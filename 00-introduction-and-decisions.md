@@ -45,12 +45,13 @@ Four questions were posed before the recommendation could be finalized, because 
 
 ## The Design Constraints
 
-1. **Sub-500ms** edge response
-2. **Greenfield — starting from scratch**
-3. **Hybrid (orchestration + choreography)** saga model
-4. (Implicit in 3 above)
+Three constraints emerged from those four questions:
 
-These constraints also confirmed that an [Anti-Corruption Layer](./02-anti-corruption-layer.md) is required — the Core's integration characteristics make that boundary non-negotiable.
+1. **Sub-500ms** edge response
+2. **Greenfield** — no existing integration infrastructure to accommodate
+3. **Hybrid saga model** — orchestration for complex multi-step flows with compensation, choreography for fan-out of side effects without coordination
+
+The fourth question (compensation style: orchestration vs. choreography?) was answered by constraint 3: choosing hybrid commits to both. These constraints also confirmed that an [Anti-Corruption Layer](./02-anti-corruption-layer.md) is required — the Core's integration characteristics make that boundary non-negotiable.
 
 ---
 
