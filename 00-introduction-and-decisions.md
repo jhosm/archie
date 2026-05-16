@@ -53,6 +53,16 @@ Three constraints emerged from those four questions:
 
 The fourth question (compensation style: orchestration vs. choreography?) was answered by constraint 3: choosing hybrid commits to both. These constraints also confirmed that an [Anti-Corruption Layer](./02-anti-corruption-layer.md) is required — the Core's integration characteristics make that boundary non-negotiable.
 
+### Security and Regulatory as Implicit Constraints
+
+Three explicit constraints were named above. A fourth is implicit and cuts across all three: **security and regulatory compliance**.
+
+Portugal's banking ecosystem operates under PSD2, GDPR, Banco de Portugal supervision, and DORA. These impose architectural requirements that are not operational add-ons: PSD2's Strong Customer Authentication shapes how the saga handles user-initiated operations (a failed SCA challenge is a first-class saga outcome, not a technical error); GDPR's right to erasure is in direct tension with the "events are immutable" principle and must be resolved structurally before the first event is published; DORA requires demonstrated operational resilience testing, not just design intent.
+
+The event-driven model also creates novel security surfaces that a monolith does not have: Kafka topics are shared across bounded contexts; the saga orchestrator holds elevated privilege over Core Banking; the operations console can force compensations on real money; and the observability backend aggregates sensitive financial data from all services in one searchable place.
+
+[Document 10](./10-security-and-threat-model.md) covers the full threat model — trust boundaries, assets, principles, and regulatory obligations. The considerations here are not decorative; they change design decisions in every document that follows.
+
 ---
 
 ## High-Level Architectural Shape

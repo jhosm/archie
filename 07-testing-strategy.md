@@ -437,6 +437,75 @@ In greenfield, with a learning team, the order of investment I recommend:
 
 ---
 
+## Security Testing
+
+Security testing is not a separate discipline that runs after the pyramid is complete. It is a set of scenarios that belong at specific levels of the pyramid — and if those levels don't include them, bugs in auth and data handling are discovered in production.
+
+**At Level 1 (unit):** aggregate invariants include authorization preconditions. `Deposit.cancel()` must fail if the caller identity does not have the required role, not only if the deposit state is wrong.
+
+**At Level 2 (integration):** the idempotency store must be tested with cross-client collision scenarios:
+```
+test "idempotency key from client A cannot match key from client B":
+  key = "idem-same-value"
+  
+  api.post("/deposits/constitute", payloadA, clientId=A, idempotencyKey=key)
+  api.post("/deposits/constitute", payloadB, clientId=B, idempotencyKey=key)
+  
+  assert count(deposits) == 2  // two distinct deposits, not a collision
+  assert depositA.clientId == A
+  assert depositB.clientId == B
+```
+
+Also at Level 2: the SSE stream endpoint must reject a request where the token's `client_id` does not match the process's owning client:
+```
+test "SSE stream for process of client A is inaccessible with client B's token":
+  process = constituteSaga(clientId=A)
+  
+  response = api.getStream(processId=process.id, bearerToken=tokenForClientB)
+  
+  assert response.status == 403
+```
+
+**At Level 4 (saga tests):** test the PSD2/SCA rejection path explicitly. A saga that begins without SCA confirmation must never reach the `ConfirmDebit` step:
+```
+test "saga does not proceed to debit if SCA is absent":
+  given: SCA not confirmed for this session
+  
+  api.post("/deposits/constitute", validPayload)
+  
+  assert response.status == 403
+  assert core received zero debit calls
+```
+
+Also at Level 4: command injection resistance. A direct publish to the internal command topic without the orchestrator's service identity must be rejected at the consumer:
+```
+test "ConfirmDebit command from unauthorized service identity is rejected":
+  // Attempt to publish ConfirmDebit directly, bypassing the orchestrator
+  given: publisher identity is "notifications-service" (wrong identity)
+  
+  publish("ConfirmDebit", payload, serviceIdentity="notifications-service")
+  
+  assert ACL never called Core Banking
+  assert alert fired on unauthorized command origin
+```
+
+**Across all levels:** verify that the event payloads published to the backbone do not contain personal data beyond the pseudonymous `client_id`. An integration test can assert:
+```
+test "DepositConstituted event carries no PII beyond client_id":
+  api.constituteDeposit(payload)
+  
+  event = kafka.consume("deposits.integration.events", type="DepositConstituted")
+  
+  assert event.payload does not contain client.name
+  assert event.payload does not contain client.nif
+  assert event.payload does not contain fields resolving to personal identity
+  // account numbers: document explicitly if present, with justification
+```
+
+This is not the complete security test surface — it is the minimum. A threat model review ([Document 10](./10-security-and-threat-model.md)) of each new feature should produce additional scenarios.
+
+---
+
 ## The Principle That Unites Everything: Trust the Pyramid, but Invert the Proportions
 
 In event-driven systems with distributed sagas, the traditional pyramid **in form holds** (more cheap tests, fewer expensive ones). But the **content shifts**: contract tests and saga tests with fault injection take disproportionate weight, because that's where the bugs actually live in this kind of architecture.

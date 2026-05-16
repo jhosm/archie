@@ -199,6 +199,18 @@ The last line is the most important point. "Exactly-once" is often sold as possi
 
 ---
 
+## Security Properties of the Plumbing
+
+The three patterns above have security implications that are easy to overlook because they feel like infrastructure, not application logic.
+
+**Outbox table: sensitive data at rest.** The outbox holds full event payloads — integration events that include `client_id`, account numbers, amounts, and in some cases IBANS. This data sits in the application database until the publisher picks it up, typically for seconds to minutes under normal conditions and up to days during Kafka outages. The outbox table must be treated with the same access controls as the application's primary tables: encryption at rest, restrictive DB roles, and included in the backup/restore security perimeter.
+
+**Kafka topic ACLs: consumers are not implicitly trusted.** Kafka is a shared medium. By default, any service that can connect to the Kafka cluster can subscribe to any topic. In a bounded-context architecture where multiple teams share one cluster, this is not acceptable. Topic-level ACLs must be part of the infrastructure configuration from day one — not added later when there are already ten services sharing the cluster. The rule: a service subscribes only to the topics it needs; it produces only to the topics it owns. ACL configuration lives in the same repository as the service and is reviewed in the same PR. See [Document 10](./10-security-and-threat-model.md) for the full Kafka trust boundary.
+
+**Schema registry access controls.** The schema registry controls the compatibility mode of every topic. A compatibility change from `BACKWARD` to `NONE` on a production topic removes the mechanical guard against breaking changes. This must be an authorized action — not something an individual developer can do in a browser. Schema registration (new schemas and version updates) is performed by the producer's CI/CD pipeline, using a deployment-scoped service account. Humans can read the registry; only CI can write to it. Changing compatibility modes requires the same review process as a breaking schema change.
+
+---
+
 ## The Mental Test to Apply to Each Component
 
 Before assuming something works, run it through these four questions:

@@ -51,6 +51,18 @@ Common scenario in legacy Cores: you submit a movement, it stays pending, proces
 
 The ACL does not trust that what it sent actually happened. Periodic batch job (typically daily, aligned with the Core's cycle) that crosses *"what the domain thinks is in the Core"* with *"what the Core actually has"*. Divergences → exceptions, alerts, investigation queue. In banking this **is not optional**: without reconciliation, divergences accumulate silently and you discover them months later with material loss.
 
+### 8. Authentication to Core Banking
+
+The ACL holds the most privileged position in the system: it can instruct Core Banking to move real money. This privilege must be bounded.
+
+The ACL authenticates to Core Banking using a **dedicated service account** — separate from any other identity in the system, with only the permissions the ACL actually needs (not a general-purpose administrator account). Credentials live in a secrets manager or HSM; they are never in configuration files, environment variables, or version control. Rotation is scheduled, and rotation is tested — a credential that has never been rotated in a drill will fail to rotate under pressure.
+
+The **reconciliation job** has a distinct identity from the write operations. It needs read access to Core Banking positions; it does not need the ability to create or modify movements. Separate credentials, minimum scope.
+
+Every Core Banking call the ACL makes includes the `correlation_id` of the originating saga. Even if Core Banking's own logs don't carry this context, the ACL's logs create a cross-boundary audit trail that survives Core Banking's retention policies.
+
+Finally: the ACL's command interface is not a public endpoint. It accepts connections only from the saga orchestrator's authenticated service identity. This is enforced at the transport layer (mTLS client certificate validation), ensuring that no other service — even one with network access — can instruct the ACL to move money. See [Document 10](./10-security-and-threat-model.md) for the full trust boundary model.
+
 ---
 
 ## Internal Structure

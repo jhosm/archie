@@ -63,7 +63,7 @@ The owner has three concrete responsibilities:
 2. **Guarantees backward compatibility** over time
 3. **Coordinates deprecations** when needed
 
-Notice what is **not** on the list: the owner **does not decide who consumes the event**. Public events are public — any context can subscribe. The owner has no veto over consumers, only obligations toward them.
+Notice what is **not** on the list: the owner **does not decide who consumes the event**. But "public" does not mean "open to all without authorization". The owner defines which contexts may consume the event; Kafka topic ACLs enforce it mechanically. The distinction between "who subscribes" (an operational fact) and "who is authorized to subscribe" (a governance decision) is important — the catalogue must track both, and they must agree.
 
 ### What Does NOT Work in Ownership
 
@@ -224,6 +224,15 @@ The document circulates. Reviewers comment. There is discussion. Eventually appr
 - The semantics are clear
 - The relationship with existing events is coherent
 - Known consumers were consulted
+
+**And a security checklist — mandatory for every new event:**
+
+- Does the payload contain personal data (name, NIF, contact details)? If yes, the event violates the pseudonymization principle — revise the payload to use `client_id` only, with consumers fetching personal data from the Customer Data Store as needed.
+- Does the payload contain account numbers (IBANs) or financial rates? Document explicitly which consumers require this data and why they cannot obtain it by lookup. If no consumer has a justified need, remove it.
+- Is GDPR tagging applied? Events containing data that persists in the event log must be tagged in the catalogue with their GDPR legal basis (e.g., `legal_basis: AML_OBLIGATION` for financial operation records).
+- Who is authorized to subscribe? The catalogue records not just who *does* subscribe but who *may* subscribe. This is the governance input to Kafka topic ACL configuration.
+
+These are not suggestions for events that seem sensitive. They are required for every integration event — "it's just a deposit ID" is not a justification for skipping the checklist. The security principles underpinning these requirements are covered in [Document 10](./10-security-and-threat-model.md).
 
 ### For Changes to Existing Events
 

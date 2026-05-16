@@ -418,6 +418,47 @@ For evolution to work, certain tools are prerequisites:
 
 ---
 
+## GDPR and the Immutability Tension
+
+[Document 10](./10-security-and-threat-model.md) names this as boundary 8 — the GDPR data boundary. It deserves treatment here because it surfaces as a schema evolution question: what do you do when a client exercises their right to erasure, and their personal data is embedded in events you cannot change?
+
+### The Tension
+
+[Principle 3 of Document 10](./10-security-and-threat-model.md): events are immutable, published facts. GDPR Article 17: clients have the right to erasure of their personal data. If `DepositConstituted` carries the client's IBAN in its payload, and that event persists in Kafka for 90 days and in the event archive indefinitely, erasure is structurally impossible without tampering with the event store.
+
+### The Structural Resolution — Design Before the First Event
+
+The resolution is not a clever technique applied retroactively. It is a schema design decision that must be made before the first event is published:
+
+**Personal data does not belong in events. Events carry only the pseudonymous `client_id`.**
+
+Name, NIF, contact details, and account numbers that identify the client live in a separate **Customer Data Store** — a service (or dedicated tables) keyed by `client_id`. When a downstream consumer needs the client's name to send a notification, it fetches it from the Customer Data Store using the `client_id` from the event. When a client exercises their right to erasure, the Customer Data Store record is deleted; the event log retains only the `client_id`, which without the corresponding record is no longer personal data under GDPR.
+
+### The Hard Case: Account Numbers in Financial Events
+
+The IBAN in `DepositConstituted` is a partial exception. It is financial account data rather than purely personal data, but it is typically considered personal data under GDPR because it identifies the account holder. The safe design: remove the IBAN from the integration event payload; consumers that need it (the Core ACL, for example) obtain it from the Customer Data Store.
+
+If a consumer has a genuinely compelling need for the account number in the event payload — a timing or availability argument that cannot be resolved by lookup — that is a design decision to document explicitly in the RFC (see [Document 08](./08-event-catalog-governance.md)), with the GDPR legal basis stated, not assumed.
+
+### Data Subject Access Requests
+
+A client submitting a DSAR asks: "what data do you hold about me?" The answer spans multiple stores:
+
+- Customer Data Store: name, NIF, contact details, account relationships
+- Read model tables: deposit history, interest payments, saga outcomes — all keyed by `client_id`
+- Outbox / inbox tables: short-retention, operational; typically not in scope for DSAR
+- Traces and logs: if pseudonymized correctly, the `client_id` reference does not constitute personal data requiring DSAR disclosure; if account numbers appear in traces, it does
+
+The pseudonymization design simplifies DSAR substantially. Without it, DSAR reconstruction requires querying Kafka archives, read models, ACL state stores, inbox tables, and the tracing backend.
+
+### Retention Policies Require a Legal Basis
+
+Kafka's 90-day retention and the indefinite event archive must have documented legal bases. In banking, AML obligations and BdP supervisory requirements typically provide that basis for financial operation records (`DepositConstituted`, `DepositMobilized`, `InterestPaid`). Marketing or operational events (`NotificationSent`) may not share the same basis and should have shorter, separately documented retention policies.
+
+Retention is not a schema decision, but it is documented in the event catalogue alongside the schema — and it must be consistent with the GDPR legal basis for each event type.
+
+---
+
 ## Principles That Tie Everything Together
 
 Five principles that, if consistently followed, resolve 90% of evolution problems. The most important of the five is the first — it reframes schema discipline from a technical concern into an organizational and economic one:

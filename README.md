@@ -44,3 +44,4 @@ The full reasoning behind these constraints and the architectural shape they for
 | [07](./07-testing-strategy.md) | Testing Strategy | Adapted test pyramid for event-driven systems: aggregate unit tests, integration with testcontainers, contract tests (Pact), saga tests, selective E2E |
 | [08](./08-event-catalog-governance.md) | Event Catalog Governance | Four governance pillars, ownership model, naming conventions, review process, the living catalogue |
 | [09](./09-long-term-schema-evolution.md) | Long-term Schema Evolution | Taxonomy of compatible/incompatible changes, concrete techniques for each, antipatterns, real scenarios |
+| [10](./10-security-and-threat-model.md) | Security and Threat Model | Trust boundaries, assets worth protecting, six security principles, regulatory obligations (PSD2, GDPR, BdP, DORA) |

@@ -222,6 +222,16 @@ Each log line automatically includes:
 
 Don't log PII at INFO/WARN/ERROR levels. NIB (Número de Identificação Bancária — Portuguese bank account identifier), name, email — only in DEBUG or redacted.
 
+### The Observability Backend as a Regulated Data Store
+
+Structured logs include `correlation_id`, `process_id`, and `deposit_id`. Span attributes include `deposit.amount`, `core.account`, and `deposit.client_id`. The distributed tracing backend thus aggregates sensitive financial and operational data from every service in the ecosystem into one searchable place. This makes it a regulated data store — not "just logs".
+
+**RBAC at the observability layer is not optional.** The NOC team needs error rates and lag metrics; it does not need to query specific client transaction details. The compliance team needs audit trails; it does not need developer-level service traces. These are different access profiles. Design them explicitly rather than giving everyone full access to the tracing backend.
+
+**Classify span attributes before you add them.** `process.state` is operational — broadly visible. `deposit.amount` is financial — restricted to authorized roles. `core.account` is financial and potentially personal data — strictly restricted. Before adding a new attribute to a manual span, ask: who should be able to query this in the tracing UI? If the answer is "not everyone", design the access control first.
+
+**Prefer pseudonymous identifiers in trace attributes.** Instead of embedding `client_id = CLI-2026-007842` in every span, a short opaque reference that resolves in the Customer Data Store gives the same debugging value without making the tracing backend a personal data index. This also simplifies GDPR right-to-erasure: pseudonymous trace records do not require erasure when a client exercises Article 17 rights. The full observability trust boundary is covered in [Document 10](./10-security-and-threat-model.md).
+
 ---
 
 ## Metrics — What to Monitor

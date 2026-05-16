@@ -188,6 +188,18 @@ This gives you 80% of CQRS's value at 30% of the complexity. The rest evolves as
 
 ---
 
+## Read Model Authorization
+
+The read model denormalizes data from multiple source systems: deposit conditions from the Deposits aggregate, client-facing labels from the CRM, KYC state signals from Compliance. The result is a single table that is very convenient to query — and that contains a richer cross-system profile than any one source system holds.
+
+Authorization at the read model layer must not be weaker than the most restrictive source. If a client relationship manager can see CRM data but not Compliance KYC details, the read model query serving that user must not expose KYC signals that were embedded in the projection. This requires either field-level authorization in the read API, or separate projections per audience.
+
+For PSD2 specifically: account data (account numbers, balances, transaction history) has defined access rules for both the account holder and any authorized third-party providers. Read models that include account-level data must enforce these rules at the query layer, not only at the ingestion layer.
+
+The practical implication is that "one read model, one endpoint" is often too coarse for a banking context. Design projections for the queries they serve, and design query APIs for the authorization contexts they operate in — not as an afterthought, but as part of the initial read model design.
+
+---
+
 ## Relationship to Everything Before
 
 CQRS closes the shape of the system:

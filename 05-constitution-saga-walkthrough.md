@@ -43,13 +43,14 @@ Body:
 
 The Deposits API gateway does **only** what fits within the 500ms:
 
-1. Authentication/authorization (token already validated by upstream IAM)
-2. **Synchronous idempotency check**: does `idem-c4d8e2f1` exist? If yes, return cached response. If no, proceed.
-3. **Light validations**: payload schema, product exists in catalogue (local read model), amount within product's limits
-4. **Creates the `ConstitutionProcess` aggregate** in state `STARTED`
-5. Also creates the `Deposit` aggregate (in state `DRAFT`)
-6. Persists everything + event `ConstitutionRequested` in the outbox **in the same local transaction**
-7. Returns `202 Accepted` with `deposit_id = "DEP-2026-00012345"` and `process_id = "PROC-2026-00098765"`
+1. Authentication/authorization (token validated by upstream IAM; claims propagated as signed assertions)
+2. **PSD2 SCA pre-condition**: deposit constitution is a significant financial operation. The IAM must confirm that SCA has been completed for this session before the saga proceeds to any irreversible step. If SCA is absent or timed out, the edge returns `403` with reason `SCA_REQUIRED` — the orchestrator never starts. If SCA fails mid-saga (e.g., a step-up challenge times out during a long-running workflow approval), the orchestrator treats it as a `ConstitutionRejected` outcome and triggers the standard compensation path.
+3. **Synchronous idempotency check**: does `(client_id, idem-c4d8e2f1)` exist? The key is scoped to the client — see [Primitive 5](./01-the-six-primitives.md). If yes, return cached response. If no, proceed.
+4. **Light validations**: payload schema, product exists in catalogue (local read model), amount within product's limits
+5. **Creates the `ConstitutionProcess` aggregate** in state `STARTED`
+6. Also creates the `Deposit` aggregate (in state `DRAFT`)
+7. Persists everything + event `ConstitutionRequested` in the outbox **in the same local transaction**
+8. Returns `202 Accepted` with `deposit_id = "DEP-2026-00012345"` and `process_id = "PROC-2026-00098765"`
 
 ```http
 HTTP 202
@@ -62,6 +63,8 @@ HTTP 202
 ```
 
 Time: ~150ms. The client sees "Processing..." and subscribes to the SSE/WebSocket to receive updates.
+
+**SSE endpoint authorization note.** The `stream_url` uses the `process_id` as the path parameter. This must not be treated as a security token — sequential or UUID-format IDs are not secrets. The SSE endpoint must independently validate that the requester's bearer token is authorized to receive updates for that specific process (i.e., the token's `client_id` matches the process's owning client). A client that guesses or obtains another client's `process_id` must not receive their saga updates.
 
 ### What Is Guaranteed Up To Here
 
@@ -427,7 +430,7 @@ This choice is a **saga design** decision — there is no universal answer, it d
 
 Three points worth extracting from the flow, beyond what the steps already make obvious:
 
-1. **The saga aggregate (`ConstitutionProcess`) is itself a domain entity.** It is persisted, has explicit valid transitions, and is queryable. The orchestrator is not a technical coordination object floating outside the domain — it *is* this aggregate in action. This is what allows `HUMAN_INTERVENTION_REQUIRED` to be a first-class state with its own operations console, rather than an unhandled exception.
+1. **The saga aggregate (`ConstitutionProcess`) is itself a domain entity.** It is persisted, has explicit valid transitions, and is queryable. The orchestrator is not a technical coordination object floating outside the domain — it *is* this aggregate in action. This is what allows `HUMAN_INTERVENTION_REQUIRED` to be a first-class state with its own operations console, rather than an unhandled exception. The operations console — which lets operators retry, cancel, and force-compensate sagas in this state — is the highest-privilege interface in the system. Its authorization model must match that privilege: strong authentication, role-based access, 4-eyes approval for operations above a defined amount threshold, and an immutable audit log of every action taken. See [Document 10](./10-security-and-threat-model.md) for the full model.
 
 2. **Compensation is never assumed to succeed.** Each scenario (eligibility rejection, post-debit compliance failure, indeterminate state) treats the compensation path as another saga with its own retries, its own intermediate states, and its own escalation path. The system doesn't *give up* — it makes explicit when it needs help.
 
