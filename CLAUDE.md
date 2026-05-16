@@ -4,9 +4,10 @@ This file provides instructions and context for AI coding agents working on this
 
 ## Project Nature
 
-This is a **documentation-only repository** — an architecture series for a Portuguese banking
-ecosystem. There is no build system, no test runner, and no deployable code. The deliverables
-are the `.md` files at the project root (numbered `00–09`).
+This is a **documentation-only repository** named **babelstone** (`github.com/jhosm/babelstone`) —
+an architecture series for a Portuguese banking ecosystem. There is no build system, no test
+runner, and no deployable code. The deliverables are the `.md` files at the project root
+(numbered `00–09`).
 
 Document series: `00-introduction-and-decisions.md` through `09-long-term-schema-evolution.md`.
 Read `README.md` for the full document map.
