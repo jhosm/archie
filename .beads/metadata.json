@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "archie",
+  "project_id": "805418ac-dcef-47b4-9fb3-fc73f969f98d"
+}
