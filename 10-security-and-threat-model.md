@@ -178,28 +178,28 @@ For a Portuguese banking ecosystem, these are the specific regulatory frameworks
 
 ### PSD2 and Strong Customer Authentication
 
-The Payment Services Directive 2 (PSD2) requires SCA for electronic payment transactions and account access. A term deposit constitution involves a debit from a payment account — SCA applies.
+The [Payment Services Directive 2 (PSD2)](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32015L2366) requires SCA for electronic payment transactions and account access. A term deposit constitution involves a debit from a payment account — SCA applies.
 
 **Architectural implication:** SCA is not just a UI step. It is a pre-condition for the saga to proceed to irreversible steps. The orchestrator must receive an SCA-confirmed signal before issuing `ConfirmDebit`. A failed or timed-out SCA triggers the compensation path, not a technical error.
 
 ### GDPR
 
-The General Data Protection Regulation imposes:
-- **Right to erasure (Article 17):** Resolved by the Customer Data Store pattern — see Principle 3 and [Document 09](./09-long-term-schema-evolution.md).
-- **Data minimization (Article 5):** Events should carry only what consumers need. Fat events carrying everything "just in case" are a GDPR risk.
+The [General Data Protection Regulation](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32016R0679) imposes:
+- **[Right to erasure (Article 17)](https://gdpr-info.eu/art-17-gdpr/):** Resolved by the Customer Data Store pattern — see Principle 3 and [Document 09](./09-long-term-schema-evolution.md).
+- **[Data minimization (Article 5)](https://gdpr-info.eu/art-5-gdpr/):** Events should carry only what consumers need. Fat events carrying everything "just in case" are a GDPR risk.
 - **Data subject access requests:** The Customer Data Store is the single point for DSAR responses. The event log contributes only pseudonymous records.
 - **Data residency:** Kafka clusters, event archives, and the observability backend must operate within the EU. This constrains cloud region choices.
 - **Retention with legal basis:** Kafka retention (90 days) and event archive (indefinite) need documented legal bases. In banking, regulatory obligations (BdP, AML) typically provide that basis for financial operation records. Marketing data does not have the same basis.
 
 ### Banco de Portugal Supervision and FGD
 
-BdP supervision requires a tamper-evident audit trail of all deposit operations, including compensations. The causation chain (Primitive 4 from [Document 01](./01-the-six-primitives.md)) and the saga state aggregate are the technical implementation of this requirement. They must be append-only and access-controlled.
+[Banco de Portugal (BdP)](https://www.bportugal.pt/) supervision requires a tamper-evident audit trail of all deposit operations, including compensations. The causation chain (Primitive 4 from [Document 01](./01-the-six-primitives.md)) and the saga state aggregate are the technical implementation of this requirement. They must be append-only and access-controlled.
 
-FGD (Fundo de Garantia de Depósitos) reporting depends on accurate aggregate positions. The read models ([Document 03](./03-cqrs-and-read-models.md)) that feed reporting must be integrity-checked — periodic reconciliation between the read model and the write aggregate is a supervisory requirement, not just an engineering preference.
+[FGD (Fundo de Garantia de Depósitos)](https://www.fgd.pt/) reporting depends on accurate aggregate positions. The read models ([Document 03](./03-cqrs-and-read-models.md)) that feed reporting must be integrity-checked — periodic reconciliation between the read model and the write aggregate is a supervisory requirement, not just an engineering preference.
 
 ### DORA (Digital Operational Resilience Act)
 
-DORA requires documented incident response procedures, operational resilience testing (including simulated failures), and third-party risk management for critical ICT providers.
+[DORA](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32022R2554) requires documented incident response procedures, operational resilience testing (including simulated failures), and third-party risk management for critical ICT providers.
 
 Core Banking is the critical third-party provider in this architecture. The ACL's indeterminate-state handling ([Document 02](./02-anti-corruption-layer.md)) and the reconciliation job are the operational resilience controls for that dependency. They must be tested, not assumed. The game days recommended in [Document 06](./06-observability-and-tracing.md) are DORA-relevant activities.
 
