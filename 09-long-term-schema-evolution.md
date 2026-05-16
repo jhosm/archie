@@ -451,19 +451,6 @@ Initial investment: ~1 day of configuration. Return: capacity to evolve the syst
 
 ## Closing the Series
 
-This was the last of the transversal topics. The complete document series now covers:
-
-- **00 — Introduction and Decisions**: initial question, clarifications, foundational architectural shape
-- **01 — The Six Primitives**: command vs event, domain vs integration event, bounded context + aggregate, identity trio, idempotency, compensating action
-- **02 — Anti-Corruption Layer**: protecting the domain from the Core's vocabulary
-- **03 — CQRS and Read Models**: how to deliver sub-500ms reads in a distributed system
-- **04 — Plumbing Patterns**: Outbox, Inbox, Schema Registry, delivery guarantees
-- **05 — Constitution Saga Walkthrough**: tangible end-to-end flow with happy path and three failure scenarios
-- **06 — Observability and Tracing**: design for debuggability from day one
-- **07 — Testing Strategy**: adapted pyramid for event-driven systems with sagas
-- **08 — Event Catalog Governance**: ownership, conventions, review, catalogue as a living product
-- **09 — Long-term Schema Evolution**: this document, on how schemas age well across years
-
-The architecture is coherent across all dimensions: conceptual foundation, boundaries, read model, plumbing, materialization in concrete sagas, operational concerns (observability, testing), and organizational concerns (governance, evolution).
+This is the final document of the series. The architecture is coherent across all dimensions: conceptual foundation, boundaries, read model, plumbing, materialization in concrete sagas, operational concerns (observability, testing), and organizational concerns (governance, evolution).
 
 Each piece serves an identified purpose, each trade-off is explicit, and the whole rests on the foundational principles asked for at the outset: maximum flexibility, performance honouring the sub-500ms requirement, and compensation mechanisms instead of distributed transactionality.

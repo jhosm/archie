@@ -19,7 +19,7 @@ Four sources of difficulty, in increasing order of subtlety:
 
 **4. Distributed contracts.** When 6 systems depend on an event, changing the event without breaking any of them requires mechanical discipline, not visual inspection.
 
-Each level of the pyramid attacks a different source.
+Each level of the pyramid attacks a different source. Unit tests cover (1) — business logic in isolation. Integration tests with testcontainers cover (2) — asynchronous behaviour and infrastructure-level guarantees. Contract tests cover (4) — distributed contracts between bounded contexts. Saga tests cover (3) — failure paths with fault injection, where the bugs actually live.
 
 ---
 
@@ -50,7 +50,7 @@ Notice two inversions compared with the traditional pyramid:
 - **Contract tests gain massive weight.** In monoliths they're unnecessary; here they are existential.
 - **Saga tests are their own level.** They don't fit into "integration" nor "e2e" — they have their own nature.
 
-We'll cover each level, from cheapest to most expensive, focusing on **what each one validates** and **what each one cannot validate** (because trying to cover everything at the wrong level is the most common trap).
+Each level is covered below, from cheapest to most expensive, focusing on **what each one validates** and **what each one cannot validate** — because trying to cover everything at the wrong level is the most common trap.
 
 ---
 

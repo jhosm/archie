@@ -34,7 +34,7 @@ The key is to assume **both models derive from the same events**, but have **dif
 
 ## How This Manifests in Your System
 
-On the write side, you live in the `Deposit` aggregate with all the richness we've seen: invariants, rules, state transitions, compensations. Optimized to guarantee correctness. Tables are normalized, there are joins, there is logic.
+On the write side, you live in the `Deposit` aggregate with all the richness from Primitive 3: invariants, rules, state transitions, compensations. Optimized to guarantee correctness. Tables are normalized, there are joins, there is logic.
 
 On the read side, you have **projections** — materialized views, denormalized, sized exactly for the screens they serve. Example:
 

@@ -167,9 +167,9 @@ Three temptations that destroy the primitive:
 
 3. **Aggregates calling external services in the middle of an operation.** If `Deposit.constitute()` calls Core to debit, you contaminated the aggregate with distributed I/O. The local operation emits intent; the saga outside coordinates the rest.
 
-### How This Interacts with the Confirmed ACL
+### Relationship to the ACL
 
-The Anti-Corruption Layer is what **translates** between your aggregate's model and the Core Banking model. The `Deposit` talks about "constituting a deposit"; the Core talks about "debit movement on account X with reference Y". The ACL converts both directions, which ensures that changes in the Core don't force refactorings in the domain. **Without an ACL, the Core's vocabulary ends up infiltrating the aggregate, and you lose evolutionary independence.**
+The Anti-Corruption Layer (detailed in Document 02) is what **translates** between your aggregate's model and the Core Banking model. The `Deposit` talks about "constituting a deposit"; the Core talks about "debit movement on account X with reference Y". The ACL converts both directions, which ensures that changes in the Core don't force refactorings in the domain. **Without an ACL, the Core's vocabulary ends up infiltrating the aggregate, and you lose evolutionary independence.**
 
 ### Summary
 

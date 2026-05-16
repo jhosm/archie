@@ -3,7 +3,7 @@
 
 The mechanisms that make events reliable.
 
-These patterns solve **real and specific problems** that appear when you try to implement everything we've covered. Each pattern exists because, without it, one of the primitives silently collapses. We cover four: Outbox, Inbox, Schema Registry, and the package of delivery guarantees.
+These patterns solve **real and specific problems** that appear when implementing the primitives. Each pattern exists because, without it, one of the primitives silently collapses. Four are covered here: Outbox, Inbox, Schema Registry, and the package of delivery guarantees.
 
 ---
 

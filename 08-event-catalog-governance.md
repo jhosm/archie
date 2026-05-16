@@ -42,7 +42,7 @@ Robust governance rests on four pillars. Without any one of them, the others los
 3. **Review process** — new events and changes go through an explicit gate
 4. **Living catalogue** — central documentation, always up to date, discoverable
 
-We cover each.
+Each pillar is covered in turn below.
 
 ---
 
@@ -148,10 +148,10 @@ Each of these choices looks micro. Together, they make the difference between a 
 
 Events must be **factually true and complete about the moment they happened**.
 
-- ✅ "X happened with these parameters on this date"
-- ❌ "Please do Y" (that's a command)
-- ❌ "I think maybe X" (events are not attempts)
-- ❌ Partial events that require a subsequent call to "get the details"
+- ✓ "X happened with these parameters on this date"
+- ✗ "Please do Y" (that's a command)
+- ✗ "I think maybe X" (events are not attempts)
+- ✗ Partial events that require a subsequent call to "get the details"
 
 A consumer processing an event must be able to do its job **with the event alone**, without calling back the producer for "more info". If it needs to, the event is incomplete.
 

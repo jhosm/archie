@@ -29,7 +29,7 @@ Compensation is the pragmatic right choice — but **how** you implement it (cho
 
 ## Clarifying Questions Before Proceeding
 
-Four questions that materially change the recommendation:
+Four questions were posed before the recommendation could be finalized, because each materially changes the architectural shape:
 
 1. **Tolerable latency in the user flow.** When a client taps "Constitute Term Deposit" on mobile, what is the acceptable response time until they see confirmation? Sub-2 seconds (sync orchestration end-to-end), sub-500ms (event-driven with optimistic UI/pending status), or "show spinner and notify when done" (purely asynchronous at the edge with polling/push)? This defines whether the saga is synchronous request-reply or fully asynchronous at the boundary.
 
@@ -107,7 +107,7 @@ These six sustain everything else. Outbox, inbox/dedup, sagas, ACL, read models,
 
 ### Order of Coverage
 
-The agreed order:
+The order of coverage:
 - (1+2) Message semantics
 - (3) Boundaries
 - (4+5) Identity and idempotency
@@ -131,5 +131,6 @@ Then, on top of the primitives:
 - **04 — Plumbing Patterns**
 - **05 — Constitution Saga Walkthrough**
 - **06 — Observability and Distributed Tracing**
-
-(Additional documents to be written for the remaining transversal topics: Testing Strategy, Event Catalog Governance, Long-term Schema Evolution.)
+- **07 — Testing Strategy**
+- **08 — Event Catalog Governance**
+- **09 — Long-term Schema Evolution**

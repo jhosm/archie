@@ -33,7 +33,7 @@ Your domain speaks REST/JSON internally. The Core may speak SOAP, MQ, batch file
 
 ### 3. Adapted Idempotency
 
-We covered the essence in Primitive 5. The ACL maintains its store `(idempotency_key → core_reference)` and makes the Core *appear* idempotent to the domain.
+Primitive 5 covered the essence. The ACL maintains its store `(idempotency_key → core_reference)` and makes the Core *appear* idempotent to the domain.
 
 ### 4. ID Mapping
 
@@ -69,6 +69,18 @@ Notice that the ACL **has its own state**. It's not a stateless proxy. Without t
 
 ---
 
+## Who Owns the ACL
+
+Organizational question, but critical: **the Deposits team owns the ACL for the Core**, not the Core team. Reasons:
+
+1. The Deposits team is the one that knows the semantic needs the ACL serves
+2. The Core team cannot (and should not) maintain N different ACLs for N consumers
+3. The pace of change of the ACL follows the consumer's pace, not the Core's
+
+The Core team maintains the **technical contract** of the Core (its API). The Deposits team maintains **the translation** between that contract and its domain.
+
+---
+
 ## The Hard Case: Indeterminate State
 
 This is the scenario that separates robust ACLs from naive ones.
@@ -95,9 +107,9 @@ The saga must know the state can be indeterminate. It's not an anomaly hidden by
 
 ---
 
-## Where ACLs Collapse — Antipatterns
+## ACL Antipatterns
 
-I see almost always the same five:
+Five recurring failure modes:
 
 ### Wrapper That Doesn't Translate
 
@@ -118,18 +130,6 @@ Stateless proxy. Without a state store, you lose idempotency, ID mapping, and in
 ### ACL That Hides Errors
 
 Swallows exceptions, silent retries. The saga needs to know what failed and why — without visibility, it cannot compensate correctly. The ACL is an error translator, not an error silencer.
-
----
-
-## Who Owns the ACL
-
-Organizational question, but critical: **the Deposits team owns the ACL for the Core**, not the Core team. Reasons:
-
-1. The Deposits team is the one that knows the semantic needs the ACL serves
-2. The Core team cannot (and should not) maintain N different ACLs for N consumers
-3. The pace of change of the ACL follows the consumer's pace, not the Core's
-
-The Core team maintains the **technical contract** of the Core (its API). The Deposits team maintains **the translation** between that contract and its domain.
 
 ---
 

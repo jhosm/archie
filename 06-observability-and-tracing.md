@@ -1,6 +1,8 @@
 # Term Deposit System — Integration Architecture
 ## Document 06: Observability and Distributed Tracing
 
+In a system with distributed sagas, eventual consistency, and compensations, observability is not a post-hoc concern — it is the operational substrate that determines whether failures are diagnosable in minutes or in hours. This document covers what to instrument, how to propagate context across services and message buses, and what to alert on.
+
 ---
 
 ## The Concrete Problem
@@ -334,10 +336,4 @@ Concretely, what this means in practice:
 
 ## Closing
 
-This document covers the first of the four transversal topics. The following are:
-
-- **Testing strategy** — how you test with confidence a system that has local ACID + eventual consistency + sagas + compensations
-- **Event catalog governance** — who approves a new integration event, who owns it, naming conventions, deprecation policy
-- **Long-term schema evolution** — migrating consumers between major versions, dual-write during transitions, sunsetting old versions
-
-Observability has natural links to testing: well-built observability facilitates testing (test traces, integration test debugging), and well-built testing instruments observability (validating that the right spans and metrics are generated).
+Observability links tightly to the next document on testing strategy (Document 07): well-built observability facilitates testing (test traces, integration test debugging), and well-built testing instruments observability (validating that the right spans, attributes, and metrics are generated for each business operation). The two are designed together, not sequentially.

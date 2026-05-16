@@ -1,9 +1,9 @@
 # Term Deposit System — Integration Architecture
 ## Document 05: Constitution Saga Walkthrough
 
-Everything we've covered, materialized in a real flow.
+The primitives and patterns from Documents 01–04, materialized in a real flow.
 
-I'll draw the complete flow, with concrete IDs, concrete events, concrete states. For tangibility, I use a real scenario: client João Silva (`client_id = CLI-2026-007842`) wants to constitute a €10,000 deposit for 12 months in product "Traditional TD 12M" with a 2.5% gross nominal annual rate.
+This document draws the complete flow, with concrete IDs, concrete events, concrete states. For tangibility, it uses a real scenario: client João Silva (`client_id = CLI-2026-007842`) constituting a €10,000 deposit for 12 months in product "Traditional TD 12M" with a 2.5% gross nominal annual rate.
 
 ---
 
@@ -16,7 +16,7 @@ Click on "Constitute" in the mobile app at 14:32:17 on 15 May 2026. The app gene
 
 **The saga will be orchestrated** (not choreographed). Remember the decision from Primitive 6: orchestration for multi-step flows with complex compensation. Constitution is exactly that.
 
-I'll present it in four overlapping perspectives: **orchestrator states**, **messages that flow**, **state of each participant**, **compensations if something fails**.
+The walkthrough presents four overlapping perspectives: **orchestrator states**, **messages that flow**, **state of each participant**, **compensations if something fails**.
 
 ---
 
@@ -137,7 +137,7 @@ payload:
 
 ### 2b. Core ACL Receives `ReserveAccountBalance`
 
-Here happens **all the magic of the ACL we saw in the previous session**:
+Here the ACL's full responsibilities (Document 02) come into play:
 
 1. Local idempotency check: does `idem-c4d8e2f1::reservation` exist? No.
 2. Records intent: `(idempotency_key, status=IN_FLIGHT, started_at=...)`.
@@ -183,9 +183,9 @@ Orchestrator emits internal command `ApproveConstitution`. The `ConstitutionProc
 
 ---
 
-## Step 4: Execution — Where Effects Become Real (Careful Step)
+## Step 4: Execution — Where Effects Become Real
 
-Now the orchestrator enters the irreversible phase. By **careful** order:
+Now the orchestrator enters the irreversible phase, in carefully chosen order:
 
 ### 4a. Confirm Debit in Core (Convert Hold Into Real Debit)
 
@@ -290,7 +290,7 @@ event: status_update
 data: {status: "CONSTITUTED", deposit_id: "DEP-2026-00012345"}
 ```
 
-And displays "Deposit successfully constituted ✓" to the client. Total perceived time: ~700ms-1s (the entire saga), but the `202 Accepted` arrived at ~150ms. To the user, sense of near-instantaneous.
+And displays "Deposit successfully constituted" to the client. Total perceived time: ~700ms–1s (the entire saga), but the `202 Accepted` arrived at ~150ms. To the user, the sense is near-instantaneous.
 
 ---
 
@@ -326,14 +326,14 @@ T+700ms   DepositConstituted published on Kafka (backbone)
           - CRM updates
 
 T+800ms   SSE notifies frontend
-          Client sees ✓
+          Client sees confirmation
 ```
 
 ---
 
 ## Now the Part That Matters Most: Compensations
 
-Everything we've seen so far has been happy path. The robustness of the system is in knowing what happens when it fails. Let's walk through three representative scenarios.
+Everything above has been the happy path. The robustness of the system is in knowing what happens when it fails. Three representative scenarios follow.
 
 ### Scenario A: Client Not Eligible (Fails Early, in Validation)
 
@@ -345,9 +345,11 @@ The orchestrator receives. Transitions `ConstitutionProcess` to `COMPENSATE_VALI
 
 **What needs to be compensated?** Only what was done:
 
-- ❌ Compliance hold: already rejected, doesn't need release
-- ✅ **Core hold: needs to be released** (was done in parallel)
-- ❌ Internal validation: stateless, nothing to do
+| Step | Compensation needed? |
+|---|---|
+| Compliance hold | No — already rejected |
+| **Core hold** | **Yes — release it** (was done in parallel) |
+| Internal validation | No — stateless |
 
 The orchestrator sends `ReleaseBalanceReservation` to the ACL. The ACL calls Core: `DELETE /core/services/HoldsService/{CORE-HOLD-554433}`. Confirms. Emits `ReservationReleased`.
 
@@ -364,9 +366,12 @@ The frontend receives SSE: `{status: "REJECTED", reason: "KYC pending — visit 
 A harder scenario. Everything went well until the debit was confirmed in Core. Then, **Compliance fails** in the step of confirming the registration (network dropped, system unavailable, or refusal for supervening reason).
 
 Current state:
-- ✅ Core: debit confirmed, money is gone
-- ❌ Compliance: registration failed
-- ⚠️ Deposit: not yet activated
+
+| Participant | State |
+|---|---|
+| Core | Debit confirmed, money has moved |
+| Compliance | Registration failed |
+| Deposit | Not yet activated |
 
 The orchestrator enters `COMPENSATE_POST_DEBIT`. **Critical business decision**: is there still a window to retry Compliance, or do we compensate directly?
 
@@ -386,7 +391,7 @@ The client is notified: "We couldn't constitute your deposit. The amount has bee
 
 You sent `ConfirmDebit` to the Core, the network dropped before the response arrived.
 
-The ACL enters `INDETERMINATE` (we saw this in the ACL session). Instead of blind retry:
+The ACL enters `INDETERMINATE` (Document 02 covers this state in detail). Instead of blind retry:
 
 1. The ACL marks the operation as `AWAIT_CLEARANCE`
 2. A clearance job (can be near-immediate) queries the Core by `reference: TD-DEP-2026-00012345`: was the debit actually executed?
@@ -420,21 +425,13 @@ This choice is a **saga design** decision — there is no universal answer, it d
 
 ## What This Concrete Saga Shows
 
-1. **The primitives materialize in concrete fields** (`correlation_id`, `causation_id`, `idempotency_key`) in **every** message. Without exception.
+Three points worth extracting from the flow, beyond what the steps already make obvious:
 
-2. **The command/event distinction remains rigorous**: commands have a recipient (`ValidateClientEligibility` → Compliance adapter); events are facts (`BalanceReserved`, `DepositConstituted`) that multiple parties can consume.
+1. **The saga aggregate (`ConstitutionProcess`) is itself a domain entity.** It is persisted, has explicit valid transitions, and is queryable. The orchestrator is not a technical coordination object floating outside the domain — it *is* this aggregate in action. This is what allows `HUMAN_INTERVENTION_REQUIRED` to be a first-class state with its own operations console, rather than an unhandled exception.
 
-3. **The domain/integration distinction is visible**: `ConstitutionRequested`, `BalanceReserved`, `ProcessConstituted` live **only in the Deposits context**. Only `DepositConstituted` (and `DepositCancelled`, `DepositMobilized`, etc.) cross over to the public backbone.
+2. **Compensation is never assumed to succeed.** Each scenario (eligibility rejection, post-debit compliance failure, indeterminate state) treats the compensation path as another saga with its own retries, its own intermediate states, and its own escalation path. The system doesn't *give up* — it makes explicit when it needs help.
 
-4. **The saga aggregate (`ConstitutionProcess`) is a domain entity**, with explicit states, valid transitions, persistence. **It's not a technical coordination object**.
-
-5. **The ACL absorbs all the friction of the Core**: idempotency, ID mapping, semantic translation, indeterminate state, reconciliation. The domain never sees SOAP, never sees Core error codes, never sees accounting semantics.
-
-6. **Compensations are domain operations with their own names**: `ReleaseBalanceReservation`, `ReverseDebit`, `Deposit.cancel(reason)`. Each emits its event, has its preconditions, can fail and have its own retry.
-
-7. **CQRS is naturally integrated**: the read model updates via projector, in the background, without ever blocking the critical path.
-
-8. **The reversibility order is respected**: holds before debits, validations before executions, coordinated effects before choreographed fan-out.
+3. **The reversibility-ordering principle is doing real work.** The three parallel validations are all reversible by construction (holds, not commits). The irreversible operation (debit confirmation in Core) lands after every reversible step has succeeded. If failure ordering had been chosen differently, Scenario B would not have been recoverable.
 
 ---
 
