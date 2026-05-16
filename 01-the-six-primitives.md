@@ -1,4 +1,4 @@
-# Term Deposit System — Integration Architecture
+# Banking Ecosystem — Integration Architecture
 ## Document 01: The Six Primitives
 
 These six primitives are the conceptual foundation of the architecture. Everything else (Outbox, Inbox, sagas, ACL, read models, schema registry) is a pattern *built upon* these primitives, not a primitive itself.
@@ -32,7 +32,7 @@ Teams create "events" with command-like names (`RequestConstitution`) or command
 
 ## Primitive 2: Domain Event vs Integration Event
 
-Inside the Term Deposits bounded context, many events will happen. Not all of them leave for the ecosystem.
+Inside the Term Deposits bounded context — the example system — many events will happen. Not all of them leave for the ecosystem.
 
 ### Domain Event (internal)
 
@@ -104,9 +104,9 @@ These two work at different layers, and confusing them is one of the most common
 
 A bounded context is a **linguistic and organizational** boundary. Within it, words have a precise and unique meaning. *Client* in the Deposits context means something different from *Client* in the Compliance context or in the CRM — and that's healthy, not a problem to solve.
 
-In the ecosystem being designed, the natural contexts are:
+In the example ecosystem, the natural contexts are:
 
-- **Term Deposits** (your system)
+- **Term Deposits** (the example application)
 - **Core Banking** (accounts, debits, credits, balances)
 - **CRM** (client as commercial relationship)
 - **Compliance** (client as KYC/AML subject)
@@ -123,7 +123,7 @@ The question that validates whether a boundary is well-drawn: *"If this team wan
 
 Inside a bounded context live aggregates. An aggregate is a cluster of domain objects treated as a unit for consistency purposes. It has a **root** (the entity through which you access it) and invariant rules that **must** always be true within it.
 
-In your context, the central aggregate is the **Deposit**. Its root is the `Deposit` entity, and inside it live:
+In the example system, the central aggregate is the **Deposit**. Its root is the `Deposit` entity, and inside it live:
 
 - Contractual conditions (amount, rate, term, interest modality)
 - Current state (Draft, Active, Matured, Mobilized, Cancelled)

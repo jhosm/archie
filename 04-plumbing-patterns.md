@@ -1,4 +1,4 @@
-# Term Deposit System — Integration Architecture
+# Banking Ecosystem — Integration Architecture
 ## Document 04: Plumbing Patterns
 
 The mechanisms that make events reliable.
@@ -60,7 +60,7 @@ Two ways to implement the relay:
 
 **CDC — Change Data Capture** (more sophisticated). Tool such as Debezium reads the DB **WAL/redo log** directly and publishes to Kafka without polling. Practically real-time latency. Less pressure on the main DB. More infrastructure to maintain. Recommended when polling stops being enough, not before.
 
-For greenfield, **start with polling**. It's hard to become limited by polling at Portuguese banking volumes (even at peak, we talk about thousands of constitutions/day, not millions/second). CDC introduces a piece of critical infrastructure that isn't worth the complexity until you need it.
+For greenfield, **start with polling**. It's hard to become limited by polling at typical banking application volumes (even at peak, we talk about thousands of operations/day per product, not millions/second). CDC introduces a piece of critical infrastructure that isn't worth the complexity until you need it.
 
 ### Details That Distinguish a Serious Implementation From a Naive One
 
