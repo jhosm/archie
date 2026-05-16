@@ -1,16 +1,18 @@
-# Term Deposit System — Integration Architecture
+# Banking Ecosystem — Integration Architecture
 
-A documentation series covering the integration architecture of a Portuguese banking term deposit management system. The series captures the full design reasoning — from the initial constraints that shaped the architecture, through the conceptual primitives it rests on, down to the concrete patterns, flows, testing strategy, and long-term governance.
+A documentation series covering integration architecture patterns for complex banking ecosystems. The series captures the full design reasoning — from the initial constraints that shaped the architecture, through the conceptual primitives it rests on, down to the concrete patterns, flows, testing strategy, and long-term governance.
+
+A Portuguese term deposit management system serves as the running example throughout: specific enough to make every pattern concrete, complex enough to exercise all of them. The architecture itself is not tied to term deposits — it is the integration backbone for a banking ecosystem, equally applicable to loans, savings accounts, investment products, or any other application that integrates with the same Core Banking, CRM, Compliance, and Workflow infrastructure.
 
 The documents are ordered to follow the logic of the design, not alphabetical or historical order. They should be read in sequence.
 
 ---
 
-## Context
+## The Example System
 
-The system manages the complete operational lifecycle of term deposits in Portugal: constitution, maturity, early mobilization, interest payments, renewal. It integrates with Core Banking, CRM, Compliance, Workflow, Documentation, Notifications, and Reporting.
+The running example manages the complete operational lifecycle of term deposits in Portugal: constitution, maturity, early mobilization, interest payments, renewal. It integrates with Core Banking, CRM, Compliance, Workflow, Documentation, Notifications, and Reporting — the same ecosystem that any application built on this architecture would share.
 
-The system must operate within Portugal's regulatory framework (Banco de Portugal, FGD deposit guarantee schemes, specific tax treatment) and is designed for a greenfield stack — no legacy constraints on the integration infrastructure.
+The example operates within Portugal's regulatory framework (Banco de Portugal, FGD deposit guarantee schemes, specific tax treatment) and is designed for a greenfield stack — no legacy constraints on the integration infrastructure.
 
 ---
 
@@ -18,7 +20,7 @@ The system must operate within Portugal's regulatory framework (Banco de Portuga
 
 Before any patterns were chosen, three constraints were fixed. Every architectural decision in the series is traceable to one or more of these.
 
-**Sub-500ms edge response.** When a client taps "Constitute Term Deposit", they see confirmation within 500ms. Coordinating Core + Compliance + CRM + Workflow synchronously within that budget is physically impossible, so the system uses an optimistic acceptance model: validate what fits, persist the request, return `202 Accepted`, run the saga asynchronously.
+**Sub-500ms edge response.** When a client initiates a high-value operation — in the example, constituting a term deposit — they see confirmation within 500ms. Coordinating Core + Compliance + CRM + Workflow synchronously within that budget is physically impossible, so the system uses an optimistic acceptance model: validate what fits, persist the request, return `202 Accepted`, run the saga asynchronously.
 
 **Hybrid saga — orchestration + choreography.** Multi-step flows with complex compensation use a stateful orchestrator. Fan-out of side-effects without coordination requirements uses choreography.
 

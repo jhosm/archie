@@ -1,4 +1,4 @@
-# Term Deposit System — Integration Architecture
+# Banking Ecosystem — Integration Architecture
 ## Document 03: CQRS and Read Models
 
 Separating reads from writes to honour the 500ms requirement.
@@ -34,7 +34,7 @@ The key is to assume **both models derive from the same events**, but have **dif
 
 ## How This Manifests in Your System
 
-On the write side, you live in the `Deposit` aggregate with all the richness from Primitive 3: invariants, rules, state transitions, compensations. Optimized to guarantee correctness. Tables are normalized, there are joins, there is logic.
+On the write side, the write model centers on the `Deposit` aggregate with all the richness from Primitive 3: invariants, rules, state transitions, compensations. Optimized to guarantee correctness. Tables are normalized, there are joins, there is logic.
 
 On the read side, you have **projections** — materialized views, denormalized, sized exactly for the screens they serve. Example:
 
@@ -93,7 +93,7 @@ Notice: **each read model has its own projector**, dedicated, independent. There
 
 This is the mental inversion that distinguishes well-done CQRS from CQRS-called-CQRS-but-just-cache. You don't design read models starting from "entities" — you design them from the **queries you need to serve**.
 
-For your system, real queries you'll need:
+For the example system, the queries that need to be served:
 
 | Query | Dedicated read model |
 |---|---|

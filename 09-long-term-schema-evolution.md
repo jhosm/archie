@@ -1,4 +1,4 @@
-# Term Deposit System — Integration Architecture
+# Banking Ecosystem — Integration Architecture
 ## Document 09: Long-term Schema Evolution
 
 We already touched on schema versioning in [Document 04 (Plumbing)](./04-plumbing-patterns.md) and [Document 08 (Governance)](./08-event-catalog-governance.md). Here we go deep into the specific discipline that makes the difference between an event-driven system that ages well over 5+ years and one that becomes paralysed by changes impossible to make.
@@ -453,4 +453,4 @@ Initial investment: ~1 day of configuration. Return: capacity to evolve the syst
 
 This is the final document of the series. The architecture is coherent across all dimensions: conceptual foundation, boundaries, read model, plumbing, materialization in concrete sagas, operational concerns (observability, testing), and organizational concerns (governance, evolution).
 
-Each piece serves an identified purpose, each trade-off is explicit, and the whole rests on the foundational principles asked for at the outset: maximum flexibility, performance honouring the sub-500ms requirement, and compensation mechanisms instead of distributed transactionality.
+Each piece serves an identified purpose, each trade-off is explicit, and the whole rests on the foundational principles established at the outset: maximum flexibility, performance honouring the sub-500ms requirement, and compensation mechanisms instead of distributed transactionality. The term deposit walkthrough demonstrates these principles concretely — but the architecture is the underlying pattern, applicable across the full range of applications that share the same banking ecosystem.

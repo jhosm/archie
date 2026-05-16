@@ -1,4 +1,4 @@
-# Term Deposit System — Integration Architecture
+# Banking Ecosystem — Integration Architecture
 ## Document 02: Anti-Corruption Layer
 
 The Anti-Corruption Layer (ACL) is the boundary that protects your domain.

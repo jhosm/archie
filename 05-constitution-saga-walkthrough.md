@@ -1,9 +1,9 @@
-# Term Deposit System — Integration Architecture
+# Banking Ecosystem — Integration Architecture
 ## Document 05: Constitution Saga Walkthrough
 
 The primitives and patterns from Documents 01–04, materialized in a real flow.
 
-This document draws the complete flow, with concrete IDs, concrete events, concrete states. For tangibility, it uses a real scenario: client João Silva (`client_id = CLI-2026-007842`) constituting a €10,000 deposit for 12 months in product "Traditional TD 12M" with a 2.5% gross nominal annual rate.
+This document draws the complete flow, with concrete IDs, concrete events, concrete states. For tangibility, it uses an illustrative scenario: client João Silva (`client_id = CLI-2026-007842`) constituting a €10,000 deposit for 12 months in product "Traditional TD 12M" with a 2.5% gross nominal annual rate.
 
 ---
 
