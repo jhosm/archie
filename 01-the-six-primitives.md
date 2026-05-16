@@ -169,7 +169,7 @@ Three temptations that destroy the primitive:
 
 ### Relationship to the ACL
 
-The Anti-Corruption Layer (detailed in Document 02) is what **translates** between your aggregate's model and the Core Banking model. The `Deposit` talks about "constituting a deposit"; the Core talks about "debit movement on account X with reference Y". The ACL converts both directions, which ensures that changes in the Core don't force refactorings in the domain. **Without an ACL, the Core's vocabulary ends up infiltrating the aggregate, and you lose evolutionary independence.**
+The [Anti-Corruption Layer](./02-anti-corruption-layer.md) is what **translates** between your aggregate's model and the Core Banking model. The `Deposit` talks about "constituting a deposit"; the Core talks about "debit movement on account X with reference Y". The ACL converts both directions, which ensures that changes in the Core don't force refactorings in the domain. **Without an ACL, the Core's vocabulary ends up infiltrating the aggregate, and you lose evolutionary independence.**
 
 ### Summary
 
@@ -248,7 +248,7 @@ How this is guaranteed:
 
 **Race condition on first-write.** Two requests with the same key arrive in parallel. Solution: the idempotency store is a database with a UNIQUE constraint; the first to insert "wins", the second receives a conflict and returns the first's result. Don't try to solve with application locks.
 
-**Idempotency must cover the complete effect, not just the local DB.** If the call implies publishing an event + writing to the DB, both must be protected by the same key. This is where the Outbox Pattern becomes mandatory: event and state written in the same transaction, key associated with the transaction.
+**Idempotency must cover the complete effect, not just the local DB.** If the call implies publishing an event + writing to the DB, both must be protected by the same key. This is where the [Outbox Pattern](./04-plumbing-patterns.md) becomes mandatory: event and state written in the same transaction, key associated with the transaction.
 
 **Idempotency in event handlers (inbox).** Consumers also receive duplicate messages (at-least-once delivery). Each handler maintains a `processed_messages (message_id)` table and ignores repetitions. Known as the **Inbox Pattern**, symmetric to the Outbox.
 
@@ -256,7 +256,7 @@ How this is guaranteed:
 
 ### The Special Case: Idempotency on the Core via the ACL
 
-The Core Banking probably **does not** offer native idempotency keys — legacy systems rarely do. Result: if you send the same debit instruction twice, it debits twice. The ACL absorbs this semantic difference:
+The Core Banking probably **does not** offer native idempotency keys — legacy systems rarely do. Result: if you send the same debit instruction twice, it debits twice. The [ACL](./02-anti-corruption-layer.md) absorbs this semantic difference:
 
 - The ACL maintains its own idempotency store (`idempotency_key → core_transaction_id`).
 - Before sending to Core, it checks: have I already sent this? If yes, returns the cached `core_transaction_id`.
@@ -364,7 +364,7 @@ Reason: if something is going to fail, fail early, before irreversible steps. No
 
 ### Saga State as Domain Entity
 
-Inevitable consequence of all this: the **saga state is an auditable entity**, not a transient variable. It has its own aggregate (`ConstitutionProcess`), persisted, with explicit states:
+Inevitable consequence of all this: the **saga state is an auditable entity**, not a transient variable. It has its own aggregate (`ConstitutionProcess`), persisted, with explicit states (see the [Constitution Saga walkthrough](./05-constitution-saga-walkthrough.md) for a concrete materialization):
 
 ```
 Started → Validated → CapitalReserved → ComplianceRegistered 
@@ -394,4 +394,4 @@ Without any of the previous ones, this last one collapses. With all of them, you
 
 ## Final Notes on the Six Primitives
 
-These six primitives, taken together, are the foundation. From here on, everything we build (Outbox, Inbox, Schema Registry, detailed ACL, CQRS model, concrete saga orchestrator for the Constitution) **rests** upon them. Nothing that follows is independent of these six.
+These six primitives, taken together, are the foundation. From here on, everything we build ([Outbox, Inbox, Schema Registry](./04-plumbing-patterns.md), [detailed ACL](./02-anti-corruption-layer.md), [CQRS model](./03-cqrs-and-read-models.md), [concrete saga orchestrator for the Constitution](./05-constitution-saga-walkthrough.md)) **rests** upon them. Nothing that follows is independent of these six.

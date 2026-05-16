@@ -48,7 +48,7 @@ Four questions were posed before the recommendation could be finalized, because 
 3. **Hybrid (orchestration + choreography)**
 4. (Implicit in 3 above)
 
-Plus confirmation that the **Anti-Corruption Layer is needed**.
+The answers also confirmed that an [Anti-Corruption Layer](./02-anti-corruption-layer.md) is required — the Core's integration characteristics make that boundary non-negotiable.
 
 ---
 
@@ -84,7 +84,7 @@ For the user, the constitution operation does not "complete" in 500ms — it is 
 
 ### Anti-Corruption Layer Confirmed
 
-The Anti-Corruption Layer is required as a peripheral element between our domain and the Core Banking system, since the Core's contract is rarely event-native and its semantics would contaminate the rest of the system if there were no isolation.
+The [Anti-Corruption Layer](./02-anti-corruption-layer.md) is required as a peripheral element between our domain and the Core Banking system, since the Core's contract is rarely event-native and its semantics would contaminate the rest of the system if there were no isolation.
 
 ---
 
@@ -114,23 +114,25 @@ The order of coverage:
 - (6) Compensation
 
 Then, on top of the primitives:
-- ACL deep dive
-- CQRS and read models
-- Plumbing patterns (Outbox, Inbox, Schema Registry, delivery guarantees)
-- Concrete saga of the Constitution
-- Transversal topics: Observability, Testing, Governance, Schema Evolution
+- [ACL deep dive](./02-anti-corruption-layer.md)
+- [CQRS and read models](./03-cqrs-and-read-models.md)
+- [Plumbing patterns](./04-plumbing-patterns.md) (Outbox, Inbox, Schema Registry, delivery guarantees)
+- [Concrete saga of the Constitution](./05-constitution-saga-walkthrough.md)
+- Transversal topics: [Observability](./06-observability-and-tracing.md), [Testing](./07-testing-strategy.md), [Governance](./08-event-catalog-governance.md), [Schema Evolution](./09-long-term-schema-evolution.md)
 
 ---
 
 ## Documents in This Series
 
-- **00 — Introduction and Foundational Decisions** (this document)
-- **01 — The Six Primitives**
-- **02 — Anti-Corruption Layer**
-- **03 — CQRS and Read Models**
-- **04 — Plumbing Patterns**
-- **05 — Constitution Saga Walkthrough**
-- **06 — Observability and Distributed Tracing**
-- **07 — Testing Strategy**
-- **08 — Event Catalog Governance**
-- **09 — Long-term Schema Evolution**
+| # | Title |
+|---|---|
+| 00 | Introduction and Foundational Decisions (this document) |
+| [01](./01-the-six-primitives.md) | The Six Primitives |
+| [02](./02-anti-corruption-layer.md) | Anti-Corruption Layer |
+| [03](./03-cqrs-and-read-models.md) | CQRS and Read Models |
+| [04](./04-plumbing-patterns.md) | Plumbing Patterns |
+| [05](./05-constitution-saga-walkthrough.md) | Constitution Saga Walkthrough |
+| [06](./06-observability-and-tracing.md) | Observability and Distributed Tracing |
+| [07](./07-testing-strategy.md) | Testing Strategy |
+| [08](./08-event-catalog-governance.md) | Event Catalog Governance |
+| [09](./09-long-term-schema-evolution.md) | Long-term Schema Evolution |
