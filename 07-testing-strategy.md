@@ -1,4 +1,4 @@
-# Term Deposit System — Integration Architecture
+# Banking Ecosystem — Integration Architecture
 ## Document 07: Testing Strategy
 
 Testing an event-driven system with sagas and compensations requires inverting some habits. The traditional test pyramid (many unit tests, some integration, rare e2e) still applies in form, but the **content** changes: some levels gain disproportionate weight, others lose.

@@ -1,4 +1,4 @@
-# Term Deposit System — Integration Architecture
+# Banking Ecosystem — Integration Architecture
 ## Document 06: Observability and Distributed Tracing
 
 In a system with distributed sagas, eventual consistency, and compensations, observability is not a post-hoc concern — it is the operational substrate that determines whether failures are diagnosable in minutes or in hours. This document covers what to instrument, how to propagate context across services and message buses, and what to alert on.

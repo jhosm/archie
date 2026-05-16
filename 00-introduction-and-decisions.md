@@ -1,15 +1,17 @@
-# Term Deposit System — Integration Architecture
+# Banking Ecosystem — Integration Architecture
 ## Document 00: Introduction and Foundational Decisions
 
 ---
 
 ## Context
 
-This document series captures the architectural reasoning for the integration patterns of a Portuguese banking term deposit management system. The system is a specialized banking backend handling the complete operational lifecycle of term deposits, designed to be consumed by various UI/UX interfaces (web, chat, mobile apps) that exist as separate systems.
+This document series covers integration architecture patterns for complex banking ecosystems — the kind of architecture that serves as the shared backbone for multiple applications: term deposits, loans, savings accounts, investment products, and whatever else the organization builds on top of the same infrastructure.
 
-The system operates within Portugal's regulatory framework overseen by Banco de Portugal, including compliance with deposit guarantee schemes (FGD) and specific tax treatment requirements. A modular system design is preferred, where different concerns like workflow approvals, reporting, and documentation are handled by separate applications rather than creating a monolithic system.
+To make the patterns concrete, the series uses a specific running example throughout: a Portuguese banking term deposit management system. It is a specialized banking backend handling the complete operational lifecycle of term deposits, designed to be consumed by various UI/UX interfaces (web, chat, mobile apps) that exist as separate systems. The architecture is not limited to term deposits — that system is the vehicle for the patterns, not the destination.
 
-The system integrates with: Core Banking, CRM, Compliance, Workflow, Documentation, Notifications, and Reporting.
+The example operates within Portugal's regulatory framework overseen by Banco de Portugal, including compliance with deposit guarantee schemes (FGD) and specific tax treatment requirements. A modular system design is assumed, where different concerns like workflow approvals, reporting, and documentation are handled by separate applications rather than a monolith.
+
+The example system integrates with: Core Banking, CRM, Compliance, Workflow, Documentation, Notifications, and Reporting.
 
 ---
 
@@ -41,14 +43,14 @@ Four questions were posed before the recommendation could be finalized, because 
 
 ---
 
-## Answers Received
+## The Design Constraints
 
-1. **Sub-500ms**
+1. **Sub-500ms** edge response
 2. **Greenfield — starting from scratch**
-3. **Hybrid (orchestration + choreography)**
+3. **Hybrid (orchestration + choreography)** saga model
 4. (Implicit in 3 above)
 
-The answers also confirmed that an [Anti-Corruption Layer](./02-anti-corruption-layer.md) is required — the Core's integration characteristics make that boundary non-negotiable.
+These constraints also confirmed that an [Anti-Corruption Layer](./02-anti-corruption-layer.md) is required — the Core's integration characteristics make that boundary non-negotiable.
 
 ---
 

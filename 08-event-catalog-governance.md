@@ -1,4 +1,4 @@
-# Term Deposit System — Integration Architecture
+# Banking Ecosystem — Integration Architecture
 ## Document 08: Event Catalog Governance
 
 Governance sounds like corporate slides and committees. In event-driven systems, it is the opposite: it is the mechanical discipline without which the architecture collapses in 18 months. We start by showing exactly how it collapses, because the urgency of the problem is only visible once you have seen it happen.
