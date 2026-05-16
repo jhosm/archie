@@ -127,7 +127,7 @@ For your system:
 | To the Core (SOAP/MQ) | Manual: the ACL adds to the SOAP envelope or MQ property |
 | To systems that don't understand trace context | At least propagates `correlation_id` in a reference field |
 
-**Notice this is exactly Primitive 4 (Identity) materialized.** The `correlation_id` we defined isn't just logging — it's the axis around which all observability organizes. If Primitive 4 is well implemented, distributed tracing **emerges naturally**. If it's poorly implemented, everything else collapses.
+**Notice this is exactly [Primitive 4 (Identity)](./01-the-six-primitives.md) materialized.** The `correlation_id` we defined isn't just logging — it's the axis around which all observability organizes. If Primitive 4 is well implemented, distributed tracing **emerges naturally**. If it's poorly implemented, everything else collapses.
 
 ---
 
@@ -220,7 +220,7 @@ Each log line automatically includes:
 - `INFO`: significant business events (saga started, saga completed, important transition)
 - `DEBUG`: technical detail for troubleshooting (only in dev, or temporarily activatable in production)
 
-Don't log PII at INFO/WARN/ERROR levels. NIB, name, email — only in DEBUG or redacted.
+Don't log PII at INFO/WARN/ERROR levels. NIB (Número de Identificação Bancária — Portuguese bank account identifier), name, email — only in DEBUG or redacted.
 
 ---
 
@@ -336,4 +336,4 @@ Concretely, what this means in practice:
 
 ## Closing
 
-Observability links tightly to the next document on testing strategy (Document 07): well-built observability facilitates testing (test traces, integration test debugging), and well-built testing instruments observability (validating that the right spans, attributes, and metrics are generated for each business operation). The two are designed together, not sequentially.
+Observability links tightly to the next document on testing strategy ([Document 07](./07-testing-strategy.md)): well-built observability facilitates testing (test traces, integration test debugging), and well-built testing instruments observability (validating that the right spans, attributes, and metrics are generated for each business operation). The two are designed together, not sequentially.

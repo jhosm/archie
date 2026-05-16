@@ -178,7 +178,7 @@ Beyond the technical schema, I recommend keeping a documental **event catalog**:
 - Versioning policy
 - Payload examples
 
-This catalog is as important as the technical registry. In event-driven systems, **events are the public API** of the ecosystem. Document them with the same care you document REST APIs.
+This catalog is as important as the technical registry. In event-driven systems, **events are the public API** of the ecosystem. Document them with the same care you document REST APIs. [Document 08](./08-event-catalog-governance.md) covers event catalogue governance in full — ownership model, naming conventions, review process, and the living catalogue.
 
 ---
 

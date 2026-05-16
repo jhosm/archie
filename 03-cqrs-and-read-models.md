@@ -63,7 +63,7 @@ A query `SELECT * FROM client_deposits WHERE client_id = ?` returns everything t
 
 ## The Relationship with the Event Backbone
 
-Read models are not a magical copy of the write model. They are **fed by the integration events** we are already publishing (Primitive 2). When the aggregate emits `DepositConstituted`, a **projector** subscribes to that event and updates the `client_deposits` table.
+Read models are not a passive mirror of the write model. They are **fed by the integration events** we are already publishing (Primitive 2). When the aggregate emits `DepositConstituted`, a **projector** subscribes to that event and updates the `client_deposits` table.
 
 ```
 Deposit Aggregate (write)
@@ -192,11 +192,11 @@ This gives you 80% of CQRS's value at 30% of the complexity. The rest evolves as
 
 CQRS closes the shape of the system:
 
-- **Command vs event** (Primitive 1) is the literal foundation: commands attack the write model, events feed read models
-- **Domain vs integration** (Primitive 2) is what makes projectors stable: they subscribe to public, versioned events, not volatile internal events
-- **Aggregate** (Primitive 3) is where the write model lives, with all its local consistency
-- **Identity** (Primitive 4) propagates through the read models — the `correlation_id` that originated a deposit is recorded in the projection, fundamental for cross-system debugging
-- **Idempotency** (Primitive 5) is what makes projectors robust to duplication
-- **Compensation** (Primitive 6) generates its own events (`DepositCancelled`, `MobilizationExecuted`), which projectors consume like any other — the read model naturally reflects compensations without special code
+- **[Command vs event](./01-the-six-primitives.md) (Primitive 1)** is the literal foundation: commands attack the write model, events feed read models
+- **[Domain vs integration](./01-the-six-primitives.md) (Primitive 2)** is what makes projectors stable: they subscribe to public, versioned events, not volatile internal events
+- **[Aggregate](./01-the-six-primitives.md) (Primitive 3)** is where the write model lives, with all its local consistency
+- **[Identity](./01-the-six-primitives.md) (Primitive 4)** propagates through the read models — the `correlation_id` that originated a deposit is recorded in the projection, fundamental for cross-system debugging
+- **[Idempotency](./01-the-six-primitives.md) (Primitive 5)** is what makes projectors robust to duplication
+- **[Compensation](./01-the-six-primitives.md) (Primitive 6)** generates its own events (`DepositCancelled`, `MobilizationExecuted`), which projectors consume like any other — the read model naturally reflects compensations without special code. The [Constitution Saga walkthrough](./05-constitution-saga-walkthrough.md) shows this in action for the full constitution flow.
 
 The 500ms become possible because the read model **has already done all the hard work in the background**. At the moment of the query, it is literally an indexed `SELECT`.

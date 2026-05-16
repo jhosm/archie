@@ -33,7 +33,7 @@ Your domain speaks REST/JSON internally. The Core may speak SOAP, MQ, batch file
 
 ### 3. Adapted Idempotency
 
-Primitive 5 covered the essence. The ACL maintains its store `(idempotency_key → core_reference)` and makes the Core *appear* idempotent to the domain.
+[Primitive 5](./01-the-six-primitives.md) covered the essence. The ACL maintains its store `(idempotency_key → core_reference)` and makes the Core *appear* idempotent to the domain.
 
 ### 4. ID Mapping
 
@@ -83,7 +83,7 @@ The Core team maintains the **technical contract** of the Core (its API). The De
 
 ## The Hard Case: Indeterminate State
 
-This is the scenario that separates robust ACLs from naive ones.
+This is the scenario that separates a robust ACL from a naive one.
 
 You submit a debit. The network drops before you receive a response. Timeout.
 
@@ -137,11 +137,11 @@ Swallows exceptions, silent retries. The saga needs to know what failed and why 
 
 The ACL is the place where **all six primitives** concretely manifest at the most hostile boundary of the ecosystem:
 
-- **Command vs event**: the domain sends commands to the ACL (`debit`); the ACL emits events when Core confirms (`DebitConfirmedInCore`).
-- **Domain vs integration**: what leaves the ACL for the internal bus are domain events of the Deposits context, not raw Core events.
-- **Aggregate**: the ACL state (idempotency, mapping, in-flight) is itself a small aggregate, with its own local consistency.
-- **Identity**: the ACL propagates `correlation_id` and `causation_id` on every call to the Core (even if the Core doesn't understand them, they go in the reference or metadata field). Creates its own chain of `message_id`s.
-- **Idempotency**: the ACL's main responsibility, as seen.
-- **Compensation**: every operation on the Core has its inverse modelled in the ACL (`debit` → `creditReversal`), with domain vocabulary, not Core vocabulary.
+- **[Command vs event](./01-the-six-primitives.md)**: the domain sends commands to the ACL (`debit`); the ACL emits events when Core confirms (`DebitConfirmedInCore`).
+- **[Domain vs integration](./01-the-six-primitives.md)**: what leaves the ACL for the internal bus are domain events of the Deposits context, not raw Core events.
+- **[Aggregate](./01-the-six-primitives.md)**: the ACL state (idempotency, mapping, in-flight) is itself a small aggregate, with its own local consistency.
+- **[Identity](./01-the-six-primitives.md)**: the ACL propagates `correlation_id` and `causation_id` on every call to the Core (even if the Core doesn't understand them, they go in the reference or metadata field). Creates its own chain of `message_id`s.
+- **[Idempotency](./01-the-six-primitives.md)**: the ACL's main responsibility, as seen.
+- **[Compensation](./01-the-six-primitives.md)**: every operation on the Core has its inverse modelled in the ACL (`debit` → `creditReversal`), with domain vocabulary, not Core vocabulary.
 
 Without the ACL, all these primitives would have to exist scattered through the domain, contaminated by the Core's language. With the ACL, they sit in a place where the friction belongs.

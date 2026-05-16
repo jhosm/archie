@@ -58,7 +58,7 @@ Each level is covered below, from cheapest to most expensive, focusing on **what
 
 Here you live the pure equivalent of the domain: the `Deposit` aggregate tested without network, without DB, without Kafka, without anything. Just objects, methods, and business rules.
 
-Rich aggregates (Primitive 3) are designed to be **trivially testable**: in-memory state, pure rules, no I/O. If your aggregate needs mocks to be tested, there is I/O contamination that should be outside it.
+Rich aggregates ([Primitive 3](./01-the-six-primitives.md)) are designed to be **trivially testable**: in-memory state, pure rules, no I/O. If your aggregate needs mocks to be tested, there is I/O contamination that should be outside it.
 
 ### What You Validate at This Level
 
@@ -323,7 +323,7 @@ The rule: **if you can validate at lower levels, do it**. E2E is the last resort
 
 ## Testing Idempotency Specifically
 
-Idempotency (Primitive 5) deserves explicit treatment because it is the primitive most frequently poorly tested.
+[Idempotency (Primitive 5)](./01-the-six-primitives.md) deserves explicit treatment because it is the primitive most frequently poorly tested.
 
 ### The Wrong Test
 
@@ -396,9 +396,9 @@ In banking systems, test data is a problem of its own:
 
 ---
 
-## The Relationship With Observability (Topic 1)
+## The Relationship With Observability ([Document 06](./06-observability-and-tracing.md))
 
-The two topics reinforce each other:
+The two documents reinforce each other:
 
 - **Observability facilitates testing**: when a saga test fails, structured traces and logs tell you immediately where. Without this, debugging saga tests is torture.
 - **Testing instruments observability**: each saga test can validate that the right spans were created, that the right attributes are present, that the right metrics incremented. **Observability is a product that also needs to be tested**, not just configured.

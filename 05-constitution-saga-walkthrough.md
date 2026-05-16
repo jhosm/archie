@@ -14,7 +14,7 @@ Click on "Constitute" in the mobile app at 14:32:17 on 15 May 2026. The app gene
 - `correlation_id = corr-aB7xK2pQ9` (this ID will follow everything)
 - `idempotency_key = idem-c4d8e2f1` (even if the user clicks twice, it's the same intent)
 
-**The saga will be orchestrated** (not choreographed). Remember the decision from Primitive 6: orchestration for multi-step flows with complex compensation. Constitution is exactly that.
+**The saga will be orchestrated** (not choreographed). Remember the decision from [Primitive 6](./01-the-six-primitives.md): orchestration for multi-step flows with complex compensation. Constitution is exactly that.
 
 The walkthrough presents four overlapping perspectives: **orchestrator states**, **messages that flow**, **state of each participant**, **compensations if something fails**.
 
@@ -105,7 +105,7 @@ The orchestrator transitions the `ConstitutionProcess` state to `PARALLEL_VALIDA
 
 The three carry the same `correlation_id`, `causation_id = msg-001-a7b3c`, and derived `idempotency_key`s (`idem-c4d8e2f1::eligibility`, etc.).
 
-### Ordering by the Reversibility Principle (Primitive 6)
+### Ordering by the Reversibility Principle ([Primitive 6](./01-the-six-primitives.md))
 
 Notice: none of the three parallel steps has an irreversible external effect yet.
 
@@ -391,7 +391,7 @@ The client is notified: "We couldn't constitute your deposit. The amount has bee
 
 You sent `ConfirmDebit` to the Core, the network dropped before the response arrived.
 
-The ACL enters `INDETERMINATE` (Document 02 covers this state in detail). Instead of blind retry:
+The ACL enters `INDETERMINATE` ([Document 02](./02-anti-corruption-layer.md) covers this state in detail). Instead of blind retry:
 
 1. The ACL marks the operation as `AWAIT_CLEARANCE`
 2. A clearance job (can be near-immediate) queries the Core by `reference: TD-DEP-2026-00012345`: was the debit actually executed?
@@ -431,7 +431,7 @@ Three points worth extracting from the flow, beyond what the steps already make 
 
 2. **Compensation is never assumed to succeed.** Each scenario (eligibility rejection, post-debit compliance failure, indeterminate state) treats the compensation path as another saga with its own retries, its own intermediate states, and its own escalation path. The system doesn't *give up* — it makes explicit when it needs help.
 
-3. **The reversibility-ordering principle is doing real work.** The three parallel validations are all reversible by construction (holds, not commits). The irreversible operation (debit confirmation in Core) lands after every reversible step has succeeded. If failure ordering had been chosen differently, Scenario B would not have been recoverable.
+3. **The reversibility-ordering principle is doing real work.** The three parallel validations are all reversible by construction (holds, not commits). The irreversible operation (debit confirmation in Core) lands after every reversible step has succeeded. If failure ordering had been chosen differently, Scenario B would not have been recoverable. This is the [saga ordering principle from Primitive 6](./01-the-six-primitives.md) in direct operation — designing for failure before writing a single line of happy-path code.
 
 ---
 
@@ -439,10 +439,10 @@ Three points worth extracting from the flow, beyond what the steps already make 
 
 With this, the cycle closes. You have:
 
-- **Conceptual foundation**: 6 primitives
-- **Boundaries**: ACL for the Core
-- **Read model**: CQRS for the 500ms
-- **Plumbing**: Outbox, Inbox, Schema Registry, guarantees
+- **Conceptual foundation**: [6 primitives](./01-the-six-primitives.md)
+- **Boundaries**: [ACL for the Core](./02-anti-corruption-layer.md)
+- **Read model**: [CQRS for the 500ms](./03-cqrs-and-read-models.md)
+- **Plumbing**: [Outbox, Inbox, Schema Registry, guarantees](./04-plumbing-patterns.md)
 - **Materialization**: concrete saga of the Constitution with happy path + 3 failure scenarios
 
 The architecture is coherent. Each piece serves an identified purpose, and the trade-off decisions are explicit (orchestration vs choreography at each moment, at-least-once + idempotency instead of exactly-once, eventual consistency assumed, compensation instead of transactionality).

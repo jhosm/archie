@@ -363,13 +363,13 @@ Two practical implications:
 
 Governance closes the cycle:
 
-- **Primitives 1 and 2** (Command vs Event, Domain vs Integration): governance is what makes these distinctions **mechanically enforced** over time, not dependent on individual goodwill.
-- **ACL (Document 02)**: governance dictates how events leave the ACL for the backbone. It defines who can publish `DepositConstituted` (only Deposits, even if the ACL is involved).
-- **CQRS (Document 03)**: governance defines which events can feed read models and how changes to events affect projections.
-- **Plumbing (Document 04)**: the schema registry is the technical infrastructure; governance is the human discipline that decides what to register.
-- **Saga (Document 05)**: the saga publishes precise integration events. Governance validates that those events follow conventions and are in the catalogue.
-- **Observability (Document 06)**: governance defines that each event carries correlation_id, causation_id, and that is mechanically validated.
-- **Testing (Document 07)**: contract tests **are the technical manifestation** of governance. Without governance, contract tests don't know what to validate.
+- **[Primitives 1 and 2](./01-the-six-primitives.md)** (Command vs Event, Domain vs Integration): governance is what makes these distinctions **mechanically enforced** over time, not dependent on individual goodwill.
+- **[ACL (Document 02)](./02-anti-corruption-layer.md)**: governance dictates how events leave the ACL for the backbone. It defines who can publish `DepositConstituted` (only Deposits, even if the ACL is involved).
+- **[CQRS (Document 03)](./03-cqrs-and-read-models.md)**: governance defines which events can feed read models and how changes to events affect projections.
+- **[Plumbing (Document 04)](./04-plumbing-patterns.md)**: the schema registry is the technical infrastructure; governance is the human discipline that decides what to register.
+- **[Saga (Document 05)](./05-constitution-saga-walkthrough.md)**: the saga publishes precise integration events. Governance validates that those events follow conventions and are in the catalogue.
+- **[Observability (Document 06)](./06-observability-and-tracing.md)**: governance defines that each event carries correlation_id, causation_id, and that is mechanically validated.
+- **[Testing (Document 07)](./07-testing-strategy.md)**: contract tests **are the technical manifestation** of governance. Without governance, contract tests don't know what to validate.
 
 Governance isn't decorative overlay; it's the connective tissue of everything else.
 

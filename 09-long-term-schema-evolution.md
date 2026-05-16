@@ -1,7 +1,7 @@
 # Term Deposit System — Integration Architecture
 ## Document 09: Long-term Schema Evolution
 
-We already touched on schema versioning in Document 04 (Plumbing) and Document 08 (Governance). Here we go deep into the specific discipline that makes the difference between an event-driven system that ages well over 5+ years and one that becomes paralysed by changes impossible to make.
+We already touched on schema versioning in [Document 04 (Plumbing)](./04-plumbing-patterns.md) and [Document 08 (Governance)](./08-event-catalog-governance.md). Here we go deep into the specific discipline that makes the difference between an event-driven system that ages well over 5+ years and one that becomes paralysed by changes impossible to make.
 
 We start with why this is especially hard in events, then move to concrete techniques, antipatterns, and real-world scenarios of changes you will inevitably face.
 
@@ -420,13 +420,13 @@ For evolution to work, certain tools are prerequisites:
 
 ## Principles That Tie Everything Together
 
-Five principles that, if consistently followed, resolve 90% of evolution problems:
+Five principles that, if consistently followed, resolve 90% of evolution problems. The most important of the five is the first — it reframes schema discipline from a technical concern into an organizational and economic one:
 
-**1. Optimize for the unknown future consumer.** The hardest consumer to serve is the one that doesn't exist yet. Every schema decision should pass through the filter: *"if someone reads this event 3 years from now without context, will they correctly interpret it?"*
+**1. Compatibility is economic, not technical.** Compatibility exists to reduce coordination cost. Every incompatible change is a cross-team meeting, a migration plan, a risk window. **Optimizing for compatibility is optimizing for organizational velocity**.
 
-**2. Events are immutable. Schemas evolve.** A published event is a recorded fact. It's not "corrected"; it's complemented with new facts. The schema may grow; the individual event never changes.
+**2. Optimize for the unknown future consumer.** The hardest consumer to serve is the one that doesn't exist yet. Every schema decision should pass through the filter: *"if someone reads this event 3 years from now without context, will they correctly interpret it?"*
 
-**3. Compatibility is economic, not technical.** Compatibility exists to reduce coordination cost. Every incompatible change is a cross-team meeting, a migration plan, a risk window. **Optimizing for compatibility is optimizing for organizational velocity**.
+**3. Events are immutable. Schemas evolve.** A published event is a recorded fact. It's not "corrected"; it's complemented with new facts. The schema may grow; the individual event never changes.
 
 **4. Deprecation is harder than addition.** Adding fields is trivial. Removing (even deprecated) requires evidence of non-use, time, and coordination. So, avoid adding what you'll probably want to remove. *Think twice before adding; think ten times before removing.*
 
