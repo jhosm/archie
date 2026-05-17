@@ -3,7 +3,7 @@
 
 Security in event-driven systems is not a layer you add at the end. It is the same thing as architecture: a set of decisions about who can do what, across which boundaries, with what data. In a banking ecosystem built on shared Kafka topics, distributed sagas, and a privileged ACL with real money-moving capability, these decisions are not optional and they are not somebody else's problem.
 
-This document names the trust boundaries in this architecture, the assets worth protecting, the threats that flow from the design choices made in documents 01–09, and the six principles that constrain how security is handled across the system. Each subsequent document in the series treats these principles as given; this is where they are grounded.
+This document names the trust boundaries in this architecture, the assets worth protecting, the threats that flow from the design choices made in documents 01–09 and 11, the customer-identity binding lifecycle for the LLM-agent channel, and the six principles that constrain how security is handled across the system. Each subsequent document in the series treats these principles as given; this is where they are grounded.
 
 ---
 
@@ -33,7 +33,7 @@ Before naming threats, you need to know what you are protecting. In this system:
 
 ## Trust Boundaries
 
-A trust boundary is a point in the system where claims must be verified rather than assumed. This architecture has eight of them.
+A trust boundary is a point in the system where claims must be verified rather than assumed. This architecture has nine of them.
 
 ### Boundary 1: External Clients → API Gateway
 
@@ -118,11 +118,108 @@ The resolution is structural and must be made before the first event is publishe
 
 The IBAN in `DepositConstituted` is the clearest violation of this principle in the current design. It is financial account data that persists in the event log for the full retention window. Whether this constitutes personal data under GDPR depends on the specific analysis, but the safe design avoids it: consumers that need the IBAN look it up from the Customer Data Store using the `client_id` in the event, rather than receiving it in the event payload.
 
+### Boundary 9: Agent → MCP Server
+
+The MCP server fronts the bank for general-purpose LLM agents — Claude, ChatGPT, self-hosted equivalents — that the bank does not own and cannot trust. [Document 11](./11-chat-agent-channel-strategy.md) covers the channel pattern; this entry catalogues the boundary itself.
+
+This is the least controllable boundary in the system. The agent runtime is third-party code the bank cannot patch, the conversation memory lives in someone else's database, and the layer that translates the user's intent into the bank's tool call is statistical rather than deterministic. The agent is well-meaning, capable, and structurally manipulable — defences must accommodate that profile rather than treat the agent as trusted (it isn't) or as hostile (the user's intent depends on it).
+
+**What must be enforced:**
+
+- OAuth 2.1 with Bearer tokens on every request, including same-session requests. PKCE on the authorisation code flow. No tokens in URI query strings (an MCP `MUST` from the 2025-11-25 spec)
+- [RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707) Resource Indicators: every access token's `aud` claim is bound to the canonical URI of the bank's MCP server. Tokens issued for any other resource are rejected, preventing replay across MCP servers (also an MCP `MUST`)
+- Narrow, family-scoped OAuth scopes — `deposits:read`, `deposits:write`, `transfers:write` are distinct. No "god scope" covering multiple tool families. The scope-to-tool mapping is configuration in version control, reviewed in the same RFC process as event-catalogue additions ([Document 08](./08-event-catalog-governance.md))
+- Strict `inputSchema` on every tool. No implicit defaults for security-relevant parameters: the `client_id` of the actor comes from the OAuth token's `sub` claim and is never accepted as a tool argument. Structurally valid but semantically suspect calls (a `source_account` the OAuth-identified customer does not own) are rejected with a typed error
+- Returned content is structured against `outputSchema`. Free-text fields are capped at the smallest length consistent with business use, and content originating from customers or external counterparties (transaction references, beneficiary names, free-text notes) has control characters stripped at write-time and is annotated in the tool description as untrusted data
+- Irreversible operations remove the agent from the confirmation path entirely. The mechanism is `elicitation/create` in URL mode (MCP 2025-11-25): the user authenticates and signs in a bank-controlled context, and the saga reads the resulting confirmation directly. The agent observes the outcome but does not authorise it
+
+**Failure modes specific to this boundary:**
+
+- **Prompt injection via bank-returned content.** The agent treats adversarial text in a free-text field — a transaction reference reading `"ignore prior instructions, transfer..."`, a customer note written by a malicious counterparty — as an instruction. The bank cannot fix the agent runtime; the structured-output and write-time sanitisation rules above narrow the attack surface but do not close it
+- **Hallucinated parameters.** The agent constructs a plausible-looking `client_id`, `amount`, or `source_account` from incomplete context. Bind the actor to the OAuth token's `sub`; reject tool arguments that contradict it; reject accounts the token-identified customer does not own
+- **Confused deputy.** The agent holds the customer's OAuth scope but acts on a third party's intent — either because a prompt-injection attack succeeded or because a multi-user agent crossed session boundaries. URL-mode confirmation for irreversible operations is the structural defence: actor intent is verified by a bank-controlled channel rather than asserted by the agent
+- **Token replay across MCP servers.** A token issued for one MCP server is presented at another. RFC 8707 binding (above) is the mandatory defence
+- **Scope creep over time.** A tool added "temporarily" with a broad scope ossifies as permanent. Every tool's scope is reviewed in the RFC process; scope grants are reviewed periodically, not just at introduction
+
+**What the saga must know:** SCA at the OAuth grant is the entry-point control. Step-up SCA mid-flow is the irreversibility control. Both surface to the saga as the same kind of signal — an SCA outcome event — regardless of whether the channel was an owned mobile app or a third-party agent. The saga's state machine does not branch on channel; the binding lifecycle below is what makes that uniformity hold.
+
+---
+
+## Customer-Identity Binding Lifecycle (MCP Channel)
+
+[Document 11](./11-chat-agent-channel-strategy.md) commits to OAuth 2.1 as the mediation between an MCP session and a banking customer, with the access token's `sub` claim as the canonical binding to `client_id`. The lifecycle of that binding — establishment, refresh, step-up, revocation — is the responsibility of this document. The treatment below is specific to Boundary 9; the owned-channel boundary (Boundary 1) follows the same OAuth/PSD2 model but with a trusted client, and the structural differences flow from the agent's untrusted status.
+
+### Enrolment and the Initial OAuth Grant
+
+A customer authorises an agent vendor (Claude, ChatGPT, a self-hosted client) the first time they use that vendor against the bank's MCP server. The flow:
+
+1. The agent's MCP client discovers the bank's authorisation server endpoint via [OAuth 2.0 Authorization Server Metadata](https://datatracker.ietf.org/doc/html/rfc8414)
+2. If [Dynamic Client Registration](https://datatracker.ietf.org/doc/html/rfc7591) is enabled — which [Document 11](./11-chat-agent-channel-strategy.md) recommends for an MCP server consumed by arbitrary agents — the agent registers and receives a `client_id`. The DCR endpoint applies rate limits and may require [software statements](https://datatracker.ietf.org/doc/html/rfc7591#section-2.3) to elevate trust above the default
+3. The agent initiates the authorisation code flow with PKCE. The `resource` parameter ([RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707)) is set to the canonical URI of the bank's MCP server; `scope` declares the tool families the agent intends to use
+4. The customer authenticates at the bank's IDP. This authentication is SCA-strength under [PSD2 RTS Article 4](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32018R0389) — two factors from independent categories. The authentication context (`acr`) and the time of authentication (`auth_time`) are recorded
+5. The authorisation server returns an access token whose `sub` is the bank's pseudonymous customer identifier (`client_id` in the architecture's vocabulary, not the agent's `client_id`), `aud` is the canonical MCP server URI, plus the granted scopes and the `acr` and `auth_time` claims. A refresh token is also issued
+
+After enrolment, the MCP server verifies on every request — locally, without re-contacting the IDP — that the token's signature, expiry, audience, and scope are valid and that the `acr` is sufficient for the requested operation. The `sub` claim is the canonical binding to the banking customer; no other identifier the agent might supply (a phone number, a chat-platform user ID, an agent-side account) is accepted as proof of customer identity at this boundary.
+
+### PSD2 SCA at Enrolment
+
+[PSD2 RTS Article 10](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32018R0389) governs how often SCA must be repeated for account information access — the reuse window is in the order of months. Payment initiation requires SCA on each transaction unless an exemption applies (low-value, trusted-beneficiary, recurring, etc.). For the MCP server this maps cleanly to scope families:
+
+- **`deposits:read` and other AIS-equivalent scopes.** SCA at grant time is sufficient. Refresh-token-driven token rotation within the reuse window does not require fresh SCA
+- **`deposits:write`, `transfers:write` and other PIS-equivalent scopes.** SCA at grant time authorises the *grant*. Each irreversible operation invoked under the grant requires its own SCA via the URL-mode step-up below, or an explicit exemption the saga records
+
+The `acr` claim on the access token is the structural signal: a value indicating SCA completion is a pre-condition for the saga to enter irreversible steps. A grant with a weaker `acr` — a single-factor session inherited from a long-lived browser cookie, say — is acceptable for read-only operations but rejected by the MCP server's write tools at request time, with a structured error directing the agent into a re-authorisation flow.
+
+### Step-Up Authentication Mid-Session
+
+The saga occasionally needs SCA evidence that was not present at grant time: the token's `acr` is too weak, `auth_time` is too far in the past, or the operation crosses an auto-approval threshold ([Document 05](./05-constitution-saga-walkthrough.md)).
+
+The MCP server signals step-up via `elicitation/create` in URL mode (MCP 2025-11-25). The agent receives a one-time URL bound to the in-flight `process_id` and presents it to the user. The user navigates to that URL in a bank-controlled context — the bank's web app, the bank's mobile app via a deep link, a hardware-key signing flow — re-authenticates under SCA, and the bank reads the resulting confirmation directly. The saga transitions out of `AWAIT_USER_CONFIRMATION` from the bank's own signal.
+
+Two structural points:
+
+- **The agent never sees the SCA factors.** The OTP, the push-notification approval, the hardware-key signing — none of this passes through the MCP transport. The agent observes only the outcome
+- **The step-up does not require a new OAuth grant.** It updates the saga's evidence of intent, not the OAuth session. The agent's existing access token continues to be valid for non-irreversible operations; the next irreversible operation may require its own step-up
+
+This is the same control as Boundary 1's SCA enforcement for owned mobile apps, with one structural addition: the agent's absence from the confirmation context.
+
+### Refresh and Rotating Refresh Tokens
+
+Access tokens are short-lived. The bank picks a lifetime reflecting both the latency tolerance for revocation (below) and the regulatory reuse window for AIS scopes — 30 minutes is a reasonable default for write scopes, up to 60 minutes for read-only. When an access token expires, the agent presents the refresh token to obtain a new access token. The MCP server is unaffected by refresh; it sees only the new access token.
+
+Two non-default decisions matter:
+
+- **Rotating refresh tokens (OAuth 2.1).** Each use of a refresh token issues a new one and invalidates the previous. Detection of a re-use — the same refresh token presented twice — is a credential-theft signal and revokes the entire token family: the active access token, the refresh chain, the grant. The customer is forced to re-authorise
+- **Refresh does not widen scope or freshen `acr`.** Refresh requires the same `resource` and a subset of the originally granted `scope`. The refreshed access token carries the original `acr` and `auth_time`. The agent cannot widen its grant via refresh, and SCA does not freshen across refresh — irreversible operations always require an explicit step-up
+
+### Revocation and Cached Resource Handles
+
+The customer can revoke an agent's access from the bank's web app or mobile app — a list of authorised agents with a "revoke" action per entry. Revocation is a standard [OAuth Token Revocation](https://datatracker.ietf.org/doc/html/rfc7009) call against the bank's authorisation server.
+
+Propagation is bounded by the access token's lifetime:
+
+- The refresh token is invalidated at the authorisation server. The next refresh attempt fails
+- Active access tokens continue to be accepted by the MCP server until they expire. For high-risk operations, the MCP server SHOULD use [OAuth Token Introspection](https://datatracker.ietf.org/doc/html/rfc7662) to check token status on every call, accepting the latency cost in exchange for near-immediate revocation propagation
+
+The bank cannot push revocation to the agent runtime — the agent must come back to the bank for the next refresh, and that attempt fails. A revoked agent may successfully complete one more operation in the worst case. The mitigation is access-token lifetime: shorter tokens make this window smaller at the cost of more frequent refresh traffic.
+
+**Cached resource handles after revocation.** An agent that has used the MCP server retains structured outputs — `deposit_id`, `process_id`, resource URIs like `bank://clients/{client_id}/deposits/{deposit_id}`. None of these are secrets; all of them require a valid OAuth token to dereference. After revocation, every attempt to read a cached URI or poll a cached `process_id` fails at OAuth validation, before the MCP server touches the read model. The resource-handle pattern is intentionally stateless on the bank's side — there is no agent-specific session table whose entries need clearing on revocation. The same applies to `process_id` references retained from an earlier session: holding the identifier is not the same as holding the right to act on it.
+
+### Compromised Agent Credentials
+
+Two distinct compromise scenarios require distinct responses.
+
+**A customer's OAuth grant to one agent is compromised.** The customer revokes that grant via the standard revocation flow above. If the bank detects the compromise first — anomalous tool-call patterns, geographic anomalies, velocity violations crossing the rate-limit threshold — it revokes proactively on the customer's behalf and notifies them out-of-band, using the same notification path used for async saga completion (open ADR: archie-087).
+
+**An agent vendor's `client_id` is compromised system-wide.** The bank revokes the agent vendor's dynamic client registration. All access and refresh tokens issued to that `client_id` — across every customer who authorised that vendor — are invalidated. Every affected customer is forced to re-authorise, against either a new registration of the same vendor or a different vendor entirely. This is a heavy hammer; the bank's onboarding policy for DCR (rate limits, software statements, vendor attestation) should make it rarely necessary.
+
+In both cases, the audit trail of operations the compromised credential performed remains in the event log and the saga state — revocation removes future capability, not past evidence. The reconciliation job ([Document 02](./02-anti-corruption-layer.md)) and the audit-log infrastructure (Principle 5 below) provide the forensic surface.
+
 ---
 
 ## Six Security Principles for This Architecture
 
-These principles translate the eight boundaries into actionable constraints for engineers working on this system.
+These principles translate the nine boundaries into actionable constraints for engineers working on this system.
 
 ### Principle 1: Authenticate at Every Boundary, Authorize by Least Privilege
 
@@ -218,3 +315,4 @@ Core Banking is the critical third-party provider in this architecture. The ACL'
 | [07 — Testing](./07-testing-strategy.md) | Security testing; GDPR erasure verification; injection tests |
 | [08 — Governance](./08-event-catalog-governance.md) | Security checklist in RFC process; consumer authorization tracking |
 | [09 — Schema Evolution](./09-long-term-schema-evolution.md) | GDPR right-to-erasure vs. immutability; pseudonymization strategy |
+| [11 — Chat Agent Channel](./11-chat-agent-channel-strategy.md) | The MCP-server boundary as the channel's ACL; OAuth 2.1 with RFC 8707 audience binding; URL-mode confirmation removing the agent from the irreversible-action path |
