@@ -54,7 +54,7 @@ ADR-002 established that compaction-based GDPR erasure uses null-payload tombsto
 | Candidate | Licence | Assessment | Proceeds? |
 |---|---|---|---|
 | Git-native AsyncAPI | AsyncAPI spec: Apache 2.0; AsyncAPI CLI: Apache 2.0 | No tool to license beyond the CLI | **Pass** |
-| EventCatalog | Apache 2.0 (core) | Open-source static site generator; self-hosted or GitHub Pages; commercial features available as paid tier but core portal is open source | **Pass** (note: assess whether required features fall within the open-source tier; free-tier boundaries can shift — verify at time of implementation) |
+| EventCatalog | Apache 2.0 (core) | Open-source static site generator; self-hosted or GitHub Pages; commercial features available as paid tier but core portal is open source | **Pass (conditional)** — required features must be verified to fall within the open-source tier at implementation time; free-tier boundaries can shift |
 | Backstage | Apache 2.0 | CNCF project; open source; self-hosted | **Pass** |
 | Confluent Stream Governance | Proprietary; part of Confluent Platform | The event catalog and schema lineage features are paywalled in Confluent Platform; no self-hosted open-source equivalent | **Fail** — event catalog features require Confluent Platform licence |
 
@@ -68,7 +68,7 @@ The catalog portal is a documentation tool, not a data-processing system. It sto
 |---|---|---|---|---|
 | Git-native AsyncAPI | AsyncAPI files contain schema definitions and field descriptions. If a field description example contains PII (e.g., a sample payload with real `client_id` values), that is a governance antipattern, not a structural risk of the format. No new GDPR data surface. | The catalog is not on the operational critical path. Its unavailability does not affect event production or consumption. No DORA obligation applies to the catalog portal itself. | No PSD2 implication for documentation tooling. | **Pass** |
 | EventCatalog | Same as Git-native. EventCatalog renders the AsyncAPI files; it does not store separate event data. The built static site may be publicly accessible — operators must verify that no event description example embeds real PII. | Same as Git-native. | Same as Git-native. | **Pass** |
-| Backstage | Backstage persists catalog metadata (service ownership, component relationships) in a PostgreSQL database. The catalog entries themselves (AsyncAPI files) contain no PII, but Backstage's user identity and team membership data (for ownership and access control) introduces a new GDPR surface for the personnel data it holds. This is standard HR data, not financial PII, but it must be in the data inventory. | Backstage is an internal tooling service. Its availability does not affect production event infrastructure. However, if Backstage is the authoritative catalog that CI gates reference, a Backstage outage could block deployments — a DORA-adjacent concern to manage by decoupling the CI gate from the live Backstage instance. | No PSD2 implication. | **Pass** (GDPR note: user/team identity data in Backstage must be in data inventory) |
+| Backstage | Backstage persists catalog metadata (service ownership, component relationships) in a PostgreSQL database. The catalog entries themselves (AsyncAPI files) contain no PII, but Backstage's user identity and team membership data (for ownership and access control) introduces a new GDPR surface for the personnel data it holds. This is standard HR data, not financial PII, but it must be in the data inventory. | Backstage is an internal tooling service. Its availability does not affect production event infrastructure. However, if Backstage is the authoritative catalog that CI gates reference, a Backstage outage could block deployments — a DORA-adjacent concern to manage by decoupling the CI gate from the live Backstage instance. | No PSD2 implication. | **Pass (conditional)** — user/team identity data held by Backstage must be entered in the GDPR data inventory |
 
 All three passing candidates proceed.
 
@@ -236,7 +236,7 @@ components:
       payload:
         schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
         schema:
-          $ref: '<karapace-registry-url>/subjects/<subject-name>/versions/latest/schema'
+          $ref: '<schema-registry-url>/subjects/<subject-name>/versions/latest/schema'
 ```
 
 Services may add additional `x-` extension fields. They may not omit the above.
@@ -325,7 +325,7 @@ components:
       payload:
         schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
         schema:
-          $ref: '<karapace-registry-url>/subjects/term_deposit.DepositConstituted-value/versions/latest/schema'
+          $ref: '<schema-registry-url>/subjects/term_deposit.DepositConstituted-value/versions/latest/schema'
 ```
 
 The CI gate validates that the referenced subject exists in the schema registry at pipeline time. A catalog entry that references a subject that does not exist in the registry fails the gate — this prevents the catalog from documenting events that are not yet registered, or that had their registry subject deleted without updating the catalog.

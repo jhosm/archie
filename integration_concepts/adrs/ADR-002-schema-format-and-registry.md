@@ -54,7 +54,7 @@ A fourth option — **Redpanda built-in schema registry** — is not a separate 
 | JSON Schema | Open specification; open source tooling | All relevant libraries are open source | **Pass** |
 | Confluent Schema Registry | Apache 2.0 | Open source community edition; self-hosted | **Pass** |
 | Apicurio Registry | Apache 2.0 | Open source; self-hosted | **Pass** |
-| AWS Glue Schema Registry | Proprietary (free tier) | Managed service; free tier available | **Pass** (conditional — see F2) |
+| AWS Glue Schema Registry | Proprietary (free tier) | Managed service; free tier available | **Pass** |
 
 *Date of assessment: 2026-05-17. Licence terms and free-tier limits can change; verify before production hardening.*
 
@@ -66,7 +66,7 @@ A fourth option — **Redpanda built-in schema registry** — is not a separate 
 |---|---|---|---|---|
 | Avro | Binary encoding — PII fields are not human-readable without schema lookup. Null-payload tombstones (compaction-based erasure, ADR-001) require consumers to tolerate null values; the Avro SerDe must not enforce a non-null schema on compacted topics. | Format is independent of broker resilience. | Schema versioning provides an auditable contract trail. | **Pass** |
 | Protobuf | Same binary properties as Avro. | Same. | Same. | **Pass** |
-| JSON Schema | Payloads are plain-text JSON — readable without schema lookup. PII is not structurally protected by the wire format. Weaker data minimization than binary formats. | Same. | Same. | **Pass** (structurally weaker on GDPR, not a hard fail) |
+| JSON Schema | Payloads are plain-text JSON — readable without schema lookup. PII is not structurally protected by the wire format. Weaker data minimization than binary formats — analysed in soft criteria. | Same. | Same. | **Pass** |
 
 **Registry:**
 
@@ -74,7 +74,7 @@ A fourth option — **Redpanda built-in schema registry** — is not a separate 
 |---|---|---|---|---|
 | Confluent SR | Self-hosted — data residency in EU under operator control. SR is cached client-side; SR downtime does not break consumers reading previously-seen schema IDs. | Resilience testing is under operator control. | Schema version history provides audit trail of contract evolution. | **Pass** |
 | Apicurio Registry | Same as Confluent SR. | Same. | Same. | **Pass** |
-| AWS Glue Schema Registry | Schemas stored in AWS — data residency depends on region. Requires explicit EU region configuration for GDPR compliance. Cloud dependency is inconsistent with ADR-001's self-hosted posture. DORA resilience testing depends on AWS availability, not under operator control. | Not under operator control. | Same audit properties. | **Fail** — data residency not self-controlled; DORA resilience testing not under operator control; inconsistent with ADR-001. |
+| AWS Glue Schema Registry | Schemas stored in AWS — data residency requires explicit EU region configuration; the default region setting can place schemas outside the EU. The residency control surface lives in the AWS console, not in self-managed infrastructure, so EU-region enforcement depends on AWS IAM policy discipline rather than on a self-hosted boundary. | Resilience testing depends on AWS service availability and is not under operator control — chaos drills and failover testing of Glue itself cannot be conducted by the operator. | Same audit properties as self-hosted registries. | **Fail** — F2 grounds: GDPR data-residency enforcement is not operator-managed end-to-end, and DORA resilience testing cannot target the registry itself. |
 
 AWS Glue fails F2 and is eliminated.
 

@@ -78,6 +78,12 @@ Is this tool likely to be actively maintained in 10 years? Positive signals: lar
 
 ### Verdict format
 
+Hard filter verdicts use three values:
+
+- **Pass** — the candidate satisfies the filter without qualification.
+- **Pass (conditional)** — the candidate satisfies the filter only if a specific mitigation is documented and verified at implementation time. The mitigation appears in the same table cell, in the form `**Pass (conditional)** — [mitigation]`, and is restated in the ADR's Consequences or Residual Risks. A conditional pass is a hard filter result, not a soft criterion: it proceeds to Stage 2 only on the condition that the mitigation is committed.
+- **Fail** — the candidate is disqualified by this filter. A waiver requires explicit justification.
+
 Each ADR (001–010) produces a decision structured as follows:
 
 ```
