@@ -2,13 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-05-17 |
 | Deciders | jhosm |
 | Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
 | Depends on | [ADR-001](./ADR-001-event-backbone-message-broker.md) |
-
-*Status note: this ADR is in draft pending review. Its decisions are not yet load-bearing — implementation should wait until the status is updated to Accepted. The review trigger is sign-off by the decider above; in the absence of additional reviewers, that means a deliberate second pass on the trade-offs after at least one other ADR in the series (ADR-006 or ADR-009) has been written, since adjacent decisions may surface constraints not yet visible here.*
 
 ---
 
@@ -30,7 +28,7 @@ This requirement — unified cross-signal navigation — is the primary differen
 
 ### GDPR surface of the observability backend
 
-Document 06 identifies a direct consequence of the instrumentation model: span attributes include `deposit.amount`, `core.account`, and `deposit.client_id`. The distributed tracing backend therefore aggregates sensitive financial and operational data from every service in the ecosystem into one searchable place. It is a regulated data store. Two concrete obligations follow:
+Document 06 identifies a direct consequence of the instrumentation model: span attributes include `deposit.amount`, `core.account`, and `deposit.client_id`. The distributed tracing backend therefore aggregates sensitive financial and operational data from every service in the ecosystem into one searchable place. It is a regulated data store (see also [document 10](../10-security-and-threat-model.md) — Trust Boundary 3 and Principle 4 for the full data classification taxonomy). Two concrete obligations follow:
 
 - **RBAC is not optional.** NOC needs error rates and lag metrics; it does not need to query specific client transaction details. The access model must be designed before the stack is deployed.
 - **Retention must be bounded.** Traces and logs containing financial attributes have a retention horizon driven by regulatory minimum (PSD2 audit trail: typically 5 years for payment operations) and GDPR maximum (data not retained beyond its stated purpose). These bounds must be expressed in the storage configuration, not left as infinite retention defaults.
@@ -231,7 +229,7 @@ OTel SDK automatic injection of `trace_id` and `span_id` is separate and complem
 
 ### P4 — Span attributes are classified before use
 
-Every span attribute is classified into one of three tiers before it is added to the instrumentation code. The classification determines who can query it in Grafana:
+Every span attribute is classified into one of three tiers before it is added to the instrumentation code, following the data classification taxonomy in [document 10](../10-security-and-threat-model.md) (Principle 4). The classification determines who can query it in Grafana:
 
 | Tier | Examples | Grafana RBAC visibility |
 |---|---|---|
