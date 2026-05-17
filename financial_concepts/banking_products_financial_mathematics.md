@@ -6,7 +6,7 @@
 > This document is a conceptual reference, not a regulatory or accounting source.
 > Real-world implementations must respect Banco de Portugal conventions and IFRS 9 for accounting recognition.
 
-**Reader's map:** §1–3 set up the unifying framework (cash flows, present value, the fundamental identity); §4 develops the three loan amortization systems; §5 covers term deposits; §6 introduces the cross-cutting metrics (IRR, APR); §7 handles composite cases; §8 treats irregular products (current account, credit card); §9 synthesizes both families. A glossary is provided at the end.
+**Reader's map:** §1–3 set up the unifying framework (cash flows, present value, the fundamental identity); §4 develops the three loan amortization systems; §5 covers *depósitos a prazo*; §6 introduces the cross-cutting metrics (IRR, TAEG); §7 handles composite cases including *carência*, variable rate, *prestações extraordinárias* and *amortização antecipada*; §8 treats irregular products (*conta à ordem*, *cartão de crédito*); §9 synthesizes both families. A glossary is provided at the end.
 
 ---
 
@@ -26,7 +26,7 @@ All accrue interest. The fundamental difference is that products with a plan hav
 
 ---
 
-## 2. The Generic Algorithm: Sequence of Cash Flows
+## 2. The Generic Model: Sequence of Cash Flows
 
 Any financial product is a **sequence of cash flows over time:**
 
@@ -36,7 +36,11 @@ t0      t1      t2      t3      ...     tn
 CF0     CF1     CF2     CF3            CFn
 ```
 
-Each `CF` can be positive (inflow) or negative (outflow).
+**Sign convention.** Cash flows are written from the perspective of the **holder of the product** — the depositor for a *depósito a prazo*, the borrower for a credit, the cardholder for a credit card. Money received by the holder is positive; money paid out is negative. This convention is applied uniformly throughout the document.
+
+- Term deposit: `CF(0) < 0` (handover to the bank), `CF(n) > 0` (return of capital and interest).
+- Credit: `CF(0) > 0` (disbursement received), `CF(t) < 0` (installments paid).
+- Current account / card: each movement carries its natural sign from the holder's side.
 
 ### 2.1 The Unifying Function: Present Value
 
@@ -68,6 +72,8 @@ The base algorithm is always the same. What differs between products are only th
 - `TAN` — nominal annual rate
 - `r = TAN / m` — periodic rate for products with a plan (m = periods per year)
 - `r = TAN / base` — daily rate for irregular products (base = 360 or 365 days)
+
+The relation `r = TAN / m` is the **proportional rate** (*taxa proporcional*) — the convention used in Portuguese retail credit for installment computation. An alternative is the **equivalent rate** (*taxa equivalente*), `r = (1 + TAE)^(1/m) − 1`, which preserves the effective annual return across compounding frequencies. The two coincide only when `m = 1`; otherwise the proportional rate produces a slightly higher TAE for the same TAN. Unless stated otherwise, this document uses the proportional convention.
 
 ---
 
@@ -105,9 +111,16 @@ The base example for all systems is:
 
 ### 4.1 Price System (French)
 
-**What is fixed:** the installment `P(t)` — it is constant across all periods.
+**What is fixed:** the installment `P(t)` — it is constant across all periods. This is the *sistema francês*, the default for Portuguese mortgages (*crédito à habitação*) and most personal credit.
 
-**Formula:**
+**Derivation.** Imposing `P(t) = P` in §3's identity and summing forward, the present value of `n` equal installments at rate `r` must equal `C`:
+
+```
+C = P × Σ (1+r)^-t   for t = 1..n
+  = P × [1 − (1+r)^-n] / r
+```
+
+Inverting for `P`:
 
 ```
 P = C × r / (1 - (1+r)^-n)
@@ -177,7 +190,7 @@ P(12)= 833.33 +    833.33 × 0.005 = €837.50
 | ... | ... | ... | ... | ... |
 | 12 | 833.33 | 4.17 | 833.33 | 837.50 |
 
-**Characteristic:** amortizes capital faster at the beginning, so less interest is paid in total compared to Price.
+**Characteristic:** amortizes capital faster at the beginning. The outstanding balance falls more quickly than under Price, so the interest base is smaller every month and the total interest paid over the life of the loan is lower.
 
 ---
 
@@ -212,7 +225,7 @@ P(12)    = 50.00 + 10,000 = €10,050.00
 | 11 | 10,000.00 | 50.00 | 0.00 | 50.00 |
 | 12 | 10,000.00 | 50.00 | 10,000.00 | 10,050.00 |
 
-**Characteristic:** minimum installment during the life of the credit, but a high final payment ("balloon"). This is the mathematical structure of a bond.
+**Characteristic:** minimum installment during the life of the credit, but a high final payment ("balloon"). Rare in Portuguese retail; common in corporate financing and the structural form of a bond.
 
 ---
 
@@ -224,10 +237,10 @@ P(12)    = 50.00 + 10,000 = €10,050.00
 | Installment | Constant | Decreasing | Low + balloon |
 | Capital amortized | Increasing | Constant | All at the end |
 | Total interest | Intermediate | Lower | Higher |
-| Initial burden | Medium | Higher | Lower |
+| Initial burden (borrower) | Medium | Higher | Lower |
 | Typical use | Mortgage, personal credit | Mortgage (less common) | Bonds, corporate credit |
 
-**Cash flows compared:**
+**Cash flows compared** (borrower's perspective; the initial disbursement of `+€10,000` at t = 0 is omitted from the vector below):
 
 ```
 Price:     [ -860.66 ; -860.66 ; -860.66 ; ... ; -860.66 ]
@@ -266,17 +279,19 @@ M = 10,000 × (1 + 0.06 × 365/360) = €10,608.33
 
 ### 5.2 Compound Interest
 
-When interest is capitalized (automatically reinvested), with annual compounding and `n` in years:
+When interest is capitalized (automatically reinvested), with compounding `m` times per year and `n` in years:
+
+```
+M = C × (1 + TAN/m)^(m·n)
+```
+
+The special case `m = 1` (annual compounding) reduces to:
 
 ```
 M = C × (1 + TAN)^n
 ```
 
-For compounding `m` times per year (`n` still in years):
-
-```
-M = C × (1 + TAN/m)^(m·n)
-```
+Beware of misreading the second form: `TAN` in `(1 + TAN)^n` is the nominal *annual* rate, not the periodic rate. For monthly compounding always use `(1 + TAN/12)^(12·n)`.
 
 ### 5.3 Variants of Interest Payment
 
@@ -293,11 +308,13 @@ CF(1..n-1)   = +interest of the period
 CF(n)        = +10,000 + interest of the last period
 ```
 
-**Interest paid in advance** (paid up front):
+**Interest paid in advance** (paid up front, *juros antecipados*):
 ```
 CF(0) = -10,000 + interest received upfront
 CF(n) = +10,000
 ```
+
+For the same nominal rate, the depositor's IRR is higher than in the "interest at maturity" case — the interest is received at t = 0 rather than at t = n. Banks offer this variant as a cash-management tool; for the depositor it is a presentation difference unless the upfront cash is actually reinvested.
 
 ### 5.4 Deposit Rates
 
@@ -310,11 +327,19 @@ TANL = TANB × (1 - 0.28)    (withholding in Portugal: 28%)
 
 The rate-level conversion above is exact for a single-period deposit with interest paid at maturity. For multi-period compound deposits, withholding tax is applied to each interest payment as it accrues, so the realized net return must be computed flow-by-flow rather than by scaling the rate.
 
-Effective annual rate with compounding m times per year:
+Effective annual rate with compounding `m` times per year:
 
 ```
 TAE = (1 + TAN/m)^m - 1
 ```
+
+**Worked example.** A *depósito a prazo* with TAN 6% and monthly capitalization:
+
+```
+TAE = (1 + 0.06/12)^12 - 1 = (1.005)^12 - 1 ≈ 6.17%
+```
+
+The 17 basis-point gap is the compounding effect — it grows with `m`. For deposits with interest at maturity (no intra-period capitalization) `TAE = TAN`; the formula matters once compounding kicks in.
 
 ---
 
@@ -329,48 +354,51 @@ The IRR is the rate `i` that zeroes the present value of all cash flows:
     t=0..n
 ```
 
-**Example — Price credit without charges:**
+**Example — Price credit without charges** (using the €860.66 installment derived in §4.1, borrower's perspective):
 
 ```
-CF(0)     = -10,000
-CF(1..12) = +860.66
+CF(0)     = +10,000           (loan received)
+CF(1..12) = -860.66            (installments paid)
 
-0 = -10,000 + Σ [ 860.66 / (1+i)^t ]
-              t=1..12
+0 = 10,000 - Σ [ 860.66 / (1+i)^t ]
+             t=1..12
 ```
 
 Solving: `i = 0.005` per month → **TAN = 6% (nominal annual); equivalent TAE = (1.005)^12 − 1 ≈ 6.17%** ✓
 
 The per-period IRR coincides with the nominal periodic rate (TAN / m) when there are no additional charges.
 
-### 6.2 APR (TAEG) — Annual Percentage Rate of Charge
+### 6.2 TAEG (APR) — *Taxa Anual Efetiva Global*
 
-The APR is the metric that allows comparing any financial product regardless of the amortization system, fees, insurance, or periodicity.
+The TAEG is the metric that allows comparing any financial product regardless of the amortization system, fees, insurance, or periodicity.
 
-**Formal definition:** the APR is the rate `i` that satisfies:
+**Formal definition** (Decreto-Lei n.º 133/2009, Anexo II): the TAEG is the rate `i` that satisfies:
 
 ```
-Σ [ Ak / (1+i)^tk ] = Σ [ Al / (1+i)^tl ]
+Σ_k [ Ak / (1+i)^tk ] = Σ_l [ Al / (1+i)^tl ]
 ```
 
-Where:
-- `Ak` = each amount received (capital handed over)
-- `Al` = each amount paid (installments, fees, insurance...)
-- `tk`, `tl` = moment of each cash flow, expressed in years
+The two sums use independent indices because credits and debits occur on different timetables:
 
-**It is mathematically equivalent to the IRR of the full set of cash flows**, including all mandatory charges.
+- `Ak` = amounts received by the borrower (capital disbursed); `tk` = moment of receipt (years)
+- `Al` = amounts paid by the borrower (installments, fees, insurance…); `tl` = moment of payment (years)
 
-**What enters the calculation:**
+Equivalently, with net flows from the borrower's perspective, `0 = Σ CF(t) / (1+i)^t` — i.e. **the TAEG is the IRR of the full borrower-side cash flow vector**, including all mandatory charges.
 
-| Enters the APR | Does not enter |
+**What enters the calculation** (illustrative; the authoritative list is in Decreto-Lei n.º 133/2009, art. 24.º):
+
+| Enters the TAEG | Does not enter |
 |---|---|
-| Installments | Taxes (IMT, Stamp Duty) |
-| Origination fee | Notary costs |
-| Appraisal fee | Default penalties |
-| Life insurance premium | Optional insurance |
-| Multi-risk insurance premium | |
+| Installments | Taxes (IMT, *Imposto do Selo*) |
+| *Comissão de abertura* (origination fee) | Notary and registry costs |
+| *Comissão de processamento de prestação* (per-installment fee) | Default penalties |
+| Appraisal fee | Optional insurance |
+| Mandatory life insurance premium | |
+| Mandatory multi-risk insurance premium | |
 
-**For `n > 4` no closed-form solution in `i` exists** — it is solved numerically by the Newton-Raphson method (or bisection):
+Taxes are excluded because the TAEG measures the cost of the *credit relationship*, not the total cost of the transaction. *Imposto do Selo* on the loan principal is mandatory but legally a tax on the contract, not a charge by the lender.
+
+**For `n ≥ 5` there is no general closed-form solution** in `i` (by Abel–Ruffini, after substituting `x = 1/(1+i)` to obtain a polynomial of degree `n`) — solve numerically by Newton-Raphson or bisection:
 
 ```
 1. Build the full sequence of CFs (including fees, insurance)
@@ -380,33 +408,35 @@ Where:
 5. Converges when |PV| < epsilon
 ```
 
-**Example — Price credit with origination fee:**
+**Example — Price credit with *comissão de abertura*:**
 
-Adding a €200 origination fee to the base example:
+Adding a €200 origination fee to the base example. The borrower nominally contracts €10,000 but the fee is netted at disbursement, so net cash received is €9,800. Installments are unchanged at €860.66.
 
 ```
-CF(0)     = -10,000 + 200 = -9,800   (bank hands over 10,000 but charges 200 upfront)
-CF(1..12) = +860.66
+CF(0)     = +10,000 - 200 = +9,800   (net disbursement to borrower)
+CF(1..12) = -860.66
 ```
 
 Solving numerically: `i* ≈ 0.00818` per month
 
 ```
-APR = (1 + 0.00818)^12 - 1 ≈ 10.28%
+TAEG = (1 + 0.00818)^12 - 1 ≈ 10.27%
 ```
 
-Compare with TAN = 6%. **The €200 fee added ~4.3 pp to the effective cost.**
+Compare with TAN = 6% (TAE ≈ 6.17%). **The €200 fee added ~4.1 pp to the effective cost** — a striking reminder that a small upfront fee on a short-term credit can dwarf the nominal rate.
 
-(For consumer credit in Portugal, the rules for what enters the APR are set by Decreto-Lei n.º 133/2009; at EU level, see the Consumer Credit Directive 2008/48/EC.)
+**Mandatory insurance — sketch.** For a mortgage with a life-insurance premium pegged to the outstanding balance, each monthly `CF(t)` becomes `−(installment + premium(t))`, where `premium(t)` falls over time as `S(t)` is amortized. Because the premium is a periodic charge tied to the balance, any additional mandatory cost is just one more term in the CF vector — no new mathematics, only a longer sum.
+
+(For consumer credit in Portugal, the rules for what enters the TAEG are set by Decreto-Lei n.º 133/2009; for mortgages, by Decreto-Lei n.º 74-A/2017; at EU level, see the Consumer Credit Directive 2008/48/EC.)
 
 **Relationship between the rates:**
 
 ```
-TAN  →  nominal rate, no charges, no compounding
-TAE  →  TAN converted to an annual basis (compounding)
-APR  →  TAE + all mandatory charges
+TAN   →  nominal rate, no charges, no compounding
+TAE   →  TAN converted to an annual basis (compounding)
+TAEG  →  TAE + all mandatory charges
 
-Always: APR ≥ TAE ≥ TAN
+In normal conditions (positive rates, non-negative charges, m ≥ 1):  TAEG ≥ TAE ≥ TAN
 ```
 
 ---
@@ -415,16 +445,21 @@ Always: APR ≥ TAE ≥ TAN
 
 ### 7.1 Grace Period (Mix of Systems)
 
-The credit has phases with different behaviors:
+In Portuguese practice the grace period (*carência*) comes in two forms:
+
+- ***Carência parcial*** (partial): only interest is paid during the grace phase; principal is untouched. American-style for Phase 1.
+- ***Carência total*** (total): neither interest nor principal is paid; accrued interest is *capitalized* into the principal, so the capital entering Phase 2 is **larger** than `C`.
+
+The example below uses *carência parcial*, the more common form for personal credit. *Carência total* is typical of construction-phase mortgages (*crédito à habitação em fase de obra*).
 
 ```
-Phase 1 (grace): interest only  →  American style
+Phase 1 (grace): interest only  →  American style (carência parcial)
 Phase 2 (amortization): normal Price or SAC
 ```
 
-The capital entering Phase 2 is the original capital untouched — because during the grace period nothing is amortized.
+With *carência parcial* the capital entering Phase 2 is the original capital untouched. Under *carência total*, replace `C` by `C × (1+r)^g` (where `g` is the number of grace periods) before computing the Phase 2 installment.
 
-**Example:** €10,000, 6 months grace + 12 months Price, TAN 6%:
+**Example (carência parcial):** €10,000, 6 months grace + 12 months Price, TAN 6%:
 
 ```
 Phase 1 (t=1..6):
@@ -434,12 +469,12 @@ Phase 2 (t=7..18), recompute Price on C=10,000:
     P = 10,000 × 0.005 / (1 - 1.005^-12) = €860.66
 ```
 
-**Cash flows:**
+**Cash flows** (borrower's perspective):
 
 ```
-CF(0)     = -10,000
-CF(1..6)  = +50.00
-CF(7..18) = +860.66
+CF(0)     = +10,000
+CF(1..6)  = -50.00
+CF(7..18) = -860.66
 ```
 
 ---
@@ -468,24 +503,26 @@ S(6) = C × (1+r₁)^6 - P₁ × [(1+r₁)^6 - 1] / r₁
 **Phase 2 (t=7..12) with r₂, on S(6):**
 
 ```
-P₂ = 5,074.75 × 0.005833 / (1 - 1.005833^-6) = €863.16
+P₂ = 5,074.75 × 0.0058333 / (1 - 1.0058333^-6) = €862.86
 ```
 
-**Cash flows:**
+(In Portuguese variable-rate mortgages this recomputation happens at each rate revision — usually every 6 or 12 months, indexed to Euribor — keeping the residual term constant.)
+
+**Cash flows** (borrower's perspective):
 
 ```
-CF(0)     = -10,000
-CF(1..6)  = +860.66
-CF(7..12) = +863.16
+CF(0)     = +10,000
+CF(1..6)  = -860.66
+CF(7..12) = -862.86
 ```
 
 ---
 
-### 7.3 Balloon Installments
+### 7.3 Balloon Installments (*Prestações Extraordinárias*)
 
-Regular installments with one or more extraordinary payments at defined moments.
+Regular installments with one or more extraordinary payments at defined moments. In Portuguese retail terminology these are *prestações extraordinárias*; "balloon" is the corporate/bond term for the same structure.
 
-**Example:** Price 12 months + balloon of €2,000 at month 6:
+**Example:** Price 12 months + *prestação extraordinária* of €2,000 at month 6:
 
 The first 5 months are normal Price installments. In month 6, the installment is paid plus an extra €2,000:
 
@@ -499,13 +536,13 @@ The Price is recomputed on the new balance for the remaining 6 months:
 P_new = S(6)_after_balloon × r / (1 - (1+r)^-6)
 ```
 
-**Cash flows:**
+**Cash flows** (borrower's perspective):
 
 ```
-CF(0)     = -10,000
-CF(1..5)  = +860.66
-CF(6)     = +860.66 + 2,000 = +2,860.66
-CF(7..12) = +P_new          (lower than 860.66 because the balance is smaller)
+CF(0)     = +10,000
+CF(1..5)  = -860.66
+CF(6)     = -(860.66 + 2,000) = -2,860.66
+CF(7..12) = -P_new           (smaller in magnitude than 860.66 because the balance is smaller)
 ```
 
 ---
@@ -518,10 +555,41 @@ For any Price credit, the outstanding balance after `m` installments is:
 S(m) = C × (1+r)^m - P × [(1+r)^m - 1] / r
 ```
 
+**Derivation.** Iterating the fundamental identity `S(t) = S(t-1)(1+r) - P` gives `S(m) = C(1+r)^m - P × Σ (1+r)^k` for `k = 0..m-1`. The geometric sum collapses to `[(1+r)^m - 1] / r`.
+
 This formula is used to:
-- Compute the balance at a rate revision point
-- Compute the balance just before a balloon payment
+- Compute the balance at a rate revision point (§7.2)
+- Compute the balance just before a *prestação extraordinária* (§7.3)
+- Compute the outstanding capital for *amortização antecipada* (§7.5)
 - Compute the outstanding capital at any moment
+
+---
+
+### 7.5 Early Repayment (*Amortização Antecipada*)
+
+Portuguese law gives borrowers the right to repay early. The lender may charge a *comissão de amortização antecipada* capped by statute:
+
+- **Mortgages, variable rate:** 0.5% of the capital repaid (Decreto-Lei n.º 74-A/2017)
+- **Mortgages, fixed rate:** 2.0% of the capital repaid
+- **Consumer credit:** up to 1.0%, or 0.5% if remaining term ≤ 1 year (Decreto-Lei n.º 133/2009)
+
+**Mechanics.** At month `m` the borrower pays the regular installment plus `S(m) + fee`, where `S(m)` is the formula from §7.4 and the fee is the capped percentage of `S(m)`. The contract terminates and the CF vector is truncated:
+
+```
+CF(0)         = +C
+CF(1..m-1)    = -P
+CF(m)         = -(P + S(m) + fee)
+CF(m+1..n)    = 0
+```
+
+**Effect on realized cost.** The TAEG of the executed contract (computed on the truncated CF vector) generally exceeds the contractual TAEG, because fixed upfront charges (*comissão de abertura*, appraisal fee) are amortized over a shorter horizon. This is especially pronounced for Price under early repayment in the first years — the borrower has paid mostly interest, with little principal retired.
+
+**Effect on amortization-system choice.** Under early repayment, SAC and Price diverge more than the comparison in §4.4 suggests:
+
+- Price front-loads interest → larger residual `S(m)` for given `m` → higher early-repayment cost.
+- SAC pays principal faster → smaller residual `S(m)` → lower early-repayment cost.
+
+A borrower who anticipates *amortização antecipada* should prefer SAC; one who will hold to term and values predictable budgeting should prefer Price.
 
 ---
 
@@ -538,9 +606,11 @@ J(t) = S(t-1) × r
 In irregular products, the balance varies continuously between movements. Interest is an integral:
 
 ```
-J = ∫ S(τ) × r(τ) dτ
+J = ∫ S(τ) × r dτ
     [t0, t1]
 ```
+
+(In the general case `r` may also vary in time; for clarity we assume `r` is constant within the accrual period, which matches Portuguese current-account practice between rate-revision dates.)
 
 Since the balance only changes at discrete moments (movements), `S(τ)` is a step function and the integral collapses into a sum:
 
@@ -592,7 +662,7 @@ Jan 20: withdrawal of €1,300 → balance €200
 Jan 31: end of period
 ```
 
-**Daily balances calculation:**
+**Daily balances calculation.** Convention: the new balance applies from the day of the movement up to (but not including) the day of the next movement. So a deposit on Jan 01 gives balance €1,000 on Jan 01 through Jan 09 (9 days); a deposit on Jan 10 changes it to €1,500 from Jan 10 through Jan 19 (10 days); and so on.
 
 | Interval | Balance | Δt (days) | S × Δt |
 |----------|---------|-----------|--------|
@@ -626,10 +696,10 @@ TAN = 20%, base 365.
 J(jan) = 1,000 × 0.20 × (31/365) = €16.99
 ```
 
-Payment of €50 at the end of the month. Balance at the start of February:
+Payment of €50 at the end of the month. Balance at the start of February (starting balance + interest accrued − payment received):
 
 ```
-S(start feb) = (1,000 - 50) + 16.99 = €966.99
+S(start feb) = 1,000 + 16.99 - 50 = €966.99
 ```
 
 Unpaid interest is added to the outstanding capital — **it is compound interest disguised as monthly simple interest.**
@@ -643,10 +713,12 @@ S(m) = S(m-1) × (1 + r) - P(m)
 ```
 
 Where:
-- `r` = TAN / 12 (equivalent monthly rate)
+- `r` = TAN / 12 (monthly *taxa proporcional*)
 - `P(m)` = payment in month m
 
 This is a **difference equation** — recursive, with the same mathematical structure as Price.
+
+Note that §8.4 used daily accrual (`TAN × days / base`) while this section uses monthly compounding at `TAN / 12`. The two differ by a few basis points and reflect two real conventions: card statements typically accrue interest daily but capitalize at month-end, which is well-approximated by the monthly-compounding model used here. The simplified form is the one used for projection and pay-off calculations.
 
 **Analytical resolution with constant payment P:**
 
@@ -674,11 +746,11 @@ Solve `S(n) = 0`:
 n = log(1.5002) / log(1.01667) ≈ 24.5 months
 ```
 
-In just over 2 years, €1,000 is paid off at €50/month, with ~€250 of total interest paid.
+In just over 2 years, €1,000 is paid off at €50/month. Total paid ≈ 24.5 × 50 = €1,225, of which ~€225 is interest — roughly a quarter of the principal, paid in interest alone, for a relatively small balance.
 
 ---
 
-### 8.7 APR for Irregular Products
+### 8.7 TAEG for Irregular Products
 
 Conceptually it is the same as for products with a plan — solve:
 
@@ -709,7 +781,7 @@ The IRR of these CFs is the **actual realized return** — only computable after
 | Balance | `S(t)` closed-form formula | `S(d)` observed |
 | Interest | `J(t) = S(t-1) × r` | `J = Σ S(d) × r × Δt` |
 | Cash flows | Forecast | Observed |
-| APR | Ex-ante (contract) | Ex-post (history) |
+| TAEG | Ex-ante (contract) | Ex-post (history) |
 | Equation | Solvable recursion | Numerical accumulation |
 
 ### 9.2 The Mathematical Unification
@@ -720,9 +792,11 @@ Both families follow the same fundamental identity:
 S(t + Δt) = S(t) × (1 + r × Δt) − payments(Δt) + drawdowns(Δt)
 ```
 
+Read `r` and `Δt` in matched units: for a Price installment, `r` is the period rate and `Δt = 1` period (so `r × Δt = r`, matching §3); for a current account, `r` is the daily rate and `Δt` is the number of days between movements. The form `(1 + r × Δt)` is simple-interest accrual within the interval — exact for products that capitalize once per period and a tight approximation otherwise.
+
 The only difference is:
-- **Products with a plan:** fixed Δt (month), payments known a priori
-- **Irregular products:** variable Δt (intervals between movements), payments observed
+- **Products with a plan:** fixed Δt (month), payments known a priori, drawdowns only at t = 0
+- **Irregular products:** variable Δt (intervals between movements), payments and drawdowns observed
 
 The function `J = Σ S × r × Δt` is universal to both.
 
@@ -731,21 +805,22 @@ The function `J = Σ S × r × Δt` is universal to both.
 ```
 Financial Product
 ├── With a plan (prospective)
-│   ├── Term deposit
-│   │   ├── Interest at maturity
-│   │   ├── Periodic interest
-│   │   └── Interest paid in advance
+│   ├── Depósito a prazo
+│   │   ├── Juros no vencimento (interest at maturity)
+│   │   ├── Juros periódicos (periodic interest)
+│   │   └── Juros antecipados (interest paid in advance)
 │   └── Credit
-│       ├── Price (fixed installment)
+│       ├── Price / sistema francês (fixed installment)
 │       ├── SAC (fixed amortization)
-│       ├── American (fixed balance)
+│       ├── American / bullet (fixed balance)
 │       └── Composite
-│           ├── Grace period + amortization
-│           ├── Fixed rate + variable rate
-│           └── With balloon installments
+│           ├── Carência (parcial / total) + amortização
+│           ├── Fixed rate + variable rate (revisão Euribor)
+│           ├── With prestações extraordinárias
+│           └── With amortização antecipada
 └── Irregular (retrospective)
-    ├── Current account
-    └── Credit card (revolving)
+    ├── Conta à ordem (current account)
+    └── Cartão de crédito (revolving)
 ```
 
 ### 9.4 Formula Map
@@ -760,23 +835,36 @@ Financial Product
 | SAC amortization | `A = C / n` |
 | Balance after m installments | `S(m) = C×(1+r)^m - P×[(1+r)^m - 1]/r` |
 | Simple interest (deposit) | `M = C × (1 + TAN × days/base)` |
-| Compound interest (deposit) | `M = C × (1 + TAN)^n` |
+| Compound interest (deposit) | `M = C × (1 + TAN/m)^(m·n)` |
 | Effective annual rate | `TAE = (1 + TAN/m)^m - 1` |
 | Present value | `PV = Σ CF(t) / (1+i)^t` |
-| IRR / APR | solve `PV(i) = 0` for `i` |
-| Rate relationship | `APR ≥ TAE ≥ TAN` |
+| IRR / TAEG | solve `PV(i) = 0` for `i` |
+| Rate relationship | `TAEG ≥ TAE ≥ TAN` |
 
 ---
 
 ## Glossary
 
-| Abbreviation | Meaning |
+| Term / Abbreviation | Meaning |
 |---|---|
 | TAN | *Taxa Anual Nominal* — nominal annual rate, no compounding |
 | TAE | *Taxa Anual Efetiva* — effective annual rate, with compounding |
-| TAEG / APR | *Taxa Anual Efetiva Global* — APR, including all mandatory charges |
+| TAEG / APR | *Taxa Anual Efetiva Global* — TAEG, including all mandatory charges |
 | TANB / TANL | *Bruta / Líquida* — gross / net of withholding tax |
+| *Taxa proporcional* | Periodic rate computed as `TAN / m`; Portuguese retail-credit convention |
+| *Taxa equivalente* | Periodic rate computed as `(1 + TAE)^(1/m) − 1`; preserves effective return |
 | SAC | *Sistema de Amortização Constante* — constant-amortization system |
+| *Sistema francês* | French (Price) system — constant installment |
+| *Carência parcial / total* | Grace period: interest-only / fully-capitalized |
+| *Prestação extraordinária* | Extraordinary (balloon) payment within a Price/SAC schedule |
+| *Amortização antecipada* | Early repayment of part or all of the outstanding capital |
+| *Comissão de abertura* | Origination fee |
+| *Comissão de processamento* | Per-installment processing fee |
+| *Imposto do Selo* | Portuguese Stamp Duty (tax on the contract, excluded from TAEG) |
+| *Depósito a prazo* | Term deposit |
+| *Conta à ordem* | Current account (demand deposit) |
+| *Cartão de crédito* | Credit card |
+| *Número de capitais* | Sum of daily balances over a period |
 | Act/360, Act/365 | Day-count conventions (actual days over a 360- or 365-day year) |
 | 30/360 | Day-count convention treating each month as 30 days, year as 360 |
 | IRR | Internal Rate of Return |
