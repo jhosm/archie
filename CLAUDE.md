@@ -5,11 +5,12 @@ This file provides instructions and context for AI coding agents working on this
 ## Project Nature
 
 This is a **documentation-only repository** named **babelstone** (`github.com/jhosm/babelstone`) —
-an architecture series for a Portuguese banking ecosystem. There is no build system, no test
-runner, and no deployable code. The deliverables are the `.md` files under `integration/`
-(numbered `00–10`).
+a reference library for a Portuguese banking ecosystem. There is no build system, no test
+runner, and no deployable code. The deliverables are `.md` files organised into two series:
 
-Document series: `integration/00-introduction-and-decisions.md` through `integration/10-security-and-threat-model.md`.
+- `integration/` — integration architecture patterns (documents `00–10`)
+- `financial_concepts/` — financial mathematics of banking products
+
 Read `README.md` for the full document map.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
@@ -74,7 +75,8 @@ rm -rf directory        # not: rm -r directory
 
 ## Document Conventions
 
-- Documents are numbered `00–09` and intended to be read in sequence
+- `integration/` documents are numbered `00–10` and intended to be read in sequence
+- `financial_concepts/` documents are standalone references, not sequenced
 - The running example is a Portuguese term deposit system — patterns are general, the example is specific
 - Cross-links between documents use relative markdown links (`./00-introduction-and-decisions.md`)
 - `AGENTS.md` mirrors these instructions for non-Claude-Code agents (keep in sync)

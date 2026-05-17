@@ -1,22 +1,20 @@
-# babelstone — Banking Ecosystem Integration Architecture
+# babelstone — Banking Ecosystem Reference Library
+
+A collection of documentation series covering different dimensions of a banking ecosystem. Each series is self-contained and addresses a distinct concern; they share a common example domain — a Portuguese retail banking environment — but can be read independently.
+
+---
+
+## Series
+
+### integration/ — Integration Architecture
 
 A documentation series covering integration architecture patterns for complex banking ecosystems. The series captures the full design reasoning — from the initial constraints that shaped the architecture, through the conceptual primitives it rests on, down to the concrete patterns, flows, testing strategy, and long-term governance.
 
 A Portuguese term deposit management system serves as the running example throughout: specific enough to make every pattern concrete, complex enough to exercise all of them. The architecture itself is not tied to term deposits — it is the integration backbone for a banking ecosystem, equally applicable to loans, savings accounts, investment products, or any other application that integrates with the same Core Banking, CRM, Compliance, and Workflow infrastructure.
 
-The documents are ordered to follow the logic of the design, not alphabetical or historical order. They should be read in sequence.
+The documents are ordered to follow the logic of the design. They should be read in sequence.
 
----
-
-## The Example System
-
-The running example manages the complete operational lifecycle of term deposits in Portugal: constitution, maturity, early mobilization, interest payments, renewal. It integrates with Core Banking, CRM, Compliance, Workflow, Documentation, Notifications, and Reporting — the same ecosystem that any application built on this architecture would share.
-
-The example operates within Portugal's regulatory framework (Banco de Portugal, FGD deposit guarantee schemes, specific tax treatment) and is designed for a greenfield stack — no legacy constraints on the integration infrastructure.
-
----
-
-## The Three Constraints That Shaped Everything
+#### The Three Constraints That Shaped Everything
 
 Before any patterns were chosen, three constraints were fixed. Every architectural decision in the series is traceable to one or more of these.
 
@@ -26,11 +24,9 @@ Before any patterns were chosen, three constraints were fixed. Every architectur
 
 **Compensation, not transactionality.** Classical 2PC/XA distributed transactions kill flexibility and are often unavailable in Core Banking systems. Compensation is the right trade-off — but how it is implemented determines whether the system is actually robust under failure.
 
-The full reasoning behind these constraints and the architectural shape they force is in [Document 00](./integration/00-introduction-and-decisions.md).
+The full reasoning is in [Document 00](./integration/00-introduction-and-decisions.md).
 
----
-
-## Document Map
+#### Document Map
 
 | # | Title | What It Covers |
 |---|---|---|
@@ -45,3 +41,15 @@ The full reasoning behind these constraints and the architectural shape they for
 | [08](./integration/08-event-catalog-governance.md) | Event Catalog Governance | Four governance pillars, ownership model, naming conventions, review process, the living catalogue |
 | [09](./integration/09-long-term-schema-evolution.md) | Long-term Schema Evolution | Taxonomy of compatible/incompatible changes, concrete techniques for each, antipatterns, real scenarios |
 | [10](./integration/10-security-and-threat-model.md) | Security and Threat Model | Trust boundaries, assets worth protecting, six security principles, regulatory obligations (PSD2, GDPR, BdP, DORA) |
+
+---
+
+### financial_concepts/ — Financial Mathematics of Banking Products
+
+A conceptual reference for the financial mathematics underlying retail banking products. It establishes a unifying framework — sequences of cash flows, present value, IRR — and develops it across the main product families: term deposits, loan amortization (French, German, and constant-amortization systems), current accounts, and credit cards.
+
+The document is aimed at engineers and architects who need to reason about the financial behaviour of the products their systems manage, without requiring an accounting or finance background. It is not a regulatory or accounting source; real implementations must respect Banco de Portugal conventions and IFRS 9.
+
+| Document | What It Covers |
+|---|---|
+| [Financial Mathematics of Banking Products](./financial_concepts/banking_products_financial_mathematics.md) | Cash flow framework, present value, the three amortization systems, term deposits, IRR/TAEG, composite and irregular cases, cross-family synthesis, glossary |
