@@ -41,6 +41,7 @@ The full reasoning is in [Document 00](./integration_concepts/00-introduction-an
 | [08](./integration_concepts/08-event-catalog-governance.md) | Event Catalog Governance | Four governance pillars, ownership model, naming conventions, review process, the living catalogue |
 | [09](./integration_concepts/09-long-term-schema-evolution.md) | Long-term Schema Evolution | Taxonomy of compatible/incompatible changes, concrete techniques for each, antipatterns, real scenarios |
 | [10](./integration_concepts/10-security-and-threat-model.md) | Security and Threat Model | Trust boundaries, assets worth protecting, six security principles, regulatory obligations (PSD2, GDPR, BdP, DORA) |
+| [11](./integration_concepts/11-chat-agent-channel-strategy.md) | Chat Agent Channel Strategy | Bank as MCP server; LLM-agent channel; tool/resource/prompt mapping onto commands and CQRS; async completion patterns (tasks, polling, out-of-band callback); trust model for untrusted agents |
 
 ---
 

@@ -6,8 +6,8 @@ This is a **documentation-only repository** named **babelstone** (`github.com/jh
 a reference library for a Portuguese banking ecosystem. There is no build system, no test
 runner, and no deployable code. The deliverables are `.md` files organised into two series:
 
-- `integration_concepts/` — integration architecture patterns (documents `00–10`)
-  - `integration_concepts/adrs/` — Architectural Decision Records selecting concrete tools for each pattern (ADR-000 defines the shared evaluation framework; ADRs 001–008 currently filed)
+- `integration_concepts/` — integration architecture patterns (documents `00–11`)
+  - `integration_concepts/adrs/` — Architectural Decision Records selecting concrete tools for each pattern (ADR-000 defines the shared evaluation framework; ADRs 001–009 currently filed)
 - `financial_concepts/` — financial mathematics of banking products
 
 Read `README.md` for the full document map.
@@ -52,7 +52,7 @@ cp -rf source dest          # NOT: cp -r source dest
 
 ## Document Conventions
 
-- `integration_concepts/` documents are numbered `00–10` and intended to be read in sequence
+- `integration_concepts/` documents are numbered `00–11` and intended to be read in sequence
 - `financial_concepts/` documents are standalone references, not sequenced
 - The running example is a Portuguese term deposit system — patterns are general, the example is specific
 - Cross-links use relative markdown links. Patterns by location:
