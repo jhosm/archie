@@ -68,7 +68,7 @@ All four candidates pass both hard filters. RabbitMQ and NATS pass F2 conditiona
 
 **S1 · Operational complexity:** Apache Kafka in KRaft mode (no ZooKeeper, stable since Kafka 3.3) is a meaningful operational simplification over older Kafka deployments, but it remains a JVM application with non-trivial configuration surface (broker configs, JVM heap, log segment sizes). For a 1–2 person team, JVM tuning and garbage collection surprises are real risks. **Redpanda eliminates this entirely**: it is a single C++ binary with no JVM, no ZooKeeper, no controller quorum complexity beyond the broker itself, and strong defaults requiring almost no tuning for a single-node POC. Redpanda's developer mode (`--mode dev-container`) starts in seconds. On operational burden alone, Redpanda is a better fit for this team size than Apache Kafka directly.
 
-**S2 · Ecosystem coherence:** Kafka's ecosystem is the strongest of all candidates by a wide margin. Kafka Connect provides hundreds of production-grade connectors (JDBC, Debezium CDC, Elasticsearch, S3). The schema registry (Confluent Schema Registry — Apache 2.0 community edition) integrates natively. Kafka Streams and ksqlDB provide stream processing. OpenTelemetry instrumentation is available via the OpenTelemetry Kafka instrumentation. Redpanda is wire-compatible with Kafka's protocol, meaning every Kafka client, connector, and tool works without modification. The entire ecosystem coherence argument applies to Redpanda directly.
+**S2 · Ecosystem coherence:** Kafka's ecosystem is the strongest of all candidates by a wide margin. Kafka Connect provides hundreds of production-grade connectors (JDBC, Elasticsearch, S3, and more). The schema registry (Confluent Schema Registry — Apache 2.0 community edition) integrates natively. Kafka Streams and ksqlDB provide stream processing. OpenTelemetry instrumentation is available via the OpenTelemetry Kafka instrumentation. Redpanda is wire-compatible with Kafka's protocol, meaning every Kafka client, connector, and tool works without modification. The entire ecosystem coherence argument applies to Redpanda directly.
 
 **S3 · Exit cost:** High. The Kafka wire protocol is de facto standard, but it is proprietary in origin. Application code using Kafka client APIs (`KafkaProducer`, `KafkaConsumer`, Kafka Streams) would require significant rework to migrate to a different broker. Topic data is exportable via connectors or MirrorMaker. For an event sourcing architecture where the log is the system of record, exit cost is inherently high regardless of tool — this is a property of the architectural choice, not uniquely of Kafka. Redpanda's compatibility actually reduces lock-in relative to Apache Kafka, since another Kafka-compatible broker (or Apache Kafka itself) is a valid migration target.
 
@@ -92,7 +92,7 @@ All four candidates pass both hard filters. RabbitMQ and NATS pass F2 conditiona
 
 **S1 · Operational complexity:** RabbitMQ has the best operational story of the traditional candidates. It is a mature Erlang application with excellent defaults, a management UI, and decades of battle-testing. The streams feature (stable since 3.9) extends it with a durable log model without requiring separate components. Single-node setup is trivially simple. For teams that already operate RabbitMQ, the upgrade path to streams is low-friction.
 
-**S2 · Ecosystem coherence:** RabbitMQ's traditional AMQP ecosystem is excellent for point-to-point and pub/sub messaging. For event streaming specifically, the streams feature is newer and the ecosystem is immature: there is no equivalent to Kafka Connect for CDC and sink connectors; no stream processing framework comparable to Kafka Streams; and schema registry integration is not a solved problem for the streams protocol. The architecture described in this series (Debezium CDC, schema-versioned Avro/Protobuf events, compaction-based read model rebuilding) does not have well-worn paths on RabbitMQ Streams as of 2026.
+**S2 · Ecosystem coherence:** RabbitMQ's traditional AMQP ecosystem is excellent for point-to-point and pub/sub messaging. For event streaming specifically, the streams feature is newer and the ecosystem is immature: there is no equivalent to Kafka Connect for sink connectors; no stream processing framework comparable to Kafka Streams; and schema registry integration is not a solved problem for the streams protocol. The architecture described in this series (schema-versioned Avro/Protobuf events, compaction-based read model rebuilding, outbox relay with polling) does not have well-worn paths on RabbitMQ Streams as of 2026.
 
 **S3 · Exit cost:** AMQP protocol interoperability is a genuine advantage for point-to-point workloads. For the streaming workloads in this architecture, the exit cost is moderate — the streams protocol is proprietary, but data can be migrated via the management API.
 
@@ -104,7 +104,7 @@ All four candidates pass both hard filters. RabbitMQ and NATS pass F2 conditiona
 
 **S1 · Operational complexity:** NATS JetStream has the simplest operational surface of all candidates. NATS Server is a single Go binary with JetStream enabled via a single config flag. Single-node setup takes minutes. Clustering (three-node RAFT) is straightforward. There is no separate ZooKeeper, no BookKeeper, no JVM. For a 1–2 person team, NATS is genuinely operationally comfortable.
 
-**S2 · Ecosystem coherence:** NATS is well-suited to microservice-to-microservice communication and has a growing ecosystem of client libraries. For the specific workloads in this series — Debezium CDC pipelines, Avro/Protobuf schema-versioned events, sink connectors to PostgreSQL and Elasticsearch — the ecosystem is significantly thinner than Kafka Connect. There is no NATS Connect equivalent. Schema registry integration is not standardised. OpenTelemetry instrumentation is available via community libraries. NATS JetStream's key-value and object store are useful primitives, but they do not replace a schema registry.
+**S2 · Ecosystem coherence:** NATS is well-suited to microservice-to-microservice communication and has a growing ecosystem of client libraries. For the specific workloads in this series — Avro/Protobuf schema-versioned events, outbox relay publishing, sink connectors to PostgreSQL and Elasticsearch — the ecosystem is significantly thinner than Kafka Connect. There is no NATS Connect equivalent. Schema registry integration is not standardised. OpenTelemetry instrumentation is available via community libraries. NATS JetStream's key-value and object store are useful primitives, but they do not replace a schema registry.
 
 **S3 · Exit cost:** Moderate. NATS protocol is proprietary, but client libraries are available for most languages. JetStream-specific patterns (consumer groups, durable subscriptions, stream subjects) are conceptually different from Kafka's consumer groups and topic partitions, so migration involves meaningful application code changes.
 
@@ -116,7 +116,7 @@ All four candidates pass both hard filters. RabbitMQ and NATS pass F2 conditiona
 
 **Chosen: Kafka-compatible ecosystem, implemented as Redpanda Community Edition**
 
-The Kafka ecosystem is the only candidate with a complete, production-proven toolchain for every component this architecture requires: CDC via Debezium, schema registry, sink connectors, stream processing, and a native right-to-erasure path via log compaction. No other candidate matches this breadth.
+The Kafka ecosystem is the only candidate with a complete, production-proven toolchain for every component this architecture requires: schema registry, sink connectors, stream processing, outbox relay (polling-based), and a native right-to-erasure path via log compaction. No other candidate matches this breadth.
 
 Between Apache Kafka and Redpanda as implementations: Redpanda removes the JVM entirely (eliminating the primary operational risk for a 1–2 person team), is wire-compatible with the Kafka protocol (so every Kafka client, connector, and tool works unchanged), and its Apache 2.0 community edition covers all POC requirements. If Redpanda's commercial trajectory becomes a concern, migration to Apache Kafka KRaft is a broker replacement, not an application rewrite.
 
@@ -128,11 +128,11 @@ The three-tier architecture (ZooKeeper + BookKeeper + brokers) is operationally 
 
 **Rejected: RabbitMQ Streams**
 
-The streams ecosystem is too immature for event sourcing workloads in 2026. There is no equivalent to Kafka Connect's CDC connectors, no standard schema registry integration for streams, and no stream processing framework. RabbitMQ's classic AMQP use case is well-served by the existing toolchain; streams specifically is not.
+The streams ecosystem is too immature for event sourcing workloads in 2026. There is no equivalent to Kafka Connect for sink connectors, no standard schema registry integration for streams, and no stream processing framework. RabbitMQ's classic AMQP use case is well-served by the existing toolchain; streams specifically is not.
 
 **Rejected: NATS JetStream**
 
-Operationally the strongest alternative, but the Kafka Connect ecosystem gap is decisive for this architecture. Banking integration pipelines depend on CDC connectors (Debezium), schema-versioned event contracts, and sink connectors that do not exist in the NATS ecosystem. NATS JetStream is a credible choice for a service mesh communication layer but not for a durable financial event log with structured schema governance.
+Operationally the strongest alternative, but the Kafka Connect ecosystem gap is decisive for this architecture. Banking integration pipelines depend on schema-versioned event contracts, sink connectors, and a native compaction path for GDPR right-to-erasure — none of which have established solutions in the NATS ecosystem. NATS JetStream is a credible choice for a service mesh communication layer but not for a durable financial event log with structured schema governance.
 
 ---
 
@@ -141,7 +141,7 @@ Operationally the strongest alternative, but the Kafka Connect ecosystem gap is 
 **What this choice makes easier:**
 
 - Document 04's outbox, inbox, and compaction patterns map directly to Redpanda/Kafka APIs — no translation layer.
-- The Debezium CDC path (document 04, §CDC) is fully supported via Kafka Connect on Redpanda.
+- The outbox relay (document 04) uses polling — simple, adequate for banking event volumes, and requires no extra infrastructure beyond the application database and Redpanda. Kafka Connect's sink connectors (JDBC, Elasticsearch) remain available for read model population when needed.
 - Schema registry (Confluent Schema Registry — open source) works unchanged against Redpanda's schema registry API.
 - Any Kafka client library (Java, Python, Go, Rust) works without modification.
 - Topic ACL enforcement (document 04, §Security) is supported via Redpanda's SASL/SCRAM and ACL API, which mirrors Kafka's.
