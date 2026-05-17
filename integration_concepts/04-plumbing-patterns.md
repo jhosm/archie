@@ -52,23 +52,19 @@ loop:
 
 If the publisher crashes mid-way: on the next execution, it resumes. Events can be published more than once (at-least-once) — but never **lost**. The duplication is resolved at the consumer (Inbox, next).
 
-### Implementation: Polling
+### Implementations: Polling vs CDC
 
-The relay runs a periodic `SELECT` (every 200ms–1s) on the outbox table, publishes pending events to Kafka, and marks them published. Additional latency: 1× the polling interval. Puts some read pressure on the DB. Works on any DBMS. This is the right implementation — not a compromise while waiting for something better.
+Two ways to implement the relay:
 
-**Why not CDC?** Change Data Capture — tools like Debezium that read the database WAL/redo log — is sometimes proposed as an alternative relay mechanism. It is a poor fit for an event-stream-native architecture for a structural reason: **CDC derives events from database side effects, inverting the causal relationship between events and data.**
+**Polling** (simpler). Worker does periodic `SELECT` (200ms-1s) on the outbox table. Additional latency: 1× the polling period. Extra read pressure on the DB. Works on any DBMS. Recommended to start.
 
-In an event-sourced system, the event is the cause and the database state is the effect. Your application code explicitly decides that `TermDepositOpened` happened and writes it to the outbox as part of the domain transaction. That outbox row is a pending publication for an event the domain already raised — its structure, name, and semantics are defined by the domain model.
+**CDC — Change Data Capture** (more sophisticated). Tool such as Debezium reads the outbox table's WAL/redo log directly and publishes to Kafka without polling. Practically real-time latency. Less pressure on the main DB. More infrastructure to maintain.
 
-With CDC, this causality is reversed: the relay reads WAL mutations and infers events from storage changes. The consequences are architectural, not just operational:
+For greenfield, **start with polling**. It's hard to become limited by polling at typical banking application volumes (even at peak, we talk about thousands of operations/day per product, not millions/second). CDC introduces a piece of critical infrastructure that isn't worth the complexity until you need it.
 
-- **Event semantics are dictated by the storage schema.** A column rename, a table split, or a normalisation refactor changes your events without any domain-level decision being made.
-- **Events become database side effects.** There is no longer an explicit moment where the domain says "this business fact occurred." The event is an observation of data, not a declaration of intent.
-- **The coupling is invisible.** Application code looks clean; the implicit contract lives in a Debezium connector configuration file no one reviews during schema migrations.
+**Why CDC is acceptable here, but nowhere else.** CDC on the outbox table is structurally different from applying CDC to domain tables. The outbox already contains intentional business events — your application code explicitly raised `TermDepositOpened` and wrote it to the outbox as part of the domain transaction. CDC here is a delivery mechanism: it detects that a new row appeared and ships it to Kafka. No inference happens; the event semantics are already correct.
 
-On top of the architectural problem, CDC adds real infrastructure: Debezium requires WAL-level database access (replication slots in PostgreSQL), a Kafka Connect worker cluster, connector configurations, and lag monitoring. This is significant operational weight for a problem polling already solves cleanly.
-
-At typical banking volumes — thousands of operations per day per product, not millions per second — the polling interval (200ms–1s) is never the bottleneck. If it ever were, the right response would be to re-examine the volume assumptions, not to add CDC infrastructure.
+Applying CDC to domain tables — `deposits`, `accounts`, `movements` — is the anti-pattern. There, CDC reads storage mutations and tries to derive business events from them, coupling event semantics to the storage schema rather than the domain model. A column rename or table refactor then silently changes your events without any domain-level decision being made. That inverts the causal relationship that event sourcing depends on: **events are causes, database state is the effect**. CDC on domain tables reads the effect and infers the cause — backwards.
 
 ### Details That Distinguish a Serious Implementation From a Naive One
 
