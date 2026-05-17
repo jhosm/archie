@@ -12,7 +12,7 @@
 
 ## Context
 
-The integration series describes a hybrid saga model (document 00): orchestration for complex multi-step flows (constitution, early mobilization, maturity renewal), choreography for side-effect fan-out. The orchestrated flows require a mechanism that:
+The integration series describes a hybrid saga model ([document 00](../00-introduction-and-decisions.md)): orchestration for complex multi-step flows (constitution, early mobilization, maturity renewal), choreography for side-effect fan-out. The orchestrated flows require a mechanism that:
 
 - Maintains saga state across crashes and restarts
 - Drives compensations as first-class business operations
@@ -20,7 +20,7 @@ The integration series describes a hybrid saga model (document 00): orchestratio
 - Coordinates parallel and sequential steps with retry and timeout semantics
 - Integrates with the Redpanda event backbone (ADR-001) and the application database
 
-Document 05 (Constitution Saga Walkthrough) illustrates one saga in one application — `ConstitutionProcess` — with explicit business states grouped as follows:
+[Document 05](../05-constitution-saga-walkthrough.md) (Constitution Saga Walkthrough) illustrates one saga in one application — `ConstitutionProcess` — with explicit business states grouped as follows:
 
 - **Happy path:** `STARTED`, `PARALLEL_VALIDATION`, `VALIDATIONS_COMPLETE`, `APPROVED`
 - **Compensation paths:** `COMPENSATE_VALIDATIONS`, `COMPENSATE_POST_DEBIT`
@@ -164,7 +164,7 @@ Reintroduces JVM operational complexity for the component with the most complex 
 
 - Saga state (e.g. `ConstitutionProcess`) lives in the application database — one place to persist, one place to query, one place to audit. The operations console reads directly from the application database without a vendor API.
 - Long-running waits (`AWAIT_WORKFLOW_APPROVAL`, `AWAIT_CORE_CLEARANCE`) are first-class aggregate states persisted in the database. The saga resumes when the triggering event arrives from Redpanda, regardless of how long it waited. No external timer primitives to manage.
-- Every observability, retry, and idempotency pattern in documents 04 and 06 applies directly to the orchestrator service — no separate instrumentation model, no new operational target.
+- Every observability, retry, and idempotency pattern in documents [04](../04-plumbing-patterns.md) and [06](../06-observability-and-tracing.md) applies directly to the orchestrator service — no separate instrumentation model, no new operational target.
 - No new infrastructure to provision, monitor, or upgrade. The orchestrator is a service, not a platform. Temporal or a similar durable-execution engine is the natural upgrade path when saga count and team size make shared orchestration infrastructure worth its cost.
 
 **What this choice makes harder or impossible:**
@@ -233,7 +233,7 @@ No saga may hold a thread, connection, or lock across an external wait. The infr
 
 ### P5 — Apply the reversibility-ordering principle from Primitive 6
 
-The ordering principle documented in document 01 (Primitive 6) and demonstrated in document 05 is not optional for orchestrated sagas: reversible steps first, irreversible steps last. This is what makes partial failure recoverable. Any saga design that schedules an irreversible effect before all reversible preconditions have succeeded requires an explicit justification — it is an architectural exception, not a default.
+The ordering principle documented in [document 01](../01-the-six-primitives.md) (Primitive 6) and demonstrated in document 05 is not optional for orchestrated sagas: reversible steps first, irreversible steps last. This is what makes partial failure recoverable. Any saga design that schedules an irreversible effect before all reversible preconditions have succeeded requires an explicit justification — it is an architectural exception, not a default.
 
 ---
 

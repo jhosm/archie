@@ -11,7 +11,7 @@
 
 ## Context
 
-The integration series (documents 00–10) assumes an event-driven backbone from the outset. Documents 00 and 04 name Kafka explicitly: document 00 recommends it for greenfield contexts alongside a schema registry; document 04 builds the outbox, inbox, and ordering guarantees entirely around Kafka semantics (partitioning by `aggregate_id`, `acks=all`, topic ACLs, at-least-once delivery with idempotent consumers).
+The integration series (documents 00–10) assumes an event-driven backbone from the outset. Documents 00 and 04 name Kafka explicitly: [document 00](../00-introduction-and-decisions.md) recommends it for greenfield contexts alongside a schema registry; [document 04](../04-plumbing-patterns.md) builds the outbox, inbox, and ordering guarantees entirely around Kafka semantics (partitioning by `aggregate_id`, `acks=all`, topic ACLs, at-least-once delivery with idempotent consumers).
 
 This ADR makes that assumption explicit, evaluates the realistic alternatives, and records why Kafka (specifically in a Redpanda-compatible form) is the right choice for this architecture at zero budget and 1–2 people.
 

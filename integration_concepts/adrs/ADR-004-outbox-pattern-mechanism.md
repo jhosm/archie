@@ -12,7 +12,7 @@
 
 ## Context
 
-Document 04 establishes the outbox pattern as the non-negotiable primitive for dual-write safety: the domain state change and the integration event are written to the application database in the same local transaction, then a relay process reads the outbox table and publishes to Redpanda. This eliminates the scenario where the database is updated but the event is never published — the silent data corruption that in banking means Core never debits, Compliance never registers, and the client is never notified.
+[Document 04](../04-plumbing-patterns.md) establishes the outbox pattern as the non-negotiable primitive for dual-write safety: the domain state change and the integration event are written to the application database in the same local transaction, then a relay process reads the outbox table and publishes to Redpanda. This eliminates the scenario where the database is updated but the event is never published — the silent data corruption that in banking means Core never debits, Compliance never registers, and the client is never notified.
 
 Document 04 also draws a hard line between acceptable and unacceptable CDC use: CDC on the outbox table is a delivery mechanism (reading rows the application explicitly wrote as domain events), while CDC on domain tables is an anti-pattern (inferring event semantics from storage mutations). This ADR is concerned only with the delivery mechanism.
 
@@ -196,7 +196,7 @@ The outbox table must have the following columns across every service that imple
 | `created_at` | TIMESTAMPTZ | Write time; used for `ORDER BY` and lag calculation |
 | `published_at` | TIMESTAMPTZ, nullable | Set when the relay successfully produces to Redpanda and receives an ack |
 
-Services may add columns (e.g. `correlation_id`, `causation_id` from Document 01 Primitive 4), but must not omit the above. The publisher reads only the above columns; additional columns are invisible to the relay.
+Services may add columns (e.g. `correlation_id`, `causation_id` from [Document 01](../01-the-six-primitives.md) Primitive 4), but must not omit the above. The publisher reads only the above columns; additional columns are invisible to the relay.
 
 ---
 

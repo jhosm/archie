@@ -12,7 +12,7 @@
 
 ## Context
 
-The integration series assumes schema-versioned events from the outset: document 00 names Avro and Protobuf alongside a schema registry; document 04 specifies compatibility modes (BACKWARD, FORWARD, FULL) enforced by the registry at publish time; document 09 builds the entire schema evolution discipline on the assumption of a mechanical CI/CD gate.
+The integration series assumes schema-versioned events from the outset: [document 00](../00-introduction-and-decisions.md) names Avro and Protobuf alongside a schema registry; [document 04](../04-plumbing-patterns.md) specifies compatibility modes (BACKWARD, FORWARD, FULL) enforced by the registry at publish time; [document 09](../09-long-term-schema-evolution.md) builds the entire schema evolution discipline on the assumption of a mechanical CI/CD gate.
 
 This ADR makes two coupled choices explicit:
 
@@ -183,7 +183,7 @@ Same reasoning as standalone Confluent SR. More components to operate for no add
 - Any Kafka / Redpanda client in any language uses a standard Confluent Avro SerDe with no custom serialization code.
 - Schema registration is a CI/CD gate: the producer's pipeline registers (or validates) the schema against the Redpanda built-in SR before deployment. Incompatible schemas fail the build, not production (document 09).
 - Compatibility mode defaults: **BACKWARD** for most events (producer evolves first; old consumers can read new data). **FULL** for events with many known consumers where coordinated rollout is not feasible. Both are enforced mechanically by the SR.
-- GDPR tombstones: null-payload tombstone messages on compacted topics must be tolerated by consumers — the Avro SerDe must be configured to accept null values on compacted topics rather than enforcing a non-null schema. This is a producer/consumer contract requirement to be documented in the event catalog (document 08).
+- GDPR tombstones: null-payload tombstone messages on compacted topics must be tolerated by consumers — the Avro SerDe must be configured to accept null values on compacted topics rather than enforcing a non-null schema. This is a producer/consumer contract requirement to be documented in the event catalog ([document 08](../08-event-catalog-governance.md)).
 - **Envelope is out of registry scope.** The schema registry manages only the business payload schema. The CloudEvents envelope is governed separately by the event catalog (ADR-008) and is constructed by the outbox publisher (ADR-004) from outbox table columns at publish time. Payload changes go through the registry's compatibility gates; envelope changes do not. Concretely, the Confluent wire-format Avro value is the `data` of a CloudEvents 1.0 event in Binary Content Mode; CloudEvents attributes — including the domain extensions `ce_correlationid`, `ce_causationid`, `ce_aggregatetype` — travel in Kafka message headers.
 - Migrating from Redpanda built-in SR to standalone Confluent SR or Apicurio is a configuration change (SR endpoint URL), not a code change.
 
