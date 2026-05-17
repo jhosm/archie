@@ -130,8 +130,8 @@ P = C × r / (1 - (1+r)^-n)
 
 ```
 P = 10,000 × 0.005 / (1 - 1.005^-12)
-  = 50 / (1 - 0.94191)
-  = 50 / 0.05809
+  = 50 / (1 - 0.941905)
+  = 50 / 0.058095
   = €860.66
 ```
 
@@ -483,7 +483,7 @@ CF(7..18) = -860.66
 
 **Example:** €10,000, Price, 12 months, with a revision at the 6th month:
 - Initial TAN: 6% → r₁ = 0.005
-- TAN after revision: 7% → r₂ = 0.00583
+- TAN after revision: 7% → r₂ ≈ 0.005833
 
 **Phase 1 (t=1..6) with r₁:**
 
@@ -495,15 +495,15 @@ Balance at the end of Phase 1, using the general formula:
 
 ```
 S(6) = C × (1+r₁)^6 - P₁ × [(1+r₁)^6 - 1] / r₁
-     = 10,000 × 1.03038 - 860.66 × 6.0756
-     = 10,303.78 - 5,229.03
-     = €5,074.75
+     = 10,000 × 1.030378 - 860.66 × 6.0755
+     = 10,303.78 - 5,228.94
+     = €5,074.84
 ```
 
 **Phase 2 (t=7..12) with r₂, on S(6):**
 
 ```
-P₂ = 5,074.75 × 0.0058333 / (1 - 1.0058333^-6) = €862.86
+P₂ = 5,074.84 × 0.0058333 / (1 - 1.0058333^-6) = €863.24
 ```
 
 (In Portuguese variable-rate mortgages this recomputation happens at each rate revision — usually every 6 or 12 months, indexed to Euribor — keeping the residual term constant.)
@@ -513,7 +513,7 @@ P₂ = 5,074.75 × 0.0058333 / (1 - 1.0058333^-6) = €862.86
 ```
 CF(0)     = +10,000
 CF(1..6)  = -860.66
-CF(7..12) = -862.86
+CF(7..12) = -863.24
 ```
 
 ---
