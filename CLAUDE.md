@@ -6,10 +6,10 @@ This file provides instructions and context for AI coding agents working on this
 
 This is a **documentation-only repository** named **babelstone** (`github.com/jhosm/babelstone`) —
 an architecture series for a Portuguese banking ecosystem. There is no build system, no test
-runner, and no deployable code. The deliverables are the `.md` files at the project root
-(numbered `00–09`).
+runner, and no deployable code. The deliverables are the `.md` files under `integration/`
+(numbered `00–10`).
 
-Document series: `00-introduction-and-decisions.md` through `09-long-term-schema-evolution.md`.
+Document series: `integration/00-introduction-and-decisions.md` through `integration/10-security-and-threat-model.md`.
 Read `README.md` for the full document map.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
