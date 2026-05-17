@@ -1,5 +1,19 @@
 # Agent Instructions
 
+## Project Nature
+
+This is a **documentation-only repository** named **babelstone** (`github.com/jhosm/babelstone`) —
+a reference library for a Portuguese banking ecosystem. There is no build system, no test
+runner, and no deployable code. The deliverables are `.md` files organised into two series:
+
+- `integration_concepts/` — integration architecture patterns (documents `00–10`)
+  - `integration_concepts/adrs/` — Architectural Decision Records selecting concrete tools for each pattern (ADR-000 defines the shared evaluation framework; ADRs 001–008 currently filed)
+- `financial_concepts/` — financial mathematics of banking products
+
+Read `README.md` for the full document map.
+
+## Issue Tracking
+
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
 ## Quick Reference
@@ -35,6 +49,18 @@ cp -rf source dest          # NOT: cp -r source dest
 - `ssh` - use `-o BatchMode=yes` to fail instead of prompting
 - `apt-get` - use `-y` flag
 - `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
+
+## Document Conventions
+
+- `integration_concepts/` documents are numbered `00–10` and intended to be read in sequence
+- `financial_concepts/` documents are standalone references, not sequenced
+- The running example is a Portuguese term deposit system — patterns are general, the example is specific
+- Cross-links use relative markdown links. Patterns by location:
+  - Between sibling concept docs (in `integration_concepts/`): `./NN-name.md`
+  - From an ADR to a concept doc (in `integration_concepts/adrs/`): `../NN-name.md`
+  - From the top-level README: `./integration_concepts/NN-name.md`
+- ADR verdict convention (defined in ADR-000): hard filters return `Pass` / `Pass (conditional)` / `Fail`. A conditional pass requires a named mitigation in the same cell and is restated in Consequences or Residual Risks
+- `CLAUDE.md` is the Claude-Code-specific mirror of this file (keep in sync)
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:7510c1e2 -->
 ## Beads Issue Tracker
