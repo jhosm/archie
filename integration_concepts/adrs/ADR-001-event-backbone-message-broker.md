@@ -158,3 +158,59 @@ Operationally the strongest alternative, but the Kafka Connect ecosystem gap is 
 - **Redpanda commercial trajectory:** Redpanda Inc. is a VC-backed company. If it is acquired or changes its licensing model, the community edition's scope could narrow. Mitigation: the Apache 2.0 licence protects the current community edition version; Apache Kafka KRaft is the fallback.
 - **Kafka protocol version drift:** Redpanda tracks the Kafka protocol but may lag on very recent API versions. Verify client compatibility before upgrading either the broker or client libraries.
 - **Single-node POC ≠ production topology:** A single-node Redpanda instance provides no replication. The architecture patterns in documents 00–10 assume at-least-once delivery with `acks=all`; on a single node, `acks=all` is equivalent to `acks=1`. This is acceptable for a POC; production requires a minimum three-broker cluster.
+
+---
+
+## Implementation Principles
+
+Choosing the Kafka ecosystem means every service in the architecture shares a common broker. Without deliberate configuration conventions, individual services will diverge: different topic naming schemes, inconsistent retention policies, missing compaction configuration for GDPR-sensitive topics, and ad-hoc security. The following principles define the minimum shared discipline for Redpanda configuration and topic usage.
+
+---
+
+### P1 — POC topology is single-node but configuration must be production-structurally-honest
+
+For POC, Redpanda runs as a single node in developer mode (`--overprovisioned --smp 1 --memory 1G --reserve-memory 0M --default-log-level=info`). Producers must still be configured with `acks=all` — on a single broker this is equivalent to `acks=1`, but the producer code must not be simplified to match the POC topology. When the cluster scales to three brokers, the configuration is correct without change. Any code that short-circuits `acks` or `enable.idempotence` "because it's just a POC" is a correctness debt, not a simplification.
+
+---
+
+### P2 — Topic naming encodes domain, aggregate type, and purpose
+
+Topics must follow the pattern `{domain}.{aggregate_type}.{purpose}`, where:
+
+| Segment | Values | Example |
+|---|---|---|
+| `domain` | Bounded context or service | `deposits` |
+| `aggregate_type` | Aggregate root, snake_case | `term_deposit` |
+| `purpose` | `events`, `commands`, or `dlq` | `events` |
+
+Full example: `deposits.term_deposit.events`, `deposits.term_deposit.dlq`.
+
+This naming convention is what makes document 04's topic ACL model workable: each service's producer ACL is scoped to its own `{domain}.` prefix, and consumer ACLs are scoped to the specific topic names the service explicitly subscribes to.
+
+---
+
+### P3 — Partition count is fixed at creation time; partition key is always `aggregate_id`
+
+Redpanda partitions are immutable after topic creation. All event topics must be created with an explicit partition count before any producer connects. For POC, 12 partitions per event topic is the default — sufficient for local development without over-provisioning a single-node setup.
+
+The producer must always set the record key to `aggregate_id` (the UUID of the aggregate root). Redpanda assigns partitions by hashing the record key; document 04's per-aggregate ordering guarantee depends on this — all events for a given `aggregate_id` must land in the same partition. The default round-robin or null-key partition assignment must not be used on domain event topics.
+
+---
+
+### P4 — GDPR-sensitive topics require log compaction configuration at creation time
+
+Topics that carry events with PII fields must be created with `cleanup.policy=compact,delete`. This cannot be retrofitted after events have been published — adding compaction to an existing topic does not retroactively compact already-written segments, and null-payload tombstones cannot erase records in segments that predate the compaction policy.
+
+The event catalog (ADR-008) is the authoritative list of which topics require compaction. Topics that carry no PII use `cleanup.policy=delete` with an explicit `retention.ms`. The default (no explicit policy) must not be relied upon — the correct policy must be set at `kafka-topics --create` time or the equivalent Redpanda Admin API call.
+
+---
+
+### P5 — Security baseline is SASL/SCRAM from the first deployment, not a production hardening step
+
+Redpanda supports SASL/SCRAM-SHA-256 without external dependencies. Every service that produces or consumes must authenticate with a dedicated service account (not a shared superuser credential). ACLs must be configured per service at Redpanda startup:
+
+- A producer has `WRITE` permission on its own domain prefix (`deposits.*`).
+- A consumer has `READ` permission on the specific topics it subscribes to.
+- No service has `ALTER`, `DELETE`, or `DESCRIBE CONFIGS` unless it is explicitly the cluster operator.
+
+Deferring SASL/SCRAM to production means application code is never tested against an authenticated broker, and the ACL model from document 04 is never validated. The cost at POC scale is one SCRAM user creation per service; there is no justification for skipping it.

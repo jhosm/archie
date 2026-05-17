@@ -198,3 +198,61 @@ Same reasoning as standalone Confluent SR. More components to operate for no add
 - **Avro null / union verbosity:** Avro represents nullable fields as a union type (`["null", "string"]`). This is verbose and a common source of schema authoring errors. A schema authoring convention (document 08) should standardise nullable field patterns before the first event is published.
 - **Redpanda built-in SR feature surface:** The built-in SR implements the core Confluent SR API but may not support all advanced features (context-namespaced schemas, schema export). Verify before relying on any non-standard SR capability.
 - **Schema registry backup:** Redpanda's built-in SR stores schemas in an internal topic (`_schemas`). This topic must be included in the backup and restore strategy — loss of this topic makes all persisted Avro events unreadable.
+
+---
+
+## Implementation Principles
+
+Choosing Avro and the Confluent Schema Registry API means every event schema in the architecture is governed by the same registry and serialized by the same SerDe conventions. Without explicit rules, schemas will diverge in nullable field handling, file naming, compatibility mode choices, and the boundary between what the registry governs and what it does not. The following principles establish the minimum shared discipline.
+
+---
+
+### P1 — One schema file per event type; naming mirrors the registry subject
+
+Every event type must have exactly one `.avsc` file. Files follow the naming pattern `{aggregate_type}.{EventName}.avsc` (e.g. `term_deposit.DepositInitiated.avsc`). The Avro `namespace` in the schema must be `{domain}.{aggregate_type}` (e.g. `deposits.term_deposit`) and the `name` must be the PascalCase event name (`DepositInitiated`). The registry subject is derived from the fully qualified name: `deposits.term_deposit.DepositInitiated-value`.
+
+This naming makes schema registry subjects predictable and avoids collisions when multiple aggregates in the same domain publish events with similar names.
+
+---
+
+### P2 — Nullable fields always use `["null", "type"]` with null listed first
+
+Avro represents optional fields as a union. The project convention is null first in the union:
+
+```json
+{ "name": "cancellation_reason", "type": ["null", "string"], "default": null }
+```
+
+Null must be listed first because Avro's default value must match the first type in the union. If null is listed second, the field cannot have a `null` default — which in practice means every producer must explicitly supply the field even when absent, and BACKWARD compatibility checks behave unexpectedly. Fields that are logically required (never null) must use a non-null type with no null union; they must not have a `null` default.
+
+---
+
+### P3 — Schema registration is a CI gate, never a runtime operation
+
+No service may register a new schema version at runtime in the producer startup path. Schema registration must happen in the CI/CD pipeline, before the service container image is deployed. The pipeline step must:
+
+1. Resolve the SR endpoint from the deployment environment configuration.
+2. Attempt to register the schema for the subject; if it already exists at an identical hash, the step is a no-op.
+3. Check the SR compatibility enforcement result — a BACKWARD or FULL violation must fail the build, not be suppressed.
+
+At runtime, the Avro SerDe resolves the schema ID by subject name lookup only. A schema registry outage must not stall a deployment and must not stall an already-running producer whose subject was registered in a prior CI run. This is the primary reason registration is a pipeline step: the schema is durably registered before the code that depends on it ships.
+
+---
+
+### P4 — Consumers on compacted topics must handle null-payload tombstones explicitly
+
+Redpanda log compaction produces null-payload tombstone messages as the GDPR right-to-erasure mechanism (ADR-001 P4). Every consumer on a compacted topic must:
+
+1. Check whether the record value is null before passing it to the Avro SerDe.
+2. If null: treat the record as a deletion signal — remove the corresponding projection, cache entry, or materialized state for the key.
+3. Never attempt to deserialize a null payload as an Avro record; the Confluent SerDe will throw a `NullPointerException` or equivalent before reaching the application.
+
+This is not an edge-case defensive check — it is part of the consumer contract for any topic with `cleanup.policy=compact`. A consumer that crashes on null payloads is not GDPR-compliant, regardless of what the schema says.
+
+---
+
+### P5 — The schema registry governs the `data` field only; envelope attributes are not schema-versioned
+
+The `.avsc` schema file and its registry subject describe the CloudEvents `data` field — the business payload. The schema must not include CloudEvents envelope attributes (`id`, `source`, `type`, `time`, `datacontenttype`, `specversion`) or domain extension attributes (`ce_correlationid`, `ce_causationid`, `ce_aggregatetype`). These are carried as Kafka/Redpanda message headers, written by the outbox publisher (ADR-004), and consumed directly from the record header map.
+
+Embedding envelope fields in the Avro schema conflates the wire envelope with the business payload. It means every schema version carries envelope fields that are already mandated by the CloudEvents spec, creates schema churn when envelope conventions evolve, and makes the schema registry subject misleadingly describe the full message structure rather than just the business event.
