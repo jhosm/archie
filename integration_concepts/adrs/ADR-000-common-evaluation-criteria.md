@@ -16,7 +16,7 @@ Rather than evaluating each tool in isolation, a shared set of criteria ensures 
 
 ### Constraints that shape the criteria
 
-**Budget:** Effectively zero. This is a proof-of-concept / learning exercise, not a production system with infrastructure spend. All tool selections must be achievable with self-hosted open-source software or genuinely usable free-tier cloud services. "Genuinely usable" means: no credit-card-required production cliff, and the free tier covers the traffic and feature set needed for a realistic POC.
+**Budget:** Zero. This is a proof-of-concept / learning exercise, not a production system with infrastructure spend. All tool selections must be achievable with self-hosted open-source software or genuinely usable free-tier cloud services. "Genuinely usable" means: no credit-card-required production cliff, and the free tier covers the traffic and feature set needed for a realistic POC.
 
 **Team:** 1–2 people. No dedicated ops engineer. Tools that require specialist operational knowledge to stand up and keep running are a significant liability at this scale.
 
@@ -36,7 +36,7 @@ These are evaluated before any functional comparison. A tool that fails a hard f
 
 #### F1 · Cost
 
-**Pass:** self-hosted open-source with a permissive or copyleft licence (Apache 2.0, MIT, GPL, LGPL, AGPL); or a cloud-managed service with a free tier that covers POC-scale usage without a payment method.
+**Pass:** self-hosted open-source under an OSI-approved permissive or copyleft licence (e.g., Apache 2.0, MIT, GPL, LGPL, AGPL, MPL 2.0) that does not restrict use in financial services; or a cloud-managed service with a free tier that covers POC-scale usage without a payment method.
 
 **Fail:** paid-only tiers; open-core tools where the features required by this architecture are paywalled; tools with a licence that restricts use in a financial services context (Commons Clause, BSL, SSPLv1 — flag even if currently free, because the licence constrains future use).
 
@@ -72,7 +72,7 @@ How painful is migration away from this tool in 3–5 years? Key questions: does
 
 #### S4 · Community and longevity
 
-Is this tool likely to be actively maintained in 10 years? Positive signals: large contributor base beyond the founding company; foundation governance (Apache, CNCF); commercial ecosystem creating aligned incentives. Red flags: recent licence change to a restrictive model (signals monetisation pressure); single-vendor control with a history of breaking API changes; stagnant commit activity or declining community.
+Is this tool likely to be actively maintained in 10 years? Positive signals: large contributor base beyond the founding company; foundation governance (Apache, CNCF); commercial ecosystem creating aligned incentives. Red flags: recent licence change to a restrictive model (signals monetisation pressure); single-vendor control with a history of breaking API changes; stagnant commit activity (operational threshold: fewer than ~25 commits in the trailing 12 months from contributors outside the founding company, or no minor release in the trailing 9 months) or declining community.
 
 ---
 

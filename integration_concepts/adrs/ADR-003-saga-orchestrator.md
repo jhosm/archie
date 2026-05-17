@@ -20,7 +20,14 @@ The integration series describes a hybrid saga model (document 00): orchestratio
 - Coordinates parallel and sequential steps with retry and timeout semantics
 - Integrates with the Redpanda event backbone (ADR-001) and the application database
 
-Document 05 (Constitution Saga Walkthrough) illustrates one saga in one application — `ConstitutionProcess` — with explicit business states (`STARTED`, `PARALLEL_VALIDATION`, `VALIDATIONS_COMPLETE`, `APPROVED`, `COMPENSATE_VALIDATIONS`, `COMPENSATE_POST_DEBIT`, `HUMAN_INTERVENTION_REQUIRED`, `AWAIT_CORE_CLEARANCE`, `AWAIT_WORKFLOW_APPROVAL`, `COMPLETED`, `CANCELLED`). This is one example; the ecosystem described in document 00 will have many sagas across many applications (term deposits, loans, savings products). The orchestrator choice must be evaluated for that general case, not just for one illustrated flow.
+Document 05 (Constitution Saga Walkthrough) illustrates one saga in one application — `ConstitutionProcess` — with explicit business states grouped as follows:
+
+- **Happy path:** `STARTED`, `PARALLEL_VALIDATION`, `VALIDATIONS_COMPLETE`, `APPROVED`
+- **Compensation paths:** `COMPENSATE_VALIDATIONS`, `COMPENSATE_POST_DEBIT`
+- **Waiting / escalation:** `HUMAN_INTERVENTION_REQUIRED`, `AWAIT_CORE_CLEARANCE`, `AWAIT_WORKFLOW_APPROVAL`
+- **Terminal:** `COMPLETED`, `CANCELLED`
+
+This is one example; the ecosystem described in document 00 will have many sagas across many applications (term deposits, loans, savings products). The orchestrator choice must be evaluated for that general case, not just for one illustrated flow.
 
 **Candidates evaluated:**
 
@@ -67,7 +74,7 @@ All four candidates pass both hard filters.
 
 #### Temporal
 
-**S1 · Operational complexity:** Self-hosted Temporal requires the Temporal Server — multiple services in production (Frontend, History, Matching, Worker, Internal Frontend), though collapsible to a single process for development (`temporal server start-dev`) — and a PostgreSQL database for workflow history and visibility state. For a 1–2 person team already operating Redpanda and an application database, Temporal introduces a second persistence layer and a new service with its own operational, monitoring, and upgrade surface. The developer experience is polished; the production operational surface is non-trivial.
+**S1 · Operational complexity:** Self-hosted Temporal requires the Temporal Server — a cluster of internal services (Frontend, History, Matching, Worker, plus additional roles in recent versions) collapsible to a single process for development (`temporal server start-dev`) — and a PostgreSQL database for workflow history and visibility state. For a 1–2 person team already operating Redpanda and an application database, Temporal introduces a second persistence layer and a new service with its own operational, monitoring, and upgrade surface. The developer experience is polished; the production operational surface is non-trivial.
 
 **S2 · Ecosystem coherence:** Temporal's workflow-as-code model is powerful: sagas are expressed as Go, Java, Python, or TypeScript functions, with activities representing individual saga steps. Retries, timeouts, and long-running pauses are first-class language constructs. However, Temporal's native communication model is **synchronous activity calls** — the workflow calls an activity and awaits its return. Integrating with a Redpanda event backbone requires building Kafka-consumer activities, so the saga is partially event-driven (via the backbone) and partially Temporal-signal-driven (within the workflow). This impedance mismatch means the orchestration model and the event model do not share a clean seam. OpenTelemetry instrumentation is available.
 

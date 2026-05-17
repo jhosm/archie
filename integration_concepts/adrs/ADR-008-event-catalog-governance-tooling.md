@@ -88,7 +88,7 @@ All three passing candidates proceed.
 
 **Where this approach fails the governance goal:**
 
-Document 08 states that the catalog must be *discoverable* and *navigable* — "documentation as a product." A Git repository of raw YAML files is neither. The governance failure mode for this option is not technical; it is behavioral: engineers stop consulting a catalog that is hard to use, the review discipline erodes, and the month-18 swamp scenario reasserts itself. Governance tooling that nobody uses is not governance.
+Document 08 states that the catalog must be *discoverable* and *navigable* — "documentation as a product." A Git repository of raw YAML files is neither. The governance failure mode for this option is not technical; it is behavioral: engineers stop consulting a catalog that is hard to use, the review discipline erodes, and the month-18 swamp scenario reasserts itself. This is the failure mode the Decision section's headline principle is targeting.
 
 ---
 
@@ -120,11 +120,13 @@ Document 08 states that the catalog must be *discoverable* and *navigable* — "
 
 **Chosen: EventCatalog**
 
+The decisive principle: **governance tooling that nobody uses is not governance.** A catalog that is technically complete on paper but practically unread fails its purpose — the events are documented in the formal sense and undiscoverable in the operational sense, which is the same outcome as having no catalog at all.
+
 Confluent Stream Governance is disqualified by F1. The choice is between Git-native AsyncAPI (no portal), EventCatalog, and Backstage.
 
 The operational overhead argument that determined ADR-003, ADR-004, and ADR-005 does not govern this decision. Those ADRs rejected runtime services because operating them adds a permanent production obligation. EventCatalog generates a static site — it adds a build step to CI and a GitHub Pages deployment. There is no service to monitor, no database to back up, no cluster to tune. The operational cost is zero at runtime.
 
-The meaningful question is therefore: does Git-native AsyncAPI (raw YAML files, GitHub file browser) provide sufficient discovery for the governance goals document 08 sets out? The answer is no, for one concrete reason. Document 08 is explicit that the catalog must be *discoverable as a product*, and that "without a catalogue, governance lives in the heads of a few people." Raw YAML files in a repository satisfy the *existence* requirement (the event is documented) without satisfying the *discoverability* requirement (engineers find and use the documentation). Governance that is technically correct but practically unused fails its purpose.
+The meaningful question is therefore: does Git-native AsyncAPI (raw YAML files, GitHub file browser) provide sufficient discovery for the governance goals document 08 sets out? The answer is no. Document 08 is explicit that the catalog must be *discoverable as a product*, and that "without a catalogue, governance lives in the heads of a few people." Raw YAML files in a repository satisfy the *existence* requirement (the event is documented) without satisfying the *discoverability* requirement (engineers find and use the documentation), and the decisive principle above resolves which side of that distinction matters.
 
 EventCatalog satisfies both requirements. It renders the AsyncAPI files into a searchable, cross-referenced portal where the producer/consumer relationships, schema versions, changelog, and lifecycle status of each event are navigable without reading YAML. It is purpose-built for exactly this use case. Its static-site delivery model means the operational cost argument against it is moot.
 
@@ -164,7 +166,7 @@ The right tool for the wrong scale. Backstage's operational footprint (Node.js s
 
 **Residual risks:**
 
-- **License drift:** EventCatalog's commercial tier boundaries can shift. The critical feature for this architecture is the open-source static-site build with AsyncAPI import and CI validation. If these features move to a paid tier, the migration path is Backstage (no specification change) or Git-native AsyncAPI (portal removed, CI validation retained). Assess the EventCatalog open-source tier at implementation time against the features required.
+- **License drift:** EventCatalog's commercial tier boundaries can shift. **Baseline (as of 2026-05-17):** EventCatalog Core (open source, Apache 2.0) provides the static-site build, AsyncAPI import, schema rendering, producer/consumer relationship visualization, changelog rendering, full-text search across event descriptions, and the CLI commands (`validate`, `generate`, `build`) used by the CI gate (P2). The commercial EventCatalog Pro / Enterprise tiers add Backstage and Confluent UI integrations, federated catalogs across repositories, asset management workflows, governance scorecards, custom-domain hosting, and SLA-backed support. The critical features for this architecture all sit in Core today. If they migrate to a paid tier, the exit path is Backstage (no specification change — Backstage imports the same AsyncAPI files) or Git-native AsyncAPI (portal removed, CI validation retained via the AsyncAPI CLI). Re-assess the Core feature surface at implementation time against the features required.
 - **CI gate fragility:** The "no event without catalog entry" gate must be implemented carefully to avoid false positives that block unrelated PRs. The gate must validate only the AsyncAPI file set against the schema registry, not require the entire EventCatalog build to succeed on every PR. Separate the validation step (fast, runs on every PR) from the build step (runs on merge to main for deployment).
 - **Example payload PII:** EventCatalog renders example payloads from AsyncAPI `examples:` blocks. These examples must use synthetic data only. An example block containing a real `client_id`, IBAN, or name is a GDPR incident embedded in version-controlled documentation.
 
@@ -270,9 +272,12 @@ channels:
       This topic uses null-payload tombstone records for GDPR erasure (ADR-001, ADR-002).
       Consumers MUST configure their Avro SerDe to tolerate null values on this topic.
       A consumer that enforces a non-null schema will throw a deserialization exception
-      on tombstone receipt. The recommended SerDe configuration:
-        value.deserializer.null.value.default = true  (Confluent Avro SerDe)
-        or equivalent in the consumer's Kafka client library.
+      on tombstone receipt. Concrete configuration depends on the SerDe library version
+      and is intentionally not pinned in this contract — verify against the consumer's
+      actual library at implementation time. As a starting point: for the Confluent Java
+      Avro SerDe, the consumer must accept null `ConsumerRecord.value()` and the SerDe
+      must not enforce a non-null schema; the corresponding property keys (and their
+      defaults) vary across `kafka-avro-serializer` major versions.
 ```
 
 The CI gate (P2) must validate that any AsyncAPI file with `x-compacted: true` also has `x-tombstone-contract` set. A compacted topic without this field fails the gate.

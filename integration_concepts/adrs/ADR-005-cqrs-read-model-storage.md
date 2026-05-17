@@ -49,7 +49,7 @@ The candidates are evaluated as paradigm choices, not merely as individual tools
 | C | **Search / inverted index** | OpenSearch | Apache 2.0 fork of Elasticsearch; maintained by AWS |
 | D | **Embedded columnar (OLAP)** | DuckDB | In-process analytical engine; MIT licence; zero operational overhead |
 
-MongoDB (document store) was considered and excluded before evaluation: MongoDB changed its licence to SSPL 1.0 in 2018, which fails the F1 hard filter — SSPL is not OSI-approved and contains use restrictions that constrain the host application's deployment options. No substitute document store offers sufficient community and ecosystem support to merit evaluation for this use case, where the relational paradigm serves the same denormalized-projection need without the licence risk.
+MongoDB (document store) was considered and excluded before evaluation: MongoDB changed its licence to SSPL 1.0 in 2018, which fails the F1 hard filter — SSPL is not OSI-approved and contains use restrictions that constrain the host application's deployment options. Open-source substitutes exist (CouchDB under Apache 2.0, ArangoDB Community Edition under Apache 2.0), but none materially out-performs PostgreSQL for the denormalized-projection access patterns identified above at POC scale; the relational paradigm serves the same need without introducing a second storage technology to operate. The decision can be revisited if a future projection genuinely requires flexible nested-document indexing that PostgreSQL `jsonb` cannot serve.
 
 ---
 
@@ -155,8 +155,9 @@ The upgrade path from PostgreSQL to a specialized paradigm is clean, explicit, a
 - When `deposits_by_client` query latency exceeds SLA under production load → introduce Valkey with explicit cache invalidation and a 7-day operational observation period before making it the primary path
 - When `aggregated_positions` materialized view refresh time exceeds the BdP reporting SLA → introduce DuckDB (embedded, zero operational overhead) for that projection only
 - When a new projection requires full-text search or multi-dimensional aggregation that PostgreSQL cannot serve → introduce OpenSearch for that projection only, with explicit GDPR audit of the index
+- When three or more projections simultaneously breach SLA on PostgreSQL → re-evaluate the single-storage assumption as a whole, rather than introducing a fourth paradigm piecemeal. At that point the operational cost of running PostgreSQL for some projections and a second paradigm for others is comparable to a planned migration, and the team has measurement to support a paradigm-level decision.
 
-The upgrade path is never "migrate everything to the new paradigm" — it is "add the paradigm for the specific projection that exceeds SLA, measured."
+The upgrade path is never "migrate everything to the new paradigm" — it is "add the paradigm for the specific projection that exceeds SLA, measured." The wholesale re-evaluation above is the explicit exception: it kicks in only when piecemeal additions have stopped paying off.
 
 ---
 
@@ -193,7 +194,7 @@ Not a permanent rejection — DuckDB is the preferred upgrade path for the `aggr
 
 - **Read-after-write staleness for the deposits screen:** this is an explicit architectural consequence of CQRS, not a storage decision risk, but it surfaces at the read model layer. See document 03 for the three strategies (write-model fallback, optimistic client projection, wait-for-projection). Every projection row must surface a `last_event_offset` field so the API layer can implement read-after-write strategies without querying both sides blindly.
 - **Shared-database write contention:** placing read model projections in the same PostgreSQL instance as the write side creates contention risk if projection writes are high-volume. At Portuguese banking volumes, this risk is theoretical. If projector write volume measurably degrades write-side performance (observable via lock wait metrics and replication lag), the correct response is a read model replica — a PostgreSQL streaming replica used only by projectors and read APIs — not a different paradigm.
-- **Materialized view refresh blocking:** the `aggregated_positions` materialized view uses `REFRESH MATERIALIZED VIEW CONCURRENTLY` to allow reads during refresh. A refresh that takes longer than the refresh interval creates overlap. Monitor `pg_stat_user_tables` refresh timing and alert if refresh duration exceeds 50% of the refresh interval.
+- **Materialized view refresh blocking:** the `aggregated_positions` materialized view uses `REFRESH MATERIALIZED VIEW CONCURRENTLY` to allow reads during refresh. If a refresh takes longer than the refresh interval, two refreshes contend for the materialized view's `ACCESS EXCLUSIVE` lock at the swap step and one will stall behind the other; the projection then falls progressively behind reality and reporting reads see increasingly stale data. Monitor `pg_stat_user_tables` refresh timing and alert if refresh duration exceeds 50% of the refresh interval — that threshold leaves headroom to act before successive refreshes overlap.
 
 ---
 

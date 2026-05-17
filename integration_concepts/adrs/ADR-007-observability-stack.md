@@ -8,6 +8,8 @@
 | Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
 | Depends on | [ADR-001](./ADR-001-event-backbone-message-broker.md) |
 
+*Status note: this ADR is in draft pending review. Its decisions are not yet load-bearing — implementation should wait until the status is updated to Accepted. The review trigger is sign-off by the decider above; in the absence of additional reviewers, that means a deliberate second pass on the trade-offs after at least one other ADR in the series (ADR-006 or ADR-009) has been written, since adjacent decisions may surface constraints not yet visible here.*
+
 ---
 
 ## Context
@@ -42,8 +44,7 @@ Document 06 identifies a direct consequence of the instrumentation model: span a
 | C | **SigNoz** | Purpose-built OTel APM; Apache 2.0; unified UI; ClickHouse backend for all three signals |
 | D | **Elastic APM stack** | Elasticsearch + Kibana + APM Server; Elasticsearch SSPL after v7.10 |
 | E | **Datadog / commercial SaaS APM** | SaaS, paid |
-
-Zipkin was considered and excluded before evaluation: it is a trace-only backend with declining OTel investment relative to Jaeger, no metrics or log integration, and a smaller community. At the point where the full three-signal stack is required (which document 06 mandates), Zipkin solves only one-third of the problem and cannot serve as the foundation.
+| F | **Zipkin** | *Excluded before evaluation* — trace-only backend; no metrics or log integration; declining OTel investment relative to Jaeger; solves only one-third of the three-signal requirement (document 06) and cannot serve as the foundation |
 
 ---
 
@@ -172,7 +173,7 @@ Strong on OTel-native integration and operational simplicity. Loses on visualiza
 
 **Residual risks:**
 
-- **Grafana Labs commercial trajectory:** Grafana Labs has historically kept the open-source core stable while commercializing cloud-managed features. The risk that observability-critical features (specific RBAC capabilities, new correlation features) migrate to Grafana Enterprise is real and precedented in the ecosystem. Monitor the Grafana changelog at each major version for open-source feature tier changes.
+- **Grafana Labs commercial trajectory:** Grafana Labs has historically kept the open-source core stable while commercializing cloud-managed features. The risk that observability-critical features (specific RBAC capabilities, new correlation features) migrate to Grafana Enterprise is real and precedented in the ecosystem. Monitor the Grafana changelog at each major version for open-source feature tier changes. **Baseline (as of 2026-05-17):** OSS Grafana ships basic role-based access control (Viewer / Editor / Admin), datasource permissions, dashboards-as-code provisioning, the unified alerting engine, and the Tempo / Loki / Prometheus correlation features used by this ADR. Grafana Enterprise adds: fine-grained RBAC down to dashboards and folders with team-based assignment, SAML/OAuth/LDAP enterprise SSO, audit logs of dashboard and query access, datasource query caching, recorded queries, and reporting / scheduled PDF exports. If the OSS RBAC tier later proves insufficient for the role split described in P6 below, the choice is to adopt Enterprise (which re-opens F1) or front Grafana with an external auth gateway that enforces dashboard-level ACLs upstream of the application.
 - **Single-node Loki and Tempo:** for POC deployment, Loki and Tempo run in single-process mode. This is not HA — loss of the observability node means loss of observability. For a POC, this is acceptable (the application still runs). Before production hardening, both must move to a replicated configuration or cloud-managed storage backend (Grafana Cloud free tier is an option for trace and log storage without operating the backends).
 - **Span attribute PII discipline:** the GDPR surface of the stack depends entirely on what teams put in span attributes. A single engineer who adds `client_name` or `client_email` as a span attribute creates a GDPR incident inside the tracing backend. P4 (attribute classification) below is the technical control; the cultural control is code review that treats span attributes with the same PII discipline as log messages.
 
@@ -236,9 +237,9 @@ Every span attribute is classified into one of three tiers before it is added to
 |---|---|---|
 | **Operational** | `process.state`, `saga.phase`, `inbox.deduplicated`, `event.type` | All roles (NOC, engineers, compliance) |
 | **Financial-restricted** | `deposit.amount`, `deposit.product`, `core.txn_id` | Compliance and engineering roles only; not NOC |
-| **Personal-restricted** | `deposit.client_id`, `core.account` | Engineering only; pseudonymous reference preferred |
+| **Personal-restricted** | `deposit.client_nif` (raw Portuguese tax ID), `core.account` (full account number / IBAN) | Engineering only; pseudonymous reference (e.g. opaque `client_ref`) preferred over raw identifiers |
 
-The **personal-restricted** tier should use pseudonymous identifiers wherever possible. Instead of `deposit.client_id = CLI-2026-007842`, use an opaque short reference that resolves in the Customer Data Store. This removes raw client identifiers from the trace backend, eliminating the GDPR erasure obligation for historical traces when a client exercises Article 17 rights.
+The **personal-restricted** tier should use pseudonymous identifiers wherever possible. Instead of `deposit.client_nif = 234567891` (raw Portuguese tax ID) or `core.account = PT50.0033.0000.45161234567.05` (full IBAN), use an opaque short reference such as `client_ref = CLI-2026-007842` that resolves only in the authoritative Customer Data Store. This removes raw client identifiers from the trace backend, eliminating the GDPR erasure obligation for historical traces when a client exercises Article 17 rights.
 
 Code review must reject any span attribute that adds a tier-2 or tier-3 attribute without a corresponding comment confirming its classification. This is not about blocking the attribute — it is about making the choice visible and intentional.
 

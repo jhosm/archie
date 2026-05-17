@@ -84,13 +84,13 @@ Kafka/Redpanda and Pulsar pass both hard filters unconditionally. RabbitMQ and N
 
 **S3 · Exit cost:** Moderate. Pulsar's multi-topic, namespace, and tenant model differs structurally from Kafka's flat topic model. Migration to or from Pulsar requires topic restructuring, not just client code changes.
 
-**S4 · Community and longevity:** Pulsar is a top-level Apache project backed commercially by StreamNative. Community is healthy but substantially smaller than Kafka's. The architectural bet on BookKeeper as a separate storage tier has not become an industry default, and Pulsar's market position has not grown as fast as Kafka's since 2020.
+**S4 · Community and longevity:** Pulsar is a top-level Apache project backed commercially by StreamNative. Community is healthy but substantially smaller than Kafka's. The architectural bet on BookKeeper as a separate storage tier has not become an industry default, and Pulsar's market position has not grown as fast as Kafka's between 2020 and 2026 (CNCF survey trend at the time of this ADR).
 
 ---
 
 #### RabbitMQ Streams
 
-**S1 · Operational complexity:** RabbitMQ has the best operational story of the traditional candidates. It is a mature Erlang application with excellent defaults, a management UI, and decades of battle-testing. The streams feature (stable since 3.9) extends it with a durable log model without requiring separate components. Single-node setup is trivially simple. For teams that already operate RabbitMQ, the upgrade path to streams is low-friction.
+**S1 · Operational complexity:** RabbitMQ has the best operational story of the traditional candidates. It is a mature Erlang application with excellent defaults, a management UI, and decades of battle-testing. The streams feature (stable since 3.9) extends it with a durable log model without requiring separate components. Single-node setup is simple. For teams that already operate RabbitMQ, the upgrade path to streams is low-friction.
 
 **S2 · Ecosystem coherence:** RabbitMQ's traditional AMQP ecosystem is excellent for point-to-point and pub/sub messaging. For event streaming specifically, the streams feature is newer and the ecosystem is immature: there is no equivalent to Kafka Connect for outbox CDC relay or sink connectors; no stream processing framework comparable to Kafka Streams; and schema registry integration is not a solved problem for the streams protocol. The architecture described in this series (schema-versioned Avro/Protobuf events, compaction-based read model rebuilding, outbox relay) does not have well-worn paths on RabbitMQ Streams as of 2026.
 
@@ -149,7 +149,7 @@ Operationally the strongest alternative, but the Kafka Connect ecosystem gap is 
 
 **What this choice makes harder or impossible:**
 
-- Redpanda's tiered storage (S3-backed infinite retention) is an Enterprise feature. At POC scale, retention is bounded by local disk. This is acceptable; it must be revisited before production hardening.
+- Redpanda's tiered storage (S3-backed extended retention) is an Enterprise feature. At POC scale, retention is bounded by local disk. This is acceptable; it must be revisited before production hardening.
 - Log compaction provides a structural right-to-erasure path, but the application must discipline itself to use null-payload tombstones correctly — a partially implemented compaction strategy is worse than no compaction strategy (it creates a false sense of compliance). This must be documented in the event schema governance (see ADR-002).
 - Topic count and partition count affect Redpanda performance differently from Apache Kafka (Redpanda has lower per-partition overhead). Capacity planning data from Kafka benchmarks is directionally useful but should be validated against Redpanda.
 
