@@ -1,4 +1,4 @@
-# Banking Ecosystem — Integration Architecture
+# babelstone — Banking Ecosystem Integration Architecture
 
 A documentation series covering integration architecture patterns for complex banking ecosystems. The series captures the full design reasoning — from the initial constraints that shaped the architecture, through the conceptual primitives it rests on, down to the concrete patterns, flows, testing strategy, and long-term governance.
 
