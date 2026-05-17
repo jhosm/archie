@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-05-17 |
 | Deciders | jhosm |
 | Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
