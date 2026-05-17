@@ -176,13 +176,13 @@ The right tool for the wrong scale. Backstage's operational footprint (Node.js s
 
 Every integration event has exactly one AsyncAPI specification file, located at `catalog/events/<event-name>.asyncapi.yaml`. This file is the authoritative contract: the schema registry Avro schema is its structural validation layer; the CI gate is its enforcement mechanism; EventCatalog is its rendering layer. No part of the governance record lives outside this file and the schema registry.
 
-The minimum required fields in each AsyncAPI file:
+The minimum required fields in each AsyncAPI file. Events use CloudEvents 1.0 Binary Content Mode for Kafka: CloudEvents attributes are Kafka headers; the message value is the Avro-encoded business payload.
 
 ```yaml
 asyncapi: '3.0.0'
 info:
   title: <EventName>
-  version: '<schema-version>'
+  version: '<ce_schemaversion>'
   description: |
     <Business meaning: what business fact does this event represent?>
     <When emitted: exact triggering conditions, including conditions under which it is NOT emitted>
@@ -195,7 +195,48 @@ info:
 channels:
   <topic-name>:
     x-compacted: true | false   # required; drives tombstone contract field (see P3)
-    # ...
+    messages:
+      <EventName>:
+        $ref: '#/components/messages/<EventName>'
+components:
+  messages:
+    <EventName>:
+      bindings:
+        kafka:
+          # CloudEvents 1.0 Binary Content Mode — attributes in Kafka headers
+          headers:
+            type: object
+            required:
+              - ce_specversion
+              - ce_id
+              - ce_source
+              - ce_type
+              - ce_time
+              - ce_correlationid
+              - ce_causationid
+              - ce_aggregatetype
+            properties:
+              ce_specversion:      { type: string, const: "1.0" }
+              ce_id:               { type: string, format: uuid, description: "Unique event ID" }
+              ce_source:           { type: string, description: "URI of the producing service" }
+              ce_type:             { type: string, description: "Reverse-DNS event type, e.g. com.bank.deposits.DepositConstituted" }
+              ce_time:             { type: string, format: date-time }
+              ce_datacontenttype:  { type: string, const: "application/avro" }
+              ce_dataschema:       { type: string, format: uri, description: "Schema registry subject URI" }
+              ce_subject:          { type: string, description: "aggregate_id — the specific resource this event is about" }
+              # Domain extension attributes:
+              ce_correlationid:    { type: string, description: "Originating correlation ID (Primitive 4, doc 01)" }
+              ce_causationid:      { type: string, description: "ce_id of the triggering message (Primitive 4, doc 01)" }
+              ce_aggregatetype:    { type: string, description: "Aggregate type, e.g. Deposit" }
+              ce_schemaversion:    { type: integer, description: "Schema version" }
+              ce_producerversion:  { type: string, description: "Semantic version of the producing service" }
+              # W3C Trace Context (injected by OTel SDK — not CloudEvents attributes):
+              traceparent:         { type: string }
+              tracestate:          { type: string }
+      payload:
+        schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
+        schema:
+          $ref: '<karapace-registry-url>/subjects/<subject-name>/versions/latest/schema'
 ```
 
 Services may add additional `x-` extension fields. They may not omit the above.

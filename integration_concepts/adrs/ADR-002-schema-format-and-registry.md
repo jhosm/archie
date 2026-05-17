@@ -184,6 +184,7 @@ Same reasoning as standalone Confluent SR. More components to operate for no add
 - Schema registration is a CI/CD gate: the producer's pipeline registers (or validates) the schema against the Redpanda built-in SR before deployment. Incompatible schemas fail the build, not production (document 09).
 - Compatibility mode defaults: **BACKWARD** for most events (producer evolves first; old consumers can read new data). **FULL** for events with many known consumers where coordinated rollout is not feasible. Both are enforced mechanically by the SR.
 - GDPR tombstones: null-payload tombstone messages on compacted topics must be tolerated by consumers — the Avro SerDe must be configured to accept null values on compacted topics rather than enforcing a non-null schema. This is a producer/consumer contract requirement to be documented in the event catalog (document 08).
+- CloudEvents envelope: the Confluent wire-format Avro value is the `data` of a CloudEvents 1.0 event in Binary Content Mode. CloudEvents attributes (including domain extensions `ce_correlationid`, `ce_causationid`, `ce_aggregatetype`) are carried in Kafka message headers. The schema registry manages only the business payload schema — not the envelope. The outbox publisher (ADR-004) constructs the CloudEvents headers from outbox table columns at publish time.
 - Migrating from Redpanda built-in SR to standalone Confluent SR or Apicurio is a configuration change (SR endpoint URL), not a code change.
 
 **What this choice makes harder or impossible:**

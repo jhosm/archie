@@ -112,24 +112,38 @@ Bad examples:
 
 ### Payload Structure Convention
 
-All events share a **common envelope**:
+All integration events use **CloudEvents 1.0** as the envelope standard, in **Binary Content Mode** for Kafka. In this mode, CloudEvents attributes are carried in Kafka message headers (each prefixed with `ce_`), and the Kafka message value is the Avro-encoded business payload in Confluent wire format (unchanged from the schema registry contract).
 
-```yaml
-envelope:
-  message_id: uuid
-  event_type: DepositConstituted
-  event_version: 1
-  aggregate_id: DEP-2026-00012345
-  aggregate_type: Deposit
-  correlation_id: corr-aB7xK2pQ9
-  causation_id: msg-008-h6i7j
-  timestamp: 2026-05-15T14:32:17.687Z
-  producer:
-    bounded_context: deposits
-    service_version: 1.4.2
-payload:
-  # event-specific fields here
-```
+This separates two concerns that are often conflated: the metadata envelope (who produced this event, when, what it is — CloudEvents) from the payload encoding (what the data looks like — Avro). The schema registry manages only the business payload schema, not the envelope.
+
+**Standard CloudEvents attributes (Kafka headers):**
+
+| CloudEvents attribute | Kafka header | Example | Notes |
+|---|---|---|---|
+| `specversion` | `ce_specversion` | `1.0` | Always `"1.0"` |
+| `id` | `ce_id` | `8a7b3c-...` (UUID) | Unique event ID; the stable message identifier |
+| `source` | `ce_source` | `/deposits-service` | URI identifying the producing service |
+| `type` | `ce_type` | `com.bank.deposits.DepositConstituted` | Reverse-DNS event type name |
+| `time` | `ce_time` | `2026-05-15T14:32:17.687Z` | ISO-8601 UTC |
+| `datacontenttype` | `ce_datacontenttype` | `application/avro` | Always `"application/avro"` |
+| `dataschema` | `ce_dataschema` | schema registry subject URI | Points to the registered Avro schema |
+| `subject` | `ce_subject` | `DEP-2026-00012345` | The specific aggregate instance this event is about |
+
+**Domain extension attributes (Kafka headers, `ce_` prefixed):**
+
+CloudEvents extension attribute names must be lowercase alphanumeric, ≤ 20 characters, no underscores.
+
+| Extension attribute | Kafka header | Example | Purpose |
+|---|---|---|---|
+| `correlationid` | `ce_correlationid` | `corr-aB7xK2pQ9` | Originating correlation ID — the axis of distributed tracing (Primitive 4) |
+| `causationid` | `ce_causationid` | `msg-008-h6i7j` | `ce_id` of the message that caused this event (Primitive 4) |
+| `aggregatetype` | `ce_aggregatetype` | `Deposit` | Aggregate type; used for topic routing in the outbox publisher |
+| `schemaversion` | `ce_schemaversion` | `1` | Schema version; increments only on backward-compatible evolution |
+| `producerversion` | `ce_producerversion` | `1.4.2` | Semantic version of the producing service |
+
+**W3C Trace Context headers** (`traceparent`, `tracestate`) coexist with the CloudEvents headers — they are injected by the OTel SDK and are not CloudEvents attributes.
+
+**Kafka message value:** Confluent wire format — magic byte (`0x00`) + 4-byte schema ID + Avro-encoded business payload. Unchanged from the schema registry contract.
 
 Without a consistent envelope, you lose tracing, correlation, debugging, and the ability to mechanically filter events by type. **The envelope is non-negotiable; it is infrastructure.**
 
