@@ -3,6 +3,13 @@
 
 ---
 
+> This document is a conceptual reference, not a regulatory or accounting source.
+> Real-world implementations must respect Banco de Portugal conventions and IFRS 9 for accounting recognition.
+
+**Reader's map:** §1–3 set up the unifying framework (cash flows, present value, the fundamental identity); §4 develops the three loan amortization systems; §5 covers term deposits; §6 introduces the cross-cutting metrics (IRR, APR); §7 handles composite cases; §8 treats irregular products (current account, credit card); §9 synthesizes both families. A glossary is provided at the end.
+
+---
+
 ## 1. Framework
 
 The main retail banking financial products can be grouped into two categories:
@@ -15,7 +22,7 @@ The main retail banking financial products can be grouped into two categories:
 - Current account (demand deposit)
 - Credit card
 
-All of them calculate interest. The fundamental difference is that products with a plan generate future cash flows known upfront, whereas irregular ones only produce cash flows observable after the fact.
+All accrue interest. The fundamental difference is that products with a plan have cash flows known *ex ante*; irregular products have cash flows known only *ex post*.
 
 ---
 
@@ -33,7 +40,7 @@ Each `CF` can be positive (inflow) or negative (outflow).
 
 ### 2.1 The Unifying Function: Present Value
 
-The central mathematical model is the **present value of discounted cash flows:**
+The central mathematical model is the **present value of future cash flows:**
 
 ```
 PV = Σ [ CF(t) / (1 + i)^t ]
@@ -55,6 +62,12 @@ The base algorithm is always the same. What differs between products are only th
 1. **Shape of the cash flows** — fixed, variable, irregular
 2. **Day-count convention** — Act/360, Act/365, 30/360...
 3. **Compounding frequency** — daily, monthly, annual
+
+**Rate notation used throughout:**
+
+- `TAN` — nominal annual rate
+- `r = TAN / m` — periodic rate for products with a plan (m = periods per year)
+- `r = TAN / base` — daily rate for irregular products (base = 360 or 365 days)
 
 ---
 
@@ -109,7 +122,7 @@ P = 10,000 × 0.005 / (1 - 1.005^-12)
   = €860.66
 ```
 
-Interest and amortization derive from the fundamental identity:
+Interest and amortization derive from the fundamental identity (§3):
 
 ```
 J(t) = S(t-1) × 0.005
@@ -130,7 +143,7 @@ A(t) = 860.66 - J(t)
 
 ---
 
-### 4.2 SAC System (German)
+### 4.2 SAC System (German, *Sistema de Amortização Constante*)
 
 **What is fixed:** the capital amortization `A(t)` — it is constant across all periods.
 
@@ -168,7 +181,7 @@ P(12)= 833.33 +    833.33 × 0.005 = €837.50
 
 ---
 
-### 4.3 American System (Bullet)
+### 4.3 American System (bullet)
 
 **What is fixed:** the outstanding balance `S(t)` — it remains constant until the last period.
 
@@ -228,6 +241,8 @@ American:  [  -50.00 ;  -50.00 ;  -50.00 ; ... ; -10,050.00 ]
 
 In a term deposit the perspective is reversed: the depositor hands money over to the bank, which returns it with interest.
 
+**Sign convention used throughout:** cash flows are written from the holder's point of view — money paid is negative, money received is positive.
+
 **Cash flows (from the depositor's point of view):**
 
 ```
@@ -251,10 +266,16 @@ M = 10,000 × (1 + 0.06 × 365/360) = €10,608.33
 
 ### 5.2 Compound Interest
 
-When interest is capitalized (automatically reinvested):
+When interest is capitalized (automatically reinvested), with annual compounding and `n` in years:
 
 ```
 M = C × (1 + TAN)^n
+```
+
+For compounding `m` times per year (`n` still in years):
+
+```
+M = C × (1 + TAN/m)^(m·n)
 ```
 
 ### 5.3 Variants of Interest Payment
@@ -281,11 +302,13 @@ CF(n) = +10,000
 ### 5.4 Deposit Rates
 
 ```
-TANB  →  Gross Nominal Annual Rate (before taxes)
-TANL  →  Net Nominal Annual Rate (after withholding tax)
+TANB  →  Gross Nominal Annual Rate (Taxa Anual Nominal Bruta, before taxes)
+TANL  →  Net Nominal Annual Rate  (Taxa Anual Nominal Líquida, after withholding tax)
 
 TANL = TANB × (1 - 0.28)    (withholding in Portugal: 28%)
 ```
+
+The rate-level conversion above is exact for a single-period deposit with interest paid at maturity. For multi-period compound deposits, withholding tax is applied to each interest payment as it accrues, so the realized net return must be computed flow-by-flow rather than by scaling the rate.
 
 Effective annual rate with compounding m times per year:
 
@@ -316,9 +339,9 @@ CF(1..12) = +860.66
               t=1..12
 ```
 
-Solving: `i = 0.005` per period → **IRR = 6% annual = TAN** ✓
+Solving: `i = 0.005` per month → **TAN = 6% (nominal annual); equivalent TAE = (1.005)^12 − 1 ≈ 6.17%** ✓
 
-The IRR coincides with the TAN when there are no additional charges.
+The per-period IRR coincides with the nominal periodic rate (TAN / m) when there are no additional charges.
 
 ### 6.2 APR (TAEG) — Annual Percentage Rate of Charge
 
@@ -347,7 +370,7 @@ Where:
 | Life insurance premium | Optional insurance |
 | Multi-risk insurance premium | |
 
-**There is no closed-form formula** — it is solved numerically by the Newton-Raphson method (or bisection):
+**For `n > 4` no closed-form solution in `i` exists** — it is solved numerically by the Newton-Raphson method (or bisection):
 
 ```
 1. Build the full sequence of CFs (including fees, insurance)
@@ -366,13 +389,15 @@ CF(0)     = -10,000 + 200 = -9,800   (bank hands over 10,000 but charges 200 upf
 CF(1..12) = +860.66
 ```
 
-Solving numerically: `i* ≈ 0.00857` per month
+Solving numerically: `i* ≈ 0.00818` per month
 
 ```
-APR = (1 + 0.00857)^12 - 1 ≈ 10.78%
+APR = (1 + 0.00818)^12 - 1 ≈ 10.28%
 ```
 
-Compare with TAN = 6%. **The €200 fee added ~4.8 pp to the effective cost.**
+Compare with TAN = 6%. **The €200 fee added ~4.3 pp to the effective cost.**
+
+(For consumer credit in Portugal, the rules for what enters the APR are set by Decreto-Lei n.º 133/2009; at EU level, see the Consumer Credit Directive 2008/48/EC.)
 
 **Relationship between the rates:**
 
@@ -435,15 +460,15 @@ Balance at the end of Phase 1, using the general formula:
 
 ```
 S(6) = C × (1+r₁)^6 - P₁ × [(1+r₁)^6 - 1] / r₁
-     = 10,000 × 1.03038 - 860.66 × 6.0755
-     = 10,303.80 - 5,227.49
-     = €5,076.31
+     = 10,000 × 1.03038 - 860.66 × 6.0756
+     = 10,303.78 - 5,229.03
+     = €5,074.75
 ```
 
 **Phase 2 (t=7..12) with r₂, on S(6):**
 
 ```
-P₂ = 5,076.31 × 0.00583 / (1 - 1.00583^-6) = €862.18
+P₂ = 5,074.75 × 0.005833 / (1 - 1.005833^-6) = €863.16
 ```
 
 **Cash flows:**
@@ -451,7 +476,7 @@ P₂ = 5,076.31 × 0.00583 / (1 - 1.00583^-6) = €862.18
 ```
 CF(0)     = -10,000
 CF(1..6)  = +860.66
-CF(7..12) = +862.18
+CF(7..12) = +863.16
 ```
 
 ---
@@ -517,7 +542,7 @@ J = ∫ S(τ) × r(τ) dτ
     [t0, t1]
 ```
 
-Since the balance only changes at discrete moments (movements), the integral collapses into a sum:
+Since the balance only changes at discrete moments (movements), `S(τ)` is a step function and the integral collapses into a sum:
 
 ```
 J = Σ S(d) × r × Δt(d)
@@ -740,3 +765,27 @@ Financial Product
 | Present value | `PV = Σ CF(t) / (1+i)^t` |
 | IRR / APR | solve `PV(i) = 0` for `i` |
 | Rate relationship | `APR ≥ TAE ≥ TAN` |
+
+---
+
+## Glossary
+
+| Abbreviation | Meaning |
+|---|---|
+| TAN | *Taxa Anual Nominal* — nominal annual rate, no compounding |
+| TAE | *Taxa Anual Efetiva* — effective annual rate, with compounding |
+| TAEG / APR | *Taxa Anual Efetiva Global* — APR, including all mandatory charges |
+| TANB / TANL | *Bruta / Líquida* — gross / net of withholding tax |
+| SAC | *Sistema de Amortização Constante* — constant-amortization system |
+| Act/360, Act/365 | Day-count conventions (actual days over a 360- or 365-day year) |
+| 30/360 | Day-count convention treating each month as 30 days, year as 360 |
+| IRR | Internal Rate of Return |
+| PV | Present Value |
+| `C` | Initial capital (principal) |
+| `r` | Periodic interest rate |
+| `n` | Number of periods |
+| `m` | Compounding periods per year |
+| `S(t)` | Outstanding balance at period t |
+| `J(t)` | Interest in period t |
+| `A(t)` | Capital amortized in period t |
+| `P(t)` | Installment in period t |
