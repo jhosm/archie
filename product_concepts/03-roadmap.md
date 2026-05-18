@@ -6,18 +6,16 @@
 
 ## The Sequence at a Glance
 
-| Phase | Product family | Pack | Target window | Rationale |
-|---|---|---|---|---|
-| **v1** | Term deposits | PT | Months 0-9 | Simplest math; validates engine + pack end-to-end |
-| **v2** | Personal credit (Price / SAC) | PT | Months 9-18 | First time the unification wedge becomes buyer-visible; introduces TAEG with charges and DL 133/2009 compliance |
-| **v3** | *Crédito à habitação* (mortgage) | PT | Months 18-30 | Largest portfolio in PT retail; adds variable rate, Euribor revision, mandatory insurance, DL 74-A/2017 |
-| **v4** | Current accounts + cards (irregular family) | PT | Months 24+ | Completes the engine's range; firm long-term goal, optional in early years (see v4 section below) |
-| **v5+** | Term deposits + personal credit | ES | Months 24+ | First proof that regulatory-as-a-pack works; lowest-risk products in a new geography |
-| **v6+** | EU expansion | EU baseline + per-country deltas | Demand-driven | CCD 2008/48/EC and MCD 2014/17/EU baseline; country-specific deltas as additional packs |
+| Phase | Product family | Pack | Rationale |
+|---|---|---|---|
+| **v1** | Term deposits | PT | Simplest math; validates engine + pack end-to-end |
+| **v2** | Personal credit (Price / SAC) | PT | First product family where the unification wedge runs in production; introduces TAEG with charges and DL 133/2009 compliance |
+| **v3** | *Crédito à habitação* (mortgage) | PT | Largest portfolio in PT retail; adds variable rate, Euribor revision, mandatory insurance, DL 74-A/2017 |
+| **v4** | Current accounts + cards (irregular family) | PT | Completes the engine's range; firm long-term goal, optional in practice (see v4 section below) |
+| **v5+** | Term deposits + personal credit | ES | First proof that regulatory-as-a-pack works; lowest-risk products in a new geography |
+| **v6+** | EU expansion | EU baseline + per-country deltas | CCD 2008/48/EC and MCD 2014/17/EU baseline; country-specific deltas as additional packs |
 
-The numbering is illustrative, not contractual — phases overlap, and a customer bank may adopt them in a slightly different order. What is fixed is the **sequencing logic** below, not the version labels.
-
-**The target windows are planning assumptions, not commitments.** They are stated to make the brief operationally useful (an investor or a design-partner bank needs *some* time anchor) and to make the assumption testable. Realistic windows depend on team size, customer-development cycle length, and the v3 mortgage sales cycle in particular — see [04-open-questions](./04-open-questions.md) on team credibility and economic buyer, both of which materially affect velocity. Windows should be revisited at each phase close.
+The numbering is illustrative, not contractual — phases may overlap and may be adopted in a different order. What is fixed is the **sequencing logic** below, not the version labels.
 
 ---
 
@@ -33,7 +31,7 @@ v1 is the architectural proof. Every subsequent phase is configuration on top of
 
 ## v2 — Personal Credit (PT)
 
-The first phase where the **unification wedge becomes visible to a buyer**. v1 ran a single product on the engine; v2 runs a second, structurally different product on the *same* engine. The product team's job is a configuration change; the runtime is unchanged. That is the agility wedge in operation, observed for the first time.
+The first phase where the **unification wedge runs in production on more than one product family**. v1 ran a single product on the engine; v2 runs a second, structurally different product on the *same* engine. The product configuration changes; the runtime is unchanged. That is the agility wedge in operation, observed for the first time.
 
 In scope: Portuguese unsecured personal credit (*crédito pessoal*) under the Price (French) and SAC (constant-amortisation) systems from [financial_concepts §4](../financial_concepts/banking_products_financial_mathematics.md). Fixed rate, fixed term, monthly installments. The new pieces relative to v1:
 
@@ -41,7 +39,7 @@ In scope: Portuguese unsecured personal credit (*crédito pessoal*) under the Pr
 - **DL 133/2009 compliance.** *Decreto-Lei* 133/2009 transposes CCD 2008/48/EC (the EU Consumer Credit Directive). The PT pack now has to ship the SECCI pre-contractual information sheet, the legal right of withdrawal, the explicit cost-of-credit breakdown, and the dispute-resolution disclosures.
 - **Amortisation schedule semantics.** A credit produces an amortisation schedule on day one; events on the account either match the schedule (`InstallmentPaid`) or trigger deviations (`InstallmentMissed`, `AmortizationAdvanced`, `PrestaçãoExtraordináriaApplied`). The engine's with-a-plan mode from [01-product-architecture §3](./01-product-architecture.md) is exercised in earnest.
 
-v2 is the phase where a product CIO sees the wedge, not just hears about it. New credit product configurations after v2 are days of work, not months.
+v2 is the phase where the wedge is exercised on a structurally different product. After v2, new credit product configurations are configuration work, not module work.
 
 ---
 
@@ -68,13 +66,13 @@ The irregular family. **Completes the engine's range** — once v4 ships, every 
 
 **Why last in PT.** The legacy core's current-account module is the **most deeply entrenched** piece of the bank's estate. Every other system in the bank references current-account IDs; payments rails settle into current accounts; the GL is structured around them. Moving current accounts is not a product migration, it is an estate-wide event. By going last, the strangler-fig motion gives the bank time to (a) prove the engine on three other product families first, (b) build out the coexistence APIs from [02-v1-scope §3](./02-v1-scope-term-deposits.md) to a level where multiple product families on the engine settle cleanly into the legacy DDA, and (c) make the v4 cutover a genuine decision rather than an act of faith.
 
-### v4 stance: firm long-term, optional in early years
+### v4 stance: firm long-term goal, optional in practice
 
-v4 is committed as a **firm long-term goal**: the architecture is built so the engine can run current accounts and cards, the irregular mode is part of the engine's design point (not a retrofit), and the operational tooling for high-volume ingest is built out by v3 at the latest. The destination is "the engine runs every retail product family the bank sells."
+v4 is committed as a **firm long-term goal**: the architecture is built so the engine can run current accounts and cards, the irregular mode is part of the engine's design point (not a retrofit), and the operational tooling for high-volume ingest is built out by v3 at the latest. The destination is "the engine runs every retail product family the bank holds."
 
-For an individual customer bank, v4 is **explicitly optional in early years**. A bank can adopt v1-v3 on the new engine, keep current accounts and cards on legacy DDA indefinitely, and still extract the full agility wedge for the product families that have moved. This is a valid customer endpoint — what is sometimes called a "non-core core": the engine handles configurable products, the legacy core handles current accounts and the GL, and the integration architecture from [integration_concepts/](../integration_concepts/00-introduction-and-decisions.md) keeps them coherent.
+v4 is also **explicitly optional in practice**. The bank can stop at v1–v3 on the new engine, keep current accounts and cards on legacy DDA indefinitely, and still extract the full agility wedge for the product families that have moved. This is a valid endpoint — what is sometimes called a "non-core core": the engine handles configurable products, the legacy core handles current accounts and the GL, and the integration architecture from [integration_concepts/](../integration_concepts/00-introduction-and-decisions.md) keeps them coherent.
 
-The two framings are not in tension. The vendor commits to building v4; each customer decides when (or whether) to consume it. Commercially, this is the strongest stance: it gives banks a path to full migration without forcing one, and it gives the vendor a defensible architectural story regardless of any specific customer's choice.
+The two framings are not in tension. The architecture supports v4; the decision to take v4 into production is separate from the decision to build the capability.
 
 ---
 
@@ -86,11 +84,11 @@ Why those two families: term deposits and personal credit are the products with 
 
 What v5 must prove:
 
-- **Pack swap is a configuration change.** A bank in Spain deploys the engine pointing at the ES pack; the same images, the same engine binary, the same event schemas, the same subledger structure. Only the pack differs. If anything in the engine has to change to support ES, the pack abstraction failed and the wedge is at risk.
+- **Pack swap is a configuration change.** A deployment pointing at the ES pack uses the same images, the same engine binary, the same event schemas, the same subledger structure. Only the pack differs. If anything in the engine has to change to support ES, the pack abstraction failed and the wedge is at risk.
 - **Reporting hooks remap cleanly.** Banco de Portugal reporting (v1–v4) becomes Banco de España and AEAT reporting (v5+). The engine emits abstracted signals; the geography-specific reporting application interprets them.
 - **Disclosure documents are pack outputs.** The FIN (PT depósito disclosure) and SECCI (PT consumer credit disclosure) have ES counterparts. The pack ships the disclosure templates and the data the templates need; the engine doesn't know about specific documents.
 
-v5 is short and unglamorous if the architecture is right. It is a re-deployment with a different pack and three months of supervised operation. If it is *not* short, the pack abstraction needs to go back to the drawing board before v6+ is contemplated.
+v5 is unglamorous if the architecture is right: a re-deployment with a different pack and a supervised operating period. If it is *not* unglamorous, the pack abstraction needs to go back to the drawing board before v6+ is contemplated.
 
 ---
 
@@ -105,7 +103,7 @@ EU expansion is **not** "one phase." It is a per-country sequence with a common 
 
 Each country then ships **deltas** on top of the baseline: the transposition law, the tax treatment, the reporting agency, the disclosure templates in the local language, the day-count or rate conventions that local market practice has standardised. The pack for each country is therefore a small file by design: the EU baseline pack does most of the work, the country pack overrides only what is genuinely different.
 
-The roadmap inside v6+ is **demand-driven**, not architecturally driven. The architecture is ready after v5; which country goes next depends on which customer bank is buying. Likely early candidates: countries with a similar civil-law tradition and significant incumbent banks (FR, IT), or countries with a digital-friendly regulator (NL, IE). The candidate list is in [04-open-questions §3](./04-open-questions.md) as the "Legacy coexistence targets" item — until a customer is identified, the order is speculative.
+The roadmap inside v6+ is **demand-driven**, not architecturally driven. The architecture is ready after v5; which country comes next depends on which subsidiary or operating geography the bank takes on next. Until a specific geography is committed, the order is left open.
 
 ---
 
@@ -115,12 +113,12 @@ The phase table above suggests a discrete march of pack introductions: PT in v1,
 
 Pack maintenance is therefore a **continuous track in parallel with the phase roadmap**, not an event inside any single phase. The maintenance shape:
 
-- **Watch.** A small per-jurisdiction surveillance function tracks regulatory publications (BdP *Avisos* and *Instruções*; *Diário da República* for PT primary legislation; *Boletín Oficial del Estado* and Banco de España for ES; *Official Journal of the EU* for directives). For a single-vendor team this is one named owner per pack; for a multi-customer footprint it grows.
+- **Watch.** A small per-jurisdiction surveillance function tracks regulatory publications (BdP *Avisos* and *Instruções*; *Diário da República* for PT primary legislation; *Boletín Oficial del Estado* and Banco de España for ES; *Official Journal of the EU* for directives). One named owner per pack.
 - **Diff and decide.** Each change is classified: configuration-only (a parameter changes), pack-data (a new disclosure template, a new reporting field), or engine (rare; a fundamentally new regulatory primitive that doesn't fit the current pack surface). Configuration-only and pack-data changes ship as pack updates; engine changes feed the roadmap.
-- **Release cadence.** Packs ship on a known cadence (e.g. monthly minor releases, quarterly major releases) plus emergency releases for time-bound regulatory deadlines. Customers running self-hosted consume pack updates on the same cadence as their engine updates.
+- **Release cadence.** Packs ship on a known cadence (e.g. monthly minor releases, quarterly major releases) plus emergency releases for regulatory deadlines.
 - **Backward compatibility.** A pack update **cannot** retroactively change accruals or balances on existing accounts (that would be unauditable). Pack changes apply prospectively from a `pack_effective_date`; the engine carries the effective pack version per account so historical reconstructions remain consistent.
 
-Pack maintenance is a product, not a side-effect. It is the **largest recurring cost** the vendor takes on beyond engine development, and the **single largest source of customer lock-in** (a bank that depends on the vendor's pack updates is structurally a renewing customer). Both consequences are intentional, and both have to be staffed and priced from day one.
+Pack maintenance is a product, not a side-effect. It is the **largest recurring operational cost** beyond engine development itself, and it has to be staffed accordingly from day one.
 
 ---
 
@@ -141,6 +139,6 @@ The combination is what protects the wedge. If new product families had to be bu
 To match the discipline of the [vision](./00-product-vision.md), some things are deliberately omitted:
 
 - **GL, IFRS 9, channels, payments rails, fraud, KYC, onboarding.** Still out of scope, at every phase. These are not "later v's"; they are someone else's product. The engine's job is to emit clean signals to whichever systems do those.
-- **Wholesale, corporate, treasury, investment-banking products.** This is a retail product engine; the wedge depends on it staying that way. Corporate banking has fundamentally different products and a fundamentally different sales motion; absorbing it would dilute the architecture.
+- **Wholesale, corporate, treasury, investment-banking products.** This is a retail product engine; the wedge depends on it staying that way. Corporate banking has fundamentally different products and a fundamentally different operating model; absorbing it would dilute the architecture.
 - **Non-EU geographies.** Switzerland, UK, US — each has a substantially different regulatory shape. The pack abstraction may eventually extend that far, but it is not a roadmap commitment.
-- **A multi-currency core.** v1–v4 are EUR-only by configuration. The events carry `currency` because the schema convention requires it, but the engine's TAEG, withholding, and reporting paths are not exercised with mixed currencies. Multi-currency is a pack/configuration extension that lands when a customer needs it, not on the v-numbered roadmap.
+- **A multi-currency core.** v1–v4 are EUR-only by configuration. The events carry `currency` because the schema convention requires it, but the engine's TAEG, withholding, and reporting paths are not exercised with mixed currencies. Multi-currency is a pack/configuration extension that lands when the operating bank needs it, not on the v-numbered roadmap.

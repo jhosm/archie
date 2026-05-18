@@ -38,9 +38,9 @@ Three dimensions are not enough on their own to specify a sellable banking produ
 
 The agility wedge from the [vision](./00-product-vision.md) lives concretely here. **A new product is a new configuration, not a new module.** A new variant of *depósito a prazo* with a different compounding rule is a parameter change. A new credit line with a balloon at the end is a new cash-flow shape attached to existing day-count and compounding settings. The product engine's job is to be the runtime; the product team's job is to fill in the configuration surface. The legacy product-per-module pattern dies because it has nothing left to do.
 
-The falsifiable target from the [vision](./00-product-vision.md) ("under 5 working days from configuration commit to first booked instance") translates into specific properties of this surface: the configuration must be **declarative** (no engine code change required to ship a new variant within an existing family), the validation must be **synchronous at commit time** (so the product team learns within minutes that a configuration is well-formed and pack-compliant, not hours), and the deployment must be **safe-by-default** (a new configuration cannot break configurations already running in production). The depth question — templates only, DSL only, or both — is genuinely open and tracked in [04-open-questions](./04-open-questions.md); whichever depth is chosen, it must satisfy these three properties or the 5-day claim fails.
+The configuration surface has three load-bearing properties: it must be **declarative** (no engine code change required to ship a new variant within an existing family), validation must be **synchronous at commit time** (so the product team learns at commit time that a configuration is well-formed and pack-compliant), and deployment must be **safe-by-default** (a new configuration cannot break configurations already running in production). The depth question — templates only, DSL only, or both — is genuinely open and tracked in [04-open-questions](./04-open-questions.md); whichever depth is chosen, it must satisfy these three properties or the agility wedge fails.
 
-The configuration surface is also where the discipline of the brief lives. The engine **does not** ship with a configuration for "anything imaginable." It ships with a deliberately bounded surface that covers the product families in scope. Expanding the surface is a roadmap decision, not a runtime extension point that customers can stretch beyond recognition.
+The configuration surface is also where the discipline of the brief lives. The engine **does not** ship with a configuration for "anything imaginable." It ships with a deliberately bounded surface that covers the product families in scope. Expanding the surface is a roadmap decision, not a runtime extension point that can be stretched beyond recognition.
 
 ---
 
@@ -100,16 +100,9 @@ The product engine does not live alone. It lives inside a bank's ecosystem, whic
 
 **MCP server exposure.** The engine's commands and queries are exposed to LLM agents via the MCP server described in [ADR-010](../integration_concepts/adrs/ADR-010-mcp-server-runtime-and-sdk.md) and [integration_concepts/11](../integration_concepts/11-chat-agent-channel-strategy.md). Agent-channel access is the same surface as the rest of the bank — a request, a saga, a status push — gated by the same authorisation.
 
-### Deployment modes
+### Deployment
 
-The engine ships in two deployment modes from a single codebase:
-
-- **SaaS multi-tenant.** Hosted by the vendor; tenants isolated at a level determined by the [open-questions](./04-open-questions.md) review.
-- **Self-hosted.** Deployed into the customer bank's infrastructure (typically a private cloud or on-prem Kubernetes), operated by the customer or co-operated under a managed-service agreement.
-
-Both modes use the same images, the same configuration grammar, and the same regulatory packs. The integration architecture supports both — Redpanda runs equally well in either topology, and the saga orchestrator is environment-agnostic.
-
-The single-codebase commitment is not free. SaaS multi-tenancy needs tenant routing, per-tenant rate limits, and shared observability that names every signal by tenant; self-hosted needs none of those but needs operational tooling (upgrade scripts, backup/restore, on-call runbooks) that the SaaS team operates centrally. Vendors who promise "same code, two modes" frequently arrive at a *de facto* fork — a separate branch for self-hosted, with selective backports from SaaS. The engineering response is to treat the seam (tenant scoping, deployment topology) as a configuration point inside the codebase, not as a branch — and to require every feature to ship in both modes before it lands in either. A future ADR will document the specific mechanism; the architectural commitment in this brief is that the seam exists at runtime, not at the source-tree level.
+The engine is deployed into the operating bank's own infrastructure (typically a private cloud or on-prem Kubernetes). One codebase, one set of images, one configuration grammar, one regulatory pack at a time. The integration architecture is environment-agnostic — Redpanda and the saga orchestrator run in the same topology that hosts the engine itself. Operational tooling (upgrade scripts, backup/restore, on-call runbooks) is part of the deliverable, not an after-thought.
 
 ### Strangler-fig coexistence
 
