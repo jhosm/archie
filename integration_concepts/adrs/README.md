@@ -39,7 +39,7 @@ The chosen tools form one coherent runtime topology, not twelve independent choi
                                   │  Routes: REST, SSE, MCP        │
                                   └──────────┬─────────────────────┘
                                              │
-              MCP agents ──── Streamable HTTP ─┤
+            MCP agents ──── Streamable HTTP ─┤
                                              │
                           ┌──────────────────┴───────────────────┐
                           │  Deposits domain service             │
@@ -72,17 +72,17 @@ The chosen tools form one coherent runtime topology, not twelve independent choi
    ┌──────────▼──────────┐                          ┌────────────▼──────────────┐
    │ Read-model projector│                          │ Notification service      │
    │ (ADR-005)           │                          │ (ADR-011)                 │
-   │ → PostgreSQL CQRS   │                          │ → webhook HMAC delivery    │
+   │ → PostgreSQL CQRS   │                          │ → webhook HMAC delivery   │
    └─────────────────────┘                          └───────────────────────────┘
 
-   ┌─────────────────────────────────────────┐
+   ┌──────────────────────────────────────────┐
    │ ACL service (ADR-012) — dedicated, own DB│
    │  ┌──────────────────────────────────┐    │
    │  │ Outbound: hand-rolled clients ───┼────┼──── Core Banking (SOAP/REST/MQ)
    │  │ Inbound:  webhook / poll / MQ ◀──┼────┼──── Core Banking
    │  │ State store + own outbox ────────┼────┼──── Redpanda (events back to domain)
    │  └──────────────────────────────────┘    │
-   └─────────────────────────────────────────┘
+   └──────────────────────────────────────────┘
 
    ┌─────────────────────────────────────────┐  ┌──────────────────────────────┐
    │ OpenTelemetry Collector → Grafana LGTM  │  │ EventCatalog (ADR-008)       │
