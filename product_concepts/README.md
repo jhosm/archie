@@ -23,3 +23,9 @@ The series is short by design: a vision one-pager, an architectural thesis, a co
 | [02](./02-v1-scope-term-deposits.md) | v1 Scope — Term Deposits | Why term deposits first, in-scope features, PT regulatory features, subledger outputs, event contract, coexistence with legacy DDA |
 | [03](./03-roadmap.md) | Roadmap | Sequenced product-family + geography expansion: PT term deposits → PT credit → PT mortgage → PT current accounts/cards → ES → EU |
 | [04](./04-open-questions.md) | Open Questions | Deferred decisions with context and unblocking notes — competitive positioning, pricing, licensing, coexistence targets, multi-tenancy, IFRS 9 signal boundary, time-travel, configurability depth, primary economic buyer, founding team credibility, split-brain reconciliation |
+
+### Design notes (companion to the brief, not part of the numbered series)
+
+| File | What It Covers |
+|---|---|
+| [feature-design-configuration-surface](./feature-design-configuration-surface.md) | Deepens §01 §2 and §01 §4: rate sheets as a price layer separate from product structure, and the pack vocabulary (T1) as a typed jurisdiction-scoped vocabulary. Resolves two sub-questions of Open Question 8 and opens nine new ones. |
