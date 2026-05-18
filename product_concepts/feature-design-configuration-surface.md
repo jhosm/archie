@@ -1,8 +1,8 @@
 # Feature Design — Configuration Surface
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §2](./01-product-architecture.md) ("The Configuration Surface") and [§01-product-architecture §4](./01-product-architecture.md) ("The Regulatory Pack") by working through two artefact families that the brief names but does not specify: **rate sheets** (the price layer, separate from product structure) and the **pack vocabulary T1** (the jurisdiction-scoped vocabulary that configs and rate sheets bind to).
+> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §2](./01-product-architecture.md) ("The Configuration Surface") and [§01-product-architecture §4](./01-product-architecture.md) ("The Regulatory Pack") by working through two artefact families that the brief names but does not specify: **rate sheets** (the price layer, separate from product structure) and the **pack vocabulary** (the jurisdiction-scoped vocabulary that configs and rate sheets bind to).
 >
-> The brief is short by design; this document is the load-bearing detail behind a couple of its load-bearing claims. It addresses several entries in [04-open-questions](./04-open-questions.md), most directly Q8 (Configurability Depth), and resolves two sub-questions of that thread while opening nine new ones.
+> The brief is short by design; this document is the load-bearing detail behind a couple of its load-bearing claims. It does not resolve Q8 (Configurability Depth) in [04-open-questions](./04-open-questions.md) but answers two design questions that any future Q8 resolution will have to live with, and opens nine new questions in their own right.
 >
 > Reading order: skim §1 for the shared frame; read §2 (rate sheets) and §3 (pack vocabulary) on their own merits; §4 collects the consequences for the numbered brief.
 
@@ -12,7 +12,7 @@
 
 [§01-product-architecture §2](./01-product-architecture.md) commits to a configuration surface that is declarative, synchronously validated, and safe-by-default. It does not commit to *how many distinct artefacts* the surface is composed of. The implicit reading of the brief is "one artefact per product." That implicit reading does not survive contact with the v1 PT pack.
 
-A working configuration surface needs three artefact families, with different cadences, different approvers, and different lifecycle semantics:
+A working configuration surface needs three artefact families, with distinct cadences, approvers, and lifecycle semantics:
 
 | Family | What it specifies | Owner | Cadence | Approver shape |
 |---|---|---|---|---|
@@ -20,7 +20,7 @@ A working configuration surface needs three artefact families, with different ca
 | **Rate sheet** | Numerical rates indexed by (product, role, principal band), with effective-from timestamps | Treasury / ALM | Daily–weekly | Treasury sign-off |
 | **Pack** | Jurisdiction-scoped vocabulary of primitives and their parameters (day-count conventions, withholding rules, disclosure templates, reporting hooks, calendars) | Vendor + regulatory counsel | Per regulatory change (months–years) | Vendor release + tenant pinning |
 
-The three are bound by reference. A product config says "for the period 1–6, apply a *promotional* rate from the live rate sheet, computed under the *act_360* day-count primitive from the *pt* pack." The rate sheet supplies the numerical value. The pack supplies the primitive implementation parameters.
+The three are bound by reference. A product config says "for this depósito a prazo, take the rate from the live rate sheet for the *new_money* role, compute accrual under the *act_360* day-count primitive from the *pt* pack, and apply the pack's *irs_juros* withholding at credit time." The rate sheet supplies the numerical value. The pack supplies the primitive and its parameters. The product config composes them.
 
 Treating these as one artefact family is the single largest configuration-surface mistake to avoid. A product redesign and a rate change should not move through the same approval gate; a regulatory change should not require a product redesign. The brief's commitment to "new products are configuration changes" is only operable if the configuration surface is layered so that the *cheapest* change moves through the *cheapest* approval.
 
@@ -43,34 +43,39 @@ The split: structure lives in the product config, prices live in the rate sheet,
 
 ### 2.2 Worked example
 
-Product config (excerpt, building on v2 personal credit shape):
+Product config (excerpt, a v1 *depósito a prazo* with interest at maturity):
 
 ```yaml
-product_id: cp_pt_60m_promo
+product_id: dpz_pt_12m_juros_venc
 pack: pt.2026.1
 parameters:
-  rate_schedule:
-    - { periods: [1, 6],  rate_ref: { sheet: live, role: promotional } }
-    - { periods: [7, 60], rate_ref: { sheet: live, role: standard } }
+  interest_variant: AT_MATURITY
+  term_days: 365
+  day_count: pt.act_360
+  rate_ref: { sheet: live, role_selector: deposit_origin }
+  roles: [standard, new_money]
 ```
 
 Rate sheet (a separate artefact, separate repo path, separate deploy endpoint):
 
 ```yaml
-rate_sheet_id: cp_pt_rates_2026_05_19
-product_family: personal_credit
+rate_sheet_id: dpz_pt_rates_2026_05_19
+product_family: term_deposit
 pack: pt.2026.1
 effective_from: 2026-05-19T00:00:00+01:00
 products:
-  cp_pt_60m_promo:
+  dpz_pt_12m_juros_venc:
     standard:
       bands:
-        - { principal_cents: [0, 1000000],     tan_basis_points: 850 }
-        - { principal_cents: [1000000, null],  tan_basis_points: 800 }
-    promotional:
+        - { principal_cents: [50000,    5000000],   tan_basis_points: 300 }
+        - { principal_cents: [5000000,  25000000],  tan_basis_points: 325 }
+        - { principal_cents: [25000000, null],      tan_basis_points: 350 }
+    new_money:
       bands:
-        - { principal_cents: [0, null],        tan_basis_points: 600 }
+        - { principal_cents: [50000, null],         tan_basis_points: 400 }
 ```
+
+The `role_selector` is resolved by the engine at constitution time from a known fact about the operation — here, whether the principal is new money transferred in from outside the bank or money already on the bank's balance sheet. The product config names the input fact (`deposit_origin`); the rate sheet supplies the rate for each role.
 
 A weekly rate-only update is a new rate-sheet version; the product config's `version_id` does not move.
 
@@ -78,20 +83,18 @@ A weekly rate-only update is a new rate-sheet version; the product config's `ver
 
 At `DepositConstituted` (or `CreditConstituted`), the engine resolves the rate by:
 
-1. Reading the rate sheet **active at `constituted_at`** — the saga's commit timestamp, deterministic.
+1. Reading the rate sheet **active at `constituted_at`** — the saga's commit timestamp, deterministic. If two rate sheets share `effective_from`, the validator has rejected the second at deploy time, so no runtime ambiguity is possible.
 2. Resolving `(product_id, role, principal_band)` to a `tan_basis_points` value.
 3. Storing both `rate_sheet_version_id` and the resolved `tan_basis_points` on the instance.
 4. Emitting both on the event.
 
 Every subsequent `InterestAccrued` event references the same `rate_sheet_version_id` so the audit chain is decidable from the event stream alone, with no need to re-resolve.
 
-Storing both the version ID and the resolved value is deliberate redundancy. The version ID satisfies the audit/replay story (Open Question #7 in [04-open-questions](./04-open-questions.md)); the resolved value satisfies the simpler day-2 query ("what rate is this deposit paying?") without forcing a re-resolution.
-
-**Tiebreaker.** If two rate sheets share `effective_from`, the validator rejects the second one at deploy time. No runtime ambiguity.
+Storing both is deliberate. The version ID anchors the audit/replay story ([Open Question 7](./04-open-questions.md)); the resolved value answers the day-2 "what rate is this deposit paying?" query without a re-resolution.
 
 ### 2.4 Index sheets — the variable-rate cousin
 
-For variable-rate mortgages (v3 in [03-roadmap](./03-roadmap.md)), the engine needs an external index (Euribor, IRPH) and reads it at every revision date. Same shape as a rate sheet, different source:
+For variable-rate mortgages (v3 in [03-roadmap](./03-roadmap.md)), the engine needs an external index (Euribor for PT) and reads it at every revision date. Same shape as a rate sheet, different source:
 
 ```yaml
 index_sheet_id: euribor_2026_05_19
@@ -123,22 +126,20 @@ The two artefacts can deploy in either order, but the engine never accepts a sta
 
 ### 2.6 Lifecycle
 
-- **Maximum cadence.** Sub-second timestamp granularity. Useful if a bank ever wants intraday rate moves (uncommon for retail; common in some FX-adjacent products).
-- **Minimum cadence.** One rate sheet a year is allowed.
-- **Typical PT retail.** Weekly or biweekly, midnight on a published day.
+Rate sheets are forward-only and versioned. Once a sheet is published, it is never edited; corrections ship as a new version with a new effective-from. The schema supports sub-second timestamp granularity (rare in retail, common in FX-adjacent products) but allows arbitrarily slow cadence at the other end — a bank that publishes one sheet a year is unusual but not violating the model. Typical PT retail cadence is weekly or biweekly at midnight on a published day. Rollback of a wrong-rate publication uses the same forward-only mechanism plus an out-of-band compensation flow for instances that constituted under the bad sheet (see Q-J below).
 
-Rates are forward-only and versioned. Once a sheet is published, it is never edited; corrections ship as a new version with a new effective-from. Rollback of a wrong-rate publication is the same forward-only mechanism plus an out-of-band compensation flow for instances that constituted under the bad sheet — see Q-J below.
+Rate sheets apply only to products on the new engine. Term deposits booked through the legacy core during the strangler-fig coexistence ([§02 §3](./02-v1-scope-term-deposits.md)) continue to draw their rates from whatever the legacy core does — the engine's rate-sheet artefacts have no scope over them. The engine and the legacy core never disagree about a rate because they never read from the same source.
 
 ### 2.7 Open questions opened in this thread
 
 - **Q-I. Negative rates.** Schema allows signed bps; pack constrains. PT pack v1 recommends `tan_basis_points >= 0`. Forward-looking: if a EUR retail product ever runs negative again, the pack relaxes the bound; the engine does not change.
-- **Q-J. Rate-sheet typo rollback.** Treasury publishes 350 bps instead of 35 bps and some deposits constitute at the wrong rate. Same shape as Q-E (config rollback): forward-only fix plus an out-of-band compensation flow. Worth naming this as a **commercial** risk, distinct from the technical rollback story.
+- **Q-J. Rate-sheet typo rollback.** Treasury publishes 350 bps instead of 35 bps and some deposits constitute at the wrong rate. The technical shape is forward-only fix plus an out-of-band compensation flow for affected instances. Worth naming because it is a **commercial** risk (someone has to call the affected customers and explain), distinct from the merely-technical rollback mechanics.
 - **Q-K. Tenant-scoped rate sheets.** In SaaS multi-tenant mode, rate sheets are tenant-scoped. No vendor-default sheet; would risk cross-bank leakage and is commercially meaningless.
 - **Q-L. Index sheet sourcing.** Who publishes the Euribor fixings into the engine? Direct from ECB? A market-data vendor (Bloomberg, Refinitiv)? Bank-supplied? Probably bank-supplied via the same deploy API, with a pluggable upstream feeder. v3 question, not v1.
 
 ---
 
-## 3. Pack Vocabulary (T1)
+## 3. Pack Vocabulary
 
 ### 3.1 Premise
 
@@ -158,25 +159,19 @@ The engine never knows what country it is in. The pack tells it.
 
 ### 3.3 PT v1 pack — required primitives
 
-What v1 ships, organised by category:
+What v1 ships, by category:
 
-**Day-count conventions** (`day_count.*`) — `act_360`, `act_365`, `act_act_isda`, `30_360_european`.
-
-**Calendars** (`calendar.*`) — `pt_national`, `pt_national_plus_lisbon`, `target2` (euro payments). Business-day conventions: `following`, `modified_following`, `preceding`.
-
-**Interest computation** (`interest.*`) — `simple` (capital × rate × day-count fraction), `compound_periodic` (explicit compounding frequency), `act_365_compound` (used in some BdP-mandated TAEG calculations).
-
-**Withholding** (`withholding.*`) — `irs_juros` at 2800 bps on gross interest at credit time, with exemptions (`pme_leader`, `non_resident_treaty`, `jovens_poupanca`) and reporting hook `modelo_39`. The 28% rate is a *parameter*, not a constant in the engine; rate changes ship as a new pack version, the engine binary does not move.
-
-**Stamp duty** (`stamp_duty.*`) — `is_credit` (percentage on principal at origination, irrelevant for v1 deposits but shipped now so v2 credit doesn't need pack churn), `is_interest` (percentage on interest paid, relevant for some deposit structures). Reporting hook `dms_at` (declaração mensal de imposto do selo).
-
-**Disclosure templates** (`disclosure.*`) — `fin` (Ficha de Informação Normalizada for deposits, with required-fields schema in the pack and field-level mapping populated by the engine at constitution). `fipre`, `fine` reserved for v2 / v3.
-
-**Reporting hooks** (`reporting.*`) — `bdp_centralizacao_responsabilidades` (reserved, credit only), `bdp_estatisticas_taxas_juro` (active for v1 deposits, emits monthly aggregates), `ifrs9_staging` (reserved, credit only — see Open Question #6 in [04-open-questions](./04-open-questions.md)).
-
-**Default interest / mora** (`mora.*`) — reserved for v2 credit; deposits do not enter mora.
-
-**Currency** (`currency.*`) — `eur` with rounding rule (HALF_EVEN to cents). Per-currency rounding lives in the pack because it is jurisdiction-influenced (PT rounds differently from CH for some products).
+| Category | Primitive IDs | Notes |
+|---|---|---|
+| Day-count (`day_count.*`) | `act_360`, `act_365`, `act_act_isda`, `30_360_european` | PT retail deposits default to `act_360`. |
+| Calendars (`calendar.*`) | `pt_national`, `pt_national_plus_lisbon`, `target2` | Business-day conventions: `following`, `modified_following`, `preceding`. |
+| Interest (`interest.*`) | `simple`, `compound_periodic`, `act_365_compound` | `simple` is capital × rate × day-count fraction. `act_365_compound` is required for some BdP-mandated TAEG calculations. |
+| Withholding (`withholding.*`) | `irs_juros` | 2800 bps on gross interest at credit time. Exemptions: `pme_leader`, `non_resident_treaty`, `jovens_poupanca`. Reporting hook `modelo_39`. The 28% rate is a pack *parameter*, not an engine constant — rate changes ship as a new pack version, the engine binary does not move. |
+| Stamp duty (`stamp_duty.*`) | `is_credit`, `is_interest` | `is_credit` reserved for v2; `is_interest` relevant for some deposit structures. Reporting hook `dms_at` (declaração mensal de imposto do selo). |
+| Disclosure templates (`disclosure.*`) | `fin`, `fipre`, `fine` | v1 activates `fin` (Ficha de Informação Normalizada for deposits) — required-fields schema in the pack, field-level mapping populated by the engine at constitution. `fipre`, `fine` reserved for v2 / v3. |
+| Reporting hooks (`reporting.*`) | `bdp_centralizacao_responsabilidades`, `bdp_estatisticas_taxas_juro`, `ifrs9_staging` | v1 activates `bdp_estatisticas_taxas_juro` only (monthly aggregates). The others reserved for credit (see [Open Question 6](./04-open-questions.md)). |
+| Default interest / mora (`mora.*`) | reserved | v2 credit only; deposits do not enter mora. |
+| Currency (`currency.*`) | `eur` | HALF_EVEN rounding to cents. Rounding lives in the pack because it is jurisdiction-influenced (PT rounds differently from CH for some products). |
 
 ### 3.4 Pack manifest shape
 
@@ -193,7 +188,7 @@ delta_summary: |
   - Added withholding exemption: jovens-poupança scheme
   - No primitive added or removed
 
-breaking_changes: []   # if non-empty, tenants must explicitly opt in
+breaking_changes: []
 
 primitives:
   day_count:
@@ -222,14 +217,16 @@ test_corpus_ref: oci://vendor/pt-pack-tests:2026.1
 
 Every constituted instance pins to **the pack version active at constitution**. The instance carries `pack_version: pt.2026.1` for its entire life. Pack `pt.2027.1` shipping the next year does not change any in-flight instance.
 
-This is the regulatory-stability guarantee. A 12-year mortgage constituted under `pt.2024.1` keeps computing interest and applying withholding per `pt.2024.1` until maturity. Regulators expect it; banks rely on it.
+Concretely: a depósito a prazo constituted on 2024-03-15 under `pt.2024.1` keeps computing accrual under that pack's `act_360` primitive and applying withholding at that pack's `irs_juros` parameters until it matures on 2025-03-15 — even if `pt.2025.1` ships on 2025-01-01 with a different withholding rate. A 12-year mortgage constituted under `pt.2024.1` runs `pt.2024.1` for 12 years.
+
+This is the regulatory-stability guarantee. Regulators expect it; banks rely on it. The retroactive-change story in §3.6 covers the rare cases where the regulator overrides it.
 
 ### 3.6 Retroactive change — explicit, audited
 
 Sometimes the regulator *requires* retroactive change ("from 2027-01-01, the new rate applies to all existing instances"). The model handles this without violating pinning:
 
 1. Vendor ships `pt.2027.1` with the new rate.
-2. Bank explicitly invokes a **pack migration** for affected instances: `POST /v1/pack-migrations { from: pt.2026.x, to: pt.2027.1, instance_filter: ... }`.
+2. Bank explicitly invokes a **pack migration** for the affected instance set: `POST /v1/pack-migrations { from: pt.2026.1, to: pt.2027.1, instance_filter: { product_family: term_deposit, currently_active: true } }`.
 3. Engine emits a `PackVersionMigrated` event per instance.
 4. Instances now run under `pt.2027.1`. History prior to the migration remains pinned to `pt.2026.x`.
 
@@ -273,20 +270,20 @@ expected_events:
   - { type: DepositMatured, at: 2027-01-15 }
 ```
 
-This is the canonical "the engine + pack do what the brief claims" evidence. Buyers will ask to see it.
+This is the canonical "the engine + pack do what the brief claims" evidence — the kind of artefact a regulated buyer's technical due-diligence reasonably asks to see before committing.
 
-### 3.10 Validator interplay (T2)
+### 3.10 Validator interplay
 
-The validator (T2 in the configurability stack) consumes the pack to do its job. Two stages:
+The validator consumes the pack to do its job. Two stages:
 
 1. **Static.** Schema-check the config against the pack version it pins. Every `pt.*` reference must resolve to a primitive that exists. Every parameter must be in-range per pack-declared bounds (e.g. `tan_basis_points ≤ pack.max_consumer_rate`).
-2. **Dynamic.** Run the simulator (T3) over a sample instance under the pinned pack version and assert outputs match the test-corpus expectations for that product shape.
+2. **Dynamic.** Run the simulator over a sample instance under the pinned pack version and assert outputs match the test-corpus expectations for that product shape.
 
 Without the pack as a typed vocabulary, the validator could only catch syntax errors. With it, the validator catches regulatory misuse.
 
 ### 3.11 Open questions opened in this thread
 
-- **Q-M. Pack governance / commercial model.** Vendor-published with regulatory-counsel sign-off (most common)? Industry consortium (better for credibility, slower for change)? Open-source with vendor-curated default plus community packs (interesting but likely too radical for retail banking)? A go-to-market decision shaping pricing and trust posture.
+- **Q-M. Pack governance / commercial model.** Vendor-published with regulatory-counsel sign-off (most common)? Industry consortium (better for credibility, slower for change)? Open-source with vendor-curated default plus community packs (interesting but likely too radical for retail banking)? A go-to-market decision shaping pricing and trust posture; sits downstream of [Q3 (Licensing Posture)](./04-open-questions.md) — whoever owns the pack inherits the licensing choices already made for the engine.
 - **Q-N. Breaking-change opt-in mechanics.** When a pack ships with a non-empty `breaking_changes` block, what does adoption look like? Recommend: tenants must call `POST /v1/pack-adoptions` with explicit acknowledgement of each breaking item; engine logs an `OperatorAck` event. No silent pack upgrades.
 - **Q-O. Pack forking.** Can a bank fork the pack to add a proprietary primitive (e.g. a private internal-credit-rating-based stamp-duty calculation the regulator allows it to self-determine)? Allowed but stigmatised: vendor maintains only the canonical pack; forks are the bank's responsibility; forks are flagged in reporting metadata so regulators can ask about them.
 - **Q-P. Multi-pack composition.** A v5 cross-border product wants PT primitives for withholding (because the holder is PT-resident) but ES primitives for the booking entity. Is the resolution "pick one pack and inline what you need from the other," or "real composition with explicit precedence"? v5 question, but the v1 pack schema should reserve a `primitive_overlays` field (no-op in v1) to avoid painting into a corner.
@@ -298,20 +295,20 @@ Without the pack as a typed vocabulary, the validator could only catch syntax er
 
 ### 4.1 Sections that change
 
-- **[§00-product-vision §2.4](./00-product-vision.md) ("the pack")** is currently a sketch. Replace with the three-layer model in §3.2 of this document and the pack manifest shape in §3.4.
-- **[§01-product-architecture §2](./01-product-architecture.md) ("The Configuration Surface")** currently implies a single artefact family. Update to name three artefact families (configs, rate sheets, pack) with their distinct cadences and approvers (table in §1 of this document).
-- **[§01-product-architecture §4](./01-product-architecture.md) ("The Regulatory Pack")** currently commits to "swappable from day one" without specifying *what* a pack is. Update to reference the pack manifest in §3.4 and the pinning invariant in §3.5.
-- **[§02-v1-scope-term-deposits](./02-v1-scope-term-deposits.md)** event contract: `DepositConstituted` gains `rate_sheet_version_id` and `pack_version`; `InterestAccrued` and `WithholdingApplied` inherit both. Add `PackVersionMigrated` and `NetInterestCredited` to the standard event set.
-- **[§02-v1-scope-term-deposits](./02-v1-scope-term-deposits.md)** subledger outputs: the BdP reporting hook for deposits is pack-defined (`reporting.bdp_estatisticas_taxas_juro`), not a separate engine module.
+- **[§00-product-vision §2.4](./00-product-vision.md) ("the pack").** Currently a sketch. Replace with the three-layer model in §3.2 and the pack manifest in §3.4.
+- **[§01-product-architecture §2](./01-product-architecture.md) ("The Configuration Surface").** Implies a single artefact family; name three (configs, rate sheets, pack) with the cadences and approvers from §1 of this document.
+- **[§01-product-architecture §4](./01-product-architecture.md) ("The Regulatory Pack").** Commits to "swappable from day one" without saying *what* a pack is; cross-reference §3.4 (manifest) and §3.5 (pinning invariant).
+- **[§02-v1-scope-term-deposits §2.4](./02-v1-scope-term-deposits.md) (event contract).** `DepositConstituted` gains `rate_sheet_version_id` and `pack_version`; `InterestAccrued` and `WithholdingApplied` inherit both via `causationid`. Add `PackVersionMigrated` and `NetInterestCredited` to the event set.
+- **[§02-v1-scope-term-deposits §2.3](./02-v1-scope-term-deposits.md) (subledger outputs).** The BdP retail-rate-statistics signal is a pack-defined reporting hook (`reporting.bdp_estatisticas_taxas_juro`), not a separate engine module.
 
 ### 4.2 Open questions touched
 
-The two sub-questions of [Q8 (Configurability Depth)](./04-open-questions.md) that this document resolves:
+This document does not resolve [Q8 (Configurability Depth)](./04-open-questions.md) — the template-vs-DSL boundary remains open. It does answer two further design questions that any resolution of Q8 will have to live with:
 
-- **Sub-question: who owns the rate values.** Resolved: rate sheets, separate artefact, separate cadence, separate approver.
-- **Sub-question: when are rates bound.** Resolved: at constitution time for fixed-rate products, at every revision for variable-rate products, with `rate_sheet_version_id` / `index_sheet_version_id` carried on every relevant event.
+- **Who owns rate values.** Rate sheets — a separate artefact family, separate cadence, separate approver. Settled in §2.
+- **When rates are bound to an instance.** At constitution time for fixed-rate products; at every revision for variable-rate products. `rate_sheet_version_id` (or `index_sheet_version_id`) is carried on every relevant event. Settled in §2.3 and §2.4.
 
-[Q8 itself](./04-open-questions.md) remains open — the template-vs-DSL boundary is still undecided. This document sharpens the configuration surface around it but does not pick the boundary.
+A future Q8 resolution that says "templates only" must work with these two answers. A future resolution that says "DSL only" must work with them too. The artefact-family split sits underneath the template-vs-DSL question, not inside it.
 
 ### 4.3 New open questions to fold into [04-open-questions](./04-open-questions.md)
 
@@ -330,4 +327,4 @@ This document captures a design exploration, not an adopted spec. To move from e
 3. Decide Q-M (pack governance) — it gates the entire pack story commercially.
 4. Prototype a single product config + rate sheet + pack triple against the v1 deposit scope and validate the schema against [financial_concepts §9.2](../financial_concepts/banking_products_financial_mathematics.md) cash-flow primitives.
 
-The natural next design thread is the **validator / simulator CLI surface** (T2 + T3) — without it, the configuration-as-code story has no developer experience, and the synchronous-validation property in [§01-product-architecture §2](./01-product-architecture.md) cannot be honoured.
+The natural next design thread is the **validator / simulator CLI surface** — the developer-facing tool a product team runs locally and in CI to check a config + rate sheet + pack triple before it deploys. The synchronous-validation property in [§01-product-architecture §2](./01-product-architecture.md) is a claim about *when* the product team learns a configuration is well-formed and pack-compliant (within minutes of committing, not hours after deploy). That property is only operable if there is a CLI the product team runs at commit time; without it, validation lives in a deploy pipeline that runs at the wrong cadence and surfaces failures to the wrong audience.
