@@ -38,6 +38,8 @@ Three dimensions are not enough on their own to specify a sellable banking produ
 
 The agility wedge from the [vision](./00-product-vision.md) lives concretely here. **A new product is a new configuration, not a new module.** A new variant of *depósito a prazo* with a different compounding rule is a parameter change. A new credit line with a balloon at the end is a new cash-flow shape attached to existing day-count and compounding settings. The product engine's job is to be the runtime; the product team's job is to fill in the configuration surface. The legacy product-per-module pattern dies because it has nothing left to do.
 
+The falsifiable target from the [vision](./00-product-vision.md) ("under 5 working days from configuration commit to first booked instance") translates into specific properties of this surface: the configuration must be **declarative** (no engine code change required to ship a new variant within an existing family), the validation must be **synchronous at commit time** (so the product team learns within minutes that a configuration is well-formed and pack-compliant, not hours), and the deployment must be **safe-by-default** (a new configuration cannot break configurations already running in production). The depth question — templates only, DSL only, or both — is genuinely open and tracked in [04-open-questions](./04-open-questions.md); whichever depth is chosen, it must satisfy these three properties or the 5-day claim fails.
+
 The configuration surface is also where the discipline of the brief lives. The engine **does not** ship with a configuration for "anything imaginable." It ships with a deliberately bounded surface that covers the product families in scope. Expanding the surface is a roadmap decision, not a runtime extension point that customers can stretch beyond recognition.
 
 ---
@@ -52,7 +54,9 @@ Even with a unified equation, retail banking products split cleanly into two **o
 
 The same equation governs both — that is what §9.2 proves. The operational differences (fixed vs variable `Δt`, forecast vs observed cash flows) translate into two **modes** of the same engine, not two engines. A single product runtime supports both: it accepts events when they arrive (irregular mode) *or* it generates a schedule and reconciles events against it (with-a-plan mode). The subledger semantics are the same. The reporting hooks are the same. The lifecycle state machine differs in detail but not in structure.
 
-This is what "one engine across product families" actually means. Not "we have one engine and two completely separate code paths inside it." One engine, two modes, one cash-flow primitive.
+The mathematical sameness does not erase an operational asymmetry worth naming. The with-a-plan family has predictable ingest: one or two events per account per period, schedulable in advance. The irregular family has unpredictable, high-volume ingest: every card swipe, every direct debit, every salary credit is an event the engine has to absorb, accrue, and reconcile within tight timing. The runtime is the same; the *operational profile* (throughput, latency, batch-window behaviour, peak handling) is materially different. The engine architecture has to be built with the irregular profile as the upper-bound design point, even if the irregular mode lands later in the [roadmap](./03-roadmap.md). Sizing for with-a-plan only and retrofitting irregular is one of the ways "one engine, two modes" turns into two engines under the same name.
+
+This is what "one engine across product families" actually means, with that caveat. Not "we have one engine and two completely separate code paths inside it." One engine, two modes, one cash-flow primitive, two operational profiles that the runtime has to absorb without forking.
 
 ---
 
@@ -104,6 +108,8 @@ The engine ships in two deployment modes from a single codebase:
 - **Self-hosted.** Deployed into the customer bank's infrastructure (typically a private cloud or on-prem Kubernetes), operated by the customer or co-operated under a managed-service agreement.
 
 Both modes use the same images, the same configuration grammar, and the same regulatory packs. The integration architecture supports both — Redpanda runs equally well in either topology, and the saga orchestrator is environment-agnostic.
+
+The single-codebase commitment is not free. SaaS multi-tenancy needs tenant routing, per-tenant rate limits, and shared observability that names every signal by tenant; self-hosted needs none of those but needs operational tooling (upgrade scripts, backup/restore, on-call runbooks) that the SaaS team operates centrally. Vendors who promise "same code, two modes" frequently arrive at a *de facto* fork — a separate branch for self-hosted, with selective backports from SaaS. The engineering response is to treat the seam (tenant scoping, deployment topology) as a configuration point inside the codebase, not as a branch — and to require every feature to ship in both modes before it lands in either. A future ADR will document the specific mechanism; the architectural commitment in this brief is that the seam exists at runtime, not at the source-tree level.
 
 ### Strangler-fig coexistence
 

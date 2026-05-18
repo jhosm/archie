@@ -33,6 +33,14 @@ Two consequences flow from this choice, and both are buyer-visible:
 
 Both consequences fall out of the same architectural insight. Take the insight away and neither holds.
 
+**The wedge as a falsifiable claim.** "Days, not quarters" needs a number to be testable. The working target:
+
+> *A new variant of an existing product family — for example, a new term deposit with a different compounding rule or a new fixed-rate personal credit with adjusted charges — goes from configuration commit to first booked instance in production in under 5 working days, end-to-end.*
+
+This is the operational claim that has to survive contact with v1 in production. Adding a new *product family* (a new family in the [01-product-architecture §3](./01-product-architecture.md) sense, e.g. moving from credits to current accounts) takes longer because new pack work or new mode work is involved; that's a separate target for the corresponding roadmap phase. The 5-day claim is for variants within a family on an existing pack — the exact case the legacy product-per-module pattern handles worst.
+
+**Who buys this.** The primary economic buyer is **deliberately unspecified at this stage**: CIO modernisation, head-of-retail agility, and CEO strategic-response all map plausibly. The sales motion and the messaging differ by buyer, but the architecture does not. The decision is tracked in [04-open-questions](./04-open-questions.md) and will be sharpened by customer-development conversations.
+
 ---
 
 ## 3. What's In Scope
