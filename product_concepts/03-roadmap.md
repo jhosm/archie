@@ -6,16 +6,18 @@
 
 ## The Sequence at a Glance
 
-| Phase | Product family | Pack | Rationale |
-|---|---|---|---|
-| **v1** | Term deposits | PT | Simplest math; validates engine + pack end-to-end |
-| **v2** | Personal credit (Price / SAC) | PT | First time the unification wedge becomes buyer-visible; introduces TAEG with charges and DL 133/2009 compliance |
-| **v3** | *Crédito à habitação* (mortgage) | PT | Largest portfolio in PT retail; adds variable rate, Euribor revision, mandatory insurance, DL 74-A/2017 |
-| **v4** | Current accounts + cards (irregular family) | PT | Completes the engine's range; hardest to displace because legacy DDA is deeply entrenched — so it goes last in PT |
-| **v5+** | Term deposits + personal credit | ES | First proof that regulatory-as-a-pack works; lowest-risk products in a new geography |
-| **v6+** | EU expansion | EU baseline + per-country deltas | CCD 2008/48/EC and MCD 2014/17/EU baseline; country-specific deltas as additional packs |
+| Phase | Product family | Pack | Target window | Rationale |
+|---|---|---|---|---|
+| **v1** | Term deposits | PT | Months 0-9 | Simplest math; validates engine + pack end-to-end |
+| **v2** | Personal credit (Price / SAC) | PT | Months 9-18 | First time the unification wedge becomes buyer-visible; introduces TAEG with charges and DL 133/2009 compliance |
+| **v3** | *Crédito à habitação* (mortgage) | PT | Months 18-30 | Largest portfolio in PT retail; adds variable rate, Euribor revision, mandatory insurance, DL 74-A/2017 |
+| **v4** | Current accounts + cards (irregular family) | PT | Months 24+ | Completes the engine's range; firm long-term goal, optional in early years (see v4 section below) |
+| **v5+** | Term deposits + personal credit | ES | Months 24+ | First proof that regulatory-as-a-pack works; lowest-risk products in a new geography |
+| **v6+** | EU expansion | EU baseline + per-country deltas | Demand-driven | CCD 2008/48/EC and MCD 2014/17/EU baseline; country-specific deltas as additional packs |
 
 The numbering is illustrative, not contractual — phases overlap, and a customer bank may adopt them in a slightly different order. What is fixed is the **sequencing logic** below, not the version labels.
+
+**The target windows are planning assumptions, not commitments.** They are stated to make the brief operationally useful (an investor or a design-partner bank needs *some* time anchor) and to make the assumption testable. Realistic windows depend on team size, customer-development cycle length, and the v3 mortgage sales cycle in particular — see [04-open-questions](./04-open-questions.md) on team credibility and economic buyer, both of which materially affect velocity. Windows should be revisited at each phase close.
 
 ---
 
@@ -66,7 +68,13 @@ The irregular family. **Completes the engine's range** — once v4 ships, every 
 
 **Why last in PT.** The legacy core's current-account module is the **most deeply entrenched** piece of the bank's estate. Every other system in the bank references current-account IDs; payments rails settle into current accounts; the GL is structured around them. Moving current accounts is not a product migration, it is an estate-wide event. By going last, the strangler-fig motion gives the bank time to (a) prove the engine on three other product families first, (b) build out the coexistence APIs from [02-v1-scope §3](./02-v1-scope-term-deposits.md) to a level where multiple product families on the engine settle cleanly into the legacy DDA, and (c) make the v4 cutover a genuine decision rather than an act of faith.
 
-Some banks may **never** migrate current accounts to the new engine and continue to use it for product families only. That is a valid endpoint for the strangler fig.
+### v4 stance: firm long-term, optional in early years
+
+v4 is committed as a **firm long-term goal**: the architecture is built so the engine can run current accounts and cards, the irregular mode is part of the engine's design point (not a retrofit), and the operational tooling for high-volume ingest is built out by v3 at the latest. The destination is "the engine runs every retail product family the bank sells."
+
+For an individual customer bank, v4 is **explicitly optional in early years**. A bank can adopt v1-v3 on the new engine, keep current accounts and cards on legacy DDA indefinitely, and still extract the full agility wedge for the product families that have moved. This is a valid customer endpoint — what is sometimes called a "non-core core": the engine handles configurable products, the legacy core handles current accounts and the GL, and the integration architecture from [integration_concepts/](../integration_concepts/00-introduction-and-decisions.md) keeps them coherent.
+
+The two framings are not in tension. The vendor commits to building v4; each customer decides when (or whether) to consume it. Commercially, this is the strongest stance: it gives banks a path to full migration without forcing one, and it gives the vendor a defensible architectural story regardless of any specific customer's choice.
 
 ---
 
@@ -98,6 +106,21 @@ EU expansion is **not** "one phase." It is a per-country sequence with a common 
 Each country then ships **deltas** on top of the baseline: the transposition law, the tax treatment, the reporting agency, the disclosure templates in the local language, the day-count or rate conventions that local market practice has standardised. The pack for each country is therefore a small file by design: the EU baseline pack does most of the work, the country pack overrides only what is genuinely different.
 
 The roadmap inside v6+ is **demand-driven**, not architecturally driven. The architecture is ready after v5; which country goes next depends on which customer bank is buying. Likely early candidates: countries with a similar civil-law tradition and significant incumbent banks (FR, IT), or countries with a digital-friendly regulator (NL, IE). The candidate list is in [04-open-questions §3](./04-open-questions.md) as the "Legacy coexistence targets" item — until a customer is identified, the order is speculative.
+
+---
+
+## Pack Maintenance — A Continuous Track
+
+The phase table above suggests a discrete march of pack introductions: PT in v1, ES in v5, EU baseline in v6. The reality is that **a regulatory pack is not finished when it ships**. PT regulation changes continuously: a Banco de Portugal *Aviso* updates a reporting threshold; a new *Decreto-Lei* transposes a revised EU directive; an IRS Budget Law changes the withholding rate. ES and EU packs evolve at the same cadence.
+
+Pack maintenance is therefore a **continuous track in parallel with the phase roadmap**, not an event inside any single phase. The maintenance shape:
+
+- **Watch.** A small per-jurisdiction surveillance function tracks regulatory publications (BdP *Avisos* and *Instruções*; *Diário da República* for PT primary legislation; *Boletín Oficial del Estado* and Banco de España for ES; *Official Journal of the EU* for directives). For a single-vendor team this is one named owner per pack; for a multi-customer footprint it grows.
+- **Diff and decide.** Each change is classified: configuration-only (a parameter changes), pack-data (a new disclosure template, a new reporting field), or engine (rare; a fundamentally new regulatory primitive that doesn't fit the current pack surface). Configuration-only and pack-data changes ship as pack updates; engine changes feed the roadmap.
+- **Release cadence.** Packs ship on a known cadence (e.g. monthly minor releases, quarterly major releases) plus emergency releases for time-bound regulatory deadlines. Customers running self-hosted consume pack updates on the same cadence as their engine updates.
+- **Backward compatibility.** A pack update **cannot** retroactively change accruals or balances on existing accounts (that would be unauditable). Pack changes apply prospectively from a `pack_effective_date`; the engine carries the effective pack version per account so historical reconstructions remain consistent.
+
+Pack maintenance is a product, not a side-effect. It is the **largest recurring cost** the vendor takes on beyond engine development, and the **single largest source of customer lock-in** (a bank that depends on the vendor's pack updates is structurally a renewing customer). Both consequences are intentional, and both have to be staffed and priced from day one.
 
 ---
 

@@ -12,6 +12,35 @@ The three series answer three distinct questions:
 
 ## Series
 
+### financial_concepts/ — Financial Mathematics of Banking Products
+
+A conceptual reference for the financial mathematics underlying retail banking products. It establishes a unifying framework — sequences of cash flows, present value, IRR — and develops it across the main product families: term deposits, loan amortization (French, German, and constant-amortization systems), current accounts, and credit cards.
+
+The document is aimed at engineers and architects who need to reason about the financial behaviour of the products their systems manage, without requiring an accounting or finance background. It is not a regulatory or accounting source; real implementations must respect Banco de Portugal conventions and IFRS 9.
+
+| Document | What It Covers |
+|---|---|
+| [Financial Mathematics of Banking Products](./financial_concepts/banking_products_financial_mathematics.md) | Cash flow framework, present value, the three amortization systems, term deposits, IRR/TAEG, composite and irregular cases, cross-family synthesis, glossary |
+
+---
+
+### product_concepts/ — Core Banking Product Engine
+
+A documentation series defining a configurable core banking product engine: a product brief, not a system design. The engine takes the cash-flow primitive from [financial_concepts §9.2](./financial_concepts/banking_products_financial_mathematics.md) as its single architectural insight and uses it to collapse every retail product family — deposits, credits, mortgages, current accounts, cards — into one engine with a swappable configuration surface and a swappable regulatory pack. The integration backbone is inherited from `integration_concepts/`, not redefined.
+
+The customer is an incumbent Portuguese bank modernising on a strangler-fig adoption path; geography expands PT → ES → EU; deployment is SaaS multi-tenant and self-hosted from a single codebase. The v1 slice is *depósito a prazo* (Portuguese term deposit) — the smallest surface that exercises both the engine and the PT regulatory pack end-to-end.
+
+| Document | What It Covers |
+|---|---|
+| [README](./product_concepts/README.md) | Series intro, positioning relative to the other two series, document map |
+| [00 — Product Vision](./product_concepts/00-product-vision.md) | The one-pager: customer, problem, wedge, in/out of scope, strategic frame |
+| [01 — Product Architecture](./product_concepts/01-product-architecture.md) | Architectural thesis: cash-flow primitive, configuration surface, two families, regulatory pack, integration seam |
+| [02 — v1 Scope: Term Deposits](./product_concepts/02-v1-scope-term-deposits.md) | Why term deposits first, in-scope features, PT regulatory features, subledger outputs, event contract, coexistence with legacy DDA |
+| [03 — Roadmap](./product_concepts/03-roadmap.md) | Sequenced expansion (PT term deposits → PT credit → PT mortgage → PT current accounts/cards → ES → EU) plus continuous pack maintenance |
+| [04 — Open Questions](./product_concepts/04-open-questions.md) | Deferred decisions register: competitive positioning, pricing, licensing, coexistence targets, multi-tenancy, IFRS 9 signal boundary, time-travel, configurability depth, primary economic buyer, founding team credibility, split-brain reconciliation |
+
+---
+
 ### integration_concepts/ — Integration Architecture
 
 A documentation series covering integration architecture patterns for complex banking ecosystems. The series captures the full design reasoning — from the initial constraints that shaped the architecture, through the conceptual primitives it rests on, down to the concrete patterns, flows, testing strategy, and long-term governance.
@@ -48,32 +77,3 @@ The full reasoning is in [Document 00](./integration_concepts/00-introduction-an
 | [09](./integration_concepts/09-long-term-schema-evolution.md) | Long-term Schema Evolution | Taxonomy of compatible/incompatible changes, concrete techniques for each, antipatterns, real scenarios |
 | [10](./integration_concepts/10-security-and-threat-model.md) | Security and Threat Model | Trust boundaries, assets worth protecting, six security principles, regulatory obligations (PSD2, GDPR, BdP, DORA) |
 | [11](./integration_concepts/11-chat-agent-channel-strategy.md) | Chat Agent Channel Strategy | Bank as MCP server; LLM-agent channel; tool/resource/prompt mapping onto commands and CQRS; async completion patterns (tasks, polling, out-of-band callback); trust model for untrusted agents |
-
----
-
-### product_concepts/ — Core Banking Product Engine
-
-A documentation series defining a configurable core banking product engine: a product brief, not a system design. The engine takes the cash-flow primitive from [financial_concepts §9.2](./financial_concepts/banking_products_financial_mathematics.md) as its single architectural insight and uses it to collapse every retail product family — deposits, credits, mortgages, current accounts, cards — into one engine with a swappable configuration surface and a swappable regulatory pack. The integration backbone is inherited from `integration_concepts/`, not redefined.
-
-The customer is an incumbent Portuguese bank modernising on a strangler-fig adoption path; geography expands PT → ES → EU; deployment is SaaS multi-tenant and self-hosted from a single codebase. The v1 slice is *depósito a prazo* (Portuguese term deposit) — the smallest surface that exercises both the engine and the PT regulatory pack end-to-end.
-
-| Document | What It Covers |
-|---|---|
-| [README](./product_concepts/README.md) | Series intro, positioning relative to the other two series, document map |
-| [00 — Product Vision](./product_concepts/00-product-vision.md) | The one-pager: customer, problem, wedge, in/out of scope, strategic frame |
-| [01 — Product Architecture](./product_concepts/01-product-architecture.md) | Architectural thesis: cash-flow primitive, configuration surface, two families, regulatory pack, integration seam |
-| [02 — v1 Scope: Term Deposits](./product_concepts/02-v1-scope-term-deposits.md) | Why term deposits first, in-scope features, PT regulatory features, subledger outputs, event contract, coexistence with legacy DDA |
-| [03 — Roadmap](./product_concepts/03-roadmap.md) | Sequenced expansion: PT term deposits → PT credit → PT mortgage → PT current accounts/cards → ES → EU |
-| [04 — Open Questions](./product_concepts/04-open-questions.md) | Deferred decisions register: competitive positioning, pricing, licensing, coexistence targets, multi-tenancy, IFRS 9 signal boundary, time-travel, configurability depth |
-
----
-
-### financial_concepts/ — Financial Mathematics of Banking Products
-
-A conceptual reference for the financial mathematics underlying retail banking products. It establishes a unifying framework — sequences of cash flows, present value, IRR — and develops it across the main product families: term deposits, loan amortization (French, German, and constant-amortization systems), current accounts, and credit cards.
-
-The document is aimed at engineers and architects who need to reason about the financial behaviour of the products their systems manage, without requiring an accounting or finance background. It is not a regulatory or accounting source; real implementations must respect Banco de Portugal conventions and IFRS 9.
-
-| Document | What It Covers |
-|---|---|
-| [Financial Mathematics of Banking Products](./financial_concepts/banking_products_financial_mathematics.md) | Cash flow framework, present value, the three amortization systems, term deposits, IRR/TAEG, composite and irregular cases, cross-family synthesis, glossary |

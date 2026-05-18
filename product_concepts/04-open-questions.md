@@ -123,6 +123,52 @@ This is the heart of the wedge, and getting it wrong in either direction kills i
 
 ---
 
+## 9. Primary Economic Buyer
+
+**Context.** [00-product-vision](./00-product-vision.md) leaves the primary economic buyer deliberately unspecified. Three plausible buyers, with materially different sales motions:
+
+- **CIO / Head of IT** — modernisation pitch. Wedge framed as legacy reduction, vendor consolidation, cloud-readiness, and DORA operational resilience. 9–12 month enterprise sale; long procurement; high RFI/RFP overhead; vendor due diligence is rigorous. Largest deal size; longest cycle.
+- **Head of Retail / Head of Products** — agility pitch. Wedge framed as time-to-market for new products. Often pulls IT into the deal rather than waiting for IT to initiate. Shorter cycle than CIO; smaller initial scope (one product line); higher chance of expansion.
+- **CEO / Board** — strategic-transformation pitch. Wedge framed as competitive response to neobanks and digital challengers. Top-down mandate; the longest cycle but the largest commitment when it closes. Rare in PT incumbents; more common as a follow-on after an initial CIO or Head-of-Retail engagement proves the concept.
+
+The architecture is buyer-agnostic; the messaging, the sales materials, the early reference customers, and the founder's calendar all differ by buyer. Picking one buyer for the first 2-3 customers is a sequencing decision, not a permanent commitment — but it has to be made before the first sales conversation, not improvised.
+
+**Unblocked by.** Customer-development conversations with 5–10 candidates across the three buyer profiles. Output: a named primary buyer for the first wave, recorded in this document and reflected in the [vision](./00-product-vision.md) and the GTM materials (which are not part of this repository).
+
+---
+
+## 10. Founding Team Credibility Story
+
+**Context.** Banking customers buy people more than software, especially on a first deal where there is no production reference. The team's credibility story has three plausible shapes:
+
+- **Banking insider.** Founder(s) with senior roles at a PT incumbent — credibility through direct domain knowledge, regulatory familiarity, and an existing network of decision-makers. Strongest entry into PT incumbents; risk of underestimating the technology shift required by the architecture.
+- **Fintech veteran.** Founder(s) with senior roles at a previous fintech or core-banking vendor (Temenos, Mambu, Thought Machine, or a neobank's product team). Credibility through "we have shipped a thing like this before, at scale." Easier on technology; harder on PT-specific incumbent access.
+- **External technologist.** Founder(s) from a non-banking software background bringing the architectural thesis (cash-flow primitive, event-driven, regulatory-pack abstraction). Strongest technology story; weakest entry into incumbents without a banking-insider partner or advisor.
+
+Most real teams are a *combination*. The honest question is which combination, and what the team is doing to close the gap on whichever credibility axis is weakest. For example, an external-technologist founding team that lacks the banking-insider axis typically closes the gap with a senior PT banking advisor and a founding board member from the industry.
+
+**Unblocked by.** Founder/team decision and disclosure. This is not a research question; it is a self-assessment. Output: a one-paragraph team statement in [00-product-vision](./00-product-vision.md) or a separate `team.md`, and (where the credibility axis needs closing) named advisors or board members with the relevant background.
+
+---
+
+## 11. Split-Brain Reconciliation with Legacy DDA
+
+**Context.** [02-v1-scope §3](./02-v1-scope-term-deposits.md) describes the happy-path coexistence with the legacy core's current-account module: the engine settles principal and interest into the current account through the [ACL](../integration_concepts/02-anti-corruption-layer.md), the legacy core books the credit, and end-of-day reconciliation compares the engine's outbox against the legacy core's incoming journal. The unhappy path is the open question: **what happens when the engine and the legacy core disagree about an account's state?**
+
+Concrete scenarios:
+
+- The engine settles a deposit-maturity credit to the customer's current account; the legacy core books it; meanwhile the legacy core has booked a separate same-day transaction (a card payment, a salary credit) that the engine doesn't know about. The customer-facing balance is the legacy core's responsibility; the engine's view of "the credit landed" is correct from its perspective. The two views are consistent but only the legacy core has the complete picture.
+- The engine sends the settlement instruction through the ACL; the ACL gets an ambiguous response from the legacy core (the [indeterminate state](../integration_concepts/02-anti-corruption-layer.md) problem). The engine has to decide whether to retry, escalate, or compensate. A wrong choice leads to either a double-credit or a missing credit.
+- The legacy core's reconciliation file at end of day shows a credit the engine did not emit. The engine has to flag it as an alert; if the count of alerts crosses a threshold, something is fundamentally wrong with the ACL or the deployment.
+
+The architectural answer is "the legacy core is the system of record for current accounts; the engine's view is reconciled against it; intra-day inconsistency is bounded and visible." The operational answer — who reconciles when, what tools the bank's ops team uses, what alerts fire at what thresholds — is genuinely open.
+
+This question must be resolved before v1 ships to a real bank. A demo can hand-wave; a production deployment cannot.
+
+**Unblocked by.** An operations / reconciliation review with the first design-partner bank: walk through the daily reconciliation process the bank uses today, identify where the engine's settlements fit, define the alerting and escalation paths. Output: an operational runbook (not necessarily in this repo) plus an addendum to [02-v1-scope §3](./02-v1-scope-term-deposits.md) describing the contract the engine commits to.
+
+---
+
 ## Adding to This Register
 
 Future sessions are expected to add to this list. The shape of a useful entry is:
