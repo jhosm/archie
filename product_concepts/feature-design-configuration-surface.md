@@ -18,7 +18,7 @@ A working configuration surface needs three artefact families, with distinct cad
 |---|---|---|---|---|
 | **Product config** | Cash-flow shape, day-count, compounding, charge structure, lifecycle hooks, references to rate-sheet roles | Product team | Days–weeks per product variant | Product + Compliance |
 | **Rate sheet** | Numerical rates indexed by (product, role, principal band), with effective-from timestamps | Treasury / ALM | Daily–weekly | Treasury sign-off |
-| **Pack** | Jurisdiction-scoped vocabulary of primitives and their parameters (day-count conventions, withholding rules, disclosure templates, reporting hooks, calendars) | Vendor + regulatory counsel | Per regulatory change (months–years) | Vendor release + tenant pinning |
+| **Pack** | Jurisdiction-scoped vocabulary of primitives and their parameters (day-count conventions, withholding rules, disclosure templates, reporting hooks, calendars) | Engine team + internal regulatory counsel | Per regulatory change (months–years) | Engine-team release + operating-bank pinning |
 
 The three are bound by reference. A product config says "for this depósito a prazo, take the rate from the live rate sheet for the *new_money* role, compute accrual under the *act_360* day-count primitive from the *pt* pack, and apply the pack's *irs_juros* withholding at credit time." The rate sheet supplies the numerical value. The pack supplies the primitive and its parameters. The product config composes them.
 
@@ -134,7 +134,7 @@ Rate sheets apply only to products on the new engine. Term deposits booked throu
 
 - **Q-I. Negative rates.** Schema allows signed bps; pack constrains. PT pack v1 recommends `tan_basis_points >= 0`. Forward-looking: if a EUR retail product ever runs negative again, the pack relaxes the bound; the engine does not change.
 - **Q-J. Rate-sheet typo rollback.** Treasury publishes 350 bps instead of 35 bps and some deposits constitute at the wrong rate. The technical shape is forward-only fix plus an out-of-band compensation flow for affected instances. Worth naming because it is a **commercial** risk (someone has to call the affected customers and explain), distinct from the merely-technical rollback mechanics.
-- **Q-K. Tenant-scoped rate sheets.** In SaaS multi-tenant mode, rate sheets are tenant-scoped. No vendor-default sheet; would risk cross-bank leakage and is commercially meaningless.
+- **Q-K. [Retired.]** Previously asked about tenant-scoped rate sheets under SaaS multi-tenancy. Out of scope per the [single-operator framing](./README.md): the engine runs for one operating bank, so there are no tenants in the SaaS sense. The narrower legitimate question — should rate sheets be scopable per business unit inside the bank (retail vs corporate, brand A vs brand B) — is left open as a configuration concern, not a multi-tenancy concern. Letter preserved to keep Q-I through Q-W stable for cross-references.
 - **Q-L. Index sheet sourcing.** Who publishes the Euribor fixings into the engine? Direct from ECB? A market-data vendor (Bloomberg, Refinitiv)? Bank-supplied? Probably bank-supplied via the same deploy API, with a pluggable upstream feeder. v3 question, not v1.
 
 ---
@@ -143,7 +143,7 @@ Rate sheets apply only to products on the new engine. Term deposits booked throu
 
 ### 3.1 Premise
 
-[§01-product-architecture §4](./01-product-architecture.md) commits to the regulatory pack as "swappable from day one" but does not specify what a pack actually is. The risk in leaving it abstract: vendors who promise "swappable pack" routinely arrive at a *de facto* fork (a PT branch, an ES branch) because the abstraction was never load-bearing. This section makes the pack load-bearing.
+[§01-product-architecture §4](./01-product-architecture.md) commits to the regulatory pack as "swappable from day one" but does not specify what a pack actually is. The risk in leaving it abstract: engine implementations that promise "swappable pack" routinely arrive at a *de facto* fork (a PT branch, an ES branch) because the abstraction was never load-bearing. This section makes the pack load-bearing.
 
 A **pack** is a versioned, jurisdiction-scoped vocabulary of *primitives*, *parameters*, and *reporting hooks*. It is declarative data, not executable code. The engine ships the executable primitives; the pack binds them to a jurisdiction.
 
@@ -151,8 +151,8 @@ A **pack** is a versioned, jurisdiction-scoped vocabulary of *primitives*, *para
 
 | Layer | Artefact | Owner | Versioning | Contains |
 |---|---|---|---|---|
-| **Engine** | Binary release | Vendor | semver | Primitive implementations (`compute_interest_simple`, `apply_withholding`, …), event bus, persistence, scheduler |
-| **Pack** | Signed YAML bundle | Vendor + regulatory counsel | `YYYY.N` | Jurisdiction bindings: which primitives apply, with what parameters, with what reporting hooks |
+| **Engine** | Binary release | Engine team | semver | Primitive implementations (`compute_interest_simple`, `apply_withholding`, …), event bus, persistence, scheduler |
+| **Pack** | Signed YAML bundle | Engine team + internal regulatory counsel | `YYYY.N` | Jurisdiction bindings: which primitives apply, with what parameters, with what reporting hooks |
 | **Config** | YAML in bank repo | Bank | Content-hash + label | Product composition: "use these primitives via this pack, with these knobs" |
 
 The engine never knows what country it is in. The pack tells it.
@@ -179,7 +179,7 @@ What v1 ships, by category:
 pack_id: pt
 pack_version: 2026.1
 pack_effective_from: 2026-01-01
-pack_signed_by: vendor-pt-pack-team@vendor.example
+pack_signed_by: pt-pack-team@engine.internal
 based_on_pack_version: 2025.2
 engine_compatibility: ">=1.4.0,<2.0.0"
 
@@ -208,7 +208,7 @@ primitives:
       reporting:
         modelo_39: { required: true, frequency: annual }
 
-test_corpus_ref: oci://vendor/pt-pack-tests:2026.1
+test_corpus_ref: oci://engine/pt-pack-tests:2026.1
 ```
 
 `formula_ref` is the bridge between pack and engine. `engine.withholding.percentage` names a primitive the engine implements; the pack supplies its parameters. A pack referencing a `formula_ref` the loaded engine does not know is rejected at deploy time, with a clear error pointing at the engine-compatibility range.
@@ -225,7 +225,7 @@ This is the regulatory-stability guarantee. Regulators expect it; banks rely on 
 
 Sometimes the regulator *requires* retroactive change ("from 2027-01-01, the new rate applies to all existing instances"). The model handles this without violating pinning:
 
-1. Vendor ships `pt.2027.1` with the new rate.
+1. Engine team ships `pt.2027.1` with the new rate.
 2. Bank explicitly invokes a **pack migration** for the affected instance set: `POST /v1/pack-migrations { from: pt.2026.1, to: pt.2027.1, instance_filter: { product_family: term_deposit, currently_active: true } }`.
 3. Engine emits a `PackVersionMigrated` event per instance.
 4. Instances now run under `pt.2027.1`. History prior to the migration remains pinned to `pt.2026.x`.
@@ -234,9 +234,9 @@ The migration is auditable (a regulator can ask exactly which instances were re-
 
 ### 3.7 Distribution and signing
 
-- Packs ship as OCI artefacts: `oci://vendor/pt-pack:2026.1`, signed (cosign).
-- Engine verifies signature at load time; rejects unsigned or wrong-signer packs unless the tenant explicitly allows local development overrides.
-- Banks pin pack version in their cluster config; pack updates are an explicit operations action, not a background pull.
+- Packs ship as OCI artefacts: `oci://engine/pt-pack:2026.1`, signed (cosign).
+- Engine verifies signature at load time; rejects unsigned or wrong-signer packs unless an explicit local-development override is configured.
+- The operating bank pins pack version in its cluster config; pack updates are an explicit operations action, not a background pull.
 
 ### 3.8 Pack ↔ engine compatibility matrix
 
@@ -250,7 +250,7 @@ Published with every engine release. CI in the bank's monorepo can assert "every
 
 ### 3.9 Pack test corpus
 
-Every pack version ships with a sealed test corpus: canonical instances with expected event sequences over a multi-year horizon. The vendor runs the corpus against every engine release; banks run it in their own CI to detect drift from local engine forks.
+Every pack version ships with a sealed test corpus: canonical instances with expected event sequences over a multi-year horizon. The engine team runs the corpus against every engine release; the operating bank runs it in CI to detect drift from local engine forks.
 
 Example test:
 
@@ -270,7 +270,7 @@ expected_events:
   - { type: DepositMatured, at: 2027-01-15 }
 ```
 
-This is the canonical "the engine + pack do what the brief claims" evidence — the kind of artefact a regulated buyer's technical due-diligence reasonably asks to see before committing.
+This is the canonical "the engine + pack do what the brief claims" evidence — the kind of artefact the operating bank's internal audit, Banco de Portugal supervision, and DORA-style technical due-diligence reasonably ask to see.
 
 ### 3.10 Validator interplay
 
@@ -283,11 +283,11 @@ Without the pack as a typed vocabulary, the validator could only catch syntax er
 
 ### 3.11 Open questions opened in this thread
 
-- **Q-M. Pack governance / commercial model.** Vendor-published with regulatory-counsel sign-off (most common)? Industry consortium (better for credibility, slower for change)? Open-source with vendor-curated default plus community packs (interesting but likely too radical for retail banking)? A go-to-market decision shaping pricing and trust posture; sits downstream of [Q3 (Licensing Posture)](./04-open-questions.md) — whoever owns the pack inherits the licensing choices already made for the engine.
+- **Q-M. Pack authorship and sign-off model.** Who within the operating bank authors and signs the canonical pack? Engine team alone (purest, but lacks regulatory accountability)? Engine team plus internal regulatory counsel / compliance function (most likely)? Engine team plus an industry working group the bank participates in (interesting for credibility, slower for change)? Each shape puts a different team on the hook when regulation changes and the pack has to follow within an internal SLA (see Q-Q).
 - **Q-N. Breaking-change opt-in mechanics.** When a pack ships with a non-empty `breaking_changes` block, what does adoption look like? Recommend: tenants must call `POST /v1/pack-adoptions` with explicit acknowledgement of each breaking item; engine logs an `OperatorAck` event. No silent pack upgrades.
-- **Q-O. Pack forking.** Can a bank fork the pack to add a proprietary primitive (e.g. a private internal-credit-rating-based stamp-duty calculation the regulator allows it to self-determine)? Allowed but stigmatised: vendor maintains only the canonical pack; forks are the bank's responsibility; forks are flagged in reporting metadata so regulators can ask about them.
+- **Q-O. Pack overrides for business-unit-specific primitives.** Can a specific business unit within the operating bank define a proprietary primitive override (e.g. a private internal-credit-rating-based stamp-duty calculation the regulator allows the bank to self-determine)? Allowed but discouraged: the engine team maintains only the canonical pack; overrides are owned by the business unit that needs them; overrides are flagged in reporting metadata so regulators can ask about them.
 - **Q-P. Multi-pack composition.** A v5 cross-border product wants PT primitives for withholding (because the holder is PT-resident) but ES primitives for the booking entity. Is the resolution "pick one pack and inline what you need from the other," or "real composition with explicit precedence"? v5 question, but the v1 pack schema should reserve a `primitive_overlays` field (no-op in v1) to avoid painting into a corner.
-- **Q-Q. Pack maintainer SLA.** When a DL ships with 30 days' notice, the vendor needs to publish the updated pack within (say) 14 days. A contractual obligation that needs to live in the vendor's commercial agreements. Currently unmodelled.
+- **Q-Q. Pack-update internal SLA.** When a DL ships with 30 days' notice, the engine team needs to publish the updated pack within (say) 14 days. An internal operational SLA between the engine team and the product organisation, currently unmodelled. Without it, regulatory urgency competes against feature work case-by-case rather than against a named commitment.
 
 ---
 
