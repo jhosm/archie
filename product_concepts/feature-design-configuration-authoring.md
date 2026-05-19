@@ -168,11 +168,15 @@ The agility wedge in [§00-product-vision §2](./00-product-vision.md) is curren
 
 ### 7.1 Engine commitment: zero engine code per variant
 
-> **Adding a new variant to an existing family touches zero lines of engine code. New families touch only schema and pack-binding code, never engine primitives.**
+> **Adding a new variant to an existing family touches zero lines of engine code. Adding a new family is contained work in a known artefact set — new primitives, family schema, pack bindings, and sometimes lifecycle or event types — on the months-cadence engine release track, never scattered across the engine.**
 
-Trivially testable: a new variant PR that modifies any file under the engine's `src/` (or equivalent) directory has failed the test. The PR description should explicitly disclose whether the variant required new primitives; if it did, the work is structurally a family-schema or pack change, not a variant change, and should be split into separate PRs.
+The variant claim is the falsifiable one. Trivially testable: a new variant PR that modifies any file under the engine's `src/` (or equivalent) directory has failed the test. The PR description should explicitly disclose whether the variant required new primitives; if it did, the work is structurally a family-schema or pack change, not a variant change, and should be split into separate PRs.
 
-The diagnostic value: a variant that "needs" engine code reveals a primitive gap (which is a planned, quarterly-cadence change) or a misuse of the variant layer (which is a workflow problem). Either way, the gap surfaces at PR review, not silently absorbed into the wedge as "well, it's still a configuration change at heart."
+The family claim is a *containment* claim, not an absence claim. A new family typically does require new engine primitives — personal credit (v2) needs amortisation schedulers and a TAEG/IRR solver; mortgage (v3) needs variable-rate revision and composite-case primitives like *carência* and *prestações extraordinárias*; current accounts and cards (v4) need an entirely different operating mode (irregular accrual, continuous-state subledger, revolving-credit math). Each of those is real engine code on the months cadence. What the claim guarantees is that the new code is *contained*: a new family lands as a defined set of primitives + a family schema + pack bindings + (sometimes) new lifecycle states and event types — not as edits scattered across the existing engine. The wedge is not "families are free"; it is "family work is bounded, named, and on a slow cadence, so variant work on top of a finished family stays cheap."
+
+The diagnostic value of separating the two: a variant that "needs" engine code reveals a primitive gap (which is a planned, slow-cadence family change) or a misuse of the variant layer (which is a workflow problem). A family that needs engine changes *outside* the contained artefact set (a primitive added under the wrong subsystem, a lifecycle hook bolted onto the runtime instead of the schema) reveals a leaky abstraction. Both surface at PR review, not silently absorbed into the wedge as "well, it's still a configuration change at heart."
+
+The wedge ultimately rests on **cadence separation**, not on the absence of work. Primitives move on months; family schemas move on quarters; variants move on weeks. Variant cadence stays fast because the slower layers stay slower — not because nothing happens at the slower layers.
 
 ### 7.2 Organisational commitment: 5 working days end-to-end
 
