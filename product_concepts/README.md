@@ -29,3 +29,4 @@ The series is short by design: a vision one-pager, an architectural thesis, a co
 | File | What It Covers |
 |---|---|
 | [feature-design-configuration-surface](./feature-design-configuration-surface.md) | Deepens §01 §2 and §01 §4: rate sheets as a price layer separate from product structure, and the pack vocabulary (T1) as a typed jurisdiction-scoped vocabulary. Resolves two sub-questions of Open Question 8 and opens nine new ones. |
+| [feature-design-configuration-authoring](./feature-design-configuration-authoring.md) | Deepens §01 §2 from the authoring angle: the three authoring layers (engine primitives, family schemas, variants), the variant authoring/review workflow, the validator's five depths, schema-version pinning parallel to pack pinning, and the falsifiable agility wedge (zero engine code per variant; ≤ 5 working days PM commit to production). Opens six new questions (Q-R through Q-W). |
