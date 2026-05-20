@@ -10,7 +10,7 @@
 
 ## 1. Frame: One Configuration Surface, Three Artefact Families
 
-[§01-product-architecture §3](./01-product-architecture.md) commits to a configuration surface that is declarative, synchronously validated, and safe-by-default, and names three artefact families with distinct cadences and approvers. This document specifies the artefact families in detail — the rate-sheet split (§2) and the pack vocabulary (§3).
+[01 §3](./01-product-architecture.md) commits to a configuration surface that is declarative, synchronously validated, and safe-by-default, and names three artefact families with distinct cadences and approvers. This document specifies the artefact families in detail — the rate-sheet split (§2) and the pack vocabulary (§3).
 
 The three artefact families, with their cadences, approvers, and lifecycle semantics:
 
@@ -30,14 +30,14 @@ Treating these as one artefact family is the single largest configuration-surfac
 
 ### 2.1 Premise
 
-In the v1 scope ([§02-v1-scope](./02-v1-scope-term-deposits.md)), depósito a prazo has at least these properties that change on different timescales:
+In the v1 scope ([02](./02-v1-scope-term-deposits.md)), depósito a prazo has at least these properties that change on different timescales:
 
 - **Cash-flow shape** (juros à cabeça vs juros no vencimento vs juros trimestrais): changes when a new variant is designed. Months.
 - **Day-count and compounding**: changes when the regulatory pack changes. Years.
 - **Withholding mechanics**: changes when DL or BdP regulation changes. Years.
 - **TAN values** for each (product variant, principal band, role): changes weekly, sometimes daily during promotional campaigns.
 
-Embedding rate values in the product config means every weekly rate change becomes a product config deploy — the same approval gate as a structural redesign. That collapses the cadence of the cheapest change to the cadence of the most expensive one, and the agility wedge in [§00-product-vision §2](./00-product-vision.md) dies on the first promotional campaign.
+Embedding rate values in the product config means every weekly rate change becomes a product config deploy — the same approval gate as a structural redesign. That collapses the cadence of the cheapest change to the cadence of the most expensive one, and the agility wedge in [00 §2](./00-product-vision.md) dies on the first promotional campaign.
 
 The split: structure lives in the product config, prices live in the rate sheet, both are versioned, both deploy through CI, but they move at different cadences through different approvers.
 
@@ -90,11 +90,11 @@ At `DepositConstituted` (or `CreditConstituted`), the engine resolves the rate b
 
 Every subsequent `InterestAccrued` event references the same `rate_sheet_version_id` so the audit chain is decidable from the event stream alone, with no need to re-resolve.
 
-Storing both is deliberate. The version ID anchors the audit/replay story (the event-sourced model in [§01-product-architecture §2](./01-product-architecture.md) and [feature-design-event-store-projections](./feature-design-event-store-projections.md)); the resolved value answers the day-2 "what rate is this deposit paying?" query without a re-resolution.
+Storing both is deliberate. The version ID anchors the audit/replay story (the event-sourced model in [01 §2](./01-product-architecture.md) and [event-store](./feature-design-event-store-projections.md)); the resolved value answers the day-2 "what rate is this deposit paying?" query without a re-resolution.
 
 ### 2.4 Index sheets — the variable-rate cousin
 
-For variable-rate mortgages (v3 in [03-roadmap](./03-roadmap.md)), the engine needs an external index (Euribor for PT) and reads it at every revision date. Same shape as a rate sheet, different source:
+For variable-rate mortgages (v3 in [03](./03-roadmap.md)), the engine needs an external index (Euribor for PT) and reads it at every revision date. Same shape as a rate sheet, different source:
 
 ```yaml
 index_sheet_id: euribor_2026_05_19
@@ -128,7 +128,7 @@ The two artefacts can deploy in either order, but the engine never accepts a sta
 
 Rate sheets are forward-only and versioned. Once a sheet is published, it is never edited; corrections ship as a new version with a new effective-from. The schema supports sub-second timestamp granularity (rare in retail, common in FX-adjacent products) but allows arbitrarily slow cadence at the other end — a bank that publishes one sheet a year is unusual but not violating the model. Typical PT retail cadence is weekly or biweekly at midnight on a published day. Rollback of a wrong-rate publication uses the same forward-only mechanism plus an out-of-band compensation flow for instances that constituted under the bad sheet (see Q-J below).
 
-Rate sheets apply only to products on the new engine. Term deposits booked through the legacy core during the strangler-fig coexistence ([§02 §3](./02-v1-scope-term-deposits.md)) continue to draw their rates from whatever the legacy core does — the engine's rate-sheet artefacts have no scope over them. The engine and the legacy core never disagree about a rate because they never read from the same source.
+Rate sheets apply only to products on the new engine. Term deposits booked through the legacy core during the strangler-fig coexistence ([02 §3](./02-v1-scope-term-deposits.md)) continue to draw their rates from whatever the legacy core does — the engine's rate-sheet artefacts have no scope over them. The engine and the legacy core never disagree about a rate because they never read from the same source.
 
 ### 2.7 Open questions opened in this thread
 
@@ -143,7 +143,7 @@ Rate sheets apply only to products on the new engine. Term deposits booked throu
 
 ### 3.1 Premise
 
-[§01-product-architecture §5](./01-product-architecture.md) commits to the regulatory pack as "swappable from day one" but does not specify what a pack actually is. The risk in leaving it abstract: engine implementations that promise "swappable pack" routinely arrive at a *de facto* fork (a PT branch, an ES branch) because the abstraction was never load-bearing. This section makes the pack load-bearing.
+[01 §5](./01-product-architecture.md) commits to the regulatory pack as "swappable from day one" but does not specify what a pack actually is. The risk in leaving it abstract: engine implementations that promise "swappable pack" routinely arrive at a *de facto* fork (a PT branch, an ES branch) because the abstraction was never load-bearing. This section makes the pack load-bearing.
 
 A **pack** is a versioned, jurisdiction-scoped vocabulary of *primitives*, *parameters*, and *reporting hooks*. It is declarative data, not executable code. The engine ships the executable primitives; the pack binds them to a jurisdiction.
 

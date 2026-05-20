@@ -10,7 +10,7 @@
 
 ## 1. Frame: Event Store + Projections as the Source of Truth
 
-The engine's source of truth is the **event store**, co-located with the outbox. State is *derived* by deterministic, side-effect-free event handlers. Projections — positions, accrual schedules, maturity calendars, withholding ledgers — are bitemporal tables built from the event store. The CQRS read model ([integration_concepts/03](../integration_concepts/03-cqrs-and-read-models.md)), the GL system, the IFRS 9 system, and the regulatory reporting application are all *consumers* of these projections; none of them is the engine's primary state holder.
+The engine's source of truth is the **event store**, co-located with the outbox. State is *derived* by deterministic, side-effect-free event handlers. Projections — positions, accrual schedules, maturity calendars, withholding ledgers — are bitemporal tables built from the event store. The CQRS read model ([integration_concepts §03](../integration_concepts/03-cqrs-and-read-models.md)), the GL system, the IFRS 9 system, and the regulatory reporting application are all *consumers* of these projections; none of them is the engine's primary state holder.
 
 The four capabilities the engine must support — point-in-time reconstruction, audit trails, counterfactual replay, forward projection — are not properties of a state-holding ledger; they are properties of an event-sourced model with derived projections. The event-sourced shape is not a design choice but a consequence of those capabilities being mandatory, which is why [Open Question 3 (Time-Travel)](./04-open-questions.md) closed as resolved.
 
@@ -42,7 +42,7 @@ Recasting them as architectural requirements rather than deferred decisions clar
 
 ## 3. Engine vs Family Separation
 
-The unification thesis in [§01-product-architecture §1](./01-product-architecture.md) holds only if the engine code is genuinely generic — i.e. does not know what a "deposit" or "credit" or "mortgage" is. Without that separation, "one engine, many families" silently becomes "one engine plus a lot of family-conditional code in the engine," and the unification is a label, not a structure.
+The unification thesis in [01 §1](./01-product-architecture.md) holds only if the engine code is genuinely generic — i.e. does not know what a "deposit" or "credit" or "mortgage" is. Without that separation, "one engine, many families" silently becomes "one engine plus a lot of family-conditional code in the engine," and the unification is a label, not a structure.
 
 The separation, made explicit:
 
@@ -50,9 +50,9 @@ The separation, made explicit:
 |---|---|---|
 | **Engine** | Event store, outbox, handler dispatch, projection runtime, validator runtime, snapshot machinery, cross-cutting generic event types ([§4.1](#41-cross-cutting-generic-events-engine-declared)), the family-schema loading mechanism | Nothing family-specific. The engine does not know what a deposit is. |
 | **Family schema** | Family-specific event types, event handlers (pure functions), family-specific projections, lifecycle state machine, pack-binding declarations | The engine's interfaces only — not the engine's internals. |
-| **Pack** | Jurisdiction-specific primitives and parameters (see [feature-design-configuration-surface §3](./feature-design-configuration-surface.md)) | The engine's primitive interface only. |
+| **Pack** | Jurisdiction-specific primitives and parameters (see [surface §3](./feature-design-configuration-surface.md)) | The engine's primitive interface only. |
 
-The line between engine and family schema is the load-bearing one. The engine is a small, stable runtime. Family schemas are the variable part. Adding a new family is a new schema; the engine code does not change. This is what makes the engine commitment from [feature-design-configuration-authoring §7.1](./feature-design-configuration-authoring.md) — *zero engine code per new variant; contained engine code per new family* — testable rather than aspirational.
+The line between engine and family schema is the load-bearing one. The engine is a small, stable runtime. Family schemas are the variable part. Adding a new family is a new schema; the engine code does not change. This is what makes the engine commitment from [authoring §7.1](./feature-design-configuration-authoring.md) — *zero engine code per new variant; contained engine code per new family* — testable rather than aspirational.
 
 A concrete consequence: when a developer working on a new family writes a new event handler, that handler lives in the family schema's source tree, not in the engine's. The engine's handler dispatch runtime *loads* handlers from family schemas at startup; it does not contain handlers itself. A handler that references engine internals is an architectural violation visible at PR review.
 
@@ -78,9 +78,9 @@ Events that apply to any instance regardless of family. The engine declares thes
 
 | Event | Trigger | Carries |
 |---|---|---|
-| `PackVersionMigrated` | Operator-initiated retroactive pack migration per [feature-design-configuration-surface §3.6](./feature-design-configuration-surface.md) | `instance_id`, `from_pack_version`, `to_pack_version`, `migration_id`, `operator_actor` |
-| `SchemaVersionMigrated` | Operator-initiated family-schema migration per [feature-design-configuration-authoring §6](./feature-design-configuration-authoring.md) | `instance_id`, `from_schema_version`, `to_schema_version`, `migration_id`, `operator_actor` |
-| `LegacyInstanceObserved` | Daily batch arrives from legacy DDA (per [feature-design-strangler-fig-coexistence §5](./feature-design-strangler-fig-coexistence.md)) | `legacy_instance_id`, `observed_at`, `legacy_state_snapshot`, `batch_file_id` |
+| `PackVersionMigrated` | Operator-initiated retroactive pack migration per [surface §3.6](./feature-design-configuration-surface.md) | `instance_id`, `from_pack_version`, `to_pack_version`, `migration_id`, `operator_actor` |
+| `SchemaVersionMigrated` | Operator-initiated family-schema migration per [authoring §6](./feature-design-configuration-authoring.md) | `instance_id`, `from_schema_version`, `to_schema_version`, `migration_id`, `operator_actor` |
+| `LegacyInstanceObserved` | Daily batch arrives from legacy DDA (per [coexistence §5](./feature-design-strangler-fig-coexistence.md)) | `legacy_instance_id`, `observed_at`, `legacy_state_snapshot`, `batch_file_id` |
 | `FundsHeld` | Court order, garnishment, or external hold instruction | `instance_id`, `hold_id`, `held_amount_cents`, `legal_reference`, `hold_expires_at` (optional) |
 | `AccountFrozen` | Compliance hold (fraud, AML, sanctions screening) | `instance_id`, `freeze_id`, `freeze_reason`, `compliance_actor`, `freeze_expires_at` (optional) |
 
@@ -90,7 +90,7 @@ These five exist because they describe *operational realities* that span every p
 
 Events that describe family-specific lifecycle transitions. Declared in family schemas; handlers also in family schemas. The engine dispatches by event type but knows nothing about the semantics.
 
-The current v1 catalogue in [§02-v1-scope §2.4](./02-v1-scope-term-deposits.md) declares 8 deposit events: `DepositConstituted`, `DepositConstitutionFailed`, `InterestAccrued`, `WithholdingApplied`, `InterestPaid`, `DepositMatured`, `DepositRenewed`, `DepositTerminatedEarly`. These are happy-path events. Under event sourcing, the catalogue must also cover operationally inevitable events or the audit trail will have gaps. Three additions for v1:
+The current v1 catalogue in [02 §2.4](./02-v1-scope-term-deposits.md) declares 8 deposit events: `DepositConstituted`, `DepositConstitutionFailed`, `InterestAccrued`, `WithholdingApplied`, `InterestPaid`, `DepositMatured`, `DepositRenewed`, `DepositTerminatedEarly`. These are happy-path events. Under event sourcing, the catalogue must also cover operationally inevitable events or the audit trail will have gaps. Three additions for v1:
 
 | Event | Why it must exist | Carries |
 |---|---|---|
@@ -159,7 +159,7 @@ Once an event with `event_schema_version: N` is written, that schema must remain
 - **Removing fields is never silent**. A field deprecated in schema version N+1 is still present in the schema and still parseable from old events; the new handler may ignore it, but the data does not disappear.
 - **Renaming and re-typing require an explicit migration step** — a new event type, not a new version of the old one. The engine carries both event types in parallel until all instances pinned to old schemas have matured.
 
-This is the same disclosure as pack pinning ([feature-design-configuration-surface §3.5](./feature-design-configuration-surface.md)) and schema pinning ([feature-design-configuration-authoring §6](./feature-design-configuration-authoring.md)), specialised to event payloads.
+This is the same disclosure as pack pinning ([surface §3.5](./feature-design-configuration-surface.md)) and schema pinning ([authoring §6](./feature-design-configuration-authoring.md)), specialised to event payloads.
 
 ---
 
@@ -217,13 +217,13 @@ The cadence is monthly for v1, quarterly once the engine stabilises. The drill e
 Every downstream system that derives state from engine events is a consumer subject to reconciliation:
 
 - The engine's own projection runtime (positions, accrual schedules, withholding ledger, maturity calendar)
-- The CQRS read model ([integration_concepts/03](../integration_concepts/03-cqrs-and-read-models.md))
+- The CQRS read model ([integration_concepts §03](../integration_concepts/03-cqrs-and-read-models.md))
 - The GL system (see §9)
 - The IFRS 9 system
 - The regulatory reporting application
 - Any analytics / BI consumer of the event stream
 
-Each consumer agrees with the engine on a reconciliation contract (which checksums it publishes, which event-count it reports, how full rebuilds are coordinated). The contracts are part of the event catalogue's governance ([integration_concepts/08](../integration_concepts/08-event-catalog-governance.md)).
+Each consumer agrees with the engine on a reconciliation contract (which checksums it publishes, which event-count it reports, how full rebuilds are coordinated). The contracts are part of the event catalogue's governance ([integration_concepts §08](../integration_concepts/08-event-catalog-governance.md)).
 
 ---
 
@@ -263,7 +263,7 @@ Snapshots that pass these checks for six months become trusted enough to use in 
 
 ## 9. GL Coupling and Downstream Integration
 
-The brief says ([§00-product-vision §4](./00-product-vision.md)) the engine emits signals; the GL consumes them. This document commits to the specific shape of that coupling.
+The brief says ([00 §4](./00-product-vision.md)) the engine emits signals; the GL consumes them. This document commits to the specific shape of that coupling.
 
 ### 9.1 Engine emits raw business events; downstream systems map
 
@@ -315,5 +315,5 @@ Snapshots accelerate replay; they do not replace the event log. §8 captures thi
 
 ### 10.6 Synthetic load testing with v4-scale traffic in v1
 
-This connects to [feature-design-two-modes-asymmetry](./feature-design-two-modes-asymmetry.md). Even though v1's family (term deposits) generates ~12M events/year, the engine's event store and replay infrastructure must be load-tested against synthetic v4-scale traffic (~100M-600M events/year, sustained 100s TPS, bursts to 1000s) during v1 development. The point is to surface event-store and projection-runtime bottlenecks while v1 is still malleable, not after v4 commitment hardens.
+This connects to [two-modes](./feature-design-two-modes-asymmetry.md). Even though v1's family (term deposits) generates ~12M events/year, the engine's event store and replay infrastructure must be load-tested against synthetic v4-scale traffic (~100M-600M events/year, sustained 100s TPS, bursts to 1000s) during v1 development. The point is to surface event-store and projection-runtime bottlenecks while v1 is still malleable, not after v4 commitment hardens.
 

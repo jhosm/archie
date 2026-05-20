@@ -10,7 +10,7 @@
 
 ## 1. Frame: Coexistence Is a Period, Not a Steady State
 
-The strangler-fig motion in [§00-product-vision §5](./00-product-vision.md) and [§01-product-architecture §6](./01-product-architecture.md) commits to coexistence as a **multi-year period** with start, middle, and end phases — not a steady-state property the engine has. This document specifies the period: three phases with distinct risks, distinct operational shape, and distinct exit criteria; seven dimensions of dual operation; the system-of-record map; the legacy emission shape; the unified read surface; reconciliation; regulatory reporting; the SoR-transition event chain; cutover mechanics; and the end state.
+The strangler-fig motion in [00 §5](./00-product-vision.md) and [01 §6](./01-product-architecture.md) commits to coexistence as a **multi-year period** with start, middle, and end phases — not a steady-state property the engine has. This document specifies the period: three phases with distinct risks, distinct operational shape, and distinct exit criteria; seven dimensions of dual operation; the system-of-record map; the legacy emission shape; the unified read surface; reconciliation; regulatory reporting; the SoR-transition event chain; cutover mechanics; and the end state.
 
 Three phases, each load-bearing on different things:
 
@@ -22,7 +22,7 @@ Three phases, each load-bearing on different things:
 
 Each phase has a different operational profile. Cutover is high-attention, short-duration, fully-staffed. The middle phase is the long tail where attention naturally drops but where most of the operational risk accrues. The end is short again but requires a deliberate trigger that someone has to pull.
 
-[§01-product-architecture §6](./01-product-architecture.md) commits to three coexistence properties of the integration seam (per-product-line onboarding, API coexistence, event-contract reactivity). This document specifies how the period itself is operated underneath those properties.
+[01 §6](./01-product-architecture.md) commits to three coexistence properties of the integration seam (per-product-line onboarding, API coexistence, event-contract reactivity). This document specifies how the period itself is operated underneath those properties.
 
 ---
 
@@ -48,7 +48,7 @@ The seven dimensions are not independent. Settlement plumbing and reconciliation
 
 ## 3. The System-of-Record Map
 
-At any moment during the coexistence period, every product instance is owned by exactly one system. The engine owns its instances; the legacy core owns its instances; no instance has two SoRs. This is the property that prevents split-brain ledgers — the failure mode that the [§04 §5 (Operational SLA Calibration for Reconciliation)](./04-open-questions.md) question was originally about under its earlier "Split-Brain Reconciliation" framing.
+At any moment during the coexistence period, every product instance is owned by exactly one system. The engine owns its instances; the legacy core owns its instances; no instance has two SoRs. This is the property that prevents split-brain ledgers — the failure mode that [04 §5](./04-open-questions.md) was originally about under its earlier "Split-Brain Reconciliation" framing.
 
 ### 3.1 The rule for term deposits (v1)
 
@@ -74,7 +74,7 @@ The asymmetry between with-a-plan and irregular families is load-bearing for the
 
 ### 3.3 What the engine commits to per-instance
 
-Every instance the engine constitutes carries, in addition to the envelope fields from [feature-design-event-store-projections §4.3](./feature-design-event-store-projections.md):
+Every instance the engine constitutes carries, in addition to the envelope fields from [event-store §4.3](./feature-design-event-store-projections.md):
 
 - `sor: engine` — set at constitution, never changes.
 - `originating_legacy_id` (optional) — present when the engine instance was created by renewal of a legacy instance (see §9). Carries the legacy instance's identifier so the audit chain reaches across the SoR transition.
@@ -86,7 +86,7 @@ Legacy instances carry no engine-side marker; the engine simply does not know ab
 
 ## 4. Settlement Plumbing
 
-The engine debits and credits customer current accounts on the legacy core throughout the coexistence period. This is already covered by [integration_concepts/02 (Anti-Corruption Layer)](../integration_concepts/02-anti-corruption-layer.md) and applied in [§02-v1-scope §3](./02-v1-scope-term-deposits.md); the coexistence framing does not change any of it. This section exists to name the dependency, not to redefine the mechanism.
+The engine debits and credits customer current accounts on the legacy core throughout the coexistence period. This is already covered by [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md) and applied in [02 §3](./02-v1-scope-term-deposits.md); the coexistence framing does not change any of it. This section exists to name the dependency, not to redefine the mechanism.
 
 The settlement events that flow through the ACL during coexistence:
 
@@ -98,7 +98,7 @@ The settlement events that flow through the ACL during coexistence:
 | `DepositTerminatedEarly` | Credit (principal − penalty) + net accrued interest to depositor's current account on legacy |
 | `DepositPartiallyWithdrawn` | Credit withdrawn principal + net accrued interest (on the withdrawn portion) to depositor's current account on legacy |
 
-Each of these triggers an ACL call. The ACL handles the seven responsibilities from [integration_concepts/02](../integration_concepts/02-anti-corruption-layer.md) (semantic translation, protocol translation, idempotency, ID mapping, error translation, latency adaptation, periodic reconciliation), including the indeterminate-state problem that is the heart of the split-brain risk.
+Each of these triggers an ACL call. The ACL handles the seven responsibilities from [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md) (semantic translation, protocol translation, idempotency, ID mapping, error translation, latency adaptation, periodic reconciliation), including the indeterminate-state problem that is the heart of the split-brain risk.
 
 The settlement direction is asymmetric. The engine emits commands toward legacy via the ACL (engine → legacy). Legacy emits *facts* toward the engine via the daily batch file (legacy → engine, §5). There is no bidirectional command channel; legacy never commands the engine. This asymmetry is what makes the coexistence tractable — the engine is a strangler-fig consumer of legacy data and an active driver of legacy state changes, but not a participant in legacy's own command paths.
 
@@ -127,14 +127,14 @@ The cost is latency. The unified read surface (§6) and the reconciliation proce
 A daily batch file is a flat-format extract (CSV, fixed-width, or whatever the bank's legacy core natively produces) covering the day's facts for product families the engine cares about. For v1, that scope is term deposits on legacy. Per-record fields, at minimum:
 
 - `legacy_instance_id` — legacy's identifier for the instance.
-- `fact_kind` — one of: `constituted`, `interest_accrued`, `interest_paid`, `matured`, `terminated_early`, `partially_withdrawn`, `corrected`, `transferred_to_heirs`. Maps onto the family-specific events the engine declares in [feature-design-event-store-projections §4.2](./feature-design-event-store-projections.md) and [§02-v1-scope §2.4](./02-v1-scope-term-deposits.md).
+- `fact_kind` — one of: `constituted`, `interest_accrued`, `interest_paid`, `matured`, `terminated_early`, `partially_withdrawn`, `corrected`, `transferred_to_heirs`. Maps onto the family-specific events the engine declares in [event-store §4.2](./feature-design-event-store-projections.md) and [02 §2.4](./02-v1-scope-term-deposits.md).
 - `fact_date` — when the fact occurred in legacy's books.
 - `legacy_state_snapshot` — the legacy instance's state after the fact (principal, accrued interest, withholding to date, lifecycle state).
 - Family-specific payload (principal cents, rate, term, maturity date, etc.) per fact kind.
 
 Crucially: the batch file is **not** the engine's event store. The engine does not commit batch-file records to its event log as native events. Instead, the engine emits a single cross-cutting event per ingested record:
 
-- `LegacyInstanceObserved` (cross-cutting, engine-declared, defined in [feature-design-event-store-projections §4.1](./feature-design-event-store-projections.md)). Payload: `legacy_instance_id`, `observed_at`, `legacy_state_snapshot`, `batch_file_id`, plus the `fact_kind` and family-specific data lifted from the batch record.
+- `LegacyInstanceObserved` (cross-cutting, engine-declared, defined in [event-store §4.1](./feature-design-event-store-projections.md)). Payload: `legacy_instance_id`, `observed_at`, `legacy_state_snapshot`, `batch_file_id`, plus the `fact_kind` and family-specific data lifted from the batch record.
 
 The semantic separation matters. `LegacyInstanceObserved` says "we observed that legacy reports this fact"; it is the engine's truthful record of *what legacy told us*. It is not "the fact is true in our domain"; legacy retains SoR for the instance, and the engine's view is a derived projection. When the fact's instance later migrates to the engine via renewal (§9), the engine emits its own native family-specific event (`DepositConstituted`) and the chain of `LegacyInstanceObserved` events stays as the audit trail of the legacy lifetime.
 
@@ -154,7 +154,7 @@ The detailed shape of this contract — exact format, exact cutoffs, exact dedup
 
 ## 6. The Unified Read Surface
 
-[§01-product-architecture §6](./01-product-architecture.md) names a unified read surface as one of the three coexistence properties. [integration_concepts/03 (CQRS and Read Models)](../integration_concepts/03-cqrs-and-read-models.md) covers the read-model pattern in general. This section specifies how the read model handles **two sources with different staleness profiles** — the case that integration_concepts/03 does not address explicitly.
+[01 §6](./01-product-architecture.md) names a unified read surface as one of the three coexistence properties. [integration_concepts §03](../integration_concepts/03-cqrs-and-read-models.md) covers the read-model pattern in general. This section specifies how the read model handles **two sources with different staleness profiles** — the case integration_concepts §03 does not address explicitly.
 
 ### 6.1 Two sources, two staleness profiles
 
@@ -165,7 +165,7 @@ The unified read surface ingests from two sources:
 | **Engine** | Real-time event stream (Redpanda) via the CQRS projector | Seconds | Eventually consistent, near-real-time |
 | **Legacy** | Daily batch file via ACL ingestion | Up to 24 hours | Eventually consistent, daily |
 
-The read model's projector is the same regardless of source — it is the [integration_concepts/03](../integration_concepts/03-cqrs-and-read-models.md) projector consuming the engine's event stream — but the events arriving from legacy via `LegacyInstanceObserved` carry a 24-hour staleness profile that the events native to the engine do not.
+The read model's projector is the same regardless of source — it is the [integration_concepts §03](../integration_concepts/03-cqrs-and-read-models.md) projector consuming the engine's event stream — but the events arriving from legacy via `LegacyInstanceObserved` carry a 24-hour staleness profile that the events native to the engine do not.
 
 ### 6.2 Per-row staleness in the read model
 
@@ -188,7 +188,7 @@ Channels reading the projection can ask the projection itself "how fresh is this
 
 The `as_of` is the **engine's transaction time** for the row — when the engine learned the fact. For engine-sourced rows it matches the originating event's transaction_time; for legacy-sourced rows it is the engine's ingestion timestamp of the batch file, which lags legacy's `fact_date` by up to 24 hours.
 
-This pairs with the bitemporal projection capability from [feature-design-event-store-projections §6](./feature-design-event-store-projections.md). For legacy-sourced rows, the bitemporal pair is *(valid_time = fact_date, transaction_time = ingestion_time)*. The 24-hour gap between the two is observable, not hidden.
+This pairs with the bitemporal projection capability from [event-store §6](./feature-design-event-store-projections.md). For legacy-sourced rows, the bitemporal pair is *(valid_time = fact_date, transaction_time = ingestion_time)*. The 24-hour gap between the two is observable, not hidden.
 
 ### 6.3 Channel implications
 
@@ -224,7 +224,7 @@ The decision is deferred as [Q-AI in 04-open-questions](./04-open-questions.md).
 
 ## 7. Reconciliation
 
-Reconciliation is the operational check that prevents split-brain ledgers. [§04-open-questions §5](./04-open-questions.md) was originally about reconciliation; this section gives the architectural answer, leaving only the operational SLA calibration open.
+Reconciliation is the operational check that prevents split-brain ledgers. [04 §5](./04-open-questions.md) was originally about reconciliation; this section gives the architectural answer, leaving only the operational SLA calibration open.
 
 ### 7.1 Three reconciliation flows
 
@@ -234,7 +234,7 @@ Three distinct comparisons happen daily during coexistence. They catch different
 |---|---|---|
 | 1 | **Engine's settlement outbox** (commands sent to legacy via ACL) vs **legacy's incoming credit/debit journal** for the day | The engine sent a settlement that legacy didn't book (or vice versa); ACL idempotency failure |
 | 2 | **Engine's view of legacy instances** (rows in the read model with `sor: legacy`) vs **legacy's current state** as reported in today's batch file | Engine missed a legacy event (ingestion failure); engine has a stale view of a legacy instance |
-| 3 | **Engine's instances on the engine** (rows in the read model with `sor: engine`) vs **engine's own event store** rebuilt projection | Internal engine drift; covered fully by [feature-design-event-store-projections §7](./feature-design-event-store-projections.md) (this section just names it for completeness) |
+| 3 | **Engine's instances on the engine** (rows in the read model with `sor: engine`) vs **engine's own event store** rebuilt projection | Internal engine drift; covered fully by [event-store §7](./feature-design-event-store-projections.md) (this section just names it for completeness) |
 
 Flow 1 is the split-brain check. Flow 2 is the staleness/completeness check. Flow 3 is the engine-internal check.
 
@@ -264,7 +264,7 @@ Flow 2's alert thresholds are also covered by [Q-AG in 04-open-questions](./04-o
 
 All three flows run daily at the same end-of-day window. The runtime is a separate reconciliation job, not part of the engine's normal projection runtime. The job emits a daily reconciliation report — a structured record per day per flow, with counts of matches and mismatches and pointers to specific records on either side.
 
-Ownership of the report sits with the operating bank's operations function, not the engine team. The engine team owns the *runtime* of the reconciliation job; the operations team owns the *interpretation* of the report and the decision tree for what to do when a mismatch is flagged. The boundary is the same as the boundary for any other periodic-reconciliation responsibility in [integration_concepts/02 §7](../integration_concepts/02-anti-corruption-layer.md).
+Ownership of the report sits with the operating bank's operations function, not the engine team. The engine team owns the *runtime* of the reconciliation job; the operations team owns the *interpretation* of the report and the decision tree for what to do when a mismatch is flagged. The boundary is the same as the boundary for any other periodic-reconciliation responsibility in [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md) §7.
 
 ---
 
@@ -274,11 +274,11 @@ The second decision committed in this document: **regulatory reporting aggregate
 
 ### 8.1 The reporting application as a named downstream system
 
-The reporting application is already referenced in [§02-v1-scope §2.2](./02-v1-scope-term-deposits.md) ("The reports themselves are built by a downstream reporting application") but the brief is currently silent on its identity. This document commits to naming it: **the reporting application is a downstream system in the bank's estate, separate from the engine and separate from legacy, that consumes events from both and produces regulatory returns.** It is not part of the engine product. Its ownership and scope are tracked as an open question ([Q-AE in 04-open-questions](./04-open-questions.md)) because it is genuinely ambiguous whether the operating bank already has such a system or whether it has to be built.
+The reporting application is already referenced in [02 §2.2](./02-v1-scope-term-deposits.md) ("The reports themselves are built by a downstream reporting application") but the brief is currently silent on its identity. This document commits to naming it: **the reporting application is a downstream system in the bank's estate, separate from the engine and separate from legacy, that consumes events from both and produces regulatory returns.** It is not part of the engine product. Its ownership and scope are tracked as an open question ([Q-AE](./04-open-questions.md)) because it is genuinely ambiguous whether the operating bank already has such a system or whether it has to be built.
 
 The architectural commitment is **the engine never reads legacy data directly to produce regulatory output.** The engine emits its events; legacy emits its facts via the batch file (re-projected by the reporting application from the same source the engine consumes, or by another downstream consumer). The reporting application aggregates the two streams into the returns. The engine remains ignorant of legacy's data shape; legacy remains ignorant of the engine's data shape; the reporting application is where the cross-system aggregation lives.
 
-This commitment is what keeps the engine's data model free of legacy concerns. An engine that has to read legacy data to compute a BdP return has effectively been forked into a hybrid system; the wedge ([§00-product-vision §2](./00-product-vision.md)) is dead the moment that happens.
+This commitment is what keeps the engine's data model free of legacy concerns. An engine that has to read legacy data to compute a BdP return has effectively been forked into a hybrid system; the wedge ([00 §2](./00-product-vision.md)) is dead the moment that happens.
 
 ### 8.2 The three returns in v1 scope
 
@@ -286,7 +286,7 @@ Three returns matter for the v1 term-deposit period:
 
 | Return | Cadence | Cross-system aggregation needed | Per-instance signal source |
 |---|---|---|---|
-| **BdP retail-deposit interest-rate statistics** (`bdp_estatisticas_taxas_juro` per [feature-design-configuration-surface §3.3](./feature-design-configuration-surface.md)) | Monthly | Yes — totals span engine and legacy | Engine: `DepositConstituted` events; Legacy: `constituted` facts in batch file |
+| **BdP retail-deposit interest-rate statistics** (`bdp_estatisticas_taxas_juro` per [surface §3.3](./feature-design-configuration-surface.md)) | Monthly | Yes — totals span engine and legacy | Engine: `DepositConstituted` events; Legacy: `constituted` facts in batch file |
 | **FGD (Fundo de Garantia de Depósitos) coverage report** | Annual + on-demand | Yes — per-customer aggregates span engine and legacy current accounts | Engine: `DepositConstituted` + `DepositMatured` + `DepositTerminatedEarly` running totals; Legacy: per-customer balance from batch file |
 | **IRS Modelo 39 (withholding declaration)** | Annual | Yes — per-customer withholding aggregates span both | Engine: `WithholdingApplied` events; Legacy: `interest_paid` facts in batch file with withholding line |
 
@@ -294,7 +294,7 @@ Each return is the reporting application's responsibility. The engine guarantees
 
 ### 8.3 What this means for the engine's signal contract
 
-The pack-defined reporting hooks from [feature-design-configuration-surface §3.3](./feature-design-configuration-surface.md) (`bdp_estatisticas_taxas_juro`, `modelo_39`) describe the engine's side of the contract: the signals are present in the engine's event stream, computed under the pinned pack version, timely to the reporting application's ingestion cutoffs.
+The pack-defined reporting hooks from [surface §3.3](./feature-design-configuration-surface.md) (`bdp_estatisticas_taxas_juro`, `modelo_39`) describe the engine's side of the contract: the signals are present in the engine's event stream, computed under the pinned pack version, timely to the reporting application's ingestion cutoffs.
 
 The reporting application's side of the contract — how it consumes events, how it aggregates with legacy data, how it formats the actual return for submission — is out of scope for the engine's product brief. It is the reporting application's product brief.
 
@@ -320,7 +320,7 @@ When a legacy term deposit reaches its maturity date with an `auto_renewal_polic
 
 1. **Legacy matures the instance.** Legacy's batch file for the day includes a record: `legacy_instance_id`, `fact_kind: matured`, `fact_date`, `legacy_state_snapshot` showing final principal and final net interest.
 2. **Engine ingests the batch file.** The engine's ACL parses the record and emits a `LegacyInstanceObserved` event with `event_id: <uuid_1>`.
-3. **Engine evaluates the renewal policy.** The renewal policy (`SAME_TERM_CURRENT_RATE` or `SAME_TERM_SAME_RATE` per [§02-v1-scope §2.4](./02-v1-scope-term-deposits.md)) is encoded in the legacy state snapshot. The engine applies the current rate sheet ([feature-design-configuration-surface §2](./feature-design-configuration-surface.md)) — the same rate sheet a customer would get for a new constitution — and computes the new deposit's terms.
+3. **Engine evaluates the renewal policy.** The renewal policy (`SAME_TERM_CURRENT_RATE` or `SAME_TERM_SAME_RATE` per [02 §2.4](./02-v1-scope-term-deposits.md)) is encoded in the legacy state snapshot. The engine applies the current rate sheet ([surface §2](./feature-design-configuration-surface.md)) — the same rate sheet a customer would get for a new constitution — and computes the new deposit's terms.
 4. **Engine constitutes the new instance.** The engine emits `DepositConstituted` (family-specific) with `event_id: <uuid_2>`, `instance_id: <new_engine_uuid>`, `causation_id: <uuid_1>` (the `LegacyInstanceObserved` event from step 2), `originating_legacy_id: <legacy_instance_id>`, `pack_version` and `schema_version` pinned to the current versions.
 5. **Engine debits the customer's current account on legacy for the new principal** (which is identical to the legacy instance's matured principal, possibly plus the net interest the customer chose to roll over).
 
@@ -330,7 +330,7 @@ The causation chain is decidable from the event log alone: starting from the eng
 
 The brainstorm-decided consequence: **the bulk of the legacy term-deposit book migrates to the engine within one auto-renewal cycle (3–24 months for typical PT term deposits), not over the full 5-year maturity tail.** Only deposits with `auto_renewal_policy: NONE` stay on legacy until full maturity. This compresses the middle phase materially — coexistence for term deposits is roughly the duration of the longest popular renewal cycle, not the duration of the longest popular term.
 
-This is a planning-relevant fact. The roadmap ([03-roadmap](./03-roadmap.md)) currently treats term-deposit coexistence as multi-year without naming a horizon; this document gives the horizon a concrete shape: most of the book is engine-native by the end of the first renewal cycle after cutover, with a long tail of `NONE`-policy deposits aging out over the next 1–5 years.
+This is a planning-relevant fact. The roadmap ([03](./03-roadmap.md)) currently treats term-deposit coexistence as multi-year without naming a horizon; this document gives the horizon a concrete shape: most of the book is engine-native by the end of the first renewal cycle after cutover, with a long tail of `NONE`-policy deposits aging out over the next 1–5 years.
 
 ### 9.3 The cutover-day load risk
 
@@ -342,10 +342,10 @@ The brief currently does not name this risk. The mitigation — a load-smoothing
 
 The chain uses only events already declared in the brief:
 
-- `LegacyInstanceObserved` — cross-cutting, declared by the engine in [feature-design-event-store-projections §4.1](./feature-design-event-store-projections.md).
-- `DepositConstituted` — family-specific, declared by the term-deposit family schema, in the v1 catalogue in [§02-v1-scope §2.4](./02-v1-scope-term-deposits.md).
+- `LegacyInstanceObserved` — cross-cutting, declared by the engine in [event-store §4.1](./feature-design-event-store-projections.md).
+- `DepositConstituted` — family-specific, declared by the term-deposit family schema, in the v1 catalogue in [02 §2.4](./02-v1-scope-term-deposits.md).
 
-The SoR-transition link is carried by `causation_id` and `originating_legacy_id`; no new event type is introduced to represent the transition itself. The transition is the *relationship* between two existing events, not an event in its own right. This keeps the event taxonomy lean and consistent with the engine-vs-family separation from [feature-design-event-store-projections §3](./feature-design-event-store-projections.md).
+The SoR-transition link is carried by `causation_id` and `originating_legacy_id`; no new event type is introduced to represent the transition itself. The transition is the *relationship* between two existing events, not an event in its own right. This keeps the event taxonomy lean and consistent with the engine-vs-family separation from [event-store §3](./feature-design-event-store-projections.md).
 
 ---
 
@@ -403,7 +403,7 @@ The end-state trigger is the architectural answer to "is coexistence over?" When
 
 ### 11.2 The full-bank end state
 
-For the full coexistence period (across all product families introduced in [03-roadmap](./03-roadmap.md)), the end state is when the legacy core is fully decommissioned. That involves:
+For the full coexistence period (across all product families introduced in [03](./03-roadmap.md)), the end state is when the legacy core is fully decommissioned. That involves:
 
 - All product families have migrated to the engine (v1 deposits, v2 credit, v3 mortgage, v4 current accounts and cards).
 - The remaining legacy book has been force-migrated, archived, or otherwise resolved per the per-family end-state rules.

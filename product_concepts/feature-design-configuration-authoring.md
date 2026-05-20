@@ -13,7 +13,7 @@
 
 ## 1. Frame: The Wedge as an Authoring Claim
 
-The agility wedge in [§00-product-vision §2](./00-product-vision.md) and [§01-product-architecture §3](./01-product-architecture.md) commits to "new products are configuration changes, not new modules" and to a configuration surface that is declarative, synchronously validated, and safe-by-default. The brief states the architectural property without specifying the workflow — *who turns what change into a deployable artefact, on what timescale, under what review*. Without that workflow, "configuration change" is a category description, not an operable shape.
+The agility wedge in [00 §2](./00-product-vision.md) and [01 §3](./01-product-architecture.md) commits to "new products are configuration changes, not new modules" and to a configuration surface that is declarative, synchronously validated, and safe-by-default. The brief states the architectural property without specifying the workflow — *who turns what change into a deployable artefact, on what timescale, under what review*. Without that workflow, "configuration change" is a category description, not an operable shape.
 
 The wedge is operable only when three layers exist with three different cadences and three different review postures:
 
@@ -23,7 +23,7 @@ The wedge is operable only when three layers exist with three different cadences
 | **Family schemas** | Typed schemas (e.g. CUE / JSON Schema with a domain layer on top) | Platform engineering + product engineering | Engineering + compliance | Quarterly — a family schema absorbs new shapes as they emerge from variant work |
 | **Variants** | YAML instances of a family schema | Product (PM, business analyst) | Engineer (technical correctness) + automated validator + risk (rate bands, exposure) | Weekly or faster — promotional campaigns and product tweaks live here |
 
-Compliance review sits **upstream** at the primitive and family-schema layers, not at the variant layer. The variant layer carries only the scope that compliance has already pre-approved by signing off on the family schema and the pack ([feature-design-configuration-surface §3](./feature-design-configuration-surface.md)). The validator enforces the pre-approved scope at variant-commit time, so compliance does not need to re-read each variant.
+Compliance review sits **upstream** at the primitive and family-schema layers, not at the variant layer. The variant layer carries only the scope that compliance has already pre-approved by signing off on the family schema and the pack ([surface §3](./feature-design-configuration-surface.md)). The validator enforces the pre-approved scope at variant-commit time, so compliance does not need to re-read each variant.
 
 This is the load-bearing claim: **the cheapest change moves through the cheapest approval**. A weekly variant change does not pay the cost of a quarterly family-schema review, and a family-schema change does not pay the cost of a months-cadence engine change. Embedding any of those costs at a wrong layer collapses the cadence of cheap changes onto the cadence of the most expensive one, and the wedge dies.
 
@@ -35,7 +35,7 @@ This is the load-bearing claim: **the cheapest change moves through the cheapest
 
 Primitives are the executable building blocks: `compute_interest_simple`, `compute_interest_compound_periodic`, `day_count_act_360`, `apply_withholding_percentage`, `schedule_amortisation_price`, and so on. They live in the engine's source tree, are versioned with the engine binary (semver), and ship as part of an engine release.
 
-A new primitive is an engineering change. It carries the full weight of an engineering change: design, implementation, test corpus, code review, regression suite, release notes. A new primitive is rare by design; the v1 PT pack ([feature-design-configuration-surface §3.3](./feature-design-configuration-surface.md)) lists the dozen or so primitives v1 actually exercises, and most subsequent variants compose existing primitives rather than introducing new ones.
+A new primitive is an engineering change. It carries the full weight of an engineering change: design, implementation, test corpus, code review, regression suite, release notes. A new primitive is rare by design; the v1 PT pack ([surface §3.3](./feature-design-configuration-surface.md)) lists the dozen or so primitives v1 actually exercises, and most subsequent variants compose existing primitives rather than introducing new ones.
 
 A primitive is referenced from a pack manifest (`formula_ref: engine.day_count.actual_360`), never from a variant directly. The variant layer never names a primitive; it names a family-schema field that the schema and pack together bind to a primitive.
 
@@ -51,7 +51,7 @@ If schema evolution becomes weekly, something is wrong: either the schema is und
 
 ### 2.3 Variants — YAML instances
 
-A **variant** is a single YAML file: an instance of a family schema, with concrete values for every required field. A 12-month *depósito a prazo* with interest at maturity and a flat TAN is a variant. A 12-month *depósito a prazo* with quarterly interest payments is another variant. A 24-month version of either is another. A new promotional product layered on top of an existing variant (with a different rate-sheet binding only) is, strictly, a new variant — or, equivalently, a rate-sheet change against an existing variant, depending on how the team factors it (see [feature-design-configuration-surface §2](./feature-design-configuration-surface.md) for the rate-sheet split).
+A **variant** is a single YAML file: an instance of a family schema, with concrete values for every required field. A 12-month *depósito a prazo* with interest at maturity and a flat TAN is a variant. A 12-month *depósito a prazo* with quarterly interest payments is another variant. A 24-month version of either is another. A new promotional product layered on top of an existing variant (with a different rate-sheet binding only) is, strictly, a new variant — or, equivalently, a rate-sheet change against an existing variant, depending on how the team factors it (see [surface §2](./feature-design-configuration-surface.md) for the rate-sheet split).
 
 Variants are authored by product — PMs, business analysts, the people who design the product the bank sells. The author writes the YAML; commits it to the configuration repository; opens a pull request. The author does not need to read engine code, does not need to read the pack manifest, and does not need to know which primitive backs `day_count: pt.act_360`. The author needs only the family schema and the pack vocabulary they bind to.
 
@@ -63,7 +63,7 @@ A variant's cadence is **weekly or faster**. The validator and the deployment tr
 
 ### 3.1 Coarse-start, fine-drift
 
-v1 ships one family schema per product family. The `term_deposit` schema covers every shape of term deposit the engine has to handle in v1: interest at maturity, periodic interest, advance interest, flat rate, stepped rate (if v1 stretches into it per [§02 §4](./02-v1-scope-term-deposits.md)). The schema is intentionally **coarse** at start — it carries optional fields and union shapes for variant patterns that are known to exist or expected soon.
+v1 ships one family schema per product family. The `term_deposit` schema covers every shape of term deposit the engine has to handle in v1: interest at maturity, periodic interest, advance interest, flat rate, stepped rate (if v1 stretches into it per [02 §4](./02-v1-scope-term-deposits.md)). The schema is intentionally **coarse** at start — it carries optional fields and union shapes for variant patterns that are known to exist or expected soon.
 
 This is the right starting point. Splitting `term_deposit` into `term_deposit_flat`, `term_deposit_stepped`, `term_deposit_index_linked`, etc., on day one is premature: each split is a real review gate (engineering + compliance) for a distinction that may not be load-bearing yet. Keeping them in one schema lets the variant layer enumerate the shapes that *actually* matter.
 
@@ -127,7 +127,7 @@ The workflow is the wedge made operational. Each step has a named author or revi
 
 **Step 5 — Deployment.** Once approved, the variant merges to the configuration repository's main branch. The deployment train picks it up on its next cycle. The deployment cadence is **weekly or faster**; anything less collapses the variant cadence onto the deployment cadence. A variant marked `effective_from: <future date>` waits for its activation; one marked effective immediately becomes available to constitute against on the first deployment after merge.
 
-Compliance review is **not** in this list. Compliance reviews the family schema and the pack ([feature-design-configuration-surface §3](./feature-design-configuration-surface.md)), upstream of any variant. The variant layer can produce only what the schema and pack permit. Adding a compliance step at the variant layer would re-impose schema-cadence cost on variant work and break the wedge.
+Compliance review is **not** in this list. Compliance reviews the family schema and the pack ([surface §3](./feature-design-configuration-surface.md)), upstream of any variant. The variant layer can produce only what the schema and pack permit. Adding a compliance step at the variant layer would re-impose schema-cadence cost on variant work and break the wedge.
 
 ---
 
@@ -145,7 +145,7 @@ The validator is a single CLI invocation but five logically-distinct checks. The
 
 **Synchronous at commit time: depths 1–4.** All four run on every commit, with the budgets above. Total synchronous validation completes in under 30 seconds; anything slower is a bug. The product team learns at commit time, not on PR merge or on deploy, whether their variant is well-formed.
 
-**Deferred to CI: depth 5.** The simulator runs the full sealed test corpus from [feature-design-configuration-surface §3.9](./feature-design-configuration-surface.md) against the variant. This is the depth that gives multi-year event-sequence confidence; it is also the depth that takes long enough that running it on every commit would tax the developer loop. CI runs depth 5 on every PR before merge; the engineer review (§4 Step 3) sees the result.
+**Deferred to CI: depth 5.** The simulator runs the full sealed test corpus from [surface §3.9](./feature-design-configuration-surface.md) against the variant. This is the depth that gives multi-year event-sequence confidence; it is also the depth that takes long enough that running it on every commit would tax the developer loop. CI runs depth 5 on every PR before merge; the engineer review (§4 Step 3) sees the result.
 
 Depth 1 alone is a syntactic check; depth 5 alone is integration testing. The agility wedge depends on all five being part of the same validator, run from the same CLI, with consistent error messages and a clean separation between "you broke this at commit time, fix it now" (1–4) and "you broke this at PR time, fix it before merge" (5).
 
@@ -153,13 +153,13 @@ Depth 1 alone is a syntactic check; depth 5 alone is integration testing. The ag
 
 ## 6. Schema-Version Pinning
 
-[feature-design-configuration-surface §3.5](./feature-design-configuration-surface.md) commits every constituted instance to **the pack version active at constitution**. The same invariant applies to the family schema: every constituted instance pins to **both the pack version and the family-schema version** active at constitution.
+[surface §3.5](./feature-design-configuration-surface.md) commits every constituted instance to **the pack version active at constitution**. The same invariant applies to the family schema: every constituted instance pins to **both the pack version and the family-schema version** active at constitution.
 
 Concretely, a depósito a prazo constituted on 2026-03-15 carries `pack_version: pt.2026.1` *and* `schema_version: term_deposit@2026.1`. When `term_deposit@2026.3` ships with the split into `term_deposit_flat` and `term_deposit_stepped`, the 2026-03-15 instance keeps running under `term_deposit@2026.1` until it matures. The engine supports both schemas in parallel for as long as in-flight instances reference them.
 
 This is the regulatory and contractual stability guarantee at the schema layer, mirroring the same guarantee at the pack layer. Banks (and their internal auditors) need to be able to answer "what schema and pack governed this instance for its entire life?" The answer is on every instance's `DepositConstituted` event and never moves.
 
-Schema migration, when the bank chooses to consolidate, uses the same explicit, audited shape as pack migration ([feature-design-configuration-surface §3.6](./feature-design-configuration-surface.md)): a `POST /v1/schema-migrations` action with explicit instance filter, an emitted `SchemaVersionMigrated` event per affected instance, and full reversibility-in-principle by replay. Silent global rewrites are not available.
+Schema migration, when the bank chooses to consolidate, uses the same explicit, audited shape as pack migration ([surface §3.6](./feature-design-configuration-surface.md)): a `POST /v1/schema-migrations` action with explicit instance filter, an emitted `SchemaVersionMigrated` event per affected instance, and full reversibility-in-principle by replay. Silent global rewrites are not available.
 
 Schema versioning is the same shape as pack versioning, deliberately. The two could in principle share a versioning mechanism; in practice they are kept separate because they have different owners (engineering owns schemas; the engine team plus internal regulatory counsel own packs) and different cadences (schemas quarterly; packs per regulatory change). Sharing the version space would couple two cadences that should remain independent.
 
@@ -167,7 +167,7 @@ Schema versioning is the same shape as pack versioning, deliberately. The two co
 
 ## 7. The Falsifiable Agility Wedge — Two Claims
 
-The agility wedge in [§00-product-vision §2](./00-product-vision.md) is currently a category statement ("new products are configuration changes, not new modules"). With the authoring workflow above defined, the wedge is restatable as **two falsifiable internal commitments**, each testable, each failure-diagnosable. These are *internal challenge targets*, not external promises — the point is to surface bottlenecks early, not to underwrite a contractual SLA.
+The agility wedge in [00 §2](./00-product-vision.md) is currently a category statement ("new products are configuration changes, not new modules"). With the authoring workflow above defined, the wedge is restatable as **two falsifiable internal commitments**, each testable, each failure-diagnosable. These are *internal challenge targets*, not external promises — the point is to surface bottlenecks early, not to underwrite a contractual SLA.
 
 ### 7.1 Engine commitment: zero engine code per variant
 
@@ -209,7 +209,7 @@ A failure of one does not imply a failure of the other. The team can have a perf
 
 ## 8. Multi-Country Within Two Years — Implication for Roadmap
 
-The brainstorm context for this design notes set the multi-country constraint: **the ES pack must be a concrete artefact within roughly two years of v1**, not a theoretical placeholder that lands after v4. The current [03-roadmap](./03-roadmap.md) sequences v5+ (ES) after v4 (current accounts and cards on PT). Read literally, that puts ES pack work after the entire PT product family set is complete, which is too late.
+The brainstorm context for this design notes set the multi-country constraint: **the ES pack must be a concrete artefact within roughly two years of v1**, not a theoretical placeholder that lands after v4. The current [03](./03-roadmap.md) sequences v5+ (ES) after v4 (current accounts and cards on PT). Read literally, that puts ES pack work after the entire PT product family set is complete, which is too late.
 
 The implication: **pack abstraction work for ES has to overlap v2–v3, not wait until v5**. Specifically:
 
@@ -217,7 +217,7 @@ The implication: **pack abstraction work for ES has to overlap v2–v3, not wait
 - v3 (PT mortgage) is the phase where the pack carries the most surface (DL 74-A/2017, mandatory insurance, variable rate). v3 is where the ES pack catches up, because the test of pack abstraction is whether the most complex surface swaps cleanly.
 - v5+ becomes a *deployment* milestone (turn on ES in the operating bank's stack), not a *design* milestone (start building the ES pack now). The design is already two phases old by then.
 
-The reshape does not change the order of PT product families — v2 and v3 still ship PT-first because the operating bank's volume and regulatory expertise are PT-side. What changes is that **the pack work is treated as a parallel track, not a sequential phase**. A follow-up issue should rewrite [03-roadmap](./03-roadmap.md) to surface this as an explicit parallel track in the phase table.
+The reshape does not change the order of PT product families — v2 and v3 still ship PT-first because the operating bank's volume and regulatory expertise are PT-side. What changes is that **the pack work is treated as a parallel track, not a sequential phase**. A follow-up issue should rewrite [03](./03-roadmap.md) to surface this as an explicit parallel track in the phase table.
 
-The architectural reading is consistent with the brief's "[§01 §5](./01-product-architecture.md) — the pack is swappable from day one." A pack that only ever holds PT can be a *de facto* fork; only a pack that holds two jurisdictions concurrently in active development proves the abstraction is real. The roadmap should reflect that the proof has to land by v3, not deferred to v5.
+The architectural reading is consistent with the brief's "[01 §5](./01-product-architecture.md) — the pack is swappable from day one." A pack that only ever holds PT can be a *de facto* fork; only a pack that holds two jurisdictions concurrently in active development proves the abstraction is real. The roadmap should reflect that the proof has to land by v3, not deferred to v5.
 
