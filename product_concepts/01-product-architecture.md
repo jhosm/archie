@@ -121,7 +121,7 @@ The bank's most valuable asset in this estate is the integration shape — the n
 
 The integration architecture is documented in full in [integration_concepts/](../integration_concepts/00-introduction-and-decisions.md). This section names the seam — where the engine plugs into events, sagas, the ACL, observability, and the MCP surface. The engine honours the architecture; it does not redefine it.
 
-- **Events on Redpanda.** The engine emits and consumes on the bank's event backbone (per [ADR-001](../integration_concepts/adrs/ADR-001-event-backbone-message-broker.md)). The engine has a contract with the broker's interface, not an opinion about the broker.
+- **Event backbone.** The engine emits and consumes on the bank's event backbone (broker chosen in [ADR-001](../integration_concepts/adrs/ADR-001-event-backbone-message-broker.md)). The engine has a contract with the broker's interface, not an opinion about the broker.
 - **Schema format and registry.** Event payloads use the format and registry from [ADR-002](../integration_concepts/adrs/ADR-002-schema-format-and-registry.md). Evolution follows [integration_concepts §09](../integration_concepts/09-long-term-schema-evolution.md).
 - **Saga participation.** The constitution flow of a new product instance touches Core Banking + Compliance + CRM + Workflow + Notifications — a saga, not a request. The orchestrator is from [ADR-003](../integration_concepts/adrs/ADR-003-saga-orchestrator.md); the walkthrough is in [integration_concepts §05](../integration_concepts/05-constitution-saga-walkthrough.md). The engine participates as a saga step (commands + compensations); it does not run the saga.
 - **Outbox emission.** Every state-changing operation produces a domain event; events leave via the outbox pattern (per [ADR-004](../integration_concepts/adrs/ADR-004-outbox-pattern-mechanism.md), [integration_concepts §04](../integration_concepts/04-plumbing-patterns.md)). Exactly-once-effectively semantics. Event store and outbox are co-located so event-append and outbox-write commit atomically.
@@ -131,7 +131,7 @@ The integration architecture is documented in full in [integration_concepts/](..
 
 ### Deployment
 
-Self-hosted in the operating bank's infrastructure (typically private cloud or on-prem Kubernetes). One codebase, one set of images, one configuration grammar, one regulatory pack at a time. Redpanda and the saga orchestrator run in the same topology. Operational tooling (upgrade scripts, backup/restore, on-call runbooks) is part of the deliverable.
+Self-hosted in the operating bank's infrastructure (typically private cloud or on-prem Kubernetes). One codebase, one set of images, one configuration grammar, one regulatory pack at a time. The event backbone and the saga orchestrator run in the same topology. Operational tooling (upgrade scripts, backup/restore, on-call runbooks) is part of the deliverable.
 
 ### Strangler-fig coexistence
 
