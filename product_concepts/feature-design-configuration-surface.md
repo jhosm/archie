@@ -1,18 +1,18 @@
 # Feature Design — Configuration Surface
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §3](./01-product-architecture.md) ("The Configuration Surface") and [§01-product-architecture §5](./01-product-architecture.md) ("The Regulatory Pack") by working through two artefact families that the brief names but does not specify: **rate sheets** (the price layer, separate from product structure) and the **pack vocabulary** (the jurisdiction-scoped vocabulary that configs and rate sheets bind to).
+> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §3](./01-product-architecture.md) ("The Configuration Surface") and [§01-product-architecture §5](./01-product-architecture.md) ("The Regulatory Pack") by specifying two artefact families the brief names but does not detail: **rate sheets** (the price layer, separate from product structure) and the **pack vocabulary** (the jurisdiction-scoped vocabulary that configs and rate sheets bind to).
 >
-> The brief is short by design; this document is the load-bearing detail behind a couple of its load-bearing claims. It does not resolve Q8 (Configurability Depth) in [04-open-questions](./04-open-questions.md) but answers two design questions that any future Q8 resolution will have to live with, and opens nine new questions in their own right.
+> The brief is short by design; this document is the load-bearing detail behind a couple of its load-bearing claims. It does not resolve [Q4 (Configurability Depth)](./04-open-questions.md) but answers two design questions any future Q4 resolution will have to live with.
 >
-> Reading order: skim §1 for the shared frame; read §2 (rate sheets) and §3 (pack vocabulary) on their own merits; §4 collects the consequences for the numbered brief.
+> Reading order: skim §1 for the shared frame; read §2 (rate sheets) and §3 (pack vocabulary) on their own merits.
 
 ---
 
 ## 1. Frame: One Configuration Surface, Three Artefact Families
 
-[§01-product-architecture §3](./01-product-architecture.md) commits to a configuration surface that is declarative, synchronously validated, and safe-by-default. It does not commit to *how many distinct artefacts* the surface is composed of. The implicit reading of the brief is "one artefact per product." That implicit reading does not survive contact with the v1 PT pack.
+[§01-product-architecture §3](./01-product-architecture.md) commits to a configuration surface that is declarative, synchronously validated, and safe-by-default, and names three artefact families with distinct cadences and approvers. This document specifies the artefact families in detail — the rate-sheet split (§2) and the pack vocabulary (§3).
 
-A working configuration surface needs three artefact families, with distinct cadences, approvers, and lifecycle semantics:
+The three artefact families, with their cadences, approvers, and lifecycle semantics:
 
 | Family | What it specifies | Owner | Cadence | Approver shape |
 |---|---|---|---|---|
@@ -90,7 +90,7 @@ At `DepositConstituted` (or `CreditConstituted`), the engine resolves the rate b
 
 Every subsequent `InterestAccrued` event references the same `rate_sheet_version_id` so the audit chain is decidable from the event stream alone, with no need to re-resolve.
 
-Storing both is deliberate. The version ID anchors the audit/replay story ([Open Question 7](./04-open-questions.md)); the resolved value answers the day-2 "what rate is this deposit paying?" query without a re-resolution.
+Storing both is deliberate. The version ID anchors the audit/replay story (the event-sourced model in [§01-product-architecture §2](./01-product-architecture.md) and [feature-design-event-store-projections](./feature-design-event-store-projections.md)); the resolved value answers the day-2 "what rate is this deposit paying?" query without a re-resolution.
 
 ### 2.4 Index sheets — the variable-rate cousin
 
@@ -169,7 +169,7 @@ What v1 ships, by category:
 | Withholding (`withholding.*`) | `irs_juros` | 2800 bps on gross interest at credit time. Exemptions: `pme_leader`, `non_resident_treaty`, `jovens_poupanca`. Reporting hook `modelo_39`. The 28% rate is a pack *parameter*, not an engine constant — rate changes ship as a new pack version, the engine binary does not move. |
 | Stamp duty (`stamp_duty.*`) | `is_credit`, `is_interest` | `is_credit` reserved for v2; `is_interest` relevant for some deposit structures. Reporting hook `dms_at` (declaração mensal de imposto do selo). |
 | Disclosure templates (`disclosure.*`) | `fin`, `fipre`, `fine` | v1 activates `fin` (Ficha de Informação Normalizada for deposits) — required-fields schema in the pack, field-level mapping populated by the engine at constitution. `fipre`, `fine` reserved for v2 / v3. |
-| Reporting hooks (`reporting.*`) | `bdp_centralizacao_responsabilidades`, `bdp_estatisticas_taxas_juro`, `ifrs9_staging` | v1 activates `bdp_estatisticas_taxas_juro` only (monthly aggregates). The others reserved for credit (see [Open Question 6](./04-open-questions.md)). |
+| Reporting hooks (`reporting.*`) | `bdp_centralizacao_responsabilidades`, `bdp_estatisticas_taxas_juro`, `ifrs9_staging` | v1 activates `bdp_estatisticas_taxas_juro` only (monthly aggregates). The others reserved for credit (see [Open Question 2 — IFRS 9 Signal Boundary](./04-open-questions.md)). |
 | Default interest / mora (`mora.*`) | reserved | v2 credit only; deposits do not enter mora. |
 | Currency (`currency.*`) | `eur` | HALF_EVEN rounding to cents. Rounding lives in the pack because it is jurisdiction-influenced (PT rounds differently from CH for some products). |
 
@@ -266,7 +266,7 @@ expected_events:
   - { type: DepositConstituted, at: 2026-01-15 }
   - { type: InterestAccrued, at: 2027-01-15, gross_cents: 30000 }
   - { type: WithholdingApplied, at: 2027-01-15, irs_cents: 8400 }
-  - { type: NetInterestCredited, at: 2027-01-15, net_cents: 21600 }
+  - { type: InterestPaid, at: 2027-01-15, net_cents: 21600 }
   - { type: DepositMatured, at: 2027-01-15 }
 ```
 
@@ -289,42 +289,3 @@ Without the pack as a typed vocabulary, the validator could only catch syntax er
 - **Q-P. Multi-pack composition.** A v5 cross-border product wants PT primitives for withholding (because the holder is PT-resident) but ES primitives for the booking entity. Is the resolution "pick one pack and inline what you need from the other," or "real composition with explicit precedence"? v5 question, but the v1 pack schema should reserve a `primitive_overlays` field (no-op in v1) to avoid painting into a corner.
 - **Q-Q. Pack-update internal SLA.** When a DL ships with 30 days' notice, the engine team needs to publish the updated pack within (say) 14 days. An internal operational SLA between the engine team and the product organisation, currently unmodelled. Without it, regulatory urgency competes against feature work case-by-case rather than against a named commitment.
 
----
-
-## 4. Consequences for the Brief
-
-### 4.1 Sections that change
-
-- **[§00-product-vision §2.4](./00-product-vision.md) ("the pack").** Currently a sketch. Replace with the three-layer model in §3.2 and the pack manifest in §3.4.
-- **[§01-product-architecture §3](./01-product-architecture.md) ("The Configuration Surface").** Implies a single artefact family; name three (configs, rate sheets, pack) with the cadences and approvers from §1 of this document.
-- **[§01-product-architecture §5](./01-product-architecture.md) ("The Regulatory Pack").** Commits to "swappable from day one" without saying *what* a pack is; cross-reference §3.4 (manifest) and §3.5 (pinning invariant).
-- **[§02-v1-scope-term-deposits §2.4](./02-v1-scope-term-deposits.md) (event contract).** `DepositConstituted` gains `rate_sheet_version_id` and `pack_version`; `InterestAccrued` and `WithholdingApplied` inherit both via `causationid`. Add `PackVersionMigrated` and `NetInterestCredited` to the event set.
-- **[§02-v1-scope-term-deposits §2.3](./02-v1-scope-term-deposits.md) (subledger outputs).** The BdP retail-rate-statistics signal is a pack-defined reporting hook (`reporting.bdp_estatisticas_taxas_juro`), not a separate engine module.
-
-### 4.2 Open questions touched
-
-This document does not resolve [Q8 (Configurability Depth)](./04-open-questions.md) — the template-vs-DSL boundary remains open. It does answer two further design questions that any resolution of Q8 will have to live with:
-
-- **Who owns rate values.** Rate sheets — a separate artefact family, separate cadence, separate approver. Settled in §2.
-- **When rates are bound to an instance.** At constitution time for fixed-rate products; at every revision for variable-rate products. `rate_sheet_version_id` (or `index_sheet_version_id`) is carried on every relevant event. Settled in §2.3 and §2.4.
-
-A future Q8 resolution that says "templates only" must work with these two answers. A future resolution that says "DSL only" must work with them too. The artefact-family split sits underneath the template-vs-DSL question, not inside it.
-
-### 4.3 New open questions to fold into [04-open-questions](./04-open-questions.md)
-
-Rate sheets: Q-I (negative rates), Q-J (typo rollback), Q-K (tenant-scoped sheets), Q-L (index sheet sourcing).
-
-Pack vocabulary: Q-M (pack governance), Q-N (breaking-change opt-in), Q-O (pack forking), Q-P (multi-pack composition), Q-Q (pack maintainer SLA).
-
----
-
-## 5. Status
-
-This document captures a design exploration, not an adopted spec. To move from exploration to spec:
-
-1. Fold §4.1 changes into the numbered brief documents.
-2. Fold §4.3 questions into [04-open-questions](./04-open-questions.md).
-3. Decide Q-M (pack governance) — it gates the entire pack story commercially.
-4. Prototype a single product config + rate sheet + pack triple against the v1 deposit scope and validate the schema against [financial_concepts §9.2](../financial_concepts/banking_products_financial_mathematics.md) cash-flow primitives.
-
-The natural next design thread is the **validator / simulator CLI surface** — the developer-facing tool a product team runs locally and in CI to check a config + rate sheet + pack triple before it deploys. The synchronous-validation property in [§01-product-architecture §3](./01-product-architecture.md) is a claim about *when* the product team learns a configuration is well-formed and pack-compliant (within minutes of committing, not hours after deploy). That property is only operable if there is a CLI the product team runs at commit time; without it, validation lives in a deploy pipeline that runs at the wrong cadence and surfaces failures to the wrong audience.

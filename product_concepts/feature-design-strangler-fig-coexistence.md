@@ -1,16 +1,16 @@
 # Feature Design — Strangler-Fig Coexistence
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §6](./01-product-architecture.md) ("Strangler-fig coexistence") and resolves the architectural part of [§04-open-questions §5](./04-open-questions.md) ("Split-Brain Reconciliation"). The brief treats coexistence as a half-page subsection and a single open question; this document treats it as what it actually is — a **multi-year period** during which two peer systems run the same product family concurrently, with seven dimensions of dual operation the brief does not currently cover.
+> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §6](./01-product-architecture.md) ("Strangler-fig coexistence") and provides the architectural answer for [§04-open-questions §5](./04-open-questions.md) ("Operational SLA Calibration for Reconciliation") — the question narrowed to an operational-calibration scope once the architecture was committed here. The brief treats coexistence as a half-page subsection; this document treats it as what it actually is — a **multi-year period** during which two peer systems run the same product family concurrently, with seven dimensions of dual operation.
 >
 > The framing is unusually operations-heavy compared to the other companions. It refers to specific systems by name (the legacy core, the reporting application, the ACL, the unified read model) and is more concrete about runbooks, alerts, and end-of-day plumbing than the rest of the series. The reason: the brief's value depends on v1 actually working in production, and v1 is the period when coexistence is most fragile. Configuration depth (the subject of [feature-design-configuration-authoring](./feature-design-configuration-authoring.md)) is about velocity *after* v1; coexistence is about whether v1 ships at all without a split-brain incident.
 >
-> Reading order: §1 frames coexistence as a period rather than a steady state. §2 names the seven dimensions. §3 specifies the system-of-record map. §4 names the settlement plumbing already covered by integration_concepts/02. §5 commits to the daily batch file as legacy's emission shape. §6 specifies the unified read surface and its staleness asymmetry. §7 specifies reconciliation. §8 specifies regulatory reporting under coexistence. §9 specifies the SoR-transition event chain (the renewal-creates-new-engine-instance decision). §10 covers cutover mechanics. §11 covers the end state. §12 collects consequences for the brief. §13 is status.
+> Reading order: §1 frames coexistence as a period rather than a steady state. §2 names the seven dimensions. §3 specifies the system-of-record map. §4 names the settlement plumbing already covered by integration_concepts/02. §5 commits to the daily batch file as legacy's emission shape. §6 specifies the unified read surface and its staleness asymmetry. §7 specifies reconciliation. §8 specifies regulatory reporting under coexistence. §9 specifies the SoR-transition event chain (the renewal-creates-new-engine-instance decision). §10 covers cutover mechanics. §11 covers the end state.
 
 ---
 
 ## 1. Frame: Coexistence Is a Period, Not a Steady State
 
-The strangler-fig motion in [§00-product-vision §1.4](./00-product-vision.md) and [§01-product-architecture §6](./01-product-architecture.md) describes coexistence as a property of the engine: "the engine can run alongside the legacy core." Treating coexistence as a property hides that it is also a **period** — a multi-year stretch with start, middle, and end phases, each with distinct risks, distinct operational shape, and distinct exit criteria.
+The strangler-fig motion in [§00-product-vision §5](./00-product-vision.md) and [§01-product-architecture §6](./01-product-architecture.md) commits to coexistence as a **multi-year period** with start, middle, and end phases — not a steady-state property the engine has. This document specifies the period: three phases with distinct risks, distinct operational shape, and distinct exit criteria; seven dimensions of dual operation; the system-of-record map; the legacy emission shape; the unified read surface; reconciliation; regulatory reporting; the SoR-transition event chain; cutover mechanics; and the end state.
 
 Three phases, each load-bearing on different things:
 
@@ -22,7 +22,7 @@ Three phases, each load-bearing on different things:
 
 Each phase has a different operational profile. Cutover is high-attention, short-duration, fully-staffed. The middle phase is the long tail where attention naturally drops but where most of the operational risk accrues. The end is short again but requires a deliberate trigger that someone has to pull.
 
-The brief currently has no explicit treatment of any of these phases. [§01-product-architecture §6](./01-product-architecture.md) commits to the three coexistence properties (per-product-line onboarding, API coexistence, event-contract reactivity) but says nothing about how the period itself is operated. That gap is what this document fills.
+[§01-product-architecture §6](./01-product-architecture.md) commits to three coexistence properties of the integration seam (per-product-line onboarding, API coexistence, event-contract reactivity). This document specifies how the period itself is operated underneath those properties.
 
 ---
 
@@ -48,7 +48,7 @@ The seven dimensions are not independent. Settlement plumbing and reconciliation
 
 ## 3. The System-of-Record Map
 
-At any moment during the coexistence period, every product instance is owned by exactly one system. The engine owns its instances; the legacy core owns its instances; no instance has two SoRs. This is the property that prevents split-brain ledgers — the failure mode that the [§04 §5 (Split-Brain Reconciliation)](./04-open-questions.md) question was originally about.
+At any moment during the coexistence period, every product instance is owned by exactly one system. The engine owns its instances; the legacy core owns its instances; no instance has two SoRs. This is the property that prevents split-brain ledgers — the failure mode that the [§04 §5 (Operational SLA Calibration for Reconciliation)](./04-open-questions.md) question was originally about under its earlier "Split-Brain Reconciliation" framing.
 
 ### 3.1 The rule for term deposits (v1)
 
@@ -148,7 +148,7 @@ The batch file is a public contract between legacy and the engine, even though b
 - **Lateness contract.** The file must be available to the engine by a published cutoff (e.g. 04:00 local time on day D+1). Missed cutoffs page operations.
 - **Schema-drift protocol.** When legacy changes its extract (a new field is added, a rate scaling changes), the change is coordinated through a written contract update; the engine's ACL is updated to parse the new shape before the new extract ships.
 
-The detailed shape of this contract — exact format, exact cutoffs, exact dedupe keys — is left open as [Q-AH below](#125-new-open-questions-to-fold-into-04-open-questions), because it depends on what the operating bank's legacy core already produces.
+The detailed shape of this contract — exact format, exact cutoffs, exact dedupe keys — is left open as [Q-AH in 04-open-questions](./04-open-questions.md), because it depends on what the operating bank's legacy core already produces.
 
 ---
 
@@ -204,7 +204,7 @@ Different channels have different tolerances for staleness. The read-model archi
 
 The point is not to define every channel's contract here — that is the channel team's job. The point is that the read model **exposes the staleness as a first-class property** so the channel can make the right call. A read model that homogenises the two sources into "one consistent view" is a read model that lies, and the lie surfaces during incidents when a 24h-stale legacy row is acted on as if it were fresh.
 
-This is the question that [Q-AF below](#125-new-open-questions-to-fold-into-04-open-questions) leaves open: which channels can tolerate the staleness, and where do per-channel refresh paths back to legacy need to exist.
+This is the question that [Q-AF in 04-open-questions](./04-open-questions.md) leaves open: which channels can tolerate the staleness, and where do per-channel refresh paths back to legacy need to exist.
 
 ### 6.4 Per-instance routing for state-changing operations
 
@@ -218,13 +218,13 @@ Three credible locations for the routing logic, none obviously correct:
 | **Unified API gateway** | A single API in front of channels resolves `sor` and dispatches | A new system to build and operate | Centralises the routing rule but adds a hop and a new operational dependency |
 | **Read model** | The projection exposes a "command endpoint" alongside the row | Couples read and command surfaces | Mixes CQRS sides; pragmatic but architecturally noisy |
 
-The decision is deferred as [Q-AI below](#125-new-open-questions-to-fold-into-04-open-questions). The operating bank's existing channel architecture probably already has an opinion about this — the engine should fit into it, not invent a new pattern.
+The decision is deferred as [Q-AI in 04-open-questions](./04-open-questions.md). The operating bank's existing channel architecture probably already has an opinion about this — the engine should fit into it, not invent a new pattern.
 
 ---
 
 ## 7. Reconciliation
 
-Reconciliation is the operational check that prevents split-brain ledgers. [§04-open-questions §5](./04-open-questions.md) was originally about reconciliation; this section gives the architectural answer.
+Reconciliation is the operational check that prevents split-brain ledgers. [§04-open-questions §5](./04-open-questions.md) was originally about reconciliation; this section gives the architectural answer, leaving only the operational SLA calibration open.
 
 ### 7.1 Three reconciliation flows
 
@@ -247,7 +247,7 @@ The engine's outbox records every settlement command sent to legacy (debit at co
 - **Legacy-side orphan:** Legacy journal has an entry the engine did not emit. Either the engine emitted the command but the outbox record was lost (engine-side bug, very serious) or legacy is showing an unrelated entry that has nothing to do with the engine (false positive — needs filtering). Alerts ops.
 - **Amount mismatch:** Both sides have a record but the amounts disagree. Almost always a sign of a deeper bug; pages an on-call engineer.
 
-The alert thresholds (how many engine-side orphans per day cross from "operational noise" to "fundamentally broken") are unknown in advance and require a calibration period. This is [Q-AG below](#125-new-open-questions-to-fold-into-04-open-questions).
+The alert thresholds (how many engine-side orphans per day cross from "operational noise" to "fundamentally broken") are unknown in advance and require a calibration period. This is [Q-AG in 04-open-questions](./04-open-questions.md).
 
 ### 7.3 Reconciliation flow 2: legacy state
 
@@ -258,7 +258,7 @@ The engine's read model maintains a projected view of every legacy instance, bui
 - **Legacy-side gap:** Engine's projection has an instance legacy doesn't report. Possible if legacy archived the instance; possible if there's a definitional drift. Investigated.
 - **State mismatch:** Both have the instance but states disagree. Most concerning case — either ingestion lost a fact or there's an out-of-band change in legacy the batch file did not surface.
 
-Flow 2's alert thresholds are also covered by [Q-AG below](#125-new-open-questions-to-fold-into-04-open-questions).
+Flow 2's alert thresholds are also covered by [Q-AG in 04-open-questions](./04-open-questions.md).
 
 ### 7.4 Reconciliation cadence and ownership
 
@@ -274,7 +274,7 @@ The second decision committed in this document: **regulatory reporting aggregate
 
 ### 8.1 The reporting application as a named downstream system
 
-The reporting application is already referenced in [§02-v1-scope §2.2](./02-v1-scope-term-deposits.md) ("The reports themselves are built by a downstream reporting application") but the brief is currently silent on its identity. This document commits to naming it: **the reporting application is a downstream system in the bank's estate, separate from the engine and separate from legacy, that consumes events from both and produces regulatory returns.** It is not part of the engine product. Its ownership and scope are tracked as an open question ([Q-AE below](#125-new-open-questions-to-fold-into-04-open-questions)) because it is genuinely ambiguous whether the operating bank already has such a system or whether it has to be built.
+The reporting application is already referenced in [§02-v1-scope §2.2](./02-v1-scope-term-deposits.md) ("The reports themselves are built by a downstream reporting application") but the brief is currently silent on its identity. This document commits to naming it: **the reporting application is a downstream system in the bank's estate, separate from the engine and separate from legacy, that consumes events from both and produces regulatory returns.** It is not part of the engine product. Its ownership and scope are tracked as an open question ([Q-AE in 04-open-questions](./04-open-questions.md)) because it is genuinely ambiguous whether the operating bank already has such a system or whether it has to be built.
 
 The architectural commitment is **the engine never reads legacy data directly to produce regulatory output.** The engine emits its events; legacy emits its facts via the batch file (re-projected by the reporting application from the same source the engine consumes, or by another downstream consumer). The reporting application aggregates the two streams into the returns. The engine remains ignorant of legacy's data shape; legacy remains ignorant of the engine's data shape; the reporting application is where the cross-system aggregation lives.
 
@@ -336,7 +336,7 @@ This is a planning-relevant fact. The roadmap ([03-roadmap](./03-roadmap.md)) cu
 
 The renewal-creates-engine-instance decision interacts with cutover (§10) in a specific way: **on the first auto-renewal cycle after cutover, every legacy deposit that renews on a given day lands on the engine as a new constitution on that day.** If the legacy book has significant date clustering (a campaign in March that constituted 10,000 deposits on the same day, all renewing 12 months later), the engine sees a day-1 (well, day-365) load spike that does not reflect the engine's steady-state constitution rate.
 
-The brief currently does not name this risk. The mitigation — a load-smoothing strategy, an explicit cutover scheduling that staggers renewals, or simply load-testing the engine for the worst-day case — is left as [Q-AD below](#125-new-open-questions-to-fold-into-04-open-questions).
+The brief currently does not name this risk. The mitigation — a load-smoothing strategy, an explicit cutover scheduling that staggers renewals, or simply load-testing the engine for the worst-day case — is left as [Q-AD in 04-open-questions](./04-open-questions.md).
 
 ### 9.4 No new event types
 
@@ -412,7 +412,7 @@ For the full coexistence period (across all product families introduced in [03-r
 
 This is the strangler-fig's strangling completed. It is a multi-year horizon — possibly 5–10 years from initial cutover — and the brief does not commit to a timeline. The point of naming it here is to make explicit that **decommissioning is a deliverable**, not a side effect. A coexistence architecture that has no decommissioning plan is a coexistence architecture that becomes permanent.
 
-The end-state trigger for the full bank — what specific signal indicates "we are done" and the legacy core can be archived — is left as [Q-AJ below](#125-new-open-questions-to-fold-into-04-open-questions). For term deposits alone the answer is mechanical (last instance matured); for the full bank the answer involves cross-family judgement calls (when does a tail of low-value irregular instances justify the cost of running legacy for them?).
+The end-state trigger for the full bank — what specific signal indicates "we are done" and the legacy core can be archived — is left as [Q-AJ in 04-open-questions](./04-open-questions.md). For term deposits alone the answer is mechanical (last instance matured); for the full bank the answer involves cross-family judgement calls (when does a tail of low-value irregular instances justify the cost of running legacy for them?).
 
 ### 11.3 What does *not* end with coexistence
 
@@ -425,55 +425,3 @@ When term-deposit coexistence ends, several things continue:
 
 The architecture survives the end of coexistence for any single family. Each family's coexistence subperiod has its own end state; the global end state is when every family's subperiod has ended.
 
----
-
-## 12. Consequences for the Brief
-
-### 12.1 Sections that change
-
-- **[§01-product-architecture §6](./01-product-architecture.md) ("Strangler-fig coexistence").** Currently three bullet points (per-product-line onboarding, API coexistence, event-contract reactivity). Keep the bullets but add a paragraph framing coexistence as a multi-year period (§1 of this document) and cross-referencing this document for the full treatment of the seven dimensions, the SoR map, and the end state.
-- **[§02-v1-scope §3](./02-v1-scope-term-deposits.md) ("Coexistence with Legacy DDA").** Currently happy-path-only (engine settles to legacy current accounts via ACL). Add an explicit reference to this document for the period-level treatment and the legacy-emission shape (the daily batch file). Add the renewal-creates-engine-instance commitment as a footnote or short paragraph; it is materially part of the v1 scope.
-- **[§02-v1-scope §2.2](./02-v1-scope-term-deposits.md) (PT regulatory features).** The line "The reports themselves are built by a downstream reporting application" can stand as-is, but cross-reference §8 of this document where the reporting application is named as a load-bearing dependency rather than a downstream consumer.
-- **[§04-open-questions §5](./04-open-questions.md) (Split-Brain Reconciliation).** Narrow the question rather than close it. The architectural answer is in this document (§7); the residual open question is the operational SLA calibration — alert thresholds, reconciliation runbook with the operating bank's ops function, escalation paths. Re-frame the §5 entry to focus on that operational scope, point at this document for the architectural part, and cross-reference Q-AG for the alert thresholds.
-
-### 12.2 Decisions committed in this document
-
-1. **Legacy emits a daily batch file.** Not events, not CDC. Up to 24-hour latency on legacy-sourced data is the price; predictable operational shape is the value. §5.
-2. **Regulatory reporting aggregates downstream.** The reporting application is a named, load-bearing dependency. The engine never reads legacy data directly. §8.
-3. **Renewal of a legacy in-flight deposit creates a new instance on the engine.** Linked by `causation_id` and `originating_legacy_id`. The legacy term-deposit book migrates within one auto-renewal cycle, not over the full maturity tail. §9.
-
-### 12.3 New event types declared
-
-None. The chain in §9 uses `LegacyInstanceObserved` (cross-cutting, declared by [feature-design-event-store-projections §4.1](./feature-design-event-store-projections.md)) and `DepositConstituted` (family-specific, declared in [§02-v1-scope §2.4](./02-v1-scope-term-deposits.md)). The transition is carried by `causation_id` and the new `originating_legacy_id` field (§3.3).
-
-The `DepositConstituted` payload should carry `originating_legacy_id` (optional) and `cutover_cohort` (optional) per §3.3. These are payload additions, not new event types, and follow the additive-only schema-evolution discipline from [feature-design-event-store-projections §5.4](./feature-design-event-store-projections.md).
-
-### 12.4 Open questions resolved
-
-- **[Q5 (Split-Brain Reconciliation)](./04-open-questions.md)** does not close, but the architectural component is resolved in §7 of this document. The residual question is narrowed to operational SLA calibration. See Q-AG.
-
-### 12.5 New open questions to fold into [04-open-questions](./04-open-questions.md)
-
-Continuing the lettered sequence from [feature-design-event-store-projections](./feature-design-event-store-projections.md) (which opened Q-X through Q-AC):
-
-- **Q-AD. Cutover-day load risk.** On the first auto-renewal cycle after cutover, every legacy deposit that renews on a given date lands on the engine as a new constitution. Day-1 load could spike if the legacy book has date clustering. Needs a load-smoothing strategy or explicit cutover scheduling against the actual legacy renewal distribution. §9.3.
-- **Q-AE. Reporting application identity and ownership.** §8 names the reporting application as a load-bearing downstream system but does not specify whether the operating bank already has one or has to build it. Ownership, scope, build-vs-buy. The answer shapes whether the engine's reporting hooks (`bdp_estatisticas_taxas_juro`, `modelo_39`) target an existing system's contract or a system that does not yet exist.
-- **Q-AF. Read-model latency contract per channel.** §6.3 lists indicative channel tolerances for 24-hour-stale legacy-sourced data. Each channel's actual tolerance, and where per-channel refresh paths back to legacy are needed, requires a channel-by-channel review with the channel teams. Unblocking depends on a channel-architecture audit, not on an engine-team decision.
-- **Q-AG. Reconciliation alert thresholds.** §7.2 and §7.3 name the three reconciliation flows but leave the calibration of "how many mismatches per day cross from noise to incident" as an operational decision requiring a calibration period under real-data load. The narrowed scope of [Q5](./04-open-questions.md) lives here.
-- **Q-AH. Legacy batch file contract.** §5.3 names the governance properties (schema-versioned, idempotent, complete, on-time, drift-coordinated) but the actual schema, cutoff times, and format depend on what the operating bank's legacy core can produce. Unblocking depends on a legacy-extract audit.
-- **Q-AI. Channel routing for state-changing operations.** §6.4 names three credible locations for the routing logic (channel, unified API gateway, read model) but does not pick one. The decision should align with the operating bank's existing channel architecture, not introduce a new pattern.
-- **Q-AJ. End-of-coexistence trigger for the full bank.** §11.2 commits to coexistence ending when every product family has migrated and the legacy core is fully decommissioned, but does not specify the cross-family judgement-call signal that says "we are done." For term deposits alone the answer is mechanical (§11.1); for the full bank it requires named operational criteria.
-
----
-
-## 13. Status
-
-This document captures a design exploration, not an adopted spec. To move from exploration to spec:
-
-1. Fold §12.1 changes into the numbered brief documents. The §01 §6 edit is the largest; the §04 §5 narrowing is the second largest; the §02 §3 cross-reference is small.
-2. Fold §12.5 questions into [04-open-questions](./04-open-questions.md). Narrow Q5 to operational SLA calibration with a pointer to this document.
-3. Run the legacy-extract audit (Q-AH) and the channel-architecture audit (Q-AF, Q-AI) in parallel during v1 architectural work. Both are *discovery* work, not *engineering* work; they unblock specific engineering decisions.
-4. Convert Q-AE (reporting application identity) into a build-vs-buy conversation with the operating bank's regulatory-reporting function. The answer is load-bearing for the engine's reporting-hook contracts.
-5. Schedule the shadow run (§10.1) explicitly into the v1 engineering timeline. It is not "if needed"; it is a v1 deliverable. The duration depends on how clean the comparison comes out, but the budget should assume weeks rather than days.
-
-The natural next design thread is the **operations runbook** — the artefact the operating bank's ops function uses during the cutover day, the post-cutover monitoring period, the first renewal cycle, and the eventual end state. The runbook is not part of this repository (it is an operations-team deliverable specific to the operating bank), but the design notes in this document are its architectural input. Producing the runbook is the test of whether this document is operationally complete.

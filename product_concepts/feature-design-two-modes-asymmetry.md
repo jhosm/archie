@@ -1,10 +1,10 @@
 # Feature Design — Two Operating Modes Asymmetry
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §4](./01-product-architecture.md) ("Two Families Inside One Engine"), specifically the operational-asymmetry warning at the end of that section. The brief says: "the engine architecture has to be built with the irregular profile as the upper-bound design point, even if the irregular mode lands later in the roadmap. Sizing for with-a-plan only and retrofitting irregular is one of the ways 'one engine, two modes' turns into two engines under the same name." That warning is decorative until it is operationalised. This document operationalises it: it commits to **Approach C — interfaces for v4, implementations for v1**, and specifies the six v1 architectural commitments that distinguish Approach C from a v1 design that would have to be substantially rewritten to absorb v4.
+> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §4](./01-product-architecture.md) ("Two Families Inside One Engine"), specifically the operational-asymmetry warning at the end of that section. The brief says: "the engine architecture has to be built with the irregular profile as the upper-bound design point, even if the irregular mode lands later in the roadmap. Sizing for with-a-plan only and retrofitting irregular is one of the ways 'one engine, two modes' turns into two engines under the same name." This document operationalises that warning: it commits to **Approach C — interfaces for v4, implementations for v1**, and specifies the six v1 architectural commitments that distinguish Approach C from a v1 design that would have to be substantially rewritten to absorb v4.
 >
 > This document is unusual in the series because it forces v4 thinking into v1. Every other design notes companion (configuration surface, configuration authoring, event store + projections, strangler-fig coexistence) treats v4 as future scope; this one treats v4 as a v1 design constraint. That framing is necessary because the architecture cannot absorb v4 retroactively without breaking v1 contracts that have already been written down.
 >
-> Reading order: §1 frames why v4 has to be a v1 concern. §2 quantifies the asymmetry. §3 names the three credible architectural answers. §4 commits to Approach C. §5 specifies the six v1 commitments that follow from Approach C. §6 specifies the event-store selection criteria that refine [Q-AC](./04-open-questions.md). §7 names how this document interacts with the other design notes companions. §8 collects consequences for the brief. §9 is status.
+> Reading order: §1 frames why v4 has to be a v1 concern. §2 quantifies the asymmetry. §3 names the three credible architectural answers. §4 commits to Approach C. §5 specifies the six v1 commitments that follow from Approach C. §6 specifies the event-store selection criteria that refine [Q-AC](./04-open-questions.md). §7 names how this document interacts with the other design notes companions.
 
 ---
 
@@ -16,7 +16,7 @@ The architectural cost of staying v4-capable is concentrated in v1. Every v1 des
 
 The asymmetry is not just numerical scale. The two modes differ on six independent operational dimensions (§2): instance count, event volume per instance, peak rate, per-event latency budget, event source direction (engine-generated vs externally-ingested), and lifecycle bounded­ness. Each dimension is its own architectural constraint, and each compounds the others.
 
-The discipline of this document is to specify what "v1 stays v4-capable" means concretely — six non-negotiable v1 commitments (§5). Without that concretion, the brief's warning is decorative and the failure mode is the one the warning names: years of v1–v3 work followed by a v4 effort that finds itself rewriting the engine.
+[§01-product-architecture §4](./01-product-architecture.md) commits to Approach C — interfaces for v4, implementations for v1 — and points at this document for the six non-negotiable v1 commitments that operationalise it (§5). Without those concrete commitments, the architectural commitment is decorative and the failure mode is the one the brief warns against: years of v1–v3 work followed by a v4 effort that finds itself rewriting the engine.
 
 ---
 
@@ -155,7 +155,7 @@ The pass/fail criteria are workflow falsifiable claims:
 
 If any pass/fail criterion is missed, v1 does not ship until the cause is identified and fixed. The fix is either a v1 implementation change (resize, retune) or a v1 architecture change (the rare case where one of §5.1–§5.5 turns out to need refinement). The fix is not "ship v1 and revisit at v4" — that is Approach B disguised as Approach C.
 
-The test infrastructure is owned by the engine team and run on every v1 release candidate. Q-AK (below) names the open questions: exact workload patterns, exact pass/fail thresholds, exact test infrastructure shape.
+The test infrastructure is owned by the engine team and run on every v1 release candidate. [Q-AK in 04-open-questions](./04-open-questions.md) names the open questions: exact workload patterns, exact pass/fail thresholds, exact test infrastructure shape.
 
 ---
 
@@ -219,7 +219,7 @@ This document **extends** the event-store-projections document with operational-
 - **Projection mechanism** (event-store §6) gains the per-projection sync/async declaration (§5.4 above).
 - **Snapshot infrastructure** (event-store §8) is committed as a v1 deliverable rather than a v4 future (§5.5 above).
 - **Event store technology** (event-store §10.4, [Q-AC](./04-open-questions.md)) is refined with the four selection criteria of §6 above.
-- **Synthetic v4-scale load test** (event-store §10.6) is operationalised with workload patterns and pass/fail criteria (§5.6 above and [Q-AK](#85-new-open-questions-to-fold-into-04-open-questions) below).
+- **Synthetic v4-scale load test** (event-store §10.6) is operationalised with workload patterns and pass/fail criteria (§5.6 above and [Q-AK in 04-open-questions](./04-open-questions.md)).
 
 The two documents are read together: event-store-projections specifies what the event-sourced engine *is*; this document specifies what its v1 implementation must commit to so v4 remains viable.
 
@@ -242,7 +242,7 @@ Legacy emission shape (the daily batch file from coexistence §5) is one async i
 
 The interaction surfaces in the projection sync/async declaration (§5.4 above): legacy-sourced projections are inherently async (24-hour staleness profile per coexistence §5.1); v4 sync projections coexist with them on the same read model. The unified-read-surface staleness asymmetry from coexistence §6.2 is the same architectural pattern as the v4 sync/async asymmetry — the read model surfaces per-row staleness regardless of source.
 
-A specific interaction worth flagging: **a deposit maturing into a current account is a cross-mode flow.** v1's `DepositMatured` (with-a-plan) settles into the legacy current account via the ACL today (v1) and into the engine's current-account projection at v4. At v4, the cross-mode flow runs end-to-end inside the engine: `DepositMatured` from the with-a-plan side fires a settlement that creates a balance event on the irregular side. The engine has to model this without breaking either family schema's autonomy. [Q-AN](#85-new-open-questions-to-fold-into-04-open-questions) names the open question.
+A specific interaction worth flagging: **a deposit maturing into a current account is a cross-mode flow.** v1's `DepositMatured` (with-a-plan) settles into the legacy current account via the ACL today (v1) and into the engine's current-account projection at v4. At v4, the cross-mode flow runs end-to-end inside the engine: `DepositMatured` from the with-a-plan side fires a settlement that creates a balance event on the irregular side. The engine has to model this without breaking either family schema's autonomy. [Q-AN in 04-open-questions](./04-open-questions.md) names the open question.
 
 ### 7.4 With the integration architecture
 
@@ -253,54 +253,3 @@ The event backbone choice ([ADR-001](../integration_concepts/adrs/ADR-001-event-
 
 These are integration-layer concerns, not engine-layer concerns. The engine commits to playing well with the integration layer; the integration layer commits to scaling to v4. The boundary is the same as for v1.
 
----
-
-## 8. Consequences for the Brief
-
-### 8.1 Sections that change
-
-- **[§01-product-architecture §4](./01-product-architecture.md) ("Two Families Inside One Engine").** Keep the operational-asymmetry warning paragraph; add a sentence committing to Approach C and pointing at this document for the six v1 commitments. The §4 narrative stays compact; the operational detail lives here.
-- **[§03-roadmap §v4](./03-roadmap.md) ("v4 stance: firm long-term goal, optional in practice").** Cross-reference this document for the v1 commitments that keep v4 viable. The "optional in practice" framing is unchanged; the architectural commitments that *make* it optional in practice (rather than infeasible in practice) are specified here.
-
-### 8.2 Decisions committed in this document
-
-1. **Approach C is the architectural commitment.** Interfaces for v4, implementations for v1. §3, §4.
-2. **Six v1 architectural commitments are non-negotiable for v1 acceptance.** §5.
-3. **The event-store selection criteria are the four of §6.1.** §6. Refines [Q-AC](./04-open-questions.md) without re-opening it.
-4. **The synthetic v4-scale load test is part of v1 acceptance, with workflow falsifiable pass/fail criteria.** §5.6.
-
-### 8.3 Envelope addition
-
-The event envelope from [feature-design-event-store-projections §4.3](./feature-design-event-store-projections.md) gains:
-
-- `partition_key` (reserved) — typically `instance_id` in v1; routing key in v4.
-
-This is a payload addition under the additive-only schema-evolution discipline. No existing event type changes.
-
-### 8.4 Open questions resolved
-
-None directly. This document **refines** Q-AC (event-store technology selection, opened by event-store-projections) and Q-Z (replay performance targets, opened by event-store-projections); neither closes here.
-
-### 8.5 New open questions to fold into [04-open-questions](./04-open-questions.md)
-
-Continuing the lettered sequence from [feature-design-strangler-fig-coexistence](./feature-design-strangler-fig-coexistence.md) (which opened Q-AD through Q-AJ):
-
-- **Q-AK. Synthetic v4-scale load test specification.** §5.6 commits to the test as v1 acceptance and names the workflow falsifiable claims. The exact workload patterns (event mix, instance-distribution shape, burst patterns), the exact pass/fail thresholds (TPS, p99 latency budgets per projection type, replay-time budget per snapshot-coverage scenario), and the exact test-infrastructure shape (where it runs, how synthetic instances are generated, how results are reported) are deferred to v1 engineering. The infrastructure is owned by the engine team.
-- **Q-AL. Sharding strategy for v4.** The `partition_key` field (§5.3) reserves the routing-key shape, but the v4 sharding strategy itself — how shards are sized, how rebalancing is handled, how cross-shard transactions are avoided or coordinated, how shard-level replay is parallelised — is deferred. This is a v4-time decision, not a v1-time decision, but the v1 event store choice must not foreclose any credible v4 sharding shape.
-- **Q-AM. Real-time projection backpressure.** §5.4 commits to sync/async projection support but does not specify what happens when an async projection's projector falls behind the event stream. Acceptable lag bounds per projection class; alerting thresholds; recovery procedures (catch up by replay, by parallel projector spawning, by load shedding). v4 makes this question urgent; v1 names the question.
-- **Q-AN. Cross-mode reconciliation.** §7.3 flags the cross-mode flow (a deposit on the with-a-plan side maturing into a current account on the irregular side). At v4, this runs end-to-end inside the engine. The reconciliation contract between the two family schemas, the event chain across the mode boundary, the responsibility for the cross-mode invariant ("the deposit principal landing in the current account exactly once") — all deferred to v4 design.
-- **Q-AO. Operational tooling asymmetry.** v1's operational tools (manual deposit lookup, batch reports, accrual investigation) are different in shape from v4's operational tools (real-time transaction search, fraud-screening review, overdraft incident triage). The engine's MCP server ([ADR-010](../integration_concepts/adrs/ADR-010-mcp-server-runtime-and-sdk.md)) and admin APIs must accommodate both. v1 builds the with-a-plan tools; v4 adds the irregular tools. The MCP surface must be additive across the mode boundary, not bifurcated into two tools.
-
----
-
-## 9. Status
-
-This document captures a design exploration, not an adopted spec. To move from exploration to spec:
-
-1. Fold §8.1 changes into the numbered brief. The §01 §4 edit is small (one sentence and a cross-reference). The §03 §v4 edit is also small.
-2. Fold §8.5 questions into [04-open-questions](./04-open-questions.md). Q-AK through Q-AO. Cross-reference Q-AC and Q-Z as refined-not-resolved.
-3. Run the three event-store spikes (Kurrent, Postgres-based, Redpanda-as-event-store) under §6's four criteria during the v1 architectural-decision phase. The synthetic v4-scale load test from §5.6 is the spike's most decisive evaluation.
-4. Convert Q-AK (synthetic load test specification) from open question into v1 engineering work as soon as the event-store choice is made. The test infrastructure has to exist before v1 release-candidate phase.
-5. Treat each of the six commitments in §5 as v1 acceptance gates. A v1 implementation that misses any one of them is not a v1 implementation under the architectural commitment of this document.
-
-The natural next design thread is the **v4 design notes themselves** — a future document that picks up the implementation specifics of the irregular mode (the current-account family schema, the card family schema, the cross-mode reconciliation contract, the v4 sharding strategy, the real-time projection runtime). That document is not v1 work; it is v3-or-v4 work. But the contract this document writes down — Approach C plus the six commitments — is what makes that future document possible without rewriting v1.

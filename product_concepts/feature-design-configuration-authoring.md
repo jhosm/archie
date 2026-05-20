@@ -1,16 +1,16 @@
 # Feature Design — Configuration Authoring
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §3](./01-product-architecture.md) ("The Configuration Surface") from a different angle than [feature-design-configuration-surface](./feature-design-configuration-surface.md): that document split the *artefact* surface into configs, rate sheets, and packs; this document splits the *authoring* surface into engine primitives, family schemas, and variants — and works through who authors each layer at what cadence with what review, plus the falsifiable agility-wedge claim that the workflow is designed to satisfy.
+> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §3](./01-product-architecture.md) ("The Configuration Surface") from a different angle than [feature-design-configuration-surface](./feature-design-configuration-surface.md): that document splits the *artefact* surface into configs, rate sheets, and packs; this document splits the *authoring* surface into engine primitives, family schemas, and variants — and works through who authors each layer at what cadence with what review, plus the falsifiable agility-wedge claim that the workflow is designed to satisfy.
 >
 > The two design-notes documents are orthogonal: the artefact split says what kinds of files exist; the authoring split says who writes what kind of change to which file, on what timescale, under what review. Reading the existing surface document first helps but is not required.
 >
-> Reading order: §1 frames the wedge as an authoring claim. §2–§6 work through the authoring layers, the family/variant taxonomy, the review workflow, the validator's five depths, and the schema-version pinning invariant. §7 states the falsifiable agility wedge as two distinct claims. §8 names the roadmap consequence of the multi-country window. §9 collects consequences for the brief.
+> Reading order: §1 frames the wedge as an authoring claim. §2–§6 work through the authoring layers, the family/variant taxonomy, the review workflow, the validator's five depths, and the schema-version pinning invariant. §7 states the falsifiable agility wedge as two distinct claims. §8 names the roadmap consequence of the multi-country window.
 
 ---
 
 ## 1. Frame: The Wedge as an Authoring Claim
 
-The agility wedge in [§00-product-vision §2](./00-product-vision.md) and [§01-product-architecture §3](./01-product-architecture.md) commits to "new products are configuration changes, not new modules." The brief states the architectural property — declarative, synchronously validated, safe-by-default — without committing to *who turns what change into a deployable artefact, on what timescale, under what review*. Without that, "configuration change" is a category description, not a workflow.
+The agility wedge in [§00-product-vision §2](./00-product-vision.md) and [§01-product-architecture §3](./01-product-architecture.md) commits to "new products are configuration changes, not new modules" and to a configuration surface that is declarative, synchronously validated, and safe-by-default. The brief states the architectural property without specifying the workflow — *who turns what change into a deployable artefact, on what timescale, under what review*. Without that workflow, "configuration change" is a category description, not an operable shape.
 
 The wedge is operable only when three layers exist with three different cadences and three different review postures:
 
@@ -218,50 +218,3 @@ The reshape does not change the order of PT product families — v2 and v3 still
 
 The architectural reading is consistent with the brief's "[§01 §5](./01-product-architecture.md) — the pack is swappable from day one." A pack that only ever holds PT can be a *de facto* fork; only a pack that holds two jurisdictions concurrently in active development proves the abstraction is real. The roadmap should reflect that the proof has to land by v3, not deferred to v5.
 
----
-
-## 9. Consequences for the Brief
-
-### 9.1 Sections that change
-
-- **[§00-product-vision §2](./00-product-vision.md) ("The Wedge").** The two-bullet "Agility / Unification" pair is correct but stops at category description. Add a one-line internal-target form of the wedge, pointing to this document for the falsifiable shape (zero engine code per variant; ≤ 5 working days PM commit to production). Do not turn the wedge bullets into commercial promises; the target is internal challenge.
-- **[§01-product-architecture §3](./01-product-architecture.md) ("The Configuration Surface").** Currently states three load-bearing properties (declarative, synchronous validation, safe-by-default) and defers depth to [Q4 in 04-open-questions](./04-open-questions.md). Add a cross-reference to this document for the three-authoring-layer split (primitives / family schemas / variants) and the named workflow. The depth question is still open; the *layering* question is resolved here.
-- **[§01-product-architecture §5](./01-product-architecture.md) ("The Regulatory Pack").** Already cross-references [feature-design-configuration-surface](./feature-design-configuration-surface.md) for the pack manifest and pinning invariant. Add the schema-pinning parallel from §6 above so both pinning invariants are visible.
-- **[§02-v1-scope-term-deposits §2.4](./02-v1-scope-term-deposits.md) (event contract).** `DepositConstituted` already gains `pack_version` from the surface doc; add `schema_version` alongside. Introduce `SchemaVersionMigrated` to the event set, parallel to `PackVersionMigrated`.
-- **[§03-roadmap](./03-roadmap.md).** Major restructure per §8 above: surface the ES pack as a parallel track starting in v2, not a sequential phase after v4. This is a follow-up issue, not a same-PR change.
-
-### 9.2 Open questions touched
-
-This document does not resolve [Q4 (Configurability Depth)](./04-open-questions.md). It also does not resolve the template-vs-DSL boundary that [feature-design-configuration-surface §4.2](./feature-design-configuration-surface.md) flagged. What it does resolve:
-
-- **Who authors variants.** Product (PM, business analyst). Settled in §2.3.
-- **Who reviews variants.** Engineer (technical), automated validator (depths 1–4), risk (exposure). Settled in §4.
-- **Where compliance lives in the loop.** Upstream of variants, at the family schema and pack layers. Settled in §1 and §4.
-- **What the falsifiable wedge claim is, in two parts.** Zero engine code per variant; ≤ 5 working days end-to-end. Settled in §7.
-
-A future resolution of [Q4](./04-open-questions.md) (templates vs DSL vs both) has to work with these answers. The authoring-layer split sits under the depth question, not inside it: whichever depth is chosen, variants are authored by product against typed family schemas, validated synchronously, reviewed by engineer + risk, with compliance upstream.
-
-### 9.3 New open questions to fold into [04-open-questions](./04-open-questions.md)
-
-Continuing the lettered sequence from [feature-design-configuration-surface](./feature-design-configuration-surface.md) (which opened Q-I through Q-Q):
-
-- **Q-R. Family-schema split threshold.** What concrete signal triggers a fine-drift split (§3.1)? Candidates: number of mutually-exclusive sub-blocks crossing a threshold, validator error-message length crossing a threshold, an explicit decision in quarterly schema review. Worth naming because "split when bloated" is a judgement call that needs an observable proxy.
-- **Q-S. Variant deployment cadence beyond weekly.** §7.2 assumes a weekly deployment train as the floor. Some variants (promotional rate campaigns) could plausibly want daily activation windows. Is that a separate same-day-activation flag, a separate cadence track, or a reason to shorten the deployment train to daily across the board? Sits with the deployment-pipeline design, not the engine.
-- **Q-T. PM-authored YAML vs. PM-driven form UI.** §2.3 commits to YAML as the variant artefact. The author may not write YAML directly — a form UI that produces the YAML is a plausible long-term path. The question is whether the form UI is an engine-team-shipped artefact (then it has the cadence of an engine release) or owned by the product organisation independently of the engine (which can iterate on input shape without engine-release timing). The latter is structurally cleaner.
-- **Q-U. Risk-review automation.** Risk review (§4 Step 4) is currently a human gate. Risk corridors (rate-band caps, principal-exposure ceilings) are largely encodable. Worth asking whether a portion of risk review can become a validator depth 6 (automated risk policy) with human review reserved for variants that flag exceptions. Sits at the boundary between risk function and engineering.
-- **Q-V. Schema split-merge tooling.** §3.1's fine-drift relies on splitting a bloated schema. The mechanism — how the split is authored, how existing variants are mapped to one or the other side of the split, how the engine continues to support both during the transition — is not specified. Mostly a tooling question, but the schema-pinning invariant in §6 has to hold across splits.
-- **Q-W. Multi-pack variant composition.** A variant authored in 2027 for a cross-border product (book in PT, hold by ES-resident customer) needs PT-pack disclosure rules and ES-pack withholding mechanics. The variant layer presumably names two packs; the family schema declares which fields are pack-A vs pack-B. Same shape as [Q-P in feature-design-configuration-surface](./feature-design-configuration-surface.md), reached from the authoring side. Defer to the same v5-era resolution.
-
----
-
-## 10. Status
-
-This document captures a design exploration, not an adopted spec. To move from exploration to spec:
-
-1. Fold §9.1 changes into the numbered brief documents (one PR per affected document is cleanest; the changes are small).
-2. Fold §9.3 questions into [04-open-questions](./04-open-questions.md).
-3. Surface the parallel-ES-pack track in [03-roadmap](./03-roadmap.md) per §8.
-4. Prototype the validator CLI to the depth split in §5 — the engine claim and the organisational claim both depend on the validator being a real, fast, error-message-clear tool, not a deployment-pipeline afterthought. The natural sequel to [feature-design-configuration-surface §5](./feature-design-configuration-surface.md)'s validator/simulator CLI thread.
-5. Begin the ES-pack design in parallel with v2 architectural work, per §8.
-
-The two design-notes documents (surface and authoring) together specify the configuration system from both the artefact and the human-process angles. Future design notes are expected to cover: the validator/simulator CLI (operational shape of the tool); the deployment-train shape (how a merged variant becomes an activated configuration); the migration tooling for schema and pack version changes.

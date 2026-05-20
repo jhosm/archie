@@ -1,27 +1,25 @@
 # Feature Design — Event Store and Projections
 
-> A design-notes companion to the brief, not a numbered member of the series. Reframes the engine's source-of-truth model: the brief currently calls it "the product subledger" ([§00-product-vision §3](./00-product-vision.md), [§02-v1-scope §2.3](./02-v1-scope-term-deposits.md)) but never defines its shape. This document drops "subledger" as a primary concept and replaces it with **event store + bitemporal projections** — the event log is the truth, projections are derived state, and the strict separation between generic engine core and family-specific event logic is what makes the unification claim in [§01-product-architecture §1](./01-product-architecture.md) operationally true rather than aspirational.
+> A design-notes companion to the brief, not a numbered member of the series. Deepens the engine's source-of-truth model: [§00-product-vision §3](./00-product-vision.md), [§01-product-architecture §2](./01-product-architecture.md), and [§02-v1-scope §2.3](./02-v1-scope-term-deposits.md) commit to **event store + bitemporal projections** — the event log is the truth, projections are derived state — and this document specifies the engine-vs-family separation, the event taxonomy, handler discipline, replay reconciliation, snapshot strategy, and the GL coupling that operationalise the commitment. The strict separation between generic engine core and family-specific event logic is what makes the unification claim in [§01-product-architecture §1](./01-product-architecture.md) structurally true rather than aspirational.
 >
 > This document is interlocked with [feature-design-configuration-authoring](./feature-design-configuration-authoring.md): that document established that family schemas declare variants and handlers; this one establishes that they also declare *event types* and that everything in the engine outside the cross-cutting set is family-schema material. Read together, the two documents specify why "one engine, many families" is structurally possible.
 >
-> Reading order: §1 frames the reframing. §2 names the four time-dimensional capabilities the engine must support. §3 specifies the engine-vs-family separation. §4 specifies the event taxonomy (cross-cutting generic events + family-specific events) and names the v1 catalogue gaps. §5 covers handler discipline. §6 covers bitemporal projections and defers the implementation choice. §7 covers replay reconciliation. §8 covers snapshots. §9 covers GL and downstream coupling. §10 covers risk mitigations for a team with moderate event-sourcing experience. §11 collects consequences for the brief.
+> Reading order: §1 frames the source-of-truth model. §2 names the four time-dimensional capabilities the engine must support. §3 specifies the engine-vs-family separation. §4 specifies the event taxonomy (cross-cutting generic events + family-specific events). §5 covers handler discipline. §6 covers bitemporal projections and defers the implementation choice. §7 covers replay reconciliation. §8 covers snapshots. §9 covers GL and downstream coupling. §10 covers risk mitigations for a team with moderate event-sourcing experience.
 
 ---
 
-## 1. Frame: From Subledger to Event Store + Projections
+## 1. Frame: Event Store + Projections as the Source of Truth
 
-The brief uses "subledger" as a primary deliverable ([§00-product-vision §3](./00-product-vision.md)) and as the engine's source of truth ([§02-v1-scope §2.3](./02-v1-scope-term-deposits.md)), but never defines what a subledger *is* as an artefact. That gap matters because the four capabilities the engine actually has to support — point-in-time reconstruction, audit trails, counterfactual replay, forward projection — are not properties of a state-holding ledger; they are properties of an event-sourced model with derived projections. Treating the engine as "a subledger that has events on top" inverts cause and effect.
+The engine's source of truth is the **event store**, co-located with the outbox. State is *derived* by deterministic, side-effect-free event handlers. Projections — positions, accrual schedules, maturity calendars, withholding ledgers — are bitemporal tables built from the event store. The CQRS read model ([integration_concepts/03](../integration_concepts/03-cqrs-and-read-models.md)), the GL system, the IFRS 9 system, and the regulatory reporting application are all *consumers* of these projections; none of them is the engine's primary state holder.
 
-The reframing: **the engine's source of truth is the event store**, co-located with the outbox. State is *derived* by deterministic, side-effect-free event handlers. Projections — positions, accrual schedules, maturity calendars, withholding ledgers — are bitemporal tables built from the event store. The CQRS read model ([integration_concepts/03](../integration_concepts/03-cqrs-and-read-models.md)), the GL system, the IFRS 9 system, and the regulatory reporting application are all *consumers* of these projections; none of them is "the subledger."
+The four capabilities the engine must support — point-in-time reconstruction, audit trails, counterfactual replay, forward projection — are not properties of a state-holding ledger; they are properties of an event-sourced model with derived projections. The event-sourced shape is not a design choice but a consequence of those capabilities being mandatory, which is why [Open Question 3 (Time-Travel)](./04-open-questions.md) closed as resolved.
 
-This is not a renaming. It is a commitment with consequences:
+The commitment carries four consequences:
 
 - The events ARE the truth. State that does not derive from events does not exist.
 - Replay is a routine operation, not a recovery scenario. Counterfactual queries ("what would the accrual be if pack `pt.2027.1` had applied from 2026-01-01?") are answered by replay with modified inputs.
 - The outbox is not a sidecar; it is part of the event store's commit boundary. The same write that appends to the event log emits to the bus.
 - Projections can be rebuilt at any time. A projection that cannot be rebuilt is broken.
-
-The brief currently treats [Open Question 3 (Time-Travel)](./04-open-questions.md) as a deferred design choice between event sourcing and snapshot-plus-journal. Under this reframing, event sourcing is not a choice; it is a consequence of the four capabilities being mandatory. Q3 closes as resolved.
 
 ---
 
@@ -82,7 +80,7 @@ Events that apply to any instance regardless of family. The engine declares thes
 |---|---|---|
 | `PackVersionMigrated` | Operator-initiated retroactive pack migration per [feature-design-configuration-surface §3.6](./feature-design-configuration-surface.md) | `instance_id`, `from_pack_version`, `to_pack_version`, `migration_id`, `operator_actor` |
 | `SchemaVersionMigrated` | Operator-initiated family-schema migration per [feature-design-configuration-authoring §6](./feature-design-configuration-authoring.md) | `instance_id`, `from_schema_version`, `to_schema_version`, `migration_id`, `operator_actor` |
-| `LegacyInstanceObserved` | Daily batch arrives from legacy DDA (introduced for strangler-fig coexistence — see archie-119 design notes when shipped) | `legacy_instance_id`, `observed_at`, `legacy_state_snapshot`, `batch_file_id` |
+| `LegacyInstanceObserved` | Daily batch arrives from legacy DDA (per [feature-design-strangler-fig-coexistence §5](./feature-design-strangler-fig-coexistence.md)) | `legacy_instance_id`, `observed_at`, `legacy_state_snapshot`, `batch_file_id` |
 | `FundsHeld` | Court order, garnishment, or external hold instruction | `instance_id`, `hold_id`, `held_amount_cents`, `legal_reference`, `hold_expires_at` (optional) |
 | `AccountFrozen` | Compliance hold (fraud, AML, sanctions screening) | `instance_id`, `freeze_id`, `freeze_reason`, `compliance_actor`, `freeze_expires_at` (optional) |
 
@@ -176,7 +174,7 @@ Projections are derived state. They support the four time-dimensional capabiliti
 
 A bitemporal query has the shape *"as of `valid_time` T1, as known at `transaction_time` T2"*. This is what makes corrections auditable. A clerk-data-entry error on 2026-03-15, corrected on 2026-05-19, leaves *both* facts queryable: "what we thought on 2026-03-15 about 2026-03-15" (the original wrong principal) and "what we now know on 2026-05-19 about 2026-03-15" (the corrected principal). Unitemporal projections collapse these.
 
-PT regulatory expectations on financial systems include this distinction by default — auditors expect to be able to query both "as we knew then" and "as we know now" for any past date. Confirming this expectation explicitly with the operating bank's compliance and audit functions is left as an open question ([Q-Y below](#113-new-open-questions-to-fold-into-04-open-questions)).
+PT regulatory expectations on financial systems include this distinction by default — auditors expect to be able to query both "as we knew then" and "as we know now" for any past date. Confirming this expectation explicitly with the operating bank's compliance and audit functions is left as an open question ([Q-Y in 04-open-questions](./04-open-questions.md)).
 
 ### 6.1 Three implementation choices, deferred decision
 
@@ -279,7 +277,7 @@ The same shape applies to the IFRS 9 system (which interprets `LoanRestructured`
 
 The downside of the clean separation is a coordination dependency: the GL team must be willing and able to maintain the event-to-GL mapping. Most banks' GL systems do not have first-class event-stream consumption; the GL team typically wants flat-file extracts or pre-mapped postings. This is a real organisational risk to the architectural commitment, not just a technical detail.
 
-The mitigation is to surface the dependency explicitly as a discovery item in the engine roadmap ([Q-AB below](#113-new-open-questions-to-fold-into-04-open-questions)). If the GL system cannot consume events, the answer is *not* to make the engine emit GL-shaped events — that would couple the engine to a specific GL and break the clean separation. The answer is to introduce a small "GL adapter" — a thin transformation layer owned by the GL team — that consumes engine events and produces GL postings. The adapter is a GL-team artefact; it is not part of the engine.
+The mitigation is to surface the dependency explicitly as a discovery item in the engine roadmap ([Q-AB in 04-open-questions](./04-open-questions.md)). If the GL system cannot consume events, the answer is *not* to make the engine emit GL-shaped events — that would couple the engine to a specific GL and break the clean separation. The answer is to introduce a small "GL adapter" — a thin transformation layer owned by the GL team — that consumes engine events and produces GL postings. The adapter is a GL-team artefact; it is not part of the engine.
 
 ---
 
@@ -309,7 +307,7 @@ The event store is purchased capability, not built capability. Three candidates 
 | **Postgres-based event store** (e.g. on top of plain Postgres tables with strict append semantics) | Mainstream | ~1k TPS without sharding; higher with careful design | Familiar; team already operates Postgres; engineering work to sustain v4 scale |
 | **Kafka-as-event-store** (the bank's existing Redpanda per [ADR-001](../integration_concepts/adrs/ADR-001-event-backbone-message-broker.md)) | Mature (Redpanda is operationally proven); streaming-first semantics | Very high natively | Single technology with the existing event backbone; trades query ergonomics for streaming semantics; pattern is used by some modern fintechs |
 
-The choice is deferred to a follow-up issue (see [Q-AC below](#113-new-open-questions-to-fold-into-04-open-questions)) but the constraint is firm: building an event store in-house is rejected. The team's moderate experience cannot absorb both event-sourcing-pattern discipline AND event-store-infrastructure correctness simultaneously.
+The choice is deferred to a follow-up issue (see [Q-AC in 04-open-questions](./04-open-questions.md)) but the constraint is firm: building an event store in-house is rejected. The team's moderate experience cannot absorb both event-sourcing-pattern discipline AND event-store-infrastructure correctness simultaneously.
 
 ### 10.5 Snapshots as optimisation, not architecture
 
@@ -317,45 +315,5 @@ Snapshots accelerate replay; they do not replace the event log. §8 captures thi
 
 ### 10.6 Synthetic load testing with v4-scale traffic in v1
 
-This connects to the two-modes-asymmetry design notes (archie-7nl, when shipped). Even though v1's family (term deposits) generates ~12M events/year, the engine's event store and replay infrastructure must be load-tested against synthetic v4-scale traffic (~100M-600M events/year, sustained 100s TPS, bursts to 1000s) during v1 development. The point is to surface event-store and projection-runtime bottlenecks while v1 is still malleable, not after v4 commitment hardens.
+This connects to [feature-design-two-modes-asymmetry](./feature-design-two-modes-asymmetry.md). Even though v1's family (term deposits) generates ~12M events/year, the engine's event store and replay infrastructure must be load-tested against synthetic v4-scale traffic (~100M-600M events/year, sustained 100s TPS, bursts to 1000s) during v1 development. The point is to surface event-store and projection-runtime bottlenecks while v1 is still malleable, not after v4 commitment hardens.
 
----
-
-## 11. Consequences for the Brief
-
-### 11.1 Sections that change
-
-- **[§00-product-vision §3](./00-product-vision.md) ("What's In Scope").** The three-deliverable list currently includes "the product subledger." Replace with "the event store + product projections" — the engine's source of truth (event log) and the bitemporal projections built over it. Cross-reference this document for the full treatment. Drop "subledger" as a primary concept across the brief.
-- **[§01-product-architecture](./01-product-architecture.md) — new section between §1 and §2.** A new section "The Event Store and Projections" covers: event log as truth, deterministic side-effect-free handlers, bitemporal projections derived from the log, snapshots as performance optimisation not architecture, schema-evolution discipline (events are forever readable; migrations are versioned), replay correctness as a testable property. The section is short and points at this document for the full treatment.
-- **[§01-product-architecture §1](./01-product-architecture.md) ("The Cash-Flow Primitive").** Clarify that the cash-flow primitive is the *mathematical rule that governs event handlers*. The handlers update the event log; projections derive state. The §1 framing remains; the connection to the event-sourced model is now explicit.
-- **[§02-v1-scope §2.3](./02-v1-scope-term-deposits.md) ("Subledger outputs").** Rename to "Projections" or "Product projections." The four items listed (deposit position, accrual schedule, maturity calendar, withholding ledger) are projections, not subledger outputs. Update prose accordingly.
-- **[§02-v1-scope §2.4](./02-v1-scope-term-deposits.md) (event contract).** Add `schema_version` to the envelope alongside `pack_version` (already added by feature-design-configuration-authoring). Add the three new family-specific deposit events (`DepositPartiallyWithdrawn`, `DepositCorrected`, `DepositTransferredToHeirs`) to the event table. Add a separate sub-section listing the five cross-cutting generic events (`PackVersionMigrated`, `SchemaVersionMigrated`, `LegacyInstanceObserved`, `FundsHeld`, `AccountFrozen`) declared by the engine.
-- **[§04-open-questions](./04-open-questions.md) §3 (Time-Travel / Point-in-Time Correctness).** Close as resolved. The architectural answer is in this document: event store with bitemporal projections. Annotate the question with a pointer to this document.
-
-### 11.2 Open questions resolved
-
-- **[Q3 (Time-Travel / Point-in-Time Correctness)](./04-open-questions.md)** closes. The architectural answer is event store with bitemporal projections; the implementation choice is the only remaining open question and is captured below as Q-X.
-
-### 11.3 New open questions to fold into [04-open-questions](./04-open-questions.md)
-
-Continuing the lettered sequence from [feature-design-configuration-authoring](./feature-design-configuration-authoring.md) (which opened Q-R through Q-W):
-
-- **Q-X. Bitemporal projection implementation choice.** PostgreSQL temporal extensions vs XTDB / datomic-style vs application-level bitemporality on plain Postgres. Decision deferred to a small spike per path. The constraint is firm (bitemporal projections), the implementation is open.
-- **Q-Y. Regulatory bitemporality confirmation.** §6 assumes PT regulators expect retroactive corrections to be auditable in both dimensions. Confirmation with the operating bank's compliance and internal audit functions is needed before this is locked. If unitemporal is sufficient for v1, the projection schemas simplify materially.
-- **Q-Z. Replay performance targets and instrumentation.** §8.2 commits to specific cold-replay budgets (5s for with-a-plan, 30s for irregular). Instrumentation, monitoring dashboards, and SLA escalation paths are not specified. Sits with the operations runbook design.
-- **Q-AA. Storage growth modelling.** Back-of-envelope estimates suggest 500GB-5TB across 10 years; the engine team should produce a real model based on v1 deposit volume, v2-v3 product velocity, and v4 irregular ingestion. Storage cost is bounded but worth confirming.
-- **Q-AB. GL adapter ownership and contract.** §9.2 names the GL-team coordination dependency. The adapter shape — what it consumes (CloudEvents from the bus), what it produces (GL postings in the GL system's expected format), who maintains it — is left to a coordination conversation with the GL team. A blocker for §9.1's clean separation.
-- **Q-AC. Event-store technology selection.** §10.4 names three candidates (Kurrent, Postgres-based, Redpanda-as-event-store). The decision criteria (throughput, replay performance, schema evolution support, operational maturity, team comfort) are noted but the choice is deferred. A small spike per candidate is the proposed path.
-
----
-
-## 12. Status
-
-This document captures a design exploration, not an adopted spec. To move from exploration to spec:
-
-1. Fold §11.1 changes into the numbered brief documents (one PR per affected document is cleanest; the changes are small and well-scoped).
-2. Fold §11.3 questions into [04-open-questions](./04-open-questions.md). Close Q3 with a pointer to this document.
-3. Run the three spikes named in Q-X, Q-AC, and the synthetic load test from §10.6 in parallel during v1 architectural work. Each spike has a small budget and a binary outcome: viable / not viable.
-4. Confirm Q-Y with the operating bank's compliance and internal audit functions before projection schemas are first written. The bitemporal-vs-unitemporal decision is irreversible after the first projection lands.
-
-The natural next design thread is the **handler runtime and projection runtime** — the engine internals that load family-schema-declared handlers and projections, dispatch events to them, and persist the results. This document specified *what* the engine does at the source-of-truth level; the next document covers *how* the runtime is structured and what its testing/observability surface looks like.
