@@ -34,7 +34,7 @@ This series sits between the other two in the repository:
 - **product_concepts/** (this series) — **what configurable product implements that math**: the engine, the configuration surface, the regulatory pack, the v1 slice, the roadmap.
 - [integration_concepts/](../integration_concepts/00-introduction-and-decisions.md) — **how that product integrates with the bank**: events, sagas, ACL, CQRS, the operational backbone.
 
-The engine takes the cash-flow primitive from financial_concepts §9.2 as its single architectural insight and collapses every product family — deposits, credits, mortgages, current accounts, cards — into one engine with a swappable configuration surface and a swappable regulatory pack. The integration backbone is inherited from integration_concepts/, not redefined here.
+The engine takes the cash-flow primitive from [financial_concepts §9.2](../financial_concepts/banking_products_financial_mathematics.md) as its single architectural insight and collapses every product family — deposits, credits, mortgages, current accounts, cards — into one engine with a swappable configuration surface and a swappable regulatory pack. The integration backbone is inherited from integration_concepts/, not redefined here.
 
 The operating organization is an incumbent Portuguese bank modernising on a strangler-fig adoption path: a single product line moves onto the new engine while the legacy core continues to run the rest. Geography expands PT → ES → EU. The v1 slice is *depósito a prazo* (Portuguese term deposit) — the smallest surface that exercises both the engine and the PT regulatory pack end-to-end.
 

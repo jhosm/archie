@@ -14,7 +14,7 @@ S(t + Δt) = S(t) × (1 + r × Δt) − payments(Δt) + drawdowns(Δt)
 
 `S(t)` is the outstanding balance, `r` is the rate matched to the unit of `Δt`, and `payments` and `drawdowns` are the cash flows crossing the account boundary in the interval.
 
-Term deposits, Price and SAC loans, bullet credit, mortgages with grace periods and quarterly Euribor revision, current accounts, revolving credit cards — pick any product, substitute the right shape for `payments` and `drawdowns`, the right `r` and `Δt`, and the equation produces the right answer. The proof is in financial_concepts §9.2; the consequence is architectural.
+Term deposits, Price and SAC loans, bullet credit, mortgages with grace periods and quarterly Euribor revision, current accounts, revolving credit cards — pick any product, substitute the right shape for `payments` and `drawdowns`, the right `r` and `Δt`, and the equation produces the right answer. The proof is in [financial_concepts §9.2](../financial_concepts/banking_products_financial_mathematics.md); the consequence is architectural.
 
 A product engine that takes this equation as its primitive is *structurally* one engine. Not "one engine that special-cases each product family," nor "a shared library that each product module reuses." One engine, one runtime, one balance-evolution function — invoked with different parameters for different products. The product-per-module pattern that haunts legacy cores is a modelling accident. Unification dissolves it.
 
@@ -49,7 +49,7 @@ The engine's runtime is fixed; the configuration surface is the variable part. T
 
 Three dimensions are not enough on their own to specify a sellable product. A product also carries:
 
-- **Charges.** Opening fees, maintenance fees, early-repayment penalties, currency-conversion margins. Some are mandatory for the TAEG calculation (financial_concepts §6.2); some are optional. The engine treats charges as first-class cash flows, not metadata.
+- **Charges.** Opening fees, maintenance fees, early-repayment penalties, currency-conversion margins. Some are mandatory for the TAEG calculation (per [financial_concepts §6.2](../financial_concepts/banking_products_financial_mathematics.md)); some are optional. The engine treats charges as first-class cash flows, not metadata.
 - **Insurance.** Mandatory life insurance on a mortgage (PT *seguro de vida*), optional payment-protection insurance on a personal loan. Premiums are cash flows; coverage events are state transitions. Both belong inside the product configuration.
 - **Regulatory pack.** The geography-specific bundle, covered in §5 below. The pack is swapped at deployment time, not at product-design time. Product configurations layer on top of a chosen pack.
 
@@ -81,7 +81,7 @@ Even with a unified equation, retail banking products split cleanly into two ope
 
 **Irregular (observed cash flows).** Current accounts and credit cards. There is no schedule. Movements happen; the engine observes them; balance and interest are computed *ex post* by integration over the realised balance path. The PT operational formula `J(period) = (TAN / base) × Σ S(d)` — sum-of-daily-balances — is derived in [financial_concepts §8](../financial_concepts/banking_products_financial_mathematics.md).
 
-The same equation governs both, which is what §9.2 proves. The operational differences (fixed vs variable `Δt`; forecast vs observed cash flows) translate into two *modes* of the same engine, not two engines. A single runtime supports both: it accepts events as they arrive (irregular mode) or generates a schedule and reconciles events against it (with-a-plan mode). Event store and projection semantics are the same. Reporting hooks are the same. The lifecycle state machine differs in detail but not in structure.
+The same equation governs both, which is what [financial_concepts §9.2](../financial_concepts/banking_products_financial_mathematics.md) proves. The operational differences (fixed vs variable `Δt`; forecast vs observed cash flows) translate into two *modes* of the same engine, not two engines. A single runtime supports both: it accepts events as they arrive (irregular mode) or generates a schedule and reconciles events against it (with-a-plan mode). Event store and projection semantics are the same. Reporting hooks are the same. The lifecycle state machine differs in detail but not in structure.
 
 The mathematical sameness does not erase an operational asymmetry. With-a-plan has predictable ingest — one or two events per account per period, schedulable in advance. Irregular has unpredictable, high-volume ingest — every card swipe, every direct debit, every salary credit is an event the engine absorbs, accrues, and reconciles within tight timing. The runtime is the same; the operational profile (throughput, latency, batch-window behaviour, peak handling) is materially different. The architecture must be built with the irregular profile as the upper-bound design point, even though the irregular mode lands later in the [roadmap](./03-roadmap.md). Sizing for with-a-plan only and retrofitting irregular is how "one engine, two modes" turns into two engines under the same name.
 
