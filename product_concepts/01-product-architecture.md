@@ -84,7 +84,9 @@ A regulatory pack bundles, for one geography:
 
 ## 5. The Integration Seam
 
-The product engine does not live alone. It lives inside a bank's ecosystem, which means it inherits an integration architecture. That architecture is fully documented in [integration_concepts/](../integration_concepts/00-introduction-and-decisions.md). This section names the seam, not the architecture — the engine's job is to **inherit, not redefine**.
+The bank's most valuable asset in this estate is the integration shape — the network of contracts between core, channels, payments, CRM, GL, IFRS 9, and regulatory reporting, developed over decades and shaped by this bank's specific operating model. The engine exists to *extend* that asset with a configurable product layer, not to replace it. This is the build-vs-buy thesis from [§00-product-vision §1.5](./00-product-vision.md) made architectural: a vendor engine forces the integration to be rebuilt to fit its contracts; an engine built fitted to the existing integration preserves the asset.
+
+That asset has its own architecture, documented in full in [integration_concepts/](../integration_concepts/00-introduction-and-decisions.md). This section names the seam between the engine and that architecture — where the engine plugs into events, sagas, the ACL, observability, and the MCP surface. The engine's job is to **honour the architecture, not redefine it**.
 
 **Events on Redpanda.** The engine emits and consumes events on the bank's event backbone. The choice of broker is [ADR-001](../integration_concepts/adrs/ADR-001-event-backbone-message-broker.md) (Redpanda). The engine does not have an opinion about the broker; it has a contract with the broker's interface.
 
