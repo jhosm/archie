@@ -1,10 +1,10 @@
 # Feature Design — Event Store and Projections
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens the engine's source-of-truth model: [§00-product-vision §3](./00-product-vision.md), [§01-product-architecture §2](./01-product-architecture.md), and [§02-v1-scope §2.3](./02-v1-scope-term-deposits.md) commit to **event store + bitemporal projections** — the event log is the truth, projections are derived state — and this document specifies the engine-vs-family separation, the event taxonomy, handler discipline, replay reconciliation, snapshot strategy, and the GL coupling that operationalise the commitment. The strict separation between generic engine core and family-specific event logic is what makes the unification claim in [§01-product-architecture §1](./01-product-architecture.md) structurally true rather than aspirational.
+> Companion to the brief. Deepens the engine's source-of-truth model from [00 §3](./00-product-vision.md), [01 §2](./01-product-architecture.md), and [02 §2.3](./02-v1-scope-term-deposits.md): event store + bitemporal projections, the log is the truth, projections are derived state.
 >
-> This document is interlocked with [feature-design-configuration-authoring](./feature-design-configuration-authoring.md): that document established that family schemas declare variants and handlers; this one establishes that they also declare *event types* and that everything in the engine outside the cross-cutting set is family-schema material. Read together, the two documents specify why "one engine, many families" is structurally possible.
+> Interlocks with [authoring](./feature-design-configuration-authoring.md): family schemas declare variants and handlers (that document) and also event types (this one). Everything outside the cross-cutting event set is family-schema material.
 >
-> Reading order: §1 frames the source-of-truth model. §2 names the four time-dimensional capabilities the engine must support. §3 specifies the engine-vs-family separation. §4 specifies the event taxonomy (cross-cutting generic events + family-specific events). §5 covers handler discipline. §6 covers bitemporal projections and defers the implementation choice. §7 covers replay reconciliation. §8 covers snapshots. §9 covers GL and downstream coupling. §10 covers risk mitigations for a team with moderate event-sourcing experience.
+> Reading order: §1 source-of-truth · §2 four time-dimensional capabilities · §3 engine-vs-family separation · §4 event taxonomy · §5 handler discipline · §6 bitemporal projections · §7 replay reconciliation · §8 snapshots · §9 GL coupling · §10 risk mitigations.
 
 ---
 

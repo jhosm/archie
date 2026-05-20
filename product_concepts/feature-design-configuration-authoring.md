@@ -1,10 +1,13 @@
 # Feature Design — Configuration Authoring
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §3](./01-product-architecture.md) ("The Configuration Surface") from a different angle than [feature-design-configuration-surface](./feature-design-configuration-surface.md): that document splits the *artefact* surface into configs, rate sheets, and packs; this document splits the *authoring* surface into engine primitives, family schemas, and variants — and works through who authors each layer at what cadence with what review, plus the falsifiable agility-wedge claim that the workflow is designed to satisfy.
+> Companion to the brief. Deepens [01 §3](./01-product-architecture.md) from a different angle than [surface](./feature-design-configuration-surface.md):
 >
-> The two design-notes documents are orthogonal: the artefact split says what kinds of files exist; the authoring split says who writes what kind of change to which file, on what timescale, under what review. Reading the existing surface document first helps but is not required.
+> - The *artefact* split ([surface](./feature-design-configuration-surface.md)): what kinds of files exist — configs, rate sheets, packs.
+> - The *authoring* split (this note): who writes what kind of change, on what timescale, under what review — engine primitives, family schemas, variants.
 >
-> Reading order: §1 frames the wedge as an authoring claim. §2–§6 work through the authoring layers, the family/variant taxonomy, the review workflow, the validator's five depths, and the schema-version pinning invariant. §7 states the falsifiable agility wedge as two distinct claims. §8 names the roadmap consequence of the multi-country window.
+> Reading [surface](./feature-design-configuration-surface.md) first helps but is not required.
+>
+> Reading order: §1 frame · §2–§6 layers, taxonomy, review, validator, pinning · §7 falsifiable wedge · §8 roadmap consequence.
 
 ---
 

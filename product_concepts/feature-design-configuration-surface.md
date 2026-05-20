@@ -1,10 +1,10 @@
 # Feature Design — Configuration Surface
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §3](./01-product-architecture.md) ("The Configuration Surface") and [§01-product-architecture §5](./01-product-architecture.md) ("The Regulatory Pack") by specifying two artefact families the brief names but does not detail: **rate sheets** (the price layer, separate from product structure) and the **pack vocabulary** (the jurisdiction-scoped vocabulary that configs and rate sheets bind to).
+> Companion to the brief. Deepens [01 §3](./01-product-architecture.md) and [01 §5](./01-product-architecture.md) by specifying two artefact families the brief names but does not detail: **rate sheets** (the price layer) and the **pack vocabulary** (the jurisdiction-scoped vocabulary).
 >
-> The brief is short by design; this document is the load-bearing detail behind a couple of its load-bearing claims. It does not resolve [Q4 (Configurability Depth)](./04-open-questions.md) but answers two design questions any future Q4 resolution will have to live with.
+> Does not resolve [04 §4 (Configurability Depth)](./04-open-questions.md); answers two design questions any future resolution will have to live with.
 >
-> Reading order: skim §1 for the shared frame; read §2 (rate sheets) and §3 (pack vocabulary) on their own merits.
+> Reading order: skim §1 for the shared frame, then read §2 (rate sheets) and §3 (pack vocabulary) independently.
 
 ---
 

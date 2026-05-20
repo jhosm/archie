@@ -35,51 +35,53 @@ A steering committee can ask this question at any point in the engine's lifetime
 
 ## 2. The Wedge
 
-The wedge is a single architectural choice: **cash flows are the primitive**. Products are configurations of (cash-flow shape, day-count, compounding, charges, regulatory pack). Everything else is a consequence.
+A single architectural choice: **cash flows are the primitive**. Products are configurations of cash-flow shape, day-count, compounding, charges, and regulatory pack. Everything else is a consequence.
 
-[financial_concepts §9.2](../financial_concepts/banking_products_financial_mathematics.md) proves the unification mathematically. Every retail banking product — term deposit, Price loan, SAC loan, mortgage with variable rate and grace period, current account, credit card — obeys the same equation:
+The unification is mathematically proved (per [financial_concepts §9.2](../financial_concepts/banking_products_financial_mathematics.md)). Every retail banking product — term deposit, Price loan, SAC loan, variable-rate mortgage, current account, credit card — obeys the same equation:
 
 ```
 S(t + Δt) = S(t) × (1 + r × Δt) − payments(Δt) + drawdowns(Δt)
 ```
 
-What varies between products is bounded and small: cash-flow shape (fixed/variable/irregular), day-count convention (Act/360, Act/365, 30/360), and compounding frequency. Three dimensions. Everything else — Price vs SAC vs American, deposit vs credit, *carência* vs balloon, *juros antecipados* vs juros at maturity — is a choice about what is fixed inside those three.
+What varies between products is bounded and small: cash-flow shape (fixed/variable/irregular), day-count convention (Act/360, Act/365, 30/360), and compounding frequency. Three dimensions. Price vs SAC, deposit vs credit, *carência* vs balloon, *juros antecipados* vs juros at maturity — all are choices about what is fixed inside those three.
 
-Two consequences flow from this choice:
+Two consequences:
 
 - **Agility.** A new product is a new row in a configuration table, not a new module.
 - **Unification.** One engine, one operational model, one set of audit and reporting hooks, one event store + projection surface across every retail product family.
 
-Both consequences fall out of the same architectural insight. Take the insight away and neither holds.
+Both fall out of the same insight. Take the insight away and neither holds.
 
-The agility consequence is stated as an internal-challenge form in [feature-design-configuration-authoring §7](./feature-design-configuration-authoring.md): zero engine code per new variant (architectural invariant); PM commit to production in ≤ 5 working days (workflow target). Both are testable; failure is diagnosable. These are not external promises — they are the falsifiable shape of the wedge that lets the team detect when it is being eroded.
+The agility consequence is stated in falsifiable form in [authoring §7](./feature-design-configuration-authoring.md): zero engine code per new variant (architectural invariant); PM commit to production in ≤ 5 working days (workflow target). Both are testable. Both are diagnosable when they fail. They are not external promises — they are the shape of the wedge that lets the team detect when it is being eroded.
 
 ---
 
 ## 3. What's In Scope
 
-Three things, and exactly three:
+Three things, and exactly three.
 
-- **The product engine** — the runtime that takes a product configuration plus a sequence of events and produces the cash flows, accrual schedule, balance evolution, and lifecycle transitions for an instance of that product.
-- **The event store + product projections** — the engine's source of truth. The event log is the truth; bitemporal projections (positions, accrual schedules, maturity calendars, withholding ledgers) are derived state, rebuildable from the log at any time. The brief calls this "event store + projections" rather than "subledger" because the four time-dimensional capabilities the engine commits to (as-of queries, audit trail, counterfactual replay, forward projection) are properties of an event-sourced model, not a state-holding ledger. [feature-design-event-store-projections](./feature-design-event-store-projections.md) covers the full treatment.
-- **The regulatory pack** — a swappable, geography-scoped vocabulary of primitives, parameters, and reporting hooks. The engine ships the executable primitives; the pack binds them to a jurisdiction. The pack is declarative data, not executable code, and is version-pinned per instance for regulatory stability. [feature-design-configuration-surface §3.2](./feature-design-configuration-surface.md) names the three-layer model (engine / pack / config); §3.4 shows the pack manifest; §3.5 specifies the pinning invariant. v1 ships with the PT pack; ES and EU packs are roadmap items.
+**The product engine.** The runtime that takes a product configuration plus a sequence of events and produces the cash flows, accrual schedule, balance evolution, and lifecycle transitions for an instance of that product.
 
-The product engine, the event store + projections, and the regulatory pack together form one cohesive deliverable. Operating any two of the three without the third is operating a half-product.
+**The event store + product projections.** The engine's source of truth. The event log is the truth; bitemporal projections (positions, accrual schedules, maturity calendars, withholding ledgers) are derived state, rebuildable from the log at any time. The four time-dimensional capabilities the engine commits to — as-of queries, audit trail, counterfactual replay, forward projection — are properties of an event-sourced model, not features bolted on a state-holding ledger. Full treatment: [event-store](./feature-design-event-store-projections.md).
+
+**The regulatory pack.** A swappable, geography-scoped vocabulary of primitives, parameters, and reporting hooks. The engine ships the executable primitives; the pack binds them to a jurisdiction. The pack is declarative data, not executable code, and is version-pinned per instance for regulatory stability. v1 ships with the PT pack; ES and EU packs are roadmap items. Full treatment: [surface §3.2–§3.5](./feature-design-configuration-surface.md).
+
+The three form one cohesive deliverable. Operating any two without the third is operating a half-product.
 
 ---
 
 ## 4. What's Out of Scope
 
-The discipline of the brief lives in this list. Each item is genuinely deferred — owned by other systems in the bank's estate, not by this engine. **"Out of scope" means "the engine does not build it, but the engine owns the integration to it."** Channels, GL, IFRS 9, payments rails, fraud / AML, KYC are out-of-scope *products*; the integration shapes to them are in-scope and are the load-bearing asset of the build (see [§1.5](#15-why-build-rather-than-buy)). Stating them explicitly prevents scope creep from eroding the wedge.
+Out of scope means *the engine does not build it, but the engine owns the integration to it*. Channels, GL, IFRS 9, payments rails, fraud / AML, KYC are out-of-scope products; the integration shapes to them are in-scope and are the load-bearing asset of the build (see [§1.5](#15-why-build-rather-than-buy)).
 
-- **General ledger / double-entry accounting.** The engine emits signals; a GL system consumes them. We do not write a GL.
-- **IFRS 9 staging and ECL.** We emit the events an IFRS 9 system needs (days past due, restructuring, write-off triggers). The IFRS 9 logic itself runs elsewhere. The signal-boundary contract is in scope; the staging engine is not.
+- **General ledger / double-entry accounting.** The engine emits signals; a GL system consumes them.
+- **IFRS 9 staging and ECL.** The engine emits the events an IFRS 9 system needs (days past due, restructuring, write-off triggers). The IFRS 9 logic runs elsewhere. The signal-boundary contract is in scope; the staging engine is not.
 - **Channels.** Mobile apps, web banking, branch teller, call centre. The engine exposes APIs and events; channels are someone else's product.
 - **Payments rails.** SEPA, TARGET2, instant payments, card schemes. The engine settles to a current account; how that current account moves money is a payments problem.
-- **Fraud and AML.** These are first-class systems in their own right, with their own vendors and their own regulators. The engine integrates with them; it does not absorb them.
+- **Fraud and AML.** First-class systems in their own right, with their own vendors and their own regulators. The engine integrates with them; it does not absorb them.
 - **KYC and onboarding.** A customer exists before they hold a product. KYC is upstream.
 
-If the answer to "should we build X?" is "X is in the explicit out-of-scope list," the answer is no. Re-opening one of these items costs the wedge.
+If the answer to "should we build X?" is "X is on the explicit out-of-scope list," the answer is no. Re-opening one of these costs the wedge.
 
 ---
 

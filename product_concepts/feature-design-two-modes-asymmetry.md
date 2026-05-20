@@ -1,22 +1,26 @@
 # Feature Design — Two Operating Modes Asymmetry
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §4](./01-product-architecture.md) ("Two Families Inside One Engine"), specifically the operational-asymmetry warning at the end of that section. The brief says: "the engine architecture has to be built with the irregular profile as the upper-bound design point, even if the irregular mode lands later in the roadmap. Sizing for with-a-plan only and retrofitting irregular is one of the ways 'one engine, two modes' turns into two engines under the same name." This document operationalises that warning: it commits to **Approach C — interfaces for v4, implementations for v1**, and specifies the six v1 architectural commitments that distinguish Approach C from a v1 design that would have to be substantially rewritten to absorb v4.
+> Companion to the brief. Deepens [01 §4](./01-product-architecture.md) — the operational-asymmetry warning at the end. Commits to **Approach C — interfaces for v4, implementations for v1**, and specifies the six v1 commitments that follow.
 >
-> This document is unusual in the series because it forces v4 thinking into v1. Every other design notes companion (configuration surface, configuration authoring, event store + projections, strangler-fig coexistence) treats v4 as future scope; this one treats v4 as a v1 design constraint. That framing is necessary because the architecture cannot absorb v4 retroactively without breaking v1 contracts that have already been written down.
+> Unusual in the series because it forces v4 thinking into v1: every other design note treats v4 as future scope, this one treats v4 as a v1 design constraint.
 >
-> Reading order: §1 frames why v4 has to be a v1 concern. §2 quantifies the asymmetry. §3 names the three credible architectural answers. §4 commits to Approach C. §5 specifies the six v1 commitments that follow from Approach C. §6 specifies the event-store selection criteria that refine [Q-AC](./04-open-questions.md). §7 names how this document interacts with the other design notes companions.
+> Reading order: §1 frame · §2 asymmetry · §3 three approaches · §4 commitment · §5 six commitments · §6 event-store criteria · §7 cross-references.
 
 ---
 
 ## 1. Frame: v4 as a v1 Design Constraint
 
-The roadmap in [03-roadmap §v4](./03-roadmap.md) treats current accounts and cards as the fourth product family, several phases after v1 deposits. The same document is careful to call v4 "a firm long-term goal, optional in practice" — meaning the bank can stop at v1–v3 and still extract the full agility wedge, but the architecture must remain v4-capable regardless. The unification claim in [§01-product-architecture §1](./01-product-architecture.md) — "one engine, one runtime, one balance evolution function" — is what the v4-capability commitment is *about*. Drop v4-capability, and the unification claim collapses to "one engine for with-a-plan families, plus a separate runtime later for irregular families." That is not what the brief promises.
+[03-roadmap §v4](./03-roadmap.md) treats current accounts and cards as the fourth product family, several phases after v1 deposits. The same document calls v4 "a firm long-term goal, optional in practice" — the bank can stop at v1–v3 and still extract the full agility wedge, but the architecture must remain v4-capable regardless. The unification claim in [§01 §1](./01-product-architecture.md) — *one engine, one runtime, one balance-evolution function* — is what the v4-capability commitment is about. Drop v4-capability and the claim collapses to "one engine for with-a-plan, plus a separate runtime later for irregular." That is not what the brief promises.
 
-The architectural cost of staying v4-capable is concentrated in v1. Every v1 design decision either preserves v4 optionality or forecloses it. A v1 event store that hits a throughput wall at 10k events/day is fine for v1's term-deposit workload (~12M events/year, ~30k/day) but forecloses v4 (~100M–600M events/year, sustained 100s TPS, bursts to 1000s). A v1 handler interface that assumes batch invocation is fine for v1's daily accrual cadence but forecloses v4's real-time card-transaction ingest. A v1 event envelope without a `partition_key` field is fine for v1's unsharded operation but turns sharding into a breaking schema change when v4 needs it.
+The architectural cost of staying v4-capable is concentrated in v1. Every v1 design decision either preserves v4 optionality or forecloses it:
 
-The asymmetry is not just numerical scale. The two modes differ on six independent operational dimensions (§2): instance count, event volume per instance, peak rate, per-event latency budget, event source direction (engine-generated vs externally-ingested), and lifecycle bounded­ness. Each dimension is its own architectural constraint, and each compounds the others.
+- A v1 event store that hits a throughput wall at 10k events/day is fine for v1's term-deposit workload (~12M events/year, ~30k/day) but forecloses v4 (~100M–600M events/year, sustained 100s TPS, bursts to 1000s).
+- A v1 handler interface that assumes batch invocation is fine for v1's daily accrual cadence but forecloses v4's real-time card-transaction ingest.
+- A v1 event envelope without a `partition_key` field is fine for v1's unsharded operation but turns sharding into a breaking schema change when v4 needs it.
 
-[§01-product-architecture §4](./01-product-architecture.md) commits to Approach C — interfaces for v4, implementations for v1 — and points at this document for the six non-negotiable v1 commitments that operationalise it (§5). Without those concrete commitments, the architectural commitment is decorative and the failure mode is the one the brief warns against: years of v1–v3 work followed by a v4 effort that finds itself rewriting the engine.
+The asymmetry is not just volumetric. The two modes differ on six independent operational dimensions (§2): instance count, event volume per instance, peak rate, per-event latency budget, event source direction (engine-generated vs externally-ingested), and lifecycle boundedness. Each is its own architectural constraint; each compounds the others.
+
+[§01 §4](./01-product-architecture.md) commits to Approach C — interfaces for v4, implementations for v1 — and points here for the six non-negotiable v1 commitments that operationalise it (§5). Without those concrete commitments, the architectural commitment is decorative and the failure mode is the one the brief warns against: years of v1–v3 work followed by a v4 effort that finds itself rewriting the engine.
 
 ---
 
