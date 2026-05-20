@@ -67,21 +67,20 @@ This is the heart of the wedge, and getting it wrong in either direction kills i
 
 ---
 
-## 5. Split-Brain Reconciliation with Legacy DDA
+## 5. Operational SLA Calibration for Reconciliation
 
-**Context.** [02-v1-scope §3](./02-v1-scope-term-deposits.md) describes the happy-path coexistence with the legacy core's current-account module: the engine settles principal and interest into the current account through the [ACL](../integration_concepts/02-anti-corruption-layer.md), the legacy core books the credit, and end-of-day reconciliation compares the engine's outbox against the legacy core's incoming journal. The unhappy path is the open question: **what happens when the engine and the legacy core disagree about an account's state?**
+**Context.** [02-v1-scope §3](./02-v1-scope-term-deposits.md) describes the happy-path coexistence with the legacy core's current-account module. The unhappy path (engine and legacy disagree about an instance's state) was the original framing of this question; the architectural answer is now in [feature-design-strangler-fig-coexistence §7](./feature-design-strangler-fig-coexistence.md), which specifies three reconciliation flows (settlements outbox vs legacy journal; engine's view of legacy instances vs daily batch file; engine-internal projection rebuild) and names ownership and cadence.
 
-Concrete scenarios:
+The residual open question is **operational**, not architectural: **what alert thresholds, escalation paths, and tooling does the operating bank's ops function use to action the reconciliation reports?** Specifically:
 
-- The engine settles a deposit-maturity credit to the customer's current account; the legacy core books it; meanwhile the legacy core has booked a separate same-day transaction (a card payment, a salary credit) that the engine doesn't know about. The customer-facing balance is the legacy core's responsibility; the engine's view of "the credit landed" is correct from its perspective. The two views are consistent but only the legacy core has the complete picture.
-- The engine sends the settlement instruction through the ACL; the ACL gets an ambiguous response from the legacy core (the [indeterminate state](../integration_concepts/02-anti-corruption-layer.md) problem). The engine has to decide whether to retry, escalate, or compensate. A wrong choice leads to either a double-credit or a missing credit.
-- The legacy core's reconciliation file at end of day shows a credit the engine did not emit. The engine has to flag it as an alert; if the count of alerts crosses a threshold, something is fundamentally wrong with the ACL or the deployment.
+- How many engine-side orphans per day cross from "operational noise" to "page on-call"? How many cross from "page on-call" to "freeze new constitutions"? The thresholds require a calibration period under real-data load — they cannot be set in advance.
+- What's the decision tree for a single legacy-side orphan (a credit in legacy's journal the engine did not emit)? Investigation paths, ownership, time-to-resolution targets.
+- What tooling does the ops team use to drill from a daily reconciliation report into specific records on each side? Existing bank tooling, or new tooling owned by the engine team?
+- What is the runbook for the first auto-renewal cycle after cutover (see [feature-design-strangler-fig-coexistence §9.3](./feature-design-strangler-fig-coexistence.md) and Q-AD), where the engine sees an unusual constitution-load spike?
 
-The architectural answer is "the legacy core is the system of record for current accounts; the engine's view is reconciled against it; intra-day inconsistency is bounded and visible." The operational answer — who reconciles when, what tools the ops team uses, what alerts fire at what thresholds — is genuinely open.
+This is operational scope tracked here because v1 cannot enter production without it. A demo can hand-wave; a production deployment cannot.
 
-This question must be resolved before v1 enters production. A demo can hand-wave; a production deployment cannot.
-
-**Unblocked by.** An operations / reconciliation review with the operating bank's ops function: walk through the daily reconciliation process the bank uses today, identify where the engine's settlements fit, define the alerting and escalation paths. Output: an operational runbook (not necessarily in this repo) plus an addendum to [02-v1-scope §3](./02-v1-scope-term-deposits.md) describing the contract the engine commits to.
+**Unblocked by.** An operations / reconciliation review with the operating bank's ops function: walk through the daily reconciliation process the bank uses today, identify where the three reconciliation flows from [feature-design-strangler-fig-coexistence §7](./feature-design-strangler-fig-coexistence.md) fit, define the alerting thresholds and escalation paths. Output: an operational runbook (not in this repo — it is operating-bank-specific) plus a confirmation in [02-v1-scope §3](./02-v1-scope-term-deposits.md) that the engine's reconciliation contract is operable as specified. See also Q-AG (reconciliation alert thresholds), Q-AH (legacy batch file contract), Q-AI (channel routing) when folded in.
 
 ---
 
