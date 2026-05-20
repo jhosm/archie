@@ -68,7 +68,7 @@ The irregular family. **Completes the engine's range** — once v4 ships, every 
 
 ### v4 stance: firm long-term goal, optional in practice
 
-v4 is committed as a **firm long-term goal**: the architecture is built so the engine can run current accounts and cards, the irregular mode is part of the engine's design point (not a retrofit), and the operational tooling for high-volume ingest is built out by v3 at the latest. The destination is "the engine runs every retail product family the bank holds."
+v4 is committed as a **firm long-term goal**: the architecture is built so the engine can run current accounts and cards, the irregular mode is part of the engine's design point (not a retrofit), and the operational tooling for high-volume ingest is built out by v3 at the latest. The destination is "the engine runs every retail product family the bank holds." The six v1 commitments that keep v4 architecturally viable — and the synthetic v4-scale load test that proves them at v1 acceptance — are specified in [feature-design-two-modes-asymmetry](./feature-design-two-modes-asymmetry.md).
 
 v4 is also **explicitly optional in practice**. The bank can stop at v1–v3 on the new engine, keep current accounts and cards on legacy DDA indefinitely, and still extract the full agility wedge for the product families that have moved. This is a valid endpoint — what is sometimes called a "non-core core": the engine handles configurable products, the legacy core handles current accounts and the GL, and the integration architecture from [integration_concepts/](../integration_concepts/00-introduction-and-decisions.md) keeps them coherent.
 
