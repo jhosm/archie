@@ -1,6 +1,6 @@
 # Feature Design — Configuration Authoring
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §2](./01-product-architecture.md) ("The Configuration Surface") from a different angle than [feature-design-configuration-surface](./feature-design-configuration-surface.md): that document split the *artefact* surface into configs, rate sheets, and packs; this document splits the *authoring* surface into engine primitives, family schemas, and variants — and works through who authors each layer at what cadence with what review, plus the falsifiable agility-wedge claim that the workflow is designed to satisfy.
+> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §3](./01-product-architecture.md) ("The Configuration Surface") from a different angle than [feature-design-configuration-surface](./feature-design-configuration-surface.md): that document split the *artefact* surface into configs, rate sheets, and packs; this document splits the *authoring* surface into engine primitives, family schemas, and variants — and works through who authors each layer at what cadence with what review, plus the falsifiable agility-wedge claim that the workflow is designed to satisfy.
 >
 > The two design-notes documents are orthogonal: the artefact split says what kinds of files exist; the authoring split says who writes what kind of change to which file, on what timescale, under what review. Reading the existing surface document first helps but is not required.
 >
@@ -10,7 +10,7 @@
 
 ## 1. Frame: The Wedge as an Authoring Claim
 
-The agility wedge in [§00-product-vision §2](./00-product-vision.md) and [§01-product-architecture §2](./01-product-architecture.md) commits to "new products are configuration changes, not new modules." The brief states the architectural property — declarative, synchronously validated, safe-by-default — without committing to *who turns what change into a deployable artefact, on what timescale, under what review*. Without that, "configuration change" is a category description, not a workflow.
+The agility wedge in [§00-product-vision §2](./00-product-vision.md) and [§01-product-architecture §3](./01-product-architecture.md) commits to "new products are configuration changes, not new modules." The brief states the architectural property — declarative, synchronously validated, safe-by-default — without committing to *who turns what change into a deployable artefact, on what timescale, under what review*. Without that, "configuration change" is a category description, not a workflow.
 
 The wedge is operable only when three layers exist with three different cadences and three different review postures:
 
@@ -216,7 +216,7 @@ The implication: **pack abstraction work for ES has to overlap v2–v3, not wait
 
 The reshape does not change the order of PT product families — v2 and v3 still ship PT-first because the operating bank's volume and regulatory expertise are PT-side. What changes is that **the pack work is treated as a parallel track, not a sequential phase**. A follow-up issue should rewrite [03-roadmap](./03-roadmap.md) to surface this as an explicit parallel track in the phase table.
 
-The architectural reading is consistent with the brief's "[§01 §4](./01-product-architecture.md) — the pack is swappable from day one." A pack that only ever holds PT can be a *de facto* fork; only a pack that holds two jurisdictions concurrently in active development proves the abstraction is real. The roadmap should reflect that the proof has to land by v3, not deferred to v5.
+The architectural reading is consistent with the brief's "[§01 §5](./01-product-architecture.md) — the pack is swappable from day one." A pack that only ever holds PT can be a *de facto* fork; only a pack that holds two jurisdictions concurrently in active development proves the abstraction is real. The roadmap should reflect that the proof has to land by v3, not deferred to v5.
 
 ---
 
@@ -225,8 +225,8 @@ The architectural reading is consistent with the brief's "[§01 §4](./01-produc
 ### 9.1 Sections that change
 
 - **[§00-product-vision §2](./00-product-vision.md) ("The Wedge").** The two-bullet "Agility / Unification" pair is correct but stops at category description. Add a one-line internal-target form of the wedge, pointing to this document for the falsifiable shape (zero engine code per variant; ≤ 5 working days PM commit to production). Do not turn the wedge bullets into commercial promises; the target is internal challenge.
-- **[§01-product-architecture §2](./01-product-architecture.md) ("The Configuration Surface").** Currently states three load-bearing properties (declarative, synchronous validation, safe-by-default) and defers depth to [Q4 in 04-open-questions](./04-open-questions.md). Add a cross-reference to this document for the three-authoring-layer split (primitives / family schemas / variants) and the named workflow. The depth question is still open; the *layering* question is resolved here.
-- **[§01-product-architecture §4](./01-product-architecture.md) ("The Regulatory Pack").** Already cross-references [feature-design-configuration-surface](./feature-design-configuration-surface.md) for the pack manifest and pinning invariant. Add the schema-pinning parallel from §6 above so both pinning invariants are visible.
+- **[§01-product-architecture §3](./01-product-architecture.md) ("The Configuration Surface").** Currently states three load-bearing properties (declarative, synchronous validation, safe-by-default) and defers depth to [Q4 in 04-open-questions](./04-open-questions.md). Add a cross-reference to this document for the three-authoring-layer split (primitives / family schemas / variants) and the named workflow. The depth question is still open; the *layering* question is resolved here.
+- **[§01-product-architecture §5](./01-product-architecture.md) ("The Regulatory Pack").** Already cross-references [feature-design-configuration-surface](./feature-design-configuration-surface.md) for the pack manifest and pinning invariant. Add the schema-pinning parallel from §6 above so both pinning invariants are visible.
 - **[§02-v1-scope-term-deposits §2.4](./02-v1-scope-term-deposits.md) (event contract).** `DepositConstituted` already gains `pack_version` from the surface doc; add `schema_version` alongside. Introduce `SchemaVersionMigrated` to the event set, parallel to `PackVersionMigrated`.
 - **[§03-roadmap](./03-roadmap.md).** Major restructure per §8 above: surface the ES pack as a parallel track starting in v2, not a sequential phase after v4. This is a follow-up issue, not a same-PR change.
 

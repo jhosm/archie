@@ -1,6 +1,6 @@
 # Product Architecture
 
-> The architectural thesis. Five sections, each one a load-bearing piece of the engine's identity. The engine **inherits** the integration architecture from [integration_concepts/](../integration_concepts/00-introduction-and-decisions.md) — it does not redefine it.
+> The architectural thesis. Six sections, each one a load-bearing piece of the engine's identity. The engine **inherits** the integration architecture from [integration_concepts/](../integration_concepts/00-introduction-and-decisions.md) — it does not redefine it.
 
 ---
 
@@ -20,9 +20,26 @@ The consequence is this: a product engine that takes this equation as its primit
 
 This is the single architectural insight on which everything else in this document depends. The configuration surface, the two-families story, the regulatory pack, and the integration seam are all consequences of taking the cash-flow primitive seriously.
 
+Concretely, the cash-flow primitive is the **mathematical rule that governs event handlers**. Every product instance is a stream of events; deterministic, side-effect-free handlers fold events into derived state by applying this equation under the parameters declared in the product configuration. The handlers update the event log; projections derive state from the log. §2 names the source-of-truth shape that follows from this.
+
 ---
 
-## 2. The Configuration Surface
+## 2. The Event Store and Projections
+
+The engine's source of truth is the **event store**, co-located with the outbox per [ADR-004](../integration_concepts/adrs/ADR-004-outbox-pattern-mechanism.md). State is *derived* by deterministic, side-effect-free handlers; projections — positions, accrual schedules, maturity calendars, withholding ledgers — are bitemporal tables built from the event store. The CQRS read model ([integration_concepts/03](../integration_concepts/03-cqrs-and-read-models.md)), the GL system, the IFRS 9 system, and the regulatory reporting application are all *consumers* of these projections; none of them is the engine's primary state holder.
+
+Four properties follow:
+
+- **The events are the truth.** State that does not derive from events does not exist. Projections are recomputable from the event log alone; a projection that cannot be rebuilt is broken.
+- **Replay is routine.** Counterfactual queries ("what would the accrual be if pack `pt.2027.1` had applied from 2026-01-01?") are answered by replay with modified inputs, not by separate analysis tooling.
+- **Snapshots are performance optimisation, not architecture.** The engine must always be able to rebuild any projection from the event log alone; snapshots accelerate the rebuild, they do not replace the log.
+- **Schema evolution is forward-only.** Events are forever readable; payload migrations are versioned; breaking changes are new event types, not new versions of old ones.
+
+The four time-dimensional capabilities the engine commits to — *as-of* queries (state as of date X, as known on date Y), audit trails, counterfactual replay, forward projection — are properties of this event-sourced model, not features bolted on top. Replay correctness is a testable property: stored fixture event sequences applied to handlers must produce the same projections every time. [feature-design-event-store-projections](./feature-design-event-store-projections.md) covers the full treatment — handler discipline, bitemporal projection mechanics, replay reconciliation, snapshot strategy, GL coupling, and the event taxonomy (cross-cutting generic events declared by the engine plus family-specific events declared by family schemas).
+
+---
+
+## 3. The Configuration Surface
 
 The engine's runtime is fixed; the **configuration surface** is the variable part. [financial_concepts §2.2](../financial_concepts/banking_products_financial_mathematics.md) names the three irreducible dimensions:
 
@@ -40,11 +57,13 @@ The agility wedge from the [vision](./00-product-vision.md) lives concretely her
 
 The configuration surface has three load-bearing properties: it must be **declarative** (no engine code change required to ship a new variant within an existing family), validation must be **synchronous at commit time** (so the product team learns at commit time that a configuration is well-formed and pack-compliant), and deployment must be **safe-by-default** (a new configuration cannot break configurations already running in production). The depth question — templates only, DSL only, or both — is genuinely open and tracked in [04-open-questions](./04-open-questions.md); whichever depth is chosen, it must satisfy these three properties or the agility wedge fails.
 
+The surface is not one artefact family but three, with distinct cadences and approvers: **product configs** (structure; product team; days–weeks; product + compliance), **rate sheets** (numerical rates; treasury / ALM; daily–weekly; treasury sign-off), and the **pack** (jurisdiction-scoped vocabulary; engine team + internal regulatory counsel; per regulatory change). The split is what lets a weekly rate change move through the treasury-sign-off cadence without paying the cost of a product-redesign approval; collapsing them into one artefact collapses the cheapest change onto the most expensive approval. [feature-design-configuration-surface](./feature-design-configuration-surface.md) covers the three artefact families, the rate-sheet binding mechanics, and the pack vocabulary. From the authoring angle, the same configuration model splits into **three authoring layers** — engine primitives, family schemas, and variants — with named cadences, named reviewers, and a falsifiable agility-wedge claim. [feature-design-configuration-authoring](./feature-design-configuration-authoring.md) covers the layering, the variant authoring/review workflow, the validator's five depths, and the wedge as two falsifiable claims (zero engine code per variant; ≤ 5 working days PM commit to production).
+
 The configuration surface is also where the discipline of the brief lives. The engine **does not** ship with a configuration for "anything imaginable." It ships with a deliberately bounded surface that covers the product families in scope. Expanding the surface is a roadmap decision, not a runtime extension point that can be stretched beyond recognition.
 
 ---
 
-## 3. Two Families Inside One Engine
+## 4. Two Families Inside One Engine
 
 Even with a unified equation, retail banking products split cleanly into two **operating modes**. [financial_concepts §9.1](../financial_concepts/banking_products_financial_mathematics.md) calls these *prospective* and *retrospective*; this document calls them by what they do to cash flows.
 
@@ -52,7 +71,7 @@ Even with a unified equation, retail banking products split cleanly into two **o
 
 **Irregular (observed cash flows).** Current accounts and credit cards. There is no schedule. Movements happen; the engine observes them; balance and interest are computed *ex post* by integration over the realised balance path. [financial_concepts §8](../financial_concepts/banking_products_financial_mathematics.md) covers the operational formula — `J(period) = (TAN / base) × Σ S(d)`, the sum-of-daily-balances method that PT current-account practice uses.
 
-The same equation governs both — that is what §9.2 proves. The operational differences (fixed vs variable `Δt`, forecast vs observed cash flows) translate into two **modes** of the same engine, not two engines. A single product runtime supports both: it accepts events when they arrive (irregular mode) *or* it generates a schedule and reconciles events against it (with-a-plan mode). The subledger semantics are the same. The reporting hooks are the same. The lifecycle state machine differs in detail but not in structure.
+The same equation governs both — that is what §9.2 proves. The operational differences (fixed vs variable `Δt`, forecast vs observed cash flows) translate into two **modes** of the same engine, not two engines. A single product runtime supports both: it accepts events when they arrive (irregular mode) *or* it generates a schedule and reconciles events against it (with-a-plan mode). The event-store and projection semantics are the same. The reporting hooks are the same. The lifecycle state machine differs in detail but not in structure.
 
 The mathematical sameness does not erase an operational asymmetry worth naming. The with-a-plan family has predictable ingest: one or two events per account per period, schedulable in advance. The irregular family has unpredictable, high-volume ingest: every card swipe, every direct debit, every salary credit is an event the engine has to absorb, accrue, and reconcile within tight timing. The runtime is the same; the *operational profile* (throughput, latency, batch-window behaviour, peak handling) is materially different. The engine architecture has to be built with the irregular profile as the upper-bound design point, even if the irregular mode lands later in the [roadmap](./03-roadmap.md). Sizing for with-a-plan only and retrofitting irregular is one of the ways "one engine, two modes" turns into two engines under the same name.
 
@@ -62,7 +81,7 @@ This is what "one engine across product families" actually means, with that cave
 
 ---
 
-## 4. The Regulatory Pack
+## 5. The Regulatory Pack
 
 The regulatory pack is the **third dimension of the wedge** — alongside agility and unification. Without it, the engine works only in Portugal. With it, the engine works in any EU country once the pack is filled in.
 
@@ -82,9 +101,11 @@ A regulatory pack bundles, for one geography:
 
 **The non-negotiable.** The pack is swappable from day one. If regulation is hardcoded anywhere in the engine — a `if country == "PT"` somewhere, a hardcoded `0.28` for withholding tax, a hardcoded "Act/360" for day-count — geographic expansion becomes a rewrite, not a configuration change. The wedge dies. The architecture has to make the pack a first-class swap point, and the engine has to read the pack at runtime, not bake it in.
 
+**Pack pinning + schema pinning.** Two stability invariants run in parallel. Every constituted instance pins to the **pack version active at constitution** and to the **family-schema version active at constitution**; the instance carries both for its entire life. A deposit constituted on 2026-03-15 under `pack: pt.2026.1` and `schema: term_deposit@2026.1` keeps computing under both for its entire lifecycle, even after `pt.2027.1` or `term_deposit@2027.1` ships. This is the regulatory and contractual stability guarantee at both layers — regulators expect it, auditors expect it, banks rely on it. Retroactive change is rare and explicit: a pack migration emits a `PackVersionMigrated` event per instance; a schema migration emits a `SchemaVersionMigrated` event; both are auditable and reversible-in-principle. [feature-design-configuration-surface §3.5–§3.6](./feature-design-configuration-surface.md) covers the pack pinning and migration mechanics; [feature-design-configuration-authoring §6](./feature-design-configuration-authoring.md) covers the schema pinning parallel.
+
 ---
 
-## 5. The Integration Seam
+## 6. The Integration Seam
 
 The bank's most valuable asset in this estate is the integration shape — the network of contracts between core, channels, payments, CRM, GL, IFRS 9, and regulatory reporting, developed over decades and shaped by this bank's specific operating model. The engine exists to *extend* that asset with a configurable product layer, not to replace it. This is the build-vs-buy thesis from [§00-product-vision §1.5](./00-product-vision.md) made architectural: a vendor engine forces the integration to be rebuilt to fit its contracts; an engine built fitted to the existing integration preserves the asset.
 
@@ -96,7 +117,7 @@ That asset has its own architecture, documented in full in [integration_concepts
 
 **Saga participation.** The constitution flow of a new product instance touches Core Banking + Compliance + CRM + Workflow + Notifications — that is a saga, not a request. The saga orchestrator is the one in [ADR-003](../integration_concepts/adrs/ADR-003-saga-orchestrator.md); the canonical walkthrough is the constitution saga in [integration_concepts/05](../integration_concepts/05-constitution-saga-walkthrough.md). The engine participates as a saga step (commands + compensations), it does not run the saga.
 
-**Outbox emission.** Every state-changing operation in the engine produces a domain event; events leave the engine via the outbox pattern from [ADR-004](../integration_concepts/adrs/ADR-004-outbox-pattern-mechanism.md) and [integration_concepts/04](../integration_concepts/04-plumbing-patterns.md). Exactly-once-effectively semantics, not at-most-once and not at-least-once. The subledger and the outbox are co-located so the event-and-write commit atomically.
+**Outbox emission.** Every state-changing operation in the engine produces a domain event; events leave the engine via the outbox pattern from [ADR-004](../integration_concepts/adrs/ADR-004-outbox-pattern-mechanism.md) and [integration_concepts/04](../integration_concepts/04-plumbing-patterns.md). Exactly-once-effectively semantics, not at-most-once and not at-least-once. The event store and the outbox are co-located so the event-append and outbox-write commit atomically.
 
 **Anti-corruption layer.** The engine talks to Core Banking through the ACL described in [integration_concepts/02](../integration_concepts/02-anti-corruption-layer.md). The ACL handles the seven responsibilities listed there (translation, idempotency, indeterminate state, etc.); the engine sees clean domain primitives. Translation lives in the ACL, not in the engine.
 

@@ -1,6 +1,6 @@
 # Feature Design — Configuration Surface
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §2](./01-product-architecture.md) ("The Configuration Surface") and [§01-product-architecture §4](./01-product-architecture.md) ("The Regulatory Pack") by working through two artefact families that the brief names but does not specify: **rate sheets** (the price layer, separate from product structure) and the **pack vocabulary** (the jurisdiction-scoped vocabulary that configs and rate sheets bind to).
+> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §3](./01-product-architecture.md) ("The Configuration Surface") and [§01-product-architecture §5](./01-product-architecture.md) ("The Regulatory Pack") by working through two artefact families that the brief names but does not specify: **rate sheets** (the price layer, separate from product structure) and the **pack vocabulary** (the jurisdiction-scoped vocabulary that configs and rate sheets bind to).
 >
 > The brief is short by design; this document is the load-bearing detail behind a couple of its load-bearing claims. It does not resolve Q8 (Configurability Depth) in [04-open-questions](./04-open-questions.md) but answers two design questions that any future Q8 resolution will have to live with, and opens nine new questions in their own right.
 >
@@ -10,7 +10,7 @@
 
 ## 1. Frame: One Configuration Surface, Three Artefact Families
 
-[§01-product-architecture §2](./01-product-architecture.md) commits to a configuration surface that is declarative, synchronously validated, and safe-by-default. It does not commit to *how many distinct artefacts* the surface is composed of. The implicit reading of the brief is "one artefact per product." That implicit reading does not survive contact with the v1 PT pack.
+[§01-product-architecture §3](./01-product-architecture.md) commits to a configuration surface that is declarative, synchronously validated, and safe-by-default. It does not commit to *how many distinct artefacts* the surface is composed of. The implicit reading of the brief is "one artefact per product." That implicit reading does not survive contact with the v1 PT pack.
 
 A working configuration surface needs three artefact families, with distinct cadences, approvers, and lifecycle semantics:
 
@@ -143,7 +143,7 @@ Rate sheets apply only to products on the new engine. Term deposits booked throu
 
 ### 3.1 Premise
 
-[§01-product-architecture §4](./01-product-architecture.md) commits to the regulatory pack as "swappable from day one" but does not specify what a pack actually is. The risk in leaving it abstract: engine implementations that promise "swappable pack" routinely arrive at a *de facto* fork (a PT branch, an ES branch) because the abstraction was never load-bearing. This section makes the pack load-bearing.
+[§01-product-architecture §5](./01-product-architecture.md) commits to the regulatory pack as "swappable from day one" but does not specify what a pack actually is. The risk in leaving it abstract: engine implementations that promise "swappable pack" routinely arrive at a *de facto* fork (a PT branch, an ES branch) because the abstraction was never load-bearing. This section makes the pack load-bearing.
 
 A **pack** is a versioned, jurisdiction-scoped vocabulary of *primitives*, *parameters*, and *reporting hooks*. It is declarative data, not executable code. The engine ships the executable primitives; the pack binds them to a jurisdiction.
 
@@ -296,8 +296,8 @@ Without the pack as a typed vocabulary, the validator could only catch syntax er
 ### 4.1 Sections that change
 
 - **[§00-product-vision §2.4](./00-product-vision.md) ("the pack").** Currently a sketch. Replace with the three-layer model in §3.2 and the pack manifest in §3.4.
-- **[§01-product-architecture §2](./01-product-architecture.md) ("The Configuration Surface").** Implies a single artefact family; name three (configs, rate sheets, pack) with the cadences and approvers from §1 of this document.
-- **[§01-product-architecture §4](./01-product-architecture.md) ("The Regulatory Pack").** Commits to "swappable from day one" without saying *what* a pack is; cross-reference §3.4 (manifest) and §3.5 (pinning invariant).
+- **[§01-product-architecture §3](./01-product-architecture.md) ("The Configuration Surface").** Implies a single artefact family; name three (configs, rate sheets, pack) with the cadences and approvers from §1 of this document.
+- **[§01-product-architecture §5](./01-product-architecture.md) ("The Regulatory Pack").** Commits to "swappable from day one" without saying *what* a pack is; cross-reference §3.4 (manifest) and §3.5 (pinning invariant).
 - **[§02-v1-scope-term-deposits §2.4](./02-v1-scope-term-deposits.md) (event contract).** `DepositConstituted` gains `rate_sheet_version_id` and `pack_version`; `InterestAccrued` and `WithholdingApplied` inherit both via `causationid`. Add `PackVersionMigrated` and `NetInterestCredited` to the event set.
 - **[§02-v1-scope-term-deposits §2.3](./02-v1-scope-term-deposits.md) (subledger outputs).** The BdP retail-rate-statistics signal is a pack-defined reporting hook (`reporting.bdp_estatisticas_taxas_juro`), not a separate engine module.
 
@@ -327,4 +327,4 @@ This document captures a design exploration, not an adopted spec. To move from e
 3. Decide Q-M (pack governance) — it gates the entire pack story commercially.
 4. Prototype a single product config + rate sheet + pack triple against the v1 deposit scope and validate the schema against [financial_concepts §9.2](../financial_concepts/banking_products_financial_mathematics.md) cash-flow primitives.
 
-The natural next design thread is the **validator / simulator CLI surface** — the developer-facing tool a product team runs locally and in CI to check a config + rate sheet + pack triple before it deploys. The synchronous-validation property in [§01-product-architecture §2](./01-product-architecture.md) is a claim about *when* the product team learns a configuration is well-formed and pack-compliant (within minutes of committing, not hours after deploy). That property is only operable if there is a CLI the product team runs at commit time; without it, validation lives in a deploy pipeline that runs at the wrong cadence and surfaces failures to the wrong audience.
+The natural next design thread is the **validator / simulator CLI surface** — the developer-facing tool a product team runs locally and in CI to check a config + rate sheet + pack triple before it deploys. The synchronous-validation property in [§01-product-architecture §3](./01-product-architecture.md) is a claim about *when* the product team learns a configuration is well-formed and pack-compliant (within minutes of committing, not hours after deploy). That property is only operable if there is a CLI the product team runs at commit time; without it, validation lives in a deploy pipeline that runs at the wrong cadence and surfaces failures to the wrong audience.

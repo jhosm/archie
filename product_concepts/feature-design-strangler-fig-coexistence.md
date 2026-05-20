@@ -1,6 +1,6 @@
 # Feature Design — Strangler-Fig Coexistence
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §5](./01-product-architecture.md) ("Strangler-fig coexistence") and resolves the architectural part of [§04-open-questions §5](./04-open-questions.md) ("Split-Brain Reconciliation"). The brief treats coexistence as a half-page subsection and a single open question; this document treats it as what it actually is — a **multi-year period** during which two peer systems run the same product family concurrently, with seven dimensions of dual operation the brief does not currently cover.
+> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §6](./01-product-architecture.md) ("Strangler-fig coexistence") and resolves the architectural part of [§04-open-questions §5](./04-open-questions.md) ("Split-Brain Reconciliation"). The brief treats coexistence as a half-page subsection and a single open question; this document treats it as what it actually is — a **multi-year period** during which two peer systems run the same product family concurrently, with seven dimensions of dual operation the brief does not currently cover.
 >
 > The framing is unusually operations-heavy compared to the other companions. It refers to specific systems by name (the legacy core, the reporting application, the ACL, the unified read model) and is more concrete about runbooks, alerts, and end-of-day plumbing than the rest of the series. The reason: the brief's value depends on v1 actually working in production, and v1 is the period when coexistence is most fragile. Configuration depth (the subject of [feature-design-configuration-authoring](./feature-design-configuration-authoring.md)) is about velocity *after* v1; coexistence is about whether v1 ships at all without a split-brain incident.
 >
@@ -10,7 +10,7 @@
 
 ## 1. Frame: Coexistence Is a Period, Not a Steady State
 
-The strangler-fig motion in [§00-product-vision §1.4](./00-product-vision.md) and [§01-product-architecture §5](./01-product-architecture.md) describes coexistence as a property of the engine: "the engine can run alongside the legacy core." Treating coexistence as a property hides that it is also a **period** — a multi-year stretch with start, middle, and end phases, each with distinct risks, distinct operational shape, and distinct exit criteria.
+The strangler-fig motion in [§00-product-vision §1.4](./00-product-vision.md) and [§01-product-architecture §6](./01-product-architecture.md) describes coexistence as a property of the engine: "the engine can run alongside the legacy core." Treating coexistence as a property hides that it is also a **period** — a multi-year stretch with start, middle, and end phases, each with distinct risks, distinct operational shape, and distinct exit criteria.
 
 Three phases, each load-bearing on different things:
 
@@ -22,7 +22,7 @@ Three phases, each load-bearing on different things:
 
 Each phase has a different operational profile. Cutover is high-attention, short-duration, fully-staffed. The middle phase is the long tail where attention naturally drops but where most of the operational risk accrues. The end is short again but requires a deliberate trigger that someone has to pull.
 
-The brief currently has no explicit treatment of any of these phases. [§01-product-architecture §5](./01-product-architecture.md) commits to the three coexistence properties (per-product-line onboarding, API coexistence, event-contract reactivity) but says nothing about how the period itself is operated. That gap is what this document fills.
+The brief currently has no explicit treatment of any of these phases. [§01-product-architecture §6](./01-product-architecture.md) commits to the three coexistence properties (per-product-line onboarding, API coexistence, event-contract reactivity) but says nothing about how the period itself is operated. That gap is what this document fills.
 
 ---
 
@@ -154,7 +154,7 @@ The detailed shape of this contract — exact format, exact cutoffs, exact dedup
 
 ## 6. The Unified Read Surface
 
-[§01-product-architecture §5](./01-product-architecture.md) names a unified read surface as one of the three coexistence properties. [integration_concepts/03 (CQRS and Read Models)](../integration_concepts/03-cqrs-and-read-models.md) covers the read-model pattern in general. This section specifies how the read model handles **two sources with different staleness profiles** — the case that integration_concepts/03 does not address explicitly.
+[§01-product-architecture §6](./01-product-architecture.md) names a unified read surface as one of the three coexistence properties. [integration_concepts/03 (CQRS and Read Models)](../integration_concepts/03-cqrs-and-read-models.md) covers the read-model pattern in general. This section specifies how the read model handles **two sources with different staleness profiles** — the case that integration_concepts/03 does not address explicitly.
 
 ### 6.1 Two sources, two staleness profiles
 
@@ -431,7 +431,7 @@ The architecture survives the end of coexistence for any single family. Each fam
 
 ### 12.1 Sections that change
 
-- **[§01-product-architecture §5](./01-product-architecture.md) ("Strangler-fig coexistence").** Currently three bullet points (per-product-line onboarding, API coexistence, event-contract reactivity). Keep the bullets but add a paragraph framing coexistence as a multi-year period (§1 of this document) and cross-referencing this document for the full treatment of the seven dimensions, the SoR map, and the end state.
+- **[§01-product-architecture §6](./01-product-architecture.md) ("Strangler-fig coexistence").** Currently three bullet points (per-product-line onboarding, API coexistence, event-contract reactivity). Keep the bullets but add a paragraph framing coexistence as a multi-year period (§1 of this document) and cross-referencing this document for the full treatment of the seven dimensions, the SoR map, and the end state.
 - **[§02-v1-scope §3](./02-v1-scope-term-deposits.md) ("Coexistence with Legacy DDA").** Currently happy-path-only (engine settles to legacy current accounts via ACL). Add an explicit reference to this document for the period-level treatment and the legacy-emission shape (the daily batch file). Add the renewal-creates-engine-instance commitment as a footnote or short paragraph; it is materially part of the v1 scope.
 - **[§02-v1-scope §2.2](./02-v1-scope-term-deposits.md) (PT regulatory features).** The line "The reports themselves are built by a downstream reporting application" can stand as-is, but cross-reference §8 of this document where the reporting application is named as a load-bearing dependency rather than a downstream consumer.
 - **[§04-open-questions §5](./04-open-questions.md) (Split-Brain Reconciliation).** Narrow the question rather than close it. The architectural answer is in this document (§7); the residual open question is the operational SLA calibration — alert thresholds, reconciliation runbook with the operating bank's ops function, escalation paths. Re-frame the §5 entry to focus on that operational scope, point at this document for the architectural part, and cross-reference Q-AG for the alert thresholds.
@@ -470,7 +470,7 @@ Continuing the lettered sequence from [feature-design-event-store-projections](.
 
 This document captures a design exploration, not an adopted spec. To move from exploration to spec:
 
-1. Fold §12.1 changes into the numbered brief documents. The §01 §5 edit is the largest; the §04 §5 narrowing is the second largest; the §02 §3 cross-reference is small.
+1. Fold §12.1 changes into the numbered brief documents. The §01 §6 edit is the largest; the §04 §5 narrowing is the second largest; the §02 §3 cross-reference is small.
 2. Fold §12.5 questions into [04-open-questions](./04-open-questions.md). Narrow Q5 to operational SLA calibration with a pointer to this document.
 3. Run the legacy-extract audit (Q-AH) and the channel-architecture audit (Q-AF, Q-AI) in parallel during v1 architectural work. Both are *discovery* work, not *engineering* work; they unblock specific engineering decisions.
 4. Convert Q-AE (reporting application identity) into a build-vs-buy conversation with the operating bank's regulatory-reporting function. The answer is load-bearing for the engine's reporting-hook contracts.

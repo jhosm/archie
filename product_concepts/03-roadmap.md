@@ -6,16 +6,18 @@
 
 ## The Sequence at a Glance
 
-| Phase | Product family | Pack | Rationale |
+| Phase | Product family | Pack (deployment) | Rationale |
 |---|---|---|---|
 | **v1** | Term deposits | PT | Simplest math; validates engine + pack end-to-end |
 | **v2** | Personal credit (Price / SAC) | PT | First product family where the unification wedge runs in production; introduces TAEG with charges and DL 133/2009 compliance |
 | **v3** | *Crédito à habitação* (mortgage) | PT | Largest portfolio in PT retail; adds variable rate, Euribor revision, mandatory insurance, DL 74-A/2017 |
 | **v4** | Current accounts + cards (irregular family) | PT | Completes the engine's range; firm long-term goal, optional in practice (see v4 section below) |
-| **v5+** | Term deposits + personal credit | ES | First proof that regulatory-as-a-pack works; lowest-risk products in a new geography |
+| **v5+** | Term deposits + personal credit | ES (deployment) | First *deployment* of the second pack; the pack itself has been in active design since v2 (see Parallel Tracks below) |
 | **v6+** | EU expansion | EU baseline + per-country deltas | CCD 2008/48/EC and MCD 2014/17/EU baseline; country-specific deltas as additional packs |
 
 The numbering is illustrative, not contractual — phases may overlap and may be adopted in a different order. What is fixed is the **sequencing logic** below, not the version labels.
+
+**Parallel tracks.** Read literally, the table sequences ES pack work after v4. That reading is wrong. The pack is a *deployment* milestone at v5+; the *design* work begins at v2 as an explicit parallel track. See [Parallel Track: ES Pack Design Starts at v2](#parallel-track-es-pack-design-starts-at-v2) below.
 
 ---
 
@@ -23,7 +25,7 @@ The numbering is illustrative, not contractual — phases may overlap and may be
 
 The v1 slice is fully specified in [02-v1-scope-term-deposits.md](./02-v1-scope-term-deposits.md). The rationale belongs here:
 
-The simplest cash-flow math in retail banking (financial_concepts §5). At most three cash flows in the basic case. The narrowest slice of the PT regulatory pack (Act/360, TANB/TANL, 28% withholding, BdP reporting hooks). End-to-end exercise of the engine, the subledger, the regulatory pack, and the integration seam — but on a product where every formula has a closed form and a worked example. Aligned with the running example in [integration_concepts/](../integration_concepts/00-introduction-and-decisions.md), so the integration architecture is not theoretical for this product, it is documented and worked out.
+The simplest cash-flow math in retail banking (financial_concepts §5). At most three cash flows in the basic case. The narrowest slice of the PT regulatory pack (Act/360, TANB/TANL, 28% withholding, BdP reporting hooks). End-to-end exercise of the engine, the event store + projections, the regulatory pack, and the integration seam — but on a product where every formula has a closed form and a worked example. Aligned with the running example in [integration_concepts/](../integration_concepts/00-introduction-and-decisions.md), so the integration architecture is not theoretical for this product, it is documented and worked out.
 
 v1 is the architectural proof. Every subsequent phase is configuration on top of a known-working engine.
 
@@ -37,7 +39,7 @@ In scope: Portuguese unsecured personal credit (*crédito pessoal*) under the Pr
 
 - **TAEG with charges.** [financial_concepts §6.2](../financial_concepts/banking_products_financial_mathematics.md) defines TAEG as the IRR of the full cash flow including all mandatory charges. The engine has to treat charges (opening fee, monthly maintenance fee, mandatory PPI premium if any) as first-class cash flows and run a numerical IRR solver to publish the TAEG on every offer. v1 had charges as a configuration capability but no v1 product exercised it; v2 is where it lands in production.
 - **DL 133/2009 compliance.** *Decreto-Lei* 133/2009 transposes CCD 2008/48/EC (the EU Consumer Credit Directive). The PT pack now has to ship the SECCI pre-contractual information sheet, the legal right of withdrawal, the explicit cost-of-credit breakdown, and the dispute-resolution disclosures.
-- **Amortisation schedule semantics.** A credit produces an amortisation schedule on day one; events on the account either match the schedule (`InstallmentPaid`) or trigger deviations (`InstallmentMissed`, `AmortizationAdvanced`, `PrestaçãoExtraordináriaApplied`). The engine's with-a-plan mode from [01-product-architecture §3](./01-product-architecture.md) is exercised in earnest.
+- **Amortisation schedule semantics.** A credit produces an amortisation schedule on day one; events on the account either match the schedule (`InstallmentPaid`) or trigger deviations (`InstallmentMissed`, `AmortizationAdvanced`, `PrestaçãoExtraordináriaApplied`). The engine's with-a-plan mode from [01-product-architecture §4](./01-product-architecture.md) is exercised in earnest.
 
 v2 is the phase where the wedge is exercised on a structurally different product. After v2, new credit product configurations are configuration work, not module work.
 
@@ -60,8 +62,8 @@ v3 is the phase where the regulatory pack is *seriously* exercised. DL 74-A/2017
 
 The irregular family. **Completes the engine's range** — once v4 ships, every retail product family is on the same engine. The new pieces relative to v3:
 
-- **Irregular operating mode.** v1–v3 ran the engine's *with-a-plan* mode (schedules computed ex ante, events reconcile to the schedule). v4 introduces the *irregular* mode from [01-product-architecture §3](./01-product-architecture.md) and [financial_concepts §8](../financial_concepts/banking_products_financial_mathematics.md): no schedule, balance evolves event by event, interest is computed retrospectively over the realised balance path (`J = Σ S(d) × r × Δt`). Same engine, different mode.
-- **Continuous-state subledger.** Current accounts and cards have permanently open balances; the subledger has to support point-in-time queries efficiently across a long history. v1–v3 subledgers handled at-most-a-few-years lifecycles; v4 changes the access pattern.
+- **Irregular operating mode.** v1–v3 ran the engine's *with-a-plan* mode (schedules computed ex ante, events reconcile to the schedule). v4 introduces the *irregular* mode from [01-product-architecture §4](./01-product-architecture.md) and [financial_concepts §8](../financial_concepts/banking_products_financial_mathematics.md): no schedule, balance evolves event by event, interest is computed retrospectively over the realised balance path (`J = Σ S(d) × r × Δt`). Same engine, different mode.
+- **Continuous-state projections.** Current accounts and cards have permanently open balances; the engine's projections have to support point-in-time queries efficiently across a long history. v1–v3 projections handled at-most-a-few-years lifecycles; v4 changes the access pattern (see [feature-design-two-modes-asymmetry §5.5](./feature-design-two-modes-asymmetry.md) for the snapshot-infrastructure implications).
 - **Card-specific surface.** Credit limits, billing cycles, minimum-payment rules, revolving evolution ([financial_concepts §8.5](../financial_concepts/banking_products_financial_mathematics.md)). Treated as a configuration of the irregular mode, not a separate product type.
 
 **Why last in PT.** The legacy core's current-account module is the **most deeply entrenched** piece of the bank's estate. Every other system in the bank references current-account IDs; payments rails settle into current accounts; the GL is structured around them. Moving current accounts is not a product migration, it is an estate-wide event. By going last, the strangler-fig motion gives the bank time to (a) prove the engine on three other product families first, (b) build out the coexistence APIs from [02-v1-scope §3](./02-v1-scope-term-deposits.md) to a level where multiple product families on the engine settle cleanly into the legacy DDA, and (c) make the v4 cutover a genuine decision rather than an act of faith.
@@ -78,13 +80,13 @@ The two framings are not in tension. The architecture supports v4; the decision 
 
 ## v5+ — Iberia: ES (Term Deposits + Personal Credit)
 
-The **first proof that regulatory-as-a-pack works**. Up to v4 the engine has been run on a single pack (PT). v5 is where a second pack (ES) is filled in, exercised on the lowest-risk product families to validate the abstraction.
+The **first proof that regulatory-as-a-pack works in production**. Up to v4 the engine has been run on a single deployed pack (PT). v5 is where the ES pack — designed as a parallel track during v2–v3 (see the Parallel Tracks section above) — first *deploys* in production, exercised on the lowest-risk product families to validate the abstraction under operational load.
 
 Why those two families: term deposits and personal credit are the products with the smallest cross-border regulatory delta inside the EU. Both are covered by harmonising EU directives (term deposits via the deposit-guarantee scheme directive 2014/49/EU; personal credit via CCD 2008/48/EC) with relatively thin per-country deltas. Spain transposes CCD 2008/48/EC as *Ley 16/2011 de Contratos de Crédito al Consumo*; the IRS-equivalent withholding regime (*retención a cuenta del IRPF*) is administratively different from PT but mathematically the same shape (a flat withholding on interest, applied flow-by-flow).
 
 What v5 must prove:
 
-- **Pack swap is a configuration change.** A deployment pointing at the ES pack uses the same images, the same engine binary, the same event schemas, the same subledger structure. Only the pack differs. If anything in the engine has to change to support ES, the pack abstraction failed and the wedge is at risk.
+- **Pack swap is a configuration change.** A deployment pointing at the ES pack uses the same images, the same engine binary, the same event schemas, the same event-store and projection structure. Only the pack differs. If anything in the engine has to change to support ES, the pack abstraction failed and the wedge is at risk.
 - **Reporting hooks remap cleanly.** Banco de Portugal reporting (v1–v4) becomes Banco de España and AEAT reporting (v5+). The engine emits abstracted signals; the geography-specific reporting application interprets them.
 - **Disclosure documents are pack outputs.** The FIN (PT depósito disclosure) and SECCI (PT consumer credit disclosure) have ES counterparts. The pack ships the disclosure templates and the data the templates need; the engine doesn't know about specific documents.
 
@@ -119,6 +121,29 @@ Pack maintenance is therefore a **continuous track in parallel with the phase ro
 - **Backward compatibility.** A pack update **cannot** retroactively change accruals or balances on existing accounts (that would be unauditable). Pack changes apply prospectively from a `pack_effective_date`; the engine carries the effective pack version per account so historical reconstructions remain consistent.
 
 Pack maintenance is a product, not a side-effect. It is the **largest recurring operational cost** beyond engine development itself, and it has to be staffed accordingly from day one.
+
+---
+
+## Parallel Track: ES Pack Design Starts at v2
+
+The phase table sequences ES under v5+, which is when the ES pack first *runs* in production. The phase table does **not** sequence when the ES pack is *designed*. Read literally, ES pack design starts only after v4 — too late.
+
+The reshape: **ES pack design is a parallel track that begins at v2 and is complete by v3.** The v-numbered sequence remains a product-family deployment ladder; ES pack design overlaps it as named parallel work. v5+ becomes a *deployment* milestone, not a *design* milestone. [feature-design-configuration-authoring §8](./feature-design-configuration-authoring.md) covers the reasoning in full; the summary:
+
+- **v2 is the first phase where the pack abstraction is genuinely exercised.** TAEG, DL 133/2009 disclosures, charge handling — all are pack-defined and all are designed as the second pack arrives. The right phase to start the ES pack alongside is v2, because the abstractions being designed are the ones that have to swap cleanly between PT and ES.
+- **v3 is the phase where the pack carries the most surface.** DL 74-A/2017, mandatory insurance, variable rate — the test of pack abstraction is whether the most complex surface swaps cleanly. v3 is where the ES pack design catches up to PT's depth.
+- **v5+ is the deployment milestone.** The pack is already two phases old by the time it ships. The v5+ work is operational: a re-deployment with the ES pack and a supervised operating period, plus the deltas (reporting agencies, disclosure rendering, local-language templates) that emerge only when the pack is run in production.
+
+The PT product-family order does not change — v2 and v3 still ship PT-first because the operating bank's volume and regulatory expertise are PT-side. What changes is that **pack work is a parallel track, not a sequential phase**. The architecture in [§01-product-architecture §5](./01-product-architecture.md) commits to "the pack is swappable from day one"; a pack that only ever holds PT until v5 is a *de facto* fork, not a proof of swappability. Only a pack that holds two jurisdictions concurrently in active development proves the abstraction is real.
+
+The deliverables of the ES-pack parallel track during v2–v3:
+
+- An ES pack manifest (the v5+ shape, per [feature-design-configuration-surface §3.4](./feature-design-configuration-surface.md)) with primitives, parameters, reporting hooks bound for ES.
+- An ES test corpus (per [feature-design-configuration-surface §3.9](./feature-design-configuration-surface.md)) — canonical instances with expected event sequences for the v5+ product set, run in CI against every engine release.
+- ES-pack-authored versions of the disclosure templates referenced by v2 (SECCI-equivalent) and the deposit information document referenced by v1 (FIN-equivalent).
+- A documented PT-vs-ES delta per category (rates, day-count, withholding, reporting), enabling the v5+ deployment team to focus on operational onboarding rather than architectural design.
+
+This is unglamorous work, and that is the point. If the ES pack design has to be invented under deployment pressure at v5, the pack abstraction has failed.
 
 ---
 

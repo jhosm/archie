@@ -1,6 +1,6 @@
 # Feature Design — Two Operating Modes Asymmetry
 
-> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §3](./01-product-architecture.md) ("Two Families Inside One Engine"), specifically the operational-asymmetry warning at the end of that section. The brief says: "the engine architecture has to be built with the irregular profile as the upper-bound design point, even if the irregular mode lands later in the roadmap. Sizing for with-a-plan only and retrofitting irregular is one of the ways 'one engine, two modes' turns into two engines under the same name." That warning is decorative until it is operationalised. This document operationalises it: it commits to **Approach C — interfaces for v4, implementations for v1**, and specifies the six v1 architectural commitments that distinguish Approach C from a v1 design that would have to be substantially rewritten to absorb v4.
+> A design-notes companion to the brief, not a numbered member of the series. Deepens [§01-product-architecture §4](./01-product-architecture.md) ("Two Families Inside One Engine"), specifically the operational-asymmetry warning at the end of that section. The brief says: "the engine architecture has to be built with the irregular profile as the upper-bound design point, even if the irregular mode lands later in the roadmap. Sizing for with-a-plan only and retrofitting irregular is one of the ways 'one engine, two modes' turns into two engines under the same name." That warning is decorative until it is operationalised. This document operationalises it: it commits to **Approach C — interfaces for v4, implementations for v1**, and specifies the six v1 architectural commitments that distinguish Approach C from a v1 design that would have to be substantially rewritten to absorb v4.
 >
 > This document is unusual in the series because it forces v4 thinking into v1. Every other design notes companion (configuration surface, configuration authoring, event store + projections, strangler-fig coexistence) treats v4 as future scope; this one treats v4 as a v1 design constraint. That framing is necessary because the architecture cannot absorb v4 retroactively without breaking v1 contracts that have already been written down.
 >
@@ -22,7 +22,7 @@ The discipline of this document is to specify what "v1 stays v4-capable" means c
 
 ## 2. The Asymmetry, Quantified
 
-The two operating modes from [§01-product-architecture §3](./01-product-architecture.md) — *with-a-plan* (v1 deposits, v2 credit, v3 mortgage) and *irregular* (v4 current accounts and cards) — differ across seven dimensions. The runtime is the same (event handlers, projections per [feature-design-event-store-projections](./feature-design-event-store-projections.md)); the operational profile is materially different.
+The two operating modes from [§01-product-architecture §4](./01-product-architecture.md) — *with-a-plan* (v1 deposits, v2 credit, v3 mortgage) and *irregular* (v4 current accounts and cards) — differ across seven dimensions. The runtime is the same (event handlers, projections per [feature-design-event-store-projections](./feature-design-event-store-projections.md)); the operational profile is materially different.
 
 | Property | With-a-plan (v1–v3) | Irregular (v4) | Asymmetry |
 |---|---|---|---|
@@ -69,7 +69,7 @@ The cost of Approach C is concentrated in six non-negotiable v1 commitments (§5
 
 The commitment is non-negotiable for v1 acceptance. A v1 implementation that ships with any of the six commitments (§5) unmet is a v1 implementation that has foreclosed v4, and the unification claim in [§01-product-architecture §1](./01-product-architecture.md) is no longer credible.
 
-Approach C is what the brief's [§01-product-architecture §3](./01-product-architecture.md) warning actually requires. The warning is "size for the irregular profile as the upper-bound design point"; Approach C operationalises that as "v1 implementations may be sized for v1, but v1 interfaces are sized for the irregular profile."
+Approach C is what the brief's [§01-product-architecture §4](./01-product-architecture.md) warning actually requires. The warning is "size for the irregular profile as the upper-bound design point"; Approach C operationalises that as "v1 implementations may be sized for v1, but v1 interfaces are sized for the irregular profile."
 
 The discipline that follows: every v1 architectural decision is reviewed against the v4 implications. A v1 PR that introduces a batch-only assumption in a core code path is rejected even if it ships v1 functionality cleanly. A v1 PR that adds a field to the event envelope without considering its v4 routing implications is rejected. A v1 PR that picks an event store without naming its v4 scale path is rejected. The review gate is part of the v1 engineering process, not an after-the-fact check.
 
@@ -259,7 +259,7 @@ These are integration-layer concerns, not engine-layer concerns. The engine comm
 
 ### 8.1 Sections that change
 
-- **[§01-product-architecture §3](./01-product-architecture.md) ("Two Families Inside One Engine").** Keep the operational-asymmetry warning paragraph; add a sentence committing to Approach C and pointing at this document for the six v1 commitments. The §3 narrative stays compact; the operational detail lives here.
+- **[§01-product-architecture §4](./01-product-architecture.md) ("Two Families Inside One Engine").** Keep the operational-asymmetry warning paragraph; add a sentence committing to Approach C and pointing at this document for the six v1 commitments. The §4 narrative stays compact; the operational detail lives here.
 - **[§03-roadmap §v4](./03-roadmap.md) ("v4 stance: firm long-term goal, optional in practice").** Cross-reference this document for the v1 commitments that keep v4 viable. The "optional in practice" framing is unchanged; the architectural commitments that *make* it optional in practice (rather than infeasible in practice) are specified here.
 
 ### 8.2 Decisions committed in this document
@@ -297,7 +297,7 @@ Continuing the lettered sequence from [feature-design-strangler-fig-coexistence]
 
 This document captures a design exploration, not an adopted spec. To move from exploration to spec:
 
-1. Fold §8.1 changes into the numbered brief. The §01 §3 edit is small (one sentence and a cross-reference). The §03 §v4 edit is also small.
+1. Fold §8.1 changes into the numbered brief. The §01 §4 edit is small (one sentence and a cross-reference). The §03 §v4 edit is also small.
 2. Fold §8.5 questions into [04-open-questions](./04-open-questions.md). Q-AK through Q-AO. Cross-reference Q-AC and Q-Z as refined-not-resolved.
 3. Run the three event-store spikes (Kurrent, Postgres-based, Redpanda-as-event-store) under §6's four criteria during the v1 architectural-decision phase. The synthetic v4-scale load test from §5.6 is the spike's most decisive evaluation.
 4. Convert Q-AK (synthetic load test specification) from open question into v1 engineering work as soon as the event-store choice is made. The test infrastructure has to exist before v1 release-candidate phase.

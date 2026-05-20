@@ -48,9 +48,11 @@ What varies between products is bounded and small: cash-flow shape (fixed/variab
 Two consequences flow from this choice:
 
 - **Agility.** A new product is a new row in a configuration table, not a new module.
-- **Unification.** One engine, one operational model, one set of audit and reporting hooks, one subledger across every retail product family.
+- **Unification.** One engine, one operational model, one set of audit and reporting hooks, one event store + projection surface across every retail product family.
 
 Both consequences fall out of the same architectural insight. Take the insight away and neither holds.
+
+The agility consequence is stated as an internal-challenge form in [feature-design-configuration-authoring §7](./feature-design-configuration-authoring.md): zero engine code per new variant (architectural invariant); PM commit to production in ≤ 5 working days (workflow target). Both are testable; failure is diagnosable. These are not external promises — they are the falsifiable shape of the wedge that lets the team detect when it is being eroded.
 
 ---
 
@@ -59,10 +61,10 @@ Both consequences fall out of the same architectural insight. Take the insight a
 Three things, and exactly three:
 
 - **The product engine** — the runtime that takes a product configuration plus a sequence of events and produces the cash flows, accrual schedule, balance evolution, and lifecycle transitions for an instance of that product.
-- **The product subledger** — a per-account record of positions, accruals, charges, and lifecycle events. The subledger is the engine's source of truth for "what is the state of this account at this point in time?" It is *not* a general ledger; it is a product-side journal that feeds GLs and IFRS 9 systems elsewhere.
-- **The regulatory pack** — a swappable, geography-specific bundle of rules: rate conventions, tax treatments, mandatory disclosures, reporting hooks, day-count defaults. v1 ships with the PT pack. ES and EU packs are roadmap items.
+- **The event store + product projections** — the engine's source of truth. The event log is the truth; bitemporal projections (positions, accrual schedules, maturity calendars, withholding ledgers) are derived state, rebuildable from the log at any time. The brief calls this "event store + projections" rather than "subledger" because the four time-dimensional capabilities the engine commits to (as-of queries, audit trail, counterfactual replay, forward projection) are properties of an event-sourced model, not a state-holding ledger. [feature-design-event-store-projections](./feature-design-event-store-projections.md) covers the full treatment.
+- **The regulatory pack** — a swappable, geography-scoped vocabulary of primitives, parameters, and reporting hooks. The engine ships the executable primitives; the pack binds them to a jurisdiction. The pack is declarative data, not executable code, and is version-pinned per instance for regulatory stability. [feature-design-configuration-surface §3.2](./feature-design-configuration-surface.md) names the three-layer model (engine / pack / config); §3.4 shows the pack manifest; §3.5 specifies the pinning invariant. v1 ships with the PT pack; ES and EU packs are roadmap items.
 
-The product engine, the subledger, and the regulatory pack together form one cohesive deliverable. Operating any two of the three without the third is operating a half-product.
+The product engine, the event store + projections, and the regulatory pack together form one cohesive deliverable. Operating any two of the three without the third is operating a half-product.
 
 ---
 
