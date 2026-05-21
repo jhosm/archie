@@ -6,3 +6,6 @@
 
 # Beads / Dolt files (added by bd init)
 .beads/proxieddb/
+
+# macOS metadata
+.DS_Store
