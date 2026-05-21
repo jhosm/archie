@@ -6,7 +6,7 @@
 > This document is a conceptual reference, not a regulatory or accounting source.
 > Real-world implementations must respect Banco de Portugal conventions and IFRS 9 for accounting recognition.
 
-**Reader's map:** §1–3 set up the unifying framework (cash flows, present value, the fundamental identity); §4 develops the three loan amortization systems; §5 covers *depósitos a prazo*; §6 introduces the cross-cutting metrics (IRR, TAEG); §7 handles composite cases including *carência*, variable rate, *prestações extraordinárias* and *amortização antecipada*; §8 treats irregular products (*conta à ordem*, *cartão de crédito*); §9 synthesizes both families. A glossary is provided at the end.
+**Reader's map:** §1–3 set up the unifying framework (cash flows, present value, the fundamental identity); §4 develops the three loan amortization systems; §5 covers *depósitos a prazo*; §6 introduces the cross-cutting metrics (IRR, TAEG); §7 handles composite cases including *carência*, variable rate, *prestações extraordinárias*, *amortização antecipada*, and payment moratoria; §8 treats irregular products (*conta à ordem*, *cartão de crédito*); §9 synthesizes both families. A glossary is provided at the end.
 
 ---
 
@@ -590,6 +590,86 @@ CF(m+1..n)    = 0
 - SAC pays principal faster → smaller residual `S(m)` → lower early-repayment cost.
 
 A borrower who anticipates *amortização antecipada* should prefer SAC; one who will hold to term and values predictable budgeting should prefer Price.
+
+---
+
+### 7.6 Payment Moratorium (*Moratória*)
+
+A **payment moratorium** (Portuguese *moratória*; plural moratoria) is a temporary, legally-permitted suspension of payment obligations on an active credit instance — typically triggered by a government decree in response to a disaster (the canonical recent Portuguese example is *Decreto-Lei* 10-J/2020 during COVID), or by a bank-initiated forbearance arrangement under EBA *forborne exposures* rules. The mathematical content is a special case of §7.1 (*carência*) inserted mid-contract on the balance computed via §7.4 — no new framework, only re-use.
+
+**Three flavours**, distinguished by what is suspended:
+
+- **Full moratorium.** Capital amortization *and* interest accrual suspended. Term typically extends by the moratorium duration.
+- **Interest-only moratorium.** Capital amortization suspended; interest continues to accrue. Three sub-flavours on the interest treatment: *capitalised* into principal at moratorium-end (PT DL 10-J/2020 default), *deferred* to a lump-sum payment at moratorium-end (or spread over the post-moratorium schedule), or *paid as scheduled* throughout the moratorium window.
+- **Capital-only moratorium.** Interest paid as scheduled; capital amortization suspended.
+
+The combinations map onto §7.1 mechanics:
+
+- *Capitalised interest* during the moratorium uses the *carência total* formula: `S(end) = S(start) × (1 + r)^g`.
+- *Suspended interest* (no accrual): `S(end) = S(start)`.
+- *Paid-as-scheduled interest* with capital suspended is *carência parcial* inserted at the moratorium window: balance unchanged, `J(t) = S(start) × r` paid each period.
+- *Deferred interest* accrues notionally during the window (`J_def = S(start) × r × g`) and is paid as a separate flow at moratorium-end or distributed over the remaining schedule; principal is unchanged at end.
+
+**Worked example — interest-only with capitalisation (DL 10-J/2020 shape).** A 10-year (120-month) mortgage at TAN 4%, principal €100,000:
+
+```
+r = 0.04 / 12 ≈ 0.003333
+P = 100,000 × 0.003333 / (1 − 1.003333^−120) ≈ €1,012.30
+```
+
+After 24 installments, the outstanding balance from §7.4:
+
+```
+S(24) = 100,000 × 1.003333^24 − 1,012.30 × (1.003333^24 − 1) / 0.003333
+      ≈ €83,062
+```
+
+A 6-month interest-only moratorium with capitalisation is granted starting month 24. Capital amortization pauses; interest accrues at `r` and capitalises into principal at month 30 (the *carência total* mechanism, applied mid-contract):
+
+```
+S(30) = S(24) × (1 + r)^6 ≈ 83,062 × 1.003333^6 ≈ €84,740
+```
+
+The term extends by 6 months (so the original 120-month schedule now ends at month 126; 96 monthly installments remain), recomputed on the new balance:
+
+```
+P_new = 84,740 × 0.003333 / (1 − 1.003333^−96) ≈ €1,032.51
+```
+
+**Cash flows** (borrower's perspective):
+
+```
+CF(0)       = +100,000
+CF(1..24)   = −1,012.30
+CF(25..30)  = 0                  (moratorium window — no payment)
+CF(31..126) = −1,032.51
+```
+
+The customer's new installment is about 2% larger than the original, the principal-side cost of the 6-month capitalised window.
+
+**Term-extension alternatives.** PT DL 10-J/2020 extends the term by the moratorium duration (the example above). Two other policies appear in practice:
+
+- *No extension* — the remaining schedule is compressed into the original maturity, producing a larger `P_new` over fewer periods.
+- *Compress remaining* with a re-amortization that targets a fixed final-installment moment.
+
+The choice is a policy parameter of the moratorium, not a property of the math; the formulas are identical with different `(n − m)` substituted for the remaining-term denominator.
+
+**TAEG impact.** Applying a moratorium mutates the realized cash-flow vector, so the TAEG (per §6.2) of the executed contract differs from the contractual TAEG — the same kind of re-solve as §7.5 *amortização antecipada*, with the IRR computed numerically over the new vector. PT/EU consumer-credit rules typically require re-disclosure of the new TAEG via an updated SECCI or FINE; this is a regulatory consequence of the math.
+
+**Retroactivity.** Government moratoria are frequently declared retroactively — the legal text is published days or weeks after the operative date. The math is unchanged: the cash-flow vector is rewritten as if the moratorium had taken effect at its operative date, and any payments collected in the interim are treated as reversal candidates against the corrected vector. Recording both the original and the corrected history is a system concern; the financial math operates on the corrected vector as the source of truth for TAEG, balances, and projections.
+
+**Sub-flavour quick reference (g periods, starting at month m):**
+
+| Flavour | Interest treatment | `S(m + g)` | Cash flow during window |
+|---|---|---|---|
+| Full, suspended interest | None accrues | `S(m)` | `0` |
+| Full, capitalised interest | Accrues, capitalises | `S(m) × (1 + r)^g` | `0` |
+| Interest-only, capitalised | Accrues, capitalises | `S(m) × (1 + r)^g` | `0` |
+| Interest-only, deferred | Accrues, deferred | `S(m)` plus `J_def = S(m) × r × g` at end | `0` during window; lump at `m + g` |
+| Interest-only, paid as scheduled | Accrues, paid each period | `S(m)` | `−S(m) × r` per period |
+| Capital-only | Paid as scheduled | `S(m)` | `−S(m) × r` per period (*carência parcial*) |
+
+All entries are compositions of the §7.1 and §7.4 formulas; no new mathematics is introduced.
 
 ---
 
