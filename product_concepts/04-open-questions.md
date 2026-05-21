@@ -4,7 +4,7 @@
 >
 > Two registers run in parallel:
 >
-> - **§§1–5** — the original brief-level decisions, opened in the first drafting pass. §3 is now Resolved; §5 has narrowed; §§1, 2, 4 remain open.
+> - **§§1–5** — the original brief-level decisions, opened in the first drafting pass. §§3 and 4 are now Resolved; §5 has narrowed; §§1 and 2 remain open.
 > - **Q-I through Q-AO** — questions opened by the design-notes companions, in a continuing letter sequence. Each entry points at its source document.
 >
 > Future sessions add lettered entries; when one resolves, fold the resolution into the relevant numbered document and annotate the entry here.
@@ -53,17 +53,15 @@ The implementation choice (PostgreSQL temporal extensions vs XTDB / datomic-styl
 
 ---
 
-### 4. Configurability Depth
+### 4. Configurability Depth — **RESOLVED**
 
-**Context.** The agility wedge (per [00 §2](./00-product-vision.md), [01 §3](./01-product-architecture.md)) depends on new products being configuration changes. The open question is the **depth** of the configuration surface — three credible models:
+**Resolution.** The three options of the original framing — template-only, DSL-only, or both — are all rejected. The configuration model is **typed family schemas with variants, evolving under coarse-start fine-drift**. The schema is the boundary: what the schema permits is in-scope at the variant layer (weekly cadence); what it does not permit waits for schema fine-drift (quarterly) or a new primitive (months) or is declined at the roadmap layer. There is no DSL escape hatch — that path collapses the cadence-separation invariant on which the agility wedge depends.
 
-- **Template catalog only.** The engine ships with a bounded catalogue of product templates (term deposit with X variants, Price credit, SAC credit, mortgage, current account, card). New products are template instantiations with parameter overrides. Simplest; safest; tightest scope. Risk: the catalogue is always either too narrow (a product needed is not in it) or too wide (the catalogue is the same complexity the engine was meant to replace).
-- **DSL only.** The engine ships with a configuration DSL (cash-flow shape, day-count, compounding, charges, lifecycle hooks) and no templates; every product is composed from primitives. Most flexible; highest learning curve; biggest support surface; risk: the DSL can be used to build products that violate regulatory or commercial constraints the engine is meant to enforce.
-- **Both.** Templates for 80% of common products; DSL for the long tail. Probably correct; specific shape needs work. Risks: dual maintenance burden; the boundary between "template" and "DSL extension" is a per-product judgement that may drift.
+A schema with union types, optional fields, range-bounded scalars, and pack-bound primitives is structurally different from a static template catalogue (and is what the PT v1 `term_deposit` schema already is, absorbing the three interest variants from [02 §2.1](./02-v1-scope-term-deposits.md), flat-vs-stepped rates, banded early termination, and the role split from [surface §2.2](./feature-design-configuration-surface.md) in one typed contract). The long tail is future schema territory, not DSL territory.
 
-This is the heart of the wedge, and getting it wrong in either direction kills it. Template-only is too rigid; DSL-only is too unbounded. The "both" answer is correct in shape but undefined in detail.
+The four-outcome operational procedure (variant reshape / schema fine-drift / primitive release / roadmap-layer decline), the worked examples that exercise the boundary at four positions, and the reasoning that rejects each of the original three options are in [authoring §9](./feature-design-configuration-authoring.md). The wedge falsifiability claim ([authoring §7.1](./feature-design-configuration-authoring.md)) is preserved: a variant that "needs" engine code reveals a schema gap or a primitive gap, never a DSL bypass.
 
-**Unblocked by.** Prototyping the configuration surface against the v1–v3 product set. The prototype answers: what does the term-deposit configuration look like as a template; what does a "non-standard" deposit (one whose configuration the template cannot express) look like in the DSL; where is the template/DSL boundary. Output: an addendum to [01 §3](./01-product-architecture.md) with worked examples of both shapes and a stated boundary policy.
+Two related questions remain open: **Q-R** (the precise signal that triggers schema fine-drift) and **Q-T** (raw-YAML vs form-UI authoring tooling). Both are below the boundary-policy level and do not reopen the depth question.
 
 ---
 

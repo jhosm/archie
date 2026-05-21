@@ -7,7 +7,7 @@
 >
 > Reading [surface](./feature-design-configuration-surface.md) first helps but is not required.
 >
-> Reading order: §1 frame · §2–§6 layers, taxonomy, review, validator, pinning · §7 falsifiable wedge · §8 roadmap consequence.
+> Reading order: §1 frame · §2–§6 layers, taxonomy, review, validator, pinning · §7 falsifiable wedge · §8 roadmap consequence · §9 configurability depth resolution.
 
 ---
 
@@ -220,4 +220,83 @@ The implication: **pack abstraction work for ES has to overlap v2–v3, not wait
 The reshape does not change the order of PT product families — v2 and v3 still ship PT-first because the operating bank's volume and regulatory expertise are PT-side. What changes is that **the pack work is treated as a parallel track, not a sequential phase**. A follow-up issue should rewrite [03](./03-roadmap.md) to surface this as an explicit parallel track in the phase table.
 
 The architectural reading is consistent with the brief's "[01 §5](./01-product-architecture.md) — the pack is swappable from day one." A pack that only ever holds PT can be a *de facto* fork; only a pack that holds two jurisdictions concurrently in active development proves the abstraction is real. The roadmap should reflect that the proof has to land by v3, not deferred to v5.
+
+---
+
+## 9. Configurability Depth — Resolution
+
+[Open Question §4](./04-open-questions.md) frames three options for the configuration surface: **template-only** (a bounded catalogue of product templates with parameter overrides), **DSL-only** (variants compose engine primitives directly), or **both** (templates for the 80%, DSL for the long tail). The authoring model in §§2–6 implicitly answers the question; this section makes the answer explicit, exhibits the worked examples that justify it, and states the boundary policy.
+
+### 9.1 The resolution
+
+**None of the three. The configuration model is *typed family schemas with variants, evolving under coarse-start fine-drift* (§§2.2–3.1). The schema is the boundary.** What the schema permits is in-scope at the variant layer; what it does not permit waits for schema evolution (quarterly) or a new primitive (months) or is declined at the roadmap layer.
+
+The §4 framing is not wrong, but does not name the actual shape:
+
+- "Template-only" mis-describes the schema as **static**. A schema with union types, optional fields, range-bounded scalars, and quarterly fine-drift evolution is structurally different from a fixed catalogue of templates with parameter overrides. The wedge depends on the schema being a *typed contract that absorbs new variants*, not a closed list.
+
+- "DSL-only" mis-describes the variant layer as **unbounded**. A genuine DSL — variants composing engine primitives directly, with conditionals, loops, and free-form parameter binding — escapes the typed contract. The risk named in §4 ("the DSL can be used to build products that violate regulatory or commercial constraints the engine is meant to enforce") is real and is decisive: variant-cadence approval was sized for changes the schema and pack have already pre-vetted; a DSL escape hatch lets unvetted compositions through the same gate.
+
+- "Both" sounds like a compromise but is the worst of both. It imports the DSL risk for the long tail and asks the team to draw a per-product judgement that drifts. Two parallel mechanisms (template + DSL) collapse to whichever is faster — which is the DSL — which means the wedge fails on the long tail.
+
+The model in §§2–6 is none of these. It is bounded enough to make the wedge falsifiable (§7.1) and flexible enough to absorb the product set the [roadmap](./03-roadmap.md) targets.
+
+### 9.2 Worked examples — four positions on the boundary
+
+The boundary is legible only against concrete products. The table places candidate deposits at four positions on the in-scope/out-of-scope spectrum, with the authoring artefact each requires.
+
+| Position | Example deposit | What changes | Cadence | Authoring layer |
+|---|---|---|---|---|
+| **A. Fits the current schema** | 24-month stepped-rate *depósito a prazo* with quarterly payouts | One new variant YAML against `term_deposit@2026.1` (the schema already carries the `rate.stepped` union per §3.2) | Weekly | §2.3 variants |
+| **B. Needs fine-drift schema evolution** | Tiered-by-principal *entire-principal* pricing: principal in [0, 10k) earns TAN_A on the **whole** principal; [10k, 50k) earns TAN_B on the whole principal; etc. (entire-principal, not banded-marginal) | New optional field group on `term_deposit@2026.x` (`rate.tiered_by_constitution_principal`); schema bumps to `2026.x+1`; new variants pin to the new version; existing variants remain on the old | Quarterly | §2.2 family schemas |
+| **C. Needs a new primitive** | Mid-term top-up deposit (*depósito poupança programado*): the customer can add principal during the term; each top-up accrues interest only from its contribution date; maturity payout is the principal-weighted accrual | New engine primitive (`accrue_per_contribution_weighted`); new event type (`DepositToppedUp`); family-schema extension to expose the new shape; coordinated release | Months | §2.1 primitives (plus §2.2 and §2.3) |
+| **D. Out at the roadmap layer** | Structured deposit with a "best-of" payout linked to a basket of indices | The product is explicitly out of scope per [02 §4](./02-v1-scope-term-deposits.md). Declined at the [roadmap](./03-roadmap.md) layer; the PM is pointed at the roadmap, not at the schema | N/A | not authored |
+
+The four positions correspond directly to the three authoring layers from §2, plus the roadmap layer above them:
+
+- **Position A** lives in **§2.3 variants** alone — no schema or primitive change.
+- **Position B** lives in **§2.2 family schemas** — schema evolution, no new primitive.
+- **Position C** lives in **§2.1 primitives** — engine code, plus the schema and variant work that follows.
+- **Position D** is **out of scope** at the roadmap layer — declined, not authored.
+
+A DSL would compress positions A through C into the variant cadence by letting an author bypass the schema and compose primitives directly. That compression is exactly the wedge failure: a variant that "needs" engine-level expressiveness is *by construction* either a schema gap or a primitive gap, and ought to be visible as such. Hiding it inside a DSL turns a planned slow-cadence change into an ad-hoc fast-cadence one — which is how regulatory mistakes ship.
+
+### 9.3 The boundary policy
+
+**The family schema is the boundary.** Authored against the schema: in-scope at the variant layer. Outside the schema's permitted shapes: schema fine-drift (Position B) or primitive release (Position C). Outside the roadmap: declined (Position D).
+
+Operationally, every "this doesn't fit" outcome resolves to exactly one of four named outcomes with a named owner and a named cadence:
+
+1. A PM proposes a variant. The validator (§5) accepts or rejects.
+2. If rejected for a schema reason (depths 1–4), the variant is either **reshaped** to fit, or escalated to a **schema gap** ticket against engineering.
+3. Schema gaps accumulate; quarterly review batches them into a **schema fine-drift release** (§3.1). The PM whose gap is in the batch knows the timeline at gap-filing time.
+4. If a schema gap turns out to need a primitive the engine does not have, it is re-classified as a **primitive gap** and joins the engine release backlog (months cadence).
+5. If a primitive gap turns out to require expansion of the engine's product-family scope (for example "deposits that behave like current accounts"), it escalates to the **roadmap layer**, not the engine release backlog.
+
+There is no fifth outcome of "use the DSL escape hatch."
+
+### 9.4 Why the schema-as-boundary works
+
+Two properties of the model from §§2–6 carry the boundary policy:
+
+- **Schemas are typed contracts, not catalogues.** Union types, optional fields, range-bounded scalars, and pack-bound primitives let one schema absorb many shapes. The PT v1 `term_deposit` schema already absorbs the three interest variants from [02 §2.1](./02-v1-scope-term-deposits.md) (`AT_MATURITY`, `PERIODIC`, `ADVANCE`), the flat-vs-stepped rate split (§3.2), the flat-vs-banded early-termination policy ([02 §2.5](./02-v1-scope-term-deposits.md)), and the standard / new_money role split ([surface §2.2](./feature-design-configuration-surface.md)). None of those is a "template" in the static-catalogue sense; each is a parametric region of the typed schema.
+
+- **Coarse-start fine-drift handles the long tail.** §3.1 commits to splitting a bloated schema into focused per-shape schemas when union types accumulate past a useful threshold (the precise signal is still open as Q-R). The long tail is *future schema territory*, not DSL territory. Fine-drift turns long-tail products into quarterly schema work, not into a parallel authoring track.
+
+Together: the model handles the same product set "DSL + templates" would handle, with one cadence ladder instead of two and one validator (§5) sized for one mechanism instead of forced to gate two.
+
+### 9.5 What this resolution does and does not commit
+
+**Commits:**
+
+- No DSL layer. The engine does not ship a runtime-evaluated configuration language in which variant authors compose primitives.
+- Variant authoring is the only fast-cadence configuration path.
+- The schema-as-boundary policy and the four-outcome operational procedure (§9.3).
+- The wedge's falsifiability (§7.1) is preserved: a variant that "needs" engine code reveals a schema gap or a primitive gap, never a DSL bypass.
+
+**Does not commit:**
+
+- The precise signal that triggers schema fine-drift (open as Q-R).
+- The PM-authoring tooling — raw YAML vs form UI generating YAML (open as Q-T).
+- The roadmap-layer decision process for whether a candidate product becomes a new family schema or is declined as out-of-scope. That lives in the roadmap's own governance and is out of scope for this note.
 
