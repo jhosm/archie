@@ -144,6 +144,16 @@ Approach C: interfaces for v4, implementations for v1.
 - **Q-AN. Cross-mode reconciliation.** A v1 deposit maturing into a v4 current account is a cross-family flow. At v4, runs end-to-end inside the engine; the reconciliation contract between the two family schemas and the cross-mode invariant ("principal lands exactly once") are deferred to v4 design.
 - **Q-AO. Operational tooling asymmetry.** With-a-plan tools (manual lookup, batch reports, accrual investigation) vs irregular tools (real-time transaction search, fraud-screening review, overdraft incident triage). The MCP server and admin APIs must accommodate both additively; bifurcating into two tools would break the unification claim.
 
+### Q-AP through Q-AT — from [moratoria](./feature-design-moratoria-and-forbearance.md)
+
+Payment moratoria and EBA forbearance on credit instances (v2+).
+
+- **Q-AP. Moratorium catalogue in PT pack v2.** Which historical and live moratoria the v2 pack ships with. Candidates: DL 10-J/2020 (COVID — expired but useful for testing and audit-trail completeness), DL 22-C/2021 (extension regime), and a generic disaster-moratorium template that future *Decreto-Lei*s bind to as they ship. Decision depends on the operating bank's audit-trail requirements for expired moratoria and on the template-vs-specific ratio.
+- **Q-AQ. Bulk-command authorisation and approval model.** A bulk moratorium command can affect thousands of instances and millions of euros of expected cash flow. Authorisation requires more than the standard operator token — probably a two-person rule with explicit legal-basis evidence and a mandatory dry-run gate. Specifics are operating-bank policy; the engine must enforce *some* scheme by default.
+- **Q-AR. Eligibility-check primitive ownership.** Eligibility checks (e.g. `dl_10j_2020_eligibility`) are pack-bound primitives but encode legal interpretation. Same shape as Q-M (pack authorship and sign-off), surfaced from the eligibility angle — engine team alone, plus internal regulatory counsel, or plus an industry working group.
+- **Q-AS. TAEG re-disclosure timing.** When the moratorium ends and the schedule is recomputed, re-disclosure of TAEG via SECCI/FINE has a timing question — is the customer disclosed *before* the new schedule takes effect (giving an opt-out window) or *at* the moment it takes effect? Pack-defined per legal basis; PT default needs an explicit choice.
+- **Q-AT. Cross-moratorium handling.** An instance receives a second moratorium before the first ends (e.g. flood after pandemic). Engine semantics: nested application is rejected at the command layer; revoke-and-replace is the path. The pack-and-policy-level question is whether the legal-basis combination supports it. Probably pack-defined per pair of bases.
+
 ---
 
 ## Adding to This Register
