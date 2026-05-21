@@ -938,6 +938,7 @@ Financial Product
 | *Carência parcial / total* | Grace period: interest-only / fully-capitalized |
 | *Prestação extraordinária* | Extraordinary (balloon) payment within a Price/SAC schedule |
 | *Amortização antecipada* | Early repayment of part or all of the outstanding capital |
+| *Moratória* / Payment moratorium | Temporary legally-permitted suspension of credit payment obligations (§7.6); flavours by what is suspended and by interest treatment |
 | *Comissão de abertura* | Origination fee |
 | *Comissão de processamento* | Per-installment processing fee |
 | *Imposto do Selo* | Portuguese Stamp Duty (tax on the contract, excluded from TAEG) |
