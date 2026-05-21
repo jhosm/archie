@@ -306,7 +306,7 @@ Each item below is a v1 omission, not a never-built omission. Each has a specifi
 - **Structured deposits.** Returns linked to indices, baskets, or derivatives. Need optionality math v1 does not implement.
 - **FX deposits.** Non-EUR-denominated. The engine is currency-aware (events carry `currency`), but v1 only exercises EUR; multi-currency tax treatment and FX accounting are additional surface.
 - **Secondary-market trading.** Negotiable certificates of deposit and similar. Different lifecycle, different regulatory treatment.
-- **Deposit-guarantee-fund reporting (the full report).** v1 emits the signals (eligible-balances-per-customer); the FGD return itself is built downstream.
+- **FGD coverage return.** v1 emits the signals (eligible-balances-per-customer per §2.2); assembly and submission of the return to the Fundo de Garantia de Depósitos is built downstream.
 - **Early-termination policies beyond flat and banded.** Policies that depend on movements between constitution and termination (revenue-share, portfolio-performance), policies indexed to a market rate at termination, and policies derived from product-specific optionality.
 - **Non-resident depositors.** Different withholding rules (typically lower with a tax-residency certificate). v1 assumes resident individuals.
 - **Joint-holder deposits.** Held by two or more *co-titulares*. Different consent flows, different withholding allocation. v1 is single-holder.

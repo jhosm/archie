@@ -257,3 +257,117 @@ The event backbone choice ([ADR-001](../integration_concepts/adrs/ADR-001-event-
 
 These are integration-layer concerns, not engine-layer concerns. The engine commits to playing well with the integration layer; the integration layer commits to scaling to v4. The boundary is the same as for v1.
 
+---
+
+## 8. Q-AK: Synthetic v4-Scale Load Test Specification
+
+§5.6 commits the engine to passing a synthetic v4-scale load test as part of v1 acceptance. [Q-AK in 04-open-questions](./04-open-questions.md) defers the *exact* shape — workload patterns, pass/fail thresholds, test infrastructure. This section is that specification. It is a v1 design deliverable, not a future deliverable: the test shape constrains the engine, so it must be specified before the engine is built, not derived from what the built engine happens to do.
+
+### 8.1 Calibration parameters (operator input)
+
+Three numbers come from the operating bank and parameterise the whole spec. They are not derivable from architectural reasoning; they are facts about the operating bank's v4 portfolio.
+
+| Parameter | Symbol | v4 placeholder | Source |
+|---|---|---|---|
+| Active current accounts at v4 steady state | `N_acct` | ~3M | Operating bank treasury / retail-banking analytics |
+| Active cards at v4 steady state | `N_card` | ~1.5M | Card-issuing function |
+| Annual event volume to engine | `E_year` | 200M–600M | [event-store §10.6](./feature-design-event-store-projections.md); refined by the bank's actuals |
+
+Throughout this spec the placeholders are illustrative for a midsize PT retail bank. Substituting the operating bank's actuals is a v1 calibration task; the spec's *shape* (event mix, peak structure, latency bands) is independent of the absolute size.
+
+### 8.2 Workload pattern
+
+The synthetic generator produces a deterministic event stream from a seeded RNG so test runs are reproducible per seed; different seeds exercise different data shapes (uniform vs clustered customer activity, normal vs heavy-tailed transaction sizes).
+
+**Event mix (steady-state composition).**
+
+| Event class | Share of `E_year` | Source profile |
+|---|---|---|
+| Card transactions (`CardTxnSettled`, `CardAuthorizationHeld`) | ~70% | Real-time, externally-ingested; sync projections (balance, available credit) |
+| Bank transfers and direct debits (`TransferPosted`, `DirectDebitApplied`) | ~15% | Real-time or batched; sync projections (balance) |
+| Engine-generated lifecycle (`DailyAccrualClosed`, `StatementCycleClosed`, `FeeAssessed`) | ~10% | Cyclical, engine-triggered; async projections |
+| Cross-mode (with-a-plan settlements arriving at irregular accounts — `DepositMaturedSettlement`) | ~3% | Engine-internal cross-mode flow per §7.3 |
+| Operational (`AccountFrozen`, `FundsHeld`, `DepositCorrected`, `LegacyInstanceObserved`) | ~2% | Bursty; coexist with the steady stream |
+
+**Peak structure.**
+
+- **Daily peaks.** Lunch hour (12:00–14:00 Lisbon) and after-work (18:00–21:00 Lisbon) drive 2–3× average TPS. The test holds a sustained-peak shape for 4 hours per simulated day.
+- **Monthly peaks.** Payday morning (typically 25th–26th and 1st of the month) concentrates salary credits and standing-order debits. Peak rate ~10× average for 10–15 minutes. The test simulates one payday per 24-hour run.
+- **Annual peaks.** Black Friday weekend and Christmas Eve drive 4–5× average across the full day. The test runs at least one synthetic annual-peak day per release-candidate suite.
+
+**Sync/async classification per projection.**
+
+Synchronous projections (block transaction authorization; must complete within the latency budget):
+
+- `current_balance` — every transaction
+- `available_credit` — every card authorization
+- `hold_freeze_ledger` — every authorization or hold operation
+
+Asynchronous projections (do not block authorization; lag bounded by §8.3):
+
+- `statement_cycle` — month-end batch
+- `withholding_ledger` — daily close
+- `regulatory_reporting` (`modelo_39`, `bdp_estatisticas_taxas_juro`) — cadence per the report
+- `bi_analytics` — continuous tail, hours-of-lag acceptable
+
+### 8.3 Pass/fail thresholds
+
+The test is binary: every threshold passes, or v1 does not ship. The thresholds are workflow-falsifiable claims, not "best effort" targets.
+
+**Latency (per projection class).**
+
+| Projection class | p50 | p95 | p99 | Notes |
+|---|---|---|---|---|
+| Sync — `current_balance`, `available_credit` | < 20 ms | < 80 ms | < 200 ms | Measured from event-receipt at engine boundary to projection update committed |
+| Sync — `hold_freeze_ledger` | < 30 ms | < 100 ms | < 250 ms | Same boundary, slightly looser given less write contention |
+| Async — `statement_cycle` (monthly) | n/a | n/a | All accounts' month-end statements committed within 6 hours of cycle close | Batch budget |
+| Async — `withholding_ledger` (daily) | n/a | n/a | Within 4 hours of daily close | Batch budget |
+| Async — `regulatory_reporting` | n/a | n/a | Within the report's regulatory deadline minus a 6-hour buffer | Per report; tightest is the daily BdP feed |
+
+**Throughput.**
+
+- **Sustained**: 250 TPS aggregate (across all event classes) for 24 hours without error.
+- **Burst**: 1000 TPS aggregate for 15 minutes without event loss, without projection corruption, without event-store write failures.
+- **Recovery**: after a 15-minute 1000-TPS burst, sustained TPS returns to baseline within 2 minutes and async-projection backlog drains within 30 minutes.
+
+**Replay performance** (consistent with [event-store §8.2](./feature-design-event-store-projections.md)).
+
+- Cold replay of one irregular instance (5-year-old account, ~1000 events): under 30 seconds.
+- Cold replay of a 100k-account snapshot population from a calendar-boundary baseline (per [event-store §8.1](./feature-design-event-store-projections.md)): under 1 hour.
+
+**Reliability.**
+
+- No OOM under any tested pattern, including the burst and annual-peak shapes.
+- No event-store write failures that don't resolve via the standard retry path. Persistent failures (constraint violations, unresolvable transaction conflicts) fail the test.
+- No projection-rebuild divergence: post-test, a cold rebuild of every projection from the event log matches the running projection bit-for-bit (the [event-store §7.2](./feature-design-event-store-projections.md) projection-rebuild drill, run as the test's final step).
+- No event ordering violations: per `partition_key` (per §5.3) the event sequence delivered to consumers matches the order in the event store.
+
+### 8.4 Test infrastructure
+
+- **Ownership.** The engine team owns the test rig. The rig is reproducible from version-controlled config; running the test produces an artefact (pass/fail report plus raw metrics) that the team archives per release candidate.
+- **Hardware.** The test runs on production-shaped hardware. Passing on a developer laptop or on a 10× oversized cluster does not count. The exact production-shaped sizing is named in the test's config and matches the v1 production deployment target.
+- **Test harness.** The harness drives the engine through the same APIs production channels use, not via internal entry points. The integration backbone (Redpanda per [ADR-001](../integration_concepts/adrs/ADR-001-event-backbone-message-broker.md)) is exercised end-to-end; the harness simulates upstream sources (card scheme, payments rails, direct-debit feeds) at the same boundary the production engine sees.
+- **Observability.** Standard production observability ([integration_concepts §06](../integration_concepts/06-observability-and-tracing.md)) applies during the test. A test failure must be diagnosable from production-grade telemetry — no test-only instrumentation that disappears at production cutover.
+- **Cadence.** The test runs on every v1 release candidate. Failure on the v1 acceptance run blocks v1 ship. The test re-runs at every minor release through v3; v4 replaces the synthetic test with the real v4 workload at v4 acceptance.
+
+### 8.5 Determinism and reproducibility
+
+The test must be reproducible. Two requirements:
+
+- **Seeded synthetic data.** Every run names its RNG seed; rerunning with the same seed produces the same event sequence. Bug reproductions cite the seed.
+- **Deterministic time.** The engine's "current time" during the test is driven by a test clock, not wall-clock. Lifecycle events that fire at "month-end" fire at the simulated month-end, not the real one. This is a v1 engine requirement (the production engine accepts an injected clock for testability) that the load test exercises end-to-end.
+
+A test failure that cannot be reproduced from `(seed, code revision)` is treated as more severe than a deterministic failure — non-reproducibility implies an engine-level non-determinism that the production engine cannot tolerate.
+
+### 8.6 What this specification does not cover
+
+Three deliberate omissions, each tracked separately:
+
+- *Sharding strategies.* The reserved `partition_key` (§5.3) leaves the v4 sharding shape open; [Q-AL](./04-open-questions.md) tracks. The v1 load test runs on a single-shard topology and verifies the engine does not foreclose sharding; it does not validate any specific sharding implementation.
+- *Backpressure under sustained overload.* What happens when the workload exceeds the burst budget for hours, not minutes. [Q-AM](./04-open-questions.md) is v4-urgent; the v1 test runs at the burst budget for minutes only.
+- *Cross-mode invariants under load.* The cross-mode reconciliation contract from §7.3 ([Q-AN](./04-open-questions.md)) is a v4 design question; the v1 test includes cross-mode events at 3% mix but does not yet verify the v4 invariant ("principal lands exactly once across families").
+
+These three are v4-time decisions; v1 must not foreclose, but the v1 load test does not validate them.
+
+The specification is registered as the resolution of [Q-AK in 04-open-questions](./04-open-questions.md), pending the operator-calibration step in §8.1.
+

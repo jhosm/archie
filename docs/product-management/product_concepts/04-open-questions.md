@@ -4,28 +4,22 @@
 >
 > Two registers run in parallel:
 >
-> - **§§1–5** — the original brief-level decisions, opened in the first drafting pass. §§3 and 4 are now Resolved; §5 has narrowed; §§1 and 2 remain open.
-> - **Q-I through Q-AO** — questions opened by the design-notes companions, in a continuing letter sequence. Each entry points at its source document.
+> - **§§1–8** — brief-level decisions. §§1–5 are the original drafting-pass set; §§6–8 surfaced in a later register audit. §§3 and 4 are Resolved; §5 has narrowed and largely folded into Q-AG; §1 has a structured unblocking agenda pending the legacy-inventory meeting; §7 has a recommended v1 position pending DPO confirmation; §§2, 6, 8 remain open.
+> - **Q-I through Q-BC** — lettered questions, in a continuing letter sequence. Q-I–Q-AO from the original five design-note companions; Q-AP–Q-AT from the moratoria design note; Q-AU–Q-BC collect cross-cutting and integration-shape gaps that none of the existing design notes own.
 >
 > Future sessions add lettered entries; when one resolves, fold the resolution into the relevant numbered document and annotate the entry here.
 
 ---
 
-## §§1–5: Brief-Level Decisions
+## §§1–8: Brief-Level Decisions
 
-### 1. Legacy Coexistence Targets
+### 1. Legacy Coexistence Targets — **AGENDA SPECIFIED; PENDING LEGACY INVENTORY MEETING**
 
-**Context.** The strangler-fig motion in [01 §6](./01-product-architecture.md) and [02 §3](./02-v1-scope-term-deposits.md) requires first-class coexistence with the operating bank's legacy core. The legacy estate has several integration surfaces that may be relevant:
+**Context.** The strangler-fig motion in [01 §6](./01-product-architecture.md) and [02 §3](./02-v1-scope-term-deposits.md) requires first-class coexistence with the operating bank's legacy core. The open question is **which specific legacy systems the engine ships first-class adapters for**, vs which are handled bespoke through customer-built adapters on top of the ACL ([integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md)). The decision shapes the v1 engineering effort: a productised connector for the dominant legacy system shortens v1 onboarding; a generic ACL interface keeps the engine portable but pushes work to the integration side. The gap is not closable by architectural reasoning — only the bank knows its estate.
 
-- **The legacy core banking system** (whatever the operating bank runs — a vendor core such as BANKA / Temenos T24 / Oracle Flexcube, a mainframe / AS400-era system, an internally-built stack, or some combination).
-- **Mainframe / AS400-era systems** (integration via fixed-format files or middleware) if present.
-- **Internal stacks** (per-system integration shape) if present.
+**Unblocking conversation.** Inventory questionnaire — ten dimensions per system (identity, transaction model, idempotency, batch windows, API surface, settlement contract, data export, outage profile, customer-master role, GL coupling), three-way classification per system (first-class adapter / generic ACL-only / out-of-scope at v1), five named decision outputs, and pre-meeting preparation guidance — in [coexistence §12](./feature-design-strangler-fig-coexistence.md). The legacy current-account module is the load-bearing first-class candidate by virtue of [02 §3](./02-v1-scope-term-deposits.md); the commitment is "one or two named systems" first-class, with the rest handled by the generic ACL.
 
-The engine's coexistence story is described abstractly in terms of the ACL (per [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md)). The open question is **which specific legacy systems the engine ships first-class adapters for**, vs which are handled bespoke through customer-built adapters on top of the ACL contract.
-
-The decision shapes the v1 engineering effort: a productised connector for the dominant legacy system in the operating bank shortens v1 onboarding; a generic ACL interface keeps the engine portable but pushes more work to the integration side.
-
-**Unblocked by.** An inventory of the operating bank's legacy core systems, the specific integration shape of each (transaction model, idempotency guarantees, batch windows), and a decision on which integrations are first-class vs bespoke. Output: a list (one or two named systems) added to this document and reflected in the engineering roadmap.
+**Output.** A named list (one or two systems) folded into this entry as the position, and a new sub-section of [01 §6](./01-product-architecture.md) declaring the first-class adapters as in-scope for v1 engineering. Interacts with Q-AH (legacy batch file contract — same source system) and Q-AB (GL adapter ownership — see §12.1's GL-coupling dimension).
 
 ---
 
@@ -82,9 +76,49 @@ This is operational scope tracked here because v1 cannot enter production withou
 
 ---
 
-## Q-I through Q-AO: Design-Note Questions
+### 6. Customer-Master Ownership During Coexistence
 
-Each design-notes companion opens its own questions in a continuing letter sequence. Skim by letter range; drill into the source for the trade-off space.
+**Context.** [01 §6](./01-product-architecture.md) and [coexistence](./feature-design-strangler-fig-coexistence.md) describe the engine working with opaque customer-IDs owned by the legacy core's customer-master system. This holds for as long as legacy runs. The open question is **what happens at the strangler-fig endpoint** — when the last legacy product family migrates and the operational case for keeping the legacy customer-master service alive disappears.
+
+Three credible answers:
+
+- **Legacy customer-master survives indefinitely as a stub.** Cheapest in the short term; the bank carries a legacy dependency past the point where any product runs on legacy. Each integration that resolves customer IDs (channels, KYC, marketing, AML) still calls a system that has no other purpose.
+- **Customer master migrates to a new owning system.** Could be a CRM platform the bank already runs, a new dedicated customer-master service, or absorbed into a CDP. Requires a customer-side cutover analogous to a product-family cutover, with its own coexistence period and its own reconciliation flows.
+- **The engine absorbs customer master.** Out of scope as currently framed ([00 §4](./00-product-vision.md) puts KYC and onboarding upstream of the engine). Re-opening expands engine scope materially and unwinds part of the wedge — the engine becomes "core banking + customer master" rather than "product engine."
+
+The decision is structurally peer to [§1](#1-legacy-coexistence-targets): both shape what the engine can unilaterally retire and what dependencies survive past the v4-equivalent cutover. Folding it into one of the existing design notes is premature because none of them claim customer-master as a topic.
+
+**Unblocked by.** A customer-master architecture review with whoever owns customer data today (typically a CRM or CIF function inside the bank), plus a position from the channels function on what they can tolerate. Output: a stated position in [01](./01-product-architecture.md) or a new companion design note on customer-master coexistence, plus a corresponding answer at Q-AJ (end-of-coexistence trigger) and an unblocking input for Q-BA (cutover mechanism).
+
+---
+
+### 7. GDPR Erasure vs Event-Sourcing Immutability — **POSITION; PENDING DPO CONFIRMATION**
+
+**Position.** v1 commits to **crypto-shredding**: PII fields encrypted per data subject under a per-subject key; erasure = key destruction; cipher-text remains in the event log, plaintext is unrecoverable. Structural fields (amounts, dates, lifecycle transitions) remain in the clear, so handlers and projections continue to operate over erased records exactly as they do over live ones — PII fields return null instead of plaintext. The audit trail after erasure shows "an event occurred at this transaction_time; payload PII is unrecoverable due to subject erasure," which is the GDPR-compliant audit state, not a gap. Full treatment, including the per-event PII annotation requirement and the field-level encryption envelope constraint on the §6.1 candidate paths: [event-store §6.2](./feature-design-event-store-projections.md). PT GDPR transposition (Lei 58/2019) is in force at v1; the choice cannot be deferred to a later phase.
+
+**Residual.** DPO and compliance confirmation that crypto-shredding satisfies the operating bank's interpretation of Article 17 in conjunction with PT banking-record retention obligations (10-year accounting, 7-year AML). Conversation agenda — worked retention-vs-erasure scenario, three-path foreclosure reference list, four named decision outputs — in [event-store §6.4](./feature-design-event-store-projections.md). Q-Y below is the same conversation from the bitemporality angle; both are unblocked by the same meeting. If the DPO vetoes crypto-shredding, the v1 fallback is PII off-store; tombstoning is rejected.
+
+---
+
+### 8. Pack-Effective-Date Semantics for In-Flight Contracts
+
+**Context.** [03 §Pack Maintenance](./03-roadmap.md) commits to prospective pack changes: a pack update applies from a `pack_effective_date`, the engine carries the effective pack version per account, and historical reconstructions remain consistent. The unanswered question is **whether "pack version" pins at constitution or floats per flow**.
+
+Concretely: a term deposit constituted 2026-09-01 under PT pack v1.3 (28% IRS withholding) matures 2027-03-01. The 2027 Budget Law (effective 2027-01-01) changes the rate to 27% via PT pack v1.4. The maturity-day withholding flow is computed 2027-03-01 — under which pack version?
+
+- **Pin-at-constitution.** Every flow on the instance uses pack v1.3 for the instance's lifetime. Simple; deterministic; matches the "instance carries its pack version" claim verbatim. Costs: a budget-law rate change does not flow through to existing instances, which is operationally surprising and may not match how the bank's tax obligations actually work.
+- **Float-per-flow.** Each flow looks up the pack effective on the flow's value-date. Matches typical regulatory expectation (a withholding event is taxed under the rules in force on the event date). Costs: harder to reproduce historical state; replay must reconstruct pack-version-at-flow-date, which requires the pack registry to be queryable bitemporally as well.
+- **Per-primitive policy.** Some primitives pin (cash-flow shape, day-count — these *define* the instrument); others float (withholding rate, regulatory disclosure templates — these track regulation in force). Probably correct in shape; the categorisation is detailed pack-vocabulary design work and the boundary may itself shift under regulator pressure.
+
+This interacts with [§4](#4-configurability-depth) (configurability depth): the pack vocabulary has to be able to *express* which primitives pin and which float, and that's not yet in the surface design. It also interacts with Q-N (breaking-change opt-in mechanics) — a primitive that floats automatically is, in effect, a non-opt-in pack change for affected flows.
+
+**Unblocked by.** A pack-design session with the regulatory and tax leads inside the operating bank, plus a worked example for each PT pack primitive (day-count, withholding rate, TANB/TANL split, BdP reporting schema, disclosure templates). Output: a per-primitive pin-or-float annotation in the PT pack manifest ([surface §3.4](./feature-design-configuration-surface.md)) and an addendum to [03 §Pack Maintenance](./03-roadmap.md) stating the per-primitive policy as part of the pack contract.
+
+---
+
+## Q-I through Q-BC: Lettered Questions
+
+Q-I–Q-AO are opened by the design-notes companions, one block per companion. Q-AP onward collect gaps the design notes do not own — integration shapes the brief declares in-scope without a companion document, plus operational and strategic peers of the existing operational questions. Skim by letter range; drill into the source for the trade-off space.
 
 ### Q-I through Q-Q — from [surface](./feature-design-configuration-surface.md)
 
@@ -115,12 +149,12 @@ Configuration authoring workflow.
 
 Event store and bitemporal projections.
 
-- **Q-X. Bitemporal projection implementation choice.** PostgreSQL temporal extensions vs XTDB / datomic-style vs application-level bitemporality on plain Postgres. Decision deferred to a small spike per path; the bitemporal commitment is firm.
-- **Q-Y. Regulatory bitemporality confirmation.** Confirmation with the operating bank's compliance and internal-audit functions that PT regulators expect retroactive corrections to be queryable in both time dimensions. If unitemporal is sufficient for v1, projection schemas simplify materially.
+- **Q-X. Bitemporal projection implementation choice.** PostgreSQL temporal extensions vs XTDB / datomic-style vs application-level bitemporality on plain Postgres. Spike specification — 5-day timebox per path, four-deliverable scope (deposit-position projection end-to-end, per-subject PII encryption envelope, cold-replay performance run, operational profile doc), six scoring criteria in priority order (correctness on forced correction round-trip, GDPR erasure compatibility per §7, DR/RTO shape per Q-AY, cold-replay time vs §8.2 target, operational fit, query ergonomics) — in [event-store §6.3](./feature-design-event-store-projections.md). Spike runs only after Q-Y returns: if Q-Y confirms bitemporal is required, scoring proceeds as specified; if not, criteria 1 and 6 fall away and the choice collapses to operational fit. The bitemporal commitment is firm; only the mechanism is deferred.
+- **Q-Y. Regulatory bitemporality confirmation.** Confirmation with the operating bank's compliance and internal-audit functions that PT regulators expect retroactive corrections to be queryable in both time dimensions. Conversation agenda — attendees (compliance lead, internal audit lead, DPO, engine technical lead), worked retroactive-correction scenario (€10k-vs-€100k clerk error), retention-vs-erasure scenario, three-path foreclosure reference list, four named decision outputs — in [event-store §6.4](./feature-design-event-store-projections.md). The meeting covers Q-Y and the §7 DPO question simultaneously and unblocks the Q-X spike. If unitemporal is sufficient for v1, the Q-X spike scoring weights shift away from bitemporal-specific criteria; if forbidden, projection schemas simplify materially.
 - **Q-Z. Replay performance targets and instrumentation.** Cold-replay budgets (5s for with-a-plan, 30s for irregular). Instrumentation, monitoring dashboards, SLA escalation paths sit with the operations runbook. Refined and operationalised by Q-AK below.
 - **Q-AA. Storage growth modelling.** Back-of-envelope estimates suggest 500GB–5TB across 10 years; the engine team should produce a real model based on v1 volume, v2–v3 product velocity, and v4 irregular ingestion.
 - **Q-AB. GL adapter ownership and contract.** The engine emits raw business events; the GL system needs a small adapter to consume them and produce postings. Adapter shape, ownership, and consumption contract are coordination work with the GL team.
-- **Q-AC. Event-store technology selection.** Kurrent / EventStoreDB, Postgres-based, or Redpanda-as-event-store. A small spike per candidate against the synthetic v4-scale load test (see Q-AK) is the proposed path. Refined by Q-AK and [two-modes §6](./feature-design-two-modes-asymmetry.md).
+- **Q-AC. Event-store technology selection.** Kurrent / EventStoreDB, Postgres-based, or Redpanda-as-event-store. Selection criteria — throughput at v4 scale, replay performance, schema-evolution support, operational maturity, plus four non-negotiable commitments (envelope shape, outbox co-location, forward-only schema discipline, snapshot mechanism) — laid out in [two-modes §6](./feature-design-two-modes-asymmetry.md). Spike runs per candidate against a v1-scale workload (viability gate) and against the [Q-AK synthetic v4-scale load test](./feature-design-two-modes-asymmetry.md) (scale gate). Coordinate with the Q-X projection-implementation spike at [event-store §6.3](./feature-design-event-store-projections.md): cold-replay scoring crosses the event-store / projection boundary, so the two spikes share fixtures and run in lockstep.
 
 ### Q-AD through Q-AJ — from [coexistence](./feature-design-strangler-fig-coexistence.md)
 
@@ -138,7 +172,7 @@ Strangler-fig coexistence (multi-year period of dual operation).
 
 Approach C: interfaces for v4, implementations for v1.
 
-- **Q-AK. Synthetic v4-scale load test specification.** Exact workload patterns, exact pass/fail thresholds (sustained TPS, p99 latency per projection type, replay-time per snapshot-coverage scenario), and exact test infrastructure. The test is v1 acceptance, not a future deliverable.
+- **Q-AK. Synthetic v4-scale load test specification — SPECIFIED; pending operator calibration.** Workload pattern (event mix, daily/monthly/annual peak structure, sync/async projection classification), pass/fail thresholds (latency p50/p95/p99 per projection class, sustained 250 TPS for 24h, burst 1000 TPS for 15min, replay budgets, reliability invariants, no projection-rebuild divergence), test infrastructure (engine-team-owned rig on production-shaped hardware, harness through production APIs, standard observability, every-RC cadence), determinism requirements (seeded RNG, injected clock), and three explicit non-goals (Q-AL sharding, Q-AM backpressure, Q-AN cross-mode invariant) — fully laid out in [two-modes §8](./feature-design-two-modes-asymmetry.md). Residual is the operator calibration in §8.1 (active accounts `N_acct`, active cards `N_card`, annual event volume `E_year`); spec shape is independent of absolute size. The test is v1 acceptance, not a future deliverable.
 - **Q-AL. Sharding strategy for v4.** Reserved `partition_key` (per [two-modes §5.3](./feature-design-two-modes-asymmetry.md)) leaves the v4 sharding shape open — shard sizing, rebalancing approach, cross-shard transaction handling, parallel shard-level replay. v4-time decision; v1 must not foreclose any credible v4 shape.
 - **Q-AM. Real-time projection backpressure.** Sync/async projection support is committed; what happens when an async projection falls behind is not specified. Acceptable lag bounds per projection class, alerting thresholds, recovery procedures (replay, parallel projectors, load shedding). v4 makes this urgent.
 - **Q-AN. Cross-mode reconciliation.** A v1 deposit maturing into a v4 current account is a cross-family flow. At v4, runs end-to-end inside the engine; the reconciliation contract between the two family schemas and the cross-mode invariant ("principal lands exactly once") are deferred to v4 design.
@@ -153,6 +187,20 @@ Payment moratoria and EBA forbearance on credit instances (v2+).
 - **Q-AR. Eligibility-check primitive ownership.** Eligibility checks (e.g. `dl_10j_2020_eligibility`) are pack-bound primitives but encode legal interpretation. Same shape as Q-M (pack authorship and sign-off), surfaced from the eligibility angle — engine team alone, plus internal regulatory counsel, or plus an industry working group.
 - **Q-AS. TAEG re-disclosure timing.** When the moratorium ends and the schedule is recomputed, re-disclosure of TAEG via SECCI/FINE has a timing question — is the customer disclosed *before* the new schedule takes effect (giving an opt-out window) or *at* the moment it takes effect? Pack-defined per legal basis; PT default needs an explicit choice.
 - **Q-AT. Cross-moratorium handling.** An instance receives a second moratorium before the first ends (e.g. flood after pandemic). Engine semantics: nested application is rejected at the command layer; revoke-and-replace is the path. The pack-and-policy-level question is whether the legal-basis combination supports it. Probably pack-defined per pair of bases.
+
+### Q-AU through Q-BC — cross-cutting and integration-shape gaps
+
+Gaps the existing design notes do not own. Some are integration shapes the brief declares in-scope (per [00 §4](./00-product-vision.md)) but have no companion design note; others sit at the engine ↔ operator boundary, peer to Q5, Q-AG, Q-AJ.
+
+- **Q-AU. AML / KYC signal contract.** [00 §4](./00-product-vision.md) puts AML and KYC out of scope as products but in-scope as integration shapes. The engine emits a constitution event; an AML system may need to gate or post-flag it. Two credible shapes: (a) constitution completes and AML reviews asynchronously, with a compensation flow if AML rejects; (b) AML pre-gates constitution as a synchronous check on the saga. The two have materially different cancellation semantics and different requirements on the legacy seam ([coexistence](./feature-design-strangler-fig-coexistence.md)). Peer in shape to Q-AB (out-of-scope system, in-scope integration contract).
+- **Q-AV. Customer-communications emit contract.** Pack-shipped disclosure templates (FIN, SECCI, FINE, maturity notices, annual IRS withholding statements) are specified in [surface §3.4](./feature-design-configuration-surface.md); the *trigger* and *delivery* contract is not. Candidates: engine emits `NotificationDue` events per template-ref and a separate system renders and delivers; pack-side renderer with channel-side delivery; channel-side both. Choice determines whether the engine carries a notification-state projection (sent/acked/bounced) or treats notifications as fire-and-forget.
+- **Q-AW. Tax-engine pluggability vs in-pack rules.** PT pack v1 treats 28% IRS withholding as an in-pack primitive computed inline. Some banks run external tax engines (vendor or in-house) for cross-border, non-resident, or treaty-relief cases. Open question: is tax always an in-pack primitive, or can a pack delegate to an external tax engine through the ACL? Forced earlier than Q-P (multi-pack composition) if any v1–v4 product touches non-resident withholding (offshore depositor, EU resident under DAC6, etc.).
+- **Q-AX. Regulatory-reporting inventory per phase.** Q-AE asks who owns *a* reporting application; the prior question — the complete named-report inventory v1–v4 must produce — is unanswered. Candidates so far: modelo 39 (annual IRS withholding statements), BdP Aviso 8/2009 (deposit-rate statistics), BdP central de responsabilidades (credit-bureau reporting, from v2), DGSD 2014/49/EU reporting, FATCA / CRS reporting, BdP estatísticas de taxas de juro. Each needs a per-contract design (signal shape, cadence, completeness guarantees, schema-drift protocol).
+- **Q-AY. DR / RTO / RPO and event-store recovery.** [event-store](./feature-design-event-store-projections.md) makes replay routine and treats it as the integrity story; it does not name an RTO for an event-store-volume loss. Backup cadence (continuous, hourly, daily snapshots), off-site replication topology, recovery-time targets, cold-replay budget under a *recovery* scenario (distinct from the benchmark in Q-Z). Production-blocking at v1 cutover; the engine cannot enter production without a named recovery position.
+- **Q-AZ. "Non-core core" stopping criteria.** [03 §v4 stance](./03-roadmap.md) explicitly allows the bank to stop at v1–v3 and keep current accounts on legacy DDA. The criteria for that stopping decision are not named. Candidates: aggregate dual-operation operating cost above a stated threshold; legacy DDA support EOL; integration-brittleness incidents per quarter; organisational appetite signalled by senior stakeholders. Without named criteria, "optional in practice" decays into unintentional drift — the bank ends up with a permanent two-core estate by accident rather than by decision.
+- **Q-BA. Customer-master cutover mechanism.** If §6 lands a brief-level position, the operational mechanism is a separate design question — same shape as Q-AD (cutover-day load risk) but for customer records rather than product instances. Qualitatively harder because every other system holds customer references; a customer-ID change cascades across channels, payments, marketing, regulatory reporting. Probably needs a long alias-table period during which both IDs resolve.
+- **Q-BB. Data-residency policy per pack.** PT pack data hosted where, ES pack data hosted where, each operator's regulator imposing supervisory expectations on regulated-data location, GDPR baseline, operating-bank policy. Touches the [00 §5](./00-product-vision.md) deployment model: single-codebase does not imply single-deployment, and per-pack residency may demand per-pack deployment topology. v5+ urgency; v1 should not foreclose any credible v5 residency shape — specifically, the event store should not assume single-region storage.
+- **Q-BC. Build-vs-buy revisit trip-wires.** [00 §1.5](./00-product-vision.md) commits the bank to revisit build-vs-buy at any point, but does not name what fires the conversation. Candidates: aggregate v1–v3 calendar slip beyond a stated multiple of plan; pack-maintenance staffing gap persisting beyond a stated quarter count; integration-asset value re-estimated downward by an external audit; vendor product capability inflection (a vendor ships something materially closer to the engine's wedge). Without trip-wires, the revisit is reactive — a steering-committee mood swing — rather than evidence-driven.
 
 ---
 

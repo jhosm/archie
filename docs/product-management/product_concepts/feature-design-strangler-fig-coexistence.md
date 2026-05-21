@@ -425,3 +425,58 @@ When term-deposit coexistence ends, several things continue:
 
 The architecture survives the end of coexistence for any single family. Each family's coexistence subperiod has its own end state; the global end state is when every family's subperiod has ended.
 
+---
+
+## 12. §1 Resolution Inputs: Legacy Inventory Questionnaire
+
+§§3–11 specify the coexistence architecture in terms abstract enough to work against any major legacy core. The v1 implementation needs concrete inputs about the operating bank's specific legacy estate — [§1 in 04-open-questions](./04-open-questions.md) names this as the inventory gap. The gap is not closable by architectural reasoning; only the bank knows what its legacy estate contains. This section specifies the conversation that closes it.
+
+**Who attends.** Operating bank's legacy-core technical lead, integration architect, GL team lead, current-account operations lead, and the engine technical lead. Optional: vendor support representative if the legacy core is vendor-owned; the bank's enterprise architecture lead if the estate spans multiple cores.
+
+### 12.1 What to inventory (per legacy system)
+
+The bank's legacy estate is typically not one system. The questionnaire is filled in once per system the engine integrates with at v1 (per [02 §3](./02-v1-scope-term-deposits.md), at minimum the current-account module that handles deposit settlement).
+
+| Dimension | What to capture | Why it matters |
+|---|---|---|
+| **System identity** | Name, version, vendor (if vendor product), age, last major upgrade, EOL date if known | Determines whether vendor-supplied connectors exist; age and EOL constrain adapter investment |
+| **Transaction model** | ACID DB transactions, message queue, file-based, screen-scraping, custom RPC | Saga compensation in [integration_concepts §05](../integration_concepts/05-constitution-saga-walkthrough.md) depends on what the legacy system actually offers as an undo |
+| **Idempotency guarantees** | Native idempotency keys; idempotent retry; non-idempotent (the engine must dedupe) | The ACL idempotency strategy from [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md) is shaped here |
+| **Batch windows** | Real-time / near-real-time / daily batch / weekly batch; cutoff times in Lisbon time; lockout windows | Drives the daily batch file contract (§5) and the unified read model's staleness profile (§6.2) |
+| **API surface** | REST / SOAP / proprietary RPC / file drop / DB read / message bus subscription | Constrains how the engine reads from and writes to the legacy system |
+| **Settlement contract** | How a credit/debit to a legacy current account is initiated; ack semantics; reversal semantics; same-day vs T+1 | Drives the settlement plumbing in §4 |
+| **Data export** | Schema, format, completeness guarantees, schema-drift coordination protocol | Drives the daily batch file in §5.2 ([Q-AH](./04-open-questions.md)) |
+| **Outage profile** | Planned-maintenance frequency and duration; unplanned-incident MTTR; capacity headroom | Shapes the strangler-fig adoption schedule and the §10 cutover plan |
+| **Customer-master role** | Whether this system owns customer master data or references it from another system | Interacts with [§6 in 04-open-questions](./04-open-questions.md) (customer-master ownership) |
+| **GL coupling** | Whether this system posts to the GL directly, via an adapter, or by file extract | Interacts with [Q-AB](./04-open-questions.md) (GL adapter ownership) |
+
+### 12.2 What to decide per inventoried system
+
+| Classification | Engine team commitment | When to use |
+|---|---|---|
+| **First-class adapter** | Engine team builds and maintains a system-aware adapter that absorbs the legacy specifics. Shortens v1 onboarding measurably. | The system handles v1 settlement (current-account module) or v1 reconciliation (daily batch source) and is the dominant integration the engine cannot operate without |
+| **Generic ACL-only** | The engine commits to the ACL pattern; the bank builds its own integration on top per [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md). | The integration is per-operator-bespoke even within the operating bank's estate (e.g. a brand-specific internal stack), or the system is touched only occasionally |
+| **Out-of-scope at v1** | The engine does not integrate with this system at v1; the integration is deferred to a later phase. | The system is touched only at v2+ (e.g. a credit-bureau feed needed from v2) or a manual / batch process is operationally acceptable through coexistence |
+
+The [§1 in 04-open-questions](./04-open-questions.md) commitment names "one or two named systems" as first-class. Naming more dilutes engineering focus; naming fewer leaves the v1 onboarding longer than the brief promises. The legacy current-account module is the load-bearing first-class candidate by virtue of [02 §3](./02-v1-scope-term-deposits.md).
+
+### 12.3 Decision outputs needed from the meeting
+
+- A named list of v1-relevant legacy systems with the §12.1 dimensions filled in for each. Systems that no one can fully describe are flagged for follow-up rather than treated as known.
+- A §12.2 classification per system: first-class adapter / generic ACL-only / out-of-scope at v1.
+- For each first-class adapter, an engineering owner on the engine side, a counterpart on the legacy side, and an effort estimate that fits the v1 calendar.
+- A confirmation that the v1 onboarding plan (per [02 §3](./02-v1-scope-term-deposits.md)) is operable against the inventoried estate, or a named blocker — a system whose integration shape forecloses v1 as currently scoped.
+- For each first-class candidate, a check against the dimensions that most often foreclose adapter feasibility: transaction model (does the legacy system offer compensation primitives, or does the saga have to invent them?), idempotency (will the engine see double-delivery in production?), and outage profile (does the legacy system have enough headroom to absorb engine-driven traffic?).
+
+The meeting's output is folded into [§1 in 04-open-questions](./04-open-questions.md) — which moves from open to a Position with named systems — and into a new sub-section of [01 §6](./01-product-architecture.md) declaring the first-class adapters as in-scope for v1 engineering.
+
+### 12.4 Pre-meeting preparation
+
+The engine team prepares for the meeting by:
+
+- Drafting a candidate inventory from public knowledge (what the bank has publicly disclosed about its core estate) and internal knowledge that pre-dates this conversation. The candidate inventory is *not* the answer; it is the starting list to confirm, expand, or correct in the meeting.
+- Reading [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md) and §05 so the engine team can speak fluently about what each adapter classification implies engineering-wise.
+- Bringing the §3.1 system-of-record map and the §5.2 batch file schema as concrete artefacts the inventoried systems must support.
+
+Meeting failure modes to avoid: leaving without a per-system classification (the conversation becomes a "we'll figure it out" deferral), classifying everything as first-class (the engine team's v1 capacity does not absorb it), or classifying everything as generic ACL-only (no v1 onboarding speedup, which is the §1 commitment's purpose).
+

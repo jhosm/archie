@@ -190,6 +190,72 @@ The choice depends on three factors: the team's operational comfort with new inf
 
 The wrong way to defer this is to ship with unitemporal projections and "add bitemporality later." Adding bitemporality to a unitemporal projection set is a rewrite, not an enhancement, because every projection's identity (the row identifier) changes when valid_time is introduced. The decision must be made before projection schemas are first written.
 
+### 6.2 GDPR erasure and the bitemporal model
+
+[Open Question §7 in 04-open-questions](./04-open-questions.md) opens the collision: GDPR Article 17 requires a data subject to be able to compel erasure of their personal data, but an immutable event log cannot satisfy that request without invalidating the replay invariant that audit and as-of queries depend on. The PT GDPR transposition (Lei 58/2019) is in force at v1, so the choice cannot be deferred to a later phase. Three architectural shapes were considered:
+
+| Shape | What it does | Replay impact | Supervisory acceptance |
+|---|---|---|---|
+| **Crypto-shredding** | PII fields encrypted per data subject under a per-subject key; erasure = key destruction; cipher-text remains in the log, plaintext is unrecoverable | Replay produces nulls in PII fields after erasure; structural fields (amounts, dates, lifecycle transitions) remain intact and replayable | High — aligns with the GDPR Article 4(5) pseudonymisation definition and the "additional information held separately" test |
+| **Tombstoning** | A tombstone event overrides PII fields on replay; cipher-text not destroyed | Same as crypto-shredding for replay | Mixed — some EU supervisors have rejected this as "deletion" because cipher-text remains recoverable from raw storage |
+| **PII off-store** | Event log carries only structural fields plus a foreign-key reference to a mutable PII store; PII store is a normal database where erasure is straightforward | Replay determinism requires the PII store to be itself versioned bitemporally, or replays return "PII as it is now" rather than "PII as it was then" — losing bitemporality on the PII side | High — simplest legal story but the engineering invariant is harder to maintain |
+
+**v1 commits to crypto-shredding.** The PII surface in v1 is bounded — customer name, NIF, address, contact, and free-text fields on a small set of lifecycle events — and is encryptable per-subject using the bank's existing KMS / HSM infrastructure. The structural fields the engine actually reasons about (principal, rate, dates, withholding ledger, lifecycle state) are not PII and remain in the clear, so handlers and projections continue to operate over erased records exactly as they do over live ones, with PII fields returning null instead of plaintext. The audit trail after erasure shows "an event occurred at this transaction_time; payload PII is unrecoverable due to subject erasure" — the GDPR-compliant audit state, not a gap.
+
+The position is conditional on a DPO confirmation (see §6.4) that crypto-shredding satisfies the operating bank's interpretation of Article 17 in conjunction with PT banking-record retention obligations (typically 10 years for accounting records, 7 years for AML records). The fallback is PII off-store; tombstoning is rejected.
+
+Two engineering consequences fall out immediately and constrain §6.3:
+
+- Every event-type payload schema declares its PII fields explicitly. The engine's CI rejects schemas that introduce a string field without a PII / non-PII annotation. Family schemas declare; engine enforces.
+- The chosen bitemporal storage path in §6.1 must host per-subject encryption envelopes at the field level, not the row level. Row-level encryption forecloses structural-field queries on erased records. This becomes scoring criterion #2 in the §6.3 spike.
+
+### 6.3 Q-X implementation spike: scope and scoring
+
+§6.1 names three candidate paths for bitemporal projection storage and defers the choice "to a follow-up issue with a small spike per path." This sub-section specifies the spike so it produces a comparable result across paths rather than three differently-shaped reports.
+
+**Spike scope (per path, timeboxed at 5 engineering days).**
+
+1. Implement the deposit-position projection (per [02 §2.5](./02-v1-scope-term-deposits.md)) end-to-end against the candidate storage: schema declaration, valid_time and transaction_time handling, the four canonical queries (#1–#4 from §2), and a forced correction round-trip — initial event, retroactive correction, both states queryable.
+2. Implement the per-subject PII encryption envelope per §6.2 against at least one PII field on `DepositConstituted` (customer name) and verify the field is queryable when the key exists and returns null when the key is destroyed.
+3. Run the v1 cold-replay performance target from §8.2 (one instance, ~24-260 events, under 5 seconds) and report achieved time.
+4. Document operational profile: backup mechanism, point-in-time-recovery story, observability hooks, on-call complexity for a team operating Postgres today.
+
+**Scoring criteria (in priority order).**
+
+| # | Criterion | Why this priority |
+|---|---|---|
+| 1 | Correctness on the forced correction round-trip | If the path silently loses the original-then-corrected pair, it fails the bitemporal commitment in §6 — no other property compensates |
+| 2 | GDPR erasure compatibility from §6.2 | Foreclosure risk: per-subject field-level encryption is hard to retrofit once projection schemas are written |
+| 3 | DR / RTO / RPO shape (per [Q-AY in 04-open-questions](./04-open-questions.md)) | Production gating; the recovery story constrains the storage decision in ways that operate-time discovery is too late |
+| 4 | Cold-replay time vs the §8.2 target | If the path hits the v1 target without snapshots, snapshots become optional rather than mandatory |
+| 5 | Operational profile match to the team's existing stack | The team's moderate event-sourcing experience cannot absorb a new database technology simultaneously — see §10.4 |
+| 6 | Query ergonomics for application code | Bitemporal joins are written by every family schema; ergonomics compound |
+
+**Spike deliverable.** A single comparison table — one row per path — scoring each criterion 1–5 with a one-line justification, plus the working PR for each path. The decision is made by the engine technical lead with input from the operations function (criterion 5) and the DPO (criterion 2).
+
+The spike runs only after Q-Y (§6.4) returns. If Q-Y confirms bitemporal is required, scoring proceeds as above. If Q-Y returns "unitemporal is sufficient for v1," criteria 1 and 6 fall away and the choice collapses to a simpler operational fit between the three paths.
+
+### 6.4 Q-Y compliance verification: what to bring
+
+[Open question Q-Y in 04-open-questions](./04-open-questions.md) asks whether PT regulators expect retroactive corrections to be queryable in both time dimensions. The §6 design assumes yes; if no, projection schemas simplify materially. The conversation is short — one meeting — but its result resets the storage decision in §6.1 and §6.2, so it runs before the §6.3 spike committee meets. The same meeting also resolves the §7 DPO question, since both turn on the same compliance/legal reading.
+
+**Who attends.** Operating bank's compliance lead, internal audit lead, DPO, and the engine technical lead. Optional: external counsel familiar with BdP supervisory practice on system-of-record requirements.
+
+**What to bring.**
+
+1. **A concrete retroactive-correction scenario.** A worked example: a deposit's principal is recorded as €10,000 on 2026-03-15 due to clerk-data-entry error; the true principal was €100,000; the correction is applied on 2026-05-19 via a `DepositCorrected` event. An auditor on 2026-09-01 asks "what was the principal as we knew it on 2026-04-01?" The answer with bitemporal storage is "€10,000 — the wrong value, which is what we knew then." The answer without bitemporal storage is "€100,000 — the corrected value, projected backward as if always known." The question to compliance: which answer does BdP expect when this happens in supervisory inspection? Is there a written supervisory expectation, or is it inferred from general system-of-record practice?
+2. **A retention-vs-erasure scenario.** A customer requests erasure of their PII on 2032-04-01; the deposit matured on 2029-03-15 and is therefore outside the 7-year AML retention window but inside the 10-year accounting-record window. Three candidate paths: (a) crypto-shred the PII per §6.2 — cipher-text remains, plaintext unrecoverable, audit trail shows erasure event; (b) retain everything until 2039-03-15 and reject the erasure request as legally exempt; (c) move PII off-store and erase from the mutable store. The question to compliance and the DPO: which path is defensible under PT supervisory practice and Lei 58/2019, and is crypto-shredding adequate as "erasure" or does it count as "pseudonymisation" that still requires deletion at the cipher-text level after the 10-year window?
+3. **The three §6.1 candidate paths** as a reference list, so the conversation can foreclose paths that fail the compliance shape rather than only confirming a preferred one.
+
+**Decision outputs needed from the meeting.**
+
+- Bitemporal required, optional, or forbidden. (Forbidden is unlikely but possible if compliance views queryable "what we used to think" as making errors hard to disavow.)
+- Crypto-shredding accepted as Article 17 erasure, or PII off-store required as the v1 mechanism.
+- Retention windows confirmed for v1 deposit data: structural events vs PII fields, with the cipher-text question answered for the post-window period.
+- Whether the engine must support a "regulator query" mode that bypasses subject-erasure for supervisory inspection (some EU jurisdictions allow this; the PT position is the open question).
+
+The meeting's output is folded into [§7 and Q-Y in 04-open-questions](./04-open-questions.md), unblocks §6.3, and is committed to a one-paragraph addendum in [01 §2](./01-product-architecture.md) so the architectural commitment carries the regulatory qualification.
+
 ---
 
 ## 7. Replay Reconciliation

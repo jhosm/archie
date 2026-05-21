@@ -52,8 +52,13 @@ parameters:
   interest_variant: AT_MATURITY
   term_days: 365
   day_count: pt.act_360
-  rate_ref: { sheet: live, role_selector: deposit_origin }
-  roles: [standard, new_money]
+  rate_ref:
+    sheet: live
+    role_selector:
+      fact: deposit_origin       # fact captured at constitution
+      map:
+        external_transfer: new_money
+        existing_balance: standard
 ```
 
 Rate sheet (a separate artefact, separate repo path, separate deploy endpoint):
@@ -75,7 +80,7 @@ products:
         - { principal_cents: [50000, null],         tan_basis_points: 400 }
 ```
 
-The `role_selector` is resolved by the engine at constitution time from a known fact about the operation — here, whether the principal is new money transferred in from outside the bank or money already on the bank's balance sheet. The product config names the input fact (`deposit_origin`); the rate sheet supplies the rate for each role.
+At constitution the engine reads the `deposit_origin` fact about the operation (one of `external_transfer` — principal transferred in from outside the bank — or `existing_balance` — principal already on the bank's balance sheet) and resolves it through `role_selector.map` to a role: `external_transfer → new_money`, `existing_balance → standard`. The rate sheet supplies the rate for each role; the product config supplies the fact-to-role mapping. The rate sheet never sees `deposit_origin`; the product config never sees a `tan_basis_points` value.
 
 A weekly rate-only update is a new rate-sheet version; the product config's `version_id` does not move.
 
