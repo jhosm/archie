@@ -1,11 +1,11 @@
-# ADR-001: Event Backbone — Message Broker Choice
+# ADR-IC-001: Event Backbone — Message Broker Choice
 
 | Field | Value |
 |---|---|
 | Status | Accepted |
 | Date | 2026-05-17 |
 | Deciders | jhosm |
-| Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
+| Common criteria | [ADR-IC-000](./ADR-IC-000-common-evaluation-criteria.md) |
 
 ---
 
@@ -55,8 +55,8 @@ The Portuguese banking context imposes GDPR, DORA, and PSD2. The most structural
 |---|---|---|---|---|
 | Kafka / Redpanda | Native log compaction with null-payload tombstones; crypto-erasure also possible | Replication factor, ISR, configurable RTO/RPO; chaos tooling (Chaos Monkey, Pumba) well-tested against Kafka | Ordered, durable, immutable-by-default log per topic | **Pass** |
 | Pulsar | Compaction supported via Pulsar's ledger compaction | HA via BookKeeper ensemble; RTO/RPO documentable; resilience tooling less mature | Durable ledger; same audit properties | **Pass** |
-| RabbitMQ Streams | No key-based log compaction. Streams support size/time retention and per-message TTL, but **not tombstone-based selective erasure**. Requires crypto-erasure (encrypt payload with per-subject key; delete the key). Valid DPIA approach — but adds application-layer complexity not required by Kafka. | Quorum queues provide HA; resilience tooling limited compared to Kafka | Classic AMQP audit trail; streams retain ordered log | **Pass (conditional)** — crypto-erasure required as the right-to-erasure mechanism (alternative accepted per ADR-000 F2) |
-| NATS JetStream | Same gap as RabbitMQ Streams: no key-based compaction. Crypto-erasure is the only compliant path. | Single-binary simplicity aids resilience drills; JetStream clustering (RAFT) is straightforward | Durable JetStream subjects retain message history | **Pass (conditional)** — crypto-erasure required as the right-to-erasure mechanism (alternative accepted per ADR-000 F2) |
+| RabbitMQ Streams | No key-based log compaction. Streams support size/time retention and per-message TTL, but **not tombstone-based selective erasure**. Requires crypto-erasure (encrypt payload with per-subject key; delete the key). Valid DPIA approach — but adds application-layer complexity not required by Kafka. | Quorum queues provide HA; resilience tooling limited compared to Kafka | Classic AMQP audit trail; streams retain ordered log | **Pass (conditional)** — crypto-erasure required as the right-to-erasure mechanism (alternative accepted per ADR-IC-000 F2) |
+| NATS JetStream | Same gap as RabbitMQ Streams: no key-based compaction. Crypto-erasure is the only compliant path. | Single-binary simplicity aids resilience drills; JetStream clustering (RAFT) is straightforward | Durable JetStream subjects retain message history | **Pass (conditional)** — crypto-erasure required as the right-to-erasure mechanism (alternative accepted per ADR-IC-000 F2) |
 
 Kafka/Redpanda and Pulsar pass both hard filters unconditionally. RabbitMQ and NATS pass F2 only on the condition that crypto-erasure is committed as the right-to-erasure mechanism, with the key-management discipline that implies. Kafka/Redpanda and Pulsar provide the cleaner compliance path via native compaction.
 
@@ -150,7 +150,7 @@ Operationally the strongest alternative, but the Kafka Connect ecosystem gap is 
 **What this choice makes harder or impossible:**
 
 - Redpanda's tiered storage (S3-backed extended retention) is an Enterprise feature. At POC scale, retention is bounded by local disk. This is acceptable; it must be revisited before production hardening.
-- Log compaction provides a structural right-to-erasure path, but the application must discipline itself to use null-payload tombstones correctly — a partially implemented compaction strategy is worse than no compaction strategy (it creates a false sense of compliance). This must be documented in the event schema governance (see ADR-002).
+- Log compaction provides a structural right-to-erasure path, but the application must discipline itself to use null-payload tombstones correctly — a partially implemented compaction strategy is worse than no compaction strategy (it creates a false sense of compliance). This must be documented in the event schema governance (see ADR-IC-002).
 - Topic count and partition count affect Redpanda performance differently from Apache Kafka (Redpanda has lower per-partition overhead). Capacity planning data from Kafka benchmarks is directionally useful but should be validated against Redpanda.
 
 **Residual risks:**
@@ -201,7 +201,7 @@ The producer must always set the record key to `aggregate_id` (the UUID of the a
 
 Topics that carry events with PII fields must be created with `cleanup.policy=compact,delete`. This cannot be retrofitted after events have been published — adding compaction to an existing topic does not retroactively compact already-written segments, and null-payload tombstones cannot erase records in segments that predate the compaction policy.
 
-The event catalog (ADR-008) is the authoritative list of which topics require compaction. Topics that carry no PII use `cleanup.policy=delete` with an explicit `retention.ms`. The default (no explicit policy) must not be relied upon — the correct policy must be set at `kafka-topics --create` time or the equivalent Redpanda Admin API call.
+The event catalog (ADR-IC-008) is the authoritative list of which topics require compaction. Topics that carry no PII use `cleanup.policy=delete` with an explicit `retention.ms`. The default (no explicit policy) must not be relied upon — the correct policy must be set at `kafka-topics --create` time or the equivalent Redpanda Admin API call.
 
 ---
 

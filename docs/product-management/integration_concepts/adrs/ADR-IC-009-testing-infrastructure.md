@@ -1,12 +1,12 @@
-# ADR-009: Testing Infrastructure and Contract Testing
+# ADR-IC-009: Testing Infrastructure and Contract Testing
 
 | Field | Value |
 |---|---|
 | Status | Accepted |
 | Date | 2026-05-17 |
 | Deciders | jhosm |
-| Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
-| Depends on | [ADR-001](./ADR-001-event-backbone-message-broker.md), [ADR-002](./ADR-002-schema-format-and-registry.md), [ADR-003](./ADR-003-saga-orchestrator.md), [ADR-005](./ADR-005-cqrs-read-model-storage.md), [ADR-007](./ADR-007-observability-stack.md) |
+| Common criteria | [ADR-IC-000](./ADR-IC-000-common-evaluation-criteria.md) |
+| Depends on | [ADR-IC-001](./ADR-IC-001-event-backbone-message-broker.md), [ADR-IC-002](./ADR-IC-002-schema-format-and-registry.md), [ADR-IC-003](./ADR-IC-003-saga-orchestrator.md), [ADR-IC-005](./ADR-IC-005-cqrs-read-model-storage.md), [ADR-IC-007](./ADR-IC-007-observability-stack.md) |
 
 ---
 
@@ -14,9 +14,9 @@
 
 [Document 07](../07-testing-strategy.md) defines a five-level adapted pyramid for this architecture: unit tests of pure aggregates, integration tests with real infrastructure, consumer-driven contract tests, saga tests (happy path, fault injection, chaos/property-based), and selective E2E. Each level requires tooling choices that must hold at 1–2 person scale.
 
-**One decision is already settled by ADR-002:** schema-level compatibility for integration events is enforced by the Redpanda built-in schema registry using BACKWARD/FORWARD/FULL compatibility modes. This is a hard CI gate that prevents structurally incompatible schema changes from reaching any consumer. Document 07 (Level 3) names this the "schema contract" layer. It is not re-evaluated here.
+**One decision is already settled by ADR-IC-002:** schema-level compatibility for integration events is enforced by the Redpanda built-in schema registry using BACKWARD/FORWARD/FULL compatibility modes. This is a hard CI gate that prevents structurally incompatible schema changes from reaching any consumer. Document 07 (Level 3) names this the "schema contract" layer. It is not re-evaluated here.
 
-**What ADR-006 already covers:** Kong's `request-validator` plugin enforces the OpenAPI schema for all inbound REST requests at the edge. External-facing REST contract enforcement is a consequence of the gateway choice.
+**What ADR-IC-006 already covers:** Kong's `request-validator` plugin enforces the OpenAPI schema for all inbound REST requests at the edge. External-facing REST contract enforcement is a consequence of the gateway choice.
 
 **What remains to be decided, across four interdependent areas:**
 
@@ -161,7 +161,7 @@ S4 · Community and longevity: maintained by the Pact Foundation, a non-profit m
 
 S1 · Operational complexity: no broker service required — contracts are published as stub JARs to a standard Maven repository. This is operationally simpler than the Pact Broker for a pure JVM team. Contracts live in the producer's codebase (or a separate contracts repository) as Groovy/YAML DSL files.
 
-S2 · Ecosystem coherence: Spring Cloud Contract's messaging support is idiomatic within the Spring ecosystem (Spring Cloud Stream, Spring Integration). ADR-003 chose a custom event-driven orchestrator, not a Spring-based orchestrator. If the orchestrator does not use Spring messaging abstractions, wiring Spring Cloud Contract's messaging stub mechanism requires additional adapter code. The more natural fit is for a team building Spring Boot microservices end-to-end; less natural for architecture where the orchestrator manages its own Redpanda consumer loop outside Spring Cloud Stream.
+S2 · Ecosystem coherence: Spring Cloud Contract's messaging support is idiomatic within the Spring ecosystem (Spring Cloud Stream, Spring Integration). ADR-IC-003 chose a custom event-driven orchestrator, not a Spring-based orchestrator. If the orchestrator does not use Spring messaging abstractions, wiring Spring Cloud Contract's messaging stub mechanism requires additional adapter code. The more natural fit is for a team building Spring Boot microservices end-to-end; less natural for architecture where the orchestrator manages its own Redpanda consumer loop outside Spring Cloud Stream.
 
 S2, continued: Spring Cloud Contract does not unify Kafka and HTTP contracts in a single framework in the same way Pact does — its HTTP stubs and messaging stubs are separate mechanisms. Pact's single framework for both is the coherence advantage.
 
@@ -248,7 +248,7 @@ S2 · Ecosystem coherence: equivalent to WireMock for most use cases; smaller co
 |---|---|---|
 | Toxiproxy | Toxiproxy operates at the TCP proxy layer between services. It intercepts a specific connection and applies programmable conditions (latency, disconnect, bandwidth limit, timeout) to the byte stream without modifying data — only timing and connectivity. GDPR: no data persistence; Toxiproxy is a transparent proxy. DORA: Toxiproxy enables the fault scenarios from document 07 (Level 4 saga test table) to run as automated, repeatable, committed test cases — this is the concrete evidence of operational resilience that DORA requires. The test that verifies "ACL enters INDETERMINATE when Core Banking connection times out after 3 retries" is a DORA compliance artifact, not just a developer convenience. | **Pass** |
 | Pumba | Pumba applies chaos at the Docker container level: kill containers, pause them, or apply `tc` (Linux traffic control) network rules to the container's network interface. The `tc`-based network impairment (latency, packet loss) requires `CAP_NET_ADMIN` in the container runtime, which must be verified against the CI provider. Pumba is the right tool for "what happens when the entire Redpanda node crashes mid-saga?" — a coarser, whole-component failure that complements Toxiproxy's per-connection surgical control. | **Pass** |
-| Chaos Mesh | Requires a running Kubernetes cluster. The POC stack (ADR-001 through ADR-007) is Docker Compose-based. Standing up a Kubernetes cluster solely for chaos testing is a significant operational addition at 1–2 person scale. | **Pass (conditional)** — Kubernetes dependency is disproportionate at POC scale; re-evaluate when the stack moves to a Kubernetes deployment model |
+| Chaos Mesh | Requires a running Kubernetes cluster. The POC stack (ADR-IC-001 through ADR-IC-007) is Docker Compose-based. Standing up a Kubernetes cluster solely for chaos testing is a significant operational addition at 1–2 person scale. | **Pass (conditional)** — Kubernetes dependency is disproportionate at POC scale; re-evaluate when the stack moves to a Kubernetes deployment model |
 
 #### Soft criteria
 
@@ -311,7 +311,7 @@ Pact also unifies event contracts (PactV4 async messages) and HTTP contracts (Pa
 
 **Rejected: Spring Cloud Contract**
 
-Not rejected on quality grounds — the Spring Cloud Contract DSL is well-designed and operationally simpler (no Pact Broker). The rejection is structural: non-JVM consumers cannot participate in Spring Cloud Contract's stub mechanism without significant shim code. In an architecture where the schema-level contract (ADR-002) is already language-neutral (Avro), the behavioral contract layer should be equally language-neutral.
+Not rejected on quality grounds — the Spring Cloud Contract DSL is well-designed and operationally simpler (no Pact Broker). The rejection is structural: non-JVM consumers cannot participate in Spring Cloud Contract's stub mechanism without significant shim code. In an architecture where the schema-level contract (ADR-IC-002) is already language-neutral (Avro), the behavioral contract layer should be equally language-neutral.
 
 **Rejected: Schema registry only**
 
@@ -486,8 +486,8 @@ Following the relationship between documents 07 and 06 (observability facilitate
 Minimum telemetry assertions per saga test:
 
 - A trace with the expected `correlation_id` attribute exists in the in-memory span exporter.
-- The trace contains the manually-created spans in the naming convention from ADR-007 P2 (`aggregate.deposit.create`, `saga.constitution.transition`, `outbox.publish`, etc.).
+- The trace contains the manually-created spans in the naming convention from ADR-IC-007 P2 (`aggregate.deposit.create`, `saga.constitution.transition`, `outbox.publish`, etc.).
 - The business metric `deposits_constituted_total` (or `deposits_cancelled_total` for compensation paths) increments by exactly 1.
-- No span carries a raw Portuguese NIF or IBAN as a span attribute (GDPR assertion — P4 of ADR-007).
+- No span carries a raw Portuguese NIF or IBAN as a span attribute (GDPR assertion — P4 of ADR-IC-007).
 
-This prevents a class of silent regression where a refactoring removes a span or a metric that an alert (from ADR-007 P6) depends on. The observability signal is a product output tested like any other, not an assumed side-effect.
+This prevents a class of silent regression where a refactoring removes a span or a metric that an alert (from ADR-IC-007 P6) depends on. The observability signal is a product output tested like any other, not an assumed side-effect.

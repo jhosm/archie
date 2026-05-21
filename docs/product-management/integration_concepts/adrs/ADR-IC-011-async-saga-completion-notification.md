@@ -1,18 +1,18 @@
-# ADR-011: Async Saga Completion Notification — Out-of-Band Callback Wire Format
+# ADR-IC-011: Async Saga Completion Notification — Out-of-Band Callback Wire Format
 
 | Field | Value |
 |---|---|
 | Status | Accepted |
 | Date | 2026-05-17 |
 | Deciders | jhosm |
-| Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
-| Depends on | [ADR-001](./ADR-001-event-backbone-message-broker.md), [ADR-003](./ADR-003-saga-orchestrator.md), [ADR-006](./ADR-006-edge-api-gateway.md) |
+| Common criteria | [ADR-IC-000](./ADR-IC-000-common-evaluation-criteria.md) |
+| Depends on | [ADR-IC-001](./ADR-IC-001-event-backbone-message-broker.md), [ADR-IC-003](./ADR-IC-003-saga-orchestrator.md), [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) |
 
 ---
 
 ## Context
 
-[Document 05](../05-constitution-saga-walkthrough.md) and [ADR-006](./ADR-006-edge-api-gateway.md) establish the synchronous edge pattern: a `202 Accepted` with a `stream_url` pointing to an SSE endpoint where the client subscribes for saga progress. That model presumes a connected, attentive client — a browser or mobile app with an open HTTP connection that stays open for the duration of the saga.
+[Document 05](../05-constitution-saga-walkthrough.md) and [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) establish the synchronous edge pattern: a `202 Accepted` with a `stream_url` pointing to an SSE endpoint where the client subscribes for saga progress. That model presumes a connected, attentive client — a browser or mobile app with an open HTTP connection that stays open for the duration of the saga.
 
 [Document 11](../11-chat-agent-channel-strategy.md) breaks that presupposition in two places:
 
@@ -154,7 +154,7 @@ A `4xx` (client error) from the receiver means the URL is misconfigured — retr
 
 ### D5 — Owning component for delivery
 
-**Option A: Orchestrator delivers directly.** When the saga state machine (ADR-003) transitions to a terminal state, it posts the callback in-process — before or after committing the final state transition. This is simpler (no additional service) but couples the orchestrator to the notification contract, the retry scheduler, the dead-letter store, and the HMAC signing logic. If the delivery attempt blocks or fails, it affects the orchestrator's processing throughput. If the callback logic has a bug, it can stall sagas.
+**Option A: Orchestrator delivers directly.** When the saga state machine (ADR-IC-003) transitions to a terminal state, it posts the callback in-process — before or after committing the final state transition. This is simpler (no additional service) but couples the orchestrator to the notification contract, the retry scheduler, the dead-letter store, and the HMAC signing logic. If the delivery attempt blocks or fails, it affects the orchestrator's processing throughput. If the callback logic has a bug, it can stall sagas.
 
 **Option B: Dedicated notification service.** The orchestrator emits a terminal domain event to the Redpanda backbone (e.g., `SagaTerminated` — which it already emits as part of its event stream). A dedicated notification service subscribes to those events and handles delivery, retry, dead-letter, and subscription management. The orchestrator is unaware of the notification service.
 
@@ -214,7 +214,7 @@ Summary of all six choices:
 
 - **No free-form webhook URL.** Partners or agents that want a bespoke callback URL must register it through the subscription endpoint first. For quickly prototyped integrations this adds a step; it is a deliberate friction that prevents SSRF.
 - **Receiver must be idempotent.** At-least-once means the receiver will occasionally see duplicate deliveries — guaranteed on retry after a timeout where the receiver processed the first delivery but the acknowledgement was lost. Receivers that are not idempotent will double-process terminal events. The `idempotency_key` is the contract; receiver correctness is the receiver's responsibility.
-- **Notification service is a new operational component.** It requires a database (subscription store + delivery log + dead-letter records), a Redpanda consumer loop, an outbound HTTP client with retry scheduler, and its own observability configuration (ADR-007 P2 span naming: `notification.delivery.attempt`, `notification.delivery.confirmed`, `notification.delivery.exhausted`). This is appropriate operational overhead for the capability — it is not zero-overhead.
+- **Notification service is a new operational component.** It requires a database (subscription store + delivery log + dead-letter records), a Redpanda consumer loop, an outbound HTTP client with retry scheduler, and its own observability configuration (ADR-IC-007 P2 span naming: `notification.delivery.attempt`, `notification.delivery.confirmed`, `notification.delivery.exhausted`). This is appropriate operational overhead for the capability — it is not zero-overhead.
 - **Dead-lettered deliveries require human review.** When a subscription is suspended (after `4xx`) or a delivery is exhausted (after 10 retries), an operator or the subscriber must intervene. This is the correct behaviour — silent swallowing of failed deliveries would be worse — but it adds an operational surface to monitor.
 
 **Residual risks:**
@@ -269,7 +269,7 @@ X-Webhook-Delivery-Id: {delivery_attempt_uuid}
 }
 ```
 
-The `outcome` field is populated from the CQRS read model for the process (ADR-005 / ADR-003) — the same structured data that `get_process_status` returns. The receiver can reconstruct full saga detail by calling `get_process_status` if the callback payload is insufficient.
+The `outcome` field is populated from the CQRS read model for the process (ADR-IC-005 / ADR-IC-003) — the same structured data that `get_process_status` returns. The receiver can reconstruct full saga detail by calling `get_process_status` if the callback payload is insufficient.
 
 The `terminal_event` field carries the saga's terminal state name (`COMPLETED`, `CANCELLED`, `HUMAN_INTERVENTION_REQUIRED`) — not a derived summary. The receiver makes its own interpretation.
 
@@ -289,7 +289,7 @@ For each consumed terminal event:
 6. On transient failure: update record to RETRY, schedule next attempt per D4.
 7. On permanent failure (`4xx` non-429, or 10 retries exhausted): update record to DEAD_LETTERED; publish `NotificationDeliveryExhausted` to the backbone.
 
-The notification service uses its own PostgreSQL table for the delivery store — consistent with ADR-005's choice of PostgreSQL as the single relational store.
+The notification service uses its own PostgreSQL table for the delivery store — consistent with ADR-IC-005's choice of PostgreSQL as the single relational store.
 
 ---
 

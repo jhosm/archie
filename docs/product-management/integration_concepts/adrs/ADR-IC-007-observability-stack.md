@@ -1,12 +1,12 @@
-# ADR-007: Observability Stack
+# ADR-IC-007: Observability Stack
 
 | Field | Value |
 |---|---|
 | Status | Accepted |
 | Date | 2026-05-17 |
 | Deciders | jhosm |
-| Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
-| Depends on | [ADR-001](./ADR-001-event-backbone-message-broker.md) |
+| Common criteria | [ADR-IC-000](./ADR-IC-000-common-evaluation-criteria.md) |
+| Depends on | [ADR-IC-001](./ADR-IC-001-event-backbone-message-broker.md) |
 
 ---
 
@@ -54,10 +54,10 @@ Document 06 identifies a direct consequence of the instrumentation model: span a
 
 | Candidate | Licence | Assessment | Proceeds? |
 |---|---|---|---|
-| Grafana LGTM Stack | Grafana: AGPLv3; Tempo: Apache 2.0; Loki: AGPLv3; Prometheus: Apache 2.0 | AGPLv3 is explicitly in ADR-000's acceptable list. Self-hosted; Grafana Cloud free tier available but not required. | **Pass** |
+| Grafana LGTM Stack | Grafana: AGPLv3; Tempo: Apache 2.0; Loki: AGPLv3; Prometheus: Apache 2.0 | AGPLv3 is explicitly in ADR-IC-000's acceptable list. Self-hosted; Grafana Cloud free tier available but not required. | **Pass** |
 | Jaeger + Prometheus + Grafana | Jaeger: Apache 2.0 (CNCF); Prometheus: Apache 2.0; Grafana: AGPLv3 | Same licensing as components of candidate A. | **Pass** |
 | SigNoz | Apache 2.0 (core); commercial tier available | Core platform is Apache 2.0; enterprise features are commercial. Self-hosted on ClickHouse. | **Pass (conditional)** — required features must be verified to fall within the Apache 2.0 tier at implementation time |
-| Elastic APM stack | Elasticsearch: SSPLv1 (from v7.10+); Kibana: SSPLv1 (from v7.10+); APM Server: Apache 2.0 | Elasticsearch and Kibana changed to SSPL in January 2021. SSPL contains use restrictions that ADR-000 explicitly flags as a hard fail even when currently free. OpenSearch (Apache 2.0, AWS fork) is a credible alternative, but OpenSearch APM maturity significantly lags the Elastic APM stack. | **Fail** — Elasticsearch and Kibana SSPL licence; OpenSearch APM variant not at equivalent maturity to justify evaluation |
+| Elastic APM stack | Elasticsearch: SSPLv1 (from v7.10+); Kibana: SSPLv1 (from v7.10+); APM Server: Apache 2.0 | Elasticsearch and Kibana changed to SSPL in January 2021. SSPL contains use restrictions that ADR-IC-000 explicitly flags as a hard fail even when currently free. OpenSearch (Apache 2.0, AWS fork) is a credible alternative, but OpenSearch APM maturity significantly lags the Elastic APM stack. | **Fail** — Elasticsearch and Kibana SSPL licence; OpenSearch APM variant not at equivalent maturity to justify evaluation |
 | Datadog / commercial SaaS | Proprietary; SaaS subscription required | No free tier that covers the signal volume of this architecture without a payment commitment. | **Fail** — no free tier for POC-scale usage without payment method |
 
 *Date of licence assessment: 2026-05-17.*
@@ -133,13 +133,13 @@ Jaeger is the technically strongest trace backend in isolation — CNCF graduate
 
 SigNoz is an honest contender and deserves acknowledgement. Its unified OTel-native model and simpler deployment are genuine strengths. The reason it does not win is the immaturity of its visualization layer for the multi-persona dashboards document 06 requires, and the addition of ClickHouse as a new database paradigm to a stack that already operates PostgreSQL and Redpanda.
 
-The operational overhead argument that determined ADR-003, ADR-004, and ADR-005 applies here too, but points *toward* the LGTM stack rather than away from it: running Jaeger + an OAuth proxy + Prometheus + Grafana + a log backend is more pieces than running Loki + Grafana + Tempo + Prometheus as a single Compose application.
+The operational overhead argument that determined ADR-IC-003, ADR-IC-004, and ADR-IC-005 applies here too, but points *toward* the LGTM stack rather than away from it: running Jaeger + an OAuth proxy + Prometheus + Grafana + a log backend is more pieces than running Loki + Grafana + Tempo + Prometheus as a single Compose application.
 
 ---
 
 **Rejected: Elastic APM stack**
 
-Elasticsearch and Kibana changed to SSPL in January 2021. SSPL is explicitly flagged in ADR-000 as a licence that fails the F1 filter even when currently free. The OpenSearch fork (Apache 2.0) is a viable alternative for general log analytics but lacks the APM maturity of the Elastic stack.
+Elasticsearch and Kibana changed to SSPL in January 2021. SSPL is explicitly flagged in ADR-IC-000 as a licence that fails the F1 filter even when currently free. The OpenSearch fork (Apache 2.0) is a viable alternative for general log analytics but lacks the APM maturity of the Elastic stack.
 
 **Rejected: Datadog / commercial SaaS**
 

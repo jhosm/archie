@@ -1,12 +1,12 @@
-# ADR-003: Saga Orchestrator
+# ADR-IC-003: Saga Orchestrator
 
 | Field | Value |
 |---|---|
 | Status | Accepted |
 | Date | 2026-05-17 |
 | Deciders | jhosm |
-| Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
-| Depends on | [ADR-001](./ADR-001-event-backbone-message-broker.md) |
+| Common criteria | [ADR-IC-000](./ADR-IC-000-common-evaluation-criteria.md) |
+| Depends on | [ADR-IC-001](./ADR-IC-001-event-backbone-message-broker.md) |
 
 ---
 
@@ -18,7 +18,7 @@ The integration series describes a hybrid saga model ([document 00](../00-introd
 - Drives compensations as first-class business operations
 - Handles long-running waits (hours to days, e.g. manual workflow approval)
 - Coordinates parallel and sequential steps with retry and timeout semantics
-- Integrates with the Redpanda event backbone (ADR-001) and the application database
+- Integrates with the Redpanda event backbone (ADR-IC-001) and the application database
 
 [Document 05](../05-constitution-saga-walkthrough.md) (Constitution Saga Walkthrough) illustrates one saga in one application — `ConstitutionProcess` — with explicit business states grouped as follows:
 
@@ -51,7 +51,7 @@ This is one example; the ecosystem described in document 00 will have many sagas
 | Temporal | MIT (server), Apache 2.0 (SDKs) | Open source; self-hosted | **Pass** |
 | Conductor-OSS | Apache 2.0 | Community fork; self-hosted | **Pass** |
 | Axon Framework | Apache 2.0 (framework); Axon Server SE is proprietary freeware | The framework itself is open source and can run without Axon Server using JDBC-backed saga and event stores. Axon Server Standard Edition (free) is a proprietary binary with a feature ceiling below the Enterprise tier. This ADR evaluates Axon in the JDBC-only (fully open source) configuration. | **Pass (conditional)** — JDBC-only configuration; adopting Axon Server SE would reintroduce paywalled features |
-| Event-driven orchestrator | N/A — no additional tool | Uses Redpanda (Apache 2.0, ADR-001) and the application database already required by the domain | **Pass** |
+| Event-driven orchestrator | N/A — no additional tool | Uses Redpanda (Apache 2.0, ADR-IC-001) and the application database already required by the domain | **Pass** |
 
 *Date of licence assessment: 2026-05-17. Licence terms can change; verify before production hardening.*
 
@@ -63,8 +63,8 @@ The critical regulatory consideration for saga orchestrators is where saga state
 |---|---|---|---|---|
 | Temporal | Workflow history stores all workflow arguments and activity return values in plain text by default. For a constitution saga, workflow inputs include `client_id`, IBAN, amount — PII by GDPR definition. Temporal v1.20+ provides a custom data converter API for payload encryption, but this requires application-layer key management in addition to Temporal's own PostgreSQL-backed storage. The history store must be included in the GDPR key rotation and erasure protocol. | Self-hosted PostgreSQL-backed Temporal can document RTO/RPO from PostgreSQL guarantees. Resilience testing is under operator control. | Temporal history provides an ordered, durable audit trail of all workflow executions. Strong PSD2 fit. | **Pass (conditional)** — custom data converter required from day one to encrypt PII in workflow inputs; key management discipline is mandatory |
 | Conductor-OSS | Task inputs and outputs are stored in the Conductor backend (Redis or Elasticsearch). Same PII surface as Temporal — any task input or output containing client data must be masked or encrypted at the application layer. Achievable, but adds complexity not present for the application-database-native approaches. | Resilience depends on the chosen backend (Redis Sentinel or Elasticsearch HA). Operator-controlled. DORA requirements documentable. | Task execution history provides an ordered audit trail. | **Pass (conditional)** — application-layer PII masking or encryption required for every task payload carrying client data |
-| Axon Framework (JDBC) | Saga state persisted in the application PostgreSQL database — the same database already subject to the domain GDPR handling strategy. No additional GDPR surface. Events in the Axon event store must comply with the same tombstone/compaction discipline as Redpanda topics (ADR-001). | JVM application; resilience testing under operator control. RTO/RPO from PostgreSQL guarantees. DORA-compatible. | Domain events in the Axon event store provide a strong audit trail. | **Pass** |
-| Event-driven orchestrator | No additional GDPR surface. `ConstitutionProcess` aggregate is stored in the application database alongside domain state — already subject to the domain GDPR handling strategy. Events on Redpanda topics are governed by ADR-001 and ADR-002. | No infrastructure beyond Redpanda (ADR-001) and the application database. DORA resilience testing targets both. | `ConstitutionProcess` state transitions are persisted in the application database and published as domain events on Redpanda — full audit trail. | **Pass** |
+| Axon Framework (JDBC) | Saga state persisted in the application PostgreSQL database — the same database already subject to the domain GDPR handling strategy. No additional GDPR surface. Events in the Axon event store must comply with the same tombstone/compaction discipline as Redpanda topics (ADR-IC-001). | JVM application; resilience testing under operator control. RTO/RPO from PostgreSQL guarantees. DORA-compatible. | Domain events in the Axon event store provide a strong audit trail. | **Pass** |
+| Event-driven orchestrator | No additional GDPR surface. `ConstitutionProcess` aggregate is stored in the application database alongside domain state — already subject to the domain GDPR handling strategy. Events on Redpanda topics are governed by ADR-IC-001 and ADR-IC-002. | No infrastructure beyond Redpanda (ADR-IC-001) and the application database. DORA resilience testing targets both. | `ConstitutionProcess` state transitions are persisted in the application database and published as domain events on Redpanda — full audit trail. | **Pass** |
 
 All four candidates pass both hard filters.
 
@@ -98,7 +98,7 @@ All four candidates pass both hard filters.
 
 #### Axon Framework (JDBC-backed)
 
-**S1 · Operational complexity:** Axon Framework is a Java library, which reintroduces JVM as an orchestrator runtime dependency. ADR-001 identified JVM operational complexity — GC tuning, heap sizing, JVM version management — as a meaningful risk for a 1–2 person team, which is why Redpanda (C++) was chosen over Apache Kafka (JVM). Adding a JVM orchestration service reintroduces this risk for the component with the most complex state management in the system. The JDBC-backed configuration (without Axon Server) avoids the proprietary server but requires more manual wiring of event store, saga store, and command bus, with less community documentation than the Axon Server path.
+**S1 · Operational complexity:** Axon Framework is a Java library, which reintroduces JVM as an orchestrator runtime dependency. ADR-IC-001 identified JVM operational complexity — GC tuning, heap sizing, JVM version management — as a meaningful risk for a 1–2 person team, which is why Redpanda (C++) was chosen over Apache Kafka (JVM). Adding a JVM orchestration service reintroduces this risk for the component with the most complex state management in the system. The JDBC-backed configuration (without Axon Server) avoids the proprietary server but requires more manual wiring of event store, saga store, and command bus, with less community documentation than the Axon Server path.
 
 **S2 · Ecosystem coherence:** Axon's saga model — Java classes annotated with `@Saga`, reacting to events via `@SagaEventHandler` — is conceptually aligned with the event-driven architecture in this series. However, Axon's native communication model (via the Axon Message Bus) competes with rather than integrates natively into Redpanda. The Axon Kafka Extension provides a bridge, but adds another adapter layer and its own configuration surface. The heavy Spring coupling (Spring Boot, Spring Data) creates framework-level opinions across the domain model.
 
@@ -116,7 +116,7 @@ All four candidates pass both hard filters.
 
 **S3 · Exit cost:** LOWEST. There is no external vendor state to migrate. The orchestration logic is in the application code, modifiable with standard software practices. The "orchestrator" is a service, not a framework, and its replacement or refactoring does not require extracting state from a vendor system.
 
-**S4 · Community and longevity:** N/A — there is no external vendor. The approach depends on the team's own engineering, Redpanda (ADR-001), and the application database. The patterns involved (state machine, event-driven, outbox, inbox) are well-documented, widely practiced, and not proprietary.
+**S4 · Community and longevity:** N/A — there is no external vendor. The approach depends on the team's own engineering, Redpanda (ADR-IC-001), and the application database. The patterns involved (state machine, event-driven, outbox, inbox) are well-documented, widely practiced, and not proprietary.
 
 **Where this approach requires more explicit implementation effort than the dedicated tools:**
 
@@ -154,7 +154,7 @@ The JSON DSL is insufficiently expressive for the multi-path, stateful compensat
 
 **Rejected: Axon Framework**
 
-Reintroduces JVM operational complexity for the component with the most complex state management in the system, after ADR-001 deliberately eliminated the JVM by choosing Redpanda over Apache Kafka. The deep Spring and framework coupling (`@Aggregate`, `@Saga`, Axon Message Bus) creates the highest exit cost of any candidate and constrains the team's language choices for the orchestrator service.
+Reintroduces JVM operational complexity for the component with the most complex state management in the system, after ADR-IC-001 deliberately eliminated the JVM by choosing Redpanda over Apache Kafka. The deep Spring and framework coupling (`@Aggregate`, `@Saga`, Axon Message Bus) creates the highest exit cost of any candidate and constrains the team's language choices for the orchestrator service.
 
 ---
 

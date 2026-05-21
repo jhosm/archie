@@ -9,7 +9,7 @@ a reference library for a Portuguese banking ecosystem. There is no build system
 runner, and no deployable code. The deliverables are `.md` files organised into three series, all under `docs/product-management/`:
 
 - `docs/product-management/integration_concepts/` — integration architecture patterns (documents `00–11`)
-  - `docs/product-management/integration_concepts/adrs/` — Architectural Decision Records selecting concrete tools for each pattern (ADR-000 defines the shared evaluation framework; ADRs 001–012 currently filed)
+  - `docs/product-management/integration_concepts/adrs/` — Architectural Decision Records selecting concrete tools for each pattern (ADR-IC-000 defines the shared evaluation framework; ADRs 001–012 currently filed)
 - `docs/product-management/financial_concepts/` — financial mathematics of banking products
 - `docs/product-management/product_concepts/` — core banking product engine: brief (`00–04`), feature-design companions, and the open-questions register
 
@@ -87,5 +87,5 @@ rm -rf directory        # not: rm -r directory
   - Between concept docs in different sibling folders (same `docs/product-management/` parent): `../OTHER_FOLDER/NN-name.md`
   - From an ADR to a concept doc (in `integration_concepts/adrs/`): `../NN-name.md`
   - From the top-level README: `./docs/product-management/FOLDER/NN-name.md`
-- ADR verdict convention (defined in ADR-000): hard filters return `Pass` / `Pass (conditional)` / `Fail`. A conditional pass requires a named mitigation in the same cell and is restated in Consequences or Residual Risks
+- ADR verdict convention (defined in ADR-IC-000): hard filters return `Pass` / `Pass (conditional)` / `Fail`. A conditional pass requires a named mitigation in the same cell and is restated in Consequences or Residual Risks
 - `AGENTS.md` mirrors these instructions for non-Claude-Code agents (keep in sync)

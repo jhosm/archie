@@ -143,7 +143,7 @@ The engine's handler dispatch runtime applies the function and persists the new 
 
 A handler that "needs to send a notification" emits a `NotificationScheduled` event in its returned state's pending-effects list. A separate handler (the notification effect handler) consumes those scheduled events and dispatches them to the notification system. The original handler stays pure; the side effect is observable, retriable, and replayable.
 
-This is the same shape as the outbox pattern from [ADR-004](../integration_concepts/adrs/ADR-004-outbox-pattern-mechanism.md). The outbox *is* the side-effects-as-scheduled-events mechanism for the event-bus publication side. The same shape extends to other side-effecting consumers (notifications, payments, regulatory submissions).
+This is the same shape as the outbox pattern from [ADR-IC-004](../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md). The outbox *is* the side-effects-as-scheduled-events mechanism for the event-bus publication side. The same shape extends to other side-effecting consumers (notifications, payments, regulatory submissions).
 
 ### 5.3 Handlers can be replayed
 
@@ -371,7 +371,7 @@ The event store is purchased capability, not built capability. Three candidates 
 |---|---|---|---|
 | **Kurrent / EventStoreDB** | Mature; event-sourcing-native | Very high (millions of events/day routine) | New operational dependency for the team; smaller ecosystem |
 | **Postgres-based event store** (e.g. on top of plain Postgres tables with strict append semantics) | Mainstream | ~1k TPS without sharding; higher with careful design | Familiar; team already operates Postgres; engineering work to sustain v4 scale |
-| **Kafka-as-event-store** (the bank's existing Redpanda per [ADR-001](../integration_concepts/adrs/ADR-001-event-backbone-message-broker.md)) | Mature (Redpanda is operationally proven); streaming-first semantics | Very high natively | Single technology with the existing event backbone; trades query ergonomics for streaming semantics; pattern is used by some modern fintechs |
+| **Kafka-as-event-store** (the bank's existing Redpanda per [ADR-IC-001](../integration_concepts/adrs/ADR-IC-001-event-backbone-message-broker.md)) | Mature (Redpanda is operationally proven); streaming-first semantics | Very high natively | Single technology with the existing event backbone; trades query ergonomics for streaming semantics; pattern is used by some modern fintechs |
 
 The choice is deferred to a follow-up issue (see [Q-AC in 04-open-questions](./04-open-questions.md)) but the constraint is firm: building an event store in-house is rejected. The team's moderate experience cannot absorb both event-sourcing-pattern discipline AND event-store-infrastructure correctness simultaneously.
 

@@ -1,10 +1,10 @@
-# ADR-000: Common Evaluation Criteria for All Tool Selections
+# ADR-IC-000: Common Evaluation Criteria for All Tool Selections
 
 | Field | Value |
 |---|---|
 | Status | Accepted |
 | Date | 2026-05-17 |
-| Applies to | ADR-001 through ADR-012 |
+| Applies to | ADR-IC-001 through ADR-IC-012 |
 
 ---
 

@@ -1,7 +1,7 @@
 # Banking Ecosystem — Integration Architecture
 ## Document 11: Chat Agent Channel Strategy — Bank as MCP Server
 
-The architecture in documents 00–10 was written assuming the bank owns the UI. The mobile app, the web frontend, the operations console — all are software the bank ships, with code the bank can change. The synchronous edge ([Document 05](./05-constitution-saga-walkthrough.md), [ADR-006](./adrs/ADR-006-edge-api-gateway.md)) returns `202 Accepted` and a `stream_url`; the client opens an SSE stream and watches the saga progress in real time. That model rests on a connected, bank-controlled client that stays attentive for the duration of the operation.
+The architecture in documents 00–10 was written assuming the bank owns the UI. The mobile app, the web frontend, the operations console — all are software the bank ships, with code the bank can change. The synchronous edge ([Document 05](./05-constitution-saga-walkthrough.md), [ADR-IC-006](./adrs/ADR-IC-006-edge-api-gateway.md)) returns `202 Accepted` and a `stream_url`; the client opens an SSE stream and watches the saga progress in real time. That model rests on a connected, bank-controlled client that stays attentive for the duration of the operation.
 
 The assumption has changed. Increasingly the user's primary interface is a general-purpose LLM agent — Claude, Claude Code, ChatGPT, or a self-hosted equivalent — and not a screen the bank ships. The natural way for such an agent to act on the bank's behalf is to call tools the bank exposes through the [**Model Context Protocol**](https://modelcontextprotocol.io/) (MCP). The bank's integration responsibility collapses to *one shape*: an authenticated MCP server, exposing well-scoped tools, resources, and prompts, consumed by agents the bank does not own and cannot trust.
 
@@ -15,7 +15,7 @@ Three structural facts about the LLM-agent channel break the old model:
 
 1. **The bank does not own the chat surface.** The user talks to an agent through Claude.ai, a desktop client, a mobile app, a custom chat UI, or a chat-platform bot (WhatsApp, Slack). The chat transport, the NLU, the conversation memory — all live in the agent runtime, which the bank neither writes nor deploys.
 
-2. **The agent is not a connected client.** An MCP client establishes a session, calls tools, may disconnect, and may never return. There is no persistent socket the bank can push status to. The SSE assumption from [ADR-006](./adrs/ADR-006-edge-api-gateway.md) does not hold.
+2. **The agent is not a connected client.** An MCP client establishes a session, calls tools, may disconnect, and may never return. There is no persistent socket the bank can push status to. The SSE assumption from [ADR-IC-006](./adrs/ADR-IC-006-edge-api-gateway.md) does not hold.
 
 3. **The agent is untrusted.** It hallucinates parameters. It is steerable by adversarial content — including content the bank itself returns. It can be tricked into acting against the user's interest. The threat model from [Document 10](./10-security-and-threat-model.md) extends with a new boundary whose specific failure modes are not addressed by anything already in the series.
 
@@ -90,7 +90,7 @@ Headers carry `Authorization: Bearer <token>`, `MCP-Protocol-Version: 2025-11-25
 The MCP server is a thin translator on top of the existing edge:
 
 1. Validate the bearer token's signature, expiry, audience, and OAuth scope (`deposits:write`). Reject otherwise.
-2. Confirm PSD2 SCA pre-condition is satisfied on this session (same enforcement as [ADR-006](./adrs/ADR-006-edge-api-gateway.md)). The OAuth flow that established the session must carry the SCA completion claim.
+2. Confirm PSD2 SCA pre-condition is satisfied on this session (same enforcement as [ADR-IC-006](./adrs/ADR-IC-006-edge-api-gateway.md)). The OAuth flow that established the session must carry the SCA completion claim.
 3. Translate the JSON-RPC call into the internal `ConstituteDeposit` command, attach the [Identity Trio](./01-the-six-primitives.md), forward into the existing handler chain.
 4. Receive the `{deposit_id, process_id, status: "PROCESSING"}` from the Deposits API (Step 0 of [Document 05](./05-constitution-saga-walkthrough.md)).
 5. Return a structured tool result:
@@ -123,7 +123,7 @@ Time budget: identical to [Document 05](./05-constitution-saga-walkthrough.md) �
 
 ## Asynchronous Completion — The SSE Problem in MCP Clothing
 
-A saga that completes in 700ms can return its terminal state directly in the synchronous tool result. A saga that contains an `AWAIT_WORKFLOW_APPROVAL` step ([Document 05](./05-constitution-saga-walkthrough.md), lines 408–425) may not complete for hours or days. The agent's MCP session almost certainly will not last that long; even if it does, the agent's context window will not retain the relevant intent. The SSE pattern from [ADR-006](./adrs/ADR-006-edge-api-gateway.md) is structurally a wrong fit here for the same reason it was structurally right for the mobile app: it presumes a connected, attentive client.
+A saga that completes in 700ms can return its terminal state directly in the synchronous tool result. A saga that contains an `AWAIT_WORKFLOW_APPROVAL` step ([Document 05](./05-constitution-saga-walkthrough.md), lines 408–425) may not complete for hours or days. The agent's MCP session almost certainly will not last that long; even if it does, the agent's context window will not retain the relevant intent. The SSE pattern from [ADR-IC-006](./adrs/ADR-IC-006-edge-api-gateway.md) is structurally a wrong fit here for the same reason it was structurally right for the mobile app: it presumes a connected, attentive client.
 
 Three patterns are available, in increasing order of operational complexity.
 
@@ -147,7 +147,7 @@ Some sagas need active notification: the user is not currently talking to an age
 
 The shape is: the original tool call accepts an optional `callback` declaration (a notification preference registered with the bank, not a free-form URL the agent supplies); when the saga reaches a terminal state, the bank's notification service emits to that channel. The user then opens (or returns to) their agent and asks about it; the agent calls `get_process_status` to retrieve the structured outcome.
 
-The wire format of that callback — payload schema, signature scheme, retry policy, delivery guarantees, idempotency on the receiver — is decided in [ADR-011](./adrs/ADR-011-async-saga-completion-notification.md). This document describes the *shape* and leaves the wire format to that ADR. Doc 11 does not commit to it; it only commits to the structural place a callback occupies in the design.
+The wire format of that callback — payload schema, signature scheme, retry policy, delivery guarantees, idempotency on the receiver — is decided in [ADR-IC-011](./adrs/ADR-IC-011-async-saga-completion-notification.md). This document describes the *shape* and leaves the wire format to that ADR. Doc 11 does not commit to it; it only commits to the structural place a callback occupies in the design.
 
 ### What the agent sees in `AWAIT_WORKFLOW_APPROVAL`
 
@@ -238,13 +238,13 @@ The corollary: if a chat-platform integration becomes the bank's responsibility 
 
 | Document | What composes |
 |---|---|
-| [ADR-006 — Edge API Gateway](./adrs/ADR-006-edge-api-gateway.md) | The gateway adds an MCP transport route (Streamable HTTP) alongside the existing REST and SSE routes. JWT validation, rate limiting, mTLS to internal services, SCA enforcement, and OTel trace propagation apply uniformly — MCP is one more route, not a parallel edge. |
+| [ADR-IC-006 — Edge API Gateway](./adrs/ADR-IC-006-edge-api-gateway.md) | The gateway adds an MCP transport route (Streamable HTTP) alongside the existing REST and SSE routes. JWT validation, rate limiting, mTLS to internal services, SCA enforcement, and OTel trace propagation apply uniformly — MCP is one more route, not a parallel edge. |
 | [Document 02 — ACL](./02-anti-corruption-layer.md) | The MCP server is an ACL instance applied to the agent channel. The seven responsibilities apply directly; the chat adapter has its own state, its own owner, and follows the standard ACL antipatterns. |
 | [Document 03 — CQRS and Read Models](./03-cqrs-and-read-models.md) | MCP resources are CQRS read-model views with a stable URI. Eventual consistency is an explicit property of every resource exposed; operations sensitive to lag are tools, not resources. |
 | [Document 05 — Constitution Saga](./05-constitution-saga-walkthrough.md) | The synchronous 202 response pattern is unchanged. `AWAIT_WORKFLOW_APPROVAL` and `HUMAN_INTERVENTION_REQUIRED` map onto the polling-tool and out-of-band callback patterns. The reversibility-ordering principle is unchanged. |
 | [Document 10 — Security](./10-security-and-threat-model.md) | Boundary 9 (Agent → MCP Server) catalogues the threats specific to this channel — prompt injection via bank-returned content, hallucinated parameters, confused deputy, token replay, scope creep. The *Customer-Identity Binding Lifecycle* section there covers OAuth enrolment, PSD2 SCA integration, step-up authentication, refresh, revocation, and the cached-resource-handle case. The six security principles apply as-is to the MCP boundary. |
 | [Document 01 — Six Primitives](./01-the-six-primitives.md) | The [Identity Trio](./01-the-six-primitives.md) (`correlation_id`, `causation_id`, `entity_id`) propagates through MCP calls as request metadata. The OAuth `sub` claim binds to `client_id`. Idempotency keys are tool arguments. |
-| [ADR-010 — MCP Server Runtime, SDK, Transport, and Authorization](./adrs/ADR-010-mcp-server-runtime-and-sdk.md) | Materialises this document into concrete choices: Python SDK on Streamable HTTP, behind Kong as one more route on the existing gateway, reusing the existing IAM as the OAuth 2.1 authorisation server extended with RFC 8707 Resource Indicators and RFC 9728 Protected Resource Metadata. |
-| [ADR-011 — Async Saga Completion Notification](./adrs/ADR-011-async-saga-completion-notification.md) | Out-of-band callback wire format, signature scheme, retry policy, and delivery guarantees. This document describes the pattern's shape; ADR-011 picks the wire — pre-registered subscription endpoints (no free-form callback URLs), HMAC-SHA256 signing, at-least-once delivery with stable idempotency keys, exponential backoff. |
+| [ADR-IC-010 — MCP Server Runtime, SDK, Transport, and Authorization](./adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) | Materialises this document into concrete choices: Python SDK on Streamable HTTP, behind Kong as one more route on the existing gateway, reusing the existing IAM as the OAuth 2.1 authorisation server extended with RFC 8707 Resource Indicators and RFC 9728 Protected Resource Metadata. |
+| [ADR-IC-011 — Async Saga Completion Notification](./adrs/ADR-IC-011-async-saga-completion-notification.md) | Out-of-band callback wire format, signature scheme, retry policy, and delivery guarantees. This document describes the pattern's shape; ADR-IC-011 picks the wire — pre-registered subscription endpoints (no free-form callback URLs), HMAC-SHA256 signing, at-least-once delivery with stable idempotency keys, exponential backoff. |
 
 What this document does not introduce: new primitives, new saga states, new trust principles, or new ownership boundaries. The MCP-server channel is a reapplication of patterns the architecture already commits to — the ACL applied at a new edge, the optimistic-acceptance model preserved, the trust boundaries extended by one. The only new thing is the explicit treatment of an *untrusted agent* as the channel's caller, and the design defences that follow from accepting that.

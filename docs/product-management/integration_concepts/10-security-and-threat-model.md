@@ -209,7 +209,7 @@ The bank cannot push revocation to the agent runtime — the agent must come bac
 
 Two distinct compromise scenarios require distinct responses.
 
-**A customer's OAuth grant to one agent is compromised.** The customer revokes that grant via the standard revocation flow above. If the bank detects the compromise first — anomalous tool-call patterns, geographic anomalies, velocity violations crossing the rate-limit threshold — it revokes proactively on the customer's behalf and notifies them out-of-band, using the same notification path used for async saga completion ([ADR-011](./adrs/ADR-011-async-saga-completion-notification.md)).
+**A customer's OAuth grant to one agent is compromised.** The customer revokes that grant via the standard revocation flow above. If the bank detects the compromise first — anomalous tool-call patterns, geographic anomalies, velocity violations crossing the rate-limit threshold — it revokes proactively on the customer's behalf and notifies them out-of-band, using the same notification path used for async saga completion ([ADR-IC-011](./adrs/ADR-IC-011-async-saga-completion-notification.md)).
 
 **An agent vendor's `client_id` is compromised system-wide.** The bank revokes the agent vendor's dynamic client registration. All access and refresh tokens issued to that `client_id` — across every customer who authorised that vendor — are invalidated. Every affected customer is forced to re-authorise, against either a new registration of the same vendor or a different vendor entirely. This is a heavy hammer; the bank's onboarding policy for DCR (rate limits, software statements, vendor attestation) should make it rarely necessary.
 

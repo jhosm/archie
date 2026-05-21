@@ -184,7 +184,7 @@ The criteria are ordered by how decisive they are for the v1-to-v4 transition. A
 |---|---|---|---|---|---|
 | **Kurrent / EventStoreDB** | Native; designed for event sourcing | Native; designed for it | Native; event-sourcing-first product | New dependency for the team; documented runbooks; mature product; smaller ecosystem | Best on the technical criteria; weakest on team familiarity |
 | **Postgres-based** | ~1k TPS without sharding; needs careful sharding strategy for v4 | Excellent at v1 scale; replay characteristics at v4 scale depend on schema design | Application-level (the engine code maintains schema evolution discipline) | Familiar; the team operates Postgres for other systems; mature ecosystem | Strongest on team familiarity; most engineering work to sustain v4 scale |
-| **Kafka-as-event-store (Redpanda per [ADR-001](../integration_concepts/adrs/ADR-001-event-backbone-message-broker.md))** | Native very high throughput | Replay = stream consumption from beginning; characteristics depend on retention and tiered storage | Streaming-first semantics; schema-registry support via [ADR-002](../integration_concepts/adrs/ADR-002-schema-format-and-registry.md) | Used by some modern fintechs; the team already operates Redpanda as the event backbone | Single technology with the existing backbone; trades SQL query ergonomics for streaming semantics |
+| **Kafka-as-event-store (Redpanda per [ADR-IC-001](../integration_concepts/adrs/ADR-IC-001-event-backbone-message-broker.md))** | Native very high throughput | Replay = stream consumption from beginning; characteristics depend on retention and tiered storage | Streaming-first semantics; schema-registry support via [ADR-IC-002](../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md) | Used by some modern fintechs; the team already operates Redpanda as the event backbone | Single technology with the existing backbone; trades SQL query ergonomics for streaming semantics |
 
 The choice is genuinely open. Each candidate has a credible v1-to-v4 path; each has known operational tradeoffs at v4 scale; each has a different cost profile for the operating bank's specific team and existing infrastructure.
 
@@ -202,7 +202,7 @@ The choice is committed before v1 implementation begins, not deferred to v4. Pic
 Even though the technology choice is deferred, the *commitments* are not. Whichever event store is picked must:
 
 - Support the envelope shape from [event-store §4.3](./feature-design-event-store-projections.md) plus the `partition_key` field from §5.3 above.
-- Co-locate with the outbox per [event-store §1](./feature-design-event-store-projections.md) and [ADR-004](../integration_concepts/adrs/ADR-004-outbox-pattern-mechanism.md) so the event-write and bus-emit commit atomically.
+- Co-locate with the outbox per [event-store §1](./feature-design-event-store-projections.md) and [ADR-IC-004](../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md) so the event-write and bus-emit commit atomically.
 - Honour the forward-only schema-evolution discipline from [event-store §5.4](./feature-design-event-store-projections.md).
 - Support the snapshot mechanism from §5.5 above and [event-store §8](./feature-design-event-store-projections.md).
 
@@ -250,7 +250,7 @@ A specific interaction worth flagging: **a deposit maturing into a current accou
 
 ### 7.4 With the integration architecture
 
-The event backbone choice ([ADR-001](../integration_concepts/adrs/ADR-001-event-backbone-message-broker.md)) is Redpanda. The ACL ([integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md)) and the outbox ([integration_concepts §04](../integration_concepts/04-plumbing-patterns.md)) are inherited as-is. The v4 implications for the integration layer are:
+The event backbone choice ([ADR-IC-001](../integration_concepts/adrs/ADR-IC-001-event-backbone-message-broker.md)) is Redpanda. The ACL ([integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md)) and the outbox ([integration_concepts §04](../integration_concepts/04-plumbing-patterns.md)) are inherited as-is. The v4 implications for the integration layer are:
 
 - **Backbone throughput at v4 scale.** Redpanda is throughput-capable per its native semantics; the operating bank's specific Redpanda topology has to be sized for v4 ingest. This is an operations question, not a product-engine question, but the engine team should surface the v4 throughput projection to the integration team early.
 - **ACL latency under v4 load.** v4 introduces real-time settlement paths (engine → legacy DDA during coexistence) at much higher event rates than v1. The ACL's idempotency guarantees and the indeterminate-state handling have to survive the rate increase. This is documented in [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md) at the pattern level; the operating bank's specific ACL implementation must absorb the rate increase.
@@ -346,7 +346,7 @@ The test is binary: every threshold passes, or v1 does not ship. The thresholds 
 
 - **Ownership.** The engine team owns the test rig. The rig is reproducible from version-controlled config; running the test produces an artefact (pass/fail report plus raw metrics) that the team archives per release candidate.
 - **Hardware.** The test runs on production-shaped hardware. Passing on a developer laptop or on a 10× oversized cluster does not count. The exact production-shaped sizing is named in the test's config and matches the v1 production deployment target.
-- **Test harness.** The harness drives the engine through the same APIs production channels use, not via internal entry points. The integration backbone (Redpanda per [ADR-001](../integration_concepts/adrs/ADR-001-event-backbone-message-broker.md)) is exercised end-to-end; the harness simulates upstream sources (card scheme, payments rails, direct-debit feeds) at the same boundary the production engine sees.
+- **Test harness.** The harness drives the engine through the same APIs production channels use, not via internal entry points. The integration backbone (Redpanda per [ADR-IC-001](../integration_concepts/adrs/ADR-IC-001-event-backbone-message-broker.md)) is exercised end-to-end; the harness simulates upstream sources (card scheme, payments rails, direct-debit feeds) at the same boundary the production engine sees.
 - **Observability.** Standard production observability ([integration_concepts §06](../integration_concepts/06-observability-and-tracing.md)) applies during the test. A test failure must be diagnosable from production-grade telemetry — no test-only instrumentation that disappears at production cutover.
 - **Cadence.** The test runs on every v1 release candidate. Failure on the v1 acceptance run blocks v1 ship. The test re-runs at every minor release through v3; v4 replaces the synthetic test with the real v4 workload at v4 acceptance.
 

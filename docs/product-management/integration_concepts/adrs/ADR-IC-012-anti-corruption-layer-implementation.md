@@ -1,12 +1,12 @@
-# ADR-012: Anti-Corruption Layer Implementation Approach
+# ADR-IC-012: Anti-Corruption Layer Implementation Approach
 
 | Field | Value |
 |---|---|
 | Status | Accepted |
 | Date | 2026-05-18 |
 | Deciders | jhosm |
-| Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
-| Depends on | [ADR-001](./ADR-001-event-backbone-message-broker.md), [ADR-003](./ADR-003-saga-orchestrator.md), [ADR-004](./ADR-004-outbox-pattern-mechanism.md), [ADR-005](./ADR-005-cqrs-read-model-storage.md) |
+| Common criteria | [ADR-IC-000](./ADR-IC-000-common-evaluation-criteria.md) |
+| Depends on | [ADR-IC-001](./ADR-IC-001-event-backbone-message-broker.md), [ADR-IC-003](./ADR-IC-003-saga-orchestrator.md), [ADR-IC-004](./ADR-IC-004-outbox-pattern-mechanism.md), [ADR-IC-005](./ADR-IC-005-cqrs-read-model-storage.md) |
 
 ---
 
@@ -20,7 +20,7 @@ What document 02 leaves open is how to *materialise* those responsibilities. Thr
 2. **How does it talk to the Core?** What outbound protocol client; what fallback when the Core uses MQ or batch.
 3. **How does the Core talk back?** Webhook callbacks, ACL polling, or an MQ bridge — the answer depends on the Core's capabilities, but the ACL design must accommodate all three without rewriting the translator each time.
 
-Two further decisions are downstream of (1)–(3): where to place circuit breakers and bulkheads, and how the ACL's state store relates to the domain outbox ([ADR-004](./ADR-004-outbox-pattern-mechanism.md)).
+Two further decisions are downstream of (1)–(3): where to place circuit breakers and bulkheads, and how the ACL's state store relates to the domain outbox ([ADR-IC-004](./ADR-IC-004-outbox-pattern-mechanism.md)).
 
 ### What this ADR decides
 
@@ -60,7 +60,7 @@ Three forces push past the operational simplicity of the library mode.
 
 **First, document 02 §8 requires identity separation that a library cannot provide.** The ACL holds the most privileged credentials in the system — it can instruct the Core to move real money. The saga orchestrator authenticates *to* the ACL via mTLS; the ACL authenticates to the Core with a dedicated service account; the reconciliation job has a distinct identity from the write path. A library-mode ACL collapses all three into the saga orchestrator's process and identity. The transport-layer enforcement that "no other service — even one with network access — can instruct the ACL to move money" disappears, because there is no transport layer between them. Document 10's Boundary 9 (and equivalent boundaries for Core access) require a process-level break. A library cannot create one.
 
-**Second, the ACL needs its own database for its own state.** Document 02 lists idempotency keys, ID mappings, in-flight operations, and the indeterminate-state dead-letter as ACL-owned state. If the ACL is a library in the domain process, it either shares the domain's database (mixing two aggregates' state in one schema, violating the bounded-context property that ADR-004 P6 makes explicit) or maintains a separate connection to a separate database from the same process (which is the dedicated-service pattern with extra steps and no isolation). Separating the runtime is the cleaner expression.
+**Second, the ACL needs its own database for its own state.** Document 02 lists idempotency keys, ID mappings, in-flight operations, and the indeterminate-state dead-letter as ACL-owned state. If the ACL is a library in the domain process, it either shares the domain's database (mixing two aggregates' state in one schema, violating the bounded-context property that ADR-IC-004 P6 makes explicit) or maintains a separate connection to a separate database from the same process (which is the dedicated-service pattern with extra steps and no isolation). Separating the runtime is the cleaner expression.
 
 **Third, the reading test from document 02 — "if the Core vendor were replaced tomorrow, how many files would change?" — is structurally enforced by a deployment boundary.** In a library mode, the discipline of keeping Core types out of domain code is a code-review obligation. In a dedicated-service mode, the only types that cross the boundary are the domain types the saga sends and the domain types the ACL emits — Core types cannot leak because they are in a different process with a different repository.
 
@@ -86,7 +86,7 @@ The EIP framework approach is genuinely useful when an integration involves doze
 - **The Core is a single back-end.** EIP shines in scenarios where one inbound message fans out to multiple back-ends with content-based routing. The ACL talks to one Core. There is no routing problem to solve.
 - **The transformation rules are not configuration-grade.** Each Core operation has subtle semantic translations (e.g., a `Deposit` constitution becomes N accounting movements; an `EarlyMobilization` becomes a reversal plus interest adjustment plus release). Expressing these as Camel processors trades a clear function in the host language for opaque XML or DSL configuration that is harder to test, debug, and review.
 
-The hand-rolled client is also strictly inside the ADR-000 budget: no additional dependency beyond the SOAP/REST client library the runtime ships with, and the application's existing test harness covers it.
+The hand-rolled client is also strictly inside the ADR-IC-000 budget: no additional dependency beyond the SOAP/REST client library the runtime ships with, and the application's existing test harness covers it.
 
 The translator's structure is small enough to enumerate in the implementation principles below. The frame is: one function per Core operation, each function with three parts (build request, send, parse response into domain result). The framework saves nothing here.
 
@@ -168,23 +168,23 @@ Bulkheading is the structural defence: if the outbound pool exhausts, the inboun
 | ACL state store | No — local DB; failure is fatal to all operations | N/A — implicit in the database connection pool | Health check fails; the ACL stops accepting saga calls until DB returns |
 | Reconciler (document 02 §7) | Yes — its own breaker; isolated from runtime path | Yes — own pool, scheduled, not request-driven | Skip this reconciliation cycle; alert if breaker stays open across two scheduled cycles |
 
-**Library choice is deferred to the host runtime.** This ADR specifies the placement; the implementation picks the idiomatic resilience library (Resilience4j on the JVM; Polly on .NET; semaphore-based isolation in Go or Node). All three families are open-source and inside the ADR-000 budget. The principle that matters is "one breaker and one bulkhead per failure-class adapter," not which library expresses it.
+**Library choice is deferred to the host runtime.** This ADR specifies the placement; the implementation picks the idiomatic resilience library (Resilience4j on the JVM; Polly on .NET; semaphore-based isolation in Go or Node). All three families are open-source and inside the ADR-IC-000 budget. The principle that matters is "one breaker and one bulkhead per failure-class adapter," not which library expresses it.
 
 ---
 
 ### D5 — ACL state and the outbox relationship
 
-The ACL has substantial state — document 02 lists idempotency keys (per Core operation), ID mappings (`deposit_id ↔ core_txn_id`, persistent), in-flight operations (with their `IN_FLIGHT`/`INDETERMINATE`/`CONFIRMED` lifecycle), and a dead-letter for ambiguous outcomes. The question is where this state lives in relation to the domain's outbox (ADR-004).
+The ACL has substantial state — document 02 lists idempotency keys (per Core operation), ID mappings (`deposit_id ↔ core_txn_id`, persistent), in-flight operations (with their `IN_FLIGHT`/`INDETERMINATE`/`CONFIRMED` lifecycle), and a dead-letter for ambiguous outcomes. The question is where this state lives in relation to the domain's outbox (ADR-IC-004).
 
 **Option A: ACL state in the domain database.** The ACL service writes its state to the same PostgreSQL instance the Deposits domain uses (different schema, same database). The ACL's "Core confirmed" outbox row and the ACL's state mutation can be in one transaction. But the ACL service no longer owns its database — every schema migration, every replication tuning decision, every backup strategy is shared with the domain.
 
-**Option B: ACL state in its own database.** The ACL service owns a PostgreSQL instance. ACL state mutations and ACL outbox writes are in one local transaction (the outbox pattern from [document 04](../04-plumbing-patterns.md) and ADR-004 applies inside the ACL exactly as it applies inside the domain). The ACL publishes confirmation events to Redpanda; the domain consumes them through the standard inbox pattern.
+**Option B: ACL state in its own database.** The ACL service owns a PostgreSQL instance. ACL state mutations and ACL outbox writes are in one local transaction (the outbox pattern from [document 04](../04-plumbing-patterns.md) and ADR-IC-004 applies inside the ACL exactly as it applies inside the domain). The ACL publishes confirmation events to Redpanda; the domain consumes them through the standard inbox pattern.
 
 **Chosen: Option B — ACL owns its database; events cross via Redpanda.**
 
 Option A collapses the bounded-context boundary the dedicated-service decision (D1) was meant to enforce. If the ACL writes to the same database as the domain, the deployment boundary is real but the data boundary is leaky — schema changes coordinate, foreign keys may form, query patterns drift across the seam. The architectural intent of D1 is undercut.
 
-Option B costs one more PostgreSQL instance (still within the ADR-000 budget — PostgreSQL is open source and a small instance is unremarkable to operate). In exchange, every ACL responsibility from document 02 is local: idempotency keys, ID mappings, and the in-flight state machine are read and written in the same database transaction as the outbox row that publishes the domain-visible event. ADR-004's invariants apply unchanged.
+Option B costs one more PostgreSQL instance (still within the ADR-IC-000 budget — PostgreSQL is open source and a small instance is unremarkable to operate). In exchange, every ACL responsibility from document 02 is local: idempotency keys, ID mappings, and the in-flight state machine are read and written in the same database transaction as the outbox row that publishes the domain-visible event. ADR-IC-004's invariants apply unchanged.
 
 **Flow on a confirmed Core operation:**
 
@@ -192,7 +192,7 @@ Option B costs one more PostgreSQL instance (still within the ADR-000 budget —
 2. Translator looks up the matching in-flight operation by `external_reference` in the ACL state store.
 3. Translator applies the error-translation table to `outcome`; produces a domain event (e.g., `DebitConfirmedInCore` with `correlation_id` and `causation_id` from the originating saga step).
 4. In one local transaction: state-store row transitions `IN_FLIGHT → CONFIRMED`; ID mapping written if the Core returned a new reference; outbox row inserted with the domain event payload.
-5. The ACL's outbox publisher (ADR-004's custom polling publisher) picks up the row and publishes to Redpanda.
+5. The ACL's outbox publisher (ADR-IC-004's custom polling publisher) picks up the row and publishes to Redpanda.
 6. The saga consumes the event via its own inbox (Primitive 5 from [document 01](../01-the-six-primitives.md)) and advances.
 
 **Indeterminate-state flow** (the case document 02 highlights):
@@ -218,7 +218,7 @@ Summary of all five choices:
 | D2 — Outbound adapter | Hand-rolled per-operation client; WSDL-to-stub code generation for SOAP only; error catalogue is hand-maintained code |
 | D3 — Inbound trigger | Pluggable adapter (webhook, polling, MQ) behind a single `CoreInboundEvent` abstraction; the translator is adapter-agnostic |
 | D4 — Failure isolation | Per-adapter circuit breaker and bounded bulkhead pool; outbound, inbound poller, and reconciler are isolated failure classes; library choice deferred to runtime |
-| D5 — State and outbox | ACL owns its own PostgreSQL database; ACL outbox publishes domain events to Redpanda; ADR-004's invariants apply inside the ACL unchanged |
+| D5 — State and outbox | ACL owns its own PostgreSQL database; ACL outbox publishes domain events to Redpanda; ADR-IC-004's invariants apply inside the ACL unchanged |
 
 ---
 
@@ -241,9 +241,9 @@ Summary of all five choices:
 **Residual risks:**
 
 - **State-store divergence from the Core.** The ACL's state store records what the ACL believes the Core has. The reconciler (document 02 §7) is the only mechanism that corrects divergence. The reconciler is mandatory; an ACL without an active reconciler is a partial implementation. The reconciler must run at least daily and must produce a divergence report even on a zero-divergence day (silence on the reconciler indicates the reconciler is not running, not that nothing diverges).
-- **Webhook adapter SSRF / replay surface.** The webhook receiver is the only inbound HTTP endpoint of the ACL. mTLS-pinned to the Core is the structural defence; if the Core does not support mTLS, the ACL must require a signed delivery (HMAC with a Core-issued secret, see [ADR-011](./ADR-011-async-saga-completion-notification.md) D3) and reject anything else. A webhook adapter that accepts unauthenticated POSTs is unacceptable in banking.
+- **Webhook adapter SSRF / replay surface.** The webhook receiver is the only inbound HTTP endpoint of the ACL. mTLS-pinned to the Core is the structural defence; if the Core does not support mTLS, the ACL must require a signed delivery (HMAC with a Core-issued secret, see [ADR-IC-011](./ADR-IC-011-async-saga-completion-notification.md) D3) and reject anything else. A webhook adapter that accepts unauthenticated POSTs is unacceptable in banking.
 - **Indeterminate-state backlog.** The `INDETERMINATE` queue can grow if the clearance task is slow. The architecture must alert on `INDETERMINATE` queue depth (a separate SLI from outbox lag); a sustained backlog means the clearance task or the Core's query interface is unhealthy, and the bank is sitting on operations whose Core-side reality is unknown. This is one of the most dangerous states the system can enter and must be observable.
-- **ACL outbox lag.** Because the ACL has its own outbox (ADR-004), it has its own `outbox_publish_lag_seconds` SLI. The same warning/critical thresholds from ADR-004 P4 apply, scoped to the ACL's outbox.
+- **ACL outbox lag.** Because the ACL has its own outbox (ADR-IC-004), it has its own `outbox_publish_lag_seconds` SLI. The same warning/critical thresholds from ADR-IC-004 P4 apply, scoped to the ACL's outbox.
 - **Single-vendor Core lock-in is unaffected by this ADR.** A dedicated-service ACL with a clean translator does not make the Core easier to replace; it makes the *domain* easier to preserve when the Core is replaced. The Core itself remains a single point of dependency, mitigated only by the reconciler's audit trail and the ACL's structured error catalogue.
 
 ---
@@ -258,7 +258,7 @@ The ACL is the most concentrated repository of cross-system risk in the architec
 
 Each bounded context that consumes the Core owns its ACL. The Deposits ACL serves only the Deposits domain. If Compliance later needs Core access, it gets its own ACL deployment with its own database — not a multi-tenant ACL. This is the structural enforcement of document 02's "ACL Shared Across Multiple Consumers" antipattern.
 
-The ACL's database is not shared with any other service. The schema includes: `idempotency_keys`, `id_mappings`, `in_flight_operations` (with the state machine described in D5), `inbound_event_dedup` (per-adapter delivery dedup), `outbox` (per ADR-004 P1 columns), and `reconciliation_runs` (per-run divergence reports).
+The ACL's database is not shared with any other service. The schema includes: `idempotency_keys`, `id_mappings`, `in_flight_operations` (with the state machine described in D5), `inbound_event_dedup` (per-adapter delivery dedup), `outbox` (per ADR-IC-004 P1 columns), and `reconciliation_runs` (per-run divergence reports).
 
 ---
 
@@ -296,9 +296,9 @@ A retry against an `INDETERMINATE` operation without clearance is the canonical 
 
 ### P6 — Outbox is local; cross-service consistency is via Redpanda
 
-The ACL's outbox (per ADR-004) is in the ACL's own database. The saga's outbox is in the saga's own database. Neither service writes to the other's database. Confirmed Core operations cross the boundary as Redpanda events; saga commands cross the boundary as synchronous mTLS calls into the ACL's port.
+The ACL's outbox (per ADR-IC-004) is in the ACL's own database. The saga's outbox is in the saga's own database. Neither service writes to the other's database. Confirmed Core operations cross the boundary as Redpanda events; saga commands cross the boundary as synchronous mTLS calls into the ACL's port.
 
-This is the standard ADR-004 invariant scoped to the ACL: the outbox write and the state-store mutation are in the same local transaction, ensuring an operation cannot be recorded as confirmed without the corresponding domain event being durably queued for publication.
+This is the standard ADR-IC-004 invariant scoped to the ACL: the outbox write and the state-store mutation are in the same local transaction, ensuring an operation cannot be recorded as confirmed without the corresponding domain event being durably queued for publication.
 
 ---
 

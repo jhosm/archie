@@ -246,7 +246,7 @@ Conventions inherited from [integration_concepts §08](../integration_concepts/0
 - CloudEvents 1.0 envelope; Avro payloads with Confluent wire format; schema registry contracts.
 - IDs as strings; monetary values as integer cents; dates ISO-8601 UTC; ISO-4217 currencies (always `EUR` here, always explicit).
 - `correlation_id` and `causation_id` propagated from the originating constitution saga (per [integration_concepts §05](../integration_concepts/05-constitution-saga-walkthrough.md)).
-- Outbox emission per [ADR-004](../integration_concepts/adrs/ADR-004-outbox-pattern-mechanism.md): event-store append and outbox-row write commit in one local transaction; the publisher relays from the outbox to Redpanda.
+- Outbox emission per [ADR-IC-004](../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md): event-store append and outbox-row write commit in one local transaction; the publisher relays from the outbox to Redpanda.
 
 #### 2.4.4 Auto-renewal semantics
 

@@ -1,12 +1,12 @@
-# ADR-010: MCP Server Runtime, SDK, Transport, and Authorization
+# ADR-IC-010: MCP Server Runtime, SDK, Transport, and Authorization
 
 | Field | Value |
 |---|---|
 | Status | Accepted |
 | Date | 2026-05-17 |
 | Deciders | jhosm |
-| Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
-| Depends on | [ADR-006](./ADR-006-edge-api-gateway.md) |
+| Common criteria | [ADR-IC-000](./ADR-IC-000-common-evaluation-criteria.md) |
+| Depends on | [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) |
 
 ---
 
@@ -14,7 +14,7 @@
 
 [Document 11](../11-chat-agent-channel-strategy.md) commits the bank to exposing an authenticated MCP server as the integration surface for LLM agents. It specifies the *shape* of that surface — tools mapped to commands, resources mapped to CQRS read models, prompts as vetted procedures, `elicitation/create` for high-stakes confirmation, OAuth 2.1 with RFC 8707 Resource Indicators bound to the server's canonical URI — but it does not pick a runtime, SDK, transport, hosting placement, or authorisation server integration.
 
-[Document 10](../10-security-and-threat-model.md) catalogues the agent boundary as the ninth trust boundary in the architecture and describes the *Customer-Identity Binding Lifecycle (MCP Channel)* — the OAuth flow, the `sub` → `client_id` binding, step-up authentication, refresh and revocation. [ADR-006](./ADR-006-edge-api-gateway.md) (Kong Gateway CE) already commits the gateway to add an MCP route "alongside the existing REST and SSE routes" with uniform JWT validation, rate limiting, mTLS, SCA enforcement, and OTel propagation. This ADR materialises both commitments into concrete choices.
+[Document 10](../10-security-and-threat-model.md) catalogues the agent boundary as the ninth trust boundary in the architecture and describes the *Customer-Identity Binding Lifecycle (MCP Channel)* — the OAuth flow, the `sub` → `client_id` binding, step-up authentication, refresh and revocation. [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) (Kong Gateway CE) already commits the gateway to add an MCP route "alongside the existing REST and SSE routes" with uniform JWT validation, rate limiting, mTLS, SCA enforcement, and OTel propagation. This ADR materialises both commitments into concrete choices.
 
 ### What the 2025-11-25 spec mandates
 
@@ -35,7 +35,7 @@ These are spec requirements, not architectural choices. They narrow the candidat
 |---|---|
 | **Runtime / SDK** | Which official SDK and language runtime hosts the bank's MCP server? |
 | **Transport** | Streamable HTTP (canonical in 2025-11-25) or HTTP+SSE (deprecated) — does the deprecation status alone settle this? |
-| **Hosting placement** | Behind Kong as another route ([ADR-006](./ADR-006-edge-api-gateway.md)) or as a separate service with its own ingress? |
+| **Hosting placement** | Behind Kong as another route ([ADR-IC-006](./ADR-IC-006-edge-api-gateway.md)) or as a separate service with its own ingress? |
 | **OAuth authorisation server** | Extend the existing IAM that already issues JWTs for the REST edge, or stand up a dedicated MCP-specific authorisation server? |
 
 These areas are coupled — for example, a separate ingress would imply duplicate JWT validation logic, and a dedicated authorisation server would imply duplicate audit surfaces. They are evaluated as one decision because they cohere.
@@ -66,7 +66,7 @@ These areas are coupled — for example, a separate ingress would imply duplicat
 
 | # | Candidate | Notes |
 |---|---|---|
-| I | **Behind Kong** (one more route on the existing gateway) | Already anticipated by [ADR-006](./ADR-006-edge-api-gateway.md); inherits JWT validation, rate limiting, mTLS, SCA enforcement, OTel propagation |
+| I | **Behind Kong** (one more route on the existing gateway) | Already anticipated by [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md); inherits JWT validation, rate limiting, mTLS, SCA enforcement, OTel propagation |
 | J | **Separate ingress** (own load balancer, own gateway) | Independent failure domain; independent rate-limit pool; duplicate JWT and observability configuration |
 
 **Area 4 — OAuth authorisation server:**
@@ -109,7 +109,7 @@ All six SDK candidates proceed to Stage 2.
 
 **S1 · Operational complexity:** Python at POC scale is operationally comfortable for a 1–2 person team. The FastMCP-style high-level framework in the official SDK collapses tool/resource/prompt registration to decorators on Python functions, which keeps the ACL translator layer small (the seven ACL responsibilities from [document 02](../02-anti-corruption-layer.md) compose naturally with Python's standard `asyncio` + `httpx` ecosystem). Deployment is a single Docker container behind Kong. The operational baggage Python is sometimes accused of — dependency management, virtualenv hell, GIL — is not a meaningful POC concern for a stateless translator handling at most a few requests per second per replica. Production hardening would surface familiar Python operational concerns (process management, worker model under load), but not before the POC phase.
 
-**S2 · Ecosystem coherence:** Native OTel instrumentation via `opentelemetry-python` integrates cleanly with the observability stack from [ADR-007](./ADR-007-observability-stack.md). OAuth 2.1 client and resource-server libraries (`authlib`, `python-jose`, `pyjwt`) are mature and well-documented; RFC 8707 audience validation is a few lines of code against a `jwt.decode(audience=...)` call. The reference implementation has 244 documented code examples and 23k GitHub stars at the time of this ADR — the largest documented user base of any official MCP SDK. Tool and resource testing fits naturally into the contract-testing approach from [ADR-009](./ADR-009-testing-infrastructure.md) using `pytest` and Testcontainers.
+**S2 · Ecosystem coherence:** Native OTel instrumentation via `opentelemetry-python` integrates cleanly with the observability stack from [ADR-IC-007](./ADR-IC-007-observability-stack.md). OAuth 2.1 client and resource-server libraries (`authlib`, `python-jose`, `pyjwt`) are mature and well-documented; RFC 8707 audience validation is a few lines of code against a `jwt.decode(audience=...)` call. The reference implementation has 244 documented code examples and 23k GitHub stars at the time of this ADR — the largest documented user base of any official MCP SDK. Tool and resource testing fits naturally into the contract-testing approach from [ADR-IC-009](./ADR-IC-009-testing-infrastructure.md) using `pytest` and Testcontainers.
 
 **S3 · Exit cost:** Low. The MCP server is an ACL translator (Pattern 2 from [document 02](../02-anti-corruption-layer.md)); the business logic lives in the Deposits domain and the saga orchestrator behind it. Replacing the SDK is a port of the translation layer alone — estimated 5–10 days for the surfaces described in [document 11](../11-chat-agent-channel-strategy.md). No data format is owned by the SDK; the wire protocol is the MCP spec itself, which is wire-compatible across every official SDK.
 
@@ -137,13 +137,13 @@ All six SDK candidates proceed to Stage 2.
 
 **S3 · Exit cost:** Same as Python and TypeScript — low.
 
-**S4 · Community and longevity:** 4.5k stars. The Go MCP community is meaningfully smaller than the Python or TypeScript communities at the time of this ADR. The collaboration with Google is a positive longevity signal but does not yet translate to community-documented edge case resolutions at the volume seen in the Python ecosystem. For a 1–2 person team relying on community-documented resolutions for unusual issues, this is a real cost — the same operational reason ADR-006 cited for choosing Kong over APISIX.
+**S4 · Community and longevity:** 4.5k stars. The Go MCP community is meaningfully smaller than the Python or TypeScript communities at the time of this ADR. The collaboration with Google is a positive longevity signal but does not yet translate to community-documented edge case resolutions at the volume seen in the Python ecosystem. For a 1–2 person team relying on community-documented resolutions for unusual issues, this is a real cost — the same operational reason ADR-IC-006 cited for choosing Kong over APISIX.
 
 ---
 
 **Java / Kotlin SDK**
 
-**S1 · Operational complexity:** JVM operational complexity is the documented reason [ADR-001](./ADR-001-event-backbone-message-broker.md) chose Redpanda over Apache Kafka for this team size. The same logic applies here: JVM heap tuning, GC behaviour under load, classpath management, and the operational surface area of a JVM application are a meaningful liability for a 1–2 person team, even if the MCP server itself is small. This is the decisive disqualifier.
+**S1 · Operational complexity:** JVM operational complexity is the documented reason [ADR-IC-001](./ADR-IC-001-event-backbone-message-broker.md) chose Redpanda over Apache Kafka for this team size. The same logic applies here: JVM heap tuning, GC behaviour under load, classpath management, and the operational surface area of a JVM application are a meaningful liability for a 1–2 person team, even if the MCP server itself is small. This is the decisive disqualifier.
 
 **S2–S4:** Not evaluated.
 
@@ -179,9 +179,9 @@ The 2025-11-25 spec is unambiguous: Streamable HTTP "replaces" the HTTP+SSE tran
 
 For the bank, exposing only the deprecated transport would be a structural choice to launch a new service on a removal trajectory before it reaches production. Even from a DORA perspective, that is a meaningful operational risk: the spec authors have committed to removing the deprecated transport, and a regulated banking service should not be running on a removed protocol.
 
-Streamable HTTP also composes more cleanly with Kong (ADR-006). It is a single HTTP endpoint supporting both POST (for client → server JSON-RPC) and optional GET-with-SSE (for server-initiated notifications), which maps onto a single Kong route. The deprecated HTTP+SSE transport required two endpoints with distinct semantics, which would require two Kong route configurations and corresponding rate-limit and SCA-enforcement plugins on each.
+Streamable HTTP also composes more cleanly with Kong (ADR-IC-006). It is a single HTTP endpoint supporting both POST (for client → server JSON-RPC) and optional GET-with-SSE (for server-initiated notifications), which maps onto a single Kong route. The deprecated HTTP+SSE transport required two endpoints with distinct semantics, which would require two Kong route configurations and corresponding rate-limit and SCA-enforcement plugins on each.
 
-The decision in Area 2 is **Streamable HTTP**. No soft criteria applied — the spec deprecation status and ADR-006 fit are decisive together.
+The decision in Area 2 is **Streamable HTTP**. No soft criteria applied — the spec deprecation status and ADR-IC-006 fit are decisive together.
 
 ---
 
@@ -191,13 +191,13 @@ The decision in Area 2 is **Streamable HTTP**. No soft criteria applied — the 
 
 **Behind Kong (one more route on the existing gateway)**
 
-**S1 · Operational complexity:** ADR-006 already commits Kong to add an MCP route. The implementation cost is one entry in `kong.yaml`: a route for the MCP endpoint path, the same `jwt` plugin with an additional audience-validation check (RFC 8707), the same `rate-limiting` plugin with MCP-specific limits, the same `pre-function` plugin for SCA enforcement on irreversible operations, and the same `opentelemetry` plugin for trace propagation. Configuration is a pull request on a YAML file, not a new service.
+**S1 · Operational complexity:** ADR-IC-006 already commits Kong to add an MCP route. The implementation cost is one entry in `kong.yaml`: a route for the MCP endpoint path, the same `jwt` plugin with an additional audience-validation check (RFC 8707), the same `rate-limiting` plugin with MCP-specific limits, the same `pre-function` plugin for SCA enforcement on irreversible operations, and the same `opentelemetry` plugin for trace propagation. Configuration is a pull request on a YAML file, not a new service.
 
 **S2 · Ecosystem coherence:** Edge policy is uniform across REST and MCP routes. SCA enforcement is a route-level plugin attachment, not a duplicate implementation in two places. JWT validation is a single configuration source. Rate limiting is a shared pool, which is the right behaviour for an authenticated consumer who might be using both channels: a customer abusing the MCP channel against their own account is still subject to the same per-consumer rate limits as if they were using the REST channel. OTel traces span the gateway boundary uniformly.
 
 **S3 · Exit cost:** Zero structural cost. If the MCP channel grows to need its own ingress (e.g., for traffic isolation from REST), splitting it off later is a Kong route migration, not an architectural rewrite. The application code behind Kong does not depend on which gateway fronts it.
 
-**S4 · Community and longevity:** Kong's community is the differentiator that won ADR-006. That community covers the MCP route case (`websocket`/SSE proxying, mTLS to upstream, OTel propagation) without requiring custom plugins.
+**S4 · Community and longevity:** Kong's community is the differentiator that won ADR-IC-006. That community covers the MCP route case (`websocket`/SSE proxying, mTLS to upstream, OTel propagation) without requiring custom plugins.
 
 ---
 
@@ -211,7 +211,7 @@ The decision in Area 2 is **Streamable HTTP**. No soft criteria applied — the 
 
 **S4 · Community and longevity:** Not the decisive criterion here — both candidates would still use Kong CE for their gateway layer.
 
-The decision in Area 3 is **behind Kong**. The decisive reason is operational convergence with [ADR-006](./ADR-006-edge-api-gateway.md): one gateway, one configuration source, one audit surface, one rate-limit pool. The separate-ingress option would only become attractive if MCP traffic profile diverges sharply from REST traffic in a way that uniform edge policy cannot accommodate — a contingency for which the upgrade path is straightforward when and if it materialises.
+The decision in Area 3 is **behind Kong**. The decisive reason is operational convergence with [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md): one gateway, one configuration source, one audit surface, one rate-limit pool. The separate-ingress option would only become attractive if MCP traffic profile diverges sharply from REST traffic in a way that uniform edge policy cannot accommodate — a contingency for which the upgrade path is straightforward when and if it materialises.
 
 ---
 
@@ -238,7 +238,7 @@ The MCP server itself must additionally publish RFC 9728 Protected Resource Meta
 
 **Reuse existing IAM**
 
-**S1 · Operational complexity:** The existing IAM already authenticates customers (per ADR-006 the JWTs it issues are validated by Kong's `jwt` plugin), already integrates with PSD2 SCA at enrolment, and already manages the customer-identity binding (`sub` claim → `client_id`) referenced in [document 10](../10-security-and-threat-model.md). Extending it for MCP requires four concrete additions:
+**S1 · Operational complexity:** The existing IAM already authenticates customers (per ADR-IC-006 the JWTs it issues are validated by Kong's `jwt` plugin), already integrates with PSD2 SCA at enrolment, and already manages the customer-identity binding (`sub` claim → `client_id`) referenced in [document 10](../10-security-and-threat-model.md). Extending it for MCP requires four concrete additions:
 
 1. **Per-resource audience binding** (RFC 8707). The token endpoint must accept a `resource` parameter and bind the resulting access token to it (typically as the `aud` claim). The MCP server's canonical URI becomes a registered resource alongside the REST API's canonical URI.
 2. **MCP-specific OAuth scopes.** `deposits:read`, `deposits:write`, `transfers:write` as narrow scope strings per tool family, mirroring the scope discipline from [document 11](../11-chat-agent-channel-strategy.md). These are additions to the existing scope catalogue, not a parallel scope system.
@@ -259,7 +259,7 @@ The operational surface is one identity store, one key-rotation lifecycle, one a
 
 **S1 · Operational complexity:** A second authorisation server doubles the identity infrastructure surface. Two key-rotation lifecycles, two metadata documents to keep in sync, two audit logs that must be correlated for a complete view of customer activity, two revocation surfaces (a customer who revokes at the IAM but not at the MCP authorisation server retains MCP access). For a 1–2 person team, this is the highest ongoing maintenance cost of any candidate in this ADR.
 
-**S2 · Ecosystem coherence:** The bank now has two places that issue tokens for the same customer identity. Cross-channel audit ("show me every authenticated action this customer has taken in the last 30 days") requires joining two audit logs across two systems. SCA integration must be replicated; step-up authentication must be replicated; the customer-identity binding lifecycle from [document 10](../10-security-and-threat-model.md) must be implemented in two places. This is the parallel-implementation cost that [ADR-006](./ADR-006-edge-api-gateway.md) rejected for gateway concerns; the logic applies identically here.
+**S2 · Ecosystem coherence:** The bank now has two places that issue tokens for the same customer identity. Cross-channel audit ("show me every authenticated action this customer has taken in the last 30 days") requires joining two audit logs across two systems. SCA integration must be replicated; step-up authentication must be replicated; the customer-identity binding lifecycle from [document 10](../10-security-and-threat-model.md) must be implemented in two places. This is the parallel-implementation cost that [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) rejected for gateway concerns; the logic applies identically here.
 
 The argument *for* a dedicated authorisation server is operational isolation: a security incident on one authorisation server does not compromise the other. At POC scale this isolation is theoretical (the same engineers operate both); at production scale the bank already separates customer-facing and operator-facing identity surfaces if needed, and adding a third surface specifically for MCP does not align with any documented threat that the unified surface cannot address.
 
@@ -277,21 +277,21 @@ The decision in Area 4 is **reuse the existing IAM, extended with MCP requiremen
 
 1. **Python SDK** (`modelcontextprotocol/python-sdk`) as the runtime.
 2. **Streamable HTTP** as the transport.
-3. **Behind Kong** as the hosting placement (one route on the existing gateway from [ADR-006](./ADR-006-edge-api-gateway.md)).
+3. **Behind Kong** as the hosting placement (one route on the existing gateway from [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md)).
 4. **Reuse the existing IAM** as the OAuth 2.1 authorisation server, extended with RFC 8707 Resource Indicators, RFC 9728 Protected Resource Metadata coordination, MCP-specific OAuth scopes, and Client ID Metadata Document support (with Dynamic Client Registration as a fallback).
 
 The decisive reasons:
 
 - **SDK.** The Python SDK is the reference implementation with the largest documented user base; a 1–2 person team relying on community-documented resolutions for unusual MCP edge cases benefits from this scale more than from any operational property the alternatives offer at POC. The MCP server is a small ACL translator, so the operational profile of the runtime is bounded and Python's costs at scale are not exercised.
 - **Transport.** The 2025-11-25 spec deprecates HTTP+SSE; new services should not launch on a deprecated transport.
-- **Hosting.** ADR-006 already committed Kong to add an MCP route. One gateway, one configuration source, one audit surface, one rate-limit pool.
+- **Hosting.** ADR-IC-006 already committed Kong to add an MCP route. One gateway, one configuration source, one audit surface, one rate-limit pool.
 - **OAuth.** A single authorisation server is the structural defence against the token-replay and confused-deputy threats catalogued in [document 10, Boundary 9](../10-security-and-threat-model.md). Cross-channel audit, revocation, and SCA integration all simplify to one implementation rather than two.
 
 **Rejected:**
 
 - **TypeScript SDK.** A close second on every soft criterion. The decisive reason for rejection is community scale: 12.4k stars vs. 23k for Python at the time of this ADR. If the bank's other edge code were already TypeScript, this rejection would be reversed — the soft-criteria gap is small enough that ecosystem fit at the team level matters more than absolute community size. The TypeScript SDK remains the documented upgrade path if Python's POC operational profile becomes burdensome.
-- **Go SDK.** Single-binary deploys are a real operational advantage at production scale that does not materialise at POC scale. The smaller MCP community at 4.5k stars increases the cost of resolving unusual configuration problems for a 1–2 person team. Same disqualification logic as APISIX in [ADR-006](./ADR-006-edge-api-gateway.md).
-- **Java / Kotlin SDK.** JVM operational complexity is the documented reason [ADR-001](./ADR-001-event-backbone-message-broker.md) chose Redpanda over Apache Kafka for this team size. The logic applies identically to a JVM-hosted MCP server.
+- **Go SDK.** Single-binary deploys are a real operational advantage at production scale that does not materialise at POC scale. The smaller MCP community at 4.5k stars increases the cost of resolving unusual configuration problems for a 1–2 person team. Same disqualification logic as APISIX in [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md).
+- **Java / Kotlin SDK.** JVM operational complexity is the documented reason [ADR-IC-001](./ADR-IC-001-event-backbone-message-broker.md) chose Redpanda over Apache Kafka for this team size. The logic applies identically to a JVM-hosted MCP server.
 - **C# SDK.** No other component in the architecture uses the .NET runtime; adopting it here would introduce a single-purpose runtime to operate without a corresponding benefit.
 - **Rust SDK.** The MCP server is an I/O-bound translator that does not benefit from Rust's strengths. Smallest documented community of the candidates.
 - **HTTP+SSE transport.** Deprecated by the spec. New services should not launch on a transport with a documented removal trajectory.
@@ -308,7 +308,7 @@ The decisive reasons:
 - **One audit surface.** Cross-channel customer activity (REST + MCP) reconstructs from one audit log per consumer-identified JWT, not from joining two systems.
 - **One revocation surface.** When a customer revokes an agent's access, the revocation propagates to every channel the agent's token authorised. The "cached resource handles" question from [document 10, *Customer-Identity Binding Lifecycle*](../10-security-and-threat-model.md) is resolved at the same IAM, not at a parallel system.
 - **SCA integration is inherited, not reimplemented.** The `elicitation/create` URL-mode flow ([document 11](../11-chat-agent-channel-strategy.md) §Human-in-the-Loop) directs the agent to navigate the user to a bank-controlled URL where the existing SCA flow completes. No parallel SCA implementation for the MCP channel.
-- **Kong's `pre-function` plugin enforces SCA at the MCP route uniformly with the REST route.** The contract test from [ADR-006](./ADR-006-edge-api-gateway.md) (Principle 2) extends to assert that an MCP `tools/call` for a financial operation without the SCA claim returns `403 SCA_REQUIRED`.
+- **Kong's `pre-function` plugin enforces SCA at the MCP route uniformly with the REST route.** The contract test from [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) (Principle 2) extends to assert that an MCP `tools/call` for a financial operation without the SCA claim returns `403 SCA_REQUIRED`.
 - **OAuth scope changes are a `kong.yaml` pull request, not application code.** New MCP tool scopes (e.g., `transfers:write` when transfer tools are added) follow the same RFC process as event-catalogue additions ([document 08](../08-event-catalog-governance.md)).
 - **Trace propagation is uniform.** Kong's `opentelemetry` plugin propagates `traceparent` into the MCP server, which the Python SDK already supports via `opentelemetry-python` instrumentation. The end-to-end trace from agent tool call to saga completion is one continuous span tree.
 
@@ -320,9 +320,9 @@ The decisive reasons:
 
 **Residual risks:**
 
-- **The existing IAM may not currently support RFC 8707 or RFC 9728 out of the box.** Common commercial OIDC providers (Auth0, Okta, Azure AD B2C) added Resource Indicators support at different points; some still require provider-specific configuration to bind tokens to a resource URI. The verification step is: confirm that the IAM in use can issue tokens with the MCP server's canonical URI as the `aud` claim, and can serve RFC 8414 metadata with `code_challenge_methods_supported: ["S256"]`. If the answer is no, the choice in Area 4 must be revisited — either by upgrading the IAM, switching to one that supports these RFCs natively, or (as a last resort) standing up a dedicated MCP authorisation server. Mitigation: this verification is a Principle 2 contract test in CI ([ADR-006](./ADR-006-edge-api-gateway.md), [ADR-009](./ADR-009-testing-infrastructure.md)) — a request with a token issued for the wrong resource MUST receive `401` from the MCP server before the request reaches any application code.
-- **Streamable HTTP through Kong needs explicit configuration for the GET-with-SSE case.** The MCP server uses GET requests to expose server-initiated notifications via SSE (per spec §Listening for Messages from the Server). Kong proxies these natively (the nginx base does not buffer streaming responses, as documented in [ADR-006](./ADR-006-edge-api-gateway.md), P4), but the route must be configured with the same `X-Accel-Buffering: no` upstream header and extended `read_timeout` as the existing saga-stream SSE route. Mitigation: explicit configuration in `kong.yaml` and a contract test that asserts a long-running MCP GET-SSE stream survives Kong's default read timeout.
-- **The Python SDK is the reference implementation, but reference status is not the same as production hardening.** The SDK is actively developed and tracks spec changes first, which means breaking changes between spec versions reach the SDK first. The bank must pin to a specific SDK version and treat MCP spec upgrades as a deliberate operation (SDK upgrade, re-validate spec conformance contract tests, re-run integration tests). Mitigation: explicit version pinning in `requirements.txt`, and the contract test layer from [ADR-009](./ADR-009-testing-infrastructure.md) catches behavioural drift before deployment.
+- **The existing IAM may not currently support RFC 8707 or RFC 9728 out of the box.** Common commercial OIDC providers (Auth0, Okta, Azure AD B2C) added Resource Indicators support at different points; some still require provider-specific configuration to bind tokens to a resource URI. The verification step is: confirm that the IAM in use can issue tokens with the MCP server's canonical URI as the `aud` claim, and can serve RFC 8414 metadata with `code_challenge_methods_supported: ["S256"]`. If the answer is no, the choice in Area 4 must be revisited — either by upgrading the IAM, switching to one that supports these RFCs natively, or (as a last resort) standing up a dedicated MCP authorisation server. Mitigation: this verification is a Principle 2 contract test in CI ([ADR-IC-006](./ADR-IC-006-edge-api-gateway.md), [ADR-IC-009](./ADR-IC-009-testing-infrastructure.md)) — a request with a token issued for the wrong resource MUST receive `401` from the MCP server before the request reaches any application code.
+- **Streamable HTTP through Kong needs explicit configuration for the GET-with-SSE case.** The MCP server uses GET requests to expose server-initiated notifications via SSE (per spec §Listening for Messages from the Server). Kong proxies these natively (the nginx base does not buffer streaming responses, as documented in [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md), P4), but the route must be configured with the same `X-Accel-Buffering: no` upstream header and extended `read_timeout` as the existing saga-stream SSE route. Mitigation: explicit configuration in `kong.yaml` and a contract test that asserts a long-running MCP GET-SSE stream survives Kong's default read timeout.
+- **The Python SDK is the reference implementation, but reference status is not the same as production hardening.** The SDK is actively developed and tracks spec changes first, which means breaking changes between spec versions reach the SDK first. The bank must pin to a specific SDK version and treat MCP spec upgrades as a deliberate operation (SDK upgrade, re-validate spec conformance contract tests, re-run integration tests). Mitigation: explicit version pinning in `requirements.txt`, and the contract test layer from [ADR-IC-009](./ADR-IC-009-testing-infrastructure.md) catches behavioural drift before deployment.
 - **Spec evolution between POC and production.** MCP at 2025-11-25 includes the tasks capability (SEP-1686) as a first-class feature and structured output (`outputSchema`) as stable. Future spec versions may change these. Mitigation: the bank's MCP server pins to a specific protocol version via the `MCP-Protocol-Version` header negotiated at initialisation; spec upgrades are deliberate operations, not automatic.
 
 ---
@@ -333,7 +333,7 @@ The decisive reasons:
 
 The MCP server pins to protocol version `2025-11-25` via the `MCP-Protocol-Version` header in every response. The Python SDK is pinned to a specific minor version in `requirements.txt`. Protocol or SDK upgrades require:
 
-1. A re-run of the contract test suite from [ADR-009](./ADR-009-testing-infrastructure.md), including the OAuth audience-binding test, the SCA enforcement test, and the structured-output schema test.
+1. A re-run of the contract test suite from [ADR-IC-009](./ADR-IC-009-testing-infrastructure.md), including the OAuth audience-binding test, the SCA enforcement test, and the structured-output schema test.
 2. A documented review of breaking changes between the prior and target protocol versions.
 3. Deployment as a deliberate operation, not as part of routine dependency updates.
 
@@ -345,7 +345,7 @@ The MCP server publishes RFC 9728 metadata at `/.well-known/oauth-protected-reso
 
 Every access token presented at the MCP server is validated against three properties before any application code sees the request:
 
-1. Signature verification against the IAM's published JWKS (per Kong's `jwt` plugin, [ADR-006](./ADR-006-edge-api-gateway.md) P7).
+1. Signature verification against the IAM's published JWKS (per Kong's `jwt` plugin, [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) P7).
 2. `aud` claim equals the MCP server's canonical URI as registered with the IAM via RFC 8707 (validated at the MCP server's application layer because Kong's `jwt` plugin does not natively check audience against a per-route value).
 3. Required OAuth scope present for the requested tool (e.g., `tools/call` for `constitute_deposit` requires `deposits:write`).
 
@@ -359,15 +359,15 @@ OAuth scopes are defined per tool family (`deposits:read`, `deposits:write`, `tr
 
 The MCP endpoint is a single Kong route accepting POST (for `tools/call`, `resources/read`, etc.) and GET (for the SSE notification stream). The route configuration includes:
 
-- `jwt` plugin (signature + expiry; per ADR-006 P3).
+- `jwt` plugin (signature + expiry; per ADR-IC-006 P3).
 - `rate-limiting` plugin (per-consumer; tighter for `tools/call` on financial operations than for `resources/read`).
 - `pre-function` plugin for SCA enforcement on routes that map to financial-operation tools.
 - `opentelemetry` plugin for trace propagation.
-- Upstream definition with `read_timeout` matching the saga duration ceiling (1800 seconds per ADR-006 P4) for the GET-SSE case, and `X-Accel-Buffering: no` from the upstream.
+- Upstream definition with `read_timeout` matching the saga duration ceiling (1800 seconds per ADR-IC-006 P4) for the GET-SSE case, and `X-Accel-Buffering: no` from the upstream.
 
 ### P6 — `outputSchema` mandatory on every tool; structured content for financial domain
 
-Every tool declared by the MCP server includes an `outputSchema` (per [document 11](../11-chat-agent-channel-strategy.md) §Tool, Resource, and Prompt Design). The SDK validates structured tool output against this schema before sending it. A tool that returns free-text confirmation without a structured payload is rejected in CI by a contract test ([ADR-009](./ADR-009-testing-infrastructure.md)).
+Every tool declared by the MCP server includes an `outputSchema` (per [document 11](../11-chat-agent-channel-strategy.md) §Tool, Resource, and Prompt Design). The SDK validates structured tool output against this schema before sending it. A tool that returns free-text confirmation without a structured payload is rejected in CI by a contract test ([ADR-IC-009](./ADR-IC-009-testing-infrastructure.md)).
 
 ### P7 — Client ID Metadata Documents preferred; DCR as fallback
 

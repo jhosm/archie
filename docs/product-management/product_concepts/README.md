@@ -66,7 +66,7 @@ Three styles, signalling how to use each link.
 | Same document section | `§N.M` | No link |
 | Sibling numbered brief | `[NN §N.M]` | e.g. `[01 §3]`, `[02 §2.4]`, `[04 §5]` |
 | Open question by letter | `[Q-AC]` | Always linked to [04](./04-open-questions.md) |
-| Sister series | `[financial_concepts §9.2]`, `[integration_concepts §03]`, `[ADR-004]` | Series name + section |
+| Sister series | `[financial_concepts §9.2]`, `[integration_concepts §03]`, `[ADR-IC-004]` | Series name + section |
 | Design note | `[surface §3.4]`, `[authoring §6]`, `[event-store §4.1]`, `[coexistence §9]`, `[two-modes §5.3]` | Topic word from the *Cite as* column above |
 
 The URL preserves the full filename; only the link text uses the short form.

@@ -1,12 +1,12 @@
-# ADR-005: CQRS Read Model Storage
+# ADR-IC-005: CQRS Read Model Storage
 
 | Field | Value |
 |---|---|
 | Status | Accepted |
 | Date | 2026-05-17 |
 | Deciders | jhosm |
-| Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
-| Depends on | [ADR-001](./ADR-001-event-backbone-message-broker.md), [ADR-002](./ADR-002-schema-format-and-registry.md) |
+| Common criteria | [ADR-IC-000](./ADR-IC-000-common-evaluation-criteria.md) |
+| Depends on | [ADR-IC-001](./ADR-IC-001-event-backbone-message-broker.md), [ADR-IC-002](./ADR-IC-002-schema-format-and-registry.md) |
 
 ---
 
@@ -14,7 +14,7 @@
 
 [Document 03](../03-cqrs-and-read-models.md) defines CQRS as the mechanism for meeting the 500ms requirement on the client-facing deposits screen. Read models — denormalized, pre-computed projections fed by the Redpanda event backbone — decouple read performance from write-side complexity. The Anti-Corruption Layer ([document 02](../02-anti-corruption-layer.md)) feeds Core Banking data into these projections, producing a cross-system combination of deposit conditions, client labels from CRM, and KYC signals from Compliance that no single source system holds. What remains to be decided is the concrete storage technology for those projections.
 
-The decision is structurally different from the tool-selection ADRs that precede it. ADR-001 through ADR-004 each evaluate a single storage technology for a single purpose. Read model storage is inherently plural: document 03 identifies six distinct projections, each designed for a specific query, and those queries have different access patterns, latency requirements, and volume characteristics.
+The decision is structurally different from the tool-selection ADRs that precede it. ADR-IC-001 through ADR-IC-004 each evaluate a single storage technology for a single purpose. Read model storage is inherently plural: document 03 identifies six distinct projections, each designed for a specific query, and those queries have different access patterns, latency requirements, and volume characteristics.
 
 The right question is therefore not "which storage technology wins?" but "which storage paradigm serves each projection, and where does the team constraint change the answer?"
 
@@ -61,7 +61,7 @@ MongoDB (document store) was considered and excluded before evaluation: MongoDB 
 
 | Candidate | Licence | Assessment | Proceeds? |
 |---|---|---|---|
-| PostgreSQL | PostgreSQL Licence (permissive, OSI-approved) | Fully open source; self-hosted; already committed by ADR-004 | **Pass** |
+| PostgreSQL | PostgreSQL Licence (permissive, OSI-approved) | Fully open source; self-hosted; already committed by ADR-IC-004 | **Pass** |
 | Valkey | BSD 3-Clause | Linux Foundation project; fork of Redis 7.2.4 (before Redis re-licensing); permissive licence | **Pass** |
 | OpenSearch | Apache 2.0 | AWS-maintained fork of Elasticsearch 7.10; open source | **Pass** |
 | DuckDB | MIT | In-process OLAP engine; embedded in the application; MIT licence | **Pass** |
@@ -78,7 +78,7 @@ Read model projections contain a cross-system combination of data drawn through 
 |---|---|---|---|---|
 | PostgreSQL | Row-level deletion and schema-level encryption are standard PostgreSQL capabilities. Projections can be rebuilt from the event stream after a GDPR erasure tombstone on the write side; the projection row can be deleted or masked independently. No new GDPR surface beyond the write-side database, with which it shares operational controls. | PostgreSQL HA, backup, and recovery semantics are well-understood and documentable. Replication lag is an observable metric. DORA resilience testing (failover drills) is standard PostgreSQL practice. | Read model query responses are not PSD2-regulated API surfaces themselves, but the data they expose falls within PSD2 account data access rules when account-level fields are projected. Enforcement is at the query API layer (authorization), not the storage layer. | **Pass** |
 | Valkey | Persistence in Valkey is optional (RDB snapshots, AOF log, or neither). A purely in-memory Valkey deployment introduces a GDPR risk: erasure tombstones on the write side do not automatically propagate to the Valkey cache without an explicit invalidation mechanism. The projector must actively delete or overwrite affected cache entries on every erasure event. If Valkey persistence is enabled, the persistence files must be in the GDPR data inventory. | A Valkey cache in front of PostgreSQL read models degrades gracefully: on Valkey failure, the application falls back to PostgreSQL. However, Valkey must still be treated as a DORA resilience target if its availability enters the SLA definition. | No specific PSD2 concern beyond the shared GDPR and PSD2 data access obligations. | **Pass (conditional)** — explicit cache erasure on every GDPR tombstone is mandatory; persistence files (if enabled) must be in the data inventory |
-| OpenSearch | OpenSearch documents contain the full projection payload — the same PII surface as PostgreSQL, but in an inverted-index structure that does not support row-level deletion with the same granularity. Deleting a document removes the forward-stored document, but index segments containing the data are only fully removed on segment merge, which is asynchronous. GDPR erasure is achievable but less deterministic than a SQL DELETE; OpenSearch must be included in the erasure protocol with explicit attention to segment merge timing. | OpenSearch is a JVM process, which reintroduces the JVM operational concern from ADR-001 for a component already served by PostgreSQL at POC volumes. | No specific PSD2 concern beyond shared access-control obligations. | **Pass (conditional)** — erasure protocol must account for asynchronous segment merge timing; deterministic deletion windows must be defined and monitored |
+| OpenSearch | OpenSearch documents contain the full projection payload — the same PII surface as PostgreSQL, but in an inverted-index structure that does not support row-level deletion with the same granularity. Deleting a document removes the forward-stored document, but index segments containing the data are only fully removed on segment merge, which is asynchronous. GDPR erasure is achievable but less deterministic than a SQL DELETE; OpenSearch must be included in the erasure protocol with explicit attention to segment merge timing. | OpenSearch is a JVM process, which reintroduces the JVM operational concern from ADR-IC-001 for a component already served by PostgreSQL at POC volumes. | No specific PSD2 concern beyond shared access-control obligations. | **Pass (conditional)** — erasure protocol must account for asynchronous segment merge timing; deterministic deletion windows must be defined and monitored |
 | DuckDB | DuckDB runs embedded in the application process and writes to a single file (`.duckdb`) if persistence is enabled. The file is DuckDB's GDPR surface: it must be in the data inventory, and PII deletion in the application database does not automatically propagate to the DuckDB file. For the `aggregated_positions` projection (the primary DuckDB use case), data is aggregated at the product/term level — individual PII is typically not present. GDPR risk depends on whether the projection retains identifiable fields. | DuckDB's durability model (file-backed or in-memory) is under application control. No independent operational process to manage or monitor. | No specific PSD2 concern beyond shared data-access obligations on the aggregated fields. | **Pass (conditional)** — projection schema must be reviewed to confirm no PII in aggregated fields; if identifiable fields are present, the DuckDB file must enter the erasure protocol |
 
 All four candidates pass both hard filters.
@@ -89,7 +89,7 @@ All four candidates pass both hard filters.
 
 #### PostgreSQL (relational)
 
-**S1 · Operational complexity:** Zero incremental infrastructure. The application database is PostgreSQL already — ADR-004 committed this for the outbox pattern, and ADR-003 for the saga state tables. Read model projections are tables in a separate schema (`read_model.*`), populated by projector services using the same Kafka client and PostgreSQL driver already present in the stack. No new connection pool, no new backup policy, no new monitoring target beyond what the existing database already requires.
+**S1 · Operational complexity:** Zero incremental infrastructure. The application database is PostgreSQL already — ADR-IC-004 committed this for the outbox pattern, and ADR-IC-003 for the saga state tables. Read model projections are tables in a separate schema (`read_model.*`), populated by projector services using the same Kafka client and PostgreSQL driver already present in the stack. No new connection pool, no new backup policy, no new monitoring target beyond what the existing database already requires.
 
 **S2 · Ecosystem coherence:** Maximum. Projectors are PostgreSQL writers; the API layer is a PostgreSQL reader. The same ORM, the same connection pool, the same EXPLAIN plan tooling, the same PostgreSQL slow-query log. UPSERT semantics (`INSERT … ON CONFLICT DO UPDATE`) are the natural mechanism for idempotent projectors (Primitive 5 from [document 01](../01-the-six-primitives.md)). The `processed_events` deduplication table described in document 03 is a PostgreSQL table, in the same transaction as the projection update — the idempotency check is atomic with the write by construction. OpenTelemetry instrumentation is uniform with the rest of the application.
 
@@ -118,7 +118,7 @@ All four candidates pass both hard filters.
 
 #### OpenSearch (search / inverted index)
 
-**S1 · Operational complexity:** OpenSearch is a JVM cluster. It requires heap sizing, JVM version management, shard configuration, index lifecycle management, and its own monitoring stack. ADR-001 chose Redpanda over Apache Kafka explicitly to eliminate JVM operational overhead from the event backbone. Introducing OpenSearch for read models reintroduces a JVM process — and a more demanding one than a typical service. For a 1–2 person team, this is the highest operational cost of all candidates per unit of read-model benefit.
+**S1 · Operational complexity:** OpenSearch is a JVM cluster. It requires heap sizing, JVM version management, shard configuration, index lifecycle management, and its own monitoring stack. ADR-IC-001 chose Redpanda over Apache Kafka explicitly to eliminate JVM operational overhead from the event backbone. Introducing OpenSearch for read models reintroduces a JVM process — and a more demanding one than a typical service. For a 1–2 person team, this is the highest operational cost of all candidates per unit of read-model benefit.
 
 **S2 · Ecosystem coherence:** OpenSearch excels at full-text search, complex boolean queries, and aggregations over large document sets — use cases not present in the current projection inventory. The `aggregated_positions` reporting model is a good fit for OpenSearch's aggregation framework, but it is an equally strong fit for a PostgreSQL materialized view at POC scale. None of the six projections from document 03 requires full-text search. The inverted-index paradigm is powerful but misdirected for projections that are primarily point-lookup or range-scan in character. Adding OpenSearch to serve `aggregated_positions` alone is disproportionate to the benefit at this scale.
 
@@ -167,7 +167,7 @@ The latency advantage (sub-10ms vs. sub-20ms for PostgreSQL) is a real paradigm 
 
 **Rejected: OpenSearch (search / inverted index)**
 
-Reintroduces a JVM cluster — the operational concern ADR-001 deliberately avoided in the event backbone — for projections that do not require full-text search or complex boolean queries. None of the six projections from document 03 has an access pattern that PostgreSQL cannot serve at POC volumes. The aggregation use case (`aggregated_positions`) is equally served by a PostgreSQL materialized view at this scale. OpenSearch's GDPR erasure timing (segment merge asynchrony) adds protocol complexity not present for PostgreSQL.
+Reintroduces a JVM cluster — the operational concern ADR-IC-001 deliberately avoided in the event backbone — for projections that do not require full-text search or complex boolean queries. None of the six projections from document 03 has an access pattern that PostgreSQL cannot serve at POC volumes. The aggregation use case (`aggregated_positions`) is equally served by a PostgreSQL materialized view at this scale. OpenSearch's GDPR erasure timing (segment merge asynchrony) adds protocol complexity not present for PostgreSQL.
 
 **Rejected: DuckDB (embedded columnar)**
 
@@ -180,7 +180,7 @@ Not a permanent rejection — DuckDB is the preferred upgrade path for the `aggr
 **What this choice makes easier:**
 
 - Projector code is uniform: every projector in the system is a Kafka consumer that writes to PostgreSQL using UPSERT semantics (`INSERT … ON CONFLICT DO UPDATE SET …, last_event_offset = ?`). No projector writes to a different storage technology; no dual-write coordination logic exists at inception. The idempotency check (`WHERE last_event_offset < current_offset`) is atomic with the projection write in a single PostgreSQL transaction — no two-phase check, no race condition.
-- GDPR erasure is handled at one layer: a tombstone event in the Redpanda backbone (per ADR-001 and ADR-002) triggers re-projection; the PostgreSQL row is deleted or overwritten in the same operation. No cache invalidation, no index purge protocol, no external store to synchronize.
+- GDPR erasure is handled at one layer: a tombstone event in the Redpanda backbone (per ADR-IC-001 and ADR-IC-002) triggers re-projection; the PostgreSQL row is deleted or overwritten in the same operation. No cache invalidation, no index purge protocol, no external store to synchronize.
 - The query API layer speaks SQL to one store. No result merging across paradigms, no fallback logic for cache miss.
 - Rebuild and replay (identified in document 03 as non-negotiable) is straightforward: truncate the projection table, reset the consumer group offset to zero, replay the full event history. The rebuilding projector uses the same write path as live operations.
 
@@ -240,7 +240,7 @@ The `last_event_offset` is not a version number: it is the source-of-truth offse
 
 ### P4 — Projection lag is a first-class SLI
 
-Each projector must emit a `projection_lag_seconds` gauge — the age of the most recently processed event relative to the current wall clock — on every event consumed. This is the read model equivalent of `outbox_publish_lag_seconds` from ADR-004. Alert thresholds:
+Each projector must emit a `projection_lag_seconds` gauge — the age of the most recently processed event relative to the current wall clock — on every event consumed. This is the read model equivalent of `outbox_publish_lag_seconds` from ADR-IC-004. Alert thresholds:
 
 - **Warning:** projection lag exceeds 5 seconds. The read model is falling behind the event stream.
 - **Critical:** projection lag exceeds 60 seconds. The projector is likely stalled or the consumer group is lagging.
@@ -274,7 +274,7 @@ When this refresh latency becomes unacceptable (measurable via reporting query e
 
 ### P7 — GDPR erasure propagates through the projection path
 
-A GDPR erasure request on a client triggers a tombstone event in the Redpanda backbone (per ADR-001 and ADR-002). Each projector that holds data for the affected client must consume this tombstone and execute the appropriate erasure action on its projection table(s):
+A GDPR erasure request on a client triggers a tombstone event in the Redpanda backbone (per ADR-IC-001 and ADR-IC-002). Each projector that holds data for the affected client must consume this tombstone and execute the appropriate erasure action on its projection table(s):
 
 - For row-level PII (e.g., `client_id`, name fields in `deposits_by_client`): `DELETE` the affected rows, or overwrite with nulls per the applicable GDPR-minimum standard.
 - For aggregate projections (`aggregated_positions`): verify that the projection schema does not retain individual `client_id` values. If it does, the same delete/overwrite discipline applies.

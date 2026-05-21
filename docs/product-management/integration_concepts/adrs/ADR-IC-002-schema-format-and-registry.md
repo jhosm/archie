@@ -1,12 +1,12 @@
-# ADR-002: Schema Format and Registry
+# ADR-IC-002: Schema Format and Registry
 
 | Field | Value |
 |---|---|
 | Status | Accepted |
 | Date | 2026-05-17 |
 | Deciders | jhosm |
-| Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
-| Depends on | [ADR-001](./ADR-001-event-backbone-message-broker.md) |
+| Common criteria | [ADR-IC-000](./ADR-IC-000-common-evaluation-criteria.md) |
+| Depends on | [ADR-IC-001](./ADR-IC-001-event-backbone-message-broker.md) |
 
 ---
 
@@ -64,7 +64,7 @@ A fourth option — **Redpanda built-in schema registry** — is not a separate 
 
 | Candidate | GDPR | DORA | PSD2 | Proceeds? |
 |---|---|---|---|---|
-| Avro | Binary encoding — PII fields are not human-readable without schema lookup. Null-payload tombstones (compaction-based erasure, ADR-001) require consumers to tolerate null values; the Avro SerDe must not enforce a non-null schema on compacted topics. | Format is independent of broker resilience. | Schema versioning provides an auditable contract trail. | **Pass** |
+| Avro | Binary encoding — PII fields are not human-readable without schema lookup. Null-payload tombstones (compaction-based erasure, ADR-IC-001) require consumers to tolerate null values; the Avro SerDe must not enforce a non-null schema on compacted topics. | Format is independent of broker resilience. | Schema versioning provides an auditable contract trail. | **Pass** |
 | Protobuf | Same binary properties as Avro. | Same. | Same. | **Pass** |
 | JSON Schema | Payloads are plain-text JSON — readable without schema lookup. PII is not structurally protected by the wire format. Weaker data minimization than binary formats — analysed in soft criteria. | Same. | Same. | **Pass** |
 
@@ -110,7 +110,7 @@ AWS Glue fails F2 and is eliminated.
 
 **S1 · Operational complexity:** The lowest barrier to start — write a JSON schema document, no serialization configuration. However, the Confluent SR JSON Schema mode validates payloads but does not provide binary serialization. Messages remain full JSON text: no wire efficiency (a binary Avro message is typically 5–10× smaller than the equivalent JSON); no schema-directed binary decoding; deserialization relies on application-level JSON parsing. These properties make JSON Schema appropriate for REST API contracts and configuration validation — not for a durable event stream.
 
-**S2 · Ecosystem coherence:** JSON is universal, but JSON Schema is not idiomatic for Kafka event streaming. Kafka Connect converters, stream processing frameworks, and SR compatibility enforcement all have more mature paths for Avro and Protobuf. The compaction-based GDPR erasure pattern (ADR-001) also interacts more cleanly with binary formats.
+**S2 · Ecosystem coherence:** JSON is universal, but JSON Schema is not idiomatic for Kafka event streaming. Kafka Connect converters, stream processing frameworks, and SR compatibility enforcement all have more mature paths for Avro and Protobuf. The compaction-based GDPR erasure pattern (ADR-IC-001) also interacts more cleanly with binary formats.
 
 **S3 · Exit cost:** Lowest exit cost — JSON is readable without schema lookup.
 
@@ -184,7 +184,7 @@ Same reasoning as standalone Confluent SR. More components to operate for no add
 - Schema registration is a CI/CD gate: the producer's pipeline registers (or validates) the schema against the Redpanda built-in SR before deployment. Incompatible schemas fail the build, not production (document 09).
 - Compatibility mode defaults: **BACKWARD** for most events (producer evolves first; old consumers can read new data). **FULL** for events with many known consumers where coordinated rollout is not feasible. Both are enforced mechanically by the SR.
 - GDPR tombstones: null-payload tombstone messages on compacted topics must be tolerated by consumers — the Avro SerDe must be configured to accept null values on compacted topics rather than enforcing a non-null schema. This is a producer/consumer contract requirement to be documented in the event catalog ([document 08](../08-event-catalog-governance.md)).
-- **Envelope is out of registry scope.** The schema registry manages only the business payload schema. The CloudEvents envelope is governed separately by the event catalog (ADR-008) and is constructed by the outbox publisher (ADR-004) from outbox table columns at publish time. Payload changes go through the registry's compatibility gates; envelope changes do not. Concretely, the Confluent wire-format Avro value is the `data` of a CloudEvents 1.0 event in Binary Content Mode; CloudEvents attributes — including the domain extensions `ce_correlationid`, `ce_causationid`, `ce_aggregatetype` — travel in Kafka message headers.
+- **Envelope is out of registry scope.** The schema registry manages only the business payload schema. The CloudEvents envelope is governed separately by the event catalog (ADR-IC-008) and is constructed by the outbox publisher (ADR-IC-004) from outbox table columns at publish time. Payload changes go through the registry's compatibility gates; envelope changes do not. Concretely, the Confluent wire-format Avro value is the `data` of a CloudEvents 1.0 event in Binary Content Mode; CloudEvents attributes — including the domain extensions `ce_correlationid`, `ce_causationid`, `ce_aggregatetype` — travel in Kafka message headers.
 - Migrating from Redpanda built-in SR to standalone Confluent SR or Apicurio is a configuration change (SR endpoint URL), not a code change.
 
 **What this choice makes harder or impossible:**
@@ -196,7 +196,7 @@ Same reasoning as standalone Confluent SR. More components to operate for no add
 **Residual risks:**
 
 - **Avro null / union verbosity:** Avro represents nullable fields as a union type (`["null", "string"]`). This is verbose and a common source of schema authoring errors. A schema authoring convention (document 08) should standardise nullable field patterns before the first event is published.
-- **Redpanda built-in SR feature surface:** The built-in SR implements the core Confluent SR API (subjects, schemas, versions, compatibility checks) but may lag the standalone Confluent SR on advanced features. Verify availability and behaviour of each of the following before depending on them: (a) **context-namespaced schemas** (multi-tenant subject namespaces, e.g. `:.<context>:`); (b) **schema export / import** (bulk operations needed for backup and migration); (c) **schema references** (`$ref` chains between schemas, used to factor shared envelope or value types); (d) **compatibility group overrides** (per-subject deviation from the global compatibility setting). If any of these is required and unsupported, the fallback is to deploy the standalone Confluent SR or Apicurio (ADR-002 anticipates this migration as a URL change).
+- **Redpanda built-in SR feature surface:** The built-in SR implements the core Confluent SR API (subjects, schemas, versions, compatibility checks) but may lag the standalone Confluent SR on advanced features. Verify availability and behaviour of each of the following before depending on them: (a) **context-namespaced schemas** (multi-tenant subject namespaces, e.g. `:.<context>:`); (b) **schema export / import** (bulk operations needed for backup and migration); (c) **schema references** (`$ref` chains between schemas, used to factor shared envelope or value types); (d) **compatibility group overrides** (per-subject deviation from the global compatibility setting). If any of these is required and unsupported, the fallback is to deploy the standalone Confluent SR or Apicurio (ADR-IC-002 anticipates this migration as a URL change).
 - **Schema registry backup:** Redpanda's built-in SR stores schemas in an internal topic (`_schemas`). This topic must be included in the backup and restore strategy — loss of this topic makes all persisted Avro events unreadable.
 
 ---
@@ -241,7 +241,7 @@ At runtime, the Avro SerDe resolves the schema ID by subject name lookup only. A
 
 ### P4 — Consumers on compacted topics must handle null-payload tombstones explicitly
 
-Redpanda log compaction produces null-payload tombstone messages as the GDPR right-to-erasure mechanism (ADR-001 P4). Every consumer on a compacted topic must:
+Redpanda log compaction produces null-payload tombstone messages as the GDPR right-to-erasure mechanism (ADR-IC-001 P4). Every consumer on a compacted topic must:
 
 1. Check whether the record value is null before passing it to the Avro SerDe.
 2. If null: treat the record as a deletion signal — remove the corresponding projection, cache entry, or materialized state for the key.
@@ -253,6 +253,6 @@ This is not an edge-case defensive check — it is part of the consumer contract
 
 ### P5 — The schema registry governs the `data` field only; envelope attributes are not schema-versioned
 
-The `.avsc` schema file and its registry subject describe the CloudEvents `data` field — the business payload. The schema must not include CloudEvents envelope attributes (`id`, `source`, `type`, `time`, `datacontenttype`, `specversion`) or domain extension attributes (`ce_correlationid`, `ce_causationid`, `ce_aggregatetype`). These are carried as Kafka/Redpanda message headers, written by the outbox publisher (ADR-004), and consumed directly from the record header map.
+The `.avsc` schema file and its registry subject describe the CloudEvents `data` field — the business payload. The schema must not include CloudEvents envelope attributes (`id`, `source`, `type`, `time`, `datacontenttype`, `specversion`) or domain extension attributes (`ce_correlationid`, `ce_causationid`, `ce_aggregatetype`). These are carried as Kafka/Redpanda message headers, written by the outbox publisher (ADR-IC-004), and consumed directly from the record header map.
 
 Embedding envelope fields in the Avro schema conflates the wire envelope with the business payload. It means every schema version carries envelope fields that are already mandated by the CloudEvents spec, creates schema churn when envelope conventions evolve, and makes the schema registry subject misleadingly describe the full message structure rather than just the business event.

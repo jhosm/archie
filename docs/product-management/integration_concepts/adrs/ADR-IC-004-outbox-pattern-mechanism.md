@@ -1,12 +1,12 @@
-# ADR-004: Outbox Pattern Mechanism
+# ADR-IC-004: Outbox Pattern Mechanism
 
 | Field | Value |
 |---|---|
 | Status | Accepted |
 | Date | 2026-05-17 |
 | Deciders | jhosm |
-| Common criteria | [ADR-000](./ADR-000-common-evaluation-criteria.md) |
-| Depends on | [ADR-001](./ADR-001-event-backbone-message-broker.md), [ADR-002](./ADR-002-schema-format-and-registry.md) |
+| Common criteria | [ADR-IC-000](./ADR-IC-000-common-evaluation-criteria.md) |
+| Depends on | [ADR-IC-001](./ADR-IC-001-event-backbone-message-broker.md), [ADR-IC-002](./ADR-IC-002-schema-format-and-registry.md) |
 
 ---
 
@@ -16,7 +16,7 @@
 
 Document 04 also draws a hard line between acceptable and unacceptable CDC use: CDC on the outbox table is a delivery mechanism (reading rows the application explicitly wrote as domain events), while CDC on domain tables is an anti-pattern (inferring event semantics from storage mutations). This ADR is concerned only with the delivery mechanism.
 
-What remains to be decided is the concrete relay mechanism: how the outbox table is polled or monitored, how events are published to Redpanda, how the relay is made safe for multiple concurrent instances, and how lag is observed and alarmed. This choice has implications for operational complexity, latency, and the JVM constraint established by ADR-001.
+What remains to be decided is the concrete relay mechanism: how the outbox table is polled or monitored, how events are published to Redpanda, how the relay is made safe for multiple concurrent instances, and how lag is observed and alarmed. This choice has implications for operational complexity, latency, and the JVM constraint established by ADR-IC-001.
 
 **Candidates evaluated:**
 
@@ -48,11 +48,11 @@ All candidates pass F1. No candidate introduces a paywalled feature required by 
 
 #### F2 · Regulatory fit
 
-The outbox table holds full integration event payloads — `client_id`, account numbers, amounts, IBANs. All candidates read from or interact with this data. The regulatory surface is the same across candidates: the outbox table is in the application database, which is already subject to the domain GDPR erasure strategy. The relay mechanism does not create a new persistent copy of the data (events are consumed from the outbox and published to Redpanda, which is governed by ADR-001 and ADR-002).
+The outbox table holds full integration event payloads — `client_id`, account numbers, amounts, IBANs. All candidates read from or interact with this data. The regulatory surface is the same across candidates: the outbox table is in the application database, which is already subject to the domain GDPR erasure strategy. The relay mechanism does not create a new persistent copy of the data (events are consumed from the outbox and published to Redpanda, which is governed by ADR-IC-001 and ADR-IC-002).
 
 | Candidate | GDPR | DORA | PSD2 | Proceeds? |
 |---|---|---|---|---|
-| Debezium + Kafka Connect | WAL-based CDC reads logical replication slots in PostgreSQL. The WAL itself contains PII — but this is a transport path, not a new durable store. Debezium does not persist WAL data independently; it decodes and forwards. The Kafka Connect worker holds events in memory during transit; persistent offset storage (in a Kafka topic) records only the WAL offset, not the event payload. No new GDPR surface beyond the application database. | Kafka Connect is a stateless relay; its resilience is derived from PostgreSQL WAL durability and Redpanda's own guarantees (ADR-001). Resilience testing targets the application database and Redpanda, which are already DORA obligations. | Logical replication slot offsets provide an auditable delivery position. The Redpanda topic provides the ordered audit trail per ADR-001 guarantees. | **Pass** |
+| Debezium + Kafka Connect | WAL-based CDC reads logical replication slots in PostgreSQL. The WAL itself contains PII — but this is a transport path, not a new durable store. Debezium does not persist WAL data independently; it decodes and forwards. The Kafka Connect worker holds events in memory during transit; persistent offset storage (in a Kafka topic) records only the WAL offset, not the event payload. No new GDPR surface beyond the application database. | Kafka Connect is a stateless relay; its resilience is derived from PostgreSQL WAL durability and Redpanda's own guarantees (ADR-IC-001). Resilience testing targets the application database and Redpanda, which are already DORA obligations. | Logical replication slot offsets provide an auditable delivery position. The Redpanda topic provides the ordered audit trail per ADR-IC-001 guarantees. | **Pass** |
 | Custom polling publisher | All data remains in the application database until published to Redpanda. No additional GDPR surface. | Resilience is entirely within the application database (already a DORA target) and Redpanda. | The outbox table itself is an ordered record of published events; the Redpanda topic is the durable audit trail. | **Pass** |
 | Eventuate Tram | Same as the relay mechanism it uses under the hood (CDC or polling). No additional GDPR surface beyond the chosen relay mode. | No additional infrastructure beyond what the relay mode requires. | No difference from other approaches. | **Pass** |
 | Debezium Embedded Engine | Same WAL-based CDC properties as Debezium + Kafka Connect. WAL data is decoded in-process and forwarded; no independent persistent store of event payloads. | Resilience depends on the host application process — the embedded engine fails if the application fails. No independent DORA target. | Same audit trail properties as standalone Debezium. | **Pass** |
@@ -65,9 +65,9 @@ All four candidates pass both hard filters.
 
 #### Debezium + Kafka Connect
 
-**S1 · Operational complexity:** Kafka Connect requires a Connect worker cluster (JVM) plus the Debezium PostgreSQL connector JAR and configuration. PostgreSQL must be configured with `wal_level = logical` and a logical replication slot. The replication slot is a PostgreSQL operational concern: a stalled or unacknowledged slot will cause WAL accumulation and disk pressure on the database host, which is a production incident risk if not monitored. Connector lifecycle (deployment, version upgrades, dead-letter queue configuration) is a separate operational surface from the application and from Redpanda. For a 1–2 person team, this is the second highest operational footprint after Conductor-OSS (ADR-003).
+**S1 · Operational complexity:** Kafka Connect requires a Connect worker cluster (JVM) plus the Debezium PostgreSQL connector JAR and configuration. PostgreSQL must be configured with `wal_level = logical` and a logical replication slot. The replication slot is a PostgreSQL operational concern: a stalled or unacknowledged slot will cause WAL accumulation and disk pressure on the database host, which is a production incident risk if not monitored. Connector lifecycle (deployment, version upgrades, dead-letter queue configuration) is a separate operational surface from the application and from Redpanda. For a 1–2 person team, this is the second highest operational footprint after Conductor-OSS (ADR-IC-003).
 
-**S2 · Ecosystem coherence:** The Outbox Event Router SMT is a mature, purpose-built Debezium feature that maps outbox table columns (`aggregate_type`, `aggregate_id`, `event_type`, `payload`) to the correct Redpanda topic and partition key. This transforms Debezium from a generic CDC tool into an outbox-specific relay with first-class routing semantics. OpenTelemetry instrumentation is available via the JVM agent on the Connect worker. The integration is technically coherent but introduces a JVM Connect cluster as the delivery critical path — a decision ADR-001 deliberately avoided for the broker itself.
+**S2 · Ecosystem coherence:** The Outbox Event Router SMT is a mature, purpose-built Debezium feature that maps outbox table columns (`aggregate_type`, `aggregate_id`, `event_type`, `payload`) to the correct Redpanda topic and partition key. This transforms Debezium from a generic CDC tool into an outbox-specific relay with first-class routing semantics. OpenTelemetry instrumentation is available via the JVM agent on the Connect worker. The integration is technically coherent but introduces a JVM Connect cluster as the delivery critical path — a decision ADR-IC-001 deliberately avoided for the broker itself.
 
 **S3 · Exit cost:** Medium-low. The outbox table schema is independent of Debezium — it is a standard application table and can be read by any relay mechanism. Connector configuration (SMT definitions, offset topic, schema registry references) is Debezium/Kafka-Connect-specific JSON and would need to be re-expressed for a different relay, but this is configuration, not application code. The exit cost is bounded to connector reconfiguration.
 
@@ -95,7 +95,7 @@ All four candidates pass both hard filters.
 
 #### Eventuate Tram
 
-**S1 · Operational complexity:** Eventuate Tram is a Java library. Using it requires the application to run on the JVM (or at minimum that the outbox relay runs as a separate JVM service). This reintroduces JVM operational complexity — the same concern ADR-001 raised against Apache Kafka and ADR-003 raised against Axon Framework — for the component that, in the custom approach, requires no additional runtime at all. The CDC mode of Eventuate Local requires the same Kafka Connect + Debezium infrastructure as candidate A, giving it the worst combination: both JVM dependency and Kafka Connect operational surface.
+**S1 · Operational complexity:** Eventuate Tram is a Java library. Using it requires the application to run on the JVM (or at minimum that the outbox relay runs as a separate JVM service). This reintroduces JVM operational complexity — the same concern ADR-IC-001 raised against Apache Kafka and ADR-IC-003 raised against Axon Framework — for the component that, in the custom approach, requires no additional runtime at all. The CDC mode of Eventuate Local requires the same Kafka Connect + Debezium infrastructure as candidate A, giving it the worst combination: both JVM dependency and Kafka Connect operational surface.
 
 **S2 · Ecosystem coherence:** Eventuate Tram is designed for a Spring Boot / Spring Data ecosystem and its abstractions (the `MessageProducer` interface, `@Transactional` annotations on outbox writes, the `SagaManager`) permeate the domain model's Spring wiring. In this architecture — where the domain model is not Spring-bound by any prior decision — adopting Eventuate Tram to solve the outbox relay problem is disproportionate: it introduces framework-level coupling across the producer's domain code to solve a problem that the polling publisher solves in a single infrastructure class.
 
@@ -127,7 +127,7 @@ Debezium would be the right call if: the system operates at a volume where a 200
 
 The operational overhead is not yet amortized for three reasons.
 
-**First, the JVM constraint from ADR-001 applies here.** ADR-001 rejected Apache Kafka specifically to eliminate the JVM from the event backbone. Adopting Debezium + Kafka Connect reintroduces a JVM process — and a more operationally complex one than Kafka, because the Connect worker, connector lifecycle, and SMT configuration form their own operational surface. At large scale, this cost is shared across many connectors and justified. At POC scale with a single outbox table, it is paid in full to replace a 30-line polling loop.
+**First, the JVM constraint from ADR-IC-001 applies here.** ADR-IC-001 rejected Apache Kafka specifically to eliminate the JVM from the event backbone. Adopting Debezium + Kafka Connect reintroduces a JVM process — and a more operationally complex one than Kafka, because the Connect worker, connector lifecycle, and SMT configuration form their own operational surface. At large scale, this cost is shared across many connectors and justified. At POC scale with a single outbox table, it is paid in full to replace a 30-line polling loop.
 
 **Second, the replication slot lifecycle is a production risk that the polling publisher does not introduce.** A PostgreSQL logical replication slot that stalls — because the Connect worker is restarting, or because the slot is not being consumed — causes WAL segments to accumulate on the database host until disk fills. This is a well-known operational hazard for Debezium in production. Monitoring and alerting for slot lag is standard practice, but it is an additional operational obligation with a failure mode (disk full → database unavailable) that does not exist for the polling publisher.
 
@@ -189,7 +189,7 @@ The outbox table must have the following columns across every service that imple
 | `event_id` | UUID, PK | Stable message identifier; carried into the Redpanda record header as `message_id` |
 | `aggregate_type` | VARCHAR | Topic routing key (e.g. `term_deposit`) |
 | `aggregate_id` | UUID | Partition routing key; determines Redpanda topic partition |
-| `event_type` | VARCHAR | Event name as registered in the schema registry (ADR-002) |
+| `event_type` | VARCHAR | Event name as registered in the schema registry (ADR-IC-002) |
 | `payload` | BYTEA | Avro-serialized event payload |
 | `schema_id` | INTEGER | Schema registry ID embedded at write time; re-validated at publish time |
 | `status` | VARCHAR | `PENDING` or `PUBLISHED`; indexed via partial index on `PENDING` rows |
@@ -210,7 +210,7 @@ The simplest correct implementation: poll with `LIMIT N ORDER BY created_at, eve
 
 ### P3 — The `schema_id` is embedded at write time, not resolved at publish time
 
-The Avro schema ID (from the schema registry, ADR-002) must be resolved and stored in the outbox row at the time the domain transaction writes the event. The publisher reads the `schema_id` from the row and constructs the Confluent wire-format envelope (`magic byte + schema_id + avro payload`) directly, without a schema registry lookup at publish time. This eliminates a runtime dependency on the schema registry in the publish path and ensures that a schema registry outage cannot stall the relay.
+The Avro schema ID (from the schema registry, ADR-IC-002) must be resolved and stored in the outbox row at the time the domain transaction writes the event. The publisher reads the `schema_id` from the row and constructs the Confluent wire-format envelope (`magic byte + schema_id + avro payload`) directly, without a schema registry lookup at publish time. This eliminates a runtime dependency on the schema registry in the publish path and ensures that a schema registry outage cannot stall the relay.
 
 At publish time, the publisher must validate that the `schema_id` in the row is still registered (not deleted or superseded) — a defensive check that can be satisfied by a cached registry client with a short TTL. This check is advisory at POC scale; it becomes mandatory before any production hardening that involves schema deletion.
 
@@ -229,7 +229,7 @@ The polling interval itself is not a metric that consumers can observe; `outbox_
 
 ### P5 — Cleanup is part of the schema, not a deferred task
 
-A nightly batch job or rolling retention window must move or delete `PUBLISHED` rows beyond the retention horizon. **This is the retention of the *outbox delivery record*, not the audit trail.** The Redpanda topic is the system-of-record for the published event and carries the PSD2 audit obligation (ADR-001); outbox cleanup does not affect audit retention and is a database-housekeeping concern, not a compliance concern. Recommended horizon: 7 days as default, 30 days for products where extended replay windows are useful for operational debugging. The partial index on `status = 'PENDING'` keeps the polling query fast even as the total table size grows — but only if the partial index exists from day one. The cleanup job must `DELETE WHERE status = 'PUBLISHED' AND published_at < NOW() - INTERVAL '7 days'` — it must never touch `PENDING` rows.
+A nightly batch job or rolling retention window must move or delete `PUBLISHED` rows beyond the retention horizon. **This is the retention of the *outbox delivery record*, not the audit trail.** The Redpanda topic is the system-of-record for the published event and carries the PSD2 audit obligation (ADR-IC-001); outbox cleanup does not affect audit retention and is a database-housekeeping concern, not a compliance concern. Recommended horizon: 7 days as default, 30 days for products where extended replay windows are useful for operational debugging. The partial index on `status = 'PENDING'` keeps the polling query fast even as the total table size grows — but only if the partial index exists from day one. The cleanup job must `DELETE WHERE status = 'PUBLISHED' AND published_at < NOW() - INTERVAL '7 days'` — it must never touch `PENDING` rows.
 
 ---
 
