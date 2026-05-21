@@ -4,9 +4,9 @@ A collection of documentation series covering different dimensions of a banking 
 
 The three series answer three distinct questions:
 
-- [financial_concepts/](./financial_concepts/banking_products_financial_mathematics.md) — **what math is correct**
-- [product_concepts/](./product_concepts/README.md) — **what configurable product implements that math**
-- [integration_concepts/](./integration_concepts/00-introduction-and-decisions.md) — **how that product integrates with the bank**
+- [financial_concepts/](./docs/product-management/financial_concepts/banking_products_financial_mathematics.md) — **what math is correct**
+- [product_concepts/](./docs/product-management/product_concepts/README.md) — **what configurable product implements that math**
+- [integration_concepts/](./docs/product-management/integration_concepts/00-introduction-and-decisions.md) — **how that product integrates with the bank**
 
 ---
 
@@ -20,24 +20,24 @@ The document is aimed at engineers and architects who need to reason about the f
 
 | Document | What It Covers |
 |---|---|
-| [Financial Mathematics of Banking Products](./financial_concepts/banking_products_financial_mathematics.md) | Cash flow framework, present value, the three amortization systems, term deposits, IRR/TAEG, composite and irregular cases, cross-family synthesis, glossary |
+| [Financial Mathematics of Banking Products](./docs/product-management/financial_concepts/banking_products_financial_mathematics.md) | Cash flow framework, present value, the three amortization systems, term deposits, IRR/TAEG, composite and irregular cases, cross-family synthesis, glossary |
 
 ---
 
 ### product_concepts/ — Core Banking Product Engine
 
-A documentation series defining a configurable core banking product engine: a product brief, not a system design. The engine takes the cash-flow primitive from [financial_concepts §9.2](./financial_concepts/banking_products_financial_mathematics.md) as its single architectural insight and uses it to collapse every retail product family — deposits, credits, mortgages, current accounts, cards — into one engine with a swappable configuration surface and a swappable regulatory pack. The integration backbone is inherited from `integration_concepts/`, not redefined.
+A documentation series defining a configurable core banking product engine: a product brief, not a system design. The engine takes the cash-flow primitive from [financial_concepts §9.2](./docs/product-management/financial_concepts/banking_products_financial_mathematics.md) as its single architectural insight and uses it to collapse every retail product family — deposits, credits, mortgages, current accounts, cards — into one engine with a swappable configuration surface and a swappable regulatory pack. The integration backbone is inherited from `docs/product-management/integration_concepts/`, not redefined.
 
 The customer is an incumbent Portuguese bank modernising on a strangler-fig adoption path; geography expands PT → ES → EU; deployment is SaaS multi-tenant and self-hosted from a single codebase. The v1 slice is *depósito a prazo* (Portuguese term deposit) — the smallest surface that exercises both the engine and the PT regulatory pack end-to-end.
 
 | Document | What It Covers |
 |---|---|
-| [README](./product_concepts/README.md) | Series intro, positioning relative to the other two series, document map |
-| [00 — Product Vision](./product_concepts/00-product-vision.md) | The one-pager: customer, problem, wedge, in/out of scope, strategic frame |
-| [01 — Product Architecture](./product_concepts/01-product-architecture.md) | Architectural thesis: cash-flow primitive, configuration surface, two families, regulatory pack, integration seam |
-| [02 — v1 Scope: Term Deposits](./product_concepts/02-v1-scope-term-deposits.md) | Why term deposits first, in-scope features, PT regulatory features, subledger outputs, event contract, coexistence with legacy DDA |
-| [03 — Roadmap](./product_concepts/03-roadmap.md) | Sequenced expansion (PT term deposits → PT credit → PT mortgage → PT current accounts/cards → ES → EU) plus continuous pack maintenance |
-| [04 — Open Questions](./product_concepts/04-open-questions.md) | Deferred decisions register: competitive positioning, pricing, licensing, coexistence targets, multi-tenancy, IFRS 9 signal boundary, time-travel, configurability depth, primary economic buyer, founding team credibility, split-brain reconciliation |
+| [README](./docs/product-management/product_concepts/README.md) | Series intro, positioning relative to the other two series, document map |
+| [00 — Product Vision](./docs/product-management/product_concepts/00-product-vision.md) | The one-pager: customer, problem, wedge, in/out of scope, strategic frame |
+| [01 — Product Architecture](./docs/product-management/product_concepts/01-product-architecture.md) | Architectural thesis: cash-flow primitive, configuration surface, two families, regulatory pack, integration seam |
+| [02 — v1 Scope: Term Deposits](./docs/product-management/product_concepts/02-v1-scope-term-deposits.md) | Why term deposits first, in-scope features, PT regulatory features, subledger outputs, event contract, coexistence with legacy DDA |
+| [03 — Roadmap](./docs/product-management/product_concepts/03-roadmap.md) | Sequenced expansion (PT term deposits → PT credit → PT mortgage → PT current accounts/cards → ES → EU) plus continuous pack maintenance |
+| [04 — Open Questions](./docs/product-management/product_concepts/04-open-questions.md) | Deferred decisions register: competitive positioning, pricing, licensing, coexistence targets, multi-tenancy, IFRS 9 signal boundary, time-travel, configurability depth, primary economic buyer, founding team credibility, split-brain reconciliation |
 
 ---
 
@@ -59,21 +59,21 @@ Before any patterns were chosen, three constraints were fixed. Every architectur
 
 **Compensation, not transactionality.** Classical 2PC/XA distributed transactions kill flexibility and are often unavailable in Core Banking systems. Compensation is the right trade-off — but how it is implemented determines whether the system is actually robust under failure.
 
-The full reasoning is in [Document 00](./integration_concepts/00-introduction-and-decisions.md).
+The full reasoning is in [Document 00](./docs/product-management/integration_concepts/00-introduction-and-decisions.md).
 
 #### Document Map
 
 | # | Title | What It Covers |
 |---|---|---|
-| [00](./integration_concepts/00-introduction-and-decisions.md) | Introduction and Foundational Decisions | Context, the three driving constraints, high-level architectural shape |
-| [01](./integration_concepts/01-the-six-primitives.md) | The Six Primitives | Command vs Event, Domain vs Integration Event, Bounded Context + Aggregate, Identity Trio, Idempotency Key, Compensating Action |
-| [02](./integration_concepts/02-anti-corruption-layer.md) | Anti-Corruption Layer | Seven ACL responsibilities, internal structure, the indeterminate-state problem, antipatterns |
-| [03](./integration_concepts/03-cqrs-and-read-models.md) | CQRS and Read Models | Read/write model separation, projectors, eventual consistency management, the greenfield-pragmatic starting point |
-| [04](./integration_concepts/04-plumbing-patterns.md) | Plumbing Patterns | Outbox, Inbox, Schema Registry, delivery guarantees — the mechanics that make events reliable |
-| [05](./integration_concepts/05-constitution-saga-walkthrough.md) | Constitution Saga Walkthrough | All primitives and patterns materialized in a real constitution flow, with concrete IDs, timings, and compensation paths |
-| [06](./integration_concepts/06-observability-and-tracing.md) | Observability and Distributed Tracing | Three pillars (logs/metrics/traces), OpenTelemetry, the concrete trace of a constitution, what to instrument and alert on |
-| [07](./integration_concepts/07-testing-strategy.md) | Testing Strategy | Adapted test pyramid for event-driven systems: aggregate unit tests, integration with testcontainers, contract tests (Pact), saga tests, selective E2E |
-| [08](./integration_concepts/08-event-catalog-governance.md) | Event Catalog Governance | Four governance pillars, ownership model, naming conventions, review process, the living catalogue |
-| [09](./integration_concepts/09-long-term-schema-evolution.md) | Long-term Schema Evolution | Taxonomy of compatible/incompatible changes, concrete techniques for each, antipatterns, real scenarios |
-| [10](./integration_concepts/10-security-and-threat-model.md) | Security and Threat Model | Trust boundaries, assets worth protecting, six security principles, regulatory obligations (PSD2, GDPR, BdP, DORA) |
-| [11](./integration_concepts/11-chat-agent-channel-strategy.md) | Chat Agent Channel Strategy | Bank as MCP server; LLM-agent channel; tool/resource/prompt mapping onto commands and CQRS; async completion patterns (tasks, polling, out-of-band callback); trust model for untrusted agents |
+| [00](./docs/product-management/integration_concepts/00-introduction-and-decisions.md) | Introduction and Foundational Decisions | Context, the three driving constraints, high-level architectural shape |
+| [01](./docs/product-management/integration_concepts/01-the-six-primitives.md) | The Six Primitives | Command vs Event, Domain vs Integration Event, Bounded Context + Aggregate, Identity Trio, Idempotency Key, Compensating Action |
+| [02](./docs/product-management/integration_concepts/02-anti-corruption-layer.md) | Anti-Corruption Layer | Seven ACL responsibilities, internal structure, the indeterminate-state problem, antipatterns |
+| [03](./docs/product-management/integration_concepts/03-cqrs-and-read-models.md) | CQRS and Read Models | Read/write model separation, projectors, eventual consistency management, the greenfield-pragmatic starting point |
+| [04](./docs/product-management/integration_concepts/04-plumbing-patterns.md) | Plumbing Patterns | Outbox, Inbox, Schema Registry, delivery guarantees — the mechanics that make events reliable |
+| [05](./docs/product-management/integration_concepts/05-constitution-saga-walkthrough.md) | Constitution Saga Walkthrough | All primitives and patterns materialized in a real constitution flow, with concrete IDs, timings, and compensation paths |
+| [06](./docs/product-management/integration_concepts/06-observability-and-tracing.md) | Observability and Distributed Tracing | Three pillars (logs/metrics/traces), OpenTelemetry, the concrete trace of a constitution, what to instrument and alert on |
+| [07](./docs/product-management/integration_concepts/07-testing-strategy.md) | Testing Strategy | Adapted test pyramid for event-driven systems: aggregate unit tests, integration with testcontainers, contract tests (Pact), saga tests, selective E2E |
+| [08](./docs/product-management/integration_concepts/08-event-catalog-governance.md) | Event Catalog Governance | Four governance pillars, ownership model, naming conventions, review process, the living catalogue |
+| [09](./docs/product-management/integration_concepts/09-long-term-schema-evolution.md) | Long-term Schema Evolution | Taxonomy of compatible/incompatible changes, concrete techniques for each, antipatterns, real scenarios |
+| [10](./docs/product-management/integration_concepts/10-security-and-threat-model.md) | Security and Threat Model | Trust boundaries, assets worth protecting, six security principles, regulatory obligations (PSD2, GDPR, BdP, DORA) |
+| [11](./docs/product-management/integration_concepts/11-chat-agent-channel-strategy.md) | Chat Agent Channel Strategy | Bank as MCP server; LLM-agent channel; tool/resource/prompt mapping onto commands and CQRS; async completion patterns (tasks, polling, out-of-band callback); trust model for untrusted agents |
