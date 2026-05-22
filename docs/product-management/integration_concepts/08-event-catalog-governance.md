@@ -287,6 +287,7 @@ DepositConstituted
 
 Owner: deposits team
 Status: active (v1)
+Payload shape: Option B (polymorphic envelope per aggregate) — see Deposit Aggregate entry
 Published since: 2026-01-15
 
 Business meaning:
@@ -332,6 +333,76 @@ Contact:
   - #deposits-platform on Slack
 ```
 
+For Option A events, replace the `Payload shape` line with `Payload shape: Option A (independent per-event schema)` and the rest of the entry is self-contained. For Option B events, the `Payload schema` and `Compatibility mode` fields refer to the aggregate-level schema and compatibility configuration — defined once per aggregate in the entry below.
+
+### What the Catalogue Contains for Each Aggregate (Option B Aggregates Only)
+
+[Primitive 2 (Doc 01)](../integration_concepts/01-the-six-primitives.md) names two payload-shape positions per aggregate. Option A aggregates need only per-event entries (above). Option B aggregates — where multiple event types share a single schema via a discriminator — need an additional aggregate-level entry that captures what per-event entries cannot: the granularity rationale, the discriminator, and the per-discriminator field contract.
+
+```
+Deposit Aggregate
+
+Owner: deposits team
+Payload shape: Option B (polymorphic envelope per aggregate)
+Granularity rationale:
+  Deposit drives projector-style consumers. A uniform shape collapses
+  projector code into a single discriminator-driven upsert and aligns
+  with the snapshot topic pattern in Document 04.
+
+Aggregate schema: [link to current DepositEvent schema, with all versions]
+Compatibility mode: BACKWARD
+
+Discriminator field: event_type
+Discriminator values:
+  - Constituted
+  - EarlyMobilized
+  - Matured
+  - InterestPaid
+  - Cancelled
+
+Per-discriminator field contract:
+  Constituted:
+    Guaranteed present: deposit_id, client_id, product_code, amount,
+                        rate_anb, rate_anl, start_date, maturity_date,
+                        interest_modality
+    Absent by definition: mobilization_amount, penalty_applied,
+                          cancellation_reason
+  EarlyMobilized:
+    Guaranteed present: deposit_id, mobilization_amount, penalty_applied,
+                        mobilization_date
+    Absent by definition: cancellation_reason
+  Matured:
+    Guaranteed present: deposit_id, maturity_date, final_interest,
+                        total_payout
+    Absent by definition: mobilization_amount, penalty_applied,
+                          cancellation_reason
+  InterestPaid:
+    Guaranteed present: deposit_id, period_start, period_end,
+                        gross_interest, withholding_tax, net_interest
+    Absent by definition: mobilization_amount, penalty_applied,
+                          cancellation_reason
+  Cancelled:
+    Guaranteed present: deposit_id, cancellation_reason, cancelled_at
+    Absent by definition: mobilization_amount, penalty_applied
+
+Snapshot channel (if applicable):
+  Topic: deposit-snapshots
+  Compacted: yes
+  Snapshot trigger: every N transitions OR on cadence
+  See Document 04 (Snapshot Topics).
+
+Per-event entries:
+  - DepositConstituted (under this aggregate)
+  - DepositEarlyMobilized (under this aggregate)
+  - DepositMatured (under this aggregate)
+  - InterestPaid (under this aggregate)
+  - DepositCancelled (under this aggregate)
+```
+
+The aggregate-level entry is the authoritative source for the granularity choice, the discriminator semantics, and the schema/compatibility configuration. The per-event entries continue to document business meaning, when each transition is emitted, audience, and historical changes — they do not redefine the schema.
+
+For Option A aggregates, no aggregate-level entry is needed; the per-event entries are self-contained, and the granularity choice is captured by the `Payload shape` line on each per-event entry.
+
 ### Concrete Tooling
 
 Several options, ordered by sophistication:
@@ -341,6 +412,8 @@ Several options, ordered by sophistication:
 - **Sophisticated**: commercial platforms (Backstage with event plugin, Confluent Stream Governance, Solace Event Portal). Beautiful, complete, expensive.
 
 In greenfield, start with the middle option: AsyncAPI + a static generator. Low cost, high capability. Migrate when justified.
+
+**Tooling caveat for Option B aggregates.** AsyncAPI supports discriminator-based polymorphism via `oneOf` with a `discriminator` keyword, but renderer and contract-test tooling around it is less mature than the simple one-message-per-channel case. Per-discriminator field contracts ("for `event_type=InterestPaid`, fields X, Y, Z are guaranteed present") cannot always be expressed natively and may require auxiliary contract tests (Pact, schema diffing, custom validators) maintained alongside the catalogue. This is not a reason to avoid Option B — it is a reason to budget for tooling work when the first Option B aggregate is added, and to re-evaluate the generator choice if many aggregates adopt Option B.
 
 **The catalogue is integrated with the schema registry**, not alternative to it. Schemas are what the system mechanically validates. The catalogue is what humans consult to understand meaning.
 
