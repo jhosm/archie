@@ -10,6 +10,7 @@ runner, and no deployable code. The deliverables are `.md` files organised into 
   - `docs/product-management/integration_concepts/adrs/` — Architectural Decision Records selecting concrete tools for each pattern (ADR-IC-000 defines the shared evaluation framework; ADRs 001–012 currently filed)
 - `docs/product-management/financial_concepts/` — financial mathematics of banking products
 - `docs/product-management/product_concepts/` — core banking product engine: brief (`00–04`), feature-design companions, and the open-questions register
+  - `docs/product-management/product_concepts/adrs/` — Architectural Decision Records for the product engine's own concerns: source-of-truth, configuration surface, runtime, boundary signal contracts, coexistence (ADR-PC-000 defines namespace conventions and the contract-shape template; ADR-PC numbers are independent of ADR-IC numbers)
 
 Read `README.md` for the full document map.
 
@@ -60,9 +61,12 @@ cp -rf source dest          # NOT: cp -r source dest
 - Cross-links use relative markdown links. Patterns by location:
   - Between sibling concept docs in the same folder: `./NN-name.md`
   - Between concept docs in different sibling folders (same `docs/product-management/` parent): `../OTHER_FOLDER/NN-name.md`
-  - From an ADR to a concept doc (in `integration_concepts/adrs/`): `../NN-name.md`
+  - From an ADR to a concept doc in its own series (e.g. `integration_concepts/adrs/` → `integration_concepts/NN-name.md`): `../NN-name.md`
+  - From an ADR-PC to an ADR-IC (cross-namespace): `../../integration_concepts/adrs/ADR-IC-NNN-…md`
   - From the top-level README: `./docs/product-management/FOLDER/NN-name.md`
-- ADR verdict convention (defined in ADR-IC-000): hard filters return `Pass` / `Pass (conditional)` / `Fail`. A conditional pass requires a named mitigation in the same cell and is restated in Consequences or Residual Risks
+- ADR namespaces: **ADR-IC** for shared integration infrastructure (under `integration_concepts/adrs/`); **ADR-PC** for the product engine's own concerns (under `product_concepts/adrs/`). Number spaces are independent. Within each namespace, picking a new number requires a disk + bd dual-check (per bd memory `adr-numbering-check-disk-and-bd`)
+- ADR verdict convention (defined in ADR-IC-000; reused by ADR-PC tool-selection ADRs): hard filters return `Pass` / `Pass (conditional)` / `Fail`. A conditional pass requires a named mitigation in the same cell and is restated in Consequences or Residual Risks
+- ADR-PC contract-shape ADRs (defined in ADR-PC-000) drop the F1/F2 evaluation table for boundary-contract decisions; rigor comes from six required slots (payload, semantics, ordering, idempotency, error model, ownership/versioning)
 - `CLAUDE.md` is the Claude-Code-specific mirror of this file (keep in sync)
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ccf33ec3 -->
