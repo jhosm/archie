@@ -94,6 +94,68 @@ DepositConstituted {
 
 Eight internal events compressed into a single external business fact. Consumers don't want to see *sausage being made* — they want to know what relevant thing happened to them.
 
+### Integration Event Payload Shape — Three Options
+
+Primitive 2 says *what* deserves to live on the integration backbone (coarse, business-meaningful facts). It does not say what *shape* those events should take. That is a separate choice with real trade-offs, and the same aggregate can legitimately pick different answers for different parts of the system.
+
+Three options cover the practical space.
+
+#### Option A — Narrow event-per-type (default)
+
+Each integration event has its own schema, populated only with the fields meaningful for that transition. `DepositConstituted` carries contractual fields; `InterestPaid` carries the period, amount, and new accrued balance; `DepositCancelled` carries the cancellation reason. Distinct types, distinct schemas, distinct contracts.
+
+- **Strength**: contracts are minimal and the semantic distinction between events lives in the type system. Versioning is localised — a change to `InterestPaid` does not force a compatibility evaluation for `DepositCancelled`.
+- **Weakness**: consumers that maintain projected state (read models, downstream views) stitch fields across multiple event types and keep their own partial state in between.
+
+This is the default position of the design.
+
+#### Option B — Polymorphic envelope with discriminator
+
+All events from the same aggregate share one schema: a common envelope plus a curated projection of the aggregate's external-facing state. An `event_type` discriminator names the transition. Fields irrelevant to a given transition are absent (or explicitly null), but the *shape* is constant across event types of that aggregate.
+
+```
+DepositEvent {
+  event_type: Constituted | EarlyMobilized | Matured | InterestPaid | Cancelled
+  // envelope: depositId, clientId, occurred_at,
+  //           correlation_id, causation_id, idempotency_key
+  // boundary projection: relevant fields of the Deposit's external state,
+  //                      populated per event_type
+}
+```
+
+- **Strength**: one schema per aggregate, not N. Projectors collapse into a single uniform handler keyed on the discriminator. Compacted topics provide snapshot semantics for free — the latest event per `aggregate_id` *is* the current relevant state — while per-event cost stays close to Option A because irrelevant fields are pruned.
+- **Weakness**: one schema means one versioning bottleneck per aggregate — a field added for one event type forces a compatibility evaluation across all of them. Discriminator-conditional contracts ("for `InterestPaid`, field X is guaranteed present and meaningful") cannot be fully expressed in Avro or Protobuf; the per-discriminator contract must be enforced by code and contract tests outside the schema.
+
+This option is only safe with the discipline stated below.
+
+#### Option C — Full aggregate snapshot
+
+Every event carries the whole aggregate, internal fields included. Tempting because consumers become self-sufficient — and rejected as a per-transition payload because it directly contradicts Primitive 2: internal state ends up on the public backbone, schema evolution couples to internal model changes, and PII proliferates across every topic and every event.
+
+Where genuine snapshot semantics are needed (replay, late-joining consumers, disaster recovery), the answer is a *separate* `*Snapshotted` event on its own topic with its own retention and access controls — see [Plumbing Patterns](./04-plumbing-patterns.md) — not a fat per-transition payload.
+
+### The Discipline That Makes Option B Safe
+
+The polymorphic envelope works if and only if the envelope is treated as a **boundary projection contract** — a deliberate, top-down answer to "what does the outside world need to know about a Deposit?" — and not as a bottom-up reflection of the aggregate's internal fields. In practice:
+
+- The envelope schema is owned by the boundary publisher and versioned separately from the aggregate's internal model.
+- New fields are added only when an integration consumer states a need, not when the aggregate happens to grow one.
+- Internal aggregate fields (calculation buffers, internal flags, draft state) never appear in the envelope, regardless of how convenient that would be.
+- A per-discriminator contract document states, for each `event_type`, which fields are guaranteed present and meaningful and which are absent by definition.
+
+Without this discipline, Option B drifts within a few releases into Option C — the same leak, dressed in a discriminator.
+
+### Choice Can Vary Per Aggregate
+
+The payload shape is a per-aggregate decision, not a system-wide one. A rough heuristic:
+
+- **Polymorphic envelope (Option B)** suits aggregates with a stable external state surface and many projector-style consumers — the central business aggregates whose *state* is what the rest of the ecosystem cares about. The `Deposit` aggregate is a natural candidate.
+- **Narrow event-per-type (Option A)** suits aggregates whose events are primarily *signals about transitions* rather than *announcements of state* — saga aggregates and short-lived processes. The `ConstitutionProcess` saga aggregate (see the [Constitution Saga walkthrough](./05-constitution-saga-walkthrough.md)) is a natural candidate: each transition is the news, not the resulting state.
+
+### A Caution on Compensation Semantics
+
+Option B introduces a subtle risk against Primitive 6: structural uniformity invites the assumption that compensation events are *just another transition with a different discriminator*. They are not. `DepositCancelled` shares the envelope shape with `DepositConstituted`, but semantically it is a new business operation, with its own preconditions, its own effects, and its own audit treatment. Structural similarity must not flatten semantic distinctness — consumers continue to treat compensation events as distinct business operations regardless of envelope shape.
+
 ---
 
 ## Primitive 3: Bounded Context + Aggregate
