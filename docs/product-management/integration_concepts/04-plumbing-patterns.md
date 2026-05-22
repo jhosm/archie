@@ -186,6 +186,45 @@ This catalog is as important as the technical registry. In event-driven systems,
 
 ---
 
+## Snapshot Topics — When Replay Needs a Starting Point
+
+### The Problem It Solves
+
+Per-transition events on the backbone tell you *what changed*. They don't directly answer "what is the current state of aggregate X?" without replaying every event for that aggregate from the beginning. Three situations make this expensive:
+
+- A new consumer joins, needs to populate a read model, and there are years of events to replay
+- A read-model rebuild is triggered after a projector bug fix
+- Disaster recovery requires reconstituting aggregate state from event history alone
+
+The Mental Test below includes "If a consumer is offline for 6 hours and comes back, what happens?" — the answer "it catches up by consuming missed events" works for hours but degrades for years.
+
+### The Solution
+
+A separate **snapshot event** on its own topic, carrying the full boundary projection of the aggregate at a known point in time. Two implementations:
+
+**Periodic snapshot emission.** The aggregate emits a `DepositSnapshotted` on a cadence (daily, weekly) or after every N transitions. Consumers needing to bootstrap subscribe to the snapshot topic, find the most recent snapshot per `aggregate_id`, and then apply forward-only events from the transition topic on top of it.
+
+**Compacted topics.** Kafka log compaction keeps only the latest message per key. A snapshot topic compacted by `aggregate_id` *is* the latest snapshot for every aggregate that has ever been snapshotted. Late joiners replay the compacted topic to obtain current state directly.
+
+### Why This Stays Separate From Per-Transition Events
+
+This is the operational resolution to Option C in [Primitive 2 (Doc 01)](./01-the-six-primitives.md). Putting full aggregate state into every per-transition event was rejected because it leaks internal state, bloats payloads, and worsens GDPR posture. A separate snapshot channel preserves the benefit (consumers bootstrap without source-system calls) without paying that cost on every transition.
+
+The snapshot payload carries the boundary projection of the aggregate — the same shape as Option B's envelope where Option B is in use, an explicit projection DTO where Option A is in use. It is **not** the aggregate's internal representation.
+
+### Trade-offs
+
+- **Storage and retention.** A compacted snapshot topic adds storage proportional to the number of aggregates times the snapshot size. Bounded, but real.
+- **Security surface.** The snapshot topic exposes complete boundary state in one place. Access controls must match the most restrictive consumer's authorization — the same considerations that apply to read models in [Document 03](./03-cqrs-and-read-models.md).
+- **Snapshot freshness.** A snapshot is stale the moment after it is emitted. Consumers needing live state must subscribe to both the snapshot topic (for bootstrap) and the transition topic (for ongoing updates), and apply the latter on top of the former.
+- **PII handling.** Snapshots carry whatever the boundary projection carries. The GDPR analysis applied to event payloads in [Document 09](./09-long-term-schema-evolution.md) applies identically here — personal data lives in the Customer Data Store, not embedded in snapshots.
+
+### When to Add This
+
+Not from day one. Greenfield should start with per-transition events alone. Add snapshot topics when a concrete need appears: a new consumer with multi-year replay requirements, a read-model rebuild that takes hours, or a disaster-recovery scenario that emerged in a tabletop exercise. Premature snapshotting buys complexity before the problem exists.
+
+---
+
 ## Delivery Guarantees — What You Promise and What You Don't
 
 It's worth making explicit the complete package of guarantees of the system, because each one has practical implications.

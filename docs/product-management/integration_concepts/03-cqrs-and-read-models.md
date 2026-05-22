@@ -147,6 +147,17 @@ In greenfield, **the recommendation is to start simple**: Postgres for both, sep
 
 Projectors are stateless code that consume events and update read models. They look simple; they have pitfalls.
 
+### Payload Shape
+
+The structure of the integration event determines what a projector has to do. [Primitive 2 (Doc 01)](./01-the-six-primitives.md) names two practical options:
+
+- **Narrow event-per-type (Option A)**: one projector handler per event type, each maintaining its own slice of the read model. Idiomatic where events represent distinct transitions and the read model is built from heterogeneous facts.
+- **Polymorphic envelope per aggregate (Option B)**: one handler that switches on the discriminator and applies a uniform upsert against the read model. Idiomatic where the read model is essentially a denormalised projection of the aggregate's external state.
+
+A read model designed around Option B collapses substantially — `client_deposits` becomes a single `UPSERT` keyed on `deposit_id`, with the latest event's fields overwriting prior ones. The trade-off, as Doc 01 notes, is that the envelope must be a curated boundary projection, not a leaked aggregate.
+
+The choice is per aggregate, not system-wide. The `Deposit` aggregate is a natural Option B candidate precisely *because* it drives projectors like the ones in this document; the `ConstitutionProcess` saga aggregate is a natural Option A candidate, because its events are signals about transitions rather than announcements of state.
+
 ### Idempotency
 
 We saw this in Primitive 5: at-least-once delivery means duplicated events. If the handler is naive:

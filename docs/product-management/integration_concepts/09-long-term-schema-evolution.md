@@ -287,6 +287,37 @@ Anything allowed. Translation: "no governance, even if cosmetically registered".
 
 ---
 
+## Schema Granularity — Per-Event vs Per-Aggregate
+
+The compatibility modes above operate on *a schema*. A choice upstream of them — what is the scope of "a schema"? — affects how every strategy in this document plays out.
+
+[Primitive 2 (Doc 01)](./01-the-six-primitives.md) names two practical positions:
+
+- **Option A — narrow event-per-type.** One schema per integration event: `DepositConstituted.v3`, `InterestPaid.v2`, `DepositCancelled.v1`. Schema versions evolve independently.
+- **Option B — polymorphic envelope per aggregate.** One schema for the whole aggregate, with a discriminator (`event_type`) inside. `DepositEvent.v3` covers all five Deposit event types; the discriminator selects which fields are populated.
+
+The granularity choice changes the scope of every compatibility decision that follows.
+
+### How Granularity Affects Each Strategy
+
+| Concern | Option A (per event type) | Option B (per aggregate) |
+|---|---|---|
+| **Compatibility surface** | Narrow per schema; N schemas across the aggregate | Wide per schema; one schema covers all event types |
+| **Versioning bottleneck** | Per event type — `InterestPaid` evolves without touching `DepositCancelled` | Per aggregate — a field for `InterestPaid` bumps the whole `DepositEvent`, even though `DepositCancelled` is unaffected |
+| **Consumer impact of a change** | Only consumers of that event type re-evaluate compatibility | All consumers of any event for that aggregate re-evaluate, regardless of which event types they actually consume |
+| **Strategy 1 (add field, deprecate old)** | Cheaper — only one event-type schema bumps | The new field appears in the envelope for every event type, including those that will never populate it |
+| **Strategy 2 (new event in parallel)** | Natural — `DepositConstitutedV2` coexists with `DepositConstituted` | Heavier — creating `DepositEvent.v2` parallel to `DepositEvent.v1` for one event type's sake involves the whole aggregate's stream |
+| **Strategy 3 (upcasting)** | Many narrow upcasters, one per event-type version | Fewer broader upcasters, one per aggregate-schema version |
+| **Strategy 4 (big-bang freeze + replay)** | Scoped per event type — freeze and replay one type without affecting others | Scoped per aggregate — the whole aggregate's event stream is involved |
+
+### Per-Aggregate, Not System-Wide
+
+The granularity choice is made per aggregate, not for the system as a whole. Central business aggregates with projector-heavy consumers (the `Deposit` aggregate is the canonical example) tend to favour Option B; saga aggregates and operational aggregates with heterogeneous event semantics (the `ConstitutionProcess` aggregate from [Document 05](./05-constitution-saga-walkthrough.md)) tend to favour Option A.
+
+Document the choice for each aggregate in the [event catalogue (Doc 08)](./08-event-catalog-governance.md) alongside the schema itself. Granularity drift — an aggregate that started as Option A having one event type quietly folded into a shared envelope — creates exactly the kind of "small decision now, big cost later" surface the Mental Model section warned about.
+
+---
+
 ## Real Scenario 1: The Regulatory Change
 
 Banco de Portugal announces a change in the withholding tax calculation formula on interest, with an application date 6 months out.
