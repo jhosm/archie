@@ -234,3 +234,30 @@ A third index — `(family, valid_time)` — is created if projection-rebuild qu
 ### P5 — Major-version upgrades are tested as a planned operation, not as an emergency
 
 The event log's retention horizon is longer than any single PostgreSQL major-version support window. A `pg_upgrade` (or logical-replication-based) drill runs on a production-shaped clone of the database as part of the projection-rebuild drill cadence ([event-store §7.2](../feature-design-event-store-projections.md)) every 6 months. The drill ends with a full projection rebuild from the upgraded events table; divergence from the pre-upgrade projections is a release blocker. [ADR-PC-005](../04-open-questions.md) (DR / RTO / RPO) carries the upgrade procedure as part of the operational runbook.
+
+---
+
+## Amendment — 2026-05-22: Library choice filled
+
+Per the Decision section, the choice of library on top of PostgreSQL was
+deferred to v1 build. [ADR-PC-010](./ADR-PC-010-dotnet-marten-wolverine.md)
+selects the engine implementation language as C# (.NET 9) and the event-store
+library as **Marten 7.x** (`/jasperfx/marten`, MIT, JasperFx Software). The
+companion ADRs are [ADR-PC-006](./ADR-PC-006-json-schema-njsonschema.md)
+(family-schema language) and [ADR-PC-007](./ADR-PC-007-signed-yaml-oci-pack.md)
+(pack manifest format).
+
+This amendment fills the deferred library choice within ADR-PC-001's existing
+Decision (PostgreSQL-based event store). It does **not** supersede this ADR.
+The four invariants (P1 envelope, P2 atomic append + outbox, P3 append-only
+roles, P4 indices, P5 major-version-upgrade drill) remain binding. Marten's
+table shape (`mt_events`) is an extension of the P1 contract columns;
+[ADR-PC-010 §Consequences](./ADR-PC-010-dotnet-marten-wolverine.md) records
+the column-mapping policy that keeps the underlying SQL portable.
+
+The Pattern B alternative (treat the event-store internal table as the outbox
+source, eliminating the separate `outbox` table) was considered as part of
+the ADR-PC-010 evaluation and rejected — it would have required Case-B
+supersession of this ADR. The chosen path uses Wolverine's outbox table as
+the ADR-IC-004 polling-publisher source; the separate-outbox-table contract
+from P2 is preserved.

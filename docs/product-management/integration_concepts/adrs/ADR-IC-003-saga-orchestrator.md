@@ -246,3 +246,70 @@ Compensations are modelled as explicit saga states (`COMPENSATE_VALIDATIONS`, `C
 ### P7 — Carry the identity trio on every message
 
 Every command and event emitted by the orchestrator must carry the full identity trio from document 01 (Primitive 4): `correlation_id` (unchanged from the originating request), `causation_id` (the `message_id` of the event that triggered this emission), and a new `message_id`. This is what makes saga execution traceable as a single chain in the distributed trace without requiring a dedicated orchestration UI.
+
+---
+
+## Amendment — 2026-05-22: In-process saga libraries permitted
+
+This amendment narrows — but does not reverse — the Decision section's rejection of "third-party saga engine".
+
+### What this amendment clarifies
+
+The original Decision section rejected "third-party saga engine" in favour of an "event-driven application orchestrator (in-house; no third-party engine)". The rejection's load-bearing concern, as recorded in §Consequences, was the operational complexity and ecosystem coupling that **external workflow services** introduce — Camunda, Temporal, the AWS Step Functions class of orchestrator, and Axon Framework's `@Saga` annotation pattern when used with a centralised orchestrator service.
+
+This amendment makes explicit that the rejection targets **external workflow services** — orchestrators that:
+
+- Run in a separate process or service from the saga's domain code
+- Persist saga state in their own database, separate from the saga's owning bounded context
+- Require a separate operational lifecycle (deploy, upgrade, backup, monitor) from the engine itself
+- Couple the application's saga shape to a workflow-engine-specific DSL or annotation surface
+
+The rejection does **not** target **in-process saga libraries** that:
+
+- Run inside the engine process (no separate service deployment)
+- Persist saga state in the engine's own PostgreSQL database (same database as event store, outbox, read model)
+- Share the engine's operational lifecycle (one deployment, one backup, one monitoring surface)
+- Express saga shape as plain application code (subclasses, message handlers, methods) rather than a separate workflow DSL
+- Compose with the engine's existing transactional boundary (saga state commits atomically with event-append and outbox-write)
+
+### Examples (illustrative; framework choice is ADR-PC-010's concern)
+
+**In-process saga libraries permitted by this amendment:**
+
+- **Wolverine `Saga`** (JasperFx Software, MIT) — saga state is a Marten document; dispatch is in-process; durable state commits transactionally with `IMartenOutbox` writes; selected at ADR-PC-010.
+- **Commanded process managers** (Commanded library, MIT) — saga state and process-manager state both live in the Commanded EventStore-postgres database; in-process BEAM application code.
+- **Akka.NET / akka-persistence sagas** (Akka, Apache 2.0) — durable saga actors in the engine process.
+- **Application-owned state machines** (any language) — hand-rolled saga state machines persisted to the engine's own database, dispatched by application-owned message routing.
+
+**External workflow services rejected (unchanged from original ADR-IC-003):**
+
+- Camunda BPMN engine.
+- Temporal.io workflow service.
+- AWS Step Functions and equivalent managed orchestrator services.
+- Axon Framework when deployed against a centralised Axon Server (the Axon Framework's `@Saga` annotation pattern is permitted as an in-process library when used without Axon Server; rejected when paired with the external server).
+
+### Why this clarification, why now
+
+The integration-stack work was completed in May 2026; the product-engine ADR-PC series, which began in late May 2026, surfaced cases where in-process saga libraries materially improve framework absorption without re-introducing the operational-complexity concern that motivated the original rejection. [ADR-PC-010](../../product_concepts/adrs/ADR-PC-010-dotnet-marten-wolverine.md) (Engine implementation language and framework) adopts Wolverine `Saga` as an in-process library co-located with Marten in the engine's own PostgreSQL database; this fits the spirit of the original Decision but not the literal "no third-party saga engine" phrasing without this clarification.
+
+The amendment makes the distinction explicit so future ADRs in either namespace can apply the same test:
+
+> An external workflow service is rejected. An in-process saga library that runs in the engine's own process against the engine's own database is permitted.
+
+### What does not change
+
+- The Decision section is unchanged in its literal text; this amendment narrows the interpretation of "third-party saga engine" without re-decision.
+- The Consequences and Residual Risks sections are unchanged.
+- The original ADR's Status remains `Accepted`; no supersession is in force.
+- The hybrid orchestration-vs-choreography model from `00-introduction-and-decisions` and the saga-walkthrough from `05-constitution-saga-walkthrough` are unaffected.
+- Saga state ownership remains in the bounded context whose domain emits the saga's events.
+
+### Cross-references
+
+- [ADR-PC-010](../../product_concepts/adrs/ADR-PC-010-dotnet-marten-wolverine.md) (2026-05-22) — adopts Wolverine `Saga` per this amendment.
+- [ADR-IC-004](./ADR-IC-004-outbox-pattern-mechanism.md) — outbox pattern is preserved; Wolverine's transactional outbox table is the implementation of the polling-publisher contract.
+- [ADR-PC-001](../../product_concepts/adrs/ADR-PC-001-event-store-technology.md) — event store technology unchanged; the in-process saga library's state persists in the same PG database.
+
+---
+
+*Amendment dated 2026-05-22 by jhosm. Original ADR remains `Accepted`.*
