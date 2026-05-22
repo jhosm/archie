@@ -213,6 +213,8 @@ Every event type must have exactly one `.avsc` file. Files follow the naming pat
 
 This naming makes schema registry subjects predictable and avoids collisions when multiple aggregates in the same domain publish events with similar names.
 
+This principle assumes Option A (narrow event-per-type) as defined in [Primitive 2 (Doc 01)](../01-the-six-primitives.md). Aggregates that choose Option B (polymorphic envelope per aggregate) have a single `.avsc` file covering the whole aggregate's external state with an `event_type` discriminator field; the file follows the pattern `{aggregate_type}.{AggregateName}Event.avsc` (e.g. `term_deposit.DepositEvent.avsc`), and the registry subject is `deposits.term_deposit.DepositEvent-value`. The per-aggregate granularity choice is documented in the event catalogue (see [Document 08](../08-event-catalog-governance.md)) and is the input to which file/subject pattern applies.
+
 ---
 
 ### P2 — Nullable fields always use `["null", "type"]` with null listed first
