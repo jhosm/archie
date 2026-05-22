@@ -17,8 +17,9 @@ This is the peer namespace to [integration_concepts/adrs/](../../integration_con
 | # | Title | Shape | Chosen / Decision | Supports docs |
 |---|---|---|---|---|
 | [000](./ADR-PC-000-namespace-and-contract-shape-framework.md) | ADR-PC Namespace Conventions and Contract-Shape Framework | Conventions | Two templates: tool-selection (reuses ADR-IC-000) + contract-shape (six required slots); ADR-PC number space independent of ADR-IC | all |
+| [001](./ADR-PC-001-event-store-technology.md) | Event Store Technology | Tool-selection | **PostgreSQL-based event store** — co-located with the [ADR-IC-004](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md) outbox in the same database so event-append and outbox-write commit in one local transaction; reserved `partition_key` envelope field as the v4 sharding seam | [01 §2](../01-product-architecture.md), [event-store](../feature-design-event-store-projections.md), [two-modes §6](../feature-design-two-modes-asymmetry.md) |
 
-> ADR-PC-001 through ADR-PC-018 are tracked under bd epic `archie-10r` and will be filed against this index as each is accepted. The number reservations exist in bd; the on-disk files do not yet. Per ADR-PC-000 D1, the dual-check (`ls` + `bd list | grep ADR-PC`) is required before picking a new ADR-PC number.
+> ADR-PC-002 through ADR-PC-018 are tracked under bd epic `archie-10r` and will be filed against this index as each is accepted. The number reservations exist in bd; the on-disk files do not yet. Per ADR-PC-000 D1, the dual-check (`ls` + `bd list | grep ADR-PC`) is required before picking a new ADR-PC number.
 
 ---
 

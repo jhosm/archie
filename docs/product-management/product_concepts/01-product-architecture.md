@@ -26,7 +26,7 @@ Concretely: the cash-flow primitive is the mathematical rule that governs event 
 
 ## 2. The Event Store and Projections
 
-The engine's source of truth is the event store, co-located with the outbox (per [ADR-IC-004](../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)). State is derived by deterministic, side-effect-free handlers; projections (positions, accrual schedules, maturity calendars, withholding ledgers) are bitemporal tables built from the event store. The CQRS read model (per [integration_concepts §03](../integration_concepts/03-cqrs-and-read-models.md)), the GL system, the IFRS 9 system, and the regulatory reporting application are consumers of these projections; none is the engine's primary state holder.
+The engine's source of truth is the event store — PostgreSQL ([ADR-PC-001](./adrs/ADR-PC-001-event-store-technology.md)) — co-located with the outbox in the same database (per [ADR-IC-004](../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)) so event-append and outbox-write commit in one local transaction. State is derived by deterministic, side-effect-free handlers; projections (positions, accrual schedules, maturity calendars, withholding ledgers) are bitemporal tables built from the event store. The CQRS read model (per [integration_concepts §03](../integration_concepts/03-cqrs-and-read-models.md)), the GL system, the IFRS 9 system, and the regulatory reporting application are consumers of these projections; none is the engine's primary state holder.
 
 Four properties follow:
 
