@@ -71,8 +71,6 @@ TRACE: corr-aB7xK2pQ9 (duration: 850ms)
 ├─ [Orchestrator] Consume ConstitutionRequested          [600ms]
 │  ├─ [Inbox] Dedup check                                [3ms]
 │  ├─ Parallel validations                               [220ms]
-│  │  ├─ [Compliance Adapter] Validate eligibility       [90ms]
-│  │  │  └─ [Compliance API] POST /eligibility           [78ms]
 │  │  ├─ [ACL Core] Reserve balance                      [180ms]
 │  │  │  ├─ [Idempotency] Check                          [4ms]
 │  │  │  ├─ [Core SOAP] HoldsService.create              [165ms]  ← slow!
@@ -81,7 +79,6 @@ TRACE: corr-aB7xK2pQ9 (duration: 850ms)
 │  ├─ [Orchestrator] Transition to APPROVED              [20ms]
 │  ├─ [ACL Core] Confirm debit                           [195ms]
 │  │  └─ [Core SOAP] HoldsService.confirm                [180ms]
-│  ├─ [Compliance Adapter] Confirm registration          [85ms]
 │  ├─ [Aggregate Deposit] Activate                       [45ms]
 │  │  └─ [Outbox] INSERT DepositConstituted
 │  └─ [Outbox Publisher] Publish DepositConstituted      [30ms]
@@ -153,7 +150,7 @@ tracer.startActiveSpan("aggregate.deposit.activate", span -> {
 });
 ```
 
-These manual spans transform a technical trace ("HTTP, SQL, Kafka") into a **business** trace ("constituted, validated eligibility, reserved balance, activated"). When someone looks at the trace, they read a comprehensible story, not a technical-detail soup.
+These manual spans transform a technical trace ("HTTP, SQL, Kafka") into a **business** trace ("constituted, reserved balance, validated limits, activated"). When someone looks at the trace, they read a comprehensible story, not a technical-detail soup.
 
 ### Essential Manual Spans for Your System
 

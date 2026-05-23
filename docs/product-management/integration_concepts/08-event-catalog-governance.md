@@ -298,7 +298,7 @@ Business meaning:
 When emitted:
   - After complete saga of constitution succeeds
   - After Core debit is confirmed
-  - After Compliance registration is confirmed
+  - After the deposit aggregate is activated
   - Never if the constitution saga fails or is cancelled
 
 Payload schema:

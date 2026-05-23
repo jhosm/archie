@@ -45,7 +45,7 @@ Everything outside the API gateway is untrusted. This includes mobile apps, web 
 - Rate limiting per client identity, per IP, per operation type — both a resilience and a fraud-prevention control
 - Request payload schema validation before anything enters the system
 
-**What the saga must know:** if SCA fails or times out mid-flow, the orchestrator receives a rejection event from the authentication layer, not a technical error. The compensation path for `EligibilityRejected` applies.
+**What the saga must know:** if SCA fails or times out mid-flow, the orchestrator receives a rejection event from the authentication layer, not a technical error. The orchestrator treats it as a `ConstitutionRejected` outcome and the standard compensation path applies (per [§05](./05-constitution-saga-walkthrough.md) step 0).
 
 ### Boundary 2: API Gateway → Internal Services
 

@@ -45,12 +45,13 @@ The Deposits API gateway does **only** what fits within the 500ms:
 
 1. Authentication/authorization (token validated by upstream IAM; claims propagated as signed assertions)
 2. **PSD2 SCA pre-condition**: deposit constitution is a significant financial operation. The IAM must confirm that SCA has been completed for this session before the saga proceeds to any irreversible step. If SCA is absent or timed out, the edge returns `403` with reason `SCA_REQUIRED` — the orchestrator never starts. If SCA fails mid-saga (e.g., a step-up challenge times out during a long-running workflow approval), the orchestrator treats it as a `ConstitutionRejected` outcome and triggers the standard compensation path.
-3. **Synchronous idempotency check**: does `(client_id, idem-c4d8e2f1)` exist? The key is scoped to the client — see [Primitive 5](./01-the-six-primitives.md). If yes, return cached response. If no, proceed.
-4. **Light validations**: payload schema, product exists in catalogue (local read model), amount within product's limits
-5. **Creates the `ConstitutionProcess` aggregate** in state `STARTED`
-6. Also creates the `Deposit` aggregate (in state `DRAFT`)
-7. Persists everything + event `ConstitutionRequested` in the outbox **in the same local transaction**
-8. Returns `202 Accepted` with `deposit_id = "DEP-2026-00012345"` and `process_id = "PROC-2026-00098765"`
+3. **AML / KYC clearance pre-condition**: financial-crime adjudication (sanctions/PEP screening, KYC, source-of-funds) is **upstream of this engine** and is enforced here as a precondition, exactly like SCA. The edge requires an upstream-issued clearance assertion (an `aml_clearance_ref` signed claim) on the request; if it is absent or invalid, the edge returns `403` with reason `AML_CLEARANCE_REQUIRED` — the orchestrator never starts. The engine **records the opaque `aml_clearance_ref` for audit lineage and never re-adjudicates it**; the verdict, the screening model, and any SAR/STR workflow belong to the upstream financial-crime systems. This is the contract decided in [ADR-PC-013](../product_concepts/adrs/ADR-PC-013-aml-kyc-upstream-precondition.md), and it is why there is **no `ValidateClientEligibility` step inside the saga below**.
+4. **Synchronous idempotency check**: does `(client_id, idem-c4d8e2f1)` exist? The key is scoped to the client — see [Primitive 5](./01-the-six-primitives.md). If yes, return cached response. If no, proceed.
+5. **Light validations**: payload schema, product exists in catalogue (local read model), amount within product's limits
+6. **Creates the `ConstitutionProcess` aggregate** in state `STARTED`
+7. Also creates the `Deposit` aggregate (in state `DRAFT`)
+8. Persists everything + event `ConstitutionRequested` in the outbox **in the same local transaction**
+9. Returns `202 Accepted` with `deposit_id = "DEP-2026-00012345"` and `process_id = "PROC-2026-00098765"`
 
 ```http
 HTTP 202
@@ -98,21 +99,21 @@ payload:
 
 The **Constitution Saga Orchestrator** subscribes to this topic. Inbox check, deduplicates, begins.
 
-The orchestrator transitions the `ConstitutionProcess` state to `PARALLEL_VALIDATION` and dispatches **three commands in parallel** (fan-out):
+The orchestrator transitions the `ConstitutionProcess` state to `PARALLEL_VALIDATION` and dispatches **two commands in parallel** (fan-out):
 
 ```
-→ Command ValidateClientEligibility (to Compliance adapter)
 → Command ReserveAccountBalance (to Core ACL)
 → Command ValidateProductLimits (internal, to the Deposit aggregate itself)
 ```
 
-The three carry the same `correlation_id`, `causation_id = msg-001-a7b3c`, and derived `idempotency_key`s (`idem-c4d8e2f1::eligibility`, etc.).
+> **No eligibility step here.** AML/KYC/sanctions clearance was already enforced at the edge as a precondition (step 0) and adjudicated upstream of this engine — the saga never validates client eligibility ([ADR-PC-013](../product_concepts/adrs/ADR-PC-013-aml-kyc-upstream-precondition.md)). What remains is `ValidateProductLimits` — a *product-engine* rule bound to the pack ("does the client already hold N of this product; is the amount in range"), **not** a financial-crime check.
+
+The two carry the same `correlation_id`, `causation_id = msg-001-a7b3c`, and derived `idempotency_key`s (`idem-c4d8e2f1::reservation`, `idem-c4d8e2f1::limits`).
 
 ### Ordering by the Reversibility Principle ([Primitive 6](./01-the-six-primitives.md))
 
-Notice: none of the three parallel steps has an irreversible external effect yet.
+Notice: neither of the two parallel steps has an irreversible external effect yet.
 
-- `ValidateClientEligibility` is a **validation hold** in Compliance (not final registration)
 - `ReserveAccountBalance` is a **hold** in the Core (not yet a real debit)
 - `ValidateProductLimits` is pure local computation
 
@@ -120,25 +121,9 @@ Everything easily reversible. By design.
 
 ---
 
-## Step 2: The Three Validations Execute (Parallel)
+## Step 2: The Two Validations Execute (Parallel)
 
-### 2a. Compliance Adapter Receives `ValidateClientEligibility`
-
-Makes a synchronous call to Compliance: "can client CLI-2026-007842 constitute a €10,000 TD?". Compliance responds in ~80ms: `{eligible: true, hold_id: "CMPL-HOLD-998877"}`. The hold is valid for 5 minutes.
-
-The adapter emits a domain event:
-
-```yaml
-event_type: EligibilityValidated
-causation_id: msg-002-b8c4d (the command it received)
-payload:
-  process_id: PROC-2026-00098765
-  eligible: true
-  hold_id: CMPL-HOLD-998877
-  expires_at: 2026-05-15T14:37:17Z
-```
-
-### 2b. Core ACL Receives `ReserveAccountBalance`
+### 2a. Core ACL Receives `ReserveAccountBalance`
 
 Here the ACL's full responsibilities (Document 02) come into play:
 
@@ -157,22 +142,22 @@ payload:
   expires_at: 2026-05-15T14:37:17Z
 ```
 
-### 2c. Internal Validation of Product Limits
+### 2b. Internal Validation of Product Limits
 
 Synchronous calculation in the `Deposit` aggregate itself: does the client already have N deposits of the same product? Does it exceed the maximum limit? Is the amount within range? All OK. Emits `LimitsValidated`.
 
-### 2d. Orchestrator Waits for the Three
+### 2c. Orchestrator Waits for the Two
 
-Inbox check for each event. When the three arrive, the orchestrator transitions the `ConstitutionProcess` to `VALIDATIONS_COMPLETE`.
+Inbox check for each event. When the two arrive, the orchestrator transitions the `ConstitutionProcess` to `VALIDATIONS_COMPLETE`.
 
 **Time elapsed up to here:** ~250ms from the click. Still well within the budget.
 
 ### What Is Guaranteed
 
-- Client is eligible (Compliance has hold)
+- Client clearance (AML/KYC) was already a precondition at the edge — not re-checked here
 - Balance is reserved (Core has hold)
 - Internal limits OK
-- **Nothing irreversible has happened yet.** Holds expire on their own if nothing is confirmed.
+- **Nothing irreversible has happened yet.** The Core hold expires on its own if nothing is confirmed.
 
 ---
 
@@ -204,15 +189,9 @@ ACL:
 
 **Here a significant step happens: the effect is now real in the banking world.** The money has left the client's current account.
 
-### 4b. Confirm Registration in Compliance
+### 4b. Activate the Deposit Aggregate
 
-Command to Compliance adapter: `ConfirmRegistration(hold_id=CMPL-HOLD-998877)`.
-
-Adapter calls Compliance: confirms the hold as a definitive registration. Compliance returns `{registration_id: "CMPL-REG-887766"}`. The adapter saves the local mapping, emits `ComplianceRegistered`.
-
-### 4c. Activate the Deposit Aggregate
-
-Internal command: `Deposit.activate(core_txn_id, compliance_registration_id, start_date, maturity_date)`.
+Internal command: `Deposit.activate(core_txn_id, start_date, maturity_date)`.
 
 `Deposit` aggregate:
 - Validates invariants (was in `DRAFT`, valid transition to `ACTIVE`)
@@ -264,7 +243,6 @@ payload:
   automatic_renewal: false
   metadata:
     core_txn_id: CT-2026-9988776655
-    compliance_registration_id: CMPL-REG-887766
 ```
 
 ### Consumers in Parallel
@@ -300,7 +278,7 @@ And displays "Deposit successfully constituted" to the client. Total perceived t
 ## The Complete Visual Flow (Happy Path)
 
 ```
-T+0ms     Edge: API receives, light validations, local outbox
+T+0ms     Edge: API receives, SCA + AML/KYC preconditions, light validations, local outbox
           ConstitutionProcess: STARTED
           Deposit: DRAFT
           → HTTP 202 to client (~150ms)
@@ -308,16 +286,14 @@ T+0ms     Edge: API receives, light validations, local outbox
 T+200ms   Outbox publishes ConstitutionRequested (internal topic)
           Orchestrator consumes, parallel fan-out
 
-          ┌─→ Compliance: hold
-          ├─→ Core ACL: reserve balance
+          ┌─→ Core ACL: reserve balance
           └─→ Limits: local computation
 
-T+400ms   3× validation events reach the orchestrator
+T+400ms   2× validation events reach the orchestrator
           ConstitutionProcess: VALIDATIONS_COMPLETE → APPROVED
 
 T+450ms   Sequential (real effects):
           → ACL: confirm debit in Core
-          → Compliance: confirm registration
           → Deposit: activate (emits DepositConstituted in outbox)
 
 T+700ms   DepositConstituted published on Kafka (backbone)
@@ -338,11 +314,9 @@ T+800ms   SSE notifies frontend
 
 Everything above has been the happy path. The robustness of the system is in knowing what happens when it fails. Three representative scenarios follow.
 
-### Scenario A: Client Not Eligible (Fails Early, in Validation)
+### Scenario A: Product Limit Exceeded (Fails Early, in Validation)
 
-Compliance responds `{eligible: false, reason: "KYC pending"}`.
-
-Adapter emits `EligibilityRejected`.
+`ValidateProductLimits` fails: the client already holds the maximum number of this product (or the amount is out of the product's range). The `Deposit` aggregate emits `LimitsRejected`. (Client eligibility is *not* a failure mode here — AML/KYC clearance was a precondition at the edge, so an uncleared client never reached this saga at all.)
 
 The orchestrator receives. Transitions `ConstitutionProcess` to `COMPENSATE_VALIDATIONS`.
 
@@ -350,9 +324,8 @@ The orchestrator receives. Transitions `ConstitutionProcess` to `COMPENSATE_VALI
 
 | Step | Compensation needed? |
 |---|---|
-| Compliance hold | No — already rejected |
-| **Core hold** | **Yes — release it** (was done in parallel) |
-| Internal validation | No — stateless |
+| **Core hold** | **Yes — release it** (was done in parallel and succeeded) |
+| Internal validation | No — stateless, and it is the step that rejected |
 
 The orchestrator sends `ReleaseBalanceReservation` to the ACL. The ACL calls Core: `DELETE /core/services/HoldsService/{CORE-HOLD-554433}`. Confirms. Emits `ReservationReleased`.
 
@@ -360,30 +333,29 @@ The orchestrator sends `ReleaseBalanceReservation` to the ACL. The ACL calls Cor
 
 Important: **`DepositCancelled` is emitted as an integration event**, even in a cancellation that never actually constituted. Reason: the ecosystem needs to know. Read models clean up, eventual consumers that reacted to `ConstitutionRequested` (if any exist) know they will not receive `DepositConstituted`.
 
-The frontend receives SSE: `{status: "REJECTED", reason: "KYC pending — visit your branch"}`.
+The frontend receives SSE: `{status: "REJECTED", reason: "Product limit exceeded for this client"}`.
 
 **Total time:** <500ms. Clean business error, no real-world effects.
 
 ### Scenario B: Failure After Confirmed Debit (Late Failure, Partially Irreversible)
 
-A harder scenario. Everything went well until the debit was confirmed in Core. Then, **Compliance fails** in the step of confirming the registration (network dropped, system unavailable, or refusal for supervening reason).
+A harder scenario. Everything went well until the debit was confirmed in Core (step 4a — money has moved). Then the **internal `Deposit.activate` step fails**: the activation transaction does not commit (a persistence failure, or an aggregate invariant that rejects the transition).
 
 Current state:
 
 | Participant | State |
 |---|---|
 | Core | Debit confirmed, money has moved |
-| Compliance | Registration failed |
-| Deposit | Not yet activated |
+| Deposit | Not yet activated (activation failed) |
 
-The orchestrator enters `COMPENSATE_POST_DEBIT`. **Critical business decision**: is there still a window to retry Compliance, or do we compensate directly?
+The orchestrator enters `COMPENSATE_POST_DEBIT`. **Critical business decision**: is there still a window to retry activation, or do we compensate directly?
 
 Sensible policy: **retry with backoff** first (3 attempts, 1s/3s/10s). If persistent failure, escalate.
 
 If it persists, compensation:
 
 1. `ReverseCoreDebit` to the ACL → Core executes a **reversal credit operation**, with reference to the original `core_txn_id`. Returns a new `core_txn_id` for the reversal. **Notice: two movements on the Core statement, not an undo.**
-2. `Deposit.cancel(reason="compliance_failure")` — emits `DepositCancelled` on the backbone
+2. `Deposit.cancel(reason="activation_failure")` — emits `DepositCancelled` on the backbone
 3. `ConstitutionProcess` → `CANCELLED_AFTER_DEBIT`
 
 The client is notified: "We couldn't constitute your deposit. The amount has been returned to your account. Please contact..."
@@ -432,9 +404,9 @@ Three points worth extracting from the flow, beyond what the steps already make 
 
 1. **The saga aggregate (`ConstitutionProcess`) is itself a domain entity.** It is persisted, has explicit valid transitions, and is queryable. **As a payload-shape decision ([Primitive 2 in Doc 01](./01-the-six-primitives.md)), `ConstitutionProcess` is a natural Option A aggregate** — its events are signals about transitions, have different audiences per event type (the orchestrator consumes `ProcessConstituted` to close the saga; operations consoles consume `HumanInterventionRequired`), and feed no projector-style consumers. The narrow event-per-type position serves better here than a shared envelope. The orchestrator is not a technical coordination object floating outside the domain — it *is* this aggregate in action. This is what allows `HUMAN_INTERVENTION_REQUIRED` to be a first-class state with its own operations console, rather than an unhandled exception. The operations console — which lets operators retry, cancel, and force-compensate sagas in this state — is the highest-privilege interface in the system. Its authorization model must match that privilege: strong authentication, role-based access, 4-eyes approval for operations above a defined amount threshold, and an immutable audit log of every action taken. See [Document 10](./10-security-and-threat-model.md) for the full model.
 
-2. **Compensation is never assumed to succeed.** Each scenario (eligibility rejection, post-debit compliance failure, indeterminate state) treats the compensation path as another saga with its own retries, its own intermediate states, and its own escalation path. The system doesn't *give up* — it makes explicit when it needs help.
+2. **Compensation is never assumed to succeed.** Each scenario (product-limit rejection, post-debit activation failure, indeterminate state) treats the compensation path as another saga with its own retries, its own intermediate states, and its own escalation path. The system doesn't *give up* — it makes explicit when it needs help.
 
-3. **The reversibility-ordering principle is doing real work.** The three parallel validations are all reversible by construction (holds, not commits). The irreversible operation (debit confirmation in Core) lands after every reversible step has succeeded. If failure ordering had been chosen differently, Scenario B would not have been recoverable. This is the [saga ordering principle from Primitive 6](./01-the-six-primitives.md) in direct operation — designing for failure before writing a single line of happy-path code.
+3. **The reversibility-ordering principle is doing real work.** The two parallel validations are both reversible by construction (a Core hold, not a commit; and a stateless check). The irreversible operation (debit confirmation in Core) lands after every reversible step has succeeded. If failure ordering had been chosen differently, Scenario B would not have been recoverable. This is the [saga ordering principle from Primitive 6](./01-the-six-primitives.md) in direct operation — designing for failure before writing a single line of happy-path code.
 
 ---
 

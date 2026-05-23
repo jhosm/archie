@@ -378,25 +378,25 @@ Happy-path saga of constitution:
 ```
 1. Deposit.request()           → DepositRequested
 2. ACL → Core.debit()          → CapitalDebited
-3. Compliance.register()       → ConstitutionRegistered
-4. Workflow.approve()          → ConstitutionApproved
-5. Deposit.activate()          → DepositConstituted
+3. Workflow.approve()          → ConstitutionApproved
+4. Deposit.activate()          → DepositConstituted
 ```
 
-Imagine step 4 fails (Workflow rejects due to supervening compliance reason). The capital **has already been debited**. Steps 1–3 **have already produced effects in the world**.
+(Client AML/KYC clearance is *not* a step here — it was a precondition at the edge, upstream of this saga; see [ADR-PC-013](../product_concepts/adrs/ADR-PC-013-aml-kyc-upstream-precondition.md).)
+
+Imagine step 3 fails (Workflow rejects due to a supervening business reason). The capital **has already been debited**. Steps 1–2 **have already produced effects in the world**.
 
 The compensation **is not**: "rollback of the debit".
 
 The compensation **is**: a sequence of domain operations, each with its own semantics:
 
 ```
-4'. Workflow.reject()                 → ConstitutionRejected
-3'. Compliance.cancelRegistration()   → RegistrationCancelled
+3'. Workflow.reject()                 → ConstitutionRejected
 2'. ACL → Core.creditReversal()       → ReversalExecuted
 1'. Deposit.cancel(reason)            → DepositCancelled
 ```
 
-Each `'` is a **new** domain operation, with its own name, its own effect, its own event. The Core doesn't see "rollback of debit" — it sees a **reversal credit operation** with a reference to the original debit. Compliance doesn't see "forget"; it sees "cancel this record with this reason". The client, if they want to see, sees two entries on the statement and a clear explanation.
+Each `'` is a **new** domain operation, with its own name, its own effect, its own event. The Core doesn't see "rollback of debit" — it sees a **reversal credit operation** with a reference to the original debit. The client, if they want to see, sees two entries on the statement and a clear explanation.
 
 ### Characteristics That All Compensations Must Model
 
@@ -431,13 +431,12 @@ Reason: if something is going to fail, fail early, before irreversible steps. No
 Inevitable consequence of all this: the **saga state is an auditable entity**, not a transient variable. It has its own aggregate (`ConstitutionProcess`), persisted, with explicit states (see the [Constitution Saga walkthrough](./05-constitution-saga-walkthrough.md) for a concrete materialization):
 
 ```
-Started → Validated → CapitalReserved → ComplianceRegistered 
-  → Approved → Active
+Started → Validated → CapitalReserved → Approved → Active
 
 or
 
 Started → ... → FailedApproval → AwaitingCompensation 
-  → ComplianceCancelled → CapitalReversed → Cancelled
+  → CapitalReversed → Cancelled
 ```
 
 Each transition emits an event. Each state is queryable. Exception operations (human intervention) attack this aggregate directly. The saga orchestrator **is** this aggregate in action — not a technical object on the side.

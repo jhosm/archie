@@ -25,7 +25,7 @@ Person_Ext(agents, "AI / LLM Agents", "Untrusted agents acting for staff/custome
 ' ─────────────── Neighbouring bank systems (out-of-scope products; in-scope integration) ───────────────
 System_Ext(channels,  "Channels",                 "Mobile, web, branch teller, call centre")
 System_Ext(core,      "Core Banking (Legacy)",    "Owns the conta à ordem (current account).\nSoR for legacy deposits during coexistence.\nEmits the daily legacy-DDA batch extract")
-System_Ext(compliance,"Compliance / AML / Fraud", "Gates constitution; issues freezes & legal holds")
+System_Ext(compliance,"Compliance / AML / Fraud", "Adjudicates AML/KYC upstream (edge precondition);\nmonitors via lifecycle events; issues freezes & legal holds")
 System_Ext(crm,       "CRM",                      "Customer master data")
 System_Ext(workflow,  "Workflow",                 "Human-in-the-loop saga steps")
 System_Ext(kyc,       "KYC / Onboarding",         "Establishes the customer upstream of any product")
@@ -51,16 +51,19 @@ Rel(engine, core, "Debit principal / credit interest & maturity",  "via ACL; ide
 Rel(core,   engine, "Daily legacy-state extract",                   "→ LegacyInstanceObserved")
 
 ' ─────────────── Constitution saga participants (engine is a step, not the orchestrator) ───────────────
-Rel(engine, compliance, "Screening during constitution;\nreceives freezes & holds")
 Rel(engine, crm,        "Reads customer data during constitution")
 Rel(engine, workflow,   "Human approval steps")
 Rel(kyc,    crm,        "Customer established before any product")
 
+' ─────────────── AML/KYC is upstream: clearance is an edge precondition, not an in-saga gate (ADR-PC-013) ───────────────
+Rel(compliance, engine, "AML/KYC clearance precondition (at edge);\nfreezes & legal holds", "upstream / commands")
+
 ' ─────────────── Downstream consumers (events & pack-defined signals) ───────────────
-Rel(engine, gl,        "Posting signals")
-Rel(engine, ifrs9,     "Lifecycle events")
-Rel(engine, reporting, "Reporting-hook signals")
-Rel(engine, notify,    "Terminal saga events → notify")
+Rel(engine, gl,         "Posting signals")
+Rel(engine, ifrs9,      "Lifecycle events")
+Rel(engine, compliance, "Lifecycle events → AML monitoring")
+Rel(engine, reporting,  "Reporting-hook signals")
+Rel(engine, notify,     "Terminal saga events → notify")
 
 SHOW_LEGEND()
 @enduml

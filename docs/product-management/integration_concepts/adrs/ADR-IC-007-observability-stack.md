@@ -202,7 +202,7 @@ Manual span names must follow the `<layer>.<entity>.<operation>` convention, wit
 |---|---|
 | `aggregate.<entity>.<operation>` | `aggregate.deposit.activate`, `aggregate.deposit.cancel` |
 | `saga.<process>.<transition>` | `saga.constitution.transition`, `saga.mobilization.compensation` |
-| `acl.<system>.<operation>` | `acl.core.reserve_balance`, `acl.compliance.validate_eligibility` |
+| `acl.<system>.<operation>` | `acl.core.reserve_balance`, `acl.core.confirm_debit` |
 | `outbox.<operation>` | `outbox.publish`, `outbox.poll` |
 | `inbox.<operation>` | `inbox.dedup_check`, `inbox.process` |
 | `projector.<projection>.<operation>` | `projector.deposits_by_client.upsert` |

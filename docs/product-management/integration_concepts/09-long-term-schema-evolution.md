@@ -356,7 +356,7 @@ Every event is self-describing about which regime applies. Consumers can evolve 
 
 ## Real Scenario 2: The Granularity Migration
 
-After 18 months in production, you discover that the `DepositConstituted` event is too coarse — consumers need to know separately when the capital was debited and when the compliance was registered. Currently both happen inside the saga and only one event emerges.
+After 18 months in production, you discover that the `DepositConstituted` event is too coarse — consumers need to know separately when the capital was debited and when the deposit became active. Currently both happen inside the saga and only one event emerges.
 
 **Analysis**: structural change (Category 4). Cannot be resolved with an additional field.
 
@@ -365,7 +365,7 @@ After 18 months in production, you discover that the `DepositConstituted` event 
 ```
 From the next version:
   - DepositConstituted continues to be emitted (compatibility)
-  - NEW: CapitalDebitedForDeposit + ComplianceRegisteredForDeposit
+  - NEW: CapitalDebitedForDeposit + DepositActivated
   - The three events reference the same deposit_id
   - Consumers choose granularity
 

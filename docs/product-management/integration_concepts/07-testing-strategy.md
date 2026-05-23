@@ -252,9 +252,9 @@ This is where the real value lies, and where 90% of bugs live in distributed sys
 You simulate failures at specific points in the flow and validate that the correct compensation executes:
 
 ```
-test "if Compliance fails after Core debit confirmed, capital is reversed":
+test "if deposit activation fails after Core debit confirmed, capital is reversed":
   // Given - configure failure point
-  given(complianceMock).willFailOn("ConfirmRegistration").afterCalls(1)
+  given(depositStore).willFailOn("persistActivation").afterCalls(1)
   
   // When
   api.constituteDeposit(largeAmountPayload)

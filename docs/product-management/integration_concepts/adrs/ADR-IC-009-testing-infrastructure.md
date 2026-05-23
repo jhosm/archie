@@ -470,7 +470,7 @@ Reference mapping for the ConstitutionProcess:
 |---|---|---|---|
 | Core Banking times out (INDETERMINATE) | `timeout` toxic on Core Banking proxy port; timeout < ACL retry interval | — | ACL transitions to INDETERMINATE; clearance job retries; saga awaits |
 | Core Banking empty response | — | `CONNECTION_RESET` fault on `/holds` stub | Same INDETERMINATE path as above |
-| Compliance fails after Core debit | — | WireMock priority stub: 3 × 500, then 200 | Saga enters COMPENSATE_POST_DEBIT; Core reversal credit is called |
+| Deposit activation fails after Core debit | `reset_peer` toxic on the PostgreSQL proxy during the activation commit | — | Saga enters COMPENSATE_POST_DEBIT; Core reversal credit is called |
 | Redpanda producer timeout | `latency` toxic on Redpanda proxy port with `latency=30000ms` (> producer timeout) | — | Outbox publisher retries; saga persists; no duplicate events after recovery |
 | Compensation fails 3× | — | WireMock priority stub: 3 × 500, no 200 | Saga enters HUMAN_INTERVENTION_REQUIRED; alert fires in observability stack |
 | Service restart mid-flow | Pumba `kill` on the application container; restart | — | Saga resumes from persisted PostgreSQL state; no duplicate effects |
