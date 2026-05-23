@@ -201,7 +201,7 @@ migration_id, operator_actor
 
 ##### `LegacyInstanceObserved`
 
-Daily batch file arrives from legacy DDA (per [coexistence §5](./feature-design-strangler-fig-coexistence.md)).
+Daily batch file arrives from legacy DDA (per [coexistence §5](./feature-design-strangler-fig-coexistence.md); ingest contract in [ADR-PC-017](./adrs/ADR-PC-017-legacy-batch-ingest-contract.md)).
 
 ```
 legacy_instance_id, observed_at,
@@ -295,7 +295,7 @@ Three concrete commitments:
 
 3. **Settlement and maturity events are observable by the legacy core.** When `DepositMatured` fires, the engine settles principal + final net interest into the legacy current account. The legacy core sees a credit event with a correlation ID and reconciles against its own books at end of day. The bank's reconciliation process compares the engine's outbox (matured deposits, target current accounts, amounts) against the legacy core's incoming credit journal; mismatches are operational alerts, not silent drift.
 
-These are direct consequences of the ACL (per [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md)) and the outbox (per [integration_concepts §04](../integration_concepts/04-plumbing-patterns.md)). Later v's that bring more product families onto the engine adopt the same approach until the legacy core is replaced — or until the bank decides to run hybrid indefinitely.
+These are direct consequences of the ACL (per [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md)) and the outbox (per [integration_concepts §04](../integration_concepts/04-plumbing-patterns.md)). The settlement-command contract and the first-class-adapter decision for the current-account module are fixed in [ADR-PC-016](./adrs/ADR-PC-016-legacy-current-account-adapter.md). Later v's that bring more product families onto the engine adopt the same approach until the legacy core is replaced — or until the bank decides to run hybrid indefinitely.
 
 ---
 

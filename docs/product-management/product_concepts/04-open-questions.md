@@ -21,6 +21,8 @@
 
 **Output.** A named list (one or two systems) folded into this entry as the position, and a new sub-section of [01 §6](./01-product-architecture.md) declaring the first-class adapters as in-scope for v1 engineering. Interacts with Q-AH (legacy batch file contract — same source system) and Q-AB (GL adapter ownership — see §12.1's GL-coupling dimension).
 
+**Partial commitment.** [ADR-PC-016](./adrs/ADR-PC-016-legacy-current-account-adapter.md) commits the *approach* and *settlement-contract shape* for the legacy current-account module — the named load-bearing first-class candidate — pending this meeting's per-system dimension fill-in (the production gate that confirms feasibility). The broader inventory (which *other* systems are first-class vs generic ACL-only) stays open here.
+
 ---
 
 ### 2. IFRS 9 Signal Boundary
@@ -164,8 +166,8 @@ Strangler-fig coexistence (multi-year period of dual operation).
 - **Q-AE. Reporting application identity and ownership.** Whether the operating bank already has a downstream reporting application that can consume engine events and legacy batch facts, or whether one has to be built. Shapes the engine's reporting-hook contracts (`bdp_estatisticas_taxas_juro`, `modelo_39`).
 - **Q-AF. Read-model latency contract per channel.** Per-channel tolerances for 24-hour-stale legacy-sourced data and where per-channel refresh paths back to legacy are needed. Requires a channel-by-channel review with the channel teams.
 - **Q-AG. Reconciliation alert thresholds.** Calibration of "how many mismatches per day cross from noise to incident" for the three reconciliation flows (settlements outbox, legacy state, engine-internal). Requires a calibration period under real-data load. The narrowed scope of Q5 (above) lives here.
-- **Q-AH. Legacy batch file contract.** Schema, cutoff times, completeness guarantees, schema-drift coordination protocol. Depends on what the operating bank's legacy core can produce; unblocked by a legacy-extract audit.
-- **Q-AI. Channel routing for state-changing operations.** Three credible locations for the routing logic (channel, unified API gateway, read model); the choice should align with the operating bank's existing channel architecture, not introduce a new pattern.
+- **Q-AH. Legacy batch file contract.** Schema, cutoff times, completeness guarantees, schema-drift coordination protocol. Depends on what the operating bank's legacy core can produce; unblocked by a legacy-extract audit. Contract *shape* fixed in [ADR-PC-017](./adrs/ADR-PC-017-legacy-batch-ingest-contract.md) (format-agnostic record + closed `fact_kind` taxonomy, all-or-nothing, idempotent re-ingest, fail-loud versioning); the residual here is the concrete format/cutoffs/dedupe keys the audit produces.
+- **Q-AI. Channel routing for state-changing operations.** Three credible locations for the routing logic (channel, unified API gateway, read model); the choice should align with the operating bank's existing channel architecture, not introduce a new pattern. [ADR-PC-018](./adrs/ADR-PC-018-channel-routing-coexistence.md) takes the position (engine exposes `sor`, not the routing logic; recommends gateway-tier reuse of [ADR-IC-006](../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md); rejects a read-model command endpoint for the engine); the placement decision stays open here, pending channel-team review.
 - **Q-AJ. End-of-coexistence trigger for the full bank.** For term deposits alone the answer is mechanical (last instance matured); for the full bank it requires named operational criteria across families.
 
 ### Q-AK through Q-AO — from [two-modes](./feature-design-two-modes-asymmetry.md)

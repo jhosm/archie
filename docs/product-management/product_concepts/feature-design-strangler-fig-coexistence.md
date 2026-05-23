@@ -86,7 +86,7 @@ Legacy instances carry no engine-side marker; the engine simply does not know ab
 
 ## 4. Settlement Plumbing
 
-The engine debits and credits customer current accounts on the legacy core throughout the coexistence period. This is already covered by [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md) and applied in [02 §3](./02-v1-scope-term-deposits.md); the coexistence framing does not change any of it. This section exists to name the dependency, not to redefine the mechanism.
+The engine debits and credits customer current accounts on the legacy core throughout the coexistence period. This is already covered by [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md) and applied in [02 §3](./02-v1-scope-term-deposits.md); the coexistence framing does not change any of it. This section exists to name the dependency, not to redefine the mechanism. The settlement *contract* this seam carries — the five commands, gated-on-confirmation error model, inherited idempotency, and reconciliation flow 1 — is decided in [ADR-PC-016](./adrs/ADR-PC-016-legacy-current-account-adapter.md), which also classifies the current-account module as a first-class adapter (§12.2).
 
 The settlement events that flow through the ACL during coexistence:
 
@@ -148,7 +148,7 @@ The batch file is a public contract between legacy and the engine, even though b
 - **Lateness contract.** The file must be available to the engine by a published cutoff (e.g. 04:00 local time on day D+1). Missed cutoffs page operations.
 - **Schema-drift protocol.** When legacy changes its extract (a new field is added, a rate scaling changes), the change is coordinated through a written contract update; the engine's ACL is updated to parse the new shape before the new extract ships.
 
-The detailed shape of this contract — exact format, exact cutoffs, exact dedupe keys — is left open as [Q-AH in 04-open-questions](./04-open-questions.md), because it depends on what the operating bank's legacy core already produces.
+The contract *shape* — format-agnostic record fields, the closed `fact_kind` taxonomy, all-or-nothing completeness, idempotent re-ingest, fail-loud schema-versioning — is fixed in [ADR-PC-017](./adrs/ADR-PC-017-legacy-batch-ingest-contract.md). The exact format, cutoffs, and dedupe keys remain open as [Q-AH in 04-open-questions](./04-open-questions.md), because they depend on what the operating bank's legacy core already produces.
 
 ---
 
@@ -218,7 +218,7 @@ Three credible locations for the routing logic, none obviously correct:
 | **Unified API gateway** | A single API in front of channels resolves `sor` and dispatches | A new system to build and operate | Centralises the routing rule but adds a hop and a new operational dependency |
 | **Read model** | The projection exposes a "command endpoint" alongside the row | Couples read and command surfaces | Mixes CQRS sides; pragmatic but architecturally noisy |
 
-The decision is deferred as [Q-AI in 04-open-questions](./04-open-questions.md). The operating bank's existing channel architecture probably already has an opinion about this — the engine should fit into it, not invent a new pattern.
+[ADR-PC-018](./adrs/ADR-PC-018-channel-routing-coexistence.md) takes the position: the engine exposes the `sor` routing *data* and refuses to host the routing *logic* in its own command or read surfaces (rejecting the read-model option for itself), and recommends gateway-tier routing reusing the [ADR-IC-006](../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md) edge gateway. The placement itself stays deferred as [Q-AI in 04-open-questions](./04-open-questions.md): the operating bank's existing channel architecture probably already has an opinion about this — the engine should fit into it, not invent a new pattern.
 
 ---
 
@@ -458,7 +458,7 @@ The bank's legacy estate is typically not one system. The questionnaire is fille
 | **Generic ACL-only** | The engine commits to the ACL pattern; the bank builds its own integration on top per [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md). | The integration is per-operator-bespoke even within the operating bank's estate (e.g. a brand-specific internal stack), or the system is touched only occasionally |
 | **Out-of-scope at v1** | The engine does not integrate with this system at v1; the integration is deferred to a later phase. | The system is touched only at v2+ (e.g. a credit-bureau feed needed from v2) or a manual / batch process is operationally acceptable through coexistence |
 
-The [§1 in 04-open-questions](./04-open-questions.md) commitment names "one or two named systems" as first-class. Naming more dilutes engineering focus; naming fewer leaves the v1 onboarding longer than the brief promises. The legacy current-account module is the load-bearing first-class candidate by virtue of [02 §3](./02-v1-scope-term-deposits.md).
+The [§1 in 04-open-questions](./04-open-questions.md) commitment names "one or two named systems" as first-class. Naming more dilutes engineering focus; naming fewer leaves the v1 onboarding longer than the brief promises. The legacy current-account module is the load-bearing first-class candidate by virtue of [02 §3](./02-v1-scope-term-deposits.md); [ADR-PC-016](./adrs/ADR-PC-016-legacy-current-account-adapter.md) commits it as first-class on that basis, with this meeting's per-system dimension fill-in as the production gate that confirms feasibility.
 
 ### 12.3 Decision outputs needed from the meeting
 
