@@ -1,0 +1,36 @@
+# CODEOWNERS — approval-boundary gate for the babelstone monorepo.
+#
+# Enforces the three-owner configuration-surface split (01 §3, ADR-PC-019 F2):
+# the cheapest, most frequent change must not inherit the most expensive approval.
+# Every merge to a gated path requires its owner's review, so the segregation is a
+# property of the merge gate, not of repository count.
+#
+# Team size note: at the current 1–2-person team the three config-surface roles
+# (Product team / Treasury-ALM / Engine team + regulatory counsel) all resolve to
+# @jhosm. Replace the per-role handle with a GitHub team (e.g. @jhosm-org/treasury)
+# when the org adds the team; the role each line represents is named in its comment.
+
+# --- Default owner -----------------------------------------------------------
+*                       @jhosm
+
+# --- Product-engine + in-house estate (engine team) --------------------------
+/engine/                @jhosm
+/pack-validate/         @jhosm
+/families/              @jhosm
+/contracts/             @jhosm
+/orchestrator/          @jhosm
+/acl/                   @jhosm
+/mcp-server/            @jhosm
+/notification/          @jhosm
+/infra/                 @jhosm
+
+# --- Three-owner configuration surface (01 §3) -------------------------------
+# Product configs (structure)            — role: Product team
+/product-configs/       @jhosm
+# Rate sheets (numerical rates)          — role: Treasury / ALM
+/rate-sheets/           @jhosm
+# Pack (jurisdiction-scoped vocabulary)  — role: Engine team + regulatory counsel
+/packs/                 @jhosm
+
+# --- Docs & ADRs (engine team) -----------------------------------------------
+/docs/                  @jhosm

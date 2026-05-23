@@ -9,3 +9,16 @@
 
 # macOS metadata
 .DS_Store
+
+# Build output — .NET (engine, orchestrator, acl, notification)
+bin/
+obj/
+
+# Build output — Go (pack-validate)
+/pack-validate/pack-validate
+
+# Build output — Python (mcp-server)
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/

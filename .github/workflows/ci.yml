@@ -1,0 +1,160 @@
+name: CI
+
+# Path-scoped CI (ADR-PC-019 §P1; Consequences #1: "CI must be path-scoped from
+# the start"). The `changes` job detects which top-level subtree a PR touches;
+# each downstream job runs only for its path. Real build/test steps land with each
+# subtree's own build task — this skeleton wires the path-scoping, which must exist
+# from day one so a naïve "build everything on every push" never takes root.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      engine: ${{ steps.filter.outputs.engine }}
+      pack_validate: ${{ steps.filter.outputs.pack_validate }}
+      families: ${{ steps.filter.outputs.families }}
+      contracts: ${{ steps.filter.outputs.contracts }}
+      orchestrator: ${{ steps.filter.outputs.orchestrator }}
+      acl: ${{ steps.filter.outputs.acl }}
+      mcp_server: ${{ steps.filter.outputs.mcp_server }}
+      notification: ${{ steps.filter.outputs.notification }}
+      product_configs: ${{ steps.filter.outputs.product_configs }}
+      packs: ${{ steps.filter.outputs.packs }}
+      rate_sheets: ${{ steps.filter.outputs.rate_sheets }}
+      infra: ${{ steps.filter.outputs.infra }}
+      docs: ${{ steps.filter.outputs.docs }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            engine: ['engine/**']
+            pack_validate: ['pack-validate/**']
+            families: ['families/**']
+            contracts: ['contracts/**']
+            orchestrator: ['orchestrator/**']
+            acl: ['acl/**']
+            mcp_server: ['mcp-server/**']
+            notification: ['notification/**']
+            product_configs: ['product-configs/**']
+            packs: ['packs/**']
+            rate_sheets: ['rate-sheets/**']
+            infra: ['infra/**']
+            docs: ['docs/**']
+
+  engine:
+    needs: changes
+    if: ${{ needs.changes.outputs.engine == 'true' || needs.changes.outputs.families == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + analysers + Testcontainers (ADR-PC-010, ADR-IC-009)
+        run: echo "TODO - dotnet build plus analysers plus Testcontainers suite; lands with the engine build task"
+
+  pack-validate:
+    needs: changes
+    if: ${{ needs.changes.outputs.pack_validate == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + test the Go validator (ADR-PC-006)
+        run: echo "TODO - go build and go test; lands with the pack-validate build task"
+
+  contracts:
+    needs: changes
+    if: ${{ needs.changes.outputs.contracts == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Schema compatibility + EventCatalog build (ADR-IC-002, ADR-IC-008)
+        run: echo "TODO - Avro/CUE compatibility checks plus EventCatalog build; lands with the contracts task"
+
+  orchestrator:
+    needs: changes
+    if: ${{ needs.changes.outputs.orchestrator == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + contract tests (ADR-IC-003, ADR-IC-013)
+        run: echo "TODO - dotnet build plus contract tests; lands with the orchestrator build task"
+
+  acl:
+    needs: changes
+    if: ${{ needs.changes.outputs.acl == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + contract tests (ADR-IC-012, ADR-IC-013)
+        run: echo "TODO - dotnet build plus contract tests; lands with the ACL build task"
+
+  mcp-server:
+    needs: changes
+    if: ${{ needs.changes.outputs.mcp_server == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + contract tests (ADR-IC-010, ADR-IC-013)
+        run: echo "TODO - Python build plus contract tests; lands with the MCP server build task"
+
+  notification:
+    needs: changes
+    if: ${{ needs.changes.outputs.notification == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build + contract tests (ADR-IC-011, ADR-IC-013)
+        run: echo "TODO - dotnet build plus contract tests; lands with the notification build task"
+
+  product-configs:
+    needs: changes
+    if: ${{ needs.changes.outputs.product_configs == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate variant structure (01 §3)
+        run: echo "TODO - pack-validate variant structure against family schema plus active pack; lands with pack-validate"
+
+  packs:
+    needs: changes
+    if: ${{ needs.changes.outputs.packs == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate + verify + smoke-load the pack (ADR-PC-006, ADR-PC-007)
+        run: echo "TODO - pack-validate plus cosign verify plus pack-load smoke test; lands with pack tooling"
+
+  rate-sheets:
+    needs: changes
+    if: ${{ needs.changes.outputs.rate_sheets == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate rate-sheet schema (ADR-PC-008)
+        run: echo "TODO - rate-sheet schema validation; lands with rate-sheet tooling"
+
+  infra:
+    needs: changes
+    if: ${{ needs.changes.outputs.infra == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint infra manifests (01 §6)
+        run: echo "TODO - infra manifest lint/validate; lands with the infra task"
+
+  docs:
+    needs: changes
+    if: ${{ needs.changes.outputs.docs == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Link + diagram checks
+        run: echo "TODO - markdown link check plus PlantUML render check; lands with the docs-CI task"
