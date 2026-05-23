@@ -179,8 +179,8 @@ At startup the engine pulls, signature-verifies, structurally re-parses, and cac
 - [ADR-PC-006](./ADR-PC-006-cue-schema-language.md) — CUE is the schema language; pack `schemas/` ship `.cue` files validated by the same Go validator; cosign signing underwrites the validated-in-CI attestation.
 - [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — engine runtime is .NET 9; YamlDotNet parses pack YAML; the hand-rolled substrate runs the depth-5 corpus.
 - [ADR-PC-001 §P1](./ADR-PC-001-event-store-technology.md) — `pack_version` is a contract column on the event envelope.
-- [ADR-PC-008](../04-open-questions.md) — rate-sheet storage; this ADR carries rate-sheet refs only.
-- [ADR-PC-009](../04-open-questions.md) — per-instance pack/schema version pinning; this ADR carries the pinning column, PC-009 carries the migration-event semantics.
+- [ADR-PC-008](./ADR-PC-008-rate-sheet-storage-and-deploy-api.md) — rate-sheet storage; this ADR carries rate-sheet refs only.
+- [ADR-PC-009](./ADR-PC-009-per-instance-version-pinning.md) — per-instance pack/schema version pinning; this ADR carries the pinning column, PC-009 carries the migration-event semantics.
 - [surface §3.4–§3.10](../feature-design-configuration-surface.md) — pack manifest shape, pinning, distribution/signing (§3.7), sealed test corpus (§3.9), validator interplay (§3.10).
 
 ---
