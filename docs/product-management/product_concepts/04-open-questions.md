@@ -39,6 +39,8 @@ The decision interacts with the event catalogue (per [integration_concepts §08]
 
 **Unblocked by.** An IFRS 9 SME conversation: ideally a risk-quant or model-validation lead inside the operating bank, or a consultant who has integrated several IFRS 9 vendors. Output: a signal-contract section in [02](./02-v1-scope-term-deposits.md) (or in the v2 / v3 scope documents where credit lands) and corresponding events registered in the catalogue.
 
+**Partial commitment.** [ADR-PC-015](./adrs/ADR-PC-015-ifrs9-signal-contract.md) commits the *shape* — **shape (b)**: the engine emits raw operational facts (a continuous days-past-due tracker plus discrete restructuring / write-off events) and the IFRS 9 system derives staging and ECL; the engine emits **no stage event** and holds no SICR model, default definition, forbearance classification, or ECL. This is the same raw-facts-out boundary as [ADR-PC-012](./adrs/ADR-PC-012-gl-posting-signal-contract.md) (GL) and matches the prose already in [00 §4](./00-product-vision.md). The *exact schema* (field set, reason taxonomies) and confirmation that a target IFRS 9 vendor derives staging from this shape stay open here, pending the SME conversation (the production gate) and the v2 credit scope where the events first register. Because v1 term deposits are a bank **liability** — not an exposure to which ECL staging applies — nothing in this contract is emitted in v1.
+
 ---
 
 ### 3. Time-Travel / Point-in-Time Correctness — **RESOLVED**
