@@ -1,0 +1,33 @@
+@startuml c4-l3-projection-query
+' Source of truth for Level 3.2 in ../feature-design-c4-architecture.md.
+' Regenerate: plantuml -tsvg <this file>
+!include <C4/C4_Component>
+' Remote fallback: !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+AddElementTag("family", $bgColor="#B8860B", $fontColor="#FFFFFF", $borderColor="#7A5B08", $legendText="Loaded from the family schema at startup (not engine code)")
+AddElementTag("estate", $bgColor="#2E7D6B", $fontColor="#FFFFFF", $borderColor="#1F5749", $legendText="Inherited integration estate")
+AddElementTag("ref", $bgColor="#8A94A6", $fontColor="#FFFFFF", $borderColor="#5F6A7D", $legendText="Detailed in another Level 3 diagram")
+
+title Component — L3.2 Projection & query (Engine process): event log → bitemporal read models
+
+Container(kong, "Kong Gateway CE", "estate", "Edge for queries + SSE", $tags="estate")
+
+Container_Boundary(engine, "Engine process — C# / .NET 9") {
+  Component(projrt, "Projection runtime", "C#", "Reads the event log; dispatches each event to the family projections; maintains valid_time / transaction_time; per-projection sync (inline with append) or async (catch-up) update")
+  Component(projectors, "Family projections", "loaded from family schema", "position · accrual schedule · maturity calendar · withholding ledger — pure folds of events into bitemporal derived state", $tags="family")
+  Component(snap, "Snapshot machinery", "C#", "Triggers per-N / lifecycle / calendar; snapshot hash includes last event_id; discard-and-rebuild drills (advisory until verified)")
+  Component(queryapi, "Query API", "AspNetCore", "As-of / point-in-time reads from the read models; SSE saga-status stream")
+}
+
+Component(kernel, "Financial-math kernel", "PURE — see L3.1", "The accrual-schedule projector computes the ex-ante schedule by calling the same pure kernel with a resolved calc-context", $tags="ref")
+ContainerDb(pg, "Engine PostgreSQL", "PostgreSQL", "events (read) + bitemporal read-model projections + snapshots")
+
+Rel(kong, queryapi, "Queries (as-of, position) + SSE", "HTTPS / SSE")
+Rel(projrt, pg, "Read event log; write bitemporal read models", "SQL")
+Rel(projrt, projectors, "Dispatch event -> fold into projection")
+Rel(projectors, kernel, "Schedule computation (accrual-schedule projector)")
+Rel(snap, pg, "Read events; write + hash-verify snapshots", "SQL")
+Rel(queryapi, pg, "Read read models", "SQL")
+
+SHOW_LEGEND()
+@enduml

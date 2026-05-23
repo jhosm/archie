@@ -1,0 +1,37 @@
+@startuml c4-l3-loading-config
+' Source of truth for Level 3.4 in ../feature-design-c4-architecture.md.
+' Regenerate: plantuml -tsvg <this file>
+!include <C4/C4_Component>
+' Remote fallback: !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+AddElementTag("family", $bgColor="#B8860B", $fontColor="#FFFFFF", $borderColor="#7A5B08", $legendText="Loaded from the family schema at startup (not engine code)")
+AddElementTag("estate", $bgColor="#2E7D6B", $fontColor="#FFFFFF", $borderColor="#1F5749", $legendText="Inherited integration estate")
+AddElementTag("ref", $bgColor="#8A94A6", $fontColor="#FFFFFF", $borderColor="#5F6A7D", $legendText="Detailed in another Level 3 diagram")
+
+title Component — L3.4 Loading & config (Engine process): pack/schema load → immutable cache
+
+Container_Boundary(engine, "Engine process — C# / .NET 9") {
+  Component(schemaloader, "Family-schema loader", "C# at startup", "Loads family event types, handlers, projections, lifecycle state machine, pack-binding declarations — the engine-vs-family separation mechanism")
+  Component(packloader, "Pack loader / verifier", "C#", "Pulls pack by digest; verifies cosign signature (attests CUE validation passed in CI); structural re-parse; records pack_versions; fail-loud on mismatch")
+  Component(ratesvc, "Rate-sheet resolver", "C#", "Resolves version-pinned rate sheets (ADR-PC-008)")
+  Component(cache, "Pack / variant / rate-sheet cache", "in-memory, version-keyed, immutable", "Populated here at load; read in-process by the parameter resolver (L3.1)")
+}
+
+Component(validator, "CUE validator (pack-validate)", "Go static binary, out-of-process", "Structural re-parse + version check at pack-load; depths 1-4 in CI")
+Component(resolverref, "Parameter resolver", "see L3.1", "Reads the immutable cache in-process to build the calc-context", $tags="ref")
+Component(familyref, "Family handlers + projections", "see L3.1 / L3.2", "Registered into the runtime at startup", $tags="ref")
+Container(oci, "OCI registry", "estate", "cosign-signed packs (YAML + .cue); pulled by digest", $tags="estate")
+Container(ratestore, "Rate-sheet store", "estate", "ADR-PC-008 (TBD)", $tags="estate")
+ContainerDb(pg, "Engine PostgreSQL", "PostgreSQL", "pack_versions (pack_version -> OCI digest)")
+
+Rel(packloader, oci, "Pull pack by digest; verify cosign signature", "oras / Sigstore")
+Rel(packloader, validator, "Structural re-parse + version check", "subprocess (out-of-process)")
+Rel(packloader, pg, "Record pack_versions", "SQL")
+Rel(packloader, cache, "Populate (immutable, version-keyed)")
+Rel(ratesvc, ratestore, "Resolve version-pinned rate sheet", "read")
+Rel(ratesvc, cache, "Populate")
+Rel(schemaloader, familyref, "Load event types, handlers, projections, lifecycle SM at startup")
+Rel(resolverref, cache, "Read version-pinned params (in-process)")
+
+SHOW_LEGEND()
+@enduml

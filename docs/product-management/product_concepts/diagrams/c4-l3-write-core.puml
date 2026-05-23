@@ -1,0 +1,42 @@
+@startuml c4-l3-write-core
+' Source of truth for Level 3.1 in ../feature-design-c4-architecture.md.
+' Regenerate: plantuml -tsvg <this file>
+!include <C4/C4_Component>
+' Remote fallback: !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+AddElementTag("family", $bgColor="#B8860B", $fontColor="#FFFFFF", $borderColor="#7A5B08", $legendText="Loaded from the family schema at startup (not engine code)")
+AddElementTag("estate", $bgColor="#2E7D6B", $fontColor="#FFFFFF", $borderColor="#1F5749", $legendText="Inherited integration estate")
+AddElementTag("ref", $bgColor="#8A94A6", $fontColor="#FFFFFF", $borderColor="#5F6A7D", $legendText="Detailed in another Level 3 diagram")
+
+title Component — L3.1 Write core (Engine process): command → handlers → append
+
+Container(kong, "Kong Gateway CE", "estate", "Edge: auth / SCA / rate-limit; forwards validated commands", $tags="estate")
+
+Container_Boundary(engine, "Engine process — C# / .NET 9") {
+  Component(api, "Command API", "AspNetCore", "Accepts state-changing commands; returns 202 + stream_url")
+  Component(dispatch, "Command dispatcher", "C#", "Rehydrates the stream, resolves the calculation context, invokes the family handler, drives the one-transaction append")
+  Component(resolver, "Parameter resolver", "C#", "Resolves the instance's PINNED pack_version + schema_version + rate_sheet_version into an immutable calculation context (day-count, rate, compounding, withholding). The ONLY component that reads the version cache — the impure shell around the pure kernel")
+  Component(handlers, "Family handlers", "pure (state,event,ctx)->new_state, loaded from family schema", "Orchestrate the family lifecycle and CALL the kernel with the resolved context; deterministic, side-effect-free; the engine dispatches to them, it does not contain them", $tags="family")
+  Component(kernel, "Financial-math kernel (cash-flow primitives)", "C#, PURE, family-agnostic", "Same inputs ALWAYS produce same outputs: no reads, no I/O, no clock. Takes (values, calc-context) -> result in decimal: balance evolution S(t+dt)=S(t)(1+r·dt)-pay+draw, day-count, compounding, accrual J=sum S·r·dt, TAE, TANB/TANL split, PV/IRR")
+  Component(money, "Money / decimal boundary", "C# record Money(long Cents)", "Pure: rounds once HALF_EVEN at the decimal->cents boundary on event emission; Roslyn-analyser-guarded")
+  Component(crypto, "PII crypto-shredding envelope", "C# + KMS/HSM", "Field-level per-subject encryption of PII payload fields before append; key destruction = GDPR erasure")
+  Component(esa, "Event-store access", "C# + Npgsql", "append(stream, expectedVersion, events, outbox_rows) in ONE local tx, optimistic concurrency on (stream_id, sequence_number); load() ordered for rehydrate")
+}
+
+Component(packcache, "Pack / variant / rate-sheet cache", "in-memory, version-keyed, immutable — see L3.4", "Version-pinned pack params + variant config + resolved rate sheets, populated out-of-process at load (L3.4); reads here are in-process", $tags="ref")
+ContainerDb(pg, "Engine PostgreSQL", "PostgreSQL", "events (source of truth) + outbox + snapshots")
+
+Rel(kong, api, "Validated command", "HTTPS, mTLS")
+Rel(api, dispatch, "Dispatch command")
+Rel(dispatch, esa, "load() — rehydrate from snapshot + events")
+Rel(dispatch, resolver, "Resolve calc context from pinned versions")
+Rel(resolver, packcache, "Read version-pinned params (in-process, immutable)")
+Rel(dispatch, handlers, "Apply (state, event, calc-context)")
+Rel(handlers, kernel, "Compute via primitives (pure: explicit inputs only)")
+Rel(kernel, money, "Round result to cents (HALF_EVEN, once)")
+Rel(dispatch, crypto, "Encrypt PII payload fields before append")
+Rel(dispatch, esa, "append(events + outbox) in ONE tx")
+Rel(esa, pg, "INSERT events + outbox; read snapshots", "SQL")
+
+SHOW_LEGEND()
+@enduml

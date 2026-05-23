@@ -1,0 +1,33 @@
+@startuml c4-l3-messaging-saga
+' Source of truth for Level 3.3 in ../feature-design-c4-architecture.md.
+' Regenerate: plantuml -tsvg <this file>
+!include <C4/C4_Component>
+' Remote fallback: !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+AddElementTag("family", $bgColor="#B8860B", $fontColor="#FFFFFF", $borderColor="#7A5B08", $legendText="Loaded from the family schema at startup (not engine code)")
+AddElementTag("estate", $bgColor="#2E7D6B", $fontColor="#FFFFFF", $borderColor="#1F5749", $legendText="Inherited integration estate")
+AddElementTag("ref", $bgColor="#8A94A6", $fontColor="#FFFFFF", $borderColor="#5F6A7D", $legendText="Detailed in another Level 3 diagram")
+
+title Component — L3.3 Messaging & saga (Engine process): outbox, inbox, orchestration
+
+Container_Boundary(engine, "Engine process — C# / .NET 9") {
+  Component(sagadisp, "Saga dispatcher", "C#", "In-process state-machine dispatcher; advances sagas on inbound events; emits commands + compensations; identity trio (correlation/causation/message id) on every message")
+  Component(sagasm, "Saga state machines", "C#", "renewal · moratorium application · legacy-SoR transition; participates as a step in the integration constitution saga (ADR-IC-003)")
+  Component(inbox, "Inbox consumer", "C#", "Consumes ACL confirmations + saga events from Redpanda; dedups by message_id")
+  Component(outbox, "Outbox-relay worker", "C#, polling publisher", "SELECT ... FOR UPDATE SKIP LOCKED over the outbox; publishes to Redpanda; emits publish-lag SLI (ADR-IC-004)")
+}
+
+ContainerDb(pg, "Engine PostgreSQL", "PostgreSQL", "saga_state + events + outbox (one database, one local tx)")
+Container(redpanda, "Redpanda CE", "estate", "Event backbone", $tags="estate")
+Container(acl, "ACL service", "estate", "Receives domain commands; returns confirmations via Redpanda", $tags="estate")
+
+Rel(redpanda, inbox, "ACL confirmations + saga events", "Avro consume")
+Rel(inbox, sagadisp, "Deliver inbound event (deduped)")
+Rel(sagadisp, sagasm, "Run transition")
+Rel(sagadisp, acl, "Issue domain command", "mTLS")
+Rel(sagadisp, pg, "saga_state + emitted events + outbox in ONE local tx", "SQL")
+Rel(outbox, pg, "Poll outbox (FOR UPDATE SKIP LOCKED)", "SQL")
+Rel(outbox, redpanda, "Publish domain & integration events", "Avro")
+
+SHOW_LEGEND()
+@enduml

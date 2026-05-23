@@ -141,6 +141,62 @@ Because an MCP session may end before a long-running saga finishes ([ADR-IC-011]
 
 Every container above — engine, ACL, MCP server, notification service, plus Kong and Redpanda — emits OpenTelemetry logs, metrics, and traces to the **OTel Collector**, which fans out to **Grafana LGTM** (Loki + Grafana + Tempo + Prometheus, [ADR-IC-007](../integration_concepts/adrs/ADR-IC-007-observability-stack.md)). Kong injects `traceparent` at the edge so one trace spans gateway → engine → saga → downstream consumer ([ADR-IC-006 §P6](../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)). It is a note rather than a diagram because every container points at the collector — drawing it produces an N-to-1 hairball that buries the flows the four diagrams exist to show.
 
-## Level 3 — Component *(to follow)*
+## Level 3 — Component
 
-Will zoom into the **Engine process** container: command handlers, the cash-flow-primitive handler set, the event-store data-access layer (`append`/`load`), projectors, snapshot lifecycle, saga dispatcher, pack/rate-sheet resolution, and the Money/decimal boundary ([ADR-PC-010 §P1–P5](./adrs/ADR-PC-010-dotnet-hand-rolled-engine.md), [feature-design-event-store-projections](./feature-design-event-store-projections.md)).
+Zooms into the **Engine process** container. Like Level 2, it is split by path into four component diagrams — **L3.1 Write core · L3.2 Projection & query · L3.3 Messaging & saga · L3.4 Loading & config** — so each stays readable.
+
+**Two colour additions at this level** (legend on each diagram): **gold** marks components *loaded from the family schema, not engine code* — the engine-vs-family separation ([event-store §3](./feature-design-event-store-projections.md)) that makes "one engine, many families" structural; **grey "ref"** marks a component drawn in detail in another L3 diagram (so a shared component can appear without being re-specified).
+
+### Where the financial mathematics lives
+
+A natural question: the [financial_concepts](../financial_concepts/banking_products_financial_mathematics.md) functions — balance evolution, day-count, compounding, accrual, TAE, PV/IRR — have to sit *somewhere*. They split into three homes, and conflating them would break the unification thesis:
+
+| Thing | Example | Home | Source |
+|---|---|---|---|
+| **Math kernel** (executable primitives) | `S(t+Δt)=S(t)(1+r·Δt)−pay+draw`, Act/360, compounding, `J=ΣS·r·Δt`, TAE, TANB/TANL split, PV/IRR | **Engine** — one generic component | [01 §1](./01-product-architecture.md) "one balance-evolution function, invoked with different parameters"; [00 §3](./00-product-vision.md) "the engine ships the executable primitives" |
+| **Orchestration** | "accrue at maturity / periodically / in advance, then withhold" | **Family-schema handlers** (pure, loaded) | [event-store §3, §5](./feature-design-event-store-projections.md) — handlers *call* primitives, never re-implement them |
+| **Parameters** | day-count = Act/360, withholding = 2800 bps, the TAN value | **Pack + variant config + rate sheet** (declarative data) | [00 §3](./00-product-vision.md) "the pack is declarative data, not executable code"; [ADR-PC-007](./adrs/ADR-PC-007-signed-yaml-oci-pack.md) |
+
+The license to put the math in the engine is the unification proof itself ([financial_concepts §9.2](../financial_concepts/banking_products_financial_mathematics.md)): because one equation governs deposits, credits, current accounts, and cards, the kernel is **one** family-agnostic engine component — not per-family math. The kernel is drawn in L3.1 (where handlers invoke it) and reused by the accrual-schedule projector in L3.2.
+
+### L3.1 — Write core: command → handlers → append
+
+![Component — L3.1 Write core](./diagrams/c4-l3-write-core.svg)
+
+<sub>Source: [`diagrams/c4-l3-write-core.puml`](./diagrams/c4-l3-write-core.puml)</sub>
+
+A command arrives from **Kong** already authenticated and SCA-checked; the **command API** hands it to the **command dispatcher**, which rehydrates the instance (snapshot + events via `load`) and invokes the relevant **family handler**. The handlers are gold because they are *loaded from the family schema, not engine code* — the engine dispatches to them but contains none ([event-store §3](./feature-design-event-store-projections.md)). A handler orchestrates the family's lifecycle and delegates every calculation to the **financial-math kernel** — the one generic balance-evolution function and its day-count / compounding / accrual / withholding / PV-IRR primitives.
+
+The kernel is a **pure function**: the same inputs always produce the same outputs — no reads, no I/O, no clock. That property is what makes replay correct, so the kernel never fetches its own parameters. Instead the dispatcher calls the **parameter resolver** — the *only* component that touches the version cache — to turn the instance's **pinned** `pack_version` + `schema_version` + `rate_sheet_version` into an immutable **calculation context** (day-count, rate, compounding, withholding), and passes that context to the handler and kernel as an explicit argument (the functional-core / imperative-shell split). Because those versions are immutable — pack pinned by OCI digest, rate sheet by id — replaying a 2026 event re-resolves the identical 2026 context years later. The cache read is **in-process**; the *out-of-process* work that fills it (OCI pull, cosign verify, the CUE subprocess) is in L3.4. The kernel computes in full-precision `decimal` and rounds each result exactly once through the **Money / decimal boundary** (HALF_EVEN at the decimal→cents boundary, [ADR-PC-010 §P1–P2](./adrs/ADR-PC-010-dotnet-hand-rolled-engine.md)).
+
+Before the new events are written, the **PII crypto-shredding envelope** encrypts the PII payload fields per subject so key destruction is GDPR-Article-17 erasure ([event-store §6.2](./feature-design-event-store-projections.md)). Finally the **event-store access** layer performs the load-bearing `append(stream, expectedVersion, events, outbox_rows)` — event rows and the outbox row in **one local PostgreSQL transaction**, with optimistic concurrency on `(stream_id, sequence_number)` ([ADR-PC-001 §P2](./adrs/ADR-PC-001-event-store-technology.md), [ADR-IC-004](../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)). Two build-time disciplines guard this path and so are not drawn as components: a Roslyn analyser bans raw `decimal` rounding outside `Money.FromCents`, and a CI determinism gate rejects any handler that reads the clock, calls out, or otherwise breaks replayability ([event-store §5.3, §10.3](./feature-design-event-store-projections.md)).
+
+### L3.2 — Projection & query: event log → bitemporal read models
+
+![Component — L3.2 Projection & query](./diagrams/c4-l3-projection-query.svg)
+
+<sub>Source: [`diagrams/c4-l3-projection-query.puml`](./diagrams/c4-l3-projection-query.puml)</sub>
+
+The read side derives state from the log. The **projection runtime** reads the event log and dispatches each event to the **family projections** (gold — loaded from the family schema, like handlers): deposit position, accrual schedule, maturity calendar, withholding ledger ([02 §2.3](./02-v1-scope-term-deposits.md)). Projections are pure folds carrying both time dimensions — `valid_time` (when the fact was true) and `transaction_time` (when we recorded it) — so a retroactive `DepositCorrected` leaves *both* "what we thought" and "what we now know" queryable ([event-store §6](./feature-design-event-store-projections.md)). Each projection updates either **synchronously** (inline with the append transaction) or **asynchronously** (a catch-up reader of the log), per projection ([01 §4](./01-product-architecture.md)).
+
+The **accrual-schedule projector** is where the kernel reappears: for a with-a-plan family it computes the ex-ante schedule by calling the *same pure kernel* with a resolved calc-context — so a schedule rebuilt by replay is identical to the original. The **query API** serves as-of / point-in-time reads (and the SSE status stream) from the read models behind Kong. The **snapshot machinery** is performance-only: it triggers per-N-events / at lifecycle boundaries / at calendar boundaries, stamps each snapshot with the last `event_id` it covers for hash-verification, and is discarded-and-rebuilt in the monthly drill — a snapshot is advisory until it has survived that drill ([event-store §8](./feature-design-event-store-projections.md)).
+
+### L3.3 — Messaging & saga: outbox, inbox, orchestration
+
+![Component — L3.3 Messaging & saga](./diagrams/c4-l3-messaging-saga.svg)
+
+<sub>Source: [`diagrams/c4-l3-messaging-saga.puml`](./diagrams/c4-l3-messaging-saga.puml)</sub>
+
+The asynchronous edges and orchestration. The **outbox-relay worker** is the [ADR-IC-004](../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md) custom polling publisher: it claims rows with `SELECT … FOR UPDATE SKIP LOCKED` and publishes them to **Redpanda**, emitting a publish-lag SLI. Inbound, the **inbox consumer** reads ACL confirmations and saga events off Redpanda and dedups by `message_id` before handing them to the **saga dispatcher** — a small in-process state-machine dispatcher ([ADR-PC-010 §P4](./adrs/ADR-PC-010-dotnet-hand-rolled-engine.md)) that advances the **saga state machines** (renewal, moratorium application, legacy-SoR transition, and the engine's participation as a *step* in the integration constitution saga, [ADR-IC-003](../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md)).
+
+Saga progress is durable the same way state is: `saga_state`, the emitted events, and the outbox rows commit in **one local transaction** (the same `append` from L3.1), so a saga can never advance without its events being durably queued for publication. Outbound domain commands to the **ACL** go over mTLS; their confirmations return asynchronously through Redpanda, closing the loop the inbox started.
+
+### L3.4 — Loading & config: pack/schema load → immutable cache
+
+![Component — L3.4 Loading & config](./diagrams/c4-l3-loading-config.svg)
+
+<sub>Source: [`diagrams/c4-l3-loading-config.puml`](./diagrams/c4-l3-loading-config.puml)</sub>
+
+The genericity and configuration machinery — and the engine's out-of-process boundary. At startup the **family-schema loader** registers a family's event types, pure handlers, projections, and lifecycle state machine into the runtime (the L3.1/L3.2 components) — the loading mechanism that keeps the engine generic ([event-store §3](./feature-design-event-store-projections.md)). The **pack loader/verifier** pulls a pack from the **OCI registry** by digest, verifies its cosign signature (which attests CUE validation already passed in CI, so load is a structural re-parse rather than a full re-validation, [ADR-PC-006 §P3](./adrs/ADR-PC-006-cue-schema-language.md)), records the `pack_version → digest` mapping, and **fails loud** on any mismatch ([ADR-PC-007 §P4](./adrs/ADR-PC-007-signed-yaml-oci-pack.md)). The **rate-sheet resolver** does the same for version-pinned rate sheets ([ADR-PC-008](./adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md)).
+
+All of this populates the **immutable, version-keyed cache** that L3.1's parameter resolver reads *in-process*. That is what isolates every out-of-process call — the OCI pull, the cosign verification, the [CUE validator](./adrs/ADR-PC-006-cue-schema-language.md) Go subprocess — to load time, off the deterministic compute path. This diagram is the answer to "where does the out-of-process work go": here, never in the kernel.
