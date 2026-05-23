@@ -4,7 +4,7 @@
 |---|---|
 | Status | Accepted |
 | Date | 2026-05-22 |
-| Applies to | ADR-PC-001 through ADR-PC-018 (and all future ADR-PC entries) |
+| Applies to | ADR-PC-001 through ADR-PC-020 (and all future ADR-PC entries) |
 | Shape | Conventions (defines the templates used by ADR-PC) |
 
 ---
@@ -151,3 +151,35 @@ These conventions match ADR-IC (per [integration_concepts/adrs/README.md](../../
 
 - The contract-shape template does not enforce a particular schema language or a particular event-catalogue tool. An ADR-PC contract-shape entry that references AsyncAPI or Avro is implicitly assuming the ADR-IC catalogue tooling ([ADR-IC-008](../../integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md)) and the ADR-IC schema registry ([ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)). If those ADRs are ever superseded, every contract-shape ADR-PC needs a sweep to confirm it still composes with the replacement.
 - "Default to tool-selection when in doubt" assumes reviewers will catch a misclassification. A misclassified ADR that fabricates straw-man alternatives to fill its hard-filter table degrades the framework. Mitigation: the ADR-PC index lists shape per ADR, so a reviewer skim against `bd show <id>`'s described deliverable will surface shape mismatches early.
+
+---
+
+## Amendment — 2026-05-23: `Verifiable commitments` template slot (per ADR-PC-020)
+
+[ADR-PC-019](./ADR-PC-019-monorepo-and-llm-build-toolchain.md) and [ADR-PC-020](./ADR-PC-020-spec-conformance-and-drift-governance.md) adopt an LLM-first build with **layered spec-conformance**: the implementation is kept faithful to the ADR corpus by binding each load-bearing decision to an executable check ("architecture fitness functions"), and any divergence is forced through the [§D5](#d5--file-naming-status-lifecycle-cross-linking) amend/supersede lifecycle rather than landing silently in code. For that to work, the *load-bearing commitments of each ADR must be enumerable and bound to the test that proves them* ([ADR-PC-020 §P1](./ADR-PC-020-spec-conformance-and-drift-governance.md)). This amendment adds that slot to the templates this ADR defines.
+
+### A1 · Both templates gain a `## Verifiable commitments` section
+
+Every **tool-selection** ([§D2](#d2--tool-selection-shape-reuse-adr-ic-000-verbatim)) and **contract-shape** ([§D3](#d3--contract-shape-a-complementary-template)) ADR-PC carries a `## Verifiable commitments` section. Placement: **after Consequences** (tool-selection) or **after Residual risks** (contract-shape) — i.e. near the end, before any later Amendment or Cross-references block — so it reads as the checklist that the body's argument earns, not as part of the argument. The section is a table:
+
+```
+## Verifiable commitments
+| # | Commitment | Gate (pyramid level) | Test ID | Status |
+|---|---|---|---|---|
+| C1 | <the falsifiable claim, with the §-anchor it derives from> | unit / integration / contract / saga / benchmark / analyser | <stable identifier> | Live / Planned / Gap |
+```
+
+- **Commitment** — a falsifiable claim the implementation must satisfy (e.g. "append + outbox commit in one local transaction", "a handler that reads the clock fails the build"), tagged with the Decision/Principle section it derives from.
+- **Gate (pyramid level)** — where the check lives on the [07-testing-strategy](../../integration_concepts/07-testing-strategy.md) pyramid, or "analyser"/"benchmark" for build-time and timing gates.
+- **Test ID** — a stable identifier the [ADR-PC-020 §P2](./ADR-PC-020-spec-conformance-and-drift-governance.md) coverage checker resolves to an existing, running test.
+- **Status** — `Live` (gate exists and passes), `Planned` (gate to be built before the decision is implemented), or `Gap` (no gate yet — a **known hole, listed deliberately**; visibility is the point, per [ADR-PC-020 §P1](./ADR-PC-020-spec-conformance-and-drift-governance.md)).
+
+Brevity is expected: a contract-shape ADR may have one or two commitments (often just "post-flag never gates" / an idempotency-key rule); a tool-selection ADR lists only the load-bearing few, not every sentence. An ADR with **no** load-bearing commitment says so explicitly (a one-line "no executable commitments — this decision is realised entirely by [the cited downstream ADR]") rather than omitting the section.
+
+### A2 · Scope: the two buildable-decision templates only; Conventions ADRs are exempt
+
+The slot applies to ADRs whose deliverable is a tool/mechanism or a boundary contract — the things an implementation can *drift from*. **Conventions ADRs** (`Shape: Conventions`, like this one) define process, not buildable behaviour, and carry no `Verifiable commitments` section. The F1/F2 hard-filter framework ([§D2](#d2--tool-selection-shape-reuse-adr-ic-000-verbatim)) and the six required contract slots ([§D3](#d3--contract-shape-a-complementary-template)) are unchanged; this is an *additional* section, not a revision of either.
+
+### A3 · This amends the templates; it does not supersede this ADR
+
+[§D2](#d2--tool-selection-shape-reuse-adr-ic-000-verbatim), [§D3](#d3--contract-shape-a-complementary-template), and [§D4](#d4--shape-declaration-is-per-adr-default-to-tool-selection) remain binding as written; the `Verifiable commitments` section is appended to the structures they prescribe. Backfilling the section into the already-Accepted ADR-PC and in-house ADR-IC entries is **incremental, not big-bang** — done as each decision is implemented ([ADR-PC-020 Open Action #5](./ADR-PC-020-spec-conformance-and-drift-governance.md)) — so existing Accepted ADRs are not invalidated by lacking it yet. The front-matter `Applies to` range is bumped to ADR-PC-020 as housekeeping (the parenthetical "all future ADR-PC entries" already covered it).
