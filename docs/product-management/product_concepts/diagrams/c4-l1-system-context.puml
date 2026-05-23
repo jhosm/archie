@@ -1,0 +1,66 @@
+@startuml c4-l1-system-context
+' Source of truth for the Level 1 (System Context) diagram in
+' ../feature-design-c4-architecture.md. Regenerate the SVG with:
+'   plantuml -tsvg docs/product-management/product_concepts/diagrams/c4-l1-system-context.puml
+'
+' Standard-library short form (no network needed on recent PlantUML):
+!include <C4/C4_Context>
+' Canonical remote fallback if your renderer lacks the bundled stdlib:
+' !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+title System Context — Core Banking Product Engine (v1 slice: PT depósito a prazo)
+
+' ─────────────── People who directly touch the engine's surfaces ───────────────
+Person(pm,        "Product Manager",                 "Authors declarative product configs:\nfamily schemas + variants")
+Person(treasury,  "Treasury / ALM Analyst",          "Publishes rate sheets (numerical rates)")
+Person(regteam,   "Engine Team + Regulatory Counsel", "Author & version-pin the geography-scoped regulatory pack")
+Person(ops,       "Bank Operations Clerk",           "Data-entry corrections;\nmaturity & position queries")
+
+' ─────────────── The system in focus ───────────────
+System(engine, "Core Banking Product Engine", "Event-sourced, configuration-driven runtime over a PostgreSQL source of truth. One engine across every retail product family; one swappable regulatory pack across every geography. v1 implements PT term deposits end-to-end.")
+
+' ─────────────── External actors ───────────────
+Person_Ext(agents, "AI / LLM Agents", "Untrusted agents acting for staff/customers via the MCP surface")
+
+' ─────────────── Neighbouring bank systems (out-of-scope products; in-scope integration) ───────────────
+System_Ext(channels,  "Channels",                 "Mobile, web, branch teller, call centre")
+System_Ext(core,      "Core Banking (Legacy)",    "Owns the conta à ordem (current account).\nSoR for legacy deposits during coexistence.\nEmits the daily legacy-DDA batch extract")
+System_Ext(compliance,"Compliance / AML / Fraud", "Gates constitution; issues freezes & legal holds")
+System_Ext(crm,       "CRM",                      "Customer master data")
+System_Ext(workflow,  "Workflow",                 "Human-in-the-loop saga steps")
+System_Ext(kyc,       "KYC / Onboarding",         "Establishes the customer upstream of any product")
+System_Ext(gl,        "General Ledger",           "Double-entry postings from engine signals")
+System_Ext(ifrs9,     "IFRS 9 System",            "Staging / ECL from engine lifecycle events")
+System_Ext(reporting, "Regulatory Reporting",     "FGD return + BdP retail-rate statistics → Banco de Portugal")
+System_Ext(notify,    "Customer Notifications",   "Customer messages + async saga-completion callbacks")
+System_Ext(iam,       "Identity / IAM",           "OAuth 2.1 authorization for every caller")
+
+' ─────────────── Authoring the configuration surface (three artefacts, three cadences) ───────────────
+Rel(pm,       engine, "Commits product configs", "Git/CI; CUE-validated")
+Rel(treasury, engine, "Publishes rate sheets",   "daily–weekly")
+Rel(regteam,  engine, "Ships & pins the pack",   "signed OCI artefact")
+
+' ─────────────── Customer / agent entry (through the gateway) ───────────────
+Rel(ops,      channels, "Corrections, operational queries")
+Rel(channels, engine,   "Constitute / terminate / query;\nrender FIN", "REST/SSE")
+Rel(agents,   engine,   "Commands + queries",                          "MCP / Streamable HTTP")
+Rel(iam,      engine,   "Authenticates & authorizes callers")
+
+' ─────────────── Coexistence with the legacy current account ───────────────
+Rel(engine, core, "Debit principal / credit interest & maturity",  "via ACL; idempotent")
+Rel(core,   engine, "Daily legacy-state extract",                   "→ LegacyInstanceObserved")
+
+' ─────────────── Constitution saga participants (engine is a step, not the orchestrator) ───────────────
+Rel(engine, compliance, "Screening during constitution;\nreceives freezes & holds")
+Rel(engine, crm,        "Reads customer data during constitution")
+Rel(engine, workflow,   "Human approval steps")
+Rel(kyc,    crm,        "Customer established before any product")
+
+' ─────────────── Downstream consumers (events & pack-defined signals) ───────────────
+Rel(engine, gl,        "Posting signals")
+Rel(engine, ifrs9,     "Lifecycle events")
+Rel(engine, reporting, "Reporting-hook signals")
+Rel(engine, notify,    "Terminal saga events → notify")
+
+SHOW_LEGEND()
+@enduml

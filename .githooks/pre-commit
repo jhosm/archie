@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+#
+# pre-commit — keep rendered C4 SVGs in sync with their PlantUML sources.
+#
+# Whenever a commit stages a *.puml file, re-render it to SVG with PlantUML and
+# stage the result, so a committed *.svg is never out of date with its source.
+# GitHub does not render PlantUML, so the committed SVG is what readers see.
+#
+# Requirements: a JDK, Graphviz (dot), and the PlantUML CLI. See INSTALL.md.
+#
+# Convention: each diagram's `@startuml <id>` MUST match its .puml filename
+# (without extension), so `foo.puml` renders to `foo.svg` beside it.
+#
+# Activate in a fresh clone with EITHER:
+#   git config core.hooksPath .githooks   # recommended — single source, no copy to keep in sync
+# OR copy/symlink this file to .git/hooks/pre-commit and chmod +x it.
+
+set -euo pipefail
+
+# .puml sources staged in this commit (Added / Copied / Modified / Renamed).
+staged_puml="$(git -c core.quotepath=false diff --cached --name-only --diff-filter=ACMR -- '*.puml')"
+
+# Fast path: nothing diagram-related in this commit.
+[ -n "$staged_puml" ] || exit 0
+
+if ! command -v plantuml >/dev/null 2>&1; then
+  {
+    echo "pre-commit: this commit stages PlantUML source(s) but 'plantuml' is not installed:"
+    printf '  %s\n' $staged_puml
+    echo
+    echo "Install the renderer (see INSTALL.md):"
+    echo "  macOS:  brew install graphviz plantuml"
+    echo
+    echo "Bypassing with --no-verify would commit stale SVGs — install instead."
+  } >&2
+  exit 1
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+status=0
+
+while IFS= read -r puml; do
+  [ -n "$puml" ] || continue
+  echo "pre-commit: rendering ${puml} -> SVG"
+  plantuml -tsvg "${repo_root}/${puml}"
+  svg="${repo_root}/${puml%.puml}.svg"
+  if [ -f "$svg" ]; then
+    git add -- "$svg"
+  else
+    {
+      echo "pre-commit: expected '${puml%.puml}.svg' but PlantUML did not produce it."
+      echo "  Ensure '@startuml' uses the id '$(basename "${puml%.puml}")' (matching the filename)."
+    } >&2
+    status=1
+  fi
+done <<EOF
+$staged_puml
+EOF
+
+exit "$status"
