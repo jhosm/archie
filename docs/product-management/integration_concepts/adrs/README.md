@@ -23,6 +23,7 @@ This folder holds the Architectural Decision Records (ADRs) that materialise the
 | [010](./ADR-IC-010-mcp-server-runtime-and-sdk.md) | MCP Server Runtime, SDK, Transport, and Authorization | **Python MCP SDK**, **Streamable HTTP**, hosted **behind Kong**, reusing the **existing IAM** as the OAuth 2.1 authorisation server | [10](../10-security-and-threat-model.md), [11](../11-chat-agent-channel-strategy.md) |
 | [011](./ADR-IC-011-async-saga-completion-notification.md) | Async Saga Completion Notification — Out-of-Band Callback Wire Format | Pre-registered subscription endpoint; HMAC-SHA256 signing; exponential backoff with jitter; **dedicated notification service** subscribed to saga terminal events; SSE and callbacks **coexist** | [11](../11-chat-agent-channel-strategy.md) |
 | [012](./ADR-IC-012-anti-corruption-layer-implementation.md) | Anti-Corruption Layer Implementation Approach | **Dedicated ACL service** per bounded context, hand-rolled outbound clients, pluggable inbound adapter (webhook / poller / MQ bridge), per-adapter circuit-breaker + bulkhead, ACL owns its own database with its own outbox | [02](../02-anti-corruption-layer.md) |
+| [013](./ADR-IC-013-in-house-estate-build-and-repository-placement.md) | In-House Estate — Build Provenance and Repository Placement | **Five in-house estate components** (orchestrator [003], outbox [004], MCP [010], notification [011], ACL [012]) **co-located in the product monorepo** ([ADR-PC-019](../../product_concepts/adrs/ADR-PC-019-repository-strategy-monorepo.md)) as extraction-ready subtrees, estate-repo split reserved; classifies all twelve IC decisions by build provenance (in-house vs consumed vs convention). Not a runtime tool — a placement/classification decision | [feature-design-c4-architecture](../../product_concepts/feature-design-c4-architecture.md) |
 
 ---
 
@@ -142,4 +143,4 @@ ADR numbers are sequential and never reused. When picking a new number, check bo
 
 ### Cross-linking
 
-Links from one ADR to another use relative paths (`./ADR-NNN-…md`). Links from an ADR back to a concept document use `../NN-name.md`. This matches the convention in [CLAUDE.md](../../CLAUDE.md).
+Links from one ADR to another use relative paths (`./ADR-NNN-…md`). Links from an ADR back to a concept document use `../NN-name.md`. This matches the convention in [CLAUDE.md](../../../../CLAUDE.md).

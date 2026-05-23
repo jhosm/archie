@@ -19,10 +19,10 @@
 
 ### The system-boundary decision (load-bearing)
 
-The brief is explicit that the engine **inherits** the integration backbone — broker, gateway, anti-corruption layer, saga orchestrator, MCP server, observability — and does **not** redefine it ([01 §6](./01-product-architecture.md); the estate is fixed in [integration_concepts/adrs/](../integration_concepts/adrs/README.md)). The C4 model honours that split:
+The brief is explicit that the engine does **not** redesign the integration backbone — broker, gateway, anti-corruption layer, saga orchestrator, MCP server, observability — its architecture is fixed in [integration_concepts/adrs/](../integration_concepts/adrs/README.md) ([01 §6](./01-product-architecture.md)). That is a statement about **design authority**, not **build provenance**: several estate components are nonetheless *built in-house* (the saga orchestrator, the outbox, the ACL, the MCP server, the notification service) and co-located in the monorepo per [ADR-IC-013](../integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md), while others (broker, gateway, observability) are consumed third-party images. The C4 model honours the *role* split:
 
 - **Level 1 (Context)** draws the engine as the single system in focus and the bank's other systems as external neighbours. The shared transport (Redpanda, Kong, the ACL service) is intentionally **not** drawn here — at context level we care *which systems exchange what*, not *through which pipe*. Drawing the broker at context level would mis-state it as a peer business system.
-- **Level 2 (Container)** is where the shared estate appears, tagged as inherited integration-estate runtimes (distinct shading), so the seam between "engine we build" and "estate we plug into" is visible.
+- **Level 2 (Container)** is where the surrounding estate appears, tagged as integration-estate runtimes (distinct shading), so the seam between the product engine and the estate is visible. *Build provenance is orthogonal to this role split:* some estate runtimes we build in-house, some we consume as third-party images — see the legend and [ADR-IC-013](../integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md).
 
 "External system" in C4 is **not** a synonym for "out of scope". Per [00 §4](./00-product-vision.md), GL / IFRS 9 / channels / payments / fraud / KYC are out-of-scope *products*, but the integration *to* them is the in-scope, load-bearing asset of the build ([00 §1.5](./00-product-vision.md)). C4 captures exactly this: those products are `System_Ext` (grey) neighbours; the **relationships** crossing the boundary are the asset this view documents.
 
@@ -77,10 +77,12 @@ One container diagram would bloat: the engine's world is ~11 runtime containers 
 
 **Reading the colours** (legend on each diagram):
 
-- **Blue** — containers the engine team *builds* (the deliverable): the engine process, its PostgreSQL, the CUE validator binary.
-- **Teal** — inherited *integration estate* the engine *operates but did not design here*; defined in [integration_concepts/adrs/](../integration_concepts/adrs/README.md): Kong, Redpanda + SR, the ACL service (+ its DB), the MCP server, the notification service.
+The colours encode **architectural role**, *not* build provenance — the two are orthogonal ([ADR-IC-013](../integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md)):
+
+- **Blue** — the **product engine** the team builds (the deliverable): the engine process, its PostgreSQL, the CUE validator binary.
+- **Teal** — the surrounding **integration estate**, whose architecture is fixed in [integration_concepts/adrs/](../integration_concepts/adrs/README.md): Kong, Redpanda + SR, the ACL service (+ its DB), the MCP server, the notification service, the saga orchestrator, observability. By **provenance** this splits two ways: *in-house-built* — the saga orchestrator ([IC-003](../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md)), the outbox ([IC-004](../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)), the ACL ([IC-012](../integration_concepts/adrs/ADR-IC-012-anti-corruption-layer-implementation.md)), the MCP server ([IC-010](../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md)), the notification service ([IC-011](../integration_concepts/adrs/ADR-IC-011-async-saga-completion-notification.md)) — code we write, co-located in the monorepo per [ADR-IC-013](../integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md); and *consumed third-party* — Kong, Redpanda + SR, Grafana LGTM — images/SDKs we run but do not author.
 - **Grey** — external systems the engine *integrates with* (out-of-scope products per [00 §4](./00-product-vision.md)).
-- The dashed **system boundary** marks what is inside the engine deliverable. Per [01 §6](./01-product-architecture.md) the engine *inherits* the estate; it does not redefine it.
+- The dashed **system boundary** marks the product-engine deliverable. Per [01 §6](./01-product-architecture.md) the engine does not *redesign* the estate's architecture; building the in-house estate is nonetheless in scope ([ADR-IC-013](../integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md)).
 
 **Container inventory** (each appears in one or more of the four diagrams):
 

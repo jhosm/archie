@@ -9,7 +9,7 @@ a reference library for a Portuguese banking ecosystem. There is no build system
 runner, and no deployable code. The deliverables are `.md` files organised into three series, all under `docs/product-management/`:
 
 - `docs/product-management/integration_concepts/` — integration architecture patterns (documents `00–11`)
-  - `docs/product-management/integration_concepts/adrs/` — Architectural Decision Records selecting concrete tools for each pattern (ADR-IC-000 defines the shared evaluation framework; ADRs 001–012 currently filed)
+  - `docs/product-management/integration_concepts/adrs/` — Architectural Decision Records selecting concrete tools for each pattern (ADR-IC-000 defines the shared evaluation framework; ADRs 001–013 currently filed — 013 decides in-house-estate build provenance & repository placement, not a tool pick)
 - `docs/product-management/financial_concepts/` — financial mathematics of banking products
 - `docs/product-management/product_concepts/` — core banking product engine: brief (`00–04`), feature-design companions, and the open-questions register
   - `docs/product-management/product_concepts/adrs/` — Architectural Decision Records for the product engine's own concerns: source-of-truth, configuration surface, runtime, boundary signal contracts, coexistence (ADR-PC-000 defines namespace conventions and the contract-shape template; ADR-PC numbers are independent of ADR-IC numbers)
