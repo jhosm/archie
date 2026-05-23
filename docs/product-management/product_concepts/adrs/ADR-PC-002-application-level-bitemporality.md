@@ -26,7 +26,7 @@ Projections are derived state built from the event log; each row carries two tim
 | # | Candidate | Notes |
 |---|---|---|
 | A | **Application-level bitemporality on plain PostgreSQL** | Every projection table carries `valid_from`, `valid_to`, `recorded_at`, `superseded_at`; the hand-rolled engine maintains them; queries are explicit temporal joins. Most code; familiar ops; field-granular by construction. |
-| B | **PostgreSQL temporal extensions / SQL:2011 temporal tables** | `PERIOD FOR` declarations via the `temporal_tables` extension or PG17 native period support; `AS OF`-style query syntax. |
+| B | **PostgreSQL temporal extensions / SQL:2011 temporal tables** | Application-time integrity via PG18 native temporal constraints (`WITHOUT OVERLAPS` / `PERIOD` foreign keys, shipped PG 18 — reverted from PG 17), or system-time via the `temporal_tables` extension (triggers); `AS OF`-style querying built on top. Neither gives native bitemporal. |
 | C | **XTDB / Datomic-style temporal-native database** | Datalog-style temporal queries; immutable, bitemporal by design; a new datastore the team operates. |
 
 ---
@@ -40,7 +40,7 @@ Projections are derived state built from the event log; each row carries two tim
 | Candidate | Licence | Verdict |
 |---|---|---|
 | A · Application-level on PG | PostgreSQL licence (already in the stack per [ADR-PC-001](./ADR-PC-001-event-store-technology.md)). Zero incremental cost. | **Pass** |
-| B · PG temporal extensions | PG core (PostgreSQL licence); `temporal_tables` extension is community-maintained (BSD-style). | **Pass (conditional)** — extension maintenance cadence (S4) must be audited; PG17 native period support avoids the extension but requires pinning that PG major version. |
+| B · PG temporal extensions | PG core (PostgreSQL licence); `temporal_tables` extension is community-maintained (BSD-style). | **Pass (conditional)** — `temporal_tables` extension maintenance cadence (S4) must be audited; PG18 native temporal constraints avoid the extension but require pinning PG 18+ and cover only application-time. |
 | C · XTDB / Datomic | XTDB: MPL-2.0 (self-hostable). Datomic: free tier exists but proprietary licence. | **Pass (conditional)** — XTDB self-hostable and OSS; Datomic's licence restricts use and is flagged per [ADR-IC-000 F1](../../integration_concepts/adrs/ADR-IC-000-common-evaluation-criteria.md). |
 
 #### F2 · Regulatory fit (GDPR / DORA / PSD2)
@@ -69,7 +69,7 @@ Projections are derived state built from the event log; each row carries two tim
 
 #### B · PostgreSQL temporal extensions / SQL:2011
 
-Better query ergonomics (`AS OF` syntax) than A. But: it does **not** solve the field-level PII requirement (PII encryption is still applied in application columns either way), so it adds a dependency without removing the hard part; the `temporal_tables` extension is community-maintained (S4 risk) and PG17-native period support couples the engine to that PG major version; and period/row-versioning is a coarser unit than the field-granular control crypto-shredding wants. **Decisive reason for not choosing:** marginal query-ergonomics gain over A, paid for with an extension/version coupling, while leaving criterion #2 (field-level erasure) exactly where A already has it solved.
+Better query ergonomics (`AS OF` syntax) than A, but three problems. First, it delivers at most *half* of bitemporality: PG18's native temporal support (the feature was reverted from PG 17 and shipped in **PG 18**, September 2025) is **application-time only** — `WITHOUT OVERLAPS` / `PERIOD` foreign keys give valid-time *integrity constraints*, not system-versioned storage — so `transaction_time` is hand-rolled either way; the `temporal_tables` extension covers system-time via triggers but is community-maintained (S4 risk). Second, it does **not** solve the field-level PII requirement (PII encryption is applied in application columns regardless), so it adds a dependency without removing the hard part. Third, period/row-versioning is a coarser unit than the field-granular control crypto-shredding wants. **Decisive reason for not choosing:** since PG-native temporal gets you at most one of the two time dimensions (valid-time integrity), the PG 18+ coupling buys little — marginal valid-time-query ergonomics over A, while leaving both `transaction_time` and criterion #2 (field-level erasure) exactly where A already has them solved.
 
 #### C · XTDB / Datomic
 
