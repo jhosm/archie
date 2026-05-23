@@ -138,7 +138,7 @@ Specifically:
 
 The throughput question — the only quantitative dimension on which PG is potentially weaker than the alternatives — is answered by the synthetic v4-scale load test ([Q-AK](../feature-design-two-modes-asymmetry.md)) at v1 acceptance. Modern PG on production-shaped hardware sustains the test's 250-TPS-sustained and 1000-TPS-burst targets comfortably for the event-store write path. The v4 sharding path (`partition_key`-keyed declarative partitioning, with a future migration to PG17+ native logical sharding or Citus if scale demands) is named and not foreclosed — satisfying the [two-modes §5.1](../feature-design-two-modes-asymmetry.md) "clear scale path" requirement.
 
-The choice of *library or framework* on top of PostgreSQL — hand-rolled module, Marten (if the engine runtime is .NET), eventsourcing-pg (Python), or an equivalent — is deferred to v1 build (coordinated with [ADR-PC-010](../04-open-questions.md): engine implementation language). The decision here is the technology, not the library. The envelope, the table contract, and the four invariants are framework-agnostic.
+The choice of *library or framework* on top of PostgreSQL — hand-rolled module, Marten (if the engine runtime is .NET), eventsourcing-pg (Python), or an equivalent — is deferred to v1 build (coordinated with [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md): engine implementation language). The decision here is the technology, not the library. The envelope, the table contract, and the four invariants are framework-agnostic.
 
 ---
 
@@ -181,7 +181,7 @@ Two secondary concerns: indefinite retention via tiered storage adds operational
 - **Throughput at the v4 acceptance test must be validated empirically.** The reasoning above asserts that PG handles 250-TPS sustained and 1000-TPS burst on production-shaped hardware; the [Q-AK load test](../feature-design-two-modes-asymmetry.md) is what proves it. If the test fails on the chosen PG topology, the path forward is tuning (synchronous_commit, WAL configuration, hardware sizing) rather than re-deciding the technology. The acceptance gate is part of v1, not deferred.
 - **Append-only discipline relies on application convention plus database-role privileges, not on table-level enforcement.** A buggy engine PR that issues `UPDATE events` or `DELETE FROM events` can violate the source-of-truth commitment silently. Mitigation: the engine's database role has no `UPDATE` or `DELETE` privilege on the `events` table; only the `INSERT` privilege is granted. Schema migrations that need to alter the table run under a separate, more privileged role used only by migration tooling. CI lints reject application code that constructs `UPDATE events` or `DELETE FROM events` SQL strings.
 - **PostgreSQL major-version upgrades** require careful coordination with the indefinite-retention commitment. The events written under PG 16 must be readable under PG 17, PG 18, and so on. PG's binary compatibility for table data across major versions is strong, but the upgrade procedure (`pg_upgrade` or logical-replication-based cutover) must be tested as part of [ADR-PC-005](../04-open-questions.md) DR planning. The 10-year-plus retention horizon of the event log is longer than any single PG major-version's support window.
-- **Library/framework choice on top of PG** (Marten vs eventsourcing-pg vs hand-rolled vs other) is deferred and could re-introduce coupling. The decision is bounded by the table-shape contract in Implementation Principles below — any library that exposes a compatible `events` table can be replaced by another that does. The decision sits with [ADR-PC-010](../04-open-questions.md).
+- **Library/framework choice on top of PG** (Marten vs eventsourcing-pg vs hand-rolled vs other) is deferred and could re-introduce coupling. The decision is bounded by the table-shape contract in Implementation Principles below — any library that exposes a compatible `events` table can be replaced by another that does. The decision sits with [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md).
 
 ---
 
@@ -237,27 +237,44 @@ The event log's retention horizon is longer than any single PostgreSQL major-ver
 
 ---
 
-## Amendment — 2026-05-22: Library choice filled
+## Amendment — 2026-05-23: Library choice filled — hand-rolled module
 
-Per the Decision section, the choice of library on top of PostgreSQL was
-deferred to v1 build. [ADR-PC-010](./ADR-PC-010-dotnet-marten-wolverine.md)
-selects the engine implementation language as C# (.NET 9) and the event-store
-library as **Marten 7.x** (`/jasperfx/marten`, MIT, JasperFx Software). The
-companion ADRs are [ADR-PC-006](./ADR-PC-006-json-schema-njsonschema.md)
-(family-schema language) and [ADR-PC-007](./ADR-PC-007-signed-yaml-oci-pack.md)
+Per the Decision section, the choice of library or framework on top of
+PostgreSQL was deferred to v1 build. [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md)
+selects the engine implementation language as C# (.NET 9) and resolves the
+deferred question as a **hand-rolled thin event-sourcing module** on
+PostgreSQL — *not* a consolidator framework. This is Candidate A's
+"library **or hand-rolled** implementation" option, taken on the hand-rolled
+branch. The companion ADRs are [ADR-PC-006](./ADR-PC-006-cue-schema-language.md)
+(CUE family-schema language) and [ADR-PC-007](./ADR-PC-007-signed-yaml-oci-pack.md)
 (pack manifest format).
 
 This amendment fills the deferred library choice within ADR-PC-001's existing
 Decision (PostgreSQL-based event store). It does **not** supersede this ADR.
-The four invariants (P1 envelope, P2 atomic append + outbox, P3 append-only
-roles, P4 indices, P5 major-version-upgrade drill) remain binding. Marten's
-table shape (`mt_events`) is an extension of the P1 contract columns;
-[ADR-PC-010 §Consequences](./ADR-PC-010-dotnet-marten-wolverine.md) records
-the column-mapping policy that keeps the underlying SQL portable.
+The four invariants (P1 envelope and `events`-table contract, P2 atomic
+append + outbox, P3 append-only by role privilege, P4 indices, P5
+major-version-upgrade drill) remain binding — and are now **the specification
+the hand-rolled module implements directly**, rather than a contract a library
+must be mapped onto. There are no library-internal columns (`mt_*` or
+otherwise) to tolerate; the `events` table carries exactly the P1 columns.
 
-The Pattern B alternative (treat the event-store internal table as the outbox
-source, eliminating the separate `outbox` table) was considered as part of
-the ADR-PC-010 evaluation and rejected — it would have required Case-B
-supersession of this ADR. The chosen path uses Wolverine's outbox table as
-the ADR-IC-004 polling-publisher source; the separate-outbox-table contract
-from P2 is preserved.
+Why hand-rolled rather than a framework (full reasoning in
+[ADR-PC-010 §Decision](./ADR-PC-010-dotnet-hand-rolled-engine.md)): the engine's
+source of truth should be fully controlled for a regulated banking core; the
+hand-rolled path carries the **lowest exit cost** (this ADR's S3); and it is the
+*least*-friction path through the existing decisions — [ADR-IC-004](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)
+already chose a custom polling publisher (the outbox is hand-rolled regardless)
+and [ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md)
+already chose an in-house orchestrator (the saga is hand-rolled regardless).
+The [event-store §10.4](../feature-design-event-store-projections.md)
+"no in-house build" constraint is honoured under the infrastructure-vs-pattern
+reading this ADR already adopts: PostgreSQL is the bought infrastructure;
+the thin append/load/project/outbox module is pattern discipline the team owns.
+
+The separate-outbox-table contract from P2 is **preserved and implemented
+directly**: the engine's `append(stream_id, events, outbox_rows)` writes event
+rows and outbox rows in one local transaction; the [ADR-IC-004](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)
+polling publisher reads the outbox table. No framework outbox replaces it, so
+no Case-B supersession of this ADR arises. Marten and Wolverine are retained by
+ADR-PC-010 as **working reference implementations** of these patterns, not as
+runtime dependencies.

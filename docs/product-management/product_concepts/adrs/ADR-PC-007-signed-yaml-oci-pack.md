@@ -1,203 +1,151 @@
-# ADR-PC-007: Pack Manifest Format and Distribution — Signed YAML in an OCI Artefact
+# ADR-PC-007: Pack Manifest Format and Distribution — Signed YAML in an OCI Artefact, CUE-Validated
 
 | Field | Value |
 |---|---|
 | Status | Proposed |
-| Date | 2026-05-22 |
+| Date | 2026-05-23 |
 | Deciders | jhosm |
 | Shape | Tool-selection |
 | Common criteria | [ADR-IC-000](../../integration_concepts/adrs/ADR-IC-000-common-evaluation-criteria.md) (reused per [ADR-PC-000](./ADR-PC-000-namespace-and-contract-shape-framework.md) D2) |
-| Depends on | [ADR-PC-006](./ADR-PC-006-json-schema-njsonschema.md) (family-schema language; JSON Schema), [ADR-PC-010](./ADR-PC-010-dotnet-marten-wolverine.md) (engine language and framework), [ADR-PC-001](./ADR-PC-001-event-store-technology.md) (per-instance pinning via event envelope `pack_version`) |
+| Depends on | [ADR-PC-006](./ADR-PC-006-cue-schema-language.md) (family-schema language; CUE — pack schemas ship as `.cue`), [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) (engine language and framework), [ADR-PC-001](./ADR-PC-001-event-store-technology.md) (per-instance pinning via event envelope `pack_version`) |
 | Resolves | bd `archie-10r.8` (ADR-PC-007: Pack manifest format and distribution) |
 
 ---
 
 ## Context
 
-A **pack** is the regulatory + market-context container that the engine resolves against at constitution time and pins per instance for life ([01 §5](../01-product-architecture.md), [feature-design-configuration-surface §3.5–§3.6](../feature-design-configuration-surface.md)). A pack carries:
+A **pack** is the versioned, jurisdiction-scoped vocabulary the engine resolves against at constitution and pins per instance for life ([01 §5](../01-product-architecture.md), [surface §3](../feature-design-configuration-surface.md)). It carries primitives (pack-bound enumerations the schema references), parameters (pack-level constants), rate-sheet refs, and a **sealed test corpus** (canonical instances + expected event sequences — regulator-facing regression evidence per [surface §3.9](../feature-design-configuration-surface.md)). It is **declarative data, not executable code** ([surface §3.1](../feature-design-configuration-surface.md)), signed and version-pinned.
 
-- **Primitives** — pack-bound enumerations the schema references (e.g. `pt.day_count.act_360`, `pt.tax.irs_residente`, `pt.fgd.deposit_eligible`) ([authoring §9.3](../feature-design-configuration-authoring.md))
-- **Parameters** — pack-level constants the engine reads at runtime (e.g. `pack.fgd_ceiling_eur`, `pack.tax_residente_rate_bps`, `pack.max_consumer_rate_bps`) ([surface §3.4](../feature-design-configuration-surface.md))
-- **Rate-sheet refs** — pointers to active rate sheets the pack vouches for (the rate-sheet *storage* is ADR-PC-008, not this ADR; this ADR only carries refs)
-- **Sealed test corpus** — canonical instances with expected event sequences, per pack version, for regulator-facing regression evidence ([surface §3.9](../feature-design-configuration-surface.md))
+This ADR resolves three sub-problems ([bd archie-10r.8](../04-open-questions.md)): (1) **content format** — what the pack ships as and how it is laid out; (2) **distribution** — how the pack reaches the engine; (3) **signing and pinning** — how the engine verifies a pack at load and how an instance pins a version for life.
 
-Three problems this ADR resolves:
+The schema language is now **CUE** ([ADR-PC-006](./ADR-PC-006-cue-schema-language.md)), reversing the premise of this ADR's prior iteration (which rejected CUE-as-pack-format *because* the schema language was JSON Schema). With a CUE evaluator already in the stack (the Go validator binary), CUE-as-pack-format becomes a genuine contender, and the content-format question is re-opened in that light. Distribution and signing are largely orthogonal to the format choice; [surface §3.7](../feature-design-configuration-surface.md) already commits packs to OCI artefacts signed with cosign, verified at engine load.
 
-1. **Serialisation format** — what file format does a pack ship in, and what is the layout inside?
-2. **Distribution mechanism** — how does the pack reach the engine (registry, file mount, embedded resource)?
-3. **Signing and pinning** — how does the engine verify a pack at load time, and how does an instance pin to a specific pack version for life?
-
-The engine runtime is .NET 9 ([ADR-PC-010](./ADR-PC-010-dotnet-marten-wolverine.md)). The schema language is JSON Schema ([ADR-PC-006](./ADR-PC-006-json-schema-njsonschema.md)). The container registry already exists for Redpanda/Kong/engine container images.
-
-**Candidates evaluated:**
+**Candidates evaluated** ([bd archie-10r.8](../04-open-questions.md)):
 
 | # | Candidate | Notes |
 |---|---|---|
-| A | **Signed YAML files bundled into an OCI artefact in the existing container registry** | YAML primary, JSON Schema sidecar; bundled as an OCI artefact with `application/vnd.babelstone.pack.v1+yaml` media type; signed with cosign (Sigstore); engine pulls by digest |
-| B | **Signed YAML files in a Git repository** | YAML in git; signed with GPG commit signatures; engine pulls by commit SHA |
-| C | **CUE-as-pack-format** (single CUE file embedding schema + parameters + primitives) | CUE doubles as schema language and pack format; out-of-process CUE evaluator required (per PC-006 rejected paths) |
-| D | **Binary format (Avro / Protobuf packs)** | Pack as Avro / Protobuf binary; deserialised at load; signed via detached signature |
+| A | **YAML data + `.cue` schemas, bundled in an OCI artefact, cosign-signed** | Pack values/primitives/parameters/test-corpus stay auditor-readable YAML; the `schemas/` directory ships `.cue` constraint files; `cue vet` validates the YAML data; distributed as an OCI artefact pulled by digest; cosign (Sigstore) signing. |
+| B | **Fully CUE-native pack** (schema + values + constraints in one CUE tree) | Maximal coherence; the canonical regulatory artefact is CUE; `cue export` renders YAML/JSON views on demand. |
+| C | **Signed YAML in a Git repository** | YAML in git; GPG commit signing; engine pulls by commit SHA. |
+| D | **Binary format (Avro / Protobuf packs)** | Pack as binary; detached signature. |
+
+The CUE adoption upstream collapses the live decision to **A vs B**: keep the canonical regulatory data as plain YAML and use CUE only for constraints (A), or make CUE the canonical pack form end-to-end (B). C and D are evaluated and rejected on distribution and auditability grounds respectively.
 
 ---
 
 ## Evaluation
 
-### F1 · Cost / licensing
+### Hard filter results
+
+#### F1 · Cost / licensing
 
 | Candidate | Licence | Verdict |
 |---|---|---|
-| Signed YAML in OCI artefact | YAML 1.2 spec (open); YamlDotNet (MIT); cosign/Sigstore (Apache 2.0); OCI image-spec (Apache 2.0); existing container registry (Apache 2.0 Harbor / similar). All MIT/Apache 2.0. | **Pass** |
-| Signed YAML in Git | Git (GPL 2.0); GPG commit signing (no licence concern for the protocol). | **Pass** |
-| CUE-as-pack-format | CUE Apache 2.0 (CNCF Sandbox); out-of-process .NET binding required (carries CUE binary in container image). | **Pass (conditional)** — image-bundling of a Go binary alongside .NET. Mitigation: pin CUE version; declare image-bundling policy. |
-| Binary format | Avro (Apache 2.0) / Protobuf (BSD-3); detached signature via cosign or minisign. | **Pass** |
+| A · YAML + `.cue` in OCI | YAML 1.2 (open); YamlDotNet (MIT); CUE (Apache 2.0); cosign/Sigstore (Apache 2.0); OCI image-spec (Apache 2.0); existing registry. | **Pass** |
+| B · Fully CUE-native | CUE (Apache 2.0); cosign/OCI as A. | **Pass** |
+| C · YAML in Git | Git (GPL 2.0); GPG (protocol). | **Pass** |
+| D · Binary | Avro (Apache 2.0) / Protobuf (BSD-3); cosign/minisign. | **Pass** |
 
-All four pass F1. No disqualification on licence.
+All pass F1.
 
-### F2 · Regulatory fit (GDPR / DORA / PSD2)
+#### F2 · Regulatory fit (GDPR / DORA / PSD2)
 
-| Candidate | GDPR | DORA | PSD2 | Verdict |
-|---|---|---|---|---|
-| Signed YAML in OCI artefact | No PII in packs (packs hold market/regulatory constants; PII lives in event payloads — `event-store §6.2`). GDPR neutral. | OCI registries support replication, immutability of pulled-by-digest artefacts. RTO/RPO inherits registry HA topology. cosign-signed artefacts are tamper-evident. | Pack version pinned per instance is the audit trail; the registry stores every pack version published, never modified. | **Pass** |
-| Signed YAML in Git | GDPR neutral. | Git repo HA is operational discipline; commit history is immutable; signed commits are tamper-evident. | Pack version = commit SHA, immutable and signed. | **Pass** |
-| CUE-as-pack-format | GDPR neutral. | Same as (A) when distributed via OCI; out-of-process CUE evaluator adds operational surface. | Same as (A). | **Pass (conditional)** — operational surface increase for the CUE evaluator at engine load. |
-| Binary format | GDPR neutral. | Audit-trail readability requires the binary format's schema to be retrievable; if schema is embedded, fine; otherwise schema-registry lookup at pack-history time becomes a dependency. | Same as (A). | **Pass (conditional)** — auditor readability without tooling is harder than for YAML. |
+No PII in packs (packs hold market/regulatory constants; PII lives in event payloads — [event-store §6.2](../feature-design-event-store-projections.md)). GDPR neutral across all four. The discriminating dimension is **auditor/regulator readability of the canonical artefact** (packs are regulatory evidence, read by humans in supervision and DORA-style due diligence — [surface §3.9](../feature-design-configuration-surface.md)) and **tamper-evidence**.
 
-All four pass F2 at POC scale; (C) and (D) carry operational caveats.
-
----
-
-### Soft criteria — Candidate A (signed YAML in OCI artefact) — **CHOSEN**
-
-**S1 · Operational complexity for 1–2 people.** The container registry is already operated (engine images, Kong images, Redpanda images live there). Adding a `babelstone-packs/pt-deposit` repository for pack OCI artefacts costs zero new infrastructure. The engine pulls by digest (immutable reference); the operational toolchain is the same `docker pull` / `oras pull` workflow already in use for container images. Pack publication is a CI pipeline that runs `yaml-lint` + `cosign sign` + `oras push`. The 1–2 person team operates one registry, not a registry plus a separate Git repo plus a CI artefact server.
-
-**S2 · Ecosystem coherence.** Maximum. YamlDotNet is the canonical .NET YAML library; in-process parsing in NJsonSchema-validated pipelines. cosign is the de-facto Sigstore signing tool with first-class .NET verification via the Sigstore .NET client (or a thin shell-out to `cosign verify` in the build-image-build step). OCI artefacts compose with the existing ADR-IC-007 (OpenTelemetry) observability; pack-pull operations emit OTel spans naturally. The pack manifest layout maps directly onto the JSON Schema validator inputs from ADR-PC-006 — pack primitives and parameters are referenced by schema validators at depth-3 (pack compliance) without translation.
-
-**S3 · Exit cost.** Low. YAML is portable, human-readable, diff-friendly. The pack-manifest schema (a JSON Schema describing the YAML structure) is itself portable. cosign signatures are detachable; the pack content stays valid YAML without the signature. Migrating off OCI to plain object storage (or Git) is a registry change; the pack format itself is untouched.
-
-**S4 · Community and longevity.** YAML 1.2 is a multi-decade open spec. OCI image-spec is CNCF graduated; OCI artefacts (the v1.1 generalisation beyond container images) are supported by every major container registry (Harbor, ECR, GCR, ACR, Docker Hub, GitLab Registry). cosign is part of Sigstore (Linux Foundation), with multi-vendor support and active development. YamlDotNet's commit cadence comfortably exceeds the ADR-IC-000 ≥25 trailing-12-month threshold (verified context7 2026-05-22 against `/aaubry/yamldotnet`).
+| Candidate | DORA / PSD2 | Verdict |
+|---|---|---|
+| A · YAML + `.cue` in OCI | OCI artefacts pulled-by-digest are immutable; cosign-signed = tamper-evident; pack version pinned per instance is the audit trail. Canonical values are plain-text YAML — `cat` + `diff` for any reviewer. | **Pass** |
+| B · Fully CUE-native | Same distribution/signing. But the **canonical** audited artefact is CUE; regulator readability depends on a `cue export` rendering step that produces a *derived* view — the audited form is the niche language, the readable form is generated. | **Pass (conditional)** — a deterministic, version-stamped `cue export` rendering must be published alongside and treated as authoritative for review; otherwise the canonical/readable split is an audit hazard. |
+| C · YAML in Git | Commit history immutable; signed commits tamper-evident; YAML readable. | **Pass** |
+| D · Binary | Auditor readability requires tooling + retrievable schema; not plain-text. | **Pass (conditional)** — embedded schema + a published decode tool required for auditor access. |
 
 ---
 
-### Soft criteria — Candidate B (signed YAML in Git)
+### Soft criteria
 
-**S1.** Git operations are universally understood; the team already operates Git for source control. But pack distribution via Git introduces a second consumer of the Git repo (the engine pulls pack tags at startup or registry-watch time) — this couples the engine's runtime availability to Git host availability in a way that the OCI registry does not. For 1–2 person ops, the OCI path is operationally cleaner because pack pulls and image pulls share infrastructure.
+#### A · YAML data + `.cue` schemas in an OCI artefact — **CHOSEN**
 
-**S2.** GPG commit signing is fine but requires GPG key management discipline; cosign + Sigstore provides keyless signing via OIDC, which is materially simpler at small-team scale.
+**S1 · Operational complexity for 1–2 people.** The container registry is already operated (engine, Kong, Redpanda images). A `babelstone-packs/pt-deposit` repository adds zero new infrastructure; the engine pulls by digest with the same `oras pull` workflow already in use. Pack publication is a CI pipeline: `pack-validate` (CUE depths 1–4 over the YAML data, [ADR-PC-006 §P2](./ADR-PC-006-cue-schema-language.md)) + `cosign sign` + `oras push`. One registry, not a registry plus a Git host plus an artefact server.
 
-**S3.** Lowest exit cost of the four candidates (Git repo move = `git clone` + push).
+**S2 · Ecosystem coherence.** Maximum, and now unified on one constraint language. YamlDotNet parses the YAML data in-engine; the `.cue` schemas in `schemas/` are validated by the same Go validator binary the engine and CI already run ([ADR-PC-006](./ADR-PC-006-cue-schema-language.md)) — depth-3 pack compliance is `cue vet parameters.yaml schemas/term-deposit.cue` with no translation. cosign composes with the existing registry; pack-pull operations emit OTel spans ([ADR-IC-007](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md)).
 
-**S4.** Git host longevity is highest; GPG signing is multi-decade stable.
+**S3 · Exit cost.** Low. YAML data is portable, human-readable, diff-friendly; only the `.cue` constraint files are CUE-specific, and they are small and engine-team-owned. cosign signatures are detachable; the pack content stays valid YAML without them. Migrating off OCI (to object storage or Git) is a distribution change that leaves the format untouched.
 
-**Decisive reason for not choosing (B):** S1 + S2 — OCI artefact distribution composes with existing infrastructure; Git distribution adds a new runtime dependency surface.
+**S4 · Community and longevity.** YAML 1.2 is a multi-decade open spec; OCI image-spec is CNCF-graduated and supported by every major registry; cosign is Linux-Foundation Sigstore with multi-vendor support. The only pre-1.0 dependency is CUE (the `.cue` schemas) — and that risk is already owned and mitigated in [ADR-PC-006 §S4](./ADR-PC-006-cue-schema-language.md), with the YAML-data separation keeping a JSON-Schema fallback open without touching pack data.
 
----
+#### B · Fully CUE-native pack
 
-### Soft criteria — Candidate C (CUE-as-pack-format)
+**S1.** Comparable publication pipeline. **S2.** Highest *internal* coherence — schema, values, constraints, defaults in one CUE tree, one `cue vet` over the whole pack. **S3.** Highest exit cost — CUE syntax does not portably round-trip to YAML/JSON for the *values*, only lossy for constraints. **S4.** The entire canonical artefact now depends on pre-1.0 CUE, concentrating the [ADR-PC-006](./ADR-PC-006-cue-schema-language.md) S4 risk on the regulatory evidence itself rather than confining it to constraint files.
 
-**S1.** Doubles the out-of-process CUE evaluator dependency from ADR-PC-006's rejected path. The engine load-time pack parsing would shell out to `cue export` to obtain JSON, then process. Operational surface increase for a 1–2 person team.
+**Decisive reason for not choosing B:** the pack is **regulator-facing evidence**, and the canonical stored artefact should be in the lingua franca (YAML/JSON), not a niche pre-1.0 language. B inverts the "plain text is the source of truth" property: the audited form becomes CUE and the human-readable form becomes a generated `cue export` view. For a banking compliance artefact that is exactly backwards. B's coherence gain is real but is captured *almost entirely* by A — A still validates the YAML data with CUE constraints; it simply keeps the *values* as the canonical plain-text form. A gets CUE's expressiveness at the constraint boundary without betting the regulatory evidence on CUE's longevity.
 
-**S2.** CUE's expressiveness for pack constraints is genuinely powerful (typed constraint composition, bound primitives, schema + values in one file). But ADR-PC-006 already rejected CUE for the schema-language role on out-of-process grounds; doubling down here doubles the cost.
+#### C · Signed YAML in Git
 
-**S3.** Highest exit cost — CUE syntax does not portably translate to JSON Schema or YAML.
+**S1.** Git is universally understood, but pack distribution via Git couples the engine's runtime pack-pull to Git-host availability — a *new* runtime dependency surface distinct from the existing image-pull path. **S2.** GPG key management vs cosign keyless OIDC — cosign is simpler at small-team scale. **S3.** Lowest exit cost. **S4.** Git-host longevity highest.
 
-**S4.** CUE is CNCF Sandbox (still maturing); cadence is good but ecosystem maturity for .NET is thin.
+**Decisive reason for not choosing C:** S1 + S2 — OCI distribution composes with existing infrastructure; Git distribution adds a new runtime dependency surface for no compensating gain. (If the bank later prefers Git-based pack governance, the engine's pack-load source can be re-pointed without changing the YAML+`.cue` format.)
 
-**Decisive reason for not choosing (C):** Doubling the rejected-from-PC-006 out-of-process burden; (A) achieves the same pack-validation outcomes with NJsonSchema validating YAML.
+#### D · Binary format (Avro / Protobuf)
 
----
-
-### Soft criteria — Candidate D (binary format)
-
-**S1.** Auditor readability is materially harder — packs are regulatory evidence, and regulators expect to read them. YAML is plain-text and `diff`-friendly; Avro/Protobuf require tooling.
-
-**S2.** Avro is already chosen at the bus boundary (ADR-IC-002); using Avro for packs reuses serialisation but harms pack auditability.
-
-**S3.** Medium exit cost (binary-to-YAML conversion is mechanical).
-
-**S4.** Avro/Protobuf both stable.
-
-**Decisive reason for not choosing (D):** Auditor / PM readability matters at the pack boundary — packs are read by humans in regulatory review, not only by the engine. YAML keeps this property.
+**S1/S2.** Avro is already at the bus boundary ([ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)), but using it for packs harms auditability. **Decisive reason for not choosing D:** auditor/PM readability at the pack boundary is load-bearing; YAML is plain-text and `diff`-friendly, binary is not, and the efficiency gain is irrelevant for a load-once-per-constitution lifecycle.
 
 ---
 
 ## Decision
 
-**Chosen: Signed YAML files bundled into an OCI artefact in the existing container registry, signed with cosign.**
+**Chosen: a pack ships as auditor-readable YAML data plus `.cue` constraint schemas, bundled into an OCI artefact in the existing container registry, signed with cosign and pulled by digest; CUE (`cue vet`) validates the YAML data.**
 
-The decisive forces are (1) operational coherence with the existing container-registry infrastructure (S1, S2), (2) human readability for regulatory review (which is a hard requirement of the pack role in `feature-design-configuration-surface §3.9`'s sealed-test-corpus discipline), and (3) lowest combined operational surface across the engine team's 1–2 person profile. YAML in OCI artefacts is the lowest-risk path that satisfies all five pack roles (primitives, parameters, rate-sheet refs, sealed test corpus, version pinning) without introducing a new operational surface.
+The decisive forces: (1) **regulator readability of the canonical artefact** — the pack's values, primitives, parameters, and sealed test corpus stay plain-text YAML (`cat` + `diff`, no tooling), which is a hard requirement of the pack's evidence role ([surface §3.9](../feature-design-configuration-surface.md)); (2) **one constraint language, captured cheaply** — the `schemas/` directory carries `.cue` files validated by the same Go validator the engine and CI already run ([ADR-PC-006](./ADR-PC-006-cue-schema-language.md)), giving CUE's depth-3/4 expressiveness at the pack boundary without making CUE the canonical regulatory form; (3) **operational coherence** with the existing registry, cosign, and `oras` workflow.
 
-**Rejected: Signed YAML in Git** — Operationally adds a second runtime dependency for the engine without compensating gain over OCI; Git tag immutability is real but the engine pull path via Git is a separate infrastructure surface from the existing image pull path. If the operating bank later prefers Git-based pack governance (PR workflow visible in the same tool as code review), the engine's pack-load code can be re-pointed to a Git source without changing the YAML format itself — i.e. the cost of switching to Git later is the registry-mechanism change, not a pack-format rewrite.
+**Rejected: fully CUE-native pack** — its coherence gain over A is marginal (A already validates with CUE), while it inverts the canonical/readable relationship for a regulatory-evidence artefact and concentrates the pre-1.0 CUE longevity risk onto that evidence. Retained as a future option if CUE reaches a v1 stability promise and regulator tooling normalises CUE.
 
-**Rejected: CUE-as-pack-format** — Doubles ADR-PC-006's rejected out-of-process burden; the validator at depth-3 (pack compliance) is already handled by NJsonSchema against pack-parameters embedded in the JSON Schema dialect's `$defs`; CUE would re-implement this less portably. CUE remains useful as an *evaluator* tool the engine team can run locally to cross-check pack assertions during pack authoring, but not as the on-disk pack format.
-
-**Rejected: Binary format (Avro / Protobuf)** — Auditor readability is the load-bearing concern. Packs are regulatory evidence; YAML is plain-text; Avro/Protobuf are not. The marginal efficiency gain from binary packs is irrelevant at the pack-load-once-per-instance-constitution lifecycle.
+**Rejected: signed YAML in Git** — adds a runtime dependency surface without gain over OCI. **Rejected: binary format** — auditor readability is the load-bearing constraint; YAML keeps it.
 
 ---
 
 ## Implementation Principles
 
-### P1 — Pack manifest layout (YAML, single bundle)
+### P1 — Pack manifest layout (YAML data + `.cue` schemas, single bundle)
 
-A pack is a single OCI artefact comprising these files inside a tar layer:
+A pack is one OCI artefact comprising a tar layer:
 
 ```
 pack/
-  pack.yaml                 # manifest: name, version, namespace, pack metadata, deps
-  schemas/                  # JSON Schemas (one per family or shared $defs)
-    term-deposit.schema.json
-    common.schema.json
-  primitives/               # pack-bound primitives the schemas reference
+  pack.yaml                 # manifest: id, version, namespace, metadata, deps
+  schemas/                  # CUE constraint schemas (one per family or shared)
+    term-deposit.cue
+    common.cue
+  primitives/               # pack-bound primitives the schemas reference (YAML)
     day-count.yaml
     tax.yaml
     fgd.yaml
   parameters/
-    constants.yaml          # pack-level constants (max_consumer_rate_bps, fgd_ceiling_eur, ...)
+    constants.yaml          # pack-level constants (max_consumer_rate_bps, fgd_ceiling_eur, …)
   rate-sheet-refs/
-    deposits-pt.yaml        # refs to ADR-PC-008-stored rate sheets, version-pinned
-  test-corpus/              # sealed regression evidence
+    deposits-pt.yaml        # version-pinned refs to ADR-PC-008-stored rate sheets
+  test-corpus/              # sealed regression evidence (YAML data)
     canonical-instances.yaml
     expected-events.yaml
   README.md                 # human-readable pack-version changelog
 ```
 
-`pack.yaml` carries the pack identity:
+The **data** (`pack.yaml`, `primitives/`, `parameters/`, `rate-sheet-refs/`, `test-corpus/`) is YAML — the canonical, auditor-readable form. The **constraints** (`schemas/*.cue`) are CUE; `cue vet primitives/ parameters/ schemas/*.cue` is the depth-3 pack-compliance check. `pack.yaml` carries identity (`pack_id`, `pack_version` immutable once published, `namespace`, `publisher`, `publish_date`, `schema_version` of the manifest itself, `dependencies.engine_compatible_versions`, schema/rate-sheet pins) per [surface §3.4](../feature-design-configuration-surface.md).
 
-```yaml
-pack_id: "pt-deposit-pack"
-pack_version: "2026.05.22-r3"        # semver-like; immutable once published
-namespace: "pt-bank"
-publisher: "babelstone-pack-team"
-publish_date: "2026-05-22T08:30:00Z"
-schema_version: "1.4"                # of pack.yaml itself, for forward-only evolution
-dependencies:
-  engine_compatible_versions: ">=1.0.0,<2.0.0"
-  schemas:
-    - term-deposit@2026.04.10-r1
-  rate_sheets:
-    - deposits-pt@2026.05.22
-```
+### P2 — Distribution as OCI artefact, pulled by digest, cosign-signed
 
-### P2 — Distribution as OCI artefact, pulled by digest
-
-Packs publish to the existing container registry under a dedicated repository (e.g. `babelstone-packs/pt-deposit`). The artefact uses the `application/vnd.babelstone.pack.v1+yaml` media type. The engine pulls by **digest** (sha256), never by tag — tags are mutable labels for human convenience; digests are the immutable runtime reference. The pull path uses `oras pull` or the equivalent .NET OCI client.
-
-The OCI artefact is signed with **cosign keyless signing** (Sigstore OIDC; CI-emitted signature against the engine team's GitHub identity in v1; bank-internal OIDC in production). The engine verifies the signature at pull time via the Sigstore .NET client (or shell-out to `cosign verify` at image-build time, with the pack baked into the engine image for sealed deployments).
+Packs publish to a dedicated registry repository (e.g. `babelstone-packs/pt-deposit`) with media type `application/vnd.babelstone.pack.v1+yaml`. The engine pulls by **digest** (sha256), never by tag. Signing is **cosign keyless** (Sigstore OIDC; engine-team identity in v1, bank-internal OIDC in production); the engine verifies at pull time via the Sigstore .NET client or a `cosign verify` step at image-build for sealed deployments. The cosign signature is also the attestation that CUE depths 1–4 passed in CI ([ADR-PC-006 §P3](./ADR-PC-006-cue-schema-language.md)) — verified-signature ⇒ already-validated.
 
 ### P3 — Per-instance pinning via `pack_version` on every event
 
-Every event written by the engine carries `pack_version` in its envelope (per [ADR-PC-001 §P1](./ADR-PC-001-event-store-technology.md) contract column). The `pack_version` value matches the `pack.yaml` `pack_version` field; the engine resolves a `pack_version` string to the OCI digest via a `pack_versions` table (one row per `(pack_id, pack_version)` mapping to OCI digest + signature digest).
+Every event carries `pack_version` in its envelope ([ADR-PC-001 §P1](./ADR-PC-001-event-store-technology.md)). The engine resolves a `pack_version` string to its OCI digest via a `pack_versions` table (`(pack_id, pack_version) → OCI digest + signature digest`). An instance constituted under a `pack_version` keeps it for all subsequent lifecycle events until explicitly migrated by a `PackVersionMigrated` event ([surface §3.5–§3.6](../feature-design-configuration-surface.md)); the engine never silently re-resolves mid-lifetime.
 
-Per-instance pinning means: an instance constituted under `pack_version: 2026.05.22-r3` continues to use that pack version for all subsequent lifecycle events, until explicitly migrated via a `PackVersionMigrated` event (per [feature-design-configuration-surface §3.5–§3.6](../feature-design-configuration-surface.md)). The engine never silently re-resolves a pack version mid-instance-lifetime.
+### P4 — Engine load behaviour: validate-then-cache, fail-loud
 
-### P4 — Engine load behaviour: validate-then-cache
-
-At engine startup, every pack version referenced by any live instance (queryable from the `events` table's `pack_version` column) is pulled, signature-verified, and parsed into an in-memory immutable cache. Pack pull failures at startup are fatal (the engine refuses to start with unresolvable packs) — silent degradation is forbidden. Subsequent instance constitutions that reference a new pack version trigger a hot pull + verify + cache, with the same fail-loud discipline.
-
-Pack-load cost is amortised across instance lifetime: every event handler resolves pack primitives and parameters against the in-memory cache, no I/O. A pack-cache invalidation event (e.g. signature expiry, key rotation) is a deployment-time operator-initiated reload, never a runtime auto-refresh.
+At startup the engine pulls, signature-verifies, structurally re-parses, and caches every `pack_version` referenced by any live instance (queryable from `events.pack_version`). Because the signature attests prior CUE validation ([ADR-PC-006 §P3](./ADR-PC-006-cue-schema-language.md)), the load-time check is a structural parse + version check, not a full `cue vet` re-run. Pull/verify failure at startup is **fatal** — no silent degradation. New `pack_version` references trigger a hot pull + verify + cache with the same fail-loud discipline. Event handlers resolve primitives/parameters against the in-memory cache (no I/O).
 
 ### P5 — Sealed test corpus is the regression-evidence interface
 
-The `test-corpus/` directory ships canonical instances + expected event sequences per pack version. CI runs the corpus against the engine at every pack-publish AND at every engine-release; corpus failure is a release blocker. The corpus is the regulator-facing evidence that the engine + pack + schema combination produces the documented behaviour ([feature-design-configuration-surface §3.9](../feature-design-configuration-surface.md), [feature-design-event-store-projections §10.4](../feature-design-event-store-projections.md)).
+`test-corpus/` ships canonical instances + expected event sequences (YAML) per pack version. CI runs the corpus against the engine's hand-rolled substrate ([ADR-PC-010 §P3](./ADR-PC-010-dotnet-hand-rolled-engine.md)) at every pack-publish and every engine-release; corpus failure is a release blocker. `expected-events.yaml` is **generated** by running the engine against `canonical-instances.yaml` and committed — never hand-authored — so the corpus cannot silently drift ([surface §3.9](../feature-design-configuration-surface.md)).
 
 ---
 
@@ -205,38 +153,36 @@ The `test-corpus/` directory ships canonical instances + expected event sequence
 
 **What this choice makes easier:**
 
-- Pack publication is a CI pipeline run with no new infrastructure (`yaml-lint` + `cosign sign` + `oras push` against the existing registry).
-- Pack auditor / regulator review is `cat pack.yaml` + `diff` — no tooling required.
-- Per-instance pinning via `pack_version` integrates with ADR-PC-001 §P1 event envelope without schema changes.
-- The pack-load fail-loud discipline aligns with the engine's deterministic-handler philosophy (no silent degradation, no clock-time pack resolution).
+- Pack publication is a CI run with no new infrastructure (`pack-validate` + `cosign sign` + `oras push` against the existing registry).
+- Auditor/regulator review of the canonical artefact is `cat pack.yaml` + `diff` — no tooling, no `cue export` indirection.
+- One constraint language across schema ([ADR-PC-006](./ADR-PC-006-cue-schema-language.md)) and pack — the `.cue` schemas validate the YAML data directly at depth 3.
+- Per-instance pinning via `pack_version` integrates with the [ADR-PC-001 §P1](./ADR-PC-001-event-store-technology.md) envelope unchanged.
 
 **What this choice makes harder or impossible:**
 
-- Pack-content evolution is YAML-diff visible (not necessarily harder, but a discipline — every pack change is human-readable in the registry's diff view). This is a feature, not a bug, but it means pack-version churn is fully transparent to anyone with registry access.
-- The OCI registry becomes a regulatory artefact store, not just a container image store. Retention policies for pack repositories must be different from image repositories (packs are kept forever; old container images may be GC'd). The 1–2 person team must operate this distinction.
-- The pack-format JSON Schema (describing the structure of `pack.yaml`) is itself a forward-only contract that must follow the same `event_schema_version`-style evolution discipline as event schemas ([event-store §5.4](../feature-design-event-store-projections.md)). Adding fields is fine; removing or re-typing requires a new pack-format major version with parallel publication.
+- Pack-content evolution is YAML-diff-visible in the registry — a transparency feature, but it makes pack-version churn fully public to anyone with registry access.
+- The OCI registry becomes a regulatory artefact store: pack repositories need keep-forever retention, distinct from image repositories' GC policy. The 1–2 person team operates this distinction.
+- The pack-manifest CUE schema (describing `pack.yaml`'s own shape) is a forward-only contract following the same evolution discipline as event schemas ([event-store §5.4](../feature-design-event-store-projections.md)) — additive changes are fine; removal/re-typing requires a new pack-format major version with parallel publication.
 
 **Residual risks:**
 
-- **Pack-format schema versioning.** A buggy pack-publication CI that publishes a malformed pack reaches the registry. Mitigation: the pack-publication CI runs `NJsonSchema` validation of `pack.yaml` against the pack-format JSON Schema before `oras push`; the engine re-runs the same validation at load and refuses to use unparseable packs (fail-loud). Defence in depth.
-- **cosign keyless signing depends on Sigstore.** If Sigstore is unavailable at engine startup, the keyless verification path fails. Mitigation: for production, transition to a bank-internal OIDC identity provider for cosign signing; for POC, accept the Sigstore dependency.
-- **OCI artefact distribution depends on the existing registry.** If the registry is offline, the engine cannot start. Mitigation: this is the same dependency as for container images; the registry HA topology is operationally shared. Acceptable.
-- **Pack-version `2026.05.22-r3`-style strings are not lexicographically ordered against revision suffixes.** Mitigation: pack-version strings are opaque; the engine never compares them ordinally — it resolves them via the `pack_versions` mapping table. Ordering is a publication-policy concern, not a runtime concern.
-- **Sealed test corpus drift.** A pack publication can ship without updating the test corpus, or with an inconsistent corpus. Mitigation: CI gate at pack-publish requires `expected-events.yaml` to be regenerated by running the engine against `canonical-instances.yaml` and committing the new output; the corpus is generated, not hand-authored.
+- **Pack-format CUE schema versioning.** A buggy publish reaching the registry. Mitigation: the publish CI runs `cue vet` of `pack.yaml` against the manifest schema before `oras push`; the engine re-checks structurally at load and refuses unparseable packs (defence in depth).
+- **cosign keyless depends on Sigstore.** Mitigation: bank-internal OIDC for production; accept the Sigstore dependency for POC.
+- **OCI distribution depends on the existing registry** — the same dependency as container images; shared HA topology. Acceptable.
+- **Sealed-corpus drift.** Mitigation: the publish gate regenerates `expected-events.yaml` by running the engine against `canonical-instances.yaml`; the corpus is generated, not authored.
+- **CUE longevity at the constraint layer** — owned and mitigated in [ADR-PC-006 §S4](./ADR-PC-006-cue-schema-language.md); the YAML-data separation confines the risk to the `.cue` files and keeps the JSON-Schema fallback open without touching pack data.
 
 ---
 
 ## Cross-references
 
-- [ADR-PC-006](./ADR-PC-006-json-schema-njsonschema.md) — JSON Schema is the schema language; pack `schemas/` ship JSON Schema files validated by the same NJsonSchema validator pipeline.
-- [ADR-PC-010](./ADR-PC-010-dotnet-marten-wolverine.md) — engine runtime is .NET 9; YamlDotNet and Sigstore .NET client are the parsing + verification libraries.
+- [ADR-PC-006](./ADR-PC-006-cue-schema-language.md) — CUE is the schema language; pack `schemas/` ship `.cue` files validated by the same Go validator; cosign signing underwrites the validated-in-CI attestation.
+- [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — engine runtime is .NET 9; YamlDotNet parses pack YAML; the hand-rolled substrate runs the depth-5 corpus.
 - [ADR-PC-001 §P1](./ADR-PC-001-event-store-technology.md) — `pack_version` is a contract column on the event envelope.
-- [ADR-PC-008](../04-open-questions.md) — rate-sheet storage; this ADR carries rate-sheet refs only, not the sheets themselves.
-- [ADR-PC-009](../04-open-questions.md) — per-instance pack and schema version pinning; this ADR carries the pinning column, PC-009 will carry the migration-event semantics.
-- [feature-design-configuration-surface §3.5–§3.6](../feature-design-configuration-surface.md) — per-instance pinning semantics.
-- [feature-design-configuration-surface §3.9](../feature-design-configuration-surface.md) — sealed test corpus discipline.
-- [feature-design-configuration-authoring §9](../feature-design-configuration-authoring.md) — coarse-start fine-drift; the pack format must accommodate evolving primitives across pack versions.
+- [ADR-PC-008](../04-open-questions.md) — rate-sheet storage; this ADR carries rate-sheet refs only.
+- [ADR-PC-009](../04-open-questions.md) — per-instance pack/schema version pinning; this ADR carries the pinning column, PC-009 carries the migration-event semantics.
+- [surface §3.4–§3.10](../feature-design-configuration-surface.md) — pack manifest shape, pinning, distribution/signing (§3.7), sealed test corpus (§3.9), validator interplay (§3.10).
 
 ---
 
-*Decided 2026-05-22 by jhosm.*
+*Decided 2026-05-23 by jhosm. Supersedes the prior JSON-Schema-context iteration of ADR-PC-007 (removed before acceptance): the pack format is unchanged (signed YAML in OCI) but the `schemas/` files are now `.cue` and validation is CUE, following the ADR-PC-006 schema-language change.*
