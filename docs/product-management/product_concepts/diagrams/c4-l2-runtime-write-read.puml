@@ -1,0 +1,37 @@
+@startuml c4-l2-runtime-write-read
+' Source of truth for Level 2.1 in ../feature-design-c4-architecture.md.
+' Regenerate: plantuml -tsvg <this file>
+!include <C4/C4_Container>
+' Remote fallback: !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+AddElementTag("estate", $bgColor="#2E7D6B", $fontColor="#FFFFFF", $borderColor="#1F5749", $legendText="Inherited integration estate (operated, defined in integration_concepts/)")
+
+title Container — L2.1 Runtime write/read path & legacy integration
+
+System_Ext(channels, "Channels", "Mobile / web / branch / call centre acting for a customer or clerk")
+
+System_Boundary(engine_sys, "Core Banking Product Engine") {
+  Container(engine, "Engine process", "C# / .NET 9 — single deployable", "Command + query API (AspNetCore); aggregates + cash-flow handlers; hand-rolled event-sourcing core (append/load); projection runtime; saga state machines; outbox-relay worker")
+  ContainerDb(pg, "Engine PostgreSQL", "PostgreSQL", "events (source of truth) + outbox + read-model projections (positions, accrual, maturity, withholding) + saga_state + pack_versions")
+}
+
+Container(kong, "Kong Gateway CE", "Kong / nginx, DB-less", "Edge: JWT, PSD2 SCA, rate-limit, payload validation, SSE proxy, mTLS to upstream, OTel", $tags="estate")
+Container(redpanda, "Redpanda CE + Schema Registry", "Kafka API + Confluent SR", "Event backbone; Avro on the wire; topic deposits.integration.events", $tags="estate")
+Container(acl, "ACL service (Deposits)", "dedicated service", "Outbound hand-rolled Core clients (SOAP/REST/MQ); pluggable inbound adapter (webhook/poll/MQ); per-adapter circuit-breaker + bulkhead; reconciler", $tags="estate")
+ContainerDb(acldb, "ACL PostgreSQL", "PostgreSQL", "idempotency keys, id mappings, in-flight / INDETERMINATE state, inbound dedup, own outbox", $tags="estate")
+
+System_Ext(core, "Core Banking (Legacy)", "Owns the conta à ordem; SoR for legacy deposits; daily DDA batch extract")
+
+Rel(channels, kong, "Commands / queries; subscribe to SSE status stream", "HTTPS REST / SSE")
+Rel(kong, engine, "Route after auth / SCA / rate-limit", "HTTPS, mTLS")
+Rel(engine, pg, "Append events + outbox in ONE local tx; load streams; read projections; saga state", "SQL / Npgsql")
+Rel(engine, redpanda, "Outbox relay: publish domain & integration events", "polling publisher (ADR-IC-004), Avro")
+Rel(engine, acl, "Debit principal / credit interest & maturity", "mTLS, domain commands")
+Rel(acl, acldb, "State + outbox in one local tx", "SQL")
+Rel(acl, core, "Execute money movements; observe results", "SOAP / REST / MQ; idempotent")
+Rel(core, acl, "Async confirmations + daily DDA batch", "webhook / poll / MQ")
+Rel(acl, redpanda, "Confirmation events via own outbox", "Avro")
+Rel(redpanda, engine, "Consume confirmations (inbox); advance saga", "Avro")
+
+SHOW_LEGEND()
+@enduml

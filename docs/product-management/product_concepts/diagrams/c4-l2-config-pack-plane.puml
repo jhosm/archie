@@ -1,0 +1,37 @@
+@startuml c4-l2-config-pack-plane
+' Source of truth for Level 2.3 in ../feature-design-c4-architecture.md.
+' Regenerate: plantuml -tsvg <this file>
+!include <C4/C4_Container>
+' Remote fallback: !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+AddElementTag("estate", $bgColor="#2E7D6B", $fontColor="#FFFFFF", $borderColor="#1F5749", $legendText="Inherited integration estate (operated, defined in integration_concepts/)")
+
+title Container — L2.3 Configuration & regulatory-pack plane
+
+Person(pm, "Product Manager", "Authors variant YAML (product configs)")
+Person(treasury, "Treasury / ALM", "Publishes rate sheets")
+Person(reg, "Engine team + Reg counsel", "Author family schemas (.cue) + pack data (YAML)")
+
+System_Ext(gitci, "Authoring repo + CI", "Git + CI pipeline: runs pack-validate, cosign sign, oras push")
+
+System_Boundary(engine_sys, "Core Banking Product Engine") {
+  Container(engine, "Engine process", "C# / .NET 9", "Pulls pack by digest; verifies cosign signature; structural re-parse; caches; resolves pack & rate-sheet; pins pack_version + schema_version per instance")
+  Container(validator, "CUE validator (pack-validate)", "Go static binary, embeds cuelang.org/go", "Depths 1–4: syntax, type-check, pack-compliance, regulatory coherence; one binary serves pre-commit, CI, and engine pack-load")
+  ContainerDb(pg, "Engine PostgreSQL", "PostgreSQL", "pack_versions (pack_version → OCI digest); events carry the pinned pack_version + schema_version")
+}
+
+Container(oci, "OCI registry", "container / artefact registry", "Pack artefacts: auditor-readable YAML data + .cue schemas; cosign-signed; pulled by digest", $tags="estate")
+Container(ratesheets, "Rate-sheet store", "ADR-PC-008 (TBD)", "Version-pinned numerical rate sheets + deploy API", $tags="estate")
+
+Rel(pm, gitci, "Commit product configs (variant YAML)", "git push / PR")
+Rel(reg, gitci, "Author family schemas (.cue) + pack YAML", "git push / PR")
+Rel(treasury, ratesheets, "Publish rate sheets", "deploy API (ADR-PC-008)")
+Rel(gitci, validator, "Run depths 1–4 on every PR", "invoke (out-of-process)")
+Rel(gitci, oci, "cosign sign + oras push (validated pack)", "OCI push")
+Rel(engine, oci, "Pull pack by digest; verify cosign signature", "oras / Sigstore")
+Rel(engine, validator, "Structural re-parse + version check at pack-load", "subprocess")
+Rel(engine, ratesheets, "Resolve rate-sheet version at constitution / renewal", "read")
+Rel(engine, pg, "Resolve pack_versions; pin pack + schema version per instance", "SQL")
+
+SHOW_LEGEND()
+@enduml
