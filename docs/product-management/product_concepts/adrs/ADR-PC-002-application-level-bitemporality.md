@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (gated by Q-Y — see §Gate) |
+| Status | Accepted (gated by Q-Y — production gate, not required for the POC; see §Gate) |
 | Date | 2026-05-23 |
 | Deciders | jhosm |
 | Shape | Tool-selection |
@@ -87,7 +87,7 @@ Three load-bearing reasons: (1) it is **field-granular by construction**, which 
 
 ### Gate
 
-This ADR is **Proposed pending Q-Y** ([event-store §6.4](../feature-design-event-store-projections.md), [04 §7](../04-open-questions.md)) — the compliance/audit confirmation that PT regulators expect retroactive corrections queryable in both time dimensions. The architecture commits to bitemporal regardless ([04 §3](../04-open-questions.md) RESOLVED); Q-Y resets *how much* bitemporal machinery v1 populates, and Path A is robust to all three outcomes:
+This ADR is **Accepted**. Q-Y — the compliance/audit confirmation that PT regulators expect retroactive corrections queryable in both time dimensions ([event-store §6.4](../feature-design-event-store-projections.md), [04 §7](../04-open-questions.md)) — remains a **production gate, not a POC prerequisite**. For the POC the engine **assumes bitemporality is required for all purposes**: full §6.3 correctness scoring applies and Path A is built as specified. The architecture commits to bitemporal regardless ([04 §3](../04-open-questions.md) RESOLVED); should Q-Y later narrow *how much* bitemporal machinery production populates, Path A degrades gracefully across the same three outcomes:
 
 - **Bitemporal required** → full §6.3 correctness scoring applies; Path A as specified.
 - **Unitemporal sufficient for v1** → the projection schema keeps the columns but the engine need not populate the `valid_time` history; criteria 1 and 6 lose weight. Path A degrades gracefully (a unitemporal projection is application-level bitemporality with one dimension unused).
@@ -138,4 +138,4 @@ Every projection is rebuildable from the event log alone ([event-store §1](../f
 
 ---
 
-*Decided 2026-05-23 by jhosm. Proposed pending Q-Y. Mechanism choice (Q-X) made ahead of the §6.3 spike because [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) narrows the candidate set to the application-level path.*
+*Decided 2026-05-23 by jhosm. Accepted; Q-Y is a production gate, not required for the POC, which assumes bitemporality is needed for all purposes. Mechanism choice (Q-X) made ahead of the §6.3 spike because [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) narrows the candidate set to the application-level path.*

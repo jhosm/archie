@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (gated by DPO — see §Gate) |
+| Status | Accepted (gated by DPO — production gate, not required for the POC; see §Gate) |
 | Date | 2026-05-23 |
 | Deciders | jhosm |
 | Shape | Tool-selection |
@@ -88,7 +88,7 @@ The decisive reason is that **key custody is security-critical and is the delibe
 
 ### Gate
 
-This ADR is **Proposed pending DPO confirmation** ([event-store §6.4](../feature-design-event-store-projections.md), [04 §7](../04-open-questions.md)) that crypto-shredding satisfies the operating bank's interpretation of Article 17 under Lei 58/2019, in conjunction with PT banking-record retention (10-year accounting, 7-year AML). The same meeting that resolves Q-Y resolves this. Named outputs needed: crypto-shredding accepted as erasure (vs PII off-store fallback); retention windows for structural events vs PII fields; **the cipher-text-after-window question** (must ciphertext be deleted at the storage level after the 10-year window, or is key destruction sufficient?); and whether the engine must support a regulator-query mode that bypasses subject-erasure for supervisory inspection. If the DPO vetoes crypto-shredding, the v1 fallback is PII off-store; tombstoning stays rejected.
+This ADR is **Accepted**. DPO confirmation that crypto-shredding satisfies the operating bank's interpretation of Article 17 under Lei 58/2019, in conjunction with PT banking-record retention (10-year accounting, 7-year AML), remains a **production gate, not a POC prerequisite** ([event-store §6.4](../feature-design-event-store-projections.md), [04 §7](../04-open-questions.md)). The same meeting that resolves Q-Y resolves this. Named outputs needed: crypto-shredding accepted as erasure (vs PII off-store fallback); retention windows for structural events vs PII fields; **the cipher-text-after-window question** (must ciphertext be deleted at the storage level after the 10-year window, or is key destruction sufficient?); and whether the engine must support a regulator-query mode that bypasses subject-erasure for supervisory inspection. If the DPO vetoes crypto-shredding, the v1 fallback is PII off-store; tombstoning stays rejected.
 
 ---
 
@@ -138,4 +138,4 @@ Erasure is auditable (which subject, when, by whom) and the structural audit tra
 
 ---
 
-*Decided 2026-05-23 by jhosm. Proposed pending DPO confirmation. Key store (OpenBao) selected per deciders' direction as the deliberate exception to the hand-rolled-core posture, key custody being security-critical.*
+*Decided 2026-05-23 by jhosm. Accepted; DPO confirmation is a production gate, not required for the POC. Key store (OpenBao) selected per deciders' direction as the deliberate exception to the hand-rolled-core posture, key custody being security-critical.*

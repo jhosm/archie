@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (production-blocking; RTO/RPO numbers pending operating-bank sign-off) |
+| Status | Accepted (production-blocking at cutover; RTO/RPO numbers are POC defaults, operating-bank sign-off not required for the POC) |
 | Date | 2026-05-23 |
 | Deciders | jhosm |
 | Shape | Tool-selection (operational-discipline ADR per [ADR-PC-000](./ADR-PC-000-namespace-and-contract-shape-framework.md) D4; default to tool-selection) |
@@ -150,4 +150,4 @@ The monthly projection-rebuild drill ([event-store §7.2](../feature-design-even
 
 ---
 
-*Decided 2026-05-23 by jhosm. Proposed; production-blocking for v1 cutover; RTO/RPO numbers are POC defaults pending operating-bank sign-off.*
+*Decided 2026-05-23 by jhosm. Accepted; production-blocking for v1 cutover; RTO/RPO numbers are POC defaults, operating-bank sign-off not required for the POC.*
