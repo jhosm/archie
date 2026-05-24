@@ -124,3 +124,11 @@ bd close <id>         # Complete work
 - **After editing a `.puml`, re-render it** so you can check the result: `plantuml -tsvg <file>.puml`. Requires `brew install graphviz plantuml` (full setup in `INSTALL.md`).
 - The `.githooks/pre-commit` hook re-renders any staged `.puml` and stages the SVG at commit time (the safety net); activate with `git config core.hooksPath .githooks` (a shim in `.git/hooks/` may already delegate to it).
 - Convention: `@startuml <id>` MUST match the `.puml` filename, so output lands at `<filename>.svg` (the hook relies on this).
+
+## ADR governance & conformance
+
+The **explicit-drift gate** (ADR-PC-020 §D3): *no change may contradict an Accepted ADR without an amendment or supersession in the same change.* Divergence is allowed; silent divergence is not. Three layers enforce it — see `.claude/agents/README.md` for the full composition and the §P9 drift workflow:
+
+- **§D5 immutability** — don't edit an Accepted ADR's `## Decision` in place; append a dated `*Revised YYYY-MM-DD: …*` line or supersede with a new ADR (the `adr-immutability.sh` hook warns; CI hard-fails).
+- **PR-body gate** — every PR body MUST carry an "ADRs touched/honoured" section naming the ADRs it implements, amends, or honours (CI-enforced). Review starts from the decision, not the diff.
+- **ADR-conformance review** — before committing/PR on any diff touching engine/contract code or `docs/**/adrs/`, review it for internal-design drift no mechanical gate sees, and on a genuine contradiction land the amend/supersede in the same change rather than letting it pass silently. The review procedure is encoded in `.claude/agents/adr-conformance.md` (a Claude Code subagent); non-Claude-Code agents can follow that prompt as a checklist. It is a judgement *layer* — the mechanical gates + the `commitment-catalogue.md` fitness functions remain authoritative.

@@ -84,6 +84,14 @@ rm -rf directory        # not: rm -r directory
 - The `.githooks/pre-commit` hook re-renders any staged `.puml` and stages the SVG at commit time (the safety net); activate with `git config core.hooksPath .githooks` (a shim in `.git/hooks/` may already delegate to it).
 - Convention: `@startuml <id>` MUST match the `.puml` filename, so output lands at `<filename>.svg` (the hook relies on this).
 
+## ADR governance & conformance
+
+The **explicit-drift gate** (ADR-PC-020 §D3): *no change may contradict an Accepted ADR without an amendment or supersession in the same change.* Divergence is allowed; silent divergence is not. Three layers enforce it — see `.claude/agents/README.md` for the full composition and the §P9 drift workflow:
+
+- **§D5 immutability** — don't edit an Accepted ADR's `## Decision` in place; append a dated `*Revised YYYY-MM-DD: …*` line or supersede with a new ADR (the `adr-immutability.sh` hook warns; CI hard-fails).
+- **PR-body gate** — every PR body MUST carry an "ADRs touched/honoured" section naming the ADRs it implements, amends, or honours (CI-enforced). Review starts from the decision, not the diff.
+- **`adr-conformance` subagent** (`.claude/agents/adr-conformance.md`) — run it before committing/PR on any diff touching engine/contract code or `docs/**/adrs/`. It catches internal-design drift no mechanical gate sees and, on a genuine contradiction, proposes the amend/supersede rather than letting it land silently. It is a dev-time judgement *layer* — the mechanical gates + the `commitment-catalogue.md` fitness functions remain authoritative.
+
 ## Document Conventions
 
 - `docs/product-management/integration_concepts/` documents are numbered `00–11` and intended to be read in sequence
