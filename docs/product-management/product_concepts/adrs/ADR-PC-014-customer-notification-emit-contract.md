@@ -85,3 +85,11 @@ FIN is **pre-contractual**: BdP retail-conduct rules require the customer to rec
 - **What this contract does not commit to.** Channel selection and preference logic, the contact directory, retry/bounce policy, and the rendering engine are **communications-system deliverables**. The acknowledgement contract for the *pre-contractual* FIN gate (what evidence the channel captures, where it is stored) is a **saga-design / operating-bank deliverable** coordinated through [integration_concepts §05](../../integration_concepts/05-constitution-saga-walkthrough.md) — a production gate, not a POC prerequisite, matching the posture of [ADR-PC-004](./ADR-PC-004-pii-crypto-shredding.md).
 - **Scheduled-trigger machinery is unspecified here.** *That* a SCHEDULED `NotificationDue` fires at a temporal point is contracted; *how* the engine's scheduler materialises temporal triggers (the pre-maturity window, the annual statement run) is engine-internal mechanism, out of this boundary contract.
 - **Failure mode the contract permits.** A SCHEDULED notification whose underlying data is later corrected (`DepositCorrected` after a maturity notice was emitted) can leave the customer holding a now-stale notice; the engine emits a fresh `NotificationDue` on the correction, but the superseding/withdrawal of the prior delivered notice is the communications system's concern, not the engine's.
+
+## Verifiable commitments
+
+| # | Commitment | Gate (pyramid level) | Test ID | Status |
+|---|---|---|---|---|
+| C1 | **Post-flag, never gated** for EVENT_DRIVEN and SCHEDULED (§Error model): delivery is downstream of the engine's commit — a render or delivery failure (bad address, channel down, bounce) never blocks or compensates the producing flow. | contract / saga | `POST_FLAG_NEVER_GATES` | Planned |
+
+Seeded in the [commitment catalogue](../../../../conformance/README.md) ([`commitments.yaml`](../../../../conformance/commitments.yaml)) per [ADR-PC-020 §P5/§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) (Open Action #4). The same invariant is verified once across [PC-012](./ADR-PC-012-gl-posting-signal-contract.md) and [PC-015](./ADR-PC-015-ifrs9-signal-contract.md).

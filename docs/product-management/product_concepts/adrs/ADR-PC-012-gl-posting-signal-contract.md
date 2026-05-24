@@ -59,3 +59,11 @@ The engine **never mutates a past event**. A retroactive correction is a *new* e
 - **Reconciliation calibration is deferred.** "How many mismatches per day cross from noise to incident" is [Q-AG](../04-open-questions.md), requiring a calibration period under real load. Until then the reconciliation exists but its thresholds are provisional.
 - **Failure modes the contract permits.** A GL adapter that under-subscribes (misses an accounting-relevant event type as the catalogue grows in v2+) will under-post until reconciliation catches it; the Pact contract narrows but does not eliminate this — a *newly added* event type is invisible to an existing consumer contract. The mitigation is catalogue-governance review ([integration_concepts §08](../../integration_concepts/08-event-catalog-governance.md)) flagging new accounting-relevant events to the GL team at authoring time.
 - **GL-aware events were considered for one case and rejected.** Tax remittance (`WithholdingApplied` → tax-authority payable) is the event most tempting to emit GL-aware, because the posting is near-universal. It is still emitted raw: a PT-specific tax-payable account is no less operating-bank-specific than any other account, and carving one exception would erode the clean boundary for marginal benefit.
+
+## Verifiable commitments
+
+| # | Commitment | Gate (pyramid level) | Test ID | Status |
+|---|---|---|---|---|
+| C1 | **Post-flag, never gated** (§Error model): GL consumption is strictly downstream of the engine's local commit — a GL rejection (bad mapping, unavailable ledger, unbalanced posting) never blocks or compensates the producing business flow. | contract / saga | `POST_FLAG_NEVER_GATES` | Planned |
+
+Seeded in the [commitment catalogue](../../../../conformance/README.md) ([`commitments.yaml`](../../../../conformance/commitments.yaml)) per [ADR-PC-020 §P5/§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) (Open Action #4). The same invariant is verified once across [PC-014](./ADR-PC-014-customer-notification-emit-contract.md) and [PC-015](./ADR-PC-015-ifrs9-signal-contract.md).

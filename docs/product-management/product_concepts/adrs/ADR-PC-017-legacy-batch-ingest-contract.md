@@ -94,3 +94,11 @@ This contract is one half of **reconciliation flow 2** ([coexistence §7.3](../f
 - **Q-AG thresholds uncalibrated** — flow-2 mismatch counts have no noise-vs-incident boundary until a real-data calibration period sets one.
 - **CDC and native event emission are rejected for v1** ([coexistence §5.1](../feature-design-strangler-fig-coexistence.md)), accepting the 24-hour latency as the cost of zero write-path risk. The format-agnostic design accommodates a future reversal: if a later legacy core can emit events cheaply, a streaming adapter is simply another parser behind the same `LegacyInstanceObserved` contract — the engine side does not change.
 - **What this contract does not commit to:** the downstream reporting application's own ingestion of legacy facts ([Q-AE](../04-open-questions.md), [coexistence §8](../feature-design-strangler-fig-coexistence.md)), and the settlement (engine → legacy) direction, which is [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md).
+
+## Verifiable commitments
+
+| # | Commitment | Gate (pyramid level) | Test ID | Status |
+|---|---|---|---|---|
+| C1 | A batch file can be **re-ingested without producing duplicate `LegacyInstanceObserved` events** (§Decision · Idempotency) — file replay is safe, so recovery after a parse failure is a re-run, not a surgical repair. | integration / Testcontainers | `BATCH_INGEST_IDEMPOTENT` | Planned |
+
+Seeded in the [commitment catalogue](../../../../conformance/README.md) ([`commitments.yaml`](../../../../conformance/commitments.yaml)) per [ADR-PC-020 §P5/§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) (Open Action #4).

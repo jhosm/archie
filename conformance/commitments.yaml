@@ -1,0 +1,199 @@
+# Commitment catalogue — seed (ADR-PC-020 Open Action #4).
+#
+# The machine-readable source of truth for the ~8 load-bearing "architecture
+# fitness functions" named in ADR-PC-020 §P7. Each entry binds a falsifiable
+# commitment from an Accepted ADR (or concept doc) to the gate that proves it
+# and a stable Test ID. The §P6 coverage checker (bd archie-bhq.4) reads THIS
+# file directly rather than parsing the ADR prose, and asserts that every
+# `Live` commitment resolves to a test that exists and runs.
+#
+# Format mirrors the ADR-PC-000 §A1 `Verifiable commitments` table
+# (Commitment / Gate / Test ID / Status). Per-ADR tables (seeded into each
+# source ADR) reference these Test IDs; this file is the aggregate registry.
+#
+# Status vocabulary (ADR-PC-000 §A1):
+#   Live    — gate exists and passes
+#   Planned — gate to be built before the decision is implemented
+#   Gap     — no gate yet; a known hole, listed deliberately (visibility is the point)
+#
+# Gate vocabulary — the 07-testing-strategy pyramid (unit < integration <
+# contract < saga < e2e) plus two build/timing gates (analyser, benchmark).
+#
+# At seeding every commitment is `Planned`: this catalogue lands before broad
+# engine work begins (ADR-PC-020 Open Action #4), so no gate runs yet. Each
+# flips to `Live` via the §P10 spec-first loop — add the failing fitness
+# function, implement until green, the coverage checker confirms the anchor —
+# and `code_anchors` is filled as the implementing site lands (§P6).
+
+version: 1
+catalogue: seed
+owner: ADR-PC-020          # the decision that mandates this catalogue
+source_principles: [P5, P6, P7]
+gate_vocabulary: [unit, integration, contract, saga, e2e, analyser, benchmark]
+
+commitments:
+  - id: ES_ATOMIC_APPEND_OUTBOX
+    title: Append + outbox in one local transaction
+    commitment: >-
+      Every engine code path that appends an event also inserts the
+      corresponding outbox row in the SAME PostgreSQL transaction — no second,
+      non-atomic write at constitution.
+    sources:
+      - ADR-PC-001 §P2
+    source_paths:
+      - docs/product-management/product_concepts/adrs/ADR-PC-001-event-store-technology.md
+    gate: integration
+    level: Integration / Testcontainers
+    status: Planned
+    per_push: true
+    code_anchors: []
+
+  - id: MONEY_BOUNDARY_FIXTURES
+    title: Money rounds HALF_EVEN once at the Decimal→Cents boundary
+    commitment: >-
+      `Money` is `long Cents`; `decimal` enters only at boundary call sites. The
+      full expression computes in `decimal` at maximum precision and rounds
+      HALF_EVEN (MidpointRounding.ToEven) exactly once, at the final
+      `Money.FromCents` boundary. Exercised by the financial-math golden-fixture
+      corpus (simple/compound interest, TAE/TAEG, the TANB/TANL split, and
+      flow-by-flow withholding) derived from the worked examples.
+    sources:
+      - ADR-PC-010 §P1
+      - ADR-PC-010 §P2
+      - financial_concepts §5.1–§5.4, §6.1–§6.2 (golden corpus)
+    source_paths:
+      - docs/product-management/product_concepts/adrs/ADR-PC-010-dotnet-hand-rolled-engine.md
+      - docs/product-management/financial_concepts/banking_products_financial_mathematics.md
+    gate: unit
+    level: Unit + Roslyn analyser
+    status: Planned
+    per_push: true
+    code_anchors: []
+    guarded_by: financial-math-reviewer (ADR-PC-020 §P3)
+
+  - id: DETERMINISM_GATE
+    title: A handler that reads the clock or does I/O fails the build
+    commitment: >-
+      Engine handlers are pure folds: a handler that reads the wall clock or
+      performs I/O fails the build. Determinism is CI-enforced (Roslyn
+      analyser / determinism gate), not left to the model's memory.
+    sources:
+      - ADR-PC-010 §P5
+    source_paths:
+      - docs/product-management/product_concepts/adrs/ADR-PC-010-dotnet-hand-rolled-engine.md
+    gate: analyser
+    level: Analyser / CI determinism gate
+    status: Planned
+    per_push: true
+    code_anchors: []
+
+  - id: POST_FLAG_NEVER_GATES
+    title: A downstream consumer signal never gates or compensates constitution
+    commitment: >-
+      A downstream consumer signal is strictly post-flag, never gated: a GL
+      rejection (PC-012), a render/delivery failure (PC-014), or an IFRS 9-side
+      rejection/outage (PC-015) must NEVER block or compensate the producing
+      business flow. Verified once across the three emit contracts.
+    sources:
+      - ADR-PC-012 §Error model
+      - ADR-PC-014 §Error model
+      - ADR-PC-015 §Error model
+    source_paths:
+      - docs/product-management/product_concepts/adrs/ADR-PC-012-gl-posting-signal-contract.md
+      - docs/product-management/product_concepts/adrs/ADR-PC-014-customer-notification-emit-contract.md
+      - docs/product-management/product_concepts/adrs/ADR-PC-015-ifrs9-signal-contract.md
+    gate: saga
+    level: Contract / saga test
+    status: Planned
+    per_push: true
+    code_anchors: []
+
+  - id: PIN_PER_EVENT_REPLAY
+    title: Pin-per-event makes replay time-independent
+    commitment: >-
+      `pack_version` and `schema_version` are pinned on every event envelope; a
+      handler replaying instance I's event at sequence N resolves the version
+      FROM THAT EVENT'S ENVELOPE (validate-then-cache, fail-loud), so replay is
+      deterministic regardless of when it runs.
+    sources:
+      - ADR-PC-009 §Decision
+    source_paths:
+      - docs/product-management/product_concepts/adrs/ADR-PC-009-per-instance-version-pinning.md
+    gate: integration
+    level: Integration / Testcontainers
+    status: Planned
+    per_push: true
+    code_anchors: []
+
+  - id: AML_EDGE_PRECONDITION
+    title: AML/KYC clears upstream at the edge, before constitution
+    commitment: >-
+      AML/KYC adjudication is an upstream precondition enforced at the edge and
+      cleared BEFORE constitution; the constitution saga carries no
+      eligibility/compliance validation step, no AML gate, and no AML-reject
+      compensation flow (fails closed if `aml_clearance_ref` is absent).
+    sources:
+      - ADR-PC-013 §Decision
+      - ADR-PC-013 §Error model
+    source_paths:
+      - docs/product-management/product_concepts/adrs/ADR-PC-013-aml-kyc-upstream-precondition.md
+    gate: contract
+    level: Contract / saga test (CDC on the edge precondition)
+    status: Planned
+    per_push: true
+    code_anchors: []
+
+  - id: BATCH_INGEST_IDEMPOTENT
+    title: Legacy batch re-ingest is idempotent
+    commitment: >-
+      A legacy batch file can be re-ingested without producing duplicate
+      `LegacyInstanceObserved` events — file replay is safe, so recovery after a
+      parse failure is a re-run, not a surgical repair.
+    sources:
+      - ADR-PC-017 §Decision (4 · Idempotency)
+    source_paths:
+      - docs/product-management/product_concepts/adrs/ADR-PC-017-legacy-batch-ingest-contract.md
+    gate: integration
+    level: Integration / Testcontainers
+    status: Planned
+    per_push: true
+    code_anchors: []
+
+  - id: REPLAY_BUDGET_5S_30S
+    title: Cold replay stays inside the 5s / 30s budgets
+    commitment: >-
+      Cold replay of one instance's full lifecycle completes in under 5s for
+      with-a-plan families (~24–260 events, v1 term deposits) and under 30s for
+      irregular families with 5 years of transactions (~250–1000 events, v4).
+    sources:
+      - feature-design-event-store-projections §8.2
+    source_paths:
+      - docs/product-management/product_concepts/feature-design-event-store-projections.md
+    gate: benchmark
+    level: Benchmark (nightly, not per-push)
+    status: Planned
+    per_push: false      # timing-sensitive; nightly on a stable runner (ADR-PC-011 model)
+    code_anchors: []
+    note: >-
+      Catalogue-only — the source is a feature-design doc, not an ADR, so it
+      carries no per-ADR `Verifiable commitments` section (ADR-PC-000 §A2).
+
+  - id: ZERO_ENGINE_DIFF_PER_VARIANT
+    title: Zero engine code per variant
+    commitment: >-
+      Shipping a new variant within an existing family requires no engine code
+      change: an acceptance test adds a family/variant schema and asserts ZERO
+      diff under /engine.
+    sources:
+      - 01-product-architecture §3
+    source_paths:
+      - docs/product-management/product_concepts/01-product-architecture.md
+    gate: e2e
+    level: Acceptance (E2E) — add-a-family-schema diff check
+    status: Planned
+    per_push: true
+    code_anchors: []
+    note: >-
+      Catalogue-only — the source is a concept doc, not an ADR, so it carries no
+      per-ADR `Verifiable commitments` section (ADR-PC-000 §A2). Pairs with the
+      wedge's second falsifiable claim (≤ 5 working days PM-commit-to-production).

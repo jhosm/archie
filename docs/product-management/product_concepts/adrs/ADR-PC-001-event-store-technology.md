@@ -237,6 +237,16 @@ The event log's retention horizon is longer than any single PostgreSQL major-ver
 
 ---
 
+## Verifiable commitments
+
+| # | Commitment | Gate (pyramid level) | Test ID | Status |
+|---|---|---|---|---|
+| C1 | Every engine code path that appends an event also inserts the corresponding outbox row in the **same** PostgreSQL transaction (§P2) — no second, non-atomic write at constitution. | integration / Testcontainers | `ES_ATOMIC_APPEND_OUTBOX` | Planned |
+
+Seeded in the [commitment catalogue](../../../../conformance/README.md) ([`commitments.yaml`](../../../../conformance/commitments.yaml)) per [ADR-PC-020 §P5/§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) (Open Action #4).
+
+---
+
 ## Amendment — 2026-05-23: Library choice filled — hand-rolled module
 
 Per the Decision section, the choice of library or framework on top of

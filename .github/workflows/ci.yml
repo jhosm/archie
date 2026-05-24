@@ -30,6 +30,7 @@ jobs:
       packs: ${{ steps.filter.outputs.packs }}
       rate_sheets: ${{ steps.filter.outputs.rate_sheets }}
       infra: ${{ steps.filter.outputs.infra }}
+      conformance: ${{ steps.filter.outputs.conformance }}
       docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +50,7 @@ jobs:
             packs: ['packs/**']
             rate_sheets: ['rate-sheets/**']
             infra: ['infra/**']
+            conformance: ['conformance/**']
             docs: ['docs/**']
 
   engine:
@@ -158,3 +160,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Link + diagram checks
         run: echo "TODO - markdown link check plus PlantUML render check; lands with the docs-CI task"
+
+  conformance:
+    needs: changes
+    if: ${{ needs.changes.outputs.conformance == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Commitment coverage check (ADR-PC-020 §P5–§P7)
+        run: echo "TODO - validate commitments.yaml and resolve every Live commitment to a running test; the coverage checker lands with archie-bhq.4"

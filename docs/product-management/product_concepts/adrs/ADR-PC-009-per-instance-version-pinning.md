@@ -161,6 +161,16 @@ The pack manifest carries `pack_effective_from` ([surface §3.4](../feature-desi
 
 ---
 
+## Verifiable commitments
+
+| # | Commitment | Gate (pyramid level) | Test ID | Status |
+|---|---|---|---|---|
+| C1 | `pack_version` / `schema_version` are pinned on every event envelope; a handler replaying instance *I*'s event at sequence *N* resolves the version **from that event's envelope** (validate-then-cache, fail-loud), so replay is deterministic regardless of *when* it runs (§Decision). | integration / Testcontainers | `PIN_PER_EVENT_REPLAY` | Planned |
+
+Seeded in the [commitment catalogue](../../../../conformance/README.md) ([`commitments.yaml`](../../../../conformance/commitments.yaml)) per [ADR-PC-020 §P5/§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) (Open Action #4).
+
+---
+
 ## Cross-references
 
 - [ADR-PC-001 §P1–§P2](./ADR-PC-001-event-store-technology.md) — the envelope already carries `pack_version` / `schema_version`; the atomic append this pin rides on.

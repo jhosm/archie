@@ -167,6 +167,17 @@ Side-effect-free handlers ([event-store §5.3](../feature-design-event-store-pro
 
 ---
 
+## Verifiable commitments
+
+| # | Commitment | Gate (pyramid level) | Test ID | Status |
+|---|---|---|---|---|
+| C1 | `Money` is `long Cents`; `decimal` enters only at boundary call sites. The full expression computes in `decimal` at maximum precision and rounds HALF_EVEN exactly once, at the final `Money.FromCents` boundary (§P1–§P2). Exercised by the financial-math golden-fixture corpus. | unit + analyser | `MONEY_BOUNDARY_FIXTURES` | Planned |
+| C2 | A handler that reads the clock or performs I/O fails the build; determinism is CI-enforced, not left to the model's memory (§P5). | analyser / CI gate | `DETERMINISM_GATE` | Planned |
+
+Seeded in the [commitment catalogue](../../../../conformance/README.md) ([`commitments.yaml`](../../../../conformance/commitments.yaml)) per [ADR-PC-020 §P5/§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) (Open Action #4). C1's golden corpus is guarded by the §P3 financial-math-reviewer.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-001](./ADR-PC-001-event-store-technology.md) — PostgreSQL event store; the deferred library question is filled here as *hand-rolled module*. Amendment block dated 2026-05-23 appended to PC-001. Status remains `Accepted`; the four invariants are preserved (they are the hand-rolled module's spec).
