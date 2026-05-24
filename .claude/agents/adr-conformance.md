@@ -40,8 +40,10 @@ else; do **not** re-raise findings that belong to them:
 | Handler purity / projection rebuildability / fixture replay | `replay/determinism-auditor` agent | Defer for deep checks; flag obvious clock/I/O reads inline |
 | Doc / C4 vs cited source disagreement | `doc-consistency` agent | Defer; honour "the source wins" if you must judge |
 
-(The four domain-review agents above are `archie-bhq.7`; until they exist you may
-note their concern, but keep it clearly labelled as out of your lane.)
+(The four domain-review agents above — `financial-math-reviewer`, `contract-reviewer`,
+`replay-determinism-auditor`, `doc-consistency` — now exist (`archie-bhq.7`). Defer their
+concerns to them rather than raising them yourself; note them only to point the author at
+the right reviewer.)
 
 **Your class is internal-design drift** — *legal, compiling, contract-compatible
 code that contradicts a decision living entirely inside a component, which no

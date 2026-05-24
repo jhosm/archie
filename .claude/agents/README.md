@@ -10,10 +10,10 @@ diff").
 | Agent | Guards | Status |
 |---|---|---|
 | [`adr-conformance`](./adr-conformance.md) | Internal-design drift against the governing ADRs (PC + IC); the explicit-drift gate's judgement layer | **built (`archie-bhq.5`)** |
-| `financial-math-reviewer` | Act/360, TANB/TANL, flow-by-flow withholding, TAE, round-once-at-`Money` | planned (`archie-bhq.7`) |
-| `contract-reviewer` | Schema evolution, naming, no-PII-on-bus | planned (`archie-bhq.7`) |
-| `replay/determinism-auditor` | Handler purity, projection rebuildability, fixture replay | planned (`archie-bhq.7`) |
-| `doc-consistency` | Cross-linked docs + C4 vs cited source ("the source wins") | planned (`archie-bhq.7`) |
+| [`financial-math-reviewer`](./financial-math-reviewer.md) | Act/360, TANB/TANL, flow-by-flow withholding, TAE, round-once-at-`Money` | **built (`archie-bhq.7`)** |
+| [`contract-reviewer`](./contract-reviewer.md) | Schema evolution, naming, no-PII-on-bus | **built (`archie-bhq.7`)** |
+| [`replay-determinism-auditor`](./replay-determinism-auditor.md) | Handler purity, projection rebuildability, fixture replay | **built (`archie-bhq.7`)** |
+| [`doc-consistency`](./doc-consistency.md) | Cross-linked docs + C4 vs cited source ("the source wins") | **built (`archie-bhq.7`)** |
 
 These compose *with*, not instead of, the generic `code-review` / `pr-review-toolkit`
 skills. Once stable they fold into the `babelstone-engine` plugin (`archie-bhq.8`).
