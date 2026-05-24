@@ -84,9 +84,13 @@ spawns a parallel suite:
 ## What consumes this
 
 - The **coverage checker + auditor** ([ADR-PC-020 §P6 / §P3](./ADR-PC-020-llm-toolchain-and-conformance-governance.md))
-  asserts every `Live` Test ID resolves to a test that exists and runs, and that
-  every code anchor points to a live ADR section. Until it is built, this seed is
-  the human-readable registry.
+  — built as `.github/scripts/spec-coverage-check.sh` (per-push, authoritative) and
+  `spec-coverage-audit.sh` (nightly sweep), wired in `.github/workflows/spec-coverage.yml`
+  and mirrored at edit time by the `surface-spec-coverage` hook (archie-bhq.4) —
+  validates this catalogue's integrity, enforces ADR↔catalogue Test-ID consistency
+  in both directions, and (once engine source lands) asserts every `Live` Test ID
+  resolves to a running test and that every code anchor points to a live, non-superseded
+  ADR.
 - The **spec-first loop** ([ADR-PC-020 §P10](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
   implementing one of these decisions starts by writing the named Test ID as a
   *failing* fitness function, then implementing until green and flipping the row to

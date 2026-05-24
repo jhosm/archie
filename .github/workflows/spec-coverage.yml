@@ -1,0 +1,39 @@
+name: Spec coverage
+
+# ADR-PC-020 §P6 (ADR <-> catalogue <-> code/test coverage checker — per-push,
+# authoritative) + §P3 (periodic auditor sweep for the backfill backlog and, once
+# engine source lands, decided-but-unbuilt / governed-code-without-test findings).
+# The Claude PostToolUse hook (.claude/hooks/surface-spec-coverage.sh) is the fast
+# mirror; this workflow is the authority the hook mirrors (§P1).
+#
+# Security: the only ${{ }} expansions are github.event_name comparisons in job
+# `if:` conditions (trusted, not interpolated into any run: shell). No untrusted
+# PR-controlled input is referenced, per the GitHub Actions injection guidance.
+
+on:
+  pull_request:
+  schedule:
+    - cron: '17 3 * * *'   # nightly audit (UTC) — off the per-push path, per ADR-PC-011
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # Authoritative per-push gate. Runs on PRs and on manual dispatch.
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ADR <-> catalogue <-> code/test coverage (ADR-PC-020 §P6)
+        run: bash .github/scripts/spec-coverage-check.sh
+
+  audit:
+    # Periodic finding sweep — report-only (visibility, not a build break).
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decided-but-unbuilt / no-commitment-ADR sweep (ADR-PC-020 §P3)
+        run: bash .github/scripts/spec-coverage-audit.sh
