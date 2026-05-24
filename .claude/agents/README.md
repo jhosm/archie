@@ -54,8 +54,8 @@ decision change land **together**:
 
 This extends the project's established order — ADR before code, bd issue before code —
 to: **no contradiction without a recorded decision.** The
-`amend-adr` / `supersede-adr` skills (`archie-bhq.6`) make step 2 a one-command step;
-until they ship, follow the manual §D5 shape above.
+[`amend-adr`](../skills/amend-adr/SKILL.md) / [`supersede-adr`](../skills/supersede-adr/SKILL.md)
+skills (`archie-bhq.6`) make step 2 a one-command step.
 
 ## When to run the conformance agent
 
