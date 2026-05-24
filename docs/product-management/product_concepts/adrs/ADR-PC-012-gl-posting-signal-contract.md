@@ -59,3 +59,9 @@ The engine **never mutates a past event**. A retroactive correction is a *new* e
 - **Reconciliation calibration is deferred.** "How many mismatches per day cross from noise to incident" is [Q-AG](../04-open-questions.md), requiring a calibration period under real load. Until then the reconciliation exists but its thresholds are provisional.
 - **Failure modes the contract permits.** A GL adapter that under-subscribes (misses an accounting-relevant event type as the catalogue grows in v2+) will under-post until reconciliation catches it; the Pact contract narrows but does not eliminate this — a *newly added* event type is invisible to an existing consumer contract. The mitigation is catalogue-governance review ([integration_concepts §08](../../integration_concepts/08-event-catalog-governance.md)) flagging new accounting-relevant events to the GL team at authoring time.
 - **GL-aware events were considered for one case and rejected.** Tax remittance (`WithholdingApplied` → tax-authority payable) is the event most tempting to emit GL-aware, because the posting is near-universal. It is still emitted raw: a PT-specific tax-payable account is no less operating-bank-specific than any other account, and carving one exception would erode the clean boundary for marginal benefit.
+
+## Verifiable commitments
+
+This contract's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- `GL_POST_FLAG_NEVER_GATES` — a GL-side reject never gates or unwinds the producing flow (slot 5 · Error model).

@@ -183,3 +183,14 @@ The slot applies to ADRs whose deliverable is a tool/mechanism or a boundary con
 ### A3 · This amends the templates; it does not supersede this ADR
 
 [§D2](#d2--tool-selection-shape-reuse-adr-ic-000-verbatim), [§D3](#d3--contract-shape-a-complementary-template), and [§D4](#d4--shape-declaration-is-per-adr-default-to-tool-selection) remain binding as written; the `Verifiable commitments` section is appended to the structures they prescribe. Backfilling the section into the already-Accepted ADR-PC and in-house ADR-IC entries is **incremental, not big-bang** — done as each decision is implemented ([ADR-PC-020 Open Action #7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)) — so existing Accepted ADRs are not invalidated by lacking it yet. The front-matter `Applies to` range is bumped to ADR-PC-020 as housekeeping (the parenthetical "all future ADR-PC entries" already covered it).
+
+---
+
+## Amendment — 2026-05-24: a central catalogue may be the source of truth; the ADR section then *references* it
+
+The [ADR-PC-020](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) load-bearing seed (Open Action #4) introduces a central [commitment catalogue](./commitment-catalogue.md) aggregating the load-bearing fitness functions across ADRs — and across the two non-ADR sources (replay budgets, zero-engine-code-per-variant) that §A2 exempts from a per-ADR section. This refines the §A1 shape:
+
+- **When a commitment is recorded in the catalogue, the catalogue is its single source of truth** for the claim, the gate, and the `Live`/`Planned`/`Gap` status. The ADR's `## Verifiable commitments` section is then a **reference** — a short list of the governing Test IDs (the join key) with the local §-anchor and a link to the catalogue — *not* a restated table. This keeps the mutable fields (status especially) in one place, so an ADR and the catalogue cannot drift apart.
+- **The §A1 table form remains correct** for an ADR whose commitment is not (or not yet) catalogued centrally. The "no executable commitments — say so in one line" rule (§A1) is unchanged.
+
+Both forms satisfy §A1's intent: every buildable-decision ADR enumerates its load-bearing commitments, each bound to a Test ID the [ADR-PC-020 §P6](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) coverage checker resolves. This amends the §A1 *shape* guidance; it does not supersede this ADR, and §D2/§D3/§D4 are untouched.

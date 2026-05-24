@@ -40,6 +40,12 @@ This is the peer namespace to [integration_concepts/adrs/](../../integration_con
 
 ---
 
+## Verifiable commitments
+
+[ADR-PC-020](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) binds each ADR's load-bearing claims to executable fitness functions. The **seeded** load-bearing set — the ~8 invariants the engine must not silently drift from — lives in the [commitment catalogue](./commitment-catalogue.md), and each governing ADR *references* its rows (by Test ID) from a `## Verifiable commitments` section rather than restating them. The catalogue is the **single source of truth** for each commitment's claim, gate, and status, and the registry the [§P6](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) coverage checker resolves; per-ADR backfill across the rest of the corpus is incremental ([ADR-PC-020 Open Action #7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)).
+
+---
+
 ## ADR conventions
 
 The full convention statement lives in [ADR-PC-000](./ADR-PC-000-namespace-and-contract-shape-framework.md). Highlights restated here:

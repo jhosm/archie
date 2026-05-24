@@ -85,3 +85,9 @@ FIN is **pre-contractual**: BdP retail-conduct rules require the customer to rec
 - **What this contract does not commit to.** Channel selection and preference logic, the contact directory, retry/bounce policy, and the rendering engine are **communications-system deliverables**. The acknowledgement contract for the *pre-contractual* FIN gate (what evidence the channel captures, where it is stored) is a **saga-design / operating-bank deliverable** coordinated through [integration_concepts §05](../../integration_concepts/05-constitution-saga-walkthrough.md) — a production gate, not a POC prerequisite, matching the posture of [ADR-PC-004](./ADR-PC-004-pii-crypto-shredding.md).
 - **Scheduled-trigger machinery is unspecified here.** *That* a SCHEDULED `NotificationDue` fires at a temporal point is contracted; *how* the engine's scheduler materialises temporal triggers (the pre-maturity window, the annual statement run) is engine-internal mechanism, out of this boundary contract.
 - **Failure mode the contract permits.** A SCHEDULED notification whose underlying data is later corrected (`DepositCorrected` after a maturity notice was emitted) can leave the customer holding a now-stale notice; the engine emits a fresh `NotificationDue` on the correction, but the superseding/withdrawal of the prior delivered notice is the communications system's concern, not the engine's.
+
+## Verifiable commitments
+
+This contract's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- `NOTIFY_POST_FLAG_NEVER_GATES` — `EVENT_DRIVEN`/`SCHEDULED` delivery never gates the flow; `PRE_CONTRACTUAL` (FIN) is the synchronous saga carve-out (slot 5 · Error model).

@@ -237,6 +237,14 @@ The event log's retention horizon is longer than any single PostgreSQL major-ver
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- `ES_ATOMIC_APPEND_OUTBOX` — atomic event-append + outbox write (§P2).
+
+---
+
 ## Amendment — 2026-05-23: Library choice filled — hand-rolled module
 
 Per the Decision section, the choice of library or framework on top of

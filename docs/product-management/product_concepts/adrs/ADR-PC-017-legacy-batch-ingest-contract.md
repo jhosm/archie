@@ -94,3 +94,9 @@ This contract is one half of **reconciliation flow 2** ([coexistence §7.3](../f
 - **Q-AG thresholds uncalibrated** — flow-2 mismatch counts have no noise-vs-incident boundary until a real-data calibration period sets one.
 - **CDC and native event emission are rejected for v1** ([coexistence §5.1](../feature-design-strangler-fig-coexistence.md)), accepting the 24-hour latency as the cost of zero write-path risk. The format-agnostic design accommodates a future reversal: if a later legacy core can emit events cheaply, a streaming adapter is simply another parser behind the same `LegacyInstanceObserved` contract — the engine side does not change.
 - **What this contract does not commit to:** the downstream reporting application's own ingestion of legacy facts ([Q-AE](../04-open-questions.md), [coexistence §8](../feature-design-strangler-fig-coexistence.md)), and the settlement (engine → legacy) direction, which is [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md).
+
+## Verifiable commitments
+
+This contract's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- `BATCH_INGEST_IDEMPOTENT` — re-ingesting a batch file produces no duplicate `LegacyInstanceObserved` events (slot 4 · Idempotency).

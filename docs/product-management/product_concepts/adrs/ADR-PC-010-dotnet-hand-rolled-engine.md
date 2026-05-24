@@ -167,6 +167,15 @@ Side-effect-free handlers ([event-store §5.3](../feature-design-event-store-pro
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- `MONEY_BOUNDARY_FIXTURES` — HALF_EVEN rounds once at the `Decimal → Cents` boundary, against a sealed golden corpus (§P1–§P2).
+- `DETERMINISM_GATE` — a handler that reads the clock / does I/O / uses randomness fails the build (§P5).
+
+---
+
 ## Cross-references
 
 - [ADR-PC-001](./ADR-PC-001-event-store-technology.md) — PostgreSQL event store; the deferred library question is filled here as *hand-rolled module*. Amendment block dated 2026-05-23 appended to PC-001. Status remains `Accepted`; the four invariants are preserved (they are the hand-rolled module's spec).

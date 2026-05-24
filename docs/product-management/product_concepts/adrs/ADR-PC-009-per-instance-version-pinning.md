@@ -161,6 +161,14 @@ The pack manifest carries `pack_effective_from` ([surface §3.4](../feature-desi
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- `REPLAY_PIN_PER_EVENT` — replay reads the per-event pin, not the clock; the migration boundary is intrinsic to the stream (§P1–§P2).
+
+---
+
 ## Cross-references
 
 - [ADR-PC-001 §P1–§P2](./ADR-PC-001-event-store-technology.md) — the envelope already carries `pack_version` / `schema_version`; the atomic append this pin rides on.
