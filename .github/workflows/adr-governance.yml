@@ -1,0 +1,41 @@
+name: ADR governance
+
+# Mechanical half of ADR-PC-020 §D3 (explicit-drift gate) — the authoritative CI
+# the Claude Code hooks mirror but never replace (§P1). The ADR-conformance agent
+# (archie-bhq.5) is the judgement layer on top.
+#
+# Security note: all untrusted PR-controlled inputs (PR body, base ref) are passed
+# via `env:` and consumed double-quoted ("$PR_BODY"); none are interpolated into a
+# run: script, per the GitHub Actions injection guidance.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pr-body-adrs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require an "ADRs touched/honoured" section in the PR body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if printf '%s' "$PR_BODY" | grep -qiE '(^#{1,6}[[:space:]].*|^[-*][[:space:]].*|^)ADRs?[[:space:]]+(touched|honou?red|implemented|amended)'; then
+            echo "PR-body ADR section present."; exit 0
+          fi
+          echo "::error::ADR-PC-020 §D3: PR body must name the ADRs this change implements, amends, or honours."
+          echo "Add e.g.:  ## ADRs touched/honoured"
+          echo "  - Implements ADR-PC-020 §P1 (enforcement hooks); honours ADR-PC-000 §D5"
+          exit 1
+
+  adr-immutability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Block in-place edits to an Accepted ADR's Decision (unless amended)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: bash .github/scripts/adr-immutability-check.sh

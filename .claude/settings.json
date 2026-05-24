@@ -1,15 +1,22 @@
 {
   "hooks": {
     "SessionStart": [
-      {
-        "hooks": [
-          {
-            "command": "bd prime --hook-json",
-            "type": "command"
-          }
-        ],
-        "matcher": ""
-      }
+      { "matcher": "", "hooks": [ { "type": "command", "command": "bd prime --hook-json" } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Edit|Write|MultiEdit", "hooks": [
+        { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/adr-immutability.sh" }
+      ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Edit|Write|MultiEdit", "hooks": [
+        { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/surface-engine-analysers.sh" },
+        { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/surface-pii-on-bus.sh" },
+        { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/render-plantuml.sh" }
+      ] }
+    ],
+    "Stop": [
+      { "matcher": "", "hooks": [ { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/session-push-protocol.sh" } ] }
     ]
   }
 }
