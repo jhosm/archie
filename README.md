@@ -38,6 +38,7 @@ The customer is an incumbent Portuguese bank modernising on a strangler-fig adop
 | [02 — v1 Scope: Term Deposits](./docs/product-management/product_concepts/02-v1-scope-term-deposits.md) | Why term deposits first, in-scope features, PT regulatory features, subledger outputs, event contract, coexistence with legacy DDA |
 | [03 — Roadmap](./docs/product-management/product_concepts/03-roadmap.md) | Sequenced expansion (PT term deposits → PT credit → PT mortgage → PT current accounts/cards → ES → EU) plus continuous pack maintenance |
 | [04 — Open Questions](./docs/product-management/product_concepts/04-open-questions.md) | Deferred decisions register: competitive positioning, pricing, licensing, coexistence targets, multi-tenancy, IFRS 9 signal boundary, time-travel, configurability depth, primary economic buyer, founding team credibility, split-brain reconciliation |
+| [v1 Build Backlog](./docs/product-management/product_concepts/v1-build-backlog.md) | Execution spec: the v1 build as bd epics + child issues (platform, engine core, financial-math kernel, pack toolchain, projections, walking skeleton, term-deposit content, integration estate, observability, load, security/DR, CI/CD), with deferred ACL/notification/IFRS9 reserved |
 
 ---
 
