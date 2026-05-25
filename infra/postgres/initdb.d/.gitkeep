@@ -1,0 +1,7 @@
+# Mounted into postgres at /docker-entrypoint-initdb.d (runs once, on an empty
+# data volume, in alphabetical order). The database + login role are created from
+# the POSTGRES_* env vars in compose.yaml — that is the bootstrap.
+#
+# Engine event/outbox TABLES are NOT created here: they are owned by Epic A.1
+# migrations (the engine runs them on startup). Drop *.sql / *.sh files here only
+# for stack-level seed that is not the engine's schema.

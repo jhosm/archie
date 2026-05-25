@@ -1,0 +1,84 @@
+# Local dev stack — the minimum to run the engine's walking skeleton on a laptop.
+# Scope: backing infrastructure only (P.1 / archie-lcvb). No application images —
+# the service subtrees (engine/, mcp-server/, …) are still skeletons.
+#
+#   PostgreSQL                — event store              (ADR-PC-001)
+#   Redpanda                  — Kafka-compatible bus     (ADR-IC-001)
+#     └─ built-in Schema Registry (Confluent SR API)     (ADR-IC-002)
+#   Redpanda Console          — web UI for topics + SR   (dev convenience)
+#
+# Front door is the repo-root Makefile: `make up`, `make verify`, `make reset`.
+# All credentials below are LOCAL-DEV ONLY — not secrets. Override via env if needed.
+
+name: babelstone-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: babelstone-postgres
+    # The POSTGRES_* env vars ARE the bootstrap: the official image creates this
+    # database + login role on first start (idempotent). Engine event/outbox TABLES
+    # are owned by Epic A.1 migrations, not by this stack — we hand over an empty,
+    # ready database. Drop *.sql / *.sh into ./postgres/initdb.d for future seed.
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-babelstone}
+      POSTGRES_USER: ${POSTGRES_USER:-babelstone}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-babelstone}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/initdb.d:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-babelstone} -d ${POSTGRES_DB:-babelstone}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.1
+    container_name: babelstone-redpanda
+    command:
+      - redpanda
+      - start
+      - --mode dev-container          # single-node dev defaults; auto-creates topics
+      - --smp 1
+      - --default-log-level=info
+      # Two listeners: `internal` for containers on this network (advertise as
+      # `redpanda`), `external` for tools on the host (advertise as `localhost`).
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr redpanda:33145
+      - --advertise-rpc-addr redpanda:33145
+    ports:
+      - "${REDPANDA_KAFKA_PORT:-19092}:19092"   # Kafka API (from host)
+      - "${REDPANDA_SR_PORT:-18081}:18081"      # Schema Registry (from host)
+      - "9644:9644"                             # Admin API (rpk / health)
+    volumes:
+      - rpdata:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  console:
+    image: docker.redpanda.com/redpandadata/console:v2.8.0
+    container_name: babelstone-console
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    ports:
+      - "${CONSOLE_PORT:-8080}:8080"
+    environment:
+      # Reach Redpanda over the internal listener on the compose network.
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_SCHEMAREGISTRY_ENABLED: "true"
+      KAFKA_SCHEMAREGISTRY_URLS: http://redpanda:8081
+
+volumes:
+  pgdata:
+  rpdata:

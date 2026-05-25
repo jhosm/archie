@@ -1,6 +1,36 @@
 # Local Tooling
 
-This is a **documentation-only** repository — there is no application to build or run. The only local tooling you need is a **PlantUML renderer**, used to (re)generate the committed SVGs for the C4 architecture view ([`feature-design-c4-architecture.md`](./docs/product-management/product_concepts/feature-design-c4-architecture.md)). If you are only reading or editing prose, you need nothing installed.
+This repository is **mostly documentation**, with the engine build now underway. What you need to install depends on what you are doing:
+
+- **Reading or editing prose:** nothing.
+- **Editing C4 diagrams:** a **PlantUML renderer** (below).
+- **Running the local dev stack:** **Docker** (see [Local dev stack](#local-dev-stack)).
+
+> The full language toolchain (.NET, Go, Python, CUE, cosign, …) is bootstrapped under backlog task **P.2**, not here. This file currently covers diagram rendering and the Docker-based dev stack.
+
+---
+
+## Local dev stack
+
+The backing infrastructure to run the engine on a laptop — **PostgreSQL + Redpanda (with its built-in Schema Registry) + Redpanda Console**. This is the only prerequisite, and it is one tool:
+
+| Tool | Why | Notes |
+|---|---|---|
+| **Docker** (Engine + Compose v2) | Runs the stack | Docker Desktop (macOS/Windows) or Docker Engine + the Compose plugin (Linux). `docker compose version` should print v2.x |
+
+Then, from the repo root:
+
+```bash
+make up        # start the stack and wait until healthy (prints endpoints)
+make verify    # smoke-test PostgreSQL, Redpanda, and the Schema Registry
+make down      # stop it (keeps data); `make reset` wipes data and restarts
+```
+
+`make up` is the single command a newcomer runs after cloning — it pulls images, starts the three containers, and blocks until their health checks pass. Connection details, ports, and the full target list live in [`infra/README.md`](./infra/README.md).
+
+---
+
+## PlantUML renderer
 
 You need the renderer if you:
 
