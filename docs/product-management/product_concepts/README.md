@@ -25,6 +25,12 @@ Each note deepens specific sections of the numbered brief. Where a note's conclu
 | [feature-design-two-modes-asymmetry](./feature-design-two-modes-asymmetry.md) | `two-modes` | Deepens [01 §4](./01-product-architecture.md) and [03 §v4](./03-roadmap.md): operationalises irregular-profile-as-upper-bound. Commits to **Approach C — interfaces for v4, implementations for v1** and specifies the six non-negotiable v1 commitments. Refines Q-AC and Q-Z; opens Q-AK through Q-AO. |
 | [feature-design-moratoria-and-forbearance](./feature-design-moratoria-and-forbearance.md) | `moratoria` | Deepens [03 v2/v3](./03-roadmap.md): payment moratoria (Portuguese *moratória*) and EBA forbearance as a lifecycle event on credit instances. Three flavours, sub-flavours on interest treatment, the §9 four-position map, lifecycle state, event payloads, PT pack vocabulary, bitemporal retroactivity, bulk application, IFRS 9 / TAEG / insurance / customer-exit / coexistence interactions. Cites [financial_concepts §7.6](../financial_concepts/banking_products_financial_mathematics.md) for the math. Opens Q-AP through Q-AT. |
 
+### Build backlog (execution spec, not part of the brief)
+
+| File | What It Covers |
+|---|---|
+| [v1-build-backlog](./v1-build-backlog.md) | The v1 product-engine + integration-estate build backlog as bd epics + child issues (the executable spec for local `bd create`). Complements the `archie-bhq` governance/toolchain epic; recasts the production-gate-vs-POC-prerequisite distinction the Accepted ADRs draw, and binds each load-bearing child to its [commitment-catalogue](./adrs/commitment-catalogue.md) Test ID. |
+
 ---
 
 ## Orientation
