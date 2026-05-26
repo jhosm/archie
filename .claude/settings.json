@@ -9,7 +9,7 @@
   },
   "hooks": {
     "SessionStart": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "bd prime --hook-json" } ] }
+      { "matcher": "", "hooks": [ { "type": "command", "command": "bd prime" } ] }
     ],
     "PreToolUse": [
       { "matcher": "Edit|Write|MultiEdit", "hooks": [
