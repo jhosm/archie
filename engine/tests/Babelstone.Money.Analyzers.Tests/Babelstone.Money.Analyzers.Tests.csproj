@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- The in-memory compilation harness builds CSharpCompilations to run the
+         analysers against; it needs the Roslyn APIs as a normal library reference. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Plain library reference (NOT OutputItemType=Analyzer): the tests instantiate
+         the analyser types directly. The analyser does not run *on* this project. -->
+    <ProjectReference Include="../../src/Babelstone.Money.Analyzers/Babelstone.Money.Analyzers.csproj" />
+  </ItemGroup>
+</Project>
