@@ -6,10 +6,13 @@
 COMPOSE := docker compose -f infra/compose.yaml
 
 # Host endpoints the stack exposes (kept in sync with infra/compose.yaml).
-PG_PORT       ?= 5432
-SR_PORT       ?= 18081
-KAFKA_PORT    ?= 19092
-CONSOLE_PORT  ?= 8080
+PG_PORT         ?= 5432
+SR_PORT         ?= 18081
+KAFKA_PORT      ?= 19092
+CONSOLE_PORT    ?= 8080
+KONG_PROXY_PORT ?= 8000
+KONG_ADMIN_PORT ?= 8001
+OPENBAO_PORT    ?= 8200
 
 .DEFAULT_GOAL := help
 .PHONY: help bootstrap doctor up down reset logs ps verify
@@ -59,6 +62,9 @@ up: ## Start the local dev stack and wait until healthy
 	@echo "  Kafka API         localhost:$(KAFKA_PORT)"
 	@echo "  Schema Registry   http://localhost:$(SR_PORT)"
 	@echo "  Redpanda Console  http://localhost:$(CONSOLE_PORT)"
+	@echo "  Kong proxy        http://localhost:$(KONG_PROXY_PORT)   (edge gateway)"
+	@echo "  Kong admin        http://localhost:$(KONG_ADMIN_PORT)"
+	@echo "  OpenBao           http://localhost:$(OPENBAO_PORT)   (UI at /ui; dev root token: root)"
 
 down: ## Stop the stack, keep data volumes
 	$(COMPOSE) down
@@ -80,4 +86,8 @@ verify: ## Smoke-test the stack: Postgres reachable, Redpanda healthy, SR respon
 	@$(COMPOSE) exec -T redpanda rpk cluster health | grep -E 'Healthy:.+true'
 	@echo "→ Schema Registry ..."
 	@curl -fsS http://localhost:$(SR_PORT)/subjects >/dev/null && echo "Schema Registry OK (GET /subjects)"
+	@echo "→ Kong gateway ..."
+	@curl -fsS http://localhost:$(KONG_ADMIN_PORT)/status >/dev/null && echo "Kong OK (admin /status)"
+	@echo "→ OpenBao ..."
+	@curl -fsS http://localhost:$(OPENBAO_PORT)/v1/sys/health >/dev/null && echo "OpenBao OK (sys/health)"
 	@echo "✓ Stack verified."

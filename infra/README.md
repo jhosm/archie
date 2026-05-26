@@ -23,6 +23,8 @@ skeletons). Brought up via the repo-root `Makefile`.
 | **Redpanda** | Kafka-compatible event backbone | [ADR-IC-001](../docs/product-management/integration_concepts/adrs/ADR-IC-001-event-backbone-message-broker.md) |
 | └─ built-in **Schema Registry** | Confluent SR API (`/subjects`, `/schemas`) | [ADR-IC-002](../docs/product-management/integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md) |
 | **Redpanda Console** | Web UI for topics + schema registry | dev convenience |
+| **Kong Gateway CE** | Edge API gateway, DB-less declarative mode | [ADR-IC-006](../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md) |
+| **OpenBao** | Per-subject key store (crypto-shredding), dev mode | [ADR-PC-004](../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) |
 
 ### Quick start
 
@@ -30,7 +32,7 @@ From the repo root (needs Docker — see [`INSTALL.md`](../INSTALL.md)):
 
 ```bash
 make up        # start, wait until healthy, print endpoints
-make verify    # smoke-test all three services
+make verify    # smoke-test every service
 make logs      # follow logs
 make down      # stop, keep data
 make reset     # wipe data volumes and start fresh
@@ -45,6 +47,9 @@ make reset     # wipe data volumes and start fresh
 | Schema Registry | `http://localhost:18081` | inside the network: `http://redpanda:8081` |
 | Redpanda Admin | `localhost:9644` | `rpk` / health |
 | Redpanda Console | `http://localhost:8080` | browse topics + schemas |
+| Kong proxy | `http://localhost:8000` | the edge — external surfaces route through here |
+| Kong admin | `http://localhost:8001` | declarative config + status (local dev only) |
+| OpenBao | `http://localhost:8200` | API + UI (`/ui`); dev root token `root` |
 
 .NET connection string (engine, Npgsql):
 `Host=localhost;Port=5432;Database=babelstone;Username=babelstone;Password=babelstone`
@@ -64,5 +69,7 @@ before `make up`; defaults live in `compose.yaml`.
   so the local stack is two infra containers, not three.
 - **Topics auto-create** in `dev-container` mode; explicit topic + schema
   definitions arrive with the producing services (Epics A/E).
+- **Kong runs DB-less.** Its entire config is `kong/kong.yml` ([ADR-IC-006](../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)) — no gateway database. The config is empty of routes today; the Deposits REST API, SSE saga stream, and the MCP route ([ADR-IC-010](../docs/product-management/integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md)) land with Epic I as PRs on that file.
+- **OpenBao runs in dev mode** — in-memory, auto-unsealed, fixed root token `root`. It is the local crypto boundary ([ADR-PC-004](../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)); the transit engine + per-subject keys are enabled by the engine (**Epic A.5**), not this stack. **Not production**: real storage, unseal, and HA/DR ([ADR-PC-005](../docs/product-management/product_concepts/adrs/ADR-PC-005-dr-rto-rpo.md)) come with P.6/P.7.
 - This is **not** the production topology. P.7 adds 3-node Redpanda + PG HA; P.3/P.4
   add Kong + OpenBao and the Grafana LGTM + OTel observability stack.

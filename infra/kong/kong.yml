@@ -1,0 +1,13 @@
+# Kong CE declarative configuration — DB-less mode (ADR-IC-006).
+# Kong is the single shared edge gateway; this file is its ENTIRE config surface.
+# Every future edge policy — JWT validation, rate limiting, request validation,
+# PSD2 SCA pre-conditions, OTel context propagation, SSE saga-stream routes, and
+# the MCP server route (ADR-IC-010) — is a change to THIS file, deployed by
+# reloading Kong (a PR on the config, never a database mutation).
+#
+# No services/routes yet: the Deposits REST API and the MCP server land with
+# Epic I. Kong runs healthy on this empty declarative config.
+
+_format_version: "3.0"
+
+services: []
