@@ -158,6 +158,42 @@ services:
       - "${OTLP_HTTP_PORT:-4318}:4318"          # OTLP/HTTP — services export here
       - "${COLLECTOR_HEALTH_PORT:-13133}:13133" # health_check extension
 
+  registry:
+    image: registry:3.1.1
+    container_name: babelstone-registry
+    # Local OCI registry for regulatory-pack distribution (ADR-PC-007): packs are
+    # oras-pushed as OCI artefacts and pulled by digest, cosign-signed. The pack
+    # CONTENT + signing pipeline land with Epic C.4/C.5; this is just the host.
+    # Host port 5001 (5000 collides with macOS AirPlay Receiver).
+    ports:
+      - "${REGISTRY_PORT:-5001}:5000"
+    volumes:
+      - registrydata:/var/lib/registry
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/v2/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  eventcatalog:
+    image: nginx:1.27-alpine
+    container_name: babelstone-eventcatalog
+    # EventCatalog static-site host (ADR-IC-008): serves the built catalog. The
+    # catalog itself (AsyncAPI specs → static build) is produced by Epic G.4 into
+    # eventcatalog/site/; today that dir holds a placeholder. Host only.
+    ports:
+      - "${EVENTCATALOG_PORT:-8082}:80"
+    volumes:
+      - ./eventcatalog/site:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
 volumes:
   pgdata:
   rpdata:
+  registrydata:

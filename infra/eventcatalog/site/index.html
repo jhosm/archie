@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>babelstone — EventCatalog host</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 46rem; margin: 4rem auto; padding: 0 1.5rem; line-height: 1.6; color: #1a1a2e; }
+    code { background: #f0f0f5; padding: 0.1rem 0.35rem; border-radius: 4px; }
+    .note { background: #f7f7fb; border-left: 3px solid #6c63ff; padding: 0.8rem 1rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>EventCatalog — static-site host</h1>
+  <p>This is the local <strong>EventCatalog static-site host</strong> (ADR-IC-008). It serves
+     whatever static site is built into this directory.</p>
+  <div class="note">
+    <p><strong>No catalog yet.</strong> The EventCatalog build — importing the AsyncAPI
+       specs that describe each integration event — is produced by <strong>Epic G.4</strong>,
+       which writes its static output here. This host (P.5) is only the serving mechanism,
+       mirroring how the OCI registry hosts packs whose content arrives with Epic C.4/C.5.</p>
+  </div>
+  <p>Spec format: <strong>AsyncAPI</strong> (one file per integration event, version-controlled
+     alongside the Avro schema). Portal: <strong>EventCatalog</strong>, built to static HTML and
+     served from here.</p>
+</body>
+</html>

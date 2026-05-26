@@ -17,6 +17,8 @@ GRAFANA_PORT    ?= 3000
 OTLP_GRPC_PORT  ?= 4317
 OTLP_HTTP_PORT  ?= 4318
 COLLECTOR_HEALTH_PORT ?= 13133
+REGISTRY_PORT     ?= 5001
+EVENTCATALOG_PORT ?= 8082
 
 .DEFAULT_GOAL := help
 .PHONY: help bootstrap doctor up down reset logs ps verify
@@ -71,6 +73,8 @@ up: ## Start the local dev stack and wait until healthy
 	@echo "  OpenBao           http://localhost:$(OPENBAO_PORT)   (UI at /ui; dev root token: root)"
 	@echo "  Grafana           http://localhost:$(GRAFANA_PORT)   (LGTM: logs/traces/metrics; anonymous admin)"
 	@echo "  OTLP endpoint     localhost:$(OTLP_GRPC_PORT) (gRPC) / localhost:$(OTLP_HTTP_PORT) (HTTP)  — export telemetry here"
+	@echo "  OCI registry      localhost:$(REGISTRY_PORT)   (oras push/pull packs; e.g. localhost:$(REGISTRY_PORT)/babelstone-packs/…)"
+	@echo "  EventCatalog      http://localhost:$(EVENTCATALOG_PORT)"
 
 down: ## Stop the stack, keep data volumes
 	$(COMPOSE) down
@@ -100,4 +104,8 @@ verify: ## Smoke-test the stack: Postgres reachable, Redpanda healthy, SR respon
 	@curl -fsS http://localhost:$(GRAFANA_PORT)/api/health >/dev/null && echo "Grafana OK (api/health)"
 	@echo "→ OTel Collector ..."
 	@curl -fsS http://localhost:$(COLLECTOR_HEALTH_PORT)/ >/dev/null && echo "Collector OK (health_check)"
+	@echo "→ OCI registry ..."
+	@curl -fsS http://localhost:$(REGISTRY_PORT)/v2/ >/dev/null && echo "Registry OK (GET /v2/)"
+	@echo "→ EventCatalog host ..."
+	@curl -fsS http://localhost:$(EVENTCATALOG_PORT)/ >/dev/null && echo "EventCatalog OK (static host)"
 	@echo "✓ Stack verified."
