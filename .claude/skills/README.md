@@ -28,9 +28,10 @@ layout (`pack-author`, ADR-PC-007 §P1).
 
 ## How these tie into the explicit-drift gate
 
-`amend-adr` and `supersede-adr` are the §P9 companions the [`adr-conformance` agent](../agents/adr-conformance.md)
+`amend-adr` and `supersede-adr` are the §P9 companions the [`adr-conformance` agent](../../plugins/babelstone-engine/agents/adr-conformance.md)
 recommends: when it finds a genuine contradiction, the remedy is to amend or supersede the
 ADR **in the same change** rather than let the drift land silently. These skills make that
 a one-command step, so the acknowledgment is cheap enough that nobody skips it. See
-[`../agents/README.md`](../agents/README.md) for the full gate. Once stable, the skills
-fold into the `babelstone-engine` plugin (`archie-bhq.8`).
+[`plugins/babelstone-engine/README.md`](../../plugins/babelstone-engine/README.md) for the full gate.
+The §P3 agents already live in the `babelstone-engine` plugin (`archie-bhq.14`); these
+skills fold into it as the full versioned bundle under `archie-bhq.8`.

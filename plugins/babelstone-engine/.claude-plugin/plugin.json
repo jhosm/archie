@@ -1,0 +1,11 @@
+{
+  "name": "babelstone-engine",
+  "description": "ADR-PC-020 §P3 domain-specialised review subagents for the babelstone engine build — context-isolated review the generic toolkit does not cover. Packaged so each agent is spawnable as babelstone-engine:<name>.",
+  "version": "0.1.0",
+  "author": {
+    "name": "jhosm",
+    "url": "https://github.com/jhosm"
+  },
+  "repository": "https://github.com/jhosm/babelstone",
+  "license": "MIT"
+}

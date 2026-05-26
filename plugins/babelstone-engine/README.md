@@ -1,22 +1,43 @@
-# Project subagents — domain-specialised review
+# `babelstone-engine` plugin — domain-specialised review subagents
 
 Claude Code subagents implementing [ADR-PC-020](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
 §P3: *context-isolated review the generic review toolkit does not cover.* Each is a
-markdown file with YAML frontmatter (`name`, `description`, `tools`) whose body is the
-agent's system prompt; Claude Code auto-delegates to one when a task matches its
-`description`, or you can invoke it explicitly ("use the adr-conformance agent on this
-diff").
+markdown file under [`agents/`](./agents/) with YAML frontmatter (`name`, `description`,
+`tools`) whose body is the agent's system prompt.
 
-| Agent | Guards | Status |
+They are packaged as the **`babelstone-engine`** plugin (this directory + the repo-root
+[`.claude-plugin/marketplace.json`](../../.claude-plugin/marketplace.json)) so each is
+**explicitly spawnable** by its namespaced type — `subagent_type: babelstone-engine:<name>`,
+or `@babelstone-engine:<name>` to invoke by mention. Packaging is what gives a project
+subagent a spawn handle: a loose `.claude/agents/*.md` file has none, which is why these
+moved here (`archie-bhq.14`).
+
+| Agent | Guards | Spawn as |
 |---|---|---|
-| [`adr-conformance`](./adr-conformance.md) | Internal-design drift against the governing ADRs (PC + IC); the explicit-drift gate's judgement layer | **built (`archie-bhq.5`)** |
-| [`financial-math-reviewer`](./financial-math-reviewer.md) | Act/360, TANB/TANL, flow-by-flow withholding, TAE, round-once-at-`Money` | **built (`archie-bhq.7`)** |
-| [`contract-reviewer`](./contract-reviewer.md) | Schema evolution, naming, no-PII-on-bus | **built (`archie-bhq.7`)** |
-| [`replay-determinism-auditor`](./replay-determinism-auditor.md) | Handler purity, projection rebuildability, fixture replay | **built (`archie-bhq.7`)** |
-| [`doc-consistency`](./doc-consistency.md) | Cross-linked docs + C4 vs cited source ("the source wins") | **built (`archie-bhq.7`)** |
+| [`adr-conformance`](./agents/adr-conformance.md) | Internal-design drift against the governing ADRs (PC + IC); the explicit-drift gate's judgement layer | `babelstone-engine:adr-conformance` |
+| [`financial-math-reviewer`](./agents/financial-math-reviewer.md) | Act/360, TANB/TANL, flow-by-flow withholding, TAE, round-once-at-`Money` | `babelstone-engine:financial-math-reviewer` |
+| [`contract-reviewer`](./agents/contract-reviewer.md) | Schema evolution, naming, no-PII-on-bus | `babelstone-engine:contract-reviewer` |
+| [`replay-determinism-auditor`](./agents/replay-determinism-auditor.md) | Handler purity, projection rebuildability, fixture replay | `babelstone-engine:replay-determinism-auditor` |
+| [`doc-consistency`](./agents/doc-consistency.md) | Cross-linked docs + C4 vs cited source ("the source wins") | `babelstone-engine:doc-consistency` |
 
 These compose *with*, not instead of, the generic `code-review` / `pr-review-toolkit`
-skills. Once stable they fold into the `babelstone-engine` plugin (`archie-bhq.8`).
+skills. The plugin currently bundles only the §P3 agents (pulled forward by `archie-bhq.14`
+because a loose subagent cannot be spawned by type); the §P1 hooks and §P2 skills fold in
+as the full versioned bundle under `archie-bhq.8` (ADR-PC-020 §P4, as amended).
+
+## Enabling the plugin
+
+The repo declares this marketplace and enables the plugin in [`.claude/settings.json`](../../.claude/settings.json)
+(`extraKnownMarketplaces` + `enabledPlugins`), so a freshly cloned + trusted repo is
+prompted to install it — no manual step. To wire it up by hand instead:
+
+```
+/plugin marketplace add .
+/plugin install babelstone-engine@babelstone-engine
+```
+
+Plugins register at session start, so the namespaced `subagent_type` becomes spawnable in
+the **next** session after install.
 
 ## The explicit-drift gate (ADR-PC-020 §D3)
 
@@ -31,7 +52,7 @@ replace or re-implement the first two:
 |---|---|---|---|
 | 1. §D5 immutability | `adr-immutability.sh` (PreToolUse warn) → `adr-immutability-check.sh` (CI hard-fail) | An Accepted `## Decision` edited in place with no `*Revised …*`/supersession riding along | **CI** (hook is a fast mirror) |
 | 2. PR-body gate | `adr-governance.yml` job | A PR body that doesn't name the ADRs it touches/honours | **CI** |
-| 3. Conformance agent | [`adr-conformance`](./adr-conformance.md) | Code that compiles and passes contract tests yet **contradicts a decision** — the internal-design class no mechanical gate or boundary test sees | dev-time judgement (a *layer*, not the sole guard — §Residual risks) |
+| 3. Conformance agent | [`adr-conformance`](./agents/adr-conformance.md) | Code that compiles and passes contract tests yet **contradicts a decision** — the internal-design class no mechanical gate or boundary test sees | dev-time judgement (a *layer*, not the sole guard — §Residual risks) |
 
 Layer 3 is deliberately **not** a hard CI gate: an LLM reviewer can miss or invent a
 contradiction, so the mechanical gates (analysers, determinism gate, Pact, the
@@ -54,7 +75,7 @@ decision change land **together**:
 
 This extends the project's established order — ADR before code, bd issue before code —
 to: **no contradiction without a recorded decision.** The
-[`amend-adr`](../skills/amend-adr/SKILL.md) / [`supersede-adr`](../skills/supersede-adr/SKILL.md)
+[`amend-adr`](../../.claude/skills/amend-adr/SKILL.md) / [`supersede-adr`](../../.claude/skills/supersede-adr/SKILL.md)
 skills (`archie-bhq.6`) make step 2 a one-command step.
 
 ## When to run the conformance agent

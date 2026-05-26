@@ -1,0 +1,15 @@
+{
+  "name": "babelstone-engine",
+  "description": "Local marketplace for the babelstone repo's own dev-tooling plugins (ADR-PC-020 §P4).",
+  "owner": {
+    "name": "jhosm"
+  },
+  "plugins": [
+    {
+      "name": "babelstone-engine",
+      "source": "./plugins/babelstone-engine",
+      "description": "ADR-PC-020 §P3 domain-specialised review subagents (adr-conformance, financial-math-reviewer, contract-reviewer, replay-determinism-auditor, doc-consistency).",
+      "version": "0.1.0"
+    }
+  ]
+}

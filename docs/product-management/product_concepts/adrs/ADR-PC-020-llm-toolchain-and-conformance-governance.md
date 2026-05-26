@@ -300,13 +300,31 @@ Because the integration estate is built in-house ([ADR-IC-013](../../integration
 
 ## Open Actions
 
-1. **Build the toolchain in leverage order** — hooks (§P1, the safety floor incl. the §D5 immutability hook + PR-body gate) → `new-family-schema` + `new-event` (§P2, velocity) → `new-adr` + `amend-adr` (§P2, needed now) → the §P3 domain review agents + the ADR-conformance agent → fold into the `babelstone-engine` plugin (§P4) once stable.
+1. **Build the toolchain in leverage order** — hooks (§P1, the safety floor incl. the §D5 immutability hook + PR-body gate) → `new-family-schema` + `new-event` (§P2, velocity) → `new-adr` + `amend-adr` (§P2, needed now) → the §P3 domain review agents + the ADR-conformance agent → fold into the `babelstone-engine` plugin (§P4) once stable. *(Amended 2026-05-26 — the §P3 agents are packaged into the `babelstone-engine` plugin early, ahead of the §P1/§P2 layers, because a loose project subagent has no explicit-spawn handle; `archie-bhq.14`. See the Amendment below. The §P1/§P2 layers still fold into the same plugin once stable under `archie-bhq.8`.)*
 2. **Confirm the dev-time MCP allowlist** — `github` + `context7` enabled; `bd` allowlisted; prune unrelated plugins from the project config (§P4).
 3. **Amend [ADR-PC-000](./ADR-PC-000-namespace-and-contract-shape-framework.md) to add the `Verifiable commitments` section to both templates** — *done (the §D5 template slot); backfill into existing entries is incremental (#5).* 
 4. **Seed the load-bearing commitment catalogue** — the ~8 invariants named in §P7 (append+outbox atomicity, Money boundary, determinism, post-flag-never-gates, pin-per-event, AML-edge, batch-ingest idempotency, replay budgets, zero-engine-code-per-variant) as the first fitness functions, before broad engine work begins.
 5. **Build the coverage checker** (§P6) and wire it as a §P1 hook + CI step; build the spec-coverage auditor (§P3) as a periodic sweep.
 6. **Stand up the explicit-drift gate** — the §D5 ADR-immutability hook, the conformance agent, and the PR-body "ADRs touched/honoured" requirement (§P1, §P3).
 7. **Backfill `Verifiable commitments` into existing ADR-PC and in-house ADR-IC entries** incrementally as each is implemented — not a big-bang rewrite.
+
+---
+
+## Amendment — 2026-05-26: the §P3 review subagents are packaged into the `babelstone-engine` plugin ahead of the rest of the toolchain
+
+Building the v1 engine (B.1, `archie-s8gn`, landed) made the §P3 review layer load-bearing immediately: [`plugins/babelstone-engine/README.md`](../../../../plugins/babelstone-engine/README.md) and `CLAUDE.md` mandate running the **adr-conformance** agent before every engine/contract commit. Implementation then exposed a gap D1/§P4 did not foresee: a *loose* project subagent (a `.claude/agents/*.md` file) has **no explicit-spawn handle** — it can be auto-delegated or `@`-mentioned, but `subagent_type: adr-conformance` errors "agent type not found". Only built-in, CLI-passed, and **plugin-namespaced** agents are spawnable by type. So the §P3 layer's intended form — curated per-agent tool-scoping, invoked deterministically as part of pre-PR review — is unavailable while the agents stay loose. "Prove loose first" (§P4) cannot prove the spawnable form, because the loose form structurally lacks it.
+
+### A1 · The `babelstone-engine` plugin is created now, seeded with the §P3 agents only
+
+The five §P3 review subagents (`adr-conformance`, `financial-math-reviewer`, `contract-reviewer`, `replay-determinism-auditor`, `doc-consistency`) move from `.claude/agents/` into the `babelstone-engine` plugin (`plugins/babelstone-engine/`, declared by the repo-root [`.claude-plugin/marketplace.json`](../../../../.claude-plugin/marketplace.json)), so each is spawnable as `babelstone-engine:<name>`. This pulls the plugin's *creation* forward from D1's "once they stabilise" and §P4's "do not package prematurely" — but **only for the subagent layer, and only because the loose form cannot deliver the §P3 capability** (`archie-bhq.14`).
+
+### A2 · D1's one-plugin decision and §P4's version-with-the-repo rule are unchanged
+
+D1's "**one** project plugin (`babelstone-engine`) bundling the above" still holds — this *is* that plugin, seeded early with its agents rather than a second surface. §P4's "version with the repo" still holds — the plugin lives in-tree. What is revised is the *sequencing* premise for the §P3 layer: its agents are packaged before the §P1 hooks and §P2 skills, which stay loose under `.claude/` and fold into the **same** plugin as the full versioned bundle under `archie-bhq.8` (Open Action #1, as amended). No row in the [commitment catalogue](./commitment-catalogue.md) changes; packaging is not a Verifiable commitment.
+
+### A3 · This amends the decision; it does not supersede this ADR
+
+D1, D2, D3 and §P1–§P11 remain binding as written. This amendment is appended to D1/§P4's packaging guidance — it narrows *when* the plugin is first populated, not *whether* there is one plugin (§D1) or *where* it lives (§P4).
 
 ---
 

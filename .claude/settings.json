@@ -1,4 +1,12 @@
 {
+  "extraKnownMarketplaces": {
+    "babelstone-engine": {
+      "source": { "source": "directory", "path": "." }
+    }
+  },
+  "enabledPlugins": {
+    "babelstone-engine@babelstone-engine": true
+  },
   "hooks": {
     "SessionStart": [
       { "matcher": "", "hooks": [ { "type": "command", "command": "bd prime --hook-json" } ] }
