@@ -3,4 +3,13 @@
     <RootNamespace>Babelstone.Money</RootNamespace>
     <AssemblyName>Babelstone.Money</AssemblyName>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The §P1–§P2 boundary analysers run at build time. OutputItemType=Analyzer +
+         ReferenceOutputAssembly=false: passed to the compiler as a checker, never linked
+         as a runtime dependency. Warnings are errors (Directory.Build.props), so any
+         BMNY00x violation fails the build. -->
+    <ProjectReference Include="../Babelstone.Money.Analyzers/Babelstone.Money.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
 </Project>

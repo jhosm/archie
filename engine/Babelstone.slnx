@@ -1,8 +1,10 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Babelstone.Money/Babelstone.Money.csproj" />
+    <Project Path="src/Babelstone.Money.Analyzers/Babelstone.Money.Analyzers.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Babelstone.Money.Tests/Babelstone.Money.Tests.csproj" />
+    <Project Path="tests/Babelstone.Money.Analyzers.Tests/Babelstone.Money.Analyzers.Tests.csproj" />
   </Folder>
 </Solution>

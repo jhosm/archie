@@ -140,6 +140,8 @@ Money in domain code, event payloads (`principal_cents`, `gross_interest_cents`,
 
 A Roslyn analyser bans raw `Math.Round(decimal, …)` outside `Money.FromCents`, bans `decimal` fields outside the `Babelstone.Money` namespace, and flags operator overloads returning `decimal` from `Money` inputs. Because serialization is Avro ([ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)) and the engine controls it (no framework JSON path), there is no third-party serializer rounding to police.
 
+*Revised 2026-05-26 (archie-mi05.3): the `decimal`-field ban exempts the `Babelstone.Money` namespace **subtree**, not only the exact root — the ban targets stored money state, while §P2's sealed corpus (`Babelstone.Money.Tests`) necessarily carries `decimal` boundary inputs. The ban also covers `decimal` **properties** (positional-record params included) and `decimal?`, and leaves locals/parameters untouched. Delivered as analysers BMNY001/002/003 (`engine/src/Babelstone.Money.Analyzers/`).*
+
 ### P2 — HALF_EVEN rounds once, at the Decimal → Cents boundary
 
 Compute the full expression in `decimal` at maximum precision; round exactly once at the final `Money.FromCents` call site. No intermediate rounding inside `decimal` arithmetic (accumulating roundings drifts). A sealed fixture corpus of `(input, expected)` pairs — midpoints (100.5¢→100¢, 101.5¢→102¢), large magnitudes (€1e8+ over multi-year terms), small magnitudes (sub-cent daily accruals) — is the boundary-rounding test, replayable per [surface §3.9](../feature-design-configuration-surface.md).
@@ -162,7 +164,7 @@ Side-effect-free handlers ([event-store §5.3](../feature-design-event-store-pro
 
 1. **Hand-rolled-core test harness** — the projection-rebuild drill ([event-store §7.2](../feature-design-event-store-projections.md)) and the Q-AK synthetic v4-scale load test ([ADR-PC-001](./ADR-PC-001-event-store-technology.md), [two-modes §5.6](../feature-design-two-modes-asymmetry.md)) are v1 acceptance gates for the hand-rolled append/replay path.
 2. **Reference-study capture** — document the specific Marten (`mt_events`, projection modes) and Wolverine (`IMartenOutbox` one-transaction seam, `Saga` dispatch) patterns the engine mirrors, so the reference link is auditable.
-3. **Roslyn analysers** — (a) ban raw `Math.Round` on `decimal`; (b) ban `decimal` fields outside `Babelstone.Money`.
+3. **Roslyn analysers** — (a) ban raw `Math.Round` on `decimal`; (b) ban `decimal` fields outside `Babelstone.Money`. (Delivered 2026-05-26 — archie-mi05.3: BMNY001 (a), BMNY002 (b, extended to properties + the namespace subtree), BMNY003 (operators/conversions returning `decimal` from `Money`). Wired build-time with warnings-as-errors; CI leg follows the `engine:` build task.)
 4. **§10.4 clarification** — propose a one-line amendment to [event-store §10.4](../feature-design-event-store-projections.md) naming the hand-rolled-module-on-PostgreSQL path explicitly (consistent with [ADR-PC-001](./ADR-PC-001-event-store-technology.md) Candidate A), so the literal "no in-house build" phrasing does not mislead. (Doc-edit deferred pending owner sign-off — not made unilaterally in this ADR.)
 
 ---

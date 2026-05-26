@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Analyzers load inside the compiler host, not the engine runtime, so this
+         project targets netstandard2.0 — overriding the repo-wide net10.0 default
+         in ../../Directory.Build.props. TreatWarningsAsErrors et al. are inherited. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>Babelstone.Money.Analyzers</RootNamespace>
+    <AssemblyName>Babelstone.Money.Analyzers</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The Roslyn APIs the analyzer is written against. PrivateAssets=all: the
+         compiler host already provides these at analysis time, so they are never
+         flowed to consumers as a runtime dependency. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" PrivateAssets="all" />
+    <!-- The analyzer-authoring safety net (RS-series rules: release tracking, descriptor hygiene). -->
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" PrivateAssets="all">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Release tracking (RS2008) — the catalogue of diagnostic IDs this analyzer ships. -->
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The descriptors stay internal; the test assembly asserts against their IDs. -->
+    <InternalsVisibleTo Include="Babelstone.Money.Analyzers.Tests" />
+  </ItemGroup>
+</Project>

@@ -12,5 +12,9 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Babelstone.Money/Babelstone.Money.csproj" />
+    <!-- The boundary analysers guard engine test code too (the fixture corpus's decimal
+         inputs live under Babelstone.Money.Tests, which the §P1 rule exempts by subtree). -->
+    <ProjectReference Include="../../src/Babelstone.Money.Analyzers/Babelstone.Money.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>
