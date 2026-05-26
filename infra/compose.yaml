@@ -126,6 +126,38 @@ services:
       retries: 12
       start_period: 5s
 
+  grafana-lgtm:
+    image: grafana/otel-lgtm:0.28.0
+    container_name: babelstone-grafana-lgtm
+    # All-in-one Grafana LGTM appliance — Grafana UI + Tempo (traces) + Loki (logs)
+    # + Prometheus (metrics), datasources and cross-signal correlation pre-wired
+    # (ADR-IC-007). It receives OTLP forwarded by the collector below; its own
+    # OTLP ingest is NOT exposed to the host — the collector is the single entry.
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"   # Grafana UI
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.153.0
+    container_name: babelstone-otel-collector
+    # The mandatory pipeline boundary (ADR-IC-007 §P1). Services export OTLP here;
+    # config is otel/collector.yaml (the owned single export-config point).
+    command: ["--config=/etc/otel/collector.yaml"]
+    depends_on:
+      grafana-lgtm:
+        condition: service_healthy
+    volumes:
+      - ./otel:/etc/otel:ro
+    ports:
+      - "${OTLP_GRPC_PORT:-4317}:4317"          # OTLP/gRPC — services export here
+      - "${OTLP_HTTP_PORT:-4318}:4318"          # OTLP/HTTP — services export here
+      - "${COLLECTOR_HEALTH_PORT:-13133}:13133" # health_check extension
+
 volumes:
   pgdata:
   rpdata:

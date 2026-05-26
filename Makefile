@@ -13,6 +13,10 @@ CONSOLE_PORT    ?= 8080
 KONG_PROXY_PORT ?= 8000
 KONG_ADMIN_PORT ?= 8001
 OPENBAO_PORT    ?= 8200
+GRAFANA_PORT    ?= 3000
+OTLP_GRPC_PORT  ?= 4317
+OTLP_HTTP_PORT  ?= 4318
+COLLECTOR_HEALTH_PORT ?= 13133
 
 .DEFAULT_GOAL := help
 .PHONY: help bootstrap doctor up down reset logs ps verify
@@ -65,6 +69,8 @@ up: ## Start the local dev stack and wait until healthy
 	@echo "  Kong proxy        http://localhost:$(KONG_PROXY_PORT)   (edge gateway)"
 	@echo "  Kong admin        http://localhost:$(KONG_ADMIN_PORT)"
 	@echo "  OpenBao           http://localhost:$(OPENBAO_PORT)   (UI at /ui; dev root token: root)"
+	@echo "  Grafana           http://localhost:$(GRAFANA_PORT)   (LGTM: logs/traces/metrics; anonymous admin)"
+	@echo "  OTLP endpoint     localhost:$(OTLP_GRPC_PORT) (gRPC) / localhost:$(OTLP_HTTP_PORT) (HTTP)  — export telemetry here"
 
 down: ## Stop the stack, keep data volumes
 	$(COMPOSE) down
@@ -90,4 +96,8 @@ verify: ## Smoke-test the stack: Postgres reachable, Redpanda healthy, SR respon
 	@curl -fsS http://localhost:$(KONG_ADMIN_PORT)/status >/dev/null && echo "Kong OK (admin /status)"
 	@echo "→ OpenBao ..."
 	@curl -fsS http://localhost:$(OPENBAO_PORT)/v1/sys/health >/dev/null && echo "OpenBao OK (sys/health)"
+	@echo "→ Grafana (LGTM) ..."
+	@curl -fsS http://localhost:$(GRAFANA_PORT)/api/health >/dev/null && echo "Grafana OK (api/health)"
+	@echo "→ OTel Collector ..."
+	@curl -fsS http://localhost:$(COLLECTOR_HEALTH_PORT)/ >/dev/null && echo "Collector OK (health_check)"
 	@echo "✓ Stack verified."

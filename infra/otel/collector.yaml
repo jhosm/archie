@@ -1,0 +1,50 @@
+# OpenTelemetry Collector — the mandatory pipeline boundary (ADR-IC-007 §P1).
+#
+# Services export OTLP HERE (never directly to a backend). This is the single
+# export-configuration point: switching a backend, adding sampling, or redacting
+# PII is a change to THIS file, not to any service's instrumentation. The GDPR
+# note in ADR-IC-007 (pseudonymous IDs in traces, not raw client_id) is enforced
+# here as a processor when services arrive (Epic K).
+#
+# It forwards all three signals to the Grafana LGTM appliance over OTLP; Grafana
+# (Tempo/Loki/Prometheus) does the storage + cross-signal correlation.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Batch only for now. PII redaction / sampling processors land with Epic K,
+  # inserted into the pipelines below — the owned seam ADR-IC-007 §P1 mandates.
+  batch: {}
+
+exporters:
+  # Swap a backend by changing this endpoint; nothing upstream changes.
+  otlp/lgtm:
+    endpoint: grafana-lgtm:4317
+    tls:
+      insecure: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/lgtm]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/lgtm]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/lgtm]
