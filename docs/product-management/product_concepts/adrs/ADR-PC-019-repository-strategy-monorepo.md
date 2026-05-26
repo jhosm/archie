@@ -16,7 +16,7 @@
 
 ## Context
 
-[ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) fixed *what* is built and *in which languages*: a single-deployable C# (.NET 9) engine with a hand-rolled event-sourcing core, a Go `pack-validate` binary ([ADR-PC-006](./ADR-PC-006-cue-schema-language.md)), and a Python MCP sibling ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md)) — polyglot only at the boundary. With the ADR-PC series substantially filed, the project is moving from specification to implementation, and one build-strategy question falls out before the first line of engine code:
+[ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) fixed *what* is built and *in which languages*: a single-deployable C# (.NET 10) engine with a hand-rolled event-sourcing core, a Go `pack-validate` binary ([ADR-PC-006](./ADR-PC-006-cue-schema-language.md)), and a Python MCP sibling ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md)) — polyglot only at the boundary. With the ADR-PC series substantially filed, the project is moving from specification to implementation, and one build-strategy question falls out before the first line of engine code:
 
 > **Repository strategy** — one repository for the whole deliverable, or one per component?
 
@@ -119,7 +119,7 @@ The agent toolchain that operationalises the LLM-first build on this tree, and t
 A single repository with top-level paths separating the product-engine artefacts, the in-house estate services, and the contract/config planes — illustratively:
 
 ```
-/engine          C# (.NET 9) single deployable + its PostgreSQL migrations   [ADR-PC-010, ADR-PC-001]
+/engine          C# (.NET 10) single deployable + its PostgreSQL migrations   [ADR-PC-010, ADR-PC-001]
 /pack-validate   Go static binary embedding cuelang.org/go                   [ADR-PC-006]
 /families        loaded family schemas: event types, pure handlers,
                  projections, lifecycle state machines (term_deposit first)   [event-store §3]

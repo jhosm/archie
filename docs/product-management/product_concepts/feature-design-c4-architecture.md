@@ -88,7 +88,7 @@ The colours encode **architectural role**, *not* build provenance — the two ar
 
 | Container | Class | Tech | Source |
 |---|---|---|---|
-| Engine process | build | C# / .NET 9, single deployable | [ADR-PC-010](./adrs/ADR-PC-010-dotnet-hand-rolled-engine.md) |
+| Engine process | build | C# / .NET 10, single deployable | [ADR-PC-010](./adrs/ADR-PC-010-dotnet-hand-rolled-engine.md) |
 | Engine PostgreSQL | build | PostgreSQL: events + outbox + projections + saga + `pack_versions` | [ADR-PC-001](./adrs/ADR-PC-001-event-store-technology.md), [ADR-IC-005](../integration_concepts/adrs/ADR-IC-005-cqrs-read-model-storage.md) |
 | CUE validator (`pack-validate`) | build | Go static binary | [ADR-PC-006](./adrs/ADR-PC-006-cue-schema-language.md) |
 | Kong Gateway CE | estate | Kong / nginx, DB-less | [ADR-IC-006](../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md) |

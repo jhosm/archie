@@ -158,7 +158,7 @@ Anchors: ADR-IC-001/002/005/006/007,
 
 - **P.1** Local dev stack via **Docker Compose**: PostgreSQL + Redpanda (+ built-in Schema
   Registry) + bootstrap/seed. *(unblocks A, E)*
-- **P.2** Toolchain bootstrap: install/pin .NET 9, Go, Python 3.12, CUE, cosign, oras,
+- **P.2** Toolchain bootstrap: install/pin .NET 10, Go, Python 3.14, CUE, cosign, oras,
   plantuml/graphviz (devcontainer or Makefile; extend `INSTALL.md`). **Includes bd + dolt** (the
   mandated tracker) so backlog ops work in any session.
 - **P.3** Add **Kong** (DB-less) + **OpenBao** to the local stack. *(unblocks I, M)*

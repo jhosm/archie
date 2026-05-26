@@ -1,8 +1,7 @@
 # Babelstone — task entrypoint. Run `make` (or `make help`) to list targets.
 #
-# This file currently fronts the local dev stack (infra/compose.yaml, P.1).
-# The language toolchain bootstrap (.NET / Go / Python / CUE / cosign / …) lands
-# here under P.2 — keep targets grouped by section.
+# Two sections: the toolchain bootstrap (Brewfile + mise.toml, P.2) and the
+# local dev stack (infra/compose.yaml, P.1). Keep targets grouped by section.
 
 COMPOSE := docker compose -f infra/compose.yaml
 
@@ -13,12 +12,40 @@ KAFKA_PORT    ?= 19092
 CONSOLE_PORT  ?= 8080
 
 .DEFAULT_GOAL := help
-.PHONY: help up down reset logs ps verify
+.PHONY: help bootstrap doctor up down reset logs ps verify
 
 help: ## List available targets
 	@echo "Babelstone — make targets:"
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+
+## ----------------------------------------------------------------------------
+## Toolchain (Brewfile host prereqs + mise.toml pinned languages/CLIs)
+## ----------------------------------------------------------------------------
+
+bootstrap: ## Install the full toolchain: brew prereqs + pinned mise tools
+	@if command -v brew >/dev/null 2>&1; then \
+		echo "→ brew bundle (host prerequisites, install-only) ..."; \
+		brew bundle --no-upgrade --file=Brewfile; \
+	else \
+		echo "⚠ Homebrew not found — install mise, bd, dolt, plantuml, graphviz via your"; \
+		echo "  package manager (see INSTALL.md), then re-run. Continuing to mise ..."; \
+	fi
+	@echo "→ mise install (pinned toolchain from mise.toml) ..."
+	@mise trust --quiet
+	@mise install
+	@echo ""
+	@echo "✓ Toolchain installed. Run 'make doctor' to verify versions."
+
+doctor: ## Print resolved toolchain versions (verifies the pins are active)
+	@echo "→ mise-managed (mise.toml):"
+	@mise current
+	@echo "→ host prerequisites:"
+	@printf "  %-10s " "bd";       bd version 2>/dev/null      | head -1 || echo "MISSING"
+	@printf "  %-10s " "dolt";     dolt version 2>/dev/null    | head -1 || echo "MISSING"
+	@printf "  %-10s " "plantuml"; plantuml -version 2>/dev/null | head -1 || echo "MISSING"
+	@printf "  %-10s " "dot";      dot -V 2>&1                 | head -1 || echo "MISSING"
+	@printf "  %-10s " "docker";   docker --version 2>/dev/null || echo "MISSING"
 
 ## ----------------------------------------------------------------------------
 ## Local dev stack (infra/compose.yaml) — PostgreSQL + Redpanda + Console

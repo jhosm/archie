@@ -1,0 +1,29 @@
+# Pinned core toolchain for the babelstone monorepo (P.2 / archie-7zye).
+# `make bootstrap` (or `mise install`) installs exactly these versions, so every
+# machine and CI runner builds against the same compilers and CLIs.
+#
+# Versions are the latest stable as of 2026-05-26. Host prerequisites that are
+# not pinned here (mise itself, bd + dolt, plantuml + graphviz) live in the
+# Brewfile — see INSTALL.md.
+
+[tools]
+# .NET 10 LTS — engine + orchestrator + acl + notification single deployables.
+# ADR-PC-010 (amended 2026-05-26: .NET 9 → .NET 10 LTS; .NET 9 is STS and reaches
+# end-of-life in 2026). The SDK bundles the matching runtime.
+dotnet = "10.0.300"
+
+# Go — the out-of-process CUE validator / pack-validate binary (ADR-PC-006).
+go = "1.26.3"
+
+# Python — the MCP server, on the official Python SDK (ADR-IC-010).
+python = "3.14.5"
+
+# CUE — the family-schema constraint language, embedded by the Go validator
+# and used by the authoring + CI tooling (ADR-PC-006).
+cue = "0.16.1"
+
+# cosign — pack + container image signing, keyless OIDC (ADR-PC-007, ADR-IC-013).
+cosign = "3.0.6"
+
+# oras — push/pull regulatory packs as OCI artifacts by digest (ADR-PC-007).
+oras = "1.3.2"

@@ -7,7 +7,7 @@
 | Deciders | jhosm |
 | Shape | Tool-selection |
 | Common criteria | [ADR-IC-000](../../integration_concepts/adrs/ADR-IC-000-common-evaluation-criteria.md) (reused per [ADR-PC-000](./ADR-PC-000-namespace-and-contract-shape-framework.md) D2) |
-| Depends on | [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) (C# / .NET 9 hand-rolled engine — fixes the harness language and the injected-clock seam), [ADR-PC-001](./ADR-PC-001-event-store-technology.md) (PostgreSQL event store — the topology under test), [ADR-IC-001](../../integration_concepts/adrs/ADR-IC-001-event-backbone-message-broker.md) (Redpanda — the ingest boundary the harness drives), [ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md) (Avro + Confluent SR — the envelope the harness reuses), [ADR-IC-006](../../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md) (Kong — the control-plane boundary), [ADR-IC-007](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) (OpenTelemetry / Grafana LGTM — the measurement plane), [ADR-IC-009](../../integration_concepts/adrs/ADR-IC-009-testing-infrastructure.md) (Testcontainers — the fixture tooling) |
+| Depends on | [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) (C# / .NET 10 hand-rolled engine — fixes the harness language and the injected-clock seam), [ADR-PC-001](./ADR-PC-001-event-store-technology.md) (PostgreSQL event store — the topology under test), [ADR-IC-001](../../integration_concepts/adrs/ADR-IC-001-event-backbone-message-broker.md) (Redpanda — the ingest boundary the harness drives), [ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md) (Avro + Confluent SR — the envelope the harness reuses), [ADR-IC-006](../../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md) (Kong — the control-plane boundary), [ADR-IC-007](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) (OpenTelemetry / Grafana LGTM — the measurement plane), [ADR-IC-009](../../integration_concepts/adrs/ADR-IC-009-testing-infrastructure.md) (Testcontainers — the fixture tooling) |
 | Resolves | bd `archie-10r.12`; the tooling residual of Q-AK ([two-modes §8](../feature-design-two-modes-asymmetry.md)) |
 
 ---
@@ -18,7 +18,7 @@
 
 This is also the resolution of [ADR-PC-010 Open Action #1](./ADR-PC-010-dotnet-hand-rolled-engine.md) ("the Q-AK synthetic v4-scale load test is a v1 acceptance gate for the hand-rolled append/replay path") and the gate [ADR-PC-001](./ADR-PC-001-event-store-technology.md) names against the chosen PostgreSQL topology.
 
-**Candidates** (per bd `archie-10r.12`): [k6](https://k6.io), [Gatling](https://gatling.io), [Locust](https://locust.io), [JMeter](https://jmeter.apache.org), in-house harness. The bd issue framed the in-house option as *Go/Rust*; that framing predates [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) (issue created 2026-05-21; the engine language was decided C# / .NET 9 on 2026-05-23). The in-house option is therefore evaluated as **.NET**, for the engine-code-reuse reasons the Decision sets out.
+**Candidates** (per bd `archie-10r.12`): [k6](https://k6.io), [Gatling](https://gatling.io), [Locust](https://locust.io), [JMeter](https://jmeter.apache.org), in-house harness. The bd issue framed the in-house option as *Go/Rust*; that framing predates [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) (issue created 2026-05-21; the engine language was decided C# / .NET 10 on 2026-05-23). The in-house option is therefore evaluated as **.NET**, for the engine-code-reuse reasons the Decision sets out.
 
 ### Two production surfaces, not one
 
@@ -81,7 +81,7 @@ F1 and F2 leave all five candidates standing. The decision is made on soft crite
 
 **S3 · Exit cost.** Lowest possible: the harness is engine-team code in the engine repo. "Exit" means deleting code, not migrating off a vendor or a proprietary test-plan format. The archived artefact (G4) is a plain pass/fail report plus raw OTel metrics — standard formats readable by any tool.
 
-**S4 · Community and longevity.** Rides the longevity of .NET 9, Confluent.Kafka .NET, and OpenTelemetry .NET — all already assessed and accepted in [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) and [ADR-IC-007](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md). There is no separate-tool abandonment risk, no community extension to keep current.
+**S4 · Community and longevity.** Rides the longevity of .NET 10, Confluent.Kafka .NET, and OpenTelemetry .NET — all already assessed and accepted in [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) and [ADR-IC-007](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md). There is no separate-tool abandonment risk, no community extension to keep current.
 
 #### k6
 
@@ -186,7 +186,7 @@ As the test's last step, the observer triggers a cold rebuild of every projectio
 ## Cross-references
 
 - [two-modes §8](../feature-design-two-modes-asymmetry.md) — the full test specification this ADR tools; [§5.6](../feature-design-two-modes-asymmetry.md) makes it a v1 acceptance gate.
-- [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — C# / .NET 9 hand-rolled engine; fixes the harness language and the injected-clock seam (§P5); this ADR resolves its Open Action #1.
+- [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — C# / .NET 10 hand-rolled engine; fixes the harness language and the injected-clock seam (§P5); this ADR resolves its Open Action #1.
 - [ADR-PC-001](./ADR-PC-001-event-store-technology.md) — PostgreSQL event store and the §P1 envelope the harness reuses; the topology this test gates.
 - [ADR-IC-001](../../integration_concepts/adrs/ADR-IC-001-event-backbone-message-broker.md) — Redpanda backbone; the ingest boundary the harness drives (and the no-JVM rationale that weighs against Gatling/JMeter).
 - [ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md) — Avro + Confluent SR; the envelope format the harness emits.

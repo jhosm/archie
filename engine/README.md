@@ -1,10 +1,10 @@
 # /engine
 
-The product engine: a single-deployable **C# (.NET 9)** process with a hand-rolled
+The product engine: a single-deployable **C# (.NET 10)** process with a hand-rolled
 event-sourcing core, plus its PostgreSQL migrations.
 
 - **Build provenance:** in-house (product engine, "blue")
-- **Runtime / stack:** .NET 9 — [ADR-PC-010](../docs/product-management/product_concepts/adrs/ADR-PC-010-dotnet-hand-rolled-engine.md), PostgreSQL [ADR-PC-001](../docs/product-management/product_concepts/adrs/ADR-PC-001-event-store-technology.md)
+- **Runtime / stack:** .NET 10 — [ADR-PC-010](../docs/product-management/product_concepts/adrs/ADR-PC-010-dotnet-hand-rolled-engine.md), PostgreSQL [ADR-PC-001](../docs/product-management/product_concepts/adrs/ADR-PC-001-event-store-technology.md)
 - **CODEOWNERS:** engine team
 - **Path-scoped CI:** `dotnet build` + analysers + Testcontainers suite ([ADR-IC-009](../docs/product-management/integration_concepts/adrs/ADR-IC-009-testing-infrastructure.md))
 

@@ -21,7 +21,7 @@ not exist yet** — no base types, namespaces, `.csproj`, no `term_deposit` refe
 (the engine is a skeleton; its build, ADR-PC-010's implementation, is outside the current
 toolchain epic). Building them now would invent a layout the real engine build then
 contradicts — the exact silent drift the `.5` conformance gate exists to prevent. They are
-filed as `archie-bhq.13`, gated on `/engine` + `/families` having a real .NET 9 layout to
+filed as `archie-bhq.13`, gated on `/engine` + `/families` having a real .NET 10 layout to
 scaffold against. The four shipped skills operate on substrate that **does** exist: the
 rich ADR corpus (`new-adr`/`amend-adr`/`supersede-adr`) and the fully-specified pack
 layout (`pack-author`, ADR-PC-007 §P1).

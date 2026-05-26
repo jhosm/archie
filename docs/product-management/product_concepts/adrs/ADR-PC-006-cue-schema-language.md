@@ -28,7 +28,7 @@ Depths 1–4 run **synchronously at variant-commit time** in the PM author's edi
 
 The schema language is the boundary between two audiences: PM/product authors who write variant YAML, and engine code that interprets variants. [authoring §9.5](../feature-design-configuration-authoring.md) is explicit that there is **no DSL escape hatch** — the schema language must encode pack compliance and regulatory coherence as *declarative* constraints, not as runtime-evaluated procedure. The source design notes name the candidate space directly: [authoring §1](../feature-design-configuration-authoring.md) describes family schemas as "typed schemas (e.g. CUE / JSON Schema with a domain layer on top)", and [surface §3.2](../feature-design-configuration-surface.md) treats the schema as a typed contract over union types, optional fields, range-bounded scalars, and pack-bound primitives.
 
-The engine runtime is C# .NET 9 with a **hand-rolled** event-sourcing core ([ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md)). This ADR therefore must decide both the *language* and the *integration shape* of its validator against a .NET host — a constraint that materially shapes the trade-offs below, because the most expressive candidate is not a .NET-native one.
+The engine runtime is C# .NET 10 with a **hand-rolled** event-sourcing core ([ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md)). This ADR therefore must decide both the *language* and the *integration shape* of its validator against a .NET host — a constraint that materially shapes the trade-offs below, because the most expressive candidate is not a .NET-native one.
 
 **Candidates evaluated** ([bd archie-10r.7](../04-open-questions.md): JSON Schema, CUE, Pkl, Avro-as-config, hand-rolled typed DSL):
 
@@ -160,7 +160,7 @@ Depth 5 appends the sealed test-corpus events through the engine's hand-rolled `
 
 ## Cross-references
 
-- [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — engine is .NET 9 with a hand-rolled core; the validator is the one accepted out-of-process seam. This ADR depends on PC-010 for the runtime; PC-010 depends on this ADR for the schema-validation mechanism.
+- [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — engine is .NET 10 with a hand-rolled core; the validator is the one accepted out-of-process seam. This ADR depends on PC-010 for the runtime; PC-010 depends on this ADR for the schema-validation mechanism.
 - [ADR-PC-007](./ADR-PC-007-signed-yaml-oci-pack.md) — pack ships `.cue` schemas validating YAML data; cosign signing underwrites the CI-validates-engine-trusts pattern (§P3).
 - [ADR-PC-001](./ADR-PC-001-event-store-technology.md) — depth-5 simulation runs against the PostgreSQL event store's `events`-table contract via the hand-rolled append/replay path.
 - [feature-design-configuration-authoring §5](../feature-design-configuration-authoring.md) — the five validator depths; §9.5 "no DSL escape hatch"; §1 names CUE / JSON Schema as the schema-language candidates.

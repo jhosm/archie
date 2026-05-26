@@ -1,4 +1,4 @@
-# ADR-PC-010: Engine Implementation Language and Framework — .NET 9 + Hand-Rolled Event-Sourcing Core
+# ADR-PC-010: Engine Implementation Language and Framework — .NET 10 + Hand-Rolled Event-Sourcing Core
 
 | Field | Value |
 |---|---|
@@ -173,6 +173,22 @@ This decision's load-bearing commitments are fitness functions in the [commitmen
 
 - `MONEY_BOUNDARY_FIXTURES` — HALF_EVEN rounds once at the `Decimal → Cents` boundary, against a sealed golden corpus (§P1–§P2).
 - `DETERMINISM_GATE` — a handler that reads the clock / does I/O / uses randomness fails the build (§P5).
+
+---
+
+## Amendment — 2026-05-26: engine runtime .NET 9 → .NET 10 LTS
+
+The P.2 toolchain bootstrap ([bd archie-7zye](../04-open-questions.md)) pinned the engine runtime, and doing so surfaced that the version named throughout this ADR — .NET 9 — is the short-term-support (STS) release, reaching end-of-life in 2026. The pinned runtime is therefore **.NET 10 LTS** (supported to November 2028). This is an additive, version-only amendment: the language (C#) and the Framework decision (hand-rolled thin event-sourcing core on PostgreSQL) are unchanged.
+
+### A1 · The engine runtime is .NET 10 LTS, not .NET 9
+
+Every "C# (.NET 9)" reference in this ADR's Context, Evaluation, and Decision now reads as **.NET 10**. The substitution is mechanical and total: .NET 10 is MIT-licensed and .NET Foundation-governed (the F1 hard-filter and S4 longevity grounds are unchanged), and every accepted dependency carries forward unchanged — `System.Decimal` boundary rounding (§P1–§P2), Npgsql, Confluent.Kafka .NET, OpenTelemetry .NET, YamlDotNet, Testcontainers .NET. C# 14 ships with .NET 10; no language feature this ADR relies on is removed. The version is pinned in the repo-root `mise.toml` (`dotnet = "10.0.300"`) and in the four service Dockerfiles (`mcr.microsoft.com/dotnet/{sdk,aspnet,runtime}:10.0`).
+
+This substitution is also **authoritative for the cross-references that name this decision elsewhere but are themselves immutable** — the ".NET 9 engine" mention inside [ADR-PC-006](./ADR-PC-006-cue-schema-language.md)'s `## Decision` and inside [ADR-PC-001](./ADR-PC-001-event-store-technology.md)'s dated 2026-05-23 amendment both read as .NET 10 via this amendment, and are left verbatim there only because §D5 forbids editing an Accepted Decision (or rewriting a dated amendment) in place. Every *mutable* reference across the corpus has been updated directly.
+
+### A2 · This amends the decision; it does not supersede this ADR
+
+The §D Language decision (C#, single deployable) and Framework decision (hand-rolled core, no Marten/Wolverine runtime dependency) remain binding exactly as written, as do P1–P5 and both Verifiable commitments (`MONEY_BOUNDARY_FIXTURES`, `DETERMINISM_GATE`). This block bumps the runtime *version* the decision targets; it reverses nothing.
 
 ---
 
