@@ -34,5 +34,10 @@ public static class MoneyBoundaryFixtures
         new Case("large exact 1e10", 10_000_000_000m, 10_000_000_000L),
         new Case("large 1e10 + 0.5 -> even", 10_000_000_000.5m, 10_000_000_000L),
         new Case("large 1e10 + 1.5 -> even", 10_000_000_001.5m, 10_000_000_002L),
+
+        // Real accrual fraction (fin-math §5.1, carried from the B.2/B.3 review): €10,000 at
+        // TAN 6% Act/360 over 365 days = 219e9 / 3.6e6 = 60,833.33… cents → €608.33. The exact
+        // boundary decimal is written as the division so the repeating fraction is faithful.
+        new Case("accrual 10k 6% Act/360 365d -> 60833", 219_000_000_000m / 3_600_000m, 60_833L),
     };
 }
