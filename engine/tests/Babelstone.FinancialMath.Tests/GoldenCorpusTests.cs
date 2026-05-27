@@ -18,6 +18,19 @@ public class GoldenCorpusTests
         Assert.True(failures.Count == 0, "Golden-corpus drift (doc-seeded tier):\n" + string.Join("\n", failures));
     }
 
+    [Fact]
+    public void Independent_external_anchors_agree_with_the_kernel()
+    {
+        // The B.8 tier: expected values computed independently of the spec doc (closed-form
+        // algebra / spreadsheet formulas on fresh inputs). Must be populated and must agree — an
+        // independent recompute is what caught the §6.2 doc error, so this tier is load-bearing.
+        var anchors = FinancialMathGoldenCorpus.Cases.Where(c => c.Tier == CorpusTier.IndependentAnchor).ToList();
+        Assert.NotEmpty(anchors);
+
+        var failures = CheckTier(CorpusTier.IndependentAnchor);
+        Assert.True(failures.Count == 0, "Golden-corpus drift (independent-anchor tier):\n" + string.Join("\n", failures));
+    }
+
     // Every case must be reachable and produce a finite result — guards against a case whose
     // Compute throws (a kernel guard wrongly tripped by a fixture) regardless of tier.
     [Fact]

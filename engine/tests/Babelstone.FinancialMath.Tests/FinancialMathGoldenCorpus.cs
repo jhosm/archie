@@ -114,5 +114,78 @@ public static class FinancialMathGoldenCorpus
             "§6.2 TAEG with €200 origination fee", CorpusTier.DocSeeded,
             "fin-math §6.2 (corrected) → ≈10.25%", "0.1025", 4,
             () => Rates.Taeg(PriceCredit(980_000L, 86_066L, 12), 12)),
+
+        // ===================================================================================
+        // Independent external-anchor tier (B.8). Expected values are computed by a method
+        // INDEPENDENT of the fin-math doc — closed-form algebra or a spreadsheet formula on
+        // inputs the doc never worked out — so the two tiers cannot share a transcription or
+        // convention-misread blind spot (it was an independent recompute that caught the §6.2
+        // doc error). Conventions are pinned explicitly (Act/360, HALF_EVEN, proportional rate
+        // TAN/m, flow-by-flow withholding) so an external number never disagrees for a non-bug
+        // reason. Each Provenance records the exact independent computation — the audit trail.
+        //
+        // DEFERRED — regulator-published cross-check: DL 133/2009 Anexo / Banco de Portugal
+        // worked examples (feed the published CF vector to the solver, assert it reproduces the
+        // published TAEG) need the authentic regulatory figures to keep provenance auditable;
+        // fabricating one would defeat the tier's purpose. Tracked as a follow-up. Also deferred
+        // with §4/§7: PMT/IPMT amortization-schedule cross-checks (out of v1 calculator scope).
+        // ===================================================================================
+
+        // --- Simple interest, independent inputs: €25,000 at 3.5%, Act/360 over a 90-day
+        //     quarter (2024-01-01 → 2024-03-31, a leap year: 31+29+30 = 90 days).
+        new GoldenCase(
+            "simple interest €25k 3.5% Act/360 90d", CorpusTier.IndependentAnchor,
+            "spreadsheet =25000*0.035*90/360 = €218.75; Act/360, proportional rate", "21875", 0,
+            () => (decimal)Accrual.SimpleInterest(
+                new Money(2_500_000L), 350,
+                DayCount.Between(new DateOnly(2024, 1, 1), new DateOnly(2024, 3, 31), DayCountConvention.Act360)).Cents),
+
+        // --- Compound maturity, independent inputs: €5,000 at 4%, quarterly (m=4), 2 years.
+        new GoldenCase(
+            "compound maturity €5k 4% quarterly 8p", CorpusTier.IndependentAnchor,
+            "spreadsheet =5000*(1+0.04/4)^8 = 5000*(1.01)^8 = €5,414.28", "541428", 0,
+            () => (decimal)Accrual.CompoundMaturity(new Money(500_000L), 400, 4, 8).Cents),
+
+        // --- TAE, independent inputs: 4% quarterly → (1.01)^4 − 1 = 0.04060401.
+        new GoldenCase(
+            "TAE 4% quarterly", CorpusTier.IndependentAnchor,
+            "spreadsheet =(1+0.04/4)^4-1 = (1.01)^4-1 = 0.040604", "0.040604", 6,
+            () => Rates.Tae(400, 4)),
+
+        // --- Withholding, independent gross: 28% IRS on €1,234.56 → tax €345.68 (HALF_EVEN on
+        //     34,567.68¢), net €888.88. Pins the round-once tax leg and the conserving net leg.
+        new GoldenCase(
+            "withholding tax 28% on €1,234.56", CorpusTier.IndependentAnchor,
+            "spreadsheet =1234.56*0.28 = 345.6768 → €345.68 (HALF_EVEN)", "34568", 0,
+            () => (decimal)Withholding.Withhold(new Money(123_456L), 2800).Tax.Cents),
+        new GoldenCase(
+            "withholding net 28% on €1,234.56", CorpusTier.IndependentAnchor,
+            "spreadsheet =1234.56-345.68 = €888.88 (net = gross − tax)", "88888", 0,
+            () => (decimal)Withholding.Withhold(new Money(123_456L), 2800).Net.Cents),
+
+        // --- IRR, 1-period ratio: −€1,000 then +€1,100 → 1100/1000 − 1 = 0.10 exactly.
+        new GoldenCase(
+            "IRR 1-period €1,000 → €1,100", CorpusTier.IndependentAnchor,
+            "ratio =1100/1000 - 1 = 0.10", "0.10", 6,
+            () => Rates.InternalRateOfReturn(
+                new List<(Money Amount, int Period)> { (new Money(-100_000L), 0), (new Money(110_000L), 1) })),
+
+        // --- IRR, 2-period closed form: −€1,000, +€500, +€600. With x = 1/(1+i) this is the
+        //     quadratic 6x² + 5x − 10 = 0 → x = (−5+√265)/12 → i ≈ 0.06394. Validates the
+        //     iterative Newton-Raphson solver against an ALGEBRAIC root (n=2 has a closed form;
+        //     n≥5 does not — which is why IRR is numerical), the strongest independence there is.
+        new GoldenCase(
+            "IRR 2-period closed-form quadratic", CorpusTier.IndependentAnchor,
+            "quadratic 6x²+5x−10=0, x=1/(1+i), x=(−5+√265)/12 → i ≈ 0.06394", "0.0639", 4,
+            () => Rates.InternalRateOfReturn(
+                new List<(Money Amount, int Period)> { (new Money(-100_000L), 0), (new Money(50_000L), 1), (new Money(60_000L), 2) })),
+
+        // --- TAEG, closed form: a 10%/quarter return annualized over m=4 → (1.10)^4 − 1 = 0.4641
+        //     exactly. Validates the annualize-the-IRR composition on a vector with a clean root.
+        new GoldenCase(
+            "TAEG 10%/quarter annualized (m=4)", CorpusTier.IndependentAnchor,
+            "closed form =(1.10)^4-1 = 0.4641; IRR = 1100/1000 − 1 = 0.10/quarter", "0.4641", 4,
+            () => Rates.Taeg(
+                new List<(Money Amount, int Period)> { (new Money(-100_000L), 0), (new Money(110_000L), 1) }, 4)),
     };
 }
