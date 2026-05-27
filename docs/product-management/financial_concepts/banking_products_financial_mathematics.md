@@ -417,13 +417,13 @@ CF(0)     = +10,000 - 200 = +9,800   (net disbursement to borrower)
 CF(1..12) = -860.66
 ```
 
-Solving numerically: `i* ≈ 0.00818` per month
+Solving numerically: `i* ≈ 0.008166` per month
 
 ```
-TAEG = (1 + 0.00818)^12 - 1 ≈ 10.27%
+TAEG = (1 + 0.008166)^12 - 1 ≈ 10.25%
 ```
 
-Compare with TAN = 6% (TAE ≈ 6.17%). **The €200 fee added ~4.1 pp to the effective cost** — a striking reminder that a small upfront fee on a short-term credit can dwarf the nominal rate.
+Compare with TAN = 6% (TAE ≈ 6.17%). **The €200 fee added ~4.1 pp to the effective cost** — a striking reminder that a small upfront fee on a short-term credit can dwarf the nominal rate. (Annualize the *unrounded* `i*`: rounding it to 0.00818 before compounding `(1 + i*)^12` inflates the result to ≈10.27% — the same round-once discipline that governs the cents boundary applies to the rate, so round only at the end.)
 
 **Mandatory insurance — sketch.** For a mortgage with a life-insurance premium pegged to the outstanding balance, each monthly `CF(t)` becomes `−(installment + premium(t))`, where `premium(t)` falls over time as `S(t)` is amortized. Because the premium is a periodic charge tied to the balance, any additional mandatory cost is just one more term in the CF vector — no new mathematics, only a longer sum.
 

@@ -154,13 +154,10 @@ public class RatesTests
     public void Taeg_reproduces_the_fin_math_6_2_origination_fee_example()
     {
         // €200 origination fee netted at disbursement: borrower receives €9,800, installments
-        // unchanged at €860.66. The exact vector's IRR is ≈0.008167/month → TAEG ≈ 10.25%.
-        //
-        // The doc states ≈10.27%, but that is a pre-rounding artifact: it rounds i* to 0.00818
-        // and re-compounds (1.00818)^12 − 1. The true i* of (€9,800, −€860.66×12) is ≈0.008167,
-        // which rounds to 0.00817, not 0.00818 — so the precise TAEG of these exact flows is
-        // 10.25%. We pin the mathematically correct value; this is the doc-seeded blind spot the
-        // B.8 independent-anchor tier is meant to catch, surfaced here by the solver itself.
+        // unchanged at €860.66. The exact vector's IRR is ≈0.008167/month → TAEG ≈ 10.25% (§6.2,
+        // corrected in this same change). Annualize the *unrounded* i*: pre-rounding it to 0.00818
+        // and re-compounding (1.00818)^12 − 1 inflates the figure to ≈10.27% — round once, at the
+        // end. The fin-math doc originally carried the pre-rounded 10.27%; the solver caught it.
         var withFee = PriceCredit(980_000L, 86_066L, 12);
 
         Assert.Equal(0.1025m, Rates.Taeg(withFee, periodsPerYear: 12), 4);
@@ -178,7 +175,7 @@ public class RatesTests
     public void A_mandatory_fee_raises_the_taeg_above_the_no_fee_case()
     {
         // The §6.2 headline: a small upfront fee on a short credit dwarfs the nominal rate —
-        // the €200 fee adds ~4 pp (6.17% → 10.27%). Charges only ever push the TAEG up.
+        // the €200 fee adds ~4 pp (6.17% → 10.25%). Charges only ever push the TAEG up.
         decimal noFee = Rates.Taeg(PriceCredit(1_000_000L, 86_066L, 12), 12);
         decimal withFee = Rates.Taeg(PriceCredit(980_000L, 86_066L, 12), 12);
         Assert.True(withFee > noFee);

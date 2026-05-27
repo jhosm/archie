@@ -154,8 +154,8 @@ public static class Rates
     /// IRR from <see cref="InternalRateOfReturn"/>. The §6.2 fee example: a €200 origination fee
     /// netted at disbursement pushes the monthly IRR from ~0.005 to ~0.00817, so the TAEG rises
     /// from ~6.17% to ~10.25% — the charge enters as one more term in the vector, no new maths.
-    /// (The doc states ~10.27%; the exact integer-cent vector solves to 10.25% — the doc
-    /// pre-rounds i* to 0.00818 and re-compounds. See the test pinning the precise value.)
+    /// (Annualize the unrounded i*: pre-rounding it to 0.00818 and re-compounding inflates the
+    /// TAEG to ~10.27%; round once, at the end. The fin-math §6.2 example carries this note too.)
     /// </summary>
     /// <param name="cashFlows">Full borrower-side (amount, period) vector, including mandatory charges.</param>
     /// <param name="periodsPerYear">Periods per year m for the annualisation (12 for monthly flows).</param>
