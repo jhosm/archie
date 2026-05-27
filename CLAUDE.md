@@ -66,6 +66,27 @@ bd close <id>         # Complete work
 <!-- END BEADS INTEGRATION -->
 
 
+## Branching & PR Policy
+
+**All changes — especially LLM-authored ones — reach `main` only by merging a pull request. Never commit or push directly to `main`.**
+
+At the **start** of any work that will change files:
+
+1. Branch off the latest `main`:
+   ```bash
+   git switch main && git pull --rebase
+   git switch -c <type>/<short-name>   # e.g. docs/payload-shape-notes, feat/money-cents
+   ```
+2. Commit on that branch.
+3. At session end, push the **branch** (not `main`) and open a PR — this is the "PUSH TO REMOTE" step of the Session Completion workflow above, where `git push` means *push your working branch*:
+   ```bash
+   git push -u origin <branch>
+   gh pr create --fill   # body MUST carry the "ADRs touched/honoured" section (CI-enforced)
+   ```
+4. **Merging the PR is the maintainer's call**, not the agent's — do not self-merge unless explicitly told to.
+
+A local `.githooks/pre-push` hook blocks pushes to `main` as a backstop (override a deliberate maintainer push with `ALLOW_PUSH_MAIN=1`). It is a *local* guard, not a hard gate: `--no-verify` bypasses it, and true enforcement needs GitHub branch protection (a Pro plan or a public repo).
+
 ## Shell Commands
 
 Always use non-interactive flags to avoid hanging on confirmation prompts:
