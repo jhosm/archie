@@ -46,7 +46,7 @@ public static class Accrual
     /// Compound maturity value (fin-math §5.2): <c>M = C × (1 + TAN/m)^(m·n)</c>, with the
     /// periodic rate <c>r = rateBps / (periodsPerYear × 10000)</c> applied over
     /// <paramref name="totalPeriods"/> compounding periods. The integer-exponent power is
-    /// computed by <see cref="decimal"/> exponentiation-by-squaring (<see cref="PowDecimal"/>),
+    /// computed by <see cref="decimal"/> exponentiation-by-squaring (<see cref="DecimalMath.Pow"/>),
     /// never <see cref="Math.Pow"/>, which would route money math through binary <c>double</c>.
     /// Rounds once at the boundary.
     /// </summary>
@@ -64,7 +64,7 @@ public static class Accrual
         // (decimal) cast is load-bearing: without it periodsPerYear * BasisPointsPerUnit is
         // an int and rateBps / int would be integer division (600 / 120000 = 0).
         decimal periodicRate = rateBps / (periodsPerYear * (decimal)BasisPointsPerUnit);
-        decimal growth = PowDecimal(1m + periodicRate, totalPeriods);
+        decimal growth = DecimalMath.Pow(1m + periodicRate, totalPeriods);
         return Money.FromCents((decimal)principal.Cents * growth);
     }
 
@@ -110,23 +110,5 @@ public static class Accrual
         if (factor.Days < 0)
             throw new ArgumentOutOfRangeException(
                 nameof(factor), factor.Days, "Day count is negative (reversed interval); accrual requires start ≤ end.");
-    }
-
-    /// <summary>Non-negative integer power in <see cref="decimal"/> by exponentiation by
-    /// squaring — keeps compounding in base-10 precision (no <c>double</c>).</summary>
-    private static decimal PowDecimal(decimal value, int exponent)
-    {
-        decimal result = 1m;
-        decimal factor = value;
-        int e = exponent;
-        while (e > 0)
-        {
-            if ((e & 1) == 1)
-                result *= factor;
-            e >>= 1;
-            if (e > 0)
-                factor *= factor;
-        }
-        return result;
     }
 }
