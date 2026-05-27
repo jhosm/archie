@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#
+# pre-push — keep direct pushes off main; changes land on main via a branch + PR.
+#
+# Policy (CLAUDE.md → "Branching & PR Policy"): no change reaches main except by
+# merging a pull request. This hook rejects any push whose *remote* ref is
+# refs/heads/main, so an agent (or a habit) that drifts back to "push to main" is
+# stopped before the change leaves the machine.
+#
+# Scope: only refs/heads/main is guarded. Feature-branch pushes and beads'
+# refs/dolt/data sync (`bd dolt push`) pass through untouched.
+#
+# This is a *local* guard, not a hard gate — `--no-verify` bypasses it, and true
+# enforcement needs GitHub branch protection (Pro plan or public repo). It exists
+# to keep the well-behaved path the default, not to stop a determined override.
+#
+# Escape hatch (maintainer, deliberate single push):
+#   ALLOW_PUSH_MAIN=1 git push origin main
+#
+# Activate in a fresh clone (same as pre-commit):
+#   git config core.hooksPath .githooks
+
+set -euo pipefail
+
+protected="refs/heads/main"
+
+# Maintainer override for one intentional push.
+[ "${ALLOW_PUSH_MAIN:-}" = "1" ] && exit 0
+
+# pre-push feeds "<local ref> <local oid> <remote ref> <remote oid>" lines on stdin.
+blocked=0
+while read -r _local_ref _local_oid remote_ref _remote_oid; do
+  [ "${remote_ref:-}" = "$protected" ] && blocked=1
+done
+
+[ "$blocked" -eq 0 ] && exit 0
+
+{
+  echo "pre-push: direct pushes to '${protected#refs/heads/}' are blocked."
+  echo
+  echo "Changes land on main only by merging a PR (CLAUDE.md → Branching & PR Policy)."
+  echo "Move the work onto a branch and open a PR:"
+  echo
+  echo "    git switch -c <type>/<short-name>     # e.g. docs/payload-shape-notes"
+  echo "    git push -u origin <branch>"
+  echo "    gh pr create --fill"
+  echo
+  echo "Maintainer, pushing to main on purpose?  ALLOW_PUSH_MAIN=1 git push ..."
+} >&2
+exit 1
