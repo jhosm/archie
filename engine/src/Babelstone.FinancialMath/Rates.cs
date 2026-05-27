@@ -152,8 +152,10 @@ public static class Rates
     /// TAEG (APR) — the annualised IRR of the full borrower-side cash-flow vector, charges
     /// included (fin-math §6.2): <c>TAEG = (1 + i)^m − 1</c> where <c>i</c> is the per-period
     /// IRR from <see cref="InternalRateOfReturn"/>. The §6.2 fee example: a €200 origination fee
-    /// netted at disbursement pushes the monthly IRR from ~0.005 to ~0.00818, so the TAEG rises
-    /// from ~6.17% to ~10.27% — the charge enters as one more term in the vector, no new maths.
+    /// netted at disbursement pushes the monthly IRR from ~0.005 to ~0.00817, so the TAEG rises
+    /// from ~6.17% to ~10.25% — the charge enters as one more term in the vector, no new maths.
+    /// (The doc states ~10.27%; the exact integer-cent vector solves to 10.25% — the doc
+    /// pre-rounds i* to 0.00818 and re-compounds. See the test pinning the precise value.)
     /// </summary>
     /// <param name="cashFlows">Full borrower-side (amount, period) vector, including mandatory charges.</param>
     /// <param name="periodsPerYear">Periods per year m for the annualisation (12 for monthly flows).</param>

@@ -134,6 +134,20 @@ public class RatesTests
         Assert.Equal(Rates.InternalRateOfReturn(deposit), viaBisection, 6);
     }
 
+    [Fact]
+    public void Irr_converges_cleanly_over_a_30_year_monthly_horizon()
+    {
+        // The range-edge case: a 360-period (30-year monthly) mortgage must converge without
+        // overflow or silent drift — exercising the documented decimal-range envelope, where
+        // (1+i)^t over a long horizon is the binding constraint. €200,000 at 0.25%/month
+        // (TAN 3%), installment €843.25 → IRR ≈ 0.25%/month, annualizing to TAEG ≈ 3.04%.
+        var mortgage = PriceCredit(20_000_000L, 84_325L, 360);
+        decimal irr = Rates.InternalRateOfReturn(mortgage);
+
+        Assert.Equal(0.0025m, irr, 4);
+        Assert.Equal(0.0304m, Rates.Annualize(irr, 12), 4);
+    }
+
     // --- TAEG — annualised IRR of the full charge-bearing vector (fin-math §6.2). ---
 
     [Fact]
