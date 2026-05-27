@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.FinancialMath</RootNamespace>
+    <AssemblyName>Babelstone.FinancialMath</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The §P1–§P2 boundary analysers guard the kernel too: it is where decimal
+         accrual math (B.3+) crosses to Money, so the decimal-state ban (BMNY002) and
+         the round-once rule (BMNY001) most need enforcing. Passed as a checker, never
+         linked (ReferenceOutputAssembly=false); warnings are errors per
+         Directory.Build.props, so a BMNY00x violation fails the build. -->
+    <ProjectReference Include="../Babelstone.Money.Analyzers/Babelstone.Money.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>
