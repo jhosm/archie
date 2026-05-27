@@ -80,4 +80,43 @@ public class WithholdingTests
         Assert.Equal(1L, aggregated.Tax.Cents); // the aggregate keeps the sub-cent mass
         Assert.NotEqual(perFlowTax.Cents, aggregated.Tax.Cents);
     }
+
+    [Fact]
+    public void Withhold_flow_by_flow_drifts_from_aggregate_on_realistic_monthly_flows()
+    {
+        // The §5.4 economic point beyond the sub-cent degenerate case: twelve monthly interest
+        // flows of €8.33 each. Per flow: 833 × 0.28 = 233.24 → 233¢ tax, so 12 × 233 = 2,796¢.
+        // Aggregated: 9,996 × 0.28 = 2,798.88 → 2,799¢. Flow-by-flow withholds 3¢ less — the
+        // depositor's realized net is higher than the rate-on-aggregate shortcut implies.
+        Money perFlowTax = Money.Zero;
+        Money perFlowNet = Money.Zero;
+        foreach (var _ in Enumerable.Range(0, 12))
+        {
+            var r = Withholding.Withhold(new Money(833L), PtIrsBps);
+            perFlowTax += r.Tax;
+            perFlowNet += r.Net;
+        }
+
+        var aggregated = Withholding.Withhold(new Money(12 * 833L), PtIrsBps);
+
+        Assert.Equal(2_796L, perFlowTax.Cents);
+        Assert.Equal(7_200L, perFlowNet.Cents);
+        Assert.Equal(2_799L, aggregated.Tax.Cents);
+        Assert.Equal(3L, aggregated.Tax.Cents - perFlowTax.Cents); // 3¢ of accumulated drift
+    }
+
+    [Theory]
+    [InlineData(1L, 0L, 1L)]   // tax 0.5 → 0 (even); net 1
+    [InlineData(3L, 2L, 1L)]   // tax 1.5 → 2 (even); net 1
+    [InlineData(5L, 2L, 3L)]   // tax 2.5 → 2 (even); net 3
+    [InlineData(7L, 4L, 3L)]   // tax 3.5 → 4 (even); net 3
+    public void Withhold_rounds_tax_half_to_even_at_the_cent_boundary(long grossCents, long expectedTax, long expectedNet)
+    {
+        // 50% rate puts tax = gross/2, so odd gross lands exactly on a .5-cent tie. Net stays
+        // the residual gross − tax, so Net + Tax == Gross holds even across the tie.
+        var result = Withholding.Withhold(new Money(grossCents), 5_000);
+        Assert.Equal(expectedTax, result.Tax.Cents);
+        Assert.Equal(expectedNet, result.Net.Cents);
+        Assert.Equal(grossCents, (result.Net + result.Tax).Cents);
+    }
 }

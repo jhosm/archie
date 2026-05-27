@@ -9,6 +9,13 @@ namespace Babelstone.FinancialMath;
 /// integer basis points — 1% = 100 bps, so the PT default TAN 6% is <c>600</c>. No clock,
 /// no I/O: every time input is an explicit day count (§P5).
 /// </summary>
+/// <remarks>
+/// <c>rateBps</c> may be negative <b>by design</b>: a negative TAN (negative-rate
+/// environments — the ECB deposit facility was negative 2014–2022) yields negative
+/// interest, and these primitives emit it rather than reject it. The guards cover only
+/// the <i>time</i> dimension — non-negative days/periods, positive basis/frequency — never
+/// the rate sign. (Withholding, by contrast, bounds its rate to a tax fraction in [0, 1].)
+/// </remarks>
 public static class Accrual
 {
     // 100% = 10,000 bps. Kept as int (not a decimal field — BMNY002 bans stored decimal
@@ -38,9 +45,9 @@ public static class Accrual
     /// <summary>
     /// Compound maturity value (fin-math §5.2): <c>M = C × (1 + TAN/m)^(m·n)</c>, with the
     /// periodic rate <c>r = rateBps / (periodsPerYear × 10000)</c> applied over
-    /// <paramref name="totalPeriods"/> compounding periods. The power is integer-exponent,
-    /// so it is computed by repeated <see cref="decimal"/> multiplication — never
-    /// <see cref="Math.Pow"/>, which would route money math through binary <c>double</c>.
+    /// <paramref name="totalPeriods"/> compounding periods. The integer-exponent power is
+    /// computed by <see cref="decimal"/> exponentiation-by-squaring (<see cref="PowDecimal"/>),
+    /// never <see cref="Math.Pow"/>, which would route money math through binary <c>double</c>.
     /// Rounds once at the boundary.
     /// </summary>
     /// <param name="principal">Initial capital C.</param>

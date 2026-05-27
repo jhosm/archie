@@ -37,6 +37,15 @@ public class MoneyTests
         Assert.Throws<OverflowException>(() => new Money(long.MaxValue) + new Money(1L));
 
     [Fact]
+    public void FromCents_throws_contextualised_when_rounded_cents_exceed_int64()
+    {
+        // 1e19 > long.MaxValue (~9.22e18). The boundary names the operand and the value
+        // rather than surfacing a bare framework OverflowException (review I2).
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() => Money.FromCents(10_000_000_000_000_000_000m));
+        Assert.Equal("cents", ex.ParamName);
+    }
+
+    [Fact]
     public void Equality_is_by_value()
     {
         Assert.Equal(new Money(100L), new Money(100L));

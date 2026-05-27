@@ -17,8 +17,19 @@ public readonly record struct Money(long Cents)
     /// whole expression in full precision and only cross this boundary at the end —
     /// never round intermediate steps (accumulating roundings drifts).
     /// </summary>
-    public static Money FromCents(decimal cents) =>
-        new((long)Math.Round(cents, 0, MidpointRounding.ToEven));
+    /// <exception cref="ArgumentOutOfRangeException">If the rounded amount falls outside the
+    /// <see cref="long"/> cent range. A bare <c>(long)</c> cast already throws
+    /// <see cref="OverflowException"/> here (decimal→integral is always range-checked), but
+    /// that exception names neither the operand nor this boundary; this guard reports the
+    /// offending value and where it overflowed, since accrual products can drive it.</exception>
+    public static Money FromCents(decimal cents)
+    {
+        decimal rounded = Math.Round(cents, 0, MidpointRounding.ToEven);
+        if (rounded < long.MinValue || rounded > long.MaxValue)
+            throw new ArgumentOutOfRangeException(
+                nameof(cents), cents, "Rounded amount is outside the Money (Int64) cent range.");
+        return new((long)rounded);
+    }
 
     public static Money operator +(Money a, Money b) => new(checked(a.Cents + b.Cents));
 
