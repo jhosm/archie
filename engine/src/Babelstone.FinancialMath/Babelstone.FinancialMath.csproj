@@ -7,7 +7,7 @@
   <ItemGroup>
     <!-- Accrual and withholding (B.3/B.4) produce Money: the kernel rounds the fully
          computed decimal to cents exactly once via Money.FromCents (ADR-PC-010 §P2). -->
-    <ProjectReference Include="../Babelstone.Money/Babelstone.Money.csproj" />
+    <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
 
     <!-- The §P1–§P2 boundary analysers guard the kernel too: it is where decimal
          accrual math (B.3+) crosses to Money, so the decimal-state ban (BMNY002) and

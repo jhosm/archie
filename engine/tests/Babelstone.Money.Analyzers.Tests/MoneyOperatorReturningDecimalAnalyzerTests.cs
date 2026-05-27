@@ -4,7 +4,7 @@ namespace Babelstone.Money.Analyzers.Tests;
 
 public class MoneyOperatorReturningDecimalAnalyzerTests
 {
-    private const string MoneyHeader = "namespace Babelstone.Money { public readonly partial struct Money { public long Cents { get; init; } ";
+    private const string MoneyHeader = "namespace Babelstone.FinancialTypes { public readonly partial struct Money { public long Cents { get; init; } ";
 
     [Fact]
     public async Task Binary_operator_returning_decimal_from_money_is_flagged()

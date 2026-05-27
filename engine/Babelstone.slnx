@@ -1,11 +1,11 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/Babelstone.Money/Babelstone.Money.csproj" />
+    <Project Path="src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
     <Project Path="src/Babelstone.Money.Analyzers/Babelstone.Money.Analyzers.csproj" />
     <Project Path="src/Babelstone.FinancialMath/Babelstone.FinancialMath.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/Babelstone.Money.Tests/Babelstone.Money.Tests.csproj" />
+    <Project Path="tests/Babelstone.FinancialTypes.Tests/Babelstone.FinancialTypes.Tests.csproj" />
     <Project Path="tests/Babelstone.Money.Analyzers.Tests/Babelstone.Money.Analyzers.Tests.csproj" />
     <Project Path="tests/Babelstone.FinancialMath.Tests/Babelstone.FinancialMath.Tests.csproj" />
   </Folder>

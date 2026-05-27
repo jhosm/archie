@@ -1,4 +1,4 @@
-namespace Babelstone.Money;
+namespace Babelstone.FinancialTypes;
 
 /// <summary>
 /// EUR money as a signed-integer count of cents (ADR-PC-010 §P1). Cents is the

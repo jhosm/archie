@@ -28,12 +28,12 @@ internal static class MoneyDiagnostics
 
     public static readonly DiagnosticDescriptor DecimalStateOutsideMoney = new(
         id: DecimalStateId,
-        title: "decimal state is allowed only in the Babelstone.Money namespace",
-        messageFormat: "'{0}' stores decimal outside Babelstone.Money — money state is 'long Cents'; decimal is a boundary computation type, never stored state (ADR-PC-010 §P1)",
+        title: "decimal state is allowed only in the Babelstone.FinancialTypes namespace",
+        messageFormat: "'{0}' stores decimal outside Babelstone.FinancialTypes — money state is 'long Cents'; decimal is a boundary computation type, never stored state (ADR-PC-010 §P1)",
         category: Category,
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
-        description: "ADR-PC-010 §P1: money in domain code, event payloads, projections, snapshot and saga state is Money(long Cents). decimal enters only as a local or parameter at boundary call sites, never as a stored field or property outside Babelstone.Money.");
+        description: "ADR-PC-010 §P1: money in domain code, event payloads, projections, snapshot and saga state is Money(long Cents). decimal enters only as a local or parameter at boundary call sites, never as a stored field or property outside Babelstone.FinancialTypes.");
 
     public static readonly DiagnosticDescriptor MoneyOperatorReturningDecimal = new(
         id: MoneyOperatorId,

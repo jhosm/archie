@@ -12,7 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Babelstone.FinancialMath/Babelstone.FinancialMath.csproj" />
-    <!-- The boundary analysers guard kernel test code too, matching Babelstone.Money.Tests. -->
+    <!-- The boundary analysers guard kernel test code too, matching Babelstone.FinancialTypes.Tests. -->
     <ProjectReference Include="../../src/Babelstone.Money.Analyzers/Babelstone.Money.Analyzers.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>

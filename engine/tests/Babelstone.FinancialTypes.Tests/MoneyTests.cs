@@ -1,6 +1,6 @@
 using Xunit;
 
-namespace Babelstone.Money.Tests;
+namespace Babelstone.FinancialTypes.Tests;
 
 public class MoneyTests
 {
