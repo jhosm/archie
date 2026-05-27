@@ -77,10 +77,10 @@ public class DecimalStateOutsideMoneyAnalyzerTests
     }
 
     [Fact]
-    public async Task Decimal_state_inside_money_namespace_is_allowed()
+    public async Task Decimal_state_inside_financialtypes_namespace_is_allowed()
     {
         const string source = """
-            namespace Babelstone.Money
+            namespace Babelstone.FinancialTypes
             {
                 public class RateInput
                 {
@@ -94,12 +94,12 @@ public class DecimalStateOutsideMoneyAnalyzerTests
     }
 
     [Fact]
-    public async Task Decimal_state_in_money_subnamespace_is_allowed()
+    public async Task Decimal_state_in_financialtypes_subnamespace_is_allowed()
     {
-        // The fixture corpus lives in Babelstone.Money.Tests and holds decimal inputs;
-        // the exemption is the whole Babelstone.Money.* subtree, not just the root.
+        // The fixture corpus lives in Babelstone.FinancialTypes.Tests and holds decimal inputs;
+        // the exemption is the whole Babelstone.FinancialTypes.* subtree, not just the root.
         const string source = """
-            namespace Babelstone.Money.Tests
+            namespace Babelstone.FinancialTypes.Tests
             {
                 public readonly record struct Case(string Name, decimal InputCents, long ExpectedCents);
             }
@@ -110,10 +110,12 @@ public class DecimalStateOutsideMoneyAnalyzerTests
     }
 
     [Fact]
-    public async Task A_namespace_that_merely_starts_with_money_text_is_not_exempt()
+    public async Task A_namespace_that_merely_starts_with_the_exempt_text_is_not_exempt()
     {
+        // Babelstone.FinancialTypesExtra shares the prefix but is not the subtree (no dot
+        // boundary), so the exemption must not apply.
         const string source = """
-            namespace Babelstone.MoneyLaundering
+            namespace Babelstone.FinancialTypesExtra
             {
                 public class Suspicious
                 {

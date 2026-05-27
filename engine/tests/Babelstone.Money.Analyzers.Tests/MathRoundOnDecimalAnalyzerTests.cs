@@ -5,7 +5,7 @@ namespace Babelstone.Money.Analyzers.Tests;
 public class MathRoundOnDecimalAnalyzerTests
 {
     private const string MoneyShell = """
-        namespace Babelstone.Money
+        namespace Babelstone.FinancialTypes
         {
             public readonly struct Money
             {
@@ -61,7 +61,7 @@ public class MathRoundOnDecimalAnalyzerTests
     [Fact]
     public async Task A_FromCents_on_a_different_type_is_still_flagged()
     {
-        // The exemption is anchored to Babelstone.Money.Money.FromCents specifically —
+        // The exemption is anchored to Babelstone.FinancialTypes.Money.FromCents specifically —
         // a look-alike FromCents elsewhere does not earn the boundary exemption.
         const string source = """
             namespace Other

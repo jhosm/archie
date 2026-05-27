@@ -194,6 +194,20 @@ The §D Language decision (C#, single deployable) and Framework decision (hand-r
 
 ---
 
+## Amendment — 2026-05-27: Money type namespace `Babelstone.Money` → `Babelstone.FinancialTypes`
+
+Building the financial-math kernel (B.2–B.4: a sibling assembly `Babelstone.FinancialMath` for day-count, accrual, and withholding) surfaced that the Money type's fully-qualified name was `Babelstone.Money.Money` — the namespace's last segment equals the type name. From any sibling assembly the bare identifier `Money` then binds to the **namespace** `Babelstone.Money` (reached via the enclosing `Babelstone`) before the type, forcing a `using`-alias in every consumer. Renaming the type's namespace/assembly to `Babelstone.FinancialTypes` removes the collision. This is additive: the `Money` type, its `long Cents` representation, the §P1–§P2 boundary discipline, and the boundary analysers are all unchanged — only the enclosing namespace/assembly is renamed.
+
+### A3 · The `Money` type lives in `Babelstone.FinancialTypes`, not `Babelstone.Money`
+
+Every "`Babelstone.Money` namespace" reference in §P1 — the `decimal`-field/property ban's **exempt subtree**, the `*Revised 2026-05-26*` line, and Open Action #3 — now reads as **`Babelstone.FinancialTypes`** (subtree `Babelstone.FinancialTypes.*`, which the sealed fixture corpus `Babelstone.FinancialTypes.Tests` relies on). The type name `Money` and its `record Money(long Cents)` shape are unchanged; the assembly/folder `Babelstone.Money` and its test project `Babelstone.Money.Tests` are renamed to `Babelstone.FinancialTypes` / `Babelstone.FinancialTypes.Tests`. The boundary analysers retarget their namespace exemption (and diagnostic message text) to `Babelstone.FinancialTypes`; the **analyser assembly keeps the name `Babelstone.Money.Analyzers` and the `BMNY001`/`BMNY002`/`BMNY003` diagnostic IDs** — stable identifiers for the "Money discipline" referenced by this ADR (Open Action #3) and the [commitment catalogue](./commitment-catalogue.md).
+
+### A4 · This amends the decision; it does not supersede this ADR
+
+The §D Language and Framework decisions, §P1–§P5 (the §P1 `long Cents` storage / `decimal`-boundary-only rule and §P2 round-once HALF_EVEN included), and both Verifiable commitments (`MONEY_BOUNDARY_FIXTURES`, `DETERMINISM_GATE`) remain binding exactly as written. This block renames the namespace/assembly the §P1 rule is anchored to; it reverses nothing.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-001](./ADR-PC-001-event-store-technology.md) — PostgreSQL event store; the deferred library question is filled here as *hand-rolled module*. Amendment block dated 2026-05-23 appended to PC-001. Status remains `Accepted`; the four invariants are preserved (they are the hand-rolled module's spec).

@@ -1,8 +1,6 @@
-namespace Babelstone.FinancialMath;
+using Babelstone.FinancialTypes;
 
-// See Accrual.cs: the alias must sit inside the namespace to outrank the like-named
-// Babelstone.Money namespace reachable via the enclosing Babelstone.
-using Money = global::Babelstone.Money.Money;
+namespace Babelstone.FinancialMath;
 
 /// <summary>
 /// The split of a gross interest flow into withheld tax and net paid (fin-math §5.4).

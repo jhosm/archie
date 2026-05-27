@@ -48,7 +48,7 @@ public sealed class MathRoundOnDecimalAnalyzer : DiagnosticAnalyzer
         {
             if (s is IMethodSymbol { Name: "FromCents" } m &&
                 m.ContainingType?.Name == "Money" &&
-                m.ContainingType.ContainingNamespace?.ToDisplayString() == "Babelstone.Money")
+                m.ContainingType.ContainingNamespace?.ToDisplayString() == "Babelstone.FinancialTypes")
                 return true;
         }
 

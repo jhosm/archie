@@ -46,5 +46,5 @@ public sealed class MoneyOperatorReturningDecimalAnalyzer : DiagnosticAnalyzer
 
     private static bool IsMoney(ITypeSymbol type) =>
         type is { Name: "Money" } &&
-        type.ContainingNamespace?.ToDisplayString() == "Babelstone.Money";
+        type.ContainingNamespace?.ToDisplayString() == "Babelstone.FinancialTypes";
 }

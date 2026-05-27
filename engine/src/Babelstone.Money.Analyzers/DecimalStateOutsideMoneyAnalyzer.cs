@@ -6,7 +6,8 @@ namespace Babelstone.Money.Analyzers;
 
 /// <summary>
 /// BMNY002 — bans <c>decimal</c> (and <c>decimal?</c>) fields and properties outside the
-/// <c>Babelstone.Money</c> namespace subtree (ADR-PC-010 §P1). Money state is
+/// <c>Babelstone.FinancialTypes</c> namespace subtree (where the <c>Money</c> type lives;
+/// ADR-PC-010 §P1, amended). Money state is
 /// <c>Money(long Cents)</c>; decimal is a boundary computation type that may appear only
 /// as a local or parameter, never as stored state. Locals and parameters are not symbols
 /// of kind Field/Property, so this rule leaves boundary arithmetic untouched.
@@ -68,7 +69,7 @@ public sealed class DecimalStateOutsideMoneyAnalyzer : DiagnosticAnalyzer
     private static bool IsInMoneyNamespace(INamedTypeSymbol? containingType)
     {
         var ns = containingType?.ContainingNamespace?.ToDisplayString();
-        return ns == "Babelstone.Money" ||
-               (ns is not null && ns.StartsWith("Babelstone.Money.", System.StringComparison.Ordinal));
+        return ns == "Babelstone.FinancialTypes" ||
+               (ns is not null && ns.StartsWith("Babelstone.FinancialTypes.", System.StringComparison.Ordinal));
     }
 }

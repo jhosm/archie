@@ -1,4 +1,4 @@
-namespace Babelstone.Money.Tests;
+namespace Babelstone.FinancialTypes.Tests;
 
 /// <summary>
 /// The sealed MONEY_BOUNDARY_FIXTURES corpus (ADR-PC-010 §P2; commitment-catalogue #2):

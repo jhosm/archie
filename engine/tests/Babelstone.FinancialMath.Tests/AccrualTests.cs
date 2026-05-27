@@ -1,10 +1,8 @@
 using Babelstone.FinancialMath;
+using Babelstone.FinancialTypes;
 using Xunit;
 
 namespace Babelstone.FinancialMath.Tests;
-
-// Inside the namespace so it outranks the like-named Babelstone.Money namespace.
-using Money = global::Babelstone.Money.Money;
 
 public class AccrualTests
 {

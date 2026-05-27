@@ -1,11 +1,6 @@
-namespace Babelstone.FinancialMath;
+using Babelstone.FinancialTypes;
 
-// Alias the type out of the namespace it shares a name with. This MUST sit inside the
-// namespace (after the file-scoped declaration): from a compilation-unit-scope using the
-// bare `Money` would still bind to the `Babelstone.Money` namespace, found via the
-// enclosing `Babelstone` before any global-scope alias is consulted. Inside the namespace
-// the alias outranks that outer member.
-using Money = global::Babelstone.Money.Money;
+namespace Babelstone.FinancialMath;
 
 /// <summary>
 /// Pure interest-accrual primitives (fin-math §5, §8). All three modes compute the whole
