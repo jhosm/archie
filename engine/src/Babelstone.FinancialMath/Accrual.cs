@@ -1,0 +1,130 @@
+namespace Babelstone.FinancialMath;
+
+// Alias the type out of the namespace it shares a name with. This MUST sit inside the
+// namespace (after the file-scoped declaration): from a compilation-unit-scope using the
+// bare `Money` would still bind to the `Babelstone.Money` namespace, found via the
+// enclosing `Babelstone` before any global-scope alias is consulted. Inside the namespace
+// the alias outranks that outer member.
+using Money = global::Babelstone.Money.Money;
+
+/// <summary>
+/// Pure interest-accrual primitives (fin-math §5, §8). All three modes compute the whole
+/// amount in <see cref="decimal"/> at full precision and cross to <see cref="Money"/>
+/// exactly once, via <see cref="Money.FromCents(decimal)"/> (ADR-PC-010 §P1–§P2). Rates are
+/// integer basis points — 1% = 100 bps, so the PT default TAN 6% is <c>600</c>. No clock,
+/// no I/O: every time input is an explicit day count (§P5).
+/// </summary>
+public static class Accrual
+{
+    // 100% = 10,000 bps. Kept as int (not a decimal field — BMNY002 bans stored decimal
+    // state per ADR-PC-010 §P1); it promotes to decimal inside each boundary expression.
+    private const int BasisPointsPerUnit = 10_000;
+
+    /// <summary>
+    /// Simple interest (fin-math §5.1; the PT term-deposit default). Implements the
+    /// ADR-PC-010 §P1 accrual form exactly:
+    /// <c>interest = principal_cents × rate_bps × Days / (Basis × 10000)</c>.
+    /// </summary>
+    /// <param name="principal">Capital the interest accrues on.</param>
+    /// <param name="rateBps">Annual nominal rate (TAN) in basis points.</param>
+    /// <param name="factor">Day-count <see cref="DayCountFactor"/> from <see cref="DayCount.Between"/>.</param>
+    /// <exception cref="ArgumentOutOfRangeException">If the day count is negative (a reversed
+    /// interval) — accrual must never emit negative interest from swapped dates
+    /// (carried obligation from the B.2 review).</exception>
+    public static Money SimpleInterest(Money principal, int rateBps, DayCountFactor factor)
+    {
+        RequireForwardInterval(factor);
+
+        decimal interest = (decimal)principal.Cents * rateBps * factor.Days
+                         / ((decimal)factor.Basis * BasisPointsPerUnit);
+        return Money.FromCents(interest);
+    }
+
+    /// <summary>
+    /// Compound maturity value (fin-math §5.2): <c>M = C × (1 + TAN/m)^(m·n)</c>, with the
+    /// periodic rate <c>r = rateBps / (periodsPerYear × 10000)</c> applied over
+    /// <paramref name="totalPeriods"/> compounding periods. The power is integer-exponent,
+    /// so it is computed by repeated <see cref="decimal"/> multiplication — never
+    /// <see cref="Math.Pow"/>, which would route money math through binary <c>double</c>.
+    /// Rounds once at the boundary.
+    /// </summary>
+    /// <param name="principal">Initial capital C.</param>
+    /// <param name="rateBps">Annual nominal rate (TAN) in basis points.</param>
+    /// <param name="periodsPerYear">Compounding frequency m (e.g. 12 for monthly).</param>
+    /// <param name="totalPeriods">Number of compounding periods m·n.</param>
+    public static Money CompoundMaturity(Money principal, int rateBps, int periodsPerYear, int totalPeriods)
+    {
+        if (periodsPerYear <= 0)
+            throw new ArgumentOutOfRangeException(nameof(periodsPerYear), periodsPerYear, "Compounding frequency must be positive.");
+        if (totalPeriods < 0)
+            throw new ArgumentOutOfRangeException(nameof(totalPeriods), totalPeriods, "Period count must be non-negative.");
+
+        // (decimal) cast is load-bearing: without it periodsPerYear * BasisPointsPerUnit is
+        // an int and rateBps / int would be integer division (600 / 120000 = 0).
+        decimal periodicRate = rateBps / (periodsPerYear * (decimal)BasisPointsPerUnit);
+        decimal growth = PowDecimal(1m + periodicRate, totalPeriods);
+        return Money.FromCents((decimal)principal.Cents * growth);
+    }
+
+    /// <summary>
+    /// Compound interest earned: <see cref="CompoundMaturity"/> − principal (fin-math §5.2).
+    /// </summary>
+    public static Money CompoundInterest(Money principal, int rateBps, int periodsPerYear, int totalPeriods) =>
+        CompoundMaturity(principal, rateBps, periodsPerYear, totalPeriods) - principal;
+
+    /// <summary>
+    /// Interest on the sum of daily balances (fin-math §8.2): <c>J = (rate/basis) × Σ S(d)</c>,
+    /// where <c>Σ S(d)</c> (the "number of capitals") is the sum of each interval's balance
+    /// weighted by its day count. The whole numerator is accumulated in <see cref="decimal"/>
+    /// and rounded once. Used for demand-deposit / revolving accrual where the balance is a
+    /// step function over the period (§8.1).
+    /// </summary>
+    /// <param name="intervals">(balance held, days held) pairs covering the period.</param>
+    /// <param name="rateBps">Annual nominal rate (TAN) in basis points.</param>
+    /// <param name="basis">Days-in-year denominator (360 or 365) — the day-count basis.</param>
+    /// <exception cref="ArgumentOutOfRangeException">If <paramref name="basis"/> is not positive
+    /// or any interval has a negative day count.</exception>
+    public static Money DailyBalanceInterest(
+        IEnumerable<(Money Balance, int Days)> intervals, int rateBps, int basis)
+    {
+        ArgumentNullException.ThrowIfNull(intervals);
+        if (basis <= 0)
+            throw new ArgumentOutOfRangeException(nameof(basis), basis, "Day-count basis must be positive.");
+
+        decimal numberOfCapitals = 0m; // Σ (balance_cents × days), in cents·days
+        foreach (var (balance, days) in intervals)
+        {
+            if (days < 0)
+                throw new ArgumentOutOfRangeException(nameof(intervals), days, "Interval day count must be non-negative.");
+            numberOfCapitals += (decimal)balance.Cents * days;
+        }
+
+        decimal interest = rateBps * numberOfCapitals / (basis * BasisPointsPerUnit);
+        return Money.FromCents(interest);
+    }
+
+    private static void RequireForwardInterval(DayCountFactor factor)
+    {
+        if (factor.Days < 0)
+            throw new ArgumentOutOfRangeException(
+                nameof(factor), factor.Days, "Day count is negative (reversed interval); accrual requires start ≤ end.");
+    }
+
+    /// <summary>Non-negative integer power in <see cref="decimal"/> by exponentiation by
+    /// squaring — keeps compounding in base-10 precision (no <c>double</c>).</summary>
+    private static decimal PowDecimal(decimal value, int exponent)
+    {
+        decimal result = 1m;
+        decimal factor = value;
+        int e = exponent;
+        while (e > 0)
+        {
+            if ((e & 1) == 1)
+                result *= factor;
+            e >>= 1;
+            if (e > 0)
+                factor *= factor;
+        }
+        return result;
+    }
+}
