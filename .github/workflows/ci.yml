@@ -50,7 +50,7 @@ jobs:
             packs: ['packs/**']
             rate_sheets: ['rate-sheets/**']
             infra: ['infra/**']
-            docs: ['docs/**', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
+            docs: ['docs/**', '*.md', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
 
   engine:
     needs: changes
