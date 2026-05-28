@@ -14,7 +14,8 @@ name: babelstone-dev
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # Latest stable PostgreSQL major (PG 18, September 2025), the ADR-PC-001 event store.
+    image: postgres:18-alpine
     container_name: babelstone-postgres
     # The POSTGRES_* env vars ARE the bootstrap: the official image creates this
     # database + login role on first start (idempotent). Engine event/outbox TABLES
