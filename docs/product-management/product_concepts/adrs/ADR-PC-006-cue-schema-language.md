@@ -158,6 +158,15 @@ Depth 5 appends the sealed test-corpus events through the engine's hand-rolled `
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- `PACK_VALIDATE_DEPTH_BUDGETS` — depths 1–4 validate within budget (syntactic < 1 s, type < 5 s, pack-compliance < 10 s, regulatory-coherence < 10 s, aggregate < 30 s), synchronously at variant/pack-commit and on every PR (§P3 and the depth table in Context).
+- `PACK_SIM_DEPTH5_BUDGET` — depth-5 simulation replays the sealed pack test-corpus through the engine substrate and reproduces the expected event sequence in < 30 s in CI (§P4).
+
+---
+
 ## Cross-references
 
 - [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — engine is .NET 10 with a hand-rolled core; the validator is the one accepted out-of-process seam. This ADR depends on PC-010 for the runtime; PC-010 depends on this ADR for the schema-validation mechanism.
