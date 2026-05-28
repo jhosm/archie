@@ -107,11 +107,22 @@ brew install graphviz plantuml
 
 **Debian / Ubuntu:**
 
+> ⚠️ The apt `plantuml` package on Ubuntu 24.04 ships a C4 bundled-stdlib too old
+> to resolve `!include <C4/C4_Component>`, so every C4 diagram fails to render. Take
+> Graphviz + a JRE from apt, but install PlantUML as a pinned jar — the same version
+> [CI pins](.github/workflows/ci.yml) (the render-check is version-tolerant; any
+> release new enough to carry the C4 stdlib works):
+
 ```bash
-sudo apt-get install graphviz plantuml
+sudo apt-get install graphviz default-jre
+PLANTUML_VERSION=1.2026.4
+sudo curl -fsSL -o /usr/local/lib/plantuml.jar \
+  "https://github.com/plantuml/plantuml/releases/download/v${PLANTUML_VERSION}/plantuml-${PLANTUML_VERSION}.jar"
+printf '#!/usr/bin/env bash\nexec java -jar /usr/local/lib/plantuml.jar "$@"\n' \
+  | sudo tee /usr/local/bin/plantuml >/dev/null && sudo chmod +x /usr/local/bin/plantuml
 ```
 
-**Other platforms:** install a JDK, Graphviz, and PlantUML from your package manager, or run the PlantUML JAR directly (`java -jar plantuml.jar`). See <https://plantuml.com/starting>.
+**Other platforms:** install a JDK, Graphviz, and PlantUML from your package manager, or run the PlantUML JAR directly (`java -jar plantuml.jar`). See <https://plantuml.com/starting>. Note the C4 caveat above: pick a PlantUML new enough to bundle the C4 stdlib.
 
 ### Verify
 
