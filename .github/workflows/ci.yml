@@ -33,8 +33,8 @@ jobs:
       infra: ${{ steps.filter.outputs.infra }}
       docs: ${{ steps.filter.outputs.docs }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -57,13 +57,13 @@ jobs:
     if: ${{ needs.changes.outputs.engine == 'true' || needs.changes.outputs.families == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # Pin the toolchain from mise.toml (the single source of truth, ADR-PC-010
       # .NET 10 LTS) so CI builds against the same SDK as every dev machine — no
       # second version pin in this YAML to drift from it.
-      - uses: jdx/mise-action@v2
+      - uses: jdx/mise-action@v4
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('engine/**/*.csproj') }}
@@ -80,7 +80,7 @@ jobs:
     if: ${{ needs.changes.outputs.pack_validate == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build + test the Go validator (ADR-PC-006)
         run: echo "TODO - go build and go test; lands with the pack-validate build task"
 
@@ -89,7 +89,7 @@ jobs:
     if: ${{ needs.changes.outputs.contracts == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Schema compatibility + EventCatalog build (ADR-IC-002, ADR-IC-008)
         run: echo "TODO - Avro/CUE compatibility checks plus EventCatalog build; lands with the contracts task"
 
@@ -98,7 +98,7 @@ jobs:
     if: ${{ needs.changes.outputs.orchestrator == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build + contract tests (ADR-IC-003, ADR-IC-013)
         run: echo "TODO - dotnet build plus contract tests; lands with the orchestrator build task"
 
@@ -107,7 +107,7 @@ jobs:
     if: ${{ needs.changes.outputs.acl == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build + contract tests (ADR-IC-012, ADR-IC-013)
         run: echo "TODO - dotnet build plus contract tests; lands with the ACL build task"
 
@@ -116,7 +116,7 @@ jobs:
     if: ${{ needs.changes.outputs.mcp_server == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build + contract tests (ADR-IC-010, ADR-IC-013)
         run: echo "TODO - Python build plus contract tests; lands with the MCP server build task"
 
@@ -125,7 +125,7 @@ jobs:
     if: ${{ needs.changes.outputs.notification == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build + contract tests (ADR-IC-011, ADR-IC-013)
         run: echo "TODO - dotnet build plus contract tests; lands with the notification build task"
 
@@ -134,7 +134,7 @@ jobs:
     if: ${{ needs.changes.outputs.product_configs == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate variant structure (01 §3)
         run: echo "TODO - pack-validate variant structure against family schema plus active pack; lands with pack-validate"
 
@@ -143,7 +143,7 @@ jobs:
     if: ${{ needs.changes.outputs.packs == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate + verify + smoke-load the pack (ADR-PC-006, ADR-PC-007)
         run: echo "TODO - pack-validate plus cosign verify plus pack-load smoke test; lands with pack tooling"
 
@@ -152,7 +152,7 @@ jobs:
     if: ${{ needs.changes.outputs.rate_sheets == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Validate rate-sheet schema (ADR-PC-008)
         run: echo "TODO - rate-sheet schema validation; lands with rate-sheet tooling"
 
@@ -161,7 +161,7 @@ jobs:
     if: ${{ needs.changes.outputs.infra == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Lint infra manifests (01 §6)
         run: echo "TODO - infra manifest lint/validate; lands with the infra task"
 
@@ -170,7 +170,7 @@ jobs:
     if: ${{ needs.changes.outputs.docs == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # Relative/anchor cross-link integrity (the dominant link type per CLAUDE.md's
       # link conventions). --offline skips http(s) so the per-PR gate never flakes on
       # a slow external host; external-URL checking is left for a future nightly.
