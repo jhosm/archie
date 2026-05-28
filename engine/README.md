@@ -7,6 +7,7 @@ event-sourcing core, plus its PostgreSQL migrations.
 - **Runtime / stack:** .NET 10 — [ADR-PC-010](../docs/product-management/product_concepts/adrs/ADR-PC-010-dotnet-hand-rolled-engine.md), PostgreSQL [ADR-PC-001](../docs/product-management/product_concepts/adrs/ADR-PC-001-event-store-technology.md)
 - **CODEOWNERS:** engine team
 - **Path-scoped CI:** `dotnet build` + analysers + Testcontainers suite ([ADR-IC-009](../docs/product-management/integration_concepts/adrs/ADR-IC-009-testing-infrastructure.md))
+- **Design docs (implementation companions):** [event-store-skeleton](./docs/event-store-skeleton.md) — the C# expression of Epic A (event store + outbox + handler dispatch + PII envelope + determinism gate).
 
 Hosts a per-service **outbox** worker ([ADR-IC-004](../docs/product-management/integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)) — the outbox is not its own top-level path.
 
