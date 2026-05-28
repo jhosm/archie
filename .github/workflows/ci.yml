@@ -50,7 +50,7 @@ jobs:
             packs: ['packs/**']
             rate_sheets: ['rate-sheets/**']
             infra: ['infra/**']
-            docs: ['docs/**']
+            docs: ['docs/**', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
 
   engine:
     needs: changes
@@ -179,7 +179,23 @@ jobs:
         with:
           args: "--offline --no-progress docs/**/*.md ./*.md"
           fail: true
-      - name: Install PlantUML + Graphviz
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends plantuml graphviz
+      # Graphviz + a JRE from apt; PlantUML itself is pinned (not apt's) — the
+      # apt package on ubuntu-24.04 ships a C4 bundled-stdlib too old to resolve
+      # `!include <C4/C4_Component>`, so every C4 macro errors. The render-check
+      # is version-tolerant by design (SVG isn't byte-stable), so we just need a
+      # release new enough to carry the C4 stdlib; pin a recent one for a
+      # reproducible runner (current at time of writing; bump freely).
+      - name: Install Graphviz + JRE
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends graphviz default-jre-headless
+      - name: Install pinned PlantUML
+        env:
+          PLANTUML_VERSION: 1.2026.4
+        run: |
+          sudo curl -fsSL -o /usr/local/lib/plantuml.jar \
+            "https://github.com/plantuml/plantuml/releases/download/v${PLANTUML_VERSION}/plantuml-${PLANTUML_VERSION}.jar"
+          printf '#!/usr/bin/env bash\nexec java -jar /usr/local/lib/plantuml.jar "$@"\n' \
+            | sudo tee /usr/local/bin/plantuml >/dev/null
+          sudo chmod +x /usr/local/bin/plantuml
+          plantuml -version
       - name: Diagram render-check (each committed .puml renders to its SVG)
         run: bash .github/scripts/diagram-render-check.sh
