@@ -286,3 +286,38 @@ polling publisher reads the outbox table. No framework outbox replaces it, so
 no Case-B supersession of this ADR arises. Marten and Wolverine are retained by
 ADR-PC-010 as **working reference implementations** of these patterns, not as
 runtime dependencies.
+
+---
+
+## Amendment — 2026-05-29: §P3 outbox-privilege scope clarified
+
+Implementing A.1 (the `events` + `outbox` DDL and the append-only role grants)
+surfaced an internal inconsistency in §P3. Its Implementation-Principle text
+(*"the engine's application database role has `INSERT` and `SELECT` on `events`
+and `outbox`; it does not have `UPDATE` or `DELETE`"*) reads, on its own terms,
+as a blanket UPDATE/DELETE ban across **both** tables — but §P3's own Residual-risk
+bullet scopes the ban to *"the `events` table … only the `INSERT` privilege is
+granted,"* and [ADR-IC-004 §P1](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)
+requires the publisher to flip outbox rows `PENDING → PUBLISHED` (setting
+`published_at`), with [§P5](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)
+cleanup deleting published rows. A literal blanket ban would make the outbox
+undrainable.
+
+This amendment aligns the Implementation-Principle text with its own Residual-risk
+bullet and with ADR-IC-004:
+
+- **The §P3 append-only guarantee is about the `events` log.** On `events` the
+  runtime role holds `INSERT` and `SELECT` only — no `UPDATE`, no `DELETE`, no
+  `TRUNCATE` — and that is the source-of-truth invariant.
+- **The `outbox` is a work queue, not append-only.** The runtime role holds
+  `INSERT`, `SELECT`, and column-scoped `UPDATE (status, published_at)` on
+  `outbox` so the in-process publisher ([ADR-PC-010 §P4](./ADR-PC-010-dotnet-hand-rolled-engine.md);
+  event-store-skeleton §5.1) can mark rows `PUBLISHED`. The runtime role is **not**
+  granted row `DELETE` on `outbox`; the [ADR-IC-004 §P5](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)
+  cleanup of published rows runs under the migration/maintenance role, keeping the
+  runtime role's mutation surface minimal.
+
+This is an additive clarification of the privilege envelope, not a reversal of the
+Decision (PostgreSQL event store) or of the append-only-by-role-privilege principle
+itself; it does not supersede this ADR. The events-table guarantee in §P3 and the
+Residual-risk bullet remain binding and are now mutually consistent.
