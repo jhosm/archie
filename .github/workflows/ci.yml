@@ -58,8 +58,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build + analysers + Testcontainers (ADR-PC-010, ADR-IC-009)
-        run: echo "TODO - dotnet build plus analysers plus Testcontainers suite; lands with the engine build task"
+      # Pin the toolchain from mise.toml (the single source of truth, ADR-PC-010
+      # .NET 10 LTS) so CI builds against the same SDK as every dev machine — no
+      # second version pin in this YAML to drift from it.
+      - uses: jdx/mise-action@v2
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('engine/**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Build + unit/analyser tests (ADR-PC-010, ADR-IC-009 unit tier)
+        # restore + build (warnings-as-errors via Directory.Build.props) + all test
+        # projects, incl. the Roslyn Money analysers. Needs no infrastructure.
+        run: dotnet test engine/Babelstone.slnx --configuration Release --nologo
+      # TODO - Testcontainers integration tier (PostgreSQL + Redpanda, ADR-IC-009)
+      # lands with E.6 (archie-2jum); it needs the dev stack, unlike the tier above.
 
   pack-validate:
     needs: changes
@@ -157,5 +171,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Link + diagram checks
-        run: echo "TODO - markdown link check plus PlantUML render check; lands with the docs-CI task"
+      # Relative/anchor cross-link integrity (the dominant link type per CLAUDE.md's
+      # link conventions). --offline skips http(s) so the per-PR gate never flakes on
+      # a slow external host; external-URL checking is left for a future nightly.
+      - name: Markdown link check (offline)
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: "--offline --no-progress docs/**/*.md ./*.md"
+          fail: true
+      - name: Install PlantUML + Graphviz
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends plantuml graphviz
+      - name: Diagram render-check (each committed .puml renders to its SVG)
+        run: bash .github/scripts/diagram-render-check.sh
