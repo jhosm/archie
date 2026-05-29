@@ -3,6 +3,7 @@
     <Project Path="src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
     <Project Path="src/Babelstone.Money.Analyzers/Babelstone.Money.Analyzers.csproj" />
     <Project Path="src/Babelstone.FinancialMath/Babelstone.FinancialMath.csproj" />
+    <Project Path="src/Babelstone.EventStore/Babelstone.EventStore.csproj" />
     <Project Path="src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />
   </Folder>
   <Folder Name="/tests/">
