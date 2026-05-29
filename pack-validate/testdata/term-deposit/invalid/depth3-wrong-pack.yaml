@@ -1,0 +1,21 @@
+# INVALID @ depth 3: the variant pins a different pack (pt.2099.1) than the one
+# it is being validated against (pt.2026.1). A well-formed #PackId that passes
+# depths 1–2 but fails pack compliance (ADR-PC-006 depth-3).
+variant_id: dpz_pt_12m_wrong_pack
+schema: term_deposit@2026.1
+pack: pt.2099.1
+term_days: 365
+day_count: pt.act_360
+currency: EUR
+interest_variant: AT_MATURITY
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000
+    basis: ACCRUED_INTEREST
+auto_renewal_policy: NONE
+principal_bounds:
+  min_cents: 50000

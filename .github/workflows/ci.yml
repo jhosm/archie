@@ -80,12 +80,23 @@ jobs:
 
   pack-validate:
     needs: changes
-    if: ${{ needs.changes.outputs.pack_validate == 'true' }}
+    # Also runs on contracts/packs changes: the validator's accept/reject tests
+    # resolve against the live /contracts/cue schemas and packs/pt.2026.1, so a
+    # schema or pack change must re-prove the validator still classifies them.
+    if: ${{ needs.changes.outputs.pack_validate == 'true' || needs.changes.outputs.contracts == 'true' || needs.changes.outputs.packs == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4 # pins Go + cue from mise.toml (ADR-PC-006)
       - name: Build + test the Go validator (ADR-PC-006)
-        run: echo "TODO - go build and go test; lands with the pack-validate build task"
+        # Reproducible build from the pinned go.mod (Open Action #2); the test
+        # suite carries the PACK_VALIDATE_DEPTH_BUDGETS fitness function and the
+        # versioned JSON-contract test. Run from the module dir so fixture paths
+        # resolve to /contracts/cue and /packs.
+        working-directory: pack-validate
+        run: |
+          go build -trimpath -ldflags "-X main.Version=${GITHUB_SHA::12}" ./...
+          go test ./...
 
   contracts:
     needs: changes
@@ -142,12 +153,28 @@ jobs:
 
   product-configs:
     needs: changes
-    if: ${{ needs.changes.outputs.product_configs == 'true' }}
+    # Also on pack_validate/contracts changes: the variants are validated BY the
+    # binary against the schemas, so a change to either must re-validate them.
+    if: ${{ needs.changes.outputs.product_configs == 'true' || needs.changes.outputs.pack_validate == 'true' || needs.changes.outputs.contracts == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Validate variant structure (01 §3)
-        run: echo "TODO - pack-validate variant structure against family schema plus active pack; lands with pack-validate"
+      - uses: jdx/mise-action@v4 # pins Go + cue from mise.toml
+      - name: Validate every variant through depths 1–4 (ADR-PC-006, 01 §3)
+        # Build the validator once, then run the full depths-1→4 `validate` over
+        # each committed variant against the pack it pins. v1 ships one pack
+        # (pt.2026.1); when a second lands, derive --pack from the variant's
+        # `pack:` field. No variants yet ⇒ a logged no-op (never a silent pass).
+        run: |
+          go -C pack-validate build -trimpath -o "$RUNNER_TEMP/pack-validate" .
+          shopt -s nullglob
+          found=0
+          for v in product-configs/*.yaml; do
+            found=1
+            echo "== $v =="
+            "$RUNNER_TEMP/pack-validate" validate "$v" --pack packs/pt.2026.1
+          done
+          [ "$found" -eq 1 ] || echo "no variants in product-configs/ yet — nothing to validate"
 
   packs:
     needs: changes

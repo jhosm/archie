@@ -1,0 +1,25 @@
+# INVALID @ depth 4: stepped-rate step boundaries are not strictly ascending by
+# from_day (365 then 90). CUE makes ≥1 step structural but cannot enforce
+# element-wise ordering (#SteppedRate.steps comment) — a depth-4 Go check.
+variant_id: dpz_pt_24m_descending_steps
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 730
+day_count: pt.act_360
+currency: EUR
+interest_variant: PERIODIC
+payment_period_months: 3
+rate:
+  stepped:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+    steps:
+      - { from_day: 365, pricing_band: tier_1 }
+      - { from_day: 90,  pricing_band: tier_2 }
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 5000
+    basis: ACCRUED_INTEREST
+auto_renewal_policy: NONE
+principal_bounds:
+  min_cents: 100000
