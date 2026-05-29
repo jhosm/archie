@@ -242,3 +242,16 @@ No service may write to the outbox table outside a transaction that also writes 
 ### P7 — The publisher treats Redpanda unavailability as backpressure, not failure
 
 If Redpanda is unavailable, the publisher must retry with exponential backoff up to a configured ceiling, then enter a wait loop — polling the outbox table, failing to produce, and alerting via the lag SLI. It must never mark rows as `FAILED` or abandon them; the outbox is the source of truth, and rows remain `PENDING` until they are successfully published. The practical consequence is that during a Redpanda outage, the application's domain database absorbs the event backlog (events accumulate as `PENDING` rows). This is the intended behavior: the outbox table is the durability buffer. The lag SLI alert (P4) bounds the buffer accumulation: the 30-second warning fires within a normal Redpanda recovery window, and the 5-minute critical fires before the buffer reaches sizes that would stress PostgreSQL write throughput or degrade the polling query.
+
+---
+
+## Amendment — 2026-05-29: outbox drain tiebreaker is `sequence_number`, not `event_id`
+
+Implementing the engine's event-store core (Epic A) surfaced an ordering defect in the §P2 drain rule as written. §P2 (and the §Consequences polling-query note) specify `ORDER BY created_at, event_id`, but the engine stamps every event in a single multi-event append with one `transaction_time` (the runtime owns the clock — ADR-PC-010 §P5), so all rows from that append share an identical `created_at`. The only tiebreaker is then `event_id` — a random UUIDv4 — which does **not** order rows by their per-stream `sequence_number`. The publisher could therefore emit a later event of an aggregate before an earlier one, violating the §P2 hard constraint that publish order *within* an aggregate is preserved.
+
+This amendment makes the deterministic tiebreaker the **per-stream `sequence_number`** — the authoritative monotonic key, mirroring `events.sequence_number`:
+
+- **The outbox row carries `sequence_number`** (`BIGINT NOT NULL`), the sequence of the event it mirrors. It is added to the §P1 column contract (between `aggregate_id` and `event_type`).
+- **The drain reads `ORDER BY created_at, sequence_number`**, and the §P2 partial index becomes `(created_at, sequence_number) WHERE status = 'PENDING'`. Per aggregate, `sequence_number` is strictly increasing regardless of `created_at` ties, so per-aggregate publish order is preserved by construction. `event_id` remains the row's stable primary key and the Redpanda `message_id`.
+
+`created_at` stays the leading sort key (it orders distinct appends and is the lag-SLI input); only the intra-append tiebreaker changes. This is an additive, corrective clarification of the §P1 column set and the §P2 ordering rule — the Decision (a custom polling publisher on a PostgreSQL outbox) is unchanged — so it does not supersede this ADR (ADR-PC-020 §D3/§D5). The engine realises it in migration `0001_events_and_outbox.sql` and `Babelstone.EventStore.OutboxRow`.

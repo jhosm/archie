@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Analyzers load inside the compiler host, not the engine runtime, so this
+         project targets netstandard2.0 — overriding the repo-wide net10.0 default.
+         Mirrors Babelstone.Money.Analyzers. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>Babelstone.Engine.Analyzers</RootNamespace>
+    <AssemblyName>Babelstone.Engine.Analyzers</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" PrivateAssets="all">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Babelstone.Engine.Analyzers.Tests" />
+  </ItemGroup>
+</Project>

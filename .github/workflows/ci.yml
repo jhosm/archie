@@ -70,10 +70,13 @@ jobs:
           restore-keys: nuget-${{ runner.os }}-
       - name: Build + unit/analyser tests (ADR-PC-010, ADR-IC-009 unit tier)
         # restore + build (warnings-as-errors via Directory.Build.props) + all test
-        # projects, incl. the Roslyn Money analysers. Needs no infrastructure.
-        run: dotnet test engine/Babelstone.slnx --configuration Release --nologo
+        # projects, incl. the Roslyn Money analysers. Needs no infrastructure, so it
+        # excludes the Testcontainers-backed Integration tier (real PostgreSQL).
+        run: dotnet test engine/Babelstone.slnx --configuration Release --nologo --filter "Category!=Integration"
       # TODO - Testcontainers integration tier (PostgreSQL + Redpanda, ADR-IC-009)
       # lands with E.6 (archie-2jum); it needs the dev stack, unlike the tier above.
+      # That lane runs the complementary `--filter "Category=Integration"` (the
+      # EventStore migration/append-and-outbox suites tagged from A.1 onward).
 
   pack-validate:
     needs: changes

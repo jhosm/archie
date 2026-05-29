@@ -138,6 +138,7 @@ public sealed record OutboxRow(
     Guid                EventId,
     string              AggregateType,
     Guid                AggregateId,
+    long                SequenceNumber,        // per-stream sequence; §P2 drain tiebreaker (IC-004 amended 2026-05-29)
     string              EventType,
     ReadOnlyMemory<byte> Payload,
     int                 SchemaId,
@@ -273,22 +274,48 @@ public sealed class AggregateRuntime<TState>
 }
 ```
 
-### 4.6 Snapshots — `Babelstone.Engine`
+### 4.6 Snapshots — storage in `Babelstone.EventStore`, typed layer in `Babelstone.Engine`
+
+Snapshots split across the §3 boundary: the §3 invariant is that only
+`Babelstone.EventStore` touches Npgsql, and the `snapshots` table is a row in the
+same PostgreSQL database, so its **persistence is a storage primitive in
+`Babelstone.EventStore`** (byte-oriented, domain-agnostic). The **typed,
+state-aware layer is in `Babelstone.Engine`** (it serializes `TState` and knows
+lifecycle/calendar boundaries). A.4 delivers the storage half; the typed wrapper,
+the take-snapshot policy, and the discard-rebuild *executable* ride with A.6, where
+`Babelstone.Engine` and the handler fold exist.
+
+Storage half (`Babelstone.EventStore`, A.4):
 
 ```csharp
-public interface ISnapshotStore<TState>
+public sealed record SnapshotRecord(
+    Guid                 StreamId,
+    long                 AtSequence,
+    Guid                 LastEventId,    // folded into StateHash per §8.3
+    string               StateHash,      // SnapshotHash.Compute(state, lastEventId)
+    ReadOnlyMemory<byte> State,          // serialized projection state
+    bool                 Trusted,        // advisory-until-trusted flag (§8.3)
+    DateTimeOffset       CreatedAt);
+
+public interface ISnapshotStorage
+{
+    Task<SnapshotRecord?> TryGetLatestAsync(Guid streamId, CancellationToken ct = default);
+    Task                  PutAsync         (SnapshotRecord snapshot, CancellationToken ct = default);
+    Task<int>             DiscardAsync     (Guid streamId, CancellationToken ct = default);
+}
+```
+
+Typed half (`Babelstone.Engine`, A.6):
+
+```csharp
+public sealed record Snapshot<TState>(
+    long AtSequence, Guid LastEventId, string StateHash, TState State, bool Trusted, DateTimeOffset CreatedAt);
+
+public interface ISnapshotStore<TState>      // serializes TState, delegates to ISnapshotStorage
 {
     Task<Snapshot<TState>?> TryGetAsync(Guid streamId, CancellationToken ct);
     Task                     PutAsync   (Guid streamId, Snapshot<TState> s, CancellationToken ct);
 }
-
-public sealed record Snapshot<TState>(
-    long           AtSequence,
-    Guid           LastEventId,    // included in StateHash per §8.3
-    string         StateHash,
-    TState         State,
-    bool           Trusted,        // advisory-until-trusted flag (§8.3)
-    DateTimeOffset CreatedAt);
 
 public interface ISnapshotPolicy<TState>
 {
@@ -297,7 +324,7 @@ public interface ISnapshotPolicy<TState>
 }
 ```
 
-The monthly discard drill ([feature-design §10.2](../../docs/product-management/product_concepts/feature-design-event-store-projections.md)) lands as a CLI entry point — likely `engine/tools/discard-rebuild-drill/` — that wipes `snapshots` for one stream, replays cold from `events`, and compares hashes. A.4's "drill hook" is the harness; running it on a calendar cadence is ops practice, not a one-shot ticket.
+The monthly discard drill ([feature-design §8.3 / §10.2](../../docs/product-management/product_concepts/feature-design-event-store-projections.md)) lands as a CLI entry point — likely `engine/tools/discard-rebuild-drill/` — that calls `ISnapshotStorage.DiscardAsync` for one stream, replays cold from `events`, and compares hashes. A.4 delivers the `DiscardAsync` primitive (the "drill hook"); the executable that folds and compares rides with A.6 because it needs the handler dispatch. Running it on a calendar cadence is ops practice, not a one-shot ticket.
 
 ### 4.7 PII envelope — `Babelstone.Pii`
 
@@ -340,6 +367,16 @@ Scope: methods that implement `IEventHandler<,>.Apply` (or are reachable from on
 
 A.7 also ships the **fixture-replay determinism test** that the catalogue's `DETERMINISM_GATE` row resolves to: a fixture event sequence, applied by registered handlers, must produce a byte-identical projection across runs. This is the runtime half of the gate; the analysers are the build-time half.
 
+### 4.9 Shipped shapes for A.6/A.8 (deltas from the sketches above)
+
+The §4.3–§4.6 listings are the original design sketches; the code that landed in A.6/A.8 refines them as follows (the ADR anchors are unchanged — this records the C# shape downstream):
+
+- **Dispatch (§4.3).** `IDispatchableHandler.ApplyBoxed(object state, DomainEvent @event)` (a `DomainEvent` base record was introduced for the event hierarchy). `HandlerResult<TState>` gains a `From(state)` helper for the no-effect case. `DispatchableHandler<TState,TEvent>` adapts a typed handler to the boxed path.
+- **Family module (§4.4).** `IFamilyModule` drops the separate `EventPayloadTypes` list — each `HandlerRegistration(EventType, PayloadType, Handler, EventSchemaVersion=1)` already carries its payload type, and `HandlerRegistry` builds both the event-type→handler and payload-type→registration maps from it. The `FamilyModuleLoader` CUE cross-check is deferred (archie-e6fr.6) until Epic C/E.
+- **Aggregate runtime (§4.5).** `AggregateRuntime<TState>` reads via `IEventStore` and writes via the **`IEventSink`** seam (A.8), not `IEventStore` directly. The §5.3 encrypt seam is fronted by **`IPiiProtector`** (default `NullPiiProtector` until the CUE annotation source lands, archie-e6fr.5) rather than wiring `IPiiEnvelope` in the runtime. The Avro codec is the **`IEventSerializer`** seam. The runtime takes an injected `TimeProvider` (transaction_time) and a `seedState` factory; `LoadAsync` returns `Hydrated<TState>(State, Version, LastEventId)`.
+- **Snapshots (§4.6).** As already noted: storage in `EventStore` (`ISnapshotStorage`), typed `Snapshot<TState>`/`SnapshotStore<TState>` + `ISnapshotPolicy`/`CountBasedSnapshotPolicy` in `Engine`.
+- **A.8 — simulation is side-effect-free by structure, not by flag.** `SimulationRuntime<TState>` takes only `IEventStore` (read), `HandlerRegistry`, `IEventSerializer`, and a seed — no `IEventSink`, no `IPiiProtector`, no snapshot store. It therefore *cannot* write the log/outbox, mint OpenBao material, or persist a snapshot; rehydration folds structural state without unprotecting PII (ADR-PC-004 §P2: PII is off the structural hot path). The forward-lifecycle-by-clock-advance path (A.8 AC#4/#5, ADR-PC-011) is deferred to archie-e6fr.7.
+
 ---
 
 ## 5. The three answered design questions
@@ -377,10 +414,11 @@ Honours [ADR-PC-004 §Decision](../../docs/product-management/product_concepts/a
 |---|---|---|
 | **A.1** events table | `archie-z9po` | `Babelstone.EventStore.Migrations` project + initial migration scripts (`events` + `outbox` tables, §P4 indices, two PG roles per §P3) |
 | **A.2** atomic append | `archie-2m49` | `Babelstone.EventStore.IEventStore.AppendAsync` + `ConcurrencyException`; `ES_ATOMIC_APPEND_OUTBOX` test |
-| **A.3** load / rehydrate | `archie-6dlh` | `IEventStore.LoadAsync` + the snapshot-then-tail caller in `AggregateRuntime.LoadAsync` |
-| **A.4** snapshot machinery | `archie-cyiv` | `snapshots` table, `ISnapshotStore<>`, `Snapshot<>` with hash + Trusted flag, `ISnapshotPolicy<>` with three triggers, `engine/tools/discard-rebuild-drill/` harness |
-| **A.5** PII crypto envelope | `archie-qzlb` | `Babelstone.Pii` project, `IPiiEnvelope`, `IPiiKeyStore` + `OpenBaoTransitClient`, schema-lint test for PII annotation |
-| **A.6** handler dispatch | `archie-n0nq` | `IEventHandler<,>`, `HandlerResult<>`, `IHandlerRegistry`, `AggregateRuntime<>`, `IFamilyModule`, `FamilyModuleLoader` with CUE cross-check |
+| **A.3** load / rehydrate | `archie-6dlh` | `IEventStore.LoadAsync` (ordered `IAsyncEnumerable` read + `fromSequence` tail seam). The snapshot-then-tail caller in `AggregateRuntime.LoadAsync` rides with A.6 |
+| **A.4** snapshot machinery | `archie-cyiv` | **storage half (this story):** `snapshots` table (migration `0003`), `SnapshotRecord`, `ISnapshotStorage` + `PostgresSnapshotStore` (incl. `DiscardAsync` drill hook), `SnapshotHash` (§8.3) with Trusted flag. **Typed half (A.6):** `ISnapshotStore<>`, `Snapshot<>`, `ISnapshotPolicy<>` three triggers, `engine/tools/discard-rebuild-drill/` executable |
+| **A.5** PII crypto envelope | `archie-qzlb` | `Babelstone.Pii` project, `IPiiEnvelope`, `IPiiKeyStore` + `OpenBaoTransitClient` (OpenBao transit seam). **Deferred (`archie-e6fr.5`):** CUE-driven PII annotation source + the unannotated-string-field schema-lint |
+| **A.6** handler dispatch | `archie-n0nq` | `IEventHandler<,>`, `HandlerResult<>`, `IHandlerRegistry`/`HandlerRegistry`, `AggregateRuntime<>` (read via `IEventStore`, write via `IEventSink`; `IPiiProtector` + `IEventSerializer` seams), `IFamilyModule`, `FamilyModuleLoader`, typed `Snapshot<>`/`SnapshotStore<>`/`ISnapshotPolicy`. **Deferred (`archie-e6fr.6`):** the `FamilyModuleLoader` CUE cross-check |
+| **A.8** event-sink seam | `archie-e6fr.4` | `IEventSink` (`EventStoreSink` vs `NullSink`); `SimulationRuntime<>` structurally side-effect-free (no sink/protector/snapshot wiring). **Deferred (`archie-e6fr.7`):** forward-lifecycle-by-clock-advance (AC#4/#5, ADR-PC-011) |
 | **A.7** determinism CI gate | `archie-k03q` | `Babelstone.Engine.Analyzers` with BENG001/002/003, fixture-replay test (`DETERMINISM_GATE`) |
 | **A.9** property-based suite | `archie-e6fr.2` | FsCheck properties over `IEventStore` invariants (sequence monotonicity, no gaps under concurrency, snapshot+tail ≡ cold-fold) |
 | **A.10** mutation testing | `archie-e6fr.3` | Stryker.NET config + score floor for `Babelstone.EventStore` + `Babelstone.Engine`; periodic CI lane |
