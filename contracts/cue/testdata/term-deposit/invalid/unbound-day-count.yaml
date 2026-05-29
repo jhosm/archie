@@ -1,0 +1,23 @@
+# INVALID: day_count is a free string, not a pack-bound primitive reference.
+# #PackBoundPrimitive requires a dotted, jurisdiction-namespaced name
+# (e.g. pt.act_360); "Act/365" is neither — it would be an inline convention
+# rather than a binding the pack supplies (depths 2–3 resolve the name; depth 1
+# enforces the binding shape).
+variant_id: dpz_pt_12m_freeform_daycount
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 365
+day_count: "Act/365"
+currency: EUR
+interest_variant: AT_MATURITY
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000
+    basis: ACCRUED_INTEREST
+auto_renewal_policy: NONE
+principal_bounds:
+  min_cents: 50000

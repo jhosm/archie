@@ -1,0 +1,20 @@
+# INVALID: interest_variant PERIODIC but payment_period_months absent — the
+# cross-field rule (authoring §5 depth 4 shape) makes the field required here.
+variant_id: dpz_pt_24m_periodic_no_period
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 730
+day_count: pt.act_360
+currency: EUR
+interest_variant: PERIODIC
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000
+    basis: ACCRUED_INTEREST
+auto_renewal_policy: NONE
+principal_bounds:
+  min_cents: 50000

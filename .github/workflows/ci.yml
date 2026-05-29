@@ -90,8 +90,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Schema compatibility + EventCatalog build (ADR-IC-002, ADR-IC-008)
-        run: echo "TODO - Avro/CUE compatibility checks plus EventCatalog build; lands with the contracts task"
+      # Pin CUE (and the rest) from mise.toml — same single source of truth as
+      # every dev machine (CUE 0.16.1, ADR-PC-006), no second pin to drift from.
+      - uses: jdx/mise-action@v4
+      - name: CUE family-schema soundness (ADR-PC-006)
+        # fmt + compile + accept-valid / reject-invalid fixtures, incl. the
+        # closed-struct "no DSL escape hatch" guarantee. Same script dev runs
+        # via `make contracts-check`.
+        run: ./contracts/cue/check.sh
+      # TODO - Avro payload-compatibility checks + EventCatalog build
+      # (ADR-IC-002, ADR-IC-008) land with the contracts/Avro task.
 
   orchestrator:
     needs: changes

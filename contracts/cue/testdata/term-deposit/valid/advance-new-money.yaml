@@ -1,0 +1,20 @@
+# Interest-in-advance variant (02 §2.1) on the new_money pricing role
+# (surface §2.2). Exercises the third interest variant and the role split.
+variant_id: dpz_pt_6m_flat_juros_antecip_new_money
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 180
+day_count: pt.act_360
+currency: EUR
+interest_variant: ADVANCE
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: new_money }
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000
+    basis: ACCRUED_INTEREST
+auto_renewal_policy: NONE
+principal_bounds:
+  min_cents: 50000
