@@ -5,11 +5,13 @@
     <Project Path="src/Babelstone.FinancialMath/Babelstone.FinancialMath.csproj" />
     <Project Path="src/Babelstone.EventStore/Babelstone.EventStore.csproj" />
     <Project Path="src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />
+    <Project Path="src/Babelstone.Pii/Babelstone.Pii.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Babelstone.FinancialTypes.Tests/Babelstone.FinancialTypes.Tests.csproj" />
     <Project Path="tests/Babelstone.Money.Analyzers.Tests/Babelstone.Money.Analyzers.Tests.csproj" />
     <Project Path="tests/Babelstone.FinancialMath.Tests/Babelstone.FinancialMath.Tests.csproj" />
     <Project Path="tests/Babelstone.EventStore.Tests/Babelstone.EventStore.Tests.csproj" />
+    <Project Path="tests/Babelstone.Pii.Tests/Babelstone.Pii.Tests.csproj" />
   </Folder>
 </Solution>
