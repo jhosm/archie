@@ -273,22 +273,48 @@ public sealed class AggregateRuntime<TState>
 }
 ```
 
-### 4.6 Snapshots — `Babelstone.Engine`
+### 4.6 Snapshots — storage in `Babelstone.EventStore`, typed layer in `Babelstone.Engine`
+
+Snapshots split across the §3 boundary: the §3 invariant is that only
+`Babelstone.EventStore` touches Npgsql, and the `snapshots` table is a row in the
+same PostgreSQL database, so its **persistence is a storage primitive in
+`Babelstone.EventStore`** (byte-oriented, domain-agnostic). The **typed,
+state-aware layer is in `Babelstone.Engine`** (it serializes `TState` and knows
+lifecycle/calendar boundaries). A.4 delivers the storage half; the typed wrapper,
+the take-snapshot policy, and the discard-rebuild *executable* ride with A.6, where
+`Babelstone.Engine` and the handler fold exist.
+
+Storage half (`Babelstone.EventStore`, A.4):
 
 ```csharp
-public interface ISnapshotStore<TState>
+public sealed record SnapshotRecord(
+    Guid                 StreamId,
+    long                 AtSequence,
+    Guid                 LastEventId,    // folded into StateHash per §8.3
+    string               StateHash,      // SnapshotHash.Compute(state, lastEventId)
+    ReadOnlyMemory<byte> State,          // serialized projection state
+    bool                 Trusted,        // advisory-until-trusted flag (§8.3)
+    DateTimeOffset       CreatedAt);
+
+public interface ISnapshotStorage
+{
+    Task<SnapshotRecord?> TryGetLatestAsync(Guid streamId, CancellationToken ct = default);
+    Task                  PutAsync         (SnapshotRecord snapshot, CancellationToken ct = default);
+    Task<int>             DiscardAsync     (Guid streamId, CancellationToken ct = default);
+}
+```
+
+Typed half (`Babelstone.Engine`, A.6):
+
+```csharp
+public sealed record Snapshot<TState>(
+    long AtSequence, Guid LastEventId, string StateHash, TState State, bool Trusted, DateTimeOffset CreatedAt);
+
+public interface ISnapshotStore<TState>      // serializes TState, delegates to ISnapshotStorage
 {
     Task<Snapshot<TState>?> TryGetAsync(Guid streamId, CancellationToken ct);
     Task                     PutAsync   (Guid streamId, Snapshot<TState> s, CancellationToken ct);
 }
-
-public sealed record Snapshot<TState>(
-    long           AtSequence,
-    Guid           LastEventId,    // included in StateHash per §8.3
-    string         StateHash,
-    TState         State,
-    bool           Trusted,        // advisory-until-trusted flag (§8.3)
-    DateTimeOffset CreatedAt);
 
 public interface ISnapshotPolicy<TState>
 {
@@ -297,7 +323,7 @@ public interface ISnapshotPolicy<TState>
 }
 ```
 
-The monthly discard drill ([feature-design §10.2](../../docs/product-management/product_concepts/feature-design-event-store-projections.md)) lands as a CLI entry point — likely `engine/tools/discard-rebuild-drill/` — that wipes `snapshots` for one stream, replays cold from `events`, and compares hashes. A.4's "drill hook" is the harness; running it on a calendar cadence is ops practice, not a one-shot ticket.
+The monthly discard drill ([feature-design §8.3 / §10.2](../../docs/product-management/product_concepts/feature-design-event-store-projections.md)) lands as a CLI entry point — likely `engine/tools/discard-rebuild-drill/` — that calls `ISnapshotStorage.DiscardAsync` for one stream, replays cold from `events`, and compares hashes. A.4 delivers the `DiscardAsync` primitive (the "drill hook"); the executable that folds and compares rides with A.6 because it needs the handler dispatch. Running it on a calendar cadence is ops practice, not a one-shot ticket.
 
 ### 4.7 PII envelope — `Babelstone.Pii`
 
@@ -377,8 +403,8 @@ Honours [ADR-PC-004 §Decision](../../docs/product-management/product_concepts/a
 |---|---|---|
 | **A.1** events table | `archie-z9po` | `Babelstone.EventStore.Migrations` project + initial migration scripts (`events` + `outbox` tables, §P4 indices, two PG roles per §P3) |
 | **A.2** atomic append | `archie-2m49` | `Babelstone.EventStore.IEventStore.AppendAsync` + `ConcurrencyException`; `ES_ATOMIC_APPEND_OUTBOX` test |
-| **A.3** load / rehydrate | `archie-6dlh` | `IEventStore.LoadAsync` + the snapshot-then-tail caller in `AggregateRuntime.LoadAsync` |
-| **A.4** snapshot machinery | `archie-cyiv` | `snapshots` table, `ISnapshotStore<>`, `Snapshot<>` with hash + Trusted flag, `ISnapshotPolicy<>` with three triggers, `engine/tools/discard-rebuild-drill/` harness |
+| **A.3** load / rehydrate | `archie-6dlh` | `IEventStore.LoadAsync` (ordered `IAsyncEnumerable` read + `fromSequence` tail seam). The snapshot-then-tail caller in `AggregateRuntime.LoadAsync` rides with A.6 |
+| **A.4** snapshot machinery | `archie-cyiv` | **storage half (this story):** `snapshots` table (migration `0003`), `SnapshotRecord`, `ISnapshotStorage` + `PostgresSnapshotStore` (incl. `DiscardAsync` drill hook), `SnapshotHash` (§8.3) with Trusted flag. **Typed half (A.6):** `ISnapshotStore<>`, `Snapshot<>`, `ISnapshotPolicy<>` three triggers, `engine/tools/discard-rebuild-drill/` executable |
 | **A.5** PII crypto envelope | `archie-qzlb` | `Babelstone.Pii` project, `IPiiEnvelope`, `IPiiKeyStore` + `OpenBaoTransitClient`, schema-lint test for PII annotation |
 | **A.6** handler dispatch | `archie-n0nq` | `IEventHandler<,>`, `HandlerResult<>`, `IHandlerRegistry`, `AggregateRuntime<>`, `IFamilyModule`, `FamilyModuleLoader` with CUE cross-check |
 | **A.7** determinism CI gate | `archie-k03q` | `Babelstone.Engine.Analyzers` with BENG001/002/003, fixture-replay test (`DETERMINISM_GATE`) |
