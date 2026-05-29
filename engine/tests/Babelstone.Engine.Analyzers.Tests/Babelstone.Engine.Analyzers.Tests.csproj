@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- The Roslyn surface the in-memory harness compiles + runs the analyser against. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The analyser under test (normal reference, to instantiate it + see its internal IDs). -->
+    <ProjectReference Include="../../src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj" />
+    <!-- The real Babelstone.Engine surface so test snippets implement the real IEventHandler. -->
+    <ProjectReference Include="../../src/Babelstone.Engine/Babelstone.Engine.csproj" />
+  </ItemGroup>
+</Project>

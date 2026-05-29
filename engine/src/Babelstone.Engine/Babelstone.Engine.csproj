@@ -11,5 +11,13 @@
          EventStore. -->
     <ProjectReference Include="../Babelstone.EventStore/Babelstone.EventStore.csproj" />
     <ProjectReference Include="../Babelstone.Pii/Babelstone.Pii.csproj" />
+
+    <!-- The handler-purity analysers (BENG001/002/003) guard any IEventHandler.Apply
+         body compiled here. Passed as a checker, never linked
+         (ReferenceOutputAssembly=false); warnings are errors per Directory.Build.props,
+         so a clock/IO/rng call in a handler fails the build. Family-module projects
+         attach the same analyser. -->
+    <ProjectReference Include="../Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

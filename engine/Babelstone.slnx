@@ -7,6 +7,7 @@
     <Project Path="src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />
     <Project Path="src/Babelstone.Pii/Babelstone.Pii.csproj" />
     <Project Path="src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <Project Path="src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Babelstone.FinancialTypes.Tests/Babelstone.FinancialTypes.Tests.csproj" />
@@ -15,5 +16,6 @@
     <Project Path="tests/Babelstone.EventStore.Tests/Babelstone.EventStore.Tests.csproj" />
     <Project Path="tests/Babelstone.Pii.Tests/Babelstone.Pii.Tests.csproj" />
     <Project Path="tests/Babelstone.Engine.Tests/Babelstone.Engine.Tests.csproj" />
+    <Project Path="tests/Babelstone.Engine.Analyzers.Tests/Babelstone.Engine.Analyzers.Tests.csproj" />
   </Folder>
 </Solution>
