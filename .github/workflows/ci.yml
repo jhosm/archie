@@ -148,12 +148,21 @@ jobs:
 
   packs:
     needs: changes
-    if: ${{ needs.changes.outputs.packs == 'true' }}
+    # Also runs on contracts changes: a pack bundles the /contracts/cue family
+    # schemas, so a schema change must re-validate every pack.
+    if: ${{ needs.changes.outputs.packs == 'true' || needs.changes.outputs.contracts == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Validate + verify + smoke-load the pack (ADR-PC-006, ADR-PC-007)
-        run: echo "TODO - pack-validate plus cosign verify plus pack-load smoke test; lands with pack tooling"
+      - uses: jdx/mise-action@v4 # pins cue + oras from mise.toml
+      - name: Build + verify the pack by digest (ADR-PC-006, ADR-PC-007)
+        # stage schemas + cue-vet manifest/data, oras push to an OCI layout,
+        # then pull strictly by sha256 digest and re-validate (§P2).
+        run: |
+          DIGEST="$(./packs/pack.sh build packs/pt.2026.1)"
+          ./packs/pack.sh verify packs/pt.2026.1 --digest "$DIGEST"
+      # TODO - cosign keyless verify (OIDC) lands with Q.5; pack-load smoke
+      # test (engine pulls + verifies + caches) lands with C.5.
 
   rate-sheets:
     needs: changes

@@ -1,0 +1,12 @@
+# Sealed regression inputs (surface §3.9; ADR-PC-007 §P5). Canonical instances
+# whose expected event sequences are the "engine + pack do what the brief
+# claims" evidence — what BdP supervision and DORA due-diligence ask to see.
+# Inputs are hand-authored; the expected events are GENERATED (see
+# expected-events.yaml). The named variant lands in /product-configs (C.2).
+tests:
+  - test_id: pt_dpz_12m_simple_with_irs
+    pack: pt.2026.1
+    variant_id: dpz_pt_12m_juros_venc
+    principal_cents: 1000000        # €10,000.00
+    constituted_at: 2026-01-15
+    rate_basis_points: 300          # 3.00% TAN

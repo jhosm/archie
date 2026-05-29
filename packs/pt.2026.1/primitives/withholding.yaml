@@ -1,0 +1,15 @@
+# Withholding primitives (surface §3.4). v1: IRS on deposit interest paid to
+# resident individuals — 28% (2800 bp), applied flow-by-flow to each interest
+# payment as it accrues, never by scaling the rate (02 §2.2; financial_concepts
+# §5.4). Timing at_credit = withheld when net interest settles to the account.
+irs_juros:
+  formula_ref: engine.withholding.percentage
+  rate_basis_points: 2800
+  basis: gross_interest
+  timing: at_credit
+  exemptions:
+    - { id: pme_leader, evidence: declaration_pme }
+    - { id: non_resident_treaty, evidence: rfi_form }
+    - { id: jovens_poupanca, evidence: scheme_enrolment }
+  reporting:
+    modelo_39: { required: true, frequency: annual }

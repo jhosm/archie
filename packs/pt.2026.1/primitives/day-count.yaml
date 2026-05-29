@@ -1,0 +1,12 @@
+# Day-count conventions (surface §3.3). PT retail deposits default to act_360
+# (02 §2.2 — a pack parameter, not a hardcoded constant). The reference id (the
+# map key) is what a variant names via `day_count: pt.<id>` (e.g. pt.act_360);
+# formula_ref bridges to the engine-implemented primitive (surface §3.4).
+act_360:
+  formula_ref: engine.day_count.actual_360
+act_365:
+  formula_ref: engine.day_count.actual_365
+act_act_isda:
+  formula_ref: engine.day_count.actual_actual_isda
+"30_360_european":
+  formula_ref: engine.day_count.thirty_360_european

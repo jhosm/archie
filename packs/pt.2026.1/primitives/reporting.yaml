@@ -1,0 +1,15 @@
+# Banco de Portugal reporting hooks (surface §3.3). The engine emits signals;
+# the reports themselves are downstream (02 §2.2). v1 activates the retail-rate
+# statistics return only; the others are reserved for credit (later v's).
+bdp_estatisticas_taxas_juro:
+  active: true
+  frequency: monthly
+  regulator: banco_de_portugal
+bdp_centralizacao_responsabilidades:
+  active: false
+  frequency: monthly
+  regulator: banco_de_portugal
+ifrs9_staging:
+  active: false
+  frequency: quarterly
+  regulator: banco_de_portugal
