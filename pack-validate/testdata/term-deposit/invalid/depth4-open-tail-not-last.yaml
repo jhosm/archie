@@ -1,0 +1,22 @@
+# INVALID @ depth 4: the open (null up_to_days) early-termination band is not
+# the single last band — first-match evaluation (02 §2.5) would never reach the
+# bands after it. CUE makes ≥1 band structural but cannot enforce the tail
+# position (#BandedPolicy.banded comment) — a depth-4 Go check.
+variant_id: dpz_pt_24m_open_tail_not_last
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 730
+day_count: pt.act_360
+currency: EUR
+interest_variant: PERIODIC
+payment_period_months: 3
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+early_termination:
+  banded:
+    - { up_to_days: null, penalty_basis_points: 5000, basis: ACCRUED_INTEREST }
+    - { up_to_days: 90,   penalty_basis_points: 2500, basis: ACCRUED_INTEREST }
+auto_renewal_policy: NONE
+principal_bounds:
+  min_cents: 100000
