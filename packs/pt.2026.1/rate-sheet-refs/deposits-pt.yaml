@@ -1,0 +1,7 @@
+# Version-pinned references to rate sheets (ADR-PC-008). The pack carries refs
+# ONLY — the sheet body (numerical TANs) lives in the rate_sheets table on its
+# own fast cadence (surface §2; C.6). rate_sheet_version_id is resolved at
+# constitution to a concrete tan_basis_points and stamped on DepositConstituted.
+refs:
+  - product_family: term_deposit
+    rate_sheet_version_id: pt-deposits-2026.1

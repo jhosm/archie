@@ -21,7 +21,9 @@ REGISTRY_PORT     ?= 5001
 EVENTCATALOG_PORT ?= 8082
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor up down reset logs ps verify
+.PHONY: help bootstrap doctor contracts-check pack-validate pack-build pack-verify up down reset logs ps verify
+
+PACK ?= pt.2026.1
 
 help: ## List available targets
 	@echo "Babelstone — make targets:"
@@ -55,6 +57,22 @@ doctor: ## Print resolved toolchain versions (verifies the pins are active)
 	@printf "  %-10s " "plantuml"; plantuml -version 2>/dev/null | head -1 || echo "MISSING"
 	@printf "  %-10s " "dot";      dot -V 2>&1                 | head -1 || echo "MISSING"
 	@printf "  %-10s " "docker";   docker --version 2>/dev/null || echo "MISSING"
+
+## ----------------------------------------------------------------------------
+## Contracts (the governed CUE + Avro + EventCatalog surface)
+## ----------------------------------------------------------------------------
+
+contracts-check: ## Validate the CUE family schemas (fmt + accept/reject fixtures, ADR-PC-006)
+	@./contracts/cue/check.sh
+
+pack-validate: ## cue-vet a pack's manifest + data (PACK=pt.2026.1, ADR-PC-007)
+	@./packs/pack.sh validate packs/$(PACK)
+
+pack-build: ## Build a pack into an OCI layout, print its digest (PACK=pt.2026.1)
+	@./packs/pack.sh build packs/$(PACK)
+
+pack-verify: ## Build then pull-by-digest + re-validate a pack (PACK=pt.2026.1)
+	@DIGEST="$$(./packs/pack.sh build packs/$(PACK))" && ./packs/pack.sh verify packs/$(PACK) --digest "$$DIGEST"
 
 ## ----------------------------------------------------------------------------
 ## Local dev stack (infra/compose.yaml) — PostgreSQL + Redpanda + Console

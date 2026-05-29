@@ -1,0 +1,26 @@
+# Variant B from authoring §3.2 — stepped-rate, quarterly periodic interest,
+# banded early-termination schedule (02 §2.5).
+variant_id: dpz_pt_24m_stepped_juros_trim
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 730
+day_count: pt.act_360
+currency: EUR
+interest_variant: PERIODIC
+payment_period_months: 3
+rate:
+  stepped:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+    steps:
+      - { from_day: 0,   pricing_band: tier_1 }
+      - { from_day: 365, pricing_band: tier_2 }
+early_termination:
+  banded:
+    - { up_to_days: 30,   penalty_basis_points: 10000, basis: ACCRUED_INTEREST }
+    - { up_to_days: 90,   penalty_basis_points: 5000,  basis: ACCRUED_INTEREST }
+    - { up_to_days: null, penalty_basis_points: 2500,  basis: ACCRUED_INTEREST }
+  floor_cents: 0
+auto_renewal_policy: SAME_TERM_CURRENT_RATE
+principal_bounds:
+  min_cents: 100000
+  max_cents: 100000000

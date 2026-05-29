@@ -1,0 +1,15 @@
+# INVALID: rate_ref omits the required role_selector. #RateRef is closed and
+# both fields are required.
+variant_id: dpz_pt_12m_no_role
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 365
+day_count: pt.act_360
+currency: EUR
+interest_variant: AT_MATURITY
+rate:
+  flat: { rate_ref: { sheet: live } }
+early_termination:
+  flat: { up_to_days: null, penalty_basis_points: 10000, basis: ACCRUED_INTEREST }
+auto_renewal_policy: NONE
+principal_bounds: { min_cents: 50000 }

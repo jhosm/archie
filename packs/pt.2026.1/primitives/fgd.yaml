@@ -1,0 +1,7 @@
+# Fundo de Garantia de Depósitos — deposit-guarantee-fund coverage (02 §2.2).
+# v1 emits the eligible-balances-per-customer signal; assembly of the FGD
+# return is downstream (02 §4). The €100,000 per-depositor ceiling is the EU
+# Deposit Guarantee Schemes Directive figure — stable, not Epic-0-pending.
+deposit_guarantee:
+  coverage_ceiling_cents: 10000000   # €100,000.00
+  scheme: fgd_pt

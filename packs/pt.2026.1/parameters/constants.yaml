@@ -1,0 +1,11 @@
+# Pack-level scalar constants the family schema's depth-3 checks resolve
+# against (ADR-PC-006 Context: e.g. tan_basis_points <= max_consumer_rate_bps).
+#
+# ILLUSTRATIVE pending Epic 0 regulatory sign-off (0.4 regulatory inventory):
+#   max_consumer_rate_bps — a sane ceiling, not a regulated figure.
+# STABLE FIELD, typical value:
+#   auto_renewal_optout_window_days — the pre-maturity opt-out window the engine
+#   enforces is a stable pack parameter; 14 is the typical default, not a fixed
+#   regulated figure (02 §2.4.4: "typically the final 14 days").
+max_consumer_rate_bps: 2000          # 20.00% — illustrative ceiling
+auto_renewal_optout_window_days: 14

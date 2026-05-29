@@ -17,6 +17,9 @@ obj/
 # Build output — Go (pack-validate)
 /pack-validate/pack-validate
 
+# Build output — pack OCI artefact layouts (packs/pack.sh build)
+/.pack-build/
+
 # Build output — Python (mcp-server)
 __pycache__/
 *.py[cod]

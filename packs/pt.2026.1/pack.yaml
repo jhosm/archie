@@ -1,0 +1,39 @@
+# pt.2026.1 — PT term-deposit regulatory pack (ADR-PC-007).
+# The manifest: identity, metadata, dependencies, pins. Primitives, parameters,
+# rate-sheet refs and the sealed test corpus live in sibling files/dirs (§P1
+# layout — pack.yaml is NOT where primitives are inlined). Auditor-readable:
+# `cat` + `diff`, no tooling.
+pack_id: pt
+pack_version: "2026.1"
+namespace: pt
+manifest_schema_version: 1
+
+publisher: pt-pack-team@engine.internal
+pack_effective_from: 2026-01-01
+
+# First pack in the PT line.
+based_on_pack_version: null
+
+delta_summary: |
+  Initial PT term-deposit (depósito a prazo) pack. Covers the v1 regulatory
+  surface (02 §2.2): Act/360 day-count, 28% IRS withholding on interest paid
+  to resident individuals, deposit-guarantee-fund coverage, and the BdP
+  retail-deposit interest-rate statistics reporting hook. No prior pack.
+
+breaking_changes: []
+
+dependencies:
+  # v1 engine series. Published with every engine release (surface §3.8).
+  engine_compatible_versions: ">=1.0.0,<2.0.0"
+
+# The family-schema version this pack's bundled schemas/ carries (authoring §6).
+schema_pins:
+  term_deposit: term_deposit@2026.1
+
+rate_sheet_refs:
+  - deposits-pt
+
+test_corpus_ref: oci://babelstone-packs/pt-deposit-tests@2026.1
+
+# Q-P reserve (surface §3.11) — multi-pack composition; no-op in v1.
+primitive_overlays: []

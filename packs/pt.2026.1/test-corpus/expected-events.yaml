@@ -1,0 +1,12 @@
+# GENERATED ARTEFACT — DO NOT HAND-AUTHOR (ADR-PC-007 §P5).
+#
+# expected-events.yaml is produced by running the engine's hand-rolled
+# substrate over canonical-instances.yaml and committing the result, so the
+# sealed corpus cannot silently drift. The engine does not exist yet
+# (Epic A/B/D), so this file is an intentional empty placeholder: the depth-5
+# simulation gate (C.3) regenerates it once the engine can run the corpus, and
+# the pack-publish gate then blocks on any drift.
+#
+# Until then the pack-build gate treats an empty expected-events.yaml as
+# "corpus generation pending" (a logged skip), never as "corpus passed".
+expected: []

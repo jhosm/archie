@@ -1,0 +1,23 @@
+# INVALID: an undeclared field `promo_flag`. The closed #TermDeposit
+# definition rejects it — this is the structural "no DSL escape hatch"
+# guarantee (ADR-PC-006 Decision; authoring §9.5). A variant cannot smuggle
+# engine-level behaviour through an unmodelled field.
+variant_id: dpz_pt_12m_with_escape_hatch
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 365
+day_count: pt.act_360
+currency: EUR
+interest_variant: AT_MATURITY
+promo_flag: true
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000
+    basis: ACCRUED_INTEREST
+auto_renewal_policy: NONE
+principal_bounds:
+  min_cents: 50000

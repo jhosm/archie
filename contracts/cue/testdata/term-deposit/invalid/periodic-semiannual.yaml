@@ -1,0 +1,23 @@
+# INVALID: payment_period_months 6 (semi-annual). v1 periodic interest is
+# monthly or quarterly only (02 §2.1); the enum is 1 | 3. A semi-annual or
+# annual periodic deposit is out of v1 scope until a fine-drift extension
+# adds it — the schema must not silently sanction it.
+variant_id: dpz_pt_24m_periodic_semiannual
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 730
+day_count: pt.act_360
+currency: EUR
+interest_variant: PERIODIC
+payment_period_months: 6
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000
+    basis: ACCRUED_INTEREST
+auto_renewal_policy: NONE
+principal_bounds:
+  min_cents: 50000
