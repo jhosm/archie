@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Npgsql;
 
 namespace Babelstone.EventStore;
@@ -53,6 +54,51 @@ public sealed class PostgresEventStore(string connectionString) : IEventStore
             throw new ConcurrencyException(streamId, expectedVersion, head);
         }
     }
+
+    public async IAsyncEnumerable<EventEnvelope> LoadAsync(
+        Guid streamId,
+        long fromSequence = 0,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT event_id, stream_id, sequence_number, event_type, event_schema_version,
+                   family, partition_key, pack_version, schema_version, valid_time,
+                   transaction_time, causation_id, correlation_id, actor, payload, payload_schema_id
+            FROM events
+            WHERE stream_id = @stream_id AND sequence_number >= @from_sequence
+            ORDER BY sequence_number;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("stream_id", streamId);
+        command.Parameters.AddWithValue("from_sequence", fromSequence);
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            yield return ReadEnvelope(reader);
+        }
+    }
+
+    private static EventEnvelope ReadEnvelope(NpgsqlDataReader r) => new(
+        EventId: r.GetGuid(0),
+        StreamId: r.GetGuid(1),
+        SequenceNumber: r.GetInt64(2),
+        EventType: r.GetString(3),
+        EventSchemaVersion: r.GetInt32(4),
+        Family: r.GetString(5),
+        PartitionKey: r.GetGuid(6),
+        PackVersion: r.GetString(7),
+        SchemaVersion: r.GetString(8),
+        ValidTime: r.GetFieldValue<DateTimeOffset>(9),
+        TransactionTime: r.GetFieldValue<DateTimeOffset>(10),
+        CausationId: r.IsDBNull(11) ? null : r.GetGuid(11),
+        CorrelationId: r.IsDBNull(12) ? null : r.GetGuid(12),
+        Actor: r.GetString(13),
+        Payload: r.GetFieldValue<byte[]>(14),
+        PayloadSchemaId: r.GetInt32(15));
 
     private static void ValidateContiguous(Guid streamId, long expectedVersion, IReadOnlyList<EventEnvelope> events)
     {

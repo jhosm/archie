@@ -5,10 +5,6 @@ namespace Babelstone.EventStore;
 /// ONLY code that touches the <c>events</c> and <c>outbox</c> tables; no other
 /// assembly can construct an INSERT against them from a leaked helper.
 /// </summary>
-/// <remarks>
-/// A.2 defines the append half (<see cref="AppendAsync"/>). The ordered read half
-/// (<c>LoadAsync</c>) lands with A.3, when the snapshot-then-tail caller needs it.
-/// </remarks>
 public interface IEventStore
 {
     /// <summary>
@@ -33,6 +29,19 @@ public interface IEventStore
         IReadOnlyList<EventEnvelope> events,
         IReadOnlyList<OutboxRow>     outboxRows,
         CancellationToken            ct = default);
+
+    /// <summary>
+    /// Streams a stream's events in <c>sequence_number</c> order; the caller folds
+    /// them into state. Snapshot-aware callers pass <paramref name="fromSequence"/> =
+    /// the snapshot's <c>AtSequence</c> + 1 to read only the tail (the snapshot-then-tail
+    /// rehydrate path); a cold replay passes 0 and reads the whole stream.
+    /// </summary>
+    /// <param name="streamId">The stream to read.</param>
+    /// <param name="fromSequence">Inclusive lower bound on <c>sequence_number</c>; 0 reads from the start.</param>
+    IAsyncEnumerable<EventEnvelope> LoadAsync(
+        Guid              streamId,
+        long              fromSequence = 0,
+        CancellationToken ct = default);
 }
 
 /// <summary>
