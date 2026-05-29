@@ -12,6 +12,7 @@
          [Trait("Category","Integration")]; the default engine CI job filters
          them out and the integration lane (Q.1, gated on E.6) runs them. -->
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.1.0" />
+    <PackageReference Include="FsCheck.Xunit" Version="3.3.3" />
   </ItemGroup>
 
   <ItemGroup>

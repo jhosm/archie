@@ -11,6 +11,7 @@
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.1.0" />
     <!-- The A.8 side-effect-freedom test asserts zero rows directly across events/outbox/snapshots. -->
     <PackageReference Include="Npgsql" Version="9.0.3" />
+    <PackageReference Include="FsCheck.Xunit" Version="3.3.3" />
   </ItemGroup>
 
   <ItemGroup>
