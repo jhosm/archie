@@ -138,7 +138,40 @@ public sealed class OpenBaoTransitClient(HttpClient httpClient, string token, st
     }
 
     // Transit key names are limited to [a-zA-Z0-9_-]; a subject id maps to one stable key.
-    private static string KeyName(string subjectId) => $"pii-{subjectId}";
+    // The name is interpolated into the request path, so the charset is also a security
+    // boundary: validate before use (reject, never mangle) so a subject id can NEVER
+    // inject a path segment ("../") or escape the key namespace, wherever the id came from.
+    // This is the single chokepoint every call path (encrypt/decrypt/destroy/ensure/exists)
+    // routes through, so guarding it here guards them all.
+    private static string KeyName(string subjectId)
+    {
+        if (!IsValidSubjectId(subjectId))
+        {
+            throw new ArgumentException(
+                $"Subject id '{subjectId}' contains characters not allowed in an OpenBao transit key name (permitted: [a-zA-Z0-9_-]).",
+                nameof(subjectId));
+        }
+
+        return $"pii-{subjectId}";
+    }
+
+    private static bool IsValidSubjectId(string subjectId)
+    {
+        if (string.IsNullOrEmpty(subjectId))
+        {
+            return false;
+        }
+
+        foreach (var c in subjectId)
+        {
+            if (!char.IsAsciiLetterOrDigit(c) && c is not ('_' or '-'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     private sealed record TransitResponse([property: JsonPropertyName("data")] TransitData? Data);
 
