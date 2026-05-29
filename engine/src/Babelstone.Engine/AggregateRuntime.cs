@@ -97,6 +97,7 @@ public sealed class AggregateRuntime<TState>(
                 EventId: eventId,
                 AggregateType: context.Family,
                 AggregateId: streamId,
+                SequenceNumber: sequence,
                 EventType: registration.EventType,
                 Payload: encoded.Bytes,
                 SchemaId: encoded.SchemaId,

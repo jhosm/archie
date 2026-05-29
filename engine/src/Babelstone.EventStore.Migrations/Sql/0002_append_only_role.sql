@@ -8,9 +8,9 @@
 -- not merely by code review.
 --
 -- `babelstone_engine` is a NOLOGIN group role: deployments create a concrete
--- login user that is GRANTed membership (login provisioning is platform work,
--- ADR-PC-005), and tests `SET ROLE babelstone_engine` to assert the privilege
--- envelope. Idempotent so re-running the migration set is a no-op.
+-- login user that is GRANTed membership (login provisioning is deployment/platform
+-- work, out of scope for the schema), and tests `SET ROLE babelstone_engine` to assert
+-- the privilege envelope. Idempotent so re-running the migration set is a no-op.
 
 DO $$
 BEGIN

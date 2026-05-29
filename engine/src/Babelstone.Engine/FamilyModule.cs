@@ -88,16 +88,40 @@ public sealed class FamilyModuleLoader
         var modules = new List<IFamilyModule>();
         foreach (var assembly in sources)
         {
-            foreach (var type in assembly.GetTypes())
+            foreach (var type in LoadableTypes(assembly))
             {
-                if (type is { IsAbstract: false, IsInterface: false } && typeof(IFamilyModule).IsAssignableFrom(type))
+                if (type is not { IsAbstract: false, IsInterface: false } || !typeof(IFamilyModule).IsAssignableFrom(type))
                 {
-                    modules.Add((IFamilyModule)Activator.CreateInstance(type)!);
+                    continue;
                 }
+
+                // A module with a constructor dependency would otherwise fail deep inside
+                // Activator with a bare MissingMethodException naming no module. Surface a
+                // diagnosable error at the discovery seam instead.
+                if (type.GetConstructor(Type.EmptyTypes) is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Family module '{type.FullName}' must have a public parameterless constructor.");
+                }
+
+                modules.Add((IFamilyModule)Activator.CreateInstance(type)!);
             }
         }
 
         return modules;
+    }
+
+    // One unloadable type in a scanned assembly must not abort discovery of all modules.
+    private static IEnumerable<Type> LoadableTypes(Assembly assembly)
+    {
+        try
+        {
+            return assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            return ex.Types.Where(t => t is not null)!;
+        }
     }
 
     public HandlerRegistry BuildRegistry(IReadOnlyList<IFamilyModule> modules)

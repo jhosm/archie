@@ -4,10 +4,12 @@ namespace Babelstone.Engine;
 
 /// <summary>
 /// The write seam for the engine's single mutation point (A.8). The durable runtime
-/// appends THROUGH this rather than calling <see cref="IEventStore"/> directly, so
-/// side-effect-freedom for simulation is structural: a runtime composed with
-/// <see cref="NullSink"/> physically cannot write the log or outbox — there is no
-/// <c>dry_run</c> flag whose one missed branch could leak a real event onto the bus.
+/// appends THROUGH this rather than calling <see cref="IEventStore"/> directly. The
+/// structural side-effect-freedom guarantee lives in <see cref="SimulationRuntime{TState}"/>,
+/// which takes NO <see cref="IEventSink"/> at all — so it physically cannot write the log
+/// or outbox; there is no <c>dry_run</c> flag whose one missed branch could leak a real
+/// event onto the bus. <see cref="NullSink"/> is the discard sink for tests and dry-run
+/// wiring that still want the durable runtime's shape without its writes.
 /// </summary>
 public interface IEventSink
 {

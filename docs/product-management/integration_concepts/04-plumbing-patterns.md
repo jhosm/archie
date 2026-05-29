@@ -68,7 +68,7 @@ Applying CDC to domain tables — `deposits`, `accounts`, `movements` — is the
 
 ### Details That Distinguish a Serious Implementation From a Naive One
 
-**Publication order.** Read with `ORDER BY created_at, event_id` and publish sequentially **per aggregate**. If you publish `DepositConstituted` before `DepositRequested`, you break consumers that assume order. Solution: partition the Kafka topic by `aggregate_id` (in your case, `deposit_id`), and the publisher respects the order within the partition.
+**Publication order.** Read with `ORDER BY created_at, sequence_number` and publish sequentially **per aggregate**. If you publish `DepositConstituted` before `DepositRequested`, you break consumers that assume order. Solution: partition the Kafka topic by `aggregate_id` (in your case, `deposit_id`), and the publisher respects the order within the partition. (Tiebreak on the per-stream `sequence_number`, not a random `event_id`: events written in one transaction share a `created_at`, so only the sequence orders them correctly — see [ADR-IC-004](./adrs/ADR-IC-004-outbox-pattern-mechanism.md) amendment 2026-05-29.)
 
 **Outbox cleanup.** Published events accumulate. Nightly batch job that moves `PUBLISHED` events to an archive table or deletes after a defined retention (typically 7-30 days). Without cleanup, the table degrades queries.
 

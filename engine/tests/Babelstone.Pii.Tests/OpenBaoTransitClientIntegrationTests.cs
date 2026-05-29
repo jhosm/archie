@@ -49,16 +49,36 @@ public sealed class OpenBaoTransitClientIntegrationTests(OpenBaoFixture fixture)
     }
 
     [Fact]
-    public async Task A_subject_cannot_decrypt_another_subjects_ciphertext()
+    public async Task A_subject_cannot_decrypt_another_subjects_ciphertext_and_this_is_not_erasure()
     {
         var client = fixture.CreateClient();
         var alice = $"subject-{Guid.NewGuid():N}";
         var bob = $"subject-{Guid.NewGuid():N}";
         var aliceCiphertext = await client.EncryptAsync(alice, Plain("Alice secret"));
-        await client.EncryptAsync(bob, Plain("Bob secret")); // ensure bob's key exists
+        await client.EncryptAsync(bob, Plain("Bob secret")); // bob's key exists
 
-        // Bob's key cannot open Alice's ciphertext: transit rejects it (4xx → null).
-        Assert.Null(await client.DecryptAsync(bob, aliceCiphertext));
+        // Bob's key cannot open Alice's ciphertext. That is an integrity violation (a
+        // stream-routing bug), NOT erasure — Bob's key still exists — so it must surface
+        // as an exception, never be masked as a legitimate null erasure (review finding C1).
+        await Assert.ThrowsAsync<PiiKeyStoreException>(() => client.DecryptAsync(bob, aliceCiphertext));
+    }
+
+    [Fact]
+    public async Task Decrypt_of_corrupt_ciphertext_throws_rather_than_reporting_erasure()
+    {
+        var client = fixture.CreateClient();
+        var subject = $"subject-{Guid.NewGuid():N}";
+        var ciphertext = await client.EncryptAsync(subject, Plain("Ana Silva"));
+
+        // Tamper with the self-describing "vault:v1:..." ciphertext. The subject's key
+        // still exists, so transit rejects the malformed input — which must throw, not
+        // return null. Conflating it with erasure would silently report intact PII as
+        // gone (review finding C1).
+        var corrupt = (byte[])ciphertext.Clone();
+        corrupt[^1] ^= 0xFF;
+        corrupt[^2] ^= 0xFF;
+
+        await Assert.ThrowsAsync<PiiKeyStoreException>(() => client.DecryptAsync(subject, corrupt));
     }
 
     [Fact]

@@ -183,9 +183,9 @@ public sealed class PostgresEventStore(string connectionString) : IEventStore
     {
         const string sql = """
             INSERT INTO outbox (
-                event_id, aggregate_type, aggregate_id, event_type, payload,
+                event_id, aggregate_type, aggregate_id, sequence_number, event_type, payload,
                 schema_id, status, created_at, published_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
             """;
 
         await using var batch = new NpgsqlBatch(connection, tx);
@@ -195,6 +195,7 @@ public sealed class PostgresEventStore(string connectionString) : IEventStore
             command.Parameters.Add(new NpgsqlParameter { Value = r.EventId });
             command.Parameters.Add(new NpgsqlParameter { Value = r.AggregateType });
             command.Parameters.Add(new NpgsqlParameter { Value = r.AggregateId });
+            command.Parameters.Add(new NpgsqlParameter { Value = r.SequenceNumber });
             command.Parameters.Add(new NpgsqlParameter { Value = r.EventType });
             command.Parameters.Add(new NpgsqlParameter { Value = r.Payload.ToArray() });
             command.Parameters.Add(new NpgsqlParameter { Value = r.SchemaId });

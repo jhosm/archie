@@ -54,20 +54,25 @@ CREATE INDEX events_partition_key_seq_idx ON events (partition_key, sequence_num
 -- mirrors; drained by the polling publisher (Epic E), which is the ONLY reader.
 -- ---------------------------------------------------------------------------
 CREATE TABLE outbox (
-    event_id       UUID         NOT NULL,
-    aggregate_type VARCHAR      NOT NULL,
-    aggregate_id   UUID         NOT NULL,
-    event_type     VARCHAR      NOT NULL,
-    payload        BYTEA        NOT NULL,
-    schema_id      INTEGER      NOT NULL,
-    status         VARCHAR      NOT NULL DEFAULT 'PENDING',
-    created_at     TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp(),
-    published_at   TIMESTAMPTZ,
+    event_id        UUID         NOT NULL,
+    aggregate_type  VARCHAR      NOT NULL,
+    aggregate_id    UUID         NOT NULL,
+    sequence_number BIGINT       NOT NULL,
+    event_type      VARCHAR      NOT NULL,
+    payload         BYTEA        NOT NULL,
+    schema_id       INTEGER      NOT NULL,
+    status          VARCHAR      NOT NULL DEFAULT 'PENDING',
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT clock_timestamp(),
+    published_at    TIMESTAMPTZ,
 
     CONSTRAINT outbox_pkey PRIMARY KEY (event_id),
     CONSTRAINT outbox_status_chk CHECK (status IN ('PENDING', 'PUBLISHED'))
 );
 
--- §P2 (IC-004) — the publisher polls PENDING rows ORDER BY created_at, event_id.
--- A partial index keeps the drain query cheap and bounded to the unpublished tail.
-CREATE INDEX outbox_pending_idx ON outbox (created_at, event_id) WHERE status = 'PENDING';
+-- §P2 (IC-004, amended 2026-05-29) — the publisher drains PENDING rows in per-aggregate
+-- order. created_at TIES within a single multi-event append: one transaction_time stamps
+-- every row, so the tiebreaker must be sequence_number — the authoritative per-stream
+-- monotonic key (mirrors events.sequence_number) — NOT the random v4 event_id, which
+-- cannot order intra-append rows. A partial index keeps the drain cheap and bounded to
+-- the unpublished tail.
+CREATE INDEX outbox_pending_idx ON outbox (created_at, sequence_number) WHERE status = 'PENDING';

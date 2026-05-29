@@ -32,6 +32,7 @@ internal static class TestData
             EventId: eventId,
             AggregateType: "term_deposit",
             AggregateId: streamId,
+            SequenceNumber: sequence,
             EventType: "term_deposit.DepositConstituted",
             Payload: new byte[] { 0x01, 0x02 },
             SchemaId: 42,

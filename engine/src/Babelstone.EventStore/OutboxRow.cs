@@ -16,6 +16,7 @@ public sealed record OutboxRow(
     Guid                 EventId,
     string               AggregateType,
     Guid                 AggregateId,
+    long                 SequenceNumber,       // the event's per-stream sequence; the §P2 drain tiebreaker
     string               EventType,
     ReadOnlyMemory<byte> Payload,
     int                  SchemaId,             // schema-registry id, embedded at write (§P3)

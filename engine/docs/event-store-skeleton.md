@@ -138,6 +138,7 @@ public sealed record OutboxRow(
     Guid                EventId,
     string              AggregateType,
     Guid                AggregateId,
+    long                SequenceNumber,        // per-stream sequence; §P2 drain tiebreaker (IC-004 amended 2026-05-29)
     string              EventType,
     ReadOnlyMemory<byte> Payload,
     int                 SchemaId,

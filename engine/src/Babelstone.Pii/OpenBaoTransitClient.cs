@@ -46,42 +46,57 @@ public sealed class OpenBaoTransitClient(HttpClient httpClient, string token, st
             new { ciphertext = System.Text.Encoding.UTF8.GetString(ciphertext) },
             ct);
 
-        // A destroyed (erased) subject key makes transit reject decryption of
-        // previously-valid ciphertext with a 4xx. That is the GDPR post-erasure
-        // state (§P3), surfaced as null rather than an exception.
-        if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound)
+        if (response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadFromJsonAsync<TransitResponse>(Json, ct);
+            var plaintext = body?.Data?.Plaintext
+                ?? throw new InvalidOperationException($"OpenBao decrypt returned no plaintext for subject '{subjectId}'.");
+            return Convert.FromBase64String(plaintext);
+        }
+
+        // The ONLY benign decrypt failure is a destroyed/absent subject key — the GDPR
+        // post-erasure state (§P3), surfaced as null. A 4xx alone does NOT prove that:
+        // transit also answers 4xx for corrupt ciphertext, a wrong-subject key, a sealed
+        // or misconfigured mount, and a denied token. Treating any 4xx as erasure would
+        // silently report intact PII as erased (data the bank must retain reads as gone),
+        // or a transient error as permanent erasure. So we confirm the key is actually
+        // gone before returning null; every other failure surfaces, never masquerades.
+        if (response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound
+            && !await KeyExistsAsync(subjectId, ct))
         {
             return null;
         }
 
-        response.EnsureSuccessStatusCode();
-        var body = await response.Content.ReadFromJsonAsync<TransitResponse>(Json, ct);
-        var plaintext = body?.Data?.Plaintext
-            ?? throw new InvalidOperationException($"OpenBao decrypt returned no plaintext for subject '{subjectId}'.");
-        return Convert.FromBase64String(plaintext);
+        var error = await response.Content.ReadAsStringAsync(ct);
+        throw new PiiKeyStoreException(
+            $"OpenBao decrypt failed for subject '{subjectId}' (HTTP {(int)response.StatusCode}): {error}");
     }
 
     public async Task DestroyKeyAsync(string subjectId, CancellationToken ct = default)
     {
-        // Deletion must be explicitly enabled per key before it can be removed.
+        // Idempotent by proof, not by inference: if the key is already gone there is
+        // nothing to destroy. Confirming absence up front means a 4xx from the config
+        // step below (a denied token, a sealed mount, a transient error) surfaces as a
+        // real failure instead of being mistaken for "already destroyed" — which would
+        // report a subject erased while their key, and recoverable PII, still exist.
+        if (!await KeyExistsAsync(subjectId, ct))
+        {
+            return;
+        }
+
+        // Deletion must be explicitly enabled per key before it can be removed. The key
+        // exists (checked above), so any failure here is real and must throw.
         using (var config = await SendAsync(
             HttpMethod.Post,
             $"v1/{mountPath}/keys/{KeyName(subjectId)}/config",
             new { deletion_allowed = true },
             ct))
         {
-            // A key that is already gone cannot be configured — transit answers 400
-            // (or 404). Either way there is nothing left to destroy, so destruction
-            // is idempotent.
-            if (config.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound)
-            {
-                return;
-            }
-
             config.EnsureSuccessStatusCode();
         }
 
         using var delete = await SendAsync(HttpMethod.Delete, $"v1/{mountPath}/keys/{KeyName(subjectId)}", null, ct);
+        // Tolerate only a concurrent destroy having won the race (404); anything else throws.
         if (delete.StatusCode != HttpStatusCode.NotFound)
         {
             delete.EnsureSuccessStatusCode();
@@ -93,6 +108,21 @@ public sealed class OpenBaoTransitClient(HttpClient httpClient, string token, st
         // Creating an existing key is a no-op, so this is safe to call before every encrypt.
         using var response = await SendAsync(HttpMethod.Post, $"v1/{mountPath}/keys/{KeyName(subjectId)}", new { }, ct);
         response.EnsureSuccessStatusCode();
+    }
+
+    // The discriminator between "erased" and "failed": transit answers 404 for an absent
+    // key and 200 for a present one. Read-only metadata; reaches no key material. This is
+    // what lets DecryptAsync/DestroyKeyAsync tell a genuine erasure apart from a fault.
+    private async Task<bool> KeyExistsAsync(string subjectId, CancellationToken ct)
+    {
+        using var response = await SendAsync(HttpMethod.Get, $"v1/{mountPath}/keys/{KeyName(subjectId)}", null, ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+
+        response.EnsureSuccessStatusCode();
+        return true;
     }
 
     private async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, object? body, CancellationToken ct)

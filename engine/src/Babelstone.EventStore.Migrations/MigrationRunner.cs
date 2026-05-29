@@ -25,38 +25,55 @@ public sealed class MigrationRunner(string connectionString)
     /// applied version. Idempotent: a second call with nothing pending is a no-op.
     /// </summary>
     /// <returns>The migrations applied by this call, in the order applied.</returns>
+    // A stable, arbitrary 64-bit key naming this runner's session advisory lock. Two
+    // runners that start concurrently (overlapping deploys, an app boot racing CI) would
+    // otherwise both read the ledger, both apply migration N, and collide on an opaque
+    // duplicate-key / "already exists" error. The lock serialises them: the second waits.
+    private const long MigrationLockKey = 3937070637541916881;
+
     public async Task<IReadOnlyList<Migration>> ApplyAsync(CancellationToken ct = default)
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(ct);
 
-        await ExecuteAsync(connection, LedgerDdl, ct);
-        var applied = await LoadAppliedVersionsAsync(connection, ct);
-
-        var justApplied = new List<Migration>();
-        foreach (var migration in MigrationSet.All)
+        // Session-level advisory lock: held by this connection until unlocked below (or
+        // released automatically when the connection closes). A concurrent runner blocks
+        // here instead of racing into a half-applied collision.
+        await ExecuteAsync(connection, $"SELECT pg_advisory_lock({MigrationLockKey});", ct);
+        try
         {
-            if (applied.Contains(migration.Version))
+            await ExecuteAsync(connection, LedgerDdl, ct);
+            var applied = await LoadAppliedVersionsAsync(connection, ct);
+
+            var justApplied = new List<Migration>();
+            foreach (var migration in MigrationSet.All)
             {
-                continue;
+                if (applied.Contains(migration.Version))
+                {
+                    continue;
+                }
+
+                await using var tx = await connection.BeginTransactionAsync(ct);
+                await ExecuteAsync(connection, migration.Sql, ct, tx);
+
+                await using (var record = new NpgsqlCommand(
+                    "INSERT INTO schema_migrations (version, name) VALUES (@version, @name);", connection, tx))
+                {
+                    record.Parameters.AddWithValue("version", migration.Version);
+                    record.Parameters.AddWithValue("name", migration.Name);
+                    await record.ExecuteNonQueryAsync(ct);
+                }
+
+                await tx.CommitAsync(ct);
+                justApplied.Add(migration);
             }
 
-            await using var tx = await connection.BeginTransactionAsync(ct);
-            await ExecuteAsync(connection, migration.Sql, ct, tx);
-
-            await using (var record = new NpgsqlCommand(
-                "INSERT INTO schema_migrations (version, name) VALUES (@version, @name);", connection, tx))
-            {
-                record.Parameters.AddWithValue("version", migration.Version);
-                record.Parameters.AddWithValue("name", migration.Name);
-                await record.ExecuteNonQueryAsync(ct);
-            }
-
-            await tx.CommitAsync(ct);
-            justApplied.Add(migration);
+            return justApplied;
         }
-
-        return justApplied;
+        finally
+        {
+            await ExecuteAsync(connection, $"SELECT pg_advisory_unlock({MigrationLockKey});", ct);
+        }
     }
 
     private static async Task ExecuteAsync(
