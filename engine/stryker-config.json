@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stryker-mutator/stryker-net/master/src/Stryker.Core/Stryker.Core/schema/stryker-config.json",
+  "stryker-config": {
+    "reporters": [
+      "html",
+      "progress",
+      "cleartext"
+    ],
+    "mutation-level": "Standard",
+    "thresholds": {
+      "high": 85,
+      "low": 70,
+      "break": 60
+    }
+  }
+}
