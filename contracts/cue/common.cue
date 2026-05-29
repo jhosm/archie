@@ -17,7 +17,7 @@
 // not silently carried. There is no `extra: {...}` passthrough anywhere.
 package family
 
-// #PackId — a regulatory-pack version key, `pt.YYYY.N` (ADR-PC-007 §P2,
+// #PackId — a regulatory-pack version key, `pt.YYYY.N` (ADR-PC-007 §P1,
 // immutable once published). The variant pins the pack it was authored
 // against; the engine resolves it through the pack_versions registry
 // (ADR-PC-009).
@@ -35,8 +35,9 @@ package family
 
 // #BasisPoints — a non-negative rate or share expressed in basis points
 // (1 bp = 0.01%). 10000 bp = 100%. The variant-author surface never uses a
-// float for money or rates; everything is integer bp / integer cents,
-// matching the engine's Money discipline (ADR-PC-010, financial_concepts §5).
+// float for money or rates; everything is integer bp / integer cents
+// (02 §2.2 "monetary values as integer cents"; financial_concepts §5.4),
+// the same Money discipline the engine enforces (ADR-PC-010).
 #BasisPoints: int & >=0 & <=10000
 
 // #Cents — a non-negative integer-cents amount.
@@ -57,10 +58,13 @@ package family
 // concrete `tan_basis_points` + `rate_sheet_version_id` (ADR-PC-008;
 // surface §2.3). The variant never carries the numeric rate — that lives on
 // its own fast cadence in /rate-sheets. `sheet` selects which sheet binding
-// (`live` is the active sheet); `role_selector` picks the pricing role
-// (e.g. the standard vs new_money split, surface §2.2). Both resolve against
-// the rate sheet at deploy/constitution time (depth 2–3).
+// (`live` is the conventional active sheet); `role_selector` names the pricing
+// role the rate sheet keys on (the worked example uses `deposit_origin`,
+// authoring §3.2; it carries the standard-vs-new_money split of surface §2.2).
+// Both resolve against the rate sheet at deploy/constitution time (depth 2–3).
 #RateRef: {
-	sheet:         "live" | =~"^[a-z][a-z0-9_]*$"
+	// A lower-snake binding name; `live` is the conventional active sheet (it
+	// is one value of this pattern, not a privileged literal).
+	sheet:         =~"^[a-z][a-z0-9_]*$"
 	role_selector: =~"^[a-z][a-z0-9_]*$"
 }

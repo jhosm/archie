@@ -82,8 +82,10 @@ package family
 #SteppedRate: {
 	stepped: {
 		rate_ref: #RateRef
-		// Ordered step boundaries by elapsed day; each names a pricing band
-		// resolved against the rate sheet. At least one step.
+		// Step boundaries by elapsed day; each names a pricing band resolved
+		// against the rate sheet. The leading element makes ≥1 step structural;
+		// ascending from_day ordering is a depth-4 obligation (not expressible
+		// element-wise in CUE), not enforced here.
 		steps: [#RateStep, ...#RateStep]
 	}
 }
@@ -104,9 +106,10 @@ package family
 }
 
 #BandedPolicy: {
-	// Ordered (window, penalty) pairs evaluated against elapsed term; the
-	// engine picks the first band whose up_to_days is not yet reached
-	// (02 §2.5). At least one band.
+	// (window, penalty) pairs the engine evaluates first-match against elapsed
+	// term (02 §2.5). The leading element makes ≥1 band structural. Ascending
+	// up_to_days order and the single open (null) tail are a depth-4 obligation
+	// — not expressible element-wise in CUE, so not enforced here.
 	banded: [#Band, ...#Band]
 	// Optional minimum payout floor; the depositor's net never falls below it.
 	floor_cents?: #Cents

@@ -1,0 +1,13 @@
+# INVALID: early_termination sets neither flat nor banded (empty disjunction).
+variant_id: dpz_pt_12m_et_none
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 365
+day_count: pt.act_360
+currency: EUR
+interest_variant: AT_MATURITY
+rate:
+  flat: { rate_ref: { sheet: live, role_selector: deposit_origin } }
+early_termination: {}
+auto_renewal_policy: NONE
+principal_bounds: { min_cents: 50000 }

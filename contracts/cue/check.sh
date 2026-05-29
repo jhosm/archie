@@ -62,6 +62,22 @@ for entry in $FAMILIES; do
 	done
 done
 
+# Pack-manifest reject fixtures. The ACCEPT case is the real packs/pt.2026.1
+# pack.yaml, validated end-to-end by packs/pack.sh; here we pin that #Manifest
+# (pack/pack.cue) rejects malformed manifests — one rule per file.
+if [ -d testdata/pack/invalid ]; then
+	echo "== pack manifest (#Manifest) =="
+	for f in testdata/pack/invalid/*.yaml; do
+		[ -e "$f" ] || continue
+		if cue vet -d '#Manifest' "$f" pack/pack.cue 2>/dev/null; then
+			echo "  LEAK (should reject)  $(basename "$f")"
+			fail=1
+		else
+			echo "  ok (rejected)  $(basename "$f")"
+		fi
+	done
+fi
+
 if [ "$fail" -ne 0 ]; then
 	echo "FAILED"
 	exit 1

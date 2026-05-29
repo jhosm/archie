@@ -1,7 +1,12 @@
-# Withholding primitives (surface §3.4). v1: IRS on deposit interest paid to
-# resident individuals — 28% (2800 bp), applied flow-by-flow to each interest
-# payment as it accrues, never by scaling the rate (02 §2.2; financial_concepts
-# §5.4). Timing at_credit = withheld when net interest settles to the account.
+# Withholding primitives (surface §3.4). The v1 product slice onboards resident
+# individuals (02 §4); the standard case is 28% IRS (2800 bp) applied
+# flow-by-flow to each interest payment as it accrues, never by scaling the rate
+# (02 §2.2; financial_concepts §5.4). Timing at_credit = withheld when net
+# interest settles to the account.
+#
+# `exemptions` is the primitive's full catalogue (matching the canonical §3.4
+# manifest), not the v1-onboarded set: e.g. non_resident_treaty is declared here
+# but non-resident onboarding is itself out of the v1 slice (02 §4).
 irs_juros:
   formula_ref: engine.withholding.percentage
   rate_basis_points: 2800

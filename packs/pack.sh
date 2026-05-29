@@ -95,11 +95,18 @@ validate_staging() {
 	fi
 
 	# Sealed corpus: expected-events.yaml is engine-GENERATED (§P5). Empty ⇒
-	# generation pending (C.3) — a logged skip, never a silent pass.
+	# generation pending (C.3) — a logged skip. But an *unparseable* corpus is a
+	# FAILURE, never a skip: masking a parse error to "empty" would let a
+	# corrupted BdP/DORA evidence file validate green (ADR-PC-007 fail-loud).
 	if [ -f "$staging/test-corpus/expected-events.yaml" ]; then
+		# Default JSON output (an int renders as `0`); --out text would itself
+		# error on an int, masking real parse errors.
 		local n
-		n="$(cue export "$staging/test-corpus/expected-events.yaml" -e 'len(expected)' --out text 2>/dev/null || echo 0)"
-		if [ "$n" = "0" ]; then
+		if ! n="$(cue export "$staging/test-corpus/expected-events.yaml" -e 'len(expected)' 2>/tmp/pack-cue-err)"; then
+			echo "  FAIL          test-corpus/expected-events.yaml does not parse:"
+			sed 's/^/    /' /tmp/pack-cue-err
+			fail=1
+		elif [ "$n" = "0" ]; then
 			echo "  skip          depth-5 corpus: expected-events.yaml empty (generation pending, C.3)"
 		else
 			echo "  note          depth-5 corpus present ($n) — depth-5 sim is C.3, not run here"
@@ -162,11 +169,19 @@ cmd_build() {
 	mkdir -p "$layout"
 	# oras rejects absolute file paths (so artefact filenames can't leak host
 	# paths); push from the tar's dir with a relative name. $layout is absolute,
-	# which is fine for the --oci-layout target.
-	local digest
-	digest="$(cd "$(dirname "$tar")" && oras push --oci-layout "$layout:$EXPECTED_KEY" \
-		--artifact-type "$MEDIA_TYPE" "$(basename "$tar"):$MEDIA_TYPE" 2>&1 |
-		sed -n 's/^Digest: //p' | tail -1)"
+	# which is fine for the --oci-layout target. Check oras's OWN exit status —
+	# not just a non-empty digest — so a push that errors after printing a
+	# Digest line cannot be mistaken for success (ADR-PC-007 fail-loud).
+	local push_log digest
+	push_log="$(mktemp)"
+	if ! (cd "$(dirname "$tar")" && oras push --oci-layout "$layout:$EXPECTED_KEY" \
+		--artifact-type "$MEDIA_TYPE" "$(basename "$tar"):$MEDIA_TYPE") >"$push_log" 2>&1; then
+		sed 's/^/    /' "$push_log" >&2
+		rm -f "$push_log"
+		die "oras push failed"
+	fi
+	digest="$(sed -n 's/^Digest: //p' "$push_log" | tail -1)"
+	rm -f "$push_log"
 	[ -n "$digest" ] || die "oras push produced no digest"
 	echo "  pushed $EXPECTED_KEY @ $digest" >&2
 	echo "  layout: $layout" >&2

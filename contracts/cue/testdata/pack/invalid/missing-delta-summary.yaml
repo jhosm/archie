@@ -1,0 +1,14 @@
+# INVALID: delta_summary omitted. It is required (and non-empty) — every pack
+# must state what changed vs based_on_pack_version.
+pack_id: pt
+pack_version: "2026.1"
+namespace: pt
+manifest_schema_version: 1
+publisher: pt-pack-team@engine.internal
+pack_effective_from: 2026-01-01
+based_on_pack_version: null
+breaking_changes: []
+dependencies: { engine_compatible_versions: ">=1.0.0,<2.0.0" }
+schema_pins: { term_deposit: term_deposit@2026.1 }
+rate_sheet_refs: [deposits-pt]
+test_corpus_ref: oci://babelstone-packs/pt-deposit-tests@2026.1

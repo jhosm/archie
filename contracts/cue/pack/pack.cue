@@ -18,7 +18,7 @@
 package pack
 
 // ---------------------------------------------------------------------------
-// pack.yaml — the manifest (ADR-PC-007 §P1 line 132; surface §3.4)
+// pack.yaml — the manifest (ADR-PC-007 §P1; surface §3.4)
 // ---------------------------------------------------------------------------
 
 #Manifest: {
@@ -82,7 +82,7 @@ package pack
 // ---------------------------------------------------------------------------
 // primitives/*.yaml — pack-bound primitives the family schema references.
 // `formula_ref` is the bridge to an engine-implemented primitive
-// (surface §3.4 line 219). Each primitive category is a map keyed by the
+// (surface §3.4). Each primitive category is a map keyed by the
 // reference id used in variants (e.g. day_count.act_360 ← `pt.act_360`).
 // ---------------------------------------------------------------------------
 
@@ -119,10 +119,14 @@ package pack
 // in the data file.
 // ---------------------------------------------------------------------------
 
+// Closed: an unknown/misspelled constant key (max_consuer_rate_bps) must fail
+// here, not bind to nothing at depth 3. New pack constants are added by an
+// explicit, additive edit to this definition — the same no-DSL-escape-hatch
+// discipline as the family schema (ADR-PC-006), applied to the governed,
+// signed pack artefact where closedness matters most.
 #Parameters: {
 	max_consumer_rate_bps:           #BasisPoints
 	auto_renewal_optout_window_days: int & >0
-	...
 }
 
 // ---------------------------------------------------------------------------
