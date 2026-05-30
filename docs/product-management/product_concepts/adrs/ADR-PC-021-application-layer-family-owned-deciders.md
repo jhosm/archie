@@ -125,7 +125,7 @@ The decider runs the financial-math kernel (`Accrual` / `Withholding` / `DayCoun
 
 ### P2 — The engine→family edge is forbidden
 
-No project in the generic engine spine (`Babelstone.Engine`, `Babelstone.EventStore`, `Babelstone.RateSheets`, `Babelstone.Packs`, `Babelstone.FinancialMath`, `Babelstone.FinancialTypes`) may carry a `ProjectReference` to a `families/**` project. The arrow is one-way; this is the gateable invariant (see Verifiable commitments).
+No project in the generic engine spine (`Babelstone.Engine`, `Babelstone.EventStore`, `Babelstone.RateSheets`, `Babelstone.Packs`, `Babelstone.FinancialMath`, `Babelstone.FinancialTypes`, `Babelstone.Engine.Avro`, `Babelstone.OutboxPublisher`) may carry a `ProjectReference` to a `families/**` project. The arrow is one-way; this is the gateable invariant (see Verifiable commitments). The Avro codec realises this for *serialization* the same way the decider does for *commands*: it binds any family's event to its `.avsc` by convention, so it names no family (the per-family serializer would be the same coupling this rule forbids).
 
 ### P3 — Folds stay pure; deciders are the impure layer
 
