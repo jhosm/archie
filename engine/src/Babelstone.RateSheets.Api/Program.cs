@@ -4,6 +4,11 @@ using Babelstone.RateSheets.Api;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// An unexpected failure (DB drop, serialization-failure, an unforeseen constraint) returns a
+// structured ProblemDetails 500 rather than a bare connection-reset, so callers and operators see
+// a typed error. Full structured logging + OpenTelemetry on this host is the ADR-IC-007 follow-up.
+builder.Services.AddProblemDetails();
+
 // snake_case on the wire (rate_sheet_version_id, principal_cents, tan_basis_points),
 // matching the deployed YAML and the stored JSONB — the same shape RateSheetJson uses.
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -28,6 +33,9 @@ builder.Services.AddSingleton<IRateBoundsSource>(
     new ConfiguredRateBoundsSource(new RateBounds(minBps, maxBps)));
 
 var app = builder.Build();
+
+// Turns any unhandled exception escaping a handler into a ProblemDetails response.
+app.UseExceptionHandler();
 
 app.MapPost("/v1/rate-sheets", DeployRateSheetEndpoint.HandleAsync);
 

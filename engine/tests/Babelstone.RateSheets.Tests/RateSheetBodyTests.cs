@@ -54,6 +54,7 @@ public sealed class RateSheetBodyTests
     [Theory]
     [InlineData("standard", 100_000, 300)]      // first band [50_000, 5_000_000)
     [InlineData("standard", 5_000_000, 325)]    // lower bound is inclusive -> second band
+    [InlineData("standard", 25_000_000, 350)]   // upper bound is exclusive -> lands in the top band, not the second
     [InlineData("standard", 60_000_000, 350)]   // open-ended top band
     [InlineData("new_money", 100_000, 400)]
     public void Resolves_the_band_covering_a_principal(string role, long principalCents, int expectedBps)

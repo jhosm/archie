@@ -8,7 +8,25 @@ namespace Babelstone.RateSheets;
 /// caller (resolved from the pack) rather than read here, so the validator stays a
 /// pure function of (body, bounds).
 /// </summary>
-public sealed record RateBounds(int MinBasisPoints, int MaxBasisPoints);
+public sealed record RateBounds
+{
+    public RateBounds(int minBasisPoints, int maxBasisPoints)
+    {
+        if (minBasisPoints > maxBasisPoints)
+        {
+            throw new ArgumentException(
+                $"MinBasisPoints ({minBasisPoints}) must not exceed MaxBasisPoints ({maxBasisPoints}); " +
+                "an inverted bound would silently reject every band.");
+        }
+
+        MinBasisPoints = minBasisPoints;
+        MaxBasisPoints = maxBasisPoints;
+    }
+
+    public int MinBasisPoints { get; }
+
+    public int MaxBasisPoints { get; }
+}
 
 /// <summary>Outcome of <see cref="RateSheetValidator.Validate"/>: valid, or a list of human-readable diagnostics.</summary>
 public sealed record RateSheetValidationResult(bool IsValid, IReadOnlyList<string> Diagnostics)

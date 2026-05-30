@@ -36,13 +36,25 @@ public sealed class RateBand
 
     public int TanBasisPoints { get; init; }
 
-    /// <summary>Inclusive lower bound in cents. Valid only once <see cref="RateSheetValidator"/> has accepted the sheet.</summary>
+    /// <summary>
+    /// Inclusive lower bound in cents. Throws if the band is malformed (not exactly
+    /// <c>[lower, upper]</c> with a non-null lower) rather than coercing to a plausible-but-wrong
+    /// <c>0</c>: the validator accepts only well-shaped bands, and the stored JSONB is immutable,
+    /// so reaching this accessor on a malformed band means a corrupt row — which must fail loud
+    /// (a silent wrong rate is the worst failure here), not resolve every principal "from 0".
+    /// </summary>
     [JsonIgnore]
-    public long From => PrincipalCents.Length > 0 && PrincipalCents[0].HasValue ? PrincipalCents[0]!.Value : 0;
+    public long From => PrincipalCents is [{ } lower, _]
+        ? lower
+        : throw new InvalidOperationException(
+            "RateBand.principal_cents must be [lower, upper] with a non-null lower bound (the band failed validation).");
 
-    /// <summary>Exclusive upper bound in cents, or <c>null</c> for the open-ended top band.</summary>
+    /// <summary>Exclusive upper bound in cents, or <c>null</c> for the open-ended top band. Throws on a malformed band (see <see cref="From"/>).</summary>
     [JsonIgnore]
-    public long? To => PrincipalCents.Length > 1 ? PrincipalCents[1] : null;
+    public long? To => PrincipalCents is [_, var upper]
+        ? upper
+        : throw new InvalidOperationException(
+            "RateBand.principal_cents must have exactly two elements [lower, upper] (the band failed validation).");
 
     /// <summary>True if <paramref name="principalCents"/> falls in <c>[From, To)</c> (To null = unbounded above).</summary>
     public bool Covers(long principalCents) =>

@@ -59,10 +59,12 @@ public sealed class PostgresRateSheetStoreIntegrationTests : IAsyncLifetime
 
         var inMarch = await store.ResolveAsync("term_deposit", new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
         var inJuly = await store.ResolveAsync("term_deposit", new DateTimeOffset(2026, 7, 1, 0, 0, 0, TimeSpan.Zero));
+        var atExactlyJune = await store.ResolveAsync("term_deposit", june); // effective_from <= asOf is inclusive
         var before = await store.ResolveAsync("term_deposit", new DateTimeOffset(2025, 12, 1, 0, 0, 0, TimeSpan.Zero));
 
         Assert.Equal("v-jan", inMarch?.RateSheetVersionId);
         Assert.Equal("v-jun", inJuly?.RateSheetVersionId);
+        Assert.Equal("v-jun", atExactlyJune?.RateSheetVersionId); // the boundary resolves to that sheet, not the prior one
         Assert.Null(before);
     }
 

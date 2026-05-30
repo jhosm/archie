@@ -30,9 +30,9 @@ internal static class DeployRateSheetEndpoint
                 statusCode: StatusCodes.Status400BadRequest);
         }
 
-        // §P4: the deploying principal is the gateway-authenticated identity, not a payload
-        // field a caller can spoof. It is recorded as published_by; the treasury approver and
-        // sign-off reference travel in the body and are recorded as approved_by / approval_ref.
+        // §P4 + Amendment A3: the deploying principal is the gateway-authenticated identity, not
+        // a payload field a caller can spoof. It is recorded as published_by; the treasury approver
+        // and sign-off reference travel in the body and are recorded as approved_by / approval_ref.
         if (!http.Headers.TryGetValue("X-Deploy-Actor", out var actor) || string.IsNullOrWhiteSpace(actor))
         {
             return Results.Problem(
@@ -52,7 +52,12 @@ internal static class DeployRateSheetEndpoint
             request.RateSheetVersionId,
             request.ProductFamily,
             request.PackVersion,
-            request.EffectiveFrom,
+            // Truncate to PostgreSQL's microsecond resolution at the boundary so the value we
+            // store and the value we compare on a re-POST share a precision. Without this, an
+            // effective_from carrying sub-microsecond (100ns) ticks round-trips as a truncated
+            // value, and the §P2 identity check (existing == incoming) would misclassify an
+            // identical re-POST as a 409 (a forward-only-immutability breach that did not happen).
+            ToMicroseconds(request.EffectiveFrom),
             body,
             request.ApprovedBy,
             request.ApprovalRef,
@@ -81,11 +86,20 @@ internal static class DeployRateSheetEndpoint
                 : Idempotent(raced, sheet);
         }
 
-        // Re-read so the response carries the database-assigned published_at.
-        var stored = await store.TryGetAsync(sheet.RateSheetVersionId, ct) ?? sheet;
+        // Re-read so the response carries the database-assigned published_at. A just-committed
+        // row that cannot be read back is an invariant violation (not a routine empty result),
+        // so fail loud rather than silently returning the in-memory sheet with a null published_at.
+        var stored = await store.TryGetAsync(sheet.RateSheetVersionId, ct)
+            ?? throw new InvalidOperationException(
+                $"Rate sheet '{sheet.RateSheetVersionId}' was inserted but could not be read back.");
         return Results.Created(
             $"/v1/rate-sheets/{sheet.RateSheetVersionId}", RateSheetResponse.From(stored));
     }
+
+    // PostgreSQL TIMESTAMPTZ resolves to microseconds; .NET DateTimeOffset to 100ns ticks.
+    // Normalise at the boundary (10 ticks = 1 microsecond) so stored and compared values match.
+    private static DateTimeOffset ToMicroseconds(DateTimeOffset value) =>
+        new(value.Ticks - (value.Ticks % TimeSpan.TicksPerMicrosecond), value.Offset);
 
     private static IResult Idempotent(RateSheet existing, RateSheet incoming)
     {

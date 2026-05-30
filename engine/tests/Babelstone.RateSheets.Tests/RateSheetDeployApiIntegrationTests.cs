@@ -13,7 +13,7 @@ namespace Babelstone.RateSheets.Tests;
 /// <summary>
 /// End-to-end <c>POST /v1/rate-sheets</c> over the real host + a real PostgreSQL
 /// (ADR-PC-008 §P2): the idempotency state machine (201 / 200 / 409), deploy-time
-/// validation (400), and the §P4 deploy-actor requirement (401).
+/// validation (400), and the deploy-actor requirement (401, §P4 + Amendment A3).
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
@@ -100,6 +100,35 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
         var conflict = await Post(RateSheetTestData.ValidRequest(versionId: versionId, body: mutated));
 
         Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_second_version_id_sharing_a_family_effective_from_is_409()
+    {
+        var when = new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero);
+
+        var first = await Post(RateSheetTestData.ValidRequest(versionId: "fx-a", effectiveFrom: when));
+        // A different version id, same family + effective_from: the rate_sheets_family_effective_uq
+        // collision (a NEW version, not an idempotent replay) must surface as 409, not 200/500.
+        var second = await Post(RateSheetTestData.ValidRequest(versionId: "fx-b", effectiveFrom: when));
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+    }
+
+    [Fact]
+    public async Task Re_posting_with_sub_microsecond_effective_from_ticks_is_idempotent_200()
+    {
+        // 1 tick = 100ns — below PostgreSQL's microsecond resolution. The deploy must normalise
+        // effective_from so an identical re-POST replays as 200, not a spurious 409.
+        var subMicrosecond = RateSheetTestData.DefaultEffectiveFrom.AddTicks(1);
+        var request = RateSheetTestData.ValidRequest(versionId: "sub-us", effectiveFrom: subMicrosecond);
+
+        var first = await Post(request);
+        var second = await Post(request);
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
     }
 
     [Fact]

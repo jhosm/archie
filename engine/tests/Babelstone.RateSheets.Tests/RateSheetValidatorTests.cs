@@ -125,6 +125,12 @@ public sealed class RateSheetValidatorTests
         Assert.False(result.IsValid);
     }
 
+    [Fact]
+    public void RateBounds_rejects_an_inverted_bound()
+    {
+        Assert.Throws<ArgumentException>(() => new RateBounds(2_000, 0));
+    }
+
     private static RateSheetBody SingleRole(params RateBand[] bands) => new()
     {
         Products = new()
