@@ -39,13 +39,13 @@ public sealed class TermDepositConstitutionService(
     {
         // 1. Resolve the rate sheet active at constitution (ADR-PC-008 §P3); fail loud if none.
         var resolution = await rateSheets.ResolveAsync(Family.FamilyName, command.ConstitutedAt, ct)
-            ?? throw new InvalidOperationException(
+            ?? throw new DomainRejectedException(
                 $"No rate sheet effective for '{Family.FamilyName}' at {command.ConstitutedAt:O}.");
 
         // 2. Resolve the TAN for (product, role, principal); a null on a deployed sheet means the
         //    pair is genuinely unpriced — fail loud rather than constitute at a silent zero rate.
         var tan = resolution.ResolveTanBasisPoints(command.ProductId, command.Role, command.PrincipalCents)
-            ?? throw new InvalidOperationException(
+            ?? throw new DomainRejectedException(
                 $"Rate sheet '{resolution.RateSheetVersionId}' does not price " +
                 $"({command.ProductId}, {command.Role}) at {command.PrincipalCents}c.");
 
@@ -76,7 +76,7 @@ public sealed class TermDepositConstitutionService(
         var position = hydrated.State;
         if (position.Lifecycle != DepositLifecycle.Active)
         {
-            throw new InvalidOperationException(
+            throw new DomainRejectedException(
                 $"Deposit {command.DepositId} is {position.Lifecycle}, not Active; cannot mature.");
         }
 

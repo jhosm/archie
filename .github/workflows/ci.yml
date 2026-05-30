@@ -139,8 +139,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4 # pins Python from mise.toml (3.14, ADR-IC-010)
       - name: Build + contract tests (ADR-IC-010, ADR-IC-013)
-        run: echo "TODO - Python build plus contract tests; lands with the MCP server build task"
+        working-directory: mcp-server
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e ".[dev]"
+          .venv/bin/python -m pytest -q
 
   notification:
     needs: changes
