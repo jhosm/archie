@@ -15,6 +15,7 @@ package pack
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -148,12 +149,32 @@ func (p *Pack) ActiveReportingHooks() []string {
 	return out
 }
 
-// decodeYAML extracts a YAML file through CUE and decodes it into target.
-func decodeYAML(ctx *cue.Context, path string, target any) error {
-	src, err := os.ReadFile(path)
+// maxPackFileBytes caps the size of any single pack-source file before it is
+// handed to the CUE front-end. CUE's parse + BuildFile cost is superlinear in
+// the number of nodes, so an unbounded file is a denial-of-service vector on
+// this non-engineer-authored, highest-churn surface: a multi-megabyte garbage
+// file would take CUE seconds-to-minutes to chew on. Real pack files are
+// kilobytes (the largest in pt.2026.1 is ~1.3 KB); 1 MiB is ~750x that — ample
+// headroom for any legitimate pack, yet it turns the pathological large input
+// into a clean, fast, returned error rather than a hang (ADR-PC-007 §169: the
+// engine refuses unparseable packs).
+const maxPackFileBytes = 1 << 20 // 1 MiB
+
+// decodeYAML extracts a YAML file through CUE and decodes it into target. A
+// pathological input (oversized, or one that makes the CUE front-end panic) is
+// reported as a returned error — never a hang or a process crash.
+func decodeYAML(ctx *cue.Context, path string, target any) (err error) {
+	src, err := readBounded(path, maxPackFileBytes)
 	if err != nil {
 		return err
 	}
+	// Belt-and-braces: a malformed document that trips a panic deep in the CUE
+	// YAML/build path becomes a clean rejection rather than crashing the binary.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%s: malformed YAML rejected (internal parse failure: %v)", filepath.Base(path), r)
+		}
+	}()
 	file, err := cueyaml.Extract(path, src)
 	if err != nil {
 		return err
@@ -163,6 +184,27 @@ func decodeYAML(ctx *cue.Context, path string, target any) error {
 		return err
 	}
 	return v.Decode(target)
+}
+
+// readBounded reads up to limit bytes from path and rejects (without loading
+// the whole file) anything larger, so an oversized pack file never reaches the
+// CUE front-end.
+func readBounded(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	// Read limit+1 so a file exactly at the cap is accepted and the first byte
+	// over it is detected.
+	src, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(src)) > limit {
+		return nil, fmt.Errorf("%s: pack file exceeds %d-byte limit (pathological or non-pack input rejected)", filepath.Base(path), limit)
+	}
+	return src, nil
 }
 
 // decodeKeySet decodes a top-level YAML map and returns its key set — used for
