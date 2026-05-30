@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Real PostgreSQL (first-party module) + a generic container for Redpanda (no
+         first-party Redpanda module — same shape as OpenBaoFixture). All tests here carry
+         [Trait("Category","Integration")]; the default CI lane filters them out, the E.6
+         integration lane runs them. -->
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Testcontainers" />
+    <!-- Consume + Avro-deserialize the published records to assert field values + headers. -->
+    <PackageReference Include="Confluent.Kafka" />
+    <PackageReference Include="Confluent.SchemaRegistry" />
+    <PackageReference Include="Confluent.SchemaRegistry.Serdes.Avro" />
+    <PackageReference Include="Apache.Avro" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Babelstone.OutboxPublisher/Babelstone.OutboxPublisher.csproj" />
+    <ProjectReference Include="../../src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <ProjectReference Include="../../src/Babelstone.Engine.Avro/Babelstone.Engine.Avro.csproj" />
+    <ProjectReference Include="../../src/Babelstone.EventStore/Babelstone.EventStore.csproj" />
+    <ProjectReference Include="../../src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />
+    <ProjectReference Include="../../src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
+  </ItemGroup>
+</Project>

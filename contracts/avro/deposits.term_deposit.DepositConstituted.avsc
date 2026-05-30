@@ -1,0 +1,17 @@
+{
+  "type": "record",
+  "namespace": "deposits.term_deposit",
+  "name": "DepositConstituted",
+  "doc": "The deposit is opened: principal, the rate-sheet-resolved TAN, and the AT_MATURITY schedule fixed at constitution. Business payload only (ADR-IC-002 §P5); CloudEvents envelope rides in Kafka headers, NOT here. No PII (ADR-PC-004 §P2).",
+  "fields": [
+    { "name": "deposit_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "DepositId (Guid)." },
+    { "name": "principal_cents", "type": "long", "doc": "Principal as integer EUR cents (Money.Cents, ADR-PC-010 §P1)." },
+    { "name": "tan_basis_points", "type": "int", "doc": "Annual nominal rate (TAN) in basis points, resolved from the rate sheet at constitution." },
+    { "name": "rate_sheet_version_id", "type": "string", "doc": "The pinned rate-sheet version the TAN was resolved from." },
+    { "name": "term_days", "type": "int", "doc": "Term length in days." },
+    { "name": "start_date", "type": { "type": "int", "logicalType": "date" }, "doc": "StartDate (DateOnly) as days since epoch." },
+    { "name": "maturity_date", "type": { "type": "int", "logicalType": "date" }, "doc": "MaturityDate (DateOnly) as days since epoch." },
+    { "name": "interest_variant", "type": "string", "doc": "Interest variant discriminator (e.g. AT_MATURITY)." },
+    { "name": "auto_renewal_policy", "type": "string", "doc": "Auto-renewal policy discriminator." }
+  ]
+}
