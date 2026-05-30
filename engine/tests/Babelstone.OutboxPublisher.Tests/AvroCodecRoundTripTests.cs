@@ -20,7 +20,7 @@ public sealed class AvroCodecRoundTripTests
         public int ResolveSchemaId(string eventType) => 1;
     }
 
-    private static TermDepositAvroSerializer NewSerializer()
+    private static AvroEventSerializer NewSerializer()
         => new(new AvroSchemaCatalog(), new StubSchemaIdResolver());
 
     [Fact]
@@ -100,7 +100,8 @@ public sealed class AvroCodecRoundTripTests
     {
         var serializer = NewSerializer();
         var ex = Assert.Throws<InvalidOperationException>(() => serializer.Encode(new UnknownEvent()));
-        Assert.Contains("No Avro mapping", ex.Message);
+        Assert.Contains("No Avro schema catalogued", ex.Message);
+        Assert.Contains(nameof(UnknownEvent), ex.Message);
     }
 
     private sealed record UnknownEvent : DomainEvent;

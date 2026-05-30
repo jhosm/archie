@@ -63,7 +63,7 @@ public sealed class OutboxToRedpandaIntegrationTests : IAsyncLifetime
         // --- Arrange: Avro codec registered against the Redpanda Schema Registry. ---
         var catalog = new AvroSchemaCatalog();
         using var schemaIds = ConfluentSchemaIdResolver.Create(catalog, _redpanda.SchemaRegistryUrl, registerIfAbsent: true);
-        var serializer = new TermDepositAvroSerializer(catalog, schemaIds);
+        var serializer = new AvroEventSerializer(catalog, schemaIds);
 
         // --- Arrange: durable runtime over real PostgreSQL with the term-deposit handlers. ---
         var store = new PostgresEventStore(ConnectionString);

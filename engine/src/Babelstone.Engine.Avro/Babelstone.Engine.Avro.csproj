@@ -5,37 +5,30 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The contracts/avro/*.avsc files are the single source of the schemas; embed them
-         (with a deterministic LogicalName) so a deploy carries its own schemas, the same
-         posture as the embedded migration SQL resources. They live at repo root,
-         outside this project dir, hence the explicit relative path + LogicalName. -->
-    <EmbeddedResource Include="../../../contracts/avro/deposits.term_deposit.DepositConstituted.avsc"
-                      LogicalName="Babelstone.Engine.Avro.contracts.avro.deposits.term_deposit.DepositConstituted.avsc" />
-    <EmbeddedResource Include="../../../contracts/avro/deposits.term_deposit.InterestAccrued.avsc"
-                      LogicalName="Babelstone.Engine.Avro.contracts.avro.deposits.term_deposit.InterestAccrued.avsc" />
-    <EmbeddedResource Include="../../../contracts/avro/deposits.term_deposit.WithholdingApplied.avsc"
-                      LogicalName="Babelstone.Engine.Avro.contracts.avro.deposits.term_deposit.WithholdingApplied.avsc" />
-    <EmbeddedResource Include="../../../contracts/avro/deposits.term_deposit.DepositMatured.avsc"
-                      LogicalName="Babelstone.Engine.Avro.contracts.avro.deposits.term_deposit.DepositMatured.avsc" />
+    <!-- The contracts/avro/*.avsc are the single governed source (ADR-IC-002); embed ALL of
+         them (a glob — a new family's .avsc needs no csproj edit) so a deploy carries its own
+         schemas. The catalog discovers them by resource name; the codec is family-agnostic
+         (ADR-PC-021 §D2), so no family is named here. -->
+    <EmbeddedResource Include="../../../contracts/avro/*.avsc"
+                      LogicalName="Babelstone.Engine.Avro.contracts.avro.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The real IEventSerializer (Epic E.4). It lives in its OWN assembly so the
-         Confluent/Avro surface stays out of Babelstone.Engine and Babelstone.EventStore
-         (event-store-skeleton §2.1/§5.4): Engine sees only the IEventSerializer seam,
-         EventStore stays Npgsql-only. Apache.Avro builds the GenericRecord + value bytes;
-         Confluent.SchemaRegistry resolves the schema_id per subject. -->
+    <!-- The real IEventSerializer (Epic E.4) lives in its OWN assembly so the Confluent/Avro
+         surface stays out of Babelstone.Engine and Babelstone.EventStore
+         (event-store-skeleton §2.1/§5.4): Engine sees only the IEventSerializer seam, EventStore
+         stays Npgsql-only. Apache.Avro builds the GenericRecord + value bytes; Confluent.SchemaRegistry
+         resolves the schema_id per subject. -->
     <PackageReference Include="Apache.Avro" />
     <PackageReference Include="Confluent.SchemaRegistry" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The IEventSerializer / DomainEvent seam (Codec.cs) and the term-deposit event
-         records this codec maps explicitly. The family reference is deliberate: this
-         codec is term-deposit-aware (the explicit per-event GenericRecord build, no
-         fragile reflection). A second family would add its own codec or extend this one. -->
+    <!-- ONLY the generic seam (Babelstone.Engine: IEventSerializer / DomainEvent) and Money
+         (Babelstone.FinancialTypes). NO family reference (ADR-PC-021 §D2/§P2): the codec binds
+         any event's constructor parameters to its .avsc fields by convention — adding a family is
+         adding its .avsc, not a serializer. -->
     <ProjectReference Include="../Babelstone.Engine/Babelstone.Engine.csproj" />
     <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
-    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
   </ItemGroup>
 </Project>

@@ -4,62 +4,89 @@ using Avro;
 namespace Babelstone.Engine.Avro;
 
 /// <summary>
-/// The parsed Avro schemas for the term-deposit events, keyed by stored event_type
-/// (e.g. "term_deposit.DepositConstituted"), plus the derived Schema Registry subject
-/// (ADR-IC-002 §P1: fully-qualified-name + "-value"). The .avsc files in contracts/avro
-/// are the single source — they are embedded into this assembly as resources so a deploy
-/// carries its own schemas (the same posture as the embedded migration SQL resources).
+/// The Avro schemas for the engine's emitted events, discovered from the embedded
+/// <c>contracts/avro/*.avsc</c> — FAMILY-AGNOSTIC (ADR-PC-021 §D2): no family is named here.
+/// Each schema yields a catalogued entry keyed both by the stored <c>event_type</c> (derived
+/// from the Avro namespace — <c>{aggregate_type}.{Name}</c>) and by the Avro record name
+/// (== the CLR event-type name), plus the Schema-Registry subject (ADR-IC-002 §P1:
+/// fully-qualified-name + <c>-value</c>). The <c>.avsc</c> in <c>contracts/avro</c> are the
+/// single governed source and are embedded so a deploy carries its own schemas. Adding a
+/// family is adding its <c>.avsc</c> — nothing in this catalog changes.
 /// </summary>
 public sealed class AvroSchemaCatalog
 {
-    // The four AT_MATURITY term-deposit events (E.1). The map is event_type → avsc resource
-    // base name. The Avro namespace is fixed at "deposits.term_deposit" (ADR-IC-002 §P1);
-    // the registry subject is "<namespace>.<Name>-value".
-    private static readonly IReadOnlyList<(string EventType, string Avsc)> Events =
-    [
-        ("term_deposit.DepositConstituted", "deposits.term_deposit.DepositConstituted.avsc"),
-        ("term_deposit.InterestAccrued", "deposits.term_deposit.InterestAccrued.avsc"),
-        ("term_deposit.WithholdingApplied", "deposits.term_deposit.WithholdingApplied.avsc"),
-        ("term_deposit.DepositMatured", "deposits.term_deposit.DepositMatured.avsc"),
-    ];
-
     private readonly IReadOnlyDictionary<string, AvroSchemaEntry> _byEventType;
+    private readonly IReadOnlyDictionary<string, AvroSchemaEntry> _byRecordName;
 
     public AvroSchemaCatalog()
     {
         var assembly = typeof(AvroSchemaCatalog).Assembly;
         var byEventType = new Dictionary<string, AvroSchemaEntry>(StringComparer.Ordinal);
-        foreach (var (eventType, avsc) in Events)
+        var byRecordName = new Dictionary<string, AvroSchemaEntry>(StringComparer.Ordinal);
+
+        foreach (var resourceName in assembly.GetManifestResourceNames())
         {
-            var json = ReadResource(assembly, avsc);
+            if (!resourceName.EndsWith(".avsc", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var json = ReadResource(assembly, resourceName);
             var schema = (RecordSchema)Schema.Parse(json);
-            // The registry subject derives from the fully-qualified name (ADR-IC-002 §P1).
-            var subject = $"{schema.Fullname}-value";
-            byEventType[eventType] = new AvroSchemaEntry(eventType, subject, schema, json);
+            var eventType = DeriveEventType(schema);
+            var entry = new AvroSchemaEntry(eventType, $"{schema.Fullname}-value", schema, json);
+
+            if (!byEventType.TryAdd(eventType, entry))
+            {
+                throw new InvalidOperationException(
+                    $"Two embedded .avsc map to the same event_type '{eventType}'.");
+            }
+
+            if (!byRecordName.TryAdd(schema.Name, entry))
+            {
+                throw new InvalidOperationException(
+                    $"Two embedded .avsc share the Avro record name '{schema.Name}' (event names must be unique).");
+            }
         }
 
         _byEventType = byEventType;
+        _byRecordName = byRecordName;
     }
 
-    /// <summary>Every catalogued entry (event_type → subject/schema). Used to register all schemas up front.</summary>
+    /// <summary>Every catalogued entry (used to register/look up all schema_ids up front).</summary>
     public IReadOnlyCollection<AvroSchemaEntry> Entries => (IReadOnlyCollection<AvroSchemaEntry>)_byEventType.Values;
 
-    /// <summary>Resolves the schema entry for a stored event_type. Throws — fail loud — on an unknown type.</summary>
+    /// <summary>Resolves by stored <c>event_type</c> (the load path). Fail-loud on an unknown type.</summary>
     public AvroSchemaEntry ForEventType(string eventType)
         => _byEventType.TryGetValue(eventType, out var entry)
             ? entry
             : throw new InvalidOperationException(
-                $"No Avro schema catalogued for event type '{eventType}'. " +
-                "Add the .avsc to contracts/avro and register it in AvroSchemaCatalog.");
+                $"No Avro schema catalogued for event type '{eventType}'. Add its .avsc to contracts/avro.");
 
-    private static string ReadResource(Assembly assembly, string avscFileName)
+    /// <summary>
+    /// Resolves by the CLR event-type name, which equals the Avro record <c>name</c> (the codec's
+    /// encode/decode entry point — it has a CLR instance/type, not the event_type). Fail-loud.
+    /// </summary>
+    public AvroSchemaEntry ForRecordName(string recordName)
+        => _byRecordName.TryGetValue(recordName, out var entry)
+            ? entry
+            : throw new InvalidOperationException(
+                $"No Avro schema catalogued for event '{recordName}'. Its .avsc record name must equal the event-type name.");
+
+    // event_type = "{aggregate_type}.{Name}". The Avro namespace is "{domain}.{aggregate_type}"
+    // (ADR-IC-002 §P1) but the engine's stored event_type omits the domain, so the aggregate_type
+    // is the last namespace segment (e.g. "deposits.term_deposit" → "term_deposit").
+    private static string DeriveEventType(RecordSchema schema)
     {
-        // Embedded as "<RootNamespace>.<file>" — RootNamespace is Babelstone.Engine.Avro.
-        var resourceName = $"Babelstone.Engine.Avro.contracts.avro.{avscFileName}";
+        var ns = schema.Namespace ?? string.Empty;
+        var aggregateType = ns.Contains('.', StringComparison.Ordinal) ? ns[(ns.LastIndexOf('.') + 1)..] : ns;
+        return aggregateType.Length == 0 ? schema.Name : $"{aggregateType}.{schema.Name}";
+    }
+
+    private static string ReadResource(Assembly assembly, string resourceName)
+    {
         using var stream = assembly.GetManifestResourceStream(resourceName)
-            ?? throw new InvalidOperationException(
-                $"Embedded Avro schema resource '{resourceName}' not found. " +
-                $"Available: {string.Join(", ", assembly.GetManifestResourceNames())}");
+            ?? throw new InvalidOperationException($"Embedded Avro schema resource '{resourceName}' not found.");
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
