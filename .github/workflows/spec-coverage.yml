@@ -22,6 +22,8 @@ permissions:
 jobs:
   check:
     # Authoritative per-push gate. Runs on PRs and on manual dispatch.
+    # Named for a clean required-check label in the main-protect ruleset (Q.7, archie-j72w).
+    name: spec-coverage
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:

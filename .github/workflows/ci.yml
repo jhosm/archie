@@ -246,3 +246,45 @@ jobs:
           plantuml -version
       - name: Diagram render-check (each committed .puml renders to its SVG)
         run: bash .github/scripts/diagram-render-check.sh
+
+  gate:
+    # Always-run aggregator (Q.7, archie-j72w). The per-subtree jobs above are
+    # path-scoped (ADR-PC-019 §P1) — they SKIP on unrelated PRs. GitHub branch
+    # rulesets treat a skipped required check as unsatisfied, so requiring those jobs
+    # directly would block every PR that doesn't touch their path. Instead the ruleset
+    # requires this ONE always-present job, which passes iff every job that *did* run
+    # succeeded. Treats `skipped` (path not touched) and `success` as OK; fails on
+    # `failure` or `cancelled`. The pending fitness gates — DETERMINISM_GATE (A.7,
+    # archie-k03q), acceptance gates (L.3), no-PII/emit-contract (G.6) — join `needs`
+    # as they land, so coverage grows without re-touching the ruleset.
+    name: CI gate
+    needs:
+      - changes
+      - engine
+      - pack-validate
+      - contracts
+      - orchestrator
+      - acl
+      - mcp-server
+      - notification
+      - product-configs
+      - packs
+      - rate-sheets
+      - infra
+      - docs
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every triggered CI job to have passed (skipped is OK)
+        env:
+          # Controlled enum values (success/failure/skipped/cancelled) — safe to expand.
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "upstream job results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::a required CI job did not pass (result=$r)"; exit 1 ;;
+            esac
+          done
+          echo "all triggered CI jobs passed"
