@@ -1,0 +1,48 @@
+# Dependency audit / SCA (ADR-IC-014; bd Q.8 archie-lrzc). Weekly update PRs plus
+# vulnerability alerts across every package ecosystem in the monorepo, AND the GitHub
+# Actions the workflows pin — closing the unpinned/compromised-action supply-chain gap
+# that nothing else in the pipeline watched. Report-only posture: Dependabot opens PRs
+# and raises alerts; whether they block merge is the maintainer's call (required-check
+# wiring is Q.7, archie-j72w). Alerts surface in the repo's Security tab alongside the
+# native secret-scanning and CodeQL code-scanning findings (all free on a public repo —
+# ADR-IC-014 §F1).
+version: 2
+updates:
+  # C# — the engine solution and its project tree (recursive .csproj discovery under the
+  # directory). Add the in-house estate-service roots (orchestrator/acl/notification) here
+  # as their .csproj trees land (ADR-IC-013).
+  - package-ecosystem: nuget
+    directory: /engine
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      engine-nuget:
+        patterns: ["*"]
+
+  # Go — the pack-validate validator module (ADR-PC-006).
+  - package-ecosystem: gomod
+    directory: /pack-validate
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      pack-validate-gomod:
+        patterns: ["*"]
+
+  # The workflows' own pinned GitHub Actions — supply-chain hygiene for the CI itself.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Python (mcp-server) lands when it gains a pyproject/requirements file — a visible,
+  # intended Planned hole until then (ADR-IC-014):
+  # - package-ecosystem: pip
+  #   directory: /mcp-server
+  #   schedule:
+  #     interval: weekly

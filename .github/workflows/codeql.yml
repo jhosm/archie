@@ -1,0 +1,71 @@
+name: CodeQL
+
+# SAST for the multi-language estate (ADR-IC-014; bd Q.9 archie-2t16.7). The repo is
+# PUBLIC, so CodeQL code-scanning is free: results upload to the Security tab and annotate
+# PRs (the GHAS-equivalent experience comes free with public visibility — ADR-IC-014 §F1).
+# REPORT-ONLY: no `fail-on`, not a required check yet — required-check gating is Q.7
+# (archie-j72w).
+#
+# Named high-value findings for this estate (ADR-IC-014 §Context): YamlDotNet
+# insecure-deserialization sinks, and crypto-misuse around the OpenBao / crypto-shredding
+# boundary (ADR-PC-004) — both in CodeQL's C# query packs.
+#
+# Path-scoped per ADR-PC-019 §P1: only fires when scannable source (or this file) changes,
+# never on docs-only PRs. A weekly scheduled full scan backstops coverage.
+
+on:
+  push:
+    branches: [main]
+    paths: &scan_paths
+      - 'engine/**'
+      - 'families/**'
+      - 'orchestrator/**'
+      - 'acl/**'
+      - 'mcp-server/**'
+      - 'notification/**'
+      - 'pack-validate/**'
+      - '.github/workflows/codeql.yml'
+  pull_request:
+    paths: *scan_paths
+  schedule:
+    - cron: "0 4 * * 1"   # Mondays 04:00 UTC (after the 03:00 mutation run)
+
+permissions:
+  contents: read
+  security-events: write   # upload SARIF to the Security tab (free on a public repo)
+  actions: read            # codeql-action reads the workflow-run API for its status report
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # C# — buildless extraction: no .NET SDK pin and no .slnx build in this lane
+          # (ADR-IC-014 residual-risk note accepts the small dataflow trade-off for the
+          # report-only baseline; a leg can switch to a mise-pinned `manual` build later).
+          - language: csharp
+            build-mode: none
+          # Go — autobuild the single pack-validate module.
+          - language: go
+            build-mode: autobuild
+          # Python lands when mcp-server/ gains .py source (ADR-IC-014 — a visible,
+          # intended Planned hole until then):
+          # - language: python
+          #   build-mode: none
+    steps:
+      - uses: actions/checkout@v6
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - name: Autobuild
+        if: matrix.build-mode == 'autobuild'
+        uses: github/codeql-action/autobuild@v3
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
