@@ -328,6 +328,20 @@ D1, D2, D3 and §P1–§P11 remain binding as written. This amendment is appende
 
 ---
 
+## Amendment — 2026-05-30: the PR-body "ADRs touched/honoured" gate exempts Dependabot PRs
+
+Wiring Dependabot for the CI/in-house estate (the github-actions group bump, PR #44) surfaced a gap D3 did not foresee: the **PR-body "ADRs touched/honoured" gate** (`pr-body-adrs` in [`.github/workflows/adr-governance.yml`](../../../../.github/workflows/adr-governance.yml)) failed an automated dependency-bump PR. The gate exists "so review starts from the decision, not the diff" — a property of *human, design-bearing* PRs. A bot dependency bump makes no ADR-governed design decision, and its body is auto-generated and cannot carry the section. Applying the gate to it produces a false drift signal, not a real one, and (worse) invites the habit of pasting a hollow ADR section to silence the check — eroding the gate's meaning for the PRs it does govern.
+
+### A4 · Dependabot PRs are exempt from the PR-body gate; the other two §D3 mechanisms are not
+
+The `pr-body-adrs` step short-circuits (`exit 0`) when the PR author is `dependabot[bot]` or `dependabot-preview[bot]`, keying off `github.event.pull_request.user.login` passed via `env:` (injection-safe, per the workflow's own header note). This narrows **only** the PR-body half of D3. The **§D5 ADR-immutability hook** (`adr-immutability`) and the **§P6 coverage checker** still run on every PR including bot ones — a bot bump that somehow touched an Accepted `## Decision` body would still hard-fail, so the immutability guarantee is unweakened. The exemption is scoped to the one mechanism whose premise (a human authoring a design rationale) the bot case structurally fails.
+
+### A5 · This amends the decision; it does not supersede this ADR
+
+D1, D2, D3 and §P1–§P11 remain binding as written. D3's requirement that PR descriptions name the ADRs they implement/amend/honour holds in full for every human-authored PR; this amendment carves out only machine-authored dependency bumps, which carry no decision to name. No row in the [commitment catalogue](./commitment-catalogue.md) changes; the PR-body gate's scope is not a Verifiable commitment.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-019](./ADR-PC-019-repository-strategy-monorepo.md) — the single tree this toolchain and governance run on; its atomic-change property lets a contract + consumers + commitment land together.
