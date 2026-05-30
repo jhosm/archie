@@ -100,7 +100,7 @@ The pure-fold project references only `Babelstone.Engine` + `Babelstone.Financia
 - **D2 — Family-agnostic engine.** Deciders depend on generic engine ports — `AggregateRuntime<TState>`, `IRateSheetStore`, the new `ISettlementPort` — and a resolved `VerifiedPack` (the pinned pack, loaded host-side via `IPackStore`; per-instance pinning per [ADR-PC-009](./ADR-PC-009-per-instance-version-pinning.md)). The dependency arrow is **family → engine**, never engine → family. Adding a family is **zero generic-engine diff** — the `FamilyModuleLoader` plugin model, extended from folds to deciders.
 - **D3 — Pure/impure split inside the family.** The pure folds (`event → state`, no I/O, structurally DB-unreachable — the existing narrow `Babelstone.Families.<X>` project) and the impure decider (`command → events`, orchestrates I/O — the new `.Application` project) are **separate projects** in the same family subtree. The fold project keeps its analyzer-backed purity guarantee; the decider is the I/O-orchestrating layer and is reviewed as such (it is *outside* the handler-purity analyzers by design).
 - **D4 — Composition at the edge.** Which families a deployment runs, and the wiring of the runtime + ports, is the **host/composition-root's** job (the engine process, or — until it exists — an integration test), via discovery; generic code never references a family to compose it.
-- **D5 — Scope: the layering, not a one-example pipeline.** This ADR commits to D1–D4. It deliberately does **not** freeze a generic command-pipeline shape on a single decider. Three refinements are deferred: the generic `ConstitutionPipeline` extraction to the second decider (rule-of-three; bd `babelstone-osv6`); the [ADR-PC-008 §S2](./ADR-PC-008-rate-sheet-storage-and-deploy-api.md) in-transaction resolve+append (bd `babelstone-3k10`); and the external HTTP boundary, deferred to Epic E.5 (the decider is in-process for E.3, driven by the integration test as composition root).
+- **D5 — Scope: the layering, not a one-example pipeline.** This ADR commits to D1–D4. It deliberately does **not** freeze a generic command-pipeline shape on a single decider. Three refinements are deferred: the generic `ConstitutionPipeline` extraction to the second decider (rule-of-three; bd `babelstone-osv6`); the [ADR-PC-008 §S2](./ADR-PC-008-rate-sheet-storage-and-deploy-api.md) in-transaction resolve+append (bd `babelstone-3k10`); and the external HTTP boundary, deferred to Epic E.5 (the decider is in-process for E.3, driven by the integration test as composition root — **realized in E.5**, see the 2026-05-30 revision below).
 
 **Rejected: a shared `Babelstone.Application`** — an open/closed violation edited on every family. **Rejected: the decider in the engine** — the spine would name families and diff per family. **Rejected: the decider in the pure family project** — dissolves the fold-purity guarantee by dragging impure deps onto it.
 
@@ -158,7 +158,7 @@ The choreography common to deciders is written as separable steps so the generic
 **Residual risks:**
 
 - **Premature-abstraction risk on the pipeline.** Generalising the choreography from one AT_MATURITY example could freeze assumptions that PERIODIC/ADVANCE lifecycles (Epic F) break. Mitigation: the deferral in D5/§P5 — extract on the second decider, with evidence, not on the first.
-- **The engine→family no-edge rule is a convention until gated.** A stray `ProjectReference` from the spine to a family would silently erode family-agnosticism. Mitigation: the `ENGINE_FAMILY_AGNOSTIC` fitness function below makes it a mechanical check (Planned).
+- **The engine→family no-edge rule is a convention until gated.** A stray `ProjectReference` from the spine to a family would silently erode family-agnosticism. Mitigation: the `ENGINE_FAMILY_AGNOSTIC` fitness function below makes it a mechanical check (Live).
 
 ---
 
@@ -166,9 +166,9 @@ The choreography common to deciders is written as separable steps so the generic
 
 | # | Commitment (with §-anchor) | Gate (pyramid level) | Test ID | Status |
 |---|---|---|---|---|
-| 1 | The generic engine spine carries no reference to any `families/**` project — the `family → engine` arrow is one-way (§D2, §P2). | architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC` | Planned |
+| 1 | The generic engine spine carries no reference to any `families/**` project — the `family → engine` arrow is one-way (§D2, §P2). | architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC` | Live |
 
-Related: this ADR's family-agnosticism is the family-level cousin of the variant-level [`ZERO_ENGINE_DIFF_PER_VARIANT`](./commitment-catalogue.md) (adding a *variant* is zero engine diff; adding a *family* is zero *generic*-engine diff). `ENGINE_FAMILY_AGNOSTIC` is `Planned` (no gate wired in E.3; the dependency assertion is a follow-up) — a deliberate, listed hole, promoted to the [commitment catalogue](./commitment-catalogue.md) when the gate lands.
+Related: this ADR's family-agnosticism is the family-level cousin of the variant-level [`ZERO_ENGINE_DIFF_PER_VARIANT`](./commitment-catalogue.md) (adding a *variant* is zero engine diff; adding a *family* is zero *generic*-engine diff). `ENGINE_FAMILY_AGNOSTIC` is now `Live` — the dependency assertion (`EngineFamilyAgnosticTests` in `Babelstone.Engine.Tests`) parses the six spine projects' `.csproj` and fails if any references `families/**`; it is promoted to the [commitment catalogue](./commitment-catalogue.md) (row 12) as the single source of truth for its status.
 
 ---
 
@@ -185,3 +185,4 @@ Related: this ADR's family-agnosticism is the family-level cousin of the variant
 ---
 
 *Proposed 2026-05-30 by jhosm — pending acceptance.*
+*Revised 2026-05-30 (E.5): the §D5-deferred external HTTP boundary is realized as `Babelstone.Engine.Api` — a minimal-API host (`POST /v1/deposits` constitute, `GET /v1/deposits/{id}` deposit_position, `POST /v1/deposits/{id}/maturity`) wrapping `TermDepositConstitutionService`, mirroring the `RateSheets.Api` precedent ([ADR-PC-008](./ADR-PC-008-rate-sheet-storage-and-deploy-api.md) Amendment A1). It is the engine boundary the Python MCP server ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md)) calls. Authn/authz (OAuth 2.1 + Kong per ADR-IC-010) is DEFERRED — the E.5 host is the auth-deferred dev boundary; the secured edge is Epic J (bd `babelstone-e50n`).*

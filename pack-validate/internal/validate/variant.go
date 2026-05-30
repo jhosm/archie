@@ -2,12 +2,40 @@ package validate
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"cuelang.org/go/cue"
 	cueyaml "cuelang.org/go/encoding/yaml"
 )
+
+// maxVariantBytes caps a variant document before it reaches the CUE front-end.
+// CUE's parse + build cost is superlinear in node count, so an unbounded
+// variant is a denial-of-service vector — and the variant is the
+// non-engineer-authored input pack-validate exists to police. Real variants
+// are a few KB (the largest product-config in the repo is ~2 KB); 1 MiB is
+// generous headroom yet turns a pathological large input into a clean, fast
+// rejection rather than a hang (ADR-PC-007 §169).
+const maxVariantBytes = 1 << 20 // 1 MiB
+
+// readVariantBounded reads up to maxVariantBytes from path, rejecting anything
+// larger before it can reach the CUE front-end.
+func readVariantBounded(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	src, err := io.ReadAll(io.LimitReader(f, maxVariantBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(src)) > maxVariantBytes {
+		return nil, fmt.Errorf("variant %s exceeds %d-byte limit (pathological or non-variant input rejected)", filepath.Base(path), maxVariantBytes)
+	}
+	return src, nil
+}
 
 // variantMeta is the identity envelope peeked before schema resolution: a
 // variant names the family schema and pack it was authored against
@@ -21,12 +49,19 @@ type variantMeta struct {
 // peekVariant extracts the identity envelope without a schema — used to resolve
 // which family schema to load. A YAML that does not parse is reported as a
 // depth-1 malformed diagnostic by the caller; here it is a plain error.
-func peekVariant(ctx *cue.Context, path string) (variantMeta, error) {
-	var m variantMeta
-	src, err := os.ReadFile(path)
+func peekVariant(ctx *cue.Context, path string) (m variantMeta, err error) {
+	src, err := readVariantBounded(path)
 	if err != nil {
 		return m, err
 	}
+	// A malformed document that trips a panic deep in the CUE YAML/build path is
+	// turned into a clean returned error (the caller maps it to a depth-1
+	// malformed diagnostic) rather than crashing the binary.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("malformed variant rejected (internal parse failure: %v)", r)
+		}
+	}()
 	file, err := cueyaml.Extract(filepath.Base(path), src)
 	if err != nil {
 		return m, err

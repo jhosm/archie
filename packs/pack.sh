@@ -27,18 +27,52 @@ readonly ROOT
 readonly CONTRACTS_CUE="$ROOT/contracts/cue"
 readonly PACK_SCHEMA="$CONTRACTS_CUE/pack/pack.cue"
 
-# Relative-path → root-definition map for every data file in a pack. Same for
-# all packs (the format is fixed). Plain string list for bash 3.2 portability.
-readonly DATA_FILES="
+# Relative-path → root-definition map for the FORMAT-FIXED data files every pack
+# carries at a known name (ADR-PC-007 §P1). The rate-sheet-ref files are NOT
+# listed here: they are a per-pack set the manifest enumerates, so we DERIVE them
+# from pack.yaml at validate time (see manifest_data_files) — a pack that declares
+# an extra rate-sheet-ref then gets covered automatically, never silently skipped.
+# Plain string list for bash 3.2 portability.
+readonly FIXED_DATA_FILES="
 pack.yaml|#Manifest
 primitives/day-count.yaml|#DayCounts
 primitives/withholding.yaml|#Withholding
 primitives/fgd.yaml|#Fgd
 primitives/reporting.yaml|#Reporting
 parameters/constants.yaml|#Parameters
-rate-sheet-refs/deposits-pt.yaml|#RateSheetRefs
 test-corpus/canonical-instances.yaml|#CanonicalInstances
 "
+
+# The engine-GENERATED corpus file (ADR-PC-007 §P5): not hand-authored, so it has
+# no input-side root def and is handled separately (see validate_staging). Excluded
+# from the on-disk coverage sweep so its presence is not flagged as uncovered.
+readonly GENERATED_FILES="
+test-corpus/expected-events.yaml
+"
+
+# Build the full relative-path → root-def map for a staged pack: the format-fixed
+# files PLUS one rate-sheet-ref file per name the MANIFEST declares in its
+# `rate_sheet_refs` array. Emitted on stdout as `rel|#Def` lines so every declared
+# file is enumerated from the pack's own manifest, not a hardcoded list.
+manifest_data_files() {
+	local staging="$1" name refs
+	printf '%s' "$FIXED_DATA_FILES"
+	# Derive the per-pack rate-sheet-ref files from the manifest. `cue export`
+	# (not yq) keeps us on the pinned toolchain; --out text + strings.Join emits
+	# one bare name per line. An empty list yields no extra lines.
+	if ! refs="$(cue export "$staging/pack.yaml" \
+		-e 'strings.Join(rate_sheet_refs, "\n")' --out text 2>/tmp/pack-cue-err)"; then
+		echo "pack.sh: cannot read rate_sheet_refs from manifest:" >&2
+		sed 's/^/    /' /tmp/pack-cue-err >&2
+		exit 1
+	fi
+	while IFS= read -r name; do
+		[ -n "$name" ] || continue
+		echo "rate-sheet-refs/$name.yaml|#RateSheetRefs"
+	done <<-EOF
+		$refs
+	EOF
+}
 
 die() {
 	echo "pack.sh: $*" >&2
@@ -58,11 +92,19 @@ stage() {
 }
 
 validate_staging() {
-	local staging="$1" fail=0 entry rel def
+	local staging="$1" fail=0 entry rel def data_files covered
 
-	for entry in $DATA_FILES; do
+	# Enumerate every file-to-validate from the manifest (format-fixed set +
+	# manifest-declared rate-sheet-refs) so no declared file is silently skipped.
+	data_files="$(manifest_data_files "$staging")"
+
+	# Track what we cover so the on-disk sweep below can flag any data .yaml that
+	# is present but matched no validation entry (an undeclared / orphan file).
+	covered=""
+	for entry in $data_files; do
 		rel="${entry%%|*}"
 		def="${entry##*|}"
+		covered="$covered $rel"
 		[ -f "$staging/$rel" ] || die "missing required pack file: $rel"
 		if cue vet -d "$def" "$staging/$rel" "$PACK_SCHEMA" 2>/tmp/pack-cue-err; then
 			echo "  ok ($def)  $rel"
@@ -112,6 +154,24 @@ validate_staging() {
 			echo "  note          depth-5 corpus present ($n) — depth-5 sim is C.3, not run here"
 		fi
 	fi
+
+	# No-silent-gap sweep: every data .yaml present on disk must have been in the
+	# validation set above (covered) or be an engine-generated file handled
+	# specially. A primitive/parameter/rate-sheet/corpus file that is present but
+	# matched nothing means the pack carries data NO schema vetted — fail loud
+	# (ADR-PC-007), rather than letting it ship unvalidated. `schemas/` is the
+	# staged family schema (compiled, not vetted as pack data) and is excluded.
+	local found
+	while IFS= read -r found; do
+		found="${found#"$staging"/}"
+		case " $covered " in *" $found "*) continue ;; esac
+		case "$GENERATED_FILES" in *"$found"*) continue ;; esac
+		echo "  FAIL          uncovered pack data file (declared by no manifest/format entry): $found"
+		fail=1
+	done <<-EOF
+		$(find "$staging" -type f -name '*.yaml' ! -path "$staging/schemas/*" | LC_ALL=C sort)
+	EOF
+	[ "$fail" -eq 0 ] && echo "  ok            no-silent-gap sweep: all data .yaml covered"
 
 	[ "$fail" -eq 0 ] || die "validation failed"
 }

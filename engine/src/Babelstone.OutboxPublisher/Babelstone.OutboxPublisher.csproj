@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.OutboxPublisher</RootNamespace>
+    <AssemblyName>Babelstone.OutboxPublisher</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The IC-004 reader half (event-store-skeleton §3/§5.4): the ONLY assembly that
+         touches both PostgreSQL (the outbox, via Npgsql) and Redpanda (Confluent.Kafka).
+         The engine's write half does not know Redpanda exists. Confluent deps stay HERE
+         (and in Babelstone.Engine.Avro) — never in Babelstone.EventStore. -->
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Confluent.Kafka" />
+    <PackageReference Include="Confluent.SchemaRegistry" />
+    <!-- BackgroundService/IHostedService for the §5.1 in-process poll loop. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reads OutboxRow / OutboxStatus from the event store (no Engine dependency: the
+         relay is downstream of the write path, it only drains the table). -->
+    <ProjectReference Include="../Babelstone.EventStore/Babelstone.EventStore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The wire-format framing + reverse-DNS ce_type helpers are internal; the test project
+         asserts them directly without widening the public surface. -->
+    <InternalsVisibleTo Include="Babelstone.OutboxPublisher.Tests" />
+  </ItemGroup>
+</Project>

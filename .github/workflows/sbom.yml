@@ -1,0 +1,106 @@
+name: SBOM
+
+# Software Bill of Materials + dependency vulnerability scan for the .NET solution
+# (ADR-IC-014 supply-chain posture; bd Q.4 archie-2t16.9 — SBOM + scan leg). This is the
+# SOURCE-dependency SBOM for engine/Babelstone.slnx: a machine-readable CycloneDX document
+# enumerating the resolved transitive NuGet graph (component names, versions, licenses,
+# and content hashes), scanned for known vulnerabilities. It is the dependency-graph twin
+# of CodeQL's source SAST and Dependabot's update PRs — same Security-tab home, one
+# trust boundary (GitHub-hosted CI), per ADR-IC-014 §S2.
+#
+# Scope boundary (ADR-IC-014 §Decision): the *container image* SBOM + scan (Trivy over the
+# engine/Dockerfile output) is the other half of Q.4 and lands with the image build/push
+# task — this workflow covers the solution's dependency graph, not the runtime image layers.
+#
+# Path-scoped per ADR-PC-019 §P1 (mirrors codeql.yml): only fires when .NET source or this
+# file changes, never on docs-only PRs. A weekly scheduled run backstops coverage so a
+# newly-published advisory against an unchanged dependency is still surfaced.
+
+on:
+  push:
+    branches: [main]
+    paths: &sbom_paths
+      - 'engine/**'
+      - 'families/**'   # the term-deposit family projects build with the engine solution (Babelstone.slnx)
+      - '.github/workflows/sbom.yml'
+  pull_request:
+    paths: *sbom_paths
+  schedule:
+    - cron: "0 5 * * 1"   # Mondays 05:00 UTC (after the 04:00 CodeQL scheduled scan)
+
+permissions:
+  contents: read
+  security-events: write   # upload the grype SARIF to the Security tab (free on a public repo)
+
+jobs:
+  sbom-scan:
+    name: SBOM generate + vulnerability scan (.NET)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Pin the toolchain from mise.toml (single source of truth, ADR-PC-010 .NET 10 LTS),
+      # exactly as ci.yml does — no second SDK version pin in this YAML to drift from it.
+      - uses: jdx/mise-action@v4
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('engine/**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # Publish so the build output carries the fully-resolved transitive dependency
+      # closure (every restored NuGet assembly with its concrete version), which is what
+      # syft inventories. Scanning the published tree — not the bare repo — is what makes
+      # the SBOM capture transitive deps + hashes rather than only the top-level
+      # PackageReference set declared in the .csproj files.
+      - name: Restore + publish the solution (ADR-PC-010)
+        run: |
+          dotnet restore engine/Babelstone.slnx
+          dotnet publish engine/Babelstone.slnx \
+            --configuration Release --no-restore --nologo \
+            --output "$RUNNER_TEMP/publish"
+
+      # CycloneDX SBOM via syft (anchore/sbom-action). Inventories the published output:
+      # component names, versions, licenses, and content hashes. Uploaded as a workflow
+      # artifact so the document is downloadable for audit / DORA supply-chain evidence.
+      - name: Generate CycloneDX SBOM
+        id: sbom
+        uses: anchore/sbom-action@v0
+        with:
+          path: ${{ runner.temp }}/publish
+          format: cyclonedx-json
+          output-file: ${{ runner.temp }}/babelstone-engine.cdx.json
+          artifact-name: babelstone-engine-sbom.cdx.json
+          upload-artifact: true
+
+      # Scan the generated SBOM with grype (anchore/scan-action), severity-cutoff high
+      # (covers high AND critical). REPORT-ONLY baseline (fail-build: false), matching the
+      # CodeQL introduction posture (ADR-IC-014 §Consequences): a freshly-introduced scanner
+      # must not block merges on an UNTRIAGED baseline. grype CPE-matches the published .NET
+      # tree (runtime + framework assemblies), which is prone to false positives on version
+      # strings — confirmed here: `dotnet list package --vulnerable --include-transitive`
+      # (the authoritative NuGet/GitHub-advisory check) reports the solution CLEAN, while
+      # grype's first run flagged a high. Findings still upload to the Security tab (below)
+      # for triage. Flipping to fail-build: true is gated on (a) triaging this baseline to
+      # zero/suppressing CPE false positives and (b) wiring it into the §P1 required-check
+      # set — the Q.7 (archie-j72w) deliverable. Tracked as a follow-up bd issue.
+      - name: Scan SBOM for vulnerabilities (report-only baseline)
+        id: scan
+        uses: anchore/scan-action@v7
+        with:
+          sbom: ${{ runner.temp }}/babelstone-engine.cdx.json
+          severity-cutoff: high
+          fail-build: false
+          output-format: sarif
+
+      # Publish the grype findings to the Security tab so they share CodeQL's review
+      # surface (ADR-IC-014 §S2). `if: always()` so results upload even when the scan step
+      # failed the build — the whole point is to surface what failed it.
+      - name: Upload vulnerability findings to the Security tab
+        if: always() && steps.scan.outputs.sarif != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif }}
+          category: sbom-grype

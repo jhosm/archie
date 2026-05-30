@@ -2,7 +2,6 @@ package validate
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -30,9 +29,23 @@ type cueRun struct {
 // them, and partitions the resulting errors into depth 1 (structural) and
 // depth 2 (type/range). A schema that does not compile is a toolchain error
 // (returned as error), never a variant diagnostic.
-func loadAndUnify(schemaDir, variantPath string, fam Family) (*cueRun, error) {
+func loadAndUnify(schemaDir, variantPath string, fam Family) (r *cueRun, err error) {
 	ctx := cuecontext.New()
-	r := &cueRun{ctx: ctx}
+	r = &cueRun{ctx: ctx}
+
+	// A malformed variant that trips a panic deep in CUE's YAML/build/unify path
+	// becomes a clean depth-1 malformed diagnostic rather than crashing the
+	// binary (ADR-PC-007 §169: refuse unparseable input). Recover only rescues a
+	// non-toolchain parse blow-up; a legitimate toolchain error is still returned.
+	defer func() {
+		if rec := recover(); rec != nil {
+			r.diags1 = append(r.diags1, diag.Diagnostic{
+				Depth: diag.DepthSyntactic, Kind: diag.KindMalformed,
+				Message: fmt.Sprintf("variant rejected (internal parse failure: %v)", rec),
+			})
+			err = nil
+		}
+	}()
 
 	insts := load.Instances(fam.SchemaFiles, &load.Config{Dir: schemaDir})
 	if len(insts) == 0 {
@@ -53,7 +66,7 @@ func loadAndUnify(schemaDir, variantPath string, fam Family) (*cueRun, error) {
 		return nil, fmt.Errorf("root definition %s not found in family schema", fam.RootDef)
 	}
 
-	src, err := os.ReadFile(variantPath)
+	src, err := readVariantBounded(variantPath)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "namespace": "deposits.term_deposit",
+  "name": "DepositMatured",
+  "doc": "The deposit matures and pays out: TotalPayout = Principal + NetInterest. Business payload only (ADR-IC-002 §P5); no PII (ADR-PC-004 §P2).",
+  "fields": [
+    { "name": "principal_returned_cents", "type": "long", "doc": "PrincipalReturned as integer EUR cents (Money.Cents)." },
+    { "name": "net_interest_paid_cents", "type": "long", "doc": "NetInterestPaid as integer EUR cents (Money.Cents)." },
+    { "name": "total_payout_cents", "type": "long", "doc": "TotalPayout as integer EUR cents (Money.Cents)." },
+    { "name": "matured_on", "type": { "type": "int", "logicalType": "date" }, "doc": "MaturedOn (DateOnly) as days since epoch." }
+  ]
+}
