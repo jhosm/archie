@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Families.TermDeposit.Application</RootNamespace>
+    <AssemblyName>Babelstone.Families.TermDeposit.Application</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The term-deposit DECIDER (ADR-PC-021): the impure command-side layer that turns a
+         command into events. Unlike the pure-fold project (Babelstone.Families.TermDeposit,
+         which references only Engine + FinancialTypes so a fold cannot reach a DB), the
+         decider orchestrates I/O — it runs the financial-math kernel, resolves the rate
+         sheet + pack primitives, and appends through the runtime. The dependency arrow is
+         family→engine only; the engine never references back (ADR-PC-021 §D2/§P2). No
+         handler-purity analyser here by design (ADR-PC-021 §P3): this is the impure layer. -->
+    <ProjectReference Include="../Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.FinancialMath/Babelstone.FinancialMath.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.Packs/Babelstone.Packs.csproj" />
+  </ItemGroup>
+</Project>
