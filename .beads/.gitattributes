@@ -1,0 +1,18 @@
+# Beads passive exports — union-merge to eliminate spurious git conflicts.
+#
+# Dolt (synced via refs/dolt/data) is the source of truth; these JSONL files are
+# regenerated snapshots that bd re-exports on most git operations. Two divergent
+# regenerations of the same logical state otherwise collide under git's default
+# line merge (see the rate-sheet-merge incident, 2026-05-30).
+#
+# `merge=union` keeps both sides' lines with no conflict markers — the automation
+# of the beads FAQ's official "keep both lines" resolution. It is safe here because
+# each line is one complete JSON record (JSONL), hash-based issue IDs (archie-xxxx)
+# never collide across branches, and Dolt dedupes by ID so any transient duplicate
+# line self-heals on the next `bd dolt pull` / export. Do NOT hand-reconcile these
+# files; the authoritative data lives in Dolt, never in the export text.
+#
+# Refs: beads FAQ "How do I handle merge conflicts?"; docs/SYNC_CONCEPTS.md.
+issues.jsonl        merge=union
+interactions.jsonl  merge=union
+events.jsonl        merge=union
