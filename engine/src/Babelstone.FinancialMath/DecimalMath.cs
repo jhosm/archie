@@ -33,7 +33,12 @@ internal static class DecimalMath
         {
             if ((e & 1) == 1)
                 result *= factor;
+            // Stryker disable once all: e ≥ 0 throughout this loop, so >>>= is bit-identical
+            // to >>= here — the signed/unsigned shift mutant is provably equivalent.
             e >>= 1;
+            // Stryker disable once Equality: with e ≥ 0, the e > 0 guard differs from e >= 0
+            // only on the final iteration, whose extra squaring is discarded as the loop then
+            // exits; for the near-unity bases the kernel raises it cannot overflow — equivalent.
             if (e > 0)
                 factor *= factor;
         }

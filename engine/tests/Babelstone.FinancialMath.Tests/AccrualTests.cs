@@ -113,6 +113,17 @@ public class AccrualTests
     }
 
     [Fact]
+    public void DailyBalanceInterest_admits_a_zero_day_interval()
+    {
+        // A balance held zero days contributes nothing but is not a reversed interval: the
+        // guard rejects days < 0, never days == 0. Pins the < boundary so a <= slip (which
+        // would throw on the zero-day leg) is caught (B.10 mutation triage). Only the 10-day
+        // leg accrues: (0.005/365) × (100,000 × 10) = 13.70… → 14 cents.
+        var intervals = new (Money, int)[] { (new Money(100_000L), 0), (new Money(100_000L), 10) };
+        Assert.Equal(14L, Accrual.DailyBalanceInterest(intervals, rateBps: 50, basis: 365).Cents);
+    }
+
+    [Fact]
     public void DailyBalanceInterest_rejects_a_negative_interval()
     {
         var bad = new (Money, int)[] { (new Money(100_000L), -1) };

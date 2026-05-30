@@ -1,13 +1,18 @@
 name: Mutation testing
 
-# Periodic mutation testing of the engine spine (A.10) — NOT per-push. Stryker.NET
-# re-runs the whole test suite (including the Testcontainers integration tier) once
-# per mutant, so it is far too slow for the PR gate. It runs weekly and on demand,
-# guarding test *effectiveness*: a surviving mutant is a behaviour the suite does not
-# actually pin. Particular interest in event-sourcing mutants — off-by-one on
-# sequence_number, a dropped ORDER BY, a removed transaction boundary, a weakened
-# optimistic-concurrency check. The score floor + triage process live in
-# engine/docs/mutation-testing.md.
+# Periodic mutation testing — NOT per-push. Stryker.NET re-runs the whole test suite once
+# per mutant, so it is far too slow for the PR gate. It runs weekly and on demand, guarding
+# test *effectiveness*: a surviving mutant is a behaviour the suite does not actually pin.
+# Two scopes, each with its own config + score floor (engine/docs/mutation-testing.md):
+#   - Engine spine (A.10): EventStore + Engine, stryker-config.json. The suite includes the
+#     Testcontainers integration tier (needs Docker), so these legs are slow. Mutants of
+#     interest: off-by-one on sequence_number, a dropped ORDER BY, a removed transaction
+#     boundary, a weakened optimistic-concurrency check.
+#   - Financial-math kernel (B.10): FinancialTypes (Money) + FinancialMath, scoped by
+#     stryker-config.kernel.json. The kernel is pure (no clock/I/O/Docker), so these legs are
+#     fast. Mutants of interest: the HALF_EVEN rounding direction and Int64 overflow guards at
+#     the Money boundary, day-count off-by-one, withholding flow-by-flow, and the IRR/TAEG
+#     solver's PV/derivative core (which the Newton+bisection fallback otherwise hides).
 
 on:
   schedule:
@@ -24,12 +29,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Engine spine (A.10) — slow, Docker-backed integration tier.
           - name: EventStore
             project: Babelstone.EventStore.csproj
             test: tests/Babelstone.EventStore.Tests/Babelstone.EventStore.Tests.csproj
+            config: stryker-config.json
           - name: Engine
             project: Babelstone.Engine.csproj
             test: tests/Babelstone.Engine.Tests/Babelstone.Engine.Tests.csproj
+            config: stryker-config.json
+          # Financial-math kernel (B.10) — pure, fast; higher score floor (kernel config).
+          - name: Money
+            project: Babelstone.FinancialTypes.csproj
+            test: tests/Babelstone.FinancialTypes.Tests/Babelstone.FinancialTypes.Tests.csproj
+            config: stryker-config.kernel.json
+          - name: FinancialMath
+            project: Babelstone.FinancialMath.csproj
+            test: tests/Babelstone.FinancialMath.Tests/Babelstone.FinancialMath.Tests.csproj
+            config: stryker-config.kernel.json
     steps:
       - uses: actions/checkout@v6
       # Toolchain from mise.toml (the .NET 10 SDK pin), as in ci.yml.
@@ -42,9 +59,11 @@ jobs:
         env:
           STRYKER_PROJECT: ${{ matrix.project }}
           STRYKER_TEST_PROJECT: ${{ matrix.test }}
-        # break threshold in stryker-config.json fails the run below the score floor.
-        # The integration tier needs Docker, which ubuntu-latest provides.
-        run: dotnet tool run dotnet-stryker --project "$STRYKER_PROJECT" --test-project "$STRYKER_TEST_PROJECT"
+          STRYKER_CONFIG: ${{ matrix.config }}
+        # The break threshold in the leg's config fails the run below the score floor. The
+        # spine legs' integration tier needs Docker, which ubuntu-latest provides; the kernel
+        # legs are pure and use it only incidentally.
+        run: dotnet tool run dotnet-stryker --project "$STRYKER_PROJECT" --test-project "$STRYKER_TEST_PROJECT" --config-file "$STRYKER_CONFIG"
       - name: Upload mutation report
         if: always()
         uses: actions/upload-artifact@v4

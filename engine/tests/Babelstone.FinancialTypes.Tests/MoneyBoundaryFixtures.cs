@@ -39,5 +39,11 @@ public static class MoneyBoundaryFixtures
         // TAN 6% Act/360 over 365 days = 219e9 / 3.6e6 = 60,833.33… cents → €608.33. The exact
         // boundary decimal is written as the division so the repeating fraction is faithful.
         new Case("accrual 10k 6% Act/360 365d -> 60833", 219_000_000_000m / 3_600_000m, 60_833L),
+
+        // Int64 cent boundaries — a value rounding to exactly long.Max/long.MinValue is in
+        // range and must round-trip; the guard rejects only strictly beyond. Pins the
+        // < / > guard edges so a <= / >= slip (which would throw here) is caught (B.10 triage).
+        new Case("int64 max boundary", long.MaxValue, long.MaxValue),
+        new Case("int64 min boundary", long.MinValue, long.MinValue),
     };
 }

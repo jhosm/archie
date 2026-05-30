@@ -37,6 +37,27 @@ public class MoneyTests
         Assert.Throws<OverflowException>(() => new Money(long.MaxValue) + new Money(1L));
 
     [Fact]
+    public void Subtraction_overflow_throws() =>
+        // Underflow past long.MinValue: the checked operator must throw, never wrap.
+        Assert.Throws<OverflowException>(() => new Money(long.MinValue) - new Money(1L));
+
+    [Fact]
+    public void Negation_overflow_throws() =>
+        // −long.MinValue has no Int64 representation; checked negation must throw, never wrap.
+        Assert.Throws<OverflowException>(() => -new Money(long.MinValue));
+
+    [Fact]
+    public void ToDecimal_projects_cents_to_euros()
+    {
+        // The read-only euro projection divides by 100; pin it so the division is not silently
+        // a multiplication (a wrong report figure rather than a thrown error — B.10 triage).
+        Assert.Equal(12.34m, new Money(1234L).ToDecimal());
+        Assert.Equal(-12.34m, new Money(-1234L).ToDecimal());
+        Assert.Equal(0.05m, new Money(5L).ToDecimal());
+        Assert.Equal(0m, Money.Zero.ToDecimal());
+    }
+
+    [Fact]
     public void FromCents_throws_contextualised_when_rounded_cents_exceed_int64()
     {
         // 1e19 > long.MaxValue (~9.22e18). The boundary names the operand and the value

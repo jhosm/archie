@@ -223,4 +223,36 @@ public class RatesTests
         var ex = Assert.Throws<ArgumentOutOfRangeException>(() => Rates.InternalRateOfReturn(deposit, guess: -1m));
         Assert.Equal("guess", ex.ParamName);
     }
+
+    // --- Solver numeric core, pinned directly (B.10 mutation triage). ---
+    //
+    // The IRR contract is robust by construction: Newton-Raphson with a bisection fallback.
+    // That redundancy makes a wrong PV or derivative *unobservable* through the public API —
+    // a corrupted Newton step just hands off to bisection, and the root of −PV equals the
+    // root of PV, so a sign-flipped PV still finds the same rate. The black-box IRR/TAEG
+    // tests above therefore cannot tell a correct PV core from several broken ones. These two
+    // pin the PV and its derivative as *values* at a known rate, so the core the regulated
+    // TAEG (§6.2) rests on is proven, not merely backstopped.
+    // A 3-flow vector spanning t = 0, 1, 2. The t = 2 term is load-bearing: at t = 1 the
+    // derivative's `cents * t` is numerically identical to `cents / t`, so a two-flow vector
+    // cannot tell them apart — only t ≥ 2 separates the period weighting from its mutants.
+    private static readonly (Money Amount, int Period)[] PinningVector =
+        { (new Money(-1_000_000L), 0), (new Money(500_000L), 1), (new Money(700_000L), 2) };
+
+    [Fact]
+    public void PresentValue_is_pinned_at_a_known_rate()
+    {
+        // i = 1 (100%/period), chosen so (1+i)^t ≠ 1 — separating "/pow" from "*pow":
+        // −1,000,000/1 + 500,000/2 + 700,000/4 = −575,000 cents.
+        Assert.Equal(-575_000m, Rates.PresentValue(PinningVector, 1m));
+    }
+
+    [Fact]
+    public void PresentValueAndDerivative_pins_both_legs_at_a_known_rate()
+    {
+        var (f, df) = Rates.PresentValueAndDerivative(PinningVector, 1m);
+        Assert.Equal(-575_000m, f);   // Σ CF·(1+i)^−t — same value as PresentValue
+        // −Σ CF·t·(1+i)^−(t+1) = −[500,000·1/2² + 700,000·2/2³] = −(125,000 + 175,000) = −300,000.
+        Assert.Equal(-300_000m, df);
+    }
 }

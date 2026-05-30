@@ -175,7 +175,12 @@ public static class Rates
     /// <c>f(i) = Σ CF·(1+i)^−t</c> and <c>f′(i) = −Σ CF·t·(1+i)^−(t+1)</c>. One pass; the
     /// <c>t = 0</c> flow is constant so it contributes nothing to the derivative.
     /// </summary>
-    private static (decimal F, decimal Df) PresentValueAndDerivative(
+    // internal (not private) so the mutation suite can pin the PV and its derivative
+    // directly. The public IRR contract deliberately hides these behind a Newton+bisection
+    // fallback, which makes a wrong PV/derivative here unobservable through the public API —
+    // the other path rescues, and the root of −PV equals the root of PV — so only a direct
+    // value assertion can prove this numeric core is correct (B.10 mutation triage).
+    internal static (decimal F, decimal Df) PresentValueAndDerivative(
         IReadOnlyList<(Money Amount, int Period)> cashFlows, decimal i)
     {
         decimal onePlusI = 1m + i;
@@ -192,8 +197,9 @@ public static class Rates
         return (f, df);
     }
 
-    /// <summary>PV only (bisection needs no derivative).</summary>
-    private static decimal PresentValue(IReadOnlyList<(Money Amount, int Period)> cashFlows, decimal i)
+    /// <summary>PV only (bisection needs no derivative). internal for direct pinning — see
+    /// <see cref="PresentValueAndDerivative"/> for why the public API cannot pin it.</summary>
+    internal static decimal PresentValue(IReadOnlyList<(Money Amount, int Period)> cashFlows, decimal i)
     {
         decimal onePlusI = 1m + i;
         decimal f = 0m;
