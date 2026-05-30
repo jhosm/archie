@@ -5,6 +5,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The test assembly pins the IRR solver's numeric core (PresentValue /
+         PresentValueAndDerivative) directly: the public API's Newton+bisection fallback
+         makes a wrong PV/derivative unobservable from outside, so mutation testing (B.10)
+         needs internal visibility to prove that core correct. -->
+    <InternalsVisibleTo Include="Babelstone.FinancialMath.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Accrual and withholding (B.3/B.4) produce Money: the kernel rounds the fully
          computed decimal to cents exactly once via Money.FromCents (ADR-PC-010 §P2). -->
     <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
