@@ -2,31 +2,26 @@
 
 ## Project Nature
 
-This is a **documentation-only repository** named **babelstone** (`github.com/jhosm/babelstone`) —
-a reference library for a Portuguese banking ecosystem. There is no build system, no test
-runner, and no deployable code. The deliverables are `.md` files organised into three series, all under `docs/product-management/`:
+This is a **hybrid docs + code monorepo** named **babelstone** (`github.com/jhosm/babelstone`) —
+a Portuguese banking ecosystem reference combining architecture docs with a working product-engine
+implementation. The docs deliverables are `.md` files organised into three series, all under `docs/product-management/`:
 
 - `docs/product-management/integration_concepts/` — integration architecture patterns (documents `00–11`)
-  - `docs/product-management/integration_concepts/adrs/` — Architectural Decision Records selecting concrete tools for each pattern (ADR-IC-000 defines the shared evaluation framework; ADRs 001–013 currently filed — 013 decides in-house-estate build provenance & repository placement, not a tool pick)
+  - `docs/product-management/integration_concepts/adrs/` — Architectural Decision Records selecting concrete tools for each pattern (ADR-IC-000 defines the shared evaluation framework; latest filed: ADR-IC-014 — check the `adrs/` directory for the current ceiling)
 - `docs/product-management/financial_concepts/` — financial mathematics of banking products
 - `docs/product-management/product_concepts/` — core banking product engine: brief (`00–04`), feature-design companions, and the open-questions register
   - `docs/product-management/product_concepts/adrs/` — Architectural Decision Records for the product engine's own concerns: source-of-truth, configuration surface, runtime, boundary signal contracts, coexistence (ADR-PC-000 defines namespace conventions and the contract-shape template; ADR-PC numbers are independent of ADR-IC numbers)
 
+**Code components** (all under the repo root):
+- `engine/` — C# (.NET 10) event-sourced product kernel
+- `families/` — domain family handlers
+- `orchestrator/`, `acl/`, `notification/` — .NET boundary services
+- `mcp-server/` — Python MCP server (ADR-IC-010)
+- `contracts/` — Avro/CUE schemas and fixtures
+- `pack-validate/` — Go binary for pack validation (ADR-PC-006)
+- `infra/` — Docker Compose dev stack
+
 Read `README.md` for the full document map.
-
-## Issue Tracking
-
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
-
-## Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
-```
 
 ## Non-Interactive Shell Commands
 
@@ -138,6 +133,29 @@ At the **start** of any work that will change files:
 4. **Merging the PR is the maintainer's call**, not the agent's — do not self-merge unless explicitly told to.
 
 A local `.githooks/pre-push` hook blocks pushes to `main` as a backstop (override a deliberate maintainer push with `ALLOW_PUSH_MAIN=1`). It is a *local* guard, not a hard gate: `--no-verify` bypasses it, and true enforcement needs GitHub branch protection (a Pro plan or a public repo).
+
+## Dev Stack & Toolchain
+
+Toolchain is pinned in `mise.toml` (.NET 10, Go, Python). Run once per machine:
+```bash
+make bootstrap   # brew prereqs + mise install
+make doctor      # verify pinned versions are active
+```
+
+Local dev stack (Redpanda, Postgres, Schema Registry, Kong, OpenBao, Grafana):
+```bash
+make up          # start stack, wait until healthy
+make down        # stop, keep volumes
+make reset       # destroy volumes + restart fresh
+make verify      # smoke-test: Postgres + Redpanda + SR reachable
+make logs        # follow all service logs
+```
+
+Other common targets:
+```bash
+make contracts-check   # CUE schema fmt + fixture validation (ADR-PC-006)
+make pack-validate     # validate a regulatory pack (PACK=pt.2026.1)
+```
 
 ## Diagrams
 
