@@ -25,3 +25,8 @@ __pycache__/
 *.py[cod]
 .venv/
 *.egg-info/
+.pytest_cache/
+
+# Claude Code transients (agent worktrees, scheduler lock)
+.claude/worktrees/
+.claude/scheduled_tasks.lock

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Engine.Api</RootNamespace>
+    <AssemblyName>Babelstone.Engine.Api</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The engine's command/query HTTP boundary (ADR-PC-021 §D5, realized in E.5; the
+         RateSheets.Api minimal-API precedent, ADR-PC-008 Amendment A1). It composes the
+         term-deposit decider (Babelstone.Families.TermDeposit.Application) over the durable
+         runtime + rate-sheet store + pinned pack, and is the engine surface the Python MCP
+         server (ADR-IC-010) calls. Authn/authz is the gateway's job (Epic J); this host is
+         the auth-deferred dev boundary. -->
+    <ProjectReference Include="../Babelstone.Engine/Babelstone.Engine.csproj" />
+    <ProjectReference Include="../Babelstone.EventStore/Babelstone.EventStore.csproj" />
+    <ProjectReference Include="../Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
+    <ProjectReference Include="../Babelstone.Packs/Babelstone.Packs.csproj" />
+    <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
+  </ItemGroup>
+</Project>
