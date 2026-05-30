@@ -21,9 +21,10 @@ REGISTRY_PORT     ?= 5001
 EVENTCATALOG_PORT ?= 8082
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check pack-validate pack-build pack-verify up down reset logs ps verify
+.PHONY: help bootstrap doctor contracts-check validate-variant pack-validate-test pack-validate pack-build pack-verify up down reset logs ps verify
 
 PACK ?= pt.2026.1
+VARIANT ?=
 
 help: ## List available targets
 	@echo "Babelstone — make targets:"
@@ -64,6 +65,13 @@ doctor: ## Print resolved toolchain versions (verifies the pins are active)
 
 contracts-check: ## Validate the CUE family schemas (fmt + accept/reject fixtures, ADR-PC-006)
 	@./contracts/cue/check.sh
+
+validate-variant: ## Run pack-validate depths 1–4 on a variant (VARIANT=path PACK=pt.2026.1, ADR-PC-006)
+	@test -n "$(VARIANT)" || { echo "usage: make validate-variant VARIANT=<path/to/variant.yaml> [PACK=pt.2026.1]"; exit 2; }
+	@go -C pack-validate run . validate "$(abspath $(VARIANT))" --pack "$(abspath packs/$(PACK))"
+
+pack-validate-test: ## Build + test the Go pack-validate binary (ADR-PC-006)
+	@go -C pack-validate build ./... && go -C pack-validate test ./...
 
 pack-validate: ## cue-vet a pack's manifest + data (PACK=pt.2026.1, ADR-PC-007)
 	@./packs/pack.sh validate packs/$(PACK)
