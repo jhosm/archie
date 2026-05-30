@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-05-30 |
 | Deciders | jhosm |
 | Shape | Tool-selection ([ADR-PC-000 §D3](./ADR-PC-000-namespace-and-contract-shape-framework.md) residual category — a structural/engineering-practice decision, declared tool-selection per the [§D4](./ADR-PC-000-namespace-and-contract-shape-framework.md) default; F1/F2 do not discriminate, the same class as [ADR-PC-019](./ADR-PC-019-repository-strategy-monorepo.md)) |
@@ -184,5 +184,5 @@ Related: this ADR's family-agnosticism is the family-level cousin of the variant
 
 ---
 
-*Proposed 2026-05-30 by jhosm — pending acceptance.*
+*Proposed 2026-05-30; accepted 2026-05-31 by jhosm.*
 *Revised 2026-05-30 (E.5): the §D5-deferred external HTTP boundary is realized as `Babelstone.Engine.Api` — a minimal-API host (`POST /v1/deposits` constitute, `GET /v1/deposits/{id}` deposit_position, `POST /v1/deposits/{id}/maturity`) wrapping `TermDepositConstitutionService`, mirroring the `RateSheets.Api` precedent ([ADR-PC-008](./ADR-PC-008-rate-sheet-storage-and-deploy-api.md) Amendment A1). It is the engine boundary the Python MCP server ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md)) calls. Authn/authz (OAuth 2.1 + Kong per ADR-IC-010) is DEFERRED — the E.5 host is the auth-deferred dev boundary; the secured edge is Epic J (bd `babelstone-e50n`).*
