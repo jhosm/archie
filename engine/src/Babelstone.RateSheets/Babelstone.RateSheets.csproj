@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.RateSheets</RootNamespace>
+    <AssemblyName>Babelstone.RateSheets</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Npgsql-only, like Babelstone.EventStore: rate sheets are versioned
+         immutable rows in the same PostgreSQL tier (ADR-PC-008 §P1). The store is
+         hand-rolled against the table contract (no ORM, ADR-PC-010); the body model
+         and validator are pure System.Text.Json with no datastore surface. -->
+    <PackageReference Include="Npgsql" Version="9.0.3" />
+  </ItemGroup>
+</Project>

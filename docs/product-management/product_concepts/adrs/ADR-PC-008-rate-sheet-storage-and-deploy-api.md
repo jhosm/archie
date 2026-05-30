@@ -170,6 +170,28 @@ A wrong-rate publication (treasury types `350` bps for `35`) is corrected **forw
 
 ---
 
+## Amendment — 2026-05-30: HTTP host technology for the §P2 deploy endpoint
+
+Implementing C.6 ([bd archie-9vpj](../04-open-questions.md)) stood up the §P2 `POST /v1/rate-sheets` endpoint as the **first HTTP host in the engine**. The Decision mandated the endpoint *exists* but named no host technology; that choice is load-bearing and was landing in code unrecorded — the silent drift the explicit-drift gate ([ADR-PC-020 §D3](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)) exists to catch. This amendment records the host decision. It is additive: §P1–§P5 hold as written.
+
+### A1 · The deploy endpoint is an ASP.NET Core minimal-API (Kestrel) process
+
+The §P2 endpoint is hosted as an ASP.NET Core minimal-API process on Kestrel — the engine's native .NET web host ([ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md): the engine is C#/.NET, hand-rolled). The host is hand-wired (minimal API, no MVC controllers or scaffolding), consistent with PC-010's hand-rolled discipline, and adds no runtime, language, or framework beyond what PC-010 already fixes. It ships as `Babelstone.RateSheets.Api`.
+
+### A2 · ADR-IC-010's .NET rejection does not bind engine-side HTTP surfaces
+
+[ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) rejected .NET **only for the MCP / LLM-agent server**, on the reasoning that no other component used .NET. That scope does not reach an engine-side HTTP surface: the engine *is* .NET ([ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md)), so its native web host is ASP.NET Core. IC-010 remains binding for the MCP surface; it does not govern this or future engine-side endpoints.
+
+### A3 · Authentication / authorization remain the edge gateway's job
+
+Consistent with §P4 and the edge gateway ([ADR-IC-006](../../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)), this host does **not** implement authn/authz. The gateway authenticates the caller and enforces the treasury / ALM approver scope; the host records the gateway-supplied deploying principal as `published_by` (from the `X-Deploy-Actor` header, never a payload field) and the treasury sign-off as `approved_by` / `approval_ref` on the immutable row.
+
+### A4 · This amends the decision; it does not supersede this ADR
+
+§P1 (storage), §P2 (deploy API + idempotency), §P3 (resolution), §P4 (approval), and §P5 (typo-rollback) all remain binding as written. This amendment is appended to — not a revision of — the Decision and Implementation Principles; it fills only the previously-unstated host-technology slot.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-001](./ADR-PC-001-event-store-technology.md) — PostgreSQL tier and the `INSERT`-only role-privilege immutability pattern reused here; constitution resolution runs in the same local transaction as the event append.
