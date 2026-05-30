@@ -10,6 +10,8 @@
     <Project Path="src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj" />
     <Project Path="src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <Project Path="src/Babelstone.RateSheets.Api/Babelstone.RateSheets.Api.csproj" />
+    <!-- The engine command/query HTTP boundary (ADR-PC-021 §D5, realized in E.5): the surface the MCP server calls. -->
+    <Project Path="src/Babelstone.Engine.Api/Babelstone.Engine.Api.csproj" />
     <Project Path="src/Babelstone.Packs/Babelstone.Packs.csproj" />
     <!-- Loaded family schema (ADR-PC-019 §P1): lives under /families, built with the engine pipeline. -->
     <Project Path="../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
@@ -26,6 +28,7 @@
     <Project Path="tests/Babelstone.Engine.Tests/Babelstone.Engine.Tests.csproj" />
     <Project Path="tests/Babelstone.Engine.Analyzers.Tests/Babelstone.Engine.Analyzers.Tests.csproj" />
     <Project Path="tests/Babelstone.Packs.Tests/Babelstone.Packs.Tests.csproj" />
+    <Project Path="tests/Babelstone.Engine.Api.Tests/Babelstone.Engine.Api.Tests.csproj" />
     <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/Babelstone.Families.TermDeposit.Tests.csproj" />
     <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Application.Tests/Babelstone.Families.TermDeposit.Application.Tests.csproj" />
   </Folder>
