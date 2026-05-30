@@ -115,7 +115,7 @@ func Run(opts Options) (*diag.Report, error) {
 
 	// --- depth 4: regulatory coherence -----------------------------------
 	start = time.Now()
-	diags4 := depth4Regulatory(vd, p)
+	diags4 := depth4Regulatory(vd, fam, p)
 	rep.RecordDepth(diag.DepthRegulatory, time.Since(start), diags4)
 
 	return rep, nil
