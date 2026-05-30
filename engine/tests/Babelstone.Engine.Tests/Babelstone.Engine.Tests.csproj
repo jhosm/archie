@@ -5,13 +5,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.6.0" />
-    <PackageReference Include="xunit" Version="2.9.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
-    <PackageReference Include="Testcontainers.PostgreSql" Version="4.12.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
     <!-- The A.8 side-effect-freedom test asserts zero rows directly across events/outbox/snapshots. -->
-    <PackageReference Include="Npgsql" Version="10.0.3" />
-    <PackageReference Include="FsCheck.Xunit" Version="3.3.3" />
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="FsCheck.Xunit" />
   </ItemGroup>
 
   <ItemGroup>
