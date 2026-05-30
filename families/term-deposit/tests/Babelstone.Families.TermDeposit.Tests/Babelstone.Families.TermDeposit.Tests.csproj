@@ -11,7 +11,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../Babelstone.Families.TermDeposit.csproj" />
+    <ProjectReference Include="../../src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
     <!-- FinancialMath only for the kernel cross-check test, which asserts the carried event
          amounts equal Accrual.SimpleInterest / Withholding.Withhold. The family itself does
          not reference it (the math runs command-side, not in folds). -->
