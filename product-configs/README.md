@@ -14,4 +14,20 @@ This path exists so the three-owner split is enforceable by `CODEOWNERS`: the
 cheapest, most frequent change (a variant) does not inherit the most expensive
 approval (the pack). See [ADR-PC-019 F2](../docs/product-management/product_concepts/adrs/ADR-PC-019-repository-strategy-monorepo.md).
 
-> Status: skeleton — no data yet.
+## Variants
+
+| File | Family | Pack | Shape |
+|---|---|---|---|
+| `dpz_pt_12m_juros_venc.yaml` | `term_deposit@2026.1` | `pt.2026.1` | 12-month, AT_MATURITY simple interest, Act/360 |
+
+`dpz_pt_12m_juros_venc` is the walking-skeleton variant (E.2) — the named
+configuration the pack's sealed corpus references as `pt_dpz_12m_simple_with_irs`
+([packs/pt.2026.1/test-corpus](../packs/pt.2026.1/test-corpus/canonical-instances.yaml)).
+
+Validate any variant through depths 1–4 against the pack it pins:
+
+```sh
+make validate-variant VARIANT=product-configs/dpz_pt_12m_juros_venc.yaml
+```
+
+The `product-configs` CI job runs this over every committed variant on each PR.

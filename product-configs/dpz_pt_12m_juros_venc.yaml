@@ -1,0 +1,49 @@
+# dpz_pt_12m_juros_venc — 12-month PT term deposit, simple interest at maturity.
+#
+# The walking-skeleton variant (E.2). This is the named configuration the pack's
+# sealed regression corpus references as test_id `pt_dpz_12m_simple_with_irs`
+# (packs/pt.2026.1/test-corpus/canonical-instances.yaml): €10,000 principal,
+# 3.00% TAN, constituted 2026-01-15. The variant carries the *structure*; the
+# numeric rate lives in /rate-sheets and resolves at constitution (surface §2.3),
+# and the 28% IRS withholding is a pack primitive (irs_juros), not a variant
+# field. AT_MATURITY single-flow simple interest on Act/360 — the thinnest real
+# PT deposit shape (02 §2.1, mirrors authoring §3.2 "Variant A").
+#
+# Validate (depths 1–4) against the pinned pack with:
+#   make validate-variant VARIANT=product-configs/dpz_pt_12m_juros_venc.yaml
+variant_id: dpz_pt_12m_juros_venc
+schema: term_deposit@2026.1
+pack: pt.2026.1
+
+# 12 months, Act/360 (02 §2.2: PT retail deposits; depth-4 rejects any other
+# day-count for a `pt` pack). `pt.act_360` is a pack-bound primitive resolved
+# against the pinned pack's day-count map.
+term_days: 365
+day_count: pt.act_360
+currency: EUR
+
+# Interest credited once, at maturity — no intra-term payment cadence (02 §2.1).
+interest_variant: AT_MATURITY
+
+# Flat rate: one rate-sheet reference, no inline number (surface §2.3). `live`
+# is the active sheet binding; `deposit_origin` is the pricing role that carries
+# the standard-vs-new-money split (authoring §3.2).
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+
+# Early termination forfeits all accrued interest, principal untouched — the
+# conventional PT flat policy (02 §2.5). A flat policy is a degenerate one-band
+# schedule with the open (null) tail covering the whole term.
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000   # 100% of the chosen basis
+    basis: ACCRUED_INTEREST
+
+# Single fixed term, no roll-over in the walking skeleton (02 §2.4.4).
+auto_renewal_policy: NONE
+
+# Risk corridor: €500 minimum; the canonical instance (€10,000) sits inside it.
+principal_bounds:
+  min_cents: 50000
