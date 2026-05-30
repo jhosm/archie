@@ -444,8 +444,10 @@ flowchart LR
   P1["P.1/P.2 platform+bd up"] --> A & B & C
   A --> D
   C --> D
-  D --> E["E walking skeleton (MCP-min)"]
+  A --> E["E walking skeleton (MCP-min)"]
   B --> E
+  C --> E
+  D --> F
   E --> F["F full term-deposit + PT pack"]
   F --> G --> H --> I --> J["J MCP hardened"]
   F --> K & L & M
@@ -464,10 +466,21 @@ flowchart LR
   style par fill:#f6f6f6,stroke:#999
 ```
 
-Critical path: **P.1/P.2 → A/B/C → D → E → F**. Foundation A/B/C parallelisable; estate
+Critical path: **P.1/P.2 → A/B/C → E → F**, with D a parallel branch (`A/C → D → F`).
+Foundation A/B/C parallelisable; estate
 G/H/I/J after the skeleton proves the seams; K/L/M close v1. Epic 0 and Epic Q run alongside —
 Epic 0's items feed pack content (0.3/0.4 → F), load calibration (0.5 → L), and cutover
 (0.1/0.2 → v1), but **none of them block A/D**. Later P.x epics unblock I/K/M/L respectively.
+
+> **Refined 2026-05-30 (dependency model → bd).** The original `D → E` edge is superseded.
+> The walking skeleton does **not** depend on Epic D — E.1 ships its own *minimal sync*
+> deposit-position projection (E.1's defined scope) and E.5's MCP resource reads the engine
+> directly, so the full Path-A bitemporal runtime (D.1–D.5) is **Epic-F** work. D and E are
+> parallel branches that both feed F. In bd the coarse epic-level edges (`E blocked-by A,B,C,D`)
+> were replaced by precise child-level edges — E.1←A.6+B.3, E.2←C.4+C.5, E.3←E.1+E.2+C.6,
+> E.4/E.5←E.3 (E.5 also←E.1), E.6←E.3+E.4+E.5 — so `bd ready` now surfaces only E.1 and C.5.
+> Recorded as an explicit-drift acknowledgment per
+> [ADR-PC-020 §D3](./adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md).
 
 ---
 
@@ -477,7 +490,9 @@ bd is the only tracker (per `CLAUDE.md` — not TodoWrite/TaskCreate). New epics
 `archie-` prefix (dolt db `archie`). Dependency edges to record via `bd dep`:
 
 - D blocked-by A & C
-- E blocked-by A, B, C, D
+- E blocked-by A, B, C at the **child** level — **not** D (refined 2026-05-30; see the note
+  under *Sequencing*): E.1←A.6+B.3, E.2←C.4+C.5, E.3←E.1+E.2+C.6, E.4/E.5←E.3 (E.5 also←E.1),
+  E.6←E.3+E.4+E.5
 - 0.3 → F.7; 0.4 → F.7; 0.5 → L; DEF-1 blocked-by 0.6
 - **0.1 / 0.2 do NOT block A or D** — they block a v1-cutover milestone only.
 
