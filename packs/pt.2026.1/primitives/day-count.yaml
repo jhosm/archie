@@ -2,11 +2,23 @@
 # (02 §2.2 — a pack parameter, not a hardcoded constant). The reference id (the
 # map key) is what a variant names via `day_count: pt.<id>` (e.g. pt.act_360);
 # formula_ref bridges to the engine-implemented primitive (surface §3.4).
+#
+# `permitted_for` is the pack-declared regulatory permitted-set: the product
+# families a day-count may be used by. PT retail term deposits require Act/360
+# (02 §2.2; ADR-PC-006 §4 worked example "PT pack rejects Act/365 for a
+# deposit"), so only act_360 lists term_deposit — the other conventions are
+# carried (a variant CAN name them: depths 1–2 pass) but depth-4 rejects them
+# for a term-deposit variant. Previously this rule was a hardcoded Go map keyed
+# on namespace; declaring it here makes it auditor-visible in the pack itself.
 act_360:
   formula_ref: engine.day_count.actual_360
+  permitted_for: [term_deposit]
 act_365:
   formula_ref: engine.day_count.actual_365
+  permitted_for: []
 act_act_isda:
   formula_ref: engine.day_count.actual_actual_isda
+  permitted_for: []
 "30_360_european":
   formula_ref: engine.day_count.thirty_360_european
+  permitted_for: []

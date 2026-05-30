@@ -32,11 +32,69 @@ type Pack struct {
 	Namespace  string            // jurisdiction namespace, e.g. "pt"
 	SchemaPins map[string]string // family → "<family>@YYYY.N"
 
-	DayCounts     map[string]bool          // primitive keys in primitives/day-count.yaml
+	DayCounts     map[string]DayCount      // primitives in primitives/day-count.yaml, keyed by reference id
 	Withholdings  map[string]bool          // primitive keys in primitives/withholding.yaml
 	Reporting     map[string]ReportingHook // hooks in primitives/reporting.yaml
 	Params        map[string]int64         // scalars in parameters/constants.yaml
 	RateSheetRefs []RateSheetRef           // refs in rate-sheet-refs/deposits-pt.yaml
+}
+
+// DayCount mirrors one entry of primitives/day-count.yaml. PermittedFor is the
+// pack-declared regulatory permitted-set: the product families this day-count
+// may be used by (02 §2.2 — PT term deposits require act_360). depth-4 reads it
+// rather than a hardcoded validator map.
+type DayCount struct {
+	FormulaRef   string   `json:"formula_ref"`
+	PermittedFor []string `json:"permitted_for"`
+}
+
+// PermitsDayCountFor reports whether the pack declares day-count key permitted
+// for product family. A day-count the pack does not carry returns false (its
+// catalogue membership is a separate depth-2 check).
+func (p *Pack) PermitsDayCountFor(key, family string) bool {
+	dc, ok := p.DayCounts[key]
+	if !ok {
+		return false
+	}
+	for _, f := range dc.PermittedFor {
+		if f == family {
+			return true
+		}
+	}
+	return false
+}
+
+// HasDayCount reports whether the pack carries a day-count primitive under key
+// (the depth-2 catalogue-membership check).
+func (p *Pack) HasDayCount(key string) bool {
+	_, ok := p.DayCounts[key]
+	return ok
+}
+
+// PermittedDayCountsFor returns the sorted reference ids the pack declares
+// permitted for product family — used for the depth-4 diagnostic message.
+func (p *Pack) PermittedDayCountsFor(family string) []string {
+	var out []string
+	for key, dc := range p.DayCounts {
+		for _, f := range dc.PermittedFor {
+			if f == family {
+				out = append(out, key)
+				break
+			}
+		}
+	}
+	sortStrings(out)
+	return out
+}
+
+// sortStrings is a tiny insertion sort — small sets, deterministic for
+// diagnostic messages, no import of sort needed for one call site.
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
 }
 
 // ReportingHook mirrors one entry of primitives/reporting.yaml.
@@ -83,8 +141,9 @@ func Load(dir string) (*Pack, error) {
 	}
 
 	var err error
-	if p.DayCounts, err = decodeKeySet(ctx, filepath.Join(dir, "primitives", "day-count.yaml")); err != nil {
-		return nil, err
+	p.DayCounts = map[string]DayCount{}
+	if err := decodeYAML(ctx, filepath.Join(dir, "primitives", "day-count.yaml"), &p.DayCounts); err != nil {
+		return nil, fmt.Errorf("day-count primitives: %w", err)
 	}
 	if p.Withholdings, err = decodeKeySet(ctx, filepath.Join(dir, "primitives", "withholding.yaml")); err != nil {
 		return nil, err

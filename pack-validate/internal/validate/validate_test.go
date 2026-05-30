@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -147,6 +148,112 @@ func TestSyntacticNeedsNoPack(t *testing.T) {
 	if !rep.OK || len(rep.Depths) != 1 {
 		t.Fatalf("expected OK with one depth, got ok=%v depths=%d", rep.OK, len(rep.Depths))
 	}
+}
+
+// clonePackWithDayCount copies the real pt.2026.1 pack into a temp dir and
+// overwrites primitives/day-count.yaml with dayCountYAML. The validator reads
+// the pack's data files, so this lets a test prove depth-4 reads the
+// pack-declared permitted-set rather than a hardcoded Go map: change the data,
+// change the verdict. pack.Load reads pack.yaml + primitives/{day-count,
+// withholding,reporting} + parameters + rate-sheet-refs, so those are copied.
+func clonePackWithDayCount(t *testing.T, dayCountYAML string) string {
+	t.Helper()
+	dst := t.TempDir()
+	copyFile := func(rel string) {
+		t.Helper()
+		src := filepath.Join(packDir, rel)
+		b, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		out := filepath.Join(dst, rel)
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(out, b, 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	for _, rel := range []string{
+		"pack.yaml",
+		"primitives/withholding.yaml",
+		"primitives/reporting.yaml",
+		"parameters/constants.yaml",
+		"rate-sheet-refs/deposits-pt.yaml",
+	} {
+		copyFile(rel)
+	}
+	dcPath := filepath.Join(dst, "primitives", "day-count.yaml")
+	if err := os.MkdirAll(filepath.Dir(dcPath), 0o755); err != nil {
+		t.Fatalf("mkdir primitives: %v", err)
+	}
+	if err := os.WriteFile(dcPath, []byte(dayCountYAML), 0o644); err != nil {
+		t.Fatalf("write day-count.yaml: %v", err)
+	}
+	return dst
+}
+
+// The day-count catalogue keys a valid fixture (flat-at-maturity) binds
+// pt.act_360. We vary only its permitted_for to drive depth-4 either way.
+const (
+	dayCountAct360PermittedForTermDeposit = `act_360:
+  formula_ref: engine.day_count.actual_360
+  permitted_for: [term_deposit]
+act_365:
+  formula_ref: engine.day_count.actual_365
+  permitted_for: []
+`
+	dayCountAct360PermittedForNothing = `act_360:
+  formula_ref: engine.day_count.actual_360
+  permitted_for: []
+act_365:
+  formula_ref: engine.day_count.actual_365
+  permitted_for: []
+`
+)
+
+// TestDepth4ReadsPackDeclaredDayCounts proves the depth-4 regulatory permitted
+// day-count check is driven by PACK DATA (primitives/day-count.yaml
+// `permitted_for`), not a hardcoded validator map. A valid fixture binding
+// pt.act_360 is accepted when the (cloned) pack declares act_360 permitted for
+// term_deposit, and REJECTED at depth-4 (forbidden_day_count) when the same
+// pack declares act_360 permitted for nothing — same variant, same binary,
+// opposite verdict, driven only by the pack's declared data.
+func TestDepth4ReadsPackDeclaredDayCounts(t *testing.T) {
+	variant := filepath.Join(cueValidDir, "flat-at-maturity.yaml")
+
+	t.Run("permitted_for term_deposit ⇒ accepted at depth 4", func(t *testing.T) {
+		pk := clonePackWithDayCount(t, dayCountAct360PermittedForTermDeposit)
+		rep, err := Run(Options{
+			VariantPath: variant, SchemaDir: schemaDir, PackDir: pk, MaxDepth: diag.DepthRegulatory,
+		})
+		if err != nil {
+			t.Fatalf("toolchain error: %v", err)
+		}
+		if !rep.OK {
+			t.Fatalf("expected OK, got diagnostics: %+v", rep.Diagnostics)
+		}
+	})
+
+	t.Run("permitted_for empty ⇒ rejected at depth 4", func(t *testing.T) {
+		pk := clonePackWithDayCount(t, dayCountAct360PermittedForNothing)
+		rep, err := Run(Options{
+			VariantPath: variant, SchemaDir: schemaDir, PackDir: pk, MaxDepth: diag.DepthRegulatory,
+		})
+		if err != nil {
+			t.Fatalf("toolchain error: %v", err)
+		}
+		if rep.OK {
+			t.Fatalf("expected depth-4 rejection when pack permits nothing, got OK")
+		}
+		d0 := rep.Diagnostics[0]
+		if d0.Depth != diag.DepthRegulatory {
+			t.Errorf("rejected at depth %d, expected %d (regulatory)", d0.Depth, diag.DepthRegulatory)
+		}
+		if !hasKind(rep.Diagnostics, diag.KindForbiddenDayCount) {
+			t.Errorf("expected a %q diagnostic, got %+v", diag.KindForbiddenDayCount, rep.Diagnostics)
+		}
+	})
 }
 
 func hasKind(ds []diag.Diagnostic, kind string) bool {

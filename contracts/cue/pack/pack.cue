@@ -88,7 +88,18 @@ package pack
 
 #FormulaRef: =~"^engine\\.[a-z0-9_]+(\\.[a-z0-9_]+)*$"
 
-#DayCounts: [string]: {formula_ref: #FormulaRef}
+// `permitted_for` declares the product families a day-count is regulatorily
+// permitted for — pack-declared regulatory law, not validator-encoded. PT
+// retail term deposits require Act/360 (02 §2.2), so only act_360 lists
+// `term_deposit`; the others declare an empty set and depth-4 rejects them for
+// a term-deposit variant. (Previously the permitted set was a hardcoded Go map
+// keyed on namespace; moving it here makes the rule auditor-visible in the pack
+// — `cat` + `diff`, no tooling.) The family ids match the family-schema names
+// (registry in pack-validate; e.g. term_deposit).
+#DayCounts: [string]: {
+	formula_ref: #FormulaRef
+	permitted_for: [...(=~"^[a-z][a-z0-9_]*$")] | *[]
+}
 
 #Withholding: [string]: {
 	formula_ref:       #FormulaRef

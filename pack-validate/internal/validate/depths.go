@@ -26,7 +26,7 @@ func depth2PackBound(vd variantData, p *pack.Pack) []diag.Diagnostic {
 		})
 		return out
 	}
-	if !p.DayCounts[key] {
+	if !p.HasDayCount(key) {
 		out = append(out, diag.Diagnostic{
 			Depth: diag.DepthType, Path: "day_count", Kind: diag.KindUnknownPrimitive,
 			Message: fmt.Sprintf("day_count %q resolves to no day-count primitive in pack %s", vd.DayCount, p.Key),
@@ -75,20 +75,23 @@ func depth3PackCompliance(vd variantData, fam Family, p *pack.Pack) []diag.Diagn
 // comments explicitly defer to the validator because they are not expressible
 // element-wise in CUE (ADR-PC-006 Context depth-4; term-deposit.cue comments on
 // #SteppedRate.steps and #BandedPolicy.banded).
-func depth4Regulatory(vd variantData, p *pack.Pack) []diag.Diagnostic {
+func depth4Regulatory(vd variantData, fam Family, p *pack.Pack) []diag.Diagnostic {
 	var out []diag.Diagnostic
 
-	// (a) day-count must be regulatorily permitted for a deposit. PT retail
-	// term deposits require Act/360 (02 §2.2; ADR-PC-006 §4 worked example
-	// "PT pack rejects Act/365 for a deposit"). The permitted set is keyed on
-	// the pack's jurisdiction namespace. See depositPermittedDayCounts for the
-	// follow-up to make this pack-declared rather than validator-encoded.
-	if _, key, ok := splitPackRef(vd.DayCount); ok {
-		if permitted, known := depositPermittedDayCounts[p.Namespace]; known && !permitted[key] {
+	// (a) day-count must be regulatorily permitted for this product family.
+	// PT retail term deposits require Act/360 (02 §2.2; ADR-PC-006 §4 worked
+	// example "PT pack rejects Act/365 for a deposit"). The permitted set is
+	// PACK-DECLARED (primitives/day-count.yaml `permitted_for`), not encoded
+	// here, so the regulatory rule is auditor-visible in the signed pack. The
+	// day-count's catalogue membership was already enforced at depth 2; here we
+	// reject a carried-but-not-permitted day-count for the family.
+	if _, key, ok := splitPackRef(vd.DayCount); ok && p.HasDayCount(key) {
+		if !p.PermitsDayCountFor(key, fam.Name) {
 			out = append(out, diag.Diagnostic{
 				Depth: diag.DepthRegulatory, Path: "day_count", Kind: diag.KindForbiddenDayCount,
-				Message: fmt.Sprintf("day-count %q is not regulatorily permitted for a %s deposit (permitted: %s)",
-					key, strings.ToUpper(p.Namespace), strings.Join(sortedKeys(permitted), ", ")),
+				Message: fmt.Sprintf("day-count %q is not regulatorily permitted for a %s %s (pack %s permits: %s)",
+					key, strings.ToUpper(p.Namespace), fam.Name, p.Key,
+					strings.Join(p.PermittedDayCountsFor(fam.Name), ", ")),
 			})
 		}
 	}
@@ -137,15 +140,6 @@ func depth4Regulatory(vd variantData, p *pack.Pack) []diag.Diagnostic {
 	return out
 }
 
-// depositPermittedDayCounts is the per-jurisdiction regulatory permitted-set
-// for term-deposit day-counts. PT: Act/360 only (02 §2.2). This is jurisdiction
-// law, not pack-tunable config, so it lives in the engine-owned validator — but
-// migrating it to an explicit pack `regulatory:` section is filed as a
-// follow-up so the rule is auditor-visible in the pack itself.
-var depositPermittedDayCounts = map[string]map[string]bool{
-	"pt": {"act_360": true},
-}
-
 // splitPackRef splits a #PackBoundPrimitive value "pt.act_360" into namespace
 // "pt" and primitive key "act_360" (the catalogue map key). Returns ok=false
 // for a value without a namespace segment (a depth-1 shape failure).
@@ -155,18 +149,4 @@ func splitPackRef(ref string) (ns, key string, ok bool) {
 		return "", "", false
 	}
 	return ref[:i], ref[i+1:], true
-}
-
-func sortedKeys(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	// small sets; insertion-order-free, deterministic for messages
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j-1] > out[j]; j-- {
-			out[j-1], out[j] = out[j], out[j-1]
-		}
-	}
-	return out
 }
