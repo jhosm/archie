@@ -482,6 +482,26 @@ Epic 0's items feed pack content (0.3/0.4 → F), load calibration (0.5 → L), 
 > Recorded as an explicit-drift acknowledgment per
 > [ADR-PC-020 §D3](./adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md).
 
+> **Refined 2026-05-30 (full child-level dependency graph → bd).** Extending the E-decomposition
+> above to **every open epic**. The coarse epic-level recipe edges below (`D blocked-by A & C`,
+> and the implicit `E→F→G→H→I→J` / `F,I→K,L,M` epic gates) are **superseded** by precise
+> child-level edges, and the 13 coarse epic→epic `blocks` edges were **retired and converted to
+> non-gating `relates_to`** links — the narrative survives, but scheduling is no longer shadowed
+> (an epic-level `blocks` edge propagates to *every* child's readiness, hiding work whose own
+> prerequisites are already met). Net in bd: **+67 child-level `blocks` edges** (intra-epic
+> ordering + the cross-epic spine — e.g. `F.2→G.3→G.2→H.1→I.1→I.3→I.4→J.1→J.2→J.4→J.5` reproduces
+> the estate critical path), one gap-filler `I.3→L.1` (the L.1 load harness drives Kong), and 27
+> soft-affinity `relates_to`. The graph is acyclic; `bd ready` now surfaces a **28-task parallel
+> frontier** — D, F-content, K, and M fan out as independent tracks while the `G→H→I→J` estate
+> spine is the long pole. `D blocked-by A & C` is retired specifically because D's *actual* A/C
+> prerequisites (A.1–A.7 event store, C.1 CUE, C.5 loader) are already **closed**, so D's children
+> are genuinely ready now. Derivation method: a per-epic analyst pass (one analyst per epic, owning
+> edges *into* its epic for no-double-count coverage) → adversarial verification (drop unless a
+> real blocker, grounded in this backlog / a description cross-ref / a design-doc §) →
+> whole-graph completeness-and-cycle critic → mechanical transitive reduction. Recorded as an
+> explicit-drift acknowledgment per
+> [ADR-PC-020 §D3](./adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md).
+
 ---
 
 ## Creating the backlog (local `bd create`)
@@ -489,7 +509,8 @@ Epic 0's items feed pack content (0.3/0.4 → F), load calibration (0.5 → L), 
 bd is the only tracker (per `CLAUDE.md` — not TodoWrite/TaskCreate). New epics inherit the
 `archie-` prefix (dolt db `archie`). Dependency edges to record via `bd dep`:
 
-- D blocked-by A & C
+- D blocked-by A & C — *retired 2026-05-30 (coarse epic gate → child-level + `relates_to`); see
+  the second note under *Sequencing**
 - E blocked-by A, B, C at the **child** level — **not** D (refined 2026-05-30; see the note
   under *Sequencing*): E.1←A.6+B.3, E.2←C.4+C.5, E.3←E.1+E.2+C.6, E.4/E.5←E.3 (E.5 also←E.1),
   E.6←E.3+E.4+E.5
