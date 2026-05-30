@@ -9,6 +9,6 @@
          no Confluent.Kafka, no domain types. Storage sees ciphertext-in-Avro and
          does not know it is encrypted. A future Go re-implementation of this
          assembly is what ADR-PC-001 §S3's "lowest exit cost" cashes out as. -->
-    <PackageReference Include="Npgsql" Version="9.0.3" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
   </ItemGroup>
 </Project>
