@@ -21,7 +21,17 @@ jobs:
       - name: Require an "ADRs touched/honoured" section in the PR body
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
+          # Dependabot PRs bump dependencies, not ADR-governed design — their
+          # bodies are auto-generated and can't carry the section. Exempt them
+          # so the gate stays meaningful for human design changes (ADR-PC-020
+          # Amendment 2026-05-30, A4). Scoped to these two logins, not bots
+          # generically; widen deliberately if another machine author appears.
+          case "$PR_AUTHOR" in
+            'dependabot[bot]'|'dependabot-preview[bot]')
+              echo "Dependabot PR ($PR_AUTHOR) — ADR-section gate not applicable."; exit 0 ;;
+          esac
           if printf '%s' "$PR_BODY" | grep -qiE '(^#{1,6}[[:space:]].*|^[-*][[:space:]].*|^)ADRs?[[:space:]]+(touched|honou?red|implemented|amended)'; then
             echo "PR-body ADR section present."; exit 0
           fi
