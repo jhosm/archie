@@ -1,0 +1,90 @@
+name: Fuzz
+
+# Continuous (scheduled) fuzzing of pack-validate's non-engineer-authored surfaces
+# (C.8, bd archie-2t16.6). This is the DISCOVERY half of the fuzz work; the regression
+# half — re-running the committed seed corpus (f.Add seeds + any testdata/fuzz/ crashers)
+# as deterministic subtests — already runs on every per-PR `go test ./...` in the
+# pack-validate CI job. `go test -fuzz` runs ONE target in ONE package and loops until it
+# finds a failure or hits -fuzztime, so it must NOT sit on the per-PR critical path; it
+# runs on a schedule (and on demand) instead.
+#
+# Contract under test (ADR-PC-007 §169): a malformed/garbage pack yields a clean rejection,
+# never a panic/crash/hang. A crasher the fuzzer finds is written to
+# <pkg>/testdata/fuzz/<Target>/<hash>; this job uploads it as an artifact so it can be
+# reproduced locally and committed back as a permanent seed (after which the per-PR
+# `go test` guards it forever). The generated corpus is cached so coverage is cumulative
+# across runs rather than restarting from the seeds each week.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC (after the 05:00 SBOM and 04:00 CodeQL scheduled scans)
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "Per-target fuzz duration (Go duration, e.g. 3m, 30m)"
+        required: false
+        default: "5m"
+
+permissions:
+  contents: read
+
+# A new scheduled run shouldn't pile onto an in-flight one.
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false   # one target finding a crasher must not cancel the others
+      matrix:
+        include:
+          - target: FuzzLoad   # internal/pack — pack.Load over each required source file
+            dir: internal/pack
+          - target: FuzzRun    # internal/validate — full depths 1→4 pipeline over a fuzzed variant
+            dir: internal/validate
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4 # pins Go from mise.toml (ADR-PC-006)
+
+      # Cache the Go fuzz cache so each weekly run continues exploring from the prior
+      # run's generated corpus instead of restarting from the seeds. The run-id suffix
+      # makes every run save a fresh entry; restore-keys pulls the most recent prior one.
+      - name: Cache generated fuzz corpus (cumulative)
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzz-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-${{ matrix.target }}-
+
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: pack-validate
+        # Pass inputs via env (never interpolate ${{ }} into the shell): FUZZTIME is a
+        # workflow_dispatch input and must be treated as untrusted. TARGET/DIR come from
+        # the workflow-defined matrix but are quoted for consistency.
+        env:
+          FUZZTIME: ${{ github.event.inputs.fuzztime || '5m' }}
+          TARGET: ${{ matrix.target }}
+          DIR: ${{ matrix.dir }}
+        # -run='^$' skips the ordinary unit tests (they run in the per-PR CI job); we only
+        # want the fuzzing loop here. -fuzz matches exactly one target by anchored regex.
+        run: |
+          if ! printf '%s' "$FUZZTIME" | grep -Eq '^[0-9]+(\.[0-9]+)?(s|m|h)$'; then
+            echo "::warning::invalid fuzztime '$FUZZTIME'; falling back to 5m"
+            FUZZTIME=5m
+          fi
+          go test -run='^$' -fuzz="^${TARGET}$" -fuzztime="$FUZZTIME" "./$DIR"
+
+      # On a crash, Go writes the minimised reproducer to <dir>/testdata/fuzz/<Target>/.
+      # Upload it so a human can `go test -run=<Target>/<hash>` to reproduce, fix, and
+      # commit it back as a permanent seed.
+      - name: Upload crasher reproducer on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crasher-${{ matrix.target }}
+          path: pack-validate/${{ matrix.dir }}/testdata/fuzz/${{ matrix.target }}/
+          if-no-files-found: warn
