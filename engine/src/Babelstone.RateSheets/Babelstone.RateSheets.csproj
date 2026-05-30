@@ -9,6 +9,6 @@
          immutable rows in the same PostgreSQL tier (ADR-PC-008 §P1). The store is
          hand-rolled against the table contract (no ORM, ADR-PC-010); the body model
          and validator are pure System.Text.Json with no datastore surface. -->
-    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Npgsql" />
   </ItemGroup>
 </Project>
