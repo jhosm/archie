@@ -158,7 +158,7 @@ The choreography common to deciders is written as separable steps so the generic
 **Residual risks:**
 
 - **Premature-abstraction risk on the pipeline.** Generalising the choreography from one AT_MATURITY example could freeze assumptions that PERIODIC/ADVANCE lifecycles (Epic F) break. Mitigation: the deferral in D5/§P5 — extract on the second decider, with evidence, not on the first.
-- **The engine→family no-edge rule is a convention until gated.** A stray `ProjectReference` from the spine to a family would silently erode family-agnosticism. Mitigation: the `ENGINE_FAMILY_AGNOSTIC` fitness function below makes it a mechanical check (Planned).
+- **The engine→family no-edge rule is a convention until gated.** A stray `ProjectReference` from the spine to a family would silently erode family-agnosticism. Mitigation: the `ENGINE_FAMILY_AGNOSTIC` fitness function below makes it a mechanical check (Live).
 
 ---
 
@@ -166,9 +166,9 @@ The choreography common to deciders is written as separable steps so the generic
 
 | # | Commitment (with §-anchor) | Gate (pyramid level) | Test ID | Status |
 |---|---|---|---|---|
-| 1 | The generic engine spine carries no reference to any `families/**` project — the `family → engine` arrow is one-way (§D2, §P2). | architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC` | Planned |
+| 1 | The generic engine spine carries no reference to any `families/**` project — the `family → engine` arrow is one-way (§D2, §P2). | architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC` | Live |
 
-Related: this ADR's family-agnosticism is the family-level cousin of the variant-level [`ZERO_ENGINE_DIFF_PER_VARIANT`](./commitment-catalogue.md) (adding a *variant* is zero engine diff; adding a *family* is zero *generic*-engine diff). `ENGINE_FAMILY_AGNOSTIC` is `Planned` (no gate wired in E.3; the dependency assertion is a follow-up) — a deliberate, listed hole, promoted to the [commitment catalogue](./commitment-catalogue.md) when the gate lands.
+Related: this ADR's family-agnosticism is the family-level cousin of the variant-level [`ZERO_ENGINE_DIFF_PER_VARIANT`](./commitment-catalogue.md) (adding a *variant* is zero engine diff; adding a *family* is zero *generic*-engine diff). `ENGINE_FAMILY_AGNOSTIC` is now `Live` — the dependency assertion (`EngineFamilyAgnosticTests` in `Babelstone.Engine.Tests`) parses the six spine projects' `.csproj` and fails if any references `families/**`; it is promoted to the [commitment catalogue](./commitment-catalogue.md) (row 12) as the single source of truth for its status.
 
 ---
 
