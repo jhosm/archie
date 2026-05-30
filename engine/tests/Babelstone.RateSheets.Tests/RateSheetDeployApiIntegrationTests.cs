@@ -21,8 +21,7 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
     private static readonly JsonSerializerOptions SnakeCase =
         new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
-    private readonly PostgreSqlContainer _pg = new PostgreSqlBuilder()
-        .WithImage("postgres:18-alpine")
+    private readonly PostgreSqlContainer _pg = new PostgreSqlBuilder("postgres:18-alpine")
         .Build();
 
     // ConnectionStrings__RateSheets -> ConnectionStrings:RateSheets, read by the default
