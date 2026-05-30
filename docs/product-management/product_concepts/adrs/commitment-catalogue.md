@@ -21,12 +21,17 @@ tracked separately — and is **not** the job of this seed.
 
 ## How to read this
 
-- **Status is `Planned` for every row.** The engine is a skeleton (no `.cs`, CI
-  jobs are placeholders), so no gate runs yet. `Planned` means *the gate is named
-  and the Test ID reserved; the test is written before the decision is implemented*
+- **Most rows are `Planned`; a row flips to `Live` as its gate lands.** `Planned`
+  means *the gate is named and the Test ID reserved; the test is written before (or
+  with) the decision's implementation*
   ([ADR-PC-020 §P5](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)).
-  A row becomes `Live` when its test exists and passes; a row with no intended
-  gate would be `Gap` (a deliberate, visible hole) — there are none here.
+  A row becomes `Live` only when its test exists, passes, **and runs in CI** — the
+  [§P6](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) criterion is a
+  commitment that "resolves to ≥1 test that exists (and runs in CI)". A test that is
+  green on a dev machine but excluded from the CI lane (e.g. a Testcontainers
+  integration tier not yet wired) stays `Planned` until that lane runs it — otherwise
+  a regression would not fail the build. A row with no intended gate would be `Gap` (a
+  deliberate, visible hole) — there are none here.
 - **Test ID** is a stable `UPPER_SNAKE_CASE` identifier (the convention the
   [ADR-PC-020 §P5](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)
   illustration uses) and the join key between this catalogue and the referencing
@@ -51,7 +56,7 @@ tracked separately — and is **not** the job of this seed.
 |---|---|---|---|---|---|
 | 1 | `append` writes event rows **and** outbox rows in one local PostgreSQL transaction (no event without its outbox row, and vice versa). | [ADR-PC-001 §P2](./ADR-PC-001-event-store-technology.md) | integration (Testcontainers) | `ES_ATOMIC_APPEND_OUTBOX` | Planned |
 | 2 | Money rounds **HALF_EVEN exactly once** at the `Decimal → Cents` boundary, proven against a sealed golden-fixture corpus. | [ADR-PC-010 §P1–§P2](./ADR-PC-010-dotnet-hand-rolled-engine.md) | unit + analyser | `MONEY_BOUNDARY_FIXTURES` | Planned |
-| 3 | A handler that reads the clock, does I/O, or uses randomness **fails the build**; event evolution is additive-only. | [ADR-PC-010 §P5](./ADR-PC-010-dotnet-hand-rolled-engine.md) | analyser / CI determinism gate | `DETERMINISM_GATE` | Planned |
+| 3 | A handler that reads the clock, does I/O, or uses randomness **fails the build**; event evolution is additive-only. | [ADR-PC-010 §P5](./ADR-PC-010-dotnet-hand-rolled-engine.md) | analyser / CI determinism gate | `DETERMINISM_GATE` | Live |
 | 4 | Replay reads the pack/schema pin **off each event**, not the clock; a migration at sequence `M` splits the stream's pin, and a rebuild re-derives the identical per-event pin whenever it runs. | [ADR-PC-009 §P1–§P2](./ADR-PC-009-per-instance-version-pinning.md) | integration (Testcontainers) | `REPLAY_PIN_PER_EVENT` | Planned |
 | 5a | **Post-flag, never gated** — a GL-side reject never blocks or unwinds the producing business flow. | [ADR-PC-012 slot 5](./ADR-PC-012-gl-posting-signal-contract.md) | contract / saga | `GL_POST_FLAG_NEVER_GATES` | Planned |
 | 5b | **Post-flag, never gated** for `EVENT_DRIVEN`/`SCHEDULED` notifications; the `PRE_CONTRACTUAL` (FIN) case is the synchronous saga carve-out. | [ADR-PC-014 slot 5](./ADR-PC-014-customer-notification-emit-contract.md) | contract / saga | `NOTIFY_POST_FLAG_NEVER_GATES` | Planned |
@@ -73,6 +78,20 @@ provision below, identified in the Epic C readiness review: they are load-bearin
 to the authoring loop's sub-30 s feedback premise ([ADR-PC-006 §P3–§P4](./ADR-PC-006-cue-schema-language.md)).
 They are **toolchain** fitness functions rather than engine invariants, so they
 sit alongside the original ~8 rather than recounting it.
+
+**Epic A reconciliation (2026-05-30).** `DETERMINISM_GATE` (row 3) flipped
+`Planned → Live`: A.7 (`archie-k03q`) shipped both halves of the gate — the
+build-time `BENG001/002/003` handler-purity analysers (referenced by
+`Babelstone.Engine` and built warnings-as-errors) and the runtime fixture-replay
+determinism test — and both run in CI's `engine` job (the non-Integration tier of
+`.github/workflows/ci.yml`). `ES_ATOMIC_APPEND_OUTBOX` (row 1) deliberately stays
+`Planned`: A.2 (`archie-2m49`) shipped the atomic append+outbox and its integration
+test is green on PostgreSQL 18, but that test is `[Trait("Category","Integration")]`
+and CI runs `--filter "Category!=Integration"`, so the lane that would run it is
+deferred to **E.6 (`archie-2jum`)** (see the `engine` job's TODO in
+`.github/workflows/ci.yml`). It flips to `Live` when that Testcontainers lane is
+wired — per the "runs in CI" rule above and the [Epic A PR #34](https://github.com/jhosm/babelstone/pull/34)
+follow-up that scopes this reconciliation.
 
 ## Coverage by pyramid level
 
