@@ -15,8 +15,7 @@ namespace Babelstone.RateSheets.Tests;
 [Trait("Category", "Integration")]
 public sealed class PostgresRateSheetStoreIntegrationTests : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _pg = new PostgreSqlBuilder()
-        .WithImage("postgres:18-alpine")
+    private readonly PostgreSqlContainer _pg = new PostgreSqlBuilder("postgres:18-alpine")
         .Build();
 
     private string ConnectionString => _pg.GetConnectionString();

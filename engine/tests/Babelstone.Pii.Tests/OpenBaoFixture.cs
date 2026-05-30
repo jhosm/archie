@@ -13,8 +13,7 @@ public sealed class OpenBaoFixture : IAsyncLifetime
 {
     private const string Token = "root";
 
-    private readonly IContainer _container = new ContainerBuilder()
-        .WithImage("openbao/openbao:2.5.4")
+    private readonly IContainer _container = new ContainerBuilder("openbao/openbao:2.5.4")
         .WithEnvironment("BAO_DEV_ROOT_TOKEN_ID", Token)
         .WithCommand("server", "-dev", "-dev-listen-address=0.0.0.0:8200")
         .WithPortBinding(8200, assignRandomHostPort: true)

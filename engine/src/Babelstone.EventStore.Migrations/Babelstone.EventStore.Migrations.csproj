@@ -15,6 +15,6 @@
     <!-- Npgsql is the only dependency: this assembly runs DDL under the
          migration role (ADR-PC-001 §P3), separate from the engine's runtime
          role. It carries no domain types and no OpenBao/Kafka surface. -->
-    <PackageReference Include="Npgsql" Version="9.0.3" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
   </ItemGroup>
 </Project>

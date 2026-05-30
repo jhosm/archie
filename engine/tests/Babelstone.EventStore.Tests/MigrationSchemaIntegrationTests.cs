@@ -16,8 +16,7 @@ public sealed class MigrationSchemaIntegrationTests : IAsyncLifetime
     // Match the dev stack's pinned major version (infra/compose.yaml — the
     // ADR-PC-001 event store, latest stable PG 18) so the schema and §P3 role
     // behaviour are tested against the PostgreSQL the engine actually deploys on.
-    private readonly PostgreSqlContainer _pg = new PostgreSqlBuilder()
-        .WithImage("postgres:18-alpine")
+    private readonly PostgreSqlContainer _pg = new PostgreSqlBuilder("postgres:18-alpine")
         .Build();
 
     private string ConnectionString => _pg.GetConnectionString();
