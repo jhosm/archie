@@ -51,8 +51,13 @@ public sealed record PackManifest(
 
 public sealed record PackBreakingChange(string Id, string Description);
 
-/// <summary>A day-count primitive binding (primitives/day-count.yaml): an engine formula reference.</summary>
-public sealed record PackDayCount(string FormulaRef)
+/// <summary>
+/// A day-count primitive binding (primitives/day-count.yaml): an engine formula reference plus the
+/// pack-declared <c>permitted_for</c> families (the depth-4 regulatory permitted-set, babelstone-fk7m.2).
+/// The permitted-set is enforced by <c>pack-validate</c> at config-deploy time; the engine carries it
+/// for audit visibility and does not re-enforce it at resolution.
+/// </summary>
+public sealed record PackDayCount(string FormulaRef, IReadOnlyList<string> PermittedFor)
 {
     /// <summary>Bridges <c>formula_ref</c> to the engine <see cref="DayCountConvention"/>, or throws if none.</summary>
     public DayCountConvention ToConvention() => FormulaRef switch

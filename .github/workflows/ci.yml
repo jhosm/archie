@@ -54,7 +54,12 @@ jobs:
 
   engine:
     needs: changes
-    if: ${{ needs.changes.outputs.engine == 'true' || needs.changes.outputs.families == 'true' }}
+    # Also on packs/contracts changes: the engine STRICTLY parses the pack YAML (Babelstone.Packs,
+    # no IgnoreUnmatchedProperties) and embeds the Avro .avsc (Babelstone.Engine.Avro). A packs/** or
+    # contracts/** change can therefore break the engine WITHOUT touching engine/**, and a path-scoped
+    # engine job would miss it (it merges red-on-main, surfacing only on the next engine PR — the
+    # babelstone-fk7m.2 / permitted_for incident). So the engine build+tests run on these too.
+    if: ${{ needs.changes.outputs.engine == 'true' || needs.changes.outputs.families == 'true' || needs.changes.outputs.packs == 'true' || needs.changes.outputs.contracts == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
