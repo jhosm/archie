@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Packs</RootNamespace>
+    <AssemblyName>Babelstone.Packs</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- YAML parser for the auditor-readable pack data files (ADR-PC-007 §S2). A pure
+         parser owning no state — consistent with the hand-rolled-core preference (the
+         loader, cache, and fail-loud logic are all hand-rolled here). -->
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- DayCountConvention (FinancialMath) + Money (FinancialTypes) — the engine types the
+         loaded pack maps onto. No EventStore/Pii/Npgsql/ASP.NET: the loader pulls + verifies
+         + parses + caches, it does not touch the event store or the DB. -->
+    <ProjectReference Include="../Babelstone.FinancialMath/Babelstone.FinancialMath.csproj" />
+    <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+  </ItemGroup>
+</Project>

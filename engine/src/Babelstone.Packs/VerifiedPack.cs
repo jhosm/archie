@@ -1,0 +1,95 @@
+using Babelstone.FinancialMath;
+using Babelstone.FinancialTypes;
+
+namespace Babelstone.Packs;
+
+/// <summary>
+/// A regulatory pack that has been pulled by digest, cosign-verified, and structurally parsed
+/// (ADR-PC-007 §P4) — the immutable in-memory model the engine resolves primitives and
+/// parameters against. Held version-keyed in <see cref="OciPackStore"/>'s cache; a handler
+/// reads it purely (no I/O). The data shape is the pack.sh DATA_FILES layout one-for-one.
+/// </summary>
+public sealed record VerifiedPack(
+    PackManifest Manifest,
+    IReadOnlyDictionary<string, PackDayCount> DayCounts,
+    IReadOnlyDictionary<string, PackWithholding> Withholdings,
+    IReadOnlyDictionary<string, PackFgd> Fgds,
+    IReadOnlyDictionary<string, PackReporting> Reportings,
+    PackParameters Parameters,
+    IReadOnlyList<PackRateSheetRef> RateSheetRefs)
+{
+    /// <summary>The immutable composite version key <c>&lt;pack_id&gt;.&lt;pack_version&gt;</c> (e.g. <c>pt.2026.1</c>).</summary>
+    public string VersionKey => $"{Manifest.PackId}.{Manifest.PackVersion}";
+
+    /// <summary>
+    /// Maps a pack-declared day-count id (e.g. <c>act_360</c>) to the engine convention.
+    /// Throws (never defaults) if the id is undeclared or its formula_ref has no engine
+    /// convention — a variant naming an unsupported day-count must fail loud, not silently
+    /// accrue on the wrong basis.
+    /// </summary>
+    public DayCountConvention ResolveDayCount(string id) =>
+        DayCounts.TryGetValue(id, out var dayCount)
+            ? dayCount.ToConvention()
+            : throw new PackLoadException(VersionKey, null, $"day-count id '{id}' is not declared in the pack.");
+}
+
+/// <summary>The pack manifest (pack.yaml): identity, metadata, and version pins (ADR-PC-007 §P1).</summary>
+public sealed record PackManifest(
+    string PackId,
+    string PackVersion,
+    string Namespace,
+    int ManifestSchemaVersion,
+    string Publisher,
+    DateOnly PackEffectiveFrom,
+    string? BasedOnPackVersion,
+    string DeltaSummary,
+    IReadOnlyList<PackBreakingChange> BreakingChanges,
+    string EngineCompatibleVersions,
+    IReadOnlyDictionary<string, string> SchemaPins,
+    IReadOnlyList<string> RateSheetRefNames,
+    string TestCorpusRef);
+
+public sealed record PackBreakingChange(string Id, string Description);
+
+/// <summary>A day-count primitive binding (primitives/day-count.yaml): an engine formula reference.</summary>
+public sealed record PackDayCount(string FormulaRef)
+{
+    /// <summary>Bridges <c>formula_ref</c> to the engine <see cref="DayCountConvention"/>, or throws if none.</summary>
+    public DayCountConvention ToConvention() => FormulaRef switch
+    {
+        "engine.day_count.actual_360" => DayCountConvention.Act360,
+        "engine.day_count.actual_365" => DayCountConvention.Act365,
+        "engine.day_count.thirty_360_european" => DayCountConvention.Thirty360European,
+        _ => throw new PackLoadException(null, null,
+            $"day-count formula_ref '{FormulaRef}' has no engine convention; refusing to default silently."),
+    };
+}
+
+/// <summary>A withholding primitive (primitives/withholding.yaml): e.g. <c>irs_juros</c> at 2800 bps, flow-by-flow.</summary>
+public sealed record PackWithholding(
+    string FormulaRef,
+    int RateBasisPoints,
+    string Basis,
+    string Timing,
+    IReadOnlyList<PackWithholdingExemption> Exemptions,
+    IReadOnlyDictionary<string, PackReportingObligation> Reporting);
+
+public sealed record PackWithholdingExemption(string Id, string Evidence);
+
+public sealed record PackReportingObligation(bool Required, string Frequency);
+
+/// <summary>Deposit-guarantee-fund coverage (primitives/fgd.yaml).</summary>
+public sealed record PackFgd(long CoverageCeilingCents, string Scheme)
+{
+    /// <summary>The per-depositor coverage ceiling as <see cref="Money"/> (cents-native).</summary>
+    public Money CoverageCeiling => new(CoverageCeilingCents);
+}
+
+/// <summary>A regulator reporting hook (primitives/reporting.yaml).</summary>
+public sealed record PackReporting(bool Active, string Frequency, string Regulator);
+
+/// <summary>Closed pack-level scalar parameters (parameters/constants.yaml). An unknown key fails the parse.</summary>
+public sealed record PackParameters(int MaxConsumerRateBps, int AutoRenewalOptoutWindowDays);
+
+/// <summary>A version-pinned rate-sheet reference (rate-sheet-refs/*.yaml); the sheet body lives in C.6.</summary>
+public sealed record PackRateSheetRef(string ProductFamily, string RateSheetVersionId);
