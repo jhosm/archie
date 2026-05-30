@@ -33,6 +33,16 @@ public sealed class PackParserTests
         => Assert.Equal(DayCountConvention.Thirty360European, Pt2026().ResolveDayCount("30_360_european"));
 
     [Fact]
+    public void Day_count_carries_the_pack_declared_permitted_for_set()
+    {
+        // The engine models permitted_for (babelstone-fk7m.2): act_360 is permitted for term_deposit,
+        // the others for nothing yet. The strict parser must accept this governed field, not reject it.
+        var dayCounts = Pt2026().DayCounts;
+        Assert.Equal(["term_deposit"], dayCounts["act_360"].PermittedFor);
+        Assert.Empty(dayCounts["act_365"].PermittedFor);
+    }
+
+    [Fact]
     public void A_declared_but_engine_unimplemented_day_count_fails_loud()
         // act_act_isda is declared in the pack but has no DayCountConvention member — refuse to default.
         => Assert.Throws<PackLoadException>(() => Pt2026().ResolveDayCount("act_act_isda"));

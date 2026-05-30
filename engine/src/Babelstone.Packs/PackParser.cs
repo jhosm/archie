@@ -47,7 +47,9 @@ public static class PackParser
 
         var dayCounts = ParseMap<DayCountDto, PackDayCount>(
             files, "primitives/day-count.yaml", expectedVersionKey,
-            (id, dto) => new PackDayCount(Required(dto.FormulaRef, expectedVersionKey, $"day-count '{id}'.formula_ref")));
+            (id, dto) => new PackDayCount(
+                Required(dto.FormulaRef, expectedVersionKey, $"day-count '{id}'.formula_ref"),
+                dto.PermittedFor ?? []));
 
         var withholdings = ParseMap<WithholdingDto, PackWithholding>(
             files, "primitives/withholding.yaml", expectedVersionKey,
@@ -198,6 +200,7 @@ public static class PackParser
     private sealed class DayCountDto
     {
         public string? FormulaRef { get; set; }
+        public List<string>? PermittedFor { get; set; }
     }
 
     private sealed class WithholdingDto
