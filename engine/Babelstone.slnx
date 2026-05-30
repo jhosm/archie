@@ -10,6 +10,8 @@
     <Project Path="src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj" />
     <Project Path="src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <Project Path="src/Babelstone.RateSheets.Api/Babelstone.RateSheets.Api.csproj" />
+    <!-- Loaded family schema (ADR-PC-019 §P1): lives under /families, built with the engine pipeline. -->
+    <Project Path="../families/term-deposit/Babelstone.Families.TermDeposit.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Babelstone.RateSheets.Tests/Babelstone.RateSheets.Tests.csproj" />
@@ -20,5 +22,6 @@
     <Project Path="tests/Babelstone.Pii.Tests/Babelstone.Pii.Tests.csproj" />
     <Project Path="tests/Babelstone.Engine.Tests/Babelstone.Engine.Tests.csproj" />
     <Project Path="tests/Babelstone.Engine.Analyzers.Tests/Babelstone.Engine.Analyzers.Tests.csproj" />
+    <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/Babelstone.Families.TermDeposit.Tests.csproj" />
   </Folder>
 </Solution>

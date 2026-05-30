@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Families.TermDeposit</RootNamespace>
+    <AssemblyName>Babelstone.Families.TermDeposit</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The test project lives in tests/. SDK projects recurse-glob **/*.cs, so without this
+       the family would compile the test sources (and their generated AssemblyInfo). -->
+  <ItemGroup>
+    <Compile Remove="tests/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- A family references ONLY Babelstone.Engine (the dispatch/fold abstractions) plus
+         Babelstone.FinancialTypes (Money) — never EventStore or Pii. A handler therefore
+         structurally cannot reach the database or the OpenBao seam (FamilyModule.cs). -->
+    <ProjectReference Include="../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <ProjectReference Include="../../engine/src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+
+    <!-- The handler-purity analysers (BENG001/002/003) guard every IEventHandler.Apply
+         body in this family — the same checker the engine attaches to its own handlers
+         (Babelstone.Engine.csproj). Passed as an analyzer, never linked. A clock/IO/rng
+         call in a fold fails the build (warnings are errors via Directory.Build.props). -->
+    <ProjectReference Include="../../engine/src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>
