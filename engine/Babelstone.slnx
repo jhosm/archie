@@ -11,7 +11,7 @@
     <Project Path="src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <Project Path="src/Babelstone.RateSheets.Api/Babelstone.RateSheets.Api.csproj" />
     <!-- Loaded family schema (ADR-PC-019 §P1): lives under /families, built with the engine pipeline. -->
-    <Project Path="../families/term-deposit/Babelstone.Families.TermDeposit.csproj" />
+    <Project Path="../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Babelstone.RateSheets.Tests/Babelstone.RateSheets.Tests.csproj" />
