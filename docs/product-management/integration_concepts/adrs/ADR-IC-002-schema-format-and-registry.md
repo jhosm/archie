@@ -258,3 +258,27 @@ This is not an edge-case defensive check — it is part of the consumer contract
 The `.avsc` schema file and its registry subject describe the CloudEvents `data` field — the business payload. The schema must not include CloudEvents envelope attributes (`id`, `source`, `type`, `time`, `datacontenttype`, `specversion`) or domain extension attributes (`ce_correlationid`, `ce_causationid`, `ce_aggregatetype`). These are carried as Kafka/Redpanda message headers, written by the outbox publisher (ADR-IC-004), and consumed directly from the record header map.
 
 Embedding envelope fields in the Avro schema conflates the wire envelope with the business payload. It means every schema version carries envelope fields that are already mandated by the CloudEvents spec, creates schema churn when envelope conventions evolve, and makes the schema registry subject misleadingly describe the full message structure rather than just the business event.
+
+---
+
+## Amendment — 2026-05-31: §P1 file naming — directory layout and bare filename convention
+
+The E.4 implementation revealed that the §P1 filename pattern `{aggregate_type}.{EventName}.avsc` understated the domain prefix: the actual on-disk files landed as `deposits.term_deposit.DepositConstituted.avsc` (the full Avro FQN) from the outset, so §P1 was already contradicted by reality at first commit. This amendment converts that silent divergence into a recorded decision and introduces a per-namespace directory layout so the path carries the same information as the filename prefix did, without redundancy.
+
+### A1 · File location and naming (refines §P1)
+
+Each `.avsc` file lives at:
+
+```
+contracts/avro/{domain}/{aggregate_type}/{EventName}.avsc
+```
+
+where `{domain}` and `{aggregate_type}` together form the Avro `namespace` declared inside the file (e.g. `deposits.term_deposit`), and `{EventName}` is the bare PascalCase Avro record `name`. The directory mirrors the namespace exactly, so the full path reconstructs the registry subject (`{domain}.{aggregate_type}.{EventName}-value`) without encoding any information redundantly in the filename.
+
+Example: `contracts/avro/deposits/term_deposit/DepositConstituted.avsc` — namespace `deposits.term_deposit`, record name `DepositConstituted`, subject `deposits.term_deposit.DepositConstituted-value`.
+
+The engine picks up all schemas via a recursive glob (`**/*.avsc`); no code change is needed when a new family adds its directory subtree. The Avro namespace and record name inside the file remain the sole source of the registry subject — the file path is organisational only and has no runtime effect.
+
+### A2 · This amends the decision; it does not supersede this ADR
+
+§P1 (one file per event type, naming mirrors the registry subject, Option A/Option B shape) and §P2–§P5 remain binding as written. This amendment replaces only the filename pattern text and example in §P1 with the directory-tree layout above. The format choice (Apache Avro), registry API (Confluent SR), and all compatibility/registration/envelope-scope rules are unchanged.

@@ -5,7 +5,7 @@ namespace Babelstone.Engine.Avro;
 
 /// <summary>
 /// The Avro schemas for the engine's emitted events, discovered from the embedded
-/// <c>contracts/avro/*.avsc</c> — FAMILY-AGNOSTIC (ADR-PC-021 §D2): no family is named here.
+/// <c>contracts/avro/{domain}/{aggregate_type}/{EventName}.avsc</c> — FAMILY-AGNOSTIC (ADR-PC-021 §D2): no family is named here.
 /// Each schema yields a catalogued entry keyed both by the stored <c>event_type</c> (derived
 /// from the Avro namespace — <c>{aggregate_type}.{Name}</c>) and by the Avro record name
 /// (== the CLR event-type name), plus the Schema-Registry subject (ADR-IC-002 §P1:
@@ -61,7 +61,7 @@ public sealed class AvroSchemaCatalog
         => _byEventType.TryGetValue(eventType, out var entry)
             ? entry
             : throw new InvalidOperationException(
-                $"No Avro schema catalogued for event type '{eventType}'. Add its .avsc to contracts/avro.");
+                $"No Avro schema catalogued for event type '{eventType}'. Add its .avsc under contracts/avro/{{domain}}/{{aggregate_type}}/.");
 
     /// <summary>
     /// Resolves by the CLR event-type name, which equals the Avro record <c>name</c> (the codec's

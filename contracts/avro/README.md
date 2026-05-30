@@ -3,18 +3,23 @@
 Hand-authored **Avro payload schemas** — the wire format of every integration event
 published to Redpanda ([ADR-IC-002](../../docs/product-management/integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)).
 
-## Location & naming (ADR-IC-002 §P1)
+## Location & naming (ADR-IC-002 §P1, amended 2026-05-31)
 
-- One `.avsc` file per event type.
-- File name: `{aggregate_type}.{EventName}.avsc` with the Avro `namespace` =
-  `{domain}.{aggregate_type}` (here `deposits.term_deposit`) and the Avro `name` = the
-  PascalCase event name. So the files are named after the **fully-qualified name**:
-  `deposits.term_deposit.DepositConstituted.avsc`.
+- One `.avsc` file per event type, nested under `{domain}/{aggregate_type}/`.
+- File name: `{EventName}.avsc` (bare PascalCase event name — the directory already encodes
+  the domain and aggregate type, so the filename carries no redundancy).
+- The Avro `namespace` inside the file is `{domain}.{aggregate_type}` (e.g.
+  `deposits.term_deposit`) and the Avro `name` is the PascalCase event name. The
+  directory mirrors the namespace exactly:
+  `contracts/avro/deposits/term_deposit/DepositConstituted.avsc`.
 - The registry **subject** is derived from the fully-qualified name + `-value`:
   `deposits.term_deposit.DepositConstituted-value`. The engine's Avro codec
   (`Babelstone.Engine.Avro`) maps `event_type` (`term_deposit.DepositConstituted`) →
   subject at encode time; the relay (`Babelstone.OutboxPublisher`) never re-resolves a
   subject — it reads the `schema_id` embedded in the outbox row (ADR-IC-004 §P3).
+- **Adding a family:** create `contracts/avro/{domain}/{aggregate_type}/` and drop the
+  event `.avsc` files there. No engine code changes — the recursive glob in
+  `Babelstone.Engine.Avro.csproj` picks them up automatically.
 
 ## What these schemas model
 

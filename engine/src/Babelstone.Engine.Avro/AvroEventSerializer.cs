@@ -17,7 +17,7 @@ namespace Babelstone.Engine.Avro;
 /// Convention: a record parameter <c>Foo</c> maps to the Avro field <c>foo</c> (snake_case),
 /// except a <see cref="Money"/> parameter <c>Foo</c> maps to <c>foo_cents</c> (the integer-cents
 /// substrate, ADR-PC-010 §P1). Conversions are centralised: <c>Money↔long</c>, <c>Guid↔uuid</c>,
-/// <c>DateOnly↔date</c>. The <c>.avsc</c> (contracts/avro, governed by ADR-IC-002) stays the
+/// <c>DateOnly↔date</c>. The <c>.avsc</c> (contracts/avro/{domain}/{aggregate_type}/, governed by ADR-IC-002) stays the
 /// authority — reflection only <i>binds</i> params to fields and throws if they do not line up; it
 /// never derives the schema from the type. The bytes produced are the BARE Avro value; the
 /// Confluent wire-format prefix is the relay's job (ADR-IC-004 §P3). Adding a family is adding its

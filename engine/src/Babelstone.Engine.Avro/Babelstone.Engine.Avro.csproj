@@ -5,12 +5,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The contracts/avro/*.avsc are the single governed source (ADR-IC-002); embed ALL of
-         them (a glob — a new family's .avsc needs no csproj edit) so a deploy carries its own
-         schemas. The catalog discovers them by resource name; the codec is family-agnostic
-         (ADR-PC-021 §D2), so no family is named here. -->
-    <EmbeddedResource Include="../../../contracts/avro/*.avsc"
-                      LogicalName="Babelstone.Engine.Avro.contracts.avro.%(Filename)%(Extension)" />
+    <!-- contracts/avro/{domain}/{aggregate_type}/{EventName}.avsc — the single governed source
+         (ADR-IC-002 §P1 as amended). Embed ALL with a recursive glob so a new family's .avsc
+         needs no csproj edit. The catalog is family-agnostic (ADR-PC-021 §D2): it resolves
+         schemas from parsed content, never from the path. %(RecursiveDir) keeps the LogicalName
+         unique when bare event-name files in different subdirs share a short name. -->
+    <EmbeddedResource Include="../../../contracts/avro/**/*.avsc"
+                      LogicalName="Babelstone.Engine.Avro.contracts.avro.%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
