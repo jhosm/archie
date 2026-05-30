@@ -29,5 +29,8 @@
 
     <!-- In-process ASP.NET Core host for the rate-sheet deploy endpoint tests. -->
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.8" />
+
+    <!-- YAML parser for the in-engine pack loader (ADR-PC-007 §S2, Babelstone.Packs). -->
+    <PackageVersion Include="YamlDotNet" Version="18.0.0" />
   </ItemGroup>
 </Project>
