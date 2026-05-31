@@ -9,4 +9,18 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
+
+  <!-- NuGet audit (NU1902/NU1903) stays ON and warnings-as-errors for every package — except
+       the four OpenTelemetry advisories below, which have NO fixed version on the 1.x line the
+       OTel SDK ships (1.10/1.13/1.14 all flag them). They are moderate-severity, scoped to the
+       trace SDK we wire at the host boundary (ADR-IC-007 Epic K.1). Suppressing the specific
+       advisory IDs — not NU1902 wholesale — keeps the audit gate live for everything else; drop
+       these entries when an advisory-clean OTel release is available. -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-g94r-2vxg-569j" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-8785-wc3w-h8q6" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-4625-4j76-fww9" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-mr8r-92fq-pj8p" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-q834-8qmm-v933" />
+  </ItemGroup>
 </Project>

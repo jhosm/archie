@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using Babelstone.Engine;
-using Babelstone.EventStore;
 using Babelstone.Telemetry;
 using Xunit;
 
@@ -40,7 +39,7 @@ public sealed class TelemetrySpanTests
         var streamId = Guid.NewGuid();
         const string productCode = "TD-PT-12M";
         var runtime = new AggregateRuntime<CounterState>(
-            store: null!, new RecordingSink(), CounterFamilyModule.Registry(), new JsonEventSerializer(),
+            store: null!, new NullSink(), CounterFamilyModule.Registry(), new JsonEventSerializer(),
             new NullPiiProtector(), new FixedTimeProvider(DateTimeOffset.UnixEpoch), () => new CounterState(0));
         var context = new AppendContext("counter", "pt.2026.1", "counter@2026.1", "test", DateTimeOffset.UnixEpoch);
 
@@ -99,7 +98,7 @@ public sealed class TelemetrySpanTests
         ActivitySource.AddActivityListener(listener);
 
         var runtime = new AggregateRuntime<CounterState>(
-            store: null!, new RecordingSink(), CounterFamilyModule.Registry(), new JsonEventSerializer(),
+            store: null!, new NullSink(), CounterFamilyModule.Registry(), new JsonEventSerializer(),
             new NullPiiProtector(), new FixedTimeProvider(DateTimeOffset.UnixEpoch), () => new CounterState(0));
 
         // No spanName ⇒ the runtime opens no span: the impure hook is opt-in by the caller.
