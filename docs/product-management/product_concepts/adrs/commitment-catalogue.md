@@ -54,7 +54,7 @@ tracked separately — and is **not** the job of this seed.
 
 | # | Commitment | Governing source | Gate (pyramid level) | Test ID | Status |
 |---|---|---|---|---|---|
-| 1 | `append` writes event rows **and** outbox rows in one local PostgreSQL transaction (no event without its outbox row, and vice versa). | [ADR-PC-001 §P2](./ADR-PC-001-event-store-technology.md) | integration (Testcontainers) | `ES_ATOMIC_APPEND_OUTBOX` | Planned |
+| 1 | `append` writes event rows **and** outbox rows in one local PostgreSQL transaction (no event without its outbox row, and vice versa). | [ADR-PC-001 §P2](./ADR-PC-001-event-store-technology.md) | integration (Testcontainers) | `ES_ATOMIC_APPEND_OUTBOX` | Live |
 | 2 | Money rounds **HALF_EVEN exactly once** at the `Decimal → Cents` boundary, proven against a sealed golden-fixture corpus. | [ADR-PC-010 §P1–§P2](./ADR-PC-010-dotnet-hand-rolled-engine.md) | unit + analyser | `MONEY_BOUNDARY_FIXTURES` | Planned |
 | 3 | A handler that reads the clock, does I/O, or uses randomness **fails the build**; event evolution is additive-only. | [ADR-PC-010 §P5](./ADR-PC-010-dotnet-hand-rolled-engine.md) | analyser / CI determinism gate | `DETERMINISM_GATE` | Live |
 | 4 | Replay reads the pack/schema pin **off each event**, not the clock; a migration at sequence `M` splits the stream's pin, and a rebuild re-derives the identical per-event pin whenever it runs. | [ADR-PC-009 §P1–§P2](./ADR-PC-009-per-instance-version-pinning.md) | integration (Testcontainers) | `REPLAY_PIN_PER_EVENT` | Planned |
@@ -97,6 +97,17 @@ deferred to **E.6 (`archie-2jum`)** (see the `engine` job's TODO in
 `.github/workflows/ci.yml`). It flips to `Live` when that Testcontainers lane is
 wired — per the "runs in CI" rule above and the [Epic A PR #34](https://github.com/jhosm/babelstone/pull/34)
 follow-up that scopes this reconciliation.
+
+**E.6 reconciliation (2026-05-31).** The deferral recorded above is now resolved:
+`ES_ATOMIC_APPEND_OUTBOX` (row 1) flips `Planned → Live`. E.6 (`archie-2jum`) wired
+the Testcontainers Integration tier — a second `--filter "Category=Integration"`
+step in the `engine` job of `.github/workflows/ci.yml` — so `AtomicAppendIntegrationTests`
+(green on PostgreSQL 18 since A.2) now runs in CI, meeting the "test exists, passes,
+**and runs in CI**" bar for `Live`. The same lane runs the Redpanda outbox round-trip
+(E.4) and the constitute→mature API E2E (`DepositsApiIntegrationTests`), the
+acceptance test that exercises `ZERO_ENGINE_DIFF_PER_VARIANT` (row 9 stays `Planned`
+— it is "enforced across **E/F**", so it flips when the full family content lands in
+Epic F, not at E.6).
 
 **Epic K reconciliation (K.1).** The four `OBS-*` rows land with K.1 (`babelstone-rzcl`),
 which ships the shared `ActivitySource` + `babelstone.*` attribute contract

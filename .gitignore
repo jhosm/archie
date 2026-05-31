@@ -30,3 +30,6 @@ __pycache__/
 # Claude Code transients (agent worktrees, scheduler lock)
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+
+# Walking-skeleton demo runtime (scripts/demo-mcp.sh): logs + pidfiles
+/.demo-mcp/

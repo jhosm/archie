@@ -4,9 +4,15 @@
     <AssemblyName>Babelstone.Pii</AssemblyName>
   </PropertyGroup>
 
-  <!-- No project references. Babelstone.Pii isolates the deliberate exception to the
-       hand-rolled-core posture (ADR-PC-004 §Decision): the OpenBao client lives here
+  <!-- No engine project references. Babelstone.Pii isolates the deliberate exception to
+       the hand-rolled-core posture (ADR-PC-004 §Decision): the OpenBao clients live here
        and nowhere else, so the exception is visible in the project graph (skeleton
        §2.1/§3). Babelstone.Engine references this; this references no engine code.
-       OpenBao is reached over its transit HTTP API via the BCL HttpClient. -->
+       OpenBao is reached over its transit/KV HTTP API via the BCL HttpClient.
+       The one BCL-adjacent dependency below is IConfiguration, for the dev/test/CI
+       ConfigurationSecretProvider (ADR-PC-004 Amendment A1). -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+  </ItemGroup>
+
 </Project>
