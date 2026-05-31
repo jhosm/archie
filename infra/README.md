@@ -84,3 +84,31 @@ before `make up`; defaults live in `compose.yaml`.
 - **EventCatalog is host-only.** nginx serves `eventcatalog/site/` (a placeholder today). The catalog itself — AsyncAPI specs rendered to a static EventCatalog build ([ADR-IC-008](../docs/product-management/integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md)) — is generated into that dir by **Epic G.4**.
 - This is **not** the production topology. P.7 adds 3-node Redpanda + PG HA; P.3/P.4
   add Kong + OpenBao and the Grafana LGTM + OTel observability stack.
+
+---
+
+## Deployed environment (K8s) (`k8s/`)
+
+The deployed counterpart of the Compose stack lives under [`k8s/`](./k8s/) —
+Kustomize manifests (base + `overlays/dev`), per
+[ADR-IC-013 §D2](../docs/product-management/integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md)
+(IaC subtree co-located in the monorepo). It deploys the **same 9 backing-infra
+services** to Kubernetes, shaped for a single **dev / staging** environment.
+
+```bash
+mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/dev
+```
+
+The `kong/kong.yml` and `otel/collector.yaml` above are the **single source of
+truth** — the K8s ConfigMaps are *generated* from them (not duplicated), so a
+config change updates both stacks.
+
+Scope is deliberately narrow (matching the Compose stack):
+
+- **Single env, non-HA** — single-replica everywhere. The HA topology (3-node
+  Redpanda, Postgres HA, warm standby) is **P.7** (babelstone-ixkp).
+- **No CD pipeline** — CI only validates manifests (`kustomize build` +
+  `kubeconform`); promotion/apply is **Q.6** (babelstone-4c81).
+- **OpenBao is a dev-mode seam** — real provisioning is **M.2** (babelstone-puu3).
+
+See [`k8s/README.md`](./k8s/README.md) for the full layout and scope boundaries.

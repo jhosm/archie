@@ -1,0 +1,72 @@
+# Kong — edge API gateway, DB-less declarative mode (ADR-IC-006).
+# KONG_DATABASE=off is the load-bearing ADR-IC-006 commitment (asserted in CI).
+# The declarative config is the SAME infra/kong/kong.yml the Compose stack
+# mounts, carried in via the kong-config ConfigMap (single source of truth).
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong
+  labels:
+    app.kubernetes.io/name: kong
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: kong
+  ports:
+    - name: proxy
+      port: 8000
+      targetPort: 8000
+    - name: admin
+      port: 8001
+      targetPort: 8001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong
+  labels:
+    app.kubernetes.io/name: kong
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kong
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kong
+    spec:
+      containers:
+        - name: kong
+          image: kong:3.9.1
+          ports:
+            - name: proxy
+              containerPort: 8000
+            - name: admin
+              containerPort: 8001
+          env:
+            # DB-less: no gateway database, no migrations (ADR-IC-006).
+            - name: KONG_DATABASE
+              value: "off"
+            - name: KONG_DECLARATIVE_CONFIG
+              value: /kong/kong.yml
+            - name: KONG_PROXY_LISTEN
+              value: 0.0.0.0:8000
+            - name: KONG_ADMIN_LISTEN
+              value: 0.0.0.0:8001
+            - name: KONG_PROXY_ACCESS_LOG
+              value: /dev/stdout
+            - name: KONG_ADMIN_ACCESS_LOG
+              value: /dev/stdout
+            - name: KONG_PROXY_ERROR_LOG
+              value: /dev/stderr
+            - name: KONG_ADMIN_ERROR_LOG
+              value: /dev/stderr
+          volumeMounts:
+            - name: kong-config
+              mountPath: /kong
+              readOnly: true
+      volumes:
+        - name: kong-config
+          configMap:
+            name: kong-config

@@ -1,0 +1,63 @@
+# OpenBao — per-subject key store for crypto-shredding (ADR-PC-004).
+#
+# DEV-ONLY: `-dev` mode is in-memory and auto-unsealed with a fixed root token.
+# This is a SEAM, not real provisioning. Production OpenBao (real storage,
+# auto-unseal, policy/auth setup, HA/DR per ADR-PC-005) is M.2 (babelstone-puu3).
+apiVersion: v1
+kind: Service
+metadata:
+  name: openbao
+  labels:
+    app.kubernetes.io/name: openbao
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: openbao
+  ports:
+    - name: api
+      port: 8200
+      targetPort: 8200
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openbao
+  labels:
+    app.kubernetes.io/name: openbao
+  annotations:
+    babelstone.io/secret-boundary: "dev-mode-placeholder — real provisioning is M.2/puu3"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: openbao
+      annotations:
+        babelstone.io/secret-boundary: "dev-mode-placeholder — real provisioning is M.2/puu3"
+    spec:
+      containers:
+        - name: openbao
+          image: openbao/openbao:2.5.4
+          # Dev server: in-memory store, single unsealed node. NOT for prod.
+          command:
+            - server
+            - -dev
+            - -dev-listen-address
+            - 0.0.0.0:8200
+          ports:
+            - name: api
+              containerPort: 8200
+          env:
+            - name: BAO_DEV_ROOT_TOKEN_ID
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: OPENBAO_DEV_TOKEN
+            - name: BAO_ADDR
+              value: http://127.0.0.1:8200
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK"]

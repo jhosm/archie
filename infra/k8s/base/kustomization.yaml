@@ -1,0 +1,57 @@
+# Babelstone deployed-environment base (ADR-IC-013 §D2 — IaC co-located).
+#
+# Backing-infra services only — the same 9 services as infra/compose.yaml.
+# Application/engine service images are out of scope; they connect to this stack.
+#
+# Single-source-of-truth: the kong and otel ConfigMaps are generated FROM the
+# same files the Compose stack mounts (../../kong/kong.yml,
+# ../../otel/collector.yaml) — no duplicated config.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The Kong + OTel ConfigMaps are generated from files OUTSIDE this base dir
+# (../../kong/kong.yml, ../../otel/collector.yaml) so the Compose stack and the
+# K8s stack share one config source. Kustomize's default load restrictor forbids
+# file sources above the kustomization root; relax it for this directory only.
+# Builds MUST pass --load-restrictor=LoadRestrictionsNone (CI does).
+namespace: babelstone-dev
+
+# Stamp every resource as part of the babelstone app (not propagated into
+# selectors, so the per-service matchLabels stay stable).
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: babelstone
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - secrets.example.yaml
+  - postgres.yaml
+  - redpanda.yaml
+  - redpanda-console.yaml
+  - kong.yaml
+  - openbao.yaml
+  - grafana-lgtm.yaml
+  - otel-collector.yaml
+  - registry.yaml
+  - eventcatalog.yaml
+
+configMapGenerator:
+  # POSTGRES_DB / POSTGRES_USER for the Postgres StatefulSet (mirrors compose).
+  - name: postgres-config
+    literals:
+      - POSTGRES_DB=babelstone
+      - POSTGRES_USER=babelstone
+  # Kong declarative config — the SAME file the Compose stack mounts.
+  - name: kong-config
+    files:
+      - kong.yml=../../kong/kong.yml
+  # OTel Collector pipeline — the SAME file the Compose stack mounts.
+  - name: otel-collector-config
+    files:
+      - collector.yaml=../../otel/collector.yaml
+
+generatorOptions:
+  # Stable names so the volume/env references in the manifests stay valid (no
+  # content-hash suffix). Acceptable for the single dev environment.
+  disableNameSuffixHash: true
