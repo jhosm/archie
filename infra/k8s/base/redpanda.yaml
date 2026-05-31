@@ -1,0 +1,96 @@
+# Redpanda — Kafka-compatible event bus + built-in Schema Registry (ADR-IC-001,
+# ADR-IC-002). Single-node dev-container, mirroring infra/compose.yaml. The
+# 3-node HA topology is P.7 (babelstone-ixkp).
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+  labels:
+    app.kubernetes.io/name: redpanda
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redpanda
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: 9092
+    - name: kafka-ext
+      port: 19092
+      targetPort: 19092
+    - name: schema-reg
+      port: 8081
+      targetPort: 8081
+    - name: schema-ext
+      port: 18081
+      targetPort: 18081
+    - name: admin
+      port: 9644
+      targetPort: 9644
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redpanda
+  labels:
+    app.kubernetes.io/name: redpanda
+spec:
+  serviceName: redpanda
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redpanda
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redpanda
+    spec:
+      containers:
+        - name: redpanda
+          image: docker.redpanda.com/redpandadata/redpanda:v24.3.1
+          # Mirrors the compose command (single source of truth for the dev
+          # broker shape): internal listener advertised as `redpanda`, external
+          # as `localhost` (only the internal one matters in-cluster).
+          command:
+            - redpanda
+            - start
+            - --mode=dev-container
+            - --smp=1
+            - --default-log-level=info
+            - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+            - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+            - --schema-registry-addr=internal://0.0.0.0:8081,external://0.0.0.0:18081
+            - --rpc-addr=redpanda:33145
+            - --advertise-rpc-addr=redpanda:33145
+          ports:
+            - name: kafka
+              containerPort: 9092
+            - name: kafka-ext
+              containerPort: 19092
+            - name: schema-reg
+              containerPort: 8081
+            - name: schema-ext
+              containerPort: 18081
+            - name: admin
+              containerPort: 9644
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "rpk cluster health | grep -E 'Healthy:.+true'"
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          volumeMounts:
+            - name: redpanda-data
+              mountPath: /var/lib/redpanda/data
+  volumeClaimTemplates:
+    - metadata:
+        name: redpanda-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

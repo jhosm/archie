@@ -230,8 +230,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Lint infra manifests (01 §6)
-        run: echo "TODO - infra manifest lint/validate; lands with the infra task"
+      # Pin kustomize + kubeconform from mise.toml — the same single source of
+      # truth as every dev machine (no second pin in this YAML to drift from).
+      - uses: jdx/mise-action@v4
+      - name: Validate K8s manifests (kustomize build + kubeconform, P.6)
+        # The base configMapGenerator reads ../../kong/kong.yml and
+        # ../../otel/collector.yaml (the single config source the Compose stack
+        # also mounts), which sit above the kustomization root — hence
+        # --load-restrictor=LoadRestrictionsNone. kubeconform -strict catches
+        # schema drift against the pinned Kubernetes 1.31.0 API surface.
+        run: |
+          mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/dev \
+            | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
+      - name: Assert ADR commitments in rendered manifests (P.6)
+        # Mechanical fitness checks on the rendered output — divergence from
+        # these ADRs must fail CI, not land silently (ADR-PC-020 §D3).
+        run: |
+          set -euo pipefail
+          rendered="$(mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/dev)"
+          # ADR-IC-006: Kong runs DB-less (KONG_DATABASE=off).
+          if ! echo "$rendered" | grep -A1 'name: KONG_DATABASE' | grep -q 'value: "off"'; then
+            echo "::error::ADR-IC-006 violation: Kong KONG_DATABASE is not 'off'"; exit 1
+          fi
+          # ADR-IC-007 §P1: the grafana-lgtm Service must NOT expose OTLP
+          # (4317/4318) — the OTel Collector is the single OTLP entry point.
+          grafana_svc="$(echo "$rendered" | awk 'BEGIN{RS="\n---\n"} /kind: Service/ && /name: grafana-lgtm/')"
+          if [ -z "$grafana_svc" ]; then
+            echo "::error::assertion error: grafana-lgtm Service not found in rendered output"; exit 1
+          fi
+          if echo "$grafana_svc" | grep -Eq 'port: (4317|4318)'; then
+            echo "::error::ADR-IC-007 §P1 violation: grafana-lgtm Service exposes OTLP (4317/4318)"; exit 1
+          fi
+          echo "ADR assertions passed (ADR-IC-006 Kong DB-less; ADR-IC-007 §P1 OTLP single-entry)"
 
   docs:
     needs: changes

@@ -31,5 +31,8 @@ __pycache__/
 .claude/worktrees/
 .claude/scheduled_tasks.lock
 
+# Editor / backup artefacts — never commit (e.g. kustomization.yaml.bak)
+*.bak
+
 # Walking-skeleton demo runtime (scripts/demo-mcp.sh): logs + pidfiles
 /.demo-mcp/
