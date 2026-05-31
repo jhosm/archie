@@ -40,3 +40,90 @@ public sealed record DepositMatured(
     Money NetInterestPaid,
     Money TotalPayout,
     DateOnly MaturedOn) : DomainEvent;
+
+// The seven remaining term-deposit events (F.2, babelstone-5czr) — the full lifecycle
+// beyond the AT_MATURITY happy path. Same discipline as the four above: each carries
+// already-COMPUTED facts (Money cents-native, ADR-PC-010 §P1), is STRUCTURAL only
+// (computed facts + opaque references; NO depositor/heir PII — name/NIF/IBAN — in
+// cleartext OR ciphertext, ADR-PC-004 §P2), and is folded by a PURE handler. The
+// lifecycle state machine and transition legality are F.3 (babelstone-29v8), NOT here;
+// the bitemporal projection/correction is D.1/D.2 / F.6, NOT here.
+
+/// <summary>Constitution was rejected by a config/rule check, so no deposit exists. Carries
+/// failure CODES only: <paramref name="FailureReason"/> is the machine code and
+/// <paramref name="FailureDetail"/> describes the offending config or rule — NEVER anything
+/// about the customer (ADR-PC-004 §P2).</summary>
+/// <param name="FailureReason">Stable failure code (e.g. <c>RATE_SHEET_NOT_FOUND</c>).</param>
+/// <param name="FailureDetail">Human-readable detail about the config/rule that failed — never PII.</param>
+public sealed record DepositConstitutionFailed(
+    Guid DepositId,
+    string FailureReason,
+    string FailureDetail) : DomainEvent;
+
+/// <summary>Interest is paid out (the periodic/coupon variant, vs the single AT_MATURITY flow):
+/// <c>NetInterest = GrossInterest − WithholdingTax</c> conserved to the cent.</summary>
+public sealed record InterestPaid(
+    Guid DepositId,
+    Money GrossInterest,
+    Money WithholdingTax,
+    Money NetInterest,
+    DateOnly PaidOn) : DomainEvent;
+
+/// <summary>The deposit auto-renews into a new term: a fresh deposit (<paramref name="NewDepositId"/>)
+/// is constituted from the rolled-over principal at the new rate-sheet-resolved TAN. The new
+/// TAN/schedule are pinned facts (ADR-PC-008 §P3), resolved by the decider — never inline config.</summary>
+public sealed record DepositRenewed(
+    Guid DepositId,
+    Guid NewDepositId,
+    Money RolloverPrincipal,
+    string NewRateSheetVersionId,
+    int NewTanBasisPoints,
+    int NewTermDays,
+    DateOnly RenewalDate,
+    DateOnly NewMaturityDate) : DomainEvent;
+
+/// <summary>The deposit is broken before maturity: <c>NetSettlementAmount = PrincipalReturned − PenaltyAmount</c>,
+/// with <paramref name="PenaltyAmount"/> non-negative.</summary>
+public sealed record DepositTerminatedEarly(
+    Guid DepositId,
+    Money PrincipalReturned,
+    Money PenaltyAmount,
+    Money NetSettlementAmount,
+    DateOnly TerminatedOn,
+    string TerminationReason) : DomainEvent;
+
+/// <summary>A partial withdrawal reduces the deposit's principal:
+/// <c>RemainingPrincipal</c> is the principal left after taking <paramref name="WithdrawnAmount"/> out.</summary>
+public sealed record DepositPartiallyWithdrawn(
+    Guid DepositId,
+    Money WithdrawnAmount,
+    Money RemainingPrincipal,
+    DateOnly WithdrawnOn) : DomainEvent;
+
+/// <summary>A correction to a previously-recorded fact. Carries opaque REFERENCES only
+/// (<paramref name="PreviousValueRef"/> / <paramref name="CorrectedValueRef"/> point at the
+/// resolvable values) — no PII travels here (ADR-PC-004 §P2). <paramref name="EffectiveFrom"/>
+/// is the valid-time that feeds the D.1 §P2 bitemporal supersession; the real read-model
+/// correction is D.1/D.2, NOT this fold.</summary>
+public sealed record DepositCorrected(
+    Guid DepositId,
+    string CorrectionId,
+    string CorrectedField,
+    string PreviousValueRef,
+    string CorrectedValueRef,
+    DateOnly EffectiveFrom,
+    string CorrectionReason) : DomainEvent;
+
+/// <summary>The deposit balance is transferred to a deceased holder's heirs (succession).</summary>
+/// <remarks>
+/// Carries NO heir PII — no name, NIF, or IBAN — only the opaque <paramref name="HeirCaseRef"/>
+/// (the succession case reference). The engine resolves heir identity internally from that
+/// reference (ADR-PC-004 §P2); no identity ever rides on this structural event, in cleartext
+/// or ciphertext.
+/// </remarks>
+/// <param name="HeirCaseRef">Opaque reference to the succession case — NOT an heir identity.</param>
+public sealed record DepositTransferredToHeirs(
+    Guid DepositId,
+    string HeirCaseRef,
+    Money TransferredBalance,
+    DateOnly TransferDate) : DomainEvent;
