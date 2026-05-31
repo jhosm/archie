@@ -300,8 +300,8 @@ Then, in a Claude Code session, exercise it:
      start_date 2026-01-15, funding_account PT50-DDA-001 — then call get_deposit
      with that deposit_id and show the position."
 
-  • Mature it (engine-only; the MCP has no maturity tool), then call get_deposit again:
-     curl -sS -X POST ${ENGINE_URL}/v1/deposits/<deposit_id>/maturity -d '{}'
+  • "Then call mature_deposit with that deposit_id and show the matured payout"
+     — the whole constitute → read → mature loop runs through MCP tools, no curl.
 
 Stop the engine + MCP when you're done (Postgres is left up):
 

@@ -5,11 +5,11 @@ using Babelstone.Families.TermDeposit.Application;
 namespace Babelstone.Engine.Api;
 
 /// <summary>
-/// The deposits command/query endpoints (ADR-PC-021 §D5). <c>constitute_deposit</c> and
-/// <c>deposit_position</c> are the two surfaces the Python MCP server (ADR-IC-010) maps to a
-/// tool and a resource; the maturity endpoint lets the end-to-end test drive the full
-/// lifecycle. The host owns the wall-clock at this boundary (it stamps a missing
-/// constituted_at / matured_at); the decider stays pure.
+/// The deposits command/query endpoints (ADR-PC-021 §D5). The Python MCP server (ADR-IC-010)
+/// maps these to model-invokable tools — <c>constitute_deposit</c> (this POST), <c>get_deposit</c>
+/// (the GET position), and <c>mature_deposit</c> (the maturity POST) — per IC-010's 2026-05-31
+/// amendment (the tool/resource axis is control-ownership, not CQRS). The host owns the wall-clock
+/// at this boundary (it stamps a missing constituted_at / matured_at); the decider stays pure.
 /// </summary>
 public static class DepositsEndpoints
 {
