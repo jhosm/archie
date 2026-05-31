@@ -6,6 +6,6 @@ Tutorials follow the [guides invariant](../README.md): they link to the normativ
 
 | # | Tutorial | Persona entry point | Grounded in |
 |---|---|---|---|
-| _(populated by Epic R · R.6)_ | | | |
-
-> Planned ([ADR-PC-022 §P1](../../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md), Open Action #3): `00` bring up the dev stack · `01` constitute a term deposit end-to-end via MCP · `02` author and load a PT pack.
+| 00 | [Bring up the dev stack](./00-bring-up-the-dev-stack.md) | Operator | `make bootstrap` / `make up` / `make verify` · [`INSTALL.md`](../../../../INSTALL.md) |
+| 01 | [Constitute a term deposit end-to-end](./01-constitute-a-term-deposit-end-to-end.md) | Agent-channel consumer | `make demo-mcp` (`scripts/demo-mcp.sh`) · [MCP tools](../../reference/mcp-tools/README.md) · [constitution saga](../../integration_concepts/05-constitution-saga-walkthrough.md) |
+| 02 | [Author and load a PT pack](./02-author-and-load-a-pt-pack.md) | Pack author / compliance | `make pack-validate` / `pack-build` / `pack-verify` · [pack-author skill](../../../../.claude/skills/pack-author/SKILL.md) · [ADR-PC-007](../../product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md) |

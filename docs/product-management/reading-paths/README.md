@@ -8,11 +8,11 @@ The **front door** to the documentation overlay ([ADR-PC-022](../product_concept
 
 | Persona | You want to… | Path |
 |---|---|---|
-| **Integrator / solution architect** | Wire the engine into the bank's estate — ACL, saga, edge API, event catalogue | _(Epic R · R.5)_ |
-| **Family / engine developer** | Add a product family — a decider plus pure folds — over the family-agnostic engine | _(Epic R · R.5)_ |
-| **Pack author / compliance** | Author and audit a `pt.YYYY.N` regulatory pack and its rate sheets | _(Epic R · R.5)_ |
-| **Agent-channel consumer** | Drive the bank-as-MCP-server tool surface from an LLM agent | _(Epic R · R.5)_ |
-| **Operator** | Run the stack, observe it, and recover it | _(Epic R · R.5)_ |
+| **Integrator / solution architect** | Wire the engine into the bank's estate — ACL, saga, edge API, event catalogue | [integrator](./integrator.md) |
+| **Family / engine developer** | Add a product family — a decider plus pure folds — over the family-agnostic engine | [family-developer](./family-developer.md) |
+| **Pack author / compliance** | Author and audit a `pt.YYYY.N` regulatory pack and its rate sheets | [pack-author](./pack-author.md) |
+| **Agent-channel consumer** | Drive the bank-as-MCP-server tool surface from an LLM agent | [agent-consumer](./agent-consumer.md) |
+| **Operator** | Run the stack, observe it, and recover it | [operator](./operator.md) |
 
 These five are the canonical persona vocabulary ([ADR-PC-022 §P4](../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md)); paths and tutorial front-matter reference these tags and do not redefine them. Adding a persona is one row here plus one path file — no structural change.
 
