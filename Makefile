@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 EVENTCATALOG_PORT ?= 8082
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check validate-variant pack-validate-test pack-validate pack-build pack-verify up down reset logs ps verify
+.PHONY: help bootstrap doctor contracts-check validate-variant pack-validate-test pack-validate pack-build pack-verify up down reset logs ps verify demo-mcp demo-mcp-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -135,3 +135,13 @@ verify: ## Smoke-test the stack: Postgres reachable, Redpanda healthy, SR respon
 	@echo "→ EventCatalog host ..."
 	@curl -fsS http://localhost:$(EVENTCATALOG_PORT)/ >/dev/null && echo "EventCatalog OK (static host)"
 	@echo "✓ Stack verified."
+
+## ----------------------------------------------------------------------------
+## Walking-skeleton demo (Epic E — thin term-deposit slice via MCP, bd 7puj)
+## ----------------------------------------------------------------------------
+
+demo-mcp: ## Run the Epic-E walking skeleton end-to-end (Postgres→deploy→engine→MCP), leave it up
+	@./scripts/demo-mcp.sh up
+
+demo-mcp-down: ## Stop the demo's engine + MCP processes (Postgres is left running)
+	@./scripts/demo-mcp.sh down
