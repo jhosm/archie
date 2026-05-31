@@ -67,12 +67,12 @@ public sealed class PostgresProjectionStoreTests : IAsyncLifetime
         Assert.Equal(1L, ledgered);
 
         var tableExists = (long)(await new NpgsqlCommand(
-            "SELECT count(*) FROM information_schema.tables WHERE table_name = 'deposit_position_projection';",
+            "SELECT count(*) FROM information_schema.tables WHERE table_name = 'projections';",
             connection).ExecuteScalarAsync())!;
         Assert.Equal(1L, tableExists);
 
         var indexExists = (long)(await new NpgsqlCommand(
-            "SELECT count(*) FROM pg_indexes WHERE indexname = 'deposit_position_projection_current_belief_idx';",
+            "SELECT count(*) FROM pg_indexes WHERE indexname = 'projections_current_belief_idx';",
             connection).ExecuteScalarAsync())!;
         Assert.Equal(1L, indexExists);
     }
@@ -189,13 +189,13 @@ public sealed class PostgresProjectionStoreTests : IAsyncLifetime
 
         // SELECT is granted.
         var count = (long)(await new NpgsqlCommand(
-            $"SELECT count(*) FROM deposit_position_projection WHERE stream_id = '{streamId}';",
+            $"SELECT count(*) FROM projections WHERE stream_id = '{streamId}';",
             connection).ExecuteScalarAsync())!;
         Assert.Equal(1L, count);
 
         // UPDATE is granted (supersession): this must NOT raise InsufficientPrivilege.
         var updated = await new NpgsqlCommand(
-            $"UPDATE deposit_position_projection SET superseded_at = now() WHERE stream_id = '{streamId}';",
+            $"UPDATE projections SET superseded_at = now() WHERE stream_id = '{streamId}';",
             connection).ExecuteNonQueryAsync();
         Assert.Equal(1, updated);
     }
@@ -203,7 +203,7 @@ public sealed class PostgresProjectionStoreTests : IAsyncLifetime
     private static async Task InsertAsRoleAsync(NpgsqlConnection connection, Guid streamId)
     {
         const string sql = """
-            INSERT INTO deposit_position_projection
+            INSERT INTO projections
                 (stream_id, valid_from, recorded_at, structural_payload)
             VALUES (@stream_id, now(), now(), @structural_payload);
             """;
@@ -215,16 +215,16 @@ public sealed class PostgresProjectionStoreTests : IAsyncLifetime
 
     private async Task<long> CountRowsAsync(Guid streamId) =>
         await ScalarCountAsync(
-            "SELECT count(*) FROM deposit_position_projection WHERE stream_id = @id;", streamId);
+            "SELECT count(*) FROM projections WHERE stream_id = @id;", streamId);
 
     private async Task<long> CountSupersededAsync(Guid streamId) =>
         await ScalarCountAsync(
-            "SELECT count(*) FROM deposit_position_projection WHERE stream_id = @id AND superseded_at IS NOT NULL;",
+            "SELECT count(*) FROM projections WHERE stream_id = @id AND superseded_at IS NOT NULL;",
             streamId);
 
     private async Task<long> CountCurrentBeliefAsync(Guid streamId) =>
         await ScalarCountAsync(
-            "SELECT count(*) FROM deposit_position_projection WHERE stream_id = @id AND superseded_at IS NULL;",
+            "SELECT count(*) FROM projections WHERE stream_id = @id AND superseded_at IS NULL;",
             streamId);
 
     private async Task<long> ScalarCountAsync(string sql, Guid streamId)
@@ -241,7 +241,7 @@ public sealed class PostgresProjectionStoreTests : IAsyncLifetime
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(
-            "SELECT structural_payload FROM deposit_position_projection " +
+            "SELECT structural_payload FROM projections " +
             "WHERE stream_id = @id AND superseded_at IS NOT NULL ORDER BY row_id;",
             connection);
         command.Parameters.AddWithValue("id", streamId);

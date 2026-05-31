@@ -16,7 +16,7 @@
 -- snapshots (0003). It therefore GRANTs UPDATE (needed for supersession), UNLIKE the
 -- append-only events/rate_sheets tables (0001/0004) which REVOKE UPDATE and DELETE.
 
-CREATE TABLE deposit_position_projection (
+CREATE TABLE projections (
     row_id             BIGSERIAL    PRIMARY KEY,
     stream_id          UUID         NOT NULL,
     -- World time: the slice of believed-reality this row describes.
@@ -33,15 +33,15 @@ CREATE TABLE deposit_position_projection (
 );
 
 -- Fast lookup of the currently-believed row(s) for a stream (ReadCurrentBelief).
-CREATE INDEX deposit_position_projection_current_belief_idx
-    ON deposit_position_projection (stream_id)
+CREATE INDEX projections_current_belief_idx
+    ON projections (stream_id)
     WHERE superseded_at IS NULL;
 
 -- The engine role reads and writes this rebuildable cache. UPDATE is required so
 -- supersession can stamp superseded_at on the prior belief (ADR-PC-002 §P2) — this
 -- mirrors snapshots (0003, rebuildable cache, ADR-PC-002 §P4) and is deliberately
 -- UNLIKE the append-only events/rate_sheets tables which REVOKE UPDATE.
-GRANT SELECT, INSERT, UPDATE ON deposit_position_projection TO babelstone_engine;
+GRANT SELECT, INSERT, UPDATE ON projections TO babelstone_engine;
 -- INSERT into a BIGSERIAL column draws from its backing sequence; grant USAGE so the
 -- engine role can advance it.
-GRANT USAGE ON SEQUENCE deposit_position_projection_row_id_seq TO babelstone_engine;
+GRANT USAGE ON SEQUENCE projections_row_id_seq TO babelstone_engine;

@@ -4,7 +4,7 @@ namespace Babelstone.EventStore;
 
 /// <summary>
 /// PostgreSQL-backed <see cref="IProjectionStorage"/>. Hand-rolled, Npgsql-only,
-/// all <c>deposit_position_projection</c> SQL private to this type — the
+/// all <c>projections</c> SQL private to this type — the
 /// storage-boundary discipline of <see cref="PostgresSnapshotStore"/> applied to the
 /// Path-A bitemporal projection (ADR-PC-002 §P1/§P2).
 /// </summary>
@@ -13,7 +13,7 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
     public async Task WriteAsync(ProjectionRecord record, CancellationToken ct = default)
     {
         const string sql = """
-            INSERT INTO deposit_position_projection
+            INSERT INTO projections
                 (stream_id, valid_from, valid_to, recorded_at, superseded_at,
                  structural_payload, pii_ciphertext)
             VALUES
@@ -44,7 +44,7 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
         // already-superseded rows keep their original stamp so the belief history stays
         // intact. A corrected row is INSERTed separately by the caller.
         const string sql = """
-            UPDATE deposit_position_projection
+            UPDATE projections
             SET superseded_at = @superseded_at
             WHERE stream_id = @stream_id
               AND superseded_at IS NULL;
@@ -63,7 +63,7 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
         const string sql = """
             SELECT stream_id, valid_from, valid_to, recorded_at, superseded_at,
                    structural_payload, pii_ciphertext
-            FROM deposit_position_projection
+            FROM projections
             WHERE stream_id = @stream_id
               AND superseded_at IS NULL
             ORDER BY row_id DESC
