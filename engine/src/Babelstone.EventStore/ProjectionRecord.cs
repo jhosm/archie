@@ -1,7 +1,7 @@
 namespace Babelstone.EventStore;
 
 /// <summary>
-/// A single Path-A bitemporal projection row for a deposit position (ADR-PC-002 §P1/§P2).
+/// A single Path-A bitemporal projection row (ADR-PC-002 §P1/§P2).
 /// </summary>
 /// <remarks>
 /// <para>
