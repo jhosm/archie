@@ -297,10 +297,10 @@ Then, in a Claude Code session, exercise it:
 
   • "Using the babelstone-deposits MCP, call constitute_deposit with product_id
      ${PRODUCT}, role standard, principal_cents 1000000, term_days 365,
-     start_date 2026-01-15, funding_account PT50-DDA-001 — then read the
-     bank://deposits/{deposit_id} resource and show the position."
+     start_date 2026-01-15, funding_account PT50-DDA-001 — then call get_deposit
+     with that deposit_id and show the position."
 
-  • Mature it (engine-only; the MCP has no maturity tool), then re-read the resource:
+  • Mature it (engine-only; the MCP has no maturity tool), then call get_deposit again:
      curl -sS -X POST ${ENGINE_URL}/v1/deposits/<deposit_id>/maturity -d '{}'
 
 Stop the engine + MCP when you're done (Postgres is left up):

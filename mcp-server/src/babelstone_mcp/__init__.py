@@ -1,6 +1,6 @@
 """Babelstone dev MCP server (E.5, ADR-IC-010).
 
-Exposes a ``constitute_deposit`` tool and a ``deposit_position`` resource over the
+Exposes ``constitute_deposit`` (write) and ``get_deposit`` (on-demand read) tools over the
 official Python MCP SDK (Streamable HTTP), translating agent calls into HTTP requests
 to the engine command/query boundary (``Babelstone.Engine.Api``, ADR-PC-021 §D5).
 
