@@ -1,12 +1,13 @@
-"""The FastMCP server: a ``constitute_deposit`` tool + a ``get_deposit`` tool.
+"""The FastMCP server: ``constitute_deposit``, ``get_deposit``, and ``mature_deposit`` tools.
 
-Both map 1:1 to the engine's HTTP API. Per ADR-IC-010's 2026-05-31 amendment, the tool/resource
+All three map 1:1 to the engine's HTTP API. Per ADR-IC-010's 2026-05-31 amendment, the tool/resource
 axis is *control ownership* (model-invokable vs host-attached), not CQRS command/query — so a read
-the agent fetches on demand is a tool, not a resource. ``constitute_deposit`` is a write (engine
-command); ``get_deposit`` is the read-only ``deposit_position`` projection. Both declare a structured
-return type, so the SDK publishes an ``outputSchema`` (ADR-IC-010 P6 — mandatory on every tool).
-Auth is deferred — this dev server hits the engine directly (Epic J adds OAuth/Kong; the read tool's
-``deposits:read`` scope vs the write tools' ``deposits:write`` is where the gateway tiers them).
+the agent fetches on demand is a tool, not a resource. ``constitute_deposit`` and ``mature_deposit``
+are writes (engine commands); ``get_deposit`` is the read-only ``deposit_position`` projection. Each
+declares a structured return type, so the SDK publishes an ``outputSchema`` (ADR-IC-010 P6 — mandatory
+on every tool). Auth is deferred — this dev server hits the engine directly (Epic J adds OAuth/Kong;
+the read tool's ``deposits:read`` scope vs the write tools' ``deposits:write`` is where the gateway
+tiers them, and §P8 elicitation on the irreversible writes is deferred with it).
 """
 
 from __future__ import annotations
@@ -109,3 +110,17 @@ async def get_deposit(deposit_id: str) -> DepositPosition:
     accrual/maturity events land). Scoped ``deposits:read`` at the gateway (ADR-IC-010 §P4).
     """
     return DepositPosition(**await engine().deposit_position(deposit_id))
+
+
+@mcp.tool()
+async def mature_deposit(deposit_id: str) -> DepositPosition:
+    """Mature (settle) a term deposit — runs accrual to term end and returns the matured position.
+
+    ``deposit_id`` is the engine-assigned UUID. Returns the same ``DepositPosition`` shape with the
+    interest fields now folded in (``accrued_gross_interest_cents``, ``withholding_to_date_cents``,
+    ``net_interest_cents``, ``total_payout_cents``) and ``lifecycle`` = ``Matured``. Money is integer
+    cents. Scoped ``deposits:write`` at the gateway (ADR-IC-010 §P4). Settlement is irreversible, so if
+    the secured edge classes it under §P8 it gets ``elicitation/create`` confirmation — that, like all
+    auth on this dev server, is deferred to Epic J.
+    """
+    return DepositPosition(**await engine().mature(deposit_id))
