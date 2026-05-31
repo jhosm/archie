@@ -139,3 +139,45 @@ Erasure is auditable (which subject, when, by whom) and the structural audit tra
 ---
 
 *Decided 2026-05-23 by jhosm. Accepted; DPO confirmation is a production gate, not required for the POC. Key store (OpenBao) selected per deciders' direction as the deliberate exception to the hand-rolled-core posture, key custody being security-critical.*
+
+---
+
+*Revised 2026-05-31: Amendment A1 — Application-credential secrets via OpenBao KV v2.*
+
+The Decision above scopes OpenBao to **per-subject PII transit keys**, where "the engine
+never holds key material" (§P2/§Decision). Resolving **application / integration
+credentials** — the database connection string (ADR-PC-001 §P1) today, Redpanda SASL
+credentials later — is a materially different mode: the engine **does** hold the resolved
+credential in process memory in order to open connections. This amendment is **additive**;
+it does not reverse, narrow, or edit the Decision above.
+
+- **Mechanism.** Application/integration credentials are resolved from OpenBao **KV v2** via
+  **AppRole** through a new `ISecretProvider` boundary in `engine/src/Babelstone.Pii`
+  (`OpenBaoKvSecretProvider`). AppRole login (`POST v1/auth/approle/login` →
+  `auth.client_token`) yields a client token attached as `X-Vault-Token`; the secret is a
+  versioned KV v2 read (`GET v1/{mount}/data/{name}` → `data.data[name]`). No SDK is used —
+  the in-house client mirrors `OpenBaoTransitClient` (single send chokepoint, small
+  `JsonPropertyName` records, `EnsureSuccess`, prove-don't-infer error handling, never
+  echoing secret material), honouring ADR-PC-010's hand-rolled-core posture. `Babelstone.Pii`
+  stays self-contained (no engine project references; its only added dependency is
+  `Microsoft.Extensions.Configuration.Abstractions` for the dev/test/CI
+  `ConfigurationSecretProvider` fallback).
+
+- **Two distinct abstractions.** `IPiiKeyStore` (transit; key material stays at the boundary,
+  the engine never holds a key) is **separate** from `ISecretProvider` (KV; the engine holds
+  the resolved credential). They are deliberately not unified — the trust models differ.
+
+- **Rotation vs crypto-shred.** For application credentials, *rotation* is a KV v2 **version
+  bump** in the store followed by `ISecretProvider.RefreshAsync`, which re-resolves the latest
+  version and invalidates the cached value without breaking a live reconnect. This is the
+  **inverse** of the transit erasure path, where *key destruction* crypto-shreds all
+  ciphertext under a subject key (§P3).
+
+- **Boundary note (unchanged guarantees).** A resolved credential is **never** carried by the
+  saga (ADR-IC-003 §P7 — saga messages carry the identity trio only) nor placed on the durable
+  integration bus (§P2 / the PII-bus rule). It lives only at the composition root.
+
+- **Deferred.** Production secret-store HA / unseal / DR hardening for this KV usage is
+  **out of scope** here and deferred to M.4 / [ADR-PC-005 §P4](./ADR-PC-005-dr-rto-rpo.md),
+  exactly as for the transit usage (Residual Risk 1). The dev stack uses OpenBao in `-dev`
+  mode (`infra/compose.yaml`).
