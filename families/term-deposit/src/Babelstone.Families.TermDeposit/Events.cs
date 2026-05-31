@@ -15,6 +15,11 @@ namespace Babelstone.Families.TermDeposit;
 /// <param name="TanBasisPoints">Annual nominal rate (TAN) in basis points, resolved from the
 /// rate sheet at constitution (ADR-PC-008 §P3) — never inline config.</param>
 /// <param name="RateSheetVersionId">The rate-sheet version the TAN was resolved from (pinned).</param>
+/// <param name="PaymentPeriodMonths">The coupon cadence in months for the PERIODIC variant —
+/// 1 (monthly) or 3 (quarterly), the only cadences v1 prices (02 §2.1). Carried so the engine
+/// can derive each coupon window from this event alone. It is 0 for AT_MATURITY and ADVANCE,
+/// which have no coupons. Optional/additive (defaulted) so pre-F.1 AT_MATURITY streams that
+/// never carried it still replay (forward-only schema evolution).</param>
 public sealed record DepositConstituted(
     Guid DepositId,
     Money Principal,
@@ -24,7 +29,8 @@ public sealed record DepositConstituted(
     DateOnly StartDate,
     DateOnly MaturityDate,
     string InterestVariant,
-    string AutoRenewalPolicy) : DomainEvent;
+    string AutoRenewalPolicy,
+    int PaymentPeriodMonths = 0) : DomainEvent;
 
 /// <summary>Interest accrued for the period. For AT_MATURITY this is the single flow at
 /// maturity: <c>GrossInterest = Accrual.SimpleInterest(principal, tan, DayCount.Between(start, maturity, Act360))</c>.</summary>

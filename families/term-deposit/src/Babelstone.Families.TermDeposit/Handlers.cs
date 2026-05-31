@@ -22,6 +22,7 @@ public sealed class DepositConstitutedHandler : IEventHandler<DepositPosition, D
             MaturityDate = @event.MaturityDate,
             InterestVariant = @event.InterestVariant,
             AutoRenewalPolicy = @event.AutoRenewalPolicy,
+            PaymentPeriodMonths = @event.PaymentPeriodMonths,
             // RemainingPrincipal tracks principal still on deposit; it starts at the full
             // principal and is reduced by partial withdrawals (the event carries the result).
             RemainingPrincipal = @event.Principal,
@@ -82,6 +83,11 @@ public sealed class InterestPaidHandler : IEventHandler<DepositPosition, Interes
             AccruedGrossInterest = state.AccruedGrossInterest + @event.GrossInterest,
             WithholdingToDate = state.WithholdingToDate + @event.WithholdingTax,
             NetInterest = state.NetInterest + @event.NetInterest,
+            // Count coupons so the service can derive the next coupon window deterministically
+            // (start + cadence × CouponsPaid) without a clock in the fold. The ADVANCE upfront
+            // payment also folds here; its single InterestPaid leaves CouponsPaid at 1, harmless
+            // because ADVANCE never pays further coupons (the service gates on the variant).
+            CouponsPaid = state.CouponsPaid + 1,
         });
 }
 

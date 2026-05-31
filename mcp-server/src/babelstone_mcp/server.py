@@ -55,12 +55,18 @@ async def constitute_deposit(
     funding_account: str,
     interest_variant: str = "AT_MATURITY",
     auto_renewal_policy: str = "NONE",
+    payment_period_months: int = 0,
 ) -> ConstituteDepositResult:
     """Constitute a term deposit. ``principal_cents`` and all money are integer cents (never a float).
 
     ``product_id`` is the variant the rate sheet prices (e.g. ``dpz_pt_12m_juros_venc``); ``role`` is
     the pricing role (e.g. ``standard``); ``start_date`` is ISO-8601 (YYYY-MM-DD). The resolved TAN
     is stamped by the engine from the active rate sheet — never supplied here.
+
+    ``interest_variant`` is one of AT_MATURITY (interest + principal at maturity), PERIODIC (coupons
+    paid out to the current account, principal at maturity), or ADVANCE (full-term interest at t=0).
+    ``payment_period_months`` is required for PERIODIC — 1 (monthly) or 3 (quarterly), the only
+    cadences priced — and is 0/omitted for AT_MATURITY and ADVANCE.
     """
     result = await engine().constitute(
         {
@@ -72,6 +78,7 @@ async def constitute_deposit(
             "interest_variant": interest_variant,
             "auto_renewal_policy": auto_renewal_policy,
             "funding_account": funding_account,
+            "payment_period_months": payment_period_months,
         }
     )
     return ConstituteDepositResult(deposit_id=result["deposit_id"], status=result["status"])
@@ -92,12 +99,16 @@ class DepositPosition(BaseModel):
     term_days: int = Field(description="Term length in days.")
     start_date: str = Field(description="ISO-8601 start date.")
     maturity_date: str = Field(description="ISO-8601 maturity date.")
-    interest_variant: str = Field(description="Interest variant (e.g. AT_MATURITY).")
+    interest_variant: str = Field(description="Interest variant (AT_MATURITY, PERIODIC, or ADVANCE).")
     auto_renewal_policy: str = Field(description="Auto-renewal policy (e.g. NONE).")
+    payment_period_months: int = Field(
+        description="PERIODIC coupon cadence in months (1 monthly, 3 quarterly); 0 for AT_MATURITY/ADVANCE."
+    )
     accrued_gross_interest_cents: int = Field(description="Gross interest accrued to date, cents.")
     withholding_to_date_cents: int = Field(description="Withholding tax accrued to date, cents.")
     net_interest_cents: int = Field(description="Net interest to date, cents.")
     total_payout_cents: int = Field(description="Total payout to date, cents.")
+    coupons_paid: int = Field(description="PERIODIC coupons paid out so far (0 for AT_MATURITY/ADVANCE).")
     lifecycle: str = Field(description="Lifecycle state (e.g. Active, Matured).")
 
 
@@ -124,3 +135,19 @@ async def mature_deposit(deposit_id: str) -> DepositPosition:
     auth on this dev server, is deferred to Epic J.
     """
     return DepositPosition(**await engine().mature(deposit_id))
+
+
+@mcp.tool()
+async def pay_interest(deposit_id: str) -> DepositPosition:
+    """Pay one PERIODIC coupon on a term deposit — accrues the next coupon window, withholds tax on
+    that one flow, pays the net to the current account, and returns the updated position.
+
+    ``deposit_id`` is the engine-assigned UUID. Only an Active PERIODIC deposit pays coupons; the
+    coupon window is derived by the engine from the deposit's schedule and the coupons already paid
+    (not supplied here). Returns the same ``DepositPosition`` shape with the coupon's gross/withholding/
+    net folded in and ``coupons_paid`` incremented; the final coupon is paid with the principal at
+    maturity (use ``mature_deposit`` for that), so calling this once no intermediate coupon remains is
+    rejected. Money is integer cents. Scoped ``deposits:write`` at the gateway (ADR-IC-010 §P4). Like
+    ``mature_deposit``, the coupon settlement is irreversible; §P8 elicitation is deferred to Epic J.
+    """
+    return DepositPosition(**await engine().pay_interest(deposit_id))

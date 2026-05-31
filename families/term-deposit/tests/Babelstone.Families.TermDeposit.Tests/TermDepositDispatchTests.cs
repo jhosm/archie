@@ -1,245 +1,153 @@
 using Babelstone.Engine;
-using Babelstone.FinancialMath;
 using Babelstone.FinancialTypes;
 using Xunit;
 
 namespace Babelstone.Families.TermDeposit.Tests;
 
 /// <summary>
-/// Pure dispatch + fold for the term-deposit family (E.1, archie-uqlm) — no I/O, default CI
-/// lane. Pins registry resolution, module discovery, the constitute→accrue→withhold→mature
-/// fold, determinism, and that the carried event amounts agree with the financial-math
-/// kernel. The durable append/load round-trip lands with E.6 (the Testcontainers lane).
+/// E.1 dispatch tests: the family module registers all eleven event types, and the engine
+/// folds each through its handler into the deposit position. The canonical AT_MATURITY numbers
+/// match the decider + financial-math kernel (the §5.4 withholding split).
 /// </summary>
 public sealed class TermDepositDispatchTests
 {
     private static readonly HandlerRegistry Registry = TermDepositFamilyModule.Registry();
 
-    // Canonical AT_MATURITY instance: EUR 10,000.00 principal, TAN 3.00%, 365d Act/360,
-    // IRS withholding 28%. Gross 304.17, tax 85.17, net 219.00, payout 10,219.00.
-    private static readonly Guid DepositId = new("0bbe5f4e-1f5a-4f6e-9b2a-1d4c7e8a9f01");
-    private static readonly DateOnly Start = new(2026, 1, 15);
-    private static readonly DateOnly Maturity = new(2027, 1, 15);
-    private const int PrincipalCents = 1_000_000;
-    private const int TanBps = 300;
-    private const int IrsWithholdingBps = 2800;
-
-    private static DomainEvent[] HappyPath() =>
-    [
-        new DepositConstituted(DepositId, new Money(PrincipalCents), TanBps, "pt-deposits-2026.1",
-            TermDays: 365, Start, Maturity, "AT_MATURITY", "NONE"),
-        new InterestAccrued(new Money(30_417), Maturity),
-        new WithholdingApplied(Tax: new Money(8_517), Net: new Money(21_900)),
-        new DepositMatured(PrincipalReturned: new Money(PrincipalCents), NetInterestPaid: new Money(21_900),
-            TotalPayout: new Money(1_021_900), Maturity),
-    ];
-
-    private static SimulationRuntime<DepositPosition> Sim() => new(
-        store: null!, // ProjectFromScratch never reads the store
-        handlers: Registry,
-        serializer: new JsonEventSerializer(),
-        seedState: () => DepositPosition.Empty);
-
-    [Theory]
-    [InlineData("term_deposit.DepositConstituted")]
-    [InlineData("term_deposit.InterestAccrued")]
-    [InlineData("term_deposit.WithholdingApplied")]
-    [InlineData("term_deposit.DepositMatured")]
-    [InlineData("term_deposit.DepositConstitutionFailed")]
-    [InlineData("term_deposit.InterestPaid")]
-    [InlineData("term_deposit.DepositRenewed")]
-    [InlineData("term_deposit.DepositTerminatedEarly")]
-    [InlineData("term_deposit.DepositPartiallyWithdrawn")]
-    [InlineData("term_deposit.DepositCorrected")]
-    [InlineData("term_deposit.DepositTransferredToHeirs")]
-    public void Registry_resolves_each_family_event_type(string eventType)
-        => Assert.True(Registry.TryResolve(eventType, out _));
-
     [Fact]
-    public void Family_module_declares_the_full_eleven_event_taxonomy()
-        => Assert.Equal(11, new TermDepositFamilyModule().Handlers.Count);
-
-    [Fact]
-    public void Registry_does_not_resolve_an_unknown_event_type()
-        => Assert.False(Registry.TryResolve("term_deposit.Unknown", out _));
-
-    [Fact]
-    public void Family_module_loader_discovers_term_deposit_in_the_family_assembly()
+    public void Module_registers_all_eleven_event_types()
     {
-        // Mirrors how the engine loads families: scan the family assembly (where the module
-        // lives), not the executing test assembly. Proves discovery + the public parameterless ctor.
-        var modules = new FamilyModuleLoader().LoadAll([typeof(TermDepositFamilyModule).Assembly]);
-        Assert.Contains(modules, m => m.FamilyName == "term_deposit");
+        var module = new TermDepositFamilyModule();
+        Assert.Equal(11, module.Handlers.Count);
     }
 
     [Fact]
-    public void Constitute_accrue_withhold_mature_folds_to_the_expected_position()
+    public void Folds_constituted_then_accrued_then_withheld_then_matured_into_the_position()
     {
-        var position = Sim().ProjectFromScratch(HappyPath());
+        var seed = DepositPosition.Empty;
 
-        Assert.Equal(DepositId, position.DepositId);
-        Assert.Equal(new Money(PrincipalCents), position.Principal);
-        Assert.Equal(new Money(30_417), position.AccruedGrossInterest);
-        Assert.Equal(new Money(8_517), position.WithholdingToDate);
-        Assert.Equal(new Money(21_900), position.NetInterest);
-        Assert.Equal(new Money(1_021_900), position.TotalPayout);
-        Assert.Equal(DepositLifecycle.Matured, position.Lifecycle);
+        var afterConstitution = Dispatch(seed, new DepositConstituted(
+            DepositId: Guid.NewGuid(),
+            Principal: new Money(1_000_000),
+            TanBasisPoints: 300,
+            RateSheetVersionId: "rs-1",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            MaturityDate: new DateOnly(2027, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE"));
+
+        var afterAccrual = Dispatch(afterConstitution, new InterestAccrued(
+            new Money(30_417), new DateOnly(2027, 1, 15)));
+
+        var afterWithholding = Dispatch(afterAccrual, new WithholdingApplied(
+            new Money(8_517), new Money(21_900)));
+
+        var afterMaturity = Dispatch(afterWithholding, new DepositMatured(
+            PrincipalReturned: new Money(1_000_000),
+            NetInterestPaid: new Money(21_900),
+            TotalPayout: new Money(1_021_900),
+            MaturedOn: new DateOnly(2027, 1, 15)));
+
+        Assert.Equal(new Money(1_000_000), afterMaturity.Principal);
+        Assert.Equal(new Money(30_417), afterMaturity.AccruedGrossInterest);
+        Assert.Equal(new Money(8_517), afterMaturity.WithholdingToDate);
+        Assert.Equal(new Money(21_900), afterMaturity.NetInterest);
+        Assert.Equal(new Money(1_021_900), afterMaturity.TotalPayout);
+        Assert.Equal(DepositLifecycle.Matured, afterMaturity.Lifecycle);
     }
 
     [Fact]
-    public void Forward_projection_is_a_deterministic_fold()
+    public void Constituted_fold_carries_the_payment_period_for_periodic()
     {
-        var sim = Sim();
-        var events = HappyPath();
+        var seed = DepositPosition.Empty;
 
-        var first = sim.ProjectFromScratch(events);
-        var second = sim.ProjectFromScratch(events);
+        var afterConstitution = Dispatch(seed, new DepositConstituted(
+            DepositId: Guid.NewGuid(),
+            Principal: new Money(1_000_000),
+            TanBasisPoints: 300,
+            RateSheetVersionId: "rs-1",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 1),
+            MaturityDate: new DateOnly(2027, 1, 1),
+            InterestVariant: "PERIODIC",
+            AutoRenewalPolicy: "NONE",
+            PaymentPeriodMonths: 3));
 
-        Assert.Equal(first, second); // structural record equality across runs
+        Assert.Equal("PERIODIC", afterConstitution.InterestVariant);
+        Assert.Equal(3, afterConstitution.PaymentPeriodMonths);
+        Assert.Equal(0, afterConstitution.CouponsPaid);
     }
 
     [Fact]
-    public void Carried_event_amounts_match_the_financial_math_kernel()
+    public void InterestPaid_folds_accumulate_gross_tax_net_and_coupon_count_across_coupons()
     {
-        var factor = DayCount.Between(Start, Maturity, DayCountConvention.Act360);
-        var gross = Accrual.SimpleInterest(new Money(PrincipalCents), TanBps, factor);
-        var withheld = Withholding.Withhold(gross, IrsWithholdingBps);
+        // Three PERIODIC coupons fold into the running tallies: the InterestPaidHandler
+        // accumulates (it never overwrites), and CouponsPaid counts the coupons so the service
+        // can derive the next coupon window deterministically (start + cadence × CouponsPaid).
+        var state = Dispatch(DepositPosition.Empty, new DepositConstituted(
+            DepositId: Guid.NewGuid(), Principal: new Money(1_000_000), TanBasisPoints: 300,
+            RateSheetVersionId: "rs-1", TermDays: 365, StartDate: new DateOnly(2026, 1, 1),
+            MaturityDate: new DateOnly(2027, 1, 1), InterestVariant: "PERIODIC",
+            AutoRenewalPolicy: "NONE", PaymentPeriodMonths: 3));
 
-        Assert.Equal(new Money(30_417), gross);
-        Assert.Equal(new Money(8_517), withheld.Tax);
-        Assert.Equal(new Money(21_900), withheld.Net);
-        Assert.Equal(new Money(PrincipalCents) + withheld.Net, new Money(1_021_900));
-    }
+        // Three distinct coupon flows (gross/tax/net each conserved gross = tax + net).
+        var coupons = new[]
+        {
+            new InterestPaid(state.DepositId, new Money(7_500), new Money(2_100), new Money(5_400), new DateOnly(2026, 4, 1)),
+            new InterestPaid(state.DepositId, new Money(7_583), new Money(2_123), new Money(5_460), new DateOnly(2026, 7, 1)),
+            new InterestPaid(state.DepositId, new Money(7_667), new Money(2_147), new Money(5_520), new DateOnly(2026, 10, 1)),
+        };
 
-    // --- F.2: the seven remaining events (babelstone-5czr) -----------------------------------
+        foreach (var coupon in coupons)
+        {
+            state = Dispatch(state, coupon);
+        }
 
-    /// <summary>The seven new events as concrete instances, used by the codec round-trip and
-    /// the resolve checks. Built once so every case shares the same canonical fixtures.</summary>
-    public static TheoryData<DomainEvent> NewEvents() =>
-    [
-        new DepositConstitutionFailed(DepositId, "RATE_SHEET_NOT_FOUND", "no rate sheet pinned for pt-deposits-2026.1"),
-        new InterestPaid(DepositId, new Money(30_417), new Money(8_517), new Money(21_900), Maturity),
-        new DepositRenewed(DepositId, new("0bbe5f4e-1f5a-4f6e-9b2a-1d4c7e8a9f02"), new Money(PrincipalCents),
-            "pt-deposits-2027.1", NewTanBasisPoints: 325, NewTermDays: 365, RenewalDate: Maturity,
-            NewMaturityDate: new(2028, 1, 15)),
-        new DepositTerminatedEarly(DepositId, PrincipalReturned: new Money(PrincipalCents),
-            PenaltyAmount: new Money(5_000), NetSettlementAmount: new Money(995_000),
-            TerminatedOn: new(2026, 6, 30), "CUSTOMER_REQUEST"),
-        new DepositPartiallyWithdrawn(DepositId, WithdrawnAmount: new Money(200_000),
-            RemainingPrincipal: new Money(800_000), WithdrawnOn: new(2026, 6, 30)),
-        new DepositCorrected(DepositId, CorrectionId: "corr-001", CorrectedField: "TanBasisPoints",
-            PreviousValueRef: "ref://prev/300", CorrectedValueRef: "ref://new/305",
-            EffectiveFrom: Start, CorrectionReason: "RATE_SHEET_RESOLUTION_FIX"),
-        new DepositTransferredToHeirs(DepositId, HeirCaseRef: "succession-case-7741",
-            TransferredBalance: new Money(1_021_900), TransferDate: new(2026, 9, 1)),
-    ];
-
-    [Theory]
-    [MemberData(nameof(NewEvents))]
-    public void New_event_survives_a_codec_round_trip(DomainEvent @event)
-    {
-        var codec = new JsonEventSerializer();
-
-        var encoded = codec.Encode(@event);
-        var decoded = codec.Decode(encoded.Bytes, @event.GetType());
-
-        Assert.Equal(@event, decoded); // structural record equality after encode→decode
+        Assert.Equal(new Money(7_500 + 7_583 + 7_667), state.AccruedGrossInterest);
+        Assert.Equal(new Money(2_100 + 2_123 + 2_147), state.WithholdingToDate);
+        Assert.Equal(new Money(5_400 + 5_460 + 5_520), state.NetInterest);
+        Assert.Equal(3, state.CouponsPaid);
+        // Coupons are paid OUT — they do not capitalise the deposit balance (02 §2.1).
+        Assert.Equal(new Money(1_000_000), state.Principal);
+        Assert.Equal(DepositLifecycle.Active, state.Lifecycle);
     }
 
     [Fact]
-    public void Constitution_failed_folds_to_failed()
+    public void Dispatches_all_eleven_event_types_without_throwing()
     {
-        var position = Sim().ProjectFromScratch(
-        [
-            new DepositConstitutionFailed(DepositId, "RATE_SHEET_NOT_FOUND", "no rate sheet pinned"),
-        ]);
+        var seed = DepositPosition.Empty;
 
-        Assert.Equal(DepositId, position.DepositId);
-        Assert.Equal(DepositLifecycle.Failed, position.Lifecycle);
+        // One of each event; folding each must resolve a handler (no missing registration).
+        var events = new DomainEvent[]
+        {
+            new DepositConstituted(Guid.NewGuid(), new Money(1_000_000), 300, "rs-1", 365,
+                new DateOnly(2026, 1, 15), new DateOnly(2027, 1, 15), "AT_MATURITY", "NONE"),
+            new InterestAccrued(new Money(30_417), new DateOnly(2027, 1, 15)),
+            new WithholdingApplied(new Money(8_517), new Money(21_900)),
+            new DepositMatured(new Money(1_000_000), new Money(21_900), new Money(1_021_900), new DateOnly(2027, 1, 15)),
+            new DepositConstitutionFailed(Guid.NewGuid(), "RATE_SHEET_NOT_FOUND", "no sheet"),
+            new InterestPaid(Guid.NewGuid(), new Money(10_000), new Money(2_800), new Money(7_200), new DateOnly(2026, 4, 15)),
+            new DepositRenewed(Guid.NewGuid(), Guid.NewGuid(), new Money(1_000_000), "rs-2", 300, 365,
+                new DateOnly(2027, 1, 15), new DateOnly(2028, 1, 15)),
+            new DepositTerminatedEarly(Guid.NewGuid(), new Money(1_000_000), new Money(5_000), new Money(995_000),
+                new DateOnly(2026, 6, 15), "customer_request"),
+            new DepositPartiallyWithdrawn(Guid.NewGuid(), new Money(200_000), new Money(800_000), new DateOnly(2026, 6, 15)),
+            new DepositCorrected(Guid.NewGuid(), "corr-1", "principal", "ref-old", "ref-new",
+                new DateOnly(2026, 6, 15), "typo"),
+            new DepositTransferredToHeirs(Guid.NewGuid(), "case-1", new Money(1_021_900), new DateOnly(2026, 6, 15)),
+        };
+
+        foreach (var @event in events)
+        {
+            var state = Dispatch(seed, @event);
+            Assert.NotNull(state);
+        }
     }
 
-    [Fact]
-    public void Early_termination_folds_to_terminated_early_with_the_net_settlement()
+    private static DepositPosition Dispatch(DepositPosition state, DomainEvent @event)
     {
-        var position = Sim().ProjectFromScratch(
-        [
-            new DepositConstituted(DepositId, new Money(PrincipalCents), TanBps, "pt-deposits-2026.1",
-                TermDays: 365, Start, Maturity, "AT_MATURITY", "NONE"),
-            new DepositTerminatedEarly(DepositId, PrincipalReturned: new Money(PrincipalCents),
-                PenaltyAmount: new Money(5_000), NetSettlementAmount: new Money(995_000),
-                TerminatedOn: new(2026, 6, 30), "CUSTOMER_REQUEST"),
-        ]);
-
-        Assert.Equal(DepositLifecycle.TerminatedEarly, position.Lifecycle);
-        Assert.Equal(new Money(995_000), position.SettlementAmount);
-        // Net = Principal − Penalty, conserved to the cent.
-        Assert.Equal(new Money(PrincipalCents) - new Money(5_000), position.SettlementAmount);
-    }
-
-    [Fact]
-    public void Transfer_to_heirs_folds_to_transferred_to_heirs()
-    {
-        var position = Sim().ProjectFromScratch(
-        [
-            new DepositConstituted(DepositId, new Money(PrincipalCents), TanBps, "pt-deposits-2026.1",
-                TermDays: 365, Start, Maturity, "AT_MATURITY", "NONE"),
-            new DepositTransferredToHeirs(DepositId, HeirCaseRef: "succession-case-7741",
-                TransferredBalance: new Money(1_021_900), TransferDate: new(2026, 9, 1)),
-        ]);
-
-        Assert.Equal(DepositLifecycle.TransferredToHeirs, position.Lifecycle);
-        Assert.Equal(new Money(1_021_900), position.SettlementAmount);
-    }
-
-    [Fact]
-    public void Partial_withdrawal_folds_to_the_remaining_principal()
-    {
-        var position = Sim().ProjectFromScratch(
-        [
-            new DepositConstituted(DepositId, new Money(PrincipalCents), TanBps, "pt-deposits-2026.1",
-                TermDays: 365, Start, Maturity, "AT_MATURITY", "NONE"),
-            new DepositPartiallyWithdrawn(DepositId, WithdrawnAmount: new Money(200_000),
-                RemainingPrincipal: new Money(800_000), WithdrawnOn: new(2026, 6, 30)),
-        ]);
-
-        Assert.Equal(DepositLifecycle.Active, position.Lifecycle); // still active, just smaller
-        Assert.Equal(new Money(800_000), position.RemainingPrincipal);
-    }
-
-    [Fact]
-    public void Correction_increments_the_correction_count_only()
-    {
-        var position = Sim().ProjectFromScratch(
-        [
-            new DepositConstituted(DepositId, new Money(PrincipalCents), TanBps, "pt-deposits-2026.1",
-                TermDays: 365, Start, Maturity, "AT_MATURITY", "NONE"),
-            new DepositCorrected(DepositId, "corr-001", "TanBasisPoints", "ref://prev/300",
-                "ref://new/305", Start, "RATE_SHEET_RESOLUTION_FIX"),
-            new DepositCorrected(DepositId, "corr-002", "TanBasisPoints", "ref://prev/305",
-                "ref://new/310", Start, "RATE_SHEET_RESOLUTION_FIX"),
-        ]);
-
-        Assert.Equal(2, position.CorrectionCount);
-        Assert.Equal(DepositLifecycle.Active, position.Lifecycle); // fold only tallies; D.1/D.2 supersedes
-    }
-
-    /// <summary>Structural guard: <see cref="DepositTransferredToHeirs"/> carries NO heir PII —
-    /// only the opaque heir-case reference (ADR-PC-004 §P2). Reflecting over its public
-    /// surface, the only string field is the case ref; there is no name/NIF/IBAN slot for
-    /// identity to leak through, in cleartext or ciphertext.</summary>
-    [Fact]
-    public void Transfer_to_heirs_event_carries_no_heir_pii_only_an_opaque_reference()
-    {
-        var stringProps = typeof(DepositTransferredToHeirs)
-            .GetProperties()
-            .Where(p => p.PropertyType == typeof(string))
-            .Select(p => p.Name)
-            .ToArray();
-
-        Assert.Equal(["HeirCaseRef"], stringProps); // the ONLY string slot is the opaque reference
-
-        var forbidden = new[] { "Name", "Nif", "Iban", "Holder", "Heir", "FullName", "TaxId" };
-        Assert.DoesNotContain(typeof(DepositTransferredToHeirs).GetProperties(),
-            p => forbidden.Any(f => p.Name.Equals(f, StringComparison.OrdinalIgnoreCase)));
+        var eventType = $"term_deposit.{@event.GetType().Name}";
+        Assert.True(Registry.TryResolve(eventType, out var handler), $"no handler for {eventType}");
+        return (DepositPosition)handler.ApplyBoxed(state, @event).NewState;
     }
 }

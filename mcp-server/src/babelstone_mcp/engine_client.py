@@ -45,5 +45,19 @@ class EngineClient:
         response.raise_for_status()
         return response.json()
 
+    async def pay_interest(self, deposit_id: str) -> dict[str, Any]:
+        """POST /v1/deposits/{id}/interest — pays one PERIODIC coupon, returns the updated position.
+
+        Same position shape as ``deposit_position`` with the coupon's gross/withholding/net folded
+        in and ``coupons_paid`` incremented. The coupon window is derived by the engine from the
+        deposit's schedule — not supplied here. Raises on a non-2xx engine response (e.g. 422 if the
+        deposit is not Active, not PERIODIC, or has no intermediate coupon left).
+        """
+        response = await self._client.post(
+            f"{self._base_url}/v1/deposits/{deposit_id}/interest", json={}
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def aclose(self) -> None:
         await self._client.aclose()

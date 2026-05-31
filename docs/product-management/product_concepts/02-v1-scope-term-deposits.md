@@ -109,13 +109,25 @@ withholding_cents, net_interest_cents
 
 ##### `InterestPaid`
 
-Net interest is settled to the depositor's current account.
+A periodic coupon (or the ADVANCE up-front interest) is accrued, withheld, and settled —
+the self-contained per-coupon flow.
 
 ```
-deposit_id, interest_payment_id,
-net_interest_cents, currency,
-target_current_account_id, payment_date
+deposit_id,
+gross_interest_cents, withholding_tax_cents, net_interest_cents,
+payment_date
 ```
+
+The engine models `InterestPaid` as the **single, self-contained record for a coupon /
+advance flow** — it carries gross, withholding, *and* net so one event folds the whole
+flow's accrual + withholding + net tallies exactly once. (Emitting a separate
+`InterestAccrued` + `WithholdingApplied` + `InterestPaid` triple per coupon would
+double-count, because all three folds accumulate the same running tallies.) AT_MATURITY
+uses the `InterestAccrued` + `WithholdingApplied` + `DepositMatured` triple and emits no
+`InterestPaid`; the PERIODIC intermediate coupons and the ADVANCE up-front flow emit
+`InterestPaid` alone. The credit's `target_current_account_id` is resolved by the ACL
+(see §2.4 note 2) and kept out of the structural event. The Avro wire contract for
+`InterestPaid` is authored at G.3 (bd `babelstone-c3bq`).
 
 ##### `DepositMatured`
 

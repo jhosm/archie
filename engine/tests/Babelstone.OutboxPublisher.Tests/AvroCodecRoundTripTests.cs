@@ -46,6 +46,32 @@ public sealed class AvroCodecRoundTripTests
     }
 
     [Fact]
+    public void DepositConstituted_round_trips_the_periodic_payment_period_additive_field()
+    {
+        // F.1 added payment_period_months to DepositConstituted (additive, default 0). A PERIODIC
+        // deposit carrying a non-zero cadence must survive the wire — proving the .avsc field, not
+        // just the C# record, carries it (otherwise the field would silently drop to 0).
+        var serializer = NewSerializer();
+        var original = new DepositConstituted(
+            DepositId: Guid.NewGuid(),
+            Principal: new Money(49_900_000),
+            TanBasisPoints: 325,
+            RateSheetVersionId: "rs-2026-01",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 1),
+            MaturityDate: new DateOnly(2027, 1, 1),
+            InterestVariant: "PERIODIC",
+            AutoRenewalPolicy: "NONE",
+            PaymentPeriodMonths: 3);
+
+        var decoded = (DepositConstituted)serializer.Decode(
+            serializer.Encode(original).Bytes, typeof(DepositConstituted));
+
+        Assert.Equal(original, decoded);
+        Assert.Equal(3, decoded.PaymentPeriodMonths);
+    }
+
+    [Fact]
     public void InterestAccrued_round_trips()
     {
         var serializer = NewSerializer();

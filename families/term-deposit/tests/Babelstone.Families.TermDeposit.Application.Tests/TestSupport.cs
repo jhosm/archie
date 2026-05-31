@@ -84,27 +84,44 @@ internal static class TestRateSheets
 {
     public static RateSheet FlatPriced(
         string versionId, string productId, string role, int tanBasisPoints, DateTimeOffset effectiveFrom) =>
-        new(
+        MultiPriced(versionId, effectiveFrom, (productId, role, tanBasisPoints));
+
+    /// <summary>
+    /// A rate sheet pricing SEVERAL (product, role) pairs at flat TANs in one sheet. The engine's
+    /// rate-sheet resolution (<see cref="PostgresRateSheetStore.ResolveAsync"/>) picks the latest sheet
+    /// effective for the FAMILY at the instant — it does not filter by product — so when several
+    /// products coexist in one Postgres (the shared class fixture), they must live in ONE sheet, or a
+    /// deposit can resolve a sheet that does not price its product. This builds that one sheet.
+    /// </summary>
+    public static RateSheet MultiPriced(
+        string versionId, DateTimeOffset effectiveFrom,
+        params (string ProductId, string Role, int TanBasisPoints)[] pricings)
+    {
+        var products = new Dictionary<string, Dictionary<string, RoleRates>>();
+        foreach (var (productId, role, tanBasisPoints) in pricings)
+        {
+            if (!products.TryGetValue(productId, out var roles))
+            {
+                roles = new Dictionary<string, RoleRates>();
+                products[productId] = roles;
+            }
+
+            roles[role] = new RoleRates
+            {
+                Bands = [new RateBand { PrincipalCents = [0L, null], TanBasisPoints = tanBasisPoints }],
+            };
+        }
+
+        return new RateSheet(
             RateSheetVersionId: versionId,
             ProductFamily: "term_deposit",
             PackVersion: "pt.2026.1",
             EffectiveFrom: effectiveFrom,
-            Body: new RateSheetBody
-            {
-                Products = new Dictionary<string, Dictionary<string, RoleRates>>
-                {
-                    [productId] = new()
-                    {
-                        [role] = new RoleRates
-                        {
-                            Bands = [new RateBand { PrincipalCents = [0L, null], TanBasisPoints = tanBasisPoints }],
-                        },
-                    },
-                },
-            },
+            Body: new RateSheetBody { Products = products },
             ApprovedBy: "alm@bank.pt",
             ApprovalRef: "RC-2026-001",
             PublishedBy: "deploy@bank.pt");
+    }
 }
 
 /// <summary>PG18 with the engine migrations applied (events, outbox, snapshots, rate_sheets).</summary>
@@ -121,6 +138,24 @@ public sealed class ConstitutionFixture : IAsyncLifetime
     }
 
     public async Task DisposeAsync() => await _pg.DisposeAsync();
+
+    /// <summary>
+    /// Insert a rate sheet once, ignoring a duplicate. The three Integration tests share this one
+    /// Postgres container and the engine resolves the latest sheet effective for the FAMILY (not by
+    /// product), so they must share ONE sheet that prices every product they use; whichever test runs
+    /// first inserts it, the rest no-op on the (product_family, effective_from) unique key.
+    /// </summary>
+    public async Task EnsureRateSheetAsync(RateSheet sheet)
+    {
+        try
+        {
+            await new PostgresRateSheetStore(ConnectionString).InsertAsync(sheet);
+        }
+        catch (DuplicateRateSheetVersionException)
+        {
+            // Another test already inserted the shared sheet — idempotent.
+        }
+    }
 
     /// <summary>Counts rows whose <paramref name="idColumn"/> equals <paramref name="id"/> (events.stream_id / outbox.aggregate_id).</summary>
     public async Task<long> CountAsync(string table, string idColumn, Guid id)
