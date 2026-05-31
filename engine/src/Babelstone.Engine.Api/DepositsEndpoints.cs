@@ -13,7 +13,7 @@ namespace Babelstone.Engine.Api;
 /// </summary>
 public static class DepositsEndpoints
 {
-    public static void Map(WebApplication app)
+    public static void Map(IEndpointRouteBuilder app)
     {
         app.MapPost("/v1/deposits", ConstituteAsync);
         app.MapGet("/v1/deposits/{id:guid}", GetPositionAsync);
