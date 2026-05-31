@@ -172,6 +172,28 @@ Related: this ADR's family-agnosticism is the family-level cousin of the variant
 
 ---
 
+## Amendment — 2026-05-31: The host-module composition contract (`IFamilyHostModule`)
+
+E.5 realized the §D5-deferred HTTP boundary as `Babelstone.Engine.Api` wiring a *single* term-deposit family inline (the 2026-05-30 revision). Preparing the host for a *second* family revealed an asymmetry: §D4/§P4 commit to "composition at the edge via discovery", but only the **fold** side has a concrete mechanism (`FamilyModuleLoader`'s assembly-scan). §P4's "mirroring assembly-scan discovery" for the **decider + endpoint** side is an analogy, not a named contract — so a second family would mean hand-editing the host's compose code. This amendment pins the host-side contract that closes that gap. It is **additive**: it realizes §D4/§P4 and reverses nothing.
+
+### A1 · `IFamilyHostModule` is the host-side composition seam
+
+Each family contributes an `IFamilyHostModule` (defined in the host, `Babelstone.Engine.Api`) with three members: `FamilyName`; `ConfigureServices(IServiceCollection, FamilyHostContext)`; `MapEndpoints(IEndpointRouteBuilder)`. A family's module owns everything family-specific the host used to hand-wire: its closed-generic `AggregateRuntime<TState>` (with its `() => TState.Empty` seed and fold registry), its decider registration, and its endpoint mapping — so the host never names a family aggregate type. The host composes by looping over the modules: `ConfigureServices` before `Build()`, `MapEndpoints` after. `FamilyHostContext` carries the per-deployment ingredients that are not DI services — the pinned `VerifiedPack` (shared across families, [ADR-PC-009](./ADR-PC-009-per-instance-version-pinning.md)) and the configuration root; the family-agnostic infrastructure (event store, codec, PII protector, clock, rate-sheet store, settlement port) is registered once as shared singletons each module resolves. This gives §D4 ("composition at the edge … via discovery") and §P4 a concrete decider+endpoint contract.
+
+### A2 · The host MAY reference families; the spine MAY NOT (clarifying §P2/§D4)
+
+`IFamilyHostModule` and all composition code live in `Babelstone.Engine.Api` — the §D4 composition root — which is **not** one of the §P2 spine projects and therefore *may* carry a `ProjectReference` into `families/**`. This is the standing, intended exemption: `ENGINE_FAMILY_AGNOSTIC` (Verifiable commitment 1) gates only the spine, never the host. The host naming a family is §D4's job; a *spine* library naming one is the forbidden edge. (Recorded here to make the host's exclusion from the gated spine an explicit exemption rather than a silent absence from the allowlist.)
+
+### A3 · Explicit list now (Option A), assembly-scan later (Option B) — same contract
+
+The host holds an explicit list of modules today (`[new TermDepositHostModule()]`) — type-safe and debuggable at the current family count. Because every module implements this contract with a public parameterless ctor, swapping the explicit list for `FamilyModuleLoader`-style assembly-scan discovery later (the §P4 mechanism) is a localized change to the host's discovery loop, with **zero change to any family**. Adding a family today is: write its module, add the host `ProjectReference`, add one list entry — never a surgical edit threading a new aggregate type through the compose block. The residual one-line edit is the accepted cost of an in-tree host (a referenced assembly must be loadable to be composed or scanned); a true runtime-plugin model (glob + `Assembly.LoadFrom`) is the only zero-host-touch path and is out of scope here.
+
+### A4 · This amends the decision; it does not supersede this ADR
+
+§D1–§D5 remain binding as written. §D4 (composition at the edge via discovery) and §P4 (discovery at the host/test edge) are the sections this refines; the contract is *appended to* — not a revision of — them. No decision is reversed: the host was always the composition root that wires families; this names the contract by which it does so. The `IFamilyHostModule` contract is enforced by the compiler and exercised end-to-end by `DepositsApiIntegrationTests` (the constitute→read→mature flow through the real host); it adds no new gated fitness function, so the [commitment catalogue](./commitment-catalogue.md) is unchanged.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — the hand-rolled, single-deployable engine spine this application layer sits above.

@@ -2,8 +2,6 @@ using System.Text.Json;
 using Babelstone.Engine;
 using Babelstone.Engine.Api;
 using Babelstone.EventStore;
-using Babelstone.Families.TermDeposit;
-using Babelstone.Families.TermDeposit.Application;
 using Babelstone.Pii;
 using Babelstone.RateSheets;
 
@@ -56,40 +54,40 @@ catch (SecretProviderException)
 var packVersion = builder.Configuration.GetValue("Engine:PackVersion", "pt.2026.1");
 var pack = HostPack.Load(builder.Configuration["Engine:PacksDir"], packVersion);
 
+// Shared, family-agnostic infrastructure — composed once, resolved by every family module.
 // The runtime owns the clock (ADR-PC-010 §P5); the host stamps a missing constituted_at/matured_at.
 builder.Services.AddSingleton(TimeProvider.System);
-
 builder.Services.AddSingleton<IRateSheetStore>(_ => new PostgresRateSheetStore(connectionString));
 builder.Services.AddSingleton<ISettlementPort, LoggingSettlementPort>();
+builder.Services.AddSingleton<IEventStore>(_ => new PostgresEventStore(connectionString));
+builder.Services.AddSingleton<IEventSink>(serviceProvider =>
+    new EventStoreSink(serviceProvider.GetRequiredService<IEventStore>()));
+// The JSON dev codec + null PII protector; the Avro + Schema-Registry codec (E.4,
+// Babelstone.Engine.Avro) is the production wiring follow-up.
+builder.Services.AddSingleton<IEventSerializer, JsonEventSerializer>();
+builder.Services.AddSingleton<IPiiProtector, NullPiiProtector>();
 
-// The durable runtime over the term-deposit family. Uses the JSON dev codec; the Avro +
-// Schema-Registry codec (E.4, Babelstone.Engine.Avro) is the production wiring follow-up.
-builder.Services.AddSingleton(serviceProvider =>
+// Composition at the edge (ADR-PC-021 §D4/§P4): the host enumerates the families it runs as
+// IFamilyHostModule contributions and lets each register its own runtime + decider and map its
+// own endpoints. This compose block stays family-count-invariant — adding a family is a new
+// module + a ProjectReference + one entry in the list below, never a surgical edit threading a
+// new aggregate type through here. Today this is the explicit list (§P4 "Option A"); because
+// every module shares the IFamilyHostModule contract, swapping it for FamilyModuleLoader-style
+// assembly-scan discovery later is a localized change here, with zero change to families.
+var familyHostContext = new FamilyHostContext(pack, builder.Configuration);
+IReadOnlyList<IFamilyHostModule> familyModules = [new TermDepositHostModule()];
+foreach (var module in familyModules)
 {
-    var store = new PostgresEventStore(connectionString);
-    return new AggregateRuntime<DepositPosition>(
-        store,
-        new EventStoreSink(store),
-        TermDepositFamilyModule.Registry(),
-        new JsonEventSerializer(),
-        new NullPiiProtector(),
-        serviceProvider.GetRequiredService<TimeProvider>(),
-        () => DepositPosition.Empty);
-});
-
-// The term-deposit decider (ADR-PC-021): the host is its composition root (§D4).
-builder.Services.AddSingleton(serviceProvider => new TermDepositConstitutionService(
-    serviceProvider.GetRequiredService<AggregateRuntime<DepositPosition>>(),
-    serviceProvider.GetRequiredService<IRateSheetStore>(),
-    serviceProvider.GetRequiredService<ISettlementPort>(),
-    pack,
-    dayCountPrimitive: "act_360",
-    withholdingPrimitive: "irs_juros"));
+    module.ConfigureServices(builder.Services, familyHostContext);
+}
 
 var app = builder.Build();
 
 app.UseExceptionHandler();
-DepositsEndpoints.Map(app);
+foreach (var module in familyModules)
+{
+    module.MapEndpoints(app);
+}
 
 app.Run();
 
