@@ -77,6 +77,10 @@ jobs:
         # restore + build (warnings-as-errors via Directory.Build.props) + all test
         # projects, incl. the Roslyn Money analysers. Needs no infrastructure, so it
         # excludes the Testcontainers-backed Integration tier (real PostgreSQL).
+        # The Docker-free observability fitness tests land here too (K.1): ResourceAttributeTests
+        # (OBS_RESOURCE_ATTRS / OBS-1) and TelemetrySpanTests (OBS_SPAN_PRODUCT_SEMANTICS / OBS-2)
+        # in Babelstone.Engine.Tests run in this step — no new CI job. OBS-4 (traceparent over the
+        # bus) is the deferred Integration tier (E.6 lane), per the commitment catalogue.
         run: dotnet test engine/Babelstone.slnx --configuration Release --nologo --filter "Category!=Integration"
       # TODO - Testcontainers integration tier (PostgreSQL + Redpanda, ADR-IC-009)
       # lands with E.6 (archie-2jum); it needs the dev stack, unlike the tier above.

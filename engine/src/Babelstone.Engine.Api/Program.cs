@@ -5,12 +5,32 @@ using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
 using Babelstone.Families.TermDeposit.Application;
 using Babelstone.RateSheets;
+using Babelstone.Telemetry;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Typed ProblemDetails on any unhandled failure rather than a bare connection reset
-// (mirrors RateSheets.Api). Structured logging + OpenTelemetry is the ADR-IC-007 follow-up.
+// (mirrors RateSheets.Api).
 builder.Services.AddProblemDetails();
+
+// OpenTelemetry tracing (ADR-IC-007 Layer 1, Epic K.1): listen to the engine's manual span
+// source (accrual.computed / withholding.applied, emitted in the AggregateRuntime shell) and
+// export over OTLP to the Collector (P1 — never direct-to-backend). The resource stamps
+// service.name + service.namespace=babelstone + deployment.environment so every trace is
+// attributable (OBS-1). Environment resolution never throws — telemetry must not fail startup.
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource
+        .AddService(BabelstoneResource.EngineApiServiceName)
+        .AddAttributes(
+        [
+            new KeyValuePair<string, object>(BabelstoneResource.ServiceNamespaceKey, BabelstoneResource.ServiceNamespace),
+            new KeyValuePair<string, object>(BabelstoneResource.DeploymentEnvironmentKey, BabelstoneResource.ResolveEnvironment()),
+        ]))
+    .WithTracing(tracing => tracing
+        .AddSource(BabelstoneTelemetry.ActivitySourceName)
+        .AddOtlpExporter());
 
 // snake_case on the wire (principal_cents, tan_basis_points, rate_sheet_version_id), money as
 // integer cents — the same discipline as RateSheets.Api and the deposit configuration surface.

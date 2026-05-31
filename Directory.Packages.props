@@ -44,5 +44,15 @@
 
     <!-- YAML parser for the in-engine pack loader (ADR-PC-007 §S2, Babelstone.Packs). -->
     <PackageVersion Include="YamlDotNet" Version="18.0.0" />
+
+    <!-- OpenTelemetry (ADR-IC-007 Layer 1, Epic K.1). OpenTelemetry.Api carries only the
+         System.Diagnostics ActivitySource surface — it lives in Babelstone.Telemetry and the
+         engine spine. The SDK (Extensions.Hosting for AddOpenTelemetry/ConfigureResource and
+         the OTLP exporter) is wired only in the two HTTP hosts; the core OpenTelemetry package
+         backs the in-memory span fitness test. One pinned 1.x line across all four. -->
+    <PackageVersion Include="OpenTelemetry.Api" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
   </ItemGroup>
 </Project>

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Telemetry</RootNamespace>
+    <AssemblyName>Babelstone.Telemetry</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The shared OTel instrumentation surface (ADR-IC-007 Layer 1): the one
+         ActivitySource the runtime opens spans on and the versioned babelstone.*
+         attribute-key contract. OpenTelemetry.Api gives only System.Diagnostics'
+         ActivitySource — the SDK (exporters, resource, hosting) stays in the two
+         hosts, so this project carries no backend or hosting dependency and can be
+         referenced by the generic engine spine without dragging the SDK upward. -->
+    <PackageReference Include="OpenTelemetry.Api" />
+  </ItemGroup>
+</Project>

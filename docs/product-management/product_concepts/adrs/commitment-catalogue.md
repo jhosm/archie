@@ -68,6 +68,10 @@ tracked separately — and is **not** the job of this seed.
 | 10 | **`pack-validate` depths 1–4 meet budget** synchronously at variant/pack-commit and on every PR — syntactic < 1 s, type < 5 s, pack-compliance < 10 s, regulatory-coherence < 10 s, aggregate < 30 s; a depth-N failure rejects the commit. | [ADR-PC-006 §P3](./ADR-PC-006-cue-schema-language.md) | benchmark (per-PR) | `PACK_VALIDATE_DEPTH_BUDGETS` | Live |
 | 11 | **Depth-5 simulation meets budget** — the sealed pack test-corpus, appended through the engine's hand-rolled append/replay substrate against a session-scoped Testcontainers PostgreSQL fixture, reproduces the expected event sequence in < 30 s in CI. | [ADR-PC-006 §P4](./ADR-PC-006-cue-schema-language.md) | benchmark (CI) | `PACK_SIM_DEPTH5_BUDGET` | Planned |
 | 12 | The generic engine spine (`Babelstone.Engine`, `Babelstone.EventStore`, `Babelstone.RateSheets`, `Babelstone.Packs`, `Babelstone.FinancialMath`, `Babelstone.FinancialTypes`) carries **no `ProjectReference` to any `families/**` project** — the `family → engine` arrow is one-way. | [ADR-PC-021 §P2 / §D2](./ADR-PC-021-application-layer-family-owned-deciders.md) | architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC` | Live |
+| OBS-1 | Every Babelstone .NET host stamps its tracer's **resource** with `service.name`, `service.namespace == "babelstone"`, and a non-blank `deployment.environment` — so every trace is attributable to a service, the estate, and an environment. | [ADR-IC-007 §P1](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_RESOURCE_ATTRS` | Live |
+| OBS-2 | The product-semantic spans (`accrual.computed`, `withholding.applied`) are emitted in the **impure runtime shell** (`AggregateRuntime.AppendAsync`'s span hook / the host endpoint), **never** in the pure decider/fold, and carry the structural `babelstone.partition_key` + `babelstone.product_code`. | [ADR-IC-007 §P2–§P3](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_SPAN_PRODUCT_SEMANTICS` | Live |
+| OBS-3 | **No PII in any telemetry signal** — span/log attributes carry only structural identifiers (the `babelstone.*` operational tier), never NIF/IBAN/account/name/email; money rides as integer cents. | [ADR-IC-007 §P4](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit / analyser | `OBS_NO_PII_ATTRS` | Planned |
+| OBS-4 | **W3C `traceparent` propagates across every process boundary**, including the durable bus (carried as an envelope/outbox header), so a `correlation_id` resolves a complete cross-process trace. | [ADR-IC-007 §P1 (Layer 1)](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | integration | `OBS_TRACEPARENT_PROPAGATION` | Planned |
 
 The "~8 load-bearing" of [ADR-PC-020 §P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)
 counts post-flag-never-gates (rows 5a–5c) as one invariant realised across the
@@ -94,6 +98,20 @@ deferred to **E.6 (`archie-2jum`)** (see the `engine` job's TODO in
 wired — per the "runs in CI" rule above and the [Epic A PR #34](https://github.com/jhosm/babelstone/pull/34)
 follow-up that scopes this reconciliation.
 
+**Epic K reconciliation (K.1).** The four `OBS-*` rows land with K.1 (`babelstone-rzcl`),
+which ships the shared `ActivitySource` + `babelstone.*` attribute contract
+(`Babelstone.Telemetry`), the product-semantic spans in the impure runtime shell, and
+the OTLP + resource wiring on both .NET hosts. `OBS_RESOURCE_ATTRS` (OBS-1) and
+`OBS_SPAN_PRODUCT_SEMANTICS` (OBS-2) are `Live`: their Docker-free fitness tests
+(`ResourceAttributeTests`, `TelemetrySpanTests` in `Babelstone.Engine.Tests`) exist,
+pass, and run in CI's `engine` job (the non-Integration tier). `OBS_NO_PII_ATTRS`
+(OBS-3) stays `Planned`: the structural no-PII assertion rides inside `TelemetrySpanTests`
+today, but its dedicated build-time analyser gate (the cultural→mechanical control of
+ADR-IC-007 §P4) is not yet written, so the row does not yet resolve to its own gate.
+`OBS_TRACEPARENT_PROPAGATION` (OBS-4) stays `Planned`: cross-process `traceparent`
+propagation over the durable bus is documented here but deferred (the K.1 SCOPE-OUT) to
+the bus-relay work, and its lane is the deferred Testcontainers Integration tier.
+
 ## Coverage by pyramid level
 
 This is the shape [ADR-PC-020 §P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)
@@ -102,10 +120,11 @@ spawns a parallel suite:
 
 | Level / mechanism | Test IDs |
 |---|---|
-| Unit + analyser | `MONEY_BOUNDARY_FIXTURES` |
+| Unit | `OBS_RESOURCE_ATTRS`, `OBS_SPAN_PRODUCT_SEMANTICS` |
+| Unit + analyser | `MONEY_BOUNDARY_FIXTURES`, `OBS_NO_PII_ATTRS` |
 | Analyser / CI gate | `DETERMINISM_GATE` |
 | Architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC` |
-| Integration (Testcontainers) | `ES_ATOMIC_APPEND_OUTBOX`, `REPLAY_PIN_PER_EVENT`, `BATCH_INGEST_IDEMPOTENT` |
+| Integration (Testcontainers) | `ES_ATOMIC_APPEND_OUTBOX`, `REPLAY_PIN_PER_EVENT`, `BATCH_INGEST_IDEMPOTENT`, `OBS_TRACEPARENT_PROPAGATION` |
 | Contract / saga | `GL_POST_FLAG_NEVER_GATES`, `NOTIFY_POST_FLAG_NEVER_GATES`, `IFRS9_POST_FLAG_NEVER_GATES`, `AML_EDGE_PRECONDITION` |
 | Benchmark (nightly) | `REPLAY_BUDGET_5S_30S` |
 | Benchmark (per-PR / CI) | `PACK_VALIDATE_DEPTH_BUDGETS`, `PACK_SIM_DEPTH5_BUDGET` |

@@ -1,13 +1,32 @@
 using System.Text.Json;
 using Babelstone.RateSheets;
 using Babelstone.RateSheets.Api;
+using Babelstone.Telemetry;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // An unexpected failure (DB drop, serialization-failure, an unforeseen constraint) returns a
 // structured ProblemDetails 500 rather than a bare connection-reset, so callers and operators see
-// a typed error. Full structured logging + OpenTelemetry on this host is the ADR-IC-007 follow-up.
+// a typed error.
 builder.Services.AddProblemDetails();
+
+// OpenTelemetry tracing (ADR-IC-007 Layer 1, Epic K.1): the same resource discipline as the
+// engine host (OBS-1 parity) — service.name + service.namespace=babelstone + deployment.environment
+// — exporting over OTLP to the Collector (P1). It listens to the shared Babelstone.Engine source so
+// any manual span this host opens later is captured; environment resolution never throws.
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource
+        .AddService(BabelstoneResource.RateSheetsApiServiceName)
+        .AddAttributes(
+        [
+            new KeyValuePair<string, object>(BabelstoneResource.ServiceNamespaceKey, BabelstoneResource.ServiceNamespace),
+            new KeyValuePair<string, object>(BabelstoneResource.DeploymentEnvironmentKey, BabelstoneResource.ResolveEnvironment()),
+        ]))
+    .WithTracing(tracing => tracing
+        .AddSource(BabelstoneTelemetry.ActivitySourceName)
+        .AddOtlpExporter());
 
 // snake_case on the wire (rate_sheet_version_id, principal_cents, tan_basis_points),
 // matching the deployed YAML and the stored JSONB — the same shape RateSheetJson uses.

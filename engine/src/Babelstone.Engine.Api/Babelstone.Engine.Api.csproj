@@ -18,5 +18,14 @@
     <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
+
+    <!-- OpenTelemetry tracing on this host (ADR-IC-007 Layer 1, Epic K.1): the SDK hosting
+         integration (AddOpenTelemetry/ConfigureResource/WithTracing) + the OTLP exporter to the
+         Collector (P1). The ActivitySource + babelstone.* attribute keys come transitively via
+         Babelstone.Telemetry (through Babelstone.Engine); referenced explicitly so the resource
+         helper (BabelstoneResource) is a first-order dependency of the composition root. -->
+    <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
   </ItemGroup>
 </Project>
