@@ -11,6 +11,8 @@
     <!-- Generic-container support for OpenBao (no first-party module). Tests touching
          a real OpenBao carry [Trait("Category","Integration")]. -->
     <PackageReference Include="Testcontainers" />
+    <!-- In-memory IConfiguration for the ConfigurationSecretProvider unit tests. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
   </ItemGroup>
 
   <ItemGroup>

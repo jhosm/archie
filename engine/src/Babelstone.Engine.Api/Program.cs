@@ -4,6 +4,7 @@ using Babelstone.Engine.Api;
 using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
 using Babelstone.Families.TermDeposit.Application;
+using Babelstone.Pii;
 using Babelstone.RateSheets;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -20,9 +21,35 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.PropertyNameCaseInsensitive = false;
 });
 
-var connectionString = builder.Configuration.GetConnectionString("Engine")
-    ?? throw new InvalidOperationException(
+// Application / integration credentials (the DB connection string today, Redpanda SASL
+// later) resolve through the ISecretProvider boundary (ADR-PC-004 Amendment A1) — distinct
+// from the per-subject PII transit keys (IPiiKeyStore). Default to the configuration-backed
+// provider so `make up` keeps working with existing config; opt into OpenBao KV v2 with
+// OpenBao:Enabled=true. The resolved credential stays at this composition root: never on a
+// saga message (ADR-IC-003 §P7) nor the durable bus (ADR-PC-004 §P2).
+ISecretProvider secretProvider = builder.Configuration.GetValue<bool>("OpenBao:Enabled")
+    ? new OpenBaoKvSecretProvider(
+        new HttpClient { BaseAddress = new Uri(builder.Configuration["OpenBao:Address"] ?? "http://localhost:8200/") },
+        roleId: builder.Configuration["OpenBao:RoleId"]
+            ?? throw new InvalidOperationException("OpenBao:Enabled is set but OpenBao:RoleId is missing."),
+        secretId: builder.Configuration["OpenBao:SecretId"]
+            ?? throw new InvalidOperationException("OpenBao:Enabled is set but OpenBao:SecretId is missing."),
+        mountPath: builder.Configuration["OpenBao:MountPath"] ?? "secret")
+    : new ConfigurationSecretProvider(builder.Configuration);
+builder.Services.AddSingleton(secretProvider);
+
+string connectionString;
+try
+{
+    connectionString = await secretProvider.GetSecretAsync("Engine");
+}
+catch (SecretProviderException)
+{
+    // A missing/empty credential is the same failure mode as the original null check;
+    // preserve the exact ADR-PC-001 §P1 contract message.
+    throw new InvalidOperationException(
         "ConnectionStrings:Engine is required (the PostgreSQL event-store tier, ADR-PC-001 §P1).");
+}
 
 // The engine-instance's pinned pack (ADR-PC-009): a disk-loaded VerifiedPack stands in for the
 // in-engine OCI loader + per-instance pinning registry on the walking-skeleton dev boundary.

@@ -16,6 +16,9 @@
     <ProjectReference Include="../Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <ProjectReference Include="../Babelstone.Packs/Babelstone.Packs.csproj" />
     <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+    <!-- The application-credential secret boundary (ADR-PC-004 Amendment A1): ConnectionStrings:Engine
+         resolves through ISecretProvider. Babelstone.Pii stays self-contained (no engine refs). -->
+    <ProjectReference Include="../Babelstone.Pii/Babelstone.Pii.csproj" />
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
   </ItemGroup>
