@@ -32,7 +32,8 @@ public sealed class AggregateRuntime<TState>(
     IPiiProtector protector,
     TimeProvider clock,
     Func<TState> seedState,
-    SnapshotStore<TState>? snapshots = null)
+    SnapshotStore<TState>? snapshots = null,
+    IPostCommitProjector? postCommitProjector = null)
 {
     /// <summary>Rehydrates from the latest verified snapshot, then folds the tail of events on top.</summary>
     public async Task<Hydrated<TState>> LoadAsync(Guid streamId, CancellationToken ct = default)
@@ -136,6 +137,15 @@ public sealed class AggregateRuntime<TState>(
         }
 
         await sink.AppendAsync(streamId, expectedVersion, envelopes, outboxRows, ct);
+
+        // Sync-mode projections (two-modes §5.4): once the event has committed, drive them within
+        // a bounded budget. The hook NEVER rolls back the commit — "the event is true regardless
+        // of whether a projection consumed it"; it surfaces its own failure/lag. v1 injects a
+        // no-op (every projection is async); the budgeted hook is the v4 template.
+        if (postCommitProjector is not null)
+        {
+            await postCommitProjector.NotifyAppendedAsync(context.Family, ct);
+        }
     }
 
     private async Task<TState> FoldAsync(TState state, EventEnvelope envelope, bool unprotect, CancellationToken ct)

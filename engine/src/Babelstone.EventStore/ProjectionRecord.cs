@@ -5,6 +5,20 @@ namespace Babelstone.EventStore;
 /// </summary>
 /// <remarks>
 /// <para>
+/// <see cref="ProjectionKind"/> is the family-prefixed discriminator (e.g.
+/// <c>term_deposit.deposit_position</c>) — one stream carries more than one projection
+/// (F.6), so supersession and current-belief reads scope to the
+/// <c>(StreamId, ProjectionKind)</c> pair, and a PARTIAL UNIQUE index enforces exactly one
+/// currently-believed row per pair (migration 0010).
+/// </para>
+/// <para>
+/// <see cref="SourceSequence"/> is the per-stream <c>sequence_number</c> of the event that
+/// produced this belief. The async drainer is at-least-once, so the apply step is made
+/// idempotent by skipping any event whose <c>sequence_number</c> is <c>&lt;=</c> the current
+/// belief's <see cref="SourceSequence"/> — without it the accumulating folds would
+/// double-count a re-delivered event (migration 0010).
+/// </para>
+/// <para>
 /// The record carries two independent time axes (ADR-PC-002 §P1):
 /// <list type="bullet">
 /// <item>
@@ -18,7 +32,9 @@ namespace Babelstone.EventStore;
 /// A <see langword="null"/> <see cref="SupersededAt"/> means the row is the
 /// currently-believed projection (ADR-PC-002 §P2); a corrected row supersedes its
 /// predecessor in place rather than deleting it, so the full belief history stays
-/// queryable.
+/// queryable. <see cref="RecordedAt"/> is RUNTIME-SUPPLIED (the source event's
+/// transaction_time), never the SQL clock, so a cold rebuild reproduces it bit-for-bit
+/// (ADR-PC-010 §P5; migration 0010 drops the column DEFAULT).
 /// </item>
 /// </list>
 /// </para>
@@ -31,6 +47,8 @@ namespace Babelstone.EventStore;
 /// </remarks>
 public sealed record ProjectionRecord(
     Guid StreamId,
+    string ProjectionKind,
+    long SourceSequence,
     DateTimeOffset ValidFrom,
     DateTimeOffset? ValidTo,
     DateTimeOffset RecordedAt,

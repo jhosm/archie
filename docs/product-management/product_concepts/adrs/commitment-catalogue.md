@@ -68,6 +68,9 @@ tracked separately — and is **not** the job of this seed.
 | 10 | **`pack-validate` depths 1–4 meet budget** synchronously at variant/pack-commit and on every PR — syntactic < 1 s, type < 5 s, pack-compliance < 10 s, regulatory-coherence < 10 s, aggregate < 30 s; a depth-N failure rejects the commit. | [ADR-PC-006 §P3](./ADR-PC-006-cue-schema-language.md) | benchmark (per-PR) | `PACK_VALIDATE_DEPTH_BUDGETS` | Live |
 | 11 | **Depth-5 simulation meets budget** — the sealed pack test-corpus, appended through the engine's hand-rolled append/replay substrate against a session-scoped Testcontainers PostgreSQL fixture, reproduces the expected event sequence in < 30 s in CI. | [ADR-PC-006 §P4](./ADR-PC-006-cue-schema-language.md) | benchmark (CI) | `PACK_SIM_DEPTH5_BUDGET` | Planned |
 | 12 | The generic engine spine (`Babelstone.Engine`, `Babelstone.EventStore`, `Babelstone.RateSheets`, `Babelstone.Packs`, `Babelstone.FinancialMath`, `Babelstone.FinancialTypes`) carries **no `ProjectReference` to any `families/**` project** — the `family → engine` arrow is one-way. | [ADR-PC-021 §P2 / §D2](./ADR-PC-021-application-layer-family-owned-deciders.md) | architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC` | Live |
+| 13 | **Exactly one currently-believed projection row** per `(stream_id, projection_kind)`; a correction supersedes-then-inserts atomically and never overwrites or deletes the prior belief. | [ADR-PC-002 §P1 / §P2](./ADR-PC-002-application-level-bitemporality.md) | integration (Testcontainers) | `PROJECTION_ONE_CURRENT_BELIEF` | Planned |
+| 14 | **A cold projection rebuild reproduces byte-identical current-belief rows** — every stamp is event-derived (`recorded_at` = the event's transaction-time), never wall-clock. | [ADR-PC-002 §P4](./ADR-PC-002-application-level-bitemporality.md), [ADR-PC-010 §P5](./ADR-PC-010-dotnet-hand-rolled-engine.md) | integration (Testcontainers) | `PROJECTION_REBUILD_DETERMINISM` | Planned |
+| 15 | **A projection folded synchronously vs asynchronously yields identical rows**; the mode is declared per projection, not hardcoded into the engine. | [ADR-PC-002 §P4](./ADR-PC-002-application-level-bitemporality.md) | integration (Testcontainers) | `PROJECTION_MODE_EQUIVALENCE` | Planned |
 | OBS-1 | Every Babelstone .NET host stamps its tracer's **resource** with `service.name`, `service.namespace == "babelstone"`, and a non-blank `deployment.environment` — so every trace is attributable to a service, the estate, and an environment. | [ADR-IC-007 §P1](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_RESOURCE_ATTRS` | Live |
 | OBS-2 | The product-semantic spans (`accrual.computed`, `withholding.applied`) are emitted in the **impure runtime shell** (`AggregateRuntime.AppendAsync`'s span hook / the host endpoint), **never** in the pure decider/fold, and carry the structural `babelstone.partition_key` + `babelstone.product_code`. | [ADR-IC-007 §P2–§P3](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_SPAN_PRODUCT_SEMANTICS` | Live |
 | OBS-3 | **No PII in any telemetry signal** — span/log attributes carry only structural identifiers (the `babelstone.*` operational tier), never NIF/IBAN/account/name/email; money rides as integer cents. | [ADR-IC-007 §P4](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit / analyser | `OBS_NO_PII_ATTRS` | Planned |
@@ -108,6 +111,23 @@ step in the `engine` job of `.github/workflows/ci.yml` — so `AtomicAppendInteg
 acceptance test that exercises `ZERO_ENGINE_DIFF_PER_VARIANT` (row 9 stays `Planned`
 — it is "enforced across **E/F**", so it flips when the full family content lands in
 Epic F, not at E.6).
+
+**D.2 reconciliation (2026-05-31).** Three projection-runtime rows
+(`PROJECTION_ONE_CURRENT_BELIEF` row 13, `PROJECTION_REBUILD_DETERMINISM` row 14,
+`PROJECTION_MODE_EQUIVALENCE` row 15) were added under the growth provision as D.2
+(`babelstone-zkr1`) implements [ADR-PC-002](./ADR-PC-002-application-level-bitemporality.md)
+§P1/§P2/§P4 — the spec-first loop ([ADR-PC-020 §P10](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)),
+and the ADR's matching `## Verifiable commitments` section is added in the same change
+(its first, per the [ADR-PC-000 §A3](./ADR-PC-000-namespace-and-contract-shape-framework.md)
+incremental backfill). All three start `Planned`. Rows 13–14 ship as Testcontainers
+integration tests in `Babelstone.EventStore.Tests` (`PostgresProjectionStoreTests`
+forced-correction round-trip + partial-UNIQUE assertions; `ProjectionRuntimeIntegrationTests`
+rebuild byte-identity) — green on PostgreSQL 18 — but stay `Planned` until confirmed running
+in the CI Integration lane (the `ES_ATOMIC_APPEND_OUTBOX` precedent: a green Testcontainers
+test that the lane runs is the `Live` bar). Row 15 cannot be exercised until the v4 sync path
+is turned on (every v1 projection is async; the post-commit hook is wired no-op), so its gate
+is built before the path it guards — the `IFRS9_POST_FLAG_NEVER_GATES` shape. The
+forced-correction *acceptance* drill is deferred to D.5 (`babelstone-m9n2`).
 
 **Epic K reconciliation (K.1).** The four `OBS-*` rows land with K.1 (`babelstone-rzcl`),
 which ships the shared `ActivitySource` + `babelstone.*` attribute contract

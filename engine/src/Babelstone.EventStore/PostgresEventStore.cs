@@ -82,6 +82,28 @@ public sealed class PostgresEventStore(string connectionString) : IEventStore
         }
     }
 
+    public async Task<IReadOnlyList<Guid>> ReadStreamIdsAsync(string family, CancellationToken ct = default)
+    {
+        // The set of streams the async projection drainer iterates for this family. The events
+        // table has no cluster-wide total order, so draining is per stream (each stream's tail
+        // folded from its own checkpoint). DISTINCT over the family's events; v1 scale only.
+        const string sql = "SELECT DISTINCT stream_id FROM events WHERE family = @family;";
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("family", family);
+
+        var ids = new List<Guid>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            ids.Add(reader.GetGuid(0));
+        }
+
+        return ids;
+    }
+
     private static EventEnvelope ReadEnvelope(NpgsqlDataReader r) => new(
         EventId: r.GetGuid(0),
         StreamId: r.GetGuid(1),

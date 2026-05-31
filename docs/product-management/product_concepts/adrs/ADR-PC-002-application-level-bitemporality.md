@@ -138,4 +138,43 @@ Every projection is rebuildable from the event log alone ([event-store §1](../f
 
 ---
 
+## Amendment — 2026-05-31: Verifiable commitments — projection-runtime invariants
+
+Added 2026-05-31. D.2 (bd `babelstone-zkr1`, the projection runtime) is the
+implementation of this ADR's §P1/§P2/§P4 projection invariants, so per the
+incremental-backfill convention ([ADR-PC-000 §A3](./ADR-PC-000-namespace-and-contract-shape-framework.md)
+/ [ADR-PC-020 Open Action #7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md))
+and the spec-first loop ([ADR-PC-020 §P10](./ADR-PC-020-llm-toolchain-and-conformance-governance.md):
+ADR → catalogue row → test) this appends the `## Verifiable commitments` reference
+section below.
+
+This amendment is **additive**: the `## Decision`, `### Gate`, and `## Implementation
+Principles` (P1–P4) above are unchanged, and it reverses no part of the decision
+(§D5-conformant — no in-place Decision edit). The typed `AsOf`/`CurrentBelief`/`HistoryOf`
+helper (§P3) remains D.3's deliverable and is deliberately not pre-empted by D.2.
+
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the
+[commitment catalogue](./commitment-catalogue.md) — the single source of truth for each
+commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status
+([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- `PROJECTION_ONE_CURRENT_BELIEF` — exactly one currently-believed row per
+  `(stream_id, projection_kind)`; a correction supersedes-then-inserts atomically and
+  never overwrites or deletes the prior belief (§P1/§P2).
+- `PROJECTION_REBUILD_DETERMINISM` — a cold rebuild from the event log alone reproduces
+  byte-identical current-belief rows, because every stamp is event-derived (`recorded_at`
+  = the event's transaction-time), never wall-clock (§P4).
+- `PROJECTION_MODE_EQUIVALENCE` — a projection folded synchronously vs asynchronously
+  yields identical rows; the mode is declared per projection, not hardcoded into the
+  engine (§P4). The gate is built before the sync path is exercised in production (v4).
+
+The forced-correction round-trip *acceptance* drill (spike criterion #1, §P2) is the
+reconciliation work of D.5 (bd `babelstone-m9n2`); D.2 ships the supersede-then-insert
+plumbing it depends on and an integration test of the round-trip, catalogued under
+`PROJECTION_ONE_CURRENT_BELIEF`.
+
+---
+
 *Decided 2026-05-23 by jhosm. Accepted; Q-Y is a production gate, not required for the POC, which assumes bitemporality is needed for all purposes. Mechanism choice (Q-X) made ahead of the §6.3 spike because [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) narrows the candidate set to the application-level path.*

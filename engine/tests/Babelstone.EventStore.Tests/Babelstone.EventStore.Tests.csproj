@@ -18,5 +18,8 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Babelstone.EventStore/Babelstone.EventStore.csproj" />
     <ProjectReference Include="../../src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />
+    <!-- D.2 projection-runtime integration tests drive the generic runtime (ProjectionDrainer /
+         ProjectionRunner) over a real PostgreSQL projection store with a synthetic family fold. -->
+    <ProjectReference Include="../../src/Babelstone.Engine/Babelstone.Engine.csproj" />
   </ItemGroup>
 </Project>
