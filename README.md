@@ -8,6 +8,8 @@ The three series answer three distinct questions:
 - [product_concepts/](./docs/product-management/product_concepts/README.md) — **what configurable product implements that math**
 - [integration_concepts/](./docs/product-management/integration_concepts/00-introduction-and-decisions.md) — **how that product integrates with the bank**
 
+> **New here?** The series above are organised by *concern*. If you'd rather start from *your role* — integrator, family developer, pack author, agent-channel consumer, operator — begin at the [**reading paths**](./docs/product-management/reading-paths/README.md), which sequence the docs, [task guides](./docs/product-management/guides/README.md), and generated [reference](./docs/product-management/reference/README.md) for each. The organising architecture is [ADR-PC-022](./docs/product-management/product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md).
+
 ---
 
 ## Series
