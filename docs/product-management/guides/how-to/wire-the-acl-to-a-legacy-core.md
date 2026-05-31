@@ -18,9 +18,9 @@ The shape of the service is fixed, not yours to choose. Confirm you are building
 
 ---
 
-## Steps — the eight responsibilities you implement
+## Steps — the responsibilities you implement
 
-The [ACL concept doc](../../integration_concepts/02-anti-corruption-layer.md) enumerates the **eight concrete responsibilities** an ACL absorbs. Building the ACL *is* implementing them, in this order. Do not restate them here — follow the link and build to each.
+The [ACL concept doc](../../integration_concepts/02-anti-corruption-layer.md) enumerates the concrete responsibilities an ACL absorbs. Building the ACL *is* implementing them, in this order. Do not restate them here — follow the link and build to each.
 
 1. **Scaffold the service and its own database.** Per [ADR-IC-012 D1+D5](../../integration_concepts/adrs/ADR-IC-012-anti-corruption-layer-implementation.md): a dedicated .NET service with its own PostgreSQL instance holding `idempotency_keys`, `id_mappings`, `in_flight_operations`, `inbound_event_dedup`, `outbox`, and `reconciliation_runs` ([§P1](../../integration_concepts/adrs/ADR-IC-012-anti-corruption-layer-implementation.md)). The ACL has its own state — it is not a stateless proxy ([concept §Internal Structure](../../integration_concepts/02-anti-corruption-layer.md)).
 

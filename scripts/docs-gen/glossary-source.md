@@ -20,8 +20,8 @@
 | Fold | A pure, deterministic function that applies one event to aggregate state. Folds carry no clock, I/O, or randomness — the property the determinism gate enforces (ADR-PC-010). |
 | Idempotency key | The stable key (e.g. `event_id`, `correlation_id`) a receiver dedupes on so at-least-once delivery never double-applies an effect. One of the six integration primitives. |
 | MCP (Model Context Protocol) | The protocol by which the bank is exposed as a server of `tools`/`resources` to LLM agents (the agent channel). Runtime + SDK chosen in ADR-IC-010; strategy in integration-concepts 11. |
-| Money / cents | All money is an integer count of EUR cents (never a float), rounding HALF_EVEN exactly once at the `Decimal → Cents` boundary. Enforced by the Money analysers, per ADR-PC-010. |
-| Outbox | The transactional-outbox table written in the *same* local transaction as the event append, so an event and its publish-intent commit atomically. Mechanism in ADR-IC-004. |
+| Money / cents | Money is an integer count of EUR cents, never a float. The exact rounding rule and the single boundary it is applied at are fixed by ADR-PC-010 and enforced by the Money analysers. |
+| Outbox | The transactional-outbox table that lets an event and its publish-intent commit together as one unit. The atomicity contract and mechanism are ADR-IC-004 (and ADR-PC-001 for the engine's own outbox). |
 | Pack (regulatory pack) | A `pt.YYYY.N` bundle of auditor-readable YAML data (primitives, parameters, rate-sheet refs, sealed test corpus) plus bundled CUE schemas, cosign-signed and distributed as an OCI artefact pulled by digest. Format in ADR-PC-007. |
 | Projection | A read model derived by folding the event log, rebuildable at any time; the query side of CQRS. Bitemporal on PostgreSQL per ADR-PC-002. |
 | Rate sheet | Versioned, immutable pricing data resolved at constitution by an indexed point-in-time query; the resolved TAN is stamped onto the deposit and never moves. Storage + deploy API in ADR-PC-008. |
