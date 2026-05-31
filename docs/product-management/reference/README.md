@@ -11,3 +11,4 @@
 | [mcp-tools/](./mcp-tools/README.md) | `mcp-server/` | the bank-as-MCP-server tool surface |
 | [adr-index/](./adr-index/README.md) | `docs/**/adrs/` | every ADR, both namespaces, one table |
 | [pack-format/](./pack-format/README.md) | `contracts/cue/pack/` | the signed-pack manifest schema |
+| [glossary.md](./glossary.md) | `scripts/docs-gen/glossary-source.md` | the single home for the corpus vocabulary |

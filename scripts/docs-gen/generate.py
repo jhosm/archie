@@ -61,27 +61,32 @@ def adr_slug_map() -> dict[str, str]:
     return out
 
 
-def adr_link(adr_id: str, slug: str, from_dir: str) -> str:
-    """Relative link from a reference/<set>/ page to an ADR file."""
+def adr_link(adr_id: str, slug: str, prefix: str = "../../") -> str:
+    """Relative link to an ADR file. `prefix` is the path from the page's own
+    directory up to docs/product-management/ (../../ for a reference/<set>/ page,
+    ../ for reference/glossary.md which sits one level shallower)."""
     ns = "product_concepts" if "-PC-" in adr_id else "integration_concepts"
-    # from reference/<set>/  ->  ../../<ns>/adrs/<slug>
-    return f"../../{ns}/adrs/{slug}"
+    return f"{prefix}{ns}/adrs/{slug}"
 
 
-def linkify_adrs(text: str, slugs: dict[str, str]) -> str:
+def linkify_adrs(text: str, slugs: dict[str, str], prefix: str = "../../") -> str:
     """Turn bare ADR ids in prose into links (the id only; any §-anchor stays text)."""
     def repl(m: re.Match) -> str:
         aid = m.group(0)
         if aid in slugs:
-            return f"[{aid}]({adr_link(aid, slugs[aid], 'set')})"
+            return f"[{aid}]({adr_link(aid, slugs[aid], prefix)})"
         return aid
     return ADR_RE.sub(repl, text)
 
 
-def adr_refs(text: str, slugs: dict[str, str]) -> list[str]:
+def adr_refs(text: str, slugs: dict[str, str], prefix: str = "../../") -> list[str]:
     """Sorted unique ADR ids mentioned in text, as markdown links."""
     found = sorted({m for m in ADR_RE.findall(text) if m in slugs})
-    return [f"[{aid}]({adr_link(aid, slugs[aid], 'set')})" for aid in found]
+    return [f"[{aid}]({adr_link(aid, slugs[aid], prefix)})" for aid in found]
+
+
+def slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
 # --------------------------------------------------------------------------
@@ -364,6 +369,42 @@ def render_pack_format(slugs: dict[str, str]) -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------
+# Renderer 6 — glossary (hand-authored term source -> sorted, linkified page)
+# --------------------------------------------------------------------------
+def render_glossary(slugs: dict[str, str]) -> dict[str, str]:
+    src = ROOT / "scripts" / "docs-gen" / "glossary-source.md"
+    rows: list[tuple[str, str]] = []
+    for line in src.read_text().splitlines():
+        s = line.strip()
+        if not (s.startswith("|") and s.endswith("|")):
+            continue
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        if len(cells) != 2 or set(cells[0]) <= {"-", ":"} or cells[0].lower() == "term":
+            continue
+        rows.append((cells[0], cells[1]))
+    rows.sort(key=lambda r: r[0].lower())
+    out = [
+        banner(rel(src)),
+        "# Glossary\n",
+        "Canonical one-line definitions for the vocabulary used across the "
+        "corpus. Each term is defined **once, here**; guides and reading-paths "
+        "link to this page (e.g. `glossary.md#family`) rather than redefining "
+        "terms ([ADR-PC-022 §P3]"
+        "(../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md)). "
+        "For the full treatment, follow the linked ADR or concept doc.\n",
+        "| Term | Definition |",
+        "|---|---|",
+    ]
+    # glossary.md lives in reference/ (one level shallower than reference/<set>/)
+    for term, dfn in rows:
+        out.append(
+            f'| <a id="{slugify(term)}"></a>**{term}** '
+            f"| {linkify_adrs(dfn, slugs, prefix='../')} |"
+        )
+    return {"glossary.md": "\n".join(out).rstrip() + "\n"}
+
+
+# --------------------------------------------------------------------------
 # Top-level index + driver
 # --------------------------------------------------------------------------
 def render_root_index() -> dict[str, str]:
@@ -383,6 +424,7 @@ def render_root_index() -> dict[str, str]:
         "| [mcp-tools/](./mcp-tools/README.md) | `mcp-server/` | the bank-as-MCP-server tool surface |",
         "| [adr-index/](./adr-index/README.md) | `docs/**/adrs/` | every ADR, both namespaces, one table |",
         "| [pack-format/](./pack-format/README.md) | `contracts/cue/pack/` | the signed-pack manifest schema |",
+        "| [glossary.md](./glossary.md) | `scripts/docs-gen/glossary-source.md` | the single home for the corpus vocabulary |",
     ]
     return {"README.md": "\n".join(out).rstrip() + "\n"}
 
@@ -396,6 +438,7 @@ def build() -> dict[str, str]:
     pages.update(render_mcp_tools(slugs))
     pages.update(render_adr_index(slugs))
     pages.update(render_pack_format(slugs))
+    pages.update(render_glossary(slugs))
     return pages
 
 
