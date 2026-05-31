@@ -202,8 +202,8 @@ These commitments are documentation-scoped (not engine load-bearing), so they li
 
 | # | Commitment (with §-anchor) | Gate (pyramid level) | Test ID | Status |
 |---|---|---|---|---|
-| 1 | `reference/` is byte-identical to a fresh `make docs-gen` from its sources (§P2) — generated reference cannot drift. | analyser / CI (`docs-verify` lane) | `DOCS_REFERENCE_NO_DRIFT` | Planned (lands with R.3/R.4) |
-| 2 | Every page under `reference/` carries the do-not-edit generated banner (§P2). | analyser / CI | `DOCS_REFERENCE_BANNERED` | Planned (lands with R.3) |
+| 1 | `reference/` is byte-identical to a fresh `make docs-gen` from its sources (§P2) — generated reference cannot drift. | analyser / CI (`docs-verify` lane) | `DOCS_REFERENCE_NO_DRIFT` | Gate wired (ci.yml `docs-verify`; `make docs-verify`) — flips Live on first green CI run |
+| 2 | Every page under `reference/` carries the do-not-edit generated banner (§P2). | analyser / CI (`docs-verify` lane) | `DOCS_REFERENCE_BANNERED` | Gate wired (ci.yml `docs-verify` banner step) — flips Live on first green CI run |
 | 3 | The concern-axis series + both ADR namespaces are unmodified by Epic R (§P1) — the spine is additive-only. | review / CI path-scope (no diffs under the three series from a docs-overlay PR) | `DOCS_SPINE_UNTOUCHED` | Planned |
 | 4 | The overlay restates no normative content (§P3) — guides/reading-paths cite, never copy, the spec corpus. | review (no mechanical gate fully proves prose non-restatement) | `DOCS_OVERLAY_LINK_ONLY` | Gap (deliberate — review-enforced; the structural reason B/C were rejected) |
 
