@@ -52,6 +52,9 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
 
         Environment.SetEnvironmentVariable("ConnectionStrings__Engine", _pg.GetConnectionString());
         Environment.SetEnvironmentVariable("Engine__PacksDir", PacksDir());
+        // The host fails fast without an explicit deployment.environment (BabelstoneResource), so the
+        // test declares one — WebApplicationFactory sets the host env via config, not this OS var.
+        Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
         _factory = new WebApplicationFactory<Program>();
         _client = _factory.CreateClient();
     }
@@ -60,6 +63,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     {
         Environment.SetEnvironmentVariable("ConnectionStrings__Engine", null);
         Environment.SetEnvironmentVariable("Engine__PacksDir", null);
+        Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", null);
         _client.Dispose();
         await _factory.DisposeAsync();
         await _pg.DisposeAsync();

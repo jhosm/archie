@@ -20,9 +20,6 @@ public static class BabelstoneResource
     /// <summary>Every Babelstone host shares this namespace, so traces group under one estate.</summary>
     public const string ServiceNamespace = "babelstone";
 
-    /// <summary>The environment used when neither environment variable is set. Never throws.</summary>
-    public const string DefaultEnvironment = "development";
-
     /// <summary>The engine command/query host's <c>service.name</c> (ADR-PC-021 §D5).</summary>
     public const string EngineApiServiceName = "babelstone-engine-api";
 
@@ -31,9 +28,12 @@ public static class BabelstoneResource
 
     /// <summary>
     /// Resolves <c>deployment.environment</c> from <c>DOTNET_ENVIRONMENT</c>, then
-    /// <c>ASPNETCORE_ENVIRONMENT</c>, defaulting to <see cref="DefaultEnvironment"/>. Never throws —
-    /// a missing or blank value falls back to the default so host startup cannot fail on telemetry.
+    /// <c>ASPNETCORE_ENVIRONMENT</c>. <b>Fails fast</b>: when neither variable is set (or both are
+    /// blank), this throws rather than defaulting — a host must not start with traces silently
+    /// mis-attributed to an assumed environment. ADR-IC-007 §P1 requires a <i>non-blank</i>
+    /// <c>deployment.environment</c>; we satisfy it by refusing to boot without an explicit one.
     /// </summary>
+    /// <exception cref="InvalidOperationException">Neither environment variable is set to a non-blank value.</exception>
     public static string ResolveEnvironment()
     {
         var fromDotnet = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT");
@@ -43,6 +43,13 @@ public static class BabelstoneResource
         }
 
         var fromAspNet = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
-        return string.IsNullOrWhiteSpace(fromAspNet) ? DefaultEnvironment : fromAspNet;
+        if (!string.IsNullOrWhiteSpace(fromAspNet))
+        {
+            return fromAspNet;
+        }
+
+        throw new InvalidOperationException(
+            "deployment.environment is unresolved: set DOTNET_ENVIRONMENT or ASPNETCORE_ENVIRONMENT. " +
+            "Babelstone hosts fail fast rather than mis-attribute traces to a default environment (ADR-IC-007 §P1).");
     }
 }

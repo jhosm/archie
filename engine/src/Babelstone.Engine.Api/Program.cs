@@ -20,7 +20,8 @@ builder.Services.AddProblemDetails();
 // source (accrual.computed / withholding.applied, emitted in the AggregateRuntime shell) and
 // export over OTLP to the Collector (P1 — never direct-to-backend). The resource stamps
 // service.name + service.namespace=babelstone + deployment.environment so every trace is
-// attributable (OBS-1). Environment resolution never throws — telemetry must not fail startup.
+// attributable (OBS-1). Environment resolution fails fast: a host with no DOTNET_ENVIRONMENT /
+// ASPNETCORE_ENVIRONMENT refuses to boot rather than mis-attribute traces to an assumed env.
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
         .AddService(BabelstoneResource.EngineApiServiceName)

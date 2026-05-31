@@ -15,7 +15,8 @@ builder.Services.AddProblemDetails();
 // OpenTelemetry tracing (ADR-IC-007 Layer 1, Epic K.1): the same resource discipline as the
 // engine host (OBS-1 parity) — service.name + service.namespace=babelstone + deployment.environment
 // — exporting over OTLP to the Collector (P1). It listens to the shared Babelstone.Engine source so
-// any manual span this host opens later is captured; environment resolution never throws.
+// any manual span this host opens later is captured. Environment resolution fails fast: no
+// DOTNET_ENVIRONMENT / ASPNETCORE_ENVIRONMENT means the host refuses to boot (no assumed env).
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
         .AddService(BabelstoneResource.RateSheetsApiServiceName)
