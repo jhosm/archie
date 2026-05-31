@@ -39,6 +39,9 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
         await new MigrationRunner(_pg.GetConnectionString()).ApplyAsync();
 
         Environment.SetEnvironmentVariable(ConnectionStringEnvVar, _pg.GetConnectionString());
+        // The host fails fast without an explicit deployment.environment (BabelstoneResource), so the
+        // test declares one — WebApplicationFactory sets the host env via config, not this OS var.
+        Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
         _factory = new WebApplicationFactory<Program>();
         _client = _factory.CreateClient();
     }
@@ -46,6 +49,7 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         Environment.SetEnvironmentVariable(ConnectionStringEnvVar, null);
+        Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", null);
         _client.Dispose();
         await _factory.DisposeAsync();
         await _pg.DisposeAsync();

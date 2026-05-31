@@ -9,5 +9,12 @@
          the engine. Authentication/authorization is the API gateway's job (§P4 /
          ADR-IC-010); this host validates, persists, and records the approver. -->
     <ProjectReference Include="../Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
+
+    <!-- OpenTelemetry tracing (ADR-IC-007 Layer 1, Epic K.1): the shared resource helper
+         (BabelstoneResource) + the SDK hosting integration and OTLP exporter, for OBS-1 parity
+         with the engine host. -->
+    <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
   </ItemGroup>
 </Project>

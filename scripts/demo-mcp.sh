@@ -178,6 +178,7 @@ ok "built"
 # ---------------------------------------------------------------------------
 say "3/6 Deploying the rate sheet via the C.6 deploy API (validated seam, not a raw INSERT)"
 ConnectionStrings__RateSheets="$PG_CONN" ASPNETCORE_URLS="http://localhost:${RATESHEET_PORT}" \
+  ASPNETCORE_ENVIRONMENT=Development \
   mise exec -- dotnet "$RATESHEET_DLL" > "$RUNDIR/ratesheet-api.log" 2>&1 &
 RATESHEET_PID=$!
 # The deploy host is transient: always reap it, even on a failed assertion.
@@ -223,7 +224,7 @@ ok "stopped the transient deploy host (the engine reads rate_sheets directly)"
 # ---------------------------------------------------------------------------
 say "4/6 Starting the engine host on ${ENGINE_URL}"
 ConnectionStrings__Engine="$PG_CONN" Engine__PacksDir="$ROOT/packs" Engine__PackVersion=pt.2026.1 \
-  ASPNETCORE_URLS="$ENGINE_URL" \
+  ASPNETCORE_URLS="$ENGINE_URL" ASPNETCORE_ENVIRONMENT=Development \
   nohup mise exec -- dotnet "$ENGINE_DLL" > "$RUNDIR/engine.log" 2>&1 &
 echo $! > "$RUNDIR/engine.pid"
 wait_up "${ENGINE_URL}/v1/deposits/00000000-0000-0000-0000-000000000000" 60 "engine host" "$RUNDIR/engine.log"
