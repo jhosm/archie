@@ -1,15 +1,18 @@
-"""The FastMCP server: a ``constitute_deposit`` tool + a ``deposit_position`` resource.
+"""The FastMCP server: ``constitute_deposit``, ``get_deposit``, and ``mature_deposit`` tools.
 
-The tool maps 1:1 to the engine's constitute command (ADR-IC-010: tools are commands); the
-resource is the read-only ``deposit_position`` projection (resources are CQRS read models). The
-tool declares a structured return type, so the SDK publishes an ``outputSchema`` (ADR-IC-010 P6).
-Auth is deferred — this dev server hits the engine directly (Epic J adds OAuth/Kong).
+All three map 1:1 to the engine's HTTP API. Per ADR-IC-010's 2026-05-31 amendment, the tool/resource
+axis is *control ownership* (model-invokable vs host-attached), not CQRS command/query — so a read
+the agent fetches on demand is a tool, not a resource. ``constitute_deposit`` and ``mature_deposit``
+are writes (engine commands); ``get_deposit`` is the read-only ``deposit_position`` projection. Each
+declares a structured return type, so the SDK publishes an ``outputSchema`` (ADR-IC-010 P6 — mandatory
+on every tool). Auth is deferred — this dev server hits the engine directly (Epic J adds OAuth/Kong;
+the read tool's ``deposits:read`` scope vs the write tools' ``deposits:write`` is where the gateway
+tiers them, and §P8 elicitation on the irreversible writes is deferred with it).
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -74,7 +77,50 @@ async def constitute_deposit(
     return ConstituteDepositResult(deposit_id=result["deposit_id"], status=result["status"])
 
 
-@mcp.resource("bank://deposits/{deposit_id}")
-async def deposit_position(deposit_id: str) -> dict[str, Any]:
-    """The folded ``deposit_position`` read model for a deposit (money as integer cents)."""
-    return await engine().deposit_position(deposit_id)
+class DepositPosition(BaseModel):
+    """Structured tool output (ADR-IC-010 P6) — the folded ``deposit_position`` read model.
+
+    All money is integer cents (ADR-PC-010 §P1), never a float. The fields are the as-of-now fold
+    of the deposit's events, not a maturity projection: ``accrued_*`` / ``*_payout`` stay at 0 until
+    accrual or maturity events are applied.
+    """
+
+    deposit_id: str = Field(description="The deposit id (UUID).")
+    principal_cents: int = Field(description="Principal in integer cents.")
+    tan_basis_points: int = Field(description="Resolved TAN in basis points, stamped by the engine.")
+    rate_sheet_version_id: str = Field(description="Rate sheet version the TAN was resolved from.")
+    term_days: int = Field(description="Term length in days.")
+    start_date: str = Field(description="ISO-8601 start date.")
+    maturity_date: str = Field(description="ISO-8601 maturity date.")
+    interest_variant: str = Field(description="Interest variant (e.g. AT_MATURITY).")
+    auto_renewal_policy: str = Field(description="Auto-renewal policy (e.g. NONE).")
+    accrued_gross_interest_cents: int = Field(description="Gross interest accrued to date, cents.")
+    withholding_to_date_cents: int = Field(description="Withholding tax accrued to date, cents.")
+    net_interest_cents: int = Field(description="Net interest to date, cents.")
+    total_payout_cents: int = Field(description="Total payout to date, cents.")
+    lifecycle: str = Field(description="Lifecycle state (e.g. Active, Matured).")
+
+
+@mcp.tool()
+async def get_deposit(deposit_id: str) -> DepositPosition:
+    """Read a term deposit's current state — the folded ``deposit_position`` projection.
+
+    ``deposit_id`` is the engine-assigned UUID returned by ``constitute_deposit``. Money is integer
+    cents. This is the as-of-now event fold, not a maturity forecast (interest fields are 0 until
+    accrual/maturity events land). Scoped ``deposits:read`` at the gateway (ADR-IC-010 §P4).
+    """
+    return DepositPosition(**await engine().deposit_position(deposit_id))
+
+
+@mcp.tool()
+async def mature_deposit(deposit_id: str) -> DepositPosition:
+    """Mature (settle) a term deposit — runs accrual to term end and returns the matured position.
+
+    ``deposit_id`` is the engine-assigned UUID. Returns the same ``DepositPosition`` shape with the
+    interest fields now folded in (``accrued_gross_interest_cents``, ``withholding_to_date_cents``,
+    ``net_interest_cents``, ``total_payout_cents``) and ``lifecycle`` = ``Matured``. Money is integer
+    cents. Scoped ``deposits:write`` at the gateway (ADR-IC-010 §P4). Settlement is irreversible, so if
+    the secured edge classes it under §P8 it gets ``elicitation/create`` confirmation — that, like all
+    auth on this dev server, is deferred to Epic J.
+    """
+    return DepositPosition(**await engine().mature(deposit_id))

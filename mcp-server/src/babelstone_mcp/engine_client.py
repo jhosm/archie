@@ -1,7 +1,8 @@
 """HTTP client for the engine command/query boundary (Babelstone.Engine.Api, ADR-PC-021 §D5).
 
-A thin async wrapper over the two surfaces the MCP server maps: constitute (POST) and read a
-deposit position (GET). Money crosses the wire as integer cents (ADR-PC-010 §P1), snake_case.
+A thin async wrapper over the three surfaces the MCP server maps: constitute (POST), read a
+deposit position (GET), and mature (POST). Money crosses the wire as integer cents (ADR-PC-010 §P1),
+snake_case.
 The client is fail-loud: a non-2xx engine response raises (``raise_for_status``) rather than
 returning a partial/empty result — the MCP layer surfaces that to the agent.
 """
@@ -29,6 +30,18 @@ class EngineClient:
     async def deposit_position(self, deposit_id: str) -> dict[str, Any]:
         """GET /v1/deposits/{id} — the folded position. Raises on 404/other non-2xx."""
         response = await self._client.get(f"{self._base_url}/v1/deposits/{deposit_id}")
+        response.raise_for_status()
+        return response.json()
+
+    async def mature(self, deposit_id: str) -> dict[str, Any]:
+        """POST /v1/deposits/{id}/maturity — settles the deposit, returns the matured position.
+
+        Same position shape as ``deposit_position`` with ``lifecycle`` = ``Matured``. Raises on a
+        non-2xx engine response (e.g. 422 if the deposit cannot mature).
+        """
+        response = await self._client.post(
+            f"{self._base_url}/v1/deposits/{deposit_id}/maturity", json={}
+        )
         response.raise_for_status()
         return response.json()
 

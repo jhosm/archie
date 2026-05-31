@@ -14,7 +14,7 @@ System_Ext(iam, "Identity / IAM", "OAuth 2.1 AS; RFC 8707 audience binding; SCA;
 System_Ext(subscriber, "Agent callback endpoint", "Pre-registered HTTPS endpoint for async completion")
 
 Container(kong, "Kong Gateway CE", "Kong / nginx", "One route per surface — REST, SSE, MCP (Streamable HTTP); JWT (+aud) / SCA / rate-limit / mTLS / OTel", $tags="estate")
-Container(mcp, "MCP server", "Python, MCP SDK, Streamable HTTP", "tools→commands, resources→CQRS read models, prompts; publishes RFC 9728 Protected Resource Metadata", $tags="estate")
+Container(mcp, "MCP server", "Python, MCP SDK, Streamable HTTP", "tools→commands & on-demand reads (model-invokable), resources→host-attached context, prompts; publishes RFC 9728 Protected Resource Metadata", $tags="estate")
 Container(redpanda, "Redpanda CE", "Kafka API", "Carries saga terminal events to the notification service", $tags="estate")
 Container(notify, "Notification service", "service", "Delivers async saga-completion callbacks (HMAC, at-least-once)", $tags="estate")
 
@@ -28,7 +28,7 @@ Rel(channels, kong, "Commands; subscribe to SSE status stream", "REST / SSE")
 Rel(kong, iam, "Validate token signature", "JWKS")
 Rel(kong, mcp, "Route after JWT (aud) / SCA / rate-limit", "HTTPS, mTLS")
 Rel(kong, engine, "Route REST + proxy SSE stream", "HTTPS, mTLS")
-Rel(mcp, engine, "Map tools→commands, resources→read models", "internal API")
+Rel(mcp, engine, "Map tool calls→commands & reads (control-ownership, not CQRS)", "internal API")
 Rel(engine, redpanda, "Emit SagaTerminated", "Avro")
 Rel(redpanda, notify, "Terminal events", "Avro consume")
 Rel(notify, subscriber, "HMAC-signed completion callback", "HTTPS POST")
