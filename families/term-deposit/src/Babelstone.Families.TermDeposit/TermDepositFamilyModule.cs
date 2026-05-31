@@ -29,6 +29,20 @@ public sealed class TermDepositFamilyModule : IFamilyModule
             new DispatchableHandler<DepositPosition, WithholdingApplied>(new WithholdingAppliedHandler())),
         new("term_deposit.DepositMatured", typeof(DepositMatured),
             new DispatchableHandler<DepositPosition, DepositMatured>(new DepositMaturedHandler())),
+        new("term_deposit.DepositConstitutionFailed", typeof(DepositConstitutionFailed),
+            new DispatchableHandler<DepositPosition, DepositConstitutionFailed>(new DepositConstitutionFailedHandler())),
+        new("term_deposit.InterestPaid", typeof(InterestPaid),
+            new DispatchableHandler<DepositPosition, InterestPaid>(new InterestPaidHandler())),
+        new("term_deposit.DepositRenewed", typeof(DepositRenewed),
+            new DispatchableHandler<DepositPosition, DepositRenewed>(new DepositRenewedHandler())),
+        new("term_deposit.DepositTerminatedEarly", typeof(DepositTerminatedEarly),
+            new DispatchableHandler<DepositPosition, DepositTerminatedEarly>(new DepositTerminatedEarlyHandler())),
+        new("term_deposit.DepositPartiallyWithdrawn", typeof(DepositPartiallyWithdrawn),
+            new DispatchableHandler<DepositPosition, DepositPartiallyWithdrawn>(new DepositPartiallyWithdrawnHandler())),
+        new("term_deposit.DepositCorrected", typeof(DepositCorrected),
+            new DispatchableHandler<DepositPosition, DepositCorrected>(new DepositCorrectedHandler())),
+        new("term_deposit.DepositTransferredToHeirs", typeof(DepositTransferredToHeirs),
+            new DispatchableHandler<DepositPosition, DepositTransferredToHeirs>(new DepositTransferredToHeirsHandler())),
     ];
 
     /// <summary>Convenience for tests and the durable runtime: the registry for this family alone.</summary>

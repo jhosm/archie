@@ -2,9 +2,10 @@ using Babelstone.FinancialTypes;
 
 namespace Babelstone.Families.TermDeposit;
 
-/// <summary>The lifecycle states the minimal AT_MATURITY slice transits (E.1). The full
-/// state machine (early termination, renewal) is Epic F (F.3); this slice is
-/// constitute → mature only.</summary>
+/// <summary>The lifecycle states the term-deposit aggregate folds into. F.2 (babelstone-5czr)
+/// adds the full event set's terminal/transition labels; the transition LEGALITY (which
+/// states may move to which) is the F.3 state machine (babelstone-29v8), deliberately NOT
+/// enforced here — these handlers are pure folds that label state, not guards.</summary>
 public enum DepositLifecycle
 {
     /// <summary>Seed state before any event has folded.</summary>
@@ -15,6 +16,18 @@ public enum DepositLifecycle
 
     /// <summary>Matured and paid out — terminal for the AT_MATURITY slice.</summary>
     Matured,
+
+    /// <summary>Constitution was rejected by a config/rule check — no deposit was opened (terminal).</summary>
+    Failed,
+
+    /// <summary>Rolled over into a new term/deposit at renewal — terminal for this deposit id.</summary>
+    Renewed,
+
+    /// <summary>Broken before maturity and settled net of penalty (terminal).</summary>
+    TerminatedEarly,
+
+    /// <summary>Balance transferred to the holder's heirs on succession (terminal).</summary>
+    TransferredToHeirs,
 }
 
 /// <summary>
@@ -47,6 +60,9 @@ public sealed record DepositPosition(
     Money WithholdingToDate,
     Money NetInterest,
     Money TotalPayout,
+    Money RemainingPrincipal,
+    Money SettlementAmount,
+    int CorrectionCount,
     DepositLifecycle Lifecycle)
 {
     /// <summary>The seed state a fold starts from (before <c>DepositConstituted</c>).</summary>
@@ -64,5 +80,8 @@ public sealed record DepositPosition(
         WithholdingToDate: Money.Zero,
         NetInterest: Money.Zero,
         TotalPayout: Money.Zero,
+        RemainingPrincipal: Money.Zero,
+        SettlementAmount: Money.Zero,
+        CorrectionCount: 0,
         Lifecycle: DepositLifecycle.Pending);
 }
