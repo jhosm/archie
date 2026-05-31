@@ -10,6 +10,7 @@ namespace Babelstone.EventStore.Tests;
 /// </summary>
 public sealed class ProjectionRecordTests
 {
+    private const string Kind = "term_deposit.deposit_position";
     private static readonly DateTimeOffset ValidFrom = new(2026, 5, 31, 0, 0, 0, TimeSpan.Zero);
     private static readonly DateTimeOffset RecordedAt = new(2026, 5, 31, 12, 0, 0, TimeSpan.Zero);
 
@@ -24,6 +25,8 @@ public sealed class ProjectionRecordTests
 
         var record = new ProjectionRecord(
             StreamId: streamId,
+            ProjectionKind: Kind,
+            SourceSequence: 7,
             ValidFrom: ValidFrom,
             ValidTo: validTo,
             RecordedAt: RecordedAt,
@@ -32,6 +35,8 @@ public sealed class ProjectionRecordTests
             PiiCiphertext: ciphertext);
 
         Assert.Equal(streamId, record.StreamId);
+        Assert.Equal(Kind, record.ProjectionKind);
+        Assert.Equal(7, record.SourceSequence);
         Assert.Equal(ValidFrom, record.ValidFrom);
         Assert.Equal(validTo, record.ValidTo);
         Assert.Equal(RecordedAt, record.RecordedAt);
@@ -94,6 +99,8 @@ public sealed class ProjectionRecordTests
     private static ProjectionRecord RecordFor(Guid streamId, byte[] structural) =>
         new(
             StreamId: streamId,
+            ProjectionKind: Kind,
+            SourceSequence: 0,
             ValidFrom: ValidFrom,
             ValidTo: null,
             RecordedAt: RecordedAt,
@@ -108,6 +115,8 @@ public sealed class ProjectionRecordTests
         ReadOnlyMemory<byte>? piiCiphertext = null) =>
         new(
             StreamId: Guid.NewGuid(),
+            ProjectionKind: Kind,
+            SourceSequence: 0,
             ValidFrom: ValidFrom,
             ValidTo: validTo,
             RecordedAt: RecordedAt,

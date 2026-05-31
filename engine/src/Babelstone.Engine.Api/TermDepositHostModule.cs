@@ -44,6 +44,28 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             ctx.Pack,
             dayCountPrimitive: "act_360",
             withholdingPrimitive: "irs_juros"));
+
+        // D.2 projection runtime (ADR-PC-002 §P4, two-modes §5.4): the family declares its
+        // projections (currently just the deposit position) + their folds; the generic runtime
+        // (registry + drainer) lives in the spine. The async relay materialises them into the
+        // bitemporal `projections` table. v1 runs every projection async — the runtime above is
+        // wired with no post-commit hook — so the live read path (GET /v1/deposits) is unaffected;
+        // switching reads to the materialised projection is D.3/D.4.
+        services.AddSingleton<IProjectionModule, TermDepositProjectionModule>();
+        services.AddSingleton(serviceProvider =>
+        {
+            var infra = new ProjectionInfra(
+                serviceProvider.GetRequiredService<IProjectionStorage>(),
+                serviceProvider.GetRequiredService<IEventSerializer>());
+            var runners = serviceProvider.GetServices<IProjectionModule>().SelectMany(module => module.CreateRunners(infra));
+            return new ProjectionRegistry(runners);
+        });
+        services.AddSingleton(serviceProvider => new ProjectionDrainer(
+            serviceProvider.GetRequiredService<IEventStore>(),
+            serviceProvider.GetRequiredService<IProjectionCheckpointStore>(),
+            serviceProvider.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(new ProjectionRelayOptions());
+        services.AddHostedService<ProjectionRelayService>();
     }
 
     public void MapEndpoints(IEndpointRouteBuilder app) => DepositsEndpoints.Map(app);

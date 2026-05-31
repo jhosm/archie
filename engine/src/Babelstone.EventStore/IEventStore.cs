@@ -42,6 +42,16 @@ public interface IEventStore
         Guid              streamId,
         long              fromSequence = 0,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the distinct <c>stream_id</c>s for a family — the set the async projection
+    /// drainer iterates, folding each stream's tail (via <see cref="LoadAsync"/>) from its
+    /// per-stream checkpoint. A read-only companion to the append path; it does NOT touch the
+    /// <c>ES_ATOMIC_APPEND_OUTBOX</c> write transaction. (The events table carries no
+    /// cluster-wide total order, so projection draining is per stream; a v4 partition-parallel
+    /// drain would add a global cursor — out of D.2 scope.)
+    /// </summary>
+    Task<IReadOnlyList<Guid>> ReadStreamIdsAsync(string family, CancellationToken ct = default);
 }
 
 /// <summary>

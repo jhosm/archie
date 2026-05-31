@@ -38,5 +38,8 @@ public sealed class SinkTests
 
         public IAsyncEnumerable<EventEnvelope> LoadAsync(Guid streamId, long fromSequence = 0, CancellationToken ct = default)
             => throw new InvalidOperationException("not used in this test");
+
+        public Task<IReadOnlyList<Guid>> ReadStreamIdsAsync(string family, CancellationToken ct = default)
+            => throw new InvalidOperationException("not used in this test");
     }
 }
