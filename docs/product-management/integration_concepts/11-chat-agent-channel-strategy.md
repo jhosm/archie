@@ -44,9 +44,11 @@ MCP exposes three primary surfaces to the agent. The mapping onto the existing a
 
 | MCP surface | Maps to | Example |
 |---|---|---|
-| **Tools** (`tools/call`) | Commands ([Primitive 1](./01-the-six-primitives.md)) | `constitute_deposit`, `early_mobilise_deposit`, `confirm_constitution` |
-| **Resources** (`resources/read`) | CQRS read models ([Document 03](./03-cqrs-and-read-models.md)) | `bank://clients/{client_id}/deposits`, `bank://deposits/{deposit_id}` |
+| **Tools** (`tools/call`) | Model-invokable operations — commands ([Primitive 1](./01-the-six-primitives.md)) and on-demand reads ([CQRS read models](./03-cqrs-and-read-models.md)) | `constitute_deposit`, `early_mobilise_deposit`, `confirm_constitution`, `get_deposit` |
+| **Resources** (`resources/read`) | Host-attached / subscribable context | `bank://clients/{client_id}/deposits` (a pinned collection a host attaches) |
 | **Prompts** (`prompts/get`) | Canned multi-step workflows | `constitute_term_deposit_12m`, `review_upcoming_maturities` |
+
+> The tool/resource split is **control ownership** — tools are model-controlled (the agent invokes them, including reads it needs mid-reasoning), resources are application-controlled (the host attaches them). It is *not* the engine's internal CQRS command/query boundary; see [ADR-IC-010](./adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md)'s 2026-05-31 amendment. Read/write tiering keys on OAuth scope (`deposits:read` vs `deposits:write`), not on MCP method.
 
 Two design rules govern this surface.
 
@@ -54,7 +56,7 @@ Two design rules govern this surface.
 
 **Always declare `outputSchema`.** Structured tool output (added in spec 2025-06-18, stable in 2025-11-25) lets the client validate what the server returned and lets the agent reason over typed fields. For a financial domain this is not optional: an agent that receives `{"amount": 10000, "currency": "EUR"}` behaves predictably; one that receives a free-text confirmation does not.
 
-Resources are read-only by construction and map onto the CQRS read side from [Document 03](./03-cqrs-and-read-models.md) with one adaptation: resource URIs are stable references the agent can re-read, so eventual consistency must be acceptable on every resource exposed. Operational state that is sensitive to lag (saga in-flight status, freshly-emitted balance change) should be exposed as a tool, not a resource — the agent then sees explicit latency rather than stale reads.
+Resources are application-controlled context: the host attaches them (a pinned document, a long-lived view) and may `resources/subscribe` to them. A read the *agent* fetches on demand mid-reasoning is model-controlled and is a **tool** (e.g. `get_deposit`), not a resource — the control-ownership split, not the engine's internal CQRS ([ADR-IC-010](./adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md)'s 2026-05-31 amendment). Either way the underlying values come from the CQRS read side ([Document 03](./03-cqrs-and-read-models.md)), so eventual consistency must be acceptable on every read exposed; state sensitive to lag (saga in-flight status, a freshly-emitted balance change) is surfaced through a tool so the agent sees explicit latency rather than a stale pinned reference.
 
 Prompts are the surface where the bank offers a *vetted procedure* to the agent: a parameterised template the agent can fill, with the multi-step structure pre-defined. For a regulated domain this is the place to encode "the right way" to do common operations without depending on the agent to discover the sequence itself.
 
@@ -240,7 +242,7 @@ The corollary: if a chat-platform integration becomes the bank's responsibility 
 |---|---|
 | [ADR-IC-006 — Edge API Gateway](./adrs/ADR-IC-006-edge-api-gateway.md) | The gateway adds an MCP transport route (Streamable HTTP) alongside the existing REST and SSE routes. JWT validation, rate limiting, mTLS to internal services, SCA enforcement, and OTel trace propagation apply uniformly — MCP is one more route, not a parallel edge. |
 | [Document 02 — ACL](./02-anti-corruption-layer.md) | The MCP server is an ACL instance applied to the agent channel. The seven responsibilities apply directly; the chat adapter has its own state, its own owner, and follows the standard ACL antipatterns. |
-| [Document 03 — CQRS and Read Models](./03-cqrs-and-read-models.md) | MCP resources are CQRS read-model views with a stable URI. Eventual consistency is an explicit property of every resource exposed; operations sensitive to lag are tools, not resources. |
+| [Document 03 — CQRS and Read Models](./03-cqrs-and-read-models.md) | On-demand reads of CQRS read models are model-invokable **tools** (e.g. `get_deposit`); resources are reserved for host-attached/subscribable context. Eventual consistency is an explicit property of every read exposed (see [ADR-IC-010](./adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md)'s 2026-05-31 amendment for why reads are tools, not resources). |
 | [Document 05 — Constitution Saga](./05-constitution-saga-walkthrough.md) | The synchronous 202 response pattern is unchanged. `AWAIT_WORKFLOW_APPROVAL` and `HUMAN_INTERVENTION_REQUIRED` map onto the polling-tool and out-of-band callback patterns. The reversibility-ordering principle is unchanged. |
 | [Document 10 — Security](./10-security-and-threat-model.md) | Boundary 9 (Agent → MCP Server) catalogues the threats specific to this channel — prompt injection via bank-returned content, hallucinated parameters, confused deputy, token replay, scope creep. The *Customer-Identity Binding Lifecycle* section there covers OAuth enrolment, PSD2 SCA integration, step-up authentication, refresh, revocation, and the cached-resource-handle case. The six security principles apply as-is to the MCP boundary. |
 | [Document 01 — Six Primitives](./01-the-six-primitives.md) | The [Identity Trio](./01-the-six-primitives.md) (`correlation_id`, `causation_id`, `entity_id`) propagates through MCP calls as request metadata. The OAuth `sub` claim binds to `client_id`. Idempotency keys are tool arguments. |

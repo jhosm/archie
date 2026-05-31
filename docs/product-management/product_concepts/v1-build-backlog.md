@@ -265,8 +265,9 @@ Proves every seam end-to-end on the real foundation, driveable by an agent.
   append+outbox; legacy settlement **stubbed (WireMock)**.
 - **E.4** Publish to Redpanda via outbox relay; Avro schema in `contracts/`; Schema Registry
   registration.
-- **E.5** Minimal **dev MCP server** (Python, IC-010): `constitute_deposit` tool +
-  `deposit_position` resource hitting engine directly (auth deferred). *MCP-from-day-one.*
+- **E.5** Minimal **dev MCP server** (Python, IC-010): `constitute_deposit` + `get_deposit`
+  tools hitting engine directly (auth deferred; reads are tools per the IC-010 2026-05-31
+  amendment). *MCP-from-day-one.*
 - **E.6** End-to-end Testcontainers test (PG + Redpanda): constitute via MCP → accrue → mature;
   assert events + projection + published messages. → exercises `ZERO_ENGINE_DIFF_PER_VARIANT`.
 

@@ -376,3 +376,25 @@ The IAM advertises `client_id_metadata_document_supported: true` in its authoris
 ### P8 — Elicitation URL mode is the default for irreversible operations
 
 Tools that map to irreversible operations (deposit constitution above the auto-approval threshold, early mobilisation, transfers) use `elicitation/create` URL mode (per [document 11](../11-chat-agent-channel-strategy.md) §Human-in-the-Loop and the spec §Server Features). The URL is bound to a `process_id` and a one-time confirmation context; the customer's SCA-bound action at the bank-controlled URL is what transitions the saga out of `AWAIT_USER_CONFIRMATION`, not anything the agent reports back. Form-mode elicitation is reserved for non-irreversible parameter clarifications.
+
+---
+
+## Amendment — 2026-05-31: the tool/resource axis is control-ownership, not CQRS
+
+[Document 11](../11-chat-agent-channel-strategy.md) framed the MCP surface as "tools → commands, resources → CQRS read models" (restated in this ADR's Context and woven through §P4–§P6). Implementing the Epic E walking skeleton ([bd babelstone-2d12](../../product_concepts/04-open-questions.md)) surfaced that this mapping is a category error at the MCP boundary, and that landing a correction silently is the drift the explicit-drift gate ([ADR-PC-020 §D3](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)) exists to catch. This amendment records the correction. It is additive: the Decision (runtime/transport/hosting/OAuth) and §P1–§P8 hold as written, save the method-vs-scope clarification in A3 below.
+
+### A1 · The tool/resource distinction is about control ownership, not command/query
+
+The MCP spec distinguishes tools from resources by **who decides to invoke them**, not by whether they mutate state: tools are *model-controlled* (the agent invokes them on demand, mid-reasoning), resources are *application-controlled* (the host attaches them to context, and may `resources/subscribe` to them). CQRS is an **internal engine** pattern ([Document 03](../03-cqrs-and-read-models.md)); the MCP server is a thin ACL translator that consumes the engine's HTTP API ([ADR-PC-021 §D5](../../product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)), which already abstracts that pattern away. The engine's command/query split therefore does **not** dictate the shape of the external MCP surface. A read that the agent needs to fetch on demand — "what is the state of deposit X right now?" — is model-controlled and maps to a **tool**, regardless of being a query internally.
+
+### A2 · Read operations MAY be exposed as tools; `get_deposit` replaces the `deposit_position` resource
+
+Reads whose natural caller is the agent itself are exposed as tools. The `deposit_position` read model, originally a resource *template* (`bank://deposits/{deposit_id}`), is replaced by a `get_deposit` tool. Two concrete reasons beyond A1: (1) a parameterised resource template is undiscoverable to MCP clients that enumerate only `resources/list` and not `resources/templates/list` — the read surface was effectively invisible; (2) as a tool it gains a mandatory structured `outputSchema` (§P6) — a strictly stronger contract than the untyped resource dict. Resources remain the right primitive for host-attached or subscribable context (e.g. a document or a long-lived view the user pins); they are not the required primitive for every read.
+
+### A3 · Read/write tiering keys on scope, not on MCP method
+
+§P5's rate-limiting ("tighter for `tools/call` on financial operations than for `resources/read`") is restated to key on **OAuth scope**, not MCP method: read tools carry `deposits:read` (§P4's reserved read scope) and are rate-limited and SCA-exempted as reads; write tools carry `deposits:write` / `transfers:write` and get the tighter financial-operation treatment. Folding reads into `tools/call` therefore preserves the security posture — the gateway distinction moves from method-level to scope-level, where §P4 already located authorisation.
+
+### A4 · This amends the decision; it does not supersede this ADR
+
+The Decision (Python SDK, Streamable HTTP, behind Kong, reuse the IAM) and §P1–§P8 remain binding as written. §P6 (mandatory `outputSchema`) is reinforced, not relaxed — every read tool carries one. Only the method-vs-scope reading of §P5 is clarified (A3). Document 11's example list is updated in the same change to reflect control-ownership framing.
