@@ -273,3 +273,22 @@ The Grafana RBAC configuration must be provisioned as code (Grafana's provisioni
 Grafana datasource permissions must restrict the Tempo datasource to `engineer` and `admin` roles. The `compliance-viewer` role accesses only the pre-built business dashboard and the Loki `business` stream — not ad-hoc trace exploration.
 
 This configuration is not an optional hardening step. It must be in place before the first service emits spans carrying financial attributes.
+
+---
+
+## Verifiable commitments
+
+The load-bearing invariants this ADR introduces are tracked as fitness functions in the
+[load-bearing commitment catalogue](../../product_concepts/adrs/commitment-catalogue.md)
+(ADR-PC-020 §D2). This ADR references them by stable Test ID; the catalogue is the single
+source of truth for each commitment's claim, gate, and status:
+
+| Test ID | Commitment (summary) | Status (see catalogue) |
+|---|---|---|
+| `OBS_RESOURCE_ATTRS` | Every Babelstone .NET host stamps its tracer resource with `service.name`, `service.namespace == "babelstone"`, and a non-blank `deployment.environment` (§P1). | Live |
+| `OBS_SPAN_PRODUCT_SEMANTICS` | The product-semantic spans (`accrual.computed`, `withholding.applied`) are emitted in the impure runtime shell, never the pure decider/fold, carrying `babelstone.partition_key` + `babelstone.product_code` (§P2–§P3). | Live |
+| `OBS_NO_PII_ATTRS` | No PII in any telemetry signal — only the `babelstone.*` operational-tier structural identifiers; money as integer cents (§P4). | Planned |
+| `OBS_TRACEPARENT_PROPAGATION` | W3C `traceparent` propagates across every process boundary, including the durable bus via an envelope header (§P1, Layer 1). | Planned |
+
+See [ADR-PC-020 §P5–§P7](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
+for how these commitments are written before (or with) implementation and resolved to running tests.

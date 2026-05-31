@@ -77,11 +77,21 @@ jobs:
         # restore + build (warnings-as-errors via Directory.Build.props) + all test
         # projects, incl. the Roslyn Money analysers. Needs no infrastructure, so it
         # excludes the Testcontainers-backed Integration tier (real PostgreSQL).
+        # The Docker-free observability fitness tests land here too (K.1): ResourceAttributeTests
+        # (OBS_RESOURCE_ATTRS / OBS-1) and TelemetrySpanTests (OBS_SPAN_PRODUCT_SEMANTICS / OBS-2)
+        # in Babelstone.Engine.Tests run in this step — no new CI job. OBS-4 (traceparent over the
+        # bus) is the deferred Integration tier (E.6 lane), per the commitment catalogue.
         run: dotnet test engine/Babelstone.slnx --configuration Release --nologo --filter "Category!=Integration"
-      # TODO - Testcontainers integration tier (PostgreSQL + Redpanda, ADR-IC-009)
-      # lands with E.6 (archie-2jum); it needs the dev stack, unlike the tier above.
-      # That lane runs the complementary `--filter "Category=Integration"` (the
-      # EventStore migration/append-and-outbox suites tagged from A.1 onward).
+      - name: Integration tests (Testcontainers tier — E.6, ADR-IC-009)
+        # The complementary `--filter "Category=Integration"` lane the unit step
+        # above excludes: real PostgreSQL + Redpanda + OpenBao. Testcontainers
+        # self-manages those (random host ports, no `services:` block), and the
+        # ubuntu-latest runner ships Docker — so the EventStore append+outbox suite
+        # (from A.1 on), the Redpanda outbox round-trip (E.4), and the
+        # constitute→mature API E2E all run here without `make up`. Wiring this lane
+        # is what lets ES_ATOMIC_APPEND_OUTBOX flip Planned→Live in the commitment
+        # catalogue (archie-2jum / E.6).
+        run: dotnet test engine/Babelstone.slnx --configuration Release --nologo --filter "Category=Integration"
 
   pack-validate:
     needs: changes

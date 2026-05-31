@@ -12,10 +12,16 @@
     <!-- The A.8 side-effect-freedom test asserts zero rows directly across events/outbox/snapshots. -->
     <PackageReference Include="Npgsql" />
     <PackageReference Include="FsCheck.Xunit" />
+    <!-- OTel SDK for the Docker-free observability fitness tests (K.1): the core package backs
+         ResourceBuilder (OBS-1, ResourceAttributeTests); the in-memory ActivityListener for the
+         span test (OBS-2, TelemetrySpanTests) needs no package beyond System.Diagnostics. -->
+    <PackageReference Include="OpenTelemetry" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/Babelstone.Engine/Babelstone.Engine.csproj" />
     <ProjectReference Include="../../src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />
+    <!-- The shared ActivitySource + babelstone.* attribute keys + resource helper under test. -->
+    <ProjectReference Include="../../src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
   </ItemGroup>
 </Project>

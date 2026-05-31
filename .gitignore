@@ -33,3 +33,6 @@ __pycache__/
 
 # Editor / backup artefacts — never commit (e.g. kustomization.yaml.bak)
 *.bak
+
+# Walking-skeleton demo runtime (scripts/demo-mcp.sh): logs + pidfiles
+/.demo-mcp/

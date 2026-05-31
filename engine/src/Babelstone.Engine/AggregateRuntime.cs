@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using Babelstone.EventStore;
+using Babelstone.Telemetry;
 
 namespace Babelstone.Engine;
 
@@ -55,9 +57,36 @@ public sealed class AggregateRuntime<TState>(
     /// Commits new domain events and their outbox rows in one transaction (via the sink).
     /// PII is encrypted here (the only OpenBao seam, §5.3); storage sees ciphertext-in-payload.
     /// </summary>
+    /// <remarks>
+    /// This impure runtime shell is the only correct home for a product-semantic span
+    /// (ADR-PC-010 §P5 / ADR-IC-007): the pure decider/fold never touches telemetry. When
+    /// <paramref name="spanName"/> is non-null a manual span is opened on
+    /// <see cref="BabelstoneTelemetry.ActivitySource"/> around the commit, tagged with the
+    /// caller-supplied <paramref name="spanAttributes"/> — the runtime stays domain-agnostic
+    /// (it never names a span or invents an attribute value; the host, which knows the command,
+    /// does). With no tracer listening, <see cref="ActivitySource.StartActivity(string,ActivityKind)"/>
+    /// returns <c>null</c> and the path is a no-op.
+    /// </remarks>
     public async Task AppendAsync(
-        Guid streamId, long expectedVersion, IReadOnlyList<DomainEvent> events, AppendContext context, CancellationToken ct = default)
+        Guid streamId,
+        long expectedVersion,
+        IReadOnlyList<DomainEvent> events,
+        AppendContext context,
+        CancellationToken ct = default,
+        string? spanName = null,
+        IReadOnlyList<KeyValuePair<string, object?>>? spanAttributes = null)
     {
+        using var activity = spanName is null
+            ? null
+            : BabelstoneTelemetry.ActivitySource.StartActivity(spanName, ActivityKind.Internal);
+        if (activity is not null && spanAttributes is not null)
+        {
+            foreach (var attribute in spanAttributes)
+            {
+                activity.SetTag(attribute.Key, attribute.Value);
+            }
+        }
+
         var envelopes = new List<EventEnvelope>(events.Count);
         var outboxRows = new List<OutboxRow>(events.Count);
         var transactionTime = clock.GetUtcNow();

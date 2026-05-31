@@ -17,6 +17,14 @@
          dependency-free value type, so this adds no transitive surface. -->
     <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
 
+    <!-- The shared OTel instrumentation surface (ADR-IC-007): the ActivitySource the
+         runtime shell opens product-semantic spans on, and the babelstone.* attribute-key
+         contract. Carries only OpenTelemetry.Api (System.Diagnostics' ActivitySource) — no
+         SDK, exporter, or family dependency — so the engine spine stays family-agnostic
+         (catalogue ENGINE_FAMILY_AGNOSTIC) and SDK-free. Spans live here in the impure
+         runtime, never in the pure decider/fold (ADR-PC-010 §P5). -->
+    <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+
     <!-- The handler-purity analysers (BENG001/002/003) guard any IEventHandler.Apply
          body compiled here. Passed as a checker, never linked
          (ReferenceOutputAssembly=false); warnings are errors per Directory.Build.props,

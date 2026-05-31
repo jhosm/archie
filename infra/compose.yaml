@@ -25,6 +25,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-babelstone}
       POSTGRES_USER: ${POSTGRES_USER:-babelstone}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-babelstone}
+      # PG 18+ moved the default data dir under /var/lib/postgresql; the entrypoint
+      # refuses to init when the volume is mounted at the bare .../data path ("unused
+      # mount/volume"). Nest PGDATA in a subdirectory of the mount so PG 18 initialises
+      # cleanly on a fresh volume (docker-library/postgres#1259).
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:

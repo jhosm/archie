@@ -22,6 +22,9 @@ public sealed class DepositConstitutedHandler : IEventHandler<DepositPosition, D
             MaturityDate = @event.MaturityDate,
             InterestVariant = @event.InterestVariant,
             AutoRenewalPolicy = @event.AutoRenewalPolicy,
+            // RemainingPrincipal tracks principal still on deposit; it starts at the full
+            // principal and is reduced by partial withdrawals (the event carries the result).
+            RemainingPrincipal = @event.Principal,
             Lifecycle = DepositLifecycle.Active,
         });
 }
@@ -52,5 +55,83 @@ public sealed class DepositMaturedHandler : IEventHandler<DepositPosition, Depos
         {
             Lifecycle = DepositLifecycle.Matured,
             TotalPayout = @event.TotalPayout,
+        });
+}
+
+// The seven remaining folds (F.2, babelstone-5czr). Same purity contract as the four above:
+// each body is a single `state with { … }`, no clock/I/O/randomness (BENG001/002/003). These
+// LABEL lifecycle and accumulate carried facts; transition legality is F.3 (babelstone-29v8).
+
+public sealed class DepositConstitutionFailedHandler : IEventHandler<DepositPosition, DepositConstitutionFailed>
+{
+    public HandlerResult<DepositPosition> Apply(DepositPosition state, DepositConstitutionFailed @event)
+        => HandlerResult<DepositPosition>.From(state with
+        {
+            DepositId = @event.DepositId,
+            Lifecycle = DepositLifecycle.Failed,
+        });
+}
+
+public sealed class InterestPaidHandler : IEventHandler<DepositPosition, InterestPaid>
+{
+    public HandlerResult<DepositPosition> Apply(DepositPosition state, InterestPaid @event)
+        => HandlerResult<DepositPosition>.From(state with
+        {
+            // Periodic payout: accumulate the same gross/withholding/net tallies the
+            // AT_MATURITY flow feeds, so the position stays correct across multiple coupons.
+            AccruedGrossInterest = state.AccruedGrossInterest + @event.GrossInterest,
+            WithholdingToDate = state.WithholdingToDate + @event.WithholdingTax,
+            NetInterest = state.NetInterest + @event.NetInterest,
+        });
+}
+
+public sealed class DepositRenewedHandler : IEventHandler<DepositPosition, DepositRenewed>
+{
+    public HandlerResult<DepositPosition> Apply(DepositPosition state, DepositRenewed @event)
+        => HandlerResult<DepositPosition>.From(state with
+        {
+            Lifecycle = DepositLifecycle.Renewed,
+        });
+}
+
+public sealed class DepositTerminatedEarlyHandler : IEventHandler<DepositPosition, DepositTerminatedEarly>
+{
+    public HandlerResult<DepositPosition> Apply(DepositPosition state, DepositTerminatedEarly @event)
+        => HandlerResult<DepositPosition>.From(state with
+        {
+            Lifecycle = DepositLifecycle.TerminatedEarly,
+            SettlementAmount = @event.NetSettlementAmount,
+        });
+}
+
+public sealed class DepositPartiallyWithdrawnHandler : IEventHandler<DepositPosition, DepositPartiallyWithdrawn>
+{
+    public HandlerResult<DepositPosition> Apply(DepositPosition state, DepositPartiallyWithdrawn @event)
+        => HandlerResult<DepositPosition>.From(state with
+        {
+            // The event carries the post-withdrawal principal (computed by the decider);
+            // the fold just records it — no arithmetic, no rounding here.
+            RemainingPrincipal = @event.RemainingPrincipal,
+        });
+}
+
+public sealed class DepositCorrectedHandler : IEventHandler<DepositPosition, DepositCorrected>
+{
+    public HandlerResult<DepositPosition> Apply(DepositPosition state, DepositCorrected @event)
+        => HandlerResult<DepositPosition>.From(state with
+        {
+            // The real bitemporal supersession is D.1/D.2; here the fold only tallies that a
+            // correction landed (references resolved elsewhere), keeping the handler pure.
+            CorrectionCount = state.CorrectionCount + 1,
+        });
+}
+
+public sealed class DepositTransferredToHeirsHandler : IEventHandler<DepositPosition, DepositTransferredToHeirs>
+{
+    public HandlerResult<DepositPosition> Apply(DepositPosition state, DepositTransferredToHeirs @event)
+        => HandlerResult<DepositPosition>.From(state with
+        {
+            Lifecycle = DepositLifecycle.TransferredToHeirs,
+            SettlementAmount = @event.TransferredBalance,
         });
 }

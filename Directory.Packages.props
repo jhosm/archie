@@ -31,6 +31,12 @@
     <!-- IHostedService/BackgroundService host for the relay's poll loop. -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
 
+    <!-- IConfiguration for the application-credential secret boundary (ADR-PC-004 Amendment A1):
+         Abstractions for Babelstone.Pii's ConfigurationSecretProvider; the full package for the
+         in-memory provider its unit tests build. -->
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.8" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.8" />
+
     <!-- Test toolchain: runner, assertions, property-based testing, integration containers. -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.6.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
@@ -44,5 +50,15 @@
 
     <!-- YAML parser for the in-engine pack loader (ADR-PC-007 §S2, Babelstone.Packs). -->
     <PackageVersion Include="YamlDotNet" Version="18.0.0" />
+
+    <!-- OpenTelemetry (ADR-IC-007 Layer 1, Epic K.1). OpenTelemetry.Api carries only the
+         System.Diagnostics ActivitySource surface — it lives in Babelstone.Telemetry and the
+         engine spine. The SDK (Extensions.Hosting for AddOpenTelemetry/ConfigureResource and
+         the OTLP exporter) is wired only in the two HTTP hosts; the core OpenTelemetry package
+         backs the in-memory span fitness test. One pinned 1.x line across all four. -->
+    <PackageVersion Include="OpenTelemetry.Api" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
   </ItemGroup>
 </Project>
