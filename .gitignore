@@ -30,3 +30,6 @@ __pycache__/
 # Claude Code transients (agent worktrees, scheduler lock)
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+
+# Editor / backup artefacts — never commit (e.g. kustomization.yaml.bak)
+*.bak
