@@ -46,6 +46,11 @@ public enum DepositLifecycle
 /// All monetary fields are <see cref="Money"/> (cents); no <c>decimal</c> state lives here
 /// (ADR-PC-010 §P1, BMNY002).
 /// </remarks>
+/// <param name="PaymentPeriodMonths">The PERIODIC coupon cadence in months (1 or 3), folded from
+/// <c>DepositConstituted</c>; 0 for AT_MATURITY/ADVANCE. Lets the service derive coupon windows.</param>
+/// <param name="CouponsPaid">How many PERIODIC coupons have already been paid out (folded from
+/// each <c>InterestPaid</c>). The service derives "which coupon is next" from this count plus the
+/// start date and cadence — no clock or wall-time in the fold (BENG001/002/003).</param>
 public sealed record DepositPosition(
     Guid DepositId,
     Money Principal,
@@ -56,6 +61,7 @@ public sealed record DepositPosition(
     DateOnly MaturityDate,
     string InterestVariant,
     string AutoRenewalPolicy,
+    int PaymentPeriodMonths,
     Money AccruedGrossInterest,
     Money WithholdingToDate,
     Money NetInterest,
@@ -63,6 +69,7 @@ public sealed record DepositPosition(
     Money RemainingPrincipal,
     Money SettlementAmount,
     int CorrectionCount,
+    int CouponsPaid,
     DepositLifecycle Lifecycle)
 {
     /// <summary>The seed state a fold starts from (before <c>DepositConstituted</c>).</summary>
@@ -76,6 +83,7 @@ public sealed record DepositPosition(
         MaturityDate: default,
         InterestVariant: string.Empty,
         AutoRenewalPolicy: string.Empty,
+        PaymentPeriodMonths: 0,
         AccruedGrossInterest: Money.Zero,
         WithholdingToDate: Money.Zero,
         NetInterest: Money.Zero,
@@ -83,5 +91,6 @@ public sealed record DepositPosition(
         RemainingPrincipal: Money.Zero,
         SettlementAmount: Money.Zero,
         CorrectionCount: 0,
+        CouponsPaid: 0,
         Lifecycle: DepositLifecycle.Pending);
 }

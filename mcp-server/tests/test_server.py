@@ -17,10 +17,12 @@ _POSITION = {
     "maturity_date": "2027-01-15",
     "interest_variant": "AT_MATURITY",
     "auto_renewal_policy": "NONE",
+    "payment_period_months": 0,
     "accrued_gross_interest_cents": 0,
     "withholding_to_date_cents": 0,
     "net_interest_cents": 0,
     "total_payout_cents": 0,
+    "coupons_paid": 0,
     "lifecycle": "Active",
 }
 
@@ -32,6 +34,7 @@ class _FakeEngine(EngineClient):
         self.constitute_request: dict[str, Any] | None = None
         self.position_requested: str | None = None
         self.matured: str | None = None
+        self.interest_paid: str | None = None
 
     async def constitute(self, request: dict[str, Any]) -> dict[str, Any]:
         self.constitute_request = request
@@ -53,6 +56,20 @@ class _FakeEngine(EngineClient):
             "lifecycle": "Matured",
         }
 
+    async def pay_interest(self, deposit_id: str) -> dict[str, Any]:
+        self.interest_paid = deposit_id
+        return {
+            **_POSITION,
+            "deposit_id": deposit_id,
+            "interest_variant": "PERIODIC",
+            "payment_period_months": 1,
+            "accrued_gross_interest_cents": 139602,
+            "withholding_to_date_cents": 39089,
+            "net_interest_cents": 100513,
+            "coupons_paid": 1,
+            "lifecycle": "Active",
+        }
+
 
 async def test_every_tool_is_registered_with_output_schema() -> None:
     tools = await server.mcp.list_tools()
@@ -66,6 +83,8 @@ async def test_every_tool_is_registered_with_output_schema() -> None:
     assert by_name["get_deposit"].outputSchema is not None
     assert "mature_deposit" in by_name
     assert by_name["mature_deposit"].outputSchema is not None
+    assert "pay_interest" in by_name
+    assert by_name["pay_interest"].outputSchema is not None
 
 
 async def test_no_resource_templates_are_registered() -> None:
@@ -99,6 +118,22 @@ async def test_mature_deposit_tool_maps_id_and_folds_interest() -> None:
     assert result.total_payout_cents == 1_021_900
 
 
+async def test_pay_interest_tool_maps_id_and_folds_the_coupon() -> None:
+    fake = _FakeEngine()
+    server.set_engine(fake)
+
+    result = await server.pay_interest(deposit_id="d-42")
+
+    assert fake.interest_paid == "d-42"
+    assert result.deposit_id == "d-42"
+    # The coupon folds in; the deposit stays Active (the final coupon is paid at maturity).
+    assert result.lifecycle == "Active"
+    assert result.interest_variant == "PERIODIC"
+    assert result.payment_period_months == 1
+    assert result.net_interest_cents == 100_513
+    assert result.coupons_paid == 1
+
+
 async def test_constitute_tool_maps_args_to_the_engine_request() -> None:
     fake = _FakeEngine()
     server.set_engine(fake)
@@ -120,3 +155,4 @@ async def test_constitute_tool_maps_args_to_the_engine_request() -> None:
     # Defaults applied for the AT_MATURITY walking skeleton.
     assert fake.constitute_request["interest_variant"] == "AT_MATURITY"
     assert fake.constitute_request["auto_renewal_policy"] == "NONE"
+    assert fake.constitute_request["payment_period_months"] == 0

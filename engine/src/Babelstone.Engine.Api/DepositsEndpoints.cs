@@ -20,6 +20,7 @@ public static class DepositsEndpoints
         app.MapPost("/v1/deposits", ConstituteAsync);
         app.MapGet("/v1/deposits/{id:guid}", GetPositionAsync);
         app.MapPost("/v1/deposits/{id:guid}/maturity", MatureAsync);
+        app.MapPost("/v1/deposits/{id:guid}/interest", PayInterestAsync);
     }
 
     private static async Task<IResult> ConstituteAsync(
@@ -40,7 +41,8 @@ public static class DepositsEndpoints
             InterestVariant: request.InterestVariant,
             AutoRenewalPolicy: request.AutoRenewalPolicy,
             FundingAccount: request.FundingAccount,
-            Actor: request.Actor ?? "mcp:dev");
+            Actor: request.Actor ?? "mcp:dev",
+            PaymentPeriodMonths: request.PaymentPeriodMonths);
 
         // The host shell is the composition root that knows the command, so the product-semantic
         // span is opened HERE, never in the pure decider/fold (ADR-PC-010 §P5 / ADR-IC-007 P2/P3).
@@ -133,6 +135,58 @@ public static class DepositsEndpoints
             accrual?.SetTag(BabelstoneAttributes.InterestCents, matured.AccruedGrossInterest.Cents);
             withholding?.SetTag(BabelstoneAttributes.PartitionKey, id.ToString());
             withholding?.SetTag(BabelstoneAttributes.TaxCents, matured.WithholdingToDate.Cents);
+        }
+
+        return Results.Ok(DepositPositionResponse.From(hydrated.State));
+    }
+
+    private static async Task<IResult> PayInterestAsync(
+        Guid id,
+        PayInterestRequest request,
+        TermDepositConstitutionService service,
+        AggregateRuntime<DepositPosition> runtime,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        var command = new PayInterestCommand(
+            DepositId: id,
+            PaidAt: request.PaidAt ?? clock.GetUtcNow(),
+            PayoutAccount: request.PayoutAccount ?? "PT50-DDA-001",
+            Actor: request.Actor ?? "mcp:dev");
+
+        Hydrated<DepositPosition> hydrated;
+
+        // A PERIODIC coupon is its own accrual + withholding flow, so the same two product-semantic
+        // spans the maturity path opens are opened HERE, in the impure host shell — never in the pure
+        // decider/fold (ADR-PC-010 §P5 / ADR-IC-007 P2/P3). Tags are structural identifiers and
+        // cents-native money only — no PII (ADR-PC-004 §P2 / catalogue OBS_NO_PII_ATTRS).
+        using (var accrual = BabelstoneTelemetry.ActivitySource.StartActivity(
+            BabelstoneAttributes.SpanAccrualComputed, ActivityKind.Internal))
+        using (var withholding = BabelstoneTelemetry.ActivitySource.StartActivity(
+            BabelstoneAttributes.SpanWithholdingApplied, ActivityKind.Internal))
+        {
+            try
+            {
+                await service.PayInterestAsync(command, ct);
+            }
+            catch (ConcurrencyException)
+            {
+                return Results.Problem($"Deposit {id} was modified concurrently.", statusCode: StatusCodes.Status409Conflict);
+            }
+            catch (DomainRejectedException e)
+            {
+                // Not constituted / not PERIODIC / no intermediate coupon left (the lifecycle + variant
+                // guards) — surface as a 422, never pay a phantom coupon. Wiring faults propagate as 500.
+                return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+            }
+
+            hydrated = await runtime.LoadAsync(id, ct);
+            var paid = hydrated.State;
+
+            accrual?.SetTag(BabelstoneAttributes.PartitionKey, id.ToString());
+            accrual?.SetTag(BabelstoneAttributes.InterestCents, paid.AccruedGrossInterest.Cents);
+            withholding?.SetTag(BabelstoneAttributes.PartitionKey, id.ToString());
+            withholding?.SetTag(BabelstoneAttributes.TaxCents, paid.WithholdingToDate.Cents);
         }
 
         return Results.Ok(DepositPositionResponse.From(hydrated.State));
