@@ -115,6 +115,30 @@ make bootstrap   # brew prereqs + mise install
 make doctor      # verify pinned versions are active
 ```
 
+**IMPORTANT — always prefix builds and tests with `mise exec --`:**
+The shell Claude runs in may not have the mise-activated environment loaded, so `dotnet`,
+`go`, and `python` will resolve to system versions rather than the pinned ones. This causes
+cryptic Roslyn analyser version-mismatch errors (e.g. "references version '5.3.0.0' of the
+compiler, which is newer than the currently running version '5.0.0.0'"). Always run:
+```bash
+mise exec -- dotnet build ...
+mise exec -- dotnet test ...
+mise exec -- go build ...
+```
+
+**New git worktrees need `mise trust --yes` before `mise exec` will work in them:**
+```bash
+git worktree add ../babelstone-foo -b feat/foo
+cd ../babelstone-foo && mise trust --yes
+```
+
+**`dotnet test` takes exactly one path — not multiple directories.** Run per-project:
+```bash
+mise exec -- dotnet test engine/tests/Babelstone.OutboxPublisher.Tests/ --nologo -v q
+```
+Key test locations: `Babelstone.OutboxPublisher.Tests/` has Avro round-trip tests;
+`Babelstone.Engine.Tests/` has the `EngineFamilyAgnosticTests` fitness function.
+
 Local dev stack (Redpanda, Postgres, Schema Registry, Kong, OpenBao, Grafana):
 ```bash
 make up          # start stack, wait until healthy
