@@ -16,6 +16,7 @@ public sealed class OpenBaoKvFixture : IAsyncLifetime
 {
     private const string Token = "root";
     private const string MountPath = "secret";
+    private const string ReadPolicyName = "engine-kv-read";
 
     private readonly IContainer _container = new ContainerBuilder("openbao/openbao:2.5.4")
         .WithEnvironment("BAO_DEV_ROOT_TOKEN_ID", Token)
@@ -26,6 +27,13 @@ public sealed class OpenBaoKvFixture : IAsyncLifetime
         .Build();
 
     public string Mount => MountPath;
+
+    /// <summary>
+    /// The least-privilege ACL policy bound to each test AppRole: <c>read</c> on the KV v2
+    /// data path only. A token's implicit <c>default</c> policy grants no KV access, so an
+    /// AppRole carrying only it 403s ("permission denied") on every read.
+    /// </summary>
+    public string ReadPolicy => ReadPolicyName;
 
     public HttpClient NewHttpClient() => new()
     {
@@ -38,10 +46,20 @@ public sealed class OpenBaoKvFixture : IAsyncLifetime
 
         using var admin = NewAdminClient();
 
-        // Dev mode mounts kv v2 at "secret/" by default and enables approle is NOT default —
-        // enable approle once for the suite. (kv v2 at secret/ is present in -dev.)
+        // Dev mode mounts kv v2 at "secret/" by default, but approle auth is NOT — enable it
+        // once for the suite. (kv v2 at secret/ is present in -dev.)
         using var enableApprole = await admin.PostAsJsonAsync("v1/sys/auth/approle", new { type = "approle" });
         enableApprole.EnsureSuccessStatusCode();
+
+        // Author the least-privilege read policy each AppRole binds. Without a KV-granting
+        // policy the AppRole token holds only the implicit `default` policy, which 403s on
+        // every read — and a 403 is returned even for absent paths (the ACL check precedes the
+        // existence check), masking the benign not-found. `read` on the `data/*` wildcard lets
+        // real secrets resolve and absent paths surface as a genuine 404.
+        var policy = $"path \"{MountPath}/data/*\" {{\n  capabilities = [\"read\"]\n}}\n";
+        using var writePolicy = await admin.PutAsJsonAsync(
+            $"v1/sys/policies/acl/{ReadPolicyName}", new { policy });
+        writePolicy.EnsureSuccessStatusCode();
     }
 
     public async Task DisposeAsync() => await _container.DisposeAsync();
@@ -73,7 +91,7 @@ public sealed class OpenBaoKvSecretProviderIntegrationTests(OpenBaoKvFixture fix
 
         using var admin = fixture.NewAdminClient();
         await WriteKvAsync(admin, name, v1);
-        var (roleId, secretId) = await CreateAppRoleAsync(admin, role);
+        var (roleId, secretId) = await CreateAppRoleAsync(admin, role, fixture.ReadPolicy);
 
         var sut = new OpenBaoKvSecretProvider(fixture.NewHttpClient(), roleId, secretId, fixture.Mount);
 
@@ -90,7 +108,7 @@ public sealed class OpenBaoKvSecretProviderIntegrationTests(OpenBaoKvFixture fix
     {
         var role = $"engine-{Guid.NewGuid():N}";
         using var admin = fixture.NewAdminClient();
-        var (roleId, secretId) = await CreateAppRoleAsync(admin, role);
+        var (roleId, secretId) = await CreateAppRoleAsync(admin, role, fixture.ReadPolicy);
 
         // Benign not-found: the KV path simply does not exist — surfaced as a clear message.
         var sut = new OpenBaoKvSecretProvider(fixture.NewHttpClient(), roleId, secretId, fixture.Mount);
@@ -115,11 +133,12 @@ public sealed class OpenBaoKvSecretProviderIntegrationTests(OpenBaoKvFixture fix
         response.EnsureSuccessStatusCode();
     }
 
-    private static async Task<(string RoleId, string SecretId)> CreateAppRoleAsync(HttpClient admin, string role)
+    private static async Task<(string RoleId, string SecretId)> CreateAppRoleAsync(
+        HttpClient admin, string role, string policy)
     {
         using var create = await admin.PostAsJsonAsync(
             $"v1/auth/approle/role/{role}",
-            new { token_policies = "default", token_ttl = "10m" });
+            new { token_policies = policy, token_ttl = "10m" });
         create.EnsureSuccessStatusCode();
 
         using var roleIdResponse = await admin.GetAsync($"v1/auth/approle/role/{role}/role-id");
