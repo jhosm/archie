@@ -83,6 +83,13 @@ builder.Services.AddSingleton<ISettlementPort, LoggingSettlementPort>();
 builder.Services.AddSingleton<IEventStore>(_ => new PostgresEventStore(connectionString));
 builder.Services.AddSingleton<IEventSink>(serviceProvider =>
     new EventStoreSink(serviceProvider.GetRequiredService<IEventStore>()));
+// D.2 projection runtime storage (ADR-PC-002 §P4): the byte-oriented projection + checkpoint
+// stores are family-agnostic spine components (ADR-PC-021), backed by the same PostgreSQL tier as
+// the event store. The family module composes the typed runtime (registry + drainer + relay) over
+// them, so it resolves these rather than registering them; migrations 0010/0011 own the
+// `projections` discriminator columns + the `projection_checkpoints` table they read/write.
+builder.Services.AddSingleton<IProjectionStorage>(_ => new PostgresProjectionStore(connectionString));
+builder.Services.AddSingleton<IProjectionCheckpointStore>(_ => new PostgresProjectionCheckpointStore(connectionString));
 // The JSON dev codec + null PII protector; the Avro + Schema-Registry codec (E.4,
 // Babelstone.Engine.Avro) is the production wiring follow-up.
 builder.Services.AddSingleton<IEventSerializer, JsonEventSerializer>();
