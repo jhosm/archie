@@ -138,9 +138,9 @@ while IFS=$'\t' read -r tid st gate link; do
 done < "$rows"
 [ "$live" -gt 0 ] || note "no Live commitments yet — engine is a skeleton; test-resolution checks are dormant (all rows Planned)."
 
-echo "== Code anchors point to a live (non-superseded) ADR =="
+echo "== Code anchors point to a live (non-superseded, non-withdrawn) ADR =="
 # Scan code for `ADR-PC-NNN` / `ADR-IC-NNN` anchors; each must resolve to an ADR file
-# whose Status is not 'Superseded'.
+# whose Status is not 'Superseded' or 'Withdrawn' (both bind nothing — ADR-PC-000 §D5).
 anchors=0
 for d in $CODE_DIRS; do
   [ -d "$d" ] || continue
@@ -150,8 +150,8 @@ for d in $CODE_DIRS; do
     f="$(ls "$PC_ADRS/$ref"-*.md "$IC_ADRS/$ref"-*.md 2>/dev/null | head -1 || true)"
     if [ -z "$f" ]; then
       err "$d" "Code anchor '$ref' resolves to no ADR file."
-    elif grep -qiE '^\| *Status *\|.*Superseded' "$f" || grep -qiE '^\| *Status *\| *Superseded' "$f"; then
-      err "$f" "Code anchor '$ref' points to a SUPERSEDED ADR (ADR-PC-020 §P6)."
+    elif grep -qiE '^\| *Status *\|.*(Superseded|Withdrawn)' "$f"; then
+      err "$f" "Code anchor '$ref' points to a SUPERSEDED or WITHDRAWN ADR (ADR-PC-020 §P6)."
     fi
   done < <(grep -rhoE "${CODE_INCLUDES[@]}" 'ADR-(PC|IC)-[0-9]{3}' "$d" 2>/dev/null | sort -u)
 done
