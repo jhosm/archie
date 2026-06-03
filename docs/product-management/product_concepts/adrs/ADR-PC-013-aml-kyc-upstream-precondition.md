@@ -2,14 +2,18 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Withdrawn (2026-06-03) |
 | Date | 2026-05-23 |
 | Deciders | jhosm |
 | Shape | Contract-shape |
 | Counterparty | The AML / KYC / financial-crime systems and the onboarding + channel orchestration that sits **upstream** of the engine (out-of-scope as products per [00 §4](../00-product-vision.md); in-scope as an integration shape). Secondarily, ongoing AML transaction-monitoring as a **downstream** consumer of the engine's existing event catalogue |
 | Depends on | [ADR-IC-006](../../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md) (edge gateway — where the clearance precondition is enforced, alongside the existing PSD2 SCA precondition), [ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md) + [integration_concepts §05](../../integration_concepts/05-constitution-saga-walkthrough.md) (the constitution saga — the in-saga eligibility step this ADR expunges), [ADR-PC-012](./ADR-PC-012-gl-posting-signal-contract.md) (the outbound business-event catalogue — the substrate ongoing monitoring consumes), [ADR-PC-014](./ADR-PC-014-customer-notification-emit-contract.md) (PII-by-reference — inherited unchanged) |
 | Resolves | bd `archie-10r.14`; **Q-AU** ([04 §Q-AU](../04-open-questions.md)) |
-| Related | [ADR-PC-015](./ADR-PC-015-ifrs9-signal-contract.md) (IFRS 9 — the unconditional post-flag end of the spectrum; this ADR resolves the "genuine gate-vs-post-flag tension" ADR-PC-015 §5 flagged for AML by placing the gate *upstream of the engine boundary*), [ADR-PC-018](./ADR-PC-018-channel-routing-coexistence.md) (gateway-tier routing — the same edge that resolves `sor` enforces the clearance precondition), [ADR-PC-012](./ADR-PC-012-gl-posting-signal-contract.md) / [ADR-PC-014](./ADR-PC-014-customer-notification-emit-contract.md) (the sibling outbound-signal contracts whose "engine emits/consumes facts, never owns the verdict" philosophy this ADR extends to an *inbound* precondition), [ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md) (the generic constitution-precondition contract that **generalises this ADR** — PC-013 is its universal, edge-enforced, engine-oblivious special case; the shared stance is the [ADR-PC-000 signal-contract principle](./ADR-PC-000-namespace-and-contract-shape-framework.md)) |
+| Related | [ADR-PC-015](./ADR-PC-015-ifrs9-signal-contract.md) (IFRS 9 — the unconditional post-flag end of the spectrum; this ADR resolves the "genuine gate-vs-post-flag tension" ADR-PC-015 §5 flagged for AML by placing the gate *upstream of the engine boundary*), [ADR-PC-018](./ADR-PC-018-channel-routing-coexistence.md) (gateway-tier routing — the same edge that resolves `sor` enforces the clearance precondition), [ADR-PC-012](./ADR-PC-012-gl-posting-signal-contract.md) / [ADR-PC-014](./ADR-PC-014-customer-notification-emit-contract.md) (the sibling outbound-signal contracts whose "engine emits/consumes facts, never owns the verdict" philosophy this ADR extends to an *inbound* precondition) |
+
+> **⚠ Withdrawn (2026-06-03).** AML/KYC adjudication is **upstream and out of scope** for the product engine ([00 §4](../00-product-vision.md): *"Fraud and AML … KYC and onboarding … KYC is upstream"*). The product engine carries **no AML surface** — no `aml_clearance_ref` envelope field, no edge-precondition contract of its own. Where AML clearance is enforced at all, it is an **integration-estate / edge-gateway** concern ([ADR-IC-006](../../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)), not a product-engine ADR. This ADR is kept for history; the Decision below records what was once decided and **binds nothing**. (Status term: [ADR-PC-000 — `Withdrawn` amendment](./ADR-PC-000-namespace-and-contract-shape-framework.md).)
+>
+> **Still-valid sub-conclusions, re-homed (not reopened):** (1) the constitution saga performs **no in-engine eligibility / financial-crime adjudication** — now carried by [00 §4](../00-product-vision.md) + [ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md); (2) **`ValidateProductLimits` stays in the engine** as a pack-bound product rule — carried by [ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md).
 
 ---
 
@@ -105,4 +109,4 @@ Adopting (c) requires a corresponding change to the worked example in [integrati
 
 This contract's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
 
-- `AML_EDGE_PRECONDITION` — clearance is an edge precondition (`403`, orchestrator never starts); no in-engine AML gate or compensation (slot 5 · Error model).
+*(No verifiable commitments — this ADR is **Withdrawn** (2026-06-03). Its former AML-edge-precondition fitness function is retired and removed from the [commitment catalogue](./commitment-catalogue.md); the product engine has no AML commitment, AML/KYC being out of scope per [00 §4](../00-product-vision.md).)*
