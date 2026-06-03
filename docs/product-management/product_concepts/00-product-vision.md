@@ -80,6 +80,7 @@ Out of scope means *the engine does not build it, but the engine owns the integr
 - **Payments rails.** SEPA, TARGET2, instant payments, card schemes. The engine settles to a current account; how that current account moves money is a payments problem.
 - **Fraud and AML.** First-class systems in their own right, with their own vendors and their own regulators. The engine integrates with them; it does not absorb them.
 - **KYC and onboarding.** A customer exists before they hold a product. KYC is upstream.
+- **Product-administration application.** The pricing/product team manages products as *declarative configuration*, validated synchronously at commit and deployed via the [ADR-PC-008](./adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md) API ([01 §3](./01-product-architecture.md)). A runtime *imperative* product-admin UI/API ("click new product, it's live") is **downstream tooling on that deploy API**, not an engine surface — the same relationship channels have to the query API.
 
 If the answer to "should we build X?" is "X is on the explicit out-of-scope list," the answer is no. Re-opening one of these costs the wedge.
 

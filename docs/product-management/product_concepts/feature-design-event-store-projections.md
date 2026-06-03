@@ -143,6 +143,8 @@ The engine's handler dispatch runtime applies the function and persists the new 
 
 A handler that "needs to send a notification" emits a `NotificationScheduled` event in its returned state's pending-effects list. A separate handler (the notification effect handler) consumes those scheduled events and dispatches them to the notification system. The original handler stays pure; the side effect is observable, retriable, and replayable.
 
+Crucially, this path is **fact-driven**: the side-effect is caused by the handler *processing a domain event*, so it is pure and replayable. A signal whose only cause is *a date arriving* — a maturity-approaching reminder — has no causing event and would need a clock, so the engine does not emit it. Such **clock-driven temporal signals are downstream reads over projections** (the maturity calendar), never engine-emitted events, and the engine runs **no internal scheduler**. Full treatment: [ADR-PC-023](./adrs/ADR-PC-023-temporal-signals-projection-derived.md).
+
 This is the same shape as the outbox pattern from [ADR-IC-004](../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md). The outbox *is* the side-effects-as-scheduled-events mechanism for the event-bus publication side. The same shape extends to other side-effecting consumers (notifications, payments, regulatory submissions).
 
 ### 5.3 Handlers can be replayed

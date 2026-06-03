@@ -324,3 +324,14 @@ Each item below is a v1 omission, not a never-built omission. Each has a specifi
 - **Joint-holder deposits.** Held by two or more *co-titulares*. Different consent flows, different withholding allocation. v1 is single-holder.
 
 Re-opening any of these widens v1. Each has a clear later home; the brief stays disciplined by leaving them there.
+
+### v1.x — near-term, in-scope, sequenced just after v1
+
+A second tier of omissions is *in-scope for the engine* but sequenced into the first point releases after v1, surfaced by the §B scope review (2026-06-03). Unlike the list above (later-v product surface), each is engine/pack/config work on the known-working v1 runtime — not a new module:
+
+- **Commercial-eligibility preconditions.** New-client / new-money / salary-domiciliation / mortgage-linked gating, as the generic precondition contract ([ADR-PC-024](./adrs/ADR-PC-024-constitution-precondition-contract.md)): the engine declares the required verdicts in product config and refuses without them; upstream evaluates them. v1 launch products are not eligibility-gated, so the mechanism lands v1.x with the first gated product.
+- **Step-up (*crescente*) and amount-tiered (*escalonada*) rates.** A deterministic rate *schedule* resolved at constitution — *not* variable/indexed rate (that is v3, [03](./03-roadmap.md)). A rate-vector fold over the existing accrual engine; pure and replayable.
+- **Penalty-by-rate-reduction on early termination.** A fourth penalty basis alongside the flat/banded haircut and fixed fee of [§2.5](#25-early-termination-policies): recompute accrued interest at a reduced rate, penalty = `J(original) − J(reduced)`. An F.4 model-expressiveness addition, not a new mechanism.
+- **Partial-withdrawal rules.** Minimum withdrawal amount, minimum remaining balance, and lock-up (*carência*) period enforced by the decider; the `DepositPartiallyWithdrawn` event already exists ([§2.4.1](#241-family-specific-events-term-deposit-family-schema)).
+
+These are tracked in the [v1 build backlog](./v1-build-backlog.md) (F.9–F.12); none requires generic-engine change beyond [ADR-PC-024](./adrs/ADR-PC-024-constitution-precondition-contract.md)'s precondition mechanism.
