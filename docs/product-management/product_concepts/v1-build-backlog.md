@@ -112,6 +112,8 @@ checker resolves.
 | zero-engine-code-per-variant ([01 §3](./01-product-architecture.md)) | `ZERO_ENGINE_DIFF_PER_VARIANT` | enforced across **E/F** |
 | batch-ingest idempotent ([ADR-PC-017](./adrs/ADR-PC-017-legacy-batch-ingest-contract.md) slot 4) | `BATCH_INGEST_IDEMPOTENT` | **DEF-1** (stays `Planned` at v1) |
 | IFRS9 post-flag-never ([ADR-PC-015](./adrs/ADR-PC-015-ifrs9-signal-contract.md) slot 5) | `IFRS9_POST_FLAG_NEVER_GATES` | **DEF-3 / v2** (stays `Planned` at v1) |
+| constitution-precondition refusal ([ADR-PC-024](./adrs/ADR-PC-024-constitution-precondition-contract.md) slot 5) | `CONSTITUTION_PRECONDITION_REFUSAL` | **F.9** (v1.x) |
+| no clock-driven engine signal ([ADR-PC-023](./adrs/ADR-PC-023-temporal-signals-projection-derived.md) slot 1) | `NO_CLOCK_DRIVEN_ENGINE_SIGNAL` | **G.6** (analyser/emit) / DEF-2 (downstream scheduler) |
 
 ---
 
@@ -291,6 +293,19 @@ Anchors: [02](./02-v1-scope-term-deposits.md),
 - **F.8** Sealed v1 test corpus ([surface §3.9](./feature-design-configuration-surface.md)):
   canonical instances (e.g. `pt_dpz_12m_simple_with_irs`) with expected multi-year event
   sequences; wired into CI.
+- **F.9** *(v1.x)* Commercial-eligibility preconditions
+  ([ADR-PC-024](./adrs/ADR-PC-024-constitution-precondition-contract.md)):
+  `required_preconditions` in product config; **decider refusal** on absent/false verdict
+  (`DepositConstitutionFailed`); saga gathers verdicts upstream (no in-engine evaluation).
+  → `CONSTITUTION_PRECONDITION_REFUSAL`. *(v1 launch products are not eligibility-gated; lands
+  with the first gated product.)*
+- **F.10** *(v1.x)* Step-up (*crescente*) + amount-tiered (*escalonada*) rate schedules:
+  rate-vector resolved at constitution; deterministic fold over the B.3 accrual engine
+  (**not** variable/indexed rate — that is v3).
+- **F.11** *(v1.x)* Penalty-by-rate-reduction basis on `DepositTerminatedEarly`: recompute at a
+  reduced rate, penalty = `J(original) − J(reduced)`; extends F.4 flat/banded.
+- **F.12** *(v1.x)* Partial-withdrawal rules: min withdrawal, min remaining balance, *carência*
+  lock-up; decider-enforced (the `DepositPartiallyWithdrawn` event ships in F.2).
 
 ### Tier 3 — Integration estate (v1 cut)
 
@@ -431,7 +446,10 @@ Anchors: [ADR-PC-019 §P1](./adrs/ADR-PC-019-repository-strategy-monorepo.md),
   the WireMock settlement stub** from E.3/H.2. Gated by Epic 0.6 (legacy inventory).
 - **DEF-2 — Notification & disclosure delivery** (IC-011, PC-014): notification service, HMAC
   webhook delivery, FIN/SECCI/maturity/IRS-statement rendering. (Emit contract lands at v1 in
-  G.6.)
+  G.6.) **Includes the downstream temporal scheduler** that reads the maturity-calendar /
+  accrual-schedule projections and drives `SCHEDULED` notifications — the engine emits no
+  clock-driven signal ([ADR-PC-023](./adrs/ADR-PC-023-temporal-signals-projection-derived.md) +
+  [ADR-PC-014 Amendment A1](./adrs/ADR-PC-014-customer-notification-emit-contract.md)).
 - **DEF-3 — IFRS9 signal** (PC-015): raw operational facts (days-past-due,
   restructuring/write-off). Credit-oriented → v2+; `IFRS9_POST_FLAG_NEVER_GATES` built before v2
   credit scope.

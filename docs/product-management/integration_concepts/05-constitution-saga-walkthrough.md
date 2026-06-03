@@ -106,7 +106,7 @@ The orchestrator transitions the `ConstitutionProcess` state to `PARALLEL_VALIDA
 → Command ValidateProductLimits (internal, to the Deposit aggregate itself)
 ```
 
-> **No eligibility step here.** AML/KYC/sanctions clearance was already enforced at the edge as a precondition (step 0) and adjudicated upstream of this engine — the saga never validates client eligibility ([ADR-PC-013](../product_concepts/adrs/ADR-PC-013-aml-kyc-upstream-precondition.md)). What remains is `ValidateProductLimits` — a *product-engine* rule bound to the pack ("does the client already hold N of this product; is the amount in range"), **not** a financial-crime check.
+> **No eligibility step here.** AML/KYC/sanctions clearance was already enforced at the edge as a precondition (step 0) and adjudicated upstream of this engine — the saga performs no *financial-crime* eligibility adjudication ([ADR-PC-013](../product_concepts/adrs/ADR-PC-013-aml-kyc-upstream-precondition.md)). (Commercial-eligibility *verdicts* — new-money, salary-domiciliation — when a product requires them are gathered upstream and refused by the decider per [ADR-PC-024](../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md); v1's products are not eligibility-gated, so none appears in this walkthrough.) What remains is `ValidateProductLimits` — a *product-engine* rule bound to the pack ("does the client already hold N of this product; is the amount in range"), **not** a financial-crime check.
 
 The two carry the same `correlation_id`, `causation_id = msg-001-a7b3c`, and derived `idempotency_key`s (`idem-c4d8e2f1::reservation`, `idem-c4d8e2f1::limits`).
 
@@ -316,7 +316,7 @@ Everything above has been the happy path. The robustness of the system is in kno
 
 ### Scenario A: Product Limit Exceeded (Fails Early, in Validation)
 
-`ValidateProductLimits` fails: the client already holds the maximum number of this product (or the amount is out of the product's range). The `Deposit` aggregate emits `LimitsRejected`. (Client eligibility is *not* a failure mode here — AML/KYC clearance was a precondition at the edge, so an uncleared client never reached this saga at all.)
+`ValidateProductLimits` fails: the client already holds the maximum number of this product (or the amount is out of the product's range). The `Deposit` aggregate emits `LimitsRejected`. (Financial-crime eligibility is *not* a failure mode here — AML/KYC clearance was a precondition at the edge, so an uncleared client never reached this saga at all; commercial-eligibility refusals, when a product is gated, are a separate `DepositConstitutionFailed` path per [ADR-PC-024](../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md).)
 
 The orchestrator receives. Transitions `ConstitutionProcess` to `COMPENSATE_VALIDATIONS`.
 
