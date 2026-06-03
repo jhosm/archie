@@ -107,7 +107,6 @@ checker resolves.
 | pin-per-event replay ([ADR-PC-009](./adrs/ADR-PC-009-per-instance-version-pinning.md) §P1–P2) | `REPLAY_PIN_PER_EVENT` | **C.7** |
 | GL post-flag-never ([ADR-PC-012](./adrs/ADR-PC-012-gl-posting-signal-contract.md) slot 5) | `GL_POST_FLAG_NEVER_GATES` | **G.6** |
 | notify post-flag-never ([ADR-PC-014](./adrs/ADR-PC-014-customer-notification-emit-contract.md) slot 5; emit-contract only at v1) | `NOTIFY_POST_FLAG_NEVER_GATES` | **G.6** (emit) / DEF-2 (delivery) |
-| AML edge precondition ([ADR-PC-013](./adrs/ADR-PC-013-aml-kyc-upstream-precondition.md) slot 5) | `AML_EDGE_PRECONDITION` | **H.4** |
 | cold-replay budgets 5s/30s ([event-store §8.2](./feature-design-event-store-projections.md)) | `REPLAY_BUDGET_5S_30S` | **D.5 / L.3** |
 | zero-engine-code-per-variant ([01 §3](./01-product-architecture.md)) | `ZERO_ENGINE_DIFF_PER_VARIANT` | enforced across **E/F** |
 | batch-ingest idempotent ([ADR-PC-017](./adrs/ADR-PC-017-legacy-batch-ingest-contract.md) slot 4) | `BATCH_INGEST_IDEMPOTENT` | **DEF-1** (stays `Planned` at v1) |
@@ -326,30 +325,31 @@ Anchors: ADR-IC-001/002/008/004, ADR-PC-012/014.
 #### Epic H — Saga orchestrator
 
 Anchors: [ADR-IC-003](../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md),
-[integration_concepts §05](../integration_concepts/05-constitution-saga-walkthrough.md),
-[ADR-PC-013](./adrs/ADR-PC-013-aml-kyc-upstream-precondition.md).
+[integration_concepts §05](../integration_concepts/05-constitution-saga-walkthrough.md).
 
 - **H.1** Saga state machine in PG (ConstitutionProcess:
   STARTED→PARALLEL_VALIDATION→…→COMPLETED / compensation).
 - **H.2** Constitution saga: validation, approval, **settlement against WireMock stub**,
-  domain-event emission, compensation. (No in-saga `ValidateClientEligibility` — expunged by
-  PC-013.)
+  domain-event emission, compensation. (No in-saga client-eligibility/financial-crime
+  adjudication — AML/KYC is upstream per [00 §4](./00-product-vision.md); commercial eligibility
+  is a precondition per [ADR-PC-024](./adrs/ADR-PC-024-constitution-precondition-contract.md).)
 - **H.3** Renewal saga (engine-native): emit Matured+Constituted+Renewed on renewal date.
-- **H.4** AML/KYC upstream precondition (PC-013): edge records opaque `aml_clearance_ref`, engine
-  never re-adjudicates. → `AML_EDGE_PRECONDITION`.
+- ~~**H.4** AML/KYC upstream precondition~~ — **removed 2026-06-03**: AML/KYC is out of scope
+  ([00 §4](./00-product-vision.md)); [ADR-PC-013](./adrs/ADR-PC-013-aml-kyc-upstream-precondition.md)
+  is `Withdrawn`. Edge enforcement, if any, is an integration-estate concern
+  ([ADR-IC-006](../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)). (bd `babelstone-jqmu` closed.)
 - **H.5** Correlation/causation propagation; OTel span coupling.
 
 #### Epic I — Edge API (Kong) + command/query surface
 
 Anchors: [ADR-IC-006](../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md),
-[ADR-PC-018](./adrs/ADR-PC-018-channel-routing-coexistence.md),
-[ADR-PC-013](./adrs/ADR-PC-013-aml-kyc-upstream-precondition.md).
+[ADR-PC-018](./adrs/ADR-PC-018-channel-routing-coexistence.md).
 
 - **I.1** Command API → dispatcher; 202-ACCEPTED + process_id + SSE stream URL.
 - **I.2** Query API: as-of / point-in-time reads from read models.
 - **I.3** Kong config (DB-less `deck`): JWT, rate-limit, payload validation, OTel plugin, mTLS
   upstream.
-- **I.4** PSD2 SCA + AML-clearance enforcement at edge (`403 AML_CLEARANCE_REQUIRED`).
+- **I.4** PSD2 SCA enforcement at edge (`403 SCA_REQUIRED`). *(AML-clearance enforcement removed 2026-06-03 — AML out of scope, [00 §4](./00-product-vision.md).)*
 - **I.5** SoR-routing scaffolding via `sor` column (PC-018); routing in Kong, not engine.
 
 #### Epic J — MCP agent channel (hardened)

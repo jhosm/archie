@@ -61,7 +61,6 @@ tracked separately — and is **not** the job of this seed.
 | 5a | **Post-flag, never gated** — a GL-side reject never blocks or unwinds the producing business flow. | [ADR-PC-012 slot 5](./ADR-PC-012-gl-posting-signal-contract.md) | contract / saga | `GL_POST_FLAG_NEVER_GATES` | Planned |
 | 5b | **Post-flag, never gated** for `EVENT_DRIVEN` notifications; the `PRE_CONTRACTUAL` (FIN) case is the synchronous saga carve-out. *(Per [ADR-PC-014 Amendment A1](./ADR-PC-014-customer-notification-emit-contract.md), `SCHEDULED` is no longer engine-emitted — its purity claim is `NO_CLOCK_DRIVEN_ENGINE_SIGNAL`, row 17.)* | [ADR-PC-014 slot 5](./ADR-PC-014-customer-notification-emit-contract.md) | contract / saga | `NOTIFY_POST_FLAG_NEVER_GATES` | Planned |
 | 5c | **Post-flag, never gated — unconditionally**; IFRS 9 is downstream and has no gating claim. *(No signal emitted in v1; gate built before the v2 credit scope.)* | [ADR-PC-015 slot 5](./ADR-PC-015-ifrs9-signal-contract.md) | contract / saga | `IFRS9_POST_FLAG_NEVER_GATES` | Planned |
-| 6 | Absent/invalid AML clearance is a `403` at the **edge** (orchestrator never starts); the engine has **no eligibility step, no AML gate, no AML-reject compensation**. | [ADR-PC-013 slot 5](./ADR-PC-013-aml-kyc-upstream-precondition.md) | contract / saga | `AML_EDGE_PRECONDITION` | Planned |
 | 7 | A re-ingested legacy batch file produces **no duplicate `LegacyInstanceObserved` events** (engine-side dedupe on `(legacy_instance_id, fact_kind, fact_date)` + natural key). | [ADR-PC-017 slot 4](./ADR-PC-017-legacy-batch-ingest-contract.md) | integration (Testcontainers) | `BATCH_INGEST_IDEMPOTENT` | Planned |
 | 8 | **Cold replay budgets** are met: ≤ 5 s for a with-a-plan instance, ≤ 30 s for an irregular one. | [event-store §8.2](../feature-design-event-store-projections.md) | benchmark (nightly) | `REPLAY_BUDGET_5S_30S` | Planned |
 | 9 | **Zero engine code per new variant** — adding a family/variant produces **zero `/engine` diff**. | [01 §3](../01-product-architecture.md) | acceptance | `ZERO_ENGINE_DIFF_PER_VARIANT` | Planned |
@@ -159,6 +158,14 @@ event type. Row 5b's claim was narrowed in the same change: per
 no longer emits `SCHEDULED` notifications, so `NOTIFY_POST_FLAG_NEVER_GATES` now covers
 `EVENT_DRIVEN` (+ the `PRE_CONTRACTUAL` carve-out) only.
 
+**AML withdrawal (2026-06-03).** Row 6 (`AML_EDGE_PRECONDITION`, governed by
+ADR-PC-013) was **removed**: AML/KYC is out of scope for the product engine
+([00 §4](../00-product-vision.md)), and [ADR-PC-013](./ADR-PC-013-aml-kyc-upstream-precondition.md)
+is `Withdrawn`. The product engine has no AML commitment to gate; if AML clearance is
+enforced at the edge, that is an integration-estate fitness function, not a product-engine
+one. Row numbers are display indices, not the join key (Test IDs are) — the gap left at 6 is
+harmless and rows 7–17 keep their identifiers.
+
 ## Coverage by pyramid level
 
 This is the shape [ADR-PC-020 §P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)
@@ -172,7 +179,7 @@ spawns a parallel suite:
 | Analyser / CI gate | `DETERMINISM_GATE`, `NO_CLOCK_DRIVEN_ENGINE_SIGNAL` (analyser + contract) |
 | Architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC` |
 | Integration (Testcontainers) | `ES_ATOMIC_APPEND_OUTBOX`, `REPLAY_PIN_PER_EVENT`, `BATCH_INGEST_IDEMPOTENT`, `OBS_TRACEPARENT_PROPAGATION` |
-| Contract / saga | `GL_POST_FLAG_NEVER_GATES`, `NOTIFY_POST_FLAG_NEVER_GATES`, `IFRS9_POST_FLAG_NEVER_GATES`, `AML_EDGE_PRECONDITION`, `CONSTITUTION_PRECONDITION_REFUSAL` |
+| Contract / saga | `GL_POST_FLAG_NEVER_GATES`, `NOTIFY_POST_FLAG_NEVER_GATES`, `IFRS9_POST_FLAG_NEVER_GATES`, `CONSTITUTION_PRECONDITION_REFUSAL` |
 | Benchmark (nightly) | `REPLAY_BUDGET_5S_30S` |
 | Benchmark (per-PR / CI) | `PACK_VALIDATE_DEPTH_BUDGETS`, `PACK_SIM_DEPTH5_BUDGET` |
 | Acceptance | `ZERO_ENGINE_DIFF_PER_VARIANT` |
