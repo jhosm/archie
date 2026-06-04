@@ -31,10 +31,10 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [019](../../product_concepts/adrs/ADR-PC-019-repository-strategy-monorepo.md) | Repository Strategy — Monorepo | Tool-selection | Accepted |
 | [020](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md) | LLM Build Toolchain and Spec-Conformance Governance — Agent Tooling, Verifiable Commitments, and an Explicit-Drift Gate | Tool-selection | Accepted |
 | [021](../../product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md) | Application Layer — Family-Owned Deciders over a Family-Agnostic Engine | Tool-selection (ADR-PC-000 §D3 residual category — a structural/engineering-practice decision, declared tool-selection per the §D4 default; F1/F2 do not discriminate, the same class as ADR-PC-019) | Accepted |
-| [022](../../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md) | Product Documentation Architecture — Generated Reference, and the Spec/Decision Genre Discipline | Tool-selection | Proposed |
-| [023](../../product_concepts/adrs/ADR-PC-023-temporal-signals-projection-derived.md) | Temporal Signals Are Projection-Derived — The Engine Emits No Clock-Driven Events | Contract-shape | Proposed |
-| [024](../../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md) | Constitution Precondition Contract — Engine Declares, Upstream Evaluates, Decider Refuses | Contract-shape | Proposed |
-| [025](../../product_concepts/adrs/ADR-PC-025-customer-notification-emit-contract.md) | Customer-Notification Emit Contract — Event-Driven + Pre-Contractual NotificationDue, No Engine-Side Delivery State | Contract-shape | Proposed |
+| [022](../../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md) | Product Documentation Architecture — Generated Reference, and the Spec/Decision Genre Discipline | Tool-selection | Accepted |
+| [023](../../product_concepts/adrs/ADR-PC-023-temporal-signals-projection-derived.md) | Temporal Signals Are Projection-Derived — The Engine Emits No Clock-Driven Events | Contract-shape | Accepted |
+| [024](../../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md) | Constitution Precondition Contract — Engine Declares, Upstream Evaluates, Decider Refuses | Contract-shape | Accepted |
+| [025](../../product_concepts/adrs/ADR-PC-025-customer-notification-emit-contract.md) | Customer-Notification Emit Contract — Event-Driven + Pre-Contractual NotificationDue, No Engine-Side Delivery State | Contract-shape | Accepted |
 
 ## ADR-IC — Integration estate
 
