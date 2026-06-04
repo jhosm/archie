@@ -51,13 +51,18 @@ def rel(path: Path) -> str:
 
 
 def adr_slug_map() -> dict[str, str]:
-    """Map ADR id (ADR-PC-022) -> its filename slug (ADR-PC-022-...md), for linkifying."""
+    """Map ADR id (ADR-PC-022) -> its path within the adrs/ dir (ADR-PC-022-...md, or
+    retired/ADR-PC-014-...md for Superseded/Withdrawn ADRs), for linkifying."""
     out: dict[str, str] = {}
     for d in ADR_DIRS:
         for f in sorted(d.glob("ADR-*.md")):
             m = ADR_RE.match(f.name)
             if m:
                 out[m.group(0)] = f.name
+        for f in sorted((d / "retired").glob("ADR-*.md")):  # ADR-PC-000 §D5: retired ADRs live here
+            m = ADR_RE.match(f.name)
+            if m:
+                out[m.group(0)] = f"retired/{f.name}"
     return out
 
 
@@ -311,7 +316,9 @@ def render_adr_index(slugs: dict[str, str]) -> dict[str, str]:
         (ADR_DIRS[1], "ADR-IC — Integration estate", "integration_concepts"),
     ]:
         rows = ["", f"## {ns_label}\n", "| # | Title | Shape | Status |", "|---|---|---|---|"]
-        for f in sorted(d.glob("ADR-*.md")):
+        adr_files = [(f, f.name) for f in d.glob("ADR-*.md")]
+        adr_files += [(f, f"retired/{f.name}") for f in (d / "retired").glob("ADR-*.md")]
+        for f, relpath in sorted(adr_files, key=lambda x: x[0].name):
             m = ADR_RE.match(f.name)
             if not m:
                 continue
@@ -319,7 +326,7 @@ def render_adr_index(slugs: dict[str, str]) -> dict[str, str]:
             num = m.group(0).split("-")[-1]
             # title without the "ADR-XX-NNN: " prefix
             t = re.sub(r"^ADR-(?:PC|IC)-\d{3}:\s*", "", info["title"])
-            link = f"../../{ns_dir}/adrs/{f.name}"
+            link = f"../../{ns_dir}/adrs/{relpath}"
             rows.append(
                 f"| [{num}]({link}) | {strip_md(t)} | {strip_md(info['shape']) or '—'} "
                 f"| {strip_md(info['status']) or '—'} |"

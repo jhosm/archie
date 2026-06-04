@@ -6,7 +6,7 @@
 > This document is the source the creation step reads from.
 >
 > **Reference convention** (per [product_concepts/README §Cross-references](./README.md)): ADR
-> short-forms `[ADR-PC-NNN]` link to [`./adrs/`](./adrs/); design-note short-forms
+> short-forms `[ADR-PC-NNN]` link to [`./adrs/`](./adrs); design-note short-forms
 > (`event-store`, `two-modes`, `surface`, `coexistence`, `authoring`) follow the *Cite as*
 > column of [the README map](./README.md); `[Q-XX]` and brief-§ refs point at
 > [04 — Open Questions](./04-open-questions.md).
@@ -14,9 +14,9 @@
 ## Context
 
 `babelstone` is moving from a documentation-only reference library into an actual build. The
-architecture is **decided**: ADR-PC-000…020 (product engine, [`./adrs/`](./adrs/)) and
+architecture is **decided**: ADR-PC-000…020 (product engine, [`./adrs/`](./adrs)) and
 ADR-IC-000…013 (integration estate,
-[`../integration_concepts/adrs/`](../integration_concepts/adrs/)) are all Accepted, and the
+[`../integration_concepts/adrs/`](../integration_concepts/adrs)) are all Accepted, and the
 monorepo is scaffolded (bd `archie-bhq.1`: 13 top-level paths, path-scoped CI stubs that
 currently `echo TODO`, CODEOWNERS, Dockerfiles). v1 is **execution, not design**.
 
@@ -335,7 +335,7 @@ Anchors: [ADR-IC-003](../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.
   is a precondition per [ADR-PC-024](./adrs/ADR-PC-024-constitution-precondition-contract.md).)
 - **H.3** Renewal saga (engine-native): emit Matured+Constituted+Renewed on renewal date.
 - ~~**H.4** AML/KYC upstream precondition~~ — **removed 2026-06-03**: AML/KYC is out of scope
-  ([00 §4](./00-product-vision.md)); [ADR-PC-013](./adrs/ADR-PC-013-aml-kyc-upstream-precondition.md)
+  ([00 §4](./00-product-vision.md)); [ADR-PC-013](./adrs/retired/ADR-PC-013-aml-kyc-upstream-precondition.md)
   is `Withdrawn`. Edge enforcement, if any, is an integration-estate concern
   ([ADR-IC-006](../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)). (bd `babelstone-jqmu` closed.)
 - **H.5** Correlation/causation propagation; OTel span coupling.
@@ -449,7 +449,7 @@ Anchors: [ADR-PC-019 §P1](./adrs/ADR-PC-019-repository-strategy-monorepo.md),
   G.6.) **Includes the downstream temporal scheduler** that reads the maturity-calendar /
   accrual-schedule projections and drives `SCHEDULED` notifications — the engine emits no
   clock-driven signal ([ADR-PC-023](./adrs/ADR-PC-023-temporal-signals-projection-derived.md) +
-  [ADR-PC-014 Amendment A1](./adrs/ADR-PC-014-customer-notification-emit-contract.md)).
+  [ADR-PC-014 Amendment A1](./adrs/retired/ADR-PC-014-customer-notification-emit-contract.md)).
 - **DEF-3 — IFRS9 signal** (PC-015): raw operational facts (days-past-due,
   restructuring/write-off). Credit-oriented → v2+; `IFRS9_POST_FLAG_NEVER_GATES` built before v2
   credit scope.

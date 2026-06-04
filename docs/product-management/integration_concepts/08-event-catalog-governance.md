@@ -337,7 +337,7 @@ For Option A events, replace the `Payload shape` line with `Payload shape: Optio
 
 ### What the Catalogue Contains for Each Aggregate (Option B Aggregates Only)
 
-[Primitive 2 (Doc 01)](../integration_concepts/01-the-six-primitives.md) names two payload-shape positions per aggregate. Option A aggregates need only per-event entries (above). Option B aggregates — where multiple event types share a single schema via a discriminator — need an additional aggregate-level entry that captures what per-event entries cannot: the granularity rationale, the discriminator, and the per-discriminator field contract.
+[Primitive 2 (Doc 01)](./01-the-six-primitives.md) names two payload-shape positions per aggregate. Option A aggregates need only per-event entries (above). Option B aggregates — where multiple event types share a single schema via a discriminator — need an additional aggregate-level entry that captures what per-event entries cannot: the granularity rationale, the discriminator, and the per-discriminator field contract.
 
 ```
 Deposit Aggregate
