@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Superseded by [ADR-PC-025](./ADR-PC-025-customer-notification-emit-contract.md) |
 | Date | 2026-05-23 |
 | Deciders | jhosm |
 | Shape | Contract-shape |
@@ -10,6 +10,8 @@
 | Depends on | [ADR-PC-001](./ADR-PC-001-event-store-technology.md) (event store + outbox — the emission substrate), [ADR-IC-004](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md) (outbox — at-least-once relay), [ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md) (Avro + schema registry), [ADR-PC-004](./ADR-PC-004-pii-crypto-shredding.md) (PII crypto-shredding — the engine-internal PII-resolve surface decrypts on demand and returns null on erasure), [ADR-PC-007](./ADR-PC-007-signed-yaml-oci-pack.md) (templates are pack artefacts, version-pinned per instance), [ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md) (saga orchestrator — the pre-contractual FIN gate), [ADR-IC-009](../../integration_concepts/adrs/ADR-IC-009-testing-infrastructure.md) (consumer-driven contract tests) |
 | Resolves | bd `archie-10r.15`; **Q-AV** ([04 §Q-AV](../04-open-questions.md)) |
 | Related | [ADR-PC-012](./ADR-PC-012-gl-posting-signal-contract.md) (GL posting signal contract — the sibling outbound-signal contract that shares this shape), [ADR-PC-023](./ADR-PC-023-temporal-signals-projection-derived.md) (governs this ADR's **temporal-trigger half** — the engine emits no clock-driven `SCHEDULED` signal; see Amendment A1), under the [ADR-PC-000 signal-contract principle](./ADR-PC-000-namespace-and-contract-shape-framework.md) |
+
+> **Superseded by [ADR-PC-025](./ADR-PC-025-customer-notification-emit-contract.md) (2026-06-04)** — see there for the current contract. ADR-PC-014's Decision (below) emitted `SCHEDULED` `NotificationDue` and ran a scheduler; **Amendment A1** removed them. Per the [ADR-PC-000 supersede-clean convention](./ADR-PC-000-namespace-and-contract-shape-framework.md), rather than leave a reader to reconcile Decision + A1, the contract is reissued as a single present-tense read in ADR-PC-025. This ADR is retained, unchanged below, as the record of what was first decided.
 
 > **Q-code note.** The bd issue `archie-10r.15` cites the source as "Q-AQ (cross-cutting)." In the current [04-open-questions](../04-open-questions.md) register, Q-AQ is *bulk-command authorisation*; the customer-communications question is **Q-AV**. This ADR cites Q-AV. The bd issue text predates a renumber of the cross-cutting block.
 

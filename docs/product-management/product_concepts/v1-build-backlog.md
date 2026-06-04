@@ -106,7 +106,7 @@ checker resolves.
 | determinism gate ([ADR-PC-010](./adrs/ADR-PC-010-dotnet-hand-rolled-engine.md) §P5) | `DETERMINISM_GATE` | **A.7** |
 | pin-per-event replay ([ADR-PC-009](./adrs/ADR-PC-009-per-instance-version-pinning.md) §P1–P2) | `REPLAY_PIN_PER_EVENT` | **C.7** |
 | GL post-flag-never ([ADR-PC-012](./adrs/ADR-PC-012-gl-posting-signal-contract.md) slot 5) | `GL_POST_FLAG_NEVER_GATES` | **G.6** |
-| notify post-flag-never ([ADR-PC-014](./adrs/ADR-PC-014-customer-notification-emit-contract.md) slot 5; emit-contract only at v1) | `NOTIFY_POST_FLAG_NEVER_GATES` | **G.6** (emit) / DEF-2 (delivery) |
+| notify post-flag-never ([ADR-PC-025](./adrs/ADR-PC-025-customer-notification-emit-contract.md) slot 5, clean reissue of ADR-PC-014; emit-contract only at v1) | `NOTIFY_POST_FLAG_NEVER_GATES` | **G.6** (emit) / DEF-2 (delivery) |
 | cold-replay budgets 5s/30s ([event-store §8.2](./feature-design-event-store-projections.md)) | `REPLAY_BUDGET_5S_30S` | **D.5 / L.3** |
 | zero-engine-code-per-variant ([01 §3](./01-product-architecture.md)) | `ZERO_ENGINE_DIFF_PER_VARIANT` | enforced across **E/F** |
 | batch-ingest idempotent ([ADR-PC-017](./adrs/ADR-PC-017-legacy-batch-ingest-contract.md) slot 4) | `BATCH_INGEST_IDEMPOTENT` | **DEF-1** (stays `Planned` at v1) |
