@@ -17,6 +17,7 @@ The deposit is opened: principal, the rate-sheet-resolved TAN, and the AT_MATURI
 | `maturity_date` | `int` (`date`) | MaturityDate (DateOnly) as days since epoch. |
 | `interest_variant` | `string` | Interest variant discriminator (e.g. AT_MATURITY). |
 | `auto_renewal_policy` | `string` | Auto-renewal policy discriminator. |
+| `payment_period_months` | `int` | PERIODIC coupon cadence in months (1 monthly, 3 quarterly); 0 for AT_MATURITY/ADVANCE. Additive with a default so pre-F.1 AT_MATURITY records that never carried it still decode (forward-only schema evolution, [ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)). |
 
 ## Governing ADRs
 

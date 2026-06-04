@@ -8,6 +8,11 @@ Constitute a term deposit. ``principal_cents`` and all money are integer cents (
 the pricing role (e.g. ``standard``); ``start_date`` is ISO-8601 (YYYY-MM-DD). The resolved TAN
 is stamped by the engine from the active rate sheet — never supplied here.
 
+``interest_variant`` is one of AT_MATURITY (interest + principal at maturity), PERIODIC (coupons
+paid out to the current account, principal at maturity), or ADVANCE (full-term interest at t=0).
+``payment_period_months`` is required for PERIODIC — 1 (monthly) or 3 (quarterly), the only
+cadences priced — and is 0/omitted for AT_MATURITY and ADVANCE.
+
 ## Signature
 
 | Parameter | Type | Default |
@@ -20,5 +25,6 @@ is stamped by the engine from the active rate sheet — never supplied here.
 | `funding_account` | `str` | — |
 | `interest_variant` | `str` | `'AT_MATURITY'` |
 | `auto_renewal_policy` | `str` | `'NONE'` |
+| `payment_period_months` | `int` | `0` |
 
 **Returns:** `ConstituteDepositResult`
