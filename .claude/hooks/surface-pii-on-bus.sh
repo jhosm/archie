@@ -3,7 +3,7 @@
 # PostToolUse (surfacing, not a gate) — event/contract schema edited: scan for
 # PII-shaped field names and surface the no-PII-on-the-durable-bus rule. The bus
 # carries REFERENCES; PII resolves internally (ADR-PC-004 crypto-shredding,
-# ADR-PC-014 references-only; ADR-PC-020 §P3 contract-reviewer is the judgement layer).
+# ADR-PC-025 references-only; ADR-PC-020 §P3 contract-reviewer is the judgement layer).
 
 input="$(cat)"
 file_path="$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty')"
@@ -18,7 +18,7 @@ pattern='iban|bic|swift|nif|niss|vat[_-]?id|tax[_-]?id|passport|msisdn|phone|tel
 hits="$(grep -ioE "$pattern" "$file_path" 2>/dev/null | tr '[:upper:]' '[:lower:]' | sort -u | tr '\n' ' ' | sed 's/ *$//')"
 [ -n "$hits" ] || exit 0
 
-msg="Possible PII field name(s) in $(basename "$file_path"): ${hits}. NEVER put PII (cleartext OR ciphertext) on the durable bus — carry a reference/token and resolve internally (ADR-PC-004, ADR-PC-014). If these are genuinely references (a token id, not a value) this is fine; otherwise replace with a reference. The contract-reviewer agent is the authoritative check."
+msg="Possible PII field name(s) in $(basename "$file_path"): ${hits}. NEVER put PII (cleartext OR ciphertext) on the durable bus — carry a reference/token and resolve internally (ADR-PC-004, ADR-PC-025). If these are genuinely references (a token id, not a value) this is fine; otherwise replace with a reference. The contract-reviewer agent is the authoritative check."
 
 jq -n --arg c "$msg" '{hookSpecificOutput:{hookEventName:"PostToolUse",additionalContext:$c}}'
 exit 0
