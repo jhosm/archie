@@ -13,6 +13,10 @@
 
 > **Re-proposal note (2026-06-04).** This ADR was first drafted 2026-06-01 as *"Diátaxis Overlay + Generated Reference"* — a three-part navigation overlay (`guides/` + generated `reference/` + persona `reading-paths/`) realised by Epic R (R.1–R.8, PR #81). That PR was **not merged**: in use, the overlay made the corpus *harder* to read, not easier — it added front doors to a base whose **current truth was itself hard to extract**. The original proposal never reached `Accepted`, so this is a rewrite of a live proposal, not a §D5 supersession. The audit trail of the original four-architecture exploration is preserved in §Evaluation; what changed is the *diagnosis* (§Context).
 
+> **Update — Open Action 5 resumed (2026-06-04).** The deferred onboarding/tutorials rebuild (problem **B**; §P3, Open Action 5) is now being **resumed**, because §P3's precondition — *"a base that has been made legible first"* — is met: the generated `reference/` quadrant is `Live` (commitments #1–#2) and the PC-014 → [ADR-PC-025](./ADR-PC-025-customer-notification-emit-contract.md) clean reissue plus the `retired/` moves have landed on `main`. The rebuild begins as a **Diátaxis product-docs tree at `docs/product-docs/`** (PR #88 — a proof-of-concept for the pack + rate-sheet workflow), aimed at product users (config authors): a *distinct audience* from this concern-axis design corpus.
+>
+> This is **additive, not a reversal** — it leaves Decision parts **1** (keep the generated reference) and **3** (the genre discipline) untouched and executes the deferred clause of part **2** / §P3. It is explicitly **not** the rejected 2026-06-01 overlay: the new tree carries only **tutorials / how-to / explanation** (no second `reference/` — it *links into* the generated one), restates **no** normative content (**link-don't-restate**), and re-introduces **no `reading-paths/`** persona overlay (future personas get more pages in the same three quadrants, never a persona tree). A separate audience-facing deliverable is not a navigation layer over the corpus, so it does not re-incur the "front doors over an illegible base" objection (§Evaluation) that sank the original. Follow-ups: bd `babelstone-sfnt.15` / `.16` / `.17`, `babelstone-fk7m.8`.
+
 ---
 
 ## Context
@@ -158,7 +162,7 @@ These commitments are documentation-scoped (not engine load-bearing), so they li
 2. **Drop the overlay** (bd `babelstone-sfnt.11`) — delete `guides/` + `reading-paths/`; repoint README / CLAUDE.md / AGENTS.md.
 3. **Amend [ADR-PC-000 §D5](./ADR-PC-000-namespace-and-contract-shape-framework.md)** (bd `babelstone-sfnt.12`) — bless supersede-clean-on-contradiction; honour (do not rebut) the 2026-06-03 "instances remain the contracts" passage.
 4. **Supersede [ADR-PC-014](./retired/ADR-PC-014-customer-notification-emit-contract.md) clean — the pilot** (bd `babelstone-sfnt.13`).
-5. **DEFERRED:** the collapsed current-truth-view renderer (bd `babelstone-sfnt.14`); corpus-wide extraction behind proven need; the onboarding/tutorials rebuild on the clean base.
+5. **Partly resumed (2026-06-04):** the **onboarding/tutorials rebuild on the clean base** is now under way — see the *Update* note near the top — as the Diátaxis product-docs tree in PR #88. Still **DEFERRED:** the collapsed current-truth-view renderer (bd `babelstone-sfnt.14`) and corpus-wide extraction behind a proven-need trigger.
 
 ---
 
