@@ -22,8 +22,8 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [010](../../product_concepts/adrs/ADR-PC-010-dotnet-hand-rolled-engine.md) | Engine Implementation Language and Framework — .NET 10 + Hand-Rolled Event-Sourcing Core | Tool-selection | Accepted |
 | [011](../../product_concepts/adrs/ADR-PC-011-in-house-load-test-harness.md) | Synthetic v4-Scale Load-Test Harness — In-House .NET Harness on the Production Boundary | Tool-selection | Accepted |
 | [012](../../product_concepts/adrs/ADR-PC-012-gl-posting-signal-contract.md) | GL Posting Signal Contract — Raw Business Events, GL-Side Posting Adapter | Contract-shape | Accepted |
-| [013](../../product_concepts/adrs/ADR-PC-013-aml-kyc-upstream-precondition.md) | AML / KYC Contract — Upstream Precondition, Engine Oblivious | Contract-shape | Withdrawn (2026-06-03) |
-| [014](../../product_concepts/adrs/ADR-PC-014-customer-notification-emit-contract.md) | Customer-Notification Emit Contract — NotificationDue Events, No Engine-Side Delivery State | Contract-shape | Superseded by ADR-PC-025 |
+| [013](../../product_concepts/adrs/retired/ADR-PC-013-aml-kyc-upstream-precondition.md) | AML / KYC Contract — Upstream Precondition, Engine Oblivious | Contract-shape | Withdrawn (2026-06-03) |
+| [014](../../product_concepts/adrs/retired/ADR-PC-014-customer-notification-emit-contract.md) | Customer-Notification Emit Contract — NotificationDue Events, No Engine-Side Delivery State | Contract-shape | Superseded by ADR-PC-025 |
 | [015](../../product_concepts/adrs/ADR-PC-015-ifrs9-signal-contract.md) | IFRS 9 Signal Contract — Raw Operational Facts (Arrears + Credit-Lifecycle Events), Staging Derived Counterparty-Side | Contract-shape | Accepted |
 | [016](../../product_concepts/adrs/ADR-PC-016-legacy-current-account-adapter.md) | Legacy Current-Account Adapter Implementation | Contract-shape (hybrid — see Decision 0) | Accepted |
 | [017](../../product_concepts/adrs/ADR-PC-017-legacy-batch-ingest-contract.md) | Legacy Batch Ingest Contract | Contract-shape | Accepted |

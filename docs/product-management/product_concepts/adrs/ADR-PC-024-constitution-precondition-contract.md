@@ -9,7 +9,7 @@
 | Counterparty | The **constitution saga** ([ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md), [integration_concepts §05](../../integration_concepts/05-constitution-saga-walkthrough.md)) that resolves each precondition verdict from its owning upstream system (CRM for account age / relationship; Core Banking for fund provenance and salary domiciliation; the credit system for a linked mortgage), and the **product-config author** who declares which preconditions a product requires |
 | Depends on | [ADR-PC-008](./ADR-PC-008-rate-sheet-storage-and-deploy-api.md) (product config + deploy API — where the required-precondition list is authored), [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) (the family decider that performs the refusal stays pure), [ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md) (the saga that gathers verdicts) |
 | Resolves | §B commercial-eligibility gap (term-deposit scope review, 2026-06-03) |
-| Related | [ADR-PC-012](./ADR-PC-012-gl-posting-signal-contract.md) / [ADR-PC-014](./ADR-PC-014-customer-notification-emit-contract.md) / [ADR-PC-015](./ADR-PC-015-ifrs9-signal-contract.md) (the signal-contract family — the [ADR-PC-000 signal-contract principle](./ADR-PC-000-namespace-and-contract-shape-framework.md) *"the engine records/consumes a fact, never owns the verdict"* applied here to an inbound, product-specific precondition) |
+| Related | [ADR-PC-012](./ADR-PC-012-gl-posting-signal-contract.md) / [ADR-PC-014](./retired/ADR-PC-014-customer-notification-emit-contract.md) / [ADR-PC-015](./ADR-PC-015-ifrs9-signal-contract.md) (the signal-contract family — the [ADR-PC-000 signal-contract principle](./ADR-PC-000-namespace-and-contract-shape-framework.md) *"the engine records/consumes a fact, never owns the verdict"* applied here to an inbound, product-specific precondition) |
 
 ---
 
@@ -46,7 +46,7 @@ Constitution preconditions are a **generic, product-config-declared contract**: 
                       salary_domiciled: { satisfied: false, evidence_ref, evaluated_at } }
    ```
 
-   Each resolved verdict is an opaque `{ satisfied, evidence_ref, evaluated_at }` triple. The engine records the verdicts on the `DepositConstituted` (or `DepositConstitutionFailed`) envelope **for audit lineage only**. **No PII rides a verdict** (`evidence_ref` is a reference, not identity data; [ADR-PC-014 PII-by-reference](./ADR-PC-014-customer-notification-emit-contract.md), inherited).
+   Each resolved verdict is an opaque `{ satisfied, evidence_ref, evaluated_at }` triple. The engine records the verdicts on the `DepositConstituted` (or `DepositConstitutionFailed`) envelope **for audit lineage only**. **No PII rides a verdict** (`evidence_ref` is a reference, not identity data; [ADR-PC-014 PII-by-reference](./retired/ADR-PC-014-customer-notification-emit-contract.md), inherited).
 
 2. **Semantics.** A verdict asserts a *fact* — "an upstream authority evaluated this product-specific predicate for this customer at `evaluated_at` and it is `satisfied` / not." The **meaning** of each predicate (what counts as "new money", the look-back window, what a "salary domiciliation" is) is **entirely upstream/pack-owned**. The engine holds **no transaction history, no CRM data, no provenance model**; it treats each verdict as opaque and never re-evaluates it. What the engine owns is *which* verdicts a product requires (`required_preconditions`) and *that they must be `satisfied: true`* to constitute.
 

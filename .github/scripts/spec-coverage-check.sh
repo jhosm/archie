@@ -147,7 +147,7 @@ for d in $CODE_DIRS; do
   while IFS= read -r ref; do
     [ -n "$ref" ] || continue
     anchors=$((anchors+1))
-    f="$(ls "$PC_ADRS/$ref"-*.md "$IC_ADRS/$ref"-*.md 2>/dev/null | head -1 || true)"
+    f="$(ls "$PC_ADRS/$ref"-*.md "$PC_ADRS/retired/$ref"-*.md "$IC_ADRS/$ref"-*.md "$IC_ADRS/retired/$ref"-*.md 2>/dev/null | head -1 || true)"
     if [ -z "$f" ]; then
       err "$d" "Code anchor '$ref' resolves to no ADR file."
     elif grep -qiE '^\| *Status *\|.*(Superseded|Withdrawn)' "$f"; then
