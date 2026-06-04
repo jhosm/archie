@@ -22,7 +22,7 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [010](../../product_concepts/adrs/ADR-PC-010-dotnet-hand-rolled-engine.md) | Engine Implementation Language and Framework — .NET 10 + Hand-Rolled Event-Sourcing Core | Tool-selection | Accepted |
 | [011](../../product_concepts/adrs/ADR-PC-011-in-house-load-test-harness.md) | Synthetic v4-Scale Load-Test Harness — In-House .NET Harness on the Production Boundary | Tool-selection | Accepted |
 | [012](../../product_concepts/adrs/ADR-PC-012-gl-posting-signal-contract.md) | GL Posting Signal Contract — Raw Business Events, GL-Side Posting Adapter | Contract-shape | Accepted |
-| [013](../../product_concepts/adrs/ADR-PC-013-aml-kyc-upstream-precondition.md) | AML / KYC Contract — Upstream Precondition, Engine Oblivious | Contract-shape | Accepted |
+| [013](../../product_concepts/adrs/ADR-PC-013-aml-kyc-upstream-precondition.md) | AML / KYC Contract — Upstream Precondition, Engine Oblivious | Contract-shape | Withdrawn (2026-06-03) |
 | [014](../../product_concepts/adrs/ADR-PC-014-customer-notification-emit-contract.md) | Customer-Notification Emit Contract — NotificationDue Events, No Engine-Side Delivery State | Contract-shape | Accepted |
 | [015](../../product_concepts/adrs/ADR-PC-015-ifrs9-signal-contract.md) | IFRS 9 Signal Contract — Raw Operational Facts (Arrears + Credit-Lifecycle Events), Staging Derived Counterparty-Side | Contract-shape | Accepted |
 | [016](../../product_concepts/adrs/ADR-PC-016-legacy-current-account-adapter.md) | Legacy Current-Account Adapter Implementation | Contract-shape (hybrid — see Decision 0) | Accepted |
@@ -31,7 +31,9 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [019](../../product_concepts/adrs/ADR-PC-019-repository-strategy-monorepo.md) | Repository Strategy — Monorepo | Tool-selection | Accepted |
 | [020](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md) | LLM Build Toolchain and Spec-Conformance Governance — Agent Tooling, Verifiable Commitments, and an Explicit-Drift Gate | Tool-selection | Accepted |
 | [021](../../product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md) | Application Layer — Family-Owned Deciders over a Family-Agnostic Engine | Tool-selection (ADR-PC-000 §D3 residual category — a structural/engineering-practice decision, declared tool-selection per the §D4 default; F1/F2 do not discriminate, the same class as ADR-PC-019) | Accepted |
-| [022](../../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md) | Product Documentation Architecture — Diátaxis Overlay + Generated Reference | Tool-selection | Proposed |
+| [022](../../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md) | Product Documentation Architecture — Generated Reference, and the Spec/Decision Genre Discipline | Tool-selection | Proposed |
+| [023](../../product_concepts/adrs/ADR-PC-023-temporal-signals-projection-derived.md) | Temporal Signals Are Projection-Derived — The Engine Emits No Clock-Driven Events | Contract-shape | Proposed |
+| [024](../../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md) | Constitution Precondition Contract — Engine Declares, Upstream Evaluates, Decider Refuses | Contract-shape | Proposed |
 
 ## ADR-IC — Integration estate
 

@@ -2,7 +2,7 @@
 
 # Glossary
 
-Canonical one-line definitions for the vocabulary used across the corpus. Each term is defined **once, here**; guides and reading-paths link to this page (e.g. `glossary.md#family`) rather than redefining terms ([ADR-PC-022 §P3](../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md)). For the full treatment, follow the linked ADR or concept doc.
+Canonical one-line definitions for the vocabulary used across the corpus. Each term is defined **once, here** — the generated reference is the single home for the vocabulary; other corpus docs link to this page (e.g. `glossary.md#family`) rather than redefining terms ([ADR-PC-022 §P1](../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md)). For the full treatment, follow the linked ADR or concept doc.
 
 | Term | Definition |
 |---|---|
