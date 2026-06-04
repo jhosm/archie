@@ -176,10 +176,12 @@ The **explicit-drift gate** (ADR-PC-020 §D3): *no change may contradict an Acce
 - `docs/product-management/integration_concepts/` documents are numbered `00–11` and intended to be read in sequence
 - `docs/product-management/financial_concepts/` documents are standalone references, not sequenced
 - `docs/product-management/product_concepts/` documents are numbered `00–04` for the core brief, plus `feature-design-*.md` companions for each architectural sub-topic
+- `docs/product-management/reference/` is the **generated reference** (ADR-PC-022): an additive sibling rendered from the contracts / MCP / ADR sources — **never hand-edit it** (`make docs-gen` regenerates; `make docs-verify` gates drift in CI, the same guarantee ADR-IC-008 gives the EventCatalog). The concern-axis series stay physically untouched
 - The running example is a Portuguese term deposit system — patterns are general, the example is specific
 - Cross-links use relative markdown links. Patterns by location:
   - Between sibling concept docs in the same folder: `./NN-name.md`
   - Between concept docs in different sibling folders (same `docs/product-management/` parent): `../OTHER_FOLDER/NN-name.md`
+  - From a generated `reference/` page (a sibling of the three series) to a concern-axis doc: `../OTHER_FOLDER/NN-name.md`; to an ADR: `../product_concepts/adrs/ADR-PC-NNN-…md` (the renderer emits these — `reference/` is generated, not hand-authored)
   - From an ADR to a concept doc in its own series (e.g. `integration_concepts/adrs/` → `integration_concepts/NN-name.md`): `../NN-name.md`
   - From an ADR-PC to an ADR-IC (cross-namespace): `../../integration_concepts/adrs/ADR-IC-NNN-…md`
   - From the top-level README: `./docs/product-management/FOLDER/NN-name.md`

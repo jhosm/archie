@@ -32,6 +32,7 @@ jobs:
       rate_sheets: ${{ steps.filter.outputs.rate_sheets }}
       infra: ${{ steps.filter.outputs.infra }}
       docs: ${{ steps.filter.outputs.docs }}
+      docs_gen: ${{ steps.filter.outputs.docs_gen }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -51,6 +52,7 @@ jobs:
             rate_sheets: ['rate-sheets/**']
             infra: ['infra/**']
             docs: ['docs/**', '*.md', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
+            docs_gen: ['scripts/docs-gen/**', 'docs/product-management/reference/**', 'contracts/**', 'mcp-server/**', 'docs/product-management/**/adrs/ADR-*.md', 'Makefile']
 
   engine:
     needs: changes
@@ -298,6 +300,35 @@ jobs:
       - name: Diagram render-check (each committed .puml renders to its SVG)
         run: bash .github/scripts/diagram-render-check.sh
 
+  docs-verify:
+    needs: changes
+    # The generated reference/ tree (ADR-PC-022 §P2) is rendered from the Avro /
+    # CUE / MCP / ADR sources, so it can drift WITHOUT touching docs/** — a
+    # contracts/** or mcp-server/** change re-renders it. Gate on every reference
+    # source (plus the generator + Makefile) so a stale commit fails here, the same
+    # structural guarantee ADR-IC-008 gives the EventCatalog. Flips
+    # DOCS_REFERENCE_NO_DRIFT / DOCS_REFERENCE_BANNERED Planned→Live (ADR-PC-022).
+    if: ${{ needs.changes.outputs.docs_gen == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4 # pins Python + CUE from mise.toml (ADR-PC-006/022)
+      - name: Reference is up to date with its sources (ADR-PC-022 §P2)
+        # Regenerate into memory and diff against the committed tree; a non-empty
+        # diff fails. Same check dev runs via `make docs-verify`.
+        run: make docs-verify
+      - name: Every reference page carries the generated banner (DOCS_REFERENCE_BANNERED)
+        run: |
+          set -euo pipefail
+          missing=0
+          while IFS= read -r -d '' f; do
+            if ! head -1 "$f" | grep -q 'DO NOT EDIT — generated'; then
+              echo "::error file=$f::reference page is missing the generated banner (ADR-PC-022 §P2)"
+              missing=1
+            fi
+          done < <(find docs/product-management/reference -name '*.md' -print0)
+          test "$missing" -eq 0 && echo "all reference pages are bannered"
+
   gate:
     # Always-run aggregator (Q.7, archie-j72w). The per-subtree jobs above are
     # path-scoped (ADR-PC-019 §P1) — they SKIP on unrelated PRs. GitHub branch
@@ -323,6 +354,7 @@ jobs:
       - rate-sheets
       - infra
       - docs
+      - docs-verify
     if: always()
     runs-on: ubuntu-latest
     steps:

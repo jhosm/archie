@@ -8,6 +8,8 @@ The three series answer three distinct questions:
 - [product_concepts/](./docs/product-management/product_concepts/README.md) — **what configurable product implements that math**
 - [integration_concepts/](./docs/product-management/integration_concepts/00-introduction-and-decisions.md) — **how that product integrates with the bank**
 
+> **Looking something up?** Beyond the concern-axis series above, the [**generated reference**](./docs/product-management/reference/README.md) collects machine-derived lookup material — event payloads, family schemas, the MCP tool surface, a cross-namespace ADR index, and the glossary — rendered from the contracts and regenerated-and-diffed in CI so it cannot drift (`make docs-gen` / `make docs-verify`). The documentation architecture is [ADR-PC-022](./docs/product-management/product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md).
+
 ---
 
 ## Series

@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 EVENTCATALOG_PORT ?= 8082
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check validate-variant pack-validate-test pack-validate pack-build pack-verify up down reset logs ps verify demo-mcp demo-mcp-down
+.PHONY: help bootstrap doctor contracts-check validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify up down reset logs ps verify demo-mcp demo-mcp-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -81,6 +81,16 @@ pack-build: ## Build a pack into an OCI layout, print its digest (PACK=pt.2026.1
 
 pack-verify: ## Build then pull-by-digest + re-validate a pack (PACK=pt.2026.1)
 	@DIGEST="$$(./packs/pack.sh build packs/$(PACK))" && ./packs/pack.sh verify packs/$(PACK) --digest "$$DIGEST"
+
+## ----------------------------------------------------------------------------
+## Generated reference docs (ADR-PC-022 §P2 — the un-driftable reference quadrant)
+## ----------------------------------------------------------------------------
+
+docs-gen: ## Regenerate docs/.../reference/ from its Avro/CUE/MCP/ADR sources (ADR-PC-022)
+	@mise exec -- python3 scripts/docs-gen/generate.py
+
+docs-verify: ## Fail if the generated reference/ tree is stale vs its sources (ADR-PC-022)
+	@mise exec -- python3 scripts/docs-gen/generate.py --check
 
 ## ----------------------------------------------------------------------------
 ## Local dev stack (infra/compose.yaml) — PostgreSQL + Redpanda + Console
