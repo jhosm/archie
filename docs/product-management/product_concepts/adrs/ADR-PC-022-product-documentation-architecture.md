@@ -180,4 +180,4 @@ These commitments are documentation-scoped (not engine load-bearing), so they li
 
 ---
 
-*Re-proposed 2026-06-04 by jhosm (rewrites the 2026-06-01 overlay proposal; never Accepted, so not a §D5 supersession).*
+*Re-proposed 2026-06-04 by jhosm (a rewrite of the 2026-06-01 overlay proposal, which itself never reached Accepted — so the rewrite was not a §D5 supersession); accepted 2026-06-04.*
