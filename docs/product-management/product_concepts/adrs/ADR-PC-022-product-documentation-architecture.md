@@ -141,12 +141,12 @@ Epic R is P2, parallel, carrying soft `relates_to` (never `blocks`) edges to the
 
 ## Verifiable commitments
 
-These commitments are documentation-scoped (not engine load-bearing), so they live as an inline table here rather than in the engine-focused [commitment catalogue](./commitment-catalogue.md) (per [ADR-PC-000 §A2](./ADR-PC-000-namespace-and-contract-shape-framework.md): the catalogue seeds the *engine's* invariants; this ADR adds its own gates without enlarging that seed). A `Planned` row is a deliberate, listed hole — visibility is the point.
+These commitments are documentation-scoped (not engine load-bearing), so they live as an inline table here rather than in the engine-focused [commitment catalogue](./commitment-catalogue.md) (per [ADR-PC-000 §A2](./ADR-PC-000-namespace-and-contract-shape-framework.md): the catalogue seeds the *engine's* invariants; this ADR adds its own gates without enlarging that seed). Both are `Live`, gated by the `docs-verify` CI lane.
 
 | # | Commitment (with §-anchor) | Gate (pyramid level) | Test ID | Status |
 |---|---|---|---|---|
-| 1 | `reference/` is byte-identical to a fresh `make docs-gen` from its sources (§P2) — generated reference cannot drift. | analyser / CI (`docs-verify` lane) | `DOCS_REFERENCE_NO_DRIFT` | Planned (Live once the engine + `docs-verify` lane land — bd `babelstone-sfnt.10`) |
-| 2 | Every page under `reference/` carries the do-not-edit generated banner (§P2). | analyser / CI (`docs-verify` lane) | `DOCS_REFERENCE_BANNERED` | Planned (Live with #1 — bd `babelstone-sfnt.10`) |
+| 1 | `reference/` is byte-identical to a fresh `make docs-gen` from its sources (§P2) — generated reference cannot drift. | analyser / CI (`docs-verify` lane) | `DOCS_REFERENCE_NO_DRIFT` | Live (ci.yml `docs-verify` lane; `make docs-verify`) |
+| 2 | Every page under `reference/` carries the do-not-edit generated banner (§P2). | analyser / CI (`docs-verify` lane) | `DOCS_REFERENCE_BANNERED` | Live (ci.yml `docs-verify` banner step) |
 
 > The genre-discipline commitment (supersede-clean on a contradicting amendment) is a **governance** rule and is bound where it is authored — the dated [ADR-PC-000 §D5](./ADR-PC-000-namespace-and-contract-shape-framework.md) amendment (bd `babelstone-sfnt.12`), enforced by the existing `adr-immutability` gate (a reissue requires a `Superseded by …` line). The overlay-only commitments of the 2026-06-01 draft (`DOCS_SPINE_UNTOUCHED`, `DOCS_OVERLAY_LINK_ONLY`) are **dropped** with the overlay.
 
@@ -154,7 +154,7 @@ These commitments are documentation-scoped (not engine load-bearing), so they li
 
 ## Open Actions
 
-1. **Keep the generated-reference engine + `docs-verify` lane** (bd `babelstone-sfnt.10`) — cherry-pick from PR #81, confirm standalone; flip commitments #1/#2 to Live.
+1. ✅ **Generated-reference engine + `docs-verify` lane kept** (bd `babelstone-sfnt.10`) — cherry-picked from PR #81, confirmed standalone (the `docs-verify` CI lane is green); commitments #1/#2 are **Live**.
 2. **Drop the overlay** (bd `babelstone-sfnt.11`) — delete `guides/` + `reading-paths/`; repoint README / CLAUDE.md / AGENTS.md.
 3. **Amend [ADR-PC-000 §D5](./ADR-PC-000-namespace-and-contract-shape-framework.md)** (bd `babelstone-sfnt.12`) — bless supersede-clean-on-contradiction; honour (do not rebut) the 2026-06-03 "instances remain the contracts" passage.
 4. **Supersede [ADR-PC-014](./ADR-PC-014-customer-notification-emit-contract.md) clean — the pilot** (bd `babelstone-sfnt.13`).
