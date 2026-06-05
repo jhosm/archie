@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Babelstone.EventStore.Migrations;
+using Babelstone.Packs;
 using Babelstone.RateSheets;
 using Babelstone.RateSheets.Api;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -165,6 +166,73 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_tan_above_the_packs_max_consumer_rate_is_rejected_400()
+    {
+        // §P2: the bound is the VERIFIED pt.2026.1 pack's max_consumer_rate_bps = 2000 (read off the
+        // committed packs/ tree via the default HostPackStore — no live OCI registry needed). A TAN
+        // of 2001 bps breaches it, so the deploy is rejected at the boundary, never at constitution.
+        var overCeiling = new RateSheetBody
+        {
+            Products = new()
+            {
+                ["dpz_pt_12m_juros_venc"] = new()
+                {
+                    ["standard"] = new RoleRates { Bands = [RateSheetTestData.Band(50_000, null, 2001)] },
+                },
+            },
+        };
+
+        var response = await Post(RateSheetTestData.ValidRequest(versionId: "over-ceiling", body: overCeiling));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task The_bound_is_keyed_on_pack_version_so_a_tighter_pack_rejects_what_a_looser_one_allows()
+    {
+        // Two packs differing only in their ceiling: a 1500-bps TAN is within pt.2026.1's [0,2000]
+        // but breaches a hypothetical pt.tight's [0,1000]. The same sheet POSTed under each
+        // pack_version must deploy under the looser pack and be rejected under the tighter one —
+        // proving the bound is resolved from the pack keyed on pack_version, not a host constant.
+        var client = WithPackStore(new StubPackStore(new Dictionary<string, int>
+        {
+            ["pt.2026.1"] = 2000,
+            ["pt.tight"] = 1000,
+        }));
+
+        var sheet = new RateSheetBody
+        {
+            Products = new()
+            {
+                ["dpz_pt_12m_juros_venc"] = new()
+                {
+                    ["standard"] = new RoleRates { Bands = [RateSheetTestData.Band(50_000, null, 1500)] },
+                },
+            },
+        };
+
+        var loose = await Post(
+            client, RateSheetTestData.ValidRequest(versionId: "loose-1500", body: sheet) with { PackVersion = "pt.2026.1" });
+        var tight = await Post(
+            client, RateSheetTestData.ValidRequest(versionId: "tight-1500", body: sheet) with { PackVersion = "pt.tight" });
+
+        Assert.Equal(HttpStatusCode.Created, loose.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, tight.StatusCode);
+    }
+
+    [Fact]
+    public async Task An_unknown_pack_version_is_a_clean_400_not_a_500()
+    {
+        // A pack_version the engine never loaded (a stale or typo'd pin) cannot resolve a bound. The
+        // deploy must reject it cleanly (400) — a caller error — rather than letting the
+        // PackLoadException escape as a 500.
+        var response = await Post(
+            RateSheetTestData.ValidRequest(versionId: "unknown-pack") with { PackVersion = "pt.9999.1" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task A_sheet_uncovering_an_active_configs_rate_ref_is_rejected_400()
     {
         // Cross-artefact §2.5: an active config asks for a 'promo' role the worked-example sheet
@@ -253,5 +321,28 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
         : IProductConfigSource
     {
         public IReadOnlyList<ActiveProductConfig> Active() => activeConfigs;
+    }
+
+    // A client against a host whose IPackStore is swapped for one pre-loaded with the given
+    // ceilings — so the §P2 bound under each pack_version is deterministic and exercised without
+    // depending on the on-disk packs/ tree. The default host wires the disk-backed HostPackStore.
+    private HttpClient WithPackStore(IPackStore packStore) =>
+        _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IPackStore>();
+                services.AddSingleton(packStore);
+            }))
+        .CreateClient();
+
+    private sealed class StubPackStore(IReadOnlyDictionary<string, int> ceilings) : IPackStore
+    {
+        public Task<VerifiedPack> GetAsync(string packVersion, CancellationToken ct = default)
+            => throw new NotSupportedException("the stub is pre-loaded; the deploy path only calls Resolve.");
+
+        public VerifiedPack Resolve(string packVersion)
+            => ceilings.TryGetValue(packVersion, out var ceiling)
+                ? PackTestStubs.WithMaxConsumerRateBps(packVersion, ceiling)
+                : throw new PackLoadException(packVersion, null, "not pre-loaded (stub).");
     }
 }

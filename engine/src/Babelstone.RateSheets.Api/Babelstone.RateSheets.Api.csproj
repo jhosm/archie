@@ -10,6 +10,11 @@
          ADR-IC-010); this host validates, persists, and records the approver. -->
     <ProjectReference Include="../Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
 
+    <!-- The in-engine verified-pack loader (C.5, ADR-PC-007 §P4): the deploy's §P2 rate bound is
+         read from the signed pack's parameters/constants.yaml keyed on pack_version, not a config
+         knob. The host pre-loads packs at startup; the deploy handler resolves on the pure hot path. -->
+    <ProjectReference Include="../Babelstone.Packs/Babelstone.Packs.csproj" />
+
     <!-- OpenTelemetry tracing (ADR-IC-007 Layer 1, Epic K.1): the shared resource helper
          (BabelstoneResource) + the SDK hosting integration and OTLP exporter, for OBS-1 parity
          with the engine host. -->

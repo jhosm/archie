@@ -1,3 +1,4 @@
+using Babelstone.Packs;
 using Babelstone.RateSheets;
 
 namespace Babelstone.RateSheets.Api;
@@ -45,20 +46,30 @@ public sealed record RateSheetResponse(
 
 /// <summary>
 /// Resolves the pack-declared rate bounds a sheet must honour at deploy (ADR-PC-008 §P2,
-/// surface §2.5). INTERIM: the v1 implementation reads a configured ceiling. When the
-/// in-engine pack loader/verifier lands (C.5 / archie-bn8c), this must resolve the bound
-/// from the verified pack's <c>parameters/constants.yaml</c> (<c>max_consumer_rate_bps</c>)
-/// keyed on the sheet's <c>pack_version</c>, not from static configuration.
+/// surface §2.5) from the VERIFIED pack keyed on the sheet's <c>pack_version</c> — the bound
+/// is the signed pack's <c>parameters/constants.yaml</c> <c>max_consumer_rate_bps</c>, never a
+/// host-side configuration knob. <see cref="For"/> throws <see cref="PackLoadException"/> for a
+/// <c>pack_version</c> the engine has not loaded (an unknown/unpinned pack); the deploy handler
+/// turns that into a 400 rejection rather than letting it escape as a 500.
 /// </summary>
 public interface IRateBoundsSource
 {
     RateBounds For(string packVersion);
 }
 
-/// <summary>Interim <see cref="IRateBoundsSource"/>: the same bound for every pack, from configuration.</summary>
-public sealed class ConfiguredRateBoundsSource(RateBounds bounds) : IRateBoundsSource
+/// <summary>
+/// Resolves <see cref="RateBounds"/> from the verified pack (C.5, <see cref="IPackStore"/>):
+/// <c>[0, max_consumer_rate_bps]</c> read from the signed pack's <c>parameters/constants.yaml</c>
+/// keyed on <c>pack_version</c>. <see cref="IPackStore.Resolve"/> is the pure hot-path cache read
+/// (the pack was pulled-by-digest and cosign-verified once at load time, ADR-PC-007 §P4); an
+/// unknown <c>pack_version</c> surfaces as a <see cref="PackLoadException"/> the caller maps to a
+/// clean deploy rejection. The floor is 0: a pack declares only the consumer-rate ceiling, and a
+/// negative TAN is already impossible by construction.
+/// </summary>
+public sealed class PackRateBoundsSource(IPackStore packStore) : IRateBoundsSource
 {
-    public RateBounds For(string packVersion) => bounds;
+    public RateBounds For(string packVersion) =>
+        new(0, packStore.Resolve(packVersion).Parameters.MaxConsumerRateBps);
 }
 
 /// <summary>
