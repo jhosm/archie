@@ -30,6 +30,10 @@
     <PackageVersion Include="Apache.Avro" Version="1.12.1" />
     <!-- IHostedService/BackgroundService host for the relay's poll loop. -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
+    <!-- ILogger / EventId for the shared structured-log event-id contract (ADR-IC-007 Layer 1):
+         the abstractions only — Babelstone.Telemetry stays backend-/hosting-free, the hosts bring
+         the logging implementation. The same 10.0.8 line as the other Microsoft.Extensions pins. -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.8" />
 
     <!-- IConfiguration for the application-credential secret boundary (ADR-PC-004 Amendment A1):
          Abstractions for Babelstone.Pii's ConfigurationSecretProvider; the full package for the

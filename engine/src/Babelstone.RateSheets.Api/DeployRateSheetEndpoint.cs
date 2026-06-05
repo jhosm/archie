@@ -1,5 +1,7 @@
 using Babelstone.Packs;
 using Babelstone.RateSheets;
+using Babelstone.Telemetry;
+using Microsoft.Extensions.Logging;
 
 namespace Babelstone.RateSheets.Api;
 
@@ -9,9 +11,19 @@ namespace Babelstone.RateSheets.Api;
 /// a new version is created (201), an identical re-POST is replayed (200), and a
 /// different body under an existing version id is rejected (409), enforcing the
 /// forward-only immutability guarantee (§P5) at the API boundary as well as the table.
+///
+/// Observability (ADR-IC-007 Layer 1): a 409 conflict and any unexpected exception leave a
+/// structured server-side record under a stable <see cref="BabelstoneEvents"/> id, carrying the
+/// deploy context (version id, product family, effective_from, deploy actor) — none of it PII (a
+/// rate-sheet deploy carries no depositor data), the same operational-tier discipline §P4 holds
+/// for span attributes. The OTel logging integration stamps trace_id/span_id, so the record
+/// correlates to its trace.
 /// </summary>
 internal static class DeployRateSheetEndpoint
 {
+    /// <summary>The structured-log category — the ILogger&lt;T&gt; default name for this handler.</summary>
+    private const string LogCategory = "Babelstone.RateSheets.Api.DeployRateSheetEndpoint";
+
     public static async Task<IResult> HandleAsync(
         RateSheetDeployRequest request,
         HttpRequest http,
@@ -19,8 +31,13 @@ internal static class DeployRateSheetEndpoint
         RateSheetValidator validator,
         IRateBoundsSource bounds,
         IProductConfigSource productConfigs,
+        ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
+        // A static handler cannot be an ILogger<T> category, so name the category after it explicitly
+        // — a stable log scope an operator filters on, matching the ILogger<T> default category name.
+        var logger = loggerFactory.CreateLogger(LogCategory);
+
         // §P2: an Idempotency-Key header, when supplied, must equal the version id —
         // the version id IS the natural idempotency key, so no separate header is needed.
         if (http.Headers.TryGetValue("Idempotency-Key", out var key)
@@ -88,37 +105,53 @@ internal static class DeployRateSheetEndpoint
             request.ApprovalRef,
             PublishedBy: actor.ToString());
 
-        // Happy idempotency path: a prior sheet under this version id short-circuits before
-        // any write.
-        var existing = await store.TryGetAsync(sheet.RateSheetVersionId, ct);
-        if (existing is not null)
-        {
-            return Idempotent(existing, sheet);
-        }
-
+        // From here on a write is in play. An unexpected failure (a dropped DB, a serialization
+        // fault, the read-back invariant below) is logged with the deploy context under a stable
+        // id BEFORE UseExceptionHandler maps it to a 500 — the generic handler has only the bare
+        // exception, never the version id / family / actor an operator needs (ADR-IC-007 Layer 1).
         try
         {
-            await store.InsertAsync(sheet, ct);
-        }
-        catch (DuplicateRateSheetVersionException)
-        {
-            // Race: a concurrent deploy committed first under the same version id, or claimed
-            // this family's effective_from. Re-read and apply the same §P2 rule.
-            var raced = await store.TryGetAsync(sheet.RateSheetVersionId, ct);
-            return raced is null
-                ? Results.Conflict(new RateSheetConflict(
-                    "effective_from is already claimed by a different rate_sheet_version_id."))
-                : Idempotent(raced, sheet);
-        }
+            // Happy idempotency path: a prior sheet under this version id short-circuits before
+            // any write.
+            var existing = await store.TryGetAsync(sheet.RateSheetVersionId, ct);
+            if (existing is not null)
+            {
+                return Idempotent(existing, sheet, logger);
+            }
 
-        // Re-read so the response carries the database-assigned published_at. A just-committed
-        // row that cannot be read back is an invariant violation (not a routine empty result),
-        // so fail loud rather than silently returning the in-memory sheet with a null published_at.
-        var stored = await store.TryGetAsync(sheet.RateSheetVersionId, ct)
-            ?? throw new InvalidOperationException(
-                $"Rate sheet '{sheet.RateSheetVersionId}' was inserted but could not be read back.");
-        return Results.Created(
-            $"/v1/rate-sheets/{sheet.RateSheetVersionId}", RateSheetResponse.From(stored));
+            try
+            {
+                await store.InsertAsync(sheet, ct);
+            }
+            catch (DuplicateRateSheetVersionException)
+            {
+                // Race: a concurrent deploy committed first under the same version id, or claimed
+                // this family's effective_from. Re-read and apply the same §P2 rule.
+                var raced = await store.TryGetAsync(sheet.RateSheetVersionId, ct);
+                return raced is null
+                    ? Conflict(sheet, logger,
+                        "effective_from is already claimed by a different rate_sheet_version_id.")
+                    : Idempotent(raced, sheet, logger);
+            }
+
+            // Re-read so the response carries the database-assigned published_at. A just-committed
+            // row that cannot be read back is an invariant violation (not a routine empty result),
+            // so fail loud rather than silently returning the in-memory sheet with a null published_at.
+            var stored = await store.TryGetAsync(sheet.RateSheetVersionId, ct)
+                ?? throw new InvalidOperationException(
+                    $"Rate sheet '{sheet.RateSheetVersionId}' was inserted but could not be read back.");
+            return Results.Created(
+                $"/v1/rate-sheets/{sheet.RateSheetVersionId}", RateSheetResponse.From(stored));
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(
+                BabelstoneEvents.RateSheetDeployUnexpectedError, ex,
+                "Unexpected error deploying rate sheet {RateSheetVersionId} (family {ProductFamily}, "
+                + "effective_from {EffectiveFrom:O}, actor {DeployActor}); returning 500.",
+                sheet.RateSheetVersionId, sheet.ProductFamily, sheet.EffectiveFrom, sheet.PublishedBy);
+            throw;
+        }
     }
 
     // PostgreSQL TIMESTAMPTZ resolves to microseconds; .NET DateTimeOffset to 100ns ticks.
@@ -126,7 +159,7 @@ internal static class DeployRateSheetEndpoint
     private static DateTimeOffset ToMicroseconds(DateTimeOffset value) =>
         new(value.Ticks - (value.Ticks % TimeSpan.TicksPerMicrosecond), value.Offset);
 
-    private static IResult Idempotent(RateSheet existing, RateSheet incoming)
+    private static IResult Idempotent(RateSheet existing, RateSheet incoming, ILogger logger)
     {
         var identical =
             string.Equals(existing.ProductFamily, incoming.ProductFamily, StringComparison.Ordinal)
@@ -141,9 +174,23 @@ internal static class DeployRateSheetEndpoint
 
         return identical
             ? Results.Ok(RateSheetResponse.From(existing))
-            : Results.Conflict(new RateSheetConflict(
+            : Conflict(incoming, logger,
                 $"rate_sheet_version_id '{incoming.RateSheetVersionId}' already exists with a different definition; "
-                + "corrections ship forward-only as a new version (ADR-PC-008 §P5)."));
+                + "corrections ship forward-only as a new version (ADR-PC-008 §P5).");
+    }
+
+    // A 409, recorded server-side under a stable id (ADR-IC-007 Layer 1) with the deploy context —
+    // a forward-only-immutability breach (§P5) the operator should see, not just a bare HTTP 409.
+    // DeployActor is the sheet's PublishedBy, i.e. the gateway-authenticated X-Deploy-Actor header.
+    private static IResult Conflict(RateSheet incoming, ILogger logger, string detail)
+    {
+        logger.LogWarning(
+            BabelstoneEvents.RateSheetDeployConflict,
+            "Rate-sheet deploy conflict (409) for {RateSheetVersionId} (family {ProductFamily}, "
+            + "effective_from {EffectiveFrom:O}, actor {DeployActor}): {Detail}",
+            incoming.RateSheetVersionId, incoming.ProductFamily, incoming.EffectiveFrom,
+            incoming.PublishedBy, detail);
+        return Results.Conflict(new RateSheetConflict(detail));
     }
 
     private sealed record RateSheetConflict(string Error);
