@@ -37,6 +37,20 @@ Protects the default branch (`~DEFAULT_BRANCH`). Wired by **Q.7** (bd `archie-j7
     but ships **report-only** (`CODEQL_FAILON_ENFORCE` unset) because a pre-existing
     report-only alert backlog must be triaged before blocking (ADR-IC-014 residual risk
     "Baseline noise"). Flip `CODEQL_FAILON_ENFORCE=1` in `codeql.yml` once triaged.
+  - **`dependency-review`** — the [`dependency-review.yml`](../workflows/dependency-review.yml)
+    GitHub-native cross-ecosystem SCA gate (ADR-IC-014 Amendment 2026-06-06, Q.7c
+    `archie-2t16.11`). Diffs the dependency graph between the PR base and head and **blocks**
+    when a PR introduces a dependency carrying a HIGH/CRITICAL advisory — the blocking
+    companion to Dependabot, whose alerts cannot block a merge. It runs on **every** PR (no
+    paths filter), so it always reports and is required directly — no always-run aggregator is
+    needed (unlike `CI gate` / `CodeQL gate`, whose analysis jobs are path-scoped and skip on
+    unrelated PRs). It is the **primary** gate for GitHub Actions (+ Python/npm later); the
+    code ecosystems have language-native gates that block under **`CI gate`** instead:
+    **NuGetAudit** (warnings-as-errors, engine build) for .NET and **govulncheck**
+    (reachability) for Go — see the ADR amendment for the full layer. The grype SBOM scan
+    ([`sbom.yml`](../workflows/sbom.yml)) stays **report-only**: it CPE-matches the published
+    .NET assembly tree and false-positives on framework version strings, so it is SBOM / DORA
+    evidence + defense-in-depth, not a gate.
   - **`pr-body-adrs`** + **`adr-immutability`** — the [`adr-governance.yml`](../workflows/adr-governance.yml)
     explicit-drift gate (ADR-PC-020 §D3).
   - **`spec-coverage`** — the [`spec-coverage.yml`](../workflows/spec-coverage.yml) ADR↔catalogue↔test

@@ -76,17 +76,20 @@ jobs:
           upload-artifact: true
 
       # Scan the generated SBOM with grype (anchore/scan-action), severity-cutoff high
-      # (covers high AND critical). REPORT-ONLY baseline (fail-build: false), matching the
-      # CodeQL introduction posture (ADR-IC-014 §Consequences): a freshly-introduced scanner
-      # must not block merges on an UNTRIAGED baseline. grype CPE-matches the published .NET
-      # tree (runtime + framework assemblies), which is prone to false positives on version
-      # strings — confirmed here: `dotnet list package --vulnerable --include-transitive`
-      # (the authoritative NuGet/GitHub-advisory check) reports the solution CLEAN, while
-      # grype's first run flagged a high. Findings still upload to the Security tab (below)
-      # for triage. Flipping to fail-build: true is gated on (a) triaging this baseline to
-      # zero/suppressing CPE false positives and (b) wiring it into the §P1 required-check
-      # set — the Q.7 (archie-j72w) deliverable. Tracked as a follow-up bd issue.
-      - name: Scan SBOM for vulnerabilities (report-only baseline)
+      # (covers high AND critical). REPORT-ONLY by design (fail-build: false) — and it STAYS
+      # report-only. grype CPE-matches the published .NET tree (runtime + framework
+      # assemblies), whose framework assembly versions are pinned at X.0.0.0 across every
+      # patch, so it false-positives against advisory PACKAGE ranges: the authoritative
+      # `dotnet list package --vulnerable --include-transitive` reported the solution CLEAN
+      # while grype flagged 6 highs/criticals (the Q.7b triage, bd babelstone-2t16.10 — all
+      # 35 dismissed). Making grype blocking would mean perpetual CPE-suppression upkeep, so
+      # the PR-blocking SCA gates are instead a per-ecosystem layer (bd Q.7c babelstone-2t16.11,
+      # ADR-IC-014 Amendment 2026-06-06): NuGetAudit (warnings-as-errors, engine build) for
+      # .NET, govulncheck for Go (ci.yml), and dependency-review-action for the rest
+      # (dependency-review.yml) — all matching CONCRETE versions, no CPE false positives. This
+      # scan's role is the CycloneDX SBOM (DORA supply-chain evidence) + a Security-tab
+      # defense-in-depth cross-check over the published/native closure, not a gate.
+      - name: Scan SBOM for vulnerabilities (report-only — SBOM/DORA evidence, not a gate)
         id: scan
         uses: anchore/scan-action@v7
         with:
