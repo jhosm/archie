@@ -10,19 +10,24 @@ namespace Babelstone.OutboxPublisher;
 
 /// <summary>
 /// The IC-004 polling relay (Epic E.4, hardened in G.1). One <see cref="DrainOnceAsync"/> call:
-/// SELECTs PENDING outbox rows in drain order <c>FOR UPDATE SKIP LOCKED</c> (so concurrent relay
-/// instances claim disjoint rows — never the same row twice — ADR-IC-004 §P2 / §Residual-risks),
-/// builds the Confluent wire-format value from the row's embedded <c>schema_id</c> (NO
-/// Schema-Registry lookup — ADR-IC-004 §P3), sets the CloudEvents Binary-mode Kafka headers
-/// (ADR-IC-008), produces keyed by <c>aggregate_id</c> to a topic named after <c>aggregate_type</c>,
-/// flips the row to PUBLISHED (the only verbs the engine role holds on outbox), and records the
-/// publish-lag SLI (ADR-IC-004 §P4) — <c>published_at − created_at</c> — on the shared meter.
+/// SELECTs PENDING outbox rows in drain order, claiming each aggregate with a per-aggregate
+/// advisory lock and each row <c>FOR UPDATE SKIP LOCKED</c> (so concurrent relay instances claim
+/// disjoint rows — never the same row twice, and never concurrent in-flight rows for the same
+/// <c>aggregate_id</c> — ADR-IC-004 §P2 / §Residual-risks), builds the Confluent wire-format value
+/// from the row's embedded <c>schema_id</c> (NO Schema-Registry lookup — ADR-IC-004 §P3), sets the
+/// CloudEvents Binary-mode Kafka headers (ADR-IC-008), produces keyed by <c>aggregate_id</c> to a
+/// topic named after <c>aggregate_type</c>, flips the row to PUBLISHED (the only verbs the engine
+/// role holds on outbox), and records the per-row publish-latency histogram on the shared meter.
+/// The §P4 publish-lag SLI itself — the gauge of the oldest PENDING row's age — is emitted by
+/// <see cref="OutboxLagObserver"/>, which keeps reporting during an outage when nothing publishes.
 /// </summary>
 /// <remarks>
-/// The read + publish + flip run in ONE transaction: the <c>FOR UPDATE</c> row locks are held until
-/// commit, so a second concurrent drainer's <c>SKIP LOCKED</c> read steps over this drainer's
-/// in-flight rows rather than re-publishing them (the §Residual-risks dual-publish window shrinks to
-/// a crash between produce-ack and commit, which consumer-inbox idempotency absorbs). On Redpanda
+/// The read + publish + flip run in ONE transaction: the per-aggregate advisory locks and the
+/// <c>FOR UPDATE</c> row locks are held until commit, so a second concurrent drainer's read steps
+/// over this drainer's in-flight rows (SKIP LOCKED) AND over any aggregate this drainer already
+/// holds (the advisory lock is what makes cross-instance per-aggregate order a §P2 hard guarantee,
+/// not just per-row no-double-publish). The §Residual-risks dual-publish window shrinks to a crash
+/// between produce-ack and commit, which consumer-inbox idempotency absorbs. On Redpanda
 /// unavailability the produce throws, the transaction rolls back, the rows stay PENDING (NEVER
 /// FAILED — ADR-IC-004 §P7), and the hosted loop backs off.
 /// </remarks>
@@ -32,12 +37,16 @@ public sealed class OutboxDrainer : IAsyncDisposable
     // 4-byte big-endian schema_id, then the bare Avro value the codec produced.
     private const byte MagicByte = 0x00;
 
-    // The publish-lag SLI (ADR-IC-004 §P4) on the shared Babelstone meter (ADR-IC-007 Layer 1):
-    // one histogram of seconds-from-enqueue-to-ack, tagged by aggregate_type. A host turns it on
-    // with AddMeter(BabelstoneTelemetry.MeterName); with no listener Record is a near no-op.
-    private static readonly Histogram<double> PublishLagSeconds =
+    // The per-row publish-LATENCY histogram on the shared Babelstone meter (ADR-IC-007 Layer 1): one
+    // histogram of seconds-from-enqueue-to-ack, tagged by aggregate_type. This is a G.1 ADDITION, NOT
+    // the §P4 SLI — that is the oldest-PENDING-row gauge in OutboxLagObserver, which (unlike a per-row
+    // metric) keeps reporting during an outage. A host turns this on with
+    // AddMeter(BabelstoneTelemetry.MeterName); with no listener Record is a near no-op. The lag value
+    // is computed single-clock in the DB (published_at − created_at, both DB-stamped) so host/DB clock
+    // skew cannot bias or negate it.
+    private static readonly Histogram<double> PublishLatencySeconds =
         BabelstoneTelemetry.Meter.CreateHistogram<double>(
-            BabelstoneAttributes.OutboxPublishLagMetric,
+            BabelstoneAttributes.OutboxPublishLatencyMetric,
             unit: "s",
             description: "Seconds from outbox-row enqueue (created_at) to successful publish ack (published_at).");
 
@@ -50,8 +59,9 @@ public sealed class OutboxDrainer : IAsyncDisposable
         _options = options ?? throw new ArgumentNullException(nameof(options));
         if (producer is null)
         {
-            // Order is preserved by draining and producing one row at a time per aggregate
-            // (ADR-IC-004 §P2). EnableIdempotence keeps the broker from reordering on retry.
+            // Order is preserved by draining and producing one row at a time per aggregate, with a
+            // per-aggregate advisory lock keeping a second drainer off the same aggregate (ADR-IC-004
+            // §P2). EnableIdempotence keeps the broker from reordering this producer's retries.
             var config = new ProducerConfig
             {
                 BootstrapServers = options.BootstrapServers,
@@ -71,13 +81,22 @@ public sealed class OutboxDrainer : IAsyncDisposable
     /// <summary>
     /// Drains one batch of PENDING rows. Returns the number of rows published this cycle.
     /// Produces each row synchronously (produce + await ack) before marking it PUBLISHED and
-    /// moving to the next — per-aggregate FIFO by construction (ADR-IC-004 §P2).
+    /// moving to the next — per-aggregate FIFO by construction, held across instances by the
+    /// per-aggregate advisory lock the read takes (ADR-IC-004 §P2).
     /// </summary>
     /// <remarks>
-    /// The read claims rows <c>FOR UPDATE SKIP LOCKED</c> and the whole cycle runs in one
-    /// transaction, so concurrent drainers claim disjoint batches (no double-publish) without
-    /// blocking on each other (no deadlock). A produce failure rolls the transaction back, leaving
-    /// every row in the batch PENDING for the next cycle (ADR-IC-004 §P7).
+    /// The read claims each row <c>FOR UPDATE SKIP LOCKED</c> and each aggregate with a
+    /// transaction-scoped advisory lock, and the whole cycle runs in one transaction, so concurrent
+    /// drainers claim disjoint rows AND never share an aggregate (no double-publish, no cross-instance
+    /// reordering) without blocking on each other (pg_try_* + SKIP LOCKED → no lock-wait, no deadlock).
+    /// A produce failure rolls the transaction back, leaving every row in the batch PENDING for the
+    /// next cycle (ADR-IC-004 §P7).
+    /// </remarks>
+    /// <remarks>
+    /// One transaction holds the row + advisory locks across the batch's synchronous produce-and-ack
+    /// round-trips, so <see cref="OutboxRelayOptions.BatchSize"/> governs the worst-case lock-hold
+    /// time: a slow/backpressured Redpanda lengthens it. At banking volumes (§S1) and the default
+    /// batch this is acceptable; tune BatchSize down if the §S1 polling-query SLA is at risk.
     /// </remarks>
     public async Task<int> DrainOnceAsync(CancellationToken ct = default)
     {
@@ -90,8 +109,8 @@ public sealed class OutboxDrainer : IAsyncDisposable
         foreach (var row in rows)
         {
             await PublishAsync(row, ct);
-            var publishedAt = await MarkPublishedAsync(connection, transaction, row.EventId, ct);
-            RecordPublishLag(row, publishedAt);
+            var latencySeconds = await MarkPublishedAsync(connection, transaction, row.EventId, ct);
+            RecordPublishLatency(row, latencySeconds);
             published++;
         }
 
@@ -103,15 +122,16 @@ public sealed class OutboxDrainer : IAsyncDisposable
     }
 
     /// <summary>
-    /// Records the publish-lag SLI for one row (ADR-IC-004 §P4): the seconds between the row's
-    /// enqueue (<c>created_at</c>, the domain-transaction time) and its DB-stamped publish ack
-    /// (<c>published_at</c>), tagged by <c>aggregate_type</c> so lag is breakable by topic.
+    /// Records the per-row publish-latency histogram for one row (a G.1 addition, NOT the §P4 SLI):
+    /// the seconds between the row's enqueue (<c>created_at</c>) and its publish ack
+    /// (<c>published_at</c>), tagged by <c>aggregate_type</c> so latency is breakable by topic. The
+    /// value is computed single-clock in the DB by <see cref="MarkPublishedAsync"/> so host/DB clock
+    /// skew cannot bias it.
     /// </summary>
-    private static void RecordPublishLag(OutboxRow row, DateTimeOffset publishedAt)
+    private static void RecordPublishLatency(OutboxRow row, double latencySeconds)
     {
-        var lagSeconds = (publishedAt - row.CreatedAt).TotalSeconds;
-        PublishLagSeconds.Record(
-            lagSeconds,
+        PublishLatencySeconds.Record(
+            latencySeconds,
             new KeyValuePair<string, object?>(BabelstoneAttributes.AggregateType, row.AggregateType));
     }
 
@@ -176,18 +196,44 @@ public sealed class OutboxDrainer : IAsyncDisposable
         NpgsqlConnection connection, NpgsqlTransaction transaction, int batchSize, CancellationToken ct)
     {
         // The §P2 drain (amended 2026-05-29): ORDER BY created_at, sequence_number — NOT event_id.
-        // FOR UPDATE SKIP LOCKED (ADR-IC-004 §P2 / §Residual-risks) is the HA-coordination seam:
-        // each row this read returns is row-locked for the open transaction, so a concurrent
-        // drainer SKIPs it and claims a disjoint batch instead — competing instances never select
-        // the same PENDING row, so they cannot double-publish, and SKIP LOCKED (not a plain
-        // FOR UPDATE) means neither blocks on the other (no lock-wait, no deadlock).
+        //
+        // Two locks, two distinct §P2 jobs:
+        //
+        //   • pg_try_advisory_xact_lock(hashtextextended(aggregate_id::text, 0)) — the §P2
+        //     "lock granularity that prevents concurrent in-flight rows for the same aggregate_id".
+        //     SKIP LOCKED alone would let drainer A hold seq 1 of aggregate X while drainer B claims
+        //     the still-unlocked seq 2 and produces it FIRST → out-of-order on X's partition. The
+        //     per-aggregate advisory lock closes that gap: a row is a candidate only if THIS
+        //     transaction can take its aggregate's lock, so no two drainers ever hold in-flight rows
+        //     for the same aggregate. The lock is transaction-scoped (released at commit/rollback),
+        //     re-entrant within the transaction (claiming several rows of one aggregate re-takes the
+        //     same key harmlessly), and pg_try_* is non-blocking so a contended aggregate is skipped,
+        //     not waited on (no lock-wait, no deadlock).
+        //
+        //   • FOR UPDATE SKIP LOCKED (ADR-IC-004 §P2 / §Residual-risks) — the row-level
+        //     HA-coordination seam: each returned row is row-locked for the open transaction so a
+        //     concurrent drainer steps over it, claiming a disjoint set — competing instances never
+        //     select the same PENDING row, so they cannot double-publish.
+        //
+        // The advisory lock is evaluated inside the candidate CTE's WHERE, so an aggregate another
+        // drainer already holds is filtered out BEFORE the LIMIT — the batch fills with the oldest
+        // claimable rows rather than starving on a contended leading aggregate. The outer SELECT then
+        // takes the row locks (FOR UPDATE SKIP LOCKED) on those candidates in drain order.
         const string sql = """
-            SELECT event_id, aggregate_type, aggregate_id, sequence_number, event_type, payload,
-                   schema_id, status, created_at, published_at
-            FROM outbox
-            WHERE status = 'PENDING'
-            ORDER BY created_at, sequence_number
-            LIMIT @batch_size
+            WITH candidate AS (
+                SELECT event_id
+                FROM outbox
+                WHERE status = 'PENDING'
+                  AND pg_try_advisory_xact_lock(hashtextextended(aggregate_id::text, 0))
+                ORDER BY created_at, sequence_number
+                LIMIT @batch_size
+            )
+            SELECT o.event_id, o.aggregate_type, o.aggregate_id, o.sequence_number, o.event_type,
+                   o.payload, o.schema_id, o.status, o.created_at, o.published_at
+            FROM outbox o
+            JOIN candidate c ON c.event_id = o.event_id
+            WHERE o.status = 'PENDING'
+            ORDER BY o.created_at, o.sequence_number
             FOR UPDATE SKIP LOCKED;
             """;
 
@@ -216,26 +262,33 @@ public sealed class OutboxDrainer : IAsyncDisposable
         CreatedAt: r.GetFieldValue<DateTimeOffset>(8),
         PublishedAt: r.IsDBNull(9) ? null : r.GetFieldValue<DateTimeOffset>(9));
 
-    private static async Task<DateTimeOffset> MarkPublishedAsync(
+    private static async Task<double> MarkPublishedAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid eventId, CancellationToken ct)
     {
-        // UPDATE(status, published_at) — the only mutating verb the babelstone_engine role
-        // holds on outbox (0002_append_only_role.sql). RETURNING the DB-stamped published_at gives
-        // the publish-lag SLI (§P4) its authoritative ack time without a second round-trip.
+        // UPDATE(status, published_at) — the only mutating verb the babelstone_engine role holds on
+        // outbox (0002_append_only_role.sql). RETURNING the publish-latency computed IN THE DB
+        // (published_at − created_at, both DB-clock) gives the per-row latency histogram a single-clock
+        // value — no app-vs-DB clock subtraction — without a second round-trip.
         const string sql = """
             UPDATE outbox
             SET status = 'PUBLISHED', published_at = clock_timestamp()
             WHERE event_id = @event_id
-            RETURNING published_at;
+            RETURNING EXTRACT(EPOCH FROM (published_at - created_at));
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("event_id", eventId);
-        // GetFieldValue<DateTimeOffset> maps timestamptz the same way ReadRow does; ExecuteScalar
-        // would surface a bare DateTime (the default CLR mapping) and lose the offset typing.
         await using var reader = await command.ExecuteReaderAsync(ct);
-        await reader.ReadAsync(ct);
-        return reader.GetFieldValue<DateTimeOffset>(0);
+        if (!await reader.ReadAsync(ct))
+        {
+            // The row we locked and produced for must still exist to be flipped; no row back means
+            // a contract violation (a concurrent delete of a PENDING row the relay holds), not a
+            // routine case — fail loud rather than silently record a bogus latency.
+            throw new InvalidOperationException(
+                $"Outbox row {eventId} vanished before it could be marked PUBLISHED.");
+        }
+
+        return reader.GetFieldValue<double>(0);
     }
 
     public async ValueTask DisposeAsync()

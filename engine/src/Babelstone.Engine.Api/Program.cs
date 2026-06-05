@@ -32,9 +32,13 @@ builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
         .AddOtlpExporter())
-    // Metrics (ADR-IC-007 Layer 1 / ADR-IC-004 §P4): listen to the engine's meter so the outbox
-    // publish-lag SLI (outbox_publish_lag_seconds, emitted by the co-hosted relay) is exported over
-    // OTLP to the Collector → Prometheus, where the §P4 warning/critical thresholds alert.
+    // Metrics (ADR-IC-007 Layer 1 / ADR-IC-004 §P4): listen to the engine's meter and export over
+    // OTLP to the Collector → Prometheus, where the §P4 warning/critical thresholds alert. The
+    // publish-lag SLI (outbox_publish_lag_seconds) and per-row latency histogram are emitted by the
+    // outbox relay (Babelstone.OutboxPublisher: OutboxLagObserver + OutboxDrainer). Wiring this host
+    // to actually RUN the relay (its ProjectReference + AddHostedService<OutboxRelayService> +
+    // AddSingleton<OutboxLagObserver>) is a follow-up: until then AddMeter is in place but the engine
+    // SLI instruments are not produced in THIS process.
     .WithMetrics(metrics => metrics
         .AddMeter(BabelstoneTelemetry.MeterName)
         .AddOtlpExporter());
