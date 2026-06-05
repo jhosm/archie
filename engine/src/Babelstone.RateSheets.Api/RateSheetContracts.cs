@@ -63,8 +63,10 @@ public interface IRateBoundsSource
 /// keyed on <c>pack_version</c>. <see cref="IPackStore.Resolve"/> is the pure hot-path cache read
 /// (the pack was pulled-by-digest and cosign-verified once at load time, ADR-PC-007 §P4); an
 /// unknown <c>pack_version</c> surfaces as a <see cref="PackLoadException"/> the caller maps to a
-/// clean deploy rejection. The floor is 0: a pack declares only the consumer-rate ceiling, and a
-/// negative TAN is already impossible by construction.
+/// clean deploy rejection. The floor is 0: a pack declares only the consumer-rate ceiling, and the
+/// floor is what makes a negative TAN a deploy-time validation failure — <see cref="RateBand"/>
+/// does not guard <c>tanBasisPoints</c> at construction (a negative TAN is a valid band shape, by
+/// design, e.g. negative-rate environments), so this bound is the gate, not the type.
 /// </summary>
 public sealed class PackRateBoundsSource(IPackStore packStore) : IRateBoundsSource
 {

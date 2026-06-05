@@ -34,8 +34,16 @@ builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
         .AddOtlpExporter())
-    .WithLogging(logging => logging
-        .AddOtlpExporter());
+    .WithLogging(
+        logging => logging.AddOtlpExporter(),
+        // Carry the human-readable rendered message and any logging scopes into the OTLP/Loki
+        // record — without these the LogRecord ships only the message template + structured state,
+        // dropping the formatted body an operator reads in Loki (the §P1 trace-to-log navigation).
+        options =>
+        {
+            options.IncludeFormattedMessage = true;
+            options.IncludeScopes = true;
+        });
 
 // snake_case on the wire (rate_sheet_version_id, principal_cents, tan_basis_points),
 // matching the deployed YAML and the stored JSONB — the same shape RateSheetJson uses.

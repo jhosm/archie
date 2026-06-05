@@ -143,6 +143,14 @@ internal static class DeployRateSheetEndpoint
             return Results.Created(
                 $"/v1/rate-sheets/{sheet.RateSheetVersionId}", RateSheetResponse.From(stored));
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // The client aborted the request — a routine cancellation, not an unexpected deploy
+            // fault. Don't log it under RateSheetDeployUnexpectedError as a 500; rethrow so the
+            // pipeline maps it (the same cancellation-filter idiom as OutboxRelayService /
+            // ProjectionRelay), keeping the Error log reserved for genuine faults.
+            throw;
+        }
         catch (Exception ex)
         {
             logger.LogError(
