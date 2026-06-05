@@ -1,22 +1,26 @@
 name: CodeQL
 
-# SAST for the multi-language estate (ADR-IC-014; bd Q.9 archie-2t16.7). The repo is
-# PUBLIC, so CodeQL code-scanning is free: results upload to the Security tab and annotate
-# PRs (the GHAS-equivalent experience comes free with public visibility — ADR-IC-014 §F1).
-# REPORT-ONLY: no `fail-on`, not a required check yet — required-check gating is Q.7
-# (archie-j72w).
+# SAST for the multi-language estate (ADR-IC-014; bd Q.9 archie-2t16.7, required-gating
+# Q.7 archie-j72w). The repo is PUBLIC, so CodeQL code-scanning is free: results upload to
+# the Security tab and annotate PRs (the GHAS-equivalent experience comes free with public
+# visibility — ADR-IC-014 §F1).
+#
+# REQUIRED CHECK (Q.7). This workflow triggers on EVERY pull request so its always-run
+# `CodeQL gate` job reports on every PR — the main-protect ruleset requires that ONE stable
+# check without the skipped-required-check footgun (same pattern as ci.yml's `CI gate`,
+# ADR-PC-019 §P1). The analysis itself stays path-scoped via the `changes` job: a docs-only
+# PR skips `analyze` and the gate still passes. On PRs, `analyze` is flipped from report-only
+# to BLOCKING by the fail-on step (ADR-IC-014 — "Q.7 flips CodeQL to fail-on"); push-to-main
+# and the weekly scheduled scan stay report-only (baseline + backstop to the Security tab).
 #
 # Named high-value findings for this estate (ADR-IC-014 §Context): YamlDotNet
 # insecure-deserialization sinks, and crypto-misuse around the OpenBao / crypto-shredding
 # boundary (ADR-PC-004) — both in CodeQL's C# query packs.
-#
-# Path-scoped per ADR-PC-019 §P1: only fires when scannable source (or this file) changes,
-# never on docs-only PRs. A weekly scheduled full scan backstops coverage.
 
 on:
   push:
     branches: [main]
-    paths: &scan_paths
+    paths:
       - 'engine/**'
       - 'families/**'
       - 'orchestrator/**'
@@ -25,8 +29,8 @@ on:
       - 'notification/**'
       - 'pack-validate/**'
       - '.github/workflows/codeql.yml'
-  pull_request:
-    paths: *scan_paths
+      - '.github/scripts/codeql-failon.sh'
+  pull_request:        # no paths filter: must run on EVERY PR so `CodeQL gate` always reports
   schedule:
     - cron: "0 4 * * 1"   # Mondays 04:00 UTC (after the 03:00 mutation run)
 
@@ -34,18 +38,53 @@ permissions:
   contents: read
   security-events: write   # upload SARIF to the Security tab (free on a public repo)
   actions: read            # codeql-action reads the workflow-run API for its status report
+  pull-requests: read      # dorny/paths-filter lists PR files on pull_request events
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      scan: ${{ steps.filter.outputs.scan }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
+        id: filter
+        # Only meaningful on PRs (it diffs against the PR base). On push/schedule there is
+        # no diff base, and `scan` is never read there anyway — analyze's `if` first clause
+        # (`github.event_name != 'pull_request'`) already runs the baseline/backstop scan.
+        # Skipping the step keeps the `changes` job green on push/schedule so `analyze`
+        # (which `needs:` it) still runs.
+        if: ${{ github.event_name == 'pull_request' }}
+        with:
+          # Kept in sync with on.push.paths above (an alias can't cross into this
+          # block-scalar string, so the scannable-source list is inlined here).
+          filters: |
+            scan:
+              - 'engine/**'
+              - 'families/**'
+              - 'orchestrator/**'
+              - 'acl/**'
+              - 'mcp-server/**'
+              - 'notification/**'
+              - 'pack-validate/**'
+              - '.github/workflows/codeql.yml'
+              - '.github/scripts/codeql-failon.sh'
+
   analyze:
     name: Analyze (${{ matrix.language }})
+    needs: changes
+    # Path-scoped (ADR-PC-019 §P1): on a PR, analyse only when scannable source — or this
+    # workflow / its fail-on script — changed; docs-only PRs skip and the gate still passes.
+    # On push/schedule, always analyse (baseline + weekly backstop).
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.scan == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           # C# — buildless extraction: no .NET SDK pin and no .slnx build in this lane
-          # (ADR-IC-014 residual-risk note accepts the small dataflow trade-off for the
-          # report-only baseline; a leg can switch to a mise-pinned `manual` build later).
+          # (ADR-IC-014 residual-risk note accepts the small dataflow trade-off; a leg can
+          # switch to a mise-pinned `manual` build later if a query needs a built database).
           - language: csharp
             build-mode: none
           # Go — autobuild the single pack-validate module.
@@ -66,6 +105,45 @@ jobs:
         if: matrix.build-mode == 'autobuild'
         uses: github/codeql-action/autobuild@v4
       - name: Perform CodeQL Analysis
+        id: analyze
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
+          output: sarif-results   # also write SARIF locally for the fail-on check below
+          upload: always          # still publish to the Security tab regardless of fail-on
+      - name: Fail-on findings at/above the threshold (PR gate — ADR-IC-014)
+        # The severity logic lives in a version-controlled, locally-tested script (no hidden
+        # UI setting). Runs on PRs only. REPORT-ONLY for now: the script defaults to
+        # non-blocking because the repo carries a pre-existing report-only alert backlog
+        # that ADR-IC-014 says to triage BEFORE blocking. To flip to blocking once the
+        # backlog is cleared, add `env: { CODEQL_FAILON_ENFORCE: "1" }` to this step
+        # (tracked by the Q.7 follow-up issue).
+        if: ${{ github.event_name == 'pull_request' }}
+        run: bash .github/scripts/codeql-failon.sh sarif-results
+
+  gate:
+    # Always-run aggregator (Q.7, archie-j72w) — the CodeQL twin of ci.yml's `CI gate`.
+    # Present on every PR (this workflow has no pull_request paths filter), so the
+    # main-protect ruleset requires ONE stable check: `CodeQL gate`. Passes iff every job
+    # that ran succeeded; `skipped` (docs-only PR → analyze skipped) counts as OK, `failure`
+    # (a real finding tripped fail-on, or analysis errored) does not.
+    name: CodeQL gate
+    needs:
+      - changes
+      - analyze
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require CodeQL analysis to have passed (skipped is OK)
+        env:
+          # Controlled enum values (success/failure/skipped/cancelled) — safe to expand.
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "upstream job results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::CodeQL did not pass (result=$r)"; exit 1 ;;
+            esac
+          done
+          echo "CodeQL gate: all clear"

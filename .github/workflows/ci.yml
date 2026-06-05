@@ -336,9 +336,11 @@ jobs:
     # directly would block every PR that doesn't touch their path. Instead the ruleset
     # requires this ONE always-present job, which passes iff every job that *did* run
     # succeeded. Treats `skipped` (path not touched) and `success` as OK; fails on
-    # `failure` or `cancelled`. The pending fitness gates — DETERMINISM_GATE (A.7,
-    # archie-k03q), acceptance gates (L.3), no-PII/emit-contract (G.6) — join `needs`
-    # as they land, so coverage grows without re-touching the ruleset.
+    # `failure` or `cancelled`. DETERMINISM_GATE (A.7, archie-k03q) is already covered
+    # via the `engine` job (the HandlerPurity analyser + fixture-replay determinism test
+    # in its non-Integration tier). The still-pending fitness gates — acceptance gates (L.3),
+    # no-PII/emit-contract (G.6) — join `needs` as they land, so coverage grows without
+    # re-touching the ruleset. (CodeQL has its own always-run gate in codeql.yml.)
     name: CI gate
     needs:
       - changes

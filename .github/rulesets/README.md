@@ -21,18 +21,26 @@ Protects the default branch (`~DEFAULT_BRANCH`). Wired by **Q.7** (bd `archie-j7
   - **`CI gate`** — the always-run aggregator in [`ci.yml`](../workflows/ci.yml). It covers
     every path-scoped per-subtree job without the skipped-required-check footgun (a skipped
     job never satisfies a required check, so the per-subtree jobs are *not* required
-    directly). The pending fitness gates — `DETERMINISM_GATE` (A.7, `archie-k03q`),
+    directly). `DETERMINISM_GATE` (A.7, `archie-k03q`) is already covered here — the
+    HandlerPurity analyser + fixture-replay determinism test run inside the `engine` job's
+    non-Integration tier, which the gate already `needs:`. The still-pending fitness gates —
     acceptance gates (L.3), no-PII/emit-contract (G.6) — join the gate's `needs:` as they
     land, growing coverage without editing this ruleset.
+  - **`CodeQL gate`** — the always-run aggregator in [`codeql.yml`](../workflows/codeql.yml),
+    the SAST twin of `CI gate` (ADR-IC-014, Q.7). CodeQL is path-scoped at its workflow
+    trigger, so — exactly like `CI gate` — the ruleset requires this one always-present gate
+    rather than the per-language `Analyze (…)` jobs (which skip on docs-only PRs). The gate
+    requires that CodeQL analysis actually **ran and succeeded** on every scannable PR.
+    Findings-blocking is staged: [`codeql-failon.sh`](../scripts/codeql-failon.sh) flags
+    results at `error` level or `security-severity >= 7.0` (GitHub's default check-failure
+    bar, in a version-controlled, locally-tested script rather than a hidden repo UI setting),
+    but ships **report-only** (`CODEQL_FAILON_ENFORCE` unset) because a pre-existing
+    report-only alert backlog must be triaged before blocking (ADR-IC-014 residual risk
+    "Baseline noise"). Flip `CODEQL_FAILON_ENFORCE=1` in `codeql.yml` once triaged.
   - **`pr-body-adrs`** + **`adr-immutability`** — the [`adr-governance.yml`](../workflows/adr-governance.yml)
     explicit-drift gate (ADR-PC-020 §D3).
   - **`spec-coverage`** — the [`spec-coverage.yml`](../workflows/spec-coverage.yml) ADR↔catalogue↔test
     coverage checker (ADR-PC-020 §P6).
-
-Not yet required (tracked under Q.7): **CodeQL** code-scanning ([ADR-IC-014](../../docs/product-management/integration_concepts/adrs/ADR-IC-014-static-analysis-and-supply-chain-scanning.md)
-ties its required-gating + `fail-on` to Q.7). CodeQL is path-scoped at the workflow
-trigger, so making it requireable needs an always-run gate of its own — a remaining Q.7
-sub-task, landing with the other pending fitness gates.
 
 ## Applying / re-applying
 
