@@ -18,6 +18,21 @@ internal static class RateSheetTestData
     public static RateBand Band(long from, long? to, int bps) =>
         new(from, to, bps);
 
+    /// <summary>
+    /// The active product configs that match <see cref="ValidBody"/> — one config for
+    /// <c>dpz_pt_12m_juros_venc</c> whose <c>role_selector.map</c> resolves to the
+    /// <c>standard</c> and <c>new_money</c> roles the sheet prices (surface §2.2 worked example).
+    /// </summary>
+    public static IReadOnlyList<ActiveProductConfig> ActiveConfigs() =>
+    [
+        new ActiveProductConfig(
+            "dpz_pt_12m_juros_venc",
+            [
+                new RateRef("dpz_pt_12m_juros_venc", "standard"),
+                new RateRef("dpz_pt_12m_juros_venc", "new_money"),
+            ]),
+    ];
+
     public static RateSheetBody ValidBody() => new()
     {
         Products = new()

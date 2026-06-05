@@ -37,6 +37,24 @@ public sealed record RateSheetValidationResult(bool IsValid, IReadOnlyList<strin
 }
 
 /// <summary>
+/// One <c>rate_ref</c> a product config asks the active rate sheet to price (surface §2.2,
+/// §2.5): the <c>(product_id, role)</c> pair a config's <c>role_selector.map</c> can resolve
+/// to. The config never pins a single principal — it relies on the sheet covering the whole
+/// supported principal range for that pair, which the cross-band exhaustiveness check already
+/// guarantees — so coverage reduces to "the sheet has this <c>(product, role)</c> with bands".
+/// </summary>
+public sealed record RateRef(string ProductId, string Role);
+
+/// <summary>
+/// An active product config as the cross-artefact validator sees it (surface §2.5): its
+/// <see cref="ProductId"/> and the <see cref="RateRefs"/> its <c>role_selector.map</c> can
+/// resolve to. This is the minimal projection the rate-sheet side needs — the full config
+/// (parameters, day-count, withholding) is owned by the product-config registry (Epic E/F)
+/// and never reaches this validator.
+/// </summary>
+public sealed record ActiveProductConfig(string ProductId, IReadOnlyList<RateRef> RateRefs);
+
+/// <summary>
 /// Validates a rate-sheet body at deploy time (ADR-PC-008 §P2): a sheet that leaves
 /// a band gap, overlaps bands, or breaches the pack bound is rejected at the
 /// <c>POST /v1/rate-sheets</c> boundary, never at first constitution.
@@ -48,14 +66,33 @@ public sealed record RateSheetValidationResult(bool IsValid, IReadOnlyList<strin
 /// itself (<see cref="RateBandJsonConverter"/> rejects a malformed range at deserialize), so a
 /// malformed band cannot reach this validator. The <em>cross-artefact</em> invariants
 /// ("every referenced product_id exists in an active config"; "every active config's
-/// rate_ref (product, role, principal) is covered") need the product-config registry,
-/// which does not exist until Epic E/F. They are deliberately NOT enforced here — see the
-/// filed follow-up — so this validator never silently half-checks a sheet against configs
-/// it cannot see.
+/// <c>rate_ref</c> (product, role) is covered") are enforced against the active product configs
+/// the caller supplies (an <see cref="ActiveProductConfig"/> list resolved from the product-config
+/// registry). The registry itself is owned by the deploy host, so the validator stays a pure
+/// function of <c>(body, bounds, configs)</c>. With <em>no</em> active configs the two
+/// cross-artefact checks pass vacuously — a backwards-compatible default that never rejects an
+/// existing deploy just because the registry is empty (e.g. the registry is not yet wired in).
 /// </remarks>
 public sealed class RateSheetValidator
 {
-    public RateSheetValidationResult Validate(RateSheetBody body, RateBounds bounds)
+    /// <summary>
+    /// Validates a sheet against the self-contained §2.5 invariants only (no cross-artefact
+    /// checks): used where no product-config registry is in play, and the base case the
+    /// cross-artefact overload reduces to with an empty config list.
+    /// </summary>
+    public RateSheetValidationResult Validate(RateSheetBody body, RateBounds bounds) =>
+        Validate(body, bounds, []);
+
+    /// <summary>
+    /// Validates a sheet against the full §2.5 invariant set — the self-contained ones
+    /// (band shape via construction, non-overlap, upward-exhaustiveness, pack bounds) plus the
+    /// two <em>cross-artefact</em> ones evaluated against <paramref name="activeConfigs"/>:
+    /// (1) every product the sheet prices exists in an active config; (2) every active config's
+    /// <c>rate_ref</c> is covered by the sheet. An empty <paramref name="activeConfigs"/> makes
+    /// both cross-artefact checks pass vacuously (backwards-compatible).
+    /// </summary>
+    public RateSheetValidationResult Validate(
+        RateSheetBody body, RateBounds bounds, IReadOnlyList<ActiveProductConfig> activeConfigs)
     {
         var diagnostics = new List<string>();
 
@@ -77,9 +114,67 @@ public sealed class RateSheetValidator
             }
         }
 
+        ValidateCrossArtefact(body, activeConfigs, diagnostics);
+
         return diagnostics.Count == 0
             ? RateSheetValidationResult.Valid
             : RateSheetValidationResult.Invalid(diagnostics);
+    }
+
+    /// <summary>
+    /// True if <paramref name="body"/> prices <paramref name="rateRef"/> — the reusable
+    /// coverage primitive behind the symmetric §2.5 invariant. A future product-config deploy
+    /// path uses this in reverse: it rejects a config whose <c>rate_ref</c> the active sheet
+    /// does not cover (surface §2.5 "At product-config deploy"), so the engine never accepts a
+    /// state where the two artefacts disagree, whichever deploys first. Coverage is
+    /// <c>(product, role)</c> presence with at least one band: a present pair's bands are
+    /// exhaustive over the principal range by the cross-band check, so no per-principal probe is
+    /// needed.
+    /// </summary>
+    public static bool Covers(RateSheetBody body, RateRef rateRef) =>
+        body.Products.TryGetValue(rateRef.ProductId, out var roles)
+        && roles.TryGetValue(rateRef.Role, out var roleRates)
+        && roleRates.Bands.Count > 0;
+
+    private static void ValidateCrossArtefact(
+        RateSheetBody body, IReadOnlyList<ActiveProductConfig> activeConfigs, List<string> diagnostics)
+    {
+        if (activeConfigs.Count == 0)
+        {
+            // No active configs: nothing to cross-check against. Both invariants hold vacuously,
+            // so the sheet is judged on its self-contained shape alone (surface §2.5).
+            return;
+        }
+
+        // (1) Every product the sheet prices must exist in an active config — a sheet pricing a
+        // product no config references is a stale/orphaned reference, rejected at deploy.
+        var activeProductIds = activeConfigs.Select(c => c.ProductId).ToHashSet(StringComparer.Ordinal);
+        foreach (var productId in body.Products.Keys)
+        {
+            if (!activeProductIds.Contains(productId))
+            {
+                diagnostics.Add(
+                    $"Product '{productId}' is priced by the sheet but has no active product config; " +
+                    "every referenced product_id must exist in an active config (surface §2.5).");
+            }
+        }
+
+        // (2) Every active config's rate_ref must be covered by the sheet — a config asking for a
+        // (product, role) the sheet doesn't price would leave a constitution unpriceable, so it is
+        // rejected at deploy, never at first constitution.
+        foreach (var config in activeConfigs)
+        {
+            foreach (var rateRef in config.RateRefs)
+            {
+                if (!Covers(body, rateRef))
+                {
+                    diagnostics.Add(
+                        $"Active config '{config.ProductId}' references rate_ref " +
+                        $"({rateRef.ProductId}, {rateRef.Role}) which the sheet does not cover; " +
+                        "every active config's rate_ref must be covered (surface §2.5).");
+                }
+            }
+        }
     }
 
     private static void ValidateBands(

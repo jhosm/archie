@@ -17,6 +17,7 @@ internal static class DeployRateSheetEndpoint
         IRateSheetStore store,
         RateSheetValidator validator,
         IRateBoundsSource bounds,
+        IProductConfigSource productConfigs,
         CancellationToken ct)
     {
         // §P2: an Idempotency-Key header, when supplied, must equal the version id —
@@ -41,7 +42,8 @@ internal static class DeployRateSheetEndpoint
         }
 
         var body = new RateSheetBody { Products = request.Products };
-        var validation = validator.Validate(body, bounds.For(request.PackVersion));
+        var validation = validator.Validate(
+            body, bounds.For(request.PackVersion), productConfigs.Active());
         if (!validation.IsValid)
         {
             return Results.ValidationProblem(
