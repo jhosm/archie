@@ -98,7 +98,7 @@ The settlement events that flow through the ACL during coexistence:
 | `DepositTerminatedEarly` | Credit (principal − penalty) + net accrued interest to depositor's current account on legacy |
 | `DepositPartiallyWithdrawn` | Credit withdrawn principal + net accrued interest (on the withdrawn portion) to depositor's current account on legacy |
 
-Each of these triggers an ACL call. The ACL handles the seven responsibilities from [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md) (semantic translation, protocol translation, idempotency, ID mapping, error translation, latency adaptation, periodic reconciliation), including the indeterminate-state problem that is the heart of the split-brain risk.
+Each of these triggers an ACL call. The ACL handles the eight responsibilities from [integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md) (semantic translation, protocol translation, idempotency, ID mapping, error translation, latency adaptation, periodic reconciliation, authentication to Core Banking), including the indeterminate-state problem that is the heart of the split-brain risk.
 
 The settlement direction is asymmetric. The engine emits commands toward legacy via the ACL (engine → legacy). Legacy emits *facts* toward the engine via the daily batch file (legacy → engine, §5). There is no bidirectional command channel; legacy never commands the engine. This asymmetry is what makes the coexistence tractable — the engine is a strangler-fig consumer of legacy data and an active driver of legacy state changes, but not a participant in legacy's own command paths.
 
