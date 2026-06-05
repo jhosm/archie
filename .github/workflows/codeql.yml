@@ -45,6 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       scan: ${{ steps.filter.outputs.scan }}
+      failon: ${{ steps.filter.outputs.failon }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -69,6 +70,10 @@ jobs:
               - 'pack-validate/**'
               - '.github/workflows/codeql.yml'
               - '.github/scripts/codeql-failon.sh'
+            failon:
+              - '.github/scripts/codeql-failon.sh'
+              - '.github/scripts/codeql-failon.test.sh'
+              - '.github/workflows/codeql.yml'
 
   analyze:
     name: Analyze (${{ matrix.language }})
@@ -112,25 +117,46 @@ jobs:
           output: sarif-results   # also write SARIF locally for the fail-on check below
           upload: always          # still publish to the Security tab regardless of fail-on
       - name: Fail-on findings at/above the threshold (PR gate — ADR-IC-014)
-        # The severity logic lives in a version-controlled, locally-tested script (no hidden
-        # UI setting). Runs on PRs only. REPORT-ONLY for now: the script defaults to
-        # non-blocking because the repo carries a pre-existing report-only alert backlog
-        # that ADR-IC-014 says to triage BEFORE blocking. To flip to blocking once the
-        # backlog is cleared, add `env: { CODEQL_FAILON_ENFORCE: "1" }` to this step
-        # (tracked by the Q.7 follow-up issue).
+        # The severity logic lives in a version-controlled script (no hidden UI setting),
+        # unit-tested against crafted SARIF fixtures in codeql-failon.test.sh (re-run by the
+        # `failon-selftest` job below). Runs on PRs only. BLOCKING (Q.7b, bd
+        # babelstone-2t16.10): CODEQL_FAILON_ENFORCE=1 makes a CodeQL finding at/above the
+        # bar fail the PR. The pre-existing report-only backlog was triaged first — all 35
+        # were grype SBOM-scan false positives, dismissed — per ADR-IC-014 residual risk
+        # "Baseline noise". NOTE: this gate evaluates CodeQL's OWN SARIF only; the grype
+        # findings (sbom.yml) live in the same Security tab but are gated separately by that
+        # workflow's own fail-build switch (a distinct follow-up).
         if: ${{ github.event_name == 'pull_request' }}
+        env:
+          CODEQL_FAILON_ENFORCE: "1"
         run: bash .github/scripts/codeql-failon.sh sarif-results
+
+  failon-selftest:
+    name: Fail-on script self-test
+    needs: changes
+    # The PR-gate's severity logic is the security-critical core (ADR-IC-014, Q.7b). Re-run
+    # its crafted-SARIF unit tests whenever the script, its tests, or this workflow changes —
+    # and always on push/schedule. Pure bash + jq (both preinstalled on the runner), so no
+    # toolchain pin. Guards against a regression silently weakening the fail-on bar.
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.failon == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run codeql-failon.sh unit tests (crafted SARIF fixtures)
+        run: bash .github/scripts/codeql-failon.test.sh
 
   gate:
     # Always-run aggregator (Q.7, archie-j72w) — the CodeQL twin of ci.yml's `CI gate`.
     # Present on every PR (this workflow has no pull_request paths filter), so the
     # main-protect ruleset requires ONE stable check: `CodeQL gate`. Passes iff every job
-    # that ran succeeded; `skipped` (docs-only PR → analyze skipped) counts as OK, `failure`
-    # (a real finding tripped fail-on, or analysis errored) does not.
+    # that ran succeeded; `skipped` (docs-only PR → analyze/self-test skipped) counts as OK,
+    # `failure` (a real finding tripped fail-on, analysis errored, or the self-test caught a
+    # regression in the gate script) does not.
     name: CodeQL gate
     needs:
       - changes
       - analyze
+      - failon-selftest
     if: always()
     runs-on: ubuntu-latest
     steps:
