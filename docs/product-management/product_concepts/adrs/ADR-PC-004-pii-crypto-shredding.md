@@ -126,6 +126,19 @@ Erasure is auditable (which subject, when, by whom) and the structural audit tra
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+No catalogued Test ID governs crypto-shredding yet — this is a deliberate, visible hole, to be closed under the catalogue's growth provision when the crypto-shred mechanism is built. The two load-bearing, falsifiable invariants this ADR earns are:
+
+- **PII-field annotation is CI-enforced** — the engine's CI rejects any event-type payload schema that introduces an unannotated string field, so every string field is decided PII or non-PII at the schema boundary (§P1). An analyser gate; no Test ID is wired yet.
+- **Crypto-shred yields null PII + intact structural state, and records the erasure** — after a subject's OpenBao key is destroyed and caches evicted, replay and projection rebuild produce `null` in that subject's PII fields while structural fields stay queryable, and a `SubjectErased` event is recorded with its `transaction_time` and actor (§P3). No Test ID is wired yet.
+
+These are buildable regardless of the §Gate DPO production gate. Key-store and backup-completion concerns compose with the separately-owned DR gates of [ADR-PC-005](./ADR-PC-005-dr-rto-rpo.md) (§P4–§P5) rather than being claimed here.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-001](./ADR-PC-001-event-store-technology.md) — the Avro `payload` carries PII ciphertext; structural columns cleartext.

@@ -183,6 +183,16 @@ As the test's last step, the observer triggers a cold rebuild of every projectio
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+No executable commitment of its own is catalogued — this ADR is *tooling*. The harness is the v1 acceptance instrument that **exercises** budgets owned elsewhere; it does not introduce a separately-gated invariant of its own. It composes with two gates it asserts but does not own: the cold-replay budgets `REPLAY_BUDGET_5S_30S` (governed by [event-store §8.2](../feature-design-event-store-projections.md)) and the cold-rebuild byte-equality of `PROJECTION_REBUILD_DETERMINISM` (governed by [ADR-PC-002 §P4](./ADR-PC-002-application-level-bitemporality.md) / [ADR-PC-010 §P5](./ADR-PC-010-dotnet-hand-rolled-engine.md)) — the harness's §P5 final assertion drives that drill but the invariant is theirs.
+
+Known gap — the harness's own falsifiable properties are not yet wired to a Test ID, a deliberate, visible hole to be added to the catalogue under its growth provision when the harness is built ([ADR-PC-020 §P5](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)): boundary latency is asserted from the engine's OpenTelemetry spans/metrics, never the driver's send clock (§P2); and `(seed, code revision)` reproduces a run, with a non-reproducing failure escalated above a deterministic one as engine-level non-determinism (§P4).
+
+---
+
 ## Cross-references
 
 - [two-modes §8](../feature-design-two-modes-asymmetry.md) — the full test specification this ADR tools; [§5.6](../feature-design-two-modes-asymmetry.md) makes it a v1 acceptance gate.

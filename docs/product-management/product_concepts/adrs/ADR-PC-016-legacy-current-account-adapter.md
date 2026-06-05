@@ -113,3 +113,16 @@ The reconciler is mandatory and self-evidencing (ADR-IC-012 P7): it emits a repo
 - **Q-AG reconciliation thresholds are uncalibrated** until a real-data calibration period sets them. Until then, flow-1 mismatches are reviewed manually with elevated attention (the [coexistence §10.3](../feature-design-strangler-fig-coexistence.md) post-cutover regime).
 - **Customer-master coupling.** The adapter resolves `current_account_id` against the legacy customer-master, which has no end date and may outlive coexistence ([04 §6](../04-open-questions.md), [Q-BA](../04-open-questions.md)). This ADR does not address customer-master cutover.
 - **What this contract does not commit to:** the legacy core's specific API surface (SOAP/MQ/batch — absorbed by the ACL per ADR-IC-012 scope), the reconciliation job's tooling and schedule (ADR-IC-012 defers the cron/triage tooling), and the day-1 renewal load spike ([Q-AD](../04-open-questions.md), [coexistence §9.3](../feature-design-strangler-fig-coexistence.md)) which stresses this adapter but is a load-test concern owned by [ADR-PC-011](./ADR-PC-011-in-house-load-test-harness.md).
+
+---
+
+## Verifiable commitments
+
+This contract's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- **Idempotency (slot 4) is governed by [ADR-IC-012](../../integration_concepts/adrs/ADR-IC-012-anti-corruption-layer-implementation.md) P4/P5, not separately catalogued here.** This adapter inherits that gate verbatim and re-decides nothing: the indeterminate-state machine (`IN_FLIGHT → CONFIRMED | INDETERMINATE | REJECTED`) prevents the double-debit by construction — the outbound client refuses to send if an in-flight row with the same idempotency key exists in any state other than `RETRY_PERMITTED` (slot 4). PC-016 composes with that separately-owned gate; it does not claim it as its own row.
+
+Two load-bearing invariants this contract decides are real and falsifiable but **not yet wired to a Test ID** — deliberate, visible holes (ADR-PC-020 §P5) to be added to the catalogue under its growth provision when the adapter is implemented:
+
+- **Constitution debits are gated, not post-flagged.** The constitution saga blocks on settlement confirmation; `InsufficientBalance` from the Core compensates and emits `DepositConstitutionFailed` with `failure_reason: INSUFFICIENT_FUNDS`, and no credit is gated on funds but every credit is gated on confirmation (slot 5 · Error model). This is the **opposite** stance from the GL/IFRS-9 post-flag family — it must **not** reuse `GL_POST_FLAG_NEVER_GATES`; the falsifiable claim is that the producing flow *is* gated. No Test ID is wired yet.
+- **Reconciliation flow 1 is mandatory and self-evidencing.** The split-brain reconciler emits a report every day — including zero-divergence days — comparing the engine's settlement outbox against the legacy core's credit/debit journal, classifying each command as match / engine-side orphan / legacy-side orphan / amount-mismatch (Reconciliation contract). The falsifiable claim is the always-emitted report; no Test ID is wired yet.

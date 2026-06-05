@@ -174,6 +174,14 @@ Every blue and in-house-teal artefact is its own top-level path with its own bui
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+No executable commitments — this repository-layout decision is realised by `CODEOWNERS` + path-scoped CI (§P1) and is process, not buildable engine behaviour an implementation can drift from. The engine/estate boundary it enables — the `family → engine` one-way arrow, with no `ProjectReference` from the generic spine into `families/**` — is gated separately by `ENGINE_FAMILY_AGNOSTIC`, owned by [ADR-PC-021 §P2 / §D2](./ADR-PC-021-application-layer-family-owned-deciders.md), not by this ADR. The §P2 extraction-ready-subtree discipline (the property that keeps the deferred config-data and estate splits near-zero-cost) is an engineering convention checked in review, with no Test ID wired.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — the build approach this extends; LLM-codability as a first-class criterion, applied here to the repository.

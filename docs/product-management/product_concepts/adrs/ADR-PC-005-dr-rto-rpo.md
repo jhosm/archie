@@ -138,6 +138,17 @@ The monthly projection-rebuild drill ([event-store §7.2](../feature-design-even
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+No executable engine commitments are wired to this ADR: the DR posture is realised by the operational runbooks and the §P5 full recovery drill (the DORA resilience-testing evidence), not by a unit/integration fitness function. Two seams are testable but owned elsewhere — this ADR composes with them rather than claiming them:
+
+- The recovery cold-replay (§P3, §Decision RTO row) is *rebuild-from-log*, so it rides the existing rebuild gates — `PROJECTION_REBUILD_DETERMINISM` (governed by [ADR-PC-002 §P4](./ADR-PC-002-application-level-bitemporality.md)) and the `REPLAY_BUDGET_5S_30S` cold-replay budget (governed by [event-store §8.2](../feature-design-event-store-projections.md)); this ADR adds no separate projection/snapshot protection of its own.
+- **Known gap, no Test ID yet wired:** the synchronous-replication append-latency must be included in the Q-AK load test (§P1) — a falsifiable RPO-vs-write-latency claim with no catalogue row today (a deliberate, visible hole per [ADR-PC-020 §P5](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)), to be added under the catalogue's growth provision when synchronous replication is implemented and benchmarked.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-001](./ADR-PC-001-event-store-technology.md) — the PostgreSQL event store this ADR protects; §Consequences flags multi-region as a future PC-005 concern.

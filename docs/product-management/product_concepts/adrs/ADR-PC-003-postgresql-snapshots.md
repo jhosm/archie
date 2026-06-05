@@ -115,6 +115,16 @@ Keep the latest snapshot per `(stream_id, projection_type)` plus calendar-bounda
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+The load-bearing invariant this ADR owns is a **correctness guard, not a performance SLA**: a snapshot must never be trusted blindly. Concretely (§P4) — a rebuild *from* a snapshot must reproduce state whose hash at `last_event_id` matches the stored `snapshot_hash`, and the monthly discard-and-rebuild drill must reproduce identical state from the log alone. **No executable commitment is yet catalogued for this snapshot hash-verify / rebuild-equivalence invariant** (§P4); it is a known, deliberate gap — visibility is the point ([ADR-PC-020 §P5](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)) — to be added to the catalogue under its growth provision when the snapshot module is built.
+
+- Cold replay from **zero snapshots must always work** — snapshots accelerate the rebuild, they never gate correctness (§P3). The replay-budget bound this acceleration serves is the separately-owned `REPLAY_BUDGET_5S_30S` gate (governed by [event-store §8.2](../feature-design-event-store-projections.md), not this ADR); snapshots are the mechanism that ADR composes with, not a commitment this ADR claims.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-001](./ADR-PC-001-event-store-technology.md) — PostgreSQL event store; §Consequences already places snapshots as rows in the same database.

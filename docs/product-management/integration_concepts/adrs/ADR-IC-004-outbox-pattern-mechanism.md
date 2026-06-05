@@ -245,6 +245,16 @@ If Redpanda is unavailable, the publisher must retry with exponential backoff up
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](../../product_concepts/adrs/commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- `ES_ATOMIC_APPEND_OUTBOX` — the domain state change and its outbox row are written in one local PostgreSQL transaction, so no event exists without its outbox row and vice versa; this is the §P6 same-transaction guarantee, gated by `ES_ATOMIC_APPEND_OUTBOX` (catalogued under [ADR-PC-001 §P2](../../product_concepts/adrs/ADR-PC-001-event-store-technology.md), the engine-side realisation of this ADR's contract).
+
+Known gap — not yet wired to a Test ID: §P2 (as corrected by the 2026-05-29 amendment) requires the publisher to drain `ORDER BY created_at, sequence_number` so that per-aggregate publish order is preserved by construction and the publisher can never emit a later event of an aggregate before an earlier one. No catalogue row currently exercises this per-aggregate ordering invariant; it is a deliberate, visible hole (ADR-PC-020 §P5) to be added under the catalogue's growth provision when the polling publisher is implemented.
+
+---
+
 ## Amendment — 2026-05-29: outbox drain tiebreaker is `sequence_number`, not `event_id`
 
 Implementing the engine's event-store core (Epic A) surfaced an ordering defect in the §P2 drain rule as written. §P2 (and the §Consequences polling-query note) specify `ORDER BY created_at, event_id`, but the engine stamps every event in a single multi-event append with one `transaction_time` (the runtime owns the clock — ADR-PC-010 §P5), so all rows from that append share an identical `created_at`. The only tiebreaker is then `event_id` — a random UUIDv4 — which does **not** order rows by their per-stream `sequence_number`. The publisher could therefore emit a later event of an aggregate before an earlier one, violating the §P2 hard constraint that publish order *within* an aggregate is preserved.
