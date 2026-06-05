@@ -60,5 +60,7 @@
     <PackageVersion Include="OpenTelemetry" Version="1.15.3" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+    <!-- TEMPORARY (Q.7c gate verification): a known CRITICAL advisory (GHSA-ghhp-997w-qr28) to prove dependency-review blocks. DO NOT MERGE. -->
+    <PackageVersion Include="System.Text.Encodings.Web" Version="4.5.0" />
   </ItemGroup>
 </Project>

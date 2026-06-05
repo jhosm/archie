@@ -16,6 +16,8 @@
          ResourceBuilder (OBS-1, ResourceAttributeTests); the in-memory ActivityListener for the
          span test (OBS-2, TelemetrySpanTests) needs no package beyond System.Diagnostics. -->
     <PackageReference Include="OpenTelemetry" />
+    <!-- TEMPORARY (Q.7c gate verification): pulls the CRITICAL-advisory package into the graph. DO NOT MERGE. -->
+    <PackageReference Include="System.Text.Encodings.Web" />
   </ItemGroup>
 
   <ItemGroup>
