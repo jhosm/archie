@@ -20,6 +20,9 @@
     <!-- Reads OutboxRow / OutboxStatus from the event store (no Engine dependency: the
          relay is downstream of the write path, it only drains the table). -->
     <ProjectReference Include="../Babelstone.EventStore/Babelstone.EventStore.csproj" />
+    <!-- The shared OTel surface (ADR-IC-007 Layer 1): the relay records the publish-lag SLI
+         (ADR-IC-004 §P4) on BabelstoneTelemetry.Meter — never a new meter of its own. -->
+    <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
   </ItemGroup>
 
   <ItemGroup>
