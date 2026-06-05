@@ -14,10 +14,14 @@ namespace Babelstone.EventStore;
 /// projection (F.6), so supersession and current-belief reads must not bleed across kinds.
 /// </para>
 /// <para>
-/// The typed bitemporal query helper (AsOf / CurrentBelief / HistoryOf, ADR-PC-002 §P3)
-/// is a separate task (D.3) and sits ABOVE this byte-oriented boundary. Do NOT add those
-/// query helpers here — this interface intentionally exposes only the current-belief
-/// read needed by the write path.
+/// The TYPED bitemporal query helper (AsOf / CurrentBelief / HistoryOf, ADR-PC-002 §P3)
+/// is a separate task (D.3) and sits ABOVE this byte-oriented boundary in
+/// <c>Babelstone.Engine</c> — it deserializes <see cref="ProjectionRecord.StructuralPayload"/>
+/// into <c>TState</c>, the same split as <c>SnapshotStore&lt;TState&gt;</c> over
+/// <see cref="ISnapshotStorage"/>. That typed layer composes the two-axis temporal reads this
+/// boundary exposes (<see cref="ReadAsOfAsync"/> and <see cref="ReadHistoryOfAsync"/>); the SQL
+/// for the four-column join stays HERE, private to the store, because this is the only code that
+/// touches the <c>projections</c> table.
 /// </para>
 /// </remarks>
 public interface IProjectionStorage
@@ -65,4 +69,33 @@ public interface IProjectionStorage
     /// exists.
     /// </summary>
     Task<ProjectionRecord?> ReadCurrentBeliefAsync(Guid streamId, string projectionKind, CancellationToken ct = default);
+
+    /// <summary>
+    /// The two-axis bitemporal read (ADR-PC-002 §P1) backing the typed <c>AsOf</c> helper (§P3):
+    /// returns the row for the <c>(streamId, projectionKind)</c> pair whose world-time slice
+    /// covers <paramref name="validTime"/> AND whose belief-time slice covers
+    /// <paramref name="knownAt"/>, or <see langword="null"/> if no row was believed for that
+    /// valid-time at that transaction-time. World-time is covered when
+    /// <c>valid_from &lt;= validTime AND (valid_to IS NULL OR valid_to &gt; validTime)</c>;
+    /// belief-time is covered when <c>recorded_at &lt;= knownAt AND (superseded_at IS NULL OR
+    /// superseded_at &gt; knownAt)</c> — the half-open <c>[recorded_at, superseded_at)</c>
+    /// interval, so the row a correction superseded is invisible once <paramref name="knownAt"/>
+    /// reaches the correction. This is what makes "as we knew it then" differ from
+    /// "as we know it now" after a retroactive correction (§P2).
+    /// </summary>
+    Task<ProjectionRecord?> ReadAsOfAsync(
+        Guid streamId, string projectionKind, DateTimeOffset validTime, DateTimeOffset knownAt,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// The full belief history for the <c>(streamId, projectionKind)</c> pair (ADR-PC-002 §P2)
+    /// backing the typed <c>HistoryOf</c> helper (§P3) — the audit trail of how belief about
+    /// this projection changed: every row, superseded and current alike, ordered by belief-time
+    /// (<c>recorded_at</c> ascending, <c>row_id</c> ascending only as a deterministic tie-break).
+    /// A forced correction supersedes rather than deletes, so the disavowed beliefs remain here;
+    /// the currently-believed row (if any) is the one with <c>superseded_at IS NULL</c> and sorts
+    /// last. Returns an empty list if the pair was never projected.
+    /// </summary>
+    Task<IReadOnlyList<ProjectionRecord>> ReadHistoryOfAsync(
+        Guid streamId, string projectionKind, CancellationToken ct = default);
 }
