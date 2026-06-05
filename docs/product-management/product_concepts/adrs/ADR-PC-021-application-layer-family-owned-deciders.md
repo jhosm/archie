@@ -168,7 +168,7 @@ The choreography common to deciders is written as separable steps so the generic
 |---|---|---|---|---|
 | 1 | The generic engine spine carries no reference to any `families/**` project — the `family → engine` arrow is one-way (§D2, §P2). | architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC` | Live |
 
-Related: this ADR's family-agnosticism is the family-level cousin of the variant-level [`ZERO_ENGINE_DIFF_PER_VARIANT`](./commitment-catalogue.md) (adding a *variant* is zero engine diff; adding a *family* is zero *generic*-engine diff). `ENGINE_FAMILY_AGNOSTIC` is now `Live` — the dependency assertion (`EngineFamilyAgnosticTests` in `Babelstone.Engine.Tests`) parses the six spine projects' `.csproj` and fails if any references `families/**`; it is promoted to the [commitment catalogue](./commitment-catalogue.md) (row 12) as the single source of truth for its status.
+Related: this ADR's family-agnosticism is the family-level cousin of the variant-level [`ZERO_ENGINE_DIFF_PER_VARIANT`](./commitment-catalogue.md) (adding a *variant* is zero engine diff; adding a *family* is zero *generic*-engine diff). `ENGINE_FAMILY_AGNOSTIC` is now `Live` — the dependency assertion (`EngineFamilyAgnosticTests` in `Babelstone.Engine.Tests`) parses the eight spine projects' `.csproj` and fails if any references `families/**`, and a sibling assertion keeps that allowlist in lockstep with the §P2 enumeration parsed off this ADR; it is promoted to the [commitment catalogue](./commitment-catalogue.md) (row 12) as the single source of truth for its status.
 
 ---
 
