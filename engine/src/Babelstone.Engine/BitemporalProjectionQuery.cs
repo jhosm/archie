@@ -41,9 +41,11 @@ public sealed record BeliefRow<TState>(
 /// <see cref="AsOfAsync"/> directly: both axes are bound.
 /// </item>
 /// <item>
-/// <b>Audit trail (#2)</b> — "how belief about this projection changed" — is
-/// <see cref="HistoryOfAsync"/>: the full belief line, disavowed rows included, in belief-time
-/// order.
+/// <b>Belief-time history (#2)</b> — "how belief about this projection changed" — is
+/// <see cref="HistoryOfAsync"/>: the full supersession line of a single projection, disavowed rows
+/// included, in belief-time order. This is the projection's belief history, NOT the event-log audit
+/// trail (event sequence + actor) — that is a separate read over the event table, outside this
+/// projection helper.
 /// </item>
 /// <item>
 /// <b>Counterfactual replay (#3)</b> — a replay with corrected inputs is a runtime fold, but the
@@ -62,6 +64,7 @@ public sealed record BeliefRow<TState>(
 /// </list>
 /// </remarks>
 public sealed class BitemporalProjectionQuery<TState>(IProjectionStorage storage, IStateSerializer<TState> serializer)
+    where TState : class
 {
     /// <summary>
     /// Capability #1 (as-of) and the read side of #3/#4: the belief about <paramref name="validTime"/>
@@ -90,9 +93,11 @@ public sealed class BitemporalProjectionQuery<TState>(IProjectionStorage storage
     }
 
     /// <summary>
-    /// Capability #2 (audit trail): the full belief history for the pair in belief-time order —
-    /// every row a correction superseded plus the current belief — so a caller can see how the
-    /// belief about this projection evolved (event-store §2). Empty when the pair was never projected.
+    /// Capability #2 (belief-time history): the full supersession line of this projection in
+    /// belief-time order — every row a correction superseded plus the current belief — so a caller
+    /// can see how the belief about this projection evolved. This is the projection's belief history,
+    /// not the event-log audit trail (event sequence + actor), which is a separate event-table read.
+    /// Empty when the pair was never projected.
     /// </summary>
     public async Task<IReadOnlyList<BeliefRow<TState>>> HistoryOfAsync(
         Guid streamId, string kind, CancellationToken ct = default)
