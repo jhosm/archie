@@ -379,6 +379,19 @@ Tools that map to irreversible operations (deposit constitution above the auto-a
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](../../product_concepts/adrs/commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+The two boundary invariants this decision rests on are described in the body as existing CI contract tests, but neither is yet wired to a catalogue Test ID — a deliberate, visible gap to be catalogued under the catalogue's growth provision when the MCP server is implemented:
+
+- **Wrong-resource token is rejected at the boundary** — a request bearing a token whose `aud` claim is not the MCP server's canonical URI receives `401` from the MCP server before any application code runs (§P3; the Principle-2 contract test of [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) / [ADR-IC-009](./ADR-IC-009-testing-infrastructure.md)). No Test ID is wired yet.
+- **Every tool carries a mandatory `outputSchema`** — a tool that returns free-text confirmation without a structured payload is rejected in CI by a contract test, and the rule holds for read tools too after the 2026-05-31 amendment (§P6; A2/A4). No Test ID is wired yet.
+
+This ADR's per-tool scope discipline (one tool maps to exactly one scope, no god scope, §P4) and elicitation-URL-mode rule for irreversible operations (the SCA-bound action transitions the saga, not the agent's report, §P8) are realised by the [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) gateway and the saga orchestrator respectively; they are governed there, not as this ADR's own catalogue rows.
+
+---
+
 ## Amendment — 2026-05-31: the tool/resource axis is control-ownership, not CQRS
 
 [Document 11](../11-chat-agent-channel-strategy.md) framed the MCP surface as "tools → commands, resources → CQRS read models" (restated in this ADR's Context and woven through §P4–§P6). Implementing the Epic E walking skeleton ([bd babelstone-2d12](../../product_concepts/04-open-questions.md)) surfaced that this mapping is a category error at the MCP boundary, and that landing a correction silently is the drift the explicit-drift gate ([ADR-PC-020 §D3](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)) exists to catch. This amendment records the correction. It is additive: the Decision (runtime/transport/hosting/OAuth) and §P1–§P8 hold as written, save the method-vs-scope clarification in A3 below.

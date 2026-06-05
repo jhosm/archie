@@ -170,6 +170,17 @@ A wrong-rate publication (treasury types `350` bps for `35`) is corrected **forw
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+Immutability-by-privilege on `rate_sheets` (§P1 — `INSERT`/`SELECT`-only application role, no `UPDATE`/`DELETE`) is the separately-owned [ADR-PC-001 §P3](./ADR-PC-001-event-store-technology.md) role-privilege pattern this ADR composes with, not a row it claims. No catalogued Test ID governs the rate-sheet deploy/resolution path yet — a deliberate, visible hole ([ADR-PC-020 §P5](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)), to be closed under the catalogue's growth provision when `Babelstone.RateSheets` is built. The two falsifiable invariants this decision earns are clean integration-test targets:
+
+- **Deploy is idempotent on `rate_sheet_version_id`** (§P2) — re-POSTing an *identical* body under an existing version id returns `200` with the stored resource, while a *different* body under that same id returns `409 Conflict`; forward-only immutability is enforced at the API boundary, not only by the `UNIQUE (product_family, effective_from)` table constraint. No Test ID is wired yet.
+- **Resolution stamps version and value in the constitution transaction** (§P3) — `DepositConstituted` carries *both* the resolved `rate_sheet_version_id` and the resolved `tan_basis_points`, read and stamped within the same local transaction as the event append (no cross-system round-trip), so the affected-instance set after a bad sheet (§P5) is a single decidable query over the event stream. No Test ID is wired yet.
+
+---
+
 ## Amendment — 2026-05-30: HTTP host technology for the §P2 deploy endpoint
 
 Implementing C.6 ([bd archie-9vpj](../04-open-questions.md)) stood up the §P2 `POST /v1/rate-sheets` endpoint as the **first HTTP host in the engine**. The Decision mandated the endpoint *exists* but named no host technology; that choice is load-bearing and was landing in code unrecorded — the silent drift the explicit-drift gate ([ADR-PC-020 §D3](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)) exists to catch. This amendment records the host decision. It is additive: §P1–§P5 hold as written.

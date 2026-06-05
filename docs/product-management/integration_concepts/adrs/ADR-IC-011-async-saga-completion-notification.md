@@ -315,3 +315,16 @@ The `stream_url` is always present — the client may choose to open it or not. 
 If the `notification_subscription_id` references a suspended subscription (flagged by a prior `4xx`), the Deposits API returns `422 Unprocessable Entity` with a machine-readable error body indicating that the subscription is suspended and must be re-registered. This is preferable to silently accepting the request and failing to deliver — the caller learns immediately that their notification channel is broken.
 
 For MCP tool calls, the `structuredContent` in the `constitute_deposit` result carries the `notification` field alongside `process_id` and the `follow_up` poll hint — both notification paths are visible to the agent so it can relay whichever is appropriate to the user.
+
+---
+
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](../../product_concepts/adrs/commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+This ADR's load-bearing invariants are real and unit-testable but not yet wired to a catalogue Test ID — a deliberate, visible gap (per ADR-PC-020 §P5), to be added to the catalogue under its growth provision when the notification service is implemented. The falsifiable claims this decision earns, scoped to the webhook-callback wire format:
+
+- **SSRF mitigation set enforced at registration, not delivery** — `POST /api/v1/notification-subscriptions` rejects a non-`https` `endpoint_url`, rejects an `endpoint_url` resolving to a private/loopback/link-local address, resolves DNS once at registration and delivers to that recorded IP (never re-resolving at delivery, defeating DNS rebinding), and follows no redirects at delivery (§P1). No Test ID is wired yet.
+- **Stable idempotency key on every payload** — every callback carries `idempotency_key = sha256("{process_id}:{terminal_event_type}")`, identical across all retry attempts of the same saga terminal event (§P2, D2). No Test ID is wired yet.
+- **HMAC-SHA256 signature with bounded replay window** — the receiver recomputes `HMAC-SHA256(secret, "{timestamp}.{raw_body}")`, accepts only on a constant-time match, and rejects a delivery whose `X-Webhook-Timestamp` is more than 5 minutes old (§P2, D3). No Test ID is wired yet.
+- **No notification obligation lost on crash** — the Redpanda offset for a consumed terminal event is committed only after every matching delivery record is written, so a crash between consume and record cannot drop a notification (§P3 step 3, the outbox guarantee). No Test ID is wired yet.

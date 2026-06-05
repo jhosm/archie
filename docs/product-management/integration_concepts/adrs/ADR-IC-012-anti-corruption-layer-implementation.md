@@ -321,3 +321,17 @@ A silent reconciler is a broken reconciler. The reconciliation job's heartbeat (
 The deployment manifest (Helm chart, Compose file, or equivalent) names the bulkhead pools explicitly: `outbound-core-pool`, `inbound-poller-pool`, `inbound-webhook-pool`, `inbound-mq-pool`, `reconciler-pool`. The configuration is part of the ACL's release notes, not buried in code. Each pool has a documented size and a documented saturation alarm.
 
 This is a documentation principle as much as a code principle: a reader of the ACL deployment should be able to see, without reading code, where the failure-isolation seams are. An ACL whose bulkhead structure is implicit in thread-pool defaults has the wrong shape, even if it works.
+
+---
+
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](../../product_concepts/adrs/commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- The ACL idempotency key is derived deterministically from `(operation_type, saga_step_id, external_reference)`, stable across saga retries; a second send with the same key returns the recorded `core_reference` from the `idempotency_keys` table without contacting the Core (§P4).
+- Double-debit is prevented by construction: the outbound D2 client refuses to send when an in-flight row with the same idempotency key exists in any state other than `RETRY_PERMITTED`, so an `INDETERMINATE` operation is never silently re-issued without Core clearance (§P5).
+- The ACL outbox write and the state-store mutation commit in one local transaction — the ADR-IC-004 invariant scoped to the ACL — so an operation cannot be recorded as confirmed without its domain event being durably queued for publication (§P6).
+- Core types (WSDL stubs, MQ message classes, REST DTOs) are confined to the protocol-client module, enforced by build-system module-dependency rules rather than code review alone — an architecture/dependency-assertion gate analogous to `ENGINE_FAMILY_AGNOSTIC` (§P2).
+- The reconciler is mandatory and self-evidencing: it writes a `reconciliation_runs` row on every execution, including zero-divergence days, so reconciler silence is a detectable fault rather than a clean result (§P7).
+
+None of these invariants is wired to a Test ID in the catalogue yet — they are deliberate, visible gaps to be added under the catalogue's growth provision when the ACL service is implemented (ADR-PC-020 §P5). The §P2 build-time module-boundary check is an analyser-class gate (in the family of the engine's `BENG` analysers); the §P5 double-debit guard and the §P4 idempotency-key derivation are the most testable. IC-012 is the originating contract for the idempotency and indeterminate-state machinery that [ADR-PC-016](../../product_concepts/adrs/ADR-PC-016-legacy-current-account-adapter.md) inherits verbatim; that contract's own Test IDs, when catalogued, will exercise these same invariants from the engine side.

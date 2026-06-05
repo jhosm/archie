@@ -174,6 +174,19 @@ At startup the engine pulls, signature-verifies, structurally re-parses, and cac
 
 ---
 
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- The sealed test-corpus regression — `expected-events.yaml` is *generated* by running the engine against `canonical-instances.yaml` and reproduced at every pack-publish and engine-release (§P5) — is exercised through the separately-owned `PACK_SIM_DEPTH5_BUDGET` depth-5 simulation gate, governed by [ADR-PC-006 §P4](./ADR-PC-006-cue-schema-language.md). This ADR composes with that gate; it does not own it.
+
+Two falsifiable invariants this decision introduces are not yet wired to a Test ID (a deliberate, visible gap per [ADR-PC-020 §P5](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)), to be catalogued under the catalogue's growth provision when the engine load path is implemented:
+
+- **Fail-loud pack load** (§P4): a pack pull or cosign-signature-verify failure at engine startup is fatal — the engine refuses to serve rather than silently degrading; new `pack_version` references trigger a hot pull + verify + cache with the same discipline. No Test ID is wired yet.
+- **Generated-not-authored corpus** (§P5): the publish gate regenerates `expected-events.yaml` from the engine rather than accepting a hand-authored file, so a hand-edited corpus cannot land. No Test ID is wired yet.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-006](./ADR-PC-006-cue-schema-language.md) — CUE is the schema language; pack `schemas/` ship `.cue` files validated by the same Go validator; cosign signing underwrites the validated-in-CI attestation.

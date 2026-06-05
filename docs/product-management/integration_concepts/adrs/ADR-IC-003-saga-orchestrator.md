@@ -246,3 +246,16 @@ Compensations are modelled as explicit saga states (`COMPENSATE_VALIDATIONS`, `C
 ### P7 — Carry the identity trio on every message
 
 Every command and event emitted by the orchestrator must carry the full identity trio from document 01 (Primitive 4): `correlation_id` (unchanged from the originating request), `causation_id` (the `message_id` of the event that triggered this emission), and a new `message_id`. This is what makes saga execution traceable as a single chain in the distributed trace without requiring a dedicated orchestration UI.
+
+---
+
+## Verifiable commitments
+
+This decision's load-bearing commitments are fitness functions in the [commitment catalogue](../../product_concepts/adrs/commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+This in-house orchestrator carries no catalogue row of its own yet — no Test ID governs the saga engine. The falsifiable invariants below are the load-bearing claims this decision earns; each is a clean unit/integration target but none is wired to a Test ID, a deliberate, visible gap to be added to the catalogue under its growth provision when the orchestrator is built (per ADR-PC-020 §P5, visibility is the point):
+
+- **Illegal transitions impossible by construction** — the state machine is an explicit `(current_state, event_type) → (next_state, commands_to_emit)` transition table; any transition not in the table is rejected with an error, never silently ignored (§P2). *No Test ID wired yet.*
+- **Concurrent-writer guard** — saga-state persistence is optimistic-concurrency with a `WHERE version = current_version` predicate; the losing writer re-reads current state and retries, never clobbers (§P1, §Consequences "Concurrent writer race"). *No Test ID wired yet.*
+- **Compensation is a domain action, never a DB rollback** — a failed compensation yields a `HUMAN_INTERVENTION_REQUIRED` (or `INDETERMINATE`) state, not a swallowed exception (§P6). *No Test ID wired yet.*
+- **Identity trio on every emission** — every command and event the orchestrator emits carries `correlation_id`, `causation_id`, and a new `message_id`, so saga execution is one traceable chain (§P7). *No Test ID wired yet.*
