@@ -114,6 +114,16 @@ jobs:
         run: |
           go build -trimpath -ldflags "-X main.Version=${GITHUB_SHA::12}" ./...
           go test ./...
+      - name: Go vulnerability scan (govulncheck — Go-native SCA gate, ADR-IC-014 Q.7c)
+        # The Go twin of .NET's NuGetAudit (which gates the engine build). Reachability-based:
+        # fails only on advisories actually called from this module's code, so it is low-noise
+        # (the baseline was triaged to clean first — go 1.26.4 + golang.org/x/net v0.55.0 fixed
+        # the three reachable findings). Pinned and run via `go run` to avoid GOBIN/PATH
+        # variance; the vuln DB is fetched from vuln.go.dev at runtime. This blocks via the
+        # pack-validate job (→ `CI gate`); a newly-published advisory on unchanged code is
+        # backstopped by Dependabot's weekly gomod alerts.
+        working-directory: pack-validate
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.3.0 ./...
 
   contracts:
     needs: changes

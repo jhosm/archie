@@ -1,0 +1,59 @@
+name: Dependency review
+
+# Cross-ecosystem PR-blocking SCA gate (ADR-IC-014; bd Q.7c babelstone-2t16.11). The
+# GitHub-native dependency-review-action diffs the repo's dependency GRAPH between the PR base
+# and head and FAILS the PR when it introduces a dependency carrying a known advisory at/above
+# the severity bar. It is the blocking companion to Dependabot — which only opens update PRs
+# and raises Security-tab alerts, and cannot block a merge (see .github/dependabot.yml).
+#
+# WHERE THIS FITS among the SCA gates (each ecosystem has a language-native blocking gate;
+# this action is the uniform cross-ecosystem catch-all that also covers ecosystems without
+# one):
+#   - NuGet (.NET): the authoritative gate is NuGetAudit (NU1901-1904) + TreatWarningsAsErrors
+#     in the engine build (engine/Directory.Build.props → `CI gate`). It resolves CONCRETE
+#     versions at restore (direct + transitive) with no false positives. dependency-review is
+#     intentionally NOT relied on for NuGet here: this repo uses Central Package Management
+#     WITHOUT committed packages.lock.json, so GitHub's graph records NuGet packages as
+#     version-less (`>= 0`) and dependency-review cannot match an advisory range against them.
+#     That redundancy is harmless — NuGetAudit is the NuGet gate.
+#   - Go (pack-validate): the authoritative gate is govulncheck (reachability-based) in the
+#     pack-validate CI job (.github/workflows/ci.yml). The Go graph carries concrete versions,
+#     so dependency-review is belt-and-suspenders there.
+#   - GitHub Actions (+ Python when mcp-server/ gains source, npm, etc.): dependency-review is
+#     the PRIMARY blocking gate — these carry concrete versions in the graph and have no other
+#     in-CI blocking SCA. Previously they had Dependabot alerts only (non-blocking).
+#
+# Why none of these is the grype SBOM scan (sbom.yml): grype CPE-matches the published .NET
+# ASSEMBLY tree, whose framework assembly versions are pinned at X.0.0.0 across every patch —
+# so it false-positives against advisory PACKAGE ranges (the whole Q.7b triage, bd
+# babelstone-2t16.10). It stays REPORT-ONLY as CycloneDX/DORA evidence + defense-in-depth over
+# the native/published closure (e.g. bundled native libs the package graph never sees).
+#
+# Runs on EVERY pull request (no paths filter) so the `dependency-review` check always
+# reports and is a stable required check without the skipped-required-check footgun
+# (ADR-PC-019 §P1) — no always-run aggregator job is needed (unlike CI/CodeQL, whose
+# analysis jobs are path-scoped and skip). On a PR that changes no dependencies the graph
+# diff is empty and the check passes.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write   # post the dependency-review summary as a PR comment on failure
+
+jobs:
+  dependency-review:
+    name: dependency-review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Dependency review (fail on high/critical advisories)
+        uses: actions/dependency-review-action@v4
+        with:
+          # Block when a PR introduces a dependency with a HIGH or CRITICAL advisory — the
+          # same bar as the grype SBOM scan's severity-cutoff (high covers high+critical) and
+          # CodeQL's fail-on bar (security-severity >= 7.0). Tuned here, in version control,
+          # not in a hidden repo UI setting.
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
