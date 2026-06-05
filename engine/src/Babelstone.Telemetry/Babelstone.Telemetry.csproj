@@ -12,5 +12,10 @@
          hosts, so this project carries no backend or hosting dependency and can be
          referenced by the generic engine spine without dragging the SDK upward. -->
     <PackageReference Include="OpenTelemetry.Api" />
+    <!-- ILogger / EventId for the BabelstoneEvents stable structured-log event-id contract
+         (ADR-IC-007 Layer 1). Abstractions only — no logging backend, exporter, or hosting —
+         so the "no backend or hosting dependency" property above still holds and the engine
+         spine (which already depends on ILogger transitively) is not widened. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 </Project>

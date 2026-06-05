@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -5,10 +6,13 @@ using Babelstone.EventStore.Migrations;
 using Babelstone.Packs;
 using Babelstone.RateSheets;
 using Babelstone.RateSheets.Api;
+using Babelstone.Telemetry;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -24,6 +28,11 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
 {
     private static readonly JsonSerializerOptions SnakeCase =
         new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+
+    // ADR-IC-007 §P4: a deploy log carries only operational-tier structural identifiers — none of
+    // these fragments as a structured-state key. Mirrors the span fitness test's PII-key guard.
+    private static readonly string[] PiiKeyFragments =
+        ["nif", "iban", "account", "name", "email", "client", "phone", "address", "tax_id"];
 
     private readonly PostgreSqlContainer _pg = new PostgreSqlBuilder("postgres:18-alpine")
         .Build();
@@ -107,6 +116,53 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
         var conflict = await Post(RateSheetTestData.ValidRequest(versionId: versionId, body: mutated));
 
         Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_409_conflict_emits_a_structured_log_with_the_deploy_context()
+    {
+        // Observability (ADR-IC-007 Layer 1): a 409 must leave a server-side record under the stable
+        // BabelstoneEvents.RateSheetDeployConflict id, carrying the deploy context (version id, family,
+        // effective_from, X-Deploy-Actor) — so the forward-only-immutability breach (§P5) is
+        // diagnosable from the logs, not just a bare HTTP 409. Captured with an in-memory ILogger
+        // provider, the log analogue of the ActivityListener the span fitness tests use.
+        var log = new CapturedLogs();
+        var client = WithLogCollector(log);
+        var versionId = "logged-conflict";
+        var when = new DateTimeOffset(2026, 9, 1, 0, 0, 0, TimeSpan.Zero);
+        const string actor = "alice@treasury.internal";
+
+        await Post(client, RateSheetTestData.ValidRequest(versionId: versionId, effectiveFrom: when), actor: actor);
+
+        // Same version id, a changed TAN under a different actor — the §P5 mismatch 409.
+        var mutated = new RateSheetBody
+        {
+            Products = new()
+            {
+                ["dpz_pt_12m_juros_venc"] = new()
+                {
+                    ["standard"] = new RoleRates { Bands = [RateSheetTestData.Band(50_000, null, 999)] },
+                },
+            },
+        };
+        var conflict = await Post(
+            client, RateSheetTestData.ValidRequest(versionId: versionId, effectiveFrom: when, body: mutated), actor: actor);
+
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+
+        var entry = Assert.Single(log.Entries, e => e.EventId == BabelstoneEvents.RateSheetDeployConflict);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Equal(versionId, entry.State["RateSheetVersionId"]);
+        Assert.Equal("term_deposit", entry.State["ProductFamily"]);
+        Assert.Equal(when, entry.State["EffectiveFrom"]);
+        Assert.Equal(actor, entry.State["DeployActor"]);
+
+        // No PII in the structured state — only the operational-tier deploy identifiers (ADR-IC-007 §P4).
+        foreach (var key in entry.State.Keys)
+        {
+            var lowered = key.ToLowerInvariant();
+            Assert.DoesNotContain(PiiKeyFragments, fragment => lowered.Contains(fragment));
+        }
     }
 
     [Fact]
@@ -344,5 +400,56 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
             => ceilings.TryGetValue(packVersion, out var ceiling)
                 ? PackTestStubs.WithMaxConsumerRateBps(packVersion, ceiling)
                 : throw new PackLoadException(packVersion, null, "not pre-loaded (stub).");
+    }
+
+    // A client against a host whose logging fans out to an in-memory collector, so a test can assert
+    // a structured log record (EventId + structured state) the deploy handler emits — the log
+    // analogue of the ActivitySource ActivityListener the span fitness tests attach.
+    private HttpClient WithLogCollector(CapturedLogs log) =>
+        _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureLogging(logging => logging.AddProvider(new CapturingLoggerProvider(log))))
+        .CreateClient();
+
+    // The captured logs and one record's level + event id + flattened structured state (the
+    // {Name} placeholders become state keys). Concurrent because the host logs from request threads.
+    private sealed class CapturedLogs
+    {
+        public ConcurrentQueue<LogEntry> Entries { get; } = new();
+    }
+
+    private sealed record LogEntry(
+        LogLevel Level, EventId EventId, IReadOnlyDictionary<string, object?> State);
+
+    private sealed class CapturingLoggerProvider(CapturedLogs log) : ILoggerProvider
+    {
+        public ILogger CreateLogger(string categoryName) => new CapturingLogger(log);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class CapturingLogger(CapturedLogs log) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                // The message-template arguments arrive as the structured state — capture them as the
+                // {Placeholder} -> value map the assertions read (the Detail/{OriginalFormat} entries
+                // ride along untouched).
+                var values = state as IReadOnlyList<KeyValuePair<string, object?>> ?? [];
+                var flattened = new Dictionary<string, object?>(StringComparer.Ordinal);
+                foreach (var kvp in values)
+                {
+                    flattened[kvp.Key] = kvp.Value;
+                }
+
+                log.Entries.Enqueue(new LogEntry(logLevel, eventId, flattened));
+            }
+        }
     }
 }

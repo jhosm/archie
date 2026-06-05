@@ -3,6 +3,7 @@ using Babelstone.Packs;
 using Babelstone.RateSheets;
 using Babelstone.RateSheets.Api;
 using Babelstone.Telemetry;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -13,10 +14,14 @@ var builder = WebApplication.CreateBuilder(args);
 // a typed error.
 builder.Services.AddProblemDetails();
 
-// OpenTelemetry tracing (ADR-IC-007 Layer 1, Epic K.1): the same resource discipline as the
-// engine host (OBS-1 parity) — service.name + service.namespace=babelstone + deployment.environment
-// — exporting over OTLP to the Collector (P1). It listens to the shared Babelstone.Engine source so
-// any manual span this host opens later is captured. Environment resolution fails fast: no
+// OpenTelemetry tracing + logging (ADR-IC-007 Layer 1, Epic K.1): the same resource discipline as
+// the engine host (OBS-1 parity) — service.name + service.namespace=babelstone +
+// deployment.environment — exporting over OTLP to the Collector (P1, which fans out to Tempo/Loki).
+// Tracing listens to the shared Babelstone.Engine source so any manual span this host opens later is
+// captured; logging ships the host's structured ILogger records (the 409 conflict + unexpected-error
+// events, BabelstoneEvents) down the same OTLP pipe so trace_id/span_id correlate a log to its trace
+// (the document-06 / §P1 trace-to-log navigation). As the engine's first HTTP host, this establishes
+// the OTel logging wiring future engine HTTP surfaces follow. Environment resolution fails fast: no
 // DOTNET_ENVIRONMENT / ASPNETCORE_ENVIRONMENT means the host refuses to boot (no assumed env).
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
@@ -28,6 +33,8 @@ builder.Services.AddOpenTelemetry()
         ]))
     .WithTracing(tracing => tracing
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
+        .AddOtlpExporter())
+    .WithLogging(logging => logging
         .AddOtlpExporter());
 
 // snake_case on the wire (rate_sheet_version_id, principal_cents, tan_basis_points),
