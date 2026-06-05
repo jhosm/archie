@@ -5,6 +5,9 @@ using Babelstone.EventStore.Migrations;
 using Babelstone.RateSheets;
 using Babelstone.RateSheets.Api;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -162,6 +165,35 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_sheet_uncovering_an_active_configs_rate_ref_is_rejected_400()
+    {
+        // Cross-artefact §2.5: an active config asks for a 'promo' role the worked-example sheet
+        // doesn't price, so the deploy is rejected at the boundary (the same 400 validation path
+        // as a self-contained shape breach), never surfacing as an unpriceable constitution.
+        var withConfig = WithProductConfigs(
+        [
+            new ActiveProductConfig(
+                "dpz_pt_12m_juros_venc",
+                [new RateRef("dpz_pt_12m_juros_venc", "promo")]),
+        ]);
+
+        var response = await Post(withConfig, RateSheetTestData.ValidRequest(versionId: "uncovered"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_valid_sheet_deploys_201_with_an_empty_product_config_registry()
+    {
+        // The default IProductConfigSource (EmptyProductConfigSource) reports no active configs, so
+        // the cross-artefact checks pass vacuously and the worked-example sheet deploys — the
+        // backwards-compatible default that doesn't reject existing deploys (surface §2.5).
+        var response = await Post(RateSheetTestData.ValidRequest(versionId: "empty-registry"));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
     public async Task A_missing_deploy_actor_is_rejected_401()
     {
         var response = await Post(RateSheetTestData.ValidRequest(versionId: "no-actor"), actor: null);
@@ -178,8 +210,15 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
-    private async Task<HttpResponseMessage> Post(
-        RateSheetDeployRequest request, string? actor = "deploy-bot", string? idempotencyKey = null)
+    private Task<HttpResponseMessage> Post(
+        RateSheetDeployRequest request, string? actor = "deploy-bot", string? idempotencyKey = null) =>
+        Post(_client, request, actor, idempotencyKey);
+
+    private static async Task<HttpResponseMessage> Post(
+        HttpClient client,
+        RateSheetDeployRequest request,
+        string? actor = "deploy-bot",
+        string? idempotencyKey = null)
     {
         using var message = new HttpRequestMessage(HttpMethod.Post, "/v1/rate-sheets")
         {
@@ -195,6 +234,24 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
             message.Headers.Add("Idempotency-Key", idempotencyKey);
         }
 
-        return await _client.SendAsync(message);
+        return await client.SendAsync(message);
+    }
+
+    // A client against a host whose IProductConfigSource is swapped for one reporting the given
+    // active configs — the seam a registry-backed source (Epic E/F) will replace. The default host
+    // wires EmptyProductConfigSource, so the cross-artefact checks are exercised only here.
+    private HttpClient WithProductConfigs(IReadOnlyList<ActiveProductConfig> activeConfigs) =>
+        _factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IProductConfigSource>();
+                services.AddSingleton<IProductConfigSource>(new StubProductConfigSource(activeConfigs));
+            }))
+        .CreateClient();
+
+    private sealed class StubProductConfigSource(IReadOnlyList<ActiveProductConfig> activeConfigs)
+        : IProductConfigSource
+    {
+        public IReadOnlyList<ActiveProductConfig> Active() => activeConfigs;
     }
 }

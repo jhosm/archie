@@ -52,6 +52,14 @@ var maxBps = builder.Configuration.GetValue("RateSheets:MaxBasisPoints", 2000);
 builder.Services.AddSingleton<IRateBoundsSource>(
     new ConfiguredRateBoundsSource(new RateBounds(minBps, maxBps)));
 
+// INTERIM product-config registry (surface §2.5 cross-artefact invariants): no in-engine
+// product-config registry exists until Epic E/F, so the default reports no active configs and the
+// "referenced product_id exists" / "active config's rate_ref is covered" checks pass vacuously —
+// a sheet is judged on its self-contained shape alone, never rejected merely because the registry
+// is unwired. Replace with a registry-backed source when product configs land; the validator and
+// the deploy path already consume the IProductConfigSource seam.
+builder.Services.AddSingleton<IProductConfigSource, EmptyProductConfigSource>();
+
 var app = builder.Build();
 
 // Turns any unhandled exception escaping a handler into a ProblemDetails response.

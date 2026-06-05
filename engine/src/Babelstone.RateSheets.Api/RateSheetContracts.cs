@@ -60,3 +60,28 @@ public sealed class ConfiguredRateBoundsSource(RateBounds bounds) : IRateBoundsS
 {
     public RateBounds For(string packVersion) => bounds;
 }
+
+/// <summary>
+/// Supplies the active product configs the cross-artefact rate-sheet invariants validate against
+/// (surface §2.5): every product the sheet prices must exist in an active config, and every active
+/// config's <c>rate_ref</c> must be covered by the sheet. This is the product-config registry seam.
+/// INTERIM: there is no in-engine product-config registry until Epic E/F, so the v1 default
+/// (<see cref="EmptyProductConfigSource"/>) reports no active configs and the two cross-artefact
+/// checks pass vacuously — a sheet is judged on its self-contained shape alone, exactly as before.
+/// When the registry lands, replace the registration with a source that reads the active configs;
+/// the validator and the deploy path already consume this seam unchanged.
+/// </summary>
+public interface IProductConfigSource
+{
+    IReadOnlyList<ActiveProductConfig> Active();
+}
+
+/// <summary>
+/// Backwards-compatible default <see cref="IProductConfigSource"/>: no active configs, so the
+/// cross-artefact invariants pass vacuously and an existing deploy is never rejected merely because
+/// the registry is not yet wired in.
+/// </summary>
+public sealed class EmptyProductConfigSource : IProductConfigSource
+{
+    public IReadOnlyList<ActiveProductConfig> Active() => [];
+}
