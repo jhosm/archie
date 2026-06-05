@@ -148,10 +148,13 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
         Guid streamId, string projectionKind, CancellationToken ct = default)
     {
         // ADR-PC-002 §P2 — every row for the pair, superseded and current, in belief-time order:
-        // the audit trail of how belief about this projection changed. row_id ASC is a
-        // deterministic tie-break only (two rows can share a recorded_at across rebuilds); it never
-        // decides the audit ordering, which is recorded_at. The current belief (superseded_at NULL)
-        // sorts last.
+        // the belief-time history of how belief about this projection changed. recorded_at decides
+        // the ordering; row_id ASC is only a stable tie-break for rows sharing a recorded_at. Like
+        // ReadCurrentBelief, row_id is the BIGSERIAL surrogate, which is re-assigned on rebuild and
+        // so is NOT deterministic across rebuilds — for this projection class the tie never decides
+        // (corrections carry distinct recorded_at), but a future kind that stamps two rows with an
+        // identical recorded_at must order on an event-derived key, not row_id (see the F.6 flag on
+        // ReadCurrentBelief). The current belief (superseded_at NULL) sorts last.
         const string sql = """
             SELECT stream_id, projection_kind, source_sequence, valid_from, valid_to, recorded_at,
                    superseded_at, structural_payload, pii_ciphertext

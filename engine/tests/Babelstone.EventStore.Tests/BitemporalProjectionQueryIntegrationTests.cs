@@ -12,7 +12,8 @@ namespace Babelstone.EventStore.Tests;
 /// correction, so as-of and current-belief genuinely differ:
 /// <list type="number">
 /// <item>#1 as-of — the state on a valid-time, as known at a transaction-time;</item>
-/// <item>#2 audit trail — the belief line (HistoryOf), how belief changed;</item>
+/// <item>#2 belief-time history — the supersession line (HistoryOf), how belief changed (the
+/// projection's belief history, not the event-log audit trail);</item>
 /// <item>#3 counterfactual replay — the disavowed vs corrected belief (AsOf across the correction);</item>
 /// <item>#4 forward projection — a future valid-time under the current belief.</item>
 /// </list>
@@ -111,7 +112,7 @@ public sealed class BitemporalProjectionQueryIntegrationTests(PostgresEventStore
         Assert.Null(before);
     }
 
-    // ---------- #2 Audit trail (HistoryOf): how belief about the position changed ----------
+    // ---------- #2 Belief-time history (HistoryOf): how belief about the position changed ----------
 
     [Fact]
     public async Task HistoryOf_capability_2_returns_the_full_belief_line_in_belief_time_order()
@@ -149,8 +150,11 @@ public sealed class BitemporalProjectionQueryIntegrationTests(PostgresEventStore
         var validTime = new DateTimeOffset(2026, 4, 1, 0, 0, 0, TimeSpan.Zero);
 
         // The disavowed belief: what the projection asserted about 2026-04-01 BEFORE the correction
-        // landed — read by pinning knownAt to just before the correction's transaction_time.
-        var disavowed = await _query.AsOfAsync(streamId, Kind, validTime, knownAt: CorrectedAt.AddTicks(-1));
+        // landed — read by pinning knownAt to just before the correction's transaction_time. The
+        // offset is a whole microsecond: a .NET tick (100ns) is below PostgreSQL TIMESTAMPTZ's 1µs
+        // resolution, so AddTicks(-1) could round back to the correction instant in the database and
+        // silently read the corrected belief instead of the disavowed one.
+        var disavowed = await _query.AsOfAsync(streamId, Kind, validTime, knownAt: CorrectedAt.AddMicroseconds(-1));
         // The corrected belief: the same valid-time as we know it now.
         var corrected = await _query.AsOfAsync(streamId, Kind, validTime, knownAt: CorrectedAt);
 
@@ -161,6 +165,68 @@ public sealed class BitemporalProjectionQueryIntegrationTests(PostgresEventStore
         // The half-open belief interval [recorded_at, superseded_at): exactly at the correction's
         // transaction_time the new belief is live and the old one is gone.
         Assert.NotEqual(disavowed.State.PrincipalCents, corrected.State.PrincipalCents);
+    }
+
+    // ---------- World-time (valid-time) axis: the half-open slice [valid_from, valid_to) ----------
+
+    // A row whose world-time slice is CLOSED (valid_to set), so the AsOf join's world-time branch is
+    // exercised on both bounds. valid [2026-03-15, 2026-06-01); a single un-superseded belief, known
+    // from 2026-03-15T14:23 onward. ADR-PC-002 §S4 / Residual Risk 1 names the hand-written
+    // bitemporal join as Path A's main correctness risk — the belief-time axis is covered by the
+    // forced-correction round-trip above; this seeds the world-time axis the same way.
+    private static readonly DateTimeOffset ValidTo = new(2026, 6, 1, 0, 0, 0, TimeSpan.Zero);
+
+    private async Task<Guid> SeedClosedWorldTimeSliceAsync()
+    {
+        await ResetAsync();
+        var streamId = Guid.NewGuid();
+        await _store.WriteAsync(Record(streamId, TruePrincipal, RecordedThen, sourceSequence: 0) with { ValidTo = ValidTo });
+        return streamId;
+    }
+
+    [Fact]
+    public async Task AsOf_returns_the_row_for_a_valid_time_inside_the_closed_world_time_slice()
+    {
+        var streamId = await SeedClosedWorldTimeSliceAsync();
+
+        // Just before valid_to is inside the half-open slice [valid_from, valid_to). The offset is a
+        // whole microsecond, not AddTicks(-1) — a .NET tick is 100ns, below PostgreSQL TIMESTAMPTZ's
+        // 1µs resolution, so a sub-microsecond offset would round to valid_to in the database and
+        // not actually probe just-inside the bound.
+        var inside = await _query.AsOfAsync(
+            streamId, Kind, validTime: ValidTo.AddMicroseconds(-1), knownAt: CorrectedAt);
+
+        Assert.NotNull(inside);
+        Assert.Equal(TruePrincipal, inside.State.PrincipalCents);
+        Assert.Equal(ValidTo, inside.ValidTo);
+    }
+
+    [Fact]
+    public async Task AsOf_is_null_at_the_exclusive_valid_to_upper_bound()
+    {
+        var streamId = await SeedClosedWorldTimeSliceAsync();
+
+        // valid_to is EXCLUSIVE: the slice is [valid_from, valid_to), so a query AT valid_to falls
+        // outside it. This exercises the `valid_to > @valid_time` sub-clause — a regression flipping
+        // it to `>=` would return the row and fail here.
+        var atUpperBound = await _query.AsOfAsync(
+            streamId, Kind, validTime: ValidTo, knownAt: CorrectedAt);
+
+        Assert.Null(atUpperBound);
+    }
+
+    [Fact]
+    public async Task AsOf_is_null_below_the_valid_from_lower_bound()
+    {
+        var streamId = await SeedClosedWorldTimeSliceAsync();
+
+        // Strictly before valid_from is below the slice's lower bound. This exercises the
+        // `valid_from <= @valid_time` sub-clause — a regression dropping it would return the row.
+        // A whole-microsecond offset, not AddTicks(-1), to clear PostgreSQL TIMESTAMPTZ resolution.
+        var belowLowerBound = await _query.AsOfAsync(
+            streamId, Kind, validTime: ValidFrom.AddMicroseconds(-1), knownAt: CorrectedAt);
+
+        Assert.Null(belowLowerBound);
     }
 
     // ---------- #4 Forward projection: a future valid-time under the current belief ----------
