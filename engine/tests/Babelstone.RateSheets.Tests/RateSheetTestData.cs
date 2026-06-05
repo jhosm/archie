@@ -16,7 +16,7 @@ internal static class RateSheetTestData
         new(2026, 5, 19, 0, 0, 0, TimeSpan.Zero);
 
     public static RateBand Band(long from, long? to, int bps) =>
-        new() { PrincipalCents = [from, to], TanBasisPoints = bps };
+        new(from, to, bps);
 
     public static RateSheetBody ValidBody() => new()
     {
