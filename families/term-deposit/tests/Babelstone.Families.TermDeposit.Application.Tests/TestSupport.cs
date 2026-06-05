@@ -108,7 +108,7 @@ internal static class TestRateSheets
 
             roles[role] = new RoleRates
             {
-                Bands = [new RateBand { PrincipalCents = [0L, null], TanBasisPoints = tanBasisPoints }],
+                Bands = [new RateBand(0L, null, tanBasisPoints)],
             };
         }
 

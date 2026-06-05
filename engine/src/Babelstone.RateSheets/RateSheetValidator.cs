@@ -42,8 +42,11 @@ public sealed record RateSheetValidationResult(bool IsValid, IReadOnlyList<strin
 /// <c>POST /v1/rate-sheets</c> boundary, never at first constitution.
 /// </summary>
 /// <remarks>
-/// This covers the <em>self-contained</em> §2.5 invariants — band shape, non-overlap,
-/// upward-exhaustiveness, and pack-declared bounds. The <em>cross-artefact</em> invariants
+/// This covers the <em>cross-band</em> §2.5 invariants — non-overlap, upward-exhaustiveness,
+/// and pack-declared TAN bounds. Per-band <em>shape</em> (the <c>[lower, upper]</c> range is
+/// well-formed) is no longer checked here: it is correct-by-construction on <see cref="RateBand"/>
+/// itself (<see cref="RateBandJsonConverter"/> rejects a malformed range at deserialize), so a
+/// malformed band cannot reach this validator. The <em>cross-artefact</em> invariants
 /// ("every referenced product_id exists in an active config"; "every active config's
 /// rate_ref (product, role, principal) is covered") need the product-config registry,
 /// which does not exist until Epic E/F. They are deliberately NOT enforced here — see the
@@ -89,49 +92,20 @@ public sealed class RateSheetValidator
             return;
         }
 
-        // Per-band shape + bound checks. The contiguity pass below relies on well-shaped
-        // bands (exactly [from, to] with a non-null from), so it is skipped if any fail.
-        var shapeOk = true;
+        // Per-band SHAPE is correct-by-construction: a RateBand cannot exist with a malformed
+        // [lower, upper] range (RateBandJsonConverter rejects it at deserialize, the constructor
+        // at author time), so From/To are always well-shaped here. The only per-band check that
+        // remains is the pack-declared TAN bound, which depends on the external bounds the
+        // converter cannot see. Cross-band contiguity/exhaustiveness still lives below.
         for (var i = 0; i < bands.Count; i++)
         {
             var band = bands[i];
-            if (band.PrincipalCents.Length != 2)
-            {
-                diagnostics.Add($"{where} band {i}: principal_cents must have exactly 2 elements [from, to], got {band.PrincipalCents.Length}.");
-                shapeOk = false;
-                continue;
-            }
-
-            if (band.PrincipalCents[0] is not { } from)
-            {
-                diagnostics.Add($"{where} band {i}: lower bound (principal_cents[0]) must not be null.");
-                shapeOk = false;
-                continue;
-            }
-
-            if (from < 0)
-            {
-                diagnostics.Add($"{where} band {i}: lower bound {from} must be >= 0.");
-                shapeOk = false;
-            }
-
-            if (band.PrincipalCents[1] is { } upper && upper <= from)
-            {
-                diagnostics.Add($"{where} band {i}: upper bound {upper} must be greater than lower bound {from}.");
-                shapeOk = false;
-            }
-
             if (band.TanBasisPoints < bounds.MinBasisPoints || band.TanBasisPoints > bounds.MaxBasisPoints)
             {
                 diagnostics.Add(
                     $"{where} band {i}: tan_basis_points {band.TanBasisPoints} is outside the pack-declared bounds " +
                     $"[{bounds.MinBasisPoints}, {bounds.MaxBasisPoints}].");
             }
-        }
-
-        if (!shapeOk)
-        {
-            return;
         }
 
         // Contiguity + exhaustiveness (surface §2.5: non-overlapping, exhaustive over the

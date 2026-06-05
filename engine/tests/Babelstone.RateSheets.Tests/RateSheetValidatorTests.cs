@@ -105,25 +105,10 @@ public sealed class RateSheetValidatorTests
         Assert.False(result.IsValid);
     }
 
-    [Fact]
-    public void Rejects_a_malformed_principal_range()
-    {
-        var body = SingleRole(new RateBand { PrincipalCents = [50_000], TanBasisPoints = 300 });
-
-        var result = _validator.Validate(body, RateSheetTestData.Bounds);
-
-        Assert.False(result.IsValid);
-    }
-
-    [Fact]
-    public void Rejects_an_upper_bound_not_above_the_lower()
-    {
-        var body = SingleRole(new RateBand { PrincipalCents = [5_000_000, 5_000_000], TanBasisPoints = 300 });
-
-        var result = _validator.Validate(body, RateSheetTestData.Bounds);
-
-        Assert.False(result.IsValid);
-    }
+    // Per-band SHAPE (range length, null/negative lower, upper-above-lower) is no longer a
+    // validator concern: RateBand is correct-by-construction, so a malformed band is rejected
+    // at deserialize / construction and can never reach the validator. Those cases now live in
+    // RateBandTests; only the cross-band and pack-bound checks remain here.
 
     [Fact]
     public void RateBounds_rejects_an_inverted_bound()
