@@ -70,7 +70,7 @@ The full reasoning is in [Document 00](./docs/product-management/integration_con
 |---|---|---|
 | [00](./docs/product-management/integration_concepts/00-introduction-and-decisions.md) | Introduction and Foundational Decisions | Context, the three driving constraints, high-level architectural shape |
 | [01](./docs/product-management/integration_concepts/01-the-six-primitives.md) | The Six Primitives | Command vs Event, Domain vs Integration Event, Bounded Context + Aggregate, Identity Trio, Idempotency Key, Compensating Action |
-| [02](./docs/product-management/integration_concepts/02-anti-corruption-layer.md) | Anti-Corruption Layer | Seven ACL responsibilities, internal structure, the indeterminate-state problem, antipatterns |
+| [02](./docs/product-management/integration_concepts/02-anti-corruption-layer.md) | Anti-Corruption Layer | Eight ACL responsibilities, internal structure, the indeterminate-state problem, antipatterns |
 | [03](./docs/product-management/integration_concepts/03-cqrs-and-read-models.md) | CQRS and Read Models | Read/write model separation, projectors, eventual consistency management, the greenfield-pragmatic starting point |
 | [04](./docs/product-management/integration_concepts/04-plumbing-patterns.md) | Plumbing Patterns | Outbox, Inbox, Schema Registry, delivery guarantees — the mechanics that make events reliable |
 | [05](./docs/product-management/integration_concepts/05-constitution-saga-walkthrough.md) | Constitution Saga Walkthrough | All primitives and patterns materialized in a real constitution flow, with concrete IDs, timings, and compensation paths |

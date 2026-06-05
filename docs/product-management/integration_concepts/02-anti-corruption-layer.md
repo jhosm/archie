@@ -19,7 +19,7 @@ Two different languages, two different models, two different universes. The ACL 
 
 ---
 
-## The Seven Concrete Responsibilities of the ACL
+## The Eight Concrete Responsibilities of the ACL
 
 These are the real frictions between the two worlds. The ACL exists to absorb all of them — not some.
 
@@ -77,7 +77,7 @@ A well-built ACL has at least five distinct pieces:
 | **State store** | Local persistence of the ACL: idempotency keys, ID mappings, in-flight operations, dead-letter for ambiguous operations. |
 | **Reconciler** | The batch job that checks consistency with the Core. |
 
-Notice that the ACL **has its own state**. It's not a stateless proxy. Without this state, none of the seven responsibilities works with guarantees.
+Notice that the ACL **has its own state**. It's not a stateless proxy. Without this state, none of the eight responsibilities works with guarantees.
 
 ---
 
