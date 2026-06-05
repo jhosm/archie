@@ -1,3 +1,4 @@
+using Babelstone.Packs;
 using Babelstone.RateSheets;
 
 namespace Babelstone.RateSheets.Api;
@@ -41,9 +42,31 @@ internal static class DeployRateSheetEndpoint
                 statusCode: StatusCodes.Status401Unauthorized);
         }
 
+        // §P2: the bound the sheet must honour comes from the VERIFIED pack keyed on the sheet's
+        // pack_version (C.5), not a host-side config. A pack_version the engine has not loaded
+        // (unknown/unpinned) is the caller's mistake — a stale or typo'd pin — so it is a 400
+        // deploy rejection, not a 500: the pack abstractions surface it as a PackLoadException.
+        RateBounds resolvedBounds;
+        try
+        {
+            resolvedBounds = bounds.For(request.PackVersion);
+        }
+        catch (PackLoadException)
+        {
+            return Results.ValidationProblem(
+                new Dictionary<string, string[]>
+                {
+                    ["pack_version"] =
+                    [
+                        $"pack_version '{request.PackVersion}' is not a loaded, verified pack; " +
+                        "the rate-sheet bound cannot be resolved (ADR-PC-008 §P2, ADR-PC-007 §P4).",
+                    ],
+                });
+        }
+
         var body = new RateSheetBody { Products = request.Products };
         var validation = validator.Validate(
-            body, bounds.For(request.PackVersion), productConfigs.Active());
+            body, resolvedBounds, productConfigs.Active());
         if (!validation.IsValid)
         {
             return Results.ValidationProblem(

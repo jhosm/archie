@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Babelstone.Packs;
 using Babelstone.RateSheets;
 using Babelstone.RateSheets.Api;
 using Babelstone.Telemetry;
@@ -45,12 +46,22 @@ var connectionString = builder.Configuration.GetConnectionString("RateSheets")
 builder.Services.AddSingleton<IRateSheetStore>(_ => new PostgresRateSheetStore(connectionString));
 builder.Services.AddSingleton<RateSheetValidator>();
 
-// INTERIM pack bounds (surface §2.5): a configured ceiling, defaulting to pt.2026.1's
-// max_consumer_rate_bps = 2000. Replace with verified-pack-derived bounds when C.5 lands.
-var minBps = builder.Configuration.GetValue("RateSheets:MinBasisPoints", 0);
-var maxBps = builder.Configuration.GetValue("RateSheets:MaxBasisPoints", 2000);
-builder.Services.AddSingleton<IRateBoundsSource>(
-    new ConfiguredRateBoundsSource(new RateBounds(minBps, maxBps)));
+// Pack bounds (surface §2.5, ADR-PC-008 §P2): the §P2 rate bound is read from the VERIFIED pack's
+// parameters/constants.yaml (max_consumer_rate_bps) keyed on the sheet's pack_version (C.5), not a
+// host config knob. A disk-backed HostPackStore is the walking-skeleton stand-in for the cosign-
+// verifying OciPackStore (the same load-time/hot-path split); the host pre-loads the configured
+// pack versions at startup so the deploy handler resolves on the pure hot path. An unloaded
+// pack_version surfaces as a PackLoadException the handler maps to a clean 400 (never a 500).
+var packStore = new HostPackStore(builder.Configuration["RateSheets:PacksDir"]);
+var preloadVersions = builder.Configuration.GetSection("RateSheets:PackVersions").Get<string[]>()
+    ?? ["pt.2026.1"];
+foreach (var packVersion in preloadVersions)
+{
+    await packStore.GetAsync(packVersion);
+}
+
+builder.Services.AddSingleton<IPackStore>(packStore);
+builder.Services.AddSingleton<IRateBoundsSource, PackRateBoundsSource>();
 
 // INTERIM product-config registry (surface §2.5 cross-artefact invariants): no in-engine
 // product-config registry exists until Epic E/F, so the default reports no active configs and the
