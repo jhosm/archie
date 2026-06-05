@@ -1,29 +1,45 @@
 using System.Buffers.Binary;
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using Babelstone.EventStore;
+using Babelstone.Telemetry;
 using Confluent.Kafka;
 using Npgsql;
 
 namespace Babelstone.OutboxPublisher;
 
 /// <summary>
-/// The IC-004 polling relay (Epic E.4, walking-skeleton MINIMAL). One <see cref="DrainOnceAsync"/>
-/// call: SELECTs PENDING outbox rows in drain order, builds the Confluent wire-format value from
-/// the row's embedded <c>schema_id</c> (NO Schema-Registry lookup — ADR-IC-004 §P3), sets the
-/// CloudEvents Binary-mode Kafka headers (ADR-IC-008), produces keyed by <c>aggregate_id</c> to a
-/// topic named after <c>aggregate_type</c>, and on ack flips the row to PUBLISHED (the only verbs
-/// the engine role holds on outbox).
+/// The IC-004 polling relay (Epic E.4, hardened in G.1). One <see cref="DrainOnceAsync"/> call:
+/// SELECTs PENDING outbox rows in drain order <c>FOR UPDATE SKIP LOCKED</c> (so concurrent relay
+/// instances claim disjoint rows — never the same row twice — ADR-IC-004 §P2 / §Residual-risks),
+/// builds the Confluent wire-format value from the row's embedded <c>schema_id</c> (NO
+/// Schema-Registry lookup — ADR-IC-004 §P3), sets the CloudEvents Binary-mode Kafka headers
+/// (ADR-IC-008), produces keyed by <c>aggregate_id</c> to a topic named after <c>aggregate_type</c>,
+/// flips the row to PUBLISHED (the only verbs the engine role holds on outbox), and records the
+/// publish-lag SLI (ADR-IC-004 §P4) — <c>published_at − created_at</c> — on the shared meter.
 /// </summary>
 /// <remarks>
-/// Hardening — FOR UPDATE SKIP LOCKED, the publish-lag SLI, HA publisher coordination — is Epic G.1,
-/// deliberately NOT here. On Redpanda unavailability the rows stay PENDING and the produce throws up
-/// to the caller (the hosted loop backs off); rows are NEVER marked FAILED (ADR-IC-004 §P7).
+/// The read + publish + flip run in ONE transaction: the <c>FOR UPDATE</c> row locks are held until
+/// commit, so a second concurrent drainer's <c>SKIP LOCKED</c> read steps over this drainer's
+/// in-flight rows rather than re-publishing them (the §Residual-risks dual-publish window shrinks to
+/// a crash between produce-ack and commit, which consumer-inbox idempotency absorbs). On Redpanda
+/// unavailability the produce throws, the transaction rolls back, the rows stay PENDING (NEVER
+/// FAILED — ADR-IC-004 §P7), and the hosted loop backs off.
 /// </remarks>
 public sealed class OutboxDrainer : IAsyncDisposable
 {
     // Confluent wire format (ADR-IC-002 §P3 / ADR-IC-004 §P3): magic byte 0x00, then the
     // 4-byte big-endian schema_id, then the bare Avro value the codec produced.
     private const byte MagicByte = 0x00;
+
+    // The publish-lag SLI (ADR-IC-004 §P4) on the shared Babelstone meter (ADR-IC-007 Layer 1):
+    // one histogram of seconds-from-enqueue-to-ack, tagged by aggregate_type. A host turns it on
+    // with AddMeter(BabelstoneTelemetry.MeterName); with no listener Record is a near no-op.
+    private static readonly Histogram<double> PublishLagSeconds =
+        BabelstoneTelemetry.Meter.CreateHistogram<double>(
+            BabelstoneAttributes.OutboxPublishLagMetric,
+            unit: "s",
+            description: "Seconds from outbox-row enqueue (created_at) to successful publish ack (published_at).");
 
     private readonly OutboxRelayOptions _options;
     private readonly IProducer<byte[], byte[]> _producer;
@@ -57,21 +73,46 @@ public sealed class OutboxDrainer : IAsyncDisposable
     /// Produces each row synchronously (produce + await ack) before marking it PUBLISHED and
     /// moving to the next — per-aggregate FIFO by construction (ADR-IC-004 §P2).
     /// </summary>
+    /// <remarks>
+    /// The read claims rows <c>FOR UPDATE SKIP LOCKED</c> and the whole cycle runs in one
+    /// transaction, so concurrent drainers claim disjoint batches (no double-publish) without
+    /// blocking on each other (no deadlock). A produce failure rolls the transaction back, leaving
+    /// every row in the batch PENDING for the next cycle (ADR-IC-004 §P7).
+    /// </remarks>
     public async Task<int> DrainOnceAsync(CancellationToken ct = default)
     {
         await using var connection = new NpgsqlConnection(_options.ConnectionString);
         await connection.OpenAsync(ct);
+        await using var transaction = await connection.BeginTransactionAsync(ct);
 
-        var rows = await ReadPendingAsync(connection, _options.BatchSize, ct);
+        var rows = await ReadPendingAsync(connection, transaction, _options.BatchSize, ct);
         var published = 0;
         foreach (var row in rows)
         {
             await PublishAsync(row, ct);
-            await MarkPublishedAsync(connection, row.EventId, ct);
+            var publishedAt = await MarkPublishedAsync(connection, transaction, row.EventId, ct);
+            RecordPublishLag(row, publishedAt);
             published++;
         }
 
+        // Commit releases the FOR UPDATE locks and makes the PUBLISHED flips visible together. If a
+        // produce above threw, we never reach here — the using-dispose rolls back and the rows stay
+        // PENDING (ADR-IC-004 §P7), so no row is ever lost or marked PUBLISHED without an ack.
+        await transaction.CommitAsync(ct);
         return published;
+    }
+
+    /// <summary>
+    /// Records the publish-lag SLI for one row (ADR-IC-004 §P4): the seconds between the row's
+    /// enqueue (<c>created_at</c>, the domain-transaction time) and its DB-stamped publish ack
+    /// (<c>published_at</c>), tagged by <c>aggregate_type</c> so lag is breakable by topic.
+    /// </summary>
+    private static void RecordPublishLag(OutboxRow row, DateTimeOffset publishedAt)
+    {
+        var lagSeconds = (publishedAt - row.CreatedAt).TotalSeconds;
+        PublishLagSeconds.Record(
+            lagSeconds,
+            new KeyValuePair<string, object?>(BabelstoneAttributes.AggregateType, row.AggregateType));
     }
 
     private async Task PublishAsync(OutboxRow row, CancellationToken ct)
@@ -131,19 +172,26 @@ public sealed class OutboxDrainer : IAsyncDisposable
         return $"com.bank.deposits.{eventName}";
     }
 
-    private static async Task<List<OutboxRow>> ReadPendingAsync(NpgsqlConnection connection, int batchSize, CancellationToken ct)
+    private static async Task<List<OutboxRow>> ReadPendingAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, int batchSize, CancellationToken ct)
     {
         // The §P2 drain (amended 2026-05-29): ORDER BY created_at, sequence_number — NOT event_id.
+        // FOR UPDATE SKIP LOCKED (ADR-IC-004 §P2 / §Residual-risks) is the HA-coordination seam:
+        // each row this read returns is row-locked for the open transaction, so a concurrent
+        // drainer SKIPs it and claims a disjoint batch instead — competing instances never select
+        // the same PENDING row, so they cannot double-publish, and SKIP LOCKED (not a plain
+        // FOR UPDATE) means neither blocks on the other (no lock-wait, no deadlock).
         const string sql = """
             SELECT event_id, aggregate_type, aggregate_id, sequence_number, event_type, payload,
                    schema_id, status, created_at, published_at
             FROM outbox
             WHERE status = 'PENDING'
             ORDER BY created_at, sequence_number
-            LIMIT @batch_size;
+            LIMIT @batch_size
+            FOR UPDATE SKIP LOCKED;
             """;
 
-        await using var command = new NpgsqlCommand(sql, connection);
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("batch_size", batchSize);
 
         var rows = new List<OutboxRow>();
@@ -168,19 +216,26 @@ public sealed class OutboxDrainer : IAsyncDisposable
         CreatedAt: r.GetFieldValue<DateTimeOffset>(8),
         PublishedAt: r.IsDBNull(9) ? null : r.GetFieldValue<DateTimeOffset>(9));
 
-    private static async Task MarkPublishedAsync(NpgsqlConnection connection, Guid eventId, CancellationToken ct)
+    private static async Task<DateTimeOffset> MarkPublishedAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, Guid eventId, CancellationToken ct)
     {
         // UPDATE(status, published_at) — the only mutating verb the babelstone_engine role
-        // holds on outbox (0002_append_only_role.sql).
+        // holds on outbox (0002_append_only_role.sql). RETURNING the DB-stamped published_at gives
+        // the publish-lag SLI (§P4) its authoritative ack time without a second round-trip.
         const string sql = """
             UPDATE outbox
             SET status = 'PUBLISHED', published_at = clock_timestamp()
-            WHERE event_id = @event_id;
+            WHERE event_id = @event_id
+            RETURNING published_at;
             """;
 
-        await using var command = new NpgsqlCommand(sql, connection);
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("event_id", eventId);
-        await command.ExecuteNonQueryAsync(ct);
+        // GetFieldValue<DateTimeOffset> maps timestamptz the same way ReadRow does; ExecuteScalar
+        // would surface a bare DateTime (the default CLR mapping) and lose the offset typing.
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        await reader.ReadAsync(ct);
+        return reader.GetFieldValue<DateTimeOffset>(0);
     }
 
     public async ValueTask DisposeAsync()

@@ -5,6 +5,7 @@ using Babelstone.EventStore;
 using Babelstone.Pii;
 using Babelstone.RateSheets;
 using Babelstone.Telemetry;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -30,6 +31,12 @@ builder.Services.AddOpenTelemetry()
         ]))
     .WithTracing(tracing => tracing
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
+        .AddOtlpExporter())
+    // Metrics (ADR-IC-007 Layer 1 / ADR-IC-004 §P4): listen to the engine's meter so the outbox
+    // publish-lag SLI (outbox_publish_lag_seconds, emitted by the co-hosted relay) is exported over
+    // OTLP to the Collector → Prometheus, where the §P4 warning/critical thresholds alert.
+    .WithMetrics(metrics => metrics
+        .AddMeter(BabelstoneTelemetry.MeterName)
         .AddOtlpExporter());
 
 // snake_case on the wire (principal_cents, tan_basis_points, rate_sheet_version_id), money as

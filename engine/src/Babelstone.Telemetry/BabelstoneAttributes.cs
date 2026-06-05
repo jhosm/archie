@@ -36,4 +36,21 @@ public static class BabelstoneAttributes
 
     /// <summary>Manual span name for a withholding-tax application (ADR-IC-007 P2 <c>&lt;layer&gt;.&lt;operation&gt;</c>).</summary>
     public const string SpanWithholdingApplied = "withholding.applied";
+
+    /// <summary>
+    /// The outbox publish-lag SLI (ADR-IC-004 §P4): a histogram of the seconds between an outbox
+    /// row's enqueue (<c>created_at</c>) and its successful publish ack (<c>published_at</c>). The
+    /// metric name is the §P4 contract string — a Prometheus/Grafana query reads it by this exact
+    /// name, so it follows snake_case-with-unit-suffix convention, never the <c>babelstone.*</c>
+    /// span-key contract above. Warning/critical alert thresholds (30s / 5min) are deployment-time
+    /// Grafana rules, not code.
+    /// </summary>
+    public const string OutboxPublishLagMetric = "outbox_publish_lag_seconds";
+
+    /// <summary>
+    /// The aggregate type the lagged row routes to (e.g. <c>term_deposit</c>) — the structural
+    /// dimension the publish-lag histogram is tagged with so lag is breakable by topic. Operational
+    /// tier, not PII; it is the same value carried as the row's <c>aggregate_type</c> / topic name.
+    /// </summary>
+    public const string AggregateType = "babelstone.aggregate_type";
 }
