@@ -29,6 +29,7 @@
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           { "context": "CI gate" },
+          { "context": "CodeQL gate" },
           { "context": "pr-body-adrs" },
           { "context": "adr-immutability" },
           { "context": "spec-coverage" }
