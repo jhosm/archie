@@ -166,6 +166,64 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_unexpected_store_failure_returns_500_and_emits_a_structured_log()
+    {
+        // Observability (ADR-IC-007 Layer 1): an unforeseen write fault (here a store InsertAsync
+        // that throws) must surface as a 500 AND leave a server-side record under the stable
+        // BabelstoneEvents.RateSheetDeployUnexpectedError id, carrying the same deploy context the
+        // 409 path records — so the fault is diagnosable from the logs, not just a bare HTTP 500.
+        var log = new CapturedLogs();
+        var boom = new InvalidOperationException("simulated store fault");
+        var client = WithStore(new ThrowingRateSheetStore(insertFault: boom), log);
+        var when = new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
+        const string actor = "alice@treasury.internal";
+
+        var response = await Post(
+            client, RateSheetTestData.ValidRequest(versionId: "store-boom", effectiveFrom: when), actor: actor);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        AssertUnexpectedErrorLogged(log, versionId: "store-boom", when: when, actor: actor);
+    }
+
+    [Fact]
+    public async Task A_just_inserted_sheet_that_cannot_be_read_back_returns_500_and_emits_a_structured_log()
+    {
+        // The read-back invariant (handler line ~140): a row inserted but not re-readable is an
+        // invariant violation, not a routine empty result — it must throw, surface as a 500, and be
+        // logged under the same stable RateSheetDeployUnexpectedError id with the deploy context.
+        var log = new CapturedLogs();
+        var client = WithStore(new ThrowingRateSheetStore(insertFault: null), log);
+        var when = new DateTimeOffset(2026, 10, 2, 0, 0, 0, TimeSpan.Zero);
+        const string actor = "alice@treasury.internal";
+
+        var response = await Post(
+            client, RateSheetTestData.ValidRequest(versionId: "no-readback", effectiveFrom: when), actor: actor);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        AssertUnexpectedErrorLogged(log, versionId: "no-readback", when: when, actor: actor);
+    }
+
+    // Asserts the single RateSheetDeployUnexpectedError record: Error level, the four deploy-context
+    // state keys, and no PII key — the same structured-state contract the 409 test pins for the
+    // conflict event (ADR-IC-007 §P4).
+    private static void AssertUnexpectedErrorLogged(
+        CapturedLogs log, string versionId, DateTimeOffset when, string actor)
+    {
+        var entry = Assert.Single(log.Entries, e => e.EventId == BabelstoneEvents.RateSheetDeployUnexpectedError);
+        Assert.Equal(LogLevel.Error, entry.Level);
+        Assert.Equal(versionId, entry.State["RateSheetVersionId"]);
+        Assert.Equal("term_deposit", entry.State["ProductFamily"]);
+        Assert.Equal(when, entry.State["EffectiveFrom"]);
+        Assert.Equal(actor, entry.State["DeployActor"]);
+
+        foreach (var key in entry.State.Keys)
+        {
+            var lowered = key.ToLowerInvariant();
+            Assert.DoesNotContain(PiiKeyFragments, fragment => lowered.Contains(fragment));
+        }
+    }
+
+    [Fact]
     public async Task A_second_version_id_sharing_a_family_effective_from_is_409()
     {
         var when = new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero);
@@ -400,6 +458,40 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
             => ceilings.TryGetValue(packVersion, out var ceiling)
                 ? PackTestStubs.WithMaxConsumerRateBps(packVersion, ceiling)
                 : throw new PackLoadException(packVersion, null, "not pre-loaded (stub).");
+    }
+
+    // A client against a host whose IRateSheetStore is swapped for one that fails the write path,
+    // and whose logging fans out to the given collector — so the unexpected-error (500) path and its
+    // stable RateSheetDeployUnexpectedError record are exercised without a real DB fault. The default
+    // host wires the PostgreSQL-backed store; this swap drives the catch-all in the deploy handler.
+    private HttpClient WithStore(IRateSheetStore store, CapturedLogs log) =>
+        _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IRateSheetStore>();
+                services.AddSingleton(store);
+            });
+            builder.ConfigureLogging(logging => logging.AddProvider(new CapturingLoggerProvider(log)));
+        })
+        .CreateClient();
+
+    // A store that drives the deploy handler's unexpected-error branch: InsertAsync either throws the
+    // given fault (the dropped-DB / serialization-fault analogue) or — when no fault is given —
+    // succeeds while TryGetAsync always returns null, exercising the "inserted but could not be read
+    // back" invariant violation (handler line ~140). TryGetAsync returns null so the pre-insert
+    // idempotency probe finds no existing sheet and the write path is taken.
+    private sealed class ThrowingRateSheetStore(Exception? insertFault) : IRateSheetStore
+    {
+        public Task InsertAsync(RateSheet sheet, CancellationToken ct = default) =>
+            insertFault is not null ? throw insertFault : Task.CompletedTask;
+
+        public Task<RateSheet?> TryGetAsync(string rateSheetVersionId, CancellationToken ct = default) =>
+            Task.FromResult<RateSheet?>(null);
+
+        public Task<RateSheetResolution?> ResolveAsync(
+            string productFamily, DateTimeOffset asOf, CancellationToken ct = default) =>
+            throw new NotSupportedException("the deploy path does not resolve.");
     }
 
     // A client against a host whose logging fans out to an in-memory collector, so a test can assert
