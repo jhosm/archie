@@ -97,7 +97,88 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
             return null;
         }
 
-        return new ProjectionRecord(
+        return await MapAsync(reader, ct);
+    }
+
+    public async Task<ProjectionRecord?> ReadAsOfAsync(
+        Guid streamId, string projectionKind, DateTimeOffset validTime, DateTimeOffset knownAt,
+        CancellationToken ct = default)
+    {
+        // ADR-PC-002 §P1 — the two-axis bitemporal filter that backs the typed AsOf helper (§P3).
+        // World-time covers validTime, belief-time covers knownAt; the belief interval is half-open
+        // [recorded_at, superseded_at), so the row a correction superseded becomes invisible once
+        // knownAt reaches the correction's transaction_time — this is what makes "as we knew then"
+        // differ from "as we know now" (§P2). At most one row matches per pair: at any single
+        // (validTime, knownAt) point exactly one belief is live (the partial UNIQUE index plus the
+        // contiguous supersede-then-insert keep belief intervals non-overlapping for a covered
+        // valid-time), so ORDER BY recorded_at DESC + LIMIT 1 is a defensive deterministic guard,
+        // not a selection between competing rows.
+        const string sql = """
+            SELECT stream_id, projection_kind, source_sequence, valid_from, valid_to, recorded_at,
+                   superseded_at, structural_payload, pii_ciphertext
+            FROM projections
+            WHERE stream_id = @stream_id
+              AND projection_kind = @projection_kind
+              AND valid_from <= @valid_time
+              AND (valid_to IS NULL OR valid_to > @valid_time)
+              AND recorded_at <= @known_at
+              AND (superseded_at IS NULL OR superseded_at > @known_at)
+            ORDER BY recorded_at DESC, row_id DESC
+            LIMIT 1;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("stream_id", streamId);
+        command.Parameters.AddWithValue("projection_kind", projectionKind);
+        command.Parameters.AddWithValue("valid_time", validTime);
+        command.Parameters.AddWithValue("known_at", knownAt);
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return await MapAsync(reader, ct);
+    }
+
+    public async Task<IReadOnlyList<ProjectionRecord>> ReadHistoryOfAsync(
+        Guid streamId, string projectionKind, CancellationToken ct = default)
+    {
+        // ADR-PC-002 §P2 — every row for the pair, superseded and current, in belief-time order:
+        // the audit trail of how belief about this projection changed. row_id ASC is a
+        // deterministic tie-break only (two rows can share a recorded_at across rebuilds); it never
+        // decides the audit ordering, which is recorded_at. The current belief (superseded_at NULL)
+        // sorts last.
+        const string sql = """
+            SELECT stream_id, projection_kind, source_sequence, valid_from, valid_to, recorded_at,
+                   superseded_at, structural_payload, pii_ciphertext
+            FROM projections
+            WHERE stream_id = @stream_id
+              AND projection_kind = @projection_kind
+            ORDER BY recorded_at ASC, row_id ASC;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("stream_id", streamId);
+        command.Parameters.AddWithValue("projection_kind", projectionKind);
+
+        var history = new List<ProjectionRecord>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            history.Add(await MapAsync(reader, ct));
+        }
+
+        return history;
+    }
+
+    private static async Task<ProjectionRecord> MapAsync(NpgsqlDataReader reader, CancellationToken ct) =>
+        new(
             StreamId: reader.GetGuid(0),
             ProjectionKind: reader.GetString(1),
             SourceSequence: reader.GetInt64(2),
@@ -109,7 +190,6 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
             PiiCiphertext: await reader.IsDBNullAsync(8, ct)
                 ? ReadOnlyMemory<byte>.Empty
                 : reader.GetFieldValue<byte[]>(8));
-    }
 
     private static async Task InsertAsync(
         NpgsqlConnection connection, NpgsqlTransaction? transaction, ProjectionRecord record, CancellationToken ct)
