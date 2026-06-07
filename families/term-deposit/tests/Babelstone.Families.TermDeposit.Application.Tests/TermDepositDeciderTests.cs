@@ -282,4 +282,89 @@ public sealed class TermDepositDeciderTests
         Assert.Equal(new Money(PrincipalCents), matured.TotalPayout);
         Assert.Equal(Maturity, matured.MaturedOn);
     }
+
+    // ---- auto-renewal (02 §2.4.4: NONE / SAME_TERM_CURRENT_RATE / SAME_TERM_SAME_RATE) ----------
+
+    private static DepositPosition ClosingPosition(string policy) => DepositPosition.Empty with
+    {
+        DepositId = Guid.NewGuid(),
+        Principal = new Money(PrincipalCents),
+        TanBasisPoints = TanBps,
+        RateSheetVersionId = "pt-deposits-2026.1",
+        TermDays = 365,
+        StartDate = Start,
+        MaturityDate = Maturity,
+        InterestVariant = "AT_MATURITY",
+        AutoRenewalPolicy = policy,
+        RemainingPrincipal = new Money(PrincipalCents),
+        Lifecycle = DepositLifecycle.Active,
+    };
+
+    [Fact]
+    public void ResolveRenewalRate_current_rate_takes_the_freshly_resolved_sheet()
+    {
+        var closing = ClosingPosition("SAME_TERM_CURRENT_RATE");
+
+        // The bank's then-current standard rate moved to 275bps on a new sheet — CURRENT_RATE takes it.
+        var (tan, version) = TermDepositDecider.ResolveRenewalRate(closing, currentTanBasisPoints: 275, currentRateSheetVersionId: "pt-deposits-2027.1");
+
+        Assert.Equal(275, tan);
+        Assert.Equal("pt-deposits-2027.1", version);
+    }
+
+    [Fact]
+    public void ResolveRenewalRate_same_rate_carries_the_original_rate_forward_ignoring_the_current_sheet()
+    {
+        var closing = ClosingPosition("SAME_TERM_SAME_RATE");
+
+        // Even though the current sheet now prices 275bps, SAME_RATE carries the closing deposit's
+        // original 300bps / original version forward unchanged (02 §2.4.4 — pack-restricted policy).
+        var (tan, version) = TermDepositDecider.ResolveRenewalRate(closing, currentTanBasisPoints: 275, currentRateSheetVersionId: "pt-deposits-2027.1");
+
+        Assert.Equal(TanBps, tan);                       // 300, the original
+        Assert.Equal("pt-deposits-2026.1", version);     // the original version, not the current sheet
+    }
+
+    [Fact]
+    public void DecideRenewalConstitution_rolls_principal_at_resolved_rate_for_the_same_term()
+    {
+        var closing = ClosingPosition("SAME_TERM_CURRENT_RATE");
+        var newDepositId = Guid.NewGuid();
+        var renewalDate = Maturity; // renewal fires at maturity
+
+        var renewed = TermDepositDecider.DecideRenewalConstitution(
+            closing, newDepositId, rolloverPrincipal: new Money(PrincipalCents),
+            tanBasisPoints: 275, rateSheetVersionId: "pt-deposits-2027.1", renewalDate: renewalDate);
+
+        Assert.Equal(newDepositId, renewed.DepositId);
+        Assert.Equal(new Money(PrincipalCents), renewed.Principal);   // rolled-over principal
+        Assert.Equal(275, renewed.TanBasisPoints);                    // the policy-resolved new rate
+        Assert.Equal("pt-deposits-2027.1", renewed.RateSheetVersionId);
+        Assert.Equal(365, renewed.TermDays);                          // SAME term
+        Assert.Equal(renewalDate, renewed.StartDate);                 // new start = renewal date
+        Assert.Equal(renewalDate.AddDays(365), renewed.MaturityDate); // new maturity derived, not recomputed downstream
+        Assert.Equal("AT_MATURITY", renewed.InterestVariant);         // same variant
+        Assert.Equal("SAME_TERM_CURRENT_RATE", renewed.AutoRenewalPolicy); // same policy
+    }
+
+    [Fact]
+    public void DecideRenewalLink_carries_the_old_and_new_ids_and_the_new_pinned_facts()
+    {
+        var closing = ClosingPosition("SAME_TERM_CURRENT_RATE");
+        var newDepositId = Guid.NewGuid();
+        var renewed = TermDepositDecider.DecideRenewalConstitution(
+            closing, newDepositId, rolloverPrincipal: new Money(PrincipalCents),
+            tanBasisPoints: 275, rateSheetVersionId: "pt-deposits-2027.1", renewalDate: Maturity);
+
+        var link = TermDepositDecider.DecideRenewalLink(closing, renewed);
+
+        Assert.Equal(closing.DepositId, link.DepositId);
+        Assert.Equal(newDepositId, link.NewDepositId);
+        Assert.Equal(new Money(PrincipalCents), link.RolloverPrincipal);
+        Assert.Equal("pt-deposits-2027.1", link.NewRateSheetVersionId);
+        Assert.Equal(275, link.NewTanBasisPoints);
+        Assert.Equal(365, link.NewTermDays);
+        Assert.Equal(Maturity, link.RenewalDate);
+        Assert.Equal(Maturity.AddDays(365), link.NewMaturityDate);
+    }
 }

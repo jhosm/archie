@@ -21,6 +21,12 @@ public static class TermDepositDecider
     public const string Periodic = "PERIODIC";
     public const string Advance = "ADVANCE";
 
+    /// <summary>The auto-renewal policy discriminators (02 §2.4.4) the renewal branches on — the same
+    /// tokens the CUE family schema enumerates and <c>DepositConstituted.AutoRenewalPolicy</c> carries.</summary>
+    public const string RenewalNone = "NONE";
+    public const string RenewalSameTermCurrentRate = "SAME_TERM_CURRENT_RATE";
+    public const string RenewalSameTermSameRate = "SAME_TERM_SAME_RATE";
+
     /// <summary>
     /// Build <see cref="DepositConstituted"/> from the command, stamping the resolved TAN and
     /// the rate-sheet version it came from (ADR-PC-008 §P3). The maturity date is derived from
@@ -184,4 +190,70 @@ public static class TermDepositDecider
         var boundary = position.StartDate.AddMonths(couponIndex * position.PaymentPeriodMonths);
         return boundary >= position.MaturityDate ? position.MaturityDate : boundary;
     }
+
+    // ---- auto-renewal (02 §2.4.4) --------------------------------------------------------------
+
+    /// <summary>
+    /// The renewal TAN (in basis points) and the rate-sheet version it came from, resolved by policy
+    /// (02 §2.4.4). Pure: the service does the I/O (re-resolves the sheet at the renewal moment) and
+    /// hands BOTH the freshly-resolved rate AND the closing deposit's original rate in; this method
+    /// only PICKS between them per the policy the closing position carries — no clock, no I/O.
+    /// <list type="bullet">
+    /// <item><b>SAME_TERM_CURRENT_RATE</b> — the bank's then-current standard rate: take the freshly
+    /// re-resolved <paramref name="currentTanBasisPoints"/> / <paramref name="currentRateSheetVersionId"/>.</item>
+    /// <item><b>SAME_TERM_SAME_RATE</b> — the original rate: carry the closing deposit's
+    /// <see cref="DepositPosition.TanBasisPoints"/> and <see cref="DepositPosition.RateSheetVersionId"/>
+    /// forward unchanged. NOTE (bd babelstone-k4yr follow-up): 02 §2.4.4 pack-RESTRICTS this policy, but
+    /// no pack primitive expressing that restriction exists yet — the policy is implemented here, the
+    /// missing restriction is recorded rather than silently inventing a new pack primitive.</item>
+    /// </list>
+    /// <c>NONE</c> never reaches here (the service rejects it before deciding — there is no renewal to price).
+    /// </summary>
+    public static (int TanBasisPoints, string RateSheetVersionId) ResolveRenewalRate(
+        DepositPosition closing, int currentTanBasisPoints, string currentRateSheetVersionId) =>
+        closing.AutoRenewalPolicy switch
+        {
+            RenewalSameTermSameRate => (closing.TanBasisPoints, closing.RateSheetVersionId),
+            // SAME_TERM_CURRENT_RATE is the only other renewable policy (NONE is rejected upstream).
+            _ => (currentTanBasisPoints, currentRateSheetVersionId),
+        };
+
+    /// <summary>
+    /// Build the new instance's <see cref="DepositConstituted"/> for an auto-renewal (02 §2.4.4 step 2):
+    /// a fresh deposit constituted from the rolled-over principal at the policy-resolved TAN/version, for
+    /// the SAME term, interest variant, cadence, and renewal policy as the closing deposit. The new start
+    /// date is the renewal date and the new maturity is <c>renewalDate + termDays</c> — derived here, not
+    /// recomputed downstream. Pure: the rolled-over principal, resolved rate, and renewal date are explicit
+    /// inputs (the service settles and threads the <c>causation_id</c> → closing <c>DepositMatured</c>).
+    /// </summary>
+    public static DepositConstituted DecideRenewalConstitution(
+        DepositPosition closing, Guid newDepositId, Money rolloverPrincipal,
+        int tanBasisPoints, string rateSheetVersionId, DateOnly renewalDate) =>
+        new(
+            DepositId: newDepositId,
+            Principal: rolloverPrincipal,
+            TanBasisPoints: tanBasisPoints,
+            RateSheetVersionId: rateSheetVersionId,
+            TermDays: closing.TermDays,
+            StartDate: renewalDate,
+            MaturityDate: renewalDate.AddDays(closing.TermDays),
+            InterestVariant: closing.InterestVariant,
+            AutoRenewalPolicy: closing.AutoRenewalPolicy,
+            PaymentPeriodMonths: closing.PaymentPeriodMonths);
+
+    /// <summary>
+    /// Build the <see cref="DepositRenewed"/> link (02 §2.4.4 step 3) carrying the closing↔new deposit ids
+    /// and the new instance's pinned facts, for direct old→new lookup. Pure: every field is read off the
+    /// closing position and the already-decided new constitution — no clock, no I/O.
+    /// </summary>
+    public static DepositRenewed DecideRenewalLink(DepositPosition closing, DepositConstituted renewed) =>
+        new(
+            DepositId: closing.DepositId,
+            NewDepositId: renewed.DepositId,
+            RolloverPrincipal: renewed.Principal,
+            NewRateSheetVersionId: renewed.RateSheetVersionId,
+            NewTanBasisPoints: renewed.TanBasisPoints,
+            NewTermDays: renewed.TermDays,
+            RenewalDate: renewed.StartDate,
+            NewMaturityDate: renewed.MaturityDate);
 }
