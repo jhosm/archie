@@ -47,17 +47,25 @@ infra/k8s/
 │   ├── <service>.yaml          # one file per backing service
 │   └── secrets.example.yaml    # DEV-ONLY placeholder Secret (see below)
 └── overlays/
-    └── dev/
-        └── kustomization.yaml  # single env; replicas=1 (no HA)
+    ├── dev/                    # single env; replicas=1 (no HA)
+    │   └── kustomization.yaml
+    └── ha/                     # production-shaped HA topology (P.7 — see below)
+        ├── kustomization.yaml
+        ├── redpanda-ha.yaml          # 1->3 node seed-discovered cluster
+        ├── redpanda-headless-svc.yaml# per-pod DNS for the quorum
+        ├── postgres-primary-ha.yaml  # synchronous-replication primary
+        ├── postgres-standby-ha.yaml  # off-site warm standby (RPO ~ 0)
+        ├── ha-secrets.example.yaml   # DEV-ONLY replication credential
+        └── files/                    # primary init SQL + pg_hba.conf
 ```
 
-Render the manifests:
+Render the manifests (swap `dev` for `ha` to render the HA topology):
 
 ```bash
 mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/dev
 ```
 
-Validate them (this is the CI gate):
+Validate them (this is the CI gate — CI runs it for **both** overlays):
 
 ```bash
 mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/dev \
@@ -116,13 +124,63 @@ Service exposes **only the Grafana UI (3000)** — its own OTLP ports are *not*
 published; telemetry reaches it via the Collector fan-out (`grafana-lgtm:4317`),
 cluster-internally. CI asserts the grafana-lgtm Service never exposes 4317/4318.
 
+## HA overlay — production-shaped topology (P.7)
+
+The **`overlays/ha`** overlay (babelstone-ixkp) diverges from the *same*
+`base`/`dev` seam the `dev` overlay does, in the HA direction. It is the
+topology [ADR-PC-005 §P1](../../docs/product-management/product_concepts/adrs/ADR-PC-005-dr-rto-rpo.md)
+mandates for the source of truth (`events`, `outbox`, `saga_state`): a committed
+event durable on **two** nodes before acknowledgement → **RPO ≈ 0**.
+
+| Concern | dev overlay | ha overlay |
+|---|---|---|
+| Redpanda | 1 node (`--mode=dev-container`) | **3-node Raft quorum**, seed-discovered via a headless Service ([ADR-IC-001](../../docs/product-management/integration_concepts/adrs/ADR-IC-001-event-backbone-message-broker.md)) |
+| Postgres | 1 node | **primary + synchronous off-site warm standby** (streaming replication; `synchronous_standby_names`) |
+
+```bash
+mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/ha \
+  | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
+```
+
+**Postgres is hand-rolled, not an operator.** The primary + standby are raw
+`StatefulSet`s wired with native PostgreSQL streaming replication
+(`pg_basebackup` bootstrap, a physical replication slot, `synchronous_commit=on`
+naming the standby). This is deliberate: the standing preference is
+fully-controlled native primitives over frameworks that own their own
+tables/state, and streaming replication **is** the PG-native posture ADR-PC-005
+chose (its candidate A). A fixed primary + one warm standby needs no CRD-driven
+failover controller (CloudNativePG / Zalando) — adopting one would interpose a
+framework owning failover and its own state for no benefit at this topology. The
+rationale is recorded in the introducing PR body ([ADR-PC-020 §D3](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md):
+no silent divergence — this *honours* ADR-PC-005).
+
+**Off-site** is expressed as a topology constraint: the standby carries a
+required zone anti-affinity against the primary, so a same-zone placement is a
+scheduling failure, not a silent co-location (a co-located standby protects
+nothing against a site/AZ loss).
+
+**CI validates only.** The infra job kustomize-builds + kubeconforms *both*
+overlays and asserts the HA commitments mechanically (3-node Redpanda; primary
+`synchronous_commit`/`synchronous_standby_names`; standby slot + zone
+anti-affinity). It does **not** spin up a real cluster. Three downstream lanes
+ride on this wiring but are out of scope here:
+
+- **Sync-replication append-latency benchmark — L.3** (the Q-AK load test named
+  in ADR-PC-005 §P1): the RPO-vs-write-latency trade-off is *validated*, not
+  assumed — but that is a load test, not this topology.
+- **DR drill / PITR — M.4**: failover rehearsal, WAL archiving, and
+  point-in-time recovery (ADR-PC-005 §P2, §P5).
+- **CD / promotion pipeline — Q.6**: how either overlay actually gets applied.
+
+The `ha-secrets.example.yaml` replication credential is a **DEV-ONLY
+placeholder**, same seam contract as `base/secrets.example.yaml` — never commit
+real credentials; M.2 replaces it with OpenBao-backed provisioning.
+
 ## Out of scope (downstream)
 
-This is a single, non-HA, dev/staging-shaped environment. Explicitly deferred:
+The `dev` overlay is a single, non-HA, dev/staging-shaped environment; the `ha`
+overlay (above) adds the production-shaped topology. Still explicitly deferred:
 
-- **HA topology — P.7** (babelstone-ixkp): 3-node Redpanda, Postgres HA, warm
-  standby. Will live in a separate overlay; the base/dev split here is the seam
-  it diverges from.
 - **CD / promotion pipeline — Q.6** (babelstone-4c81): how rendered manifests
   get applied and promoted across environments. CI here only *validates*
   (`kustomize build` + `kubeconform`); it does not deploy.

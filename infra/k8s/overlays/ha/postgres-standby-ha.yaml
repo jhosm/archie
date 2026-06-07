@@ -1,0 +1,153 @@
+# Postgres STANDBY — synchronous off-site warm standby (ADR-PC-005 §P1).
+#
+# A second PG node that streams WAL from the primary. The primary's
+# synchronous_standby_names='standby1' (see postgres-primary-ha.yaml) makes the
+# primary BLOCK each commit until THIS standby has flushed the WAL, so every
+# acknowledged event is durable on two nodes → RPO ≈ 0 (ADR-PC-005 §Decision).
+#
+# "Off-site" is expressed as a topology constraint, not just a second pod: the
+# pod anti-affinity + zone topology key keep the standby in a DIFFERENT failure
+# domain from the primary (a co-located standby protects nothing against a
+# site/AZ loss — the whole point of §P1's "off-site"). The scheduler placement
+# is a cluster concern; here we declare the intent the cluster honours.
+#
+# Hand-rolled bootstrap (no operator): an initContainer runs `pg_basebackup`
+# into an empty PGDATA, writing standby.signal + primary_conninfo, then the main
+# postgres container starts as a hot standby streaming from the primary. On a
+# warm restart (PGDATA already populated) the initContainer is a no-op and the
+# standby just resumes streaming.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-standby
+  labels:
+    app.kubernetes.io/name: postgres
+    babelstone.io/pg-role: standby
+spec:
+  # Headless so the standby has a stable per-pod DNS name; read-only queries /
+  # failover promotion target the standby directly via postgres-standby.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+    babelstone.io/pg-role: standby
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-standby
+  labels:
+    app.kubernetes.io/name: postgres
+    babelstone.io/pg-role: standby
+spec:
+  serviceName: postgres-standby
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+      babelstone.io/pg-role: standby
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        babelstone.io/pg-role: standby
+    spec:
+      # OFF-SITE intent: never schedule the standby onto a node in the same zone
+      # as the primary. A required (not preferred) anti-affinity makes a
+      # same-zone placement a scheduling failure, not a silent co-location —
+      # protecting the §P1 "off-site" guarantee at the topology level.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: postgres
+                  babelstone.io/pg-role: primary
+              topologyKey: topology.kubernetes.io/zone
+      initContainers:
+        # Base-backup bootstrap. Runs only when PGDATA is empty (first boot);
+        # on a warm restart PGDATA is already there and this is a fast no-op.
+        - name: pg-basebackup
+          image: postgres:18-alpine
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-ha-secrets
+                  key: POSTGRES_REPLICATION_PASSWORD
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              if [ -s "$PGDATA/PG_VERSION" ]; then
+                echo "PGDATA already initialised — resuming as standby, skipping basebackup"
+                exit 0
+              fi
+              echo "Empty PGDATA — taking base backup from the primary (postgres-0.postgres)"
+              # -R writes standby.signal + primary_conninfo; -S binds the physical
+              # replication slot the primary's init SQL created; application_name
+              # MUST be 'standby1' to match synchronous_standby_names on the primary
+              # (that name is what makes the primary commit synchronously to us).
+              until pg_basebackup \
+                  -h postgres-0.postgres -p 5432 -U replicator \
+                  -D "$PGDATA" -Fp -Xs -P -R \
+                  -S standby1_slot \
+                  -d "application_name=standby1"; do
+                echo "primary not ready for basebackup yet — retrying in 5s"
+                sleep 5
+              done
+              echo "base backup complete; standby.signal + primary_conninfo written"
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      containers:
+        - name: postgres
+          image: postgres:18-alpine
+          # Start as a hot standby. primary_conninfo (written by pg_basebackup -R)
+          # carries the host but NOT the password, so inject it via the
+          # PGPASSWORD-backed .pgpass-equivalent: primary_conninfo here re-states
+          # it with the password from the secret, overriding the -R default.
+          args:
+            - -c
+            - hot_standby=on
+            - -c
+            - primary_conninfo=host=postgres-0.postgres port=5432 user=replicator password=$(POSTGRES_REPLICATION_PASSWORD) application_name=standby1
+            - -c
+            - primary_slot_name=standby1_slot
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-ha-secrets
+                  key: POSTGRES_REPLICATION_PASSWORD
+          readinessProbe:
+            # A standby answers pg_isready once it is accepting read-only
+            # connections (streaming + hot_standby). Same probe shape as the base.
+            exec:
+              command: ["pg_isready", "-U", "babelstone", "-d", "babelstone"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 12
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

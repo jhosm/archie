@@ -82,18 +82,21 @@ before `make up`; defaults live in `compose.yaml`.
 - **Services export to the OTel Collector, never to a backend directly** ([ADR-IC-007](../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) §P1). `otel/collector.yaml` is the owned single export-config point — sampling and PII/attribute redaction (pseudonymous IDs in traces) land there with Epic K. The collector forwards OTLP to the Grafana LGTM appliance, whose own OTLP ingest is **not** exposed to the host so the collector stays the single entry. Loki/Tempo are single-node and **non-HA** (dev only); production storage/replication is P.6/P.7.
 - **The OCI registry hosts packs, not pack content.** Packs are `oras`-pushed as OCI artefacts and pulled **by digest** ([ADR-PC-007](../docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md)); the registry runs with defaults (no auth, plain-HTTP — dev only). The pack build/sign pipeline (CUE validate → cosign → `oras push`) and the `babelstone-packs/*` content land with **Epic C.4/C.5**.
 - **EventCatalog is host-only.** nginx serves `eventcatalog/site/` (a placeholder today). The catalog itself — AsyncAPI specs rendered to a static EventCatalog build ([ADR-IC-008](../docs/product-management/integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md)) — is generated into that dir by **Epic G.4**.
-- This is **not** the production topology. P.7 adds 3-node Redpanda + PG HA; P.3/P.4
-  add Kong + OpenBao and the Grafana LGTM + OTel observability stack.
+- This is **not** the production topology. The production-shaped HA topology
+  (3-node Redpanda + PG primary/synchronous warm standby) is **P.7** and lives in
+  the [`k8s/overlays/ha`](./k8s/README.md) overlay, not this dev Compose stack;
+  P.3/P.4 add Kong + OpenBao and the Grafana LGTM + OTel observability stack.
 
 ---
 
 ## Deployed environment (K8s) (`k8s/`)
 
 The deployed counterpart of the Compose stack lives under [`k8s/`](./k8s/) —
-Kustomize manifests (base + `overlays/dev`), per
+Kustomize manifests (base + `overlays/dev` + `overlays/ha`), per
 [ADR-IC-013 §D2](../docs/product-management/integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md)
 (IaC subtree co-located in the monorepo). It deploys the **same 9 backing-infra
-services** to Kubernetes, shaped for a single **dev / staging** environment.
+services** to Kubernetes: `overlays/dev` is single-replica dev/staging;
+`overlays/ha` is the production-shaped HA topology (P.7).
 
 ```bash
 mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/dev
@@ -105,8 +108,10 @@ config change updates both stacks.
 
 Scope is deliberately narrow (matching the Compose stack):
 
-- **Single env, non-HA** — single-replica everywhere. The HA topology (3-node
-  Redpanda, Postgres HA, warm standby) is **P.7** (babelstone-ixkp).
+- **`overlays/dev` is single-replica, non-HA.** The production-shaped HA
+  topology (3-node Redpanda, Postgres primary + synchronous off-site warm
+  standby) is **P.7** (babelstone-ixkp), in the sibling `overlays/ha` — see
+  [`k8s/README.md`](./k8s/README.md). Both overlays are CI-validated.
 - **No CD pipeline** — CI only validates manifests (`kustomize build` +
   `kubeconform`); promotion/apply is **Q.6** (babelstone-4c81).
 - **OpenBao is a dev-mode seam** — real provisioning is **M.2** (babelstone-puu3).

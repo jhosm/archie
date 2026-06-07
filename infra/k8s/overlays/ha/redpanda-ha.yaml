@@ -1,0 +1,55 @@
+# Redpanda HA patch — 3-node cluster (ADR-IC-001; reach of ADR-PC-005 §P1: the
+# event bus the outbox publishes to must survive a single-broker loss).
+#
+# The base ships a single-node `--mode=dev-container` broker (one source of
+# truth for the dev broker shape, mirroring infra/compose.yaml). This overlay
+# converts it to a real 3-node Raft cluster:
+#
+#   * replicas 1 -> 3 (set in kustomization.yaml's `replicas:` block);
+#   * drop `--mode=dev-container` + `--smp=1` (dev-container forces a
+#     single-node topology and pins one core — wrong for a quorum cluster);
+#   * each pod advertises its OWN stable StatefulSet DNS name
+#     (redpanda-N.redpanda-headless) instead of the static `redpanda` the base
+#     used, so clients and peers address individual brokers;
+#   * `--seeds` lists all three pod DNS names so brokers form one cluster on
+#     first boot (seed-driven discovery — no external coordinator).
+#
+# Topic replication factor (RF=3, min.insync.replicas) is producer/cluster
+# config the engine sets when it creates topics (Epic A/E), not node wiring —
+# this patch only stands up the broker quorum it rides on.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redpanda
+spec:
+  # Repoint the governing Service to the HEADLESS one so per-pod DNS
+  # (redpanda-0.redpanda-headless, …) resolves — the base used the plain
+  # ClusterIP `redpanda` Service, which gives no stable per-pod records.
+  serviceName: redpanda-headless
+  # Pod-management stays default (OrderedReady): brokers join the seed list one
+  # at a time, which is the documented Redpanda bootstrap order.
+  template:
+    spec:
+      containers:
+        - name: redpanda
+          # Replace the base's static single-node command. POD_NAME (the
+          # StatefulSet hostname, e.g. redpanda-0) feeds the per-pod advertised
+          # address so each broker is individually addressable; the rpc/kafka
+          # listeners bind 0.0.0.0 and advertise the headless pod DNS.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              exec redpanda start \
+                --default-log-level=info \
+                --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092 \
+                --advertise-kafka-addr=internal://${POD_NAME}.redpanda-headless:9092,external://${POD_NAME}.redpanda-headless:19092 \
+                --schema-registry-addr=internal://0.0.0.0:8081,external://0.0.0.0:18081 \
+                --rpc-addr=0.0.0.0:33145 \
+                --advertise-rpc-addr=${POD_NAME}.redpanda-headless:33145 \
+                --seeds=redpanda-0.redpanda-headless:33145,redpanda-1.redpanda-headless:33145,redpanda-2.redpanda-headless:33145
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name

@@ -261,15 +261,20 @@ jobs:
       # Pin kustomize + kubeconform from mise.toml — the same single source of
       # truth as every dev machine (no second pin in this YAML to drift from).
       - uses: jdx/mise-action@v4
-      - name: Validate K8s manifests (kustomize build + kubeconform, P.6)
+      - name: Validate K8s manifests (kustomize build + kubeconform, P.6 / P.7)
         # The base configMapGenerator reads ../../kong/kong.yml and
         # ../../otel/collector.yaml (the single config source the Compose stack
         # also mounts), which sit above the kustomization root — hence
         # --load-restrictor=LoadRestrictionsNone. kubeconform -strict catches
         # schema drift against the pinned Kubernetes 1.31.0 API surface.
+        # Both overlays are validated: `dev` (single-replica) and `ha` (the
+        # P.7 production-shaped topology — 3-node Redpanda + PG warm standby).
         run: |
-          mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/dev \
-            | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
+          for overlay in dev ha; do
+            echo "== kubeconform: overlays/$overlay =="
+            mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$overlay" \
+              | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
+          done
       - name: Assert ADR commitments in rendered manifests (P.6)
         # Mechanical fitness checks on the rendered output — divergence from
         # these ADRs must fail CI, not land silently (ADR-PC-020 §D3).
@@ -290,6 +295,45 @@ jobs:
             echo "::error::ADR-IC-007 §P1 violation: grafana-lgtm Service exposes OTLP (4317/4318)"; exit 1
           fi
           echo "ADR assertions passed (ADR-IC-006 Kong DB-less; ADR-IC-007 §P1 OTLP single-entry)"
+      - name: Assert HA-topology commitments in the ha overlay (P.7)
+        # The ha overlay is the production-shaped topology ADR-PC-005 §P1
+        # mandates. These mechanical checks fail CI if the overlay stops
+        # expressing the load-bearing guarantees (ADR-PC-020 §D3: no silent
+        # divergence). They assert SHAPE in the rendered manifests, not runtime
+        # behaviour — a real cluster, failover, and the sync-replication
+        # append-latency benchmark are Q.6 / M.4 / L.3, out of scope here.
+        run: |
+          set -euo pipefail
+          ha="$(mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/ha)"
+          fail() { echo "::error::$1"; exit 1; }
+          # ADR-IC-001: Redpanda is a real 3-node quorum (replicas: 3), not the
+          # single-node dev broker.
+          rp_sts="$(echo "$ha" | awk 'BEGIN{RS="\n---\n"} /kind: StatefulSet/ && /(^|\n)  name: redpanda(\n|$)/')"
+          [ -n "$rp_sts" ] || fail "redpanda StatefulSet not found in rendered ha overlay"
+          echo "$rp_sts" | grep -Eq '^  replicas: 3$' \
+            || fail "ADR-IC-001/P.7 violation: redpanda StatefulSet is not 3 replicas"
+          # The 3-node cluster must NOT carry the single-node dev-container mode.
+          echo "$rp_sts" | grep -q 'mode=dev-container' \
+            && fail "P.7 violation: redpanda still uses --mode=dev-container (single-node)"
+          # ADR-PC-005 §P1: SYNCHRONOUS replication on the primary — committed
+          # events durable on two nodes before ack (RPO ~ 0). Assert both the
+          # synchronous_commit and the NAMED standby are present on the primary.
+          pg_primary="$(echo "$ha" | awk 'BEGIN{RS="\n---\n"} /kind: StatefulSet/ && /(^|\n)  name: postgres(\n|$)/')"
+          [ -n "$pg_primary" ] || fail "postgres primary StatefulSet not found in rendered ha overlay"
+          echo "$pg_primary" | grep -q 'synchronous_commit=on' \
+            || fail "ADR-PC-005 §P1 violation: primary missing synchronous_commit=on"
+          echo "$pg_primary" | grep -q 'synchronous_standby_names=standby1' \
+            || fail "ADR-PC-005 §P1 violation: primary missing synchronous_standby_names (no named standby → not synchronous)"
+          # ADR-PC-005 §P1: the off-site warm standby exists as its own
+          # StatefulSet streaming from the primary via the named slot.
+          pg_standby="$(echo "$ha" | awk 'BEGIN{RS="\n---\n"} /kind: StatefulSet/ && /(^|\n)  name: postgres-standby(\n|$)/')"
+          [ -n "$pg_standby" ] || fail "ADR-PC-005 §P1 violation: postgres-standby (warm standby) StatefulSet not found"
+          echo "$pg_standby" | grep -q 'primary_slot_name=standby1_slot' \
+            || fail "ADR-PC-005 §P1 violation: standby missing primary_slot_name (not attached to the replication slot)"
+          # Off-site intent: standby kept in a different zone from the primary.
+          echo "$pg_standby" | grep -q 'topology.kubernetes.io/zone' \
+            || fail "ADR-PC-005 §P1 violation: standby missing zone anti-affinity (off-site not expressed)"
+          echo "HA assertions passed (ADR-IC-001 3-node Redpanda; ADR-PC-005 §P1 synchronous off-site warm standby)"
 
   docs:
     needs: changes
