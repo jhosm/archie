@@ -116,7 +116,10 @@ public sealed class ForcedCorrectionRoundTripTests(ConstitutionFixture fixture)
     {
         var storage = new PostgresProjectionStore(fixture.ConnectionString);
         var infra = new ProjectionInfra(storage, new JsonEventSerializer());
-        var runner = new TermDepositProjectionModule().CreateRunners(infra).Single();
+        // Select the deposit-position runner BY KIND: F.6 grew the module to four runners, so a
+        // bare Single() (the original D.5 composition) now throws — this test only drains the
+        // bitemporal deposit-position projection.
+        var runner = new TermDepositProjectionModule().CreateRunners(infra).Single(r => r.Kind == Kind);
         var checkpoints = new PostgresProjectionCheckpointStore(fixture.ConnectionString);
         var drainer = new ProjectionDrainer(store, checkpoints, clock);
         var query = new BitemporalProjectionQuery<DepositPosition>(storage, new JsonStateSerializer<DepositPosition>());
