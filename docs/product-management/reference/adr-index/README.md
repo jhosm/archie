@@ -49,10 +49,11 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [005](../../integration_concepts/adrs/ADR-IC-005-cqrs-read-model-storage.md) | CQRS Read Model Storage | — | Accepted |
 | [006](../../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md) | Edge API Gateway and Synchronous Layer | — | Accepted |
 | [007](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | Observability Stack | — | Accepted |
-| [008](../../integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md) | Event Catalog Governance Tooling | — | Accepted |
+| [008](../../integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md) | Event Catalog Governance Tooling | — | Superseded by ADR-IC-015 |
 | [009](../../integration_concepts/adrs/ADR-IC-009-testing-infrastructure.md) | Testing Infrastructure and Contract Testing | — | Accepted |
 | [010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) | MCP Server Runtime, SDK, Transport, and Authorization | — | Accepted |
 | [011](../../integration_concepts/adrs/ADR-IC-011-async-saga-completion-notification.md) | Async Saga Completion Notification — Out-of-Band Callback Wire Format | — | Accepted |
 | [012](../../integration_concepts/adrs/ADR-IC-012-anti-corruption-layer-implementation.md) | Anti-Corruption Layer Implementation Approach | — | Accepted |
 | [013](../../integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md) | In-House Estate — Build Provenance and Repository Placement | — | Accepted |
 | [014](../../integration_concepts/adrs/ADR-IC-014-static-analysis-and-supply-chain-scanning.md) | Static Analysis and Supply-Chain Scanning — GitHub-Native Trio (CodeQL + Dependabot + Secret Scanning) | — | Accepted |
+| [015](../../integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) | Event Catalog Governance Tooling — Backstage | — | Accepted |

@@ -4,7 +4,7 @@ namespace Babelstone.InboxConsumer;
 /// Configuration for the Redpanda→inbox consumer (the mirror of <c>OutboxRelayOptions</c>).
 /// Everything the consumer needs to subscribe, decode (the wire-format schema_id is embedded in
 /// each record — no Schema-Registry lookup, ADR-IC-004 §P3), deduplicate by <c>message_id</c>
-/// (the CloudEvents <c>ce_id</c> header, ADR-IC-008), and commit offsets.
+/// (the CloudEvents <c>ce_id</c> header, ADR-IC-015), and commit offsets.
 /// </summary>
 public sealed record InboxConsumerOptions
 {

@@ -152,7 +152,7 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
 
         // First pump: the handler throws. The pump propagates AFTER rollback and BEFORE the offset
         // commit (the InboxConsumerService loop would catch+backoff; here we assert directly).
-        await Assert.ThrowsAnyAsync<Exception>(() => pump.PumpOnceAsync(CancellationToken.None));
+        await PumpUntilThrowsAsync(pump);
         // Rollback: no dedup row was written.
         Assert.Equal(0, await CountInboxAsync(messageId));
 
@@ -197,7 +197,7 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
 
         // First pump: the handler's saga_state INSERT collides on saga_state_pkey (NOT inbox_pkey). The
         // foreign 23505 must propagate — the pump seeks back and rethrows, NOT swallow it as a duplicate.
-        await Assert.ThrowsAnyAsync<Exception>(() => pump.PumpOnceAsync(CancellationToken.None));
+        await PumpUntilThrowsAsync(pump);
         // Rollback: NO inbox row was written (the message was not silently consumed).
         Assert.Equal(0, await CountInboxAsync(messageId));
 
@@ -287,7 +287,7 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
 
     private async Task ProduceRawAsync(Guid messageId, Guid aggregateId, string ceType, byte[] value)
     {
-        // CloudEvents Binary-mode headers (ADR-IC-008), the exact subset OutboxDrainer.BuildHeaders
+        // CloudEvents Binary-mode headers (ADR-IC-015), the exact subset OutboxDrainer.BuildHeaders
         // emits that the consumer reads: ce_id (the dedup key), ce_type, ce_subject.
         var headers = new Headers();
         Add(headers, "ce_specversion", "1.0");
@@ -347,6 +347,37 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
             if (outcome != InboxPump.PumpOutcome.Idle)
             {
                 return outcome;
+            }
+        }
+
+        throw new TimeoutException("Pump stayed idle for 30s — no record was delivered.");
+    }
+
+    /// <summary>
+    /// Pump until the handler raises — absorbing the cold-consumer idle polls that precede partition
+    /// assignment (the first <see cref="InboxPump.PumpOnceAsync"/> on a freshly-subscribed consumer
+    /// often returns <see cref="InboxPump.PumpOutcome.Idle"/> before the produced record is delivered).
+    /// Returns the exception the handler propagated. A record that is processed without throwing, or
+    /// never delivered within the deadline, is a genuine failure — NOT swallowed as success.
+    /// </summary>
+    private static async Task<Exception> PumpUntilThrowsAsync(InboxPump pump)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                var outcome = await pump.PumpOnceAsync(CancellationToken.None);
+                if (outcome != InboxPump.PumpOutcome.Idle)
+                {
+                    throw new Xunit.Sdk.XunitException(
+                        $"Expected the handler to throw, but the pump returned {outcome}.");
+                }
+                // Idle: consumer not yet assigned a partition — keep polling.
+            }
+            catch (Exception ex) when (ex is not Xunit.Sdk.XunitException)
+            {
+                return ex; // the handler-propagated exception we were waiting for
             }
         }
 

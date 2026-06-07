@@ -15,7 +15,7 @@ namespace Babelstone.OutboxPublisher;
 /// disjoint rows — never the same row twice, and never concurrent in-flight rows for the same
 /// <c>aggregate_id</c> — ADR-IC-004 §P2 / §Residual-risks), builds the Confluent wire-format value
 /// from the row's embedded <c>schema_id</c> (NO Schema-Registry lookup — ADR-IC-004 §P3), sets the
-/// CloudEvents Binary-mode Kafka headers (ADR-IC-008), produces keyed by <c>aggregate_id</c> to a
+/// CloudEvents Binary-mode Kafka headers (ADR-IC-015), produces keyed by <c>aggregate_id</c> to a
 /// topic named after <c>aggregate_type</c>, flips the row to PUBLISHED (the only verbs the engine
 /// role holds on outbox), and records the per-row publish-latency histogram on the shared meter.
 /// The §P4 publish-lag SLI itself — the gauge of the oldest PENDING row's age — is emitted by
@@ -161,7 +161,7 @@ public sealed class OutboxDrainer : IAsyncDisposable
         return framed;
     }
 
-    // CloudEvents 1.0 Binary Content Mode (ADR-IC-008): attributes as Kafka headers, the Avro
+    // CloudEvents 1.0 Binary Content Mode (ADR-IC-015): attributes as Kafka headers, the Avro
     // value as the message value. Every header here is derivable from the outbox row alone.
     private Headers BuildHeaders(OutboxRow row)
     {
@@ -181,7 +181,7 @@ public sealed class OutboxDrainer : IAsyncDisposable
         => headers.Add(key, System.Text.Encoding.UTF8.GetBytes(value));
 
     /// <summary>
-    /// Reverse-DNS CloudEvents type (ADR-IC-008): "term_deposit.DepositConstituted" →
+    /// Reverse-DNS CloudEvents type (ADR-IC-015): "term_deposit.DepositConstituted" →
     /// "com.bank.deposits.DepositConstituted". The "deposits" domain mirrors the Avro
     /// namespace prefix (ADR-IC-002 §P1); "com.bank" is the deployment's reverse-DNS root.
     /// </summary>

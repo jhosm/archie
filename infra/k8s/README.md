@@ -32,7 +32,7 @@ application/engine service images (they connect to this stack).
 | grafana-lgtm | Deployment | **3000 only** | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | otel-collector | Deployment | 4317, 4318, 13133 | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | registry | StatefulSet + PVC | 5000 | [ADR-PC-007](../../docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md) |
-| eventcatalog | Deployment | 80 | [ADR-IC-008](../../docs/product-management/integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md) |
+| eventcatalog | Deployment | 80 | [ADR-IC-008](../../docs/product-management/integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md) |
 
 All Services are `ClusterIP` (dev: reach them via `kubectl port-forward`).
 Ingress/gateway exposure beyond Kong is out of scope.

@@ -52,7 +52,7 @@ A factual synthesis of the choices ADR-IC-001…012 already made, sorted onto th
 | [IC-005](./ADR-IC-005-cqrs-read-model-storage.md) | PostgreSQL read store | estate | **consumed** (self-hosted image) |
 | [IC-006](./ADR-IC-006-edge-api-gateway.md) | Kong gateway | estate | **consumed** (self-hosted image) |
 | [IC-007](./ADR-IC-007-observability-stack.md) | Grafana LGTM + OTel Collector | estate | **consumed** (self-hosted images) |
-| [IC-008](./ADR-IC-008-event-catalog-governance-tooling.md) | EventCatalog | governance (offline) | **consumed tool** + **in-house source** (the AsyncAPI specs we author) |
+| [IC-008](./retired/ADR-IC-008-event-catalog-governance-tooling.md) | EventCatalog | governance (offline) | **consumed tool** + **in-house source** (the AsyncAPI specs we author) |
 | [IC-009](./ADR-IC-009-testing-infrastructure.md) | Testcontainers / Pact / WireMock / Toxiproxy | dev / test | **consumed** (libraries) |
 | [IC-010](./ADR-IC-010-mcp-server-runtime-and-sdk.md) | MCP server | estate (runtime deliverable) | **in-house** (code on the Python SDK) |
 | [IC-011](./ADR-IC-011-async-saga-completion-notification.md) | Notification service | estate | **in-house** |

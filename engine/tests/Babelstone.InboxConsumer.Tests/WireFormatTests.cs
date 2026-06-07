@@ -7,7 +7,7 @@ namespace Babelstone.InboxConsumer.Tests;
 /// <summary>
 /// Pure (no-container) tests for the consumer's wire-format un-framing and ce_type → record-name
 /// mapping — the exact inverses of the relay's framing (ADR-IC-002 §P3) and reverse-DNS ce_type
-/// (ADR-IC-008). Default CI lane: the un-framing must never silently drift from the framing, the
+/// (ADR-IC-015). Default CI lane: the un-framing must never silently drift from the framing, the
 /// same way the producer-side WireFormatTests guard the forward direction.
 /// </summary>
 public sealed class WireFormatTests

@@ -42,7 +42,7 @@ jobs:
             engine: ['engine/**']
             pack_validate: ['pack-validate/**']
             families: ['families/**']
-            contracts: ['contracts/**', 'scripts/avro-compat-check.sh']
+            contracts: ['contracts/**', 'scripts/avro-compat-check.sh', 'scripts/asyncapi-catalog-validate.sh', 'scripts/asyncapi-catalog-reconcile.sh']
             orchestrator: ['orchestrator/**']
             acl: ['acl/**']
             mcp_server: ['mcp-server/**']
@@ -155,8 +155,32 @@ jobs:
         # Same script dev runs via `make avro-compat-check`. The ubuntu-latest
         # runner ships Docker (the engine job's Testcontainers tier relies on it).
         run: ./scripts/avro-compat-check.sh
-      # TODO - EventCatalog build + `npx validate` (ADR-IC-008) lands with Q.2
-      # (bd babelstone-2f6q); G.3 delivered the Avro/SR compat gate above.
+      - name: AsyncAPI catalogue gate (ADR-IC-015 §P1–§P6, validate-only PR lane)
+        # G.4 (bd babelstone-ymav): the FAST, HERMETIC gate. ADR-IC-015 supersedes
+        # ADR-IC-008 (EventCatalog → Backstage); the AsyncAPI governance format and
+        # the §P1–§P6 checks carry forward unchanged. Validates the
+        # contracts/catalog/events/*.asyncapi.yaml set with the Apache-2.0 AsyncAPI
+        # CLI — NO live Schema Registry, NO running portal (ADR-IC-015 + the
+        # CI-fragility residual risk). It enforces §P1 (validity + required
+        # governance fields), §P2 (orphan check), §P3 (tombstone contract on compacted
+        # topics), §P4 (breaking-change diff vs the origin/main baseline fetched
+        # above), §P5 (deprecation notice ≥180d), §P6 (subject reconstructs from the
+        # .avsc) and §9 (the Backstage catalog-info.yaml descriptor is well-formed
+        # YAML). The §P6 *live* registry reconciliation is the main-lane `--reconcile`
+        # step below, deliberately split out so this PR step never touches the
+        # registry. The .avsc payload $refs resolve on disk, so no network. Same
+        # script dev runs via `make asyncapi-catalog-validate`. npx pulls the pinned
+        # @asyncapi/cli; the ubuntu-latest runner ships Node.
+        run: ./scripts/asyncapi-catalog-validate.sh
+      - name: AsyncAPI catalogue ↔ Schema Registry reconciliation (ADR-IC-015 §8, main only)
+        # The LIVE reconciliation, main lane only (never on PRs — keeps the gate above
+        # hermetic). Registers the working-tree .avsc set into a throwaway Redpanda
+        # built-in SR (the same POC registry the Avro gate uses) and asserts every
+        # x-schema-registry-subject the catalog references resolves there — so the
+        # catalog can never document an event whose subject is absent from the
+        # registry. Runs on push to main, not pull_request.
+        if: ${{ github.event_name == 'push' }}
+        run: ./scripts/asyncapi-catalog-reconcile.sh
 
   orchestrator:
     needs: changes

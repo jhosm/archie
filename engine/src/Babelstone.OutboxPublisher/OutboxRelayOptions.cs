@@ -13,7 +13,7 @@ public sealed record OutboxRelayOptions
     public required string BootstrapServers { get; init; }
 
     /// <summary>
-    /// The CloudEvents <c>ce_source</c> — the URI of the producing service (ADR-IC-008).
+    /// The CloudEvents <c>ce_source</c> — the URI of the producing service (ADR-IC-015).
     /// Constant per deployment; carried verbatim into every record header.
     /// </summary>
     public string Source { get; init; } = "urn:babelstone:engine";

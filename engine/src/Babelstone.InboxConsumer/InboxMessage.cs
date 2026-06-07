@@ -7,7 +7,7 @@ namespace Babelstone.InboxConsumer;
 /// (<see cref="MessageId"/>) plus the already-Avro-decoded <see cref="DomainEvent"/> and the
 /// structural envelope a handler routes on. The consume loop builds this from the Kafka record —
 /// it un-frames the Confluent wire-format value, decodes the Avro via the G.3 codec, and reads the
-/// CloudEvents headers (ADR-IC-008) — so the handler never touches Kafka, wire bytes, or the
+/// CloudEvents headers (ADR-IC-015) — so the handler never touches Kafka, wire bytes, or the
 /// Schema Registry.
 /// </summary>
 /// <remarks>

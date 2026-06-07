@@ -5,7 +5,7 @@ namespace Babelstone.OutboxPublisher.Tests;
 
 /// <summary>
 /// Pure (no-container) tests for the relay's two pure transforms: the Confluent wire-format
-/// framing (ADR-IC-002 §P3) and the reverse-DNS ce_type mapping (ADR-IC-008). Default CI lane.
+/// framing (ADR-IC-002 §P3) and the reverse-DNS ce_type mapping (ADR-IC-015). Default CI lane.
 /// </summary>
 public sealed class WireFormatTests
 {

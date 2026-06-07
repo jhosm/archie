@@ -149,7 +149,7 @@ These conventions match ADR-IC (per [integration_concepts/adrs/README.md](../../
 
 **Residual risks:**
 
-- The contract-shape template does not enforce a particular schema language or a particular event-catalogue tool. An ADR-PC contract-shape entry that references AsyncAPI or Avro is implicitly assuming the ADR-IC catalogue tooling ([ADR-IC-008](../../integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md)) and the ADR-IC schema registry ([ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)). If those ADRs are ever superseded, every contract-shape ADR-PC needs a sweep to confirm it still composes with the replacement.
+- The contract-shape template does not enforce a particular schema language or a particular event-catalogue tool. An ADR-PC contract-shape entry that references AsyncAPI or Avro is implicitly assuming the ADR-IC catalogue tooling ([ADR-IC-008](../../integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md)) and the ADR-IC schema registry ([ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)). If those ADRs are ever superseded, every contract-shape ADR-PC needs a sweep to confirm it still composes with the replacement.
 - "Default to tool-selection when in doubt" assumes reviewers will catch a misclassification. A misclassified ADR that fabricates straw-man alternatives to fill its hard-filter table degrades the framework. Mitigation: the ADR-PC index lists shape per ADR, so a reviewer skim against `bd show <id>`'s described deliverable will surface shape mismatches early.
 
 ---

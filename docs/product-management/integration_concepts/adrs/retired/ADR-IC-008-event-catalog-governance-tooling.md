@@ -2,17 +2,19 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Superseded by [ADR-IC-015](../ADR-IC-015-event-catalog-governance-tooling-backstage.md) |
 | Date | 2026-05-17 |
 | Deciders | jhosm |
-| Common criteria | [ADR-IC-000](./ADR-IC-000-common-evaluation-criteria.md) |
-| Depends on | [ADR-IC-001](./ADR-IC-001-event-backbone-message-broker.md), [ADR-IC-002](./ADR-IC-002-schema-format-and-registry.md) |
+| Common criteria | [ADR-IC-000](../ADR-IC-000-common-evaluation-criteria.md) |
+| Depends on | [ADR-IC-001](../ADR-IC-001-event-backbone-message-broker.md), [ADR-IC-002](../ADR-IC-002-schema-format-and-registry.md) |
+
+> Superseded by [ADR-IC-015](../ADR-IC-015-event-catalog-governance-tooling-backstage.md) — see there for the current decision. The AsyncAPI governance format and the §P1–§P6 implementation principles carry forward unchanged; only the portal tool changed (EventCatalog → Backstage), after the License-drift residual risk below was realised at implementation time (2026-06-07).
 
 ---
 
 ## Context
 
-[Document 08](../08-event-catalog-governance.md) establishes that the event catalog is not decorative infrastructure — it is the mechanical enforcement layer for governance. Without it, the four pillars (ownership, conventions, review, discoverability) exist only as goodwill and wiki pages that rot. The catalog makes governance enforceable: no integration event may be published in production without a catalog entry, and CI fails if the entry is absent or inconsistent with the registered schema.
+[Document 08](../../08-event-catalog-governance.md) establishes that the event catalog is not decorative infrastructure — it is the mechanical enforcement layer for governance. Without it, the four pillars (ownership, conventions, review, discoverability) exist only as goodwill and wiki pages that rot. The catalog makes governance enforceable: no integration event may be published in production without a catalog entry, and CI fails if the entry is absent or inconsistent with the registered schema.
 
 Two interrelated decisions are required:
 
@@ -160,7 +162,7 @@ The right tool for the wrong scale. Backstage's operational footprint (Node.js s
 
 **What this choice makes harder or impossible:**
 
-- **Real-time consumer tracking** (who is currently consuming which event in production) is not available from a static site. Knowing the live consumer topology requires instrumenting the consumers themselves ([document 06](../06-observability-and-tracing.md)'s observability layer) and querying Redpanda consumer group offsets — the catalog records *who may consume* (governance), not *who is consuming* (operational state). These are different concerns, and conflating them in the catalog is a design error.
+- **Real-time consumer tracking** (who is currently consuming which event in production) is not available from a static site. Knowing the live consumer topology requires instrumenting the consumers themselves ([document 06](../../06-observability-and-tracing.md)'s observability layer) and querying Redpanda consumer group offsets — the catalog records *who may consume* (governance), not *who is consuming* (operational state). These are different concerns, and conflating them in the catalog is a design error.
 - **Self-service onboarding flows** (Backstage templates, scaffolding new services from the portal) are not available. At POC scale this is not a requirement.
 - **Cross-catalog federation** (sharing events across organizational units with separate EventCatalog instances) requires EventCatalog federation features that may be in the commercial tier. At POC scale with a single repository, this is not a concern.
 
