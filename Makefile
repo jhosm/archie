@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 EVENTCATALOG_PORT ?= 8082
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify up down reset logs ps verify demo-mcp demo-mcp-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify up down reset logs ps verify demo-mcp demo-mcp-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -65,6 +65,9 @@ doctor: ## Print resolved toolchain versions (verifies the pins are active)
 
 contracts-check: ## Validate the CUE family schemas (fmt + accept/reject fixtures, ADR-PC-006)
 	@./contracts/cue/check.sh
+
+avro-compat-check: ## Avro §P1/§P2 lint + §P3 SR compatibility vs origin/main (ADR-IC-002, needs Docker)
+	@./scripts/avro-compat-check.sh
 
 validate-variant: ## Run pack-validate depths 1–4 on a variant (VARIANT=path PACK=pt.2026.1, ADR-PC-006)
 	@test -n "$(VARIANT)" || { echo "usage: make validate-variant VARIANT=<path/to/variant.yaml> [PACK=pt.2026.1]"; exit 2; }
