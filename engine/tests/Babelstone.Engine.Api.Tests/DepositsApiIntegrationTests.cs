@@ -23,6 +23,7 @@ namespace Babelstone.Engine.Api.Tests;
 /// (<c>OutboxToRedpandaIntegrationTests</c>) the same Integration lane now runs.
 /// </summary>
 [Trait("Category", "Integration")]
+[Collection(EngineApiHostCollection.Name)]
 public sealed class DepositsApiIntegrationTests : IAsyncLifetime
 {
     private static readonly JsonSerializerOptions SnakeCase =

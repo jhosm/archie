@@ -2,6 +2,7 @@ using System.Text.Json;
 using Babelstone.Engine;
 using Babelstone.Engine.Api;
 using Babelstone.EventStore;
+using Babelstone.OutboxPublisher;
 using Babelstone.Pii;
 using Babelstone.RateSheets;
 using Babelstone.Telemetry;
@@ -35,10 +36,9 @@ builder.Services.AddOpenTelemetry()
     // Metrics (ADR-IC-007 Layer 1 / ADR-IC-004 §P4): listen to the engine's meter and export over
     // OTLP to the Collector → Prometheus, where the §P4 warning/critical thresholds alert. The
     // publish-lag SLI (outbox_publish_lag_seconds) and per-row latency histogram are emitted by the
-    // outbox relay (Babelstone.OutboxPublisher: OutboxLagObserver + OutboxDrainer). Wiring this host
-    // to actually RUN the relay (its ProjectReference + AddHostedService<OutboxRelayService> +
-    // AddSingleton<OutboxLagObserver>) is a follow-up: until then AddMeter is in place but the engine
-    // SLI instruments are not produced in THIS process.
+    // outbox relay (Babelstone.OutboxPublisher: OutboxLagObserver + OutboxDrainer), which THIS host
+    // co-runs in-process — the relay's hosted service + the OutboxLagObserver singleton are
+    // registered below, so the instruments AddMeter picks up here are actually produced in-process.
     .WithMetrics(metrics => metrics
         .AddMeter(BabelstoneTelemetry.MeterName)
         .AddOtlpExporter());
@@ -120,7 +120,39 @@ foreach (var module in familyModules)
     module.ConfigureServices(builder.Services, familyHostContext);
 }
 
+// The IC-004 outbox→Redpanda relay (G.1), co-hosted in this process (event-store-skeleton §5.1).
+// Two pieces register here, the same proven shape as the projection relay above:
+//   • AddHostedService<OutboxRelayService> — the poll loop that drains PENDING rows to Redpanda and
+//     records the per-row publish-latency histogram (a G.1 addition).
+//   • AddSingleton<OutboxLagObserver> — the §P4 SLI itself: an observable gauge of the oldest
+//     PENDING row's age, read fresh each metrics-collection cycle so it keeps climbing during an
+//     outage when NOTHING publishes (exactly when the 30s-warn/5min-crit alerts must fire). It
+//     owns a Meter named BabelstoneTelemetry.MeterName, so the .WithMetrics → AddMeter above
+//     collects its gauge; resolving the singleton at startup is what registers the instrument.
+// The Kafka bootstrap address is a broker ENDPOINT, not a credential — it is already plaintext in
+// infra/compose.yaml and the k8s manifests — so it resolves straight from IConfiguration
+// (Kafka:BootstrapServers via env/appsettings), distinct from ConnectionStrings:Engine which goes
+// through the ISecretProvider credential boundary (ADR-PC-004 Amendment A1). When SASL credentials
+// land later (the Redpanda secret the Program.cs §54 note anticipates) THOSE will resolve through
+// ISecretProvider. The dev default matches the Redpanda external listener in infra/compose.yaml
+// (localhost:19092), the same convention `make up` exposes.
+var bootstrapServers = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:19092";
+builder.Services.AddSingleton(new OutboxRelayOptions
+{
+    ConnectionString = connectionString,
+    BootstrapServers = bootstrapServers,
+});
+builder.Services.AddSingleton(serviceProvider =>
+    new OutboxDrainer(serviceProvider.GetRequiredService<OutboxRelayOptions>()));
+builder.Services.AddHostedService<OutboxRelayService>();
+builder.Services.AddSingleton(new OutboxLagObserver(connectionString));
+
 var app = builder.Build();
+
+// Resolve the lag observer eagerly so its observable gauge is created BEFORE the first
+// metrics-collection cycle — a lazily-resolved singleton would not register the §P4 instrument
+// until something asked for it. The hosted relay starts on its own via the host lifecycle.
+app.Services.GetRequiredService<OutboxLagObserver>();
 
 app.UseExceptionHandler();
 foreach (var module in familyModules)
