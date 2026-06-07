@@ -68,4 +68,36 @@ public static class BabelstoneAttributes
     /// tier, not PII; it is the same value carried as the row's <c>aggregate_type</c> / topic name.
     /// </summary>
     public const string AggregateType = "babelstone.aggregate_type";
+
+    /// <summary>
+    /// The topic an inbox record arrived on (e.g. <c>term_deposit</c>) — the structural dimension the
+    /// consumer-side inbox counters (G.2) are tagged with so handled/duplicate/poison rates are
+    /// breakable by topic. Operational tier, not PII; it is the same value as the producer's
+    /// <c>aggregate_type</c> / topic name (the consumer mirror of <see cref="AggregateType"/>).
+    /// </summary>
+    public const string SourceTopic = "babelstone.source_topic";
+
+    /// <summary>
+    /// Inbox messages handled for the FIRST time (G.2): the dedup row was inserted and the handler
+    /// ran inside one transaction (Document 04). A monotonic counter, tagged by <see cref="SourceTopic"/>.
+    /// Distinct from <see cref="InboxDuplicatesMetric"/> (the dedup-backstop firing). snake_case
+    /// metric name (a Prometheus/Grafana query reads it by this exact string), not a span key.
+    /// </summary>
+    public const string InboxHandledMetric = "inbox_handled_total";
+
+    /// <summary>
+    /// Inbox messages skipped as DUPLICATE physical deliveries (G.2): the <c>message_id</c> PK
+    /// collided, the transaction rolled back, no effect ran. This counter rising is the ADR-IC-004
+    /// §Residual-risks dedup backstop doing its mandatory job (absorbing the dual-publish window) —
+    /// healthy in moderation, a producer/relay symptom if it dominates. Tagged by <see cref="SourceTopic"/>.
+    /// </summary>
+    public const string InboxDuplicatesMetric = "inbox_duplicates_total";
+
+    /// <summary>
+    /// Inbox records skipped as POISON (G.2): a record that cannot be processed (un-decodable Avro,
+    /// unknown event type, bad wire framing, or a missing <c>ce_id</c>) and so is stepped past rather
+    /// than wedging the partition. A non-zero rate warrants investigation (a contract/registration
+    /// gap). Tagged by <see cref="SourceTopic"/>. snake_case metric name, not a span key.
+    /// </summary>
+    public const string InboxPoisonMetric = "inbox_poison_total";
 }

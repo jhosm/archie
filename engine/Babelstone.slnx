@@ -14,6 +14,9 @@
     <Project Path="src/Babelstone.Engine.Avro/Babelstone.Engine.Avro.csproj" />
     <!-- The outbox→Redpanda relay (E.4): the only assembly touching both PostgreSQL and Redpanda. -->
     <Project Path="src/Babelstone.OutboxPublisher/Babelstone.OutboxPublisher.csproj" />
+    <!-- The Redpanda→inbox consumer (G.2): the consumer-side mirror of the outbox relay — the only
+         consumer-side assembly touching both Redpanda and PostgreSQL (the message_id dedup row). -->
+    <Project Path="src/Babelstone.InboxConsumer/Babelstone.InboxConsumer.csproj" />
     <Project Path="src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <Project Path="src/Babelstone.RateSheets.Api/Babelstone.RateSheets.Api.csproj" />
     <!-- The engine command/query HTTP boundary (ADR-PC-021 §D5, realized in E.5): the surface the MCP server calls. -->
@@ -37,6 +40,8 @@
     <Project Path="tests/Babelstone.Engine.Api.Tests/Babelstone.Engine.Api.Tests.csproj" />
     <!-- E.4 Redpanda Testcontainer integration test (the fixture E.6 reuses). -->
     <Project Path="tests/Babelstone.OutboxPublisher.Tests/Babelstone.OutboxPublisher.Tests.csproj" />
+    <!-- G.2 inbox consumer: pure dedup/wire-format/poison tests + Redpanda+PG integration round-trip. -->
+    <Project Path="tests/Babelstone.InboxConsumer.Tests/Babelstone.InboxConsumer.Tests.csproj" />
     <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/Babelstone.Families.TermDeposit.Tests.csproj" />
     <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Application.Tests/Babelstone.Families.TermDeposit.Application.Tests.csproj" />
   </Folder>
