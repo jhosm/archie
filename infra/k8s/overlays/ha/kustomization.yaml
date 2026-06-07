@@ -26,6 +26,10 @@ resources:
   - ../../base
   # HA-only additions (the base ships none of these).
   - redpanda-headless-svc.yaml
+  # Per-pod DNS for the primary (postgres-0.postgres-headless) — the standby's
+  # pg_basebackup/primary_conninfo host. The base ClusterIP `postgres` Service
+  # publishes no per-pod records, so this headless governing Service is required.
+  - postgres-headless-svc.yaml
   - postgres-standby-ha.yaml
   - ha-secrets.example.yaml
 
@@ -46,6 +50,10 @@ patches:
   - path: redpanda-ha.yaml
   # Turn the base single Postgres into the synchronous-replication PRIMARY.
   - path: postgres-primary-ha.yaml
+  # Narrow the base `postgres` (write) Service to the primary — in the HA overlay
+  # both pods carry app=postgres, so the unpatched selector would route writes to
+  # the read-only standby.
+  - path: postgres-write-svc-ha.yaml
 
 configMapGenerator:
   # Primary first-boot replication setup (replicator role + physical slot),

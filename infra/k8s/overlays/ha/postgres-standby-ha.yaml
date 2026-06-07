@@ -89,13 +89,15 @@ spec:
                 echo "PGDATA already initialised — resuming as standby, skipping basebackup"
                 exit 0
               fi
-              echo "Empty PGDATA — taking base backup from the primary (postgres-0.postgres)"
+              echo "Empty PGDATA — taking base backup from the primary (postgres-0.postgres-headless)"
               # -R writes standby.signal + primary_conninfo; -S binds the physical
               # replication slot the primary's init SQL created; application_name
               # MUST be 'standby1' to match synchronous_standby_names on the primary
               # (that name is what makes the primary commit synchronously to us).
+              # Host is the primary's per-pod DNS, which resolves ONLY via the
+              # headless postgres-headless Service (the StatefulSet's serviceName).
               until pg_basebackup \
-                  -h postgres-0.postgres -p 5432 -U replicator \
+                  -h postgres-0.postgres-headless -p 5432 -U replicator \
                   -D "$PGDATA" -Fp -Xs -P -R \
                   -S standby1_slot \
                   -d "application_name=standby1"; do
@@ -117,7 +119,7 @@ spec:
             - -c
             - hot_standby=on
             - -c
-            - primary_conninfo=host=postgres-0.postgres port=5432 user=replicator password=$(POSTGRES_REPLICATION_PASSWORD) application_name=standby1
+            - primary_conninfo=host=postgres-0.postgres-headless port=5432 user=replicator password=$(POSTGRES_REPLICATION_PASSWORD) application_name=standby1
             - -c
             - primary_slot_name=standby1_slot
           ports:

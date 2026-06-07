@@ -54,6 +54,8 @@ infra/k8s/
         ├── redpanda-ha.yaml          # 1->3 node seed-discovered cluster
         ├── redpanda-headless-svc.yaml# per-pod DNS for the quorum
         ├── postgres-primary-ha.yaml  # synchronous-replication primary
+        ├── postgres-headless-svc.yaml# per-pod DNS for the primary (replication host)
+        ├── postgres-write-svc-ha.yaml# narrows the `postgres` write Service to the primary
         ├── postgres-standby-ha.yaml  # off-site warm standby (RPO ~ 0)
         ├── ha-secrets.example.yaml   # DEV-ONLY replication credential
         └── files/                    # primary init SQL + pg_hba.conf
@@ -158,6 +160,19 @@ no silent divergence — this *honours* ADR-PC-005).
 required zone anti-affinity against the primary, so a same-zone placement is a
 scheduling failure, not a silent co-location (a co-located standby protects
 nothing against a site/AZ loss).
+
+**Postgres Service split (writes go only to the primary).** Both PG pods carry
+`app.kubernetes.io/name: postgres`, so the overlay role-scopes the Services:
+- `postgres` — the **write** entrypoint, narrowed to `pg-role: primary` (the
+  base's broad selector would otherwise load-balance writes onto the read-only
+  standby).
+- `postgres-headless` — a headless (`clusterIP: None`) governing Service for the
+  primary, the only thing that publishes the per-pod DNS
+  (`postgres-0.postgres-headless`) the standby's `pg_basebackup` /
+  `primary_conninfo` address. Same split the Redpanda overlay uses (a ClusterIP
+  Service for clients + a headless Service for per-pod addressing).
+- `postgres-standby` — a role-scoped headless Service for read-only / failover
+  traffic to the standby.
 
 **CI validates only.** The infra job kustomize-builds + kubeconforms *both*
 overlays and asserts the HA commitments mechanically (3-node Redpanda; primary

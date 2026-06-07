@@ -1,0 +1,34 @@
+# Headless governing Service for the PRIMARY Postgres StatefulSet.
+#
+# StatefulSet per-pod DNS (postgres-0.postgres-headless) only resolves when the
+# governing Service named by the StatefulSet's `serviceName` is headless
+# (clusterIP: None). The base `postgres` Service is a normal ClusterIP — fine for
+# a 1-node dev broker (clients just hit `postgres:5432`) and kept here as the
+# WRITE entrypoint, but a ClusterIP publishes NO stable per-pod records. The
+# standby's pg_basebackup + primary_conninfo address the primary by its stable
+# per-pod name, which only this headless Service makes resolvable.
+#
+# Same split the Redpanda HA overlay uses (redpanda-headless-svc.yaml): the base
+# ClusterIP Service stays for client traffic; this headless Service exists purely
+# so the per-pod DNS the replication wiring depends on exists. The HA
+# kustomization repoints the primary StatefulSet's `serviceName` to THIS Service.
+#
+# Scoped to the PRIMARY (babelstone.io/pg-role: primary) so the per-pod name set
+# under postgres-headless is exactly the primary's — the standby has its own
+# governing Service (postgres-standby), so no cross-role name collisions.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  labels:
+    app.kubernetes.io/name: postgres
+    babelstone.io/pg-role: primary
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+    babelstone.io/pg-role: primary
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
