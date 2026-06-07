@@ -206,7 +206,12 @@ public sealed class TermDepositConstitutionService(
     /// </remarks>
     public async Task RenewAsync(RenewDepositCommand command, CancellationToken ct = default)
     {
-        // 1. Rehydrate the closing deposit (must be Active to renew — the F.3 gate decides).
+        // 1. Rehydrate the closing deposit (must be Active to renew — the F.3 gate decides). The
+        //    renewal drives TWO transitions on this stream — Mature (step 5) then Renew (step 9) —
+        //    and each routes through the F.3 table at the point it fires (the table is the single
+        //    legality authority; no inline lifecycle literal lives here). This entry gate is the
+        //    Renew-intent check: Renew is legal only from Active, so it rejects renewing a closed
+        //    (e.g. already-Renewed/Matured) deposit before any work, sheet resolve, or settlement.
         var hydrated = await runtime.LoadAsync(command.DepositId, ct);
         var closing = hydrated.State;
         RejectIfIllegal(closing.Lifecycle, LifecycleTransitions.Transition.Renew, command.DepositId, "renew");
@@ -238,6 +243,12 @@ public sealed class TermDepositConstitutionService(
 
         // 4. Pack-resolved primitives (fail loud) and the maturity leg — the SAME variant-branched
         //    accrue → withhold → mature the standalone MatureAsync runs (flow-by-flow withholding).
+        //    Renewal's maturity leg appends DepositMatured (folds the closing stream to Matured), so
+        //    it drives the very same Mature transition MatureAsync gates — route it through the F.3
+        //    table here too, BEFORE appending, so the one auditable table (not a scattered guard)
+        //    decides Mature legality on EVERY path. closing is the Active head loaded at step 1, so
+        //    this checks Mature-from-Active exactly as the standalone command does.
+        RejectIfIllegal(closing.Lifecycle, LifecycleTransitions.Transition.Mature, command.DepositId, "mature");
         var (dayCount, withholdingBps) = ResolvePrimitives();
         var maturityEvents = TermDepositDecider.DecideMaturity(closing, dayCount, withholdingBps);
         var matured = (DepositMatured)maturityEvents[^1];
@@ -317,6 +328,16 @@ public sealed class TermDepositConstitutionService(
 
         // 9. Decide (pure) and append the DepositRenewed link as step 3, closing the old stream. It folds
         //    the closing deposit to Renewed (terminal) — the old→new lookup the maturity calendar uses.
+        //    This append is NOT re-gated against the table: the stream head is now Matured (step 5 folded
+        //    it), and the F.3 table (babelstone-29v8) models Matured as terminal — Renew is legal only from
+        //    Active, with terminality expressed as absence from every source set. The spec-mandated closing
+        //    sequence (02 §2.4.4: DepositMatured THEN DepositRenewed) thus legally traverses
+        //    Active→Matured→Renewed, which the table cannot currently express (no Renew-from-Matured row).
+        //    The Renew legality IS checked once, at the step-1 entry gate while the deposit is still Active —
+        //    the only state the table makes Renew legal from. Making the table express this compound
+        //    sequence (a Renew-from-Matured row, or modelling renewal as a single Active→Renewed transition
+        //    whose DepositMatured is intrinsic) is an F.3 modelling decision tracked on babelstone-29v8;
+        //    until then this leg stays as the spec dictates rather than forcing F.3's terminal model open.
         var link = TermDepositDecider.DecideRenewalLink(closing, renewed);
         await runtime.AppendAsync(
             command.DepositId, afterMaturity.Version, [link],
