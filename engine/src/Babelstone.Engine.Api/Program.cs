@@ -81,10 +81,26 @@ catch (SecretProviderException)
         "ConnectionStrings:Engine is required (the PostgreSQL event-store tier, ADR-PC-001 §P1).");
 }
 
-// The engine-instance's pinned pack (ADR-PC-009): a disk-loaded VerifiedPack stands in for the
-// in-engine OCI loader + per-instance pinning registry on the walking-skeleton dev boundary.
-var packVersion = builder.Configuration.GetValue("Engine:PackVersion", "pt.2026.1");
-var pack = HostPack.Load(builder.Configuration["Engine:PacksDir"], packVersion);
+// The engine-instance's pinned pack(s) (ADR-PC-007 §P3/§P4, ADR-PC-009). Two modes,
+// Engine:PackRegistry — never a silent fallback (HostPackLoading):
+//   • 'oci' (production): the durable Postgres pack_versions registry resolves each pinned
+//     version to its OCI coordinates; the cosign-verifying OciPackStore eager-loads EVERY pack
+//     version any live instance references (events.pack_version) plus the configured primary,
+//     fail-loud — a single unresolvable/unverifiable pack aborts startup (this await throws a
+//     PackLoadException that escapes Main, so the process exits non-zero with the offending pin
+//     logged at Critical, the §P4 fatal-on-load discipline).
+//   • 'disk' (the default — what make up/compose and the host integration tests use): the
+//     walking-skeleton on-disk structural parse, unchanged. The durable registry is opt-in so
+//     existing dev wiring keeps booting; the dev path is an explicit OPT-OUT, not a fallback.
+using var packLoadLoggerFactory = LoggerFactory.Create(logging => logging.AddConsole());
+var packLoad = await HostPackLoading.LoadAsync(
+    builder.Configuration,
+    connectionString,
+    packLoadLoggerFactory.CreateLogger("Babelstone.Engine.Api.PackLoad"));
+var pack = packLoad.PrimaryPack;
+// The hot-path pack store a handler resolves primitives/parameters against (pure, no I/O — every
+// pack a live instance references was pre-loaded above, ADR-PC-007 §P4).
+builder.Services.AddSingleton(packLoad.Store);
 
 // Shared, family-agnostic infrastructure — composed once, resolved by every family module.
 // The runtime owns the clock (ADR-PC-010 §P5); the host stamps a missing constituted_at/matured_at.

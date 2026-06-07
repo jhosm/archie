@@ -11,4 +11,13 @@
          assembly is what ADR-PC-001 §S3's "lowest exit cost" cashes out as. -->
     <PackageReference Include="Npgsql" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- The pack-version registry seam (IPackVersionRegistry/PackRef) and the fail-loud
+         PackLoadException (ADR-PC-007 §P3). Babelstone.Packs is pure types + the loader
+         seam — it owns no state and carries no Npgsql/EventStore surface — so this
+         reference is one-directional and storage stays the only home of the pack_versions
+         table the durable registry (PostgresPackVersionRegistry) reads. -->
+    <ProjectReference Include="../Babelstone.Packs/Babelstone.Packs.csproj" />
+  </ItemGroup>
 </Project>
