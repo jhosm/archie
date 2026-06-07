@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.InboxConsumer</RootNamespace>
+    <AssemblyName>Babelstone.InboxConsumer</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The IC-004 consumer half — the MIRROR of Babelstone.OutboxPublisher. The ONLY
+         consumer-side assembly that touches both Redpanda (Confluent.Kafka: the IConsumer)
+         and PostgreSQL (Npgsql: the inbox dedup row). The engine's write half does not know
+         Redpanda exists; the dispatch SEAM (IInboxMessageHandler) keeps the saga (Epic H.1)
+         off this assembly too. Confluent deps stay HERE and in Babelstone.Engine.Avro —
+         never in Babelstone.EventStore. -->
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Confluent.Kafka" />
+    <PackageReference Include="Confluent.SchemaRegistry" />
+    <!-- BackgroundService/IHostedService for the in-process consume loop (the inbox mirror
+         of the §5.1 outbox relay's hosted poll loop). -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The Avro codec (G.3 / E.4): the consumer decodes the Confluent wire-format value the
+         relay produced (magic byte ‖ big-endian schema_id ‖ Avro). Brings the schema catalog +
+         IEventSerializer; Confluent/Avro deps already live here transitively. -->
+    <ProjectReference Include="../Babelstone.Engine.Avro/Babelstone.Engine.Avro.csproj" />
+    <!-- DomainEvent / IEventSerializer (the decode contract). -->
+    <ProjectReference Include="../Babelstone.Engine/Babelstone.Engine.csproj" />
+    <!-- The shared OTel surface (ADR-IC-007 Layer 1): the consumer records its dedup/handle
+         counters on BabelstoneTelemetry.Meter — never a new meter of its own. -->
+    <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The wire-format un-framing + envelope helpers are internal; the test project asserts
+         them directly without widening the public surface. -->
+    <InternalsVisibleTo Include="Babelstone.InboxConsumer.Tests" />
+  </ItemGroup>
+</Project>

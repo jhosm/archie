@@ -1,0 +1,311 @@
+using System.Globalization;
+using System.Text;
+using Babelstone.Engine;
+using Babelstone.Engine.Avro;
+using Babelstone.Families.TermDeposit;
+using Babelstone.FinancialTypes;
+using Confluent.Kafka;
+using Npgsql;
+using Testcontainers.PostgreSql;
+using Xunit;
+
+namespace Babelstone.InboxConsumer.Tests;
+
+/// <summary>
+/// The G.2 inbox-consumer round-trip — the consumer mirror of the E.4/G.1 outbox tests. Produce
+/// real Confluent wire-format Avro records (framed + CloudEvents-headed exactly as the outbox relay
+/// does, via the local <see cref="WireFormat"/> helper) onto Redpanda, run the <see cref="InboxPump"/>, and assert the
+/// three behaviours the brief calls for: duplicate-delivery dedup, poison-message handling, and the
+/// offset ⇄ transaction ordering (a throwing handler rolls back AND leaves the offset uncommitted so
+/// the message is redelivered).
+/// </summary>
+[Trait("Category", "Integration")]
+public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
+{
+    private const long PrincipalCents = 1_000_000;
+    private const int TanBasisPoints = 300;
+    private static readonly DateOnly StartDate = new(2026, 1, 1);
+    private static readonly DateOnly MaturityDate = new(2026, 12, 31);
+    private const string Topic = "term_deposit";
+
+    private readonly RedpandaFixture _redpanda = new();
+    private readonly PostgreSqlContainer _pg = new PostgreSqlBuilder("postgres:18-alpine").Build();
+
+    private AvroEventSerializer _serializer = null!;
+    private ConfluentSchemaIdResolver _schemaIds = null!;
+
+    private string ConnectionString => _pg.GetConnectionString();
+
+    public async Task InitializeAsync()
+    {
+        await Task.WhenAll(_redpanda.InitializeAsync(), _pg.StartAsync());
+        await new Babelstone.EventStore.Migrations.MigrationRunner(ConnectionString).ApplyAsync();
+
+        // The same Avro codec the relay encodes with, registered against the test SR so the produced
+        // records carry real schema_ids — exactly the wire format the consumer un-frames + decodes.
+        var catalog = new AvroSchemaCatalog();
+        _schemaIds = ConfluentSchemaIdResolver.Create(catalog, _redpanda.SchemaRegistryUrl, registerIfAbsent: true);
+        _serializer = new AvroEventSerializer(catalog, _schemaIds);
+    }
+
+    public async Task DisposeAsync()
+    {
+        _schemaIds.Dispose();
+        await _pg.DisposeAsync();
+        await _redpanda.DisposeAsync();
+    }
+
+    // ---- The three behaviours --------------------------------------------------------------
+
+    /// <summary>
+    /// Duplicate-delivery dedup (Document 04 / ADR-IC-004 §Residual-risks "mandatory, not optional").
+    /// The SAME record (same ce_id) is produced TWICE. The pump handles the first (Handled) and
+    /// dedups the second (Duplicate) on the message_id PK: exactly one inbox row, the handler ran
+    /// exactly once, and both offsets advanced (neither delivery wedges the partition).
+    /// </summary>
+    [Fact]
+    public async Task Duplicate_delivery_is_deduplicated_on_message_id()
+    {
+        var depositId = Guid.NewGuid();
+        var messageId = Guid.NewGuid();
+        var constituted = NewConstituted(depositId);
+
+        // Produce the identical record twice — the at-least-once redelivery the inbox absorbs.
+        await ProduceAsync(messageId, depositId, constituted);
+        await ProduceAsync(messageId, depositId, constituted);
+
+        var handler = new RecordingHandler();
+        using var pump = NewPump(handler);
+
+        var first = await PumpUntilNonIdleAsync(pump);
+        var second = await PumpUntilNonIdleAsync(pump);
+
+        Assert.Equal(InboxPump.PumpOutcome.Handled, first);
+        Assert.Equal(InboxPump.PumpOutcome.Duplicate, second);
+
+        // The handler ran exactly ONCE (the effect was not duplicated — real money safety).
+        Assert.Single(handler.Handled);
+        Assert.Equal(messageId, handler.Handled[0].MessageId);
+        Assert.IsType<DepositConstituted>(handler.Handled[0].Event);
+
+        // Exactly one dedup row landed.
+        Assert.Equal(1, await CountInboxAsync(messageId));
+    }
+
+    /// <summary>
+    /// Poison-message handling. A record whose ce_type names an event this consumer does not know is
+    /// un-processable; the pump skips PAST it (offset committed) rather than wedging the partition,
+    /// and writes NO inbox row. A well-formed record produced AFTER it is then handled normally —
+    /// proving the poison record did not block the ones behind it. The poison sink saw it.
+    /// </summary>
+    [Fact]
+    public async Task Poison_record_is_skipped_past_and_does_not_block_the_partition()
+    {
+        var depositId = Guid.NewGuid();
+        var poisonId = Guid.NewGuid();
+        var goodId = Guid.NewGuid();
+        var constituted = NewConstituted(depositId);
+
+        // A poison record: valid wire framing + headers, but a ce_type the consumer's resolver does
+        // not register (an event from a context this consumer does not handle).
+        await ProducePoisonUnknownTypeAsync(poisonId, depositId, constituted);
+        // A good record behind it.
+        await ProduceAsync(goodId, depositId, constituted);
+
+        var handler = new RecordingHandler();
+        var poison = new RecordingPoisonSink();
+        using var pump = NewPump(handler, poison);
+
+        var first = await PumpUntilNonIdleAsync(pump);
+        var second = await PumpUntilNonIdleAsync(pump);
+
+        Assert.Equal(InboxPump.PumpOutcome.Poison, first);
+        Assert.Equal(InboxPump.PumpOutcome.Handled, second);
+
+        // The poison record left no dedup row and the handler never saw it.
+        Assert.Equal(0, await CountInboxAsync(poisonId));
+        Assert.DoesNotContain(handler.Handled, m => m.MessageId == poisonId);
+        // The good record behind it was handled (the poison did not block the partition).
+        Assert.Contains(handler.Handled, m => m.MessageId == goodId);
+        Assert.Equal(1, await CountInboxAsync(goodId));
+        // The poison sink saw the bad record with a reason.
+        Assert.Single(poison.Seen);
+        Assert.Contains("no event type registered", poison.Seen[0].Reason);
+    }
+
+    /// <summary>
+    /// Offset ⇄ transaction ordering. A handler that THROWS on its first call (a transient failure)
+    /// must roll the transaction back — leaving NO inbox row — and the pump must NOT commit the
+    /// offset, so the record is redelivered. On redelivery the handler succeeds, the inbox row lands,
+    /// and the offset finally advances. This is the at-least-once + effectively-once contract: a
+    /// transient failure is redelivered (never silently skipped), unlike a poison record.
+    /// </summary>
+    [Fact]
+    public async Task Handler_exception_rolls_back_and_redelivers_then_commits_on_success()
+    {
+        var depositId = Guid.NewGuid();
+        var messageId = Guid.NewGuid();
+        await ProduceAsync(messageId, depositId, NewConstituted(depositId));
+
+        var handler = new ThrowOnceHandler();
+        using var pump = NewPump(handler);
+
+        // First pump: the handler throws. The pump propagates AFTER rollback and BEFORE the offset
+        // commit (the InboxConsumerService loop would catch+backoff; here we assert directly).
+        await Assert.ThrowsAnyAsync<Exception>(() => pump.PumpOnceAsync(CancellationToken.None));
+        // Rollback: no dedup row was written.
+        Assert.Equal(0, await CountInboxAsync(messageId));
+
+        // The offset was NOT committed, so the SAME record is redelivered. This time the handler
+        // succeeds: the dedup row lands and the message is Handled.
+        var outcome = await PumpUntilNonIdleAsync(pump);
+        Assert.Equal(InboxPump.PumpOutcome.Handled, outcome);
+        Assert.Equal(1, await CountInboxAsync(messageId));
+        Assert.Equal(2, handler.Calls); // threw once, succeeded once
+    }
+
+    // ---- Produce (mirror the relay's framing + CloudEvents headers) ------------------------
+
+    private async Task ProduceAsync(Guid messageId, Guid aggregateId, DomainEvent @event)
+    {
+        var encoded = _serializer.Encode(@event);
+        var value = WireFormat.Frame(encoded.SchemaId, encoded.Bytes);
+        var ceType = WireFormat.ReverseDnsType($"{Topic}.{@event.GetType().Name}");
+        await ProduceRawAsync(messageId, aggregateId, ceType, value);
+    }
+
+    /// <summary>A poison record: well-framed Avro + valid headers, but a ce_type for an event the
+    /// consumer's resolver does not register — un-processable, the poison path.</summary>
+    private async Task ProducePoisonUnknownTypeAsync(Guid messageId, Guid aggregateId, DomainEvent realEvent)
+    {
+        var encoded = _serializer.Encode(realEvent);
+        var value = WireFormat.Frame(encoded.SchemaId, encoded.Bytes);
+        // A ce_type whose record name ("UnknownToThisConsumer") is not registered.
+        await ProduceRawAsync(messageId, aggregateId, "com.bank.other.UnknownToThisConsumer", value);
+    }
+
+    private async Task ProduceRawAsync(Guid messageId, Guid aggregateId, string ceType, byte[] value)
+    {
+        // CloudEvents Binary-mode headers (ADR-IC-008), the exact subset OutboxDrainer.BuildHeaders
+        // emits that the consumer reads: ce_id (the dedup key), ce_type, ce_subject.
+        var headers = new Headers();
+        Add(headers, "ce_specversion", "1.0");
+        Add(headers, "ce_id", messageId.ToString());
+        Add(headers, "ce_source", "urn:babelstone:engine:test");
+        Add(headers, "ce_type", ceType);
+        Add(headers, "ce_time", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+        Add(headers, "ce_datacontenttype", "application/avro");
+        Add(headers, "ce_subject", aggregateId.ToString());
+        Add(headers, "ce_aggregatetype", Topic);
+
+        var config = new ProducerConfig { BootstrapServers = _redpanda.BootstrapServers, EnableIdempotence = true, Acks = Acks.All };
+        using var producer = new ProducerBuilder<byte[], byte[]>(config).Build();
+        await producer.ProduceAsync(Topic, new Message<byte[], byte[]>
+        {
+            Key = aggregateId.ToByteArray(),
+            Value = value,
+            Headers = headers,
+        });
+        producer.Flush(TimeSpan.FromSeconds(10));
+    }
+
+    private static void Add(Headers headers, string key, string value)
+        => headers.Add(key, Encoding.UTF8.GetBytes(value));
+
+    private static DepositConstituted NewConstituted(Guid depositId) => new(
+        depositId, new Money(PrincipalCents), TanBasisPoints, "rs-2026-01",
+        TermDays: 364, StartDate, MaturityDate, "AT_MATURITY", "NONE");
+
+    // ---- Pump wiring -----------------------------------------------------------------------
+
+    private InboxPump NewPump(IInboxMessageHandler handler, IInboxPoisonSink? poisonSink = null)
+    {
+        var options = new InboxConsumerOptions
+        {
+            ConnectionString = ConnectionString,
+            BootstrapServers = _redpanda.BootstrapServers,
+            // A fresh group per pump so each test reads its own records from the start, regardless of
+            // what a sibling test committed (Earliest + a unique group = a clean replay of this topic).
+            GroupId = $"g2-inbox-test-{Guid.NewGuid()}",
+            Topics = [Topic],
+        };
+        // Only the term-deposit events this consumer knows are registered — an unknown ce_type is poison.
+        var resolver = InboxEventTypeResolver.FromTypes(
+            typeof(DepositConstituted), typeof(InterestAccrued), typeof(WithholdingApplied), typeof(DepositMatured));
+        return new InboxPump(options, _serializer, resolver, handler, poisonSink);
+    }
+
+    /// <summary>Pump until a record is actually processed (the first poll after a subscribe often
+    /// returns Idle while the group joins + the partition is assigned).</summary>
+    private static async Task<InboxPump.PumpOutcome> PumpUntilNonIdleAsync(InboxPump pump)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            var outcome = await pump.PumpOnceAsync(CancellationToken.None);
+            if (outcome != InboxPump.PumpOutcome.Idle)
+            {
+                return outcome;
+            }
+        }
+
+        throw new TimeoutException("Pump stayed idle for 30s — no record was delivered.");
+    }
+
+    // ---- Inbox assertions ------------------------------------------------------------------
+
+    private async Task<int> CountInboxAsync(Guid messageId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT count(*) FROM inbox WHERE message_id = @id;", connection);
+        command.Parameters.AddWithValue("id", messageId);
+        return (int)(long)(await command.ExecuteScalarAsync())!;
+    }
+
+    // ---- Test handlers ---------------------------------------------------------------------
+
+    /// <summary>Records every message it handles — pure, no clock/IO beyond the supplied transaction.</summary>
+    private sealed class RecordingHandler : IInboxMessageHandler
+    {
+        public List<InboxMessage> Handled { get; } = [];
+
+        public Task<string?> HandleAsync(
+            InboxMessage message, NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct = default)
+        {
+            Handled.Add(message);
+            return Task.FromResult<string?>($"handled:{message.EventType}");
+        }
+    }
+
+    /// <summary>Throws on the first call, succeeds afterwards — the transient-failure case the
+    /// offset/transaction ordering must redeliver.</summary>
+    private sealed class ThrowOnceHandler : IInboxMessageHandler
+    {
+        public int Calls { get; private set; }
+
+        public Task<string?> HandleAsync(
+            InboxMessage message, NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct = default)
+        {
+            Calls++;
+            if (Calls == 1)
+            {
+                throw new InvalidOperationException("transient handler failure (test)");
+            }
+
+            return Task.FromResult<string?>(null);
+        }
+    }
+
+    private sealed class RecordingPoisonSink : IInboxPoisonSink
+    {
+        public List<(ConsumeResult<byte[], byte[]> Result, string Reason)> Seen { get; } = [];
+
+        public Task OnPoisonAsync(ConsumeResult<byte[], byte[]> result, string reason, CancellationToken ct = default)
+        {
+            Seen.Add((result, reason));
+            return Task.CompletedTask;
+        }
+    }
+}
