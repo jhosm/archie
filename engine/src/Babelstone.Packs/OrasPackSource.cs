@@ -8,7 +8,7 @@ namespace Babelstone.Packs;
 /// then reads the single <c>pack.tar</c> layer and extracts its members by relative path.
 /// </summary>
 /// <param name="useOciLayout">
-/// true for the fully-offline OCI-layout form (dev/CI — <see cref="ociRef"/> is a layout dir);
+/// true for the fully-offline OCI-layout form (dev/CI — <c>ociRef</c> is a layout dir);
 /// false for a real registry reference (production). Digest semantics are identical either way.
 /// </param>
 /// <param name="orasExecutable">The oras binary; defaults to PATH lookup (the mise-pinned oras 1.3.2 in dev/CI).</param>

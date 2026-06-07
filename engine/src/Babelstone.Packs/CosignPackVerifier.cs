@@ -37,6 +37,7 @@ public sealed class CosignVerificationPolicy
 /// non-zero exit (unsigned, wrong signer, tampered digest) is fatal: it throws
 /// <see cref="PackLoadException"/> rather than letting an unverified pack load.
 /// </summary>
+/// <param name="policy">How <c>cosign verify</c> is invoked — keyless OIDC (production) or public-key (dev/CI); see <see cref="CosignVerificationPolicy"/>.</param>
 /// <param name="cosignExecutable">The cosign binary; defaults to PATH lookup (the mise-pinned cosign 3.0.6 in dev/CI).</param>
 public sealed class CosignPackVerifier(CosignVerificationPolicy policy, string cosignExecutable = "cosign") : IPackVerifier
 {

@@ -1,0 +1,83 @@
+name: Docs site
+
+# DocFX site (ADR-PC-026): C# XML-doc API reference stitched alongside the docs/
+# corpus, published to GitHub Pages. Build runs on PRs touching its inputs (a
+# pre-merge "does the site still build" check, NOT a required gate — ADR-PC-019 §P1
+# aggregator rules don't apply); deploy runs only on push to main, via the
+# artifact-based Pages flow (no gh-pages branch). This repo has ONE Pages slot:
+# the EventCatalog site (ADR-IC-008, Epic G.4) composes into this same artifact
+# under a subpath when it lands — it must NOT add a second deploy-pages workflow.
+
+on:
+  pull_request:
+    paths: &docs_site_paths
+      - 'engine/**'
+      - 'families/**'
+      - 'docs/**'
+      - 'docfx/**'
+      - 'README.md'
+      - 'INSTALL.md'
+      - '.config/dotnet-tools.json'
+      - 'mise.toml'
+      - '.github/workflows/docs-site.yml'
+  push:
+    branches: [main]
+    paths: *docs_site_paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One Pages deployment at a time; don't cancel an in-flight deploy (it would leave
+# the site half-published) — queue behind it instead.
+concurrency:
+  group: docs-site-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # Pin the toolchain from mise.toml (the single source of truth, ADR-PC-010
+      # .NET 10 LTS) — no second SDK version pin in this YAML to drift from it.
+      # DocFX itself is pinned in .config/dotnet-tools.json (dotnet tool restore).
+      - uses: jdx/mise-action@v4
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('engine/**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Restore solution (DocFX metadata needs restored projects)
+        run: dotnet restore engine/Babelstone.slnx
+      - name: Build DocFX site
+        run: |
+          dotnet tool restore
+          dotnet docfx docfx/docfx.json
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: docfx/_site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    # The two Pages-deploy permissions are scoped to THIS job, keeping the
+    # workflow-level default at the repo convention (contents: read only).
+    permissions:
+      pages: write      # deploy to the Pages slot
+      id-token: write   # OIDC token deploy-pages uses to verify the deployment origin
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # enablement: true activates GitHub Pages (source: GitHub Actions) on first
+      # deploy, so no manual repo-settings step is needed.
+      - uses: actions/configure-pages@v6
+        with:
+          enablement: true
+      - uses: actions/deploy-pages@v5
+        id: deployment

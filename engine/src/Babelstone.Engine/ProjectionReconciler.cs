@@ -45,8 +45,8 @@ public enum EventCountStatus
 /// <summary>
 /// The outcome of an event-count reconciliation (event-store §7.1 pattern (b)): the engine
 /// publishes its monotonic per-instance event count; the consumer reports the sequence it has
-/// processed and how many events it actually folded. A <see cref="Gap"/> is acceptable lag; a
-/// <see cref="Skip"/> means events were lost and is alertable.
+/// processed and how many events it actually folded. A <see cref="EventCountStatus.Gap"/> is acceptable lag; a
+/// <see cref="EventCountStatus.Skip"/> means events were lost and is alertable.
 /// </summary>
 /// <param name="ExpectedCount">Events the engine has on this stream (head sequence + 1).</param>
 /// <param name="LastProcessedSequence">The consumer's last-folded <c>sequence_number</c> (−1 = none).</param>

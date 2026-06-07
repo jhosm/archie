@@ -56,7 +56,7 @@ public sealed record BeliefRow<TState>(
 /// </item>
 /// <item>
 /// <b>Forward projection (#4)</b> — "the state on a future date if no further events occur" — is
-/// <see cref="AsOfAsync"/> with <paramref name="validTime"/> in the future and
+/// <see cref="AsOfAsync"/> with <c>validTime</c> in the future and
 /// <c>knownAt = now</c>: the open-ended current belief (<c>valid_to IS NULL</c>) covers all future
 /// valid-times, so it is returned unchanged, or <see cref="CurrentBeliefAsync"/> when the future
 /// date is "current and onward".

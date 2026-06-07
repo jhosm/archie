@@ -1,0 +1,52 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/docfx/main/schemas/docfx.schema.json",
+  "metadata": [
+    {
+      "src": [
+        {
+          "src": "..",
+          "files": [
+            "engine/src/*/*.csproj",
+            "families/*/src/*/*.csproj"
+          ],
+          "exclude": [
+            "engine/src/Babelstone.Engine.Analyzers/**",
+            "engine/src/Babelstone.Money.Analyzers/**"
+          ]
+        }
+      ],
+      "dest": "api"
+    }
+  ],
+  "build": {
+    "content": [
+      {
+        "files": ["**/*.{md,yml}"],
+        "exclude": ["_site/**", "obj/**"]
+      },
+      {
+        "src": "..",
+        "files": ["README.md", "INSTALL.md"]
+      },
+      {
+        "src": "../docs",
+        "files": ["**/*.md"],
+        "dest": "docs"
+      }
+    ],
+    "resource": [
+      {
+        "src": "../docs",
+        "files": ["**/*.{svg,png,puml}"],
+        "dest": "docs"
+      }
+    ],
+    "output": "_site",
+    "template": ["default", "modern"],
+    "globalMetadata": {
+      "_appName": "babelstone",
+      "_appTitle": "babelstone",
+      "_enableSearch": true
+    }
+  }
+}

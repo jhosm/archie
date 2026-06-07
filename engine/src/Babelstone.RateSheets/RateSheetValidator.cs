@@ -28,7 +28,7 @@ public sealed record RateBounds
     public int MaxBasisPoints { get; }
 }
 
-/// <summary>Outcome of <see cref="RateSheetValidator.Validate"/>: valid, or a list of human-readable diagnostics.</summary>
+/// <summary>Outcome of <see cref="RateSheetValidator.Validate(RateSheetBody, RateBounds, IReadOnlyList{ActiveProductConfig})"/> (either overload): valid, or a list of human-readable diagnostics.</summary>
 public sealed record RateSheetValidationResult(bool IsValid, IReadOnlyList<string> Diagnostics)
 {
     public static RateSheetValidationResult Valid { get; } = new(true, []);

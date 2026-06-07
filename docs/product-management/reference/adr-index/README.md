@@ -35,6 +35,7 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [023](../../product_concepts/adrs/ADR-PC-023-temporal-signals-projection-derived.md) | Temporal Signals Are Projection-Derived — The Engine Emits No Clock-Driven Events | Contract-shape | Accepted |
 | [024](../../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md) | Constitution Precondition Contract — Engine Declares, Upstream Evaluates, Decider Refuses | Contract-shape | Accepted |
 | [025](../../product_concepts/adrs/ADR-PC-025-customer-notification-emit-contract.md) | Customer-Notification Emit Contract — Event-Driven + Pre-Contractual NotificationDue, No Engine-Side Delivery State | Contract-shape | Accepted |
+| [026](../../product_concepts/adrs/ADR-PC-026-csharp-api-reference-docfx.md) | C# API-Reference Surface — DocFX to GitHub Pages | Tool-selection | Proposed |
 
 ## ADR-IC — Integration estate
 

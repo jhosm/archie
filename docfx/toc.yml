@@ -1,0 +1,7 @@
+# Top navbar only — the docs corpus navigates through its own cross-linked READMEs
+# (ADR-PC-022 dropped the navigation-overlay genre; this TOC deliberately stays a
+# two-entry door, not a re-created reading-path tree).
+- name: Document Map
+  href: ../README.md
+- name: API Reference
+  href: api/
