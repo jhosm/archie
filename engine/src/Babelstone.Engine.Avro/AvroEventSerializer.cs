@@ -152,8 +152,14 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
 
     private static GenericRecord ReadAvro(RecordSchema schema, ReadOnlyMemory<byte> payload)
     {
-        // Writer schema == reader schema (the embedded .avsc the id resolves to): cold replay reads
-        // the same family schema the runtime wrote (Epic E walking skeleton).
+        // Writer schema == reader schema (the local catalog schema for this record name). This is the
+        // intra-process / same-version assumption: cold replay reads the same family schema the runtime
+        // wrote (Epic E walking skeleton), and the G.2 inbox consumer reads same-version intra-context
+        // topics. It does NOT perform Avro schema RESOLUTION — a caller that must read a DIFFERENT writer
+        // schema (cross-context BACKWARD/FORWARD evolution, ADR-IC-002) must resolve the writer schema by
+        // its embedded id from the Schema Registry and pass writer + reader here. See the KNOWN LIMITATION
+        // in InboxPump's class remarks; that SR-resolution path is unfinished follow-up work, not silent
+        // drift.
         var reader = new GenericDatumReader<GenericRecord>(schema, schema);
         using var stream = new MemoryStream(payload.ToArray(), writable: false);
         var decoder = new BinaryDecoder(stream);

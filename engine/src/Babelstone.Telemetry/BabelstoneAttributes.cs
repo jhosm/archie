@@ -100,4 +100,14 @@ public static class BabelstoneAttributes
     /// gap). Tagged by <see cref="SourceTopic"/>. snake_case metric name, not a span key.
     /// </summary>
     public const string InboxPoisonMetric = "inbox_poison_total";
+
+    /// <summary>
+    /// Inbox null-payload TOMBSTONES skipped (G.2): a Redpanda log-compaction tombstone (a record with
+    /// a key but a null/empty value — the GDPR right-to-erasure signal on a <c>cleanup.policy=compact</c>
+    /// topic, ADR-IC-001 §P4 / ADR-IC-002 §P4). It is committed-past WITHOUT being decoded as Avro, and
+    /// counted here — DISTINCT from <see cref="InboxPoisonMetric"/> so a routine crypto-shred upstream
+    /// never fires a false poison alert. A rising rate is the normal shape of erasure traffic, not a
+    /// contract gap. Tagged by <see cref="SourceTopic"/>. snake_case metric name, not a span key.
+    /// </summary>
+    public const string InboxTombstoneMetric = "inbox_tombstone_total";
 }

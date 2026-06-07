@@ -164,6 +164,86 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
         Assert.Equal(2, handler.Calls); // threw once, succeeded once
     }
 
+    /// <summary>
+    /// Finding #1 regression: a handler-side unique-violation on a DIFFERENT constraint (NOT inbox_pkey)
+    /// must NOT be misclassified as an inbox duplicate. The dedup catch narrows on inbox_pkey only, so
+    /// a foreign 23505 propagates as a transient failure — the pump seeks back, leaves the offset
+    /// uncommitted, and the record is REDELIVERED (effectively-once preserved), instead of being rolled
+    /// back, counted as a duplicate, and committed-past (which would silently drop the message's effect).
+    /// On redelivery the collision is gone and the message is handled exactly once.
+    /// </summary>
+    [Fact]
+    public async Task Handler_unique_violation_on_a_foreign_constraint_redelivers_not_dedups()
+    {
+        // A handler-owned table with its own unique constraint (a stand-in for a saga-state PK or a
+        // local-outbox event_id — the rows the IInboxMessageHandler contract invites a handler to write).
+        await ExecuteAsync("""
+            CREATE TABLE saga_state (
+                saga_key UUID NOT NULL,
+                CONSTRAINT saga_state_pkey PRIMARY KEY (saga_key)
+            );
+            """);
+
+        var depositId = Guid.NewGuid();
+        var messageId = Guid.NewGuid();
+        await ProduceAsync(messageId, depositId, NewConstituted(depositId));
+
+        // The handler INSERTs into saga_state with a key that collides on its FIRST call (a row was
+        // pre-seeded), then with a fresh key on later calls. The first INSERT raises a non-inbox 23505.
+        var preSeeded = Guid.NewGuid();
+        await ExecuteAsync("INSERT INTO saga_state (saga_key) VALUES (@k);", ("k", preSeeded));
+        var handler = new ForeignUniqueViolationOnceHandler(preSeeded);
+        using var pump = NewPump(handler);
+
+        // First pump: the handler's saga_state INSERT collides on saga_state_pkey (NOT inbox_pkey). The
+        // foreign 23505 must propagate — the pump seeks back and rethrows, NOT swallow it as a duplicate.
+        await Assert.ThrowsAnyAsync<Exception>(() => pump.PumpOnceAsync(CancellationToken.None));
+        // Rollback: NO inbox row was written (the message was not silently consumed).
+        Assert.Equal(0, await CountInboxAsync(messageId));
+
+        // The offset was NOT committed, so the SAME record is redelivered. This time the handler uses a
+        // fresh saga key, the effect lands, and the message is Handled exactly once.
+        var outcome = await PumpUntilNonIdleAsync(pump);
+        Assert.Equal(InboxPump.PumpOutcome.Handled, outcome);
+        Assert.Equal(1, await CountInboxAsync(messageId));
+        Assert.Equal(2, handler.Calls); // collided once, succeeded once
+    }
+
+    /// <summary>
+    /// Finding #3 regression: a null-payload compaction tombstone (the GDPR right-to-erasure signal,
+    /// ADR-IC-002 §P4) must be recognised BEFORE the Avro decode and skipped-and-committed as a
+    /// Tombstone — NOT routed to the poison/dead-letter path. The poison sink must never see it (no
+    /// false dead-letter alert), no inbox row is written, and a good record behind it is handled
+    /// normally (the tombstone did not wedge the partition).
+    /// </summary>
+    [Fact]
+    public async Task Null_payload_tombstone_is_skipped_as_tombstone_not_poison()
+    {
+        var depositId = Guid.NewGuid();
+        var goodId = Guid.NewGuid();
+
+        // A tombstone: a keyed record with a NULL value (no Avro, no framing). Then a good record behind it.
+        await ProduceTombstoneAsync(depositId);
+        await ProduceAsync(goodId, depositId, NewConstituted(depositId));
+
+        var handler = new RecordingHandler();
+        var poison = new RecordingPoisonSink();
+        using var pump = NewPump(handler, poison);
+
+        var first = await PumpUntilNonIdleAsync(pump);
+        var second = await PumpUntilNonIdleAsync(pump);
+
+        // The tombstone is a Tombstone outcome — NOT Poison.
+        Assert.Equal(InboxPump.PumpOutcome.Tombstone, first);
+        Assert.Equal(InboxPump.PumpOutcome.Handled, second);
+
+        // The poison sink NEVER saw the tombstone (no false dead-letter alert), and it left no inbox row.
+        Assert.Empty(poison.Seen);
+        // The good record behind it was handled (the tombstone did not block the partition).
+        Assert.Contains(handler.Handled, m => m.MessageId == goodId);
+        Assert.Equal(1, await CountInboxAsync(goodId));
+    }
+
     // ---- Produce (mirror the relay's framing + CloudEvents headers) ------------------------
 
     private async Task ProduceAsync(Guid messageId, Guid aggregateId, DomainEvent @event)
@@ -182,6 +262,27 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
         var value = WireFormat.Frame(encoded.SchemaId, encoded.Bytes);
         // A ce_type whose record name ("UnknownToThisConsumer") is not registered.
         await ProduceRawAsync(messageId, aggregateId, "com.bank.other.UnknownToThisConsumer", value);
+    }
+
+    /// <summary>A compaction tombstone: a keyed record with a NULL value (the GDPR erasure signal,
+    /// ADR-IC-002 §P4). It carries headers like any record but no Avro payload at all.</summary>
+    private async Task ProduceTombstoneAsync(Guid aggregateId)
+    {
+        var headers = new Headers();
+        Add(headers, "ce_specversion", "1.0");
+        Add(headers, "ce_id", Guid.NewGuid().ToString());
+        Add(headers, "ce_subject", aggregateId.ToString());
+        Add(headers, "ce_aggregatetype", Topic);
+
+        var config = new ProducerConfig { BootstrapServers = _redpanda.BootstrapServers, EnableIdempotence = true, Acks = Acks.All };
+        using var producer = new ProducerBuilder<byte[], byte[]>(config).Build();
+        await producer.ProduceAsync(Topic, new Message<byte[], byte[]>
+        {
+            Key = aggregateId.ToByteArray(),
+            Value = null!, // the tombstone: a null value on a compacted topic
+            Headers = headers,
+        });
+        producer.Flush(TimeSpan.FromSeconds(10));
     }
 
     private async Task ProduceRawAsync(Guid messageId, Guid aggregateId, string ceType, byte[] value)
@@ -264,6 +365,21 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
         return (int)(long)(await command.ExecuteScalarAsync())!;
     }
 
+    /// <summary>Run a one-off statement against the consumer DB (test fixture setup — a handler-owned
+    /// table + seed row for the foreign-unique-violation regression).</summary>
+    private async Task ExecuteAsync(string sql, params (string Name, object Value)[] parameters)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        await command.ExecuteNonQueryAsync();
+    }
+
     // ---- Test handlers ---------------------------------------------------------------------
 
     /// <summary>Records every message it handles — pure, no clock/IO beyond the supplied transaction.</summary>
@@ -295,6 +411,27 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
             }
 
             return Task.FromResult<string?>(null);
+        }
+    }
+
+    /// <summary>On its FIRST call inserts a saga_state row whose key collides on saga_state_pkey
+    /// (a non-inbox unique violation — the foreign 23505 the dedup catch must NOT swallow); on later
+    /// calls inserts a fresh key so the redelivery succeeds. Stands in for a real saga/local-outbox
+    /// handler the IInboxMessageHandler contract invites.</summary>
+    private sealed class ForeignUniqueViolationOnceHandler(Guid collidingKey) : IInboxMessageHandler
+    {
+        public int Calls { get; private set; }
+
+        public async Task<string?> HandleAsync(
+            InboxMessage message, NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct = default)
+        {
+            Calls++;
+            var key = Calls == 1 ? collidingKey : Guid.NewGuid();
+            await using var command = new NpgsqlCommand(
+                "INSERT INTO saga_state (saga_key) VALUES (@k);", connection, transaction);
+            command.Parameters.AddWithValue("k", key);
+            await command.ExecuteNonQueryAsync(ct); // first call raises saga_state_pkey unique-violation
+            return null;
         }
     }
 
