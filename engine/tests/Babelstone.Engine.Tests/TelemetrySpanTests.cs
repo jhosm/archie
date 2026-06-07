@@ -12,7 +12,7 @@ namespace Babelstone.Engine.Tests;
 /// decider/fold (ADR-PC-010 §P5), and they carry the structural <c>babelstone.*</c> identifiers
 /// (OBS-3 — partition_key + product_code) with NO PII keys (ADR-PC-004 §P2).
 ///
-/// Docker-free: drives the generic runtime over the in-memory <see cref="RecordingSink"/> (the A.5
+/// Docker-free: drives the generic runtime over the in-memory <see cref="NullSink"/> (the A.5
 /// fake) with the counter test family — no PostgreSQL, no Integration trait. An
 /// <see cref="ActivityListener"/> on the shared source captures the spans, exactly as a real OTel
 /// tracer provider's <c>AddSource(BabelstoneTelemetry.ActivitySourceName)</c> would.

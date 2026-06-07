@@ -22,6 +22,7 @@ public interface IEventStore
     /// </param>
     /// <param name="events">The event rows to append; must be non-empty.</param>
     /// <param name="outboxRows">The outbox rows to write in the same transaction; must be non-empty (§P2).</param>
+    /// <param name="ct">Cancels the append before the transaction commits.</param>
     /// <exception cref="ConcurrencyException">The stream head did not match <paramref name="expectedVersion"/>.</exception>
     Task AppendAsync(
         Guid                         streamId,
@@ -38,6 +39,7 @@ public interface IEventStore
     /// </summary>
     /// <param name="streamId">The stream to read.</param>
     /// <param name="fromSequence">Inclusive lower bound on <c>sequence_number</c>; 0 reads from the start.</param>
+    /// <param name="ct">Cancels the enumeration between events.</param>
     IAsyncEnumerable<EventEnvelope> LoadAsync(
         Guid              streamId,
         long              fromSequence = 0,

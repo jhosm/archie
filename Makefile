@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 EVENTCATALOG_PORT ?= 8082
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify up down reset logs ps verify demo-mcp demo-mcp-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo-mcp demo-mcp-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -94,6 +94,20 @@ docs-gen: ## Regenerate docs/.../reference/ from its Avro/CUE/MCP/ADR sources (A
 
 docs-verify: ## Fail if the generated reference/ tree is stale vs its sources (ADR-PC-022)
 	@mise exec -- python3 scripts/docs-gen/generate.py --check
+
+## ----------------------------------------------------------------------------
+## Docs site (ADR-PC-026 — DocFX: C# API reference + docs corpus on GitHub Pages)
+## ----------------------------------------------------------------------------
+
+docs-site: ## Build the DocFX site (C# XML-doc API reference + docs corpus) into docfx/_site (ADR-PC-026)
+	@mise exec -- dotnet restore engine/Babelstone.slnx
+	@mise exec -- dotnet tool restore
+	@mise exec -- dotnet docfx docfx/docfx.json
+
+docs-site-serve: ## Build the DocFX site, then serve it on http://localhost:8080 (ADR-PC-026)
+	@mise exec -- dotnet restore engine/Babelstone.slnx
+	@mise exec -- dotnet tool restore
+	@mise exec -- dotnet docfx docfx/docfx.json --serve
 
 ## ----------------------------------------------------------------------------
 ## Local dev stack (infra/compose.yaml) — PostgreSQL + Redpanda + Console

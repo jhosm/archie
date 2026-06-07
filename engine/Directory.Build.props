@@ -8,6 +8,14 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <Deterministic>true</Deterministic>
+    <!-- XML doc files feed the DocFX API reference site (ADR-PC-026). Doc COVERAGE is a docs
+         concern, not a build gate: CS1591 (missing XML comment on a public member) and CS1573
+         (some params documented, others not — records deliberately document only non-obvious
+         positional params) are suppressed. Doc ROT stays an error under TreatWarningsAsErrors:
+         malformed XML and unresolvable/ambiguous references (CS1570, CS1574, CS1734, CS0419, …)
+         fail the build, so existing /// comments cannot silently decay. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
   </PropertyGroup>
 
   <!-- NuGet audit (NU1902/NU1903) stays ON and warnings-as-errors for every package — except
