@@ -77,6 +77,24 @@ public sealed class RenewalRejectionTests
         Assert.Contains("Renew", ex.Message);
     }
 
+    [Fact]
+    public async Task RenewAsync_rejects_renewing_an_already_matured_deposit()
+    {
+        // A standalone-Matured (terminal) deposit cannot renew: the F.3 table makes Renew legal only
+        // from Active, so the step-1 entry gate rejects it before any maturity leg runs — no second
+        // DepositMatured is ever appended on the closed stream. This pins the renewal flow's Mature
+        // leg as table-governed too (the maturity leg only proceeds from an Active head); the throwing
+        // ports prove no sheet resolves and no money moves on the rejection.
+        var depositId = Guid.NewGuid();
+        var service = ServiceOverStream(depositId, MaturedStream(depositId));
+
+        var ex = await Assert.ThrowsAsync<DomainRejectedException>(() =>
+            service.RenewAsync(RenewCommand(depositId, new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero))));
+
+        Assert.Contains("Matured", ex.Message);
+        Assert.Contains("Renew", ex.Message); // the illegal transition the closed deposit cannot drive
+    }
+
     // ---- seed streams + command -----------------------------------------------------------------
 
     private static RenewDepositCommand RenewCommand(Guid depositId, DateTimeOffset renewedAt) =>
@@ -90,6 +108,16 @@ public sealed class RenewalRejectionTests
     [
         new DepositConstituted(
             depositId, new Money(1_000_000), 300, "pt-deposits-2026.1", 365, Start, Maturity, "AT_MATURITY", policy),
+    ];
+
+    /// <summary>A constituted + matured (but NOT renewed) deposit → folds to the terminal Matured state.</summary>
+    private static DomainEvent[] MaturedStream(Guid depositId) =>
+    [
+        new DepositConstituted(
+            depositId, new Money(1_000_000), 300, "pt-deposits-2026.1", 365, Start, Maturity, "AT_MATURITY", "SAME_TERM_CURRENT_RATE"),
+        new InterestAccrued(new Money(30_417), Maturity),
+        new WithholdingApplied(new Money(8_517), new Money(21_900)),
+        new DepositMatured(new Money(1_000_000), new Money(21_900), new Money(1_021_900), Maturity),
     ];
 
     /// <summary>A constituted + matured + renewed deposit → folds to the terminal Renewed state.</summary>
