@@ -40,9 +40,16 @@ public enum DepositLifecycle
 /// event (the two-modes §5.4 "sync" definition).
 /// </summary>
 /// <remarks>
-/// The full materialised bitemporal <c>deposit_position</c> table
-/// (valid_from/valid_to/recorded_at/superseded_at, a projector that writes through the
-/// sink) is Epic D (D.1) / Epic F (F.6) — deliberately excluded from the walking skeleton.
+/// Two layers materialise this state into the bitemporal store, and they are distinct
+/// (babelstone-p0u4): <b>D.1</b> shipped the GENERIC, family-agnostic engine projection storage —
+/// the <c>projections</c> table and <c>ProjectionRecord</c>/<c>IProjectionStorage</c>/
+/// <c>PostgresProjectionStore</c> in <c>Babelstone.EventStore</c>, which "does not know what a
+/// deposit is" (feature-design-event-store-projections §3). <b>F.6</b> is where THIS family
+/// materialises its family-specific <c>deposit_position</c> projection — a projector folding the
+/// family's events and writing through that store, declared in
+/// <see cref="TermDepositProjectionModule"/> (kind <c>term_deposit.deposit_position</c>), alongside
+/// the accrual schedule, maturity calendar, and withholding ledger. The family-layer
+/// <c>deposit_position</c> name does not collide with the engine's generic <c>projections</c> table.
 /// All monetary fields are <see cref="Money"/> (cents); no <c>decimal</c> state lives here
 /// (ADR-PC-010 §P1, BMNY002).
 /// </remarks>
