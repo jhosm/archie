@@ -74,10 +74,11 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      # enablement: true activates GitHub Pages (source: GitHub Actions) on first
-      # deploy, so no manual repo-settings step is needed.
+      # The Pages site itself is a ONE-TIME admin-credential creation (done
+      # 2026-06-07: `gh api -X POST repos/jhosm/babelstone/pages -f build_type=workflow`).
+      # GITHUB_TOKEN can never create it — that needs `administration: write`, which
+      # workflow tokens cannot be granted — so configure-pages here only reads the
+      # existing site's config; `pages: write` above covers the deploy itself.
       - uses: actions/configure-pages@v6
-        with:
-          enablement: true
       - uses: actions/deploy-pages@v5
         id: deployment

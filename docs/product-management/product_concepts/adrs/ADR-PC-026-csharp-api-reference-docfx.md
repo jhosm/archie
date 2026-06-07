@@ -138,7 +138,10 @@ Markdown-corpus stitching are weak for a modern docs site. **Decisive: second-cl
    pattern is not needed) and deploys on push to `main` via
    `upload-pages-artifact`/`deploy-pages` with job-scoped `pages: write` +
    `id-token: write`. No `gh-pages` branch — no second rendered-content history to
-   drift. First deploy enables Pages (`configure-pages` with `enablement: true`).
+   drift. The Pages site itself was a one-time admin-credential creation
+   (2026-06-07, `build_type=workflow`): `GITHUB_TOKEN` cannot create a Pages site
+   (that needs `administration: write`, not grantable to workflow tokens), so the
+   workflow only deploys to the existing slot.
 5. **§P5 — Single-Pages-slot composition.** A repo has one GitHub Pages site. This
    workflow owns the slot; when the EventCatalog site
    ([ADR-IC-008](../../integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md),
