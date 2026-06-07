@@ -62,7 +62,7 @@ tracked separately — and is **not** the job of this seed.
 | 5b | **Post-flag, never gated** for `EVENT_DRIVEN` notifications; the `PRE_CONTRACTUAL` (FIN) case is the synchronous saga carve-out. *(Per [ADR-PC-025](./ADR-PC-025-customer-notification-emit-contract.md) — the clean reissue of [ADR-PC-014](./retired/ADR-PC-014-customer-notification-emit-contract.md) — `SCHEDULED` is no longer engine-emitted; its purity claim is `NO_CLOCK_DRIVEN_ENGINE_SIGNAL`, row 17.)* | [ADR-PC-025 slot 5](./ADR-PC-025-customer-notification-emit-contract.md) | contract / saga | `NOTIFY_POST_FLAG_NEVER_GATES` | Planned |
 | 5c | **Post-flag, never gated — unconditionally**; IFRS 9 is downstream and has no gating claim. *(No signal emitted in v1; gate built before the v2 credit scope.)* | [ADR-PC-015 slot 5](./ADR-PC-015-ifrs9-signal-contract.md) | contract / saga | `IFRS9_POST_FLAG_NEVER_GATES` | Planned |
 | 7 | A re-ingested legacy batch file produces **no duplicate `LegacyInstanceObserved` events** (engine-side dedupe on `(legacy_instance_id, fact_kind, fact_date)` + natural key). | [ADR-PC-017 slot 4](./ADR-PC-017-legacy-batch-ingest-contract.md) | integration (Testcontainers) | `BATCH_INGEST_IDEMPOTENT` | Planned |
-| 8 | **Cold replay budgets** are met: ≤ 5 s for a with-a-plan instance, ≤ 30 s for an irregular one. | [event-store §8.2](../feature-design-event-store-projections.md) | benchmark (nightly) | `REPLAY_BUDGET_5S_30S` | Planned |
+| 8 | **Cold replay budgets** are met: ≤ 5 s for a with-a-plan instance, ≤ 30 s for an irregular one. *(v1 5 s half Live via D.5; the v4 30 s irregular-family half stays with L.3's load harness — see the D.5 reconciliation note.)* | [event-store §8.2](../feature-design-event-store-projections.md) | benchmark (CI Integration lane) | `REPLAY_BUDGET_5S_30S` | Live |
 | 9 | **Zero engine code per new variant** — adding a family/variant produces **zero `/engine` diff**. | [01 §3](../01-product-architecture.md) | acceptance | `ZERO_ENGINE_DIFF_PER_VARIANT` | Planned |
 | 10 | **`pack-validate` depths 1–4 meet budget** synchronously at variant/pack-commit and on every PR — syntactic < 1 s, type < 5 s, pack-compliance < 10 s, regulatory-coherence < 10 s, aggregate < 30 s; a depth-N failure rejects the commit. | [ADR-PC-006 §P3](./ADR-PC-006-cue-schema-language.md) | benchmark (per-PR) | `PACK_VALIDATE_DEPTH_BUDGETS` | Live |
 | 11 | **Depth-5 simulation meets budget** — the sealed pack test-corpus, appended through the engine's hand-rolled append/replay substrate against a session-scoped Testcontainers PostgreSQL fixture, reproduces the expected event sequence in < 30 s in CI. | [ADR-PC-006 §P4](./ADR-PC-006-cue-schema-language.md) | benchmark (CI) | `PACK_SIM_DEPTH5_BUDGET` | Planned |
@@ -130,6 +130,33 @@ is turned on (every v1 projection is async; the post-commit hook is wired no-op)
 is built before the path it guards — the `IFRS9_POST_FLAG_NEVER_GATES` shape. The
 forced-correction *acceptance* drill is deferred to D.5 (`babelstone-m9n2`).
 
+**D.5 reconciliation (2026-06-07).** `REPLAY_BUDGET_5S_30S` (row 8) flips `Planned → Live`,
+but **only its v1 half is proven**. D.5 (`babelstone-m9n2`) ships
+`ColdReplayBudgetTests.REPLAY_BUDGET_5S_30S_v1_cold_replay_of_one_instance_is_under_5s`
+(in `Babelstone.Families.TermDeposit.Application.Tests`): a 262-event with-a-plan instance
+(constitute → accrue×260 → mature, the TOP of the §8.2 ~24-260 range) cold-replays via
+`AggregateRuntime.LoadAsync` with no snapshots in **~13 ms locally**, far inside the 5 s
+budget — and it runs in CI's `Category=Integration` lane (the `ES_ATOMIC_APPEND_OUTBOX`
+precedent: a green Testcontainers test the lane runs is the `Live` bar). The **v4 30 s
+irregular-family half** (~250-1000 events, sustained v4-scale traffic) is **NOT** proven
+here: it belongs to L.3's in-house load harness ([ADR-PC-011](./ADR-PC-011-in-house-load-test-harness.md),
+the backlog's "D.5 / L.3" split), which builds the v4-scale corpus and the sustained-throughput
+rig D.5 deliberately does not. The row is `Live` because the commitment now resolves to ≥1
+running test; the second half is tracked under L.3 (`babelstone-2e6q`) and tightens the same
+Test ID when its rig lands. The gate column is **CI Integration lane** rather than the
+originally-reserved "benchmark (nightly)": the test rides the existing per-push Integration tier
+(no separate nightly lane exists yet), which is the stricter "runs in CI" home.
+
+D.5 also ships the **reconciliation runtime** the §7.1 patterns need —
+`engine/src/Babelstone.Engine/ProjectionReconciler.cs` (per-instance state checksum,
+event-count gap-vs-skip, and the §7.2 full-rebuild drill over `ProjectionDrainer.RebuildAsync`),
+exercised by `ProjectionReconcilerIntegrationTests` (synthetic family) — and the
+forced-correction round-trip **acceptance** drill on the real term-deposit family
+(`ForcedCorrectionRoundTripTests`), the spike-criterion-#1 deliverable ADR-PC-002's D.2
+note deferred to D.5. Those land under the existing `PROJECTION_ONE_CURRENT_BELIEF` (row 13)
+and `PROJECTION_REBUILD_DETERMINISM` (row 14) commitments — D.5 adds no new catalogue row for
+them; it is the acceptance/operational layer over D.2's already-catalogued plumbing.
+
 **Epic K reconciliation (K.1).** The four `OBS-*` rows land with K.1 (`babelstone-rzcl`),
 which ships the shared `ActivitySource` + `babelstone.*` attribute contract
 (`Babelstone.Telemetry`), the product-semantic spans in the impure runtime shell, and
@@ -180,7 +207,7 @@ spawns a parallel suite:
 | Architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC` |
 | Integration (Testcontainers) | `ES_ATOMIC_APPEND_OUTBOX`, `REPLAY_PIN_PER_EVENT`, `BATCH_INGEST_IDEMPOTENT`, `OBS_TRACEPARENT_PROPAGATION` |
 | Contract / saga | `GL_POST_FLAG_NEVER_GATES`, `NOTIFY_POST_FLAG_NEVER_GATES`, `IFRS9_POST_FLAG_NEVER_GATES`, `CONSTITUTION_PRECONDITION_REFUSAL` |
-| Benchmark (nightly) | `REPLAY_BUDGET_5S_30S` |
+| Benchmark (CI Integration lane) | `REPLAY_BUDGET_5S_30S` (v1 half; v4 30 s half deferred to L.3) |
 | Benchmark (per-PR / CI) | `PACK_VALIDATE_DEPTH_BUDGETS`, `PACK_SIM_DEPTH5_BUDGET` |
 | Acceptance | `ZERO_ENGINE_DIFF_PER_VARIANT` |
 
