@@ -12,12 +12,27 @@ namespace Babelstone.InboxConsumer;
 /// <summary>
 /// The IC-004 consumer half (Document 04 "Inbox Pattern"): the MIRROR of <c>OutboxDrainer</c>. One
 /// <see cref="PumpOnceAsync"/> call consumes the next Redpanda record, un-frames the Confluent
-/// wire-format value (magic byte ‖ big-endian schema_id ‖ Avro — the embedded id, NO Schema-Registry
-/// lookup, ADR-IC-004 §P3), decodes the Avro via the G.3 codec, then in ONE PostgreSQL transaction
-/// INSERTs the <c>message_id</c> dedup row and runs the handler — committing the Kafka offset only
-/// after the DB transaction commits.
+/// wire-format value (magic byte ‖ big-endian schema_id ‖ Avro), decodes the Avro via the G.3 codec,
+/// then in ONE PostgreSQL transaction INSERTs the <c>message_id</c> dedup row and runs the handler —
+/// committing the Kafka offset only after the DB transaction commits.
 /// </summary>
 /// <remarks>
+/// <para>
+/// <b>Schema resolution — KNOWN LIMITATION (G.2 scope):</b> the decode reads with this consumer's OWN
+/// local <c>.avsc</c> (writer schema == reader schema), so the embedded <c>schema_id</c> is NOT used to
+/// resolve the writer schema from the Schema Registry. ADR-IC-004 §P3's "no SR lookup" optimisation is
+/// a PUBLISH-path guarantee only; the consumer contract (ADR-IC-002 §194/§240) is the opposite — "the
+/// schema ID in the Avro message header is meaningless without the registry … the Avro SerDe resolves
+/// the schema ID by subject-name lookup". This consumer is therefore correct ONLY while writer == reader
+/// (same-version, intra-context topics — the walking-skeleton case the G.2 test exercises and the
+/// register-if-absent walking-skeleton convenience assumes). CROSS-CONTEXT FORWARD/BACKWARD EVOLUTION
+/// (a producer adds an optional field under the BACKWARD default and ships a new writer schema) is NOT
+/// yet supported: with no writer schema to resolve against, Avro cannot perform schema resolution and a
+/// reorder/trailing-field bump would mis-decode → poison. Closing this needs SR writer-schema-by-id
+/// resolution threaded into <c>AvroEventSerializer.Decode</c> (writer + reader passed to the
+/// <c>GenericDatumReader</c>) — a contract-reviewer / SR-resolution concern tracked as follow-up, NOT
+/// silent drift. Flagged here so the gap is explicit, per the ADR-PC-020 §D3 explicit-drift discipline.
+/// </para>
 /// <para>
 /// <b>Dedup (Document 04 / ADR-IC-004 §Residual-risks "mandatory, not optional"):</b> the inbox PK
 /// on <c>message_id</c> is the dedup mechanism. A duplicate physical delivery (the dual-publish window
@@ -38,6 +53,16 @@ namespace Babelstone.InboxConsumer;
 /// behind it. The pump records the poison counter, invokes the optional poison sink (a host's
 /// dead-letter seam), and commits the offset to step past it. This is a deliberate consumer-side
 /// policy, distinct from a handler EXCEPTION (a transient failure) which rolls back and is redelivered.
+/// A null-payload TOMBSTONE is a THIRD, distinct path (see below): it is not poison and not redelivered.
+/// </para>
+/// <para>
+/// <b>Tombstone (GDPR erasure):</b> a record with a key but a null/empty value is Redpanda log
+/// compaction's right-to-erasure signal on a <c>cleanup.policy=compact</c> topic (ADR-IC-001 §P4 /
+/// ADR-IC-002 §P4). It is recognised BEFORE the Avro decode — never deserialised as Avro — and skipped
+/// past on its OWN counter, deliberately NOT the poison counter, so a routine crypto-shred upstream
+/// never raises a false dead-letter alert. A handler that owns projection state plugs the actual
+/// erasure in via the H.1 saga seam; this dedup-only assembly's contract-honouring action is
+/// skip-and-commit.
 /// </para>
 /// </remarks>
 public sealed class InboxPump : IDisposable
@@ -66,9 +91,19 @@ public sealed class InboxPump : IDisposable
             BabelstoneAttributes.InboxPoisonMetric,
             description: "Inbox records skipped as poison (un-decodable / unknown / missing message_id).");
 
+    private static readonly Counter<long> TombstoneMessages =
+        BabelstoneTelemetry.Meter.CreateCounter<long>(
+            BabelstoneAttributes.InboxTombstoneMetric,
+            description: "Inbox null-payload tombstones skipped (GDPR compaction erasure signal, ADR-IC-002 §P4).");
+
     // PostgreSQL unique-violation SQLSTATE — the inbox_pkey collision that IS the "already processed"
     // signal (Document 04). Matching the SQLSTATE (not the message text) keeps it locale-independent.
     private const string UniqueViolation = PostgresErrorCodes.UniqueViolation;
+
+    // The inbox PRIMARY KEY constraint (0012_inbox.sql: CONSTRAINT inbox_pkey PRIMARY KEY (message_id)).
+    // The dedup catch narrows on BOTH the SQLSTATE and this constraint name so a handler-side unique
+    // violation on a DIFFERENT constraint is never misread as an inbox duplicate.
+    private const string InboxPkey = "inbox_pkey";
 
     private readonly InboxConsumerOptions _options;
     private readonly AvroEventSerializer _serializer;
@@ -129,6 +164,10 @@ public sealed class InboxPump : IDisposable
 
         /// <summary>An un-processable record: skipped past (offset committed) after the poison sink saw it.</summary>
         Poison,
+
+        /// <summary>A null-payload compaction tombstone (GDPR erasure signal): skipped past (offset
+        /// committed) WITHOUT being decoded as Avro — distinct from <see cref="Poison"/>, never an alert.</summary>
+        Tombstone,
     }
 
     /// <summary>
@@ -143,6 +182,22 @@ public sealed class InboxPump : IDisposable
         if (result?.Message is null)
         {
             return PumpOutcome.Idle; // idle poll — loop comes back round
+        }
+
+        // A null-payload tombstone (a record with a key but no value) is Redpanda log compaction's
+        // GDPR right-to-erasure signal on a cleanup.policy=compact topic (ADR-IC-001 §P4). The
+        // consumer contract (ADR-IC-002 §P4) requires it be recognised BEFORE the Avro decode: never
+        // deserialise null as Avro, and — crucially — do not mistake it for a poison record. This
+        // assembly is a dedup + dispatch seam, not a projection owner, so there is no materialised
+        // state to delete; the correct, contract-honouring action is skip-and-commit (step past it,
+        // count it as a tombstone, never as poison so a routine crypto-shred upstream never raises a
+        // false dead-letter alert). A handler that owns projection state plugs that erasure in via the
+        // H.1 saga seam; until then skip-and-commit is the conservative, GDPR-compliant behaviour.
+        if (IsTombstone(result))
+        {
+            CommitPast(result);
+            TombstoneMessages.Add(1, TopicTag(result.Topic));
+            return PumpOutcome.Tombstone;
         }
 
         // A poison record can never be retried into correctness; skip past it (offset committed) so
@@ -221,12 +276,21 @@ public sealed class InboxPump : IDisposable
             resultSummary = await _handler.HandleAsync(message, connection, transaction, ct);
             await InsertInboxRowAsync(connection, transaction, message, resultSummary, ct);
         }
-        catch (PostgresException ex) when (ex.SqlState == UniqueViolation)
+        catch (PostgresException ex) when (ex.SqlState == UniqueViolation && ex.ConstraintName == InboxPkey)
         {
             // The concurrent-race loser (the SELECT above missed a row a racing transaction inserted
-            // and committed between this SELECT and this INSERT). The PK collision is the §Residual-
-            // risks dedup backstop doing its job: roll back (the handler's effect is discarded — it
-            // must not commit twice) and report the duplicate. Not an error.
+            // and committed between this SELECT and this INSERT). The inbox_pkey collision is the
+            // §Residual-risks dedup backstop doing its job: roll back (the handler's effect is
+            // discarded — it must not commit twice) and report the duplicate. Not an error.
+            //
+            // The constraint filter is load-bearing: the handler runs INSIDE this try (it may INSERT
+            // its own rows — a saga-state row, a local-outbox row, the outbox→inbox→outbox chain of
+            // Document 04). A unique-violation on ANY OTHER constraint (a saga PK, a local-outbox
+            // event_id) is NOT an inbox duplicate — treating it as one would roll back and commit the
+            // offset, silently dropping a message whose effect never landed (at-most-once). So only
+            // the inbox PK is the dedup signal; every other unique-violation propagates as a transient
+            // failure, the caller seeks back, and the record is redelivered. (Same backstop shape as
+            // PostgresEventStore's events_stream_seq_uq narrowing.)
             await transaction.RollbackAsync(ct);
             return false;
         }
@@ -328,9 +392,19 @@ public sealed class InboxPump : IDisposable
         return true;
     }
 
+    /// <summary>A compaction tombstone: a record present but with a null OR zero-length value (the GDPR
+    /// erasure signal, ADR-IC-002 §P4). Detected BEFORE any Avro decode so a null payload is never
+    /// deserialised and never mis-routed to the poison path. Confluent.Kafka surfaces a tombstone as a
+    /// null <c>Message.Value</c>; a zero-length value is treated the same, defensively.</summary>
+    internal static bool IsTombstone(ConsumeResult<byte[], byte[]> result)
+        => result.Message.Value is null || result.Message.Value.Length == 0;
+
     /// <summary>magic byte 0x00 ‖ big-endian int32 schema_id ‖ avro value → the bare Avro value. The
-    /// embedded schema_id is not needed at decode (the resolver gives the reader schema by type), so
-    /// it is skipped — only the framing is validated. The inverse of <c>OutboxDrainer.ToConfluentWireFormat</c>.</summary>
+    /// embedded schema_id is currently skipped at decode (the reader schema comes from the local
+    /// catalog by type) — see the class-remarks KNOWN LIMITATION: that is correct only while
+    /// writer == reader, and resolving the WRITER schema from this id via the SR is the unfinished
+    /// cross-context-evolution work. Only the framing is validated here. The inverse of
+    /// <c>OutboxDrainer.ToConfluentWireFormat</c>.</summary>
     internal static bool TryUnframe(ReadOnlySpan<byte> framed, out ReadOnlyMemory<byte> avroValue)
     {
         avroValue = ReadOnlyMemory<byte>.Empty;

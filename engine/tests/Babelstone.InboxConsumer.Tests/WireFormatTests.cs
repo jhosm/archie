@@ -1,4 +1,5 @@
 using Babelstone.Families.TermDeposit;
+using Confluent.Kafka;
 using Xunit;
 
 namespace Babelstone.InboxConsumer.Tests;
@@ -55,4 +56,40 @@ public sealed class WireFormatTests
         var ceType = WireFormat.ReverseDnsType("term_deposit.DepositMatured");
         Assert.Equal(nameof(DepositMatured), InboxPump.RecordName(ceType));
     }
+
+    // ---- Tombstone detection (ADR-IC-002 §P4 — GDPR compaction erasure signal) ----------------
+
+    [Fact]
+    public void A_null_value_record_is_a_tombstone()
+    {
+        // A Redpanda compaction tombstone: a keyed record with a NULL value. Confluent.Kafka surfaces
+        // it as a null Message.Value. It must be detected BEFORE any Avro decode so it is never
+        // deserialised as Avro and never mis-routed to the poison path.
+        var result = ConsumeResultWith(value: null);
+        Assert.True(InboxPump.IsTombstone(result));
+    }
+
+    [Fact]
+    public void A_zero_length_value_record_is_a_tombstone()
+    {
+        // A zero-length value is treated the same as a null value, defensively — neither is a decodable
+        // Confluent wire-format record (which is at minimum a 5-byte header).
+        var result = ConsumeResultWith(value: []);
+        Assert.True(InboxPump.IsTombstone(result));
+    }
+
+    [Fact]
+    public void A_well_framed_value_is_not_a_tombstone()
+    {
+        // A real (framed) record has a value and is NOT a tombstone — it must continue to the decode path.
+        var framed = WireFormat.Frame(schemaId: 7, avroValue: [0xAA, 0xBB, 0xCC]);
+        var result = ConsumeResultWith(value: framed);
+        Assert.False(InboxPump.IsTombstone(result));
+    }
+
+    private static ConsumeResult<byte[], byte[]> ConsumeResultWith(byte[]? value) => new()
+    {
+        Topic = "term_deposit",
+        Message = new Message<byte[], byte[]> { Key = [0x01], Value = value! },
+    };
 }
