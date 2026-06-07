@@ -1,0 +1,24 @@
+# Narrow the base `postgres` Service to the PRIMARY (HA overlay).
+#
+# The base `postgres` Service selects only `app.kubernetes.io/name: postgres` —
+# correct for a single node, but in the HA overlay BOTH the primary and the
+# standby pods carry that label, so the unpatched selector would load-balance
+# client traffic across both. Postgres is asymmetric: only the primary accepts
+# writes; the standby is read-only (hot_standby). Routing a write to the standby
+# fails with "cannot execute … in a read-only transaction".
+#
+# (Redpanda's base ClusterIP Service keeps its broad selector across the HA
+# overlay precisely because Redpanda is symmetric — every broker accepts writes.
+# Postgres is not, so the write Service must be primary-only.)
+#
+# Adding the pg-role: primary selector makes `postgres` the WRITE entrypoint that
+# resolves to the primary alone. Read-only / failover-promotion traffic uses the
+# role-scoped `postgres-standby` Service instead.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app.kubernetes.io/name: postgres
+    babelstone.io/pg-role: primary

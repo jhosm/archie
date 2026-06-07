@@ -26,11 +26,19 @@ kind: StatefulSet
 metadata:
   name: postgres
 spec:
+  # Repoint the governing Service to the HEADLESS one so the primary's per-pod
+  # DNS (postgres-0.postgres-headless) resolves — the base used the plain
+  # ClusterIP `postgres` Service, which publishes no stable per-pod records, so
+  # the standby's pg_basebackup/primary_conninfo host would be unresolvable. Same
+  # repoint the Redpanda HA patch makes (serviceName -> redpanda-headless).
+  serviceName: postgres-headless
   template:
     metadata:
       labels:
         # Distinguish the primary from the standby (both carry app=postgres);
         # the standby's replication conn + pg_hba match on this role label's pod.
+        # The write `postgres` Service + the postgres-headless Service both select
+        # on this label, so neither ever routes to the read-only standby pod.
         babelstone.io/pg-role: primary
     spec:
       containers:
