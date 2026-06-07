@@ -99,11 +99,11 @@ public sealed class TermDepositConstitutionService(
         // 1. Rehydrate the constituted position (load-then-append on the live stream head).
         var hydrated = await runtime.LoadAsync(command.DepositId, ct);
         var position = hydrated.State;
-        if (position.Lifecycle != DepositLifecycle.Active)
-        {
-            throw new DomainRejectedException(
-                $"Deposit {command.DepositId} is {position.Lifecycle}, not Active; cannot mature.");
-        }
+
+        // Transition-legality gate (F.3 state machine): maturing is legal only from Active. The
+        // single LifecycleTransitions table — not a scattered inline check — decides, so maturing
+        // a Matured/closed deposit is rejected uniformly with every other illegal transition.
+        RejectIfIllegal(position.Lifecycle, LifecycleTransitions.Transition.Mature, command.DepositId, "mature");
 
         // 2. Pack-resolved primitives (fail loud, never a silent default).
         var (dayCount, withholdingBps) = ResolvePrimitives();
@@ -139,11 +139,12 @@ public sealed class TermDepositConstitutionService(
         // 1. Rehydrate; only an Active PERIODIC deposit pays coupons.
         var hydrated = await runtime.LoadAsync(command.DepositId, ct);
         var position = hydrated.State;
-        if (position.Lifecycle != DepositLifecycle.Active)
-        {
-            throw new DomainRejectedException(
-                $"Deposit {command.DepositId} is {position.Lifecycle}, not Active; cannot pay interest.");
-        }
+
+        // Transition-legality gate (F.3 state machine): paying a coupon is legal only from Active —
+        // the table rejects paying on a Matured/closed deposit. The PERIODIC-only check below is a
+        // separate VARIANT-applicability concern (an AT_MATURITY/ADVANCE deposit has no coupons),
+        // not a lifecycle transition, so it stays outside the table.
+        RejectIfIllegal(position.Lifecycle, LifecycleTransitions.Transition.PayInterest, command.DepositId, "pay interest");
 
         if (position.InterestVariant != TermDepositDecider.Periodic)
         {
@@ -182,6 +183,27 @@ public sealed class TermDepositConstitutionService(
         await runtime.AppendAsync(
             command.DepositId, hydrated.Version, events,
             Context(command.Actor, command.PaidAt), ct);
+    }
+
+    /// <summary>
+    /// Consult the F.3 lifecycle state machine (<see cref="LifecycleTransitions"/>) and reject an
+    /// illegal transition with the established <see cref="DomainRejectedException"/> pattern. This is
+    /// the single place command-side lifecycle legality is enforced — the scattered inline
+    /// <c>if (Lifecycle != Active) throw</c> guards that used to live in the maturity/coupon flows now
+    /// route through here, so the one auditable table (not duplicated literals) decides what is legal.
+    /// </summary>
+    /// <param name="current">The deposit's current folded lifecycle state.</param>
+    /// <param name="transition">The transition the command would drive.</param>
+    /// <param name="depositId">The deposit the command targets (for the rejection message).</param>
+    /// <param name="action">A human verb for the rejection message, e.g. <c>"mature"</c>.</param>
+    private static void RejectIfIllegal(
+        DepositLifecycle current, LifecycleTransitions.Transition transition, Guid depositId, string action)
+    {
+        if (!LifecycleTransitions.IsLegal(current, transition))
+        {
+            throw new DomainRejectedException(
+                $"Deposit {depositId} is {current}; cannot {action} (illegal lifecycle transition {transition}).");
+        }
     }
 
     /// <summary>
