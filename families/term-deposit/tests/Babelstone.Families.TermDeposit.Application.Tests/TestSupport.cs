@@ -166,4 +166,33 @@ public sealed class ConstitutionFixture : IAsyncLifetime
         command.Parameters.AddWithValue("id", id);
         return (long)(await command.ExecuteScalarAsync())!;
     }
+
+    /// <summary>The <c>event_id</c> of the single event of <paramref name="eventType"/> on the
+    /// <paramref name="streamId"/> stream (e.g. <c>term_deposit.DepositMatured</c>) — for asserting the
+    /// renewal's causation root. Throws if absent or non-unique.</summary>
+    public async Task<Guid> EventIdAsync(Guid streamId, string eventType)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT event_id FROM events WHERE stream_id = @id AND event_type = @type;", connection);
+        command.Parameters.AddWithValue("id", streamId);
+        command.Parameters.AddWithValue("type", eventType);
+        return (Guid)(await command.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException($"no {eventType} on stream {streamId}"));
+    }
+
+    /// <summary>The <c>causation_id</c> of the first event on the <paramref name="streamId"/> stream
+    /// (sequence 0) — for asserting a renewed instance's <c>DepositConstituted</c> roots at the closing
+    /// <c>DepositMatured</c>. Null when the column is null.</summary>
+    public async Task<Guid?> FirstEventCausationIdAsync(Guid streamId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT causation_id FROM events WHERE stream_id = @id AND sequence_number = 0;", connection);
+        command.Parameters.AddWithValue("id", streamId);
+        var value = await command.ExecuteScalarAsync();
+        return value is DBNull or null ? null : (Guid)value;
+    }
 }
