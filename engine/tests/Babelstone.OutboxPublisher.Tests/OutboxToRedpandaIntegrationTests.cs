@@ -118,7 +118,7 @@ public sealed class OutboxToRedpandaIntegrationTests : IAsyncLifetime
 
         foreach (var record in records)
         {
-            // CloudEvents Binary-mode headers present on every record (ADR-IC-008).
+            // CloudEvents Binary-mode headers present on every record (ADR-IC-015).
             Assert.False(string.IsNullOrEmpty(Header(record, "ce_id")));
             Assert.Equal("1.0", Header(record, "ce_specversion"));
             Assert.Equal("application/avro", Header(record, "ce_datacontenttype"));

@@ -18,7 +18,7 @@
 -- "already processed → skip and commit the offset". Two threads racing the same delivery
 -- resolve the same way — one INSERT wins, the other loses by constraint and ignores.
 --
---   message_id   — the envelope's CloudEvents ce_id (the producer's event_id, ADR-IC-008),
+--   message_id   — the envelope's CloudEvents ce_id (the producer's event_id, ADR-IC-015),
 --                  the stable physical-delivery identity. NOT idempotency_key: message_id
 --                  deduplicates physical deliveries of one event; idempotency_key (in a
 --                  command payload) deduplicates logical intents — "cousins, not twins"

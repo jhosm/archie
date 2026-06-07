@@ -1,0 +1,87 @@
+asyncapi: '3.0.0'
+info:
+  title: DepositConstituted
+  version: '1'
+  description: |
+    The term deposit is opened. Carries the principal, the rate-sheet-resolved TAN,
+    and the schedule fixed at constitution (interest variant, term, start/maturity dates).
+
+    Emitted: exactly once, when a `ConstituteDeposit` command is accepted and the
+    aggregate transitions from non-existent to Active. The `tan_basis_points` and
+    `rate_sheet_version_id` pin the rate sheet the TAN was resolved from at this instant.
+
+    NOT emitted: on a rejected constitution (validation failure, pack mismatch), nor on
+    auto-renewal (renewal re-uses the lifecycle but is a distinct transition, not modelled
+    on this topic in v1).
+  x-owner: term-deposit
+  x-owner-contact: deposits-team@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: CONTRACT_PERFORMANCE
+  x-authorized-consumers:
+    - notification        # depositor-facing constitution confirmation (ADR-IC-011)
+    - acl                 # downstream core-banking projection (ADR-IC-012)
+channels:
+  term_deposit:
+    description: |
+      Event-carried-state-transfer stream for the term-deposit aggregate. Topic name ==
+      `aggregate_type` (the relay's documented convention, OutboxDrainer). One Avro schema
+      per event type (Option A, doc 08): each event is its own message on this channel.
+    x-compacted: false
+    messages:
+      DepositConstituted:
+        $ref: '#/components/messages/DepositConstituted'
+operations:
+  publishDepositConstituted:
+    action: send
+    channel:
+      $ref: '#/channels/term_deposit'
+    messages:
+      - $ref: '#/channels/term_deposit/messages/DepositConstituted'
+components:
+  messages:
+    DepositConstituted:
+      name: DepositConstituted
+      title: Deposit Constituted
+      summary: The term deposit is opened.
+      contentType: application/avro
+      bindings:
+        kafka:
+          # CloudEvents 1.0 Binary Content Mode — attributes ride as Kafka headers,
+          # written by the outbox relay (OutboxDrainer.BuildHeaders); the message value
+          # is the Avro-encoded business payload below. No PII on any header or payload
+          # (ADR-PC-004 §P2).
+          key:
+            type: string
+            description: 'aggregate_id (DepositId) — the Kafka record key.'
+          bindingVersion: '0.5.0'
+      headers:
+        type: object
+        required:
+          - ce_specversion
+          - ce_id
+          - ce_source
+          - ce_type
+          - ce_time
+          - ce_subject
+          - ce_aggregatetype
+          - ce_datacontenttype
+        properties:
+          ce_specversion:      { type: string, const: '1.0' }
+          ce_id:               { type: string, format: uuid, description: 'Unique event ID (outbox event_id).' }
+          ce_source:           { type: string, description: 'URI of the producing service, e.g. urn:babelstone:engine.' }
+          ce_type:             { type: string, description: 'Reverse-DNS event type, e.g. com.bank.deposits.DepositConstituted.' }
+          ce_time:             { type: string, format: date-time }
+          ce_datacontenttype:  { type: string, const: 'application/avro' }
+          ce_subject:          { type: string, description: 'aggregate_id — the specific deposit this event is about.' }
+          ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. term_deposit.' }
+      # §P6: the canonical payload is the registered Avro schema — referenced, never
+      # hand-restated here (a restatement would drift from contracts/avro/). The $ref
+      # below points at the governed .avsc on disk so the fast PR gate (P2) resolves it
+      # HERMETICALLY (no live registry). The registry SUBJECT it must reconcile against
+      # is recorded as x-schema-registry-subject; the main lane checks that subject
+      # exists in the schema registry (P6) — the PR lane does not, by design.
+      x-schema-registry-subject: deposits.term_deposit.DepositConstituted-value
+      payload:
+        schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
+        schema:
+          $ref: '../../avro/deposits/term_deposit/DepositConstituted.avsc'

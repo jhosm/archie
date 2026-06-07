@@ -18,13 +18,14 @@ This folder holds the Architectural Decision Records (ADRs) that materialise the
 | [005](./ADR-IC-005-cqrs-read-model-storage.md) | CQRS Read Model Storage | **PostgreSQL** as the sole read-model store at POC inception | [03](../03-cqrs-and-read-models.md) |
 | [006](./ADR-IC-006-edge-api-gateway.md) | Edge API Gateway and Synchronous Layer | **Kong Gateway CE** as the single shared gateway | [10](../10-security-and-threat-model.md), [11](../11-chat-agent-channel-strategy.md) |
 | [007](./ADR-IC-007-observability-stack.md) | Observability Stack | **Grafana LGTM** (Loki + Grafana + Tempo + Prometheus) via the **OpenTelemetry Collector** | [06](../06-observability-and-tracing.md) |
-| [008](./ADR-IC-008-event-catalog-governance-tooling.md) | Event Catalog Governance Tooling | **EventCatalog** with **AsyncAPI** as the contract format | [08](../08-event-catalog-governance.md), [09](../09-long-term-schema-evolution.md) |
+| [008](./retired/ADR-IC-008-event-catalog-governance-tooling.md) | Event Catalog Governance Tooling | **[Superseded by ADR-IC-015]** EventCatalog with AsyncAPI as the contract format — the EventCatalog portal was replaced by Backstage after the License-drift risk realised (2026-06-07); the AsyncAPI format and §P1–§P6 carry forward | [08](../08-event-catalog-governance.md), [09](../09-long-term-schema-evolution.md) |
 | [009](./ADR-IC-009-testing-infrastructure.md) | Testing Infrastructure and Contract Testing | **Testcontainers** + **Pact** + **WireMock** + **Toxiproxy** (with Pumba secondary) | [07](../07-testing-strategy.md) |
 | [010](./ADR-IC-010-mcp-server-runtime-and-sdk.md) | MCP Server Runtime, SDK, Transport, and Authorization | **Python MCP SDK**, **Streamable HTTP**, hosted **behind Kong**, reusing the **existing IAM** as the OAuth 2.1 authorisation server | [10](../10-security-and-threat-model.md), [11](../11-chat-agent-channel-strategy.md) |
 | [011](./ADR-IC-011-async-saga-completion-notification.md) | Async Saga Completion Notification — Out-of-Band Callback Wire Format | Pre-registered subscription endpoint; HMAC-SHA256 signing; exponential backoff with jitter; **dedicated notification service** subscribed to saga terminal events; SSE and callbacks **coexist** | [11](../11-chat-agent-channel-strategy.md) |
 | [012](./ADR-IC-012-anti-corruption-layer-implementation.md) | Anti-Corruption Layer Implementation Approach | **Dedicated ACL service** per bounded context, hand-rolled outbound clients, pluggable inbound adapter (webhook / poller / MQ bridge), per-adapter circuit-breaker + bulkhead, ACL owns its own database with its own outbox | [02](../02-anti-corruption-layer.md) |
 | [013](./ADR-IC-013-in-house-estate-build-and-repository-placement.md) | In-House Estate — Build Provenance and Repository Placement | **Five in-house estate components** (orchestrator [003], outbox [004], MCP [010], notification [011], ACL [012]) **co-located in the product monorepo** ([ADR-PC-019](../../product_concepts/adrs/ADR-PC-019-repository-strategy-monorepo.md)) as extraction-ready subtrees, estate-repo split reserved; classifies all twelve IC decisions by build provenance (in-house vs consumed vs convention). Not a runtime tool — a placement/classification decision | [feature-design-c4-architecture](../../product_concepts/feature-design-c4-architecture.md) |
 | [014](./ADR-IC-014-static-analysis-and-supply-chain-scanning.md) | Static Analysis and Supply-Chain Scanning | **GitHub-native trio** (free on the public repo): **CodeQL** SAST → Security tab (C#/Go; Python when `mcp-server` lands) + **Dependabot** (SCA + Actions pinning) + **GitHub secret scanning + push protection**. F1 is visibility-dependent (private-no-GHAS fallback = CodeQL-artifact + gitleaks, documented); report-only first, gating deferred to Q.7 | [07](../07-testing-strategy.md), [10](../10-security-and-threat-model.md) |
+| [015](./ADR-IC-015-event-catalog-governance-tooling-backstage.md) | Event Catalog Governance Tooling — Backstage | **Backstage** (Apache-2.0, CNCF) with **AsyncAPI** as the contract format, **superseding [ADR-IC-008](./retired/ADR-IC-008-event-catalog-governance-tooling.md)** — the EventCatalog AsyncAPI generator went AGPL-3.0/commercial (License-drift risk realised, 2026-06-07), so ADR-IC-008's own Backstage exit path is taken; the AsyncAPI files stay the source of truth, the hermetic gate is unchanged, descriptors ship now and the Backstage host is deferred | [08](../08-event-catalog-governance.md), [09](../09-long-term-schema-evolution.md) |
 
 ---
 
@@ -87,7 +88,7 @@ The chosen tools form one coherent runtime topology, not twelve independent choi
    └──────────────────────────────────────────┘
 
    ┌─────────────────────────────────────────┐  ┌──────────────────────────────┐
-   │ OpenTelemetry Collector → Grafana LGTM  │  │ EventCatalog (ADR-IC-008)       │
+   │ OpenTelemetry Collector → Grafana LGTM  │  │ Backstage (ADR-IC-015)          │
    │ (ADR-IC-007) — logs, traces, metrics       │  │ + AsyncAPI specs             │
    │ scraped from all services above         │  │ (governance, not runtime)    │
    └─────────────────────────────────────────┘  └──────────────────────────────┘
@@ -107,7 +108,7 @@ The chosen tools form one coherent runtime topology, not twelve independent choi
 
 - **Testing fidelity comes from real infrastructure.** Testcontainers (ADR-IC-009) spins up PostgreSQL and Redpanda — the same ones the production stack uses — per test class. Pact verifies message contracts (Avro events) and HTTP contracts. WireMock simulates the Core's SOAP surface for tests that cannot afford a Testcontainer. Toxiproxy injects per-connection faults so saga tests can verify the indeterminate-state path (ADR-IC-012 D5) without taking down shared infrastructure.
 
-- **Governance is offline.** EventCatalog (ADR-IC-008) reads AsyncAPI specs from source control; it does not sit on the runtime path. Schema evolution (doc 09) is enforced by the schema registry (ADR-IC-002) at publish time, not by the catalog.
+- **Governance is offline.** The event catalogue (ADR-IC-015, superseding ADR-IC-008) reads AsyncAPI specs from source control; the portal (Backstage) does not sit on the runtime path. Schema evolution (doc 09) is enforced by the schema registry (ADR-IC-002) at publish time, not by the catalogue.
 
 - **The agent channel adds two components, not a rewrite.** ADR-IC-010 (Python MCP server behind Kong) and ADR-IC-011 (notification service for async completion delivery) layer onto the existing event backbone — both subscribe to events the orchestrator already emits. The synchronous REST/SSE surface and the agent-channel surface coexist behind the same gateway.
 

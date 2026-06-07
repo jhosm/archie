@@ -28,7 +28,7 @@ skeletons). Brought up via the repo-root `Makefile`.
 | **OTel Collector** | Telemetry pipeline boundary; config `otel/collector.yaml` | [ADR-IC-007](../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | **Grafana LGTM** | Loki + Grafana + Tempo + Prometheus (all-in-one) | [ADR-IC-007](../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | **OCI registry** | Distribution registry for `oras`-pushed packs (by digest) | [ADR-PC-007](../docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md) |
-| **EventCatalog host** | Static-site host (nginx) for the built event catalog | [ADR-IC-008](../docs/product-management/integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md) |
+| **EventCatalog host** | Static-site host (nginx) for the built event catalog | [ADR-IC-008](../docs/product-management/integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md) |
 
 ### Quick start
 
@@ -81,7 +81,7 @@ before `make up`; defaults live in `compose.yaml`.
 - **OpenBao runs in dev mode** — in-memory, auto-unsealed, fixed root token `root`. It is the local crypto boundary ([ADR-PC-004](../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)); the transit engine + per-subject keys are enabled by the engine (**Epic A.5**), not this stack. **Not production**: real storage, unseal, and HA/DR ([ADR-PC-005](../docs/product-management/product_concepts/adrs/ADR-PC-005-dr-rto-rpo.md)) come with P.6/P.7.
 - **Services export to the OTel Collector, never to a backend directly** ([ADR-IC-007](../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) §P1). `otel/collector.yaml` is the owned single export-config point — sampling and PII/attribute redaction (pseudonymous IDs in traces) land there with Epic K. The collector forwards OTLP to the Grafana LGTM appliance, whose own OTLP ingest is **not** exposed to the host so the collector stays the single entry. Loki/Tempo are single-node and **non-HA** (dev only); production storage/replication is P.6/P.7.
 - **The OCI registry hosts packs, not pack content.** Packs are `oras`-pushed as OCI artefacts and pulled **by digest** ([ADR-PC-007](../docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md)); the registry runs with defaults (no auth, plain-HTTP — dev only). The pack build/sign pipeline (CUE validate → cosign → `oras push`) and the `babelstone-packs/*` content land with **Epic C.4/C.5**.
-- **EventCatalog is host-only.** nginx serves `eventcatalog/site/` (a placeholder today). The catalog itself — AsyncAPI specs rendered to a static EventCatalog build ([ADR-IC-008](../docs/product-management/integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md)) — is generated into that dir by **Epic G.4**.
+- **EventCatalog is host-only.** nginx serves `eventcatalog/site/` (a placeholder today). The catalog itself — AsyncAPI specs rendered to a static EventCatalog build ([ADR-IC-008](../docs/product-management/integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md)) — is generated into that dir by **Epic G.4**.
 - This is **not** the production topology. The production-shaped HA topology
   (3-node Redpanda + PG primary/synchronous warm standby) is **P.7** and lives in
   the [`k8s/overlays/ha`](./k8s/README.md) overlay, not this dev Compose stack;

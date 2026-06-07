@@ -7,7 +7,7 @@ namespace Babelstone.Families.TermDeposit.Application.Tests;
 /// <summary>
 /// F.5 (babelstone-k4yr) renewal-guard unit tests: the renewal rejections that fire BEFORE any
 /// rate-sheet resolve or settlement (the policy branch and the opt-out window). PURE — no Docker:
-/// the closing deposit's events are seeded into the in-memory <see cref="IEventStore"/> (reusing
+/// the closing deposit's events are seeded into the in-memory <see cref="Babelstone.EventStore.IEventStore"/> (reusing
 /// <c>LifecycleRejectionTests</c>' helpers) and the service is wired with a <c>NullSink</c> plus a
 /// rate-sheet store and settlement port that fail if touched, so a rejection that resolves a sheet
 /// or moves money is caught loud. The happy-path renewal (append + fold over real Postgres) is the

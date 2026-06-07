@@ -23,7 +23,7 @@ internal static class WireFormat
         return framed;
     }
 
-    /// <summary>The reverse-DNS CloudEvents ce_type the relay emits (ADR-IC-008): "term_deposit.X" →
+    /// <summary>The reverse-DNS CloudEvents ce_type the relay emits (ADR-IC-015): "term_deposit.X" →
     /// "com.bank.deposits.X". Replicates OutboxDrainer.ReverseDnsType against the same documented form.</summary>
     public static string ReverseDnsType(string eventType)
     {

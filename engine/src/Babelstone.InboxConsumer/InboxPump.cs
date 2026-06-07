@@ -332,7 +332,7 @@ public sealed class InboxPump : IDisposable
 
     /// <summary>
     /// Turn a Kafka record into an <see cref="InboxMessage"/>: read the CloudEvents envelope headers
-    /// (ADR-IC-008), un-frame the Confluent wire-format value, resolve the CLR event type, and decode
+    /// (ADR-IC-015), un-frame the Confluent wire-format value, resolve the CLR event type, and decode
     /// the Avro. Returns false (with a reason) for any record that cannot be processed — the poison path.
     /// </summary>
     internal bool TryDecode(ConsumeResult<byte[], byte[]> result, out InboxMessage message, out string reason)
