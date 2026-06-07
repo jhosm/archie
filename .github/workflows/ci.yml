@@ -42,7 +42,7 @@ jobs:
             engine: ['engine/**']
             pack_validate: ['pack-validate/**']
             families: ['families/**']
-            contracts: ['contracts/**']
+            contracts: ['contracts/**', 'scripts/avro-compat-check.sh']
             orchestrator: ['orchestrator/**']
             acl: ['acl/**']
             mcp_server: ['mcp-server/**']
@@ -139,8 +139,24 @@ jobs:
         # closed-struct "no DSL escape hatch" guarantee. Same script dev runs
         # via `make contracts-check`.
         run: ./contracts/cue/check.sh
-      # TODO - Avro payload-compatibility checks + EventCatalog build
-      # (ADR-IC-002, ADR-IC-008) land with the contracts/Avro task.
+      - name: Fetch origin/main (the Avro compat baseline)
+        # actions/checkout@v6 leaves only the PR ref; the §P3 gate compares each
+        # .avsc against its previously-published version (origin/main), so make
+        # that ref resolvable. --depth=1 is enough — the gate reads files at a
+        # single ref (git show origin/main:<path>), not history.
+        run: git fetch --depth=1 origin main
+      - name: Avro schema compatibility (ADR-IC-002 §P1/§P2/§P3)
+        # The residual SR compatibility gate (G.3, bd babelstone-c3bq): §P1 path
+        # mirrors namespace+name, §P2 null-first unions (static), and §P3 each
+        # schema is BACKWARD-compatible with its origin/main version — checked by
+        # registering the baseline into a throwaway Redpanda built-in SR (the
+        # ADR-IC-002 POC registry) and asking its /compatibility endpoint. An
+        # incompatible evolution introduced in a PR fails here, not in prod.
+        # Same script dev runs via `make avro-compat-check`. The ubuntu-latest
+        # runner ships Docker (the engine job's Testcontainers tier relies on it).
+        run: ./scripts/avro-compat-check.sh
+      # TODO - EventCatalog build + `npx validate` (ADR-IC-008) lands with Q.2
+      # (bd babelstone-2f6q); G.3 delivered the Avro/SR compat gate above.
 
   orchestrator:
     needs: changes
