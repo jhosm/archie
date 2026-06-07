@@ -1,0 +1,38 @@
+# Headless governing Service for the 3-node Redpanda StatefulSet.
+#
+# StatefulSet per-pod DNS (redpanda-0.redpanda-headless, …) only resolves when
+# the governing Service is headless (clusterIP: None). The base `redpanda`
+# Service is a normal ClusterIP (fine for a 1-node dev broker, where clients
+# just hit `redpanda:9092`); for a real cluster the brokers must address each
+# OTHER by stable per-pod name for Raft RPC and seed discovery, which this
+# headless Service provides.
+#
+# The base ClusterIP `redpanda` Service is kept (clients still load-balance
+# across brokers via it); the HA kustomization repoints the StatefulSet's
+# `serviceName` to THIS headless Service so the per-pod records exist.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda-headless
+  labels:
+    app.kubernetes.io/name: redpanda
+spec:
+  clusterIP: None
+  # Surface not-yet-ready pods in DNS so seeds resolve during cluster bootstrap
+  # (before any broker has passed its readiness probe).
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: redpanda
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: 9092
+    - name: kafka-ext
+      port: 19092
+      targetPort: 19092
+    - name: rpc
+      port: 33145
+      targetPort: 33145
+    - name: admin
+      port: 9644
+      targetPort: 9644

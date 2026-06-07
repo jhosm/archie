@@ -1,5 +1,7 @@
 # Postgres — event store (ADR-PC-001).
-# StatefulSet for stable storage; single replica (dev). HA is P.7.
+# StatefulSet for stable storage; single replica (dev). HA (primary +
+# synchronous off-site warm standby, ADR-PC-005 §P1) is P.7 (babelstone-ixkp),
+# the `overlays/ha` overlay's override of this base — not a change here.
 apiVersion: v1
 kind: Service
 metadata:

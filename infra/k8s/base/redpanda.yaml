@@ -1,6 +1,7 @@
 # Redpanda — Kafka-compatible event bus + built-in Schema Registry (ADR-IC-001,
 # ADR-IC-002). Single-node dev-container, mirroring infra/compose.yaml. The
-# 3-node HA topology is P.7 (babelstone-ixkp).
+# 3-node HA topology (P.7, babelstone-ixkp) is the `overlays/ha` overlay's
+# override of this base, not a change here.
 apiVersion: v1
 kind: Service
 metadata:

@@ -1,0 +1,81 @@
+# Postgres PRIMARY — HA patch (ADR-PC-005 §P1: protect the source of truth with
+# SYNCHRONOUS replication so a committed event is durable on two nodes before
+# acknowledgement → RPO ≈ 0 for `events`, `outbox`, `saga_state`).
+#
+# HAND-ROLLED, not an operator. Standing preference (CLAUDE.md / engine-core
+# memory): fully-controlled primitives over frameworks that own their own
+# tables/state. PostgreSQL streaming replication IS the native primitive
+# ADR-PC-005 chose (candidate A, "PG-native posture"); an operator
+# (CloudNativePG / Zalando) would interpose a CRD-driven controller that owns
+# failover and its own state — exactly the kind of framework the preference
+# steers away from, and unnecessary for a fixed primary + one warm standby. The
+# rationale is recorded in the introducing PR body (ADR-PC-020 §D3: no silent
+# divergence — this honours ADR-PC-005, it does not contradict it).
+#
+# This patch turns the base single-node `postgres` StatefulSet into the primary:
+#   * runtime args enable synchronous commit against a NAMED standby
+#     (synchronous_standby_names) so commits block until the standby has the WAL;
+#   * wal_level=replica + a physical replication slot keep the standby fed and
+#     stop the primary recycling WAL the standby still needs;
+#   * an init SQL fragment (mounted ConfigMap) creates the `replicator` role and
+#     the slot; pg_hba is opened for the replicator from the standby.
+# PITR / WAL-archiving (ADR-PC-005 §P2) and the failover/DR drill (M.4) are NOT
+# here — this lane is the synchronous warm-standby topology only.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  template:
+    metadata:
+      labels:
+        # Distinguish the primary from the standby (both carry app=postgres);
+        # the standby's replication conn + pg_hba match on this role label's pod.
+        babelstone.io/pg-role: primary
+    spec:
+      containers:
+        - name: postgres
+          env:
+            # Replication-user password — separate from the app POSTGRES_PASSWORD
+            # so the streaming role has its own credential (HA-overlay secret).
+            - name: POSTGRES_REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-ha-secrets
+                  key: POSTGRES_REPLICATION_PASSWORD
+          # Append synchronous-replication runtime config. synchronous_commit=on
+          # + synchronous_standby_names naming the standby's application_name
+          # ('standby1') is the RPO≈0 guarantee: a COMMIT does not return until
+          # the standby has flushed the WAL. Losing the primary loses no
+          # acknowledged event (ADR-PC-005 §P1, §Decision RPO row).
+          args:
+            - -c
+            - wal_level=replica
+            - -c
+            - max_wal_senders=10
+            - -c
+            - max_replication_slots=10
+            - -c
+            - hot_standby=on
+            - -c
+            - synchronous_commit=on
+            - -c
+            - synchronous_standby_names=standby1
+            - -c
+            - hba_file=/etc/postgres-ha/pg_hba.conf
+          volumeMounts:
+            # The init fragment runs once on first-boot (empty PGDATA) via the
+            # postgres image's /docker-entrypoint-initdb.d hook: creates the
+            # replicator role + physical slot the standby attaches to.
+            - name: postgres-ha-init
+              mountPath: /docker-entrypoint-initdb.d
+            # pg_hba opened for the replicator role (referenced by hba_file above).
+            - name: postgres-ha-config
+              mountPath: /etc/postgres-ha
+      volumes:
+        - name: postgres-ha-init
+          configMap:
+            name: postgres-ha-init
+        - name: postgres-ha-config
+          configMap:
+            name: postgres-ha-config

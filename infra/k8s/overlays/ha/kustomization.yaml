@@ -1,0 +1,64 @@
+# HA / production-shaped overlay (P.7, babelstone-ixkp).
+#
+# Diverges from the SAME base/dev seam the dev overlay does, in the HA
+# direction: a 3-node Redpanda quorum and a Postgres primary + SYNCHRONOUS
+# off-site warm standby. This is the topology ADR-PC-005 §P1 mandates for the
+# source of truth (`events`, `outbox`, `saga_state`) — RPO ≈ 0, a committed
+# event durable on two nodes before acknowledgement.
+#
+# CI VALIDATES ONLY (kustomize build + kubeconform). No real cluster, no deploy
+# (that is Q.6), no DR drill / PITR (that is M.4), no sync-replication
+# append-latency benchmark (that is L.3 / the Q-AK load test named in
+# ADR-PC-005 §P1). This overlay is the wiring those lanes ride on.
+#
+# DESIGN DECISION — hand-rolled PG primary+standby, NOT an operator
+# (CloudNativePG / Zalando). Standing preference: fully-controlled native
+# primitives over frameworks that own their own tables/state. PostgreSQL
+# streaming replication is exactly the PG-native posture ADR-PC-005 chose
+# (candidate A); a fixed primary + one warm standby needs no CRD-driven failover
+# controller. Rationale recorded in the introducing PR body (ADR-PC-020 §D3).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: babelstone-dev
+
+resources:
+  - ../../base
+  # HA-only additions (the base ships none of these).
+  - redpanda-headless-svc.yaml
+  - postgres-standby-ha.yaml
+  - ha-secrets.example.yaml
+
+# Replicas: Redpanda 1 -> 3 (a real Raft quorum). Postgres stays at 1 here —
+# the warm standby is a SEPARATE StatefulSet (postgres-standby), not a second
+# replica of the primary, because a synchronous standby needs distinct
+# bootstrap (pg_basebackup) and runtime (standby.signal) config, not just a
+# scaled-up pod count. The other single-instance backing services are unchanged
+# from the base (HA for them is out of scope — see infra/k8s/README.md).
+replicas:
+  - name: redpanda
+    count: 3
+  - name: postgres
+    count: 1
+
+patches:
+  # Turn the base single-node Redpanda into a 3-node seed-discovered cluster.
+  - path: redpanda-ha.yaml
+  # Turn the base single Postgres into the synchronous-replication PRIMARY.
+  - path: postgres-primary-ha.yaml
+
+configMapGenerator:
+  # Primary first-boot replication setup (replicator role + physical slot),
+  # mounted into /docker-entrypoint-initdb.d on the primary.
+  - name: postgres-ha-init
+    files:
+      - 10-replication-setup.sh=files/10-replication-setup.sh
+  # Primary pg_hba.conf opening the replicator role for the standby.
+  - name: postgres-ha-config
+    files:
+      - pg_hba.conf=files/pg_hba.conf
+
+generatorOptions:
+  # Stable names so the volume references in postgres-primary-ha.yaml stay valid
+  # (no content-hash suffix) — same choice the base makes for its ConfigMaps.
+  disableNameSuffixHash: true
