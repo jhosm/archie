@@ -22,6 +22,12 @@
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
 
+    <!-- The IC-004 outbox→Redpanda relay (G.1): this host co-runs the polling relay in-process
+         (event-store-skeleton §5.1) so the §P4 publish-lag SLI (outbox_publish_lag_seconds) is
+         actually emitted on the meter AddMeter()'d in Program.cs. The relay drains the outbox the
+         engine write half fills; Confluent.Kafka stays confined to this assembly (never EventStore). -->
+    <ProjectReference Include="../Babelstone.OutboxPublisher/Babelstone.OutboxPublisher.csproj" />
+
     <!-- OpenTelemetry tracing on this host (ADR-IC-007 Layer 1, Epic K.1): the SDK hosting
          integration (AddOpenTelemetry/ConfigureResource/WithTracing) + the OTLP exporter to the
          Collector (P1). The ActivitySource + babelstone.* attribute keys come transitively via
