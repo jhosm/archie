@@ -49,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Dependency review (fail on high/critical advisories)
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
         with:
           # Block when a PR introduces a dependency with a HIGH or CRITICAL advisory — the
           # same bar as the grype SBOM scan's severity-cutoff (high covers high+critical) and
