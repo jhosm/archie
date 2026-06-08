@@ -117,6 +117,12 @@ builder.Services.AddSingleton<IEventSink>(serviceProvider =>
 // `projections` discriminator columns + the `projection_checkpoints` table they read/write.
 builder.Services.AddSingleton<IProjectionStorage>(_ => new PostgresProjectionStore(connectionString));
 builder.Services.AddSingleton<IProjectionCheckpointStore>(_ => new PostgresProjectionCheckpointStore(connectionString));
+// D.4 CQRS read model (ADR-IC-005): the denormalized query surface on the SAME PostgreSQL tier
+// (migration 0013 owns the read_model schema). Family-agnostic spine store (ADR-PC-021 §P2); the
+// family composes its read-model runner over it (TermDepositHostModule), folding the same
+// deposit-position state the live read path computes into the flat read-model row the I.2 Query
+// API serves.
+builder.Services.AddSingleton<IReadModelStore>(_ => new PostgresReadModelStore(connectionString));
 // The JSON dev codec + null PII protector; the Avro + Schema-Registry codec (E.4,
 // Babelstone.Engine.Avro) is the production wiring follow-up.
 builder.Services.AddSingleton<IEventSerializer, JsonEventSerializer>();

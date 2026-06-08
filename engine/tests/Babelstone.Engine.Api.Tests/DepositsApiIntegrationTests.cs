@@ -131,6 +131,81 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Read_model_materialises_and_serves_the_CQRS_query_surface()
+    {
+        // Constitute a deposit, then assert the D.4 CQRS read model (ADR-IC-005) materialises it
+        // asynchronously (the projection relay drains it) and the I.2 query endpoints serve it: the
+        // point lookup by id and the maturity-date range scan.
+        var maturityDate = new DateOnly(2027, 1, 15);
+        var constituteResponse = await _client.PostAsJsonAsync("/v1/deposits", new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "dpz_pt_12m_juros_venc",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001"), SnakeCase);
+        Assert.Equal(HttpStatusCode.Created, constituteResponse.StatusCode);
+        var depositId = (await constituteResponse.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
+
+        // The read model is async (v1 default), so poll the point-lookup endpoint until the relay
+        // drains the constitution event into read_model.deposits (or time out).
+        var readModel = await EventuallyAsync(async () =>
+        {
+            var response = await _client.GetAsync($"/v1/deposits/{depositId}/read-model");
+            return response.StatusCode == HttpStatusCode.OK
+                ? await response.Content.ReadFromJsonAsync<DepositReadModelResponse>(SnakeCase)
+                : null;
+        });
+
+        Assert.NotNull(readModel);
+        Assert.Equal(depositId, readModel.DepositId);
+        Assert.Equal("engine", readModel.Sor);                 // ADR-PC-018 §6.2 routing truth
+        Assert.Equal(1_000_000, readModel.PrincipalCents);
+        Assert.Equal(300, readModel.TanBasisPoints);
+        Assert.Equal(maturityDate, readModel.MaturityDate);
+        Assert.Equal("Active", readModel.Lifecycle);
+        Assert.Equal(0, readModel.LastSequence);               // the constitution event's sequence
+
+        // The maturity range scan returns the deposit when its maturity falls in the window.
+        var maturities = await _client.GetFromJsonAsync<DepositMaturitiesResponse>(
+            "/v1/deposits/maturities?from=2027-01-01&to=2027-02-01", SnakeCase);
+        Assert.NotNull(maturities);
+        Assert.Contains(maturities.Deposits, d => d.DepositId == depositId);
+
+        // A window that excludes the maturity date returns no rows.
+        var empty = await _client.GetFromJsonAsync<DepositMaturitiesResponse>(
+            "/v1/deposits/maturities?from=2030-01-01&to=2030-02-01", SnakeCase);
+        Assert.DoesNotContain(empty!.Deposits, d => d.DepositId == depositId);
+    }
+
+    [Fact]
+    public async Task Reading_an_unknown_read_model_is_404()
+    {
+        var response = await _client.GetAsync($"/v1/deposits/{Guid.NewGuid()}/read-model");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    private static async Task<T?> EventuallyAsync<T>(Func<Task<T?>> probe) where T : class
+    {
+        // The async projection relay polls every ~1s; give it generous headroom under a loaded CI box.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            var result = await probe();
+            if (result is not null)
+            {
+                return result;
+            }
+
+            await Task.Delay(250);
+        }
+
+        return null;
+    }
+
+    [Fact]
     public async Task Constituting_an_unpriced_product_is_a_422_domain_rejection()
     {
         // The deployed sheet prices only dpz_pt_12m_juros_venc; an unpriced product is a domain

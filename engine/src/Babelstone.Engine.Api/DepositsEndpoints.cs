@@ -3,6 +3,7 @@ using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
 using Babelstone.Families.TermDeposit.Application;
 using Babelstone.Telemetry;
+using Microsoft.AspNetCore.Mvc;
 
 namespace Babelstone.Engine.Api;
 
@@ -21,6 +22,15 @@ public static class DepositsEndpoints
         app.MapGet("/v1/deposits/{id:guid}", GetPositionAsync);
         app.MapPost("/v1/deposits/{id:guid}/maturity", MatureAsync);
         app.MapPost("/v1/deposits/{id:guid}/interest", PayInterestAsync);
+
+        // D.4 CQRS read-model query surface (ADR-IC-005), the I.2 Query API seam. Distinct from the
+        // write-side GET above (which folds the live event log): these serve the denormalized
+        // read_model.deposits table — a point lookup by id and a maturity-date range scan. Read-only,
+        // no command path here (ADR-PC-018 §6 — the engine never staples a command onto its read
+        // surface). The literal "/maturities" route is registered before the {id:guid} point lookup
+        // shares the prefix, but the :guid constraint already excludes the word, so order is moot.
+        app.MapGet("/v1/deposits/maturities", ListMaturitiesAsync);
+        app.MapGet("/v1/deposits/{id:guid}/read-model", GetReadModelAsync);
     }
 
     private static async Task<IResult> ConstituteAsync(
@@ -81,6 +91,34 @@ public static class DepositsEndpoints
         return hydrated.Version < 0
             ? Results.NotFound()
             : Results.Ok(DepositPositionResponse.From(hydrated.State));
+    }
+
+    private static async Task<IResult> GetReadModelAsync(
+        Guid id, IReadModelStore readModel, CancellationToken ct)
+    {
+        // The CQRS point lookup (ADR-IC-005 deposit_detail): serve the denormalized read-model row,
+        // not the live fold. 404 when the projector has not yet materialised this deposit — the
+        // caller falls back to the write-side GET for read-your-writes (ADR-IC-005 staleness note).
+        var row = await readModel.GetAsync(id, ct);
+        return row is null
+            ? Results.NotFound()
+            : Results.Ok(DepositReadModelResponse.From(row));
+    }
+
+    private static async Task<IResult> ListMaturitiesAsync(
+        [FromQuery] DateOnly from, [FromQuery] DateOnly to, IReadModelStore readModel, CancellationToken ct)
+    {
+        // The CQRS range scan (ADR-IC-005 upcoming_maturities): deposits maturing in the half-open
+        // [from, to) window, ordered by maturity date. A from >= to window is an empty, well-formed
+        // result, not an error.
+        if (to <= from)
+        {
+            return Results.Ok(new DepositMaturitiesResponse([]));
+        }
+
+        var rows = await readModel.ListByMaturityAsync(from, to, ct);
+        var deposits = rows.Select(DepositReadModelResponse.From).ToList();
+        return Results.Ok(new DepositMaturitiesResponse(deposits));
     }
 
     private static async Task<IResult> MatureAsync(

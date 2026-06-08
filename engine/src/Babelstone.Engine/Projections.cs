@@ -107,6 +107,17 @@ public sealed class ProjectionRegistry
 public sealed record ProjectionInfra(IProjectionStorage Storage, IEventSerializer EventSerializer);
 
 /// <summary>
+/// The shared infrastructure a family needs to build its CQRS read-model runner (ADR-IC-005),
+/// supplied by the host. The sibling of <see cref="ProjectionInfra"/> for the denormalized read
+/// side: the host owns the <see cref="IReadModelStore"/> (the <c>read_model.deposits</c> table) and
+/// the codec; the family supplies the fold + the state→<see cref="ReadModelRow"/> mapper. Kept
+/// separate from <see cref="ProjectionInfra"/> because the bitemporal <c>projections</c> store and
+/// the flat read model are distinct surfaces with distinct rebuild disciplines (supersede-all vs
+/// truncate-and-refold).
+/// </summary>
+public sealed record ReadModelInfra(IReadModelStore Store, IEventSerializer EventSerializer);
+
+/// <summary>
 /// A family's projection declarations (two-modes §5.4: "declared in the family schema, not
 /// hardcoded in the engine"). Discovered alongside <see cref="IFamilyModule"/>; optional — a
 /// family with no projections simply does not export one. Kept separate from

@@ -1,3 +1,4 @@
+using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
 
 namespace Babelstone.Engine.Api;
@@ -75,3 +76,46 @@ public sealed record DepositPositionResponse(
         CouponsPaid: p.CouponsPaid,
         Lifecycle: p.Lifecycle.ToString());
 }
+
+/// <summary>
+/// One denormalized CQRS read-model row (D.4, ADR-IC-005) — the query surface the I.2 Query API
+/// serves, distinct from the write-side <see cref="DepositPositionResponse"/>. Carries the
+/// ADR-PC-018 §6.2 routing-truth <c>sor</c> and the ADR-IC-005 §P3 freshness pair (<c>last_sequence</c>
+/// for read-after-write, <c>last_updated</c> for staleness display). Money as integer cents.
+/// </summary>
+public sealed record DepositReadModelResponse(
+    Guid DepositId,
+    string Sor,
+    string ProductId,
+    long PrincipalCents,
+    int TanBasisPoints,
+    string RateSheetVersionId,
+    int TermDays,
+    DateOnly StartDate,
+    DateOnly MaturityDate,
+    string InterestVariant,
+    string Lifecycle,
+    long TotalPayoutCents,
+    long LastSequence,
+    DateTimeOffset LastUpdated)
+{
+    public static DepositReadModelResponse From(ReadModelRow r) => new(
+        DepositId: r.StreamId,
+        Sor: r.Sor,
+        ProductId: r.ProductId,
+        PrincipalCents: r.PrincipalCents,
+        TanBasisPoints: r.TanBasisPoints,
+        RateSheetVersionId: r.RateSheetVersionId,
+        TermDays: r.TermDays,
+        StartDate: r.StartDate,
+        MaturityDate: r.MaturityDate,
+        InterestVariant: r.InterestVariant,
+        Lifecycle: r.Lifecycle,
+        TotalPayoutCents: r.TotalPayoutCents,
+        LastSequence: r.LastSequence,
+        LastUpdated: r.LastUpdated);
+}
+
+/// <summary>The maturities range-query result (ADR-IC-005 <c>upcoming_maturities</c>): the deposits
+/// maturing in the requested <c>[from, to)</c> window, ordered by maturity date.</summary>
+public sealed record DepositMaturitiesResponse(IReadOnlyList<DepositReadModelResponse> Deposits);

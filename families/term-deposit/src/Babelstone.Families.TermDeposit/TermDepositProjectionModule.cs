@@ -1,4 +1,5 @@
 using Babelstone.Engine;
+using Babelstone.EventStore;
 
 namespace Babelstone.Families.TermDeposit;
 
@@ -43,6 +44,9 @@ public sealed class TermDepositProjectionModule : IProjectionModule
     /// <summary>The family-prefixed discriminator for the withholding-ledger projection (F.6).</summary>
     public const string WithholdingLedgerKind = "term_deposit.withholding_ledger";
 
+    /// <summary>The family-prefixed discriminator for the denormalized CQRS read model (D.4, ADR-IC-005).</summary>
+    public const string DepositReadModelKind = "term_deposit.deposit_read_model";
+
     public string FamilyName => "term_deposit";
 
     public IReadOnlyList<IProjectionRunner> CreateRunners(ProjectionInfra infra)
@@ -85,6 +89,64 @@ public sealed class TermDepositProjectionModule : IProjectionModule
 
         return [depositPosition, accrualSchedule, maturityCalendar, withholdingLedger];
     }
+
+    /// <summary>
+    /// Builds the family's CQRS read-model runner (D.4, ADR-IC-005): folds the SAME deposit-position
+    /// state the live read path computes and maps it to the denormalized <see cref="ReadModelRow"/>
+    /// written to <c>read_model.deposits</c>. Declared separately from <see cref="CreateRunners"/>
+    /// because the flat read model is a distinct surface from the bitemporal <c>projections</c> store
+    /// — distinct store, distinct rebuild discipline (truncate-and-refold, not supersede-all). Async
+    /// (v1 default), so it rides the existing drainer/relay unchanged.
+    /// </summary>
+    public IProjectionRunner CreateReadModelRunner(ReadModelInfra infra) =>
+        new ReadModelRunner<DepositPosition>(
+            kind: DepositReadModelKind,
+            family: FamilyName,
+            mode: ProjectionMode.Async,
+            handlers: TermDepositFamilyModule.Registry(),
+            serializer: infra.EventSerializer,
+            seed: () => DepositPosition.Empty,
+            map: MapToReadModel,
+            store: infra.Store);
+
+    /// <summary>
+    /// The pure state→row mapper (no clock, no I/O): projects the folded <see cref="DepositPosition"/>
+    /// into the denormalized read-model row. <c>sor = "engine"</c> for every engine-materialised
+    /// deposit (ADR-PC-018 §6.2 — set at constitution, never changed). <see cref="ReadModelRow.LastUpdated"/>
+    /// is the producing event's transaction_time (event-derived, never the wall clock), so a rebuild
+    /// is byte-identical (ADR-PC-010 §P5). The <see cref="ReadModelRow.Detail"/> body is the full
+    /// structural state, serialized with the same deterministic JSON codec the bitemporal projection
+    /// uses — no PII (ADR-PC-004 §P2). All money is integer cents (ADR-PC-010 §P1).
+    /// </summary>
+    public static ReadModelRow MapToReadModel(ReadModelFold<DepositPosition> fold)
+    {
+        var p = fold.State;
+        return new ReadModelRow(
+            StreamId: fold.StreamId,
+            Sor: "engine",
+            ProductId: ProductIdOf(p),
+            PrincipalCents: p.Principal.Cents,
+            TanBasisPoints: p.TanBasisPoints,
+            RateSheetVersionId: p.RateSheetVersionId,
+            TermDays: p.TermDays,
+            StartDate: p.StartDate,
+            MaturityDate: p.MaturityDate,
+            InterestVariant: p.InterestVariant,
+            Lifecycle: p.Lifecycle.ToString(),
+            TotalPayoutCents: p.TotalPayout.Cents,
+            Detail: ReadModelDetailSerializer.Serialize(p),
+            LastSequence: fold.SourceSequence,
+            LastUpdated: fold.TransactionTime);
+    }
+
+    // The deposit-position state does not carry the product id as a distinct field (the product is
+    // resolved into the TAN + rate-sheet version at constitution), so the read-model's product_id
+    // dimension is the rate-sheet version's product context. v1 surfaces the rate_sheet_version_id
+    // as the product key the read API filters on; a dedicated product_id field on the position is a
+    // separable follow-up if a query needs the catalogue product code directly.
+    private static string ProductIdOf(DepositPosition p) => p.RateSheetVersionId;
+
+    private static readonly Babelstone.Engine.JsonStateSerializer<DepositPosition> ReadModelDetailSerializer = new();
 
     /// <summary>
     /// The accrual-schedule fold registry: only the accrual-bearing event types (the runner skips
