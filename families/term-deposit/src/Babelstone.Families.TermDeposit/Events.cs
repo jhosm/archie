@@ -88,8 +88,13 @@ public sealed record DepositRenewed(
     DateOnly RenewalDate,
     DateOnly NewMaturityDate) : DomainEvent;
 
-/// <summary>The deposit is broken before maturity: <c>NetSettlementAmount = PrincipalReturned − PenaltyAmount</c>,
-/// with <paramref name="PenaltyAmount"/> non-negative.</summary>
+/// <summary>The deposit is broken before maturity. The depositor's payout is the principal still on
+/// deposit PLUS the net interest accrued over the elapsed period, less the penalty haircut:
+/// <c>NetSettlementAmount = PrincipalReturned + NetAccruedInterest − PenaltyAmount</c> (the F.4 decider
+/// settles the accrued NET interest back too — only the penalty is forfeited, not the accrued interest).
+/// <paramref name="PenaltyAmount"/> is the EFFECTIVE penalty actually charged and is non-negative. The
+/// gross accrued interest, withholding, and net payout are emitted as the paired
+/// <see cref="InterestAccrued"/>/<see cref="WithholdingApplied"/> flows (02 §2.5).</summary>
 public sealed record DepositTerminatedEarly(
     Guid DepositId,
     Money PrincipalReturned,
