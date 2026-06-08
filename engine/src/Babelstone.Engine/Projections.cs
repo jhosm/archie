@@ -109,13 +109,16 @@ public sealed record ProjectionInfra(IProjectionStorage Storage, IEventSerialize
 /// <summary>
 /// The shared infrastructure a family needs to build its CQRS read-model runner (ADR-IC-005),
 /// supplied by the host. The sibling of <see cref="ProjectionInfra"/> for the denormalized read
-/// side: the host owns the <see cref="IReadModelStore"/> (the <c>read_model.deposits</c> table) and
-/// the codec; the family supplies the fold + the state→<see cref="ReadModelRow"/> mapper. Kept
-/// separate from <see cref="ProjectionInfra"/> because the bitemporal <c>projections</c> store and
-/// the flat read model are distinct surfaces with distinct rebuild disciplines (supersede-all vs
+/// side: the host owns the family-typed <see cref="IReadModelStore{TRow}"/> (the family's own
+/// read-model table) and the codec; the family supplies the fold + the state→row mapper. Generic
+/// over the family's row type <typeparamref name="TRow"/> so the engine spine never names a
+/// deposit's read-model shape (ADR-PC-021 §D2/§P2 — the family closes the type). Kept separate from
+/// <see cref="ProjectionInfra"/> because the bitemporal <c>projections</c> store and the flat read
+/// model are distinct surfaces with distinct rebuild disciplines (supersede-all vs
 /// truncate-and-refold).
 /// </summary>
-public sealed record ReadModelInfra(IReadModelStore Store, IEventSerializer EventSerializer);
+public sealed record ReadModelInfra<TRow>(IReadModelStore<TRow> Store, IEventSerializer EventSerializer)
+    where TRow : IReadModelRow;
 
 /// <summary>
 /// A family's projection declarations (two-modes §5.4: "declared in the family schema, not

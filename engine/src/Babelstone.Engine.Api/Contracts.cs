@@ -88,7 +88,7 @@ public sealed record DepositPositionResponse(
 /// IMPLEMENTED (bd babelstone-v794, earlier deferred as the bd babelstone-yfr2 note). It is
 /// PROSPECTIVE-ONLY: deposits constituted before v794 carry the "" default (the code is not
 /// back-fillable from the log — the rate-sheet version is one-to-many to products — so historical
-/// rows surface the empty code). See <see cref="ReadModelRow"/>.
+/// rows surface the empty code). See <see cref="DepositReadModelRow"/>.
 /// </summary>
 public sealed record DepositReadModelResponse(
     Guid DepositId,
@@ -106,7 +106,7 @@ public sealed record DepositReadModelResponse(
     long LastSequence,
     DateTimeOffset LastUpdated)
 {
-    public static DepositReadModelResponse From(ReadModelRow r) => new(
+    public static DepositReadModelResponse From(DepositReadModelRow r) => new(
         DepositId: r.StreamId,
         Sor: r.Sor,
         PrincipalCents: r.PrincipalCents,

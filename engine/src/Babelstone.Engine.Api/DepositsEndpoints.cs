@@ -94,7 +94,7 @@ public static class DepositsEndpoints
     }
 
     private static async Task<IResult> GetReadModelAsync(
-        Guid id, IReadModelStore readModel, CancellationToken ct)
+        Guid id, IDepositReadModelStore readModel, CancellationToken ct)
     {
         // The CQRS point lookup (ADR-IC-005 deposit_detail): serve the denormalized read-model row,
         // not the live fold. 404 when the projector has not yet materialised this deposit — the
@@ -106,7 +106,7 @@ public static class DepositsEndpoints
     }
 
     private static async Task<IResult> ListMaturitiesAsync(
-        [FromQuery] DateOnly from, [FromQuery] DateOnly to, IReadModelStore readModel, CancellationToken ct)
+        [FromQuery] DateOnly from, [FromQuery] DateOnly to, IDepositReadModelStore readModel, CancellationToken ct)
     {
         // The CQRS range scan (ADR-IC-005 upcoming_maturities): deposits maturing in the half-open
         // [from, to) window, ordered by maturity date. A from >= to window is an empty, well-formed

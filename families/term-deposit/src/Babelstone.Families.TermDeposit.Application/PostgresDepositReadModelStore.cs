@@ -1,15 +1,20 @@
 using Npgsql;
 
-namespace Babelstone.EventStore;
+namespace Babelstone.Families.TermDeposit.Application;
 
 /// <summary>
-/// PostgreSQL-backed <see cref="IReadModelStore"/>. Hand-rolled, Npgsql-only, all
-/// <c>read_model.deposits</c> SQL private to this type — the storage-boundary discipline of
-/// <see cref="PostgresProjectionStore"/> applied to the denormalized CQRS read model (ADR-IC-005).
+/// PostgreSQL-backed <see cref="IDepositReadModelStore"/>: the term-deposit family's denormalized
+/// CQRS read model (ADR-IC-005). Hand-rolled, Npgsql-only, all <c>read_model.deposits</c> SQL
+/// private to this type — the storage-boundary discipline of <c>PostgresProjectionStore</c> applied
+/// to the read side. Lives in the FAMILY layer (the impure <c>.Application</c> project that already
+/// reaches the DB seam), NOT the engine spine: the deposit-shaped table + the maturity range scan
+/// name one family's domain shape, so they are family-owned (ADR-PC-021 §D2/§P2). The generic
+/// UPSERT/point-lookup/truncate primitives satisfy <see cref="Babelstone.EventStore.IReadModelStore{TRow}"/>;
+/// <see cref="ListByMaturityAsync"/> is the family-specific read.
 /// </summary>
-public sealed class PostgresReadModelStore(string connectionString) : IReadModelStore
+public sealed class PostgresDepositReadModelStore(string connectionString) : IDepositReadModelStore
 {
-    public async Task UpsertAsync(ReadModelRow row, CancellationToken ct = default)
+    public async Task UpsertAsync(DepositReadModelRow row, CancellationToken ct = default)
     {
         // ADR-IC-005 §P2 — UPSERT with the monotonicity guard. The conditional UPDATE's WHERE only
         // overwrites when the incoming event is newer (last_sequence strictly greater), so a
@@ -49,7 +54,7 @@ public sealed class PostgresReadModelStore(string connectionString) : IReadModel
         await command.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task<ReadModelRow?> GetAsync(Guid streamId, CancellationToken ct = default)
+    public async Task<DepositReadModelRow?> GetAsync(Guid streamId, CancellationToken ct = default)
     {
         const string sql = """
             SELECT stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
@@ -68,7 +73,7 @@ public sealed class PostgresReadModelStore(string connectionString) : IReadModel
         return await reader.ReadAsync(ct) ? Map(reader) : null;
     }
 
-    public async Task<IReadOnlyList<ReadModelRow>> ListByMaturityAsync(
+    public async Task<IReadOnlyList<DepositReadModelRow>> ListByMaturityAsync(
         DateOnly fromInclusive, DateOnly toExclusive, CancellationToken ct = default)
     {
         // Range scan over the deposits_maturity_date_idx B-tree (ADR-IC-005 upcoming_maturities).
@@ -89,7 +94,7 @@ public sealed class PostgresReadModelStore(string connectionString) : IReadModel
         command.Parameters.AddWithValue("from_inclusive", fromInclusive);
         command.Parameters.AddWithValue("to_exclusive", toExclusive);
 
-        var rows = new List<ReadModelRow>();
+        var rows = new List<DepositReadModelRow>();
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
@@ -114,7 +119,7 @@ public sealed class PostgresReadModelStore(string connectionString) : IReadModel
         await command.ExecuteNonQueryAsync(ct);
     }
 
-    private static void BindRow(NpgsqlCommand command, ReadModelRow row)
+    private static void BindRow(NpgsqlCommand command, DepositReadModelRow row)
     {
         command.Parameters.AddWithValue("stream_id", row.StreamId);
         command.Parameters.AddWithValue("sor", row.Sor);
@@ -133,7 +138,7 @@ public sealed class PostgresReadModelStore(string connectionString) : IReadModel
         command.Parameters.AddWithValue("last_updated", row.LastUpdated);
     }
 
-    private static ReadModelRow Map(NpgsqlDataReader reader) =>
+    private static DepositReadModelRow Map(NpgsqlDataReader reader) =>
         new(
             StreamId: reader.GetGuid(0),
             Sor: reader.GetString(1),

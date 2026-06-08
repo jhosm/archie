@@ -1,61 +1,48 @@
 namespace Babelstone.EventStore;
 
 /// <summary>
-/// One denormalized CQRS read-model row for a deposit (ADR-IC-005): the flat, query-optimized
-/// read side that backs the sub-50ms client-facing query surface (the I.2 Query API), on the same
-/// PostgreSQL tier as the event store (ADR-IC-005 §S1). This is DISTINCT from
-/// <see cref="ProjectionRecord"/>: that is the bitemporal belief store (ADR-PC-002, the typed
-/// AsOf/CurrentBelief/HistoryOf query); this is the flat read model whose columns are the query
-/// dimensions ADR-IC-005 names (point lookup by id, range scan by <see cref="MaturityDate"/>).
+/// The generic, family-agnostic contract a denormalized CQRS read-model row (ADR-IC-005) exposes
+/// to the spine. The spine knows ONLY these three columns; a family supplies the concrete row type
+/// carrying its own typed query dimensions, the same split as <see cref="ProjectionRecord"/> keeps
+/// the bitemporal store generic (generic axes + opaque <see cref="ProjectionRecord.StructuralPayload"/>,
+/// with the family's typed shape living in the family layer). This is what keeps
+/// <c>Babelstone.EventStore</c>/<c>Babelstone.Engine</c> under ENGINE_FAMILY_AGNOSTIC
+/// (ADR-PC-021 §D2/§P2): the spine never names a deposit's body shape or a deposit-specific query
+/// column — adding a non-deposit family is zero generic-engine diff.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The row carries typed query columns (the denormalized dimensions the read API filters and
-/// projects on) plus an opaque <see cref="Detail"/> payload — the serialized structural read body.
-/// TWO product keys are surfaced under their honest names: <see cref="RateSheetVersionId"/> is the
-/// PRICE/version key (one-to-many to products), and <see cref="ProductCode"/> is the catalogue
-/// STRUCTURAL product code (e.g. <c>dpz_pt_12m_juros_venc</c>) — the queryable "which product is
-/// this" dimension. Carrying the catalogue code onto <c>DepositConstituted</c>/the position is NOW
-/// IMPLEMENTED (bd babelstone-v794, earlier deferred as the bd babelstone-yfr2 note). It is
-/// PROSPECTIVE-ONLY: deposits constituted before v794 never carried it (the Avro field decodes to
-/// the "" default) and the code is NOT back-fillable from the log — it was discarded at
-/// constitution and the rate-sheet version is one-to-many to products — so historical rows carry
-/// the empty code.
-/// Keeping the body byte-oriented is what lets the read-model STORE stay family-agnostic
-/// (ADR-PC-021 §P2): the spine persists the typed columns + opaque bytes and never names a
-/// deposit's body shape; the family owns the <see cref="Detail"/> serialization, the same split as
-/// <see cref="ProjectionRecord.StructuralPayload"/> over <see cref="IProjectionStorage"/>.
+/// <see cref="StreamId"/> is the row key (= the aggregate/stream id). <see cref="LastSequence"/> is
+/// the ADR-IC-005 §P2 monotonicity guard the spine's UPSERT and the runner's skip both read — this
+/// engine's event store has no Redpanda offset (events drain per stream, no cluster-wide order), so
+/// the §P2 <c>last_event_offset</c> is realised as the per-stream <c>sequence_number</c> of the
+/// producing event. <see cref="Detail"/> is the serialized structural read body, carried as opaque
+/// bytes so the spine store and the generic <c>Babelstone.Engine</c> runner stay family-blind
+/// (the family owns the serialization, the same boundary as
+/// <see cref="ProjectionRecord.StructuralPayload"/> over <see cref="IProjectionStorage"/>); the
+/// runner re-hydrates it to continue an accumulating fold across events.
 /// </para>
 /// <para>
-/// <see cref="LastSequence"/> is the ADR-IC-005 §P2 monotonicity guard. This engine's event store
-/// has no Redpanda offset (events drain per stream, no cluster-wide order), so the §P2
-/// <c>last_event_offset</c> is realised as the per-stream <c>sequence_number</c> of the producing
-/// event — a re-delivered or out-of-order event whose sequence is at or below the stored row's is
-/// dropped by the UPSERT guard, making the at-least-once drainer safe.
-/// <see cref="LastUpdated"/> (ADR-IC-005 §P3) is RUNTIME-SUPPLIED from the producing event's
-/// transaction_time, never the SQL clock, so a cold rebuild (TRUNCATE + re-fold) reproduces the
-/// row byte-for-byte (ADR-PC-010 §P5).
-/// </para>
-/// <para>
-/// <see cref="Sor"/> is the ADR-PC-018 §6.2 routing-truth column: <c>engine</c> for every
-/// engine-materialised deposit, <c>legacy</c> for an instance owned by the legacy core. The
-/// channel/gateway tier READS it; the engine never embeds routing logic. No PII lives in this row
-/// (ADR-PC-004 §P2) — structural deposit facts only.
+/// No PII lives on a read-model row (ADR-PC-004 §P2) — structural facts only. PII, when it lands,
+/// rides a separate ciphertext envelope, never the durable read surface.
 /// </para>
 /// </remarks>
-public sealed record ReadModelRow(
-    Guid StreamId,
-    string Sor,
-    long PrincipalCents,
-    int TanBasisPoints,
-    string RateSheetVersionId,
-    string ProductCode,
-    int TermDays,
-    DateOnly StartDate,
-    DateOnly MaturityDate,
-    string InterestVariant,
-    string Lifecycle,
-    long TotalPayoutCents,
-    ReadOnlyMemory<byte> Detail,
-    long LastSequence,
-    DateTimeOffset LastUpdated);
+public interface IReadModelRow
+{
+    /// <summary>The row key — the aggregate/stream id this denormalized row materialises.</summary>
+    Guid StreamId { get; }
+
+    /// <summary>
+    /// The ADR-IC-005 §P2 monotonicity guard: the per-stream <c>sequence_number</c> of the event
+    /// that produced this row's state. The spine UPSERT overwrites only on a strictly greater value,
+    /// so an at-least-once re-delivery is a no-op.
+    /// </summary>
+    long LastSequence { get; }
+
+    /// <summary>
+    /// The opaque serialized structural read body. The spine and the generic read-model runner treat
+    /// it as bytes; the family owns its shape and codec. The runner re-hydrates it to continue an
+    /// accumulating fold from where the last event left off.
+    /// </summary>
+    ReadOnlyMemory<byte> Detail { get; }
+}

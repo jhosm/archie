@@ -71,7 +71,10 @@ CREATE TABLE read_model.deposits (
     -- v794 onward carry a populated `product_code`. (Earlier this column was deliberately ABSENT to
     -- avoid a `product_id` mislabelled as the version id — bd babelstone-yfr2 deferred note; v794
     -- carries the real code end-to-end and adds the column under its true name.) Structural, NOT
-    -- PII (ADR-PC-004 §P2). NOT NULL DEFAULT '' so it is additive over migration 0013's prior rows.
+    -- PII (ADR-PC-004 §P2). `product_code` is just a column on this (new) table; the DEFAULT '' is
+    -- the resting value for the prospective-only semantics above (and mirrors the additive Avro
+    -- field's "" default, ADR-IC-002 §P3), not a back-fill of any pre-existing rows — 0013 is a
+    -- net-new migration, so there are no prior rows to be additive over.
     principal_cents       BIGINT       NOT NULL,
     tan_basis_points      INTEGER      NOT NULL,
     rate_sheet_version_id TEXT         NOT NULL,

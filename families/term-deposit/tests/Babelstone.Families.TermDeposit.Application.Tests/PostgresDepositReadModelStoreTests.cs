@@ -1,21 +1,26 @@
+using Babelstone.Families.TermDeposit;
+using Babelstone.Families.TermDeposit.Application;
 using Npgsql;
 using Xunit;
 
-namespace Babelstone.EventStore.Tests;
+namespace Babelstone.Families.TermDeposit.Application.Tests;
 
 /// <summary>
-/// Integration tests for <see cref="PostgresReadModelStore"/> against a real PostgreSQL
-/// (Testcontainers). Exercises the ADR-IC-005 CQRS read-model contract after migration 0013: the
-/// UPSERT-with-monotonicity-guard write (§P2), the point lookup and maturity range scan, the
-/// freshness pair (§P3), and the truncate-and-rebuild path (§P5).
+/// Integration tests for <see cref="PostgresDepositReadModelStore"/> against a real PostgreSQL
+/// (Testcontainers). The store is FAMILY-OWNED (ADR-PC-021 §D2/§P2 — the deposit-shaped table +
+/// maturity range scan name this family's domain shape, not the engine spine's), so its integration
+/// test lives in the family's Application tests, alongside the decider it composes with. Exercises
+/// the ADR-IC-005 CQRS read-model contract after migration 0013: the UPSERT-with-monotonicity-guard
+/// write (§P2), the point lookup and maturity range scan, the freshness pair (§P3), and the
+/// truncate-and-rebuild path (§P5).
 /// </summary>
 [Trait("Category", "Integration")]
-public sealed class PostgresReadModelStoreTests(PostgresEventStoreFixture fixture)
-    : IClassFixture<PostgresEventStoreFixture>
+public sealed class PostgresDepositReadModelStoreTests(ConstitutionFixture fixture)
+    : IClassFixture<ConstitutionFixture>
 {
-    private readonly PostgresReadModelStore _store = new(fixture.ConnectionString);
+    private readonly PostgresDepositReadModelStore _store = new(fixture.ConnectionString);
 
-    private static ReadModelRow Sample(
+    private static DepositReadModelRow Sample(
         Guid streamId,
         long lastSequence,
         DateOnly maturityDate,

@@ -183,8 +183,8 @@ public sealed class DepositReadModelTests
 
     // --- helpers ---
 
-    private static IProjectionRunner ReadModelRunner(IReadModelStore store) =>
-        new TermDepositProjectionModule().CreateReadModelRunner(new ReadModelInfra(store, new JsonEventSerializer()));
+    private static IProjectionRunner ReadModelRunner(IReadModelStore<DepositReadModelRow> store) =>
+        new TermDepositProjectionModule().CreateReadModelRunner(new ReadModelInfra<DepositReadModelRow>(store, new JsonEventSerializer()));
 
     private static DepositPosition FoldedPosition(InMemoryReadModelStore store, Guid streamId)
     {
@@ -213,15 +213,16 @@ public sealed class DepositReadModelTests
         PayloadSchemaId: 0);
 
     /// <summary>
-    /// A minimal in-memory <see cref="IReadModelStore"/> for the family-side runner tests — enough to
-    /// exercise the UPSERT monotonicity guard, point lookup, and truncate. The real Postgres store is
-    /// integration-tested in Babelstone.EventStore.Tests.
+    /// A minimal in-memory <see cref="IReadModelStore{TRow}"/> over the family's
+    /// <see cref="DepositReadModelRow"/> for the family-side runner tests — enough to exercise the
+    /// UPSERT monotonicity guard, point lookup, and truncate. The real Postgres store
+    /// (<c>PostgresDepositReadModelStore</c>) is integration-tested in the family's Application tests.
     /// </summary>
-    private sealed class InMemoryReadModelStore : IReadModelStore
+    private sealed class InMemoryReadModelStore : IReadModelStore<DepositReadModelRow>
     {
-        private readonly Dictionary<Guid, ReadModelRow> _rows = [];
+        private readonly Dictionary<Guid, DepositReadModelRow> _rows = [];
 
-        public Task UpsertAsync(ReadModelRow row, CancellationToken ct = default)
+        public Task UpsertAsync(DepositReadModelRow row, CancellationToken ct = default)
         {
             // ADR-IC-005 §P2: overwrite only on a strictly higher sequence.
             if (!_rows.TryGetValue(row.StreamId, out var existing) || existing.LastSequence < row.LastSequence)
@@ -232,16 +233,8 @@ public sealed class DepositReadModelTests
             return Task.CompletedTask;
         }
 
-        public Task<ReadModelRow?> GetAsync(Guid streamId, CancellationToken ct = default) =>
+        public Task<DepositReadModelRow?> GetAsync(Guid streamId, CancellationToken ct = default) =>
             Task.FromResult(_rows.TryGetValue(streamId, out var row) ? row : null);
-
-        public Task<IReadOnlyList<ReadModelRow>> ListByMaturityAsync(
-            DateOnly fromInclusive, DateOnly toExclusive, CancellationToken ct = default) =>
-            Task.FromResult<IReadOnlyList<ReadModelRow>>(
-                _rows.Values
-                    .Where(r => r.MaturityDate >= fromInclusive && r.MaturityDate < toExclusive)
-                    .OrderBy(r => r.MaturityDate).ThenBy(r => r.StreamId)
-                    .ToList());
 
         public Task TruncateAsync(CancellationToken ct = default)
         {

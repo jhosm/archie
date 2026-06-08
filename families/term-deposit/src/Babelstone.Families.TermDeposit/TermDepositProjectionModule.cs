@@ -92,14 +92,16 @@ public sealed class TermDepositProjectionModule : IProjectionModule
 
     /// <summary>
     /// Builds the family's CQRS read-model runner (D.4, ADR-IC-005): folds the SAME deposit-position
-    /// state the live read path computes and maps it to the denormalized <see cref="ReadModelRow"/>
-    /// written to <c>read_model.deposits</c>. Declared separately from <see cref="CreateRunners"/>
-    /// because the flat read model is a distinct surface from the bitemporal <c>projections</c> store
-    /// — distinct store, distinct rebuild discipline (truncate-and-refold, not supersede-all). Async
-    /// (v1 default), so it rides the existing drainer/relay unchanged.
+    /// state the live read path computes and maps it to the family-owned
+    /// <see cref="DepositReadModelRow"/> written to <c>read_model.deposits</c>. Declared separately
+    /// from <see cref="CreateRunners"/> because the flat read model is a distinct surface from the
+    /// bitemporal <c>projections</c> store — distinct store, distinct rebuild discipline
+    /// (truncate-and-refold, not supersede-all). Async (v1 default), so it rides the existing
+    /// drainer/relay unchanged. The runner is closed over BOTH the family's state type AND its row
+    /// type, so the engine spine never names a deposit (ADR-PC-021 §D2/§P2).
     /// </summary>
-    public IProjectionRunner CreateReadModelRunner(ReadModelInfra infra) =>
-        new ReadModelRunner<DepositPosition>(
+    public IProjectionRunner CreateReadModelRunner(ReadModelInfra<DepositReadModelRow> infra) =>
+        new ReadModelRunner<DepositPosition, DepositReadModelRow>(
             kind: DepositReadModelKind,
             family: FamilyName,
             mode: ProjectionMode.Async,
@@ -112,16 +114,17 @@ public sealed class TermDepositProjectionModule : IProjectionModule
     /// <summary>
     /// The pure state→row mapper (no clock, no I/O): projects the folded <see cref="DepositPosition"/>
     /// into the denormalized read-model row. <c>sor = "engine"</c> for every engine-materialised
-    /// deposit (ADR-PC-018 §6.2 — set at constitution, never changed). <see cref="ReadModelRow.LastUpdated"/>
-    /// is the producing event's transaction_time (event-derived, never the wall clock), so a rebuild
-    /// is byte-identical (ADR-PC-010 §P5). The <see cref="ReadModelRow.Detail"/> body is the full
-    /// structural state, serialized with the same deterministic JSON codec the bitemporal projection
-    /// uses — no PII (ADR-PC-004 §P2). All money is integer cents (ADR-PC-010 §P1).
+    /// deposit (ADR-PC-018 §6.2 — set at constitution, never changed).
+    /// <see cref="DepositReadModelRow.LastUpdated"/> is the producing event's transaction_time
+    /// (event-derived, never the wall clock), so a rebuild is byte-identical (ADR-PC-010 §P5). The
+    /// <see cref="DepositReadModelRow.Detail"/> body is the full structural state, serialized with the
+    /// same deterministic JSON codec the bitemporal projection uses — no PII (ADR-PC-004 §P2). All
+    /// money is integer cents (ADR-PC-010 §P1).
     /// </summary>
-    public static ReadModelRow MapToReadModel(ReadModelFold<DepositPosition> fold)
+    public static DepositReadModelRow MapToReadModel(ReadModelFold<DepositPosition> fold)
     {
         var p = fold.State;
-        return new ReadModelRow(
+        return new DepositReadModelRow(
             StreamId: fold.StreamId,
             Sor: "engine",
             PrincipalCents: p.Principal.Cents,

@@ -62,10 +62,11 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             // D.4 CQRS read model (ADR-IC-005): the denormalized read-model runner is its own kind
             // alongside the four bitemporal projections, sharing the same async drainer/relay. It
             // folds the same deposit-position state into read_model.deposits (the I.2 Query API
-            // surface). Composed here from the read-model store the host owns; the family supplies
-            // the fold + the state→row mapper (ReadModelInfra, ENGINE_FAMILY_AGNOSTIC-preserving).
-            var readModelInfra = new ReadModelInfra(
-                serviceProvider.GetRequiredService<IReadModelStore>(),
+            // surface). Composed here from the FAMILY-OWNED read-model store (the deposit-shaped
+            // table is the family's domain shape, not the spine's — ADR-PC-021 §D2/§P2); the family
+            // supplies the fold + the state→row mapper over the generic ReadModelInfra<TRow>.
+            var readModelInfra = new ReadModelInfra<DepositReadModelRow>(
+                serviceProvider.GetRequiredService<IDepositReadModelStore>(),
                 serviceProvider.GetRequiredService<IEventSerializer>());
             var readModelRunner = new TermDepositProjectionModule().CreateReadModelRunner(readModelInfra);
 
