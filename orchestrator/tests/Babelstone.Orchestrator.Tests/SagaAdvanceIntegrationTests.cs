@@ -48,8 +48,10 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         // The identity trio rides the emission (ADR-IC-003 §P7): correlation carried through.
         Assert.All(sink.Emitted, c => Assert.Equal(correlationId, c.CorrelationId));
 
-        // Both validations, approval, debit, activation, close.
+        // Both validations (balance first → AWAIT_LIMITS_VALIDATED → join), approval, debit,
+        // activation, close.
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.BalanceReserved)));
+        Assert.Equal(SagaState.AwaitLimitsValidated, await StateAsync(processId));
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsValidated)));
         Assert.Equal(SagaState.ValidationsComplete, await StateAsync(processId));
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionApproved)));
@@ -64,13 +66,42 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
             new[]
             {
                 ("STARTED", "PARALLEL_VALIDATION"),
-                ("PARALLEL_VALIDATION", "PARALLEL_VALIDATION"),
-                ("PARALLEL_VALIDATION", "VALIDATIONS_COMPLETE"),
+                ("PARALLEL_VALIDATION", "AWAIT_LIMITS_VALIDATED"),
+                ("AWAIT_LIMITS_VALIDATED", "VALIDATIONS_COMPLETE"),
                 ("VALIDATIONS_COMPLETE", "APPROVED"),
                 ("APPROVED", "APPROVED"),
                 ("APPROVED", "COMPLETED"),
             },
             history);
+    }
+
+    [Fact]
+    public async Task Parallel_validations_reach_VALIDATIONS_COMPLETE_in_either_delivery_order()
+    {
+        // ADR-IC-003 §P2 / Document 05 §2c fitness function: the parallel-validation join is
+        // order-INDEPENDENT. The two triggers have no delivery-ordering guarantee (BalanceReserved
+        // is an async ~120ms Core round-trip; LimitsValidated is a synchronous in-aggregate calc,
+        // so it frequently arrives first). Driven end-to-end through the real handler, BOTH
+        // orderings must land in VALIDATIONS_COMPLETE — neither poisons via NoTransition.
+
+        // Order A: balance first (was the only order the prior suite exercised).
+        var procA = Guid.NewGuid();
+        var handlerA = NewHandler(new RecordingCommandSink());
+        await RunAsync(handlerA, Event(procA, ConstitutionProcess.ConstitutionRequested));
+        Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handlerA, Event(procA, ConstitutionProcess.BalanceReserved)));
+        Assert.Equal(SagaState.AwaitLimitsValidated, await StateAsync(procA));
+        Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handlerA, Event(procA, ConstitutionProcess.LimitsValidated)));
+        Assert.Equal(SagaState.ValidationsComplete, await StateAsync(procA));
+
+        // Order B (the COMMON one): limits first — the previously-unexercised reverse order that
+        // used to poison the later-arriving BalanceReserved. Same destination, no NoTransition.
+        var procB = Guid.NewGuid();
+        var handlerB = NewHandler(new RecordingCommandSink());
+        await RunAsync(handlerB, Event(procB, ConstitutionProcess.ConstitutionRequested));
+        Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handlerB, Event(procB, ConstitutionProcess.LimitsValidated)));
+        Assert.Equal(SagaState.AwaitBalanceReserved, await StateAsync(procB));
+        Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handlerB, Event(procB, ConstitutionProcess.BalanceReserved)));
+        Assert.Equal(SagaState.ValidationsComplete, await StateAsync(procB));
     }
 
     [Fact]

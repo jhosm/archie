@@ -26,11 +26,53 @@ public sealed class ConstitutionProcessTests
         // The exact Document 05 happy-path walk, asserted as a chain through the table.
         AssertTransition(SagaState.Started, ConstitutionProcess.ConstitutionRequested, SagaState.ParallelValidation,
             "ReserveAccountBalance", "ValidateProductLimits");
-        AssertTransition(SagaState.ParallelValidation, ConstitutionProcess.BalanceReserved, SagaState.ParallelValidation);
-        AssertTransition(SagaState.ParallelValidation, ConstitutionProcess.LimitsValidated, SagaState.ValidationsComplete);
+        // Balance-first ordering: through AWAIT_LIMITS_VALIDATED, then the join completes.
+        AssertTransition(SagaState.ParallelValidation, ConstitutionProcess.BalanceReserved, SagaState.AwaitLimitsValidated);
+        AssertTransition(SagaState.AwaitLimitsValidated, ConstitutionProcess.LimitsValidated, SagaState.ValidationsComplete);
         AssertTransition(SagaState.ValidationsComplete, ConstitutionProcess.ConstitutionApproved, SagaState.Approved);
         AssertTransition(SagaState.Approved, ConstitutionProcess.DebitConfirmed, SagaState.Approved, "ActivateDeposit");
         AssertTransition(SagaState.Approved, ConstitutionProcess.ProcessConstituted, SagaState.Completed);
+    }
+
+    [Fact]
+    public void Parallel_validation_join_is_order_independent()
+    {
+        // Document 05 §2c: the saga completes "when the two arrive" — with NO delivery-ordering
+        // guarantee between BalanceReserved (async ~120ms Core round-trip) and LimitsValidated
+        // (synchronous in-aggregate calc). BOTH orderings must reach the SAME VALIDATIONS_COMPLETE
+        // join; neither may poison. This locks the order-independence in as a fitness function.
+
+        // Order 1: balance first, then limits.
+        AssertTransition(SagaState.ParallelValidation, ConstitutionProcess.BalanceReserved, SagaState.AwaitLimitsValidated);
+        AssertTransition(SagaState.AwaitLimitsValidated, ConstitutionProcess.LimitsValidated, SagaState.ValidationsComplete);
+
+        // Order 2 (the COMMON one): limits first, then balance — same destination.
+        AssertTransition(SagaState.ParallelValidation, ConstitutionProcess.LimitsValidated, SagaState.AwaitBalanceReserved);
+        AssertTransition(SagaState.AwaitBalanceReserved, ConstitutionProcess.BalanceReserved, SagaState.ValidationsComplete);
+
+        // Symmetry of the table itself: every state that accepts one leg's arrival has a
+        // transition for the OTHER leg too — there is no (state, sibling-event) hole that would
+        // poison the reverse delivery order.
+        Assert.True(_machine.TryAdvance(SagaState.AwaitLimitsValidated, ConstitutionProcess.LimitsValidated, out _));
+        Assert.True(_machine.TryAdvance(SagaState.AwaitBalanceReserved, ConstitutionProcess.BalanceReserved, out _));
+    }
+
+    [Fact]
+    public void Workflow_approval_fork_is_reachable_on_a_distinct_event()
+    {
+        // The AWAIT_WORKFLOW_APPROVAL fork (Document 05 "Important Variation") must be armed by a
+        // DISTINCT event, not the start event ConstitutionRequested — the advance handler
+        // intercepts the start event and routes it to StartAsync before the table lookup, so a
+        // start-event-keyed fork row would be unreachable. Keying it on WorkflowApprovalRequired
+        // makes it reachable, and the wait resumes on approval (§P2 auditability, §P4 waiting state).
+        AssertTransition(SagaState.ValidationsComplete, ConstitutionProcess.WorkflowApprovalRequired,
+            SagaState.AwaitWorkflowApproval);
+        AssertTransition(SagaState.AwaitWorkflowApproval, ConstitutionProcess.ConstitutionApproved,
+            SagaState.Approved);
+
+        // The start event is NOT a legal advance out of VALIDATIONS_COMPLETE — the old
+        // unreachable placeholder row is gone.
+        Assert.False(_machine.TryAdvance(SagaState.ValidationsComplete, ConstitutionProcess.ConstitutionRequested, out _));
     }
 
     [Fact]

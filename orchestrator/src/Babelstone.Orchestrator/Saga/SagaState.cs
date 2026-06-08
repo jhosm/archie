@@ -21,8 +21,23 @@ public enum SagaState
     Started,
 
     /// <summary>The two reversible validations (reserve balance, validate product limits)
-    /// have been dispatched in parallel and are in flight (Document 05 step 1–2).</summary>
+    /// have been dispatched in parallel and are in flight (Document 05 step 1–2). NEITHER
+    /// has arrived yet.</summary>
     ParallelValidation,
+
+    /// <summary>The balance-reservation leg arrived first; the saga waits on the product-limits
+    /// leg before the join completes (Document 05 §2c "when the two arrive"). One half of the
+    /// order-INDEPENDENT parallel join — the arrival order of the two legs has no delivery
+    /// guarantee, so each first-arrival is remembered in the state rather than in a self-loop
+    /// that loses which leg is still outstanding.</summary>
+    AwaitLimitsValidated,
+
+    /// <summary>The product-limits leg arrived first (the common case — it is a synchronous
+    /// in-aggregate calc while balance reservation is an async ~120ms Core round-trip); the
+    /// saga waits on the balance-reservation leg before the join completes (Document 05 §2c).
+    /// The mirror of <see cref="AwaitLimitsValidated"/> — both converge on
+    /// <see cref="ValidationsComplete"/>.</summary>
+    AwaitBalanceReserved,
 
     /// <summary>Both validations succeeded; nothing irreversible has happened yet
     /// (Document 05 step 2c).</summary>
@@ -39,7 +54,12 @@ public enum SagaState
     AwaitWorkflowApproval,
 
     /// <summary>An indeterminate Core debit outcome is being resolved by the clearance job
-    /// (Document 05 Scenario C). A long wait expressed as a state, never a busy retry.</summary>
+    /// (Document 05 Scenario C). A long wait expressed as a state, never a busy retry.
+    /// <para><b>H.2-reserved (babelstone-n55u):</b> deliberately declared but not yet wired
+    /// into the <see cref="ConstitutionProcess"/> transition table — the indeterminate-debit
+    /// entry/exit edges (Scenario C: an INDETERMINATE Core debit enters it, the clearance
+    /// event leaves it) are H.2's business decision. Named here so the vocabulary is complete
+    /// and the gap is explicit (§P2 auditability), not a dropped edge.</para></summary>
     AwaitCoreClearance,
 
     /// <summary>A compensation (or an indeterminate effect) could not be resolved
@@ -84,6 +104,8 @@ public static class SagaStateNames
     {
         SagaState.Started => "STARTED",
         SagaState.ParallelValidation => "PARALLEL_VALIDATION",
+        SagaState.AwaitLimitsValidated => "AWAIT_LIMITS_VALIDATED",
+        SagaState.AwaitBalanceReserved => "AWAIT_BALANCE_RESERVED",
         SagaState.ValidationsComplete => "VALIDATIONS_COMPLETE",
         SagaState.Approved => "APPROVED",
         SagaState.AwaitWorkflowApproval => "AWAIT_WORKFLOW_APPROVAL",
@@ -104,6 +126,8 @@ public static class SagaStateNames
     {
         "STARTED" => SagaState.Started,
         "PARALLEL_VALIDATION" => SagaState.ParallelValidation,
+        "AWAIT_LIMITS_VALIDATED" => SagaState.AwaitLimitsValidated,
+        "AWAIT_BALANCE_RESERVED" => SagaState.AwaitBalanceReserved,
         "VALIDATIONS_COMPLETE" => SagaState.ValidationsComplete,
         "APPROVED" => SagaState.Approved,
         "AWAIT_WORKFLOW_APPROVAL" => SagaState.AwaitWorkflowApproval,

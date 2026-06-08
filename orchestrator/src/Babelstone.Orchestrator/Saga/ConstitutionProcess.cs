@@ -37,6 +37,11 @@ public sealed class ConstitutionProcess : TableStateMachine
     public const string BalanceReserved = "BalanceReserved";
     /// <summary>Deposit aggregate: product limits passed (Document 05 step 2b).</summary>
     public const string LimitsValidated = "LimitsValidated";
+    /// <summary>Orchestrator self-signal: validations passed but the amount needs the external
+    /// workflow rather than auto-approval (Document 05 "Important Variation", >€25,000). The
+    /// DISTINCT event that arms the AWAIT_WORKFLOW_APPROVAL wait — never the start event, so the
+    /// fork is reachable through the advance handler. The concrete fork decision is H.2's.</summary>
+    public const string WorkflowApprovalRequired = "WorkflowApprovalRequired";
     /// <summary>Deposit aggregate: product limits rejected — the early-failure trigger
     /// (Document 05 Scenario A).</summary>
     public const string LimitsRejected = "LimitsRejected";
@@ -80,14 +85,26 @@ public sealed class ConstitutionProcess : TableStateMachine
         yield return ((SagaState.Started, ConstitutionRequested),
             TransitionOutcome.To(SagaState.ParallelValidation, ReserveAccountBalance, ValidateProductLimits));
 
-        // The two parallel validations land in EITHER order; both must arrive before the
-        // saga is VALIDATIONS_COMPLETE. The intermediate single-arrival is modelled as a
-        // self-loop on PARALLEL_VALIDATION (the saga stays put, emitting nothing, until its
-        // sibling arrives). H.2 refines the join into per-leg tracking; the substrate proves
-        // the legal pairs are accepted and progression is monotone.
+        // The two parallel validations land in EITHER order (Document 05 §2c "when the two
+        // arrive"). The two triggers have NO delivery-ordering guarantee — BalanceReserved is
+        // an async Core SOAP round-trip (~120ms, §2a) while LimitsValidated is a synchronous
+        // in-aggregate calc (§2b), so LimitsValidated frequently lands first. The join is made
+        // order-INDEPENDENT by remembering which leg arrived in the STATE itself (the only
+        // per-saga memory a (state, event)-keyed table has): the first arrival moves to the
+        // matching "still awaiting the sibling" state, and EITHER awaiting-state completes to
+        // VALIDATIONS_COMPLETE on its sibling. Both orderings reach the SAME join — neither
+        // poisons. H.2 may refine this into a completed-legs set on the saga row; the substrate
+        // proves the join is symmetric and progression is monotone.
+        //
+        //   PARALLEL_VALIDATION --BalanceReserved--> AWAIT_LIMITS_VALIDATED --LimitsValidated-->\
+        //   PARALLEL_VALIDATION --LimitsValidated--> AWAIT_BALANCE_RESERVED --BalanceReserved-->/ VALIDATIONS_COMPLETE
         yield return ((SagaState.ParallelValidation, BalanceReserved),
-            TransitionOutcome.To(SagaState.ParallelValidation));
+            TransitionOutcome.To(SagaState.AwaitLimitsValidated));
         yield return ((SagaState.ParallelValidation, LimitsValidated),
+            TransitionOutcome.To(SagaState.AwaitBalanceReserved));
+        yield return ((SagaState.AwaitLimitsValidated, LimitsValidated),
+            TransitionOutcome.To(SagaState.ValidationsComplete));
+        yield return ((SagaState.AwaitBalanceReserved, BalanceReserved),
             TransitionOutcome.To(SagaState.ValidationsComplete));
 
         yield return ((SagaState.ValidationsComplete, ConstitutionApproved),
@@ -100,16 +117,30 @@ public sealed class ConstitutionProcess : TableStateMachine
         yield return ((SagaState.Approved, ProcessConstituted),
             TransitionOutcome.To(SagaState.Completed));
 
-        // Long-wait variation: workflow approval (Document 05 "Important Variation"). A
-        // first-class waiting state (§P4), resumed by the approval event.
-        yield return ((SagaState.ValidationsComplete, ConstitutionRequested),
-            TransitionOutcome.To(SagaState.AwaitWorkflowApproval)); // (placeholder fork; H.2 decides)
+        // Long-wait variation: workflow approval (Document 05 "Important Variation", >€25,000).
+        // A first-class waiting state (§P4), resumed by the approval event. The wait is armed by
+        // a DISTINCT event (WorkflowApprovalRequired), NOT the start event — keying it on the
+        // start event would make the row unreachable (the advance handler intercepts the start
+        // event and routes it to StartAsync before the table lookup, SagaAdvanceHandler.cs §2),
+        // so AWAIT_WORKFLOW_APPROVAL could never be entered. With its own event the fork is
+        // reachable from the table alone (§P2 auditability). The concrete fork decision — which
+        // amounts auto-approve vs route to workflow, and who emits WorkflowApprovalRequired — is
+        // H.2's (babelstone-n55u); the substrate proves the waiting state is wired and resumable.
+        yield return ((SagaState.ValidationsComplete, WorkflowApprovalRequired),
+            TransitionOutcome.To(SagaState.AwaitWorkflowApproval));
         yield return ((SagaState.AwaitWorkflowApproval, ConstitutionApproved),
             TransitionOutcome.To(SagaState.Approved));
 
         // Compensation path A — early failure in validation (Document 05 Scenario A).
         // Compensation is a DOMAIN action: emit ReleaseBalanceReservation (§P6), not a rollback.
+        // Order-independent like the success join: LimitsRejected can land before its sibling
+        // (PARALLEL_VALIDATION) or after the Core hold already succeeded (AWAIT_LIMITS_VALIDATED).
+        // Either way the reversible Core hold is released and the saga compensates — neither
+        // ordering poisons. (From PARALLEL_VALIDATION the hold may not yet exist; the ACL's
+        // ReleaseBalanceReservation is idempotent on a no-op, per Document 02 / ADR-IC-003 §P6.)
         yield return ((SagaState.ParallelValidation, LimitsRejected),
+            TransitionOutcome.To(SagaState.CompensateValidations, ReleaseBalanceReservation));
+        yield return ((SagaState.AwaitLimitsValidated, LimitsRejected),
             TransitionOutcome.To(SagaState.CompensateValidations, ReleaseBalanceReservation));
         yield return ((SagaState.CompensateValidations, ReservationReleased),
             TransitionOutcome.To(SagaState.Cancelled));
