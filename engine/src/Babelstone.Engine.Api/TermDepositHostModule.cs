@@ -43,7 +43,18 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<ISettlementPort>(),
             ctx.Pack,
             dayCountPrimitive: "act_360",
-            withholdingPrimitive: "irs_juros"));
+            withholdingPrimitive: "irs_juros",
+            // Early-termination policy (02 §2.5) is per-PRODUCT config the bank's pricing team owns; for
+            // the walking skeleton it is pinned engine-instance config (ADR-PC-009), like the primitives
+            // above. The PT default banded schedule: 100% of accrued interest if broken in the first 30
+            // days, 50% up to 90 days, 25% thereafter — the §2.5 worked example. A per-product config
+            // registry resolving it per deposit is later work (F.4 ships the decider, not the registry).
+            earlyTerminationPolicy: EarlyTerminationPolicy.Banded(
+            [
+                new EarlyTerminationBand(UpToDays: 30, PenaltyBasisPoints: 10_000, PenaltyBasis.AccruedInterest),
+                new EarlyTerminationBand(UpToDays: 90, PenaltyBasisPoints: 5_000, PenaltyBasis.AccruedInterest),
+                new EarlyTerminationBand(UpToDays: null, PenaltyBasisPoints: 2_500, PenaltyBasis.AccruedInterest),
+            ])));
 
         // D.2 projection runtime (ADR-PC-002 §P4, two-modes §5.4): the family declares its
         // projections (currently just the deposit position) + their folds; the generic runtime
