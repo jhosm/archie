@@ -164,6 +164,10 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal("engine", readModel.Sor);                 // ADR-PC-018 §6.2 routing truth
         Assert.Equal(1_000_000, readModel.PrincipalCents);
         Assert.Equal(300, readModel.TanBasisPoints);
+        // The product key is the resolved rate-sheet version, NOT the catalogue product code that
+        // was POSTed ("dpz_pt_12m_juros_venc") — the read surface carries no catalogue product_id
+        // (bd babelstone-yfr2). Pin the meaning of the product key on the wire response.
+        Assert.Equal("pt-deposits-2026.1", readModel.RateSheetVersionId);
         Assert.Equal(maturityDate, readModel.MaturityDate);
         Assert.Equal("Active", readModel.Lifecycle);
         Assert.Equal(0, readModel.LastSequence);               // the constitution event's sequence

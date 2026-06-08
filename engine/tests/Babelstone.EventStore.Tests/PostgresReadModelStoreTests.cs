@@ -25,7 +25,6 @@ public sealed class PostgresReadModelStoreTests(PostgresEventStoreFixture fixtur
         new(
             StreamId: streamId,
             Sor: "engine",
-            ProductId: "dpz_pt_12m_juros_venc",
             PrincipalCents: 1_000_000,
             TanBasisPoints: 300,
             RateSheetVersionId: "pt-deposits-2026.1",
@@ -56,6 +55,11 @@ public sealed class PostgresReadModelStoreTests(PostgresEventStoreFixture fixtur
         Assert.Equal(maturity, row.MaturityDate);
         Assert.Equal(0, row.LastSequence);
         Assert.Equal(new byte[] { 0x01, 0x02, 0x03 }, row.Detail.ToArray());
+        // The product KEY round-trips as rate_sheet_version_id — the read surface carries the
+        // rate-sheet version, NOT a catalogue product_id (the catalogue code does not survive onto
+        // the event; bd babelstone-yfr2). Pin the meaning so a future product_id can't sneak back in
+        // mislabelled.
+        Assert.Equal("pt-deposits-2026.1", row.RateSheetVersionId);
     }
 
     [Fact]
@@ -160,5 +164,9 @@ public sealed class PostgresReadModelStoreTests(PostgresEventStoreFixture fixtur
         Assert.Contains("sor", columns);
         Assert.Contains("last_sequence", columns);
         Assert.Contains("last_updated", columns);
+        // The product key is rate_sheet_version_id; there is deliberately no catalogue product_id
+        // column (bd babelstone-yfr2). Pin its absence so a mislabelled column can't reappear.
+        Assert.Contains("rate_sheet_version_id", columns);
+        Assert.DoesNotContain("product_id", columns);
     }
 }

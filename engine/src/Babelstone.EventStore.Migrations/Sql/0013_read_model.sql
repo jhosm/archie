@@ -53,7 +53,16 @@ CREATE TABLE read_model.deposits (
     -- Denormalized query dimensions — the columns the client-facing and range-scan reads index
     -- on (ADR-IC-005: point lookup by id, range scan by maturity_date). All money is integer
     -- cents (ADR-PC-010 §P1 / BMNY002), never a float or a nested object.
-    product_id            TEXT         NOT NULL,
+    --
+    -- The product KEY surfaced here is `rate_sheet_version_id`, NOT a catalogue `product_id`
+    -- column. DepositConstituted/DepositPosition do not carry the catalogue product code (e.g.
+    -- `dpz_pt_12m_juros_venc`): the catalogue product is resolved into the TAN + rate-sheet
+    -- version AT constitution and only the version id survives onto the event. A `product_id`
+    -- column populated from the position would therefore equal `rate_sheet_version_id` and a
+    -- client filtering on the catalogue code would match nothing — a mislabelled column whose
+    -- name lies about its contents. Carrying the catalogue product code onto the event/position
+    -- is a separable follow-up (bd babelstone-yfr2 deferred note); until then this read surface
+    -- exposes the version id under its true name only.
     principal_cents       BIGINT       NOT NULL,
     tan_basis_points      INTEGER      NOT NULL,
     rate_sheet_version_id TEXT         NOT NULL,

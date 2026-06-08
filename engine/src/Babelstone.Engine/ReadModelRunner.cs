@@ -98,5 +98,9 @@ public sealed class ReadModelRunner<TState>(
         // The read model is rebuilt by TRUNCATE + re-fold (ADR-IC-005 §P5), not by supersession —
         // there is no belief history to preserve (it is a flat cache, not the bitemporal store). The
         // drainer's RebuildAsync calls this before resetting checkpoints and re-folding from 0.
+        // ASSUMPTION: one read-model runner owns the underlying table, so the store's TRUNCATE is
+        // safe per-kind. The drainer's RebuildAsync is per-runner (it resets only this runner.Kind),
+        // but TruncateAsync clears the whole table; if a second read-model kind ever shared the
+        // table, the truncate must be scoped by a kind discriminator (see PostgresReadModelStore).
         => store.TruncateAsync(ct);
 }

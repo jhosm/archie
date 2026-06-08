@@ -124,7 +124,6 @@ public sealed class TermDepositProjectionModule : IProjectionModule
         return new ReadModelRow(
             StreamId: fold.StreamId,
             Sor: "engine",
-            ProductId: ProductIdOf(p),
             PrincipalCents: p.Principal.Cents,
             TanBasisPoints: p.TanBasisPoints,
             RateSheetVersionId: p.RateSheetVersionId,
@@ -139,12 +138,15 @@ public sealed class TermDepositProjectionModule : IProjectionModule
             LastUpdated: fold.TransactionTime);
     }
 
-    // The deposit-position state does not carry the product id as a distinct field (the product is
-    // resolved into the TAN + rate-sheet version at constitution), so the read-model's product_id
-    // dimension is the rate-sheet version's product context. v1 surfaces the rate_sheet_version_id
-    // as the product key the read API filters on; a dedicated product_id field on the position is a
-    // separable follow-up if a query needs the catalogue product code directly.
-    private static string ProductIdOf(DepositPosition p) => p.RateSheetVersionId;
+    // The read-model product key is RateSheetVersionId only — there is deliberately no catalogue
+    // product_id column/field. DepositConstituted/DepositPosition do not carry the catalogue product
+    // code (e.g. "dpz_pt_12m_juros_venc"): it is resolved into the TAN + rate-sheet version AT
+    // constitution and only the version id survives onto the event. A product_id populated from the
+    // position would therefore EQUAL the rate_sheet_version_id and a client filtering on the
+    // catalogue code would match nothing — a mislabelled column whose name lies about its contents.
+    // Carrying the catalogue product code onto DepositConstituted/the position (so the read model can
+    // denormalize the real code) is a separable follow-up (bd babelstone-yfr2 deferred note); until
+    // then the read surface exposes the version id under its true name only.
 
     private static readonly Babelstone.Engine.JsonStateSerializer<DepositPosition> ReadModelDetailSerializer = new();
 

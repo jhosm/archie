@@ -82,11 +82,13 @@ public sealed record DepositPositionResponse(
 /// serves, distinct from the write-side <see cref="DepositPositionResponse"/>. Carries the
 /// ADR-PC-018 §6.2 routing-truth <c>sor</c> and the ADR-IC-005 §P3 freshness pair (<c>last_sequence</c>
 /// for read-after-write, <c>last_updated</c> for staleness display). Money as integer cents.
+/// The product key is <see cref="RateSheetVersionId"/>; there is deliberately no catalogue
+/// <c>product_id</c> field (the catalogue code does not survive onto the event — see
+/// <see cref="ReadModelRow"/>; bd babelstone-yfr2 deferred note).
 /// </summary>
 public sealed record DepositReadModelResponse(
     Guid DepositId,
     string Sor,
-    string ProductId,
     long PrincipalCents,
     int TanBasisPoints,
     string RateSheetVersionId,
@@ -102,7 +104,6 @@ public sealed record DepositReadModelResponse(
     public static DepositReadModelResponse From(ReadModelRow r) => new(
         DepositId: r.StreamId,
         Sor: r.Sor,
-        ProductId: r.ProductId,
         PrincipalCents: r.PrincipalCents,
         TanBasisPoints: r.TanBasisPoints,
         RateSheetVersionId: r.RateSheetVersionId,
