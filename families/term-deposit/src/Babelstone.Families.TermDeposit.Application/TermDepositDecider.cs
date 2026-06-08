@@ -285,14 +285,38 @@ public static class TermDepositDecider
     /// charging less penalty, never by inventing money on the principal/net legs). With no floor, the
     /// pre-floor settlement and headline penalty pass through unchanged.
     /// </summary>
+    /// <remarks>
+    /// A floor is a principal-protection MINIMUM (02 §2.5: "typically principal less any pack-permitted
+    /// principal haircut", i.e. <c>floor &lt;= principal &lt;= principal + net</c>), so a well-formed floor
+    /// only ever reduces the penalty. A misconfigured floor ABOVE the natural full payout
+    /// (<c>floor &gt; principal + net</c>) would drive the effective penalty negative — the engine would
+    /// have to invent money to reach the floor and would record a non-conforming negative penalty on
+    /// <see cref="DepositTerminatedEarly"/> (whose <c>PenaltyAmount</c> is documented non-negative). That
+    /// is a policy misconfiguration the floor semantics do not contemplate, so we fail loud rather than
+    /// settle a financially nonsensical leg — mirroring <see cref="EarlyTerminationPolicy.ResolveBand"/>'s
+    /// refusal to default to a silent zero penalty.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">If a configured floor exceeds the natural maximum
+    /// payout (<c>principal + net</c>), which would require a negative penalty to honour.</exception>
     private static (Money Settlement, Money EffectivePenalty) ApplyFloor(
         Money preFloorSettlement, Money penalty, Money? floor, Money principal, Money net)
     {
         if (floor is { } floorValue && preFloorSettlement.Cents < floorValue.Cents)
         {
+            var naturalMax = principal + net;
+            if (floorValue.Cents > naturalMax.Cents)
+            {
+                throw new InvalidOperationException(
+                    $"Early-termination floor ({floorValue.Cents} cents) exceeds the natural maximum payout " +
+                    $"of principal + net accrued interest ({naturalMax.Cents} cents); honouring it would " +
+                    "require a negative penalty (inventing money). Refusing — a floor is a principal-protection " +
+                    "minimum (02 §2.5), not a top-up above the full payout.");
+            }
+
             // Settlement is lifted to the floor; the penalty actually charged is whatever brings the
             // (principal + net) payout down to the floor — i.e. the floor absorbs the excess penalty.
-            var effectivePenalty = principal + net - floorValue;
+            // Guarded above, so effectivePenalty is non-negative (>= Money.Zero).
+            var effectivePenalty = naturalMax - floorValue;
             return (floorValue, effectivePenalty);
         }
 

@@ -249,6 +249,43 @@ public sealed class EarlyTerminationDeciderTests
     }
 
     [Fact]
+    public void Floor_above_the_natural_maximum_payout_fails_loud_rather_than_recording_a_negative_penalty()
+    {
+        // A misconfigured floor (02 §2.5 frames the floor as a principal-protection MINIMUM,
+        // floor <= principal <= principal + net). At day 100 the natural max payout is
+        // principal + net = 1,000,000 + 6,000 = 1,006,000. A floor ABOVE that (here 1,100,000)
+        // could only be honoured by a negative penalty — inventing money — so the decider fails loud
+        // instead of emitting a non-conforming negative PenaltyAmount.
+        var policy = EarlyTerminationPolicy.Flat(
+            penaltyBasisPoints: 10_000, PenaltyBasis.AccruedInterest, floorCents: 1_100_000);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => TermDepositDecider.DecideEarlyTermination(
+            ActivePosition(), Start.AddDays(100), policy, DayCountConvention.Act360, IrsBps, Reason));
+        Assert.Contains("negative penalty", ex.Message);
+    }
+
+    [Fact]
+    public void Floor_exactly_at_the_natural_maximum_payout_binds_with_a_zero_penalty()
+    {
+        // The boundary case: a floor exactly at principal + net (1,006,000) is the largest floor that
+        // does NOT require inventing money. It binds (the natural settlement after any positive penalty
+        // is below it), lifting the payout to the full principal + net with a ZERO effective penalty —
+        // the penalty is exactly absorbed, never driven negative.
+        var policy = EarlyTerminationPolicy.Flat(
+            penaltyBasisPoints: 10_000, PenaltyBasis.AccruedInterest, floorCents: 1_006_000);
+        var events = TermDepositDecider.DecideEarlyTermination(
+            ActivePosition(), Start.AddDays(100), policy, DayCountConvention.Act360, IrsBps, Reason);
+        var (_, withheld, terminated) = Decode(events);
+
+        Assert.Equal(new Money(1_006_000), terminated.NetSettlementAmount);   // principal + net
+        Assert.Equal(Money.Zero, terminated.PenaltyAmount);                   // exactly absorbed, non-negative
+        // Conservation still holds against the recorded (zero) penalty.
+        Assert.Equal(
+            terminated.PrincipalReturned + withheld.Net - terminated.PenaltyAmount,
+            terminated.NetSettlementAmount);
+    }
+
+    [Fact]
     public void Penalty_is_priced_on_gross_accrued_not_the_rate_scaled_post_tax_net()
     {
         // Guard against the classic bug: a 100%-of-accrued penalty must take the GROSS accrued
