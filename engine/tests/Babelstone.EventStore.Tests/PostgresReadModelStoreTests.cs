@@ -21,13 +21,15 @@ public sealed class PostgresReadModelStoreTests(PostgresEventStoreFixture fixtur
         DateOnly maturityDate,
         string lifecycle = "Active",
         long totalPayoutCents = 1_000_000,
-        DateTimeOffset? lastUpdated = null) =>
+        DateTimeOffset? lastUpdated = null,
+        string productCode = "dpz_pt_12m_juros_venc") =>
         new(
             StreamId: streamId,
             Sor: "engine",
             PrincipalCents: 1_000_000,
             TanBasisPoints: 300,
             RateSheetVersionId: "pt-deposits-2026.1",
+            ProductCode: productCode,
             TermDays: 365,
             StartDate: new DateOnly(2026, 1, 15),
             MaturityDate: maturityDate,
@@ -55,11 +57,30 @@ public sealed class PostgresReadModelStoreTests(PostgresEventStoreFixture fixtur
         Assert.Equal(maturity, row.MaturityDate);
         Assert.Equal(0, row.LastSequence);
         Assert.Equal(new byte[] { 0x01, 0x02, 0x03 }, row.Detail.ToArray());
-        // The product KEY round-trips as rate_sheet_version_id — the read surface carries the
-        // rate-sheet version, NOT a catalogue product_id (the catalogue code does not survive onto
-        // the event; bd babelstone-yfr2). Pin the meaning so a future product_id can't sneak back in
-        // mislabelled.
+        // BOTH product keys round-trip under their honest names: rate_sheet_version_id (the
+        // price/version key) AND the catalogue product_code (the structural "which product is this"
+        // dimension, now carried end-to-end — bd babelstone-v794).
         Assert.Equal("pt-deposits-2026.1", row.RateSheetVersionId);
+        Assert.Equal("dpz_pt_12m_juros_venc", row.ProductCode);
+    }
+
+    [Fact]
+    public async Task Product_code_round_trips_and_defaults_empty_for_pre_v794_rows()
+    {
+        // bd babelstone-v794: the catalogue product_code denormalizes onto the read surface. A
+        // deposit constituted before v794 carries no code — its event decodes the Avro "" default —
+        // so the read-model row surfaces the empty code (PROSPECTIVE-only; the code is not
+        // back-fillable from the log). A populated code round-trips verbatim.
+        await ResetAsync();
+        var legacy = Guid.NewGuid();
+        var fresh = Guid.NewGuid();
+        var maturity = new DateOnly(2027, 1, 15);
+
+        await _store.UpsertAsync(Sample(legacy, lastSequence: 0, maturityDate: maturity, productCode: ""));
+        await _store.UpsertAsync(Sample(fresh, lastSequence: 0, maturityDate: maturity, productCode: "dpz_pt_12m_juros_venc"));
+
+        Assert.Equal("", (await _store.GetAsync(legacy))!.ProductCode);
+        Assert.Equal("dpz_pt_12m_juros_venc", (await _store.GetAsync(fresh))!.ProductCode);
     }
 
     [Fact]
@@ -164,9 +185,12 @@ public sealed class PostgresReadModelStoreTests(PostgresEventStoreFixture fixtur
         Assert.Contains("sor", columns);
         Assert.Contains("last_sequence", columns);
         Assert.Contains("last_updated", columns);
-        // The product key is rate_sheet_version_id; there is deliberately no catalogue product_id
-        // column (bd babelstone-yfr2). Pin its absence so a mislabelled column can't reappear.
+        // BOTH product keys are present under their honest names: rate_sheet_version_id (price/
+        // version key) AND product_code (the catalogue structural code, now carried end-to-end —
+        // bd babelstone-v794). The MISLABELLED product_id stays ABSENT — pin both so a column whose
+        // name lies about its contents can never reappear.
         Assert.Contains("rate_sheet_version_id", columns);
+        Assert.Contains("product_code", columns);
         Assert.DoesNotContain("product_id", columns);
     }
 }

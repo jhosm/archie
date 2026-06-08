@@ -54,18 +54,28 @@ CREATE TABLE read_model.deposits (
     -- on (ADR-IC-005: point lookup by id, range scan by maturity_date). All money is integer
     -- cents (ADR-PC-010 §P1 / BMNY002), never a float or a nested object.
     --
-    -- The product KEY surfaced here is `rate_sheet_version_id`, NOT a catalogue `product_id`
-    -- column. DepositConstituted/DepositPosition do not carry the catalogue product code (e.g.
-    -- `dpz_pt_12m_juros_venc`): the catalogue product is resolved into the TAN + rate-sheet
-    -- version AT constitution and only the version id survives onto the event. A `product_id`
-    -- column populated from the position would therefore equal `rate_sheet_version_id` and a
-    -- client filtering on the catalogue code would match nothing — a mislabelled column whose
-    -- name lies about its contents. Carrying the catalogue product code onto the event/position
-    -- is a separable follow-up (bd babelstone-yfr2 deferred note); until then this read surface
-    -- exposes the version id under its true name only.
+    -- TWO product keys are surfaced, each under its HONEST name:
+    --   * `rate_sheet_version_id` — the PRICE/version key (e.g. `pt-deposits-2026.1`): which rate
+    --     sheet the TAN was resolved from. One-to-many to products (one sheet prices many variants).
+    --   * `product_code` — the catalogue STRUCTURAL product code (e.g. `dpz_pt_12m_juros_venc`):
+    --     the queryable "which product is this" dimension a client filters on. NOW IMPLEMENTED
+    --     (bd babelstone-v794): DepositConstituted carries it (additive Avro field, default ""),
+    --     the position folds it, and this read model denormalizes it.
+    --
+    -- PROSPECTIVE-ONLY semantics (bd babelstone-v794): the catalogue code is stamped from
+    -- `ConstituteDepositCommand.ProductId` AT constitution. Deposits constituted BEFORE v794 never
+    -- carried it: their `DepositConstituted` decodes the Avro field as the "" default, and the code
+    -- CANNOT be back-filled from the event log because it was discarded at constitution and
+    -- `rate_sheet_version_id` → product is one-to-many (a version cannot be inverted to a single
+    -- product). So historical read-model rows carry the empty code; only deposits constituted from
+    -- v794 onward carry a populated `product_code`. (Earlier this column was deliberately ABSENT to
+    -- avoid a `product_id` mislabelled as the version id — bd babelstone-yfr2 deferred note; v794
+    -- carries the real code end-to-end and adds the column under its true name.) Structural, NOT
+    -- PII (ADR-PC-004 §P2). NOT NULL DEFAULT '' so it is additive over migration 0013's prior rows.
     principal_cents       BIGINT       NOT NULL,
     tan_basis_points      INTEGER      NOT NULL,
     rate_sheet_version_id TEXT         NOT NULL,
+    product_code          TEXT         NOT NULL DEFAULT '',
     term_days             INTEGER      NOT NULL,
     start_date            DATE         NOT NULL,
     maturity_date         DATE         NOT NULL,

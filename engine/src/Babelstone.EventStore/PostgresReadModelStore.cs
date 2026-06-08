@@ -17,11 +17,11 @@ public sealed class PostgresReadModelStore(string connectionString) : IReadModel
         // a stale clobber. The INSERT leg covers the first projection of a stream.
         const string sql = """
             INSERT INTO read_model.deposits (
-                stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id,
+                stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
                 term_days, start_date, maturity_date, interest_variant, lifecycle, total_payout_cents,
                 detail, last_sequence, last_updated)
             VALUES (
-                @stream_id, @sor, @principal_cents, @tan_basis_points, @rate_sheet_version_id,
+                @stream_id, @sor, @principal_cents, @tan_basis_points, @rate_sheet_version_id, @product_code,
                 @term_days, @start_date, @maturity_date, @interest_variant, @lifecycle, @total_payout_cents,
                 @detail, @last_sequence, @last_updated)
             ON CONFLICT (stream_id) DO UPDATE SET
@@ -29,6 +29,7 @@ public sealed class PostgresReadModelStore(string connectionString) : IReadModel
                 principal_cents       = EXCLUDED.principal_cents,
                 tan_basis_points      = EXCLUDED.tan_basis_points,
                 rate_sheet_version_id = EXCLUDED.rate_sheet_version_id,
+                product_code          = EXCLUDED.product_code,
                 term_days             = EXCLUDED.term_days,
                 start_date            = EXCLUDED.start_date,
                 maturity_date         = EXCLUDED.maturity_date,
@@ -51,7 +52,7 @@ public sealed class PostgresReadModelStore(string connectionString) : IReadModel
     public async Task<ReadModelRow?> GetAsync(Guid streamId, CancellationToken ct = default)
     {
         const string sql = """
-            SELECT stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id,
+            SELECT stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
                    term_days, start_date, maturity_date, interest_variant, lifecycle, total_payout_cents,
                    detail, last_sequence, last_updated
             FROM read_model.deposits
@@ -74,7 +75,7 @@ public sealed class PostgresReadModelStore(string connectionString) : IReadModel
         // ORDER BY (maturity_date, stream_id) is a deterministic, stable order — stream_id breaks
         // ties so the page order never depends on physical row layout.
         const string sql = """
-            SELECT stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id,
+            SELECT stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
                    term_days, start_date, maturity_date, interest_variant, lifecycle, total_payout_cents,
                    detail, last_sequence, last_updated
             FROM read_model.deposits
@@ -120,6 +121,7 @@ public sealed class PostgresReadModelStore(string connectionString) : IReadModel
         command.Parameters.AddWithValue("principal_cents", row.PrincipalCents);
         command.Parameters.AddWithValue("tan_basis_points", row.TanBasisPoints);
         command.Parameters.AddWithValue("rate_sheet_version_id", row.RateSheetVersionId);
+        command.Parameters.AddWithValue("product_code", row.ProductCode);
         command.Parameters.AddWithValue("term_days", row.TermDays);
         command.Parameters.AddWithValue("start_date", row.StartDate);
         command.Parameters.AddWithValue("maturity_date", row.MaturityDate);
@@ -138,13 +140,14 @@ public sealed class PostgresReadModelStore(string connectionString) : IReadModel
             PrincipalCents: reader.GetInt64(2),
             TanBasisPoints: reader.GetInt32(3),
             RateSheetVersionId: reader.GetString(4),
-            TermDays: reader.GetInt32(5),
-            StartDate: reader.GetFieldValue<DateOnly>(6),
-            MaturityDate: reader.GetFieldValue<DateOnly>(7),
-            InterestVariant: reader.GetString(8),
-            Lifecycle: reader.GetString(9),
-            TotalPayoutCents: reader.GetInt64(10),
-            Detail: reader.GetFieldValue<byte[]>(11),
-            LastSequence: reader.GetInt64(12),
-            LastUpdated: reader.GetFieldValue<DateTimeOffset>(13));
+            ProductCode: reader.GetString(5),
+            TermDays: reader.GetInt32(6),
+            StartDate: reader.GetFieldValue<DateOnly>(7),
+            MaturityDate: reader.GetFieldValue<DateOnly>(8),
+            InterestVariant: reader.GetString(9),
+            Lifecycle: reader.GetString(10),
+            TotalPayoutCents: reader.GetInt64(11),
+            Detail: reader.GetFieldValue<byte[]>(12),
+            LastSequence: reader.GetInt64(13),
+            LastUpdated: reader.GetFieldValue<DateTimeOffset>(14));
 }

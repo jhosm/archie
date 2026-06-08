@@ -38,6 +38,30 @@ public sealed class DepositReadModelTests
     }
 
     [Fact]
+    public async Task Constituting_denormalizes_the_catalogue_product_code()
+    {
+        // bd babelstone-v794: DepositConstituted carries the catalogue product_code; the position
+        // fold copies it; the read model denormalizes it under its honest name. A populated code
+        // round-trips onto the row, and a pre-v794 constitution (the Avro "" default) surfaces "".
+        var store = new InMemoryReadModelStore();
+        var runner = ReadModelRunner(store);
+
+        var withCode = Guid.NewGuid();
+        await runner.ApplyAsync(Envelope(withCode, 0, "term_deposit.DepositConstituted",
+            new DepositConstituted(withCode, new Money(1_000_000), 300, "pt-deposits-2026.1", 365,
+                new DateOnly(2026, 1, 15), new DateOnly(2027, 1, 15), "AT_MATURITY", "NONE",
+                PaymentPeriodMonths: 0, ProductCode: "dpz_pt_12m_juros_venc")));
+
+        var preV794 = Guid.NewGuid();
+        await runner.ApplyAsync(Envelope(preV794, 0, "term_deposit.DepositConstituted",
+            new DepositConstituted(preV794, new Money(1_000_000), 300, "pt-deposits-2026.1", 365,
+                new DateOnly(2026, 1, 15), new DateOnly(2027, 1, 15), "AT_MATURITY", "NONE")));
+
+        Assert.Equal("dpz_pt_12m_juros_venc", (await store.GetAsync(withCode))!.ProductCode);
+        Assert.Equal("", (await store.GetAsync(preV794))!.ProductCode);
+    }
+
+    [Fact]
     public async Task Runner_skips_events_the_position_fold_does_not_handle()
     {
         var store = new InMemoryReadModelStore();
@@ -136,6 +160,7 @@ public sealed class DepositReadModelTests
             Principal = new Money(500_000),
             TanBasisPoints = 250,
             RateSheetVersionId = "rs-x",
+            ProductCode = "dpz_pt_12m_juros_venc",
             MaturityDate = new DateOnly(2027, 5, 1),
             TotalPayout = new Money(512_345),
             Lifecycle = DepositLifecycle.Active,
@@ -153,6 +178,7 @@ public sealed class DepositReadModelTests
         Assert.Equal(7, a.LastSequence);
         Assert.Equal(Origin, a.LastUpdated);
         Assert.Equal(512_345, a.TotalPayoutCents);
+        Assert.Equal("dpz_pt_12m_juros_venc", a.ProductCode); // bd babelstone-v794
     }
 
     // --- helpers ---

@@ -82,9 +82,13 @@ public sealed record DepositPositionResponse(
 /// serves, distinct from the write-side <see cref="DepositPositionResponse"/>. Carries the
 /// ADR-PC-018 §6.2 routing-truth <c>sor</c> and the ADR-IC-005 §P3 freshness pair (<c>last_sequence</c>
 /// for read-after-write, <c>last_updated</c> for staleness display). Money as integer cents.
-/// The product key is <see cref="RateSheetVersionId"/>; there is deliberately no catalogue
-/// <c>product_id</c> field (the catalogue code does not survive onto the event — see
-/// <see cref="ReadModelRow"/>; bd babelstone-yfr2 deferred note).
+/// Two product keys are surfaced under their honest names: <see cref="RateSheetVersionId"/> is the
+/// price/version key, and <see cref="ProductCode"/> is the catalogue structural product code (the
+/// queryable "which product is this" dimension). Carrying the catalogue code onto the event is NOW
+/// IMPLEMENTED (bd babelstone-v794, earlier deferred as the bd babelstone-yfr2 note). It is
+/// PROSPECTIVE-ONLY: deposits constituted before v794 carry the "" default (the code is not
+/// back-fillable from the log — the rate-sheet version is one-to-many to products — so historical
+/// rows surface the empty code). See <see cref="ReadModelRow"/>.
 /// </summary>
 public sealed record DepositReadModelResponse(
     Guid DepositId,
@@ -92,6 +96,7 @@ public sealed record DepositReadModelResponse(
     long PrincipalCents,
     int TanBasisPoints,
     string RateSheetVersionId,
+    string ProductCode,
     int TermDays,
     DateOnly StartDate,
     DateOnly MaturityDate,
@@ -107,6 +112,7 @@ public sealed record DepositReadModelResponse(
         PrincipalCents: r.PrincipalCents,
         TanBasisPoints: r.TanBasisPoints,
         RateSheetVersionId: r.RateSheetVersionId,
+        ProductCode: r.ProductCode,
         TermDays: r.TermDays,
         StartDate: r.StartDate,
         MaturityDate: r.MaturityDate,

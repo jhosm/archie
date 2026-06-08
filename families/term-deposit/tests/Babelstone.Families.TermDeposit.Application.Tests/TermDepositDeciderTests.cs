@@ -36,6 +36,9 @@ public sealed class TermDepositDeciderTests
         Assert.Equal("pt-deposits-2026.1", constituted.RateSheetVersionId);
         Assert.Equal(Maturity, constituted.MaturityDate); // derived from start + term, not recomputed downstream
         Assert.Equal("AT_MATURITY", constituted.InterestVariant);
+        // bd babelstone-v794: the catalogue product_code is stamped from the already-available
+        // command.ProductId (no new command input) so the D.4 read model can denormalize it.
+        Assert.Equal("dpz_pt_12m_juros_venc", constituted.ProductCode);
     }
 
     [Fact]

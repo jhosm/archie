@@ -12,13 +12,15 @@ namespace Babelstone.EventStore;
 /// <para>
 /// The row carries typed query columns (the denormalized dimensions the read API filters and
 /// projects on) plus an opaque <see cref="Detail"/> payload — the serialized structural read body.
-/// The product KEY is <see cref="RateSheetVersionId"/>; there is deliberately no catalogue
-/// <c>product_id</c> column. The catalogue product code (e.g. <c>dpz_pt_12m_juros_venc</c>) is
-/// resolved into the TAN + rate-sheet version at constitution and does not survive onto
-/// <c>DepositConstituted</c>/the position, so a <c>product_id</c> column populated from the
-/// position would merely duplicate the version id under a misleading name (a client filtering on
-/// the catalogue code would match nothing). Carrying the catalogue code onto the event is a
-/// separable follow-up (bd babelstone-yfr2 deferred note).
+/// TWO product keys are surfaced under their honest names: <see cref="RateSheetVersionId"/> is the
+/// PRICE/version key (one-to-many to products), and <see cref="ProductCode"/> is the catalogue
+/// STRUCTURAL product code (e.g. <c>dpz_pt_12m_juros_venc</c>) — the queryable "which product is
+/// this" dimension. Carrying the catalogue code onto <c>DepositConstituted</c>/the position is NOW
+/// IMPLEMENTED (bd babelstone-v794, earlier deferred as the bd babelstone-yfr2 note). It is
+/// PROSPECTIVE-ONLY: deposits constituted before v794 never carried it (the Avro field decodes to
+/// the "" default) and the code is NOT back-fillable from the log — it was discarded at
+/// constitution and the rate-sheet version is one-to-many to products — so historical rows carry
+/// the empty code.
 /// Keeping the body byte-oriented is what lets the read-model STORE stay family-agnostic
 /// (ADR-PC-021 §P2): the spine persists the typed columns + opaque bytes and never names a
 /// deposit's body shape; the family owns the <see cref="Detail"/> serialization, the same split as
@@ -47,6 +49,7 @@ public sealed record ReadModelRow(
     long PrincipalCents,
     int TanBasisPoints,
     string RateSheetVersionId,
+    string ProductCode,
     int TermDays,
     DateOnly StartDate,
     DateOnly MaturityDate,

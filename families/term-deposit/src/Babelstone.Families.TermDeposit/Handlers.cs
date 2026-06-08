@@ -23,6 +23,10 @@ public sealed class DepositConstitutedHandler : IEventHandler<DepositPosition, D
             InterestVariant = @event.InterestVariant,
             AutoRenewalPolicy = @event.AutoRenewalPolicy,
             PaymentPeriodMonths = @event.PaymentPeriodMonths,
+            // The catalogue product code carried onto the event (bd babelstone-v794); "" for
+            // pre-v794 deposits whose event decoded the Avro default. Copied verbatim — no clock,
+            // no I/O, no derivation, so the fold stays pure/deterministic (BENG001/002/003).
+            ProductCode = @event.ProductCode,
             // RemainingPrincipal tracks principal still on deposit; it starts at the full
             // principal and is reduced by partial withdrawals (the event carries the result).
             RemainingPrincipal = @event.Principal,

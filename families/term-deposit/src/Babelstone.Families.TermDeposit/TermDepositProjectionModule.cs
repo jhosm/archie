@@ -127,6 +127,7 @@ public sealed class TermDepositProjectionModule : IProjectionModule
             PrincipalCents: p.Principal.Cents,
             TanBasisPoints: p.TanBasisPoints,
             RateSheetVersionId: p.RateSheetVersionId,
+            ProductCode: p.ProductCode,
             TermDays: p.TermDays,
             StartDate: p.StartDate,
             MaturityDate: p.MaturityDate,
@@ -138,15 +139,20 @@ public sealed class TermDepositProjectionModule : IProjectionModule
             LastUpdated: fold.TransactionTime);
     }
 
-    // The read-model product key is RateSheetVersionId only — there is deliberately no catalogue
-    // product_id column/field. DepositConstituted/DepositPosition do not carry the catalogue product
-    // code (e.g. "dpz_pt_12m_juros_venc"): it is resolved into the TAN + rate-sheet version AT
-    // constitution and only the version id survives onto the event. A product_id populated from the
-    // position would therefore EQUAL the rate_sheet_version_id and a client filtering on the
-    // catalogue code would match nothing — a mislabelled column whose name lies about its contents.
-    // Carrying the catalogue product code onto DepositConstituted/the position (so the read model can
-    // denormalize the real code) is a separable follow-up (bd babelstone-yfr2 deferred note); until
-    // then the read surface exposes the version id under its true name only.
+    // The read model denormalizes TWO product keys under their honest names: RateSheetVersionId (the
+    // price/version key, one-to-many to products) and ProductCode (the catalogue structural product
+    // code, e.g. "dpz_pt_12m_juros_venc" — the queryable "which product is this" dimension). Carrying
+    // the catalogue code onto DepositConstituted/the position is NOW IMPLEMENTED (bd babelstone-v794):
+    // the decider stamps it from command.ProductId, the fold copies it onto the position, and the
+    // mapper above projects p.ProductCode into the row. (Earlier this was deliberately omitted to avoid
+    // a product_id mislabelled as the version id — bd babelstone-yfr2 deferred note.)
+    //
+    // PROSPECTIVE-ONLY (bd babelstone-v794): deposits constituted BEFORE this change never carried the
+    // code — their DepositConstituted decodes the additive Avro field as the "" default — and it is NOT
+    // back-fillable from the event log (the code was discarded at constitution and rate_sheet_version_id
+    // → product is one-to-many, so the version cannot be inverted to a single product). Those historical
+    // read-model rows therefore carry the empty code; only deposits constituted from v794 onward carry a
+    // populated ProductCode. The longer this waited, the larger that permanently-uncategorizable backlog.
 
     private static readonly Babelstone.Engine.JsonStateSerializer<DepositPosition> ReadModelDetailSerializer = new();
 
