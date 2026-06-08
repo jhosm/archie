@@ -191,6 +191,114 @@ public static class TermDepositDecider
         return boundary >= position.MaturityDate ? position.MaturityDate : boundary;
     }
 
+    // ---- early termination (02 §2.5) -----------------------------------------------------------
+
+    /// <summary>
+    /// Break a deposit before maturity and settle net of the configured penalty (02 §2.5). Pure: the
+    /// position carries the principal/rate/start, the pack supplies the day-count and withholding rate,
+    /// and the product's <see cref="EarlyTerminationPolicy"/> + the termination date are explicit inputs
+    /// — no clock. The flow, in order:
+    /// <list type="number">
+    /// <item><b>Accrue</b> the gross interest earned over the elapsed period
+    /// <c>[start, terminationDate]</c> on the resolved day-count (a <i>short</i> term, not the full one).</item>
+    /// <item><b>Withhold</b> that ONE accrued flow (<see cref="Withholding.Withhold"/>) — flow-by-flow,
+    /// never rate-scaled (fin-math §5.4). The realized net interest is this single flow's net.</item>
+    /// <item><b>Select the band</b> first-match against the elapsed term and compute the penalty as the
+    /// band's basis-point share of its <see cref="PenaltyBasis"/> (accrued interest, principal, or both).
+    /// The penalty is computed on the GROSS accrued interest (the headline the band prices), never on the
+    /// post-tax net — the share is rounded once at the Money boundary like every other amount.</item>
+    /// <item><b>Settle</b> <c>principal + netAccrued − penalty</c>, then <b>floor</b>: the net settlement
+    /// never falls below the policy floor (02 §2.5). When the floor binds, the EFFECTIVE penalty is
+    /// reduced so the conservation <c>settlement = principal + netAccrued − penalty</c> still holds to the
+    /// cent (the event records the effective penalty, not the pre-floor headline).</item>
+    /// </list>
+    /// Emits the SAME three-event shape AT_MATURITY uses for the interest flow — <see cref="InterestAccrued"/>
+    /// + <see cref="WithholdingApplied"/> (so the withholding ledger and position fold the accrued flow exactly
+    /// as any other) — then <see cref="DepositTerminatedEarly"/> carrying the principal, the resolved penalty,
+    /// and the net settlement. One accumulation path per flow: the accrued interest folds via the Accrued+Withheld
+    /// pair (it has no <see cref="InterestPaid"/>), and the terminated event itself carries no interest tally.
+    /// </summary>
+    /// <param name="position">The Active deposit being broken (principal, TAN, start date).</param>
+    /// <param name="terminationDate">The as-of date the break is priced and accrued to — an INPUT, not a clock read.</param>
+    /// <param name="policy">The product's early-termination policy (flat or banded, with optional floor).</param>
+    /// <param name="dayCount">The pack-resolved day-count convention the elapsed accrual uses.</param>
+    /// <param name="withholdingBasisPoints">The pack-resolved withholding rate, applied to the one accrued flow.</param>
+    /// <param name="terminationReason">A stable, non-PII reason code recorded on the event (e.g. <c>CUSTOMER_REQUEST</c>).</param>
+    public static IReadOnlyList<DomainEvent> DecideEarlyTermination(
+        DepositPosition position, DateOnly terminationDate, EarlyTerminationPolicy policy,
+        DayCountConvention dayCount, int withholdingBasisPoints, string terminationReason)
+    {
+        // 1. Accrue the elapsed-period gross interest (start → termination), one flow on the resolved
+        //    day-count. SimpleInterest rejects a reversed interval, so a termination before the start
+        //    date fails loud rather than emitting negative interest.
+        var factor = DayCount.Between(position.StartDate, terminationDate, dayCount);
+        var grossAccrued = Accrual.SimpleInterest(position.RemainingPrincipal, position.TanBasisPoints, factor);
+
+        // 2. Withhold that ONE flow — flow-by-flow (fin-math §5.4), never rate-scaled.
+        var withheld = Withholding.Withhold(grossAccrued, withholdingBasisPoints);
+
+        // 3. Select the band first-match against the elapsed term, then compute the penalty on its basis.
+        var elapsedDays = terminationDate.DayNumber - position.StartDate.DayNumber;
+        var band = policy.ResolveBand(elapsedDays);
+        var penalty = ComputePenalty(band, position.RemainingPrincipal, grossAccrued);
+
+        // 4. Settle principal + net accrued − penalty, then floor. The floor caps the EFFECTIVE penalty
+        //    (never the principal/net legs) so the conservation settlement = principal + net − penalty
+        //    still holds to the cent and the event records the penalty actually charged.
+        var preFloorSettlement = position.RemainingPrincipal + withheld.Net - penalty;
+        var (settlement, effectivePenalty) = ApplyFloor(preFloorSettlement, penalty, policy.Floor,
+            position.RemainingPrincipal, withheld.Net);
+
+        return
+        [
+            new InterestAccrued(grossAccrued, terminationDate),
+            new WithholdingApplied(withheld.Tax, withheld.Net),
+            new DepositTerminatedEarly(
+                position.DepositId, position.RemainingPrincipal, effectivePenalty, settlement,
+                terminationDate, terminationReason),
+        ];
+    }
+
+    /// <summary>
+    /// The penalty for a band: its basis-point share of the chosen basis (02 §2.5). The share is a
+    /// single decimal computation rounded once at the Money boundary (ADR-PC-010 §P1–§P2) — never a
+    /// rate scaled mid-calculation. The basis is the GROSS accrued interest, the principal, or both.
+    /// </summary>
+    private static Money ComputePenalty(EarlyTerminationBand band, Money principal, Money grossAccrued)
+    {
+        var basisAmount = band.Basis switch
+        {
+            PenaltyBasis.AccruedInterest => grossAccrued,
+            PenaltyBasis.Principal => principal,
+            // BOTH: the share applies to (principal + gross accrued interest).
+            _ => principal + grossAccrued,
+        };
+
+        // share = basis_cents × penalty_bps / 10000, rounded once HALF_EVEN at the cents boundary.
+        return Money.FromCents((decimal)basisAmount.Cents * band.PenaltyBasisPoints / 10_000);
+    }
+
+    /// <summary>
+    /// Enforce the policy floor (02 §2.5): the net settlement never falls below it. When the floor
+    /// binds, the EFFECTIVE penalty is reduced to <c>principal + net − floor</c> so the conservation
+    /// <c>settlement = principal + net − penalty</c> stays exact to the cent (the floor is realised by
+    /// charging less penalty, never by inventing money on the principal/net legs). With no floor, the
+    /// pre-floor settlement and headline penalty pass through unchanged.
+    /// </summary>
+    private static (Money Settlement, Money EffectivePenalty) ApplyFloor(
+        Money preFloorSettlement, Money penalty, Money? floor, Money principal, Money net)
+    {
+        if (floor is { } floorValue && preFloorSettlement.Cents < floorValue.Cents)
+        {
+            // Settlement is lifted to the floor; the penalty actually charged is whatever brings the
+            // (principal + net) payout down to the floor — i.e. the floor absorbs the excess penalty.
+            var effectivePenalty = principal + net - floorValue;
+            return (floorValue, effectivePenalty);
+        }
+
+        return (preFloorSettlement, penalty);
+    }
+
     // ---- auto-renewal (02 §2.4.4) --------------------------------------------------------------
 
     /// <summary>

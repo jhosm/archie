@@ -27,7 +27,8 @@ public sealed class TermDepositConstitutionService(
     ISettlementPort settlement,
     VerifiedPack pack,
     string dayCountPrimitive,
-    string withholdingPrimitive)
+    string withholdingPrimitive,
+    EarlyTerminationPolicy? earlyTerminationPolicy = null)
 {
     // The stream is keyed by the deposit id (v1: stream_id == deposit_id; partition_key == stream_id).
     private static readonly TermDepositFamilyModule Family = new();
@@ -183,6 +184,58 @@ public sealed class TermDepositConstitutionService(
         await runtime.AppendAsync(
             command.DepositId, hydrated.Version, events,
             Context(command.Actor, command.PaidAt), ct);
+    }
+
+    /// <summary>
+    /// Break a constituted deposit before maturity (02 §2.5): rehydrate it (must be Active — the F.3
+    /// gate decides), accrue the elapsed-period interest, withhold that one flow, apply the product's
+    /// configured penalty (flat or banded, to the right basis, respecting the floor), credit the net
+    /// settlement, and append the closing events. The penalty math lives in the pure decider
+    /// (<see cref="TermDepositDecider.DecideEarlyTermination"/>); withholding is flow-by-flow on the one
+    /// accrued flow, never rate-scaled. Termination is triggered MANUALLY here, exactly as maturity is.
+    /// </summary>
+    public async Task TerminateEarlyAsync(TerminateEarlyCommand command, CancellationToken ct = default)
+    {
+        // 0. The product's early-termination policy is engine-instance config for the walking skeleton
+        //    (mirroring the pinned pack stand-in, ADR-PC-009). Fail loud if no policy is configured —
+        //    never settle a break at a silent zero penalty.
+        var policy = earlyTerminationPolicy
+            ?? throw new InvalidOperationException(
+                "No early-termination policy is configured for this engine instance; refusing to terminate " +
+                $"deposit {command.DepositId} without a policy (02 §2.5).");
+
+        // 1. Rehydrate the constituted position (load-then-append on the live stream head).
+        var hydrated = await runtime.LoadAsync(command.DepositId, ct);
+        var position = hydrated.State;
+
+        // Transition-legality gate (F.3 state machine): breaking early is legal only from Active. The
+        // single LifecycleTransitions table — not a scattered inline check — decides, so terminating a
+        // Matured/closed deposit is rejected uniformly with every other illegal transition.
+        RejectIfIllegal(position.Lifecycle, LifecycleTransitions.Transition.TerminateEarly, command.DepositId, "terminate early");
+
+        // 2. Pack-resolved primitives (fail loud, never a silent default).
+        var (dayCount, withholdingBps) = ResolvePrimitives();
+
+        // 3. Decide (pure): accrue the elapsed flow → withhold → penalty → floor → settle. The
+        //    termination DATE is derived from the command instant and passed as an INPUT — no clock
+        //    in the decider.
+        var terminationDate = DateOnly.FromDateTime(command.TerminatedAt.UtcDateTime);
+        var events = TermDepositDecider.DecideEarlyTermination(
+            position, terminationDate, policy, dayCount, withholdingBps, command.TerminationReason);
+
+        // 4. Settle (ADR-PC-016): credit the net settlement to the depositor's current account. The
+        //    DepositTerminatedEarly event is the last and carries the settlement amount.
+        var terminated = (DepositTerminatedEarly)events[^1];
+        await settlement.SettleAsync(
+            new SettlementInstruction(
+                command.DepositId, SettlementDirection.Credit, terminated.NetSettlementAmount,
+                command.PayoutAccount, "early_termination"),
+            ct);
+
+        // 5. Append at the current head (optimistic concurrency on the second append).
+        await runtime.AppendAsync(
+            command.DepositId, hydrated.Version, events,
+            Context(command.Actor, command.TerminatedAt), ct);
     }
 
     /// <summary>

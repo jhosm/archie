@@ -50,6 +50,25 @@ public sealed record PayInterestCommand(
     string PayoutAccount,
     string Actor);
 
+/// <summary>Break a constituted deposit before maturity (02 §2.5): accrue the elapsed-period interest,
+/// withhold that one flow, apply the product's configured penalty (flat or banded, with optional floor)
+/// to the right basis, and settle the net payout to the depositor's current account. The penalty policy
+/// is per-PRODUCT config the bank's pricing team owns (it rides on the product config, not a command
+/// input — the service resolves it, mirroring how the day-count/withholding primitives are resolved).
+/// Termination is triggered MANUALLY here, exactly as maturity is.</summary>
+/// <param name="TerminatedAt">The instant the break fires: its DATE is the as-of termination date the
+/// elapsed interest accrues to and the penalty band is selected against. Passed as an INPUT so the
+/// decision stays pure and replayable (no clock in the decider).</param>
+/// <param name="PayoutAccount">The legacy current account credited the net settlement (settlement).</param>
+/// <param name="TerminationReason">A stable, non-PII reason code recorded on the event
+/// (e.g. <c>CUSTOMER_REQUEST</c>) — never anything about the customer (ADR-PC-004 §P2).</param>
+public sealed record TerminateEarlyCommand(
+    Guid DepositId,
+    DateTimeOffset TerminatedAt,
+    string PayoutAccount,
+    string TerminationReason,
+    string Actor);
+
 /// <summary>Auto-renew a maturing deposit (02 §2.4.4): mature the closing instance, constitute a
 /// fresh engine-native instance from the rolled-over principal at the policy-resolved rate, and link
 /// the two with <c>DepositRenewed</c>. The renewal branches on the closing deposit's
