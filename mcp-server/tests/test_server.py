@@ -9,9 +9,11 @@ from babelstone_mcp.engine_client import EngineClient
 
 _POSITION = {
     "deposit_id": "d-1",
+    "sor": "engine",
     "principal_cents": 1_000_000,
     "tan_basis_points": 300,
     "rate_sheet_version_id": "pt-deposits-2026.1",
+    "product_code": "dpz_pt_12m_juros_venc",
     "term_days": 365,
     "start_date": "2026-01-15",
     "maturity_date": "2027-01-15",
@@ -24,6 +26,8 @@ _POSITION = {
     "total_payout_cents": 0,
     "coupons_paid": 0,
     "lifecycle": "Active",
+    "last_sequence": 0,
+    "last_updated": "2026-01-15T00:00:00+00:00",
 }
 
 
@@ -33,15 +37,19 @@ class _FakeEngine(EngineClient):
     def __init__(self) -> None:  # noqa: D401 — bypass the real httpx client
         self.constitute_request: dict[str, Any] | None = None
         self.position_requested: str | None = None
+        self.min_sequence_requested: int | None = None
         self.matured: str | None = None
         self.interest_paid: str | None = None
 
     async def constitute(self, request: dict[str, Any]) -> dict[str, Any]:
         self.constitute_request = request
-        return {"deposit_id": "d-1", "status": "ACTIVE"}
+        return {"deposit_id": "d-1", "status": "ACTIVE", "commit_sequence": 0}
 
-    async def deposit_position(self, deposit_id: str) -> dict[str, Any]:
+    async def deposit_position(
+        self, deposit_id: str, min_sequence: int | None = None
+    ) -> dict[str, Any]:
         self.position_requested = deposit_id
+        self.min_sequence_requested = min_sequence
         return {**_POSITION, "deposit_id": deposit_id}
 
     async def mature(self, deposit_id: str) -> dict[str, Any]:
@@ -97,12 +105,16 @@ async def test_get_deposit_tool_maps_id_to_the_engine_read() -> None:
     fake = _FakeEngine()
     server.set_engine(fake)
 
-    result = await server.get_deposit(deposit_id="d-42")
+    result = await server.get_deposit(deposit_id="d-42", min_sequence=7)
 
     assert fake.position_requested == "d-42"
+    assert fake.min_sequence_requested == 7   # the read-your-writes token is threaded to the engine
     assert result.deposit_id == "d-42"
     assert result.tan_basis_points == 300
     assert result.lifecycle == "Active"
+    assert result.sor == "engine"
+    assert result.product_code == "dpz_pt_12m_juros_venc"
+    assert result.last_sequence == 0
 
 
 async def test_mature_deposit_tool_maps_id_and_folds_interest() -> None:
@@ -149,6 +161,7 @@ async def test_constitute_tool_maps_args_to_the_engine_request() -> None:
 
     assert result.deposit_id == "d-1"
     assert result.status == "ACTIVE"
+    assert result.commit_sequence == 0   # the read-your-writes token the agent threads to get_deposit
     assert fake.constitute_request is not None
     assert fake.constitute_request["principal_cents"] == 1_000_000
     assert fake.constitute_request["product_id"] == "dpz_pt_12m_juros_venc"

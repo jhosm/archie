@@ -39,7 +39,8 @@ public sealed class TermDepositConstitutionService(
     /// upfront net to the funding account (02 §2.1 <c>CF(0) = -C + J</c>), appending the upfront
     /// <c>InterestPaid</c> triple alongside the constitution event in the same first transaction.
     /// </summary>
-    public async Task ConstituteAsync(ConstituteDepositCommand command, CancellationToken ct = default)
+    /// <returns>The new stream's head version (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
+    public async Task<long> ConstituteAsync(ConstituteDepositCommand command, CancellationToken ct = default)
     {
         // 1. Resolve the rate sheet active at constitution (ADR-PC-008 §P3); fail loud if none.
         var resolution = await rateSheets.ResolveAsync(Family.FamilyName, command.ConstitutedAt, ct)
@@ -81,8 +82,9 @@ public sealed class TermDepositConstitutionService(
             events.AddRange(advance);
         }
 
-        // 6. Append the new stream (expectedVersion -1) — events + outbox in one transaction.
-        await runtime.AppendAsync(
+        // 6. Append the new stream (expectedVersion -1) — events + outbox in one transaction. The head
+        //    version it returns is the commit_sequence the caller threads for read-your-writes.
+        return await runtime.AppendAsync(
             command.DepositId, expectedVersion: -1, events,
             Context(command.Actor, command.ConstitutedAt), ct);
     }
@@ -94,7 +96,8 @@ public sealed class TermDepositConstitutionService(
     /// last coupon net); ADVANCE returns the principal alone (interest was paid at t=0). The branch
     /// lives in the pure decider (<see cref="TermDepositDecider.DecideMaturity"/>).
     /// </summary>
-    public async Task MatureAsync(MatureDepositCommand command, CancellationToken ct = default)
+    /// <returns>The stream's head version after maturity (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
+    public async Task<long> MatureAsync(MatureDepositCommand command, CancellationToken ct = default)
     {
         // 1. Rehydrate the constituted position (load-then-append on the live stream head).
         var hydrated = await runtime.LoadAsync(command.DepositId, ct);
@@ -119,8 +122,9 @@ public sealed class TermDepositConstitutionService(
                 command.PayoutAccount, "maturity"),
             ct);
 
-        // 5. Append at the current head (optimistic concurrency on the second append).
-        await runtime.AppendAsync(
+        // 5. Append at the current head (optimistic concurrency on the second append). The returned
+        //    head version is the commit_sequence the caller threads for read-your-writes.
+        return await runtime.AppendAsync(
             command.DepositId, hydrated.Version, events,
             Context(command.Actor, command.MaturedAt), ct);
     }
@@ -134,7 +138,8 @@ public sealed class TermDepositConstitutionService(
     /// rides with the principal at maturity (<see cref="MatureAsync"/>'s PERIODIC branch), so a coupon
     /// whose window would reach the maturity date is rejected as "due at maturity".
     /// </summary>
-    public async Task PayInterestAsync(PayInterestCommand command, CancellationToken ct = default)
+    /// <returns>The stream's head version after the coupon (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
+    public async Task<long> PayInterestAsync(PayInterestCommand command, CancellationToken ct = default)
     {
         // 1. Rehydrate; only an Active PERIODIC deposit pays coupons.
         var hydrated = await runtime.LoadAsync(command.DepositId, ct);
@@ -179,8 +184,9 @@ public sealed class TermDepositConstitutionService(
                 command.PayoutAccount, "coupon"),
             ct);
 
-        // 6. Append at the current head (optimistic concurrency).
-        await runtime.AppendAsync(
+        // 6. Append at the current head (optimistic concurrency). The returned head version is the
+        //    commit_sequence the caller threads for read-your-writes.
+        return await runtime.AppendAsync(
             command.DepositId, hydrated.Version, events,
             Context(command.Actor, command.PaidAt), ct);
     }

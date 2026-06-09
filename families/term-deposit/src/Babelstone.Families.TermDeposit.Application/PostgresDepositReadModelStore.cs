@@ -23,27 +23,35 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
         const string sql = """
             INSERT INTO read_model.deposits (
                 stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
-                term_days, start_date, maturity_date, interest_variant, lifecycle, total_payout_cents,
-                detail, last_sequence, last_updated)
+                term_days, start_date, maturity_date, interest_variant, auto_renewal_policy,
+                payment_period_months, lifecycle, accrued_gross_interest_cents, withholding_to_date_cents,
+                net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated)
             VALUES (
                 @stream_id, @sor, @principal_cents, @tan_basis_points, @rate_sheet_version_id, @product_code,
-                @term_days, @start_date, @maturity_date, @interest_variant, @lifecycle, @total_payout_cents,
-                @detail, @last_sequence, @last_updated)
+                @term_days, @start_date, @maturity_date, @interest_variant, @auto_renewal_policy,
+                @payment_period_months, @lifecycle, @accrued_gross_interest_cents, @withholding_to_date_cents,
+                @net_interest_cents, @total_payout_cents, @coupons_paid, @detail, @last_sequence, @last_updated)
             ON CONFLICT (stream_id) DO UPDATE SET
-                sor                   = EXCLUDED.sor,
-                principal_cents       = EXCLUDED.principal_cents,
-                tan_basis_points      = EXCLUDED.tan_basis_points,
-                rate_sheet_version_id = EXCLUDED.rate_sheet_version_id,
-                product_code          = EXCLUDED.product_code,
-                term_days             = EXCLUDED.term_days,
-                start_date            = EXCLUDED.start_date,
-                maturity_date         = EXCLUDED.maturity_date,
-                interest_variant      = EXCLUDED.interest_variant,
-                lifecycle             = EXCLUDED.lifecycle,
-                total_payout_cents    = EXCLUDED.total_payout_cents,
-                detail                = EXCLUDED.detail,
-                last_sequence         = EXCLUDED.last_sequence,
-                last_updated          = EXCLUDED.last_updated
+                sor                          = EXCLUDED.sor,
+                principal_cents              = EXCLUDED.principal_cents,
+                tan_basis_points             = EXCLUDED.tan_basis_points,
+                rate_sheet_version_id        = EXCLUDED.rate_sheet_version_id,
+                product_code                 = EXCLUDED.product_code,
+                term_days                    = EXCLUDED.term_days,
+                start_date                   = EXCLUDED.start_date,
+                maturity_date                = EXCLUDED.maturity_date,
+                interest_variant             = EXCLUDED.interest_variant,
+                auto_renewal_policy          = EXCLUDED.auto_renewal_policy,
+                payment_period_months        = EXCLUDED.payment_period_months,
+                lifecycle                    = EXCLUDED.lifecycle,
+                accrued_gross_interest_cents = EXCLUDED.accrued_gross_interest_cents,
+                withholding_to_date_cents    = EXCLUDED.withholding_to_date_cents,
+                net_interest_cents           = EXCLUDED.net_interest_cents,
+                total_payout_cents           = EXCLUDED.total_payout_cents,
+                coupons_paid                 = EXCLUDED.coupons_paid,
+                detail                       = EXCLUDED.detail,
+                last_sequence                = EXCLUDED.last_sequence,
+                last_updated                 = EXCLUDED.last_updated
             WHERE read_model.deposits.last_sequence < EXCLUDED.last_sequence;
             """;
 
@@ -58,8 +66,9 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
     {
         const string sql = """
             SELECT stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
-                   term_days, start_date, maturity_date, interest_variant, lifecycle, total_payout_cents,
-                   detail, last_sequence, last_updated
+                   term_days, start_date, maturity_date, interest_variant, auto_renewal_policy,
+                   payment_period_months, lifecycle, accrued_gross_interest_cents, withholding_to_date_cents,
+                   net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated
             FROM read_model.deposits
             WHERE stream_id = @stream_id;
             """;
@@ -81,8 +90,9 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
         // ties so the page order never depends on physical row layout.
         const string sql = """
             SELECT stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
-                   term_days, start_date, maturity_date, interest_variant, lifecycle, total_payout_cents,
-                   detail, last_sequence, last_updated
+                   term_days, start_date, maturity_date, interest_variant, auto_renewal_policy,
+                   payment_period_months, lifecycle, accrued_gross_interest_cents, withholding_to_date_cents,
+                   net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated
             FROM read_model.deposits
             WHERE maturity_date >= @from_inclusive AND maturity_date < @to_exclusive
             ORDER BY maturity_date ASC, stream_id ASC;
@@ -131,8 +141,14 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
         command.Parameters.AddWithValue("start_date", row.StartDate);
         command.Parameters.AddWithValue("maturity_date", row.MaturityDate);
         command.Parameters.AddWithValue("interest_variant", row.InterestVariant);
+        command.Parameters.AddWithValue("auto_renewal_policy", row.AutoRenewalPolicy);
+        command.Parameters.AddWithValue("payment_period_months", row.PaymentPeriodMonths);
         command.Parameters.AddWithValue("lifecycle", row.Lifecycle);
+        command.Parameters.AddWithValue("accrued_gross_interest_cents", row.AccruedGrossInterestCents);
+        command.Parameters.AddWithValue("withholding_to_date_cents", row.WithholdingToDateCents);
+        command.Parameters.AddWithValue("net_interest_cents", row.NetInterestCents);
         command.Parameters.AddWithValue("total_payout_cents", row.TotalPayoutCents);
+        command.Parameters.AddWithValue("coupons_paid", row.CouponsPaid);
         command.Parameters.AddWithValue("detail", row.Detail.ToArray());
         command.Parameters.AddWithValue("last_sequence", row.LastSequence);
         command.Parameters.AddWithValue("last_updated", row.LastUpdated);
@@ -150,9 +166,15 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
             StartDate: reader.GetFieldValue<DateOnly>(7),
             MaturityDate: reader.GetFieldValue<DateOnly>(8),
             InterestVariant: reader.GetString(9),
-            Lifecycle: reader.GetString(10),
-            TotalPayoutCents: reader.GetInt64(11),
-            Detail: reader.GetFieldValue<byte[]>(12),
-            LastSequence: reader.GetInt64(13),
-            LastUpdated: reader.GetFieldValue<DateTimeOffset>(14));
+            AutoRenewalPolicy: reader.GetString(10),
+            PaymentPeriodMonths: reader.GetInt32(11),
+            Lifecycle: reader.GetString(12),
+            AccruedGrossInterestCents: reader.GetInt64(13),
+            WithholdingToDateCents: reader.GetInt64(14),
+            NetInterestCents: reader.GetInt64(15),
+            TotalPayoutCents: reader.GetInt64(16),
+            CouponsPaid: reader.GetInt32(17),
+            Detail: reader.GetFieldValue<byte[]>(18),
+            LastSequence: reader.GetInt64(19),
+            LastUpdated: reader.GetFieldValue<DateTimeOffset>(20));
 }

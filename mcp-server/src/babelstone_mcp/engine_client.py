@@ -22,14 +22,26 @@ class EngineClient:
         self._client = client or httpx.AsyncClient(timeout=30.0)
 
     async def constitute(self, request: dict[str, Any]) -> dict[str, Any]:
-        """POST /v1/deposits — returns {deposit_id, status}. Raises on a non-2xx engine response."""
+        """POST /v1/deposits — returns {deposit_id, status, commit_sequence}. Raises on a non-2xx
+        engine response. ``commit_sequence`` is the read-your-writes token (ADR-IC-005 §P3): pass it
+        back as ``min_sequence`` on the follow-up read to see the just-written deposit.
+        """
         response = await self._client.post(f"{self._base_url}/v1/deposits", json=request)
         response.raise_for_status()
         return response.json()
 
-    async def deposit_position(self, deposit_id: str) -> dict[str, Any]:
-        """GET /v1/deposits/{id} — the folded position. Raises on 404/other non-2xx."""
-        response = await self._client.get(f"{self._base_url}/v1/deposits/{deposit_id}")
+    async def deposit_position(
+        self, deposit_id: str, min_sequence: int | None = None
+    ) -> dict[str, Any]:
+        """GET /v1/deposits/{id} — the ONE canonical deposit resource (ADR-IC-005). Served from the
+        denormalized read model by default; when ``min_sequence`` is given (a commit_sequence token),
+        sends ``If-Min-Sequence`` so the engine folds the stream for read-your-writes if the projector
+        is still behind. Raises on 404/other non-2xx.
+        """
+        headers = {"If-Min-Sequence": str(min_sequence)} if min_sequence is not None else None
+        response = await self._client.get(
+            f"{self._base_url}/v1/deposits/{deposit_id}", headers=headers
+        )
         response.raise_for_status()
         return response.json()
 

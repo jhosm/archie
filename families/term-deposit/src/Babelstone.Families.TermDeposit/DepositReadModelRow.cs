@@ -49,6 +49,18 @@ namespace Babelstone.Families.TermDeposit;
 /// channel/gateway tier READS it; the engine never embeds routing logic. No PII lives in this row
 /// (ADR-PC-004 §P2) — structural deposit facts only.
 /// </para>
+/// <para>
+/// The row carries the FULL displayable position — the live financial facts
+/// (<see cref="AccruedGrossInterestCents"/>, <see cref="WithholdingToDateCents"/>,
+/// <see cref="NetInterestCents"/>, <see cref="CouponsPaid"/>) and the terms
+/// (<see cref="AutoRenewalPolicy"/>, <see cref="PaymentPeriodMonths"/>) alongside the query
+/// dimensions. These are not extra computation: the read-model runner already folds the SAME
+/// <see cref="DepositPosition"/> the live aggregate fold produces, so the mapper simply projects
+/// facts already present in <c>fold.State</c> (still pure, still cents-native, ADR-PC-010 §P1/§P5).
+/// Carrying them makes the read-model row a complete stand-in for the live fold, which is what lets
+/// the single canonical <c>GET /v1/deposits/{id}</c> serve the read model by default and fall back to
+/// the fold only for read-your-writes — without the response shape changing between the two paths.
+/// </para>
 /// </remarks>
 public sealed record DepositReadModelRow(
     Guid StreamId,
@@ -61,8 +73,14 @@ public sealed record DepositReadModelRow(
     DateOnly StartDate,
     DateOnly MaturityDate,
     string InterestVariant,
+    string AutoRenewalPolicy,
+    int PaymentPeriodMonths,
     string Lifecycle,
+    long AccruedGrossInterestCents,
+    long WithholdingToDateCents,
+    long NetInterestCents,
     long TotalPayoutCents,
+    int CouponsPaid,
     ReadOnlyMemory<byte> Detail,
     long LastSequence,
     DateTimeOffset LastUpdated) : IReadModelRow;

@@ -27,7 +27,13 @@ public sealed class PostgresDepositReadModelStoreTests(ConstitutionFixture fixtu
         string lifecycle = "Active",
         long totalPayoutCents = 1_000_000,
         DateTimeOffset? lastUpdated = null,
-        string productCode = "dpz_pt_12m_juros_venc") =>
+        string productCode = "dpz_pt_12m_juros_venc",
+        string autoRenewalPolicy = "NONE",
+        int paymentPeriodMonths = 0,
+        long accruedGrossInterestCents = 0,
+        long withholdingToDateCents = 0,
+        long netInterestCents = 0,
+        int couponsPaid = 0) =>
         new(
             StreamId: streamId,
             Sor: "engine",
@@ -39,8 +45,14 @@ public sealed class PostgresDepositReadModelStoreTests(ConstitutionFixture fixtu
             StartDate: new DateOnly(2026, 1, 15),
             MaturityDate: maturityDate,
             InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: autoRenewalPolicy,
+            PaymentPeriodMonths: paymentPeriodMonths,
             Lifecycle: lifecycle,
+            AccruedGrossInterestCents: accruedGrossInterestCents,
+            WithholdingToDateCents: withholdingToDateCents,
+            NetInterestCents: netInterestCents,
             TotalPayoutCents: totalPayoutCents,
+            CouponsPaid: couponsPaid,
             Detail: new byte[] { 0x01, 0x02, 0x03 },
             LastSequence: lastSequence,
             LastUpdated: lastUpdated ?? new DateTimeOffset(2026, 1, 15, 0, 0, 0, TimeSpan.Zero));
@@ -67,6 +79,32 @@ public sealed class PostgresDepositReadModelStoreTests(ConstitutionFixture fixtu
         // dimension, now carried end-to-end — bd babelstone-v794).
         Assert.Equal("pt-deposits-2026.1", row.RateSheetVersionId);
         Assert.Equal("dpz_pt_12m_juros_venc", row.ProductCode);
+    }
+
+    [Fact]
+    public async Task The_full_financial_position_round_trips_through_postgres()
+    {
+        // D.4 single-resource enrichment: the read-model row carries the live financial facts + the
+        // terms (the same fold the live path computes), so GET /v1/deposits/{id} serves the complete
+        // position from the row without folding. Assert every enriched column round-trips.
+        await ResetAsync();
+        var streamId = Guid.NewGuid();
+
+        await _store.UpsertAsync(Sample(
+            streamId, lastSequence: 4, maturityDate: new DateOnly(2027, 1, 15), lifecycle: "Matured",
+            totalPayoutCents: 1_021_900, autoRenewalPolicy: "SAME_TERM_SAME_RATE", paymentPeriodMonths: 3,
+            accruedGrossInterestCents: 30_417, withholdingToDateCents: 8_517, netInterestCents: 21_900,
+            couponsPaid: 2));
+
+        var row = await _store.GetAsync(streamId);
+        Assert.NotNull(row);
+        Assert.Equal("SAME_TERM_SAME_RATE", row.AutoRenewalPolicy);
+        Assert.Equal(3, row.PaymentPeriodMonths);
+        Assert.Equal(30_417, row.AccruedGrossInterestCents);
+        Assert.Equal(8_517, row.WithholdingToDateCents);
+        Assert.Equal(21_900, row.NetInterestCents);
+        Assert.Equal(1_021_900, row.TotalPayoutCents);
+        Assert.Equal(2, row.CouponsPaid);
     }
 
     [Fact]

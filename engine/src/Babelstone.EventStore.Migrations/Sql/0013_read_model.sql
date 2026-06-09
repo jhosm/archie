@@ -83,8 +83,20 @@ CREATE TABLE read_model.deposits (
     start_date            DATE         NOT NULL,
     maturity_date         DATE         NOT NULL,
     interest_variant      TEXT         NOT NULL,
+    auto_renewal_policy   TEXT         NOT NULL,
+    payment_period_months INTEGER      NOT NULL,
     lifecycle             TEXT         NOT NULL,
-    total_payout_cents    BIGINT       NOT NULL,
+
+    -- The live financial position — the COMPUTED facts the events carry (never recomputed here),
+    -- surfaced so this read-model row is a complete stand-in for the live aggregate fold. That is
+    -- what lets the single canonical GET /v1/deposits/{id} serve the read model by default and fall
+    -- back to folding the stream only for read-your-writes (ADR-IC-005 §P3), without the response
+    -- shape differing between the two paths. All money is integer cents (ADR-PC-010 §P1).
+    accrued_gross_interest_cents BIGINT  NOT NULL,
+    withholding_to_date_cents    BIGINT  NOT NULL,
+    net_interest_cents           BIGINT  NOT NULL,
+    total_payout_cents           BIGINT  NOT NULL,
+    coupons_paid                 INTEGER NOT NULL,
 
     -- The fully-denormalized read body (the structural projection state, serialized). Stored as
     -- a byte-oriented payload so the read-model store stays family-agnostic (ADR-PC-021 §P2):

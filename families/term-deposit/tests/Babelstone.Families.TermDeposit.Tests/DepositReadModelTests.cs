@@ -162,6 +162,13 @@ public sealed class DepositReadModelTests
             RateSheetVersionId = "rs-x",
             ProductCode = "dpz_pt_12m_juros_venc",
             MaturityDate = new DateOnly(2027, 5, 1),
+            InterestVariant = "PERIODIC",
+            AutoRenewalPolicy = "SAME_TERM_SAME_RATE",
+            PaymentPeriodMonths = 3,
+            AccruedGrossInterest = new Money(1_234),
+            WithholdingToDate = new Money(345),
+            NetInterest = new Money(889),
+            CouponsPaid = 2,
             TotalPayout = new Money(512_345),
             Lifecycle = DepositLifecycle.Active,
         };
@@ -179,6 +186,14 @@ public sealed class DepositReadModelTests
         Assert.Equal(Origin, a.LastUpdated);
         Assert.Equal(512_345, a.TotalPayoutCents);
         Assert.Equal("dpz_pt_12m_juros_venc", a.ProductCode); // bd babelstone-v794
+        // D.4 single-resource enrichment: the full displayable position projects onto the row (the
+        // same fold the live read path computes), so GET /v1/deposits/{id} need not fold for these.
+        Assert.Equal("SAME_TERM_SAME_RATE", a.AutoRenewalPolicy);
+        Assert.Equal(3, a.PaymentPeriodMonths);
+        Assert.Equal(1_234, a.AccruedGrossInterestCents);
+        Assert.Equal(345, a.WithholdingToDateCents);
+        Assert.Equal(889, a.NetInterestCents);
+        Assert.Equal(2, a.CouponsPaid);
     }
 
     // --- helpers ---

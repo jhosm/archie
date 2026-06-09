@@ -10,27 +10,33 @@ namespace Babelstone.Engine.Api;
 /// <summary>
 /// The deposits command/query endpoints (ADR-PC-021 §D5). The Python MCP server (ADR-IC-010)
 /// maps these to model-invokable tools — <c>constitute_deposit</c> (this POST), <c>get_deposit</c>
-/// (the GET position), and <c>mature_deposit</c> (the maturity POST) — per IC-010's 2026-05-31
-/// amendment (the tool/resource axis is control-ownership, not CQRS). The host owns the wall-clock
-/// at this boundary (it stamps a missing constituted_at / matured_at); the decider stays pure.
+/// (the GET; a <c>min_sequence</c> arg threads read-your-writes), and <c>mature_deposit</c> (the
+/// maturity POST) — per IC-010's 2026-05-31 amendment (the tool/resource axis is control-ownership,
+/// not CQRS). There is ONE deposit read resource: <c>GET /v1/deposits/{id}</c> serves the denormalized
+/// read model by default and folds the event stream only for read-your-writes — the CQRS read/write
+/// split is the engine's internal business, never two public URLs (storage/mechanism never appears in
+/// a read path). The host owns the wall-clock at this boundary (it stamps a missing constituted_at /
+/// matured_at); the decider stays pure.
 /// </summary>
 public static class DepositsEndpoints
 {
     public static void Map(IEndpointRouteBuilder app)
     {
         app.MapPost("/v1/deposits", ConstituteAsync);
-        app.MapGet("/v1/deposits/{id:guid}", GetPositionAsync);
         app.MapPost("/v1/deposits/{id:guid}/maturity", MatureAsync);
         app.MapPost("/v1/deposits/{id:guid}/interest", PayInterestAsync);
 
-        // D.4 CQRS read-model query surface (ADR-IC-005), the I.2 Query API seam. Distinct from the
-        // write-side GET above (which folds the live event log): these serve the denormalized
-        // read_model.deposits table — a point lookup by id and a maturity-date range scan. Read-only,
-        // no command path here (ADR-PC-018 §6 — the engine never staples a command onto its read
-        // surface). The literal "/maturities" route is registered before the {id:guid} point lookup
-        // shares the prefix, but the :guid constraint already excludes the word, so order is moot.
+        // The CQRS query surface (ADR-IC-005, the I.2 Query API seam). ONE canonical deposit resource
+        // — GET /v1/deposits/{id} — served from the denormalized read_model.deposits row by default and
+        // folded from the event stream only as a read-your-writes fallback (see GetDepositAsync). There
+        // is NO /read-model sibling: storage/mechanism never appears in a read URL, so consumers can't
+        // gravitate to "the wrong GET". The maturities range scan is a separate query-named collection
+        // (no write-side twin, so no duality). Read-only, no command path here (ADR-PC-018 §6 — the
+        // engine never staples a command onto its read surface). The literal "/maturities" route shares
+        // the prefix with the {id:guid} point lookup, but the :guid constraint already excludes the
+        // word, so registration order is moot.
         app.MapGet("/v1/deposits/maturities", ListMaturitiesAsync);
-        app.MapGet("/v1/deposits/{id:guid}/read-model", GetReadModelAsync);
+        app.MapGet("/v1/deposits/{id:guid}", GetDepositAsync);
     }
 
     private static async Task<IResult> ConstituteAsync(
@@ -64,9 +70,10 @@ public static class DepositsEndpoints
         span?.SetTag(BabelstoneAttributes.PartitionKey, depositId.ToString());
         span?.SetTag(BabelstoneAttributes.ProductCode, request.ProductId);
 
+        long commitSequence;
         try
         {
-            await service.ConstituteAsync(command, ct);
+            commitSequence = await service.ConstituteAsync(command, ct);
         }
         catch (ConcurrencyException)
         {
@@ -81,43 +88,56 @@ public static class DepositsEndpoints
             return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
         }
 
-        return Results.Created($"/v1/deposits/{depositId}", new ConstituteDepositResponse(depositId, "ACTIVE"));
+        // commit_sequence is the head version the append reached: the caller threads it back as
+        // If-Min-Sequence on the follow-up GET to read its own write (ADR-IC-005 §P3).
+        return Results.Created(
+            $"/v1/deposits/{depositId}", new ConstituteDepositResponse(depositId, "ACTIVE", commitSequence));
     }
 
-    private static async Task<IResult> GetPositionAsync(
-        Guid id, AggregateRuntime<DepositPosition> runtime, CancellationToken ct)
+    private static async Task<IResult> GetDepositAsync(
+        Guid id,
+        [FromHeader(Name = "If-Min-Sequence")] long? minSequence,
+        IDepositReadModelStore readModel,
+        AggregateRuntime<DepositPosition> runtime,
+        CancellationToken ct)
     {
+        // The ONE canonical deposit read (ADR-IC-005). Default path: serve the denormalized read-model
+        // row — fast, eventually consistent, the 99% case (listings, dashboards). The aggregate fold is
+        // NOT a public URL; it is the internal read-your-writes fallback this handler reaches for when:
+        //   * the projector has not yet materialised the row (row is null), or
+        //   * the caller passed an If-Min-Sequence token (the commit_sequence a command returned) and
+        //     the row is staler than it (row.LastSequence < token).
+        // In both cases we fold the (short) deposit stream to the authoritative head and return that.
+        // Either branch fills the SAME DepositResponse shape, so the consumer never sees which path
+        // served it — that is what lets there be one URL, with consistency expressed as an optional
+        // token rather than a separate /read-model endpoint (the duality-of-GETs settled at the
+        // resource). A genuinely non-existent deposit folds to Version < 0 → 404.
+        var row = await readModel.GetAsync(id, ct);
+        if (row is not null && (minSequence is null || row.LastSequence >= minSequence.Value))
+        {
+            return Results.Ok(DepositResponse.FromReadModel(row));
+        }
+
         var hydrated = await runtime.LoadAsync(id, ct);
         return hydrated.Version < 0
             ? Results.NotFound()
-            : Results.Ok(DepositPositionResponse.From(hydrated.State));
-    }
-
-    private static async Task<IResult> GetReadModelAsync(
-        Guid id, IDepositReadModelStore readModel, CancellationToken ct)
-    {
-        // The CQRS point lookup (ADR-IC-005 deposit_detail): serve the denormalized read-model row,
-        // not the live fold. 404 when the projector has not yet materialised this deposit — the
-        // caller falls back to the write-side GET for read-your-writes (ADR-IC-005 staleness note).
-        var row = await readModel.GetAsync(id, ct);
-        return row is null
-            ? Results.NotFound()
-            : Results.Ok(DepositReadModelResponse.From(row));
+            : Results.Ok(DepositResponse.FromFold(hydrated));
     }
 
     private static async Task<IResult> ListMaturitiesAsync(
         [FromQuery] DateOnly from, [FromQuery] DateOnly to, IDepositReadModelStore readModel, CancellationToken ct)
     {
         // The CQRS range scan (ADR-IC-005 upcoming_maturities): deposits maturing in the half-open
-        // [from, to) window, ordered by maturity date. A from >= to window is an empty, well-formed
-        // result, not an error.
+        // [from, to) window, ordered by maturity date. A query-named collection with no write-side twin
+        // (the fold cannot answer a cross-stream range scan), so no duality. A from >= to window is an
+        // empty, well-formed result, not an error.
         if (to <= from)
         {
             return Results.Ok(new DepositMaturitiesResponse([]));
         }
 
         var rows = await readModel.ListByMaturityAsync(from, to, ct);
-        var deposits = rows.Select(DepositReadModelResponse.From).ToList();
+        var deposits = rows.Select(DepositResponse.FromReadModel).ToList();
         return Results.Ok(new DepositMaturitiesResponse(deposits));
     }
 
@@ -175,7 +195,9 @@ public static class DepositsEndpoints
             withholding?.SetTag(BabelstoneAttributes.TaxCents, matured.WithholdingToDate.Cents);
         }
 
-        return Results.Ok(DepositPositionResponse.From(hydrated.State));
+        // The post-append fold is authoritative (read-your-writes by construction): its head version is
+        // the commit_sequence, carried on the response as last_sequence (DepositResponse.FromFold).
+        return Results.Ok(DepositResponse.FromFold(hydrated));
     }
 
     private static async Task<IResult> PayInterestAsync(
@@ -227,6 +249,8 @@ public static class DepositsEndpoints
             withholding?.SetTag(BabelstoneAttributes.TaxCents, paid.WithholdingToDate.Cents);
         }
 
-        return Results.Ok(DepositPositionResponse.From(hydrated.State));
+        // The post-append fold is authoritative (read-your-writes by construction): its head version is
+        // the commit_sequence, carried on the response as last_sequence (DepositResponse.FromFold).
+        return Results.Ok(DepositResponse.FromFold(hydrated));
     }
 }

@@ -7,6 +7,6 @@ The bank-as-MCP-server tool surface (ADR-IC-010) an LLM agent calls. Generated f
 | Tool | Summary |
 |---|---|
 | [`constitute_deposit`](./constitute_deposit.md) | Constitute a term deposit. ``principal_cents`` and all money are integer cents (never a float). |
-| [`get_deposit`](./get_deposit.md) | Read a term deposit's current state — the folded ``deposit_position`` projection. |
+| [`get_deposit`](./get_deposit.md) | Read a term deposit's current state — the ONE canonical deposit resource ([ADR-IC-005](../../integration_concepts/adrs/ADR-IC-005-cqrs-read-model-storage.md)). |
 | [`mature_deposit`](./mature_deposit.md) | Mature (settle) a term deposit — runs accrual to term end and returns the matured position. |
 | [`pay_interest`](./pay_interest.md) | Pay one PERIODIC coupon on a term deposit — accrues the next coupon window, withholds tax on |

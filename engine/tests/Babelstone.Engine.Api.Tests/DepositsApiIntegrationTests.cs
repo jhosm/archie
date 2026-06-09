@@ -91,7 +91,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         var depositId = constituted.DepositId;
 
         // Read the deposit_position resource — Active, stamped with the resolved TAN + sheet.
-        var active = await _client.GetFromJsonAsync<DepositPositionResponse>($"/v1/deposits/{depositId}", SnakeCase);
+        var active = await _client.GetFromJsonAsync<DepositResponse>($"/v1/deposits/{depositId}", SnakeCase);
         Assert.NotNull(active);
         Assert.Equal(1_000_000, active.PrincipalCents);
         Assert.Equal(300, active.TanBasisPoints);
@@ -102,7 +102,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         var maturityResponse = await _client.PostAsJsonAsync(
             $"/v1/deposits/{depositId}/maturity", new MatureDepositRequest(), SnakeCase);
         Assert.Equal(HttpStatusCode.OK, maturityResponse.StatusCode);
-        var matured = await maturityResponse.Content.ReadFromJsonAsync<DepositPositionResponse>(SnakeCase);
+        var matured = await maturityResponse.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
         Assert.NotNull(matured);
         Assert.Equal(30_417, matured.AccruedGrossInterestCents);
         Assert.Equal(8_517, matured.WithholdingToDateCents);
@@ -131,11 +131,11 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Read_model_materialises_and_serves_the_CQRS_query_surface()
+    public async Task The_read_model_materialises_and_the_canonical_GET_and_maturities_scan_serve_it()
     {
-        // Constitute a deposit, then assert the D.4 CQRS read model (ADR-IC-005) materialises it
-        // asynchronously (the projection relay drains it) and the I.2 query endpoints serve it: the
-        // point lookup by id and the maturity-date range scan.
+        // Constitute, then assert the D.4 CQRS read model (ADR-IC-005) materialises asynchronously (the
+        // projection relay drains it) and the I.2 query surface serves it: the maturities range scan AND
+        // the ONE canonical point lookup GET /v1/deposits/{id} — there is NO /read-model sibling.
         var maturityDate = new DateOnly(2027, 1, 15);
         var constituteResponse = await _client.PostAsJsonAsync("/v1/deposits", new ConstituteDepositRequest(
             PrincipalCents: 1_000_000,
@@ -149,36 +149,42 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created, constituteResponse.StatusCode);
         var depositId = (await constituteResponse.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
 
-        // The read model is async (v1 default), so poll the point-lookup endpoint until the relay
-        // drains the constitution event into read_model.deposits (or time out).
-        var readModel = await EventuallyAsync(async () =>
+        // The maturities scan is served ONLY from the read model (a cross-stream range scan the live
+        // fold cannot answer), so the deposit appearing here proves the projector drained the
+        // constitution event into read_model.deposits. Poll until it materialises (async, v1 default).
+        var fromReadModel = await EventuallyAsync(async () =>
         {
-            var response = await _client.GetAsync($"/v1/deposits/{depositId}/read-model");
-            return response.StatusCode == HttpStatusCode.OK
-                ? await response.Content.ReadFromJsonAsync<DepositReadModelResponse>(SnakeCase)
-                : null;
+            var maturities = await _client.GetFromJsonAsync<DepositMaturitiesResponse>(
+                "/v1/deposits/maturities?from=2027-01-01&to=2027-02-01", SnakeCase);
+            return maturities?.Deposits.FirstOrDefault(d => d.DepositId == depositId);
         });
 
-        Assert.NotNull(readModel);
-        Assert.Equal(depositId, readModel.DepositId);
-        Assert.Equal("engine", readModel.Sor);                 // ADR-PC-018 §6.2 routing truth
-        Assert.Equal(1_000_000, readModel.PrincipalCents);
-        Assert.Equal(300, readModel.TanBasisPoints);
-        // BOTH product keys are served under their honest names: the resolved rate-sheet version
-        // (the price/version key) AND the catalogue product_code that was POSTed
-        // ("dpz_pt_12m_juros_venc"), now carried end-to-end (HTTP POST → decider → fold → read model
-        // → HTTP) — bd babelstone-v794 (earlier deferred as bd babelstone-yfr2). Pin both on the wire.
-        Assert.Equal("pt-deposits-2026.1", readModel.RateSheetVersionId);
-        Assert.Equal("dpz_pt_12m_juros_venc", readModel.ProductCode);
-        Assert.Equal(maturityDate, readModel.MaturityDate);
-        Assert.Equal("Active", readModel.Lifecycle);
-        Assert.Equal(0, readModel.LastSequence);               // the constitution event's sequence
+        Assert.NotNull(fromReadModel);
+        Assert.Equal("engine", fromReadModel.Sor);                 // ADR-PC-018 §6.2 routing truth
+        Assert.Equal(1_000_000, fromReadModel.PrincipalCents);
+        Assert.Equal(300, fromReadModel.TanBasisPoints);
+        // BOTH product keys under their honest names: the resolved rate-sheet version (price/version
+        // key) AND the catalogue product_code that was POSTed, carried end-to-end (POST → decider →
+        // fold → read model → HTTP) — bd babelstone-v794.
+        Assert.Equal("pt-deposits-2026.1", fromReadModel.RateSheetVersionId);
+        Assert.Equal("dpz_pt_12m_juros_venc", fromReadModel.ProductCode);
+        Assert.Equal(maturityDate, fromReadModel.MaturityDate);
+        Assert.Equal("Active", fromReadModel.Lifecycle);
+        Assert.Equal(0, fromReadModel.LastSequence);               // the constitution event's sequence
+        // The enriched position (D.4 single-resource): a just-constituted AT_MATURITY deposit has
+        // accrued nothing and paid no coupons, so the live financial facts are all zero.
+        Assert.Equal(0, fromReadModel.AccruedGrossInterestCents);
+        Assert.Equal(0, fromReadModel.WithholdingToDateCents);
+        Assert.Equal(0, fromReadModel.NetInterestCents);
+        Assert.Equal(0, fromReadModel.CouponsPaid);
 
-        // The maturity range scan returns the deposit when its maturity falls in the window.
-        var maturities = await _client.GetFromJsonAsync<DepositMaturitiesResponse>(
-            "/v1/deposits/maturities?from=2027-01-01&to=2027-02-01", SnakeCase);
-        Assert.NotNull(maturities);
-        Assert.Contains(maturities.Deposits, d => d.DepositId == depositId);
+        // The ONE canonical point lookup serves the SAME row (no token, projector caught up): identical
+        // shape and values, served from the read model — storage never appears in the URL.
+        var point = await _client.GetFromJsonAsync<DepositResponse>($"/v1/deposits/{depositId}", SnakeCase);
+        Assert.NotNull(point);
+        Assert.Equal(depositId, point.DepositId);
+        Assert.Equal("dpz_pt_12m_juros_venc", point.ProductCode);
+        Assert.Equal("Active", point.Lifecycle);
 
         // A window that excludes the maturity date returns no rows.
         var empty = await _client.GetFromJsonAsync<DepositMaturitiesResponse>(
@@ -187,10 +193,39 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Reading_an_unknown_read_model_is_404()
+    public async Task Reading_with_a_commit_token_gives_read_your_writes_before_the_projector_catches_up()
     {
-        var response = await _client.GetAsync($"/v1/deposits/{Guid.NewGuid()}/read-model");
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        // The READ_YOUR_WRITES_FOLD_ON_TOKEN fitness function (ADR-PC-027 slot 2/3): constitute and
+        // immediately read with If-Min-Sequence = the returned commit_sequence, WITHOUT waiting for the
+        // async projector (Option 3). The read model has almost certainly not drained yet, so the
+        // canonical GET folds the stream — the authoritative read-your-writes fallback — and returns the
+        // just-written deposit: one URL, correct read, no /read-model round-trip and no flaky wait.
+        // (Once the projector catches up, the same URL serves the fast read-model row.)
+        var constituteResponse = await _client.PostAsJsonAsync("/v1/deposits", new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "dpz_pt_12m_juros_venc",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001"), SnakeCase);
+        Assert.Equal(HttpStatusCode.Created, constituteResponse.StatusCode);
+        var constituted = (await constituteResponse.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!;
+
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/deposits/{constituted.DepositId}");
+        request.Headers.TryAddWithoutValidation(
+            "If-Min-Sequence", constituted.CommitSequence.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var deposit = await response.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
+        Assert.NotNull(deposit);
+        Assert.Equal(constituted.DepositId, deposit.DepositId);
+        Assert.Equal("Active", deposit.Lifecycle);
+        Assert.Equal(1_000_000, deposit.PrincipalCents);
+        // The answer reflects the caller's own write: last_sequence is at least the commit token.
+        Assert.True(deposit.LastSequence >= constituted.CommitSequence);
     }
 
     private static async Task<T?> EventuallyAsync<T>(Func<Task<T?>> probe) where T : class

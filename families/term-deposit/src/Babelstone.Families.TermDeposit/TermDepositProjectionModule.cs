@@ -135,8 +135,16 @@ public sealed class TermDepositProjectionModule : IProjectionModule
             StartDate: p.StartDate,
             MaturityDate: p.MaturityDate,
             InterestVariant: p.InterestVariant,
+            AutoRenewalPolicy: p.AutoRenewalPolicy,
+            PaymentPeriodMonths: p.PaymentPeriodMonths,
             Lifecycle: p.Lifecycle.ToString(),
+            // The live financial facts the same fold already computed (no recomputation, cents-native):
+            // surfaced so the read-model row is a complete stand-in for the live fold (D.4 single-resource).
+            AccruedGrossInterestCents: p.AccruedGrossInterest.Cents,
+            WithholdingToDateCents: p.WithholdingToDate.Cents,
+            NetInterestCents: p.NetInterest.Cents,
             TotalPayoutCents: p.TotalPayout.Cents,
+            CouponsPaid: p.CouponsPaid,
             Detail: ReadModelDetailSerializer.Serialize(p),
             LastSequence: fold.SourceSequence,
             LastUpdated: fold.TransactionTime);

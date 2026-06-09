@@ -14,8 +14,16 @@ public sealed record AppendContext(
     Guid?          CorrelationId = null,
     Guid?          CausationId = null);
 
-/// <summary>The rehydrated state of a stream plus its head sequence (-1 when the stream is empty).</summary>
-public sealed record Hydrated<TState>(TState State, long Version, Guid? LastEventId);
+/// <summary>
+/// The rehydrated state of a stream plus its head sequence (-1 when the stream is empty) and the
+/// transaction_time of the last folded event (null only when the stream is empty). The
+/// transaction_time is event-derived, so a read served from this live fold reports the SAME
+/// <c>last_updated</c> a read served from the denormalized read-model row would (ADR-IC-005 §P3) —
+/// the read-model-backed and fold-backed answers to <c>GET /v1/deposits/{id}</c> are identical on the
+/// wire, which is what lets the fold stay an internal fallback rather than a separate public URL.
+/// </summary>
+public sealed record Hydrated<TState>(
+    TState State, long Version, Guid? LastEventId, DateTimeOffset? LastTransactionTime);
 
 /// <summary>
 /// The durable aggregate runtime (skeleton §4.5): rehydrates state snapshot-then-tail,
@@ -42,6 +50,12 @@ public sealed class AggregateRuntime<TState>(
         var state = snapshot is null ? seedState() : snapshot.State;
         var version = snapshot?.AtSequence ?? -1;
         var lastEventId = snapshot?.LastEventId;
+        // Event-derived, never the wall clock (ADR-PC-010 §P5): the transaction_time of the last folded
+        // event, so a fold-backed read reports the same last_updated the read-model row would.
+        // KNOWN GAP (no v1 snapshots, snapshots is null here): a stream fully covered by a snapshot with
+        // no tail events would leave this null though Version >= 0 — when snapshotting lands, the snapshot
+        // must carry the transaction_time it was taken at and seed this. Not reachable in v1.
+        DateTimeOffset? lastTransactionTime = null;
         var fromSequence = version + 1;
 
         await foreach (var envelope in store.LoadAsync(streamId, fromSequence, ct))
@@ -49,9 +63,10 @@ public sealed class AggregateRuntime<TState>(
             state = await FoldAsync(state, envelope, unprotect: true, ct);
             version = envelope.SequenceNumber;
             lastEventId = envelope.EventId;
+            lastTransactionTime = envelope.TransactionTime;
         }
 
-        return new Hydrated<TState>(state, version, lastEventId);
+        return new Hydrated<TState>(state, version, lastEventId, lastTransactionTime);
     }
 
     /// <summary>
@@ -68,7 +83,14 @@ public sealed class AggregateRuntime<TState>(
     /// does). With no tracer listening, <see cref="ActivitySource.StartActivity(string,ActivityKind)"/>
     /// returns <c>null</c> and the path is a no-op.
     /// </remarks>
-    public async Task AppendAsync(
+    /// <returns>
+    /// The stream's new head version after the commit — <c>expectedVersion + events.Count</c>, i.e. the
+    /// per-stream <c>sequence_number</c> of the last appended event. A command hands this back as the
+    /// read-your-writes token (<c>commit_sequence</c>): it is the SAME number a read-model row carries as
+    /// <c>last_sequence</c>, so a follow-up <c>GET /v1/deposits/{id}</c> with <c>If-Min-Sequence</c> set
+    /// to it compares like-for-like (ADR-IC-005 §P3) and folds the stream only while the projector lags.
+    /// </returns>
+    public async Task<long> AppendAsync(
         Guid streamId,
         long expectedVersion,
         IReadOnlyList<DomainEvent> events,
@@ -146,6 +168,10 @@ public sealed class AggregateRuntime<TState>(
         {
             await postCommitProjector.NotifyAppendedAsync(context.Family, ct);
         }
+
+        // The new head version (== the last appended event's per-stream sequence_number). The sink
+        // rejects an empty batch, so events.Count >= 1 and this is always a real, committed sequence.
+        return expectedVersion + events.Count;
     }
 
     private async Task<TState> FoldAsync(TState state, EventEnvelope envelope, bool unprotect, CancellationToken ct)
