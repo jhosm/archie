@@ -18,20 +18,32 @@ namespace Babelstone.InboxConsumer;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Schema resolution (ADR-IC-002 §P2/§P3):</b> the decode resolves the WRITER schema from the
-/// embedded wire-format <c>schema_id</c> via the Schema Registry (an <see cref="ISchemaByIdResolver"/>
-/// with a client-side cache) and reads writer→reader through Avro schema resolution (the
-/// <c>GenericDatumReader</c> gets BOTH the writer and this consumer's local reader schema). This is the
-/// consumer contract ADR-IC-002 §194/§240 prescribes — "the schema ID in the Avro message header is
-/// meaningless without the registry … the Avro SerDe resolves the schema ID by … lookup" — and it is
-/// the OPPOSITE of ADR-IC-004 §P3's "no SR lookup" optimisation, which is a PUBLISH-path guarantee only.
-/// CROSS-CONTEXT FORWARD/BACKWARD EVOLUTION now decodes correctly: a producer on a NEWER, BACKWARD-
-/// compatible writer schema (an additive field under a default) embeds a different id; resolving it lets
-/// the codec drop a writer-only field and default a reader-only one, instead of mis-decoding → poison.
-/// An unknown/unresolvable id is undecodable and routes to the poison path (skip-and-commit), never a
-/// silent mis-decode. When NO resolver is wired (a unit test, or a deployment that has not yet supplied
-/// an SR), the decode falls back to the writer == reader fast path — correct for same-version intra-
-/// context topics — so the lifted limitation degrades safely rather than failing closed.
+/// <b>Schema resolution (ADR-IC-002 §Consequences; runtime lookup §P3):</b> the decode resolves the
+/// WRITER schema from the embedded wire-format <c>schema_id</c> via the Schema Registry (an
+/// <see cref="ISchemaByIdResolver"/> with a client-side cache) and reads writer→reader through Avro
+/// schema resolution (the <c>GenericDatumReader</c> gets BOTH the writer and this consumer's local
+/// reader schema). This is the consumer contract ADR-IC-002 §Consequences prescribes — "the schema ID
+/// in the Avro message header is meaningless without the registry"; §P3 adds the runtime point: "at
+/// runtime the Avro SerDe resolves the schema ID by … lookup". It is the OPPOSITE of ADR-IC-004 §P3's
+/// "no SR lookup" optimisation, which is a PUBLISH-path guarantee only. CROSS-CONTEXT FORWARD/BACKWARD
+/// EVOLUTION now decodes correctly: a producer on a NEWER, BACKWARD-compatible writer schema (an
+/// additive field under a default; BACKWARD is the §Consequences compatibility default) embeds a
+/// different id; resolving it lets the codec drop a writer-only field and default a reader-only one,
+/// instead of mis-decoding → poison. An unknown/unresolvable id is undecodable and routes to the poison
+/// path (skip-and-commit), never a silent mis-decode. When NO resolver is wired (a unit test, or a
+/// deployment that has not yet supplied an SR), the decode falls back to the writer == reader fast path
+/// — correct for same-version intra-context topics — so the consumer degrades safely rather than
+/// failing closed.
+/// </para>
+/// <para>
+/// <b>Scope — this resolves the CONSUMER/bus-decode path ONLY:</b> writer→reader SR resolution is wired
+/// here, on the InboxConsumer bus-consume path. The event-store REPLAY / projection-rebuild path
+/// (AggregateRuntime, ProjectionRunner, ProjectionReconciler, SimulationRuntime, ReadModelRunner) still
+/// calls the single-arg writer == reader <c>AvroEventSerializer.Decode</c> and does NOT resolve against
+/// the per-event-pinned <c>EventEnvelope.PayloadSchemaId</c>. That path must thread
+/// <c>envelope.PayloadSchemaId</c> through the new 3-arg <c>Decode(payload, payloadType, writerSchema)</c>
+/// before any forward <c>.avsc</c> evolution ships — a deferred follow-up, tracked as a separate bead,
+/// NOT fixed here.
 /// </para>
 /// <para>
 /// <b>Dedup (Document 04 / ADR-IC-004 §Residual-risks "mandatory, not optional"):</b> the inbox PK
@@ -130,8 +142,8 @@ public sealed class InboxPump : IDisposable
         _poisonSink = poisonSink;
         // The SR writer-schema resolver: when present, the decode resolves the WRITER schema by the
         // embedded wire-format schema_id and reads writer→reader (Avro schema resolution, ADR-IC-002
-        // §P2/§P3). When null, the decode falls back to the writer == reader fast path (the same-version
-        // intra-context case) — a unit test without an SR, or a deployment that has not wired one yet.
+        // §Consequences). When null, the decode falls back to the writer == reader fast path (the same-
+        // version intra-context case) — a unit test without an SR, or a deployment that has not wired one yet.
         _writerSchemas = writerSchemas;
 
         if (consumer is null)
@@ -403,10 +415,14 @@ public sealed class InboxPump : IDisposable
     /// <summary>
     /// Decode the bare Avro value into a <see cref="DomainEvent"/>. When a writer-schema resolver is
     /// wired, resolve the WRITER schema by the embedded wire-format <paramref name="schemaId"/> from the
-    /// Schema Registry (cached) and read writer→reader via Avro schema resolution (ADR-IC-002 §P2/§P3) —
-    /// so a producer on a NEWER, BACKWARD-compatible writer schema decodes correctly against this
-    /// consumer's OLDER reader schema rather than mis-decoding → poison. With no resolver wired, fall
-    /// back to the writer == reader fast path (same-version intra-context topics).
+    /// Schema Registry (cached) and read writer→reader via Avro schema resolution (ADR-IC-002
+    /// §Consequences) — so a producer on a NEWER, BACKWARD-compatible writer schema decodes correctly
+    /// against this consumer's OLDER reader schema rather than mis-decoding → poison. With no resolver
+    /// wired, fall back to the writer == reader fast path (same-version intra-context topics).
+    /// A <c>ce_type</c>↔<c>schema_id</c> record-name mismatch (the header names one record but the id
+    /// resolves to a different writer schema) surfaces as an Avro resolution FAILURE → the poison/skip-
+    /// and-commit path, not a silent mis-decode: the divergence is by-design and observable on the
+    /// poison counter.
     /// </summary>
     private DomainEvent DecodeWithSchemaResolution(ReadOnlyMemory<byte> avroValue, Type payloadType, int schemaId)
     {
@@ -429,8 +445,8 @@ public sealed class InboxPump : IDisposable
     /// <summary>magic byte 0x00 ‖ big-endian int32 schema_id ‖ avro value → the embedded WRITER
     /// <paramref name="schemaId"/> and the bare Avro value. The schema_id is no longer discarded: the
     /// decode resolves the writer schema from it via the Schema Registry (when a resolver is wired) and
-    /// reads writer→reader under Avro schema resolution (ADR-IC-002 §P2/§P3). Both the framing AND the
-    /// id are returned here. The inverse of <c>OutboxDrainer.ToConfluentWireFormat</c>.</summary>
+    /// reads writer→reader under Avro schema resolution (ADR-IC-002 §Consequences). Both the framing AND
+    /// the id are returned here. The inverse of <c>OutboxDrainer.ToConfluentWireFormat</c>.</summary>
     internal static bool TryUnframe(ReadOnlySpan<byte> framed, out int schemaId, out ReadOnlyMemory<byte> avroValue)
     {
         schemaId = 0;

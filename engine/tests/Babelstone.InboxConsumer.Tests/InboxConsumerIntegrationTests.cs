@@ -51,7 +51,7 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
         _serializer = new AvroEventSerializer(catalog, _schemaIds);
         // The CONSUMER-side writer-schema-by-id resolver: the pump resolves the writer schema from the
         // embedded wire-format schema_id against the SAME test SR and decodes writer→reader (ADR-IC-002
-        // §P2/§P3) — exercising the production decode path, not the writer == reader fallback.
+        // §Consequences; runtime lookup §P3) — exercising the production decode path, not the writer == reader fallback.
         _writerSchemas = ConfluentSchemaByIdResolver.Create(_redpanda.SchemaRegistryUrl);
     }
 

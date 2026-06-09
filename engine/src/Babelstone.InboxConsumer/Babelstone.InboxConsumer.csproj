@@ -14,7 +14,8 @@
     <PackageReference Include="Npgsql" />
     <PackageReference Include="Confluent.Kafka" />
     <!-- No DIRECT Confluent.SchemaRegistry reference is needed here: the SR writer-schema-by-id
-         resolution the decode now performs (ADR-IC-002 §P2/§P3) lives behind the ISchemaByIdResolver
+         resolution the consumer/bus-decode path now performs (ADR-IC-002 §Consequences; runtime lookup
+         §P3) lives behind the ISchemaByIdResolver
          seam in Babelstone.Engine.Avro (referenced below), which also ships the Confluent-backed
          ConfluentSchemaByIdResolver a host wires in. This assembly depends only on the seam; the
          Confluent.SchemaRegistry type stays transitively available via Babelstone.Engine.Avro. -->

@@ -162,16 +162,16 @@ public sealed class AvroCodecRoundTripTests
         Assert.Equal(original, decoded);
     }
 
-    // ---- Schema RESOLUTION (writer != reader) — ADR-IC-002 §P2 BACKWARD evolution ----------
+    // ---- Schema RESOLUTION (writer != reader) — ADR-IC-002 §Consequences BACKWARD evolution ----------
 
     [Fact]
     public void Decode_resolves_a_newer_writer_schema_with_an_added_defaulted_field_against_the_older_reader()
     {
-        // The forward-only/BACKWARD-evolution path (ADR-IC-002 §P2/§P3): a producer ships a NEWER
+        // The forward-only/BACKWARD-evolution path (ADR-IC-002 §Consequences): a producer ships a NEWER
         // writer schema that ADDS a trailing field WITH a default (a BACKWARD-compatible additive
         // change). This consumer still runs the OLDER reader schema (the local catalog). Decoding
         // writer→reader via Avro schema resolution must DROP the writer-only field and recover the two
-        // shared fields exactly — instead of mis-decoding → poison (the lifted InboxPump limitation).
+        // shared fields exactly — instead of mis-decoding → poison (the consumer-path limitation now fixed).
         //
         // Deliberately NON-null-requiring: the added field is a plain string with a default, so this
         // does NOT depend on the parallel nullable-union lane (feat/avro-nullable-union).

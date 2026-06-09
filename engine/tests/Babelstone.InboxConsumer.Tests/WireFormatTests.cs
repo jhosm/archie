@@ -23,7 +23,7 @@ public sealed class WireFormatTests
         Assert.True(InboxPump.TryUnframe(framed, out var schemaId, out var value));
         Assert.Equal(avro, value.ToArray());
         // The embedded schema_id is recovered from the header — the writer-schema id the decode resolves
-        // against the Schema Registry (ADR-IC-002 §P2/§P3), no longer discarded.
+        // against the Schema Registry (ADR-IC-002 §Consequences; runtime lookup §P3), no longer discarded.
         Assert.Equal(7, schemaId);
         Assert.Equal(7, InboxPump.ReadSchemaId(framed));
     }

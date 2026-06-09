@@ -5,11 +5,12 @@ namespace Babelstone.Engine.Avro;
 
 /// <summary>
 /// Resolves the WRITER Avro schema for a Confluent wire-format <c>schema_id</c> (the 4 big-endian
-/// bytes after the magic byte, ADR-IC-002 §P3 / ADR-IC-004 §P3). This is the CONSUMER-side mirror of
+/// bytes after the magic byte, ADR-IC-004 §P3). This is the CONSUMER-side mirror of
 /// <see cref="ISchemaIdResolver"/>: the writer embeds the id at publish time; the consumer hands that
-/// id here to recover the schema the bytes were ACTUALLY written with, so the codec can do Avro schema
-/// RESOLUTION (writer→reader) under forward-only/BACKWARD evolution (ADR-IC-002 §P2) instead of
-/// blindly assuming writer == reader.
+/// id here to recover the schema the bytes were ACTUALLY written with — the runtime "resolve the schema
+/// ID by … lookup" point (ADR-IC-002 §P3) — so the codec can do Avro schema RESOLUTION (writer→reader)
+/// under forward-only/BACKWARD evolution (ADR-IC-002 §Consequences) instead of blindly assuming
+/// writer == reader.
 /// </summary>
 public interface ISchemaByIdResolver
 {
@@ -28,11 +29,13 @@ public interface ISchemaByIdResolver
 /// caches the PARSED schema so each record decode skips a re-parse too.)
 /// </summary>
 /// <remarks>
-/// This closes the InboxPump KNOWN-LIMITATION (writer == reader): the consumer contract (ADR-IC-002
-/// §194/§240) is that "the schema ID in the Avro message header is meaningless without the registry …
-/// the Avro SerDe resolves the schema ID by … lookup". A producer on a NEWER writer schema (a
-/// BACKWARD-compatible additive change) embeds a different id; resolving it here lets the codec read
-/// writer→reader rather than mis-decoding → poison.
+/// This is what lets the InboxPump consumer/bus-decode path honour the consumer contract instead of
+/// assuming writer == reader: ADR-IC-002 §Consequences holds that "the schema ID in the Avro message
+/// header is meaningless without the registry", and §P3 adds the runtime "resolve the schema ID by …
+/// lookup" point. A producer on a NEWER writer schema (a BACKWARD-compatible additive change, the
+/// §Consequences compatibility default) embeds a different id; resolving it here lets the codec read
+/// writer→reader rather than mis-decoding → poison. (Scope: the CONSUMER/bus path only — the event-store
+/// replay/rebuild path still reads writer == reader; see the InboxPump class remarks.)
 /// </remarks>
 public sealed class ConfluentSchemaByIdResolver : ISchemaByIdResolver, IDisposable
 {
