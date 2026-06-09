@@ -23,6 +23,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The shared Redpanda Testcontainers fixture (ic10): one source of the broker setup, reused
+         by both the producer and consumer integration lanes instead of a copy-pasted fixture. -->
+    <ProjectReference Include="../Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
     <ProjectReference Include="../../src/Babelstone.InboxConsumer/Babelstone.InboxConsumer.csproj" />
     <ProjectReference Include="../../src/Babelstone.Engine/Babelstone.Engine.csproj" />
     <ProjectReference Include="../../src/Babelstone.Engine.Avro/Babelstone.Engine.Avro.csproj" />

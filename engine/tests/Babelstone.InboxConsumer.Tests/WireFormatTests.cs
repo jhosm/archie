@@ -20,9 +20,11 @@ public sealed class WireFormatTests
         // assert we get the value back — the consumer's TryUnframe is the inverse of the relay framing.
         var framed = WireFormat.Frame(schemaId: 7, avroValue: avro);
 
-        Assert.True(InboxPump.TryUnframe(framed, out var value));
+        Assert.True(InboxPump.TryUnframe(framed, out var schemaId, out var value));
         Assert.Equal(avro, value.ToArray());
-        // The embedded schema_id survives for diagnostics (not used by decode).
+        // The embedded schema_id is recovered from the header — the writer-schema id the decode resolves
+        // against the Schema Registry (ADR-IC-002 §P2/§P3), no longer discarded.
+        Assert.Equal(7, schemaId);
         Assert.Equal(7, InboxPump.ReadSchemaId(framed));
     }
 
@@ -30,14 +32,14 @@ public sealed class WireFormatTests
     public void Unframe_rejects_a_bad_magic_byte()
     {
         byte[] notWireFormat = [0x01, 0x00, 0x00, 0x00, 0x07, 0xAA];
-        Assert.False(InboxPump.TryUnframe(notWireFormat, out _));
+        Assert.False(InboxPump.TryUnframe(notWireFormat, out _, out _));
     }
 
     [Fact]
     public void Unframe_rejects_a_too_short_value()
     {
         byte[] tooShort = [0x00, 0x00, 0x00]; // magic byte but truncated header
-        Assert.False(InboxPump.TryUnframe(tooShort, out _));
+        Assert.False(InboxPump.TryUnframe(tooShort, out _, out _));
     }
 
     [Theory]

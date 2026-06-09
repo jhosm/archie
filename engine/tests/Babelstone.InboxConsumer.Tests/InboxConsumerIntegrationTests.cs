@@ -4,7 +4,9 @@ using Babelstone.Engine;
 using Babelstone.Engine.Avro;
 using Babelstone.Families.TermDeposit;
 using Babelstone.FinancialTypes;
+using Babelstone.TestFixtures;
 using Confluent.Kafka;
+using Confluent.Kafka.Admin;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -33,6 +35,7 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
 
     private AvroEventSerializer _serializer = null!;
     private ConfluentSchemaIdResolver _schemaIds = null!;
+    private ConfluentSchemaByIdResolver _writerSchemas = null!;
 
     private string ConnectionString => _pg.GetConnectionString();
 
@@ -46,10 +49,15 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
         var catalog = new AvroSchemaCatalog();
         _schemaIds = ConfluentSchemaIdResolver.Create(catalog, _redpanda.SchemaRegistryUrl, registerIfAbsent: true);
         _serializer = new AvroEventSerializer(catalog, _schemaIds);
+        // The CONSUMER-side writer-schema-by-id resolver: the pump resolves the writer schema from the
+        // embedded wire-format schema_id against the SAME test SR and decodes writer→reader (ADR-IC-002
+        // §P2/§P3) — exercising the production decode path, not the writer == reader fallback.
+        _writerSchemas = ConfluentSchemaByIdResolver.Create(_redpanda.SchemaRegistryUrl);
     }
 
     public async Task DisposeAsync()
     {
+        _writerSchemas.Dispose();
         _schemaIds.Dispose();
         await _pg.DisposeAsync();
         await _redpanda.DisposeAsync();
@@ -244,6 +252,94 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
         Assert.Equal(1, await CountInboxAsync(goodId));
     }
 
+    /// <summary>
+    /// ic10 — two-consumer REBALANCE race (the consumer mirror of the outbox lane's two-drainer race).
+    /// TWO <see cref="InboxPump"/> instances share ONE consumer group on a MULTI-partition topic. Pump A
+    /// starts alone, processes some records and commits, then pump B joins MID-STREAM — forcing a Kafka
+    /// partition rebalance that redelivers any records A consumed-but-not-yet-committed when its
+    /// partitions were revoked. The inbox <c>message_id</c> PK absorbs every such redelivery: each
+    /// record lands EXACTLY ONE inbox row (effectively-once), no record is lost, and the handler effect
+    /// for each message runs exactly once across BOTH pumps. This is the at-least-once delivery +
+    /// effectively-once effect contract (Document 04 / ADR-IC-004 §Residual-risks) under a rebalance —
+    /// the disruption a single-consumer test never exercises.
+    /// </summary>
+    [Fact]
+    public async Task Two_consumers_in_one_group_are_effectively_once_across_a_rebalance()
+    {
+        // --- Arrange: a MULTI-partition topic so two consumers in one group split partitions (a
+        //     single-partition topic would pin both to one consumer — no real rebalance). Distinct
+        //     aggregate keys spread the records across partitions. ---
+        const int partitions = 4;
+        const int recordCount = 24;
+        await CreateTopicAsync(Topic, partitions);
+
+        var produced = new List<Guid>(recordCount); // the message_ids (ce_id) we expect, exactly once each
+        for (var i = 0; i < recordCount; i++)
+        {
+            var depositId = Guid.NewGuid();
+            var messageId = Guid.NewGuid();
+            await ProduceAsync(messageId, depositId, NewConstituted(depositId));
+            produced.Add(messageId);
+        }
+
+        var groupId = $"g2-rebalance-{Guid.NewGuid()}";
+        var handlerA = new CountingHandler();
+        var handlerB = new CountingHandler();
+        using var pumpA = NewPumpInGroup(groupId, handlerA);
+
+        // --- Act: pump A drains alone for a bit (it joins, gets ALL partitions, processes + commits
+        //     a few records). Then pump B joins the SAME group — the broker revokes some partitions
+        //     from A and assigns them to B (the rebalance). Both then drain concurrently to completion.
+        //     A's in-flight, uncommitted records on the revoked partitions are redelivered to B; the
+        //     inbox PK dedups them. ---
+
+        // A alone: pump until it has handled a handful (so a rebalance genuinely interrupts mid-stream).
+        await PumpUntilHandledAtLeastAsync(pumpA, atLeast: 4, budget: TimeSpan.FromSeconds(30));
+
+        using var pumpB = NewPumpInGroup(groupId, handlerB);
+
+        // Drain both concurrently until the whole backlog is in the inbox (count == recordCount) or a
+        // generous deadline. Each pump loops PumpOnce; Idle just means "no record this poll".
+        async Task DrainToBacklogEmpty(InboxPump pump)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(60);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (await CountInboxTotalAsync() >= recordCount)
+                {
+                    return;
+                }
+
+                await pump.PumpOnceAsync(CancellationToken.None);
+            }
+        }
+
+        var drains = Task.WhenAll(DrainToBacklogEmpty(pumpA), DrainToBacklogEmpty(pumpB));
+        var completed = await Task.WhenAny(drains, Task.Delay(TimeSpan.FromSeconds(70)));
+        Assert.True(completed == drains, "Two consumers did not drain the backlog within the deadline.");
+        await drains; // surface any pump exception
+
+        // --- Assert (the effectively-once proof): EXACTLY one inbox row per produced message_id, and
+        //     the full produced set is present — neither lost nor duplicated by the rebalance. The
+        //     message_id PK makes a redelivered record collide rather than double-apply. ---
+        Assert.Equal(recordCount, await CountInboxTotalAsync());
+        foreach (var messageId in produced)
+        {
+            Assert.Equal(1, await CountInboxAsync(messageId));
+        }
+
+        // --- Assert: the HANDLER effect ran exactly once per record across BOTH pumps. handlerA +
+        //     handlerB between them handled each message_id exactly once (a redelivery is a Duplicate,
+        //     which does NOT invoke the handler — the IF EXISTS short-circuit / PK backstop). No
+        //     message_id was handled by both pumps. ---
+        var handledByA = handlerA.HandledMessageIds;
+        var handledByB = handlerB.HandledMessageIds;
+        Assert.Empty(handledByA.Intersect(handledByB)); // no double-handling across the rebalance
+        var handledTotal = handledByA.Concat(handledByB).ToHashSet();
+        Assert.Equal(recordCount, handledTotal.Count);
+        Assert.True(handledTotal.SetEquals(produced), "The handled set must equal the produced set exactly.");
+    }
+
     // ---- Produce (mirror the relay's framing + CloudEvents headers) ------------------------
 
     private async Task ProduceAsync(Guid messageId, Guid aggregateId, DomainEvent @event)
@@ -313,6 +409,24 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
     private static void Add(Headers headers, string key, string value)
         => headers.Add(key, Encoding.UTF8.GetBytes(value));
 
+    /// <summary>Create a topic with a fixed partition count up front (the rebalance race needs MULTIPLE
+    /// partitions so two consumers in one group split them). Idempotent: a "topic already exists" error
+    /// is benign (a sibling produce may have auto-created a single-partition one — but this test produces
+    /// only AFTER creating, so the explicit count wins).</summary>
+    private async Task CreateTopicAsync(string topic, int partitions)
+    {
+        using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = _redpanda.BootstrapServers }).Build();
+        try
+        {
+            await admin.CreateTopicsAsync(
+                [new TopicSpecification { Name = topic, NumPartitions = partitions, ReplicationFactor = 1 }]);
+        }
+        catch (CreateTopicsException ex) when (ex.Results.All(r => r.Error.Code == ErrorCode.TopicAlreadyExists))
+        {
+            // Already created (e.g. by a prior run within the same container) — fine.
+        }
+    }
+
     private static DepositConstituted NewConstituted(Guid depositId) => new(
         depositId, new Money(PrincipalCents), TanBasisPoints, "rs-2026-01",
         TermDays: 364, StartDate, MaturityDate, "AT_MATURITY", "NONE");
@@ -333,7 +447,24 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
         // Only the term-deposit events this consumer knows are registered — an unknown ce_type is poison.
         var resolver = InboxEventTypeResolver.FromTypes(
             typeof(DepositConstituted), typeof(InterestAccrued), typeof(WithholdingApplied), typeof(DepositMatured));
-        return new InboxPump(options, _serializer, resolver, handler, poisonSink);
+        // The writer-schema resolver makes the pump take the production SR-resolution decode path.
+        return new InboxPump(options, _serializer, resolver, handler, poisonSink, writerSchemas: _writerSchemas);
+    }
+
+    /// <summary>Build a pump bound to a SPECIFIC consumer group id (the two-consumer rebalance race
+    /// puts two pumps in ONE group). Mirrors <see cref="NewPump"/> otherwise.</summary>
+    private InboxPump NewPumpInGroup(string groupId, IInboxMessageHandler handler)
+    {
+        var options = new InboxConsumerOptions
+        {
+            ConnectionString = ConnectionString,
+            BootstrapServers = _redpanda.BootstrapServers,
+            GroupId = groupId,
+            Topics = [Topic],
+        };
+        var resolver = InboxEventTypeResolver.FromTypes(
+            typeof(DepositConstituted), typeof(InterestAccrued), typeof(WithholdingApplied), typeof(DepositMatured));
+        return new InboxPump(options, _serializer, resolver, handler, poisonSink: null, writerSchemas: _writerSchemas);
     }
 
     /// <summary>Pump until a record is actually processed (the first poll after a subscribe often
@@ -384,6 +515,25 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
         throw new TimeoutException("Pump stayed idle for 30s — no record was delivered.");
     }
 
+    /// <summary>Pump A alone until it has HANDLED at least <paramref name="atLeast"/> first-time records,
+    /// so the subsequent join of pump B genuinely interrupts mid-stream (the rebalance race). Idle polls
+    /// (cold consumer joining) and Duplicate/Poison outcomes are absorbed; only Handled counts.</summary>
+    private static async Task PumpUntilHandledAtLeastAsync(InboxPump pump, int atLeast, TimeSpan budget)
+    {
+        var deadline = DateTime.UtcNow.Add(budget);
+        var handled = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            var outcome = await pump.PumpOnceAsync(CancellationToken.None);
+            if (outcome == InboxPump.PumpOutcome.Handled && ++handled >= atLeast)
+            {
+                return;
+            }
+        }
+
+        throw new TimeoutException($"Pump A did not handle at least {atLeast} records within {budget.TotalSeconds}s.");
+    }
+
     // ---- Inbox assertions ------------------------------------------------------------------
 
     private async Task<int> CountInboxAsync(Guid messageId)
@@ -393,6 +543,16 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
         await using var command = new NpgsqlCommand(
             "SELECT count(*) FROM inbox WHERE message_id = @id;", connection);
         command.Parameters.AddWithValue("id", messageId);
+        return (int)(long)(await command.ExecuteScalarAsync())!;
+    }
+
+    /// <summary>Total inbox rows — the rebalance race's completion gate and effectively-once measurand
+    /// (it must equal the produced count: one row per message, none lost, none duplicated).</summary>
+    private async Task<int> CountInboxTotalAsync()
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand("SELECT count(*) FROM inbox;", connection);
         return (int)(long)(await command.ExecuteScalarAsync())!;
     }
 
@@ -423,6 +583,31 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
         {
             Handled.Add(message);
             return Task.FromResult<string?>($"handled:{message.EventType}");
+        }
+    }
+
+    /// <summary>Captures the message_ids it handled (the rebalance race asserts each is handled exactly
+    /// once across BOTH pumps). One instance per pump; the lock guards the post-drain read. Pure — no
+    /// clock/IO beyond the supplied transaction (handler-purity discipline).</summary>
+    private sealed class CountingHandler : IInboxMessageHandler
+    {
+        private readonly object _gate = new();
+        private readonly HashSet<Guid> _handled = [];
+
+        public HashSet<Guid> HandledMessageIds
+        {
+            get { lock (_gate) { return [.. _handled]; } }
+        }
+
+        public Task<string?> HandleAsync(
+            InboxMessage message, NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken ct = default)
+        {
+            lock (_gate)
+            {
+                _handled.Add(message.MessageId);
+            }
+
+            return Task.FromResult<string?>(null);
         }
     }
 

@@ -7,6 +7,7 @@ using Babelstone.EventStore;
 using Babelstone.EventStore.Migrations;
 using Babelstone.Families.TermDeposit;
 using Babelstone.FinancialTypes;
+using Babelstone.TestFixtures;
 using Confluent.Kafka;
 using Confluent.SchemaRegistry;
 using Confluent.SchemaRegistry.Serdes;

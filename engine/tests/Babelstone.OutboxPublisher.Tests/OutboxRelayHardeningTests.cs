@@ -7,6 +7,7 @@ using Babelstone.EventStore.Migrations;
 using Babelstone.Families.TermDeposit;
 using Babelstone.FinancialTypes;
 using Babelstone.Telemetry;
+using Babelstone.TestFixtures;
 using Confluent.Kafka;
 using Npgsql;
 using Testcontainers.PostgreSql;
