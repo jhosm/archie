@@ -26,6 +26,10 @@
     <Project Path="../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
     <!-- The family decider / application layer (ADR-PC-021): the impure command-side project. -->
     <Project Path="../families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
+    <!-- The in-house saga orchestrator (ADR-IC-003, Epic H.1): the hand-rolled ConstitutionProcess
+         state machine + saga-state/transition persistence + idempotent inbox-driven advance. An
+         extraction-ready subtree (ADR-PC-019 §P2) that builds with the engine pipeline. -->
+    <Project Path="../orchestrator/src/Babelstone.Orchestrator/Babelstone.Orchestrator.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Babelstone.RateSheets.Tests/Babelstone.RateSheets.Tests.csproj" />
@@ -44,5 +48,9 @@
     <Project Path="tests/Babelstone.InboxConsumer.Tests/Babelstone.InboxConsumer.Tests.csproj" />
     <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/Babelstone.Families.TermDeposit.Tests.csproj" />
     <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Application.Tests/Babelstone.Families.TermDeposit.Application.Tests.csproj" />
+    <!-- H.1 saga substrate: pure state-machine tests + saga-persistence/advance/role-envelope
+         integration tests (the latter [Trait("Category","Integration")], filtered out of the
+         default lane). -->
+    <Project Path="../orchestrator/tests/Babelstone.Orchestrator.Tests/Babelstone.Orchestrator.Tests.csproj" />
   </Folder>
 </Solution>
