@@ -30,7 +30,10 @@ public static class TermDepositDecider
     /// <summary>
     /// Build <see cref="DepositConstituted"/> from the command, stamping the resolved TAN and
     /// the rate-sheet version it came from (ADR-PC-008 §P3). The maturity date is derived from
-    /// the start date and term — an explicit field on the event, not recomputed downstream.
+    /// the start date and term — an explicit field on the event, not recomputed downstream. The
+    /// catalogue <c>ProductCode</c> is stamped from the already-available <c>command.ProductId</c>
+    /// (the structural product identifier the rate sheet priced the TAN against) so the D.4 read
+    /// model can denormalize it — no new command input (bd babelstone-v794).
     /// </summary>
     public static DepositConstituted DecideConstitution(
         ConstituteDepositCommand command, int tanBasisPoints, string rateSheetVersionId) =>
@@ -44,7 +47,8 @@ public static class TermDepositDecider
             MaturityDate: command.StartDate.AddDays(command.TermDays),
             InterestVariant: command.InterestVariant,
             AutoRenewalPolicy: command.AutoRenewalPolicy,
-            PaymentPeriodMonths: command.PaymentPeriodMonths);
+            PaymentPeriodMonths: command.PaymentPeriodMonths,
+            ProductCode: command.ProductId);
 
     /// <summary>
     /// Mature a deposit, branching on its interest variant (02 §2.1). Pure: the position carries
@@ -371,7 +375,12 @@ public static class TermDepositDecider
             MaturityDate: renewalDate.AddDays(closing.TermDays),
             InterestVariant: closing.InterestVariant,
             AutoRenewalPolicy: closing.AutoRenewalPolicy,
-            PaymentPeriodMonths: closing.PaymentPeriodMonths);
+            PaymentPeriodMonths: closing.PaymentPeriodMonths,
+            // The renewed instance is the SAME structural product as the closing deposit, so carry
+            // the closing position's catalogue code forward (bd babelstone-v794). For a deposit
+            // constituted before v794 the closing code is "" and the renewed instance inherits "" —
+            // the renewal cannot manufacture a code the original never carried.
+            ProductCode: closing.ProductCode);
 
     /// <summary>
     /// Build the <see cref="DepositRenewed"/> link (02 §2.4.4 step 3) carrying the closing↔new deposit ids

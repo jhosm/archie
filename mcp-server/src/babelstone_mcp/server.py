@@ -43,6 +43,10 @@ class ConstituteDepositResult(BaseModel):
 
     deposit_id: str = Field(description="The engine-assigned deposit id (UUID).")
     status: str = Field(description="Lifecycle state — ACTIVE on a constituted deposit.")
+    commit_sequence: int = Field(
+        description="The per-stream version this constitution committed (ADR-IC-005 §P3). Pass it as "
+        "get_deposit's min_sequence to read your own write before the projector catches up."
+    )
 
 
 @mcp.tool()
@@ -81,21 +85,29 @@ async def constitute_deposit(
             "payment_period_months": payment_period_months,
         }
     )
-    return ConstituteDepositResult(deposit_id=result["deposit_id"], status=result["status"])
+    return ConstituteDepositResult(
+        deposit_id=result["deposit_id"],
+        status=result["status"],
+        commit_sequence=result["commit_sequence"],
+    )
 
 
 class DepositPosition(BaseModel):
-    """Structured tool output (ADR-IC-010 P6) — the folded ``deposit_position`` read model.
+    """Structured tool output (ADR-IC-010 P6) — the ONE canonical deposit resource (ADR-IC-005).
 
-    All money is integer cents (ADR-PC-010 §P1), never a float. The fields are the as-of-now fold
-    of the deposit's events, not a maturity projection: ``accrued_*`` / ``*_payout`` stay at 0 until
-    accrual or maturity events are applied.
+    All money is integer cents (ADR-PC-010 §P1), never a float. The engine serves this from the fast
+    denormalized read model by default and folds the event stream only for read-your-writes — the
+    CQRS read/write split is the engine's internal business, not two shapes. ``last_sequence`` is the
+    per-stream version this view reflects (thread it forward as ``min_sequence`` for monotonic reads);
+    ``last_updated`` is the producing event's timestamp, for staleness display.
     """
 
     deposit_id: str = Field(description="The deposit id (UUID).")
+    sor: str = Field(description="System of record — 'engine' for an engine-materialised deposit (ADR-PC-018 §6.2).")
     principal_cents: int = Field(description="Principal in integer cents.")
     tan_basis_points: int = Field(description="Resolved TAN in basis points, stamped by the engine.")
-    rate_sheet_version_id: str = Field(description="Rate sheet version the TAN was resolved from.")
+    rate_sheet_version_id: str = Field(description="Rate sheet version the TAN was resolved from (price/version key).")
+    product_code: str = Field(description="Catalogue structural product code (which product); '' for pre-v794 deposits.")
     term_days: int = Field(description="Term length in days.")
     start_date: str = Field(description="ISO-8601 start date.")
     maturity_date: str = Field(description="ISO-8601 maturity date.")
@@ -110,17 +122,22 @@ class DepositPosition(BaseModel):
     total_payout_cents: int = Field(description="Total payout to date, cents.")
     coupons_paid: int = Field(description="PERIODIC coupons paid out so far (0 for AT_MATURITY/ADVANCE).")
     lifecycle: str = Field(description="Lifecycle state (e.g. Active, Matured).")
+    last_sequence: int = Field(description="The per-stream version this view reflects (ADR-IC-005 §P3 read-your-writes barrier).")
+    last_updated: str = Field(description="ISO-8601 timestamp of the producing event (for staleness display).")
 
 
 @mcp.tool()
-async def get_deposit(deposit_id: str) -> DepositPosition:
-    """Read a term deposit's current state — the folded ``deposit_position`` projection.
+async def get_deposit(deposit_id: str, min_sequence: int | None = None) -> DepositPosition:
+    """Read a term deposit's current state — the ONE canonical deposit resource (ADR-IC-005).
 
-    ``deposit_id`` is the engine-assigned UUID returned by ``constitute_deposit``. Money is integer
-    cents. This is the as-of-now event fold, not a maturity forecast (interest fields are 0 until
-    accrual/maturity events land). Scoped ``deposits:read`` at the gateway (ADR-IC-010 §P4).
+    ``deposit_id`` is the engine-assigned UUID returned by ``constitute_deposit``. Served from the
+    fast denormalized read model by default. For read-your-writes (e.g. reading right after a
+    constitute/mature), pass ``min_sequence`` = the ``commit_sequence`` that command returned: the
+    engine then folds the event stream if the projection has not caught up, so you always see your own
+    write. Money is integer cents; ``last_sequence`` on the result is the version served (thread it
+    forward for monotonic reads). Scoped ``deposits:read`` at the gateway (ADR-IC-010 §P4).
     """
-    return DepositPosition(**await engine().deposit_position(deposit_id))
+    return DepositPosition(**await engine().deposit_position(deposit_id, min_sequence))
 
 
 @mcp.tool()

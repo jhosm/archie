@@ -2,6 +2,8 @@ using System.Text.Json;
 using Babelstone.Engine;
 using Babelstone.Engine.Api;
 using Babelstone.EventStore;
+using Babelstone.Families.TermDeposit;
+using Babelstone.Families.TermDeposit.Application;
 using Babelstone.OutboxPublisher;
 using Babelstone.Pii;
 using Babelstone.RateSheets;
@@ -117,6 +119,15 @@ builder.Services.AddSingleton<IEventSink>(serviceProvider =>
 // `projections` discriminator columns + the `projection_checkpoints` table they read/write.
 builder.Services.AddSingleton<IProjectionStorage>(_ => new PostgresProjectionStore(connectionString));
 builder.Services.AddSingleton<IProjectionCheckpointStore>(_ => new PostgresProjectionCheckpointStore(connectionString));
+// D.4 CQRS read model (ADR-IC-005): the denormalized query surface on the SAME PostgreSQL tier
+// (migration 0013 owns the read_model schema). The deposit-shaped table + the maturity range scan
+// name one family's domain shape, so the store is FAMILY-OWNED (ADR-PC-021 §D2/§P2): the engine
+// spine exposes only the generic IReadModelStore<TRow> primitive, and the term-deposit family
+// supplies its typed row + this Postgres store. The host (composition root) resolves the family
+// store and composes the read-model runner over it (TermDepositHostModule), folding the same
+// deposit-position state the live read path computes into the flat read-model row the I.2 Query
+// API serves.
+builder.Services.AddSingleton<IDepositReadModelStore>(_ => new PostgresDepositReadModelStore(connectionString));
 // The JSON dev codec + null PII protector; the Avro + Schema-Registry codec (E.4,
 // Babelstone.Engine.Avro) is the production wiring follow-up.
 builder.Services.AddSingleton<IEventSerializer, JsonEventSerializer>();

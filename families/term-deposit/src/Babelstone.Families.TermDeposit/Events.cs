@@ -20,6 +20,15 @@ namespace Babelstone.Families.TermDeposit;
 /// can derive each coupon window from this event alone. It is 0 for AT_MATURITY and ADVANCE,
 /// which have no coupons. Optional/additive (defaulted) so pre-F.1 AT_MATURITY streams that
 /// never carried it still replay (forward-only schema evolution).</param>
+/// <param name="ProductCode">The catalogue product code (e.g. <c>dpz_pt_12m_juros_venc</c>) — the
+/// STRUCTURAL product identifier the rate sheet prices (<c>ConstituteDepositCommand.ProductId</c>),
+/// stamped by the decider so the D.4 read model can denormalize the queryable "which product is
+/// this" dimension that <c>RateSheetVersionId</c> (a price/version key, one-to-many to products)
+/// cannot provide. Structural, NOT PII (ADR-PC-004 §P2). Optional/additive (defaulted "") so
+/// pre-v794 streams that never carried it still replay as the empty default (forward-only schema
+/// evolution); those historical deposits are NOT back-fillable because the code is discarded at
+/// constitution and the rate-sheet version is one-to-many to products. Prospective only
+/// (bd babelstone-v794).</param>
 public sealed record DepositConstituted(
     Guid DepositId,
     Money Principal,
@@ -30,7 +39,8 @@ public sealed record DepositConstituted(
     DateOnly MaturityDate,
     string InterestVariant,
     string AutoRenewalPolicy,
-    int PaymentPeriodMonths = 0) : DomainEvent;
+    int PaymentPeriodMonths = 0,
+    string ProductCode = "") : DomainEvent;
 
 /// <summary>Interest accrued for the period. For AT_MATURITY this is the single flow at
 /// maturity: <c>GrossInterest = Accrual.SimpleInterest(principal, tan, DayCount.Between(start, maturity, Act360))</c>.</summary>

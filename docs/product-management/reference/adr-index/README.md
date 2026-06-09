@@ -36,6 +36,7 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [024](../../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md) | Constitution Precondition Contract — Engine Declares, Upstream Evaluates, Decider Refuses | Contract-shape | Accepted |
 | [025](../../product_concepts/adrs/ADR-PC-025-customer-notification-emit-contract.md) | Customer-Notification Emit Contract — Event-Driven + Pre-Contractual NotificationDue, No Engine-Side Delivery State | Contract-shape | Accepted |
 | [026](../../product_concepts/adrs/ADR-PC-026-csharp-api-reference-docfx.md) | C# API-Reference Surface — DocFX to GitHub Pages | Tool-selection | Proposed |
+| [027](../../product_concepts/adrs/ADR-PC-027-deposit-read-surface-canonical-resource.md) | Deposit Read Surface — One Canonical Resource, Read-Model-Backed with Fold-on-Token | Contract-shape | Proposed |
 
 ## ADR-IC — Integration estate
 

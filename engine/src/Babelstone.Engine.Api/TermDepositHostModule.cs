@@ -68,8 +68,20 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             var infra = new ProjectionInfra(
                 serviceProvider.GetRequiredService<IProjectionStorage>(),
                 serviceProvider.GetRequiredService<IEventSerializer>());
-            var runners = serviceProvider.GetServices<IProjectionModule>().SelectMany(module => module.CreateRunners(infra));
-            return new ProjectionRegistry(runners);
+            var bitemporalRunners = serviceProvider.GetServices<IProjectionModule>().SelectMany(module => module.CreateRunners(infra));
+
+            // D.4 CQRS read model (ADR-IC-005): the denormalized read-model runner is its own kind
+            // alongside the four bitemporal projections, sharing the same async drainer/relay. It
+            // folds the same deposit-position state into read_model.deposits (the I.2 Query API
+            // surface). Composed here from the FAMILY-OWNED read-model store (the deposit-shaped
+            // table is the family's domain shape, not the spine's — ADR-PC-021 §D2/§P2); the family
+            // supplies the fold + the state→row mapper over the generic ReadModelInfra<TRow>.
+            var readModelInfra = new ReadModelInfra<DepositReadModelRow>(
+                serviceProvider.GetRequiredService<IDepositReadModelStore>(),
+                serviceProvider.GetRequiredService<IEventSerializer>());
+            var readModelRunner = new TermDepositProjectionModule().CreateReadModelRunner(readModelInfra);
+
+            return new ProjectionRegistry(bitemporalRunners.Append(readModelRunner));
         });
         services.AddSingleton(serviceProvider => new ProjectionDrainer(
             serviceProvider.GetRequiredService<IEventStore>(),

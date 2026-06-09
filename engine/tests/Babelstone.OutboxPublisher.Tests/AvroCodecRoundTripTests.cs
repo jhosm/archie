@@ -72,6 +72,60 @@ public sealed class AvroCodecRoundTripTests
     }
 
     [Fact]
+    public void DepositConstituted_decodes_a_pre_v794_record_as_the_empty_product_code_default()
+    {
+        // bd babelstone-v794 added product_code to DepositConstituted (additive, default ""). A
+        // record written before v794 never carried it; constructing the C# record WITHOUT a
+        // ProductCode (the default "") and round-tripping proves the .avsc default decodes — old
+        // records still replay as "" rather than failing to decode (forward-only evolution,
+        // ADR-IC-002 §P3, the same precedent as payment_period_months).
+        var serializer = NewSerializer();
+        var preV794 = new DepositConstituted(
+            DepositId: Guid.NewGuid(),
+            Principal: new Money(1_000_000),
+            TanBasisPoints: 300,
+            RateSheetVersionId: "rs-2026-01",
+            TermDays: 364,
+            StartDate: new DateOnly(2026, 1, 1),
+            MaturityDate: new DateOnly(2026, 12, 31),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE");
+
+        var decoded = (DepositConstituted)serializer.Decode(
+            serializer.Encode(preV794).Bytes, typeof(DepositConstituted));
+
+        Assert.Equal(preV794, decoded);
+        Assert.Equal("", decoded.ProductCode);
+    }
+
+    [Fact]
+    public void DepositConstituted_round_trips_the_catalogue_product_code_additive_field()
+    {
+        // bd babelstone-v794: a populated catalogue product_code must survive the wire — proving the
+        // .avsc field, not just the C# record, carries it (otherwise the code would silently drop to
+        // the "" default and the D.4 read model would denormalize an empty dimension).
+        var serializer = NewSerializer();
+        var original = new DepositConstituted(
+            DepositId: Guid.NewGuid(),
+            Principal: new Money(1_000_000),
+            TanBasisPoints: 300,
+            RateSheetVersionId: "pt-deposits-2026.1",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 1),
+            MaturityDate: new DateOnly(2027, 1, 1),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            PaymentPeriodMonths: 0,
+            ProductCode: "dpz_pt_12m_juros_venc");
+
+        var decoded = (DepositConstituted)serializer.Decode(
+            serializer.Encode(original).Bytes, typeof(DepositConstituted));
+
+        Assert.Equal(original, decoded);
+        Assert.Equal("dpz_pt_12m_juros_venc", decoded.ProductCode);
+    }
+
+    [Fact]
     public void InterestAccrued_round_trips()
     {
         var serializer = NewSerializer();

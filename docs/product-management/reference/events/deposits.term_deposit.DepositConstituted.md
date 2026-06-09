@@ -18,6 +18,7 @@ The deposit is opened: principal, the rate-sheet-resolved TAN, and the AT_MATURI
 | `interest_variant` | `string` | Interest variant discriminator (e.g. AT_MATURITY). |
 | `auto_renewal_policy` | `string` | Auto-renewal policy discriminator. |
 | `payment_period_months` | `int` | PERIODIC coupon cadence in months (1 monthly, 3 quarterly); 0 for AT_MATURITY/ADVANCE. Additive with a default so pre-F.1 AT_MATURITY records that never carried it still decode (forward-only schema evolution, [ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)). |
+| `product_code` | `string` | The catalogue product code (e.g. dpz_pt_12m_juros_venc) — the STRUCTURAL product identifier the rate sheet prices (ConstituteDepositCommand.ProductId), the queryable 'which product is this' dimension that rate_sheet_version_id (a price/version key, one-to-many to products) cannot provide. Structural, NOT PII ([ADR-PC-004](../../product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) §P2). Additive with a default so pre-v794 records that never carried it still decode as the empty default (forward-only schema evolution, [ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md) §P3); those historical deposits are NOT back-fillable from the log because the code is discarded at constitution and rate_sheet_version_id→product is one-to-many. Prospective only (bd babelstone-v794). |
 
 ## Governing ADRs
 

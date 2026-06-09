@@ -58,6 +58,10 @@ public enum DepositLifecycle
 /// <param name="CouponsPaid">How many PERIODIC coupons have already been paid out (folded from
 /// each <c>InterestPaid</c>). The service derives "which coupon is next" from this count plus the
 /// start date and cadence — no clock or wall-time in the fold (BENG001/002/003).</param>
+/// <param name="ProductCode">The catalogue product code (e.g. <c>dpz_pt_12m_juros_venc</c>), folded
+/// from <c>DepositConstituted.ProductCode</c> — the structural product identifier the D.4 read model
+/// denormalizes (bd babelstone-v794). Empty ("") for deposits constituted before v794, which never
+/// carried it (the Avro default decodes to ""); not PII (ADR-PC-004 §P2).</param>
 public sealed record DepositPosition(
     Guid DepositId,
     Money Principal,
@@ -69,6 +73,7 @@ public sealed record DepositPosition(
     string InterestVariant,
     string AutoRenewalPolicy,
     int PaymentPeriodMonths,
+    string ProductCode,
     Money AccruedGrossInterest,
     Money WithholdingToDate,
     Money NetInterest,
@@ -91,6 +96,7 @@ public sealed record DepositPosition(
         InterestVariant: string.Empty,
         AutoRenewalPolicy: string.Empty,
         PaymentPeriodMonths: 0,
+        ProductCode: string.Empty,
         AccruedGrossInterest: Money.Zero,
         WithholdingToDate: Money.Zero,
         NetInterest: Money.Zero,
