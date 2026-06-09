@@ -39,15 +39,44 @@ public sealed class EmitContractFitnessTests
         ["nif", "iban", "account", "name", "email", "client", "phone", "address", "tax_id", "customer", "depositor", "heir"];
 
     /// <summary>
-    /// Clock-driven "about-to-happen" naming a family event type MUST NOT carry (ADR-PC-023 §D1):
+    /// Clock-driven "about-to-happen" suffixes a family event type MUST NOT carry (ADR-PC-023 §D1):
     /// a signal whose only cause is "a date arrived" is not a fact about the aggregate and is not
-    /// engine-emitted. The forbidden suffixes name the non-fact tense ("approaching", "due",
-    /// "upcoming", "imminent", "expiring", "reminder") the ADR's <c>DepositMaturityApproaching</c> /
-    /// <c>PaymentDue</c> examples illustrate. Matched against the event type's terminal word so a
-    /// legitimate past-tense fact (<c>...Matured</c>, <c>...Accrued</c>, <c>...Paid</c>) never trips.
+    /// engine-emitted. These name the non-fact tense ("approaching", "upcoming", "imminent",
+    /// "expiring", "pending", "reminder", "soon") the ADR's <c>DepositMaturityApproaching</c> /
+    /// <c>PaymentDue</c> examples illustrate, broadened (per the replay-determinism review) toward
+    /// the ADR's implied maturity/forecast vocabulary ("forecast", "warning", "alert", "window",
+    /// "notice", "scheduled") so an off-the-original-list clock-driven name
+    /// (<c>DepositMaturityForecast</c>) is also caught.
+    ///
+    /// IMPORTANT — this is a NAME HEURISTIC, not a semantic proof. It pattern-matches the terminal
+    /// word of an event type and cannot prove a non-obviously-named type is fact-driven; the
+    /// build-time analyser the ADR's "analyser + contract" gate column also names is the real
+    /// completeness backstop (a separate, still-open layer — see the catalogue reconciliation note).
+    /// The structural <see cref="Engine_emit_path_runs_no_clock_driven_scheduler"/> scheduler-scan is
+    /// the orthogonal STRUCTURAL proof that no clock tick fires an emission; keep both.
+    ///
+    /// NOTE — the bare suffix "Due" is deliberately NOT in this list: it would collide with the
+    /// canonical fact-driven event ADR-PC-025 names in its title, <c>NotificationDue</c> (caused by a
+    /// domain event, NOT by a date arriving). The clock-driven "X is due because a DATE arrived"
+    /// shape is instead matched ONLY via <see cref="ForbiddenClockDrivenCompounds"/> below
+    /// (<c>PaymentDue</c> / <c>*MaturityDue</c>), so <c>NotificationDue</c> stays green. Do NOT
+    /// re-add a bare "Due" suffix here (it would RED-flag the legitimate Accepted-ADR-PC-025 event).
     /// </summary>
     private static readonly string[] ForbiddenClockDrivenSuffixes =
-        ["Approaching", "Upcoming", "Due", "Imminent", "Expiring", "Pending", "Reminder", "Soon"];
+    [
+        "Approaching", "Upcoming", "Imminent", "Expiring", "Pending", "Reminder", "Soon",
+        "Forecast", "Warning", "Alert", "Window", "Notice", "Scheduled",
+    ];
+
+    /// <summary>
+    /// Clock-driven "X is due because a DATE arrived" shapes matched as COMPOUND whole-name forms
+    /// (ADR-PC-023 §D1's <c>PaymentDue</c> example, plus the parallel <c>MaturityDue</c>) — never as
+    /// a bare "Due" suffix. This anchoring on the compound is what lets the canonical fact-driven
+    /// <c>NotificationDue</c> (ADR-PC-025) pass: it ends in "Due" but is neither <c>PaymentDue</c>
+    /// nor a <c>*MaturityDue</c>, so it is not caught here.
+    /// </summary>
+    private static readonly string[] ForbiddenClockDrivenCompounds =
+        ["PaymentDue", "MaturityDue"];
 
     /// <summary>
     /// NO_CLOCK_DRIVEN_ENGINE_SIGNAL (row 17, ADR-PC-023 slot 1) — schema half: no family event
@@ -103,6 +132,11 @@ public sealed class EmitContractFitnessTests
     {
         var eventTypes = FamilyDomainEventTypeNames(RepoRoot());
         Assert.NotEmpty(eventTypes);
+
+        // Non-vacuity guard: the regex must extract ALL current family DomainEvent types, not a
+        // subset — 7 of these 11 have no .avsc, so a regex that silently dropped one would leave a
+        // schemaless event unguarded. If a family adds/removes an event, update this count knowingly.
+        Assert.Equal(11, eventTypes.Count);
 
         var violations = eventTypes
             .Select(name => (name, suffix: MatchedClockDrivenSuffix(name)))
@@ -177,6 +211,13 @@ public sealed class EmitContractFitnessTests
     /// a saga step") and lives in the constitution saga, not the engine emit path; SCHEDULED is no
     /// longer engine-emitted (ADR-PC-023). Delivery itself is DEF-2 deferred — there is nothing to
     /// gate because nothing synchronous is wired.
+    ///
+    /// This is a DENYLIST heuristic over a KNOWN SET of GL/notify port-symbol / synchronous-call
+    /// shapes — it proves the absence of those named shapes, not a closed-world proof that no gating
+    /// path of any shape exists. The authoritative gates remain the ADR-PC-009 Pact CDC contract
+    /// tests and the runtime registry; this is the cheap structural tripwire that fails fast when a
+    /// known gating port creeps onto the decide/append path. (When the DEF-2 ports actually land, this
+    /// denylist should flip to a positive allowlist of the sanctioned post-flag emission surface.)
     /// </summary>
     [Fact]
     public void Family_decider_and_append_path_holds_no_gl_or_notify_gate()
@@ -236,6 +277,12 @@ public sealed class EmitContractFitnessTests
     /// Asserts structurally that <see cref="AggregateRuntime{TState}.AppendAsync"/> builds an
     /// <c>OutboxRow</c> per event and commits via the sink, so every emitted signal rides the
     /// post-commit, fire-and-forget outbox rather than a gating synchronous call.
+    ///
+    /// The inline-publish half is a DENYLIST heuristic over a KNOWN SET of broker/publish shapes
+    /// (<c>IProducer</c>, <c>ProduceAsync</c>, <c>kafka</c>, <c>HttpClient</c>, …) — it proves the
+    /// absence of those named shapes on the write path, not a closed-world proof. The authoritative
+    /// gates remain the ADR-PC-009 Pact CDC contract tests and the runtime registry; this is the
+    /// cheap structural tripwire that fails fast if a known synchronous publish creeps inline.
     /// </summary>
     [Fact]
     public void Emission_goes_through_the_outbox_not_a_synchronous_publish()
@@ -324,10 +371,52 @@ public sealed class EmitContractFitnessTests
     }
 
     /// <summary>
+    /// NO-PII-ON-BUS — CLR half. The <c>.avsc</c> scan above covers only the 4 schema-backed events;
+    /// 7 of the 11 family events are schemaless today — including the most PII-adjacent
+    /// (<c>DepositTransferredToHeirs</c>'s <c>HeirCaseRef</c>, <c>DepositCorrected</c>'s
+    /// <c>PreviousValueRef</c>/<c>CorrectedValueRef</c>) and the highest-risk future
+    /// <c>NotificationDue</c> — so without this they ride to the bus unguarded until their
+    /// <c>.avsc</c> exists. This scans the CLR record CONSTRUCTOR PARAMETER names off
+    /// <c>families/**/Events.cs</c> (the same disk-scan idiom as <see cref="FamilyDomainEventTypeNames"/>),
+    /// normalises each PascalCase parameter to the snake form the Avro fields use, and applies the
+    /// SAME <see cref="FieldNameCarriesPii"/> detection + <c>_ref</c>/<c>_id</c> opaque-reference
+    /// exclusion — so a future PII-bearing event field is caught at its CLR declaration, before any
+    /// schema is written. <c>HeirCaseRef</c> / <c>*ValueRef</c> are opaque references and stay green.
+    /// </summary>
+    [Fact]
+    public void No_family_event_clr_field_carries_pii()
+    {
+        var fields = FamilyDomainEventConstructorParameterNames(RepoRoot());
+        Assert.NotEmpty(fields);
+
+        var violations = new List<string>();
+        foreach (var (eventType, parameter) in fields)
+        {
+            // Normalise PascalCase -> snake_case so HeirCaseRef reads as heir_case_ref and the SAME
+            // _ref/_id opaque-reference exclusion the Avro-field scan uses applies unchanged.
+            var lowered = PascalToSnake(parameter);
+            var fragment = PiiKeyFragments.FirstOrDefault(f => FieldNameCarriesPii(lowered, f));
+            if (fragment is not null)
+            {
+                violations.Add($"{eventType}.{parameter} (PII fragment '{fragment}')");
+            }
+        }
+
+        Assert.True(
+            violations.Count == 0,
+            "Never-PII-on-the-durable-bus (ADR-PC-012 / ADR-PC-025 Decision 1) — CLR half: no family "
+            + "DomainEvent record parameter may carry PII — cleartext OR ciphertext — even before its "
+            + ".avsc exists. The event carries opaque references (HeirCaseRef, *ValueRef, *Id) resolved "
+            + "internally, never the identity. Offending parameters:\n  " + string.Join("\n  ", violations));
+    }
+
+    /// <summary>
     /// A PII fragment match that excludes the structural false positives in this contract: a
     /// <c>*_ref</c> reference (e.g. <c>heir_case_ref</c>) is an OPAQUE handle the engine resolves
     /// internally — by design NOT PII — and <c>tax_cents</c> / <c>tax_basis_points</c> is a money/rate
-    /// amount, not the <c>tax_id</c> identifier the fragment guards against. The fragment test still
+    /// amount, not the <c>tax_id</c> identifier the fragment guards against (the tax/identifier
+    /// disambiguation is why the fragment list carries the full <c>"tax_id"</c> token, not a bare
+    /// <c>"tax"</c> — a tax amount/rate never contains the <c>_id</c> token). The fragment test still
     /// catches a genuine identity field (<c>customer_name</c>, <c>iban</c>, <c>nif</c>).
     /// </summary>
     private static bool FieldNameCarriesPii(string loweredFieldName, string fragment)
@@ -345,26 +434,38 @@ public sealed class EmitContractFitnessTests
             return false;
         }
 
-        // "tax" only trips via the tax_id fragment; a tax amount/rate (tax_cents, tax_basis_points,
-        // tax_rate) is structural money, not an identifier.
-        if (fragment == "tax_id" && !loweredFieldName.Contains("tax_id", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
         return true;
     }
 
-    /// <summary>The forbidden clock-driven suffix an event type name ends with, or null if none.</summary>
+    /// <summary>
+    /// The forbidden clock-driven token an event type name matches, or null if none. Matches a
+    /// suffix from <see cref="ForbiddenClockDrivenSuffixes"/> (terminal word, e.g. <c>...Approaching</c>,
+    /// <c>...Forecast</c>) OR a compound whole-name "due-on-a-date" form from
+    /// <see cref="ForbiddenClockDrivenCompounds"/> (<c>PaymentDue</c> / <c>*MaturityDue</c>). The
+    /// bare "Due" is matched ONLY via the compounds, so the fact-driven <c>NotificationDue</c>
+    /// (ADR-PC-025) does NOT trip.
+    /// </summary>
     private static string? MatchedClockDrivenSuffix(string eventTypeName)
         => ForbiddenClockDrivenSuffixes.FirstOrDefault(
-            suffix => eventTypeName.EndsWith(suffix, StringComparison.Ordinal));
+               suffix => eventTypeName.EndsWith(suffix, StringComparison.Ordinal))
+           ?? ForbiddenClockDrivenCompounds.FirstOrDefault(
+               compound => eventTypeName.EndsWith(compound, StringComparison.Ordinal));
 
     /// <summary>
     /// The family <see cref="DomainEvent"/> type names declared in <c>families/**/Events.cs</c>, read
     /// off disk the same way <see cref="EngineFamilyAgnosticTests"/> reads the spine off its csproj —
     /// no family ProjectReference from this engine-spine test project (that would itself break
-    /// ENGINE_FAMILY_AGNOSTIC). Keys off the <c>public sealed record X(...) : DomainEvent</c> shape.
+    /// ENGINE_FAMILY_AGNOSTIC). 7 of the 11 current family events have no <c>.avsc</c>, so this scan
+    /// is their ONLY naming guard — the regex must tolerate every record shape that lands a
+    /// <c>: ... DomainEvent</c> base, not just the primary-ctor one:
+    /// <list type="bullet">
+    /// <item><c>record X(...) : DomainEvent</c> — positional / primary-ctor form (the 11 today)</item>
+    /// <item><c>record class X(...) : DomainEvent</c> — explicit <c>class</c> kind</item>
+    /// <item><c>record X : DomainEvent { }</c> — body form with NO primary-ctor parens</item>
+    /// </list>
+    /// So it anchors on <c>record (class )?Name</c> and a <c>: ... DomainEvent</c> base WITHOUT
+    /// requiring parens, stopping the base scan at the first <c>{</c> or <c>;</c> so it never bleeds
+    /// past the declaration. (The 4 schema-backed events are double-guarded by the <c>.avsc</c> scan.)
     /// </summary>
     private static IReadOnlyList<string> FamilyDomainEventTypeNames(string repoRoot)
     {
@@ -382,8 +483,10 @@ public sealed class EmitContractFitnessTests
             }
 
             var source = File.ReadAllText(eventsFile);
+            // record (class )?Name <anything-but-{-or-;> : <anything-but-{-or-;> DomainEvent — matches
+            // positional, `record class`, and body-form declarations alike (no required parens).
             foreach (Match match in Regex.Matches(
-                source, @"record\s+([A-Z][A-Za-z0-9]*)\s*\([^)]*\)\s*:\s*DomainEvent", RegexOptions.Singleline))
+                source, @"record\s+(?:class\s+)?([A-Z]\w*)\b[^{;]*:\s*[^{;]*\bDomainEvent\b", RegexOptions.Singleline))
             {
                 names.Add(match.Groups[1].Value);
             }
@@ -391,6 +494,57 @@ public sealed class EmitContractFitnessTests
 
         return names;
     }
+
+    /// <summary>
+    /// The (event type, constructor parameter name) pairs declared in <c>families/**/Events.cs</c>,
+    /// read off disk the same way <see cref="FamilyDomainEventTypeNames"/> reads the type names — no
+    /// family ProjectReference. For each <c>record Name(...) : DomainEvent</c> it captures the
+    /// parameter block and yields each parameter NAME (the identifier immediately before a <c>,</c>,
+    /// <c>)</c>, or a <c>=</c> default), skipping the type tokens. Drives the CLR-field PII scan so a
+    /// PII-bearing parameter on a SCHEMALESS event is caught before its <c>.avsc</c> exists.
+    /// </summary>
+    private static IReadOnlyList<(string EventType, string Parameter)> FamilyDomainEventConstructorParameterNames(string repoRoot)
+    {
+        var familiesDir = Path.Combine(repoRoot, "families");
+        Assert.True(Directory.Exists(familiesDir), $"families directory not found on disk: {familiesDir}");
+
+        var fields = new List<(string, string)>();
+        foreach (var eventsFile in Directory.EnumerateFiles(familiesDir, "Events.cs", SearchOption.AllDirectories))
+        {
+            if (eventsFile.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                || eventsFile.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var source = File.ReadAllText(eventsFile);
+            // record (class )?Name ( <param-block> ) : ... DomainEvent — capture the parameter block.
+            foreach (Match record in Regex.Matches(
+                source, @"record\s+(?:class\s+)?([A-Z]\w*)\s*\(([^)]*)\)\s*:\s*[^{;]*\bDomainEvent\b", RegexOptions.Singleline))
+            {
+                var eventType = record.Groups[1].Value;
+                var paramBlock = record.Groups[2].Value;
+                // A parameter NAME is the identifier immediately before a separator (',' or end of
+                // block), allowing an optional '= default'. The type tokens never sit before a
+                // separator, so only the parameter name is captured.
+                foreach (Match param in Regex.Matches(
+                    paramBlock, @"\b([A-Za-z_]\w*)\s*(?:=[^,]*)?\s*(?:,|$)", RegexOptions.Singleline))
+                {
+                    fields.Add((eventType, param.Groups[1].Value));
+                }
+            }
+        }
+
+        return fields;
+    }
+
+    /// <summary>
+    /// Converts a PascalCase CLR parameter name to the lowercased snake_case shape the Avro fields
+    /// use (<c>HeirCaseRef</c> → <c>heir_case_ref</c>), so the SAME <see cref="FieldNameCarriesPii"/>
+    /// detection + <c>_ref</c>/<c>_id</c> opaque-reference exclusion applies to both surfaces.
+    /// </summary>
+    private static string PascalToSnake(string pascal)
+        => Regex.Replace(pascal, @"(?<=[a-z0-9])(?=[A-Z])", "_").ToLowerInvariant();
 
     /// <summary>Strips C# line comments so prose in comments cannot match an executable-symbol scan.</summary>
     private static string StripLineComments(string source)
