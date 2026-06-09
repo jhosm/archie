@@ -58,8 +58,8 @@ tracked separately — and is **not** the job of this seed.
 | 2 | Money rounds **HALF_EVEN exactly once** at the `Decimal → Cents` boundary, proven against a sealed golden-fixture corpus. | [ADR-PC-010 §P1–§P2](./ADR-PC-010-dotnet-hand-rolled-engine.md) | unit + analyser | `MONEY_BOUNDARY_FIXTURES` | Planned |
 | 3 | A handler that reads the clock, does I/O, or uses randomness **fails the build**; event evolution is additive-only. | [ADR-PC-010 §P5](./ADR-PC-010-dotnet-hand-rolled-engine.md) | analyser / CI determinism gate | `DETERMINISM_GATE` | Live |
 | 4 | Replay reads the pack/schema pin **off each event**, not the clock; a migration at sequence `M` splits the stream's pin, and a rebuild re-derives the identical per-event pin whenever it runs. | [ADR-PC-009 §P1–§P2](./ADR-PC-009-per-instance-version-pinning.md) | integration (Testcontainers) | `REPLAY_PIN_PER_EVENT` | Planned |
-| 5a | **Post-flag, never gated** — a GL-side reject never blocks or unwinds the producing business flow. | [ADR-PC-012 slot 5](./ADR-PC-012-gl-posting-signal-contract.md) | contract / saga | `GL_POST_FLAG_NEVER_GATES` | Planned |
-| 5b | **Post-flag, never gated** for `EVENT_DRIVEN` notifications; the `PRE_CONTRACTUAL` (FIN) case is the synchronous saga carve-out. *(Per [ADR-PC-025](./ADR-PC-025-customer-notification-emit-contract.md) — the clean reissue of [ADR-PC-014](./retired/ADR-PC-014-customer-notification-emit-contract.md) — `SCHEDULED` is no longer engine-emitted; its purity claim is `NO_CLOCK_DRIVEN_ENGINE_SIGNAL`, row 17.)* | [ADR-PC-025 slot 5](./ADR-PC-025-customer-notification-emit-contract.md) | contract / saga | `NOTIFY_POST_FLAG_NEVER_GATES` | Planned |
+| 5a | **Post-flag, never gated** — a GL-side reject never blocks or unwinds the producing business flow. | [ADR-PC-012 slot 5](./ADR-PC-012-gl-posting-signal-contract.md) | contract / saga | `GL_POST_FLAG_NEVER_GATES` | Live |
+| 5b | **Post-flag, never gated** for `EVENT_DRIVEN` notifications; the `PRE_CONTRACTUAL` (FIN) case is the synchronous saga carve-out. *(Per [ADR-PC-025](./ADR-PC-025-customer-notification-emit-contract.md) — the clean reissue of [ADR-PC-014](./retired/ADR-PC-014-customer-notification-emit-contract.md) — `SCHEDULED` is no longer engine-emitted; its purity claim is `NO_CLOCK_DRIVEN_ENGINE_SIGNAL`, row 17.)* | [ADR-PC-025 slot 5](./ADR-PC-025-customer-notification-emit-contract.md) | contract / saga | `NOTIFY_POST_FLAG_NEVER_GATES` | Live |
 | 5c | **Post-flag, never gated — unconditionally**; IFRS 9 is downstream and has no gating claim. *(No signal emitted in v1; gate built before the v2 credit scope.)* | [ADR-PC-015 slot 5](./ADR-PC-015-ifrs9-signal-contract.md) | contract / saga | `IFRS9_POST_FLAG_NEVER_GATES` | Planned |
 | 7 | A re-ingested legacy batch file produces **no duplicate `LegacyInstanceObserved` events** (engine-side dedupe on `(legacy_instance_id, fact_kind, fact_date)` + natural key). | [ADR-PC-017 slot 4](./ADR-PC-017-legacy-batch-ingest-contract.md) | integration (Testcontainers) | `BATCH_INGEST_IDEMPOTENT` | Planned |
 | 8 | **Cold replay budgets** are met: ≤ 5 s for a with-a-plan instance, ≤ 30 s for an irregular one. *(v1 5 s half Live via D.5; the v4 30 s irregular-family half stays with L.3's load harness — see the D.5 reconciliation note.)* | [event-store §8.2](../feature-design-event-store-projections.md) | benchmark (CI Integration lane) | `REPLAY_BUDGET_5S_30S` | Live |
@@ -71,7 +71,7 @@ tracked separately — and is **not** the job of this seed.
 | 14 | **A cold projection rebuild reproduces byte-identical current-belief rows** — every stamp is event-derived (`recorded_at` = the event's transaction-time), never wall-clock. | [ADR-PC-002 §P4](./ADR-PC-002-application-level-bitemporality.md), [ADR-PC-010 §P5](./ADR-PC-010-dotnet-hand-rolled-engine.md) | integration (Testcontainers) | `PROJECTION_REBUILD_DETERMINISM` | Planned |
 | 15 | **A projection folded synchronously vs asynchronously yields identical rows**; the mode is declared per projection, not hardcoded into the engine. | [ADR-PC-002 §P4](./ADR-PC-002-application-level-bitemporality.md) | integration (Testcontainers) | `PROJECTION_MODE_EQUIVALENCE` | Planned |
 | 16 | A **required precondition** that is absent or `satisfied: false` yields `DepositConstitutionFailed`, computed as a **pure function of the command's verdicts** — no in-engine evaluation, no compensation. | [ADR-PC-024 slot 5](./ADR-PC-024-constitution-precondition-contract.md) | contract / saga | `CONSTITUTION_PRECONDITION_REFUSAL` | Planned |
-| 17 | **No engine-emitted event is produced by a clock/scheduler** — every emitted signal traces to a causing domain event, and no family schema declares a clock-driven "about-to-happen" event type. | [ADR-PC-023 slot 1](./ADR-PC-023-temporal-signals-projection-derived.md) | analyser + contract | `NO_CLOCK_DRIVEN_ENGINE_SIGNAL` | Planned |
+| 17 | **No engine-emitted event is produced by a clock/scheduler** — every emitted signal traces to a causing domain event, and no family schema declares a clock-driven "about-to-happen" event type. | [ADR-PC-023 slot 1](./ADR-PC-023-temporal-signals-projection-derived.md) | analyser + contract | `NO_CLOCK_DRIVEN_ENGINE_SIGNAL` | Live |
 | 18 | The deposit read surface is **one canonical resource** (`GET /v1/deposits/{id}`, no storage-named sibling); it serves the denormalized read model by default and **folds the event stream as an internal read-your-writes fallback** when a caller's `If-Min-Sequence` token (a command's `commit_sequence`) outruns the projection — both paths fill the same `DepositResponse`. | [ADR-PC-027 slot 2/3](./ADR-PC-027-deposit-read-surface-canonical-resource.md) | integration (Testcontainers) | `READ_YOUR_WRITES_FOLD_ON_TOKEN` | Live |
 | OBS-1 | Every Babelstone .NET host stamps its tracer's **resource** with `service.name`, `service.namespace == "babelstone"`, and a non-blank `deployment.environment` — so every trace is attributable to a service, the estate, and an environment. | [ADR-IC-007 §P1](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_RESOURCE_ATTRS` | Live |
 | OBS-2 | The product-semantic spans (`accrual.computed`, `withholding.applied`) are emitted in the **impure runtime shell** (`AggregateRuntime.AppendAsync`'s span hook / the host endpoint), **never** in the pure decider/fold, and carry the structural `babelstone.partition_key` + `babelstone.product_code`. | [ADR-IC-007 §P2–§P3](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_SPAN_PRODUCT_SEMANTICS` | Live |
@@ -185,6 +185,48 @@ event type. Row 5b's claim was narrowed in the same change: per
 [ADR-PC-014 Amendment A1](./retired/ADR-PC-014-customer-notification-emit-contract.md) the engine
 no longer emits `SCHEDULED` notifications, so `NOTIFY_POST_FLAG_NEVER_GATES` now covers
 `EVENT_DRIVEN` (+ the `PRE_CONTRACTUAL` carve-out) only.
+
+**Emit-contract fitness reconciliation (2026-06-10).** Three emit-path rows flip
+`Planned → Live` (bd `babelstone-2eo0`), each now resolving to a tight pure-reflection /
+disk-scan fitness test in `EmitContractFitnessTests` (`Babelstone.Engine.Tests`) — same
+no-container, no-saga-infra idiom as `EngineFamilyAgnosticTests`, and run in CI's `engine`
+job (the non-Integration tier of `.github/workflows/ci.yml`, the `ES_ATOMIC_APPEND_OUTBOX`
+"runs in CI" bar). The tests are the spec-first loop ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md))
+realised on the emit surface:
+
+- `NO_CLOCK_DRIVEN_ENGINE_SIGNAL` (row 17, [ADR-PC-023 slot 1](./ADR-PC-023-temporal-signals-projection-derived.md)):
+  three structural assertions — no Avro event schema (`contracts/avro/**`) and no family
+  `DomainEvent` type (`families/**/Events.cs`) names a clock-driven "about-to-happen" signal
+  (the `DepositMaturityApproaching` / `PaymentDue` forbidden shape), and the `Babelstone.Engine`
+  emit spine runs no scheduler/timer (a clock tick cannot fire an engine signal; the runtime
+  stamps `transaction_time` from the injected `TimeProvider` at append but owns no timer). This
+  extends `DETERMINISM_GATE`'s purity stance from the *fold* to the *emit path* — the contract
+  half is now Live; the dedicated build-time analyser the ADR's "analyser + contract" gate column
+  also names is a separate, still-open layer (the analyser would catch a clock-driven type at
+  *compile* time rather than test time), tracked as a follow-up — but the row resolves to ≥1
+  running CI test, meeting the `Live` bar.
+- `GL_POST_FLAG_NEVER_GATES` (row 5a, [ADR-PC-012 slot 5](./ADR-PC-012-gl-posting-signal-contract.md))
+  and `NOTIFY_POST_FLAG_NEVER_GATES` (row 5b, [ADR-PC-025 slot 5](./ADR-PC-025-customer-notification-emit-contract.md)):
+  the EMIT-side structural proof (delivery is DEF-2 deferred). The family decide/append path
+  (`TermDepositDecider` + `TermDepositConstitutionService`) references no GL/notify port symbol,
+  so a GL reject or a notification failure cannot gate or unwind the producing flow; and
+  `AggregateRuntime.AppendAsync` emits only through the outbox (event + `OutboxRow` in one sink
+  transaction, no inline synchronous broker publish), so emission is post-commit fire-and-forget.
+  The `PRE_CONTRACTUAL` (FIN) synchronous-saga carve-out lives in the constitution saga, off this
+  path; `SCHEDULED` is no longer engine-emitted ([ADR-PC-023](./ADR-PC-023-temporal-signals-projection-derived.md)).
+  The "~8 load-bearing" still counts post-flag-never-gates (5a–5c) as ONE invariant: 5a/5b are
+  now Live; 5c (`IFRS9_POST_FLAG_NEVER_GATES`) stays `Planned` — no IFRS 9 signal is emitted in
+  v1, so there is no emit path to gate (the gate is built before the v2 credit scope, the
+  build-before-the-path-it-guards posture).
+
+The no-PII-on-the-bus assertion lands in the same file (`No_event_schema_field_carries_pii`),
+reusing the `TelemetrySpanTests` `OBS_NO_PII_ATTRS` structural key-fragment detection over the
+emitted-event schema surface — it does **not** flip a row: `OBS-3` (`OBS_NO_PII_ATTRS`) stays
+`Planned` because its `Live` bar is the dedicated build-time *analyser* gate (ADR-IC-007 §P4),
+not yet written. This is the bus-surface companion to that telemetry-surface check, not the
+analyser the row reserves; it honours [ADR-PC-012](./ADR-PC-012-gl-posting-signal-contract.md) /
+[ADR-PC-025](./ADR-PC-025-customer-notification-emit-contract.md) Decision 1 (the envelope carries
+no PII; references are resolved internally) without claiming the OBS-3 gate.
 
 **AML withdrawal (2026-06-03).** Row 6 (`AML_EDGE_PRECONDITION`, governed by
 ADR-PC-013) was **removed**: AML/KYC is out of scope for the product engine
