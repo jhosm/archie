@@ -16,9 +16,6 @@ act_360:
 act_365:
   formula_ref: engine.day_count.actual_365
   permitted_for: []
-act_act_isda:
-  formula_ref: engine.day_count.actual_actual_isda
-  permitted_for: []
 "30_360_european":
   formula_ref: engine.day_count.thirty_360_european
   permitted_for: []

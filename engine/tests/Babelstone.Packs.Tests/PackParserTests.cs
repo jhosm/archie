@@ -43,9 +43,12 @@ public sealed class PackParserTests
     }
 
     [Fact]
-    public void A_declared_but_engine_unimplemented_day_count_fails_loud()
-        // act_act_isda is declared in the pack but has no DayCountConvention member — refuse to default.
-        => Assert.Throws<PackLoadException>(() => Pt2026().ResolveDayCount("act_act_isda"));
+    public void A_day_count_formula_ref_with_no_engine_convention_fails_loud()
+        // ToConvention refuses to silently default when a formula_ref names a primitive the
+        // engine doesn't implement (e.g. the dropped act_act_isda, fk7m.8) — the pack no longer
+        // carries such an entry, so exercise the defensive arm directly.
+        => Assert.Throws<PackLoadException>(
+            () => new PackDayCount("engine.day_count.actual_actual_isda", []).ToConvention());
 
     [Fact]
     public void An_undeclared_day_count_id_fails_loud()
