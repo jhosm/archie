@@ -73,13 +73,14 @@ Today that switch accepts exactly three:
 | `engine.day_count.actual_365` | Actual/365 |
 | `engine.day_count.thirty_360_european` | 30E/360 (European) |
 
-> **A live cautionary example.** The `pt.2026.1` pack also declares
-> `act_act_isda → engine.day_count.actual_actual_isda`, but that case is **not**
-> in `ToConvention()` — the engine does not implement it. It passes
-> `make pack-validate` and would fail at engine load; it causes no harm only
-> because its `permitted_for: []` blocks every variant from reaching the
-> resolver. This is precisely why you confirm a `formula_ref` against the
-> *engine*, not against the pack.
+> **A cautionary example.** Suppose a pack declared
+> `act_act_isda → engine.day_count.actual_actual_isda`, but that case were **not**
+> in `ToConvention()` — the engine does not implement it. It would pass
+> `make pack-validate` and then fail at engine load; an empty `permitted_for: []`
+> would mask the trap only by blocking every variant from reaching the resolver.
+> (`pt.2026.1` carried exactly this dead entry until it was dropped pre-publication
+> — see issue `fk7m.8`.) This is precisely why you confirm a `formula_ref` against
+> the *engine*, not against the pack.
 
 > **Gap, stated honestly.** There is no *generated* catalogue of engine
 > primitives yet — unlike events, family schemas, and the pack-format, the
@@ -117,13 +118,13 @@ act_act_icma:
   formula_ref: engine.day_count.actual_actual_icma
 ```
 
-The example pack declares four day-count keys, but the engine today implements
-only **three** — `engine.day_count.actual_360`, `actual_365`, and
-`thirty_360_european`. The pack's fourth entry, `act_act_isda`
-(`engine.day_count.actual_actual_isda`), is **declared but not
-engine-implemented**: it is the live, in-repo example of the trap in the branch
-below, harmless only because its `permitted_for: []` stops any variant from
-reaching the resolver. Always confirm a `formula_ref` against the engine — see
+The example pack declares three day-count keys, and the engine implements all
+three — `engine.day_count.actual_360`, `actual_365`, and
+`thirty_360_european`. A pack could declare a fourth that the engine does *not*
+implement (`act_act_isda → engine.day_count.actual_actual_isda` was such an entry
+in `pt.2026.1` until it was dropped pre-publication — `fk7m.8`): that is exactly
+the trap in the branch below, and it would pass `make pack-validate` yet fail at
+engine load. Always confirm a `formula_ref` against the engine — see
 [Which primitives does the engine implement?](#which-primitives-does-the-engine-implement)
 above.
 
@@ -152,8 +153,8 @@ act_365:
 ```
 
 PT retail term deposits require Act/360, so only `act_360` lists
-`term_deposit`. The other three conventions (`act_365`, `act_act_isda`,
-`30_360_european`) carry `permitted_for: []`. A variant *can still name* one of
+`term_deposit`. The other two conventions (`act_365`, `30_360_european`) carry
+`permitted_for: []`. A variant *can still name* one of
 them — it parses, and depths 1–2 pass — but **depth-4 (regulatory coherence)
 rejects it for a term-deposit variant**, emitting a diagnostic like:
 

@@ -168,7 +168,7 @@ What v1 ships, by category:
 
 | Category | Primitive IDs | Notes |
 |---|---|---|
-| Day-count (`day_count.*`) | `act_360`, `act_365`, `act_act_isda`, `30_360_european` | PT retail deposits default to `act_360`. |
+| Day-count (`day_count.*`) | `act_360`, `act_365`, `30_360_european` | PT retail deposits default to `act_360`. |
 | Calendars (`calendar.*`) | `pt_national`, `pt_national_plus_lisbon`, `target2` | Business-day conventions: `following`, `modified_following`, `preceding`. |
 | Interest (`interest.*`) | `simple`, `compound_periodic`, `act_365_compound` | `simple` is capital × rate × day-count fraction. `act_365_compound` is required for some BdP-mandated TAEG calculations. |
 | Withholding (`withholding.*`) | `irs_juros` | 2800 bps on gross interest at credit time. Exemptions: `pme_leader`, `non_resident_treaty`, `jovens_poupanca`. Reporting hook `modelo_39`. The 28% rate is a pack *parameter*, not an engine constant — rate changes ship as a new pack version, the engine binary does not move. |
