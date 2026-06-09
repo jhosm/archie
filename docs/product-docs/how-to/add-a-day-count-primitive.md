@@ -81,7 +81,7 @@ Today that switch accepts exactly three:
 > pack-validate` cannot catch this; only the engine can. This is precisely why
 > you confirm a `formula_ref` against the *engine*, not against the pack. (No
 > shipped pack carries such a dead entry — a guard test, `PackDeclarationsResolveTests`,
-> asserts every declared `formula_ref` resolves, so a future one fails CI.)
+> asserts every declared day-count `formula_ref` resolves, so a future one fails CI.)
 
 > **Gap, stated honestly.** There is no *generated* catalogue of engine
 > primitives yet — unlike events, family schemas, and the pack-format, the

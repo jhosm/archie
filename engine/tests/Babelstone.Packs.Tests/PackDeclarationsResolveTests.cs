@@ -3,12 +3,15 @@ using Xunit;
 namespace Babelstone.Packs.Tests;
 
 /// <summary>
-/// Fences a whole bug class: a pack must never declare a primitive <c>formula_ref</c> the engine
-/// cannot resolve. Such a dead entry passes <c>make pack-validate</c> (CUE checks the string shape,
-/// not engine implementation — ADR-PC-006) yet throws only at engine load (ADR-PC-010,
-/// VerifiedPack/PackDayCount.ToConvention() is the resolver). This test discovers every shipped
-/// pack under <c>packs/</c> and asserts every declared day-count formula_ref resolves, so a future
-/// dead entry fails CI here instead of lurking until load.
+/// Fences the day-count <c>formula_ref</c> dead-entry class specifically: a pack must never declare a
+/// day-count <c>formula_ref</c> the engine cannot resolve. Such a dead entry passes
+/// <c>make pack-validate</c> (CUE checks the string shape, not engine implementation — ADR-PC-006)
+/// yet throws only at engine load (ADR-PC-010, VerifiedPack/PackDayCount.ToConvention() is the
+/// resolver). This test discovers every shipped pack under <c>packs/</c> and asserts every declared
+/// day-count formula_ref resolves, so a future dead entry fails CI here instead of lurking until load.
+/// Scope is intentionally day-count-only: the other primitive formula_refs (withholding, fgd,
+/// reporting) are NOT covered here — bd sfnt.15 (the planned generated engine-primitives catalogue)
+/// is what would extend this guard to them.
 /// </summary>
 public sealed class PackDeclarationsResolveTests
 {
@@ -26,6 +29,16 @@ public sealed class PackDeclarationsResolveTests
         }
 
         return data;
+    }
+
+    /// <summary>
+    /// The theory above is data-driven off <see cref="ShippedPacks"/>; an empty <c>packs/</c> tree would
+    /// make it vacuously green. This fact fails CI if the corpus is empty — at minimum pt.2026.1 must ship.
+    /// </summary>
+    [Fact]
+    public void ShippedPacks_corpus_is_non_empty()
+    {
+        Assert.NotEmpty(ShippedPacks());
     }
 
     [Theory]
