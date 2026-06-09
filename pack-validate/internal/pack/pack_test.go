@@ -20,8 +20,8 @@ func TestLoadDayCountPermittedFor(t *testing.T) {
 		t.Fatalf("load pt.2026.1: %v", err)
 	}
 
-	// The catalogue carries all four conventions (depth-2 membership).
-	for _, key := range []string{"act_360", "act_365", "act_act_isda", "30_360_european"} {
+	// The catalogue carries all three conventions (depth-2 membership).
+	for _, key := range []string{"act_360", "act_365", "30_360_european"} {
 		if !p.HasDayCount(key) {
 			t.Errorf("expected pack to carry day-count %q", key)
 		}
@@ -31,7 +31,7 @@ func TestLoadDayCountPermittedFor(t *testing.T) {
 	if !p.PermitsDayCountFor("act_360", "term_deposit") {
 		t.Errorf("act_360 must be permitted for term_deposit")
 	}
-	for _, key := range []string{"act_365", "act_act_isda", "30_360_european"} {
+	for _, key := range []string{"act_365", "30_360_european"} {
 		if p.PermitsDayCountFor(key, "term_deposit") {
 			t.Errorf("%q must NOT be permitted for term_deposit", key)
 		}
