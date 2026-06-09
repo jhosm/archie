@@ -51,6 +51,16 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
             var fieldName = FieldName(parameter.Name!, parameter.ParameterType);
             RequireField(schema, fieldName, type);
             var value = type.GetProperty(parameter.Name!)!.GetValue(@event);
+            if (value is null && !IsNullableUnion(schema, fieldName))
+            {
+                // A null on a REQUIRED (non-[null,T]) field. ToAvro(null) returns Avro null for the
+                // optional path, so without this pre-check the null reaches Apache.Avro's writer and
+                // surfaces as a bare NullReferenceException with no field name. Fail clearly here
+                // instead — the optional [null,T] path (IsNullableUnion true) still emits Avro null.
+                throw new InvalidOperationException(
+                    $"Event field '{parameter.Name}' is null; '{fieldName}' is a required (non-[null,T]) field.");
+            }
+
             record.Add(fieldName, ToAvro(value));
         }
 
@@ -125,6 +135,14 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
                 $"Avro schema {schema.Fullname} has no field '{fieldName}' for event '{type.Name}'.");
         }
     }
+
+    // True when the named field's .avsc type is an OPTIONAL [null,T] union (a union carrying a Null
+    // branch, ADR-IC-002 §P2) — the one shape where a null value is legal and must emit Avro null.
+    // Every other field is required: a null there is a binding error caught in ToRecord with the
+    // field name, not a bare NullReferenceException deep in Apache.Avro's writer.
+    internal static bool IsNullableUnion(RecordSchema schema, string fieldName)
+        => schema.Fields.FirstOrDefault(field => field.Name == fieldName)?.Schema is UnionSchema union
+            && union.Schemas.Any(branch => branch.Tag == Schema.Type.Null);
 
     // Unwrap Nullable<T> (a nullable value type, e.g. an optional Money? / DateOnly? field) to its
     // underlying T so the same Money/DateOnly conversions apply whether or not the field is optional.

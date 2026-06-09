@@ -187,6 +187,30 @@ public sealed class AvroCodecRoundTripTests
         Assert.Contains(nameof(UnknownEvent), ex.Message);
     }
 
+    [Fact]
+    public void Null_on_a_required_field_fails_loud_with_the_field_name_on_encode()
+    {
+        // A null on a REQUIRED (non-[null,T]) field must surface a clear, field-named error — NOT a
+        // bare NullReferenceException deep in Apache.Avro's writer. ToAvro(null) returns Avro null for
+        // the optional [null,T] path (ADR-IC-002 §P2), so ToRecord pre-checks the schema field and
+        // fails here when the field is required. RateSheetVersionId is a plain Avro string (required).
+        var serializer = NewSerializer();
+        var withNullRequired = new DepositConstituted(
+            DepositId: Guid.NewGuid(),
+            Principal: new Money(1_000_000),
+            TanBasisPoints: 300,
+            RateSheetVersionId: null!,
+            TermDays: 364,
+            StartDate: new DateOnly(2026, 1, 1),
+            MaturityDate: new DateOnly(2026, 12, 31),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE");
+
+        var ex = Assert.Throws<InvalidOperationException>(() => serializer.Encode(withNullRequired));
+        Assert.Contains(nameof(DepositConstituted.RateSheetVersionId), ex.Message); // the C# field name
+        Assert.Contains("rate_sheet_version_id", ex.Message);                       // the Avro field name
+    }
+
     // --- ADR-IC-002 §P2 optional-field ([null,T] union) path --------------------------------------
     // None of the 4 AT_MATURITY events carry an optional field, so these drive the codec's value
     // helpers (ToAvro/FromAvro/FieldName/RequireField) directly against a real null-first union
