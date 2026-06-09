@@ -5,6 +5,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The value-conversion + field helpers (ToAvro/FromAvro/FieldName/RequireField) are internal;
+         the codec's public surface stays Encode/Decode. The OutboxPublisher tests exercise the
+         optional [null,T]-union path (ADR-IC-002 §P2) directly against these helpers — the part that
+         must never silently drift — without needing a catalogued .avsc that carries an optional field. -->
+    <InternalsVisibleTo Include="Babelstone.OutboxPublisher.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- contracts/avro/{domain}/{aggregate_type}/{EventName}.avsc — the single governed source
          (ADR-IC-002 §P1 as amended). Embed ALL with a recursive glob so a new family's .avsc
          needs no csproj edit. The catalog is family-agnostic (ADR-PC-021 §D2): it resolves

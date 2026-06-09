@@ -51,7 +51,7 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
             var fieldName = FieldName(parameter.Name!, parameter.ParameterType);
             RequireField(schema, fieldName, type);
             var value = type.GetProperty(parameter.Name!)!.GetValue(@event);
-            record.Add(fieldName, ToAvro(value, parameter.Name!));
+            record.Add(fieldName, ToAvro(value));
         }
 
         return record;
@@ -83,31 +83,41 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
     private static ConstructorInfo PrimaryConstructor(Type type)
         => type.GetConstructors().OrderByDescending(c => c.GetParameters().Length).First();
 
-    // Foo → foo; a Money Foo → foo_cents (integer-cents wire substrate, ADR-PC-010 §P1).
-    private static string FieldName(string parameterName, Type parameterType)
+    // Foo → foo; a Money Foo → foo_cents (integer-cents wire substrate, ADR-PC-010 §P1). A nullable
+    // Money? Foo (an optional [null,long] field, ADR-IC-002 §P2) keeps the same _cents suffix — the
+    // suffix tracks the Money substrate, not whether the field is required.
+    internal static string FieldName(string parameterName, Type parameterType)
     {
         var snake = ToSnake(parameterName);
-        return parameterType == typeof(Money) ? $"{snake}_cents" : snake;
+        return UnderlyingType(parameterType) == typeof(Money) ? $"{snake}_cents" : snake;
     }
 
-    private static object ToAvro(object? value, string parameterName) => value switch
+    // null → Avro null (an optional [null,T] union, ADR-IC-002 §P2: null-first + default null). A
+    // null is no longer rejected: the codec emits it into the union the .avsc declares. The .avsc
+    // stays the authority — Apache.Avro's writer rejects a null against a non-union (required) field,
+    // so a null here can only round-trip where the schema actually offers the null branch.
+    internal static object? ToAvro(object? value) => value switch
     {
         Money money => money.Cents,                                          // → Avro long
         DateOnly date => date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc), // → Avro date (via DateTime)
         Guid guid => guid,                                                    // → Avro uuid (System.Guid)
-        null => throw new InvalidOperationException(
-            $"Event field '{parameterName}' is null; v1 events are all-required."),
+        null => null,                                                         // → Avro null (optional [null,T] field, ADR-IC-002 §P2)
         _ => value,                                                           // int / long / string passthrough
     };
 
-    private static object FromAvro(object avroValue, Type targetType)
+    internal static object? FromAvro(object? avroValue, Type targetType)
     {
-        if (targetType == typeof(Money)) return new Money((long)avroValue);
-        if (targetType == typeof(DateOnly)) return DateOnly.FromDateTime((DateTime)avroValue);
+        if (avroValue is null) return null; // optional [null,T] field absent/null → the nullable target's null (ADR-IC-002 §P2)
+        var underlying = UnderlyingType(targetType);
+        if (underlying == typeof(Money)) return new Money((long)avroValue);
+        if (underlying == typeof(DateOnly)) return DateOnly.FromDateTime((DateTime)avroValue);
         return avroValue; // Guid (uuid), int, long, string round-trip as-is.
     }
 
-    private static void RequireField(RecordSchema schema, string fieldName, Type type)
+    // Tolerates OPTIONAL fields (ADR-IC-002 §P2): a field whose .avsc type is a [null,T] union
+    // (null-first + default null) is legitimately absent/null and must NOT be flagged missing — only
+    // a field the schema does not declare AT ALL is a binding error.
+    internal static void RequireField(RecordSchema schema, string fieldName, Type type)
     {
         if (!schema.Fields.Any(field => field.Name == fieldName))
         {
@@ -115,6 +125,10 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
                 $"Avro schema {schema.Fullname} has no field '{fieldName}' for event '{type.Name}'.");
         }
     }
+
+    // Unwrap Nullable<T> (a nullable value type, e.g. an optional Money? / DateOnly? field) to its
+    // underlying T so the same Money/DateOnly conversions apply whether or not the field is optional.
+    private static Type UnderlyingType(Type type) => Nullable.GetUnderlyingType(type) ?? type;
 
     private static string ToSnake(string pascal)
     {

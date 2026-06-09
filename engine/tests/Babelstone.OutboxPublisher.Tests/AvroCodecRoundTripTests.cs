@@ -1,3 +1,6 @@
+using Avro;
+using Avro.Generic;
+using Avro.IO;
 using Babelstone.Engine;
 using Babelstone.Engine.Avro;
 using Babelstone.Families.TermDeposit;
@@ -184,5 +187,105 @@ public sealed class AvroCodecRoundTripTests
         Assert.Contains(nameof(UnknownEvent), ex.Message);
     }
 
+    // --- ADR-IC-002 §P2 optional-field ([null,T] union) path --------------------------------------
+    // None of the 4 AT_MATURITY events carry an optional field, so these drive the codec's value
+    // helpers (ToAvro/FromAvro/FieldName/RequireField) directly against a real null-first union
+    // schema, wire-encoding with the SAME Apache.Avro writer/reader the serializer uses. The point is
+    // that null is now EMITTED into [null,T] (not rejected) and read back through to the nullable
+    // target — the precise behaviour change of this lane.
+
+    // A record with two OPTIONAL fields: a [null,string] and a [null,long] (the Money substrate),
+    // both null-first with default null (ADR-IC-002 §P2). Built in code (not a catalogued .avsc) so
+    // the test exercises the optional path without minting a fixture event family.
+    private static readonly RecordSchema OptionalFieldSchema = (RecordSchema)Schema.Parse(
+        """
+        {
+          "type": "record",
+          "namespace": "test.optional",
+          "name": "OptionalFieldsProbe",
+          "fields": [
+            { "name": "note",         "type": ["null", "string"], "default": null },
+            { "name": "bonus_cents",  "type": ["null", "long"],   "default": null }
+          ]
+        }
+        """);
+
+    // Mirror the serializer's WriteAvro/ReadAvro (writer schema == reader schema, same-version
+    // assumption) so the value crosses the real [null,T] union on the wire.
+    private static GenericRecord WireRoundTrip(GenericRecord record)
+    {
+        var writer = new GenericDatumWriter<GenericRecord>(OptionalFieldSchema);
+        using var stream = new MemoryStream();
+        var encoder = new BinaryEncoder(stream);
+        writer.Write(record, encoder);
+        encoder.Flush();
+
+        var reader = new GenericDatumReader<GenericRecord>(OptionalFieldSchema, OptionalFieldSchema);
+        using var input = new MemoryStream(stream.ToArray(), writable: false);
+        return reader.Read(null!, new BinaryDecoder(input));
+    }
+
+    [Theory]
+    [InlineData("a populated note")]
+    [InlineData(null)]
+    public void Optional_string_round_trips_both_null_and_value_through_null_string_union(string? note)
+    {
+        // RequireField must TOLERATE the optional field: a [null,string] field is declared by name,
+        // so it is NOT a missing-required-field error (the union/null value is legal).
+        AvroEventSerializer.RequireField(OptionalFieldSchema, "note", typeof(OptionalFieldsProbe));
+
+        var record = new GenericRecord(OptionalFieldSchema);
+        record.Add("note", AvroEventSerializer.ToAvro(note));            // null → Avro null (no throw)
+        record.Add("bonus_cents", AvroEventSerializer.ToAvro(null));     // keep the other branch null
+
+        var decoded = WireRoundTrip(record);
+        Assert.True(decoded.TryGetValue("note", out var raw));
+        var value = (string?)AvroEventSerializer.FromAvro(raw, typeof(string));
+
+        Assert.Equal(note, value); // both the null and the non-null survive the [null,string] wire
+    }
+
+    [Fact]
+    public void Optional_money_null_path_round_trips_without_ToAvro_throwing()
+    {
+        // The pre-lane ToAvro threw on null ("v1 events are all-required"); the §P2 path must EMIT
+        // null into [null,long]. A nullable Money? field maps to the same _cents suffix.
+        Assert.Equal("bonus_cents", AvroEventSerializer.FieldName("Bonus", typeof(Money?)));
+
+        Money? noBonus = null;
+        var toAvro = Record.Exception(() => AvroEventSerializer.ToAvro(noBonus));
+        Assert.Null(toAvro);                                            // ToAvro(null) does NOT throw
+
+        var record = new GenericRecord(OptionalFieldSchema);
+        record.Add("note", AvroEventSerializer.ToAvro(null));
+        record.Add("bonus_cents", AvroEventSerializer.ToAvro(noBonus)); // null Money → Avro null
+
+        var decoded = WireRoundTrip(record);
+        Assert.True(decoded.TryGetValue("bonus_cents", out var raw));
+        var value = (Money?)AvroEventSerializer.FromAvro(raw, typeof(Money?));
+
+        Assert.Null(value); // the null Money round-trips as null (not Money.Zero)
+    }
+
+    [Fact]
+    public void Optional_money_value_path_round_trips_through_null_long_union()
+    {
+        // The populated branch of the same optional Money?: a non-null value must survive as itself.
+        Money? bonus = new Money(12_345);
+
+        var record = new GenericRecord(OptionalFieldSchema);
+        record.Add("note", AvroEventSerializer.ToAvro(null));
+        record.Add("bonus_cents", AvroEventSerializer.ToAvro(bonus));   // Money → Avro long (in the union)
+
+        var decoded = WireRoundTrip(record);
+        Assert.True(decoded.TryGetValue("bonus_cents", out var raw));
+        var value = (Money?)AvroEventSerializer.FromAvro(raw, typeof(Money?));
+
+        Assert.Equal(bonus, value);
+    }
+
     private sealed record UnknownEvent : DomainEvent;
+
+    // A test-only shape whose name labels the optional-field probe schema; never catalogued.
+    private sealed record OptionalFieldsProbe(string? Note, Money? Bonus) : DomainEvent;
 }
