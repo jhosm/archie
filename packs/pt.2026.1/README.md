@@ -12,7 +12,7 @@ for life (surface §3.5). **Declarative data, not code.**
 | `primitives/day-count.yaml` | Day-count conventions (default `act_360`) |
 | `primitives/withholding.yaml` | 28% IRS on deposit interest (`irs_juros`) |
 | `primitives/fgd.yaml` | Deposit-guarantee-fund coverage (€100k) |
-| `primitives/reporting.yaml` | BdP reporting hooks (retail-rate stats active) |
+| `primitives/reporting.yaml` | Regulatory reporting hooks (BdP retail-rate stats + FGD coverage active) |
 | `parameters/constants.yaml` | Pack-level scalar constants |
 | `rate-sheet-refs/deposits-pt.yaml` | Version-pinned rate-sheet refs (ADR-PC-008) |
 | `test-corpus/` | Sealed regression evidence (§3.9) |
