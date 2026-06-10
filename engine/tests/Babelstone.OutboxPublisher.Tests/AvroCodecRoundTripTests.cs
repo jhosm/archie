@@ -165,6 +165,121 @@ public sealed class AvroCodecRoundTripTests
         Assert.Equal(original, decoded);
     }
 
+    // ---- Schema RESOLUTION (writer != reader) — ADR-IC-002 §Consequences BACKWARD evolution ----------
+
+    [Fact]
+    public void Decode_resolves_a_newer_writer_schema_with_an_added_defaulted_field_against_the_older_reader()
+    {
+        // The forward-only/BACKWARD-evolution path (ADR-IC-002 §Consequences): a producer ships a NEWER
+        // writer schema that ADDS a trailing field WITH a default (a BACKWARD-compatible additive
+        // change). This consumer still runs the OLDER reader schema (the local catalog). Decoding
+        // writer→reader via Avro schema resolution must DROP the writer-only field and recover the two
+        // shared fields exactly — instead of mis-decoding → poison (the consumer-path limitation now fixed).
+        //
+        // Deliberately NON-null-requiring: the added field is a plain string with a default, so this
+        // does NOT depend on the parallel nullable-union lane (feat/avro-nullable-union).
+        var serializer = NewSerializer();
+        var catalog = new AvroSchemaCatalog();
+        var readerSchema = catalog.ForRecordName(nameof(InterestAccrued)).Schema;
+
+        // The writer's NEWER schema: the reader's two fields + a new defaulted trailing field the
+        // reader does not know. (Hand-built so the test stands on the documented BACKWARD shape rather
+        // than a future .avsc revision.)
+        const string writerJson = """
+            {
+              "type": "record",
+              "namespace": "deposits.term_deposit",
+              "name": "InterestAccrued",
+              "fields": [
+                { "name": "gross_interest_cents", "type": "long" },
+                { "name": "as_of", "type": { "type": "int", "logicalType": "date" } },
+                { "name": "accrual_method", "type": "string", "default": "ACT_360" }
+              ]
+            }
+            """;
+        var writerSchema = (Avro.RecordSchema)Avro.Schema.Parse(writerJson);
+
+        // Write a record under the NEWER writer schema (the new field populated), framed as the bare
+        // Avro value the wire carries.
+        var grossCents = 30_417L;
+        var asOf = new DateOnly(2026, 12, 31);
+        var written = WriteUnderWriterSchema(writerSchema, record =>
+        {
+            record.Add("gross_interest_cents", grossCents);
+            record.Add("as_of", asOf.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+            record.Add("accrual_method", "ACT_365");
+        });
+
+        // Decode writer→reader: the resolver-driven path the inbox consumer uses. The writer-only
+        // accrual_method is dropped; the shared fields decode to the original values.
+        var decoded = (InterestAccrued)serializer.Decode(written, typeof(InterestAccrued), writerSchema);
+
+        Assert.Equal(new InterestAccrued(new Money(grossCents), asOf), decoded);
+    }
+
+    [Fact]
+    public void Decode_resolves_a_writer_schema_with_reordered_fields_against_the_reader()
+    {
+        // Avro schema resolution matches fields by NAME, not position — so a writer that REORDERS the
+        // fields (another BACKWARD-compatible, non-null-requiring change) must still decode correctly
+        // against the reader. A position-blind decode (the old writer == reader assumption applied to a
+        // reordered writer) would read the bytes in the wrong order → garbage/poison; resolution fixes
+        // it. Reorder is chosen precisely because it does NOT need a nullable union (feat/avro-nullable-union).
+        var serializer = NewSerializer();
+
+        // The writer's schema: the reader's fields, ORDER SWAPPED.
+        const string writerJson = """
+            {
+              "type": "record",
+              "namespace": "deposits.term_deposit",
+              "name": "InterestAccrued",
+              "fields": [
+                { "name": "as_of", "type": { "type": "int", "logicalType": "date" } },
+                { "name": "gross_interest_cents", "type": "long" }
+              ]
+            }
+            """;
+        var writerSchema = (Avro.RecordSchema)Avro.Schema.Parse(writerJson);
+
+        var grossCents = 12_345L;
+        var asOf = new DateOnly(2026, 6, 30);
+        var written = WriteUnderWriterSchema(writerSchema, record =>
+        {
+            record.Add("as_of", asOf.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+            record.Add("gross_interest_cents", grossCents);
+        });
+
+        var decoded = (InterestAccrued)serializer.Decode(written, typeof(InterestAccrued), writerSchema);
+
+        Assert.Equal(new InterestAccrued(new Money(grossCents), asOf), decoded);
+    }
+
+    [Fact(Skip = "Lands once feat/avro-nullable-union (evfk) merges: the codec needs nullable-union " +
+                 "support (FromAvro/ToAvro) for an ADDED OPTIONAL field. This case is the BACKWARD " +
+                 "evolution where the WRITER adds a nullable field the older reader drops — orthogonal " +
+                 "to schema RESOLUTION (already covered above), so it is decoupled here rather than hard-depended on.")]
+    public void Decode_resolves_a_newer_writer_schema_with_an_added_optional_nullable_field()
+    {
+        // Intentionally a no-op skeleton: enabling it requires the nullable-union codec support the
+        // evfk lane adds. The defaulted-field and reorder cases above already prove writer→reader
+        // resolution works WITHOUT that lane, so this lane stays auto-mergeable.
+    }
+
+    /// <summary>Write a GenericRecord under a specific WRITER schema and return the bare Avro value
+    /// bytes — the producer side of a writer != reader resolution test (no Confluent framing; the
+    /// codec's Decode takes the bare value).</summary>
+    private static byte[] WriteUnderWriterSchema(Avro.RecordSchema writerSchema, Action<Avro.Generic.GenericRecord> populate)
+    {
+        var record = new Avro.Generic.GenericRecord(writerSchema);
+        populate(record);
+        var writer = new Avro.Generic.GenericDatumWriter<Avro.Generic.GenericRecord>(writerSchema);
+        using var stream = new MemoryStream();
+        var encoder = new Avro.IO.BinaryEncoder(stream);
+        writer.Write(record, encoder);
+        encoder.Flush();
+        return stream.ToArray();
+    }
+
     [Fact]
     public void Subjects_follow_ADR_IC_002_P1_naming()
     {

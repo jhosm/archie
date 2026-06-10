@@ -18,20 +18,32 @@ namespace Babelstone.InboxConsumer;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Schema resolution — KNOWN LIMITATION (G.2 scope):</b> the decode reads with this consumer's OWN
-/// local <c>.avsc</c> (writer schema == reader schema), so the embedded <c>schema_id</c> is NOT used to
-/// resolve the writer schema from the Schema Registry. ADR-IC-004 §P3's "no SR lookup" optimisation is
-/// a PUBLISH-path guarantee only; the consumer contract (ADR-IC-002 §194/§240) is the opposite — "the
-/// schema ID in the Avro message header is meaningless without the registry … the Avro SerDe resolves
-/// the schema ID by subject-name lookup". This consumer is therefore correct ONLY while writer == reader
-/// (same-version, intra-context topics — the walking-skeleton case the G.2 test exercises and the
-/// register-if-absent walking-skeleton convenience assumes). CROSS-CONTEXT FORWARD/BACKWARD EVOLUTION
-/// (a producer adds an optional field under the BACKWARD default and ships a new writer schema) is NOT
-/// yet supported: with no writer schema to resolve against, Avro cannot perform schema resolution and a
-/// reorder/trailing-field bump would mis-decode → poison. Closing this needs SR writer-schema-by-id
-/// resolution threaded into <c>AvroEventSerializer.Decode</c> (writer + reader passed to the
-/// <c>GenericDatumReader</c>) — a contract-reviewer / SR-resolution concern tracked as follow-up, NOT
-/// silent drift. Flagged here so the gap is explicit, per the ADR-PC-020 §D3 explicit-drift discipline.
+/// <b>Schema resolution (ADR-IC-002 §Consequences; runtime lookup §P3):</b> the decode resolves the
+/// WRITER schema from the embedded wire-format <c>schema_id</c> via the Schema Registry (an
+/// <see cref="ISchemaByIdResolver"/> with a client-side cache) and reads writer→reader through Avro
+/// schema resolution (the <c>GenericDatumReader</c> gets BOTH the writer and this consumer's local
+/// reader schema). This is the consumer contract ADR-IC-002 §Consequences prescribes — "the schema ID
+/// in the Avro message header is meaningless without the registry"; §P3 adds the runtime point: "at
+/// runtime the Avro SerDe resolves the schema ID by … lookup". It is the OPPOSITE of ADR-IC-004 §P3's
+/// "no SR lookup" optimisation, which is a PUBLISH-path guarantee only. CROSS-CONTEXT FORWARD/BACKWARD
+/// EVOLUTION now decodes correctly: a producer on a NEWER, BACKWARD-compatible writer schema (an
+/// additive field under a default; BACKWARD is the §Consequences compatibility default) embeds a
+/// different id; resolving it lets the codec drop a writer-only field and default a reader-only one,
+/// instead of mis-decoding → poison. An unknown/unresolvable id is undecodable and routes to the poison
+/// path (skip-and-commit), never a silent mis-decode. When NO resolver is wired (a unit test, or a
+/// deployment that has not yet supplied an SR), the decode falls back to the writer == reader fast path
+/// — correct for same-version intra-context topics — so the consumer degrades safely rather than
+/// failing closed.
+/// </para>
+/// <para>
+/// <b>Scope — this resolves the CONSUMER/bus-decode path ONLY:</b> writer→reader SR resolution is wired
+/// here, on the InboxConsumer bus-consume path. The event-store REPLAY / projection-rebuild path
+/// (AggregateRuntime, ProjectionRunner, ProjectionReconciler, SimulationRuntime, ReadModelRunner) still
+/// calls the single-arg writer == reader <c>AvroEventSerializer.Decode</c> and does NOT resolve against
+/// the per-event-pinned <c>EventEnvelope.PayloadSchemaId</c>. That path must thread
+/// <c>envelope.PayloadSchemaId</c> through the new 3-arg <c>Decode(payload, payloadType, writerSchema)</c>
+/// before any forward <c>.avsc</c> evolution ships — a deferred follow-up, tracked as a separate bead,
+/// NOT fixed here.
 /// </para>
 /// <para>
 /// <b>Dedup (Document 04 / ADR-IC-004 §Residual-risks "mandatory, not optional"):</b> the inbox PK
@@ -107,6 +119,7 @@ public sealed class InboxPump : IDisposable
 
     private readonly InboxConsumerOptions _options;
     private readonly AvroEventSerializer _serializer;
+    private readonly ISchemaByIdResolver? _writerSchemas;
     private readonly IInboxEventTypeResolver _eventTypes;
     private readonly IInboxMessageHandler _handler;
     private readonly IInboxPoisonSink? _poisonSink;
@@ -119,13 +132,19 @@ public sealed class InboxPump : IDisposable
         IInboxEventTypeResolver eventTypes,
         IInboxMessageHandler handler,
         IInboxPoisonSink? poisonSink = null,
-        IConsumer<byte[], byte[]>? consumer = null)
+        IConsumer<byte[], byte[]>? consumer = null,
+        ISchemaByIdResolver? writerSchemas = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
         _eventTypes = eventTypes ?? throw new ArgumentNullException(nameof(eventTypes));
         _handler = handler ?? throw new ArgumentNullException(nameof(handler));
         _poisonSink = poisonSink;
+        // The SR writer-schema resolver: when present, the decode resolves the WRITER schema by the
+        // embedded wire-format schema_id and reads writer→reader (Avro schema resolution, ADR-IC-002
+        // §Consequences). When null, the decode falls back to the writer == reader fast path (the same-
+        // version intra-context case) — a unit test without an SR, or a deployment that has not wired one yet.
+        _writerSchemas = writerSchemas;
 
         if (consumer is null)
         {
@@ -364,7 +383,7 @@ public sealed class InboxPump : IDisposable
             return false;
         }
 
-        if (!TryUnframe(result.Message.Value, out var avroValue))
+        if (!TryUnframe(result.Message.Value, out var schemaId, out var avroValue))
         {
             reason = "value is not Confluent wire format (bad magic byte or too short)";
             return false;
@@ -373,12 +392,13 @@ public sealed class InboxPump : IDisposable
         DomainEvent decoded;
         try
         {
-            decoded = _serializer.Decode(avroValue, payloadType);
+            decoded = DecodeWithSchemaResolution(avroValue, payloadType, schemaId);
         }
         catch (Exception ex)
         {
-            // An undecodable Avro value (schema/type mismatch) is poison — it cannot be retried into
-            // correctness, so it is skipped past, not redelivered forever.
+            // An undecodable Avro value (schema/type mismatch, or an unknown/unresolvable writer
+            // schema_id) is poison — it cannot be retried into correctness, so it is skipped past, not
+            // redelivered forever.
             reason = $"Avro decode failed for record '{recordName}': {ex.Message}";
             return false;
         }
@@ -392,6 +412,29 @@ public sealed class InboxPump : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Decode the bare Avro value into a <see cref="DomainEvent"/>. When a writer-schema resolver is
+    /// wired, resolve the WRITER schema by the embedded wire-format <paramref name="schemaId"/> from the
+    /// Schema Registry (cached) and read writer→reader via Avro schema resolution (ADR-IC-002
+    /// §Consequences) — so a producer on a NEWER, BACKWARD-compatible writer schema decodes correctly
+    /// against this consumer's OLDER reader schema rather than mis-decoding → poison. With no resolver
+    /// wired, fall back to the writer == reader fast path (same-version intra-context topics).
+    /// A <c>ce_type</c>↔<c>schema_id</c> record-name mismatch (the header names one record but the id
+    /// resolves to a different writer schema) surfaces as an Avro resolution FAILURE → the poison/skip-
+    /// and-commit path, not a silent mis-decode: the divergence is by-design and observable on the
+    /// poison counter.
+    /// </summary>
+    private DomainEvent DecodeWithSchemaResolution(ReadOnlyMemory<byte> avroValue, Type payloadType, int schemaId)
+    {
+        if (_writerSchemas is null)
+        {
+            return _serializer.Decode(avroValue, payloadType);
+        }
+
+        var writerSchema = _writerSchemas.ResolveWriterSchema(schemaId);
+        return _serializer.Decode(avroValue, payloadType, writerSchema);
+    }
+
     /// <summary>A compaction tombstone: a record present but with a null OR zero-length value (the GDPR
     /// erasure signal, ADR-IC-002 §P4). Detected BEFORE any Avro decode so a null payload is never
     /// deserialised and never mis-routed to the poison path. Confluent.Kafka surfaces a tombstone as a
@@ -399,26 +442,27 @@ public sealed class InboxPump : IDisposable
     internal static bool IsTombstone(ConsumeResult<byte[], byte[]> result)
         => result.Message.Value is null || result.Message.Value.Length == 0;
 
-    /// <summary>magic byte 0x00 ‖ big-endian int32 schema_id ‖ avro value → the bare Avro value. The
-    /// embedded schema_id is currently skipped at decode (the reader schema comes from the local
-    /// catalog by type) — see the class-remarks KNOWN LIMITATION: that is correct only while
-    /// writer == reader, and resolving the WRITER schema from this id via the SR is the unfinished
-    /// cross-context-evolution work. Only the framing is validated here. The inverse of
-    /// <c>OutboxDrainer.ToConfluentWireFormat</c>.</summary>
-    internal static bool TryUnframe(ReadOnlySpan<byte> framed, out ReadOnlyMemory<byte> avroValue)
+    /// <summary>magic byte 0x00 ‖ big-endian int32 schema_id ‖ avro value → the embedded WRITER
+    /// <paramref name="schemaId"/> and the bare Avro value. The schema_id is no longer discarded: the
+    /// decode resolves the writer schema from it via the Schema Registry (when a resolver is wired) and
+    /// reads writer→reader under Avro schema resolution (ADR-IC-002 §Consequences). Both the framing AND
+    /// the id are returned here. The inverse of <c>OutboxDrainer.ToConfluentWireFormat</c>.</summary>
+    internal static bool TryUnframe(ReadOnlySpan<byte> framed, out int schemaId, out ReadOnlyMemory<byte> avroValue)
     {
+        schemaId = 0;
         avroValue = ReadOnlyMemory<byte>.Empty;
         if (framed.Length < WireFormatHeaderLength || framed[0] != MagicByte)
         {
             return false;
         }
 
+        schemaId = BinaryPrimitives.ReadInt32BigEndian(framed.Slice(1, 4));
         avroValue = framed[WireFormatHeaderLength..].ToArray();
         return true;
     }
 
-    /// <summary>The schema_id the relay embedded, for diagnostics — not used by decode (the reader
-    /// schema comes from the resolved CLR type). Kept internal so a test can assert framing parity.</summary>
+    /// <summary>The schema_id the relay embedded. Read at decode (it resolves the writer schema via the
+    /// SR) and exposed here for diagnostics + framing-parity tests. Kept internal.</summary>
     internal static int ReadSchemaId(ReadOnlySpan<byte> framed)
         => BinaryPrimitives.ReadInt32BigEndian(framed.Slice(1, 4));
 

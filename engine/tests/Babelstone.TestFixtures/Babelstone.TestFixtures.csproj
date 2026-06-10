@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.TestFixtures</RootNamespace>
+    <AssemblyName>Babelstone.TestFixtures</AssemblyName>
+    <!-- A test-support library, not a test project: it ships shared Testcontainers fixtures
+         (the Redpanda dev-container) the producer (OutboxPublisher) and consumer (InboxConsumer)
+         integration lanes both reuse, so the broker setup lives in ONE place rather than being
+         copy-pasted per lane. No tests run here. -->
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Testcontainers (the generic container builder for Redpanda — no first-party Redpanda
+         module) and xunit (IAsyncLifetime, the fixture lifecycle the consuming tests bind to). -->
+    <PackageReference Include="Testcontainers" />
+    <PackageReference Include="xunit" />
+  </ItemGroup>
+</Project>

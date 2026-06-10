@@ -2,7 +2,7 @@ using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using Xunit;
 
-namespace Babelstone.OutboxPublisher.Tests;
+namespace Babelstone.TestFixtures;
 
 /// <summary>
 /// A single-node Redpanda (dev-container) exposing the Kafka API and the built-in Confluent
@@ -11,10 +11,13 @@ namespace Babelstone.OutboxPublisher.Tests;
 /// OpenBaoFixture shape (WithPortBinding(assignRandomHostPort) + a WaitStrategy).
 /// </summary>
 /// <remarks>
-/// Clean/reusable on purpose: Epic E.6 reuses this fixture for the full round-trip lane.
-/// Redpanda advertises listeners to clients, so the broker must advertise the host-mapped
-/// Kafka port — it is discovered after start and the broker is reconfigured in place via a
-/// startup script that templates the mapped port into the advertised address.
+/// SHARED fixture (the single source of the Redpanda broker setup): the producer lane
+/// (Babelstone.OutboxPublisher.Tests, Epic E.4/E.6) and the consumer lane
+/// (Babelstone.InboxConsumer.Tests, Epic G.2) both reuse it — the inbox is the consumer mirror
+/// of the outbox, so the broker setup must be IDENTICAL, and lives here rather than being
+/// copy-pasted per lane. Redpanda advertises listeners to clients, so the broker must advertise
+/// the host-mapped Kafka port — it is discovered after start and the broker is reconfigured in
+/// place via a startup script that templates the mapped port into the advertised address.
 /// </remarks>
 public sealed class RedpandaFixture : IAsyncLifetime
 {

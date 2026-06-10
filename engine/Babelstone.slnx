@@ -32,6 +32,10 @@
     <Project Path="../orchestrator/src/Babelstone.Orchestrator/Babelstone.Orchestrator.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <!-- Shared test-support library (ic10): the single Redpanda Testcontainers fixture both the
+         producer (OutboxPublisher) and consumer (InboxConsumer) integration lanes reuse. Not a
+         test project — it runs no tests, it just ships the fixture. -->
+    <Project Path="tests/Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
     <Project Path="tests/Babelstone.RateSheets.Tests/Babelstone.RateSheets.Tests.csproj" />
     <Project Path="tests/Babelstone.FinancialTypes.Tests/Babelstone.FinancialTypes.Tests.csproj" />
     <Project Path="tests/Babelstone.Money.Analyzers.Tests/Babelstone.Money.Analyzers.Tests.csproj" />

@@ -42,6 +42,27 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
         return FromRecord(payloadType, record);
     }
 
+    /// <summary>
+    /// Decode performing Avro schema RESOLUTION: the bytes were written with <paramref name="writerSchema"/>
+    /// (recovered from the embedded wire-format <c>schema_id</c> via the Schema Registry), and are read
+    /// against this consumer's local reader schema for <paramref name="payloadType"/>. This is the
+    /// cross-context FORWARD/BACKWARD-evolution path (ADR-IC-002 §Consequences): a producer on a NEWER
+    /// writer schema (an additive BACKWARD-compatible change) decodes correctly against the OLDER reader schema
+    /// — a writer-added field the reader does not know is dropped; a reader field absent from the writer
+    /// falls to its schema default. The single-argument <see cref="Decode(ReadOnlyMemory{byte}, Type)"/>
+    /// is the writer == reader fast path; this overload is what the inbox consumer uses once the SR has
+    /// resolved the real writer schema. The new overload leaves the existing decode untouched (it is
+    /// purely additive) so the two paths stay independent.
+    /// </summary>
+    public DomainEvent Decode(ReadOnlyMemory<byte> payload, Type payloadType, global::Avro.Schema writerSchema)
+    {
+        ArgumentNullException.ThrowIfNull(payloadType);
+        ArgumentNullException.ThrowIfNull(writerSchema);
+        var entry = catalog.ForRecordName(payloadType.Name);
+        var record = ReadAvro(writerSchema, entry.Schema, payload);
+        return FromRecord(payloadType, record);
+    }
+
     private static GenericRecord ToRecord(DomainEvent @event, RecordSchema schema)
     {
         var type = @event.GetType();
@@ -185,14 +206,30 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
     private static GenericRecord ReadAvro(RecordSchema schema, ReadOnlyMemory<byte> payload)
     {
         // Writer schema == reader schema (the local catalog schema for this record name). This is the
-        // intra-process / same-version assumption: cold replay reads the same family schema the runtime
-        // wrote (Epic E walking skeleton), and the G.2 inbox consumer reads same-version intra-context
-        // topics. It does NOT perform Avro schema RESOLUTION — a caller that must read a DIFFERENT writer
-        // schema (cross-context BACKWARD/FORWARD evolution, ADR-IC-002) must resolve the writer schema by
-        // its embedded id from the Schema Registry and pass writer + reader here. See the KNOWN LIMITATION
-        // in InboxPump's class remarks; that SR-resolution path is unfinished follow-up work, not silent
-        // drift.
+        // intra-process / same-version FAST PATH: cold replay reads the same family schema the runtime
+        // wrote (Epic E walking skeleton), and the inbox consumer's no-resolver fallback reads same-
+        // version intra-context topics. It does NOT perform Avro schema RESOLUTION — a caller that must
+        // read a DIFFERENT writer schema (cross-context BACKWARD/FORWARD evolution, ADR-IC-002
+        // §Consequences) resolves the writer schema by its embedded id from the Schema Registry and uses
+        // the Decode(payload, payloadType, writerSchema) overload, which threads writer + reader into the
+        // resolving ReadAvro below. (The event-store replay/rebuild path still calls THIS fast path and
+        // must adopt that overload before any forward .avsc evolution ships — a deferred follow-up.)
         var reader = new GenericDatumReader<GenericRecord>(schema, schema);
+        using var stream = new MemoryStream(payload.ToArray(), writable: false);
+        var decoder = new BinaryDecoder(stream);
+        return reader.Read(null!, decoder);
+    }
+
+    private static GenericRecord ReadAvro(global::Avro.Schema writerSchema, RecordSchema readerSchema, ReadOnlyMemory<byte> payload)
+    {
+        // Avro schema RESOLUTION: the bytes were written with writerSchema (the producer's, recovered
+        // from the embedded wire-format schema_id via the Schema Registry); they are READ against this
+        // consumer's readerSchema (the local catalog schema for the resolved record name). Passing BOTH
+        // schemas to the GenericDatumReader is what lets a NEWER writer's record decode against an OLDER
+        // reader under forward-only/BACKWARD evolution (ADR-IC-002 §Consequences): a writer-only field is skipped,
+        // a reader-only field falls back to its schema default. (The single-schema ReadAvro above stays
+        // the writer == reader fast path for intra-process cold replay and same-version topics.)
+        var reader = new GenericDatumReader<GenericRecord>(writerSchema, readerSchema);
         using var stream = new MemoryStream(payload.ToArray(), writable: false);
         var decoder = new BinaryDecoder(stream);
         return reader.Read(null!, decoder);

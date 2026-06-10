@@ -13,12 +13,12 @@
          never in Babelstone.EventStore. -->
     <PackageReference Include="Npgsql" />
     <PackageReference Include="Confluent.Kafka" />
-    <!-- No direct Confluent.SchemaRegistry reference: the production decode path does NOT resolve
-         the writer schema by id from the SR (see InboxPump's class-remarks KNOWN LIMITATION — that
-         SR writer-schema resolution is the unfinished cross-context-evolution work). Leaving an
-         unused SR reference here would falsely imply the consumer asks the registry what the writer
-         wrote. The type is still transitively available via Babelstone.Engine.Avro if/when the
-         decode path is wired to the SR. -->
+    <!-- No DIRECT Confluent.SchemaRegistry reference is needed here: the SR writer-schema-by-id
+         resolution the consumer/bus-decode path now performs (ADR-IC-002 §Consequences; runtime lookup
+         §P3) lives behind the ISchemaByIdResolver
+         seam in Babelstone.Engine.Avro (referenced below), which also ships the Confluent-backed
+         ConfluentSchemaByIdResolver a host wires in. This assembly depends only on the seam; the
+         Confluent.SchemaRegistry type stays transitively available via Babelstone.Engine.Avro. -->
     <!-- BackgroundService/IHostedService for the in-process consume loop (the inbox mirror
          of the §5.1 outbox relay's hosted poll loop). -->
     <PackageReference Include="Microsoft.Extensions.Hosting" />
