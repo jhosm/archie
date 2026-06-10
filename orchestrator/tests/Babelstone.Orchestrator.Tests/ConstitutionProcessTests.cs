@@ -29,7 +29,8 @@ public sealed class ConstitutionProcessTests
         // Balance-first ordering: through AWAIT_LIMITS_VALIDATED, then the join completes.
         AssertTransition(SagaState.ParallelValidation, ConstitutionProcess.BalanceReserved, SagaState.AwaitLimitsValidated);
         AssertTransition(SagaState.AwaitLimitsValidated, ConstitutionProcess.LimitsValidated, SagaState.ValidationsComplete);
-        AssertTransition(SagaState.ValidationsComplete, ConstitutionProcess.ConstitutionApproved, SagaState.Approved);
+        // Crossing into APPROVED arms the FIRST irreversible command, ConfirmDebit (Document 05 step 4a).
+        AssertTransition(SagaState.ValidationsComplete, ConstitutionProcess.ConstitutionApproved, SagaState.Approved, "ConfirmDebit");
         AssertTransition(SagaState.Approved, ConstitutionProcess.DebitConfirmed, SagaState.Approved, "ActivateDeposit");
         AssertTransition(SagaState.Approved, ConstitutionProcess.ProcessConstituted, SagaState.Completed);
     }
@@ -67,8 +68,9 @@ public sealed class ConstitutionProcessTests
         // makes it reachable, and the wait resumes on approval (§P2 auditability, §P4 waiting state).
         AssertTransition(SagaState.ValidationsComplete, ConstitutionProcess.WorkflowApprovalRequired,
             SagaState.AwaitWorkflowApproval);
+        // The workflow-approved path arms the SAME first irreversible command as the auto path.
         AssertTransition(SagaState.AwaitWorkflowApproval, ConstitutionProcess.ConstitutionApproved,
-            SagaState.Approved);
+            SagaState.Approved, "ConfirmDebit");
 
         // The start event is NOT a legal advance out of VALIDATIONS_COMPLETE — the old
         // unreachable placeholder row is gone.
@@ -145,6 +147,94 @@ public sealed class ConstitutionProcessTests
                 Assert.Equal(SagaState.Approved, from);
             }
         }
+    }
+
+    [Fact]
+    public void Irreversible_commands_ConfirmDebit_and_ActivateDeposit_are_emitted_only_from_APPROVED()
+    {
+        // §P5 reversibility ordering as a COMMAND-reachability fitness function: the two
+        // irreversible commands (ConfirmDebit — convert the hold to a real debit; ActivateDeposit
+        // — activate after the debit) may be EMITTED only by a transition that crosses INTO or
+        // sits AT the irreversible phase. ConfirmDebit is armed exactly when the saga reaches
+        // APPROVED (from VALIDATIONS_COMPLETE or AWAIT_WORKFLOW_APPROVAL); ActivateDeposit only
+        // from APPROVED. Neither is ever emitted from a pre-approval validation state. Proven
+        // directly from the table — if a future edit emits either earlier, this fails.
+        var irreversibleApprovalEntries = new[] { SagaState.ValidationsComplete, SagaState.AwaitWorkflowApproval };
+
+        foreach (var ((from, _), outcome) in _machine.Transitions)
+        {
+            if (outcome.Commands.Contains(ConstitutionProcess.ConfirmDebit))
+            {
+                // ConfirmDebit is armed on the crossing INTO APPROVED — its source is an approval
+                // entry, and its destination is APPROVED itself (the irreversible phase).
+                Assert.Contains(from, irreversibleApprovalEntries);
+                Assert.Equal(SagaState.Approved, outcome.Next);
+            }
+
+            if (outcome.Commands.Contains(ConstitutionProcess.ActivateDeposit))
+            {
+                // ActivateDeposit is emitted only from APPROVED.
+                Assert.Equal(SagaState.Approved, from);
+            }
+        }
+
+        // And the commands ARE actually reachable (the assertions above are not vacuous): the
+        // approval crossing emits ConfirmDebit, and DebitConfirmed-from-APPROVED emits ActivateDeposit.
+        Assert.True(_machine.TryAdvance(SagaState.ValidationsComplete, ConstitutionProcess.ConstitutionApproved, out var approve));
+        Assert.Contains(ConstitutionProcess.ConfirmDebit, approve.Commands);
+        Assert.True(_machine.TryAdvance(SagaState.Approved, ConstitutionProcess.DebitConfirmed, out var debit));
+        Assert.Contains(ConstitutionProcess.ActivateDeposit, debit.Commands);
+    }
+
+    [Fact]
+    public void Precondition_refusal_is_a_terminal_failure_reachable_only_before_approval_with_no_reversal()
+    {
+        // H.2: a PreconditionRefused event lands the saga in the terminal DEPOSIT_CONSTITUTION_FAILED
+        // state, emitting NO reversal command — nothing reversible was committed at a pre-approval
+        // validation state, so there is nothing to compensate (ADR-PC-024 §5;
+        // the edge precondition "the orchestrator never starts", lifted in-saga). A fitness
+        // function over the table: every PreconditionRefused transition (a) starts from a
+        // PRE-APPROVAL validation state, (b) targets the terminal DEPOSIT_CONSTITUTION_FAILED, and
+        // (c) emits NO command (no reversal, no anything).
+        var preApprovalValidationStates = new[]
+        {
+            SagaState.ParallelValidation,
+            SagaState.AwaitLimitsValidated,
+            SagaState.AwaitBalanceReserved,
+            SagaState.ValidationsComplete,
+        };
+
+        var refusalSources = new List<SagaState>();
+        foreach (var ((from, evt), outcome) in _machine.Transitions)
+        {
+            if (evt != ConstitutionProcess.PreconditionRefused)
+            {
+                continue;
+            }
+
+            refusalSources.Add(from);
+            // (a) only from a pre-approval validation state — never from APPROVED or later.
+            Assert.Contains(from, preApprovalValidationStates);
+            // (b) terminal failure destination.
+            Assert.Equal(SagaState.DepositConstitutionFailed, outcome.Next);
+            // (c) NO reversal — and indeed no command at all.
+            Assert.Empty(outcome.Commands);
+        }
+
+        // The refusal is honoured from EVERY pre-approval validation state (no hole that would
+        // strand a refusal mid-validation).
+        Assert.Equal(
+            preApprovalValidationStates.OrderBy(s => s).ToArray(),
+            refusalSources.OrderBy(s => s).ToArray());
+
+        // DEPOSIT_CONSTITUTION_FAILED is terminal — no event advances it, and it emits no reversal
+        // (it never CompensatesValidations or CompensatesPostDebit).
+        Assert.True(SagaStateNames.IsTerminal(SagaState.DepositConstitutionFailed));
+        Assert.False(_machine.TryAdvance(SagaState.DepositConstitutionFailed, ConstitutionProcess.ReservationReleased, out _));
+
+        // A precondition refusal is NOT reachable once APPROVED — past the irreversible line a
+        // failure is a COMPENSATION (ActivationFailed → ReverseCoreDebit), never this no-op terminal.
+        Assert.False(_machine.TryAdvance(SagaState.Approved, ConstitutionProcess.PreconditionRefused, out _));
     }
 
     [Fact]

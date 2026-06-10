@@ -64,15 +64,36 @@ public sealed class ConstitutionProcess : TableStateMachine
     /// <summary>Core ACL: a compensation could not be completed — escalation trigger
     /// (Document 05 Scenario B "even worse case"). The ACL reported INDETERMINATE.</summary>
     public const string CompensationFailed = "CompensationFailed";
+    /// <summary>An upstream precondition was REFUSED during the validation phase (H.2,
+    /// babelstone-n55u): a verdict that did not <see cref="PreconditionVerdict.Accepts"/> arrived
+    /// before approval and before any irreversible effect. The fail-CLOSED trigger that lands the
+    /// saga in <see cref="SagaState.DepositConstitutionFailed"/> with NO reversal — nothing was
+    /// committed yet, so nothing is compensated (ADR-PC-024 §5; the edge
+    /// precondition "the orchestrator never starts", lifted in-saga). DISTINCT from
+    /// <see cref="LimitsRejected"/>, which DOES release a Core hold.</summary>
+    public const string PreconditionRefused = "PreconditionRefused";
 
     // --- Commands the saga emits (Document 05; ADR-IC-003 §P1 "the specific commands it
-    // emits"). Names are the contract the outbox seam dispatches; payloads are H.2's. ----
-    private const string ReserveAccountBalance = "ReserveAccountBalance";
-    private const string ValidateProductLimits = "ValidateProductLimits";
-    private const string ConfirmDebit = "ConfirmDebit";
-    private const string ActivateDeposit = "ActivateDeposit";
-    private const string ReleaseBalanceReservation = "ReleaseBalanceReservation";
-    private const string ReverseCoreDebit = "ReverseCoreDebit";
+    // emits"). Names are the contract the outbox seam dispatches; the concrete payloads are
+    // the H.2 command DTOs (Commands/ConstitutionProcessCommands.cs) keyed on these names.
+    // Public so the payload DTOs and the structural fitness tests reference the SAME constant,
+    // never a re-typed literal that could drift from the transition table. ----
+    /// <summary>Core ACL: place the reversible balance hold (Document 05 step 2a).</summary>
+    public const string ReserveAccountBalance = "ReserveAccountBalance";
+    /// <summary>Deposit aggregate: check product limits (Document 05 step 2b).</summary>
+    public const string ValidateProductLimits = "ValidateProductLimits";
+    /// <summary>Core ACL: convert the hold into a real debit — the irreversible step
+    /// (Document 05 step 4a). Reachable ONLY from APPROVED (§P5).</summary>
+    public const string ConfirmDebit = "ConfirmDebit";
+    /// <summary>Deposit aggregate: activate the deposit after the debit (Document 05 step 4b).
+    /// Reachable ONLY from APPROVED (§P5).</summary>
+    public const string ActivateDeposit = "ActivateDeposit";
+    /// <summary>Core ACL: release the reversible hold — early compensation (Document 05
+    /// Scenario A). A DOMAIN reversal command, never a rollback (§P6).</summary>
+    public const string ReleaseBalanceReservation = "ReleaseBalanceReservation";
+    /// <summary>Core ACL: reverse the committed debit with a compensating credit — late
+    /// compensation (Document 05 Scenario B). A DOMAIN reversal command (§P6).</summary>
+    public const string ReverseCoreDebit = "ReverseCoreDebit";
 
     public ConstitutionProcess()
         : base(Type, SagaState.Started, BuildTable())
@@ -107,15 +128,42 @@ public sealed class ConstitutionProcess : TableStateMachine
         yield return ((SagaState.AwaitBalanceReserved, BalanceReserved),
             TransitionOutcome.To(SagaState.ValidationsComplete));
 
+        // Approval (auto, via the fork's ConstitutionApproved self-emission) moves to APPROVED
+        // and emits ConfirmDebit — the FIRST irreversible command (Document 05 step 4a "Confirm
+        // Debit in Core"), issued exactly once the saga crosses into the irreversible phase, and
+        // ONLY from a state that has passed every reversible precondition (§P5). The fork that
+        // chooses auto-approve vs route-to-workflow is the H.2 ApprovalForkHandler (a pure
+        // decider on the edge-pinned amount/threshold/client-type); the table simply records
+        // that crossing APPROVED arms the debit.
         yield return ((SagaState.ValidationsComplete, ConstitutionApproved),
-            TransitionOutcome.To(SagaState.Approved));
+            TransitionOutcome.To(SagaState.Approved, ConfirmDebit));
 
         // Irreversible phase — only ever entered from APPROVED, i.e. after every reversible
-        // precondition succeeded (§P5).
+        // precondition succeeded (§P5). ConfirmDebit (above) and ActivateDeposit (below) are the
+        // two irreversible commands, both reachable ONLY through APPROVED.
         yield return ((SagaState.Approved, DebitConfirmed),
             TransitionOutcome.To(SagaState.Approved, ActivateDeposit));
         yield return ((SagaState.Approved, ProcessConstituted),
             TransitionOutcome.To(SagaState.Completed));
+
+        // Precondition refusal — a fail-CLOSED terminal in the VALIDATION phase, before approval
+        // and before any irreversible effect (H.2, babelstone-n55u). A PreconditionRefused event
+        // (a verdict that did not Accept, decided by the pure refusal logic over a
+        // PreconditionVerdict) lands the saga in DEPOSIT_CONSTITUTION_FAILED, emitting NO reversal
+        // command — nothing reversible has been committed at these states, so there is nothing to
+        // compensate (ADR-PC-024 §5 "the deposit is never constituted, so there is nothing to unwind"; the
+        // edge precondition pattern lifted in-saga). Reachable from every pre-approval validation
+        // state, so the refusal is honoured whenever it arrives during validation; NOT reachable
+        // from APPROVED or later — past the irreversible line a failure is a COMPENSATION
+        // (ActivationFailed → ReverseCoreDebit), never this no-op terminal.
+        yield return ((SagaState.ParallelValidation, PreconditionRefused),
+            TransitionOutcome.To(SagaState.DepositConstitutionFailed));
+        yield return ((SagaState.AwaitLimitsValidated, PreconditionRefused),
+            TransitionOutcome.To(SagaState.DepositConstitutionFailed));
+        yield return ((SagaState.AwaitBalanceReserved, PreconditionRefused),
+            TransitionOutcome.To(SagaState.DepositConstitutionFailed));
+        yield return ((SagaState.ValidationsComplete, PreconditionRefused),
+            TransitionOutcome.To(SagaState.DepositConstitutionFailed));
 
         // Long-wait variation: workflow approval (Document 05 "Important Variation", >€25,000).
         // A first-class waiting state (§P4), resumed by the approval event. The wait is armed by
@@ -128,8 +176,11 @@ public sealed class ConstitutionProcess : TableStateMachine
         // H.2's (babelstone-n55u); the substrate proves the waiting state is wired and resumable.
         yield return ((SagaState.ValidationsComplete, WorkflowApprovalRequired),
             TransitionOutcome.To(SagaState.AwaitWorkflowApproval));
+        // The workflow-approved path crosses into APPROVED exactly like the auto-approved one,
+        // so it arms the SAME first irreversible command (ConfirmDebit) — the irreversible debit
+        // is reachable ONLY through APPROVED whichever approval branch was taken (§P5).
         yield return ((SagaState.AwaitWorkflowApproval, ConstitutionApproved),
-            TransitionOutcome.To(SagaState.Approved));
+            TransitionOutcome.To(SagaState.Approved, ConfirmDebit));
 
         // Compensation path A — early failure in validation (Document 05 Scenario A).
         // Compensation is a DOMAIN action: emit ReleaseBalanceReservation (§P6), not a rollback.

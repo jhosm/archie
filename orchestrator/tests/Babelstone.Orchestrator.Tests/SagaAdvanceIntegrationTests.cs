@@ -1,4 +1,5 @@
 using Babelstone.Orchestrator.Inbox;
+using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Npgsql;
 using Xunit;
@@ -141,6 +142,38 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
     }
 
     [Fact]
+    public async Task A_precondition_refusal_reaches_DEPOSIT_CONSTITUTION_FAILED_with_no_reversal()
+    {
+        // H.2: a PreconditionRefused during validation lands the saga in the terminal
+        // DEPOSIT_CONSTITUTION_FAILED state, emitting NO reversal command — nothing reversible was
+        // committed, so there is nothing to compensate (a fail-CLOSED before any effect). Driven
+        // end-to-end through the real handler + the durable outbox sink.
+        var processId = Guid.NewGuid();
+        var handler = NewHandler(new SagaCommandOutboxSink());
+
+        await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionRequested));
+        Assert.Equal(SagaState.ParallelValidation, await StateAsync(processId));
+
+        Assert.Equal(
+            AdvanceOutcome.Advanced,
+            await RunAsync(handler, Event(processId, ConstitutionProcess.PreconditionRefused)));
+        Assert.Equal(SagaState.DepositConstitutionFailed, await StateAsync(processId));
+
+        // The ONLY outbox rows are the two validation commands from the start — the refusal added
+        // NO reversal (no ReleaseBalanceReservation, no ReverseCoreDebit, nothing).
+        var commands = await OutboxCommandsAsync(processId);
+        Assert.Equal(
+            new[] { ConstitutionProcess.ReserveAccountBalance, ConstitutionProcess.ValidateProductLimits },
+            commands);
+
+        // Terminal: a late event for the failed saga is a no-op (dedup'd, state unchanged).
+        Assert.Equal(
+            AdvanceOutcome.Terminal,
+            await RunAsync(handler, Event(processId, ConstitutionProcess.ProcessConstituted)));
+        Assert.Equal(SagaState.DepositConstitutionFailed, await StateAsync(processId));
+    }
+
+    [Fact]
     public async Task A_failed_compensation_escalates_to_HUMAN_INTERVENTION_REQUIRED()
     {
         var processId = Guid.NewGuid();
@@ -257,6 +290,23 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         while (await reader.ReadAsync())
         {
             rows.Add((reader.GetString(0), reader.GetString(1)));
+        }
+
+        return [.. rows];
+    }
+
+    private async Task<string[]> OutboxCommandsAsync(Guid processId)
+    {
+        await using var connection = await OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT command_type FROM saga_outbox WHERE process_id = @p ORDER BY seq;", connection);
+        command.Parameters.AddWithValue("p", processId);
+
+        var rows = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            rows.Add(reader.GetString(0));
         }
 
         return [.. rows];
