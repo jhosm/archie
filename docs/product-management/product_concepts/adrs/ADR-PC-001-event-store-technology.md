@@ -322,3 +322,37 @@ Decision (PostgreSQL event store) or of the append-only-by-role-privilege princi
 itself; it does not supersede this ADR. The events-table guarantee in §P3 and the
 events-scoped Residual-risk bullet in §Consequences remain binding and are now
 mutually consistent.
+
+## Amendment — 2026-06-10: §P1 `payload` format is self-describing JSON ([ADR-PC-028](./ADR-PC-028-event-store-payload-format.md))
+
+[ADR-PC-028](./ADR-PC-028-event-store-payload-format.md) decided the event-store payload
+format on its own merits and found that Avro-in-store was an **unexamined inheritance**
+from the bus codec: [ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)
+scopes Avro + Confluent SR to *"the wire format for all integration events published to
+Redpanda topics"*, and the `events.payload` came to hold Avro only by mirroring the
+outbox row through the §P2 single-transaction co-location — never by an independent
+decision. That inheritance made the **system of record undecodable without the Schema
+Registry** (ADR-IC-002's own Residual Risk: losing `_schemas` *"makes all persisted Avro
+events unreadable"*), the wrong coupling for a banking book of record.
+
+This amendment aligns §P1's `payload` row with that decision:
+
+- **`events.payload` is self-describing JSON** (System.Text.Json), decodable with **no
+  Schema Registry** and no writer-schema resolution — superseding the §P1 table cell's
+  *"Avro-serialized payload"* wording. The book of record replays with the registry down.
+- **The Avro encoding lives on the `outbox.payload` row only**, for the bus
+  ([ADR-IC-004 §P3](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)),
+  produced by a **dual-encode inside the same §P2 append transaction** (JSON → `events`,
+  Avro+`schema_id` → `outbox`). §P2's atomic-append guarantee is unchanged.
+- **`events.payload_schema_id` is reinterpreted**, not removed: it records the *outbound*
+  Avro encoding's registry id (the cross-reference to the bus, [ADR-IC-004 §P3](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md));
+  it does **not** govern decode of the JSON `events.payload`.
+- **PII handling is unchanged**: the §P1 note that PII fields live inside the payload as
+  ciphertext under per-subject keys still holds ([ADR-PC-004 §P2](./ADR-PC-004-pii-crypto-shredding.md)) —
+  the ciphertext now rides as base64 inside the JSON payload.
+
+This is an additive clarification of the `payload` column's encoding, not a reversal of
+the Decision (PostgreSQL event store) or of any P-principle; it does not supersede this
+ADR. The §P1 envelope/`events`-table contract (every other column unchanged), §P2 atomic
+append + outbox, §P3 append-only-by-role, §P4 indices, and §P5 upgrade drill all remain
+binding as written.

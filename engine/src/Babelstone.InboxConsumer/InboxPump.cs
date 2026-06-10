@@ -36,14 +36,15 @@ namespace Babelstone.InboxConsumer;
 /// failing closed.
 /// </para>
 /// <para>
-/// <b>Scope — this resolves the CONSUMER/bus-decode path ONLY:</b> writer→reader SR resolution is wired
-/// here, on the InboxConsumer bus-consume path. The event-store REPLAY / projection-rebuild path
-/// (AggregateRuntime, ProjectionRunner, ProjectionReconciler, SimulationRuntime, ReadModelRunner) still
-/// calls the single-arg writer == reader <c>AvroEventSerializer.Decode</c> and does NOT resolve against
-/// the per-event-pinned <c>EventEnvelope.PayloadSchemaId</c>. That path must thread
-/// <c>envelope.PayloadSchemaId</c> through the new 3-arg <c>Decode(payload, payloadType, writerSchema)</c>
-/// before any forward <c>.avsc</c> evolution ships — a deferred follow-up, tracked as a separate bead,
-/// NOT fixed here.
+/// <b>Scope — writer→reader SR resolution is a BUS concern only:</b> it is wired here, on the
+/// InboxConsumer bus-consume path, because the bus wire format is Avro (ADR-IC-002). The event-store
+/// REPLAY / projection-rebuild path (AggregateRuntime, ProjectionRunner, ProjectionReconciler,
+/// SimulationRuntime, ReadModelRunner) needs <b>no</b> writer-schema resolution at all: the
+/// <c>events.payload</c> is self-describing JSON (ADR-PC-028), decodable with no Schema Registry, so
+/// replay never resolves against a writer schema. <c>EventEnvelope.PayloadSchemaId</c> is the outbound
+/// Avro encoding's id (a bus cross-reference, ADR-IC-004 §P3), not a replay-decode key. (This supersedes
+/// the earlier "deferred follow-up" framing: ADR-PC-028 decided the store stays JSON, obsoleting the
+/// replay-side Avro-resolution work.)
 /// </para>
 /// <para>
 /// <b>Dedup (Document 04 / ADR-IC-004 §Residual-risks "mandatory, not optional"):</b> the inbox PK

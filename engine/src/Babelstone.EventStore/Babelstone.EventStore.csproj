@@ -6,9 +6,10 @@
 
   <ItemGroup>
     <!-- Npgsql-only by design (event-store-skeleton §2.1/§3): no OpenBao client,
-         no Confluent.Kafka, no domain types. Storage sees ciphertext-in-Avro and
-         does not know it is encrypted. A future Go re-implementation of this
-         assembly is what ADR-PC-001 §S3's "lowest exit cost" cashes out as. -->
+         no Confluent.Kafka, no domain types. Storage sees ciphertext inside the
+         self-describing JSON payload (ADR-PC-028) and does not know it is encrypted.
+         A future Go re-implementation of this assembly is what ADR-PC-001 §S3's
+         "lowest exit cost" cashes out as. -->
     <PackageReference Include="Npgsql" />
   </ItemGroup>
 

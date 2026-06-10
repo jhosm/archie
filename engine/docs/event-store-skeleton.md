@@ -95,7 +95,7 @@ Babelstone.OutboxPublisher    ──→  Babelstone.EventStore  (reads the outbo
 
 Three invariants this graph enforces:
 
-1. **`Babelstone.EventStore` does not depend on `Babelstone.Pii`.** Encryption is applied *above* the storage layer, in `AggregateRuntime.AppendAsync` (§5.3). Storage sees ciphertext-in-Avro and does not know it is encrypted.
+1. **`Babelstone.EventStore` does not depend on `Babelstone.Pii`.** Encryption is applied *above* the storage layer, in `AggregateRuntime.AppendAsync` (§5.3). Storage sees ciphertext inside the self-describing JSON payload ([ADR-PC-028](../../docs/product-management/product_concepts/adrs/ADR-PC-028-event-store-payload-format.md)) and does not know it is encrypted.
 2. **Family modules cannot reach `Babelstone.EventStore` or `Babelstone.Pii`.** They reference `Babelstone.Engine` only. This is the project-level enforcement of the [event-store §5.1](../../docs/product-management/product_concepts/feature-design-event-store-projections.md) "no I/O in handlers" rule: a handler that wanted to read the database or hit OpenBao would have to add a `<ProjectReference>` that does not exist in any merged family module.
 3. **`Babelstone.OutboxPublisher` is the only assembly that touches both PostgreSQL and Redpanda.** This contains the IC-004 reader half to a single bounded place; the engine's write half ([ADR-IC-004 §P6](../../docs/product-management/integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md), [ADR-PC-001 §P2](../../docs/product-management/product_concepts/adrs/ADR-PC-001-event-store-technology.md)) does not know Redpanda exists.
 
@@ -127,8 +127,8 @@ public sealed record EventEnvelope(
     Guid?               CausationId,
     Guid?               CorrelationId,
     string              Actor,
-    ReadOnlyMemory<byte> Payload,             // Avro-serialized, PII fields ciphertext
-    int                 PayloadSchemaId);     // Confluent SR id, embedded at write
+    ReadOnlyMemory<byte> Payload,             // self-describing JSON (ADR-PC-028), PII fields ciphertext
+    int                 PayloadSchemaId);     // outbound Avro encoding's SR id (bus xref, ADR-IC-004 §P3); not a decode key for Payload
 ```
 
 The outbox row mirrors [ADR-IC-004 §P1](../../docs/product-management/integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md) column-for-column:
@@ -249,7 +249,7 @@ public sealed class AggregateRuntime<TState>
     private readonly ISnapshotStore<TState>  _snapshots;
     private readonly IHandlerRegistry        _handlers;
     private readonly IPiiEnvelope            _pii;       // from Babelstone.Pii
-    private readonly IAvroCodec              _avro;
+    private readonly IEventSerializer        _serializer;  // JSON for events.payload (ADR-PC-028)
 
     // Snapshot-then-tail load.
     public async Task<TState> LoadAsync(Guid streamId, CancellationToken ct);
@@ -258,14 +258,16 @@ public sealed class AggregateRuntime<TState>
     // Inside this method, in order:
     //   1. Walk each DomainEvent; encrypt PII-annotated fields via IPiiEnvelope
     //      (the only OpenBao seam) → ciphertext payload.
-    //   2. Serialize to Avro; build the EventEnvelope (§4.1) with the
+    //   2. Serialize the (ciphertext) payload to JSON — the events.payload book
+    //      of record (ADR-PC-028); build the EventEnvelope (§4.1) with the
     //      pack/schema/valid-time/transaction-time/actor envelope fields.
     //   3. Materialize the matching OutboxRow per event (the IC-004 §P1 row
-    //      shape, status=PENDING, schema_id embedded at write time per §P3).
+    //      shape, status=PENDING, Avro-encoded with schema_id embedded at write
+    //      time per §P3 — the bus encoding, once Avro-on-bus lands).
     //   4. Call IEventStore.AppendAsync(streamId, expectedVersion, envelopes,
     //      outboxRows, ct) — one local PG transaction commits both tables.
-    // Handlers never touch OpenBao; EventStore sees only ciphertext-in-Avro;
-    // the OpenBao dependency lives in exactly one method.
+    // Handlers never touch OpenBao; EventStore sees only ciphertext (in the JSON
+    // payload); the OpenBao dependency lives in exactly one method.
     public async Task AppendAsync(
         Guid                       streamId,
         long                       expectedVersion,
@@ -373,7 +375,7 @@ The §4.3–§4.6 listings are the original design sketches; the code that lande
 
 - **Dispatch (§4.3).** `IDispatchableHandler.ApplyBoxed(object state, DomainEvent @event)` (a `DomainEvent` base record was introduced for the event hierarchy). `HandlerResult<TState>` gains a `From(state)` helper for the no-effect case. `DispatchableHandler<TState,TEvent>` adapts a typed handler to the boxed path.
 - **Family module (§4.4).** `IFamilyModule` drops the separate `EventPayloadTypes` list — each `HandlerRegistration(EventType, PayloadType, Handler, EventSchemaVersion=1)` already carries its payload type, and `HandlerRegistry` builds both the event-type→handler and payload-type→registration maps from it. The `FamilyModuleLoader` CUE cross-check is deferred (archie-e6fr.6) until Epic C/E.
-- **Aggregate runtime (§4.5).** `AggregateRuntime<TState>` reads via `IEventStore` and writes via the **`IEventSink`** seam (A.8), not `IEventStore` directly. The §5.3 encrypt seam is fronted by **`IPiiProtector`** (default `NullPiiProtector` until the CUE annotation source lands, archie-e6fr.5) rather than wiring `IPiiEnvelope` in the runtime. The Avro codec is the **`IEventSerializer`** seam. The runtime takes an injected `TimeProvider` (transaction_time) and a `seedState` factory; `LoadAsync` returns `Hydrated<TState>(State, Version, LastEventId)`.
+- **Aggregate runtime (§4.5).** `AggregateRuntime<TState>` reads via `IEventStore` and writes via the **`IEventSink`** seam (A.8), not `IEventStore` directly. The §5.3 encrypt seam is fronted by **`IPiiProtector`** (default `NullPiiProtector` until the CUE annotation source lands, archie-e6fr.5) rather than wiring `IPiiEnvelope` in the runtime. The event-payload codec is the **`IEventSerializer`** seam (self-describing JSON for the `events.payload`, [ADR-PC-028](../../docs/product-management/product_concepts/adrs/ADR-PC-028-event-store-payload-format.md); Avro is the bus encoding). The runtime takes an injected `TimeProvider` (transaction_time) and a `seedState` factory; `LoadAsync` returns `Hydrated<TState>(State, Version, LastEventId)`.
 - **Snapshots (§4.6).** As already noted: storage in `EventStore` (`ISnapshotStorage`), typed `Snapshot<TState>`/`SnapshotStore<TState>` + `ISnapshotPolicy`/`CountBasedSnapshotPolicy` in `Engine`.
 - **A.8 — simulation is side-effect-free by structure, not by flag.** `SimulationRuntime<TState>` takes only `IEventStore` (read), `HandlerRegistry`, `IEventSerializer`, and a seed — no `IEventSink`, no `IPiiProtector`, no snapshot store. It therefore *cannot* write the log/outbox, mint OpenBao material, or persist a snapshot; rehydration folds structural state without unprotecting PII (ADR-PC-004 §P2: PII is off the structural hot path). The forward-lifecycle-by-clock-advance path (A.8 AC#4/#5, ADR-PC-011) is deferred to archie-e6fr.7.
 
@@ -402,9 +404,9 @@ Two reasons over attribute-based discovery:
 
 ### 5.3 PII encryption happens in `AggregateRuntime.AppendAsync`, between handler and store
 
-Handlers return cleartext domain events. `AggregateRuntime.AppendAsync` walks each event's PII-annotated fields, calls `IPiiEnvelope.EncryptAsync` (which calls OpenBao under the hood), swaps cleartext for ciphertext, serializes to Avro, and hands the envelope to `IEventStore.AppendAsync`. Handlers stay pure (§5.1 invariant from the feature-design); `EventStore` stays Npgsql-only (§3 invariant); the OpenBao dependency is visible in exactly one method.
+Handlers return cleartext domain events. `AggregateRuntime.AppendAsync` walks each event's PII-annotated fields, calls `IPiiEnvelope.EncryptAsync` (which calls OpenBao under the hood), swaps cleartext for ciphertext, serializes the payload to JSON ([ADR-PC-028](../../docs/product-management/product_concepts/adrs/ADR-PC-028-event-store-payload-format.md)), and hands the envelope to `IEventStore.AppendAsync`. Handlers stay pure (§5.1 invariant from the feature-design); `EventStore` stays Npgsql-only (§3 invariant); the OpenBao dependency is visible in exactly one method.
 
-Honours [ADR-PC-004 §Decision](../../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) ("the deliberate exception to the engine's hand-rolled-core posture") by keeping the exception observable rather than diffusing it through the storage layer or hiding it behind an Avro codec hook.
+Honours [ADR-PC-004 §Decision](../../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) ("the deliberate exception to the engine's hand-rolled-core posture") by keeping the exception observable rather than diffusing it through the storage layer or hiding it behind a codec hook.
 
 ---
 
@@ -459,7 +461,7 @@ The list below is deliberate. These are decisions whose ADRs are open, deferred,
 
 - **Bitemporal projection storage** ([ADR-PC-002](../../docs/product-management/product_concepts/adrs/ADR-PC-002-application-level-bitemporality.md), [feature-design §6.1](../../docs/product-management/product_concepts/feature-design-event-store-projections.md)) — the projection store decision lives with ADR-PC-002. `Babelstone.Engine` does not host projection code; projections land under their own assembly when projection work begins.
 - **Saga state machine** ([ADR-IC-003](../../docs/product-management/integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md), [ADR-PC-010 §P4](../../docs/product-management/product_concepts/adrs/ADR-PC-010-dotnet-hand-rolled-engine.md)) — the in-process saga dispatcher lives in `Babelstone.Engine` per §P4, but its surface (the `saga_state` table, compensation states, the identity trio from [integration_concepts §01 Primitive 4](../../docs/product-management/integration_concepts/01-the-six-primitives.md)) is a separate epic. Epic A leaves the assembly hookable but unhooked.
-- **Avro codec choice** ([ADR-IC-002](../../docs/product-management/integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)) — the `IAvroCodec` interface in `AggregateRuntime` (§4.5) hides which Avro library lands. The pick (Apache.Avro vs Chr.Avro vs a hand-rolled walker) is tied to the schema-registry integration that Epic E brings online.
+- **Avro codec choice** ([ADR-IC-002](../../docs/product-management/integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)) — the Avro codec is the **bus/outbox** encoding only: [ADR-PC-028](../../docs/product-management/product_concepts/adrs/ADR-PC-028-event-store-payload-format.md) keeps the `events.payload` book of record as self-describing JSON, so the deferred pick (Apache.Avro vs Chr.Avro vs a hand-rolled walker, tied to the Epic E schema-registry integration) governs the write path's outbound Avro encoding, not the event-store payload.
 - **v4-scale load harness** ([Epic L](../../docs/product-management/product_concepts/feature-design-two-modes-asymmetry.md), [ADR-PC-001 §S1](../../docs/product-management/product_concepts/adrs/ADR-PC-001-event-store-technology.md)) — the 250 TPS sustained / 1000 TPS burst / `REPLAY_BUDGET_5S_30S` gates live under Epic L (`archie-2e6q`), not under Epic A. The engine spine is the *target* of those gates, not their home.
 - **OpenBao operational topology** ([ADR-PC-004 §Residual Risks 1](../../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)) — HA + DR for OpenBao is a deployment concern co-owned with [ADR-PC-005](../../docs/product-management/product_concepts/adrs/ADR-PC-005-dr-rto-rpo.md). The engine consumes it as a transit endpoint; how that endpoint is made available is platform work.
 
