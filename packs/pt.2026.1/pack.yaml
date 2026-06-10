@@ -32,12 +32,19 @@ delta_summary: |
   rate); withholding stays the 2800 bps irs_juros primitive on gross interest;
   the only day-count is act_360. No new primitives.
 
-  DEFERRED (documented, not stubbed): TANB/TANL/TAE/TAEG remain engine-computed
-  derived figures, never pack fields. The BdP signal inventory and FIN data
-  fields come from 0.4 (bd babelstone-gjyl); pack-effective-date semantics from
-  0.3 (bd babelstone-oa3i) — v1 pins everything at constitution per ADR-PC-009
-  §P5. expected-events.yaml stays the GENERATED empty placeholder (ADR-PC-007
-  §P5) until the engine substrate (C.3/C.5) can run the corpus. Any rate sheet a
+  RESOLVED upstream (Epic 0.3/0.4, bd babelstone-oa3i + babelstone-gjyl):
+  pack-effective-date semantics — v1 pins everything at constitution, no new
+  machinery (ADR-PC-009 §P5). BdP signal inventory — v1 is three named returns,
+  all declared here: BdP rate stats (bdp_estatisticas_taxas_juro), Modelo 39
+  (withholding.yaml reporting.modelo_39), and FGD coverage
+  (fgd_cobertura_depositos); the engine emits subject-reference-only signals and
+  a downstream application assembles each return (04 §Q-AX, no PII on the bus).
+
+  STILL DEFERRED (documented, not stubbed): TANB/TANL/TAE/TAEG remain
+  engine-computed derived figures, never pack fields. expected-events.yaml stays
+  the GENERATED empty placeholder (ADR-PC-007 §P5) until the engine substrate
+  (C.3/C.5) can run the corpus. FIN data-field reconciliation (02 §2.4.1 payload
+  sketches vs canonical .avsc) is tracked in bd babelstone-50vy. Any rate sheet a
   variant references must be published before deploy (C.6 prerequisite).
 
 breaking_changes: []
