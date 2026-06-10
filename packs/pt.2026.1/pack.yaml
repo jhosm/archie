@@ -17,8 +17,28 @@ based_on_pack_version: null
 delta_summary: |
   Initial PT term-deposit (depósito a prazo) pack. Covers the v1 regulatory
   surface (02 §2.2): Act/360 day-count, 28% IRS withholding on interest paid
-  to resident individuals, deposit-guarantee-fund coverage, and the BdP
-  retail-deposit interest-rate statistics reporting hook. No prior pack.
+  to resident individuals (gross-interest basis, flow-by-flow), deposit-
+  guarantee-fund coverage, and the BdP retail-deposit interest-rate statistics
+  reporting hook. No prior pack.
+
+  F.7 delivers the full v1 INPUT surface only (declarative data, no computed
+  results): five /product-configs variants spanning every interest shape the
+  family schema carries — AT_MATURITY single-coupon (dpz_pt_12m_juros_venc),
+  periodic-monthly (dpz_pt_12m_juros_mensal), periodic-quarterly
+  (dpz_pt_24m_juros_trimestral), advance/juros-antecipados
+  (dpz_pt_6m_juros_antecipados), and a banded early-termination schedule
+  (dpz_pt_18m_resgate_escalonado) — plus one canonical sealed-corpus instance
+  per shape. Each variant references the rate sheet by ref only (no inline
+  rate); withholding stays the 2800 bps irs_juros primitive on gross interest;
+  the only day-count is act_360. No new primitives.
+
+  DEFERRED (documented, not stubbed): TANB/TANL/TAE/TAEG remain engine-computed
+  derived figures, never pack fields. The BdP signal inventory and FIN data
+  fields come from 0.4 (bd babelstone-gjyl); pack-effective-date semantics from
+  0.3 (bd babelstone-oa3i) — v1 pins everything at constitution per ADR-PC-009
+  §P5. expected-events.yaml stays the GENERATED empty placeholder (ADR-PC-007
+  §P5) until the engine substrate (C.3/C.5) can run the corpus. Any rate sheet a
+  variant references must be published before deploy (C.6 prerequisite).
 
 breaking_changes: []
 

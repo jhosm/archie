@@ -28,6 +28,53 @@ ships as a new version, never an in-place edit.
 
 - **2026.1** — Initial pack. Act/360 day-count, 28% IRS withholding, FGD
   coverage, BdP retail-rate statistics hook. No prior pack.
+  - **F.7** — full v1 *input* surface: five `/product-configs` variants covering
+    every interest shape the family schema carries (AT_MATURITY, periodic-monthly,
+    periodic-quarterly, advance, banded early-termination) and one sealed-corpus
+    canonical instance per shape. No new primitives; rate by ref only; withholding
+    unchanged (2800 bps `irs_juros`, gross interest); day-count `act_360` only.
+
+## v1 surface & deferrals (F.7)
+
+This pack carries **what the engine WILL compute, never the computed results.**
+What it declares vs. what is deliberately deferred:
+
+**Delivered (inputs only):**
+
+| Shape | Variant (`/product-configs`) | Corpus instance |
+|---|---|---|
+| AT_MATURITY, single coupon | `dpz_pt_12m_juros_venc` | `pt_dpz_12m_simple_with_irs` |
+| PERIODIC monthly (`m=1`) | `dpz_pt_12m_juros_mensal` | `pt_dpz_12m_periodic_monthly_with_irs` |
+| PERIODIC quarterly (`m=3`) | `dpz_pt_24m_juros_trimestral` | `pt_dpz_24m_periodic_quarterly_with_irs` |
+| ADVANCE (juros antecipados) | `dpz_pt_6m_juros_antecipados` | `pt_dpz_6m_advance_with_irs` |
+| Banded early-termination | `dpz_pt_18m_resgate_escalonado` | `pt_dpz_18m_banded_termination_with_irs` |
+
+Each variant references the rate sheet by `rate_ref` only and reuses the existing
+primitives (`act_360`, `irs_juros` at 2800 bps on gross interest). The corpus
+instances carry the rate the engine **resolves** from the sheet at constitution
+(`rate_basis_points`, ADR-PC-008), pinned per instance for deterministic
+regression — the per-instance pinning discipline is ADR-PC-009 §P1/§P5, to which
+ADR-PC-008 §P3 defers. These are sealed-corpus inputs, not pack-authored
+rate-sheet data.
+
+**Deferred (documented here, never stubbed with fictional content):**
+
+- **TANB / TANL / TAE / TAEG** — engine-computed derived figures
+  (financial_concepts §5.4), never pack primitives or inline rate fields. The
+  pack carries the rate-sheet **ref** plus the withholding rate only.
+- **`expected-events.yaml`** — stays the **GENERATED** empty placeholder
+  (ADR-PC-007 §P5). It is produced by running the engine substrate over the
+  canonical instances (C.3/C.5); the engine does not exist yet, so depth-5
+  simulation logs a skip and never hand-authored figures become a wrong baseline.
+- **BdP signal inventory & FIN data fields** — sourced from the v1 regulatory-
+  reporting inventory, **0.4** (bd `babelstone-gjyl`). Not invented here.
+- **Pack-effective-date semantics** — the per-primitive pin-or-float policy is
+  **0.3** (bd `babelstone-oa3i`); v1 pins everything at constitution and floats
+  nothing (ADR-PC-009 §P5; `pack_effective_from` is informational metadata).
+- **Rate-sheet bodies** — the numeric TANs live in the `rate_sheets` table on
+  their own cadence (ADR-PC-008; C.6). A variant's `rate_ref` resolving requires
+  the referenced sheet (`pt-deposits-2026.1`) to be published — a **C.6 deploy
+  prerequisite**, not pack content.
 
 ## Building & verifying
 
