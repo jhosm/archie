@@ -96,6 +96,19 @@ At the **start** of any work that will change files:
 
 A local `.githooks/pre-push` hook blocks pushes to `main` as a backstop (override a deliberate maintainer push with `ALLOW_PUSH_MAIN=1`). It is a *local* guard, not a hard gate: `--no-verify` bypasses it, and true enforcement needs GitHub branch protection (a Pro plan or a public repo).
 
+## Communication Style
+
+Everything a **human** reads — chat replies, PR descriptions, commit bodies, `bd` issue titles and descriptions — **leads with plain English, then gives the formal detail.** Keep the precision that makes the work reviewable: exact jargon, ADR cross-references, schema/type names, and the formal tone that shows a change is coherent and drift-aware. But put an on-ramp in front of it — two to four sentences, no unexpanded jargon, saying *what changed and why it matters* — so a reader who lacks the full context understands the change before hitting the rigor. The plain layer is **additive**: it never replaces or dilutes the formal one.
+
+Concretely:
+
+- **PR descriptions** open with an `## In plain English` section (2–4 jargon-free sentences on what changed and why), then the usual `## Summary` / `## Testing` / CI-required `## ADRs touched/honoured` sections unchanged.
+- **Commit bodies** open with a plain-English lead paragraph (the *what* and *why* in ordinary words) before any bullet detail. The subject line keeps the Conventional-Commits form (`feat(inbox): …`).
+- **`bd` issues** open the description with a plain-English sentence or two on the goal before the technical specifics.
+- **Chat explanations** of code or a decision lead with the plain-English picture and expand jargon on first use, keeping the formal detail available for depth.
+
+Skip the ceremony only for genuinely trivial changes (a one-line typo fix, a dependency bump) where a single plain sentence already *is* the whole story — the goal is comprehension, not boilerplate.
+
 ## Shell Commands
 
 Always use non-interactive flags to avoid hanging on confirmation prompts:
