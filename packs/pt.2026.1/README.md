@@ -57,20 +57,38 @@ regression — the per-instance pinning discipline is ADR-PC-009 §P1/§P5, to w
 ADR-PC-008 §P3 defers. These are sealed-corpus inputs, not pack-authored
 rate-sheet data.
 
-**Deferred (documented here, never stubbed with fictional content):**
+**Resolved upstream since first draft (Epic 0.3 / 0.4 — no further F.7 pack work):**
+
+- **Pack-effective-date semantics** (0.3, bd `babelstone-oa3i`). v1 **pins
+  everything at constitution and floats nothing** — `pack_effective_from` is
+  informational metadata only (ADR-PC-009 §P5, *Revised 2026-06-10*). Per-primitive
+  pin-or-float is the **confirmed v2+ direction**, not a v1 deliverable, so
+  `pt.2026.1` needs **no new effective-date machinery**; the mid-life
+  statutory-rate escape hatch stays the explicit `PackVersionMigrated` event
+  (ADR-PC-009 §P3).
+- **BdP signal inventory** (0.4, bd `babelstone-gjyl`; 04-open-questions §Q-AX).
+  The v1 named-report set is **three returns**, all declared in this pack: BdP
+  retail-rate statistics (`reporting.yaml: bdp_estatisticas_taxas_juro`, monthly),
+  IRS Modelo 39 (`withholding.yaml: reporting.modelo_39`, annual), and FGD
+  coverage (`reporting.yaml: fgd_cobertura_depositos`, annual + on-demand). The
+  engine emits **subject references only — never PII** on the durable bus; a
+  downstream application assembles each return. The per-report engine-signal
+  field contract F.7 consumes is recorded in 04-open-questions §Q-AX.
+
+**Still deferred (documented here, never stubbed with fictional content):**
 
 - **TANB / TANL / TAE / TAEG** — engine-computed derived figures
-  (financial_concepts §5.4), never pack primitives or inline rate fields. The
+  (financial_concepts §5.4 for TANB/TANL/TAE, §6.2 for TAEG), never pack
+  primitives or inline rate fields. The
   pack carries the rate-sheet **ref** plus the withholding rate only.
 - **`expected-events.yaml`** — stays the **GENERATED** empty placeholder
   (ADR-PC-007 §P5). It is produced by running the engine substrate over the
   canonical instances (C.3/C.5); the engine does not exist yet, so depth-5
   simulation logs a skip and never hand-authored figures become a wrong baseline.
-- **BdP signal inventory & FIN data fields** — sourced from the v1 regulatory-
-  reporting inventory, **0.4** (bd `babelstone-gjyl`). Not invented here.
-- **Pack-effective-date semantics** — the per-primitive pin-or-float policy is
-  **0.3** (bd `babelstone-oa3i`); v1 pins everything at constitution and floats
-  nothing (ADR-PC-009 §P5; `pack_effective_from` is informational metadata).
+- **FIN data-field reconciliation** — aligning 02 §2.4.1's `WithholdingApplied` /
+  `InterestAccrued` / `InterestPaid` payload sketches with the canonical (minimal)
+  `.avsc` shapes is an engine/contract concern tracked separately in bd
+  `babelstone-50vy`, not pack data.
 - **Rate-sheet bodies** — the numeric TANs live in the `rate_sheets` table on
   their own cadence (ADR-PC-008; C.6). A variant's `rate_ref` resolving requires
   the referenced sheet (`pt-deposits-2026.1`) to be published — a **C.6 deploy
