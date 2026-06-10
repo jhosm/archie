@@ -21,5 +21,5 @@ public sealed record EventEnvelope(
     Guid?                CausationId,
     Guid?                CorrelationId,
     string               Actor,
-    ReadOnlyMemory<byte> Payload,              // Avro-serialized, PII fields ciphertext
-    int                  PayloadSchemaId);     // Confluent SR id, embedded at write
+    ReadOnlyMemory<byte> Payload,              // self-describing JSON (ADR-PC-028), PII fields ciphertext
+    int                  PayloadSchemaId);     // outbound Avro encoding's SR id (bus xref, ADR-IC-004 §P3); NOT a decode key for Payload

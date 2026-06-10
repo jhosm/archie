@@ -5,9 +5,13 @@ using Babelstone.Packs;
 namespace Babelstone.Engine.Api;
 
 /// <summary>
-/// The dev host's event codec: plain JSON, the deferred-Avro stand-in (skeleton §8). The real
-/// Avro + Schema-Registry codec is E.4 (Babelstone.Engine.Avro); wiring this host to it is a
-/// follow-up. SchemaId is a constant 1 — meaningful only once the Avro codec lands.
+/// The event-store payload codec: self-describing JSON. Per ADR-PC-028 this is the DECIDED, permanent
+/// format for the <c>events.payload</c> book of record (readable with no
+/// Schema Registry) — no longer the "deferred-Avro stand-in"; hardening it as the decided store codec
+/// (deterministic order, explicit versioning) is bd babelstone-36mk. This same codec currently also fills
+/// the OUTBOX payload, where it stays a placeholder until the Avro+SR bus encoding lands and the write
+/// path dual-encodes (JSON → store, Avro+schema_id → outbox; ADR-IC-004 §P3). SchemaId is a constant 1 —
+/// the placeholder for that outbound Avro id, not a decode key for the JSON payload.
 /// </summary>
 public sealed class JsonEventSerializer : IEventSerializer
 {
