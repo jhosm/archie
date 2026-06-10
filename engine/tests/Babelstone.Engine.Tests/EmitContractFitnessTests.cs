@@ -79,6 +79,28 @@ public sealed class EmitContractFitnessTests
         ["PaymentDue", "MaturityDue"];
 
     /// <summary>
+    /// The ONLY collaborator types the family decide/append path is sanctioned to inject — the
+    /// positive allowlist behind <see cref="Family_decide_and_append_path_injects_no_gl_or_notify_port"/>.
+    /// Each is here for a named reason that is NOT "synchronously gate the producing flow on a GL or
+    /// notification outcome". A GL-posting or notification port (under ANY name) is deliberately
+    /// absent: such an outcome must ride the post-commit outbox, never an injected synchronous call.
+    /// <list type="bullet">
+    /// <item><c>AggregateRuntime</c> — the engine append spine; emission rides its post-commit outbox.</item>
+    /// <item><c>IRateSheetStore</c> — rate/config resolution, READ before the pure decide (no gate).</item>
+    /// <item><c>ISettlementPort</c> — the money-movement leg (ADR-PC-016): a legitimate PRE-flag
+    ///   debit/credit, a DISTINCT concern from a GL-posting or notification SIGNAL.</item>
+    /// <item><c>VerifiedPack</c> — the pinned per-instance configuration (ADR-PC-009).</item>
+    /// <item><c>EarlyTerminationPolicy</c> — a pure penalty-band policy value object, no I/O.</item>
+    /// <item><c>string</c> — primitive bindings (the day-count / withholding primitive ids).</item>
+    /// </list>
+    /// </summary>
+    private static readonly string[] AllowedDecideAppendDependencies =
+    [
+        "AggregateRuntime", "IRateSheetStore", "ISettlementPort", "VerifiedPack",
+        "EarlyTerminationPolicy", "string",
+    ];
+
+    /// <summary>
     /// NO_CLOCK_DRIVEN_ENGINE_SIGNAL (row 17, ADR-PC-023 slot 1) — schema half: no family event
     /// SCHEMA declares a clock-driven "about-to-happen" event type. Scans every Avro event schema
     /// (<c>contracts/avro/**/*.avsc</c>) — the wire contract for the emitted-event surface — and
@@ -182,10 +204,16 @@ public sealed class EmitContractFitnessTests
         var violations = new List<string>();
         foreach (var file in Directory.EnumerateFiles(engineSrc, "*.cs", SearchOption.AllDirectories))
         {
-            var text = File.ReadAllText(file);
+            // Strip line comments first so a doc-comment or TODO naming a primitive (e.g.
+            // "// deliberately no PeriodicTimer on the emit spine") cannot trip the scan — only the
+            // executable surface betrays a clock-driven emitter (same discipline as the GL/notify scan).
+            var code = StripLineComments(File.ReadAllText(file));
             foreach (var primitive in schedulerPrimitives)
             {
-                if (text.Contains(primitive, StringComparison.Ordinal))
+                // Word-boundary anchored so a primitive matches as a whole token, never as a substring
+                // of a longer identifier — ITimer must not match ITimerFactory, Threading.Timer must
+                // not match Threading.TimerQueue (a bare Contains would false-RED on both).
+                if (Regex.IsMatch(code, SchedulerPrimitivePattern(primitive)))
                 {
                     violations.Add($"{Path.GetFileName(file)} references scheduler primitive '{primitive}'");
                 }
@@ -212,61 +240,63 @@ public sealed class EmitContractFitnessTests
     /// longer engine-emitted (ADR-PC-023). Delivery itself is DEF-2 deferred — there is nothing to
     /// gate because nothing synchronous is wired.
     ///
-    /// This is a DENYLIST heuristic over a KNOWN SET of GL/notify port-symbol / synchronous-call
-    /// shapes — it proves the absence of those named shapes, not a closed-world proof that no gating
-    /// path of any shape exists. The authoritative gates remain the ADR-PC-009 Pact CDC contract
-    /// tests and the runtime registry; this is the cheap structural tripwire that fails fast when a
-    /// known gating port creeps onto the decide/append path. (When the DEF-2 ports actually land, this
-    /// denylist should flip to a positive allowlist of the sanctioned post-flag emission surface.)
+    /// This is a CLOSED-WORLD ALLOWLIST, not a denylist: rather than enumerate the GL/notify port
+    /// names a gate might use (a denylist any off-list name — <c>IGlSink</c>, <c>LedgerClient</c>,
+    /// a generic <c>IOutboundPort&lt;T&gt;</c> — would slip past), it asserts that every collaborator
+    /// INJECTED into the decide/append path is on the sanctioned set <see cref="AllowedDecideAppendDependencies"/>.
+    /// A GL-posting or notification port — under ANY name — is by construction not on that set, so it
+    /// fails this test the moment it is wired, regardless of what it is called. The append drivers are
+    /// discovered structurally (any <c>Application</c> class whose primary constructor injects the
+    /// <see cref="AggregateRuntime{TState}"/> append spine), and the pure <c>TermDepositDecider</c>
+    /// is asserted <c>static</c> — it holds no field, so it cannot call an injected port at all.
+    ///
+    /// The authoritative gates remain the ADR-IC-009 Pact CDC contract tests (the GL/notify consumer
+    /// contracts verified in the producer's CI; tracked: bd babelstone-2t16.14, gated on the DEF-2
+    /// delivery ports bd babelstone-a7d4.2) and the runtime registry; this is the cheap structural
+    /// tripwire that fails fast at PR time when a gating port is injected onto the producing flow.
+    /// When the DEF-2 delivery ports land, the
+    /// sanctioned post-flag emission surface they add is admitted by EXTENDING the allowlist with a
+    /// one-line reason — a conscious edit, reviewed against "rides the post-commit outbox, never gates".
     /// </summary>
     [Fact]
-    public void Family_decider_and_append_path_holds_no_gl_or_notify_gate()
+    public void Family_decide_and_append_path_injects_no_gl_or_notify_port()
     {
         var repoRoot = RepoRoot();
         var familyAppDir = Path.Combine(
             repoRoot, "families", "term-deposit", "src",
             "Babelstone.Families.TermDeposit.Application");
-        var familyDir = Path.Combine(
-            repoRoot, "families", "term-deposit", "src", "Babelstone.Families.TermDeposit");
         Assert.True(Directory.Exists(familyAppDir), $"family application source not found on disk: {familyAppDir}");
-        Assert.True(Directory.Exists(familyDir), $"family source not found on disk: {familyDir}");
 
-        // GL/notify port symbols that, if referenced from the decide/append path, would let a GL or
-        // notification outcome gate or unwind the producing flow. Word-boundary matched so a benign
-        // identifier (e.g. a comment mentioning "notification") that is not a port symbol use does not
-        // trip — these are PORT type names / synchronous-call shapes, not prose.
-        var gatingPortSymbols = new[]
-        {
-            "IGeneralLedger", "ILedgerPort", "IGlPort", "IGlPostingPort", "PostToLedger",
-            "INotificationPort", "INotificationGate", "INotificationSink", "INotifier",
-            "SendNotificationAsync", "PostGlAsync", "AwaitGlAck", "AwaitNotificationAck",
-        };
+        // The pure decider is STATIC — it has no instance state, so it structurally cannot hold an
+        // injected GL/notify port to call synchronously. A future refactor to a non-static decider
+        // with injected collaborators must come back through this gate.
+        var deciderPath = Path.Combine(familyAppDir, "TermDepositDecider.cs");
+        Assert.True(File.Exists(deciderPath), $"decider not found on disk: {deciderPath}");
+        Assert.Matches(
+            @"\bstatic\s+class\s+TermDepositDecider\b",
+            StripLineComments(File.ReadAllText(deciderPath)));
 
-        var violations = new List<string>();
-        foreach (var dir in new[] { familyAppDir, familyDir })
-        {
-            foreach (var file in Directory.EnumerateFiles(dir, "*.cs", SearchOption.AllDirectories))
-            {
-                // Strip line comments so prose ("the notification fires post-commit") cannot trip a
-                // symbol match — only the executable surface matters for the gating structure.
-                var code = StripLineComments(File.ReadAllText(file));
-                foreach (var symbol in gatingPortSymbols)
-                {
-                    if (Regex.IsMatch(code, $@"\b{Regex.Escape(symbol)}\b"))
-                    {
-                        violations.Add($"{Path.GetFileName(file)} references gating port symbol '{symbol}'");
-                    }
-                }
-            }
-        }
+        // Every collaborator injected into an append driver (a class whose primary ctor takes the
+        // AggregateRuntime append spine) must be on the sanctioned allowlist. A GL/notify port under
+        // ANY name is not — it would ride the post-commit outbox, never a synchronous injected call.
+        var injected = WritePathInjectedDependencies(familyAppDir);
+        Assert.NotEmpty(injected); // non-vacuity: at least one append driver was actually parsed.
+
+        var unsanctioned = injected
+            .Where(d => !AllowedDecideAppendDependencies.Contains(d.Type, StringComparer.Ordinal))
+            .Select(d => $"{d.Driver} injects '{d.Type}'")
+            .ToList();
 
         Assert.True(
-            violations.Count == 0,
+            unsanctioned.Count == 0,
             "ADR-PC-012 slot 5 (GL_POST_FLAG_NEVER_GATES) + ADR-PC-025 slot 5 (NOTIFY_POST_FLAG_NEVER_GATES): "
-            + "the family decide/append path must hold no synchronous GL/notify port — a GL reject or a "
-            + "notification failure is post-flag, downstream of the local commit, reached only via the "
-            + "outbox; it never gates or unwinds the producing flow. The PRE_CONTRACTUAL FIN gate is the "
-            + "saga carve-out, not on this path. Offending references:\n  " + string.Join("\n  ", violations));
+            + "the family decide/append path may inject ONLY the sanctioned post-flag collaborators "
+            + "(AllowedDecideAppendDependencies). A GL-posting or notification port — under ANY name — must "
+            + "NOT be injected here: such an outcome rides the post-commit outbox, never a synchronous call "
+            + "that could gate or unwind the producing flow. The PRE_CONTRACTUAL FIN gate is the saga "
+            + "carve-out, not on this path. If an unsanctioned dependency below is a legitimate non-GL/notify "
+            + "collaborator, add it to the allowlist with a one-line reason; if it is a GL/notify outcome, "
+            + "route it through the outbox instead. Unsanctioned injections:\n  " + string.Join("\n  ", unsanctioned));
     }
 
     /// <summary>
@@ -281,7 +311,7 @@ public sealed class EmitContractFitnessTests
     /// The inline-publish half is a DENYLIST heuristic over a KNOWN SET of broker/publish shapes
     /// (<c>IProducer</c>, <c>ProduceAsync</c>, <c>kafka</c>, <c>HttpClient</c>, …) — it proves the
     /// absence of those named shapes on the write path, not a closed-world proof. The authoritative
-    /// gates remain the ADR-PC-009 Pact CDC contract tests and the runtime registry; this is the
+    /// gates remain the ADR-IC-009 Pact CDC contract tests and the runtime registry; this is the
     /// cheap structural tripwire that fails fast if a known synchronous publish creeps inline.
     /// </summary>
     [Fact]
@@ -549,6 +579,76 @@ public sealed class EmitContractFitnessTests
     /// <summary>Strips C# line comments so prose in comments cannot match an executable-symbol scan.</summary>
     private static string StripLineComments(string source)
         => Regex.Replace(source, @"//.*?$", string.Empty, RegexOptions.Multiline);
+
+    /// <summary>
+    /// Builds a word-boundary-anchored regex for a scheduler primitive so it matches the whole token,
+    /// not a substring of a longer identifier — <c>ITimer</c> must not match <c>ITimerFactory</c>,
+    /// <c>Threading.Timer</c> must not match <c>Threading.TimerQueue</c>. A leading <c>\b</c> is added
+    /// when the primitive starts with a word char and a trailing <c>\b</c> when it ends with one; a
+    /// primitive ending in a non-word char (<c>new Timer(</c>) gets no trailing boundary (the
+    /// <c>(</c> already anchors it, and a trailing <c>\b</c> would break the empty-arg <c>new Timer()</c>).
+    /// </summary>
+    private static string SchedulerPrimitivePattern(string primitive)
+    {
+        static bool IsWord(char c) => char.IsLetterOrDigit(c) || c == '_';
+        var prefix = IsWord(primitive[0]) ? @"\b" : string.Empty;
+        var suffix = IsWord(primitive[^1]) ? @"\b" : string.Empty;
+        return prefix + Regex.Escape(primitive) + suffix;
+    }
+
+    /// <summary>
+    /// The (driver, injected-dependency-type) pairs for every APPEND DRIVER on the family decide/append
+    /// path, read off disk the same way the event scans read <c>Events.cs</c> — no family ProjectReference.
+    /// An append driver is any class in the family <c>Application</c> source whose PRIMARY CONSTRUCTOR
+    /// injects the <see cref="AggregateRuntime{TState}"/> append spine (the read-model store, which takes
+    /// only a connection string, is correctly NOT one); discovering drivers structurally rather than by a
+    /// hard-coded class name auto-covers a future <c>ConstitutionPipeline</c> / second-family service.
+    /// For each driver it yields each ctor parameter's TYPE token (the leading token of the parameter,
+    /// with generic args and trailing nullability stripped — <c>AggregateRuntime&lt;DepositPosition&gt;</c>
+    /// → <c>AggregateRuntime</c>, <c>EarlyTerminationPolicy?</c> → <c>EarlyTerminationPolicy</c>) so the
+    /// caller can assert the injected surface ⊆ <see cref="AllowedDecideAppendDependencies"/>. Keyed to
+    /// the codebase's primary-constructor DI idiom (a stable house style); a driver written with a classic
+    /// constructor body would not be matched and must be added knowingly.
+    /// </summary>
+    private static IReadOnlyList<(string Driver, string Type)> WritePathInjectedDependencies(string appDir)
+    {
+        var deps = new List<(string, string)>();
+        foreach (var file in Directory.EnumerateFiles(appDir, "*.cs", SearchOption.AllDirectories))
+        {
+            var source = StripLineComments(File.ReadAllText(file));
+            // `... class Name(<param-block>) :|{` — the primary-ctor param block has no nested parens,
+            // so the lazy capture stops at the ctor's own ')'. Body/base follows as ':' or '{'.
+            foreach (Match cls in Regex.Matches(
+                source, @"class\s+([A-Z]\w*)\s*\(([^)]*)\)\s*(?::|\{)", RegexOptions.Singleline))
+            {
+                var paramBlock = cls.Groups[2].Value;
+                // Only classes that inject the append spine are decide/append drivers — skip the rest
+                // (read-model stores, value objects) so the allowlist stays scoped to the producing flow.
+                if (!Regex.IsMatch(paramBlock, @"\bAggregateRuntime\b"))
+                {
+                    continue;
+                }
+
+                var driver = cls.Groups[1].Value;
+                foreach (var rawParam in paramBlock.Split(','))
+                {
+                    var param = rawParam.Trim();
+                    if (param.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    // The TYPE is the leading whitespace-delimited token; strip generic args (`<...>`)
+                    // and trailing nullability (`?`) so it matches the bare type name in the allowlist.
+                    var typeToken = param.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)[0];
+                    var normalized = typeToken.Split('<')[0].TrimEnd('?');
+                    deps.Add((driver, normalized));
+                }
+            }
+        }
+
+        return deps;
+    }
 
     /// <summary>
     /// Walks up from the test assembly's base directory to the repo root, identified by the committed

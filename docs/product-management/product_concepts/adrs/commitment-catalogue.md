@@ -207,9 +207,11 @@ realised on the emit surface:
   running CI test, meeting the `Live` bar.
 - `GL_POST_FLAG_NEVER_GATES` (row 5a, [ADR-PC-012 slot 5](./ADR-PC-012-gl-posting-signal-contract.md))
   and `NOTIFY_POST_FLAG_NEVER_GATES` (row 5b, [ADR-PC-025 slot 5](./ADR-PC-025-customer-notification-emit-contract.md)):
-  the EMIT-side structural proof (delivery is DEF-2 deferred). The family decide/append path
-  (`TermDepositDecider` + `TermDepositConstitutionService`) references no GL/notify port symbol,
-  so a GL reject or a notification failure cannot gate or unwind the producing flow; and
+  the EMIT-side structural proof (delivery is DEF-2 deferred). The family decide/append path injects
+  only the sanctioned post-flag collaborators (a closed-world allowlist over the append drivers'
+  primary-constructor dependencies; the pure `TermDepositDecider` is `static`, holding no port) — a
+  GL-posting or notification port under ANY name is by construction absent, so a GL reject or a
+  notification failure cannot gate or unwind the producing flow; and
   `AggregateRuntime.AppendAsync` emits only through the outbox (event + `OutboxRow` in one sink
   transaction, no inline synchronous broker publish), so emission is post-commit fire-and-forget.
   The `PRE_CONTRACTUAL` (FIN) synchronous-saga carve-out lives in the constitution saga, off this
