@@ -89,6 +89,16 @@ public enum SagaState
     /// compensating credit (Document 05 Scenario B). Terminal — and distinct from
     /// <see cref="Cancelled"/> because money DID move and was returned.</summary>
     CancelledAfterDebit,
+
+    /// <summary>A required PRECONDITION was refused during the validation phase, BEFORE any
+    /// irreversible effect and BEFORE approval (H.2, babelstone-n55u). A clean terminal
+    /// failure: nothing reversible was committed when the refusal landed, so there is NOTHING
+    /// to compensate — the saga emits NO reversal command and ends here. Distinct from
+    /// <see cref="Cancelled"/> (a validation REJECTION that DID release a Core hold) because a
+    /// precondition refusal is a fail-CLOSED before any effect, mirroring the edge precondition
+    /// where "the orchestrator never starts" (ADR-PC-024 §5; Document 05
+    /// step 0 SCA/clearance pattern). Terminal.</summary>
+    DepositConstitutionFailed,
 }
 
 /// <summary>
@@ -116,6 +126,7 @@ public static class SagaStateNames
         SagaState.Completed => "COMPLETED",
         SagaState.Cancelled => "CANCELLED",
         SagaState.CancelledAfterDebit => "CANCELLED_AFTER_DEBIT",
+        SagaState.DepositConstitutionFailed => "DEPOSIT_CONSTITUTION_FAILED",
         _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown saga state."),
     };
 
@@ -138,6 +149,7 @@ public static class SagaStateNames
         "COMPLETED" => SagaState.Completed,
         "CANCELLED" => SagaState.Cancelled,
         "CANCELLED_AFTER_DEBIT" => SagaState.CancelledAfterDebit,
+        "DEPOSIT_CONSTITUTION_FAILED" => SagaState.DepositConstitutionFailed,
         _ => throw new ArgumentException($"Unknown persisted saga state '{name}'.", nameof(name)),
     };
 
@@ -145,5 +157,6 @@ public static class SagaStateNames
     /// transitions (ADR-IC-003 §Context "Terminal"). A transition targeting a terminal
     /// state is the saga's last; an event arriving for a terminal saga is a no-op advance.</summary>
     public static bool IsTerminal(SagaState state) => state is
-        SagaState.Completed or SagaState.Cancelled or SagaState.CancelledAfterDebit;
+        SagaState.Completed or SagaState.Cancelled or SagaState.CancelledAfterDebit
+        or SagaState.DepositConstitutionFailed;
 }

@@ -1,6 +1,7 @@
 using Babelstone.Orchestrator;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Migrations;
+using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,10 +34,11 @@ builder.Services.AddSingleton<ISagaStateMachine, ConstitutionProcess>();
 builder.Services.AddSingleton<SagaStateStore>();
 builder.Services.AddSingleton<SagaTransitionLog>();
 
-// The command sink is the outbox seam (ADR-IC-003 §P1): H.2 replaces this recorder with the
-// real outbox-row writer. Until then the substrate proves the advance handler decides and
-// routes the right commands.
-builder.Services.AddSingleton<ISagaCommandSink, RecordingCommandSink>();
+// The command sink is the outbox seam (ADR-IC-003 §P1). H.2 (babelstone-n55u) swaps the
+// substrate's in-memory RecordingCommandSink for the REAL durable writer: each command the saga
+// decides is a saga_outbox row committed in the SAME transaction as the state move (effectively-
+// once command emission). The recorder remains as a test stand-in only.
+builder.Services.AddSingleton<ISagaCommandSink, SagaCommandOutboxSink>();
 
 builder.Services.AddSingleton(sp => new SagaAdvanceHandler(
     sp.GetRequiredService<ISagaStateMachine>(),
