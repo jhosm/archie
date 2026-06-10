@@ -1,0 +1,49 @@
+# dpz_pt_24m_juros_trimestral — 24-month PT term deposit, periodic QUARTERLY coupons.
+#
+# F.7 variant. Exercises the PERIODIC interest shape (02 §2.1) at the quarterly
+# cadence (payment_period_months: 3 — the second of the two cadences the schema
+# permits in v1). Eight coupons across the 24-month term, each paid out and
+# withheld flow-by-flow (02 §2.2; financial_concepts §5.3, §5.4). The engine
+# derives each coupon window from DepositConstituted alone and emits one
+# InterestPaid leg per quarter (families/term-deposit InterestVariant=PERIODIC).
+#
+# Flat rate by reference only — the numeric TAN resolves at constitution from the
+# rate sheet (surface §2.3; ADR-PC-008). No inline rate; no derived TANB/TANL/TAE.
+#
+# Validate (depths 1–4) against the pinned pack with:
+#   make validate-variant VARIANT=product-configs/dpz_pt_24m_juros_trimestral.yaml
+variant_id: dpz_pt_24m_juros_trimestral
+schema: term_deposit@2026.1
+pack: pt.2026.1
+
+# 24 months, Act/360 (02 §2.2). `pt.act_360` is the only day-count depth-4
+# permits for a `pt` term deposit.
+term_days: 730
+day_count: pt.act_360
+currency: EUR
+
+# Interest credited quarterly — the periodic cadence (02 §2.1) at period 3.
+interest_variant: PERIODIC
+payment_period_months: 3
+
+# Flat rate: one rate-sheet reference, no inline number (surface §2.3).
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+
+# Early termination forfeits accrued (not-yet-paid) interest, principal
+# untouched — the conventional PT flat policy (02 §2.5).
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000   # 100% of accrued interest
+    basis: ACCRUED_INTEREST
+
+# Single fixed term, no roll-over.
+auto_renewal_policy: NONE
+
+# Risk corridor: €1,000 minimum, €1,000,000 maximum; the canonical instance
+# (€50,000) sits inside it.
+principal_bounds:
+  min_cents: 100000
+  max_cents: 100000000

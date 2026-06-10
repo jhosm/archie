@@ -3,10 +3,57 @@
 # claims" evidence — what BdP supervision and DORA due-diligence ask to see.
 # Inputs are hand-authored; the expected events are GENERATED (see
 # expected-events.yaml). The named variant lands in /product-configs (C.2).
+#
+# Every field below is an INPUT, never a computed result. `rate_basis_points` is
+# the rate the engine RESOLVES from the rate sheet at constitution (ADR-PC-008);
+# the corpus pins it per instance so the regression is DETERMINISTIC even though
+# the live rate sheet runs on its own fast cadence (surface §2; C.6). It is NOT
+# pack-authored rate-sheet data and NOT a derived TANB/TANL/TAE — those are
+# engine-computed figures and live nowhere in the pack. The numbers here are
+# illustrative sealed-corpus inputs (not regulated figures); the real resolved
+# rates arrive with the published rate sheet (C.6 deploy prerequisite).
+#
+# F.7 extends the corpus to one canonical instance per interest shape carried by
+# the /product-configs variants (AT_MATURITY, periodic-monthly, periodic-
+# quarterly, advance, and a banded early-termination shape). The expected events
+# for ALL of these stay GENERATED — see expected-events.yaml, still the empty
+# placeholder until the engine substrate (C.3/C.5) can run the corpus.
 tests:
   - test_id: pt_dpz_12m_simple_with_irs
     pack: pt.2026.1
     variant_id: dpz_pt_12m_juros_venc
     principal_cents: 1000000        # €10,000.00
     constituted_at: 2026-01-15
-    rate_basis_points: 300          # 3.00% TAN
+    rate_basis_points: 300          # 3.00% TAN (resolved input)
+
+  # Periodic MONTHLY coupons — 12-month, payment_period_months: 1.
+  - test_id: pt_dpz_12m_periodic_monthly_with_irs
+    pack: pt.2026.1
+    variant_id: dpz_pt_12m_juros_mensal
+    principal_cents: 2500000        # €25,000.00
+    constituted_at: 2026-02-02
+    rate_basis_points: 325          # 3.25% TAN (resolved input)
+
+  # Periodic QUARTERLY coupons — 24-month, payment_period_months: 3.
+  - test_id: pt_dpz_24m_periodic_quarterly_with_irs
+    pack: pt.2026.1
+    variant_id: dpz_pt_24m_juros_trimestral
+    principal_cents: 5000000        # €50,000.00
+    constituted_at: 2026-03-16
+    rate_basis_points: 350          # 3.50% TAN (resolved input)
+
+  # Interest paid IN ADVANCE — 6-month, juros antecipados.
+  - test_id: pt_dpz_6m_advance_with_irs
+    pack: pt.2026.1
+    variant_id: dpz_pt_6m_juros_antecipados
+    principal_cents: 1500000        # €15,000.00
+    constituted_at: 2026-04-01
+    rate_basis_points: 275          # 2.75% TAN (resolved input)
+
+  # BANDED early-termination schedule — 18-month, AT_MATURITY interest.
+  - test_id: pt_dpz_18m_banded_termination_with_irs
+    pack: pt.2026.1
+    variant_id: dpz_pt_18m_resgate_escalonado
+    principal_cents: 4000000        # €40,000.00
+    constituted_at: 2026-05-04
+    rate_basis_points: 340          # 3.40% TAN (resolved input)

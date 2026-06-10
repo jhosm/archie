@@ -1,0 +1,50 @@
+# dpz_pt_6m_juros_antecipados — 6-month PT term deposit, interest paid IN ADVANCE.
+#
+# F.7 variant. Exercises the ADVANCE interest shape (02 §2.1; juros antecipados,
+# financial_concepts §5.3): the whole term's interest is paid up front at t=0,
+# capital returned at maturity. Withholding still applies to the upfront interest
+# flow at the 28% IRS rate, flow-by-flow (02 §2.2; financial_concepts §5.4). The
+# engine gates on InterestVariant=ADVANCE: a single upfront flow, no further
+# coupons (families/term-deposit Handlers/Application service).
+#
+# Flat rate by reference only — the numeric TAN resolves at constitution from the
+# rate sheet (surface §2.3; ADR-PC-008). No inline rate; no derived TANB/TANL/TAE.
+#
+# Validate (depths 1–4) against the pinned pack with:
+#   make validate-variant VARIANT=product-configs/dpz_pt_6m_juros_antecipados.yaml
+variant_id: dpz_pt_6m_juros_antecipados
+schema: term_deposit@2026.1
+pack: pt.2026.1
+
+# 6 months, Act/360 (02 §2.2). `pt.act_360` is the only day-count depth-4
+# permits for a `pt` term deposit.
+term_days: 180
+day_count: pt.act_360
+currency: EUR
+
+# Interest paid up front — the advance shape (02 §2.1). No payment_period_months
+# (forbidden for any non-PERIODIC variant; the schema rejects its presence).
+interest_variant: ADVANCE
+
+# Flat rate on the new_money pricing role: a single rate-sheet reference (the
+# role carries the standard-vs-new-money split of surface §2.2). No inline number.
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: new_money }
+
+# Early termination forfeits accrued interest, principal untouched — the flat PT
+# policy (02 §2.5). For the advance shape the engine reconciles the already-paid
+# upfront interest against the forfeit at termination (engine concern, not a pack
+# field).
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000   # 100% of accrued interest
+    basis: ACCRUED_INTEREST
+
+# Single fixed term, no roll-over.
+auto_renewal_policy: NONE
+
+# Risk corridor: €500 minimum; the canonical instance (€15,000) sits inside it.
+principal_bounds:
+  min_cents: 50000
