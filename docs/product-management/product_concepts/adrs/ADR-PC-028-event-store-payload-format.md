@@ -99,5 +99,5 @@ Not yet catalogued centrally — these are new with this ADR (a `Gap`/`Planned` 
 
 | # | Commitment (with §-anchor) | Gate (pyramid level) | Test ID | Status |
 |---|---|---|---|---|
-| 1 | §Decision — the `events.payload` decodes and a stream replays with **no Schema Registry reachable** (the book of record is self-describing) | Integration (engine, SR-absent) | `EVENT_STORE_PAYLOAD_SELF_DESCRIBING` | Planned |
-| 2 | §Decision — for any event, the JSON `events.payload` and the Avro `outbox.payload` are **semantically equal** (no store↔bus skew) | Unit / fitness | `STORE_BUS_ENCODING_EQUIVALENCE` | Planned |
+| 1 | §Decision — the `events.payload` decodes with **no Schema Registry**: the replay/decode spine (`Babelstone.Engine`, `Babelstone.EventStore`) references no registry client / Avro-SR codec (structural fitness), and the decided store codec `JsonEventSerializer` round-trips from the bytes alone (behavioural) | Fitness + unit (default lane) | `EVENT_STORE_PAYLOAD_SELF_DESCRIBING` | **Live** |
+| 2 | §Decision — for any event, the JSON `events.payload` and the Avro `outbox.payload` are **semantically equal** (no store↔bus skew) | Unit / fitness | `STORE_BUS_ENCODING_EQUIVALENCE` | Planned (blocked on Avro-on-bus, Epic E/G — the outbox is JSON today, so there is no Avro encoding to compare against; bd `babelstone-36mk`) |
