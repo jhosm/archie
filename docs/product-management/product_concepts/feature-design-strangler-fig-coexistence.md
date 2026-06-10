@@ -294,7 +294,7 @@ Each return is the reporting application's responsibility. The engine guarantees
 
 ### 8.3 What this means for the engine's signal contract
 
-The pack-defined reporting hooks from [surface §3.3](./feature-design-configuration-surface.md) (`bdp_estatisticas_taxas_juro`, `modelo_39`) describe the engine's side of the contract: the signals are present in the engine's event stream, computed under the pinned pack version, timely to the reporting application's ingestion cutoffs.
+The pack-defined reporting hooks from [surface §3.3](./feature-design-configuration-surface.md) (`bdp_estatisticas_taxas_juro`, `modelo_39`, `fgd_cobertura_depositos`) describe the engine's side of the contract: the signals are present in the engine's event stream, computed under the pinned pack version, timely to the reporting application's ingestion cutoffs.
 
 The reporting application's side of the contract — how it consumes events, how it aggregates with legacy data, how it formats the actual return for submission — is out of scope for the engine's product brief. It is the reporting application's product brief.
 

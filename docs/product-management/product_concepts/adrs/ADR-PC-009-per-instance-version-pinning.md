@@ -135,6 +135,8 @@ Neither happens silently or in the background. A newly published pack sits inert
 
 The pack manifest carries `pack_effective_from` ([surface §3.4](../feature-design-configuration-surface.md)). v1 **pins everything at constitution and floats nothing** — there is no per-primitive pin-or-float policy. The field is reserved so the manifest shape does not have to change later, but v1 reads it as informational metadata only. The per-primitive pin-or-float policy (some primitives float to the latest pack while others stay pinned) is **explicitly deferred** — it is on the epic's out-of-scope list ("pack-effective-date semantics policy … v2+ peers, tracked in [04-open-questions](../04-open-questions.md)") and is a [surface §3](../feature-design-configuration-surface.md)-class v2 question. No partial implementation ships in v1.
 
+*Revised 2026-06-10 (Epic 0.3, bd babelstone-oa3i): the deferred forward policy's **direction is confirmed per-primitive** — instrument-defining primitives (cash-flow shape, day-count, contracted TAN) pin; regulation-tracking primitives (withholding rate, FGD ceiling, disclosure templates) float by accrual date — resolving [04 §8](../04-open-questions.md) for v1. This is **additive**: v1 still pins everything at constitution and floats nothing, and the per-primitive **implementation** (the manifest annotation + the [03 §Pack Maintenance](../03-roadmap.md) addendum) stays a v2+ deliverable. The full `pt.2026.1` pack (F.7) needs no new effective-date machinery.*
+
 ---
 
 ## Consequences

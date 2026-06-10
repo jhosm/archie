@@ -1,6 +1,7 @@
-# Banco de Portugal reporting hooks (surface §3.3). The engine emits signals;
-# the reports themselves are downstream (02 §2.2). v1 activates the retail-rate
-# statistics return only; the others are reserved for credit (later v's).
+# Regulatory reporting hooks (surface §3.3; coexistence §8). The engine emits
+# signals; the reports themselves are assembled by a downstream reporting
+# application (02 §2.2). v1 activates the BdP retail-rate statistics and the FGD
+# deposit-coverage returns; the BdP credit hooks are reserved for later v's.
 bdp_estatisticas_taxas_juro:
   active: true
   frequency: monthly
@@ -13,3 +14,10 @@ ifrs9_staging:
   active: false
   frequency: quarterly
   regulator: banco_de_portugal
+# Fundo de Garantia de Depósitos coverage return (coexistence §8). Frequency is
+# the scheduled cadence; the FGD also pulls on-demand, a downstream read, not a
+# pack cadence. Eligible-balances parameters live in primitives/fgd.yaml.
+fgd_cobertura_depositos:
+  active: true
+  frequency: annual
+  regulator: fundo_garantia_depositos
