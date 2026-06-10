@@ -43,9 +43,13 @@ public sealed class PackParserTests
     }
 
     [Fact]
-    public void A_declared_but_engine_unimplemented_day_count_fails_loud()
-        // act_act_isda is declared in the pack but has no DayCountConvention member — refuse to default.
-        => Assert.Throws<PackLoadException>(() => Pt2026().ResolveDayCount("act_act_isda"));
+    public void A_declared_but_engine_unimplemented_formula_ref_fails_loud()
+        // A formula_ref the engine does not implement must throw, not silently default to a
+        // wrong accrual basis. The bridge is PackDayCount.ToConvention(); resolve a synthetic
+        // entry naming a formula_ref absent from the switch (the shipped pack carries no such
+        // dead entry — see PackDeclarationsResolveTests, which fences that for every pack).
+        => Assert.Throws<PackLoadException>(
+            () => new PackDayCount("engine.day_count.not_implemented", []).ToConvention());
 
     [Fact]
     public void An_undeclared_day_count_id_fails_loud()
