@@ -54,3 +54,20 @@
 # - github.repo
 
 sync.remote: "git+https://github.com/jhosm/babelstone.git"
+
+# Auto-export of the .beads/issues.jsonl mirror is DISABLED.
+#
+# By default bd re-exports issues.jsonl after every write command (throttled to
+# ~60s) and `git add`s it (export.git-add). Because that runs on bd's own
+# schedule — decoupled from your git commits — it leaves the tracked mirror
+# perpetually dirty/staged, which trips `git pull --rebase`, `git switch`, and
+# worktree operations across the repo.
+#
+# Dolt (the source of truth, synced via refs/dolt/data) does not depend on this
+# file, and nothing in CI reads it — it is only a browsable convenience mirror.
+# So we turn the auto-export off: the working tree stays clean during normal
+# work, and the mirror is refreshed deliberately at session close, where
+# `bd dolt push` regenerates the complete export and the documented
+# `git add .beads/issues.jsonl` + commit step carries it (CLAUDE.md §Session
+# Completion). bd memory: bd-jsonl-export-lags-commit-after-dolt-push.
+export.auto: false
