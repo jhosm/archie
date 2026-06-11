@@ -38,6 +38,55 @@ public static class BabelstoneAttributes
     public const string SpanWithholdingApplied = "withholding.applied";
 
     /// <summary>
+    /// Manual span name for ONE saga-advance step (H.5): the orchestrator drives a saga forward
+    /// from one inbound event, decides the legal transition (ADR-IC-003 §P2), and emits the
+    /// decided commands. The span is opened in the impure advance shell, parented to the inbound
+    /// event's W3C trace context (the <c>traceparent</c> header), so a saga's work shows up as a
+    /// connected chain in the distributed trace (ADR-IC-007 Layer 1 — <c>traceparent</c> is the
+    /// mechanism by which the identity trio becomes distributed tracing; Document 06 "each saga
+    /// state transition" is a manual span). <c>&lt;entity&gt;.&lt;operation&gt;</c> per ADR-IC-007 P2.
+    /// </summary>
+    public const string SpanSagaAdvance = "saga.advance";
+
+    /// <summary>The saga instance reference the span is for (the Document 05 PROC-… id). Structural
+    /// identifier, NOT PII — ADR-IC-003 §P3 requires <c>process_id</c> on every orchestrator span.</summary>
+    public const string SagaProcessId = "babelstone.saga.process_id";
+
+    /// <summary>Which state machine governs the advance (e.g. <c>ConstitutionProcess</c>). Structural,
+    /// not PII.</summary>
+    public const string SagaType = "babelstone.saga.type";
+
+    /// <summary>The inbound event TYPE that drove the advance (e.g. <c>BalanceReserved</c>) — the key
+    /// the transition table keys on (ADR-IC-003 §P2). A type name, never PII.</summary>
+    public const string SagaEventType = "babelstone.saga.event_type";
+
+    /// <summary>The saga state move this advance took, rendered <c>FROM-&gt;TO</c> (e.g.
+    /// <c>PARALLEL_VALIDATION-&gt;AWAIT_LIMITS_VALIDATED</c>) — Document 06 "each saga state
+    /// transition" as a span tag. The state names are operational, never PII.</summary>
+    public const string SagaTransition = "babelstone.saga.transition";
+
+    /// <summary>The advance disposition (<c>Started</c>/<c>Advanced</c>/<c>Duplicate</c>/… — the
+    /// <c>AdvanceOutcome</c>), so the span records whether the step moved the saga, deduped, or was
+    /// rejected. Operational, not PII.</summary>
+    public const string SagaOutcome = "babelstone.saga.outcome";
+
+    /// <summary>
+    /// The CORRELATION reference (Primitive 4 / ADR-IC-003 §P7): the originating request's
+    /// correlation id, carried UNCHANGED through the whole saga. ADR-IC-003 §P3 requires it on every
+    /// orchestrator span so a saga is one searchable chain. It is a structural GUID reference, NOT
+    /// PII — distinct from the OTel <c>trace_id</c> the span itself carries (the two are correlated
+    /// in Grafana, ADR-IC-007 P-consequences). Pseudonymous by construction (Document 06).
+    /// </summary>
+    public const string SagaCorrelationId = "babelstone.saga.correlation_id";
+
+    /// <summary>
+    /// The CAUSATION reference (Primitive 4 / ADR-IC-003 §P7): the <c>message_id</c> (ce_id) of the
+    /// inbound event that triggered this advance — the cause of the commands it emits. A pre-existing
+    /// reference carried through, never minted. Structural, not PII.
+    /// </summary>
+    public const string SagaCausationId = "babelstone.saga.causation_id";
+
+    /// <summary>
     /// The outbox publish-lag SLI (ADR-IC-004 §P4): an <i>observable gauge</i> of the age in seconds
     /// of the OLDEST <c>PENDING</c> outbox row at each collection cycle — <c>clock_timestamp() −
     /// MIN(created_at)</c> over PENDING rows, computed in the DB (single-clock; 0 when the backlog is

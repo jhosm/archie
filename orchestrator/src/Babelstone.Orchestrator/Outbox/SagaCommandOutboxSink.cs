@@ -27,9 +27,17 @@ namespace Babelstone.Orchestrator.Outbox;
 /// </para>
 /// <para>
 /// <b>No PII on the row (ADR-PC-004 §P2 / no-PII-on-the-durable-bus).</b> Every column written —
-/// process id, command type, causation/correlation references, and the structural payload — is
-/// a reference, never a NIF/IBAN/name/amount. The no-PII test asserts this with a positive
-/// ALLOW-LIST over the written bytes, not a deny-list of forbidden patterns.
+/// process id, command type, causation/correlation references, the outbound <c>traceparent</c>,
+/// and the structural payload — is a reference, never a NIF/IBAN/name/amount. The no-PII test
+/// asserts this with a positive ALLOW-LIST over the written bytes, not a deny-list of forbidden
+/// patterns.
+/// </para>
+/// <para>
+/// <b>Distributed-trace propagation (H.5, ADR-IC-007 Layer 1).</b> The outbound W3C
+/// <c>traceparent</c> the advance handler injects (its span's context) is written to the
+/// OPERATIONAL <c>traceparent</c> COLUMN — like <c>message_id</c> and <c>created_at</c>, never the
+/// byte-stable logical body. The drain re-emits it as the outbound Kafka header so the downstream
+/// consumer threads its spans under this saga's trace. NULL when no tracer was listening.
 /// </para>
 /// </remarks>
 public sealed class SagaCommandOutboxSink : ISagaCommandSink
@@ -42,7 +50,8 @@ public sealed class SagaCommandOutboxSink : ISagaCommandSink
         string commandType,
         Guid causationMessageId,
         Guid? correlationId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? traceParent = null)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(transaction);
@@ -65,9 +74,14 @@ public sealed class SagaCommandOutboxSink : ISagaCommandSink
         // lives in the operational column, not the decision and not the body.
         var messageId = Guid.NewGuid();
 
+        // The OUTBOUND W3C traceparent (H.5) is an OPERATIONAL column, like message_id and
+        // created_at — NEVER in the logical payload body (which stays byte-stable: re-emitting the
+        // same logical command yields identical bytes, and a traceparent changes per emission). The
+        // drain re-emits it as the outbound Kafka header so the downstream consumer threads its
+        // spans under this saga's trace (ADR-IC-007 Layer 1). NULL when no tracer was listening.
         const string sql = """
-            INSERT INTO saga_outbox (message_id, process_id, command_type, causation_id, correlation_id, payload)
-            VALUES (@message_id, @process_id, @command_type, @causation_id, @correlation_id, @payload);
+            INSERT INTO saga_outbox (message_id, process_id, command_type, causation_id, correlation_id, payload, traceparent)
+            VALUES (@message_id, @process_id, @command_type, @causation_id, @correlation_id, @payload, @traceparent);
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -77,6 +91,7 @@ public sealed class SagaCommandOutboxSink : ISagaCommandSink
         command.Parameters.AddWithValue("causation_id", causationMessageId);
         command.Parameters.AddWithValue("correlation_id", (object?)correlationId ?? DBNull.Value);
         command.Parameters.AddWithValue("payload", payload);
+        command.Parameters.AddWithValue("traceparent", (object?)traceParent ?? DBNull.Value);
         await command.ExecuteNonQueryAsync(ct);
     }
 }

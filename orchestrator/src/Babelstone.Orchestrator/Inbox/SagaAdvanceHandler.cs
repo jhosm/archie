@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using Babelstone.Orchestrator.Saga;
+using Babelstone.Telemetry;
 using Npgsql;
 
 namespace Babelstone.Orchestrator.Inbox;
@@ -57,6 +59,19 @@ public enum AdvanceOutcome
 /// This handler is the impure shell that loads, persists, and emits; it passes no time into
 /// the decision.
 /// </para>
+/// <para>
+/// <b>Distributed trace coupling (H.5, ADR-IC-007 Layer 1 / ADR-IC-003 §P3):</b> this impure
+/// shell — never the pure state machine — opens ONE manual OpenTelemetry span per advance on the
+/// SHARED <see cref="BabelstoneTelemetry.ActivitySource"/> (the same <c>Babelstone.Engine</c>
+/// scope the engine uses, not a competing source), PARENTED to the inbound event's W3C
+/// <c>traceparent</c>, so a saga's work threads into one connected distributed trace. The span
+/// carries the structural <c>babelstone.saga.*</c> identifiers (<c>process_id</c> +
+/// <c>correlation_id</c> as ADR-IC-003 §P3 requires, plus the <c>transition</c> and
+/// <c>outcome</c>) with NO PII (ADR-PC-004 §P2). The span's own context is injected back as the
+/// OUTBOUND <c>traceparent</c> the emitted commands carry, so downstream services thread under
+/// this saga's trace. With no tracer listening, <see cref="ActivitySource.StartActivity(string,
+/// ActivityKind)"/> returns <c>null</c> and the whole path is a near-zero-cost no-op.
+/// </para>
 /// </remarks>
 public sealed class SagaAdvanceHandler(
     ISagaStateMachine machine,
@@ -86,6 +101,39 @@ public sealed class SagaAdvanceHandler(
         SagaInboxEvent message,
         CancellationToken ct = default)
     {
+        // (0) Open the saga-advance span (H.5) on the SHARED Babelstone.Engine source, PARENTED to
+        // the inbound event's W3C trace context so this step joins the upstream trace as a child
+        // (ADR-IC-007 Layer 1). Kind = Consumer: the orchestrator is a Redpanda consumer driving a
+        // saga off a consumed event (ADR-IC-003 §S2). With no tracer listening, StartActivity
+        // returns null and the using-block + every span?.* below is a no-op. The span carries only
+        // structural babelstone.saga.* identifiers — process_id + correlation_id (ADR-IC-003 §P3),
+        // never PII (ADR-PC-004 §P2). The current Activity is ambient for the duration, so the
+        // outbound traceparent the sink injects is THIS span's context (the saga's commands thread
+        // under this trace).
+        var parentContext = SagaTraceContext.ParseTraceParent(message.TraceParent);
+        using var span = BabelstoneTelemetry.ActivitySource.StartActivity(
+            BabelstoneAttributes.SpanSagaAdvance, ActivityKind.Consumer, parentContext);
+        span?.SetTag(BabelstoneAttributes.SagaProcessId, message.ProcessId.ToString());
+        span?.SetTag(BabelstoneAttributes.SagaType, _machine.SagaType);
+        span?.SetTag(BabelstoneAttributes.SagaEventType, message.EventType);
+        span?.SetTag(BabelstoneAttributes.SagaCausationId, message.MessageId.ToString());
+        if (message.CorrelationId is { } correlation)
+        {
+            span?.SetTag(BabelstoneAttributes.SagaCorrelationId, correlation.ToString());
+        }
+
+        var outcome = await AdvanceCoreAsync(connection, transaction, message, span, ct);
+        span?.SetTag(BabelstoneAttributes.SagaOutcome, outcome.ToString());
+        return outcome;
+    }
+
+    private async Task<AdvanceOutcome> AdvanceCoreAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        SagaInboxEvent message,
+        Activity? span,
+        CancellationToken ct)
+    {
         // (1) Dedup FIRST (Document 04 / ADR-IC-003 §P1 "Inbox deduplication … applied to
         // saga event consumption"). If the message_id is already in the inbox, this is a
         // physical redelivery: skip the whole advance — the effect already committed once.
@@ -100,7 +148,7 @@ public sealed class SagaAdvanceHandler(
         // advances an existing one.
         if (message.EventType == StartEventType)
         {
-            return await StartAsync(connection, transaction, message, ct);
+            return await StartAsync(connection, transaction, message, span, ct);
         }
 
         var saga = await _stateStore.LoadAsync(connection, transaction, message.ProcessId, ct);
@@ -152,20 +200,29 @@ public sealed class SagaAdvanceHandler(
         await WriteInboxRowAsync(
             connection, transaction, message, SagaStateNames.ToName(outcome.Next), ct);
 
+        // Tag the state move on the span (H.5 / Document 06 "each saga state transition"). The
+        // state names are operational, never PII.
+        span?.SetTag(
+            BabelstoneAttributes.SagaTransition,
+            $"{SagaStateNames.ToName(saga.State)}->{SagaStateNames.ToName(outcome.Next)}");
+
         // (6) Emit the decided commands through the outbox seam (ADR-IC-003 §P1, §P7). Each
-        // carries the identity trio; all land atomically with the state move.
+        // carries the identity trio AND the OUTBOUND traceparent (H.5) — this span's context, so
+        // the downstream consumer threads its spans under this saga's trace. All land atomically
+        // with the state move.
+        var traceParent = SagaTraceContext.FormatTraceParent(span);
         foreach (var commandType in outcome.Commands)
         {
             await _commandSink.EmitAsync(
                 connection, transaction, saga.ProcessId, commandType,
-                message.MessageId, saga.CorrelationId ?? message.CorrelationId, ct);
+                message.MessageId, saga.CorrelationId ?? message.CorrelationId, ct, traceParent);
         }
 
         return AdvanceOutcome.Advanced;
     }
 
     private async Task<AdvanceOutcome> StartAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, SagaInboxEvent message, CancellationToken ct)
+        NpgsqlConnection connection, NpgsqlTransaction transaction, SagaInboxEvent message, Activity? span, CancellationToken ct)
     {
         var created = await _stateStore.TryStartAsync(
             connection, transaction, message.ProcessId, _machine.SagaType,
@@ -196,11 +253,17 @@ public sealed class SagaAdvanceHandler(
                 connection, transaction, message.ProcessId, _machine.InitialState, outcome.Next,
                 message.EventType, message.MessageId, note: SagaStateNames.ToName(outcome.Next), ct);
 
+            // The start event drove the first transition: tag the move (H.5) and propagate THIS
+            // span's context outbound on every command it emitted (ADR-IC-007 Layer 1).
+            span?.SetTag(
+                BabelstoneAttributes.SagaTransition,
+                $"{SagaStateNames.ToName(_machine.InitialState)}->{SagaStateNames.ToName(outcome.Next)}");
+            var traceParent = SagaTraceContext.FormatTraceParent(span);
             foreach (var commandType in outcome.Commands)
             {
                 await _commandSink.EmitAsync(
                     connection, transaction, message.ProcessId, commandType,
-                    message.MessageId, message.CorrelationId, ct);
+                    message.MessageId, message.CorrelationId, ct, traceParent);
             }
         }
         else

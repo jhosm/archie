@@ -24,9 +24,15 @@ namespace Babelstone.Orchestrator.Inbox;
 /// <param name="SourceTopic">The topic the record arrived on (structural, not PII).</param>
 /// <param name="CorrelationId">The trace correlation reference carried unchanged through the
 /// saga (ADR-IC-003 §P7). Null on a message that carried none.</param>
+/// <param name="TraceParent">The inbound W3C Trace Context <c>traceparent</c> header (H.5,
+/// ADR-IC-007 Layer 1), extracted from the Kafka record by the consume loop. It parents the
+/// saga-advance span onto the upstream trace so the saga's work is one connected distributed
+/// trace. Operational, NOT PII (an opaque <c>00-trace-span-flags</c> string). Null on a message
+/// that carried no trace context — the advance then roots a fresh trace.</param>
 public sealed record SagaInboxEvent(
     Guid MessageId,
     Guid ProcessId,
     string EventType,
     string SourceTopic,
-    Guid? CorrelationId);
+    Guid? CorrelationId,
+    string? TraceParent = null);
