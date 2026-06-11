@@ -1,0 +1,116 @@
+# OpenBao key-store DR — M.4 (bd babelstone-f0ui), ADR-PC-005 §P4.
+#
+# "The OpenBao key store (ADR-PC-004) is HA and backed up with guarantees at
+# least as strong as the event store — key loss is irreversible loss of all PII."
+# (ADR-PC-005 §P4). This file adds the DR BACKUP seam for the key store: a
+# scheduled raft-snapshot CronJob. It does NOT provision real OpenBao (storage,
+# auto-unseal, the raft HA cluster itself) — that is M.2 (babelstone-puu3),
+# which owns the openbao Deployment. This lane reserves the §P4 DR-backup seam
+# that rides on M.2's real provisioning, and documents the crypto-shred-vs-backup
+# horizon (§P4 / ADR-PC-004 §P5) the drill must respect.
+#
+# WHY a seam, not real backups: in the dev-mode openbao (base/openbao.yaml,
+# `-dev`, in-memory) there is no raft storage to snapshot — the snapshot command
+# is a no-op until M.2 swaps dev mode for real `raft` storage. Shipping the
+# CronJob now (a) makes the §P4 "key store is backed up" commitment a concrete,
+# reviewable artefact rather than a prose promise, and (b) is one Secret + one
+# real-mode flag away from live once M.2 lands. CI validates its SHAPE.
+#
+# CROSS-SHRED HORIZON (ADR-PC-005 §P4, ADR-PC-004 §P5): a GDPR erasure destroys a
+# subject's transit key, but a key-store snapshot taken BEFORE the erasure still
+# holds that key, and event-store backups still hold the ciphertext — so erasure
+# is only COMPLETE once every snapshot/backup containing the key has rolled past
+# its retention horizon. The snapshot retention below is therefore deliberately
+# bounded and ALIGNED with the pgBackRest event-store retention (14 days): the
+# two retention windows together define the true erasure-completion time. The
+# runbook (infra/runbooks/dr-recovery-drill.md §6) carries this as an explicit
+# drill step.
+
+# ---------------------------------------------------------------------------
+# Scheduled raft snapshot — the §P4 key-store backup. `bao operator raft
+# snapshot save` writes a consistent snapshot of the raft store; the snapshot is
+# pushed to the same off-site, retention-locked object storage as the event-store
+# PITR repo (guarantees "at least as strong as the event store", §P4).
+# ---------------------------------------------------------------------------
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openbao-raft-snapshot
+  labels:
+    app.kubernetes.io/name: openbao
+    babelstone.io/dr-role: keystore-snapshot
+  annotations:
+    babelstone.io/secret-boundary: "dev-mode-placeholder — real raft storage + provisioning is M.2/puu3"
+spec:
+  # Daily 03:00 — a fresh key-store snapshot every day. Cadence matches "at least
+  # as strong as the event store": the event store is continuously WAL-archived
+  # and weekly-base-backed; the key store (much smaller, append-mostly) is
+  # daily-snapshotted, which bounds key-recovery RPO well inside the §P4 intent.
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 3600
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: openbao
+            babelstone.io/dr-role: keystore-snapshot
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: openbao-snapshot
+              image: openbao/openbao:2.5.4
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  # SEAM: against the dev-mode (-dev, in-memory) OpenBao there is
+                  # no raft store to snapshot, so this guards on raft storage and
+                  # is a documented no-op until M.2 provisions real `raft`
+                  # storage. Once live, the snapshot is taken and shipped off-site
+                  # (retention-locked) alongside the event-store PITR repo.
+                  echo "openbao raft snapshot job — stanza=keystore"
+                  if bao status -format=json 2>/dev/null | grep -q '"storage_type":[[:space:]]*"raft"'; then
+                    bao operator raft snapshot save /snapshots/keystore-$(date +%Y%m%dT%H%M%SZ).snap
+                    echo "snapshot saved; ship to off-site object storage (retention 14d, aligned with event-store PITR)"
+                  else
+                    echo "OpenBao not on raft storage (dev-mode seam) — no-op until M.2/puu3 provisions real storage"
+                  fi
+              env:
+                - name: BAO_ADDR
+                  value: http://openbao:8200
+                # The snapshot token (a least-privilege policy that can only run
+                # `raft snapshot save`) is injected from the key-store DR Secret.
+                # NEVER commit a real token — M.2 provisions it.
+                - name: BAO_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: babelstone-openbao-dr-secret
+                      key: BAO_SNAPSHOT_TOKEN
+              volumeMounts:
+                - name: snapshots
+                  mountPath: /snapshots
+          volumes:
+            # EmptyDir in the POC seam (the snapshot is shipped off-site by the
+            # job body once M.2 wires real off-site storage). A real deployment
+            # mounts the retention-locked object-store-backed volume here.
+            - name: snapshots
+              emptyDir: {}
+---
+# ---------------------------------------------------------------------------
+# OpenBao DR Secret seam — DEV-ONLY placeholder, same contract as the other
+# ha-overlay Secrets. The snapshot token is least-privilege (raft-snapshot-save
+# only). NEVER commit a real token — M.2 (babelstone-puu3) provisions it.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: babelstone-openbao-dr-secret
+  annotations:
+    babelstone.io/secret-boundary: "dev-mode-placeholder — real provisioning is M.2/puu3"
+type: Opaque
+stringData:
+  BAO_SNAPSHOT_TOKEN: "placeholder-snapshot-token-not-a-real-secret"

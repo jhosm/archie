@@ -1,0 +1,94 @@
+# Postgres PITR via pgBackRest — primary PATCH (M.4, bd babelstone-f0ui).
+#
+# ADR-PC-005 §P2: continuous WAL archiving + scheduled base backups to off-site,
+# retention-locked storage give point-in-time recovery if BOTH primary and
+# standby are lost. This is the SECOND line of DR — the §P1 synchronous warm
+# standby (postgres-standby-ha.yaml) is the RPO≈0 first line; PITR here bounds
+# the base-backup floor to ≤ 60 s of WAL when both nodes are gone
+# (ADR-PC-005 §Decision RPO-floor row).
+#
+# JSON6902 (RFC 6902) PATCH, not strategic-merge. WHY: the primary's container
+# `args` is a plain scalar list, and a strategic-merge patch REPLACES a scalar
+# list rather than appending — which would silently drop the §P1
+# synchronous_commit / synchronous_standby_names args set in
+# postgres-primary-ha.yaml. A JSON6902 `add` at `/args/-` APPENDS, so this patch
+# is strictly ADDITIVE to the §P1 args and leaves postgres-primary-ha.yaml
+# untouched (the disjoint-files requirement). archive_command shells out to the
+# pgBackRest binary via the sidecar's shared config; %p is PG's WAL source-path
+# placeholder. archive-async (pgbackrest.conf) keeps archive-push OFF the
+# synchronous-commit path so §P2 never throttles §P1.
+#
+# HAND-ROLLED, no operator (same standing preference as the §P1 topology):
+# pgBackRest is a backup TOOL invoked by a sidecar + CronJob, not a CRD-driven
+# controller owning its own state. ADR-PC-005 §Decision names pgBackRest/Barman
+# explicitly as the §P2 tool — this honours it.
+#
+# The CronJob + cipher Secret live in postgres-pitr-resources.yaml
+# (kustomization `resources:`); the pgBackRest config ConfigMap is generated
+# from infra/pgbackrest/pgbackrest.conf by the configMapGenerator.
+
+# Append the three WAL-archiving args to the primary container's existing arg
+# list (postgres is containers[0]; -c flag + value as separate elements, the
+# same -c/value shape postgres-primary-ha.yaml uses).
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: -c
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: archive_mode=on
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: -c
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: archive_command=pgbackrest --stanza=event-store archive-push %p
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: -c
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: archive_timeout=60s
+
+# Mount the pgBackRest config into the primary container so its archive_command
+# can run pgbackrest archive-push.
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts/-
+  value:
+    name: pgbackrest-config
+    mountPath: /etc/pgbackrest
+    readOnly: true
+
+# Add the pgBackRest sidecar — shares PGDATA with the primary, keeps the async
+# WAL archive queue resident, and is the `kubectl exec` target for on-demand
+# backups/restores during a drill.
+- op: add
+  path: /spec/template/spec/containers/-
+  value:
+    name: pgbackrest
+    image: pgbackrest/pgbackrest:2.54.2
+    command:
+      - /bin/sh
+      - -c
+      - |
+        echo "pgbackrest sidecar up — stanza=event-store, async archive queue resident"
+        exec sleep infinity
+    env:
+      - name: PGBACKREST_CIPHER_PASS
+        valueFrom:
+          secretKeyRef:
+            name: babelstone-pgbackrest-secret
+            key: PGBACKREST_CIPHER_PASS
+    volumeMounts:
+      - name: postgres-data
+        mountPath: /var/lib/postgresql/data
+      - name: pgbackrest-config
+        mountPath: /etc/pgbackrest
+        readOnly: true
+
+# Add the pgBackRest config volume (sourced from the generated ConfigMap).
+- op: add
+  path: /spec/template/spec/volumes/-
+  value:
+    name: pgbackrest-config
+    configMap:
+      name: postgres-pgbackrest-config

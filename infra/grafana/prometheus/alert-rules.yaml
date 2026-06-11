@@ -1,0 +1,198 @@
+# Critical SLI alert rules (K.3 — bd babelstone-gbgw).
+#
+# Prometheus alerting-rules file (the native `groups:` shape Prometheus' rule
+# loader and `promtool check rules` accept). The metrics these rules read are
+# ALREADY EMITTED by the engine over OTLP (ADR-IC-007 §P1) and land in the
+# Grafana LGTM appliance's bundled Prometheus; this file materialises the ALERT
+# RULES the §P4 / §S2 commitments call for — not the metrics, which exist.
+#
+# Wiring: the appliance's Prometheus is pointed at this file via `rule_files:`
+# (see infra/grafana/README.md). On a deploy that fronts a standalone
+# Prometheus, drop this file into its `rule_files` glob unchanged.
+#
+# Metric-name note (OTLP → Prometheus): the engine emits these on the
+# `Babelstone.Engine` meter as snake_case-with-unit-suffix names
+# (BabelstoneAttributes.*Metric), so the OTLP-to-Prometheus translation is a
+# no-op on the names — `outbox_publish_lag_seconds` is read by exactly that
+# string (ADR-IC-004 §P4 contract). OTLP delta counters are exposed cumulative
+# with the `_total` suffix already present in the emitted name.
+#
+# Thresholds are deployment-time decisions (ADR-IC-004 §P4: "Alert threshold is
+# a deployment-time decision"); the values below are the ADR-named POC defaults.
+# Severity label convention: `severity: warning` | `severity: critical` — the
+# Alertmanager/Grafana contact-point routing keys off it.
+
+groups:
+  # ---------------------------------------------------------------------------
+  # Outbox publish lag — the canonical first-class SLI (ADR-IC-004 §P4).
+  # Metric: outbox_publish_lag_seconds (observable gauge, age in seconds of the
+  # OLDEST PENDING outbox row). Keeps climbing during an outage, so the Critical
+  # rule fires when the publisher is not running or Redpanda is unavailable —
+  # the exact failure mode the SLI exists to catch.
+  # ---------------------------------------------------------------------------
+  - name: outbox-publish-lag
+    rules:
+      - alert: OutboxPublishLagWarning
+        # >30s sustained: normal operations are degraded but within a typical
+        # Redpanda recovery window (ADR-IC-004 §P4 Warning).
+        expr: outbox_publish_lag_seconds > 30
+        for: 1m
+        labels:
+          severity: warning
+          sli: outbox_publish_lag
+          adr: ADR-IC-004
+        annotations:
+          summary: "Outbox publish lag >30s (oldest PENDING row)"
+          description: >-
+            outbox_publish_lag_seconds has exceeded 30s for 1m. The relay is
+            falling behind; events are accumulating as PENDING rows in the
+            outbox (the durability buffer). Investigate publisher throughput
+            and Redpanda health before this escalates to critical.
+          runbook: ../../runbooks/dr-recovery-drill.md
+      - alert: OutboxPublishLagCritical
+        # >5min: the publisher is not running or Redpanda is unavailable
+        # (ADR-IC-004 §P4 Critical). The buffer is approaching sizes that stress
+        # PostgreSQL write throughput / degrade the polling query.
+        expr: outbox_publish_lag_seconds > 300
+        for: 1m
+        labels:
+          severity: critical
+          sli: outbox_publish_lag
+          adr: ADR-IC-004
+        annotations:
+          summary: "Outbox publish lag >5min — publisher down or Redpanda unavailable"
+          description: >-
+            outbox_publish_lag_seconds has exceeded 300s for 1m. Per ADR-IC-004
+            §P4 this means the publisher is not running or Redpanda is
+            unavailable. The outbox buffer is growing unbounded; published
+            delivery has stalled. Page on-call.
+
+  # ---------------------------------------------------------------------------
+  # Outbox publish LATENCY — the per-row end-to-end delivery histogram (a G.1
+  # addition, NOT the §P4 backlog gauge). Metric: outbox_publish_latency_seconds
+  # (OTLP histogram → *_bucket/_count/_sum in Prometheus). A high p99 here means
+  # rows that DO publish take long; it complements the lag gauge (which captures
+  # the rows that are NOT publishing at all). This is the §S2 "sync-projection
+  # p99"-style latency SLI for the delivery path, on a metric that already
+  # exists.
+  # ---------------------------------------------------------------------------
+  - name: outbox-publish-latency
+    rules:
+      - alert: OutboxPublishLatencyP99High
+        # p99 publish latency >5s over 5m: delivery is slow even for rows that
+        # complete (distinct from the lag gauge, which catches stalled rows).
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (rate(outbox_publish_latency_seconds_bucket[5m]))
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          sli: outbox_publish_latency_p99
+          adr: ADR-IC-004
+        annotations:
+          summary: "Outbox publish p99 latency >5s"
+          description: >-
+            The 99th-percentile end-to-end publish latency
+            (outbox_publish_latency_seconds) has exceeded 5s over 5m. Rows are
+            publishing but slowly; check Redpanda produce latency and publisher
+            polling cadence.
+
+  # ---------------------------------------------------------------------------
+  # Inbox poison rate — consumer-side delivery health (G.2). Metric:
+  # inbox_poison_total (counter). A non-zero rate is a contract/registration
+  # gap (un-decodable Avro, unknown event type, bad framing) — distinct from
+  # inbox_tombstone_total (routine crypto-shred erasure traffic), which is
+  # deliberately NOT alerted.
+  # ---------------------------------------------------------------------------
+  - name: inbox-poison
+    rules:
+      - alert: InboxPoisonRecordsAppearing
+        # Any poison record in a 5m window warrants investigation — a healthy
+        # contract surface produces none.
+        expr: increase(inbox_poison_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          sli: inbox_poison
+          adr: ADR-IC-004
+        annotations:
+          summary: "Inbox poison records appearing"
+          description: >-
+            inbox_poison_total increased over the last 5m: one or more records
+            could not be processed (un-decodable Avro, unknown event type, bad
+            wire framing, or missing ce_id) and were stepped past. This signals
+            a contract or schema-registration gap. NOTE: tombstones
+            (inbox_tombstone_total, GDPR erasure) are counted separately and do
+            NOT fire this alert.
+
+  # ---------------------------------------------------------------------------
+  # §S2 Critical SLIs whose underlying metric is NOT YET EMITTED. Per the lane
+  # brief these rules are present but GUARDED — they are commented out, each
+  # carrying a TODO naming the emit that is pending and the bd/epic that owns it.
+  # Uncommenting is the one-line change once the metric lands; the threshold and
+  # severity are already decided here so the alert ships WITH the metric.
+  #
+  # These reference ADR-PC-005 §S2 (saga states, compensation rate, replication
+  # lag) and the document 06 "saga in HUMAN_INTERVENTION_REQUIRED" alert.
+  # ---------------------------------------------------------------------------
+  - name: saga-and-replication-pending-emit
+    rules: []
+    # TODO(emit-pending) — SAGA STATE: a saga sitting in a terminal-stuck state.
+    # Pending metric: a saga-state gauge/counter labelled by state, e.g.
+    # saga_state{state="HUMAN_INTERVENTION_REQUIRED"} (ADR-IC-003 saga
+    # orchestrator; document 06 names this exact alert). Owner: Epic E (saga
+    # runtime). Uncomment when emitted:
+    #
+    #   - alert: SagaHumanInterventionRequired
+    #     expr: saga_state{state="HUMAN_INTERVENTION_REQUIRED"} > 0
+    #     for: 0m
+    #     labels: { severity: critical, sli: saga_state, adr: ADR-PC-005 }
+    #     annotations:
+    #       summary: "Saga in HUMAN_INTERVENTION_REQUIRED"
+    #       description: >-
+    #         A saga has entered HUMAN_INTERVENTION_REQUIRED and cannot proceed
+    #         automatically (e.g. a constitution stuck after a debit). Operator
+    #         action required (document 06; ADR-PC-005 §S2).
+    #
+    # TODO(emit-pending) — COMPENSATION RATE: sustained compensation/rollback
+    # rate. Pending metric: a compensation counter, e.g.
+    # saga_compensation_total (tagged by process). Owner: Epic E. Uncomment when
+    # emitted:
+    #
+    #   - alert: SagaCompensationRateHigh
+    #     expr: sum(rate(saga_compensation_total[5m])) > 0.1
+    #     for: 10m
+    #     labels: { severity: warning, sli: compensation_rate, adr: ADR-PC-005 }
+    #     annotations:
+    #       summary: "Saga compensation rate elevated"
+    #       description: >-
+    #         Sustained compensation/rollback rate over 10m — an upstream failure
+    #         is driving sagas into compensation (ADR-PC-005 §S2).
+    #
+    # TODO(emit-pending) — POSTGRES REPLICATION LAG: the warm-standby falling
+    # behind (ADR-PC-005 §P1 RPO≈0 depends on the standby staying caught up).
+    # Pending metric: postgres replication-lag bytes/seconds. With synchronous
+    # replication the standby must stay current or commits BLOCK, so a rising
+    # lag is an early DR-degradation signal. Emit is a postgres_exporter /
+    # pg_stat_replication scrape (NOT engine code) — owner: M.4 follow-up /
+    # observability. Uncomment when the exporter is wired:
+    #
+    #   - alert: PostgresReplicationLagHigh
+    #     expr: pg_replication_lag_seconds > 10
+    #     for: 1m
+    #     labels: { severity: critical, sli: replication_lag, adr: ADR-PC-005 }
+    #     annotations:
+    #       summary: "Postgres standby replication lag >10s"
+    #       description: >-
+    #         The synchronous warm standby is falling behind (>10s). RPO≈0
+    #         (ADR-PC-005 §P1) is at risk; with synchronous_commit on, primary
+    #         commits may be blocking. Investigate the standby/network before a
+    #         site loss costs acknowledged events.
+    #
+    # TODO(emit-pending) — SYNC-PROJECTION p99: synchronous read-projection
+    # apply p99 (ADR-PC-005 §S2 / ADR-IC-005 read model). Pending metric: a
+    # projection-apply latency histogram, e.g. projection_apply_seconds. Owner:
+    # Epic F (projections runtime). The histogram_quantile shape mirrors the
+    # outbox-publish-latency rule above; ship with the metric.
