@@ -23,22 +23,6 @@
       {
         "files": ["**/*.{md,yml}"],
         "exclude": ["_site/**", "obj/**"]
-      },
-      {
-        "src": "..",
-        "files": ["README.md", "INSTALL.md"]
-      },
-      {
-        "src": "../docs",
-        "files": ["**/*.md"],
-        "dest": "docs"
-      }
-    ],
-    "resource": [
-      {
-        "src": "../docs",
-        "files": ["**/*.{svg,png,puml}"],
-        "dest": "docs"
       }
     ],
     "output": "_site",

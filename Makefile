@@ -102,10 +102,10 @@ docs-verify: ## Fail if the generated reference/ tree is stale vs its sources (A
 	@mise exec -- python3 scripts/docs-gen/generate.py --check
 
 ## ----------------------------------------------------------------------------
-## Docs site (ADR-PC-026 — DocFX: C# API reference + docs corpus on GitHub Pages)
+## Docs site (ADR-PC-026 §P3 — DocFX: C# API reference on GitHub Pages; corpus not stitched)
 ## ----------------------------------------------------------------------------
 
-docs-site: ## Build the DocFX site (C# XML-doc API reference + docs corpus) into docfx/_site (ADR-PC-026)
+docs-site: ## Build the DocFX site (C# XML-doc API reference; corpus not stitched, ADR-PC-026 §P3) into docfx/_site
 	@mise exec -- dotnet restore engine/Babelstone.slnx
 	@mise exec -- dotnet tool restore
 	@mise exec -- dotnet docfx docfx/docfx.json
