@@ -40,5 +40,12 @@
          "a Redpanda consumer like every other service"). The same Microsoft.Extensions
          line the engine relay/consumer use. -->
     <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <!-- The SHARED Babelstone telemetry surface (ADR-IC-007 Layer 1): the orchestrator opens
+         its saga-advance spans on the SAME Babelstone.Engine ActivitySource the engine uses —
+         one instrumentation scope across the estate, never a competing source — and tags them
+         with the shared babelstone.* structural keys (H.5). A small, leaf library with no DB or
+         Confluent surface, so referencing it keeps the orchestrator extraction-ready
+         (ADR-PC-019 §P2): Babelstone.Telemetry depends on nothing the orchestrator must shed. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
   </ItemGroup>
 </Project>

@@ -25,6 +25,11 @@ public interface ISagaCommandSink
     /// carry the identity trio (correlation/causation/new message id, ADR-IC-003 §P7) and NO
     /// PII (ADR-PC-004 §P2 — the durable bus carries references).
     /// </summary>
+    /// <param name="traceParent">The outbound W3C <c>traceparent</c> header (H.5) — the
+    /// advance span's context, so the downstream consumer threads its spans under this saga's
+    /// trace (ADR-IC-007 Layer 1). Operational, not PII; null when no tracer was listening
+    /// (no span to propagate). The implementer persists it on the outbox row for the drain to
+    /// re-emit as the outbound Kafka header.</param>
     Task EmitAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -32,7 +37,8 @@ public interface ISagaCommandSink
         string commandType,
         Guid causationMessageId,
         Guid? correlationId,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? traceParent = null);
 }
 
 /// <summary>
@@ -56,9 +62,10 @@ public sealed class RecordingCommandSink : ISagaCommandSink
         string commandType,
         Guid causationMessageId,
         Guid? correlationId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? traceParent = null)
     {
-        _emitted.Add(new EmittedCommand(processId, commandType, causationMessageId, correlationId));
+        _emitted.Add(new EmittedCommand(processId, commandType, causationMessageId, correlationId, traceParent));
         return Task.CompletedTask;
     }
 }
@@ -69,8 +76,11 @@ public sealed class RecordingCommandSink : ISagaCommandSink
 /// <param name="CommandType">The command name the state machine decided.</param>
 /// <param name="CausationMessageId">The triggering event's message id (ADR-IC-003 §P7).</param>
 /// <param name="CorrelationId">The trace correlation reference carried through.</param>
+/// <param name="TraceParent">The outbound W3C <c>traceparent</c> the emission propagates (H.5),
+/// or null when no tracer was listening. Operational, not PII.</param>
 public sealed record EmittedCommand(
     Guid ProcessId,
     string CommandType,
     Guid CausationMessageId,
-    Guid? CorrelationId);
+    Guid? CorrelationId,
+    string? TraceParent = null);
