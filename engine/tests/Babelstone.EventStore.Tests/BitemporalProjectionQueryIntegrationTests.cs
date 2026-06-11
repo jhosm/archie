@@ -229,6 +229,61 @@ public sealed class BitemporalProjectionQueryIntegrationTests(PostgresEventStore
         Assert.Null(belowLowerBound);
     }
 
+    // ---------- Fail-loud guard: overlapping belief intervals (ADR-PC-002 amendment 2026-06-11) ----------
+
+    [Fact]
+    public async Task AsOf_throws_when_two_belief_intervals_overlap_the_same_bitemporal_point()
+    {
+        // A CORRUPT belief store: two current-belief rows (superseded_at NULL) for the same
+        // (stream, kind), inserted directly to bypass the supersede-then-insert pair — exactly the
+        // state the partial UNIQUE index + the §P2 update should make impossible. Both rows cover
+        // the same (validTime, knownAt) point. A defensive read must FAIL LOUD here, not silently
+        // pick the most-recently-recorded one under a broken invariant (bd babelstone-zzi4).
+        await ResetAsync();
+        var streamId = Guid.NewGuid();
+
+        // Forge two beliefs whose intervals BOTH cover the probed point, with DISTINCT recorded_at
+        // so a naive ORDER BY recorded_at DESC LIMIT 1 would silently "pick the latest". The partial
+        // UNIQUE index projections_current_belief_uq only indexes superseded_at IS NULL rows, so two
+        // NULL-superseded rows would be rejected. Instead the EARLIER row carries a superseded_at far
+        // in the FUTURE (> knownAt): its half-open belief interval stays live at the probed point,
+        // yet it is invisible to the partial index — so the index accepts it alongside the genuinely
+        // current (NULL-superseded) later row. That is exactly the corrupt overlap the read must
+        // catch: two live belief intervals at one bitemporal point that the invariant forbids.
+        var earlier = RecordedThen;
+        var later = RecordedThen.AddDays(1);
+        var probeKnownAt = later.AddDays(1);
+        var farFutureSupersede = probeKnownAt.AddYears(10); // keeps the earlier interval live at probeKnownAt
+
+        await _store.WriteAsync(
+            Record(streamId, WrongPrincipal, earlier, sourceSequence: 0) with { SupersededAt = farFutureSupersede });
+        await _store.WriteAsync(
+            Record(streamId, TruePrincipal, later, sourceSequence: 1)); // current belief (superseded_at NULL)
+
+        // Both rows' belief intervals [recorded_at, superseded_at) cover probeKnownAt, and both
+        // world-time slices are open-ended, so two beliefs overlap the (ValidFrom, probeKnownAt)
+        // point — the read must throw rather than return one.
+        var ex = await Assert.ThrowsAsync<OverlappingBeliefIntervalException>(
+            () => _store.ReadAsOfAsync(streamId, Kind, validTime: ValidFrom, knownAt: probeKnownAt));
+
+        Assert.Equal(streamId, ex.StreamId);
+        Assert.Equal(Kind, ex.ProjectionKind);
+    }
+
+    [Fact]
+    public async Task AsOf_returns_the_single_belief_without_throwing_on_the_healthy_path()
+    {
+        // The normal single-belief case still returns deterministically — the guard fires only on a
+        // genuine overlap, never on the healthy one-belief read.
+        var streamId = await SeedCorrectedHistoryAsync();
+
+        var belief = await _store.ReadAsOfAsync(
+            streamId, Kind, validTime: new DateTimeOffset(2026, 4, 1, 0, 0, 0, TimeSpan.Zero), knownAt: CorrectedAt.AddDays(1));
+
+        Assert.NotNull(belief);
+        Assert.Equal(TruePrincipal, JsonSerializer.Deserialize<DepositPosition>(belief.StructuralPayload.Span)!.PrincipalCents);
+    }
+
     // ---------- #4 Forward projection: a future valid-time under the current belief ----------
 
     [Fact]

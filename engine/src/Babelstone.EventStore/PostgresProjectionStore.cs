@@ -108,11 +108,19 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
         // World-time covers validTime, belief-time covers knownAt; the belief interval is half-open
         // [recorded_at, superseded_at), so the row a correction superseded becomes invisible once
         // knownAt reaches the correction's transaction_time — this is what makes "as we knew then"
-        // differ from "as we know now" (§P2). At most one row matches per pair: at any single
+        // differ from "as we know now" (§P2). At most one row should match per pair: at any single
         // (validTime, knownAt) point exactly one belief is live (the partial UNIQUE index plus the
         // contiguous supersede-then-insert keep belief intervals non-overlapping for a covered
-        // valid-time), so ORDER BY recorded_at DESC + LIMIT 1 is a defensive deterministic guard,
-        // not a selection between competing rows.
+        // valid-time). ORDER BY recorded_at DESC + LIMIT 1 keeps the NORMAL single-belief read
+        // deterministic; but we deliberately do NOT trust LIMIT 1 to mask a BROKEN invariant.
+        //
+        // ADR-PC-002 amendment 2026-06-11 (bd babelstone-zzi4) — FAIL LOUD on overlapping belief
+        // intervals. The repo's posture is fail-loud, not silently-pick-the-latest. So we read up to
+        // TWO matching rows: if a second row also covers (validTime, knownAt), two belief intervals
+        // overlap for one bitemporal point — a corrupt belief store the supersede-then-insert pair
+        // should have made impossible — and a defensive read must surface it, not quietly return the
+        // most-recently-recorded one and let the corruption hide. One match (or none) is the healthy
+        // path; the LIMIT 2 costs nothing on it.
         const string sql = """
             SELECT stream_id, projection_kind, source_sequence, valid_from, valid_to, recorded_at,
                    superseded_at, structural_payload, pii_ciphertext
@@ -124,7 +132,7 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
               AND recorded_at <= @known_at
               AND (superseded_at IS NULL OR superseded_at > @known_at)
             ORDER BY recorded_at DESC, row_id DESC
-            LIMIT 1;
+            LIMIT 2;
             """;
 
         await using var connection = new NpgsqlConnection(connectionString);
@@ -141,7 +149,17 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
             return null;
         }
 
-        return await MapAsync(reader, ct);
+        // The first (recorded_at DESC) row is the deterministic single-belief answer.
+        var belief = await MapAsync(reader, ct);
+
+        // A second matching row means >1 belief interval overlaps this bitemporal point — a broken
+        // invariant. Fail loud rather than silently returning the latest under a corrupt store.
+        if (await reader.ReadAsync(ct))
+        {
+            throw new OverlappingBeliefIntervalException(streamId, projectionKind, validTime, knownAt);
+        }
+
+        return belief;
     }
 
     public async Task<IReadOnlyList<ProjectionRecord>> ReadHistoryOfAsync(
