@@ -1,5 +1,6 @@
 using Babelstone.EventStore;
 using Babelstone.Packs;
+using Npgsql;
 
 namespace Babelstone.Engine.Api;
 
@@ -65,7 +66,32 @@ public static class HostPackLoading
 
         // §P4 worklist: every pack version any live instance references (events.pack_version), UNION
         // the configured primary so a fresh instance with an empty event log still loads its pack.
-        var liveVersions = await registry.ListLivePackVersionsAsync(ct);
+        //
+        // This read runs at STARTUP and is fatal-on-failure (bd babelstone-5grf): a host that cannot
+        // read its worklist cannot know which packs a live instance references, so it must NOT boot
+        // and start serving against an unknown set — it fails loud, exactly like an unresolvable pin
+        // does below. A DB-connectivity failure here would otherwise escape as a bare NpgsqlException
+        // (no §P4 context); we translate it to a PackLoadException so the operator sees the same
+        // fail-loud framing — but it stays FATAL either way (the host exits non-zero). This is the
+        // decided posture: degrade-and-serve is wrong (it would silently skip pre-loading live packs,
+        // turning the first hot-path Resolve into a fail-loud miss long after boot).
+        IReadOnlyList<string> liveVersions;
+        try
+        {
+            liveVersions = await registry.ListLivePackVersionsAsync(ct);
+        }
+        catch (NpgsqlException ex)
+        {
+            logger.LogCritical(ex,
+                "FATAL: could not read the live pack-version worklist (events.pack_version) from the registry "
+                + "at startup — the host cannot determine which packs to eager-load and refuses to serve "
+                + "(ADR-PC-007 §P4).");
+            throw new PackLoadException(null, null,
+                "could not read the live pack-version worklist (events.pack_version) at startup — "
+                + "the host cannot determine which packs to eager-load and refuses to serve (ADR-PC-007 §P4).",
+                ex);
+        }
+
         var toLoad = new HashSet<string>(liveVersions, StringComparer.Ordinal) { primaryVersion };
 
         logger.LogInformation(

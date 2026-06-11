@@ -7,8 +7,8 @@ namespace Babelstone.Packs;
 /// silent fallback to a stale or bundled pack — a handler resolving against a half-loaded or
 /// wrong pack would emit wrong money, so loading either fully succeeds or throws this.
 /// </summary>
-public sealed class PackLoadException(string? packVersion, string? digest, string message)
-    : Exception($"Pack load failed for '{packVersion ?? "?"}'{(digest is null ? "" : $"@{digest}")}: {message}")
+public sealed class PackLoadException(string? packVersion, string? digest, string message, Exception? inner = null)
+    : Exception($"Pack load failed for '{packVersion ?? "?"}'{(digest is null ? "" : $"@{digest}")}: {message}", inner)
 {
     /// <summary>The pack version pin (<c>pt.YYYY.N</c>) being loaded, when known.</summary>
     public string? PackVersion { get; } = packVersion;

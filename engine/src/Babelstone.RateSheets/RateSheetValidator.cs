@@ -38,10 +38,19 @@ public sealed record RateSheetValidationResult(bool IsValid, IReadOnlyList<strin
 
 /// <summary>
 /// One <c>rate_ref</c> a product config asks the active rate sheet to price (surface §2.2,
-/// §2.5): the <c>(product_id, role)</c> pair a config's <c>role_selector.map</c> can resolve
-/// to. The config never pins a single principal — it relies on the sheet covering the whole
-/// supported principal range for that pair, which the cross-band exhaustiveness check already
-/// guarantees — so coverage reduces to "the sheet has this <c>(product, role)</c> with bands".
+/// §2.5). The surface words a <c>rate_ref</c> as resolving <c>(product, role, principal)</c>,
+/// but the principal is deliberately <em>not</em> part of the ref: a config's <c>rate_ref</c>
+/// is a <c>{ sheet, role_selector }</c> rule (surface §2.2) that pins a fact-to-<em>role</em>
+/// mapping, never a single principal. The principal arrives only at constitution time, from the
+/// deposit operation, and the <em>whole</em> supported principal range is covered by the
+/// validator's cross-band exhaustiveness check for the <c>(product, role)</c> pair (a present
+/// pair's bands are exhaustive over <c>[min, ∞)</c>). So the <c>(product, role, principal)</c>
+/// coverage the surface asks for is the product of two checks — this ref's <c>(product, role)</c>
+/// presence, and exhaustiveness over the principal axis — and the ref itself collapses to
+/// <c>(product_id, role)</c>. <b>Decision (bd babelstone-ktfx):</b> whole-range principal
+/// coverage is the intended §2.5 semantics; per-config principal pinning is explicitly NOT a
+/// thing in v1, so the principal axis stays out of the ref. See
+/// <see cref="RateSheetValidator.Covers"/> for the coverage primitive this implies.
 /// </summary>
 public sealed record RateRef(string ProductId, string Role);
 
@@ -128,8 +137,11 @@ public sealed class RateSheetValidator
     /// does not cover (surface §2.5 "At product-config deploy"), so the engine never accepts a
     /// state where the two artefacts disagree, whichever deploys first. Coverage is
     /// <c>(product, role)</c> presence with at least one band: a present pair's bands are
-    /// exhaustive over the principal range by the cross-band check, so no per-principal probe is
-    /// needed.
+    /// exhaustive over the WHOLE supported principal range by the cross-band check
+    /// (<see cref="ValidateBands"/>), so a covered pair prices every principal and no per-principal
+    /// probe is needed. This is exactly why the surface's <c>(product, role, principal)</c> coverage
+    /// is met by a <c>(product, role)</c> ref: the principal axis is whole-range, never per-config
+    /// (the §2.5 decision, bd babelstone-ktfx — see <see cref="RateRef"/>).
     /// </summary>
     public static bool Covers(RateSheetBody body, RateRef rateRef) =>
         body.Products.TryGetValue(rateRef.ProductId, out var roles)
@@ -161,11 +173,28 @@ public sealed class RateSheetValidator
 
         // (2) Every active config's rate_ref must be covered by the sheet — a config asking for a
         // (product, role) the sheet doesn't price would leave a constitution unpriceable, so it is
-        // rejected at deploy, never at first constitution.
+        // rejected at deploy, never at first constitution. Coverage is whole-range over the
+        // principal axis (the §2.5 decision, bd babelstone-ktfx): a present (product, role) pair's
+        // bands are exhaustive over [min, ∞), so a covered ref prices EVERY principal — there is no
+        // per-config principal to pin, and so none to check.
         foreach (var config in activeConfigs)
         {
             foreach (var rateRef in config.RateRefs)
             {
+                // Cross-check the ref's product against the config's own product. A config's
+                // rate_ref points at the SAME product the config configures (surface §2.2: the
+                // rate_ref lives inside the product config and resolves that product's role); a ref
+                // naming a different product_id is a malformed config, caught here at deploy rather
+                // than silently mispricing at constitution.
+                if (!string.Equals(rateRef.ProductId, config.ProductId, StringComparison.Ordinal))
+                {
+                    diagnostics.Add(
+                        $"Active config '{config.ProductId}' has a rate_ref naming a different product " +
+                        $"'{rateRef.ProductId}'; a config's rate_ref must reference its own product_id " +
+                        "(surface §2.2/§2.5).");
+                    continue;
+                }
+
                 if (!Covers(body, rateRef))
                 {
                     diagnostics.Add(

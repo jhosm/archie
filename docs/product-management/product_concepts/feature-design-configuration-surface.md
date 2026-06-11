@@ -129,6 +129,8 @@ At product-config deploy:
 
 The two artefacts can deploy in either order, but the engine never accepts a state where the two disagree. This is the symmetric invariant.
 
+**On the principal axis of a `rate_ref`.** §2.2's `rate_ref` is a `{ sheet, role_selector }` rule — it pins a fact-to-**role** mapping, never a single principal. The `(product, role, principal)` coverage above is therefore the product of two checks, not one ref carrying a principal: the ref names `(product, role)`, and the **whole** supported principal range is covered by the "non-overlapping and exhaustive over the supported principal range" band check for that pair. So the engine's `rate_ref` collapses to `(product_id, role)`, principal coverage is whole-range, and there is no per-config principal pinning in v1 — a covered `(product, role)` prices every principal a constitution can present. A config's `rate_ref` references *its own* `product_id` (the ref lives inside the product config); a ref naming a different product is a malformed config, rejected at deploy.
+
 ### 2.6 Lifecycle
 
 Rate sheets are forward-only and versioned. Once a sheet is published, it is never edited; corrections ship as a new version with a new effective-from. The schema supports sub-second timestamp granularity (rare in retail, common in FX-adjacent products) but allows arbitrarily slow cadence at the other end — a bank that publishes one sheet a year is unusual but not violating the model. Typical PT retail cadence is weekly or biweekly at midnight on a published day. Rollback of a wrong-rate publication uses the same forward-only mechanism plus an out-of-band compensation flow for instances that constituted under the bad sheet (see Q-J below).

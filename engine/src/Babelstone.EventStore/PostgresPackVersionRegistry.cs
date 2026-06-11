@@ -53,13 +53,26 @@ public sealed class PostgresPackVersionRegistry(string connectionString) : IPack
         return new PackRef(reader.GetString(0), reader.GetString(1), reader.GetString(2));
     }
 
+    // The UNIQUE (pack_version) constraint from migration 0006: a pack_version string is unique
+    // across the whole table, independent of pack_id. The INSERT's ON CONFLICT clause targets only
+    // the (pack_id, pack_version) PRIMARY KEY, so a collision on THIS constraint — a DIFFERENT
+    // pack_id reusing an existing pack_version — is NOT absorbed and raises 23505 against it. We
+    // match the constraint by NAME (not a blanket 23505) so an unrelated future unique constraint
+    // does not get silently re-interpreted as a duplicate-pin conflict.
+    private const string VersionUniqueConstraint = "pack_versions_version_uq";
+
     /// <summary>
     /// Pins a pack version to its OCI coordinates (ADR-PC-007 §P3) — the curation write the
     /// operator/deploy role performs, distinct from the runtime role's read-only resolve.
     /// Idempotent on re-pinning the SAME (ref, digests) triple; a conflicting re-pin of an
     /// existing <c>(pack_id, pack_version)</c> to DIFFERENT coordinates is rejected as a
     /// <see cref="DuplicatePackVersionException"/> rather than silently overwriting a pin a
-    /// live instance may already be bound to.
+    /// live instance may already be bound to. A DIFFERENT <c>pack_id</c> trying to claim an
+    /// already-pinned <c>pack_version</c> string (the cross-<c>pack_id</c> collision against the
+    /// <c>UNIQUE (pack_version)</c> constraint, migration 0006) is likewise a
+    /// <see cref="DuplicatePackVersionException"/>: the per-instance pin keys on
+    /// <c>pack_version</c> alone (ADR-PC-009), so two packs sharing a version string is the exact
+    /// ambiguity the constraint — and this mapping — forbid.
     /// </summary>
     public async Task RegisterAsync(
         string packId, string packVersion, PackRef packRef, string registeredBy, CancellationToken ct = default)
@@ -88,7 +101,21 @@ public sealed class PostgresPackVersionRegistry(string connectionString) : IPack
         command.Parameters.AddWithValue("signature_digest", packRef.SignatureDigest);
         command.Parameters.AddWithValue("registered_by", registeredBy);
 
-        var inserted = await command.ExecuteNonQueryAsync(ct);
+        int inserted;
+        try
+        {
+            inserted = await command.ExecuteNonQueryAsync(ct);
+        }
+        catch (PostgresException e)
+            when (e.SqlState == PostgresErrorCodes.UniqueViolation
+                  && string.Equals(e.ConstraintName, VersionUniqueConstraint, StringComparison.Ordinal))
+        {
+            // A different pack_id is trying to claim a pack_version string already pinned to another
+            // pack_id. The ON CONFLICT clause (keyed on the PK) does not cover this constraint, so it
+            // surfaces here — mapped to the same typed conflict, NEVER an overwrite or a raw 23505.
+            throw new DuplicatePackVersionException(packId, packVersion, e);
+        }
+
         if (inserted == 1)
         {
             return;
@@ -129,13 +156,19 @@ public sealed class PostgresPackVersionRegistry(string connectionString) : IPack
 }
 
 /// <summary>
-/// Raised when a pack-version pin is re-registered with coordinates that differ from the
-/// existing row (ADR-PC-007 §P3). A pin is immutable once a live instance binds to it
-/// (ADR-PC-009): the registry refuses to silently rewrite a digest a constituted instance
-/// may already resolve against. Re-registering the SAME triple is idempotent and does not throw.
+/// Raised when a pack-version pin conflicts with an existing row (ADR-PC-007 §P3): either a re-pin
+/// of an existing <c>(pack_id, pack_version)</c> to DIFFERENT coordinates, or a DIFFERENT
+/// <c>pack_id</c> claiming a <c>pack_version</c> string already pinned to another pack (the
+/// cross-<c>pack_id</c> collision against <c>UNIQUE (pack_version)</c>). A pin is immutable once a
+/// live instance binds to it (ADR-PC-009): the registry refuses to silently rewrite a digest a
+/// constituted instance may already resolve against, and refuses to let two packs share a version
+/// string the per-instance pin keys on. Re-registering the SAME triple is idempotent and does not
+/// throw.
 /// </summary>
-public sealed class DuplicatePackVersionException(string packId, string packVersion)
-    : Exception($"Pack version '{packVersion}' (pack '{packId}') is already pinned to different OCI coordinates; a pin is immutable (ADR-PC-007 §P3).")
+public sealed class DuplicatePackVersionException(string packId, string packVersion, Exception? inner = null)
+    : Exception(
+        $"Pack version '{packVersion}' (pack '{packId}') conflicts with an existing pin — either a re-pin to different OCI coordinates or another pack already owns this version string; a pin is immutable (ADR-PC-007 §P3, ADR-PC-009).",
+        inner)
 {
     public string PackId { get; } = packId;
 
