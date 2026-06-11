@@ -30,14 +30,14 @@ The brief is explicit that the engine does **not** redesign the integration back
 
 Diagrams use the [C4-PlantUML](https://github.com/plantuml-stdlib/C4-PlantUML) macro set. Because **GitHub does not render PlantUML** (it renders only Mermaid natively), each diagram is **pre-rendered to SVG and committed** next to its source, and the Markdown embeds that SVG so it displays on github.com. The workflow:
 
-- **Source of truth** is a `.puml` file under [`diagrams/`](./diagrams). The include uses the PlantUML standard-library short form (`!include <C4/...>`), which needs no network access on a recent PlantUML; a commented remote-include fallback is kept in each `.puml` for renderers lacking the bundled stdlib.
+- **Source of truth** is a `.puml` file under [`diagrams/`](https://github.com/jhosm/babelstone/tree/main/docs/product-management/product_concepts/diagrams). The include uses the PlantUML standard-library short form (`!include <C4/...>`), which needs no network access on a recent PlantUML; a commented remote-include fallback is kept in each `.puml` for renderers lacking the bundled stdlib.
 - **Committed artefact** is the rendered `.svg` beside it. Regenerate after any edit:
   ```bash
   plantuml -tsvg docs/product-management/product_concepts/diagrams/*.puml
   ```
 - **Prerequisites** (one-time): a JDK, Graphviz (`dot`), and PlantUML. Full setup in [`INSTALL.md`](../../../INSTALL.md) — e.g. `brew install graphviz plantuml`.
 
-The SVG is rendered output, never hand-edited; if an SVG and its `.puml` disagree, re-render. Drift between the two is guarded by the [`.githooks/pre-commit`](../../../.githooks/pre-commit) hook, which re-renders any staged `.puml` and stages the resulting SVG (activation in [`INSTALL.md`](../../../INSTALL.md)).
+The SVG is rendered output, never hand-edited; if an SVG and its `.puml` disagree, re-render. Drift between the two is guarded by the [`.githooks/pre-commit`](https://github.com/jhosm/babelstone/blob/main/.githooks/pre-commit) hook, which re-renders any staged `.puml` and stages the resulting SVG (activation in [`INSTALL.md`](../../../INSTALL.md)).
 
 ---
 

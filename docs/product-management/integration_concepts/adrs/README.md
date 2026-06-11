@@ -145,4 +145,4 @@ ADR numbers are sequential and never reused. When picking a new number, check bo
 
 ### Cross-linking
 
-Links from one ADR to another use relative paths (`./ADR-NNN-…md`). Links from an ADR back to a concept document use `../NN-name.md`. This matches the convention in [CLAUDE.md](../../../../CLAUDE.md).
+Links from one ADR to another use relative paths (`./ADR-NNN-…md`). Links from an ADR back to a concept document use `../NN-name.md`. This matches the convention in [CLAUDE.md](https://github.com/jhosm/babelstone/blob/main/CLAUDE.md).

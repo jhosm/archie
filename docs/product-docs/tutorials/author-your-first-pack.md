@@ -79,7 +79,7 @@ summary of our change. (For what each manifest field means and which values are
 legal, see the generated
 [pack-format reference](../../product-management/reference/pack-format/README.md)
 and its CUE source,
-[`pack.cue`](../../../contracts/cue/pack/pack.cue) — we link to those rather
+[`pack.cue`](https://github.com/jhosm/babelstone/blob/main/contracts/cue/pack/pack.cue) — we link to those rather
 than restate them, so they can never go stale against this page.)
 
 ---

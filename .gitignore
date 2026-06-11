@@ -40,3 +40,5 @@ __pycache__/
 # Build output — DocFX site (ADR-PC-026): generated API metadata + rendered site
 /docfx/api/
 /docfx/_site/
+# DocFX structured warning log consumed by the §P6 link-gate (CI-only artifact)
+/docfx/build.log.json

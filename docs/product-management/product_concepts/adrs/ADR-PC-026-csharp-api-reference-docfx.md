@@ -7,7 +7,7 @@
 | Deciders | jhosm |
 | Shape | Tool-selection |
 | Common criteria | [ADR-IC-000](../../integration_concepts/adrs/ADR-IC-000-common-evaluation-criteria.md) (reused per [ADR-PC-000](./ADR-PC-000-namespace-and-contract-shape-framework.md) D2) |
-| Depends on | [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) (.NET 10 / mise toolchain pin), [ADR-PC-022](./ADR-PC-022-product-documentation-architecture.md) (documentation architecture this sits beside), [ADR-IC-008](../../integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md) (the GitHub-Pages static-site precedent) |
+| Depends on | [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) (.NET 10 / mise toolchain pin), [ADR-PC-022](./ADR-PC-022-product-documentation-architecture.md) (documentation architecture this sits beside), [ADR-IC-008](../../integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md) (the GitHub-Pages static-site precedent) |
 | Resolves | bd `babelstone-sfnt.18` (Epic R.18) |
 
 ## Context
@@ -28,7 +28,7 @@ Neither covers the **C# API surface**: a different source (XML doc comments in c
 different output (a browsable HTML site), and different drift semantics (the compiler
 itself validates doc comments against the code they annotate, so a separate byte-drift
 gate adds nothing). This ADR selects the renderer/publisher for that third surface and
-fixes the disciplines around it. [ADR-IC-008](../../integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md)
+fixes the disciplines around it. [ADR-IC-008](../../integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md)
 already established the in-house pattern: a generated static site, built in CI, deployed
 to GitHub Pages, zero runtime cost.
 
@@ -55,7 +55,7 @@ Candidates evaluated:
 | Doxygen | GPL-2 (tool licence does not encumber generated output), free | Pass |
 
 GitHub Pages hosting is free on this public repo (the same footing
-[ADR-IC-008](../../integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md) §S1
+[ADR-IC-008](../../integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md) §S1
 accepted for EventCatalog).
 
 #### F2 · Regulatory fit (GDPR / DORA / PSD2)
@@ -144,10 +144,34 @@ Markdown-corpus stitching are weak for a modern docs site. **Decisive: second-cl
    workflow only deploys to the existing slot.
 5. **§P5 — Single-Pages-slot composition.** A repo has one GitHub Pages site. This
    workflow owns the slot; when the EventCatalog site
-   ([ADR-IC-008](../../integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md),
+   ([ADR-IC-008](../../integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md),
    Epic G.4) lands, it composes into the *same* artifact under a subpath (e.g.
    `/events/`) inside this workflow — never a second `deploy-pages` workflow racing for
    the slot.
+
+6. **§P6 — The build lane fails on a broken site link or dead bookmark.** A broken
+   relative link or a dead heading anchor would otherwise ship a silent 404 on the
+   published site. The corpus's baseline link warnings were triaged first: links that
+   escape the DocFX content root (the §P3 stitched set — `docs/**`, `README.md`,
+   `INSTALL.md`, `docfx/**`) to repo files DocFX does not publish (source under
+   `engine/`, `.github/` workflows, `CLAUDE.md`/`AGENTS.md`, `Makefile`, `packs/`,
+   `contracts/`, `.githooks/`, bare directories — inline *and* reference-style links)
+   are rewritten to **stable absolute GitHub `blob`/`tree` URLs** so they resolve from
+   the published site; the two in-corpus ADR-directory links repoint to those folders'
+   in-site `README.md`; four stale `ADR-IC-008` links here gain the `retired/` segment
+   the supersession move left off; and two dead in-page bookmarks in
+   [04 §1/§4](../04-open-questions.md) gain explicit `<a id>` anchors (DocFX harvests
+   every element's `id`/`name` as a registered bookmark, and GitHub honours the same
+   raw-HTML anchor, so one anchor string satisfies both renderers). The gate itself is
+   **scoped to the link/bookmark warning codes**, not DocFX's blunt `--warningsAsErrors`:
+   `docs-site.yml` runs `docfx … -l build.log.json --logLevel warning` and a small
+   `docfx-link-gate.py` fails the step on any `InvalidFileLink` / `InvalidBookmark` /
+   `InvalidInternalBookmark` record. The blunt flag is wrong here because, under the
+   mise-pinned SDK ([ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md)), DocFX
+   2.78.5's Roslyn metadata pass emits **environment-only** warnings — `FailedToLoadAnalyzer`
+   (the SDK's Razor source-generator is newer than docfx's bundled compiler) and
+   `Duplicate source file` for the excluded analyzer projects — that say nothing about
+   link integrity and must not fail the lane. This closes the Residual-risks item below.
 
 Rejected: MkDocs (hand-rolling the XML-doc ingester), Docusaurus (no XML-doc path, MDX
 friction), Doxygen (second-class C#) — details above.
@@ -170,7 +194,10 @@ caps) — a docs site is far inside them today, but they are GitHub's to move; t
 invariant is review-enforced, not mechanically gated (listed as a Gap below); DocFX
 warnings (broken site links) do not fail the build yet — tightening to
 `--warningsAsErrors` is a candidate once the corpus's external-file links are
-triaged.
+triaged. *Revised 2026-06-11: resolved — the external-file links were triaged and the
+build lane now fails on broken site links / dead bookmarks (§P6), via a link/bookmark-
+scoped JSON-log gate rather than the blunt `--warningsAsErrors` (which would also trip
+on the mise-SDK-vs-docfx Roslyn analyzer-load warnings).*
 
 ## Verifiable commitments
 
@@ -184,3 +211,4 @@ inline table here rather than in the engine-focused
 | 1 | The DocFX site builds green from current sources — API metadata over `Babelstone.slnx` + the stitched corpus (§P1/§P3). | CI (`docs-site.yml` build lane, path-scoped on its inputs) | `DOCS_SITE_BUILDS` | Live (lands with this ADR's PR) |
 | 2 | XML doc comments cannot rot against the code they annotate: malformed/unresolvable doc references fail the build (§P2). | compiler (`TreatWarningsAsErrors` + `GenerateDocumentationFile`, every `dotnet build` incl. the ci.yml engine lane) | `DOCS_XMLDOC_NO_ROT` | Live (lands with this ADR's PR) |
 | 3 | One Pages deploy workflow: EventCatalog (G.4) composes into this artifact under a subpath, never a second `deploy-pages` (§P5). | review discipline (PR review + this ADR) | `DOCS_PAGES_SINGLE_SLOT` | Gap (no mechanical gate; revisit when G.4 lands) |
+| 4 | A broken site link or dead bookmark fails the build — the `docs-site.yml` lane gates on DocFX's `InvalidFileLink`/`InvalidBookmark` JSON-log codes via `docfx-link-gate.py` (§P6). | CI (`docs-site.yml` build lane) | `DOCS_SITE_NO_BROKEN_LINKS` | Live (lands with this PR) |

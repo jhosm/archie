@@ -13,6 +13,7 @@
 
 ## §§1–8: Brief-Level Decisions
 
+<a id="q1-legacy-coexistence-targets"></a>
 ### 1. Legacy Coexistence Targets — **AGENDA SPECIFIED; PENDING LEGACY INVENTORY MEETING**
 
 **Context.** The strangler-fig motion in [01 §6](./01-product-architecture.md) and [02 §3](./02-v1-scope-term-deposits.md) requires first-class coexistence with the operating bank's legacy core. The open question is **which specific legacy systems the engine ships first-class adapters for**, vs which are handled bespoke through customer-built adapters on top of the ACL ([integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md)). The decision shapes the v1 engineering effort: a productised connector for the dominant legacy system shortens v1 onboarding; a generic ACL interface keeps the engine portable but pushes work to the integration side. The gap is not closable by architectural reasoning — only the bank knows its estate.
@@ -51,6 +52,7 @@ The implementation choice (PostgreSQL temporal extensions vs XTDB / datomic-styl
 
 ---
 
+<a id="q4-configurability-depth"></a>
 ### 4. Configurability Depth — **RESOLVED**
 
 **Resolution.** The three options of the original framing — template-only, DSL-only, or both — are all rejected. The configuration model is **typed family schemas with variants, evolving under coarse-start fine-drift**. The schema is the boundary: what the schema permits is in-scope at the variant layer (weekly cadence); what it does not permit waits for schema fine-drift (quarterly) or a new primitive (months) or is declined at the roadmap layer. There is no DSL escape hatch — that path collapses the cadence-separation invariant on which the agility wedge depends.
@@ -90,7 +92,7 @@ Three credible answers:
 - **Customer master migrates to a new owning system.** Could be a CRM platform the bank already runs, a new dedicated customer-master service, or absorbed into a CDP. Requires a customer-side cutover analogous to a product-family cutover, with its own coexistence period and its own reconciliation flows.
 - **The engine absorbs customer master.** Out of scope as currently framed ([00 §4](./00-product-vision.md) puts KYC and onboarding upstream of the engine). Re-opening expands engine scope materially and unwinds part of the wedge — the engine becomes "core banking + customer master" rather than "product engine."
 
-The decision is structurally peer to [§1](#1-legacy-coexistence-targets): both shape what the engine can unilaterally retire and what dependencies survive past the v4-equivalent cutover. Folding it into one of the existing design notes is premature because none of them claim customer-master as a topic.
+The decision is structurally peer to [§1](#q1-legacy-coexistence-targets): both shape what the engine can unilaterally retire and what dependencies survive past the v4-equivalent cutover. Folding it into one of the existing design notes is premature because none of them claim customer-master as a topic.
 
 **Unblocked by.** A customer-master architecture review with whoever owns customer data today (typically a CRM or CIF function inside the bank), plus a position from the channels function on what they can tolerate. Output: a stated position in [01](./01-product-architecture.md) or a new companion design note on customer-master coexistence, plus a corresponding answer at Q-AJ (end-of-coexistence trigger) and an unblocking input for Q-BA (cutover mechanism).
 
@@ -116,7 +118,7 @@ Concretely: a term deposit constituted 2026-09-01 under PT pack v1.3 (28% IRS wi
 - **Float-per-flow.** Each flow looks up the pack effective on the flow's value-date. Matches typical regulatory expectation (a withholding event is taxed under the rules in force on the event date). Costs: harder to reproduce historical state; replay must reconstruct pack-version-at-flow-date, which requires the pack registry to be queryable bitemporally as well.
 - **Per-primitive policy.** Some primitives pin (cash-flow shape, day-count — these *define* the instrument); others float (withholding rate, regulatory disclosure templates — these track regulation in force). Probably correct in shape; the categorisation is detailed pack-vocabulary design work and the boundary may itself shift under regulator pressure.
 
-This interacts with [§4](#4-configurability-depth) (configurability depth): the pack vocabulary has to be able to *express* which primitives pin and which float, and that's not yet in the surface design. It also interacts with Q-N (breaking-change opt-in mechanics) — a primitive that floats automatically is, in effect, a non-opt-in pack change for affected flows.
+This interacts with [§4](#q4-configurability-depth) (configurability depth): the pack vocabulary has to be able to *express* which primitives pin and which float, and that's not yet in the surface design. It also interacts with Q-N (breaking-change opt-in mechanics) — a primitive that floats automatically is, in effect, a non-opt-in pack change for affected flows.
 
 **Unblocked by.** A pack-design session with the regulatory and tax leads inside the operating bank, plus a worked example for each PT pack primitive (day-count, withholding rate, TANB/TANL split, BdP reporting schema, disclosure templates). Output: a per-primitive pin-or-float annotation in the PT pack manifest ([surface §3.4](./feature-design-configuration-surface.md)) and an addendum to [03 §Pack Maintenance](./03-roadmap.md) stating the per-primitive policy as part of the pack contract.
 

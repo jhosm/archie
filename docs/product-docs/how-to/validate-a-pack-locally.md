@@ -35,9 +35,9 @@ version key (`<pack_id>.<pack_version>`), and the validator checks that the
 directory name matches the manifest — a mismatch is a failure, not a warning.
 
 This runs `packs/pack.sh validate` (see
-[`packs/pack.sh`](../../../packs/pack.sh)): it stages a copy of your pack,
+[`packs/pack.sh`](https://github.com/jhosm/babelstone/blob/main/packs/pack.sh)): it stages a copy of your pack,
 copies in the digest-pinned family schemas from
-[`contracts/cue/`](../../../contracts/cue/README.md) (your committed pack does
+[`contracts/cue/`](https://github.com/jhosm/babelstone/blob/main/contracts/cue/README.md) (your committed pack does
 **not** carry `schemas/` — that is added at build), and runs `cue vet` over the
 manifest and every data file. It is fully offline.
 
@@ -109,9 +109,9 @@ Reach for the one that matches what you changed.
 | **Your pack's data** (a primitive, a parameter, a rate-sheet ref) | `make pack-validate PACK=…` | Your YAML is sound against the schemas + pack bounds (depths 1–4). |
 | **A family schema** (`.cue`) — or you want to confirm the schema is itself sound | `make contracts-check` | The schema compiles, is canonically formatted, and accepts/rejects its fixture corpus. **No pack data involved.** |
 
-`make contracts-check` runs [`contracts/cue/check.sh`](../../../contracts/cue/README.md):
+`make contracts-check` runs [`contracts/cue/check.sh`](https://github.com/jhosm/babelstone/blob/main/contracts/cue/README.md):
 it has no pack and resolves no pack-bound primitive. It exercises every fixture
-under [`contracts/cue/testdata/term-deposit/`](../../../contracts/cue/testdata/term-deposit/)
+under [`contracts/cue/testdata/term-deposit/`](https://github.com/jhosm/babelstone/tree/main/contracts/cue/testdata/term-deposit)
 — each `valid/` file must be accepted, each `invalid/` file must be rejected.
 
 As a config author you will usually run `make pack-validate`. Run
@@ -138,7 +138,7 @@ string, not a pack-bound primitive reference.
 ### The fixture catalogue is your worked list of "what each rule rejects"
 
 The single best reference for failure messages is the invalid-fixture directory:
-[`contracts/cue/testdata/term-deposit/invalid/`](../../../contracts/cue/testdata/term-deposit/invalid/).
+[`contracts/cue/testdata/term-deposit/invalid/`](https://github.com/jhosm/babelstone/tree/main/contracts/cue/testdata/term-deposit/invalid).
 Each file isolates **one** rule violation, named in its filename and explained in
 a comment at the top — for example `unknown-field.yaml` (the `promo_flag` escape
 hatch), `unbound-day-count.yaml` (the `"Act/365"` free string),

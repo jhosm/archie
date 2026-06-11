@@ -2,7 +2,7 @@
 
 This is the documentation for **people using babelstone** — starting with the **config author**: the product manager, treasury/ALM, or compliance owner at an adopting bank who writes regulatory **packs** (`packs/pt.YYYY.N/`) and deploys **rate sheets**. You write YAML data and run validation; you do not work on the engine's source.
 
-It is deliberately separate from the internal design corpus under [`../product-management/`](../product-management/), which is the engine team's concern-axis series and decision records (ADRs). That corpus answers *"what did we decide and why"*; this set answers *"how do I get my pack right."*
+It is deliberately separate from the internal design corpus under [`../product-management/`](https://github.com/jhosm/babelstone/tree/main/docs/product-management), which is the engine team's concern-axis series and decision records (ADRs). That corpus answers *"what did we decide and why"*; this set answers *"how do I get my pack right."*
 
 It is organised by the [Diátaxis](https://diataxis.fr) framework.
 

@@ -7,7 +7,7 @@ product families are regulatorily allowed to use each one*.
 
 You will: add the entry, point it at an engine formula, declare its
 permitted-set, and validate locally. The worked example throughout is the
-PT term-deposit pack, [`pt.2026.1`](../../../packs/pt.2026.1/).
+PT term-deposit pack, [`pt.2026.1`](https://github.com/jhosm/babelstone/tree/main/packs/pt.2026.1).
 
 **Before you start, know this:** `permitted_for` is **pack-declared regulatory
 law**, not a validator default. It is the lever that makes the engine reject a
@@ -32,7 +32,7 @@ act_360:
 ```
 
 The authoritative field-by-field shape (`#DayCounts`) is the
-[`pack.cue`](../../../contracts/cue/pack/pack.cue) schema, rendered in the
+[`pack.cue`](https://github.com/jhosm/babelstone/blob/main/contracts/cue/pack/pack.cue) schema, rendered in the
 generated [pack-format reference](../../product-management/reference/pack-format/README.md).
 Do not copy a field table from elsewhere — link to those and you will never go
 stale.
@@ -57,12 +57,12 @@ pack — an unimplemented `formula_ref` throws there, never at validate time.
 So the authoritative list of implemented day-count primitives lives in **engine
 source**, in two places:
 
-- [`Babelstone.Packs/VerifiedPack.cs`](../../../engine/src/Babelstone.Packs/VerifiedPack.cs)
+- [`Babelstone.Packs/VerifiedPack.cs`](https://github.com/jhosm/babelstone/blob/main/engine/src/Babelstone.Packs/VerifiedPack.cs)
   — `PackDayCount.ToConvention()` is the `formula_ref → convention` bridge: a
   `switch` whose cases are exactly the `formula_ref` strings the engine accepts.
   Anything not in it throws (*"…has no engine convention; refusing to default
   silently"*).
-- [`Babelstone.FinancialMath/DayCount.cs`](../../../engine/src/Babelstone.FinancialMath/DayCount.cs)
+- [`Babelstone.FinancialMath/DayCount.cs`](https://github.com/jhosm/babelstone/blob/main/engine/src/Babelstone.FinancialMath/DayCount.cs)
   — the `DayCountConvention` enum and the math behind each.
 
 Today that switch accepts exactly three:
@@ -199,12 +199,12 @@ A variant naming a `permitted_for: []` convention will fail here with the
 passes. Two fixture sets show the method:
 
 - The CUE schema fixtures under
-  [`contracts/cue/testdata/term-deposit/`](../../../contracts/cue/testdata/term-deposit/)
+  [`contracts/cue/testdata/term-deposit/`](https://github.com/jhosm/babelstone/tree/main/contracts/cue/testdata/term-deposit)
   — e.g. `invalid/unbound-day-count.yaml`, a free-string `day_count: "Act/365"`
   rejected at **depth 1** (it is not a pack-bound reference at all — a
   *binding-shape* failure).
 - The validator fixtures under
-  [`pack-validate/testdata/term-deposit/`](../../../pack-validate/testdata/term-deposit/)
+  [`pack-validate/testdata/term-deposit/`](https://github.com/jhosm/babelstone/tree/main/pack-validate/testdata/term-deposit)
   — e.g. `invalid/depth4-act365-deposit.yaml`, a *bound* `pt.act_365` the pack
   carries (depth 2 passes) but PT regulation forbids for a deposit, so **depth
   4** rejects it. That is the permitted-set rejection this page is about, and it

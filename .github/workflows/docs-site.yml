@@ -52,9 +52,19 @@ jobs:
       - name: Restore solution (DocFX metadata needs restored projects)
         run: dotnet restore engine/Babelstone.slnx
       - name: Build DocFX site
+        # Fail the lane on a broken site link or dead bookmark (ADR-PC-026 §P6): a
+        # new corpus link that escapes the DocFX content root, or a dead heading
+        # anchor, now breaks this build instead of silently shipping a 404 on the
+        # published site. DocFX's plain --warningsAsErrors is too blunt — under the
+        # mise-pinned SDK its Roslyn metadata pass also emits environment-only
+        # warnings (FailedToLoadAnalyzer: the SDK's Razor source-generator is newer
+        # than docfx 2.78.5's bundled compiler; Duplicate-source-file for the
+        # excluded analyzer projects) that have nothing to do with link integrity.
+        # So we scope the gate to the link/bookmark warning codes via the JSON log.
         run: |
           dotnet tool restore
-          dotnet docfx docfx/docfx.json
+          dotnet docfx docfx/docfx.json -l docfx/build.log.json --logLevel warning
+          python3 .github/scripts/docfx-link-gate.py docfx/build.log.json
       - name: Upload Pages artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v5

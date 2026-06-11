@@ -203,8 +203,8 @@ in mind, every boundary in the configuration surface will make sense.
 [adr007]: ../../product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md
 [adr008]: ../../product-management/product_concepts/adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md
 [ref]: ../../product-management/reference/README.md
-[rateref]: ../../../packs/pt.2026.1/rate-sheet-refs/deposits-pt.yaml
-[constants]: ../../../packs/pt.2026.1/parameters/constants.yaml
+[rateref]: https://github.com/jhosm/babelstone/blob/main/packs/pt.2026.1/rate-sheet-refs/deposits-pt.yaml
+[constants]: https://github.com/jhosm/babelstone/blob/main/packs/pt.2026.1/parameters/constants.yaml
 [howto-band]: ../how-to/add-a-rate-band.md
 [howto-primitive]: ../how-to/add-a-day-count-primitive.md
 [home]: ../README.md

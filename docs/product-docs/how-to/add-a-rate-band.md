@@ -32,7 +32,7 @@ band is open-ended, written with `to: null`. Bands are half-open intervals
 `[from, to)` — the lower bound is **inclusive**, the upper bound **exclusive** — so a
 principal exactly equal to a band's `to` falls in the *next* band up
 (`RateSheetBody.Covers`: `principal ≥ from && principal < to`). The authoritative shape lives in
-[`RateSheetBody.cs`](../../../engine/src/Babelstone.RateSheets/RateSheetBody.cs) and is
+[`RateSheetBody.cs`](https://github.com/jhosm/babelstone/blob/main/engine/src/Babelstone.RateSheets/RateSheetBody.cs) and is
 recorded in [ADR-PC-008 §P1](../../product-management/product_concepts/adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md);
 the worked example shape is in [config surface §2.2](../../product-management/product_concepts/feature-design-configuration-surface.md).
 Don't restate those tables — link to them.
@@ -92,7 +92,7 @@ Exactly one band per `(product, role)` may be open-ended, and it must be the hig
 The deploy validator rejects a sheet where an open-ended band is not the highest, where
 adjacent bands leave a gap or overlap, where the highest band is *not* open-ended, or
 where any `tan_basis_points` is outside the pack bound. These checks are in
-[`RateSheetValidator.cs`](../../../engine/src/Babelstone.RateSheets/RateSheetValidator.cs).
+[`RateSheetValidator.cs`](https://github.com/jhosm/babelstone/blob/main/engine/src/Babelstone.RateSheets/RateSheetValidator.cs).
 
 ### 3. Mint a new version id
 
@@ -101,7 +101,7 @@ You never edit a published sheet — corrections and additions ship forward-only
 version ([ADR-PC-008 §P2/§P5](../../product-management/product_concepts/adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md)).
 The `pt.2026.1` pack's ref points at a `rate_sheet_version_id` (currently
 `pt-deposits-2026.1` in
-[`rate-sheet-refs/deposits-pt.yaml`](../../../packs/pt.2026.1/rate-sheet-refs/deposits-pt.yaml)) —
+[`rate-sheet-refs/deposits-pt.yaml`](https://github.com/jhosm/babelstone/blob/main/packs/pt.2026.1/rate-sheet-refs/deposits-pt.yaml)) —
 the new version becomes the active sheet for that family from its `effective_from`.
 
 ### 4. Deploy via `POST /v1/rate-sheets`
@@ -132,7 +132,7 @@ Idempotency is keyed on `rate_sheet_version_id`:
 
 The body comparison is canonical (key order doesn't matter; band order does) — see
 `RateSheetJson.Canonical` in
-[`RateSheetBody.cs`](../../../engine/src/Babelstone.RateSheets/RateSheetBody.cs).
+[`RateSheetBody.cs`](https://github.com/jhosm/babelstone/blob/main/engine/src/Babelstone.RateSheets/RateSheetBody.cs).
 
 ### 5. Confirm it took
 

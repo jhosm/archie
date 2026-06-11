@@ -36,7 +36,7 @@ your head before you read any rule:
 - **The schema is the source of truth, and you read it — you do not edit it.**
   The `.cue` files are owned by engineering on a quarterly cadence; authors
   write the YAML the schema governs, never the schema itself. See
-  [contracts/cue/README.md](../../../contracts/cue/README.md).
+  [contracts/cue/README.md](https://github.com/jhosm/babelstone/blob/main/contracts/cue/README.md).
 - **The schema is *closed*.** A field the schema does not declare is not
   ignored — it is a hard error. We return to why that is a feature
   [below](#why-closedness-is-a-feature).
@@ -48,8 +48,8 @@ tells you what is being checked:
 
 | File | Validates | You meet it when… |
 |---|---|---|
-| [`contracts/cue/pack/pack.cue`](../../../contracts/cue/pack/pack.cue) | a **pack's own data** — the manifest, primitives, parameters, rate-sheet refs, sealed corpus | authoring or reviewing a `pt.YYYY.N` pack |
-| [`contracts/cue/families/term-deposit.cue`](../../../contracts/cue/families/term-deposit.cue) | a **product variant** — one configured term-deposit shape | reasoning about which variants a pack will accept |
+| [`contracts/cue/pack/pack.cue`](https://github.com/jhosm/babelstone/blob/main/contracts/cue/pack/pack.cue) | a **pack's own data** — the manifest, primitives, parameters, rate-sheet refs, sealed corpus | authoring or reviewing a `pt.YYYY.N` pack |
+| [`contracts/cue/families/term-deposit.cue`](https://github.com/jhosm/babelstone/blob/main/contracts/cue/families/term-deposit.cue) | a **product variant** — one configured term-deposit shape | reasoning about which variants a pack will accept |
 
 The `pack.cue` source says this in its own header comment: it "describe[s] the
 shape of the pack's YAML data … distinct from the *family* schema, which
@@ -68,7 +68,7 @@ You do not need it to read a schema, but it is where the *why* lives.
 
 The most reliable way to learn a rule is to look at a passing example and a
 failing one side by side. babelstone ships exactly that, on purpose, in
-[`contracts/cue/testdata/term-deposit/`](../../../contracts/cue/testdata/term-deposit/):
+[`contracts/cue/testdata/term-deposit/`](https://github.com/jhosm/babelstone/tree/main/contracts/cue/testdata/term-deposit):
 
 - `valid/` — variants the schema **must accept**.
 - `invalid/` — variants the schema **must reject**, with a deliberate
@@ -117,7 +117,7 @@ codebase comments the **why** above each constraint, so the durable habit is:
 **read the comment first, the constraint second.** The comment is plain prose
 aimed at exactly your question; the line beneath it is the enforcement.
 
-From [`families/term-deposit.cue`](../../../contracts/cue/families/term-deposit.cue),
+From [`families/term-deposit.cue`](https://github.com/jhosm/babelstone/blob/main/contracts/cue/families/term-deposit.cue),
 the day-count field:
 
 ```cue

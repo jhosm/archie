@@ -70,7 +70,7 @@ make verify    # smoke-test PostgreSQL, Redpanda, and the Schema Registry
 make down      # stop it (keeps data); `make reset` wipes data and restarts
 ```
 
-`make up` is the single command a newcomer runs after cloning — it pulls images, starts the three containers, and blocks until their health checks pass. Connection details, ports, and the full target list live in [`infra/README.md`](./infra/README.md).
+`make up` is the single command a newcomer runs after cloning — it pulls images, starts the three containers, and blocks until their health checks pass. Connection details, ports, and the full target list live in [`infra/README.md`](https://github.com/jhosm/babelstone/blob/main/infra/README.md).
 
 ---
 
@@ -110,7 +110,7 @@ brew install graphviz plantuml
 > ⚠️ The apt `plantuml` package on Ubuntu 24.04 ships a C4 bundled-stdlib too old
 > to resolve `!include <C4/C4_Component>`, so every C4 diagram fails to render. Take
 > Graphviz + a JRE from apt, but install PlantUML as a pinned jar — the same version
-> [CI pins](.github/workflows/ci.yml) (the render-check is version-tolerant; any
+> [CI pins](https://github.com/jhosm/babelstone/blob/main/.github/workflows/ci.yml) (the render-check is version-tolerant; any
 > release new enough to carry the C4 stdlib works):
 
 ```bash
@@ -152,7 +152,7 @@ The SVG is written next to its source. **Convention:** each diagram's `@startuml
 
 ## Pre-commit hook (keeps SVGs in sync)
 
-A version-controlled hook at [`.githooks/pre-commit`](./.githooks/pre-commit) re-renders any `.puml` staged in a commit and stages the resulting `.svg`, so a committed diagram is never out of date with its source. If the hook fires without PlantUML installed, it fails with install instructions rather than committing a stale SVG.
+A version-controlled hook at [`.githooks/pre-commit`](https://github.com/jhosm/babelstone/blob/main/.githooks/pre-commit) re-renders any `.puml` staged in a commit and stages the resulting `.svg`, so a committed diagram is never out of date with its source. If the hook fires without PlantUML installed, it fails with install instructions rather than committing a stale SVG.
 
 ### Activate it
 

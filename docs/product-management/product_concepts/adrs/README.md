@@ -88,4 +88,4 @@ ADR-PC numbers are independent of ADR-IC numbers. Within the ADR-PC namespace, n
 - ADR-PC to an ADR-IC: `../../integration_concepts/adrs/ADR-IC-NNN-…md`.
 - ADR-PC to a financial-concepts doc: `../../financial_concepts/banking_products_financial_mathematics.md`.
 
-These match the patterns codified in [CLAUDE.md](../../../../CLAUDE.md) and [AGENTS.md](../../../../AGENTS.md).
+These match the patterns codified in [CLAUDE.md](https://github.com/jhosm/babelstone/blob/main/CLAUDE.md) and [AGENTS.md](https://github.com/jhosm/babelstone/blob/main/AGENTS.md).
