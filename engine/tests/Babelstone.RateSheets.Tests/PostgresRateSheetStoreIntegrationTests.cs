@@ -47,6 +47,53 @@ public sealed class PostgresRateSheetStoreIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Insert_then_get_round_trips_the_bands_through_the_read_only_init_setter()
+    {
+        // bd babelstone-z0as: pin the JSONB round-trip THROUGH the IReadOnlyList<RateBand> init
+        // setter on RoleRates.Bands. The deserialize path on read-back populates Bands via the
+        // { init; } setter (RoleRates has no other way in), so this proves the init-setter ⇄ JSONB
+        // contract end-to-end: band COUNT, band ORDER (significant — the array order is preserved),
+        // every From/To/TanBasisPoints, and the open-ended top band's null upper all survive.
+        var store = new PostgresRateSheetStore(ConnectionString);
+        var body = new RateSheetBody
+        {
+            Products = new()
+            {
+                ["dpz_pt_12m_juros_venc"] = new()
+                {
+                    ["standard"] = new RoleRates
+                    {
+                        Bands =
+                        [
+                            RateSheetTestData.Band(50_000, 5_000_000, 300),
+                            RateSheetTestData.Band(5_000_000, 25_000_000, 325),
+                            RateSheetTestData.Band(25_000_000, null, 350),
+                        ],
+                    },
+                },
+            },
+        };
+
+        await store.InsertAsync(RateSheetTestData.ValidSheet(versionId: "init-setter", body: body));
+        var stored = await store.TryGetAsync("init-setter");
+
+        Assert.NotNull(stored);
+        var bands = stored.Body.Products["dpz_pt_12m_juros_venc"]["standard"].Bands;
+
+        // Count + order: three bands, ascending by lower bound, exactly as written.
+        Assert.Equal(3, bands.Count);
+        Assert.Equal([50_000L, 5_000_000L, 25_000_000L], bands.Select(b => b.From));
+        Assert.Equal([5_000_000L, 25_000_000L, (long?)null], bands.Select(b => b.To));
+        Assert.Equal([300, 325, 350], bands.Select(b => b.TanBasisPoints));
+
+        // The open-ended top band's null upper round-tripped as null, not 0 or a sentinel.
+        Assert.Null(bands[^1].To);
+
+        // And the canonical forms match — a defensive cross-check that nothing reordered or dropped.
+        Assert.Equal(RateSheetJson.Canonical(body), RateSheetJson.Canonical(stored.Body));
+    }
+
+    [Fact]
     public async Task Resolve_returns_the_sheet_active_at_the_instant()
     {
         var store = new PostgresRateSheetStore(ConnectionString);

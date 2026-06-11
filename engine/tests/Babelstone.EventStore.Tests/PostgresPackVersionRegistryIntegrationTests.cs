@@ -68,6 +68,32 @@ public sealed class PostgresPackVersionRegistryIntegrationTests : IAsyncLifetime
             registry.RegisterAsync("pt-deposit", "pt.2026.1", rePin, registeredBy: "attacker"));
     }
 
+    [Fact]
+    public async Task A_different_pack_id_claiming_an_existing_version_string_is_a_typed_conflict()
+    {
+        // bd babelstone-5grf: the UNIQUE (pack_version) constraint (migration 0006) is cross-pack_id.
+        // A pack_version string is unique table-wide, so a DIFFERENT pack_id trying to reuse an
+        // already-pinned version string collides against pack_versions_version_uq — NOT the
+        // (pack_id, pack_version) PK the INSERT's ON CONFLICT clause covers. RegisterAsync must map
+        // that constraint (by NAME, not blanket 23505) to DuplicatePackVersionException, never let a
+        // raw PostgresException escape and never silently overwrite the existing pin.
+        var registry = new PostgresPackVersionRegistry(ConnectionString);
+        await registry.RegisterAsync("pt-deposit", "pt.2026.1", Ref, registeredBy: "ci");
+
+        // A second pack family reusing the SAME version string, with its own coordinates.
+        var otherRef = new PackRef(
+            "registry.example/babelstone-packs/pt-credit", "sha256:imageOther", "sha256:signatureOther");
+        var conflict = await Assert.ThrowsAsync<DuplicatePackVersionException>(() =>
+            registry.RegisterAsync("pt-credit", "pt.2026.1", otherRef, registeredBy: "ci"));
+
+        Assert.Equal("pt-credit", conflict.PackId);
+        Assert.Equal("pt.2026.1", conflict.PackVersion);
+
+        // The original pin is intact — the conflicting register was rejected, not applied.
+        var resolved = await registry.ResolveAsync("pt.2026.1");
+        Assert.Equal(Ref.Digest, resolved?.Digest);
+    }
+
     // ── §P4: the eager-load worklist is events.pack_version ─────────────────────────────────────
 
     [Fact]

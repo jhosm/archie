@@ -224,6 +224,38 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_raced_insert_that_claims_the_effective_from_under_another_version_is_409()
+    {
+        // bd babelstone-z0as: the race-then-409 "effective_from already claimed" branch, made
+        // DETERMINISTIC via the in-process store seam (no real concurrent committers needed). The
+        // store's pre-insert idempotency probe finds no existing version (TryGetAsync → null), then
+        // InsertAsync throws DuplicateRateSheetVersionException — the (product_family, effective_from)
+        // unique-key collision a concurrent deploy under a DIFFERENT version id would cause. The
+        // handler re-reads by THIS version id, finds null again (the claimant is a different id), and
+        // must return 409 with the "effective_from is already claimed" detail, NOT a 200 or 500.
+        var log = new CapturedLogs();
+        // The store throws the (product_family, effective_from) unique-key collision a concurrent
+        // deploy under a DIFFERENT version id would raise; its TryGetAsync always returns null, so
+        // the re-read by THIS version id finds no claimant — exactly the raced-null 409 branch.
+        var raced = new DuplicateRateSheetVersionException("a-concurrent-version");
+        var client = WithStore(new ThrowingRateSheetStore(insertFault: raced), log);
+        var when = new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero);
+        const string actor = "alice@treasury.internal";
+
+        var response = await Post(
+            client, RateSheetTestData.ValidRequest(versionId: "raced-claim", effectiveFrom: when), actor: actor);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        // The 409 is recorded server-side under the stable conflict id with the "already claimed"
+        // detail — diagnosable from the logs, not just a bare HTTP 409 (ADR-IC-007 Layer 1).
+        var entry = Assert.Single(log.Entries, e => e.EventId == BabelstoneEvents.RateSheetDeployConflict);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Equal("raced-claim", entry.State["RateSheetVersionId"]);
+        Assert.Contains("already claimed", entry.State["Detail"]?.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task A_second_version_id_sharing_a_family_effective_from_is_409()
     {
         var when = new DateTimeOffset(2026, 8, 1, 0, 0, 0, TimeSpan.Zero);

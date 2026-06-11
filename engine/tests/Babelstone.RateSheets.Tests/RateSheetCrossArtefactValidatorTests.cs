@@ -100,6 +100,63 @@ public sealed class RateSheetCrossArtefactValidatorTests
     }
 
     [Fact]
+    public void Rejects_a_config_whose_rate_ref_names_a_different_product()
+    {
+        // bd babelstone-ktfx: a config's rate_ref must reference its OWN product_id (surface §2.2:
+        // the rate_ref lives inside the product config and resolves that product's role). A config
+        // for dpz_pt_12m_juros_venc whose rate_ref points at a different product is malformed —
+        // caught at deploy rather than silently mispricing at constitution. The sheet itself covers
+        // both pairs, so the only failure here is the product-id mismatch (not a coverage gap).
+        var crossWiredBody = new RateSheetBody
+        {
+            Products = new()
+            {
+                ["dpz_pt_12m_juros_venc"] = new()
+                {
+                    ["standard"] = new RoleRates { Bands = [RateSheetTestData.Band(50_000, null, 300)] },
+                },
+                ["dpz_pt_24m_juros_venc"] = new()
+                {
+                    ["standard"] = new RoleRates { Bands = [RateSheetTestData.Band(50_000, null, 320)] },
+                },
+            },
+        };
+        var activeConfigs = new[]
+        {
+            new ActiveProductConfig(
+                "dpz_pt_12m_juros_venc",
+                // The ref names dpz_pt_24m_juros_venc, not the config's own dpz_pt_12m_juros_venc.
+                new[] { new RateRef("dpz_pt_24m_juros_venc", "standard") }),
+        };
+
+        var result = _validator.Validate(crossWiredBody, RateSheetTestData.Bounds, activeConfigs);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(
+            result.Diagnostics,
+            d => d.Contains("dpz_pt_24m_juros_venc", StringComparison.Ordinal)
+                 && d.Contains("its own product_id", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void A_covered_pair_prices_the_whole_principal_range_so_no_per_principal_pinning()
+    {
+        // bd babelstone-ktfx: the §2.5 decision is whole-range principal coverage — a covered
+        // (product, role) pair's bands are exhaustive over [min, ∞), so the ref needs no principal.
+        // Resolve proves it: the same (product, role) the active config's rate_ref names prices the
+        // smallest in-range principal AND an arbitrarily large one, with no gap in between.
+        var sheet = new RateSheetResolution("v1", RateSheetTestData.ValidBody());
+
+        // standard's lowest band starts at 50_000; the open-ended top band runs to +∞.
+        Assert.Equal(300, sheet.ResolveTanBasisPoints("dpz_pt_12m_juros_venc", "standard", 50_000));
+        Assert.Equal(350, sheet.ResolveTanBasisPoints("dpz_pt_12m_juros_venc", "standard", long.MaxValue));
+
+        // The ref the active config carries covers the pair; coverage is whole-range, not pinned.
+        Assert.True(RateSheetValidator.Covers(
+            RateSheetTestData.ValidBody(), new RateRef("dpz_pt_12m_juros_venc", "standard")));
+    }
+
+    [Fact]
     public void Covers_is_true_for_a_priced_rate_ref()
     {
         Assert.True(RateSheetValidator.Covers(
