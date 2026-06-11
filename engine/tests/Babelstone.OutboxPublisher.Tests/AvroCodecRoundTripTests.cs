@@ -254,15 +254,52 @@ public sealed class AvroCodecRoundTripTests
         Assert.Equal(new InterestAccrued(new Money(grossCents), asOf), decoded);
     }
 
-    [Fact(Skip = "Lands once feat/avro-nullable-union (evfk) merges: the codec needs nullable-union " +
-                 "support (FromAvro/ToAvro) for an ADDED OPTIONAL field. This case is the BACKWARD " +
-                 "evolution where the WRITER adds a nullable field the older reader drops — orthogonal " +
-                 "to schema RESOLUTION (already covered above), so it is decoupled here rather than hard-depended on.")]
+    [Fact]
     public void Decode_resolves_a_newer_writer_schema_with_an_added_optional_nullable_field()
     {
-        // Intentionally a no-op skeleton: enabling it requires the nullable-union codec support the
-        // evfk lane adds. The defaulted-field and reorder cases above already prove writer→reader
-        // resolution works WITHOUT that lane, so this lane stays auto-mergeable.
+        // The BACKWARD-evolution case the evfk lane (ADR-IC-002 §P2, PR #121) unblocked: a producer
+        // ships a NEWER writer schema that ADDS a trailing OPTIONAL [null,T] field (null-first union,
+        // default null) — a BACKWARD-compatible additive change. This consumer still runs the OLDER
+        // reader schema (its local catalog), which has no such field. Decoding writer→reader via Avro
+        // schema resolution must DROP the writer-only optional field and recover the two shared fields
+        // exactly. Without the codec's nullable-union support, the [null,T] union on the wire would
+        // mis-decode → poison; here it resolves cleanly. This is the OPTIONAL analogue of the
+        // defaulted-field case above (which used a plain string default, not a union).
+        var serializer = NewSerializer();
+
+        // The writer's NEWER schema: the reader's two fields + a new trailing OPTIONAL [null,string]
+        // field (null-first + default null, the ADR-IC-002 §P2 shape) the reader does not know.
+        const string writerJson = """
+            {
+              "type": "record",
+              "namespace": "deposits.term_deposit",
+              "name": "InterestAccrued",
+              "fields": [
+                { "name": "gross_interest_cents", "type": "long" },
+                { "name": "as_of", "type": { "type": "int", "logicalType": "date" } },
+                { "name": "accrual_note", "type": ["null", "string"], "default": null }
+              ]
+            }
+            """;
+        var writerSchema = (Avro.RecordSchema)Avro.Schema.Parse(writerJson);
+
+        // Write under the NEWER writer schema with the optional field PRESENT (a non-null value), to
+        // prove the [null,T] union is materialised on the wire and still dropped on resolution — not
+        // merely absent. The bare Avro value bytes are the wire substrate (no Confluent framing).
+        var grossCents = 30_417L;
+        var asOf = new DateOnly(2026, 12, 31);
+        var written = WriteUnderWriterSchema(writerSchema, record =>
+        {
+            record.Add("gross_interest_cents", grossCents);
+            record.Add("as_of", asOf.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+            record.Add("accrual_note", "carried-over coupon");
+        });
+
+        // Decode writer→reader: the resolver-driven path the inbox consumer uses. The writer-only
+        // optional accrual_note is dropped; the shared fields decode to the original values.
+        var decoded = (InterestAccrued)serializer.Decode(written, typeof(InterestAccrued), writerSchema);
+
+        Assert.Equal(new InterestAccrued(new Money(grossCents), asOf), decoded);
     }
 
     /// <summary>Write a GenericRecord under a specific WRITER schema and return the bare Avro value
