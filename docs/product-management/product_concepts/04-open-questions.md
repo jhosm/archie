@@ -13,6 +13,8 @@
 
 ## §§1–8: Brief-Level Decisions
 
+<a id="1-legacy-coexistence-targets"></a>
+
 ### 1. Legacy Coexistence Targets — **AGENDA SPECIFIED; PENDING LEGACY INVENTORY MEETING**
 
 **Context.** The strangler-fig motion in [01 §6](./01-product-architecture.md) and [02 §3](./02-v1-scope-term-deposits.md) requires first-class coexistence with the operating bank's legacy core. The open question is **which specific legacy systems the engine ships first-class adapters for**, vs which are handled bespoke through customer-built adapters on top of the ACL ([integration_concepts §02](../integration_concepts/02-anti-corruption-layer.md)). The decision shapes the v1 engineering effort: a productised connector for the dominant legacy system shortens v1 onboarding; a generic ACL interface keeps the engine portable but pushes work to the integration side. The gap is not closable by architectural reasoning — only the bank knows its estate.
@@ -50,6 +52,8 @@ The decision interacts with the event catalogue (per [integration_concepts §08]
 The implementation choice (PostgreSQL temporal extensions vs XTDB / datomic-style vs application-level bitemporality on plain Postgres) remains open and is tracked as **Q-X** in the lettered questions section below. The bitemporal-vs-unitemporal commitment is firm; only the mechanism is deferred.
 
 ---
+
+<a id="4-configurability-depth"></a>
 
 ### 4. Configurability Depth — **RESOLVED**
 
