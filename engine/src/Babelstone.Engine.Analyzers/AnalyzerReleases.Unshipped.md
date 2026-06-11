@@ -8,3 +8,4 @@ Rule ID | Category          | Severity | Notes
 BENG001 | Babelstone.Engine | Warning  | HandlerPurityAnalyzer — ADR-PC-010 §P5 no clock in handler bodies
 BENG002 | Babelstone.Engine | Warning  | HandlerPurityAnalyzer — ADR-PC-010 §P5 no I/O in handler bodies
 BENG003 | Babelstone.Engine | Warning  | HandlerPurityAnalyzer — ADR-PC-010 §P5 no randomness in handler bodies
+BENG004 | Babelstone.Engine | Warning  | NoClockDrivenEngineSignalAnalyzer — ADR-PC-023 §D1 no clock-driven engine signal/event emission
