@@ -59,3 +59,4 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [013](../../integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md) | In-House Estate — Build Provenance and Repository Placement | — | Accepted |
 | [014](../../integration_concepts/adrs/ADR-IC-014-static-analysis-and-supply-chain-scanning.md) | Static Analysis and Supply-Chain Scanning — GitHub-Native Trio (CodeQL + Dependabot + Secret Scanning) | — | Accepted |
 | [015](../../integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) | Event Catalog Governance Tooling — Backstage | — | Accepted |
+| [016](../../integration_concepts/adrs/ADR-IC-016-service-identity-and-mtls.md) | Service Identity, Transport Authentication, and Observability-Plane Access Control | — | Accepted |
