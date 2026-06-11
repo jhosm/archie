@@ -5,11 +5,12 @@ The generated reference quadrant (ADR-PC-022) is **generated, never
 hand-edited** — rendered from the machine-readable contracts so it cannot drift
 from them. Five renderers, one per source kind:
 
-  events/         <- contracts/avro/**/*.avsc        (Avro record schemas)
-  family-schemas/ <- contracts/cue/**/*.cue          (CUE family contracts, via `cue def`)
-  mcp-tools/      <- mcp-server/.../server.py         (@mcp.tool()-decorated functions, via AST)
-  adr-index/      <- docs/**/adrs/ADR-*.md            (ADR front-matter, cross-namespace)
-  pack-format/    <- contracts/cue/pack/pack.cue      (the pack manifest schema, via `cue def`)
+  events/            <- contracts/avro/**/*.avsc                (Avro record schemas)
+  family-schemas/    <- contracts/cue/**/*.cue                  (CUE family contracts, via `cue def`)
+  mcp-tools/         <- mcp-server/.../server.py                (@mcp.tool()-decorated functions, via AST)
+  adr-index/         <- docs/**/adrs/ADR-*.md                   (ADR front-matter, cross-namespace)
+  pack-format/       <- contracts/cue/pack/pack.cue             (the pack manifest schema, via `cue def`)
+  engine-primitives/ <- engine/.../VerifiedPack.cs + DayCount.cs (the formula_ref the engine implements, via regex)
 
 Output is **deterministic**: sources are visited in sorted order, no timestamps
 or absolute paths are emitted, and `cue def` runs against the mise-pinned CUE —
@@ -376,7 +377,82 @@ def render_pack_format(slugs: dict[str, str]) -> dict[str, str]:
 
 
 # --------------------------------------------------------------------------
-# Renderer 6 — glossary (hand-authored term source -> sorted, linkified page)
+# Renderer 6 — engine primitives (formula_ref the engine implements)
+# --------------------------------------------------------------------------
+# Source of truth (pure file-read + regex — no dotnet/Roslyn dependency):
+#   - VerifiedPack.cs's PackDayCount.ToConvention() switch is the *authoritative*
+#     set of formula_ref values the engine resolves (a formula_ref it does not
+#     match throws — ADR-PC-007 §P4, no silent default). The switch arms, in
+#     source order, are exactly what config authors may name.
+#   - DayCount.cs's DayCountConvention enum carries the one-line <summary> doc for
+#     each convention the arms map to.
+# Matches the ToConvention() arm:  "engine.day_count.actual_360" => DayCountConvention.Act360,
+_DAYCOUNT_ARM_RE = re.compile(
+    r'"(engine\.day_count\.[a-z0-9_]+)"\s*=>\s*DayCountConvention\.(\w+)\s*,'
+)
+# Matches an enum member preceded by its /// <summary>...</summary> doc block.
+_ENUM_MEMBER_RE = re.compile(
+    r"/// <summary>(?P<doc>.*?)</summary>\s*(?P<member>\w+)\s*,",
+    re.DOTALL,
+)
+
+
+def _flatten_doc(doc: str) -> str:
+    """Collapse a C# XML <summary> body to one display line: drop `///`, turn
+    `<c>x</c>` into `` `x` ``, collapse whitespace, take the first sentence."""
+    doc = re.sub(r"^\s*///\s?", "", doc, flags=re.MULTILINE)
+    doc = re.sub(r"<c>(.*?)</c>", r"`\1`", doc, flags=re.DOTALL)
+    doc = re.sub(r"<[^>]+>", "", doc)  # strip any stray xml tags
+    doc = " ".join(doc.split())  # collapse whitespace + newlines
+    # first sentence: up to the first '. ' that is not inside backticks-free prose
+    m = re.match(r"(.*?\.)(?:\s|$)", doc)
+    sentence = m.group(1) if m else doc
+    return sentence.replace("|", "\\|").strip()
+
+
+def render_engine_primitives(slugs: dict[str, str]) -> dict[str, str]:
+    pack_src = ROOT / "engine" / "src" / "Babelstone.Packs" / "VerifiedPack.cs"
+    enum_src = ROOT / "engine" / "src" / "Babelstone.FinancialMath" / "DayCount.cs"
+
+    # member -> one-line summary, from the DayCountConvention enum block only
+    enum_text = enum_src.read_text()
+    enum_block = re.search(
+        r"public enum DayCountConvention\s*\{(?P<body>.*?)\n\}", enum_text, re.DOTALL
+    )
+    docs: dict[str, str] = {}
+    if enum_block:
+        for m in _ENUM_MEMBER_RE.finditer(enum_block.group("body")):
+            docs[m.group("member")] = _flatten_doc(m.group("doc"))
+
+    # the authoritative formula_ref set, in ToConvention() source order
+    arms = _DAYCOUNT_ARM_RE.findall(pack_src.read_text())
+
+    out = [
+        banner(rel(pack_src) + " + " + rel(enum_src)),
+        "# Engine primitives — day-count `formula_ref`\n",
+        "The `formula_ref` values a pack's `primitives/day-count.yaml` may name "
+        "(ADR-PC-007) and the engine convention each resolves to. This is the "
+        "**authoritative implemented set**: it is rendered from the "
+        "`PackDayCount.ToConvention()` switch in "
+        f"`{rel(pack_src)}`, which throws rather than defaulting silently on an "
+        "unknown `formula_ref` (ADR-PC-007 §P4) — so a pack naming a `formula_ref` "
+        "absent from this table fails loud at load. The descriptions come from the "
+        f"`DayCountConvention` enum docs in `{rel(enum_src)}`.\n",
+        "| `formula_ref` | Engine convention | Description |",
+        "|---|---|---|",
+    ]
+    for formula_ref, member in arms:
+        out.append(f"| `{formula_ref}` | `{member}` | {docs.get(member, '')} |")
+
+    out += [
+        "\n## Governing ADRs\n",
+        ", ".join(adr_refs("ADR-PC-006 ADR-PC-007 ADR-PC-010 ADR-PC-022", slugs)) + "\n",
+    ]
+    return {"engine-primitives/README.md": "\n".join(out).rstrip() + "\n"}
+
+
+# --------------------------------------------------------------------------
+# Renderer 7 — glossary (hand-authored term source -> sorted, linkified page)
 # --------------------------------------------------------------------------
 def render_glossary(slugs: dict[str, str]) -> dict[str, str]:
     src = ROOT / "scripts" / "docs-gen" / "glossary-source.md"
@@ -431,6 +507,7 @@ def render_root_index() -> dict[str, str]:
         "| [mcp-tools/](./mcp-tools/README.md) | `mcp-server/` | the bank-as-MCP-server tool surface |",
         "| [adr-index/](./adr-index/README.md) | `docs/**/adrs/` | every ADR, both namespaces, one table |",
         "| [pack-format/](./pack-format/README.md) | `contracts/cue/pack/` | the signed-pack manifest schema |",
+        "| [engine-primitives/](./engine-primitives/README.md) | `engine/src/Babelstone.Packs/`, `Babelstone.FinancialMath/` | the day-count `formula_ref` the engine implements |",
         "| [glossary.md](./glossary.md) | `scripts/docs-gen/glossary-source.md` | the single home for the corpus vocabulary |",
     ]
     return {"README.md": "\n".join(out).rstrip() + "\n"}
@@ -445,6 +522,7 @@ def build() -> dict[str, str]:
     pages.update(render_mcp_tools(slugs))
     pages.update(render_adr_index(slugs))
     pages.update(render_pack_format(slugs))
+    pages.update(render_engine_primitives(slugs))
     pages.update(render_glossary(slugs))
     return pages
 
