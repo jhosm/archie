@@ -1,0 +1,59 @@
+# Reconciliation contract — the engine's own projection runtime (event-store §7.3).
+#
+# In plain English: the engine builds its own read-side projections (positions, accrual
+# schedules, the maturity calendar, the withholding ledger) by folding the event log. This
+# file is that consumer's DECLARED statement of how it proves it folded the log correctly —
+# which checksums it publishes, which event-count it reports, and that it takes part in the
+# monthly full-rebuild drill. The ProjectionReconciler reads a contract of exactly this shape
+# (Consumer / ProjectionKind / Patterns / ContractRef) and drives the named §7.1 patterns.
+#
+# Source of truth: this is the catalogued, human/portal-readable side; the executable side is
+# `ReconciliationContract` in engine/src/Babelstone.Engine/ProjectionReconciler.cs. The two
+# carry the same four fields and must stay in step.
+#
+# NO PII — by construction (ADR-PC-004 §P2 / no-PII-on-the-durable-bus). A reconciliation
+# contract carries only references: the consumer's stable name, the projection-kind
+# discriminators, and §7.1 pattern flags. No depositor name, NIF, or IBAN appears here or in
+# any reconciliation message the consumer publishes.
+---
+apiVersion: babelstone.io/reconciliation/v1alpha1
+kind: ReconciliationContract
+metadata:
+  name: engine-projection-runtime
+  title: Engine projection runtime
+  description: >-
+    The engine's own bitemporal projection runtime — positions, accrual schedules, the
+    maturity calendar, and the withholding ledger. It folds the event log it itself emits,
+    so it reconciles against the same source under all three §7.1 patterns.
+  x-owner: term-deposit
+  x-owner-contact: deposits-team@babelstone.example
+  x-status: active
+spec:
+  # The consumer's stable identity — the same name used in the AsyncAPI
+  # x-authorized-consumers lists. A reference, never PII.
+  consumer: engine
+  # Which §7.1 patterns this consumer participates in (event-store §7.1 table).
+  patterns:
+    checksum: true        # (a) daily per-instance state-hash vs the engine cold-fold
+    eventCount: true      # (b) continuous: last-processed sequence vs stream head
+    fullRebuild: true     # (c) monthly §7.2 drill — supersede-all + cold re-fold from 0
+  # How the §7.2 full rebuild is coordinated for this consumer. The engine's runtime is
+  # in-process, so the drill is the ProjectionReconciler.FullRebuildDrillAsync path against a
+  # quiescent relay in a non-production environment with production-shaped data (§7.2).
+  fullRebuildCoordination: >-
+    Driven on the engine team's monthly drill calendar via
+    ProjectionReconciler.FullRebuildDrillAsync (supersede-all + checkpoint reset + cold
+    re-fold from sequence 0); the relay is quiesced for the kind for the duration of the drill.
+  # The projection kinds this consumer derives and reconciles. Each is the family-prefixed
+  # discriminator the ProjectionRunner uses — a reference, never PII.
+  projectionKinds:
+    - kind: term_deposit.deposit_position
+      description: The current position (principal, accrued interest, net-of-withholding balance).
+    - kind: term_deposit.accrual_schedule
+      description: The fixed per-period interest-accrual schedule.
+    - kind: term_deposit.maturity_calendar
+      description: The dated lifecycle calendar (constitution, coupons, scheduled maturity).
+    - kind: term_deposit.withholding_ledger
+      description: The flow-by-flow withholding-tax ledger.
+    - kind: term_deposit.deposit_read_model
+      description: The denormalized CQRS read model (ADR-IC-005).

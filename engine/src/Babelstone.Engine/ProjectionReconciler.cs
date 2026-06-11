@@ -90,6 +90,137 @@ public sealed record RebuildReconciliation(string? BeforeHash, string? AfterHash
 }
 
 /// <summary>
+/// Which of the three event-store §7.1 reconciliation patterns a consumer's contract opts into.
+/// A <see cref="ReconciliationContract"/> declares its subset: the engine's own projection runtime
+/// runs all three; a lighter analytics consumer might publish only the daily <see cref="Checksum"/>
+/// and report its <see cref="EventCount"/>. The flags mirror the §7.1 table verbatim.
+/// </summary>
+[Flags]
+public enum ReconciliationPatterns
+{
+    /// <summary>The consumer participates in no reconciliation pattern (degenerate; flagged at construction).</summary>
+    None = 0,
+
+    /// <summary>Pattern (a): the daily per-instance state checksum (event-store §7.1).</summary>
+    Checksum = 1 << 0,
+
+    /// <summary>Pattern (b): the continuous event-count reconciliation (event-store §7.1).</summary>
+    EventCount = 1 << 1,
+
+    /// <summary>Pattern (c): the periodic §7.2 full-rebuild drill (event-store §7.1/§7.2).</summary>
+    FullRebuild = 1 << 2,
+
+    /// <summary>All three §7.1 patterns — the engine's own projection runtime's contract.</summary>
+    All = Checksum | EventCount | FullRebuild,
+}
+
+/// <summary>
+/// A per-consumer reconciliation contract (event-store §7.3): a downstream consumer's declared,
+/// catalogued statement of what it reconciles against the engine's emitted events — which projection
+/// <see cref="ProjectionKind"/> it derives, which §7.1 <see cref="Patterns"/> it participates in, and
+/// the catalogued <see cref="ContractRef"/> that documents how its rebuilds are coordinated. The
+/// reconciler is generic over this contract rather than over an ad-hoc (streamId, kind) pair, so the
+/// SAME engine can drive the engine's own projection runtime, the GL/ACL consumer, the notification
+/// consumer, and any analytics/BI consumer from their declared contracts (§7.3 "every downstream
+/// system … is a consumer subject to reconciliation").
+/// </summary>
+/// <remarks>
+/// <para>
+/// NO PII, by construction (ADR-PC-004 §P2 / the no-PII-on-the-durable-bus rule): a contract carries
+/// only structural <em>references</em> — the consumer's stable name, its projection-kind discriminator,
+/// and a relative path to the catalogued descriptor. A depositor name, NIF, or IBAN never appears in a
+/// contract, the same guarantee the AsyncAPI catalogue and the Avro payloads give.
+/// </para>
+/// <para>
+/// <see cref="ContractRef"/> is the bridge to the catalogue's governance (event-store §7.3 →
+/// integration_concepts §08 / ADR-IC-015): it points at the consumer's descriptor under
+/// <c>contracts/catalog/reconciliation/</c>. The descriptor is the human/portal-readable side; this
+/// record is the executable side the reconciler drives.
+/// </para>
+/// </remarks>
+/// <param name="Consumer">
+/// The consumer's stable name — the same identity used in the AsyncAPI <c>x-authorized-consumers</c>
+/// list (e.g. <c>engine</c>, <c>acl</c>, <c>notification</c>). A reference, never PII.
+/// </param>
+/// <param name="ProjectionKind">
+/// The family-prefixed projection discriminator the consumer reconciles, e.g.
+/// <c>term_deposit.deposit_position</c> (the same <see cref="IProjectionRunner.Kind"/> the runner uses).
+/// </param>
+/// <param name="Patterns">Which §7.1 patterns this consumer's contract opts into.</param>
+/// <param name="ContractRef">
+/// Relative path to the catalogued reconciliation descriptor (under <c>contracts/catalog/reconciliation/</c>)
+/// that documents this contract for the portal and auditors. A reference, never PII.
+/// </param>
+public sealed record ReconciliationContract(
+    string Consumer,
+    string ProjectionKind,
+    ReconciliationPatterns Patterns,
+    string ContractRef)
+{
+    /// <summary>
+    /// Validates the contract is non-degenerate and PII-free in shape: a named consumer, a
+    /// family-prefixed kind, at least one §7.1 pattern, and a catalogued reference. Throws on a
+    /// malformed contract so a mis-declared consumer fails fast rather than silently reconciling nothing.
+    /// </summary>
+    public ReconciliationContract EnsureValid()
+    {
+        if (string.IsNullOrWhiteSpace(Consumer))
+        {
+            throw new ArgumentException("A reconciliation contract must name its consumer.", nameof(Consumer));
+        }
+
+        if (string.IsNullOrWhiteSpace(ProjectionKind) || !ProjectionKind.Contains('.'))
+        {
+            throw new ArgumentException(
+                $"ProjectionKind '{ProjectionKind}' must be a family-prefixed discriminator (e.g. term_deposit.deposit_position).",
+                nameof(ProjectionKind));
+        }
+
+        if (Patterns == ReconciliationPatterns.None)
+        {
+            throw new ArgumentException(
+                $"Consumer '{Consumer}' declares no §7.1 reconciliation pattern — a contract that reconciles nothing is a misconfiguration.",
+                nameof(Patterns));
+        }
+
+        if (string.IsNullOrWhiteSpace(ContractRef))
+        {
+            throw new ArgumentException(
+                $"Consumer '{Consumer}' has no catalogued ContractRef (event-store §7.3 governance).", nameof(ContractRef));
+        }
+
+        return this;
+    }
+}
+
+/// <summary>
+/// The outcome of driving one <see cref="ReconciliationContract"/> against one stream (event-store
+/// §7.3). Each §7.1 pattern the contract opted into has its result populated; a pattern the contract
+/// did NOT declare stays <see langword="null"/>, so the report distinguishes "ran and matched" from
+/// "the consumer's contract does not run this pattern". <see cref="IsClean"/> is the per-consumer
+/// verdict the reconciliation alerting layer (bd babelstone-irfl, M.5) keys off.
+/// </summary>
+/// <param name="Contract">The contract that was driven (carries the consumer name + ref; no PII).</param>
+/// <param name="StreamId">The instance reconciled.</param>
+/// <param name="Checksum">Pattern (a) result, or <see langword="null"/> if the contract opted out.</param>
+/// <param name="EventCount">Pattern (b) result, or <see langword="null"/> if the contract opted out.</param>
+public sealed record ConsumerReconciliationReport(
+    ReconciliationContract Contract,
+    Guid StreamId,
+    ChecksumReconciliation? Checksum,
+    EventCountReconciliation? EventCount)
+{
+    /// <summary>
+    /// The per-consumer §7.3 verdict: every pattern the contract ran is clean. A <see langword="null"/>
+    /// (opted-out) pattern does not fail the verdict — only a pattern that ran and disagreed does. The
+    /// §7.2 full-rebuild drill is coordinated separately (it supersedes beliefs) and is not folded in here.
+    /// </summary>
+    public bool IsClean =>
+        (Checksum is null || Checksum.Match) &&
+        (EventCount is null || EventCount.Status != EventCountStatus.Skip);
+}
+
+/// <summary>
 /// The three event-store §7.1 reconciliation patterns — daily per-instance checksum (a),
 /// event-count reconciliation (b), and the §7.2 periodic full-rebuild drill (c) — over the
 /// hand-rolled Path-A projection substrate (ADR-PC-002). It is the operational layer that makes
@@ -196,6 +327,51 @@ public sealed class ProjectionReconciler<TState>(
         var afterHash = after is null ? null : HashBytes(after.StructuralPayload.Span);
 
         return new RebuildReconciliation(beforeHash, afterHash, refolded);
+    }
+
+    /// <summary>
+    /// Drives one per-consumer <see cref="ReconciliationContract"/> against one stream (event-store
+    /// §7.3): runs exactly the §7.1 patterns the contract opted into and folds the results into a
+    /// single <see cref="ConsumerReconciliationReport"/>. This is the generalised entry point — the
+    /// reconciler is no longer called per ad-hoc (streamId, kind) pair but per <em>declared consumer
+    /// contract</em>, so the same engine reconciles the engine's own projection runtime, the GL/ACL
+    /// consumer, the notification consumer, and any analytics/BI consumer from their catalogued contracts.
+    /// </summary>
+    /// <remarks>
+    /// The §7.2 full-rebuild drill is deliberately NOT run here even when the contract declares
+    /// <see cref="ReconciliationPatterns.FullRebuild"/>: a rebuild supersedes live beliefs and is a
+    /// coordinated, non-production operation (<see cref="FullRebuildDrillAsync"/>'s contract), so it is
+    /// driven separately on the drill calendar. The flag on the contract records that the consumer
+    /// <em>participates</em> in the drill; this method does the two cheap, continuous patterns.
+    /// </remarks>
+    /// <param name="contract">The consumer's declared contract (validated before use).</param>
+    /// <param name="streamId">The instance to reconcile.</param>
+    /// <param name="consumerFoldedCount">
+    /// The consumer-reported count of events it actually folded — required when the contract opts into
+    /// <see cref="ReconciliationPatterns.EventCount"/>. For the engine's own projection it is the drain's
+    /// running tally; an external consumer self-reports it. Ignored when the contract opts out of event-count.
+    /// </param>
+    public async Task<ConsumerReconciliationReport> ReconcileAsync(
+        ReconciliationContract contract,
+        Guid streamId,
+        long consumerFoldedCount = 0,
+        CancellationToken ct = default)
+    {
+        contract.EnsureValid();
+
+        ChecksumReconciliation? checksum = null;
+        if (contract.Patterns.HasFlag(ReconciliationPatterns.Checksum))
+        {
+            checksum = await ChecksumAsync(streamId, contract.ProjectionKind, ct);
+        }
+
+        EventCountReconciliation? eventCount = null;
+        if (contract.Patterns.HasFlag(ReconciliationPatterns.EventCount))
+        {
+            eventCount = await EventCountAsync(streamId, contract.ProjectionKind, consumerFoldedCount, ct);
+        }
+
+        return new ConsumerReconciliationReport(contract, streamId, checksum, eventCount);
     }
 
     /// <summary>
