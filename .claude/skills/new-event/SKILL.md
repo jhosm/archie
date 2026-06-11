@@ -22,8 +22,14 @@ ciphertext ([ADR-PC-004 §P2](docs/product-management/product_concepts/adrs/ADR-
 > the C# record, its pure handler binding, the governed Avro `.avsc`, and the
 > AsyncAPI catalogue entry. This skill writes all four in lock-step.
 
-Throughout, replace `<domain>` (e.g. `deposits`), `<aggregate_type>` / `<family>` (e.g.
-`term_deposit`), and `<EventName>` with the real values. The reference family's domain is
+Throughout, replace `<domain>` (e.g. `deposits`), `<aggregate_type>` / `<family>` (snake_case,
+e.g. `term_deposit`), `<family-kebab>` (the project directory, e.g. `term-deposit`), `<Family>`
+(the PascalCase namespace segment, e.g. `TermDeposit`), `<State>` (the family's folded-state
+record, e.g. `DepositPosition`), and `<EventName>` with the real values. **Edit *your* family's
+files.** The `families/term-deposit/…` links below point at the reference family
+[`term_deposit`](families/term-deposit/src/Babelstone.Families.TermDeposit/) to show the
+*pattern* — for any other family, write to `families/<family-kebab>/…/Babelstone.Families.<Family>/`
+and swap `TermDeposit`/`DepositPosition` for your own names. The reference family's domain is
 `deposits` and its aggregate type / family name is `term_deposit`.
 
 ## Step 1 — Name the event: `<Entity><PastParticipleVerb>`
@@ -47,8 +53,9 @@ a still-pending action is wrong.
 
 ## Step 2 — Write the C# event record (the cleartext domain event)
 
-Append to the family's `Events.cs`
-([`families/term-deposit/src/Babelstone.Families.TermDeposit/Events.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/Events.cs)).
+Append to **your family's** `Events.cs` —
+`families/<family-kebab>/src/Babelstone.Families.<Family>/Events.cs` (pattern:
+[`term_deposit`'s `Events.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/Events.cs)).
 The record is a `sealed record … : DomainEvent`
 (base in [`engine/src/Babelstone.Engine/Handlers.cs`](engine/src/Babelstone.Engine/Handlers.cs)),
 in namespace `Babelstone.Families.<Family>`. Discipline (mirrors every existing event):
@@ -75,43 +82,47 @@ public sealed record <EventName>(
 
 ## Step 3 — Write the pure handler and bind it in the module
 
-Two edits, both in the pure-fold project (it references **only** `Babelstone.Engine` +
-`Babelstone.FinancialTypes` — a fold structurally cannot reach a DB, per
-[its `.csproj`](families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj)):
+Two edits, both in **your family's** pure-fold project (it references **only** `Babelstone.Engine`
++ `Babelstone.FinancialTypes` — a fold structurally cannot reach a DB, per
+[term_deposit's `.csproj`](families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj)):
 
-1. **The fold** in [`Handlers.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/Handlers.cs) —
-   one `IEventHandler<DepositPosition, <EventName>>` whose body is a single `state with { … }`.
+1. **The fold** in `families/<family-kebab>/src/Babelstone.Families.<Family>/Handlers.cs`
+   (pattern: [term_deposit's `Handlers.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/Handlers.cs)) —
+   one `IEventHandler<<State>, <EventName>>` whose body is a single `state with { … }`.
    **No clock, no I/O, no randomness** — the `BENG001/002/003` analysers fail the build
    otherwise (warnings are errors via `Directory.Build.props`). Sum into accumulators
    (`state.X + event.Y`) rather than overwrite, so the fold stays correct under replay.
 
 ```csharp
-public sealed class <EventName>Handler : IEventHandler<DepositPosition, <EventName>>
+public sealed class <EventName>Handler : IEventHandler<<State>, <EventName>>
 {
-    public HandlerResult<DepositPosition> Apply(DepositPosition state, <EventName> @event)
-        => HandlerResult<DepositPosition>.From(state with { /* label / accumulate only */ });
+    public HandlerResult<<State>> Apply(<State> state, <EventName> @event)
+        => HandlerResult<<State>>.From(state with { /* label / accumulate only */ });
 }
 ```
 
 2. **The binding** in
-   [`TermDepositFamilyModule.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/TermDepositFamilyModule.cs)
+   `families/<family-kebab>/src/Babelstone.Families.<Family>/<Family>FamilyModule.cs`
+   (pattern: [`TermDepositFamilyModule.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/TermDepositFamilyModule.cs))
    `Handlers` — the `event_type` string is `<family>.<EventName>`:
 
 ```csharp
 new("<family>.<EventName>", typeof(<EventName>),
-    new DispatchableHandler<DepositPosition, <EventName>>(new <EventName>Handler())),
+    new DispatchableHandler<<State>, <EventName>>(new <EventName>Handler())),
 ```
 
-If the new event must update one of the F.6 projections (accrual schedule, maturity
-calendar, withholding ledger), also add a `DepositPosition`-shaped fold + binding to the
-relevant registry in
-[`TermDepositProjectionModule.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/TermDepositProjectionModule.cs).
+If the new event must update one of the family's projections (term_deposit's are the F.6
+accrual schedule, maturity calendar, withholding ledger), also add a `<State>`-shaped fold +
+binding to the relevant registry in
+`families/<family-kebab>/src/Babelstone.Families.<Family>/<Family>ProjectionModule.cs`
+(pattern: [`TermDepositProjectionModule.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/TermDepositProjectionModule.cs)).
 A projection runner **skips** any event type it has no binding for, so you only add a fold
 where the event genuinely changes that belief.
 
 If the event also opens a new lifecycle transition, add the `Transition` enum value and its
 legal-source row to
-[`LifecycleTransitions.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/LifecycleTransitions.cs)
+`families/<family-kebab>/src/Babelstone.Families.<Family>/LifecycleTransitions.cs`
+(pattern: [term_deposit's `LifecycleTransitions.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/LifecycleTransitions.cs))
 — that table is the only place a new transition may exist (the decider consults it before
 appending). A new *operating* event that does not move the lifecycle needs no row beyond
 its `Active`-only source if the decider gates it.
@@ -218,14 +229,14 @@ versioning convention from
 
 ## Step 8 — Cover the fold and verify the build
 
-Add a unit test for the new fold alongside the existing ones in
-[`Babelstone.Families.TermDeposit.Tests`](families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/)
-(pure, no Docker — see `TermDepositProjectionTests.cs` for the `Fold(seed, registry, event)`
-pattern). Then build + test only the projects you touched:
+Add a unit test for the new fold alongside the existing ones in **your family's** test project
+`families/<family-kebab>/tests/Babelstone.Families.<Family>.Tests/` (pure, no Docker — see
+term_deposit's [`TermDepositProjectionTests.cs`](families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/TermDepositProjectionTests.cs)
+for the `Fold(seed, registry, event)` pattern). Then build + test only the projects you touched:
 
 ```bash
-mise exec -- dotnet build families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj --nologo -v q
-mise exec -- dotnet test families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/ --nologo -v q
+mise exec -- dotnet build families/<family-kebab>/src/Babelstone.Families.<Family>/Babelstone.Families.<Family>.csproj --nologo -v q
+mise exec -- dotnet test families/<family-kebab>/tests/Babelstone.Families.<Family>.Tests/ --nologo -v q
 ```
 
 ## Guardrails
