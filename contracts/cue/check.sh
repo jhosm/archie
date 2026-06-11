@@ -16,9 +16,22 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 COMMON="common.cue"
-# One entry per family: "<dir>|<schema.cue>|<#RootDefinition>".
-# Plain array (not associative) so macOS's bash 3.2 runs it unchanged.
-FAMILIES="term-deposit|families/term-deposit.cue|#TermDeposit"
+
+# Families are AUTO-DISCOVERED from families/*.cue — there is no hand-maintained list, so a
+# new family's schema + fixtures are gated the moment its .cue lands (matching the
+# auto-discovering Avro/AsyncAPI gates; a hand-kept list silently skips any family it omits).
+# The testdata dir is the file's basename; the root definition is its PascalCase form
+# (#<Family>, the ADR-PC-006 / new-family-schema convention). A name that does not resolve to a
+# real definition fails `cue vet` loudly below — never a silent skip.
+# bash 3.2-safe (macOS): no associative arrays, no mapfile.
+kebab_to_def() { # term-deposit | savings_account -> #TermDeposit | #SavingsAccount
+	local name="$1" out="" part
+	local IFS='-_'
+	for part in $name; do
+		out+="$(printf '%s' "${part:0:1}" | tr '[:lower:]' '[:upper:]')${part:1}"
+	done
+	printf '#%s' "$out"
+}
 
 fail=0
 
@@ -29,8 +42,10 @@ if ! cue fmt --check ./... 2>/tmp/cue-fmt-err; then
 	fail=1
 fi
 
-for entry in $FAMILIES; do
-	IFS='|' read -r family schema def <<<"$entry"
+for schema in families/*.cue; do
+	[ -e "$schema" ] || continue
+	family="$(basename "$schema" .cue)"
+	def="$(kebab_to_def "$family")"
 	echo "== ${family} (${def}) =="
 
 	if ! cue vet "$COMMON" "$schema" 2>/tmp/cue-err; then
