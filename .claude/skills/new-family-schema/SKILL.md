@@ -166,12 +166,13 @@ collection, not new rows/columns. If the family exposes a denormalized CQRS read
 
 ## Step 8 — The CUE family schema and the pack binding
 
-Add `contracts/cue/families/<family>.cue` modelled on
+Add `contracts/cue/families/<family-kebab>.cue` (kebab-case — matching the .NET project
+directory, **not** the snake_case `<family>` bus name) modelled on
 [`contracts/cue/families/term-deposit.cue`](contracts/cue/families/term-deposit.cue): a
 **closed** `#<Family>` definition (a variant carrying an undeclared field fails depth 1 — no
 DSL escape hatch, [ADR-PC-006](docs/product-management/product_concepts/adrs/ADR-PC-006-cue-schema-language.md)). Pin `schema` to `<family>@YYYY.N` and
 `pack` to the governing `pt.YYYY.N`. Add accept/reject fixtures under
-`contracts/cue/testdata/<family>/{valid,invalid}/` and verify:
+`contracts/cue/testdata/<family-kebab>/{valid,invalid}/` (same kebab name) and verify:
 
 ```bash
 mise exec -- make contracts-check   # CUE fmt + accept/reject fixtures (ADR-PC-006)
