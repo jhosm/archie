@@ -1,0 +1,23 @@
+# ADR-PC-024: when present, required_preconditions is a NON-EMPTY list — the
+# leading element makes ≥1 entry structural (a product that gates on nothing omits
+# the field entirely rather than declaring an empty gate). An empty list matches
+# the `[#PreconditionKey, ...]` shape's required head and is rejected.
+variant_id: dpz_pt_12m_flat_empty_precondition
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 365
+day_count: pt.act_360
+currency: EUR
+interest_variant: AT_MATURITY
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: new_money }
+required_preconditions: []
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000
+    basis: ACCRUED_INTEREST
+auto_renewal_policy: NONE
+principal_bounds:
+  min_cents: 50000

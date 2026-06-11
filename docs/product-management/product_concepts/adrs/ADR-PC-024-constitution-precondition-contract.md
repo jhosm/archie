@@ -77,6 +77,22 @@ This contract extends the side of constitution validation the engine **keeps** �
 - **Coarse edge admission vs fine engine precondition.** [integration_concepts §00](../../integration_concepts/00-introduction-and-decisions.md) names "product eligibility?" among *edge* pre-validations. That edge check is the **coarse admission** gate (is this customer in the eligible population at all — resolvable upstream, product-agnostic); the **fine, product-config-specific** preconditions are decider-enforced here. The two coexist without conflict.
 - **What this contract does not commit to.** The evaluators (provenance queries, CRM look-ups, credit checks), the data they read, and the look-back windows are **upstream / operating-bank deliverables**. The contract supplies the declaration surface and the refusal; it does not supply the evidence.
 
+## Amendment — 2026-06-12: where the verdict audit-lineage is recorded (F.9 implementation)
+
+Implementing F.9 ([bd babelstone-k6r8.2](../04-open-questions.md)) revealed that §1's "the engine **records the verdicts** on the `DepositConstituted` (or `DepositConstitutionFailed`) envelope for audit lineage only" is satisfiable on the **refusal** path now, but not on the **accepted** path without a disproportionate generic-engine change — because the two events sit on different contract surfaces. This amendment is additive: it pins *which* envelope carries the lineage in v1 and time-bounds the accepted-path gap, leaving §1's recording intent intact.
+
+### A1 · The refusal-path lineage rides `DepositConstitutionFailed` (store-only JSON)
+
+For an `ELIGIBILITY_NOT_MET` refusal, the resolved verdicts (the opaque `{ key, satisfied, evidence_ref, evaluated_at }` triples) are recorded on `DepositConstitutionFailed`. That event is **not** bus-published (it has no `.avsc`), so it flows only through the event-store JSON codec — the audit book of record per [ADR-PC-028](./ADR-PC-028-event-store-payload-format.md). This is the lineage the load-bearing commitment (`CONSTITUTION_PRECONDITION_REFUSAL`, §Verifiable-commitments) depends on, and it lands in v1 with F.9. The verdicts stay structural / non-PII (`evidence_ref` is a reference, §1) so the store record carries no identity data.
+
+### A2 · The accepted-path on-envelope lineage on `DepositConstituted` is deferred to v1.x
+
+`DepositConstituted` is a **bus-published** event (governed by the Avro schema + registry of [ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md); it has an `.avsc` and an AsyncAPI EventCatalog entry). The Avro bus codec enforces strict C#↔schema field parity and currently has no array-of-record support, so recording a verdict **list** on `DepositConstituted` would (a) force store-only audit lineage onto the durable bus — widening the bus contract for data with no named consumer — and (b) require a generic-codec change. Per [ADR-PC-028](./ADR-PC-028-event-store-payload-format.md) the audit book of record is the store JSON, not the Avro projection; so v1 records the *accepted-path* verdict lineage **not at all on the envelope** and defers an on-`DepositConstituted` (or store-side) accepted-path lineage to **v1.x**, when a launch product is first eligibility-gated (the same v1.x boundary §Residual-risks already sets for predicate legality). The refusal-path lineage (A1) is unaffected.
+
+### A3 · This amends the decision; it does not supersede this ADR
+
+§D1–§D6 remain binding as written — payload shape, opaque-verdict semantics, the pre-decider ordering, the pure-replay idempotency, the `ELIGIBILITY_NOT_MET` refusal before the irreversible debit, and the engine-owned-taxonomy / config-owned-list ownership split are all implemented exactly as decided. This amendment only **localises §1's "records the verdicts on the envelope" clause** to the refusal-path event in v1 and time-bounds the accepted-path recording — it is appended to, not a revision of, §1.
+
 ## Verifiable commitments
 
 This contract's load-bearing commitment is a fitness function in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for its exact claim, gate, and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):

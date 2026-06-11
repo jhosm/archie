@@ -27,6 +27,19 @@ public static class TermDepositDecider
     public const string RenewalSameTermCurrentRate = "SAME_TERM_CURRENT_RATE";
     public const string RenewalSameTermSameRate = "SAME_TERM_SAME_RATE";
 
+    /// <summary>The closed, engine-owned commercial-eligibility verdict-key taxonomy (ADR-PC-024 §1, §6) —
+    /// the SAME tokens the CUE family schema's <c>#PreconditionKey</c> enumerates and a product's
+    /// <c>required_preconditions</c> picks from. The engine owns this set and the refusal semantics;
+    /// the product config owns WHICH keys it requires; upstream owns evaluating them.</summary>
+    public const string PreconditionIsNewClient = "is_new_client";
+    public const string PreconditionIsNewMoney = "is_new_money";
+    public const string PreconditionSalaryDomiciled = "salary_domiciled";
+    public const string PreconditionMortgageLinked = "mortgage_linked";
+
+    /// <summary>The <see cref="DepositConstitutionFailed.FailureReason"/> code a precondition refusal
+    /// records (ADR-PC-024 §5). Stable, machine-readable, non-PII — like every failure reason.</summary>
+    public const string EligibilityNotMetReason = "ELIGIBILITY_NOT_MET";
+
     /// <summary>
     /// Build <see cref="DepositConstituted"/> from the command, stamping the resolved TAN and
     /// the rate-sheet version it came from (ADR-PC-008 §P3). The maturity date is derived from
@@ -48,7 +61,91 @@ public static class TermDepositDecider
             InterestVariant: command.InterestVariant,
             AutoRenewalPolicy: command.AutoRenewalPolicy,
             PaymentPeriodMonths: command.PaymentPeriodMonths,
+            // The resolved commercial-eligibility verdicts are NOT recorded on this ACCEPTED-path event
+            // in v1 (ADR-PC-024 §1 Amendment 2026-06-12): DepositConstituted is bus-published and the Avro
+            // codec enforces strict parity with no array-of-record support, so an accepted-path verdict
+            // list would force store-only audit lineage onto the durable bus. The REFUSAL-path lineage
+            // (the load-bearing CONSTITUTION_PRECONDITION_REFUSAL commitment) rides DepositConstitutionFailed
+            // (store-only JSON, ADR-PC-028); accepted-path on-envelope lineage is deferred to v1.x.
             ProductCode: command.ProductId);
+
+    /// <summary>
+    /// Decide commercial eligibility (ADR-PC-024 §5): refuse the constitution when a precondition the
+    /// product REQUIRES is absent from the command's verdicts or evaluated <c>Satisfied == false</c>.
+    /// Pure function of <paramref name="requiredPreconditions"/> (the product's declared gate) and
+    /// <paramref name="verdicts"/> (the verdicts the saga resolved upstream and placed on the command)
+    /// — NO upstream call, no in-engine evaluation, no clock (ADR-PC-024 §3–§4). The engine never
+    /// re-evaluates a verdict; it only checks that each required key is present and satisfied.
+    /// <list type="bullet">
+    /// <item>All required preconditions present and <c>Satisfied</c> ⇒ returns <c>null</c> (constitute proceeds).</item>
+    /// <item>Any required key absent, or present but <c>Satisfied == false</c> ⇒ returns a
+    /// <see cref="DepositConstitutionFailed"/> with reason <see cref="EligibilityNotMetReason"/> and a
+    /// non-PII detail naming the unmet keys. No deposit is opened; this is a REFUSAL, not a compensation —
+    /// the engine refuses BEFORE the irreversible Core debit (ADR-PC-024 §5).</item>
+    /// </list>
+    /// Replay re-presents the same command verdicts and re-derives the identical outcome — the refusal is
+    /// idempotent because no upstream re-call ever happens inside the engine (ADR-PC-024 §4). A product with
+    /// no <paramref name="requiredPreconditions"/> (v1 launch products, 02 §4) is never refused here.
+    /// </summary>
+    /// <param name="depositId">The stream id the (would-be) deposit and any refusal event are keyed by.</param>
+    /// <param name="requiredPreconditions">The closed verdict keys this product's config requires
+    /// (ADR-PC-024 §1, from <c>required_preconditions</c>). Empty ⇒ ungated ⇒ never refused.</param>
+    /// <param name="verdicts">The resolved verdicts the saga placed on the command, keyed by verdict key.</param>
+    /// <returns><c>null</c> when every required precondition is satisfied; otherwise the refusal event.</returns>
+    public static DepositConstitutionFailed? CheckPreconditions(
+        Guid depositId,
+        IReadOnlyCollection<string> requiredPreconditions,
+        IReadOnlyDictionary<string, PreconditionVerdict>? verdicts)
+    {
+        // Ungated products (the v1 launch set) never reach a refusal — fast path, no allocation.
+        if (requiredPreconditions.Count == 0)
+        {
+            return null;
+        }
+
+        // A required key fails when it is absent from the command's verdicts OR its verdict is not
+        // satisfied. Order the keys deterministically so the detail string (and thus the recorded
+        // event) is identical on replay — purity extends to the failure message, not just the verdict.
+        var unmet = requiredPreconditions
+            .Where(key => verdicts is null
+                || !verdicts.TryGetValue(key, out var verdict)
+                || !verdict.Satisfied)
+            .OrderBy(key => key, StringComparer.Ordinal)
+            .ToArray();
+
+        if (unmet.Length == 0)
+        {
+            return null;
+        }
+
+        // Detail names the unmet KEYS only — never the verdict's evidence_ref or any customer fact
+        // (ADR-PC-024 §1, §5; the keys are the engine-owned closed taxonomy, structural not PII). The
+        // full resolved verdicts are recorded on the event for AUDIT LINEAGE (ADR-PC-024 §1): which
+        // verdict drove the refusal and on what referenced evidence, beyond the unmet-key names.
+        return new DepositConstitutionFailed(
+            depositId,
+            EligibilityNotMetReason,
+            $"Required commercial-eligibility precondition(s) absent or not satisfied: {string.Join(", ", unmet)}.",
+            RecordedVerdicts(verdicts));
+    }
+
+    /// <summary>
+    /// Map the command's resolved verdicts into the structural <see cref="RecordedPreconditionVerdict"/>
+    /// lineage recorded on the constitution event (ADR-PC-024 §1 "for audit lineage only"). Ordered by
+    /// key (Ordinal) so the recorded list is REPLAY-IDENTICAL regardless of the command map's iteration
+    /// order — purity extends to the lineage artefact, not just the verdict. Pure: no clock, no I/O;
+    /// the <c>evaluated_at</c> is upstream-supplied data carried through, never a clock read. Empty/absent
+    /// verdicts map to an empty list (ungated deposits and pre-F.9 streams carry none).
+    /// </summary>
+    private static IReadOnlyList<RecordedPreconditionVerdict> RecordedVerdicts(
+        IReadOnlyDictionary<string, PreconditionVerdict>? verdicts) =>
+        verdicts is null || verdicts.Count == 0
+            ? Array.Empty<RecordedPreconditionVerdict>()
+            : verdicts
+                .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv => new RecordedPreconditionVerdict(
+                    kv.Key, kv.Value.Satisfied, kv.Value.EvidenceRef, kv.Value.EvaluatedAt))
+                .ToArray();
 
     /// <summary>
     /// Mature a deposit, branching on its interest variant (02 §2.1). Pure: the position carries

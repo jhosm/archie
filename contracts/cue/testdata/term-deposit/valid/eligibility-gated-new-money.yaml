@@ -1,0 +1,26 @@
+# Commercial-eligibility-gated variant (ADR-PC-024): a new-money + salary-
+# domiciliation promotion. The product DECLARES the verdict keys it requires;
+# upstream EVALUATES them and the saga passes the resolved verdicts on the
+# constitution command; the decider REFUSES if a required verdict is absent or
+# satisfied:false (the math/refusal lives in the engine, not in this config).
+variant_id: dpz_pt_12m_flat_new_money_promo
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 365
+day_count: pt.act_360
+currency: EUR
+interest_variant: AT_MATURITY
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: new_money }
+required_preconditions:
+  - is_new_money
+  - salary_domiciled
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000
+    basis: ACCRUED_INTEREST
+auto_renewal_policy: NONE
+principal_bounds:
+  min_cents: 50000
