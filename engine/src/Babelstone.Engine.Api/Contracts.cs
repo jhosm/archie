@@ -33,6 +33,21 @@ public sealed record ConstituteDepositRequest(
 /// </summary>
 public sealed record ConstituteDepositResponse(Guid DepositId, string Status, long CommitSequence);
 
+/// <summary>
+/// The acknowledgement returned by the ASYNCHRONOUS command surface (I.1, bd babelstone-pxj9) — the
+/// <c>202 Accepted</c> body of ADR-IC-006 §Context / Document 05 §Step-0. The host has accepted the
+/// command and is dispatching it through the engine command path on a background task; it has NOT
+/// blocked on completion. The caller follows progress on <see cref="StreamUrl"/> — the SSE endpoint
+/// (<c>GET /v1/processes/{process_id}/stream</c>) that streams <see cref="ProcessSnapshot"/> updates
+/// until the process reaches a terminal state.
+/// </summary>
+/// <param name="DepositId">The aggregate id the command will affect (assigned up front, like the
+/// synchronous path), so the caller can reference the deposit before the dispatch completes.</param>
+/// <param name="ProcessId">The host-assigned process identity, also embedded in <see cref="StreamUrl"/>.</param>
+/// <param name="Status">Always <c>PROCESSING</c> at acceptance — the lifecycle is reported on the stream.</param>
+/// <param name="StreamUrl">The relative SSE URL to subscribe to for progress (ADR-IC-006 §Context).</param>
+public sealed record CommandAcceptedResponse(Guid DepositId, Guid ProcessId, string Status, string StreamUrl);
+
 /// <summary>Mature a constituted deposit. The instant is host-stamped if omitted.</summary>
 public sealed record MatureDepositRequest(
     DateTimeOffset? MaturedAt = null,

@@ -107,6 +107,15 @@ builder.Services.AddSingleton(packLoad.Store);
 // Shared, family-agnostic infrastructure — composed once, resolved by every family module.
 // The runtime owns the clock (ADR-PC-010 §P5); the host stamps a missing constituted_at/matured_at.
 builder.Services.AddSingleton(TimeProvider.System);
+// The async command surface's process tracker (I.1, bd babelstone-pxj9): a family-agnostic,
+// in-host registry behind the 202-Accepted + process_id + SSE contract (ADR-IC-006 §Context /
+// Document 05 §Step-0). A command POST to /v1/deposits/commands dispatches through the engine
+// command path on a background task and records lifecycle here; GET /v1/processes/{id}/stream
+// (ProcessStreamEndpoints, mapped below) streams it. It is the engine host's own async-command
+// bookkeeping, NOT the cross-context constitution saga (Epic H, orchestrator/) — distinct bounded
+// context, distinct durable saga_state table. v1 keeps process state in-memory (single-host dev
+// boundary); a durable, multi-replica store is a tracked follow-up.
+builder.Services.AddSingleton<ProcessRegistry>();
 builder.Services.AddSingleton<IRateSheetStore>(_ => new PostgresRateSheetStore(connectionString));
 builder.Services.AddSingleton<ISettlementPort, LoggingSettlementPort>();
 builder.Services.AddSingleton<IEventStore>(_ => new PostgresEventStore(connectionString));
@@ -186,6 +195,12 @@ foreach (var module in familyModules)
 {
     module.MapEndpoints(app);
 }
+
+// The async command surface's process-stream SSE endpoint (I.1, bd babelstone-pxj9). Mapped at the
+// HOST level, not inside a family module, because the process stream is family-agnostic: it serves
+// an opaque ProcessSnapshot, so every family's async commands (each family's command route supplies
+// its own dispatch closure) share this one /v1/processes/{id}/stream surface.
+ProcessStreamEndpoints.Map(app);
 
 app.Run();
 

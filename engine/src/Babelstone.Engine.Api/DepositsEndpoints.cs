@@ -26,6 +26,16 @@ public static class DepositsEndpoints
         app.MapPost("/v1/deposits/{id:guid}/maturity", MatureAsync);
         app.MapPost("/v1/deposits/{id:guid}/interest", PayInterestAsync);
 
+        // The ASYNCHRONOUS command surface (I.1, bd babelstone-pxj9): the 202-Accepted +
+        // process_id + SSE-stream-URL contract of ADR-IC-006 §Context / Document 05 §Step-0. Distinct
+        // route from the synchronous POST above so the existing constitute contract (the MCP
+        // constitute_deposit tool, ADR-IC-010; the DepositsApiIntegrationTests acceptance test) is
+        // untouched — this is an ADDITIVE surface. It accepts the SAME command, dispatches it through
+        // the SAME TermDepositConstitutionService kernel path (never bypassing it), and returns
+        // immediately with a stream URL the caller follows on ProcessStreamEndpoints rather than
+        // blocking until the append commits.
+        app.MapPost("/v1/deposits/commands", ConstituteAsyncCommand);
+
         // The CQRS query surface (ADR-IC-005, the I.2 Query API seam). ONE canonical deposit resource
         // — GET /v1/deposits/{id} — served from the denormalized read_model.deposits row by default and
         // folded from the event stream only as a read-your-writes fallback (see GetDepositAsync). There
@@ -39,6 +49,27 @@ public static class DepositsEndpoints
         app.MapGet("/v1/deposits/{id:guid}", GetDepositAsync);
     }
 
+    /// <summary>
+    /// Build the constitution command from the wire request, host-stamping a missing id /
+    /// constituted_at / actor. The clock and id-minting live in this impure host shell (ADR-PC-010
+    /// §P5), never in the pure decider; the synchronous and asynchronous (I.1) constitute paths both
+    /// build the command here so they dispatch byte-identical commands through the kernel.
+    /// </summary>
+    private static ConstituteDepositCommand BuildConstituteCommand(
+        ConstituteDepositRequest request, Guid depositId, TimeProvider clock) => new(
+        DepositId: depositId,
+        PrincipalCents: request.PrincipalCents,
+        ProductId: request.ProductId,
+        Role: request.Role,
+        TermDays: request.TermDays,
+        StartDate: request.StartDate,
+        ConstitutedAt: request.ConstitutedAt ?? clock.GetUtcNow(),
+        InterestVariant: request.InterestVariant,
+        AutoRenewalPolicy: request.AutoRenewalPolicy,
+        FundingAccount: request.FundingAccount,
+        Actor: request.Actor ?? "mcp:dev",
+        PaymentPeriodMonths: request.PaymentPeriodMonths);
+
     private static async Task<IResult> ConstituteAsync(
         ConstituteDepositRequest request,
         TermDepositConstitutionService service,
@@ -46,19 +77,7 @@ public static class DepositsEndpoints
         CancellationToken ct)
     {
         var depositId = request.DepositId ?? Guid.NewGuid();
-        var command = new ConstituteDepositCommand(
-            DepositId: depositId,
-            PrincipalCents: request.PrincipalCents,
-            ProductId: request.ProductId,
-            Role: request.Role,
-            TermDays: request.TermDays,
-            StartDate: request.StartDate,
-            ConstitutedAt: request.ConstitutedAt ?? clock.GetUtcNow(),
-            InterestVariant: request.InterestVariant,
-            AutoRenewalPolicy: request.AutoRenewalPolicy,
-            FundingAccount: request.FundingAccount,
-            Actor: request.Actor ?? "mcp:dev",
-            PaymentPeriodMonths: request.PaymentPeriodMonths);
+        var command = BuildConstituteCommand(request, depositId, clock);
 
         // The host shell is the composition root that knows the command, so the product-semantic
         // span is opened HERE, never in the pure decider/fold (ADR-PC-010 §P5 / ADR-IC-007 P2/P3).
@@ -92,6 +111,48 @@ public static class DepositsEndpoints
         // If-Min-Sequence on the follow-up GET to read its own write (ADR-IC-005 §P3).
         return Results.Created(
             $"/v1/deposits/{depositId}", new ConstituteDepositResponse(depositId, "ACTIVE", commitSequence));
+    }
+
+    /// <summary>
+    /// The asynchronous command-submission path (I.1, bd babelstone-pxj9). It accepts the SAME
+    /// constitution command, assigns a process_id, kicks off the dispatch through the SAME
+    /// <see cref="TermDepositConstitutionService"/> kernel path on a background task (so the engine's
+    /// event-sourcing discipline is untouched), and returns <c>202 Accepted</c> with a stream URL —
+    /// never blocking on the append. Progress is followed on the SSE endpoint
+    /// (<see cref="ProcessStreamEndpoints"/>): the dispatch's success / domain-rejection / fault
+    /// becomes the terminal <see cref="ProcessSnapshot"/> the stream emits (the async analogue of the
+    /// synchronous path's 201 / 422 / 500).
+    /// </summary>
+    private static IResult ConstituteAsyncCommand(
+        ConstituteDepositRequest request,
+        TermDepositConstitutionService service,
+        ProcessRegistry processes,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        var depositId = request.DepositId ?? Guid.NewGuid();
+        var command = BuildConstituteCommand(request, depositId, clock);
+
+        // Register the process FIRST, then start the dispatch — the 202 carries the process_id, and a
+        // client can subscribe to the stream the instant it has that id, before the append commits.
+        var processId = processes.Start();
+
+        // The dispatch runs in the background, NOT under the request's CancellationToken: the 202 has
+        // already detached the client, so the command must complete (commit the append) regardless of
+        // whether the original HTTP request is still open. It calls the SAME kernel command path the
+        // synchronous endpoint does — the registry only wraps its outcome into process lifecycle.
+        _ = processes.RunAsync(processId, async () =>
+        {
+            var commitSequence = await service.ConstituteAsync(command, CancellationToken.None);
+            return new ProcessOutcome(depositId, commitSequence);
+        });
+
+        var response = new CommandAcceptedResponse(
+            DepositId: depositId,
+            ProcessId: processId,
+            Status: "PROCESSING",
+            StreamUrl: $"/v1/processes/{processId}/stream");
+        return Results.Accepted($"/v1/processes/{processId}/stream", response);
     }
 
     private static async Task<IResult> GetDepositAsync(

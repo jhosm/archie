@@ -264,6 +264,121 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
+    [Fact]
+    public async Task The_async_command_surface_returns_202_then_the_stream_reports_succeeded_and_the_deposit_reads_back()
+    {
+        // I.1 (bd babelstone-pxj9): POST the constitution command to the ASYNC surface. It does NOT
+        // block on the append — it returns 202 Accepted with a process_id and an SSE stream_url
+        // (ADR-IC-006 §Context / Document 05 §Step-0), having kicked the dispatch off on a background
+        // task through the SAME engine command path the synchronous POST uses.
+        var accepted = await _client.PostAsJsonAsync("/v1/deposits/commands", new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "dpz_pt_12m_juros_venc",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001"), SnakeCase);
+
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        var command = await accepted.Content.ReadFromJsonAsync<CommandAcceptedResponse>(SnakeCase);
+        Assert.NotNull(command);
+        Assert.Equal("PROCESSING", command.Status);
+        Assert.NotEqual(Guid.Empty, command.ProcessId);
+        Assert.NotEqual(Guid.Empty, command.DepositId);
+        Assert.Equal($"/v1/processes/{command.ProcessId}/stream", command.StreamUrl);
+
+        // Subscribe to the SSE stream and read until it reports a terminal state. The stream replays
+        // the current snapshot then streams updates, closing on the terminal one — so this returns the
+        // SUCCEEDED snapshot carrying the deposit id + its commit_sequence (the read-your-writes token).
+        var terminal = await ReadProcessStreamToTerminalAsync(command.StreamUrl);
+        Assert.Equal(ProcessStatus.Succeeded, terminal.Status);
+        Assert.Equal(command.DepositId, terminal.AggregateId);
+        Assert.NotNull(terminal.CommitSequence);
+
+        // The async dispatch went through the real kernel path: the deposit reads back from the engine,
+        // and threading the streamed commit_sequence as If-Min-Sequence gives read-your-writes.
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/v1/deposits/{command.DepositId}");
+        request.Headers.TryAddWithoutValidation(
+            "If-Min-Sequence", terminal.CommitSequence!.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var read = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        var deposit = await read.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
+        Assert.NotNull(deposit);
+        Assert.Equal(command.DepositId, deposit.DepositId);
+        Assert.Equal("Active", deposit.Lifecycle);
+        Assert.Equal(1_000_000, deposit.PrincipalCents);
+    }
+
+    [Fact]
+    public async Task An_async_command_that_a_domain_precondition_rejects_reports_rejected_on_the_stream()
+    {
+        // The async analogue of the synchronous 422: an unpriced product is a domain rejection. The
+        // 202 is still returned (the command was accepted for dispatch), but the dispatch fails the
+        // domain precondition, so the stream reaches a terminal REJECTED with the reason — never a
+        // phantom SUCCEEDED and never an unobservable swallowed fault.
+        var accepted = await _client.PostAsJsonAsync("/v1/deposits/commands", new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "unpriced_product",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001"), SnakeCase);
+
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        var command = (await accepted.Content.ReadFromJsonAsync<CommandAcceptedResponse>(SnakeCase))!;
+
+        var terminal = await ReadProcessStreamToTerminalAsync(command.StreamUrl);
+        Assert.Equal(ProcessStatus.Rejected, terminal.Status);
+        Assert.NotNull(terminal.Detail);
+        Assert.Null(terminal.CommitSequence);
+    }
+
+    [Fact]
+    public async Task Streaming_an_unknown_process_is_404()
+    {
+        var response = await _client.GetAsync($"/v1/processes/{Guid.NewGuid()}/stream");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Subscribe to a process SSE stream and read its events until a terminal snapshot arrives,
+    /// returning that snapshot. Parses the minimal SSE framing the host emits (one <c>data:</c> JSON
+    /// line per event); a generous deadline covers the background dispatch on a loaded CI box.
+    /// </summary>
+    private async Task<ProcessSnapshot> ReadProcessStreamToTerminalAsync(string streamUrl)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var response = await _client.GetAsync(
+            streamUrl, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        response.EnsureSuccessStatusCode();
+        Assert.StartsWith("text/event-stream", response.Content.Headers.ContentType!.MediaType);
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
+        using var reader = new StreamReader(stream);
+        string? line;
+        while ((line = await reader.ReadLineAsync(cts.Token)) is not null)
+        {
+            const string dataPrefix = "data:";
+            if (!line.StartsWith(dataPrefix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var json = line[dataPrefix.Length..].Trim();
+            var snapshot = JsonSerializer.Deserialize<ProcessSnapshot>(json, SnakeCase)!;
+            if (snapshot.Status is not ProcessStatus.Processing)
+            {
+                return snapshot;
+            }
+        }
+
+        throw new InvalidOperationException("process stream closed without a terminal snapshot");
+    }
+
     private static RateSheetBody FlatPriced(string productId, string role, int tanBasisPoints) => new()
     {
         Products = new Dictionary<string, Dictionary<string, RoleRates>>
