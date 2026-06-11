@@ -53,6 +53,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 CATALOG_DIR="contracts/catalog/events"
+RECON_DIR="contracts/catalog/reconciliation"          # per-consumer reconciliation contracts (event-store §7.3)
 CATALOG_INFO="contracts/catalog/catalog-info.yaml"   # the Backstage descriptor (ADR-IC-015 §9)
 AVRO_DIR="${ASYNCAPI_CATALOG_AVRO_DIR:-contracts/avro}"
 BASELINE_REF="${ASYNCAPI_CATALOG_BASELINE_REF:-origin/main}"
@@ -395,6 +396,56 @@ if [ -f "$CATALOG_INFO" ]; then
 	fi
 else
 	note "  no $CATALOG_INFO — Backstage descriptor not present (Git-native fallback posture)"
+fi
+note ""
+
+# ---------------------------------------------------------------------------
+# §7.3 — per-consumer reconciliation contracts (bd babelstone-y1t7). The catalogued
+# side of each consumer's reconciliation agreement (which §7.1 patterns it runs); the
+# executable side is ReconciliationContract in ProjectionReconciler.cs. Hermetic —
+# pure YAML/JSON inspection, no network. Each descriptor must:
+#   * parse as YAML;
+#   * name its consumer (spec.consumer — a reference, never PII);
+#   * declare the three §7.1 pattern flags (checksum/eventCount/fullRebuild) and have at
+#     least one true (a contract that reconciles nothing is a misconfiguration — mirrors
+#     ReconciliationContract.EnsureValid()'s Patterns != None check);
+#   * carry the governance fields metadata.x-owner / x-owner-contact / x-status.
+# ---------------------------------------------------------------------------
+note "-- §7.3 per-consumer reconciliation contracts ($RECON_DIR) --"
+if [ -d "$RECON_DIR" ]; then
+	recon_files=()
+	while IFS= read -r -d '' f; do recon_files+=("$f"); done \
+		< <(find "$RECON_DIR" -name '*.reconciliation.yaml' -print0 | sort -z)
+	if [ "${#recon_files[@]}" -eq 0 ]; then
+		note "  no *.reconciliation.yaml under $RECON_DIR — none to validate"
+	fi
+	for f in ${recon_files[@]+"${recon_files[@]}"}; do
+		before_fail="$fail"
+		rdoc="$(y2j "$f")" || { err "$f: could not parse YAML"; continue; }
+		consumer="$(printf '%s' "$rdoc" | jq -r '.spec.consumer // empty')"
+		[ -n "$consumer" ] || err "$f: spec.consumer is required (event-store §7.3)"
+		for field in x-owner x-owner-contact x-status; do
+			val="$(printf '%s' "$rdoc" | jq -r --arg k "$field" '.metadata[$k] // empty')"
+			[ -n "$val" ] || err "$f: metadata.$field is required (event-store §7.3 governance)"
+		done
+		# At least one §7.1 pattern must be true — mirrors ReconciliationContract.EnsureValid().
+		any_pattern="$(printf '%s' "$rdoc" | jq -r '
+			[(.spec.patterns.checksum // false), (.spec.patterns.eventCount // false),
+			 (.spec.patterns.fullRebuild // false)] | any')"
+		[ "$any_pattern" = "true" ] \
+			|| err "$f: spec.patterns declares no §7.1 pattern true — a contract that reconciles nothing is a misconfiguration (event-store §7.3)"
+		# Every declared projection kind is family-prefixed (the ProjectionRunner.Kind shape).
+		while IFS= read -r k; do
+			[ -n "$k" ] || continue
+			case "$k" in
+				*.*) ;;
+				*) err "$f: projectionKind '$k' is not family-prefixed (e.g. term_deposit.deposit_position)";;
+			esac
+		done < <(printf '%s' "$rdoc" | jq -r '.spec.projectionKinds[]?.kind // empty')
+		[ "$fail" = "$before_fail" ] && note "  ok  $f :: consumer '$consumer'"
+	done
+else
+	note "  no $RECON_DIR — no reconciliation contracts present"
 fi
 note ""
 

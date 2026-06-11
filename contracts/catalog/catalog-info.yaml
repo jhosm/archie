@@ -1,15 +1,20 @@
-# Backstage catalogue descriptor for the term-deposit integration events (ADR-IC-015).
+# Backstage catalogue descriptor for the term-deposit integration events (ADR-IC-015)
+# and the per-consumer reconciliation contracts (event-store §7.3, bd babelstone-y1t7).
 #
-# This file makes the SAME AsyncAPI source of truth under ./events/*.asyncapi.yaml
-# discoverable in a Backstage instance — one `kind: API` entity per event, each with
-# `spec.type: asyncapi` and `spec.definition.$text` pointing at the relative AsyncAPI
-# file (Backstage resolves $text relative to this catalog-info.yaml's location).
+# This file makes the SAME source-of-truth artefacts discoverable in a Backstage instance:
+#   * the AsyncAPI events under ./events/*.asyncapi.yaml — one `kind: API` entity per event,
+#     `spec.type: asyncapi`, `spec.definition.$text` -> the relative AsyncAPI file;
+#   * the reconciliation contracts under ./reconciliation/*.reconciliation.yaml — one
+#     `kind: API` entity per consumer, `spec.type: reconciliation`, `spec.definition.$text`
+#     -> the relative descriptor (Backstage resolves $text relative to this file's location).
 #
 # The descriptors ship NOW; the Backstage HOST deployment is deferred to platform work
 # (ADR-IC-015 Decision §9, bd babelstone-s4ol.1). Until a Backstage instance exists this
-# file is inert — the AsyncAPI files + the CI gate (scripts/asyncapi-catalog-validate.sh)
+# file is inert — the source files + the CI gate (scripts/asyncapi-catalog-validate.sh)
 # remain the live governance surface (the Git-native fallback posture). No PII lives here
-# or in any referenced AsyncAPI/Avro artefact (ADR-PC-004 §P2).
+# or in any referenced AsyncAPI / Avro / reconciliation artefact (ADR-PC-004 §P2): the
+# reconciliation contracts carry references (consumer names, projection-kind discriminators,
+# §7.1 pattern flags), never PII.
 #
 # Register it later with, e.g.:
 #   catalog:
@@ -28,6 +33,18 @@ spec:
     - ./events/DepositConstituted.asyncapi.yaml
     - ./events/InterestPaid.asyncapi.yaml
     - ./events/DepositMatured.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: babelstone-reconciliation-contracts
+  description: The per-consumer reconciliation contracts (event-store §7.3).
+spec:
+  type: url
+  targets:
+    - ./reconciliation/engine-projection-runtime.reconciliation.yaml
+    - ./reconciliation/acl.reconciliation.yaml
+    - ./reconciliation/notification.reconciliation.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API
@@ -67,3 +84,46 @@ spec:
   owner: term-deposit
   definition:
     $text: ./events/DepositMatured.asyncapi.yaml
+---
+# The per-consumer reconciliation contracts (event-store §7.3, bd babelstone-y1t7). Each is
+# a consumer's declared statement of what it reconciles against the engine's emitted events;
+# the executable side is ReconciliationContract in ProjectionReconciler.cs. References only,
+# no PII (ADR-PC-004 §P2).
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: reconciliation-engine-projection-runtime
+  title: Reconciliation — engine projection runtime
+  description: The engine's own projection runtime reconciles under all three §7.1 patterns.
+spec:
+  type: reconciliation
+  lifecycle: production
+  owner: term-deposit
+  definition:
+    $text: ./reconciliation/engine-projection-runtime.reconciliation.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: reconciliation-acl
+  title: Reconciliation — ACL / core-banking + GL + IFRS 9 + tax
+  description: The out-of-process downstream projection self-reports progress and rebuilds quarterly.
+spec:
+  type: reconciliation
+  lifecycle: production
+  owner: integration-platform
+  definition:
+    $text: ./reconciliation/acl.reconciliation.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: reconciliation-notification
+  title: Reconciliation — notification
+  description: Event-triggered confirmations — event-count only, no checksum or rebuild.
+spec:
+  type: reconciliation
+  lifecycle: production
+  owner: notification
+  definition:
+    $text: ./reconciliation/notification.reconciliation.yaml

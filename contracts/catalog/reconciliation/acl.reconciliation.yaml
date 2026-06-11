@@ -1,0 +1,50 @@
+# Reconciliation contract — the ACL / downstream core-banking consumer (event-store §7.3, §9).
+#
+# In plain English: the ACL is the anti-corruption layer in front of the legacy core-banking
+# stack; downstream of it sit the GL (general ledger), the IFRS 9 system, and tax reporting.
+# All of them derive their own state from the engine's emitted events — they are CONSUMERS,
+# never the engine's source of truth (event-store §9: "the GL system reads the same event
+# stream as every other consumer"). This file is that consumer's declared statement of how it
+# proves it consumed the stream correctly.
+#
+# Because the consumer is OUT OF PROCESS, it self-reports its event-count progress (the
+# last-processed sequence number and the count it actually folded). It publishes a daily
+# checksum and takes part in the quarterly coordinated full rebuild.
+#
+# NO PII — by construction (ADR-PC-004 §P2 / no-PII-on-the-durable-bus). The reconciliation
+# messages carry references and counts only: a stream id, a sequence number, a state hash.
+# No depositor name, NIF, or IBAN is reconciled — those never leave the engine boundary.
+---
+apiVersion: babelstone.io/reconciliation/v1alpha1
+kind: ReconciliationContract
+metadata:
+  name: acl-core-banking
+  title: ACL / core-banking + GL + IFRS 9 + tax projection
+  description: >-
+    The anti-corruption layer in front of legacy core banking (ADR-IC-012), and the GL,
+    IFRS 9, and tax-reporting systems behind it. It projects the engine's event stream into
+    its own ledger postings and reconciles those projections against the engine.
+  x-owner: integration-platform
+  x-owner-contact: integration-team@babelstone.example
+  x-status: active
+spec:
+  consumer: acl
+  patterns:
+    checksum: true        # (a) daily: the consumer's projection hash vs the engine cold-fold
+    eventCount: true      # (b) continuous: the consumer self-reports last-processed sequence
+    fullRebuild: true     # (c) quarterly coordinated rebuild from the full event log
+  # Out-of-process: the consumer rebuilds from the full event log it has retained / re-reads,
+  # then publishes its terminal projection hash for the engine to compare against a fresh
+  # cold fold. Coordinated on the quarterly drill window so the two snapshots align.
+  fullRebuildCoordination: >-
+    Quarterly. The consumer replays its retained copy of the event stream from sequence 0,
+    publishes the terminal projection hash per instance, and the engine compares it to a
+    fresh ProjectionReconciler cold fold; any divergence is the §7.2 slow-drift finding.
+  # The engine-side projection kinds the ACL reconciles against. The consumer's own GL/IFRS 9
+  # postings are derived from these; the reconciliation is kind-for-kind against the engine's
+  # belief. References only — never PII.
+  projectionKinds:
+    - kind: term_deposit.deposit_position
+      description: Position state — the ledger-posting source for principal + accrued interest.
+    - kind: term_deposit.withholding_ledger
+      description: The withholding-tax ledger — the tax-reporting and GL withholding source.

@@ -16,11 +16,22 @@ the [`catalog-info.yaml`](./catalog-info.yaml) is the only portal-specific artef
 ```
 contracts/catalog/
   catalog-info.yaml               # Backstage descriptor (the only portal-specific file)
-  events/
+  events/                         # one AsyncAPI file per integration event (the event catalogue)
     DepositConstituted.asyncapi.yaml
     InterestPaid.asyncapi.yaml
     DepositMatured.asyncapi.yaml
+  reconciliation/                 # one contract per consumer (event-store §7.3) — see its README
+    engine-projection-runtime.reconciliation.yaml
+    acl.reconciliation.yaml
+    notification.reconciliation.yaml
 ```
+
+The [`reconciliation/`](./reconciliation/) subtree is the per-consumer side of the same catalogue:
+each downstream consumer's declared statement of what it reconciles against the engine's emitted
+events (which §7.1 checksums it publishes, which event-count it reports, how full rebuilds are
+coordinated — event-store §7.3). Its executable companion is `ReconciliationContract` in
+[`ProjectionReconciler.cs`](../../engine/src/Babelstone.Engine/ProjectionReconciler.cs). See
+[`reconciliation/README.md`](./reconciliation/README.md).
 
 Each file documents one event on the `term_deposit` channel (topic name == `aggregate_type`,
 the relay's documented convention). The events are **Option A** (doc 08): one Avro schema per

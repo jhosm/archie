@@ -154,6 +154,99 @@ public sealed class ProjectionReconcilerIntegrationTests(PostgresEventStoreFixtu
         Assert.Equal(EventCountStatus.Skip, result.Status);
     }
 
+    // --- G.5: per-consumer reconciliation contract (event-store §7.3) ---
+
+    [Fact]
+    public async Task Contract_drives_the_declared_patterns_and_reports_clean_when_the_consumer_agrees()
+    {
+        await ResetAsync();
+        var (drainer, runner, events, reconciler) = Build();
+        var streamId = Guid.NewGuid();
+        events.Seed(Envelope(streamId, 0, by: 10));
+        events.Seed(Envelope(streamId, 1, by: 5));
+        events.Seed(Envelope(streamId, 2, by: 7));
+        var folded = await drainer.DrainOnceAsync(runner);
+
+        // The engine's own projection runtime: a contract over all three §7.1 patterns.
+        var contract = new ReconciliationContract(
+            Consumer: "engine",
+            ProjectionKind: Kind,
+            Patterns: ReconciliationPatterns.All,
+            ContractRef: "contracts/catalog/reconciliation/engine-projection-runtime.reconciliation.yaml");
+
+        var report = await reconciler.ReconcileAsync(contract, streamId, consumerFoldedCount: folded);
+
+        Assert.Equal("engine", report.Contract.Consumer);
+        Assert.NotNull(report.Checksum);   // the contract opted into checksum -> it ran
+        Assert.True(report.Checksum!.Match);
+        Assert.NotNull(report.EventCount); // and into event-count -> it ran
+        Assert.Equal(EventCountStatus.InSync, report.EventCount!.Status);
+        Assert.True(report.IsClean);
+    }
+
+    [Fact]
+    public async Task Contract_runs_only_the_patterns_it_declares()
+    {
+        await ResetAsync();
+        var (drainer, runner, events, reconciler) = Build();
+        var streamId = Guid.NewGuid();
+        events.Seed(Envelope(streamId, 0, by: 3));
+        await drainer.DrainOnceAsync(runner);
+
+        // A lighter consumer contract that publishes only the daily checksum — it opts OUT of
+        // event-count, so that pattern must not run (its slot stays null, not a failure).
+        var contract = new ReconciliationContract(
+            Consumer: "analytics",
+            ProjectionKind: Kind,
+            Patterns: ReconciliationPatterns.Checksum,
+            ContractRef: "contracts/catalog/reconciliation/analytics.reconciliation.yaml");
+
+        var report = await reconciler.ReconcileAsync(contract, streamId);
+
+        Assert.NotNull(report.Checksum);
+        Assert.Null(report.EventCount);  // opted out -> did not run
+        Assert.True(report.IsClean);     // an opted-out pattern never fails the verdict
+    }
+
+    [Fact]
+    public async Task Contract_reports_unclean_when_the_consumer_has_drifted()
+    {
+        await ResetAsync();
+        var (drainer, runner, events, reconciler) = Build();
+        var streamId = Guid.NewGuid();
+        events.Seed(Envelope(streamId, 0, by: 10));
+        events.Seed(Envelope(streamId, 1, by: 5));
+        await drainer.DrainOnceAsync(runner);
+        await CorruptCurrentBeliefAsync(streamId, new CounterState(999));
+
+        var contract = new ReconciliationContract(
+            Consumer: "acl",
+            ProjectionKind: Kind,
+            Patterns: ReconciliationPatterns.Checksum | ReconciliationPatterns.EventCount,
+            ContractRef: "contracts/catalog/reconciliation/acl.reconciliation.yaml");
+
+        var report = await reconciler.ReconcileAsync(contract, streamId, consumerFoldedCount: 2);
+
+        Assert.False(report.Checksum!.Match);
+        Assert.False(report.IsClean); // a drifted checksum on a pattern the contract runs => unclean
+    }
+
+    [Theory]
+    [InlineData("", Kind, ReconciliationPatterns.All, "ref")]                 // no consumer
+    [InlineData("acl", "no_dot_kind", ReconciliationPatterns.All, "ref")]     // not family-prefixed
+    [InlineData("acl", Kind, ReconciliationPatterns.None, "ref")]             // reconciles nothing
+    [InlineData("acl", Kind, ReconciliationPatterns.All, "")]                 // no catalogued ref
+    public async Task Contract_validation_rejects_a_malformed_contract(
+        string consumer, string projectionKind, ReconciliationPatterns patterns, string contractRef)
+    {
+        await ResetAsync();
+        var (_, _, _, reconciler) = Build();
+        var contract = new ReconciliationContract(consumer, projectionKind, patterns, contractRef);
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => reconciler.ReconcileAsync(contract, Guid.NewGuid()));
+    }
+
     [Fact]
     public async Task FullRebuildDrill_reports_identical_after_a_cold_rebuild()
     {

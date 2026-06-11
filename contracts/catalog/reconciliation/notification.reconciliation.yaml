@@ -1,0 +1,50 @@
+# Reconciliation contract — the notification consumer (event-store §7.3).
+#
+# In plain English: the notification service turns engine events into depositor-facing
+# confirmations (constitution confirmed, deposit matured). It does NOT hold a long-lived,
+# checksummable projection the way the engine runtime or the GL do — it reacts to events and
+# sends messages. So its reconciliation contract is the LIGHT one: it reports its event-count
+# progress (did it process every confirmation-trigger event, or did it skip some?), but it
+# publishes no state checksum and runs no full-rebuild drill — there is no derived ledger to
+# rebuild.
+#
+# This is exactly why the contract is per-consumer: the §7.1 patterns a consumer participates
+# in are not one-size-fits-all. A consumer that derives no rebuildable state opts out of the
+# checksum and rebuild patterns; an event-count gap or skip is still meaningful (a dropped
+# notification-trigger is a missed customer confirmation) and is alertable.
+#
+# NO PII — by construction (ADR-PC-004 §P2 / no-PII-on-the-durable-bus). The reconciliation
+# carries a stream id and a sequence number only. The depositor's name / NIF / IBAN that the
+# eventual notification renders is resolved INSIDE the notification service from a reference,
+# never reconciled here and never on the bus.
+---
+apiVersion: babelstone.io/reconciliation/v1alpha1
+kind: ReconciliationContract
+metadata:
+  name: notification
+  title: Notification (depositor-facing confirmations)
+  description: >-
+    The notification service (ADR-IC-011) — depositor-facing constitution and maturity
+    confirmations. Event-triggered, not projection-deriving: it reconciles only that it
+    processed every trigger event, not that a derived ledger agrees.
+  x-owner: notification
+  x-owner-contact: notification-team@babelstone.example
+  x-status: active
+spec:
+  consumer: notification
+  patterns:
+    checksum: false       # no rebuildable derived state to checksum
+    eventCount: true       # (b) continuous: it must process every confirmation-trigger event
+    fullRebuild: false     # nothing to rebuild — re-sending old confirmations is not a drill
+  # No coordinated rebuild — the consumer derives no replayable projection. A gap means a
+  # not-yet-sent confirmation (acceptable lag); a skip means a DROPPED confirmation (alert).
+  fullRebuildCoordination: >-
+    Not applicable — the notification consumer derives no rebuildable projection. Recovery from
+    a skip is a targeted re-drive of the missed trigger events, not a full cold rebuild.
+  # The engine-side kind whose event stream triggers the confirmations the consumer reconciles
+  # its event-count against. A reference, never PII.
+  projectionKinds:
+    - kind: term_deposit.maturity_calendar
+      description: >-
+        The lifecycle calendar whose constitution / maturity entries are the confirmation
+        triggers — the event-count anchor (not a checksummed belief the consumer holds).
