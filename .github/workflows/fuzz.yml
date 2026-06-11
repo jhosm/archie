@@ -1,19 +1,27 @@
 name: Fuzz
 
-# Continuous (scheduled) fuzzing of pack-validate's non-engineer-authored surfaces
-# (C.8, bd archie-2t16.6). This is the DISCOVERY half of the fuzz work; the regression
-# half — re-running the committed seed corpus (f.Add seeds + any testdata/fuzz/ crashers)
-# as deterministic subtests — already runs on every per-PR `go test ./...` in the
-# pack-validate CI job. `go test -fuzz` runs ONE target in ONE package and loops until it
-# finds a failure or hits -fuzztime, so it must NOT sit on the per-PR critical path; it
-# runs on a schedule (and on demand) instead.
+# Continuous (scheduled) fuzzing of the project's byte-parsing surfaces. TWO families of target:
 #
-# Contract under test (ADR-PC-007 §169): a malformed/garbage pack yields a clean rejection,
-# never a panic/crash/hang. A crasher the fuzzer finds is written to
-# <pkg>/testdata/fuzz/<Target>/<hash>; this job uploads it as an artifact so it can be
-# reproduced locally and committed back as a permanent seed (after which the per-PR
-# `go test` guards it forever). The generated corpus is cached so coverage is cumulative
-# across runs rather than restarting from the seeds each week.
+#   1. The Go `fuzz` job — pack-validate's non-engineer-authored surfaces (C.8, bd archie-2t16.6):
+#      the DISCOVERY half of the Go fuzz work. The regression half — re-running the committed seed
+#      corpus (f.Add seeds + any testdata/fuzz/ crashers) as deterministic subtests — already runs on
+#      every per-PR `go test ./...` in the pack-validate CI job. `go test -fuzz` runs ONE target in
+#      ONE package and loops until it finds a failure or hits -fuzztime, so it must NOT sit on the
+#      per-PR critical path; it runs on a schedule (and on demand) instead. A crasher the fuzzer finds
+#      is written to <pkg>/testdata/fuzz/<Target>/<hash>; the job uploads it as an artifact so it can
+#      be reproduced locally and committed back as a permanent seed (after which the per-PR `go test`
+#      guards it forever). The generated corpus is cached so coverage is cumulative across runs.
+#
+#   2. The `fuzz-dotnet` job — the engine's Avro event-DECODE path (bd babelstone-2t16.15): the bytes
+#      a consumer parses off the bus (AvroEventSerializer.Decode, ADR-IC-002/ADR-IC-004 §P3). This is
+#      a deterministic PROPERTY/corpus fuzz (AvroDecodeFuzzTests) — unlike `go test -fuzz` it is a
+#      normal `dotnet test` that completes, so it ALSO runs on the per-PR engine CI lane at its default
+#      iteration budget; here it runs a DEEPER sweep via FUZZ_ITERATIONS on the schedule. (SharpFuzz
+#      coverage-guided fuzzing of the same entrypoint is a deferred STRETCH follow-up.)
+#
+# Contract under test, the same for both (ADR-PC-007 §169 for packs; its .NET twin for the decode
+# path): malformed/garbage input yields a CLEAN rejection — a well-typed parse/decode failure —
+# never a panic/crash/hang.
 
 on:
   schedule:
@@ -21,9 +29,13 @@ on:
   workflow_dispatch:
     inputs:
       fuzztime:
-        description: "Per-target fuzz duration (Go duration, e.g. 3m, 30m)"
+        description: "Per-target fuzz duration for the Go targets (Go duration, e.g. 3m, 30m)"
         required: false
         default: "5m"
+      fuzz_iterations:
+        description: "Iteration budget for the .NET Avro-decode property fuzz (e.g. 200000)"
+        required: false
+        default: "500000"
 
 permissions:
   contents: read
@@ -88,3 +100,38 @@ jobs:
           name: fuzz-crasher-${{ matrix.target }}
           path: pack-validate/${{ matrix.dir }}/testdata/fuzz/${{ matrix.target }}/
           if-no-files-found: warn
+
+  # The .NET leg (bd babelstone-2t16.15): the engine's Avro event-DECODE path — the bytes a
+  # consumer parses off the bus (AvroEventSerializer.Decode, ADR-IC-002 / ADR-IC-004 §P3). Unlike
+  # `go test -fuzz`, this is a deterministic property/corpus fuzz that COMPLETES (AvroDecodeFuzzTests),
+  # so it also runs on the per-PR engine CI lane at its default budget; here it runs a DEEPER sweep
+  # driven by FUZZ_ITERATIONS. The contract: Decode never crashes/hangs — it decodes cleanly or
+  # clean-rejects with a well-typed decode failure.
+  fuzz-dotnet:
+    name: fuzz Avro decode (.NET)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4 # pins the .NET 10 SDK from mise.toml (ADR-PC-010), as in ci.yml
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('engine/**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Fuzz the Avro decode path (deep sweep)
+        working-directory: engine
+        # FUZZ_ITERATIONS is a workflow_dispatch input → treat as untrusted: pass via env and
+        # validate it is a bare positive integer before letting AvroDecodeFuzzTests read it (the test
+        # falls back to its own default for anything non-numeric, but we sanitise here too). The leg
+        # is the non-Integration (Docker-free) tier — the decode fuzz needs no broker/DB.
+        env:
+          FUZZ_ITERATIONS: ${{ github.event.inputs.fuzz_iterations || '500000' }}
+        run: |
+          if ! printf '%s' "$FUZZ_ITERATIONS" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "::warning::invalid fuzz_iterations '$FUZZ_ITERATIONS'; using the test default"
+            unset FUZZ_ITERATIONS
+          fi
+          dotnet test tests/Babelstone.OutboxPublisher.Tests/Babelstone.OutboxPublisher.Tests.csproj \
+            --configuration Release --nologo \
+            --filter "FullyQualifiedName~AvroDecodeFuzzTests"
