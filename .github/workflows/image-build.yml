@@ -19,8 +19,10 @@ name: Image build + publish
 # PR-blocking SCA gates are the per-ecosystem layer, not these defense-in-depth scans).
 #
 # Each matrix leg emits its pushed image DIGEST as a job output (the `digest` step + the
-# `digests` job that fans them back in). That is the seam the cosign keyless-OIDC signing step
-# (bd Q.5, which this task BLOCKS) attaches to: sign/attest by immutable digest, never by tag.
+# `digests` job that fans them back in) AND cosign-signs that digest keyless (Sigstore OIDC,
+# bd Q.5, ADR-PC-007 §P2): sign by immutable digest, never by tag, with id-token:write minting
+# the Fulcio cert — no long-lived signing key. Verify with `cosign verify` + the workflow's
+# OIDC identity (see the sign step for the exact identity regexes a deployer pins).
 #
 # Path-scoped trigger style follows ci.yml / sbom.yml (ADR-PC-019 §P1): a docs-only change
 # never rebuilds images. The Dockerfiles, this workflow, and the central package-version file
@@ -62,6 +64,8 @@ jobs:
       contents: read
       packages: write        # push the image to GHCR (push-to-main legs only)
       security-events: write # upload the grype SARIF to the Security tab (ADR-IC-014 §S2)
+      id-token: write        # mint the OIDC token cosign exchanges with Fulcio for a
+                             # short-lived signing cert — keyless signing (bd Q.5, ADR-PC-007 §P2)
     strategy:
       fail-fast: false       # one service's Dockerfile breaking shouldn't mask the others
       matrix:
@@ -149,6 +153,35 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: echo "ref=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
 
+      # --- Keyless cosign signing (bd Q.5, ADR-PC-007 §P2) -----------------------------
+      # Sign the PUSHED image by its immutable digest so a deployer can verify exactly the
+      # bytes that were built — never by a tag, which can be re-pointed. Signing is keyless
+      # Sigstore OIDC: cosign exchanges the workflow's `id-token` for a short-lived Fulcio
+      # cert (no long-lived private key / secret to rotate — the engine-team identity in v1
+      # is the workflow's OIDC subject; bank-internal OIDC in production, ADR-PC-007 §P2 /
+      # Residual Risk "cosign keyless depends on Sigstore"). The signature is stored back in
+      # GHCR as an OCI artefact alongside the image and logged in the public Rekor
+      # transparency log. This mirrors the established pack-signing approach (the pack-author
+      # skill cosign-signs pack artefacts by digest); the pack-publish signing leg in CI is a
+      # follow-up (ci.yml `packs` job still carries the "cosign keyless verify lands with Q.5"
+      # TODO — there is no durable pack publish in CI yet to attach a signature to).
+      - name: Install cosign
+        if: ${{ steps.imgref.outputs.ref != '' }}
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the pushed image (keyless OIDC, by digest)
+        id: sign
+        if: ${{ steps.imgref.outputs.ref != '' }}
+        env:
+          # The digest-pinned reference resolved above — the exact bytes pushed to GHCR.
+          # `cosign sign` rejects a tag-only reference under COSIGN_YES; we always pass a
+          # `name@sha256:…` ref so the signature binds to the digest, not a movable tag.
+          IMAGE_REF: ${{ steps.imgref.outputs.ref }}
+          # Non-interactive: take the keyless-signing consent (transparency-log upload)
+          # without a TTY prompt. Equivalent to `--yes`.
+          COSIGN_YES: "true"
+        run: cosign sign "$IMAGE_REF"
+
       # Container-image SBOM via syft (anchore/sbom-action) — the runtime-layer twin of
       # sbom.yml's source-dependency SBOM. CycloneDX JSON, uploaded as a per-service artifact
       # for audit / DORA supply-chain evidence (ADR-IC-014).
@@ -191,11 +224,12 @@ jobs:
           category: image-grype-${{ matrix.service }}
 
   digests:
-    # Fan the per-service pushed digests back into one place. This is the explicit seam the
-    # cosign keyless-OIDC signing step (bd Q.5 — BLOCKED by this task) hangs off: it will add a
-    # job here (or a `needs: build` sibling) that, with id-token:write, signs/attests each
-    # ghcr.io/jhosm/babelstone-<service>@<digest>. Emitting the digests now — by service — means
-    # Q.5 lands as an additive signing leg, not a rewrite of the build matrix.
+    # Fan the per-service pushed digests back into one place. The cosign keyless-OIDC signing
+    # (bd Q.5) now lands INSIDE the build matrix leg — each leg holds its own service name +
+    # pushed digest in scope, so it signs ghcr.io/jhosm/babelstone-<service>@<digest> by
+    # immutable digest right after the push, with id-token:write on the build job. (A fan-in
+    # signing job here would only see the collapsed last-leg digest, with no per-service map.)
+    # This job stays a digest-record convenience for the job summary.
     name: collect pushed digests
     needs: build
     if: ${{ github.event_name == 'push' }}
@@ -205,10 +239,8 @@ jobs:
         env:
           # Single matrix output today (matrix outputs collapse to the last leg's value); the
           # per-service digests also live on each build leg's job summary + the pushed manifest.
-          # Q.5 will read digests per service from `docker buildx imagetools inspect` by tag, or
-          # from a matrix-keyed artifact this job can be extended to write.
           DIGEST: ${{ needs.build.outputs.digest }}
         run: |
           echo "Build matrix completed; representative pushed digest: ${DIGEST:-<none>}"
           echo "Per-service images: ghcr.io/jhosm/babelstone-{engine,acl,orchestrator,notification,mcp-server,pack-validate}"
-          echo "Q.5 (cosign keyless-OIDC) attaches signatures to these images by digest."
+          echo "Each pushed image is cosign-signed by digest (keyless OIDC) in its build leg (bd Q.5)."
