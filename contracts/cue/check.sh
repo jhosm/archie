@@ -24,7 +24,7 @@ COMMON="common.cue"
 # (#<Family>, the ADR-PC-006 / new-family-schema convention). A name that does not resolve to a
 # real definition fails `cue vet` loudly below — never a silent skip.
 # bash 3.2-safe (macOS): no associative arrays, no mapfile.
-kebab_to_def() { # term-deposit | savings_account -> #TermDeposit | #SavingsAccount
+kebab_to_def() { # term-deposit -> #TermDeposit (kebab is canonical; '_' tolerated defensively)
 	local name="$1" out="" part
 	local IFS='-_'
 	for part in $name; do

@@ -68,9 +68,10 @@ cue vet -d '#TermDeposit' <variant>.yaml common.cue families/term-deposit.cue
 
 ## Adding a family or a fixture
 
-- **New family:** add `families/<family>.cue` (a closed `#RootDefinition`
-  composing `common.cue`), a `testdata/<family>/{valid,invalid}/` tree, and one
-  line to `FAMILIES` in `check.sh`.
+- **New family:** add `families/<family-kebab>.cue` (a closed `#RootDefinition`
+  composing `common.cue`) and a `testdata/<family-kebab>/{valid,invalid}/` tree —
+  both kebab-cased to match the family's project directory. `check.sh`
+  auto-discovers them from `families/*.cue`; no script edit needed.
 - **New rule:** add a `valid/` fixture exercising it and an `invalid/` fixture
   that isolates its violation — keep invalid fixtures one-rule-per-file so a
   failure names the rule.
