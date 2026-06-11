@@ -1,0 +1,32 @@
+# Prometheus config overlay for the Grafana LGTM appliance (K.3 — bd babelstone-gbgw).
+#
+# The grafana/otel-lgtm appliance ships its OWN prometheus.yaml that configures
+# the OTLP receiver + self-scrape. This file is the SMALL overlay that adds the
+# K.3 alerting rules to that bundled Prometheus by naming the rule file in
+# `rule_files`. The appliance loads it when mounted over its default config (see
+# infra/grafana/README.md for the exact mount path on the 0.28.0 image).
+#
+# Intentionally minimal: it carries ONLY the rule_files wiring + the
+# Alertmanager handoff seam. The OTLP-ingest scrape/receiver config stays the
+# appliance's default — we add rules, we do not re-derive the appliance's whole
+# config (single-responsibility: this lane materialises ALERT RULES, the metrics
+# pipeline is ADR-IC-007's owned seam).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# The K.3 Critical-SLI alerting rules (sibling file). Prometheus evaluates every
+# `evaluation_interval`; a firing rule routes to Alertmanager per the handoff
+# below.
+rule_files:
+  - alert-rules.yaml
+
+# Alertmanager handoff seam. In the POC the appliance's bundled Alertmanager (or
+# Grafana unified alerting) receives these; a real deployment points this at the
+# org Alertmanager. Left empty-but-declared so the wiring is visible and a
+# deployment fills in the target rather than discovering the seam is missing.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []

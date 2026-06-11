@@ -1,0 +1,84 @@
+# Postgres PITR via pgBackRest — added RESOURCES (M.4, bd babelstone-f0ui).
+#
+# The CronJob (scheduled base backup) + cipher Secret seam for the §P2 PITR leg.
+# The primary StatefulSet PATCH (archive_mode/archive_command + sidecar) lives in
+# postgres-pitr-pgbackrest.yaml (kustomization `patches:`); the pgBackRest config
+# ConfigMap is generated from infra/pgbackrest/pgbackrest.conf by the
+# kustomization configMapGenerator. Together they realise ADR-PC-005 §P2.
+#
+# CI validates SHAPE only (kustomize build + kubeconform). No real S3, no real
+# backup, no real restore — the drill is the runbook
+# (infra/runbooks/dr-recovery-drill.md), the §P5 DORA resilience-test evidence.
+
+# ---------------------------------------------------------------------------
+# Scheduled base backup — the §P2 "periodic base backups" leg. A full backup
+# weekly + the continuously-archived WAL gives PITR to any point in the
+# retention window. POC cadence: weekly full; a diff CronJob can be added later.
+# ---------------------------------------------------------------------------
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-pgbackrest-backup
+  labels:
+    app.kubernetes.io/name: postgres
+    babelstone.io/dr-role: pitr-base-backup
+spec:
+  # Sunday 02:00 — weekly full base backup (ADR-PC-005 §P2 "scheduled base
+  # backups"). WAL archiving (the primary's archive_command) runs continuously
+  # between backups; the base backup is just the PITR anchor.
+  schedule: "0 2 * * 0"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 21600
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: postgres
+            babelstone.io/dr-role: pitr-base-backup
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: pgbackrest-backup
+              image: pgbackrest/pgbackrest:2.54.2
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  # First run on a fresh repo must create the stanza; idempotent
+                  # afterwards. Then take a full base backup.
+                  pgbackrest --stanza=event-store --log-level-console=info stanza-create || true
+                  pgbackrest --stanza=event-store --type=full --log-level-console=info backup
+              env:
+                - name: PGBACKREST_CIPHER_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      name: babelstone-pgbackrest-secret
+                      key: PGBACKREST_CIPHER_PASS
+              volumeMounts:
+                - name: pgbackrest-config
+                  mountPath: /etc/pgbackrest
+                  readOnly: true
+          volumes:
+            - name: pgbackrest-config
+              configMap:
+                name: postgres-pgbackrest-config
+---
+# ---------------------------------------------------------------------------
+# pgBackRest cipher-pass seam — DEV-ONLY placeholder, same contract as the other
+# ha-overlay Secrets (base/secrets.example.yaml, ha-secrets.example.yaml). The
+# repo is encrypted at rest (pgbackrest.conf repo1-cipher-type); this is the
+# pass. NEVER commit a real value — M.2 (babelstone-puu3) replaces this seam with
+# OpenBao-backed provisioning.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: babelstone-pgbackrest-secret
+  annotations:
+    babelstone.io/secret-boundary: "dev-mode-placeholder — real provisioning is M.2/puu3"
+type: Opaque
+stringData:
+  PGBACKREST_CIPHER_PASS: "placeholder-cipher-pass-not-a-real-secret"
