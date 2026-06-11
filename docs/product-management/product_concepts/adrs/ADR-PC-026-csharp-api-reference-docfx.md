@@ -7,7 +7,7 @@
 | Deciders | jhosm |
 | Shape | Tool-selection |
 | Common criteria | [ADR-IC-000](../../integration_concepts/adrs/ADR-IC-000-common-evaluation-criteria.md) (reused per [ADR-PC-000](./ADR-PC-000-namespace-and-contract-shape-framework.md) D2) |
-| Depends on | [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) (.NET 10 / mise toolchain pin), [ADR-PC-022](./ADR-PC-022-product-documentation-architecture.md) (documentation architecture this sits beside), [ADR-IC-008](../../integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md) (the GitHub-Pages static-site precedent) |
+| Depends on | [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) (.NET 10 / mise toolchain pin), [ADR-PC-022](./ADR-PC-022-product-documentation-architecture.md) (documentation architecture this sits beside), [ADR-IC-008](../../integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md) (the GitHub-Pages static-site precedent) |
 | Resolves | bd `babelstone-sfnt.18` (Epic R.18) |
 
 ## Context
@@ -28,7 +28,7 @@ Neither covers the **C# API surface**: a different source (XML doc comments in c
 different output (a browsable HTML site), and different drift semantics (the compiler
 itself validates doc comments against the code they annotate, so a separate byte-drift
 gate adds nothing). This ADR selects the renderer/publisher for that third surface and
-fixes the disciplines around it. [ADR-IC-008](../../integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md)
+fixes the disciplines around it. [ADR-IC-008](../../integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md)
 already established the in-house pattern: a generated static site, built in CI, deployed
 to GitHub Pages, zero runtime cost.
 
@@ -55,14 +55,14 @@ Candidates evaluated:
 | Doxygen | GPL-2 (tool licence does not encumber generated output), free | Pass |
 
 GitHub Pages hosting is free on this public repo (the same footing
-[ADR-IC-008](../../integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md) §S1
+[ADR-IC-008](../../integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md) §S1
 accepted for EventCatalog).
 
 #### F2 · Regulatory fit (GDPR / DORA / PSD2)
 
 | Candidate | Assessment | Verdict |
 |---|---|---|
-| All four | The site renders only content already public in this repo (source XML doc comments + the docs corpus). No PII enters the pipeline — the no-PII-on-the-bus rule ([ADR-PC-004](./ADR-PC-004-pii-crypto-shredding.md)) governs runtime data, which never reaches docs. Publishing adds no new regulatory surface. | Pass |
+| All four | The site renders only content already public in this repo (source XML doc comments). No PII enters the pipeline — the no-PII-on-the-bus rule ([ADR-PC-004](./ADR-PC-004-pii-crypto-shredding.md)) governs runtime data, which never reaches docs. Publishing adds no new regulatory surface. | Pass |
 
 ### Soft criteria
 
@@ -124,13 +124,31 @@ Markdown-corpus stitching are weak for a modern docs site. **Decisive: second-cl
    `TreatWarningsAsErrors`, so the compiler guards comment↔code integrity on every
    build — the API-reference analogue of ADR-PC-022's drift gate, enforced at a
    stronger level (compiler, not byte-diff).
-3. **§P3 — One stitched site, minimal door.** The site carries the API reference
-   *alongside* the existing corpus (the README document map, the three series, both ADR
-   namespaces, `reference/`, `product-docs/`) — rendered as-is from their existing
-   locations. The TOC is deliberately a two-entry door (Document Map + API Reference):
-   [ADR-PC-022](./ADR-PC-022-product-documentation-architecture.md) dropped the
-   navigation-overlay genre, and this site must not re-create it as `toc.yml`. The
-   corpus navigates through its own cross-links.
+3. **§P3 — The site is the C# API reference only; the corpus is not stitched.** DocFX
+   publishes *only* the generated API metadata plus a one-page landing and a minimal
+   navbar (`docfx/index.md`, `docfx/toc.yml`). The hand-authored corpus (the three
+   series, both ADR namespaces, `reference/`, `product-docs/`) is **not** rendered here
+   — it reads on GitHub, where every relative cross-link resolves against the repo tree
+   *at the revision being viewed*. That property is load-bearing: the corpus links to
+   repo files DocFX does not publish (`packs/`, `contracts/`, `.github/`, `engine/`
+   source, `Makefile`, …); stitching the corpus into the site turns each of those into
+   a 404 on the published site, whose only repair is an absolute `…/blob/<ref>/…` URL —
+   and a ref fixed at authoring time is wrong for every *other* version once babelstone
+   is multi-version. Keeping the corpus on GitHub's at-ref relative rendering avoids the
+   problem at its root rather than patching it. The API reference, generated from code,
+   carries no cross-root links and is self-contained. The navbar
+   ([ADR-PC-022](./ADR-PC-022-product-documentation-architecture.md) dropped the
+   navigation-overlay genre, and this site must not re-create one) is a single
+   `API Reference` entry plus one outbound link to the repo docs on GitHub.
+
+   *Revised 2026-06-11: the original §P3 stitched the corpus alongside the API
+   reference in one site. That coupling forced corpus links escaping the DocFX content
+   root to render as 404s on the published site, "fixable" only by `main`-pinned
+   absolute URLs that are wrong under multi-version docs. Narrowed to
+   API-reference-only; the corpus stays on GitHub's version-correct relative rendering.
+   The `docs/**`, `README.md`, and `INSTALL.md` trigger inputs were dropped from
+   `docs-site.yml` to match, and `docfx.json` no longer stitches `../docs` or the root
+   READMEs.*
 4. **§P4 — Publishing is the artifact-based GitHub Pages flow.**
    `.github/workflows/docs-site.yml` builds on PRs touching its inputs (build-only
    validation — *not* a required check, so the
@@ -144,7 +162,7 @@ Markdown-corpus stitching are weak for a modern docs site. **Decisive: second-cl
    workflow only deploys to the existing slot.
 5. **§P5 — Single-Pages-slot composition.** A repo has one GitHub Pages site. This
    workflow owns the slot; when the EventCatalog site
-   ([ADR-IC-008](../../integration_concepts/adrs/ADR-IC-008-event-catalog-governance-tooling.md),
+   ([ADR-IC-008](../../integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md),
    Epic G.4) lands, it composes into the *same* artifact under a subpath (e.g.
    `/events/`) inside this workflow — never a second `deploy-pages` workflow racing for
    the slot.
@@ -157,8 +175,9 @@ friction), Doxygen (second-class C#) — details above.
 **Easier:** the ~400 existing doc comments become a browsable, searchable API reference
 at zero marginal authoring cost; comment↔code integrity is now compiler-enforced on
 every build (it never was before — enabling emission immediately surfaced and fixed 18
-latent doc-rot errors); the corpus and the API reference cross-resolve in one site;
-future families inherit the pipeline by existing (`families/*/src/*/*.csproj` glob).
+latent doc-rot errors); the corpus stays on GitHub's version-correct relative
+rendering (it is not stitched here, §P3); future families inherit the pipeline by
+existing (`families/*/src/*/*.csproj` glob).
 
 **Harder/impossible:** every later C# project is in the docs build by default (exclusion
 is an explicit `docfx.json` edit); malformed doc comments now break the build —
@@ -167,10 +186,11 @@ deliberate, but a new failure mode for contributors; the site rebuilds wholesale
 
 **Residual risks:** GitHub Pages usage limits (published-site size and soft bandwidth
 caps) — a docs site is far inside them today, but they are GitHub's to move; the §P5 composition
-invariant is review-enforced, not mechanically gated (listed as a Gap below); DocFX
-warnings (broken site links) do not fail the build yet — tightening to
-`--warningsAsErrors` is a candidate once the corpus's external-file links are
-triaged.
+invariant is review-enforced, not mechanically gated (listed as a Gap below). The
+broken-site-link failure mode a corpus-stitching site would have carried is **designed
+out** by §P3, not deferred: the corpus is not published here, so its cross-root links
+cannot 404 on the site, and the API reference is generated from code and is
+self-contained — so no DocFX link-gate is needed.
 
 ## Verifiable commitments
 
@@ -181,6 +201,6 @@ inline table here rather than in the engine-focused
 
 | # | Commitment (with §-anchor) | Gate (pyramid level) | Test ID | Status |
 |---|---|---|---|---|
-| 1 | The DocFX site builds green from current sources — API metadata over `Babelstone.slnx` + the stitched corpus (§P1/§P3). | CI (`docs-site.yml` build lane, path-scoped on its inputs) | `DOCS_SITE_BUILDS` | Live (lands with this ADR's PR) |
+| 1 | The DocFX site builds green from current sources — API metadata over `Babelstone.slnx`; the corpus is not stitched (§P1/§P3). | CI (`docs-site.yml` build lane, path-scoped on its inputs) | `DOCS_SITE_BUILDS` | Live |
 | 2 | XML doc comments cannot rot against the code they annotate: malformed/unresolvable doc references fail the build (§P2). | compiler (`TreatWarningsAsErrors` + `GenerateDocumentationFile`, every `dotnet build` incl. the ci.yml engine lane) | `DOCS_XMLDOC_NO_ROT` | Live (lands with this ADR's PR) |
 | 3 | One Pages deploy workflow: EventCatalog (G.4) composes into this artifact under a subpath, never a second `deploy-pages` (§P5). | review discipline (PR review + this ADR) | `DOCS_PAGES_SINGLE_SLOT` | Gap (no mechanical gate; revisit when G.4 lands) |

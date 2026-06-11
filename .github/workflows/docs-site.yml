@@ -1,22 +1,23 @@
 name: Docs site
 
-# DocFX site (ADR-PC-026): C# XML-doc API reference stitched alongside the docs/
-# corpus, published to GitHub Pages. Build runs on PRs touching its inputs (a
-# pre-merge "does the site still build" check, NOT a required gate — ADR-PC-019 §P1
-# aggregator rules don't apply); deploy runs only on push to main, via the
-# artifact-based Pages flow (no gh-pages branch). This repo has ONE Pages slot:
-# the EventCatalog site (ADR-IC-008, Epic G.4) composes into this same artifact
-# under a subpath when it lands — it must NOT add a second deploy-pages workflow.
+# DocFX site (ADR-PC-026 §P3): the C# XML-doc API reference, published to GitHub
+# Pages. The site renders ONLY the API surface — the hand-authored docs/ corpus is
+# NOT stitched in (it reads on GitHub natively, version-correct), so the trigger
+# inputs are just the API sources, the docfx/ config, and the toolchain pins — NOT
+# docs/**, README.md, or INSTALL.md, which no longer feed this site. Build runs on
+# PRs touching those inputs (a pre-merge "does the site still build" check, NOT a
+# required gate — ADR-PC-019 §P1 aggregator rules don't apply); deploy runs only on
+# push to main, via the artifact-based Pages flow (no gh-pages branch). This repo
+# has ONE Pages slot: the EventCatalog site (ADR-IC-008, Epic G.4) composes into
+# this same artifact under a subpath when it lands — it must NOT add a second
+# deploy-pages workflow.
 
 on:
   pull_request:
     paths: &docs_site_paths
       - 'engine/**'
       - 'families/**'
-      - 'docs/**'
       - 'docfx/**'
-      - 'README.md'
-      - 'INSTALL.md'
       - '.config/dotnet-tools.json'
       - 'mise.toml'
       - '.github/workflows/docs-site.yml'
