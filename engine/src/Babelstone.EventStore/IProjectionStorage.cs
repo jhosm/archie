@@ -81,7 +81,10 @@ public interface IProjectionStorage
     /// superseded_at &gt; knownAt)</c> — the half-open <c>[recorded_at, superseded_at)</c>
     /// interval, so the row a correction superseded is invisible once <paramref name="knownAt"/>
     /// reaches the correction. This is what makes "as we knew it then" differ from
-    /// "as we know it now" after a retroactive correction (§P2).
+    /// "as we know it now" after a retroactive correction (§P2). At most one row may cover a
+    /// single (validTime, knownAt) point; if more than one does the belief store is corrupt and
+    /// the read FAILS LOUD with <see cref="OverlappingBeliefIntervalException"/> rather than
+    /// silently returning the most-recently-recorded one (ADR-PC-002 amendment 2026-06-11).
     /// </summary>
     Task<ProjectionRecord?> ReadAsOfAsync(
         Guid streamId, string projectionKind, DateTimeOffset validTime, DateTimeOffset knownAt,
@@ -98,4 +101,28 @@ public interface IProjectionStorage
     /// </summary>
     Task<IReadOnlyList<ProjectionRecord>> ReadHistoryOfAsync(
         Guid streamId, string projectionKind, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Thrown by <see cref="IProjectionStorage.ReadAsOfAsync"/> when MORE THAN ONE belief interval
+/// covers a single <c>(validTime, knownAt)</c> bitemporal point for a
+/// <c>(streamId, projectionKind)</c> pair. At a single point at most one belief is live — the
+/// partial UNIQUE index <c>projections_current_belief_uq</c> (migration 0010) plus the
+/// contiguous supersede-then-insert pair (ADR-PC-002 §P2) keep belief intervals non-overlapping
+/// for a covered valid-time. Two overlapping intervals therefore mean the belief store is
+/// corrupt. The repo's posture is FAIL-LOUD: a defensive read surfaces the broken invariant
+/// rather than silently picking the most-recently-recorded belief and masking it
+/// (ADR-PC-002 amendment 2026-06-11, bd babelstone-zzi4).
+/// </summary>
+public sealed class OverlappingBeliefIntervalException(
+    Guid streamId, string projectionKind, DateTimeOffset validTime, DateTimeOffset knownAt)
+    : Exception(
+        $"Overlapping belief intervals for projection ({streamId}, '{projectionKind}') at " +
+        $"valid-time {validTime:O}, known-at {knownAt:O}: more than one belief covers this " +
+        "bitemporal point. The belief store invariant (exactly one live belief per point) is broken.")
+{
+    public Guid StreamId { get; } = streamId;
+    public string ProjectionKind { get; } = projectionKind;
+    public DateTimeOffset ValidTime { get; } = validTime;
+    public DateTimeOffset KnownAt { get; } = knownAt;
 }

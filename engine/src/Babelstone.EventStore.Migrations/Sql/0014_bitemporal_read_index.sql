@@ -1,0 +1,44 @@
+-- 0014_bitemporal_read_index.sql
+-- D.3 bitemporal-read covering index (bd babelstone-b1fz).
+--
+-- The two-axis bitemporal reads (ReadAsOfAsync / ReadHistoryOfAsync, ADR-PC-002 §P3)
+-- filter on (stream_id, projection_kind) and then scan the BELIEF history of that pair —
+-- the superseded rows AND the current one — ordering by belief-time (recorded_at). The
+-- D.2 index `projections_current_belief_uq` (migration 0010) is PARTIAL on
+-- `WHERE superseded_at IS NULL`: it serves the current-belief lookup and the
+-- one-current-belief invariant, but it deliberately EXCLUDES the superseded rows. Those
+-- rows are exactly what AsOf-then and HistoryOf read, so before this migration those two
+-- queries fall back to a sequential scan over `projections` for the (stream, kind) pair —
+-- fine at a handful of rows, a growing cost as the belief history of a long-lived,
+-- repeatedly-corrected projection accumulates.
+--
+-- This adds a NON-partial composite B-tree covering the full belief line of a pair, sized
+-- for both reads:
+--
+--   * Leading (stream_id, projection_kind) — the equality predicate both queries share; it
+--     narrows the scan to one projection's rows (PostgresProjectionStore.ReadAsOfAsync /
+--     ReadHistoryOfAsync WHERE clauses).
+--   * Then recorded_at — the ORDER BY key of BOTH reads (ReadAsOf: `ORDER BY recorded_at
+--     DESC, row_id DESC LIMIT 1`; ReadHistoryOf: `ORDER BY recorded_at ASC, row_id ASC`).
+--     A B-tree is read forwards or backwards, so one column ordering serves both the ASC
+--     history scan and the DESC as-of probe; the planner takes the index-ordered rows and
+--     skips a sort.
+--   * Then row_id — the deterministic tie-break trailing both ORDER BYs, so the index
+--     yields rows in the exact read order with no in-memory sort even when two rows share a
+--     recorded_at.
+--
+-- The composite is intentionally NOT partial: superseded rows are first-class read targets
+-- here (unlike the current-belief index), so the WHERE-superseded-IS-NULL filter would
+-- defeat the purpose. The AsOf belief-time sub-clause (`recorded_at <= knownAt AND
+-- (superseded_at IS NULL OR superseded_at > knownAt)`) is then evaluated as a cheap filter
+-- on the already-narrowed, already-ordered index rows — the index gets the planner to the
+-- pair's belief line by index scan instead of a seq scan; it does not need to encode the
+-- half-open belief-interval test itself.
+--
+-- ADR-PC-002 §P1/§P2/§P3 — supports the bitemporal read surface; changes no row, no grant.
+-- ADR-PC-001 §P5 — forward-only; no down-migration. Purely additive: a new index over the
+--   rebuildable projection cache, inheriting 0005/0010 grants (no new GRANT needed — an
+--   index is not a separately-granted object).
+
+CREATE INDEX projections_belief_history_idx
+    ON projections (stream_id, projection_kind, recorded_at, row_id);

@@ -177,4 +177,59 @@ plumbing it depends on and an integration test of the round-trip, catalogued und
 
 ---
 
+## Amendment — 2026-06-11: §P3 helper signature is `HistoryOf(streamId, kind)`
+
+Added 2026-06-11 (bd `babelstone-3s7u`). The §P3 prose above sketches the typed
+belief-history helper as `HistoryOf(streamId)`. The D.3 implementation ships it as
+**`HistoryOf(streamId, kind)`** — and `AsOf`/`CurrentBelief` likewise take `kind` —
+because the projection store is keyed by the **`(stream_id, projection_kind)` pair**, not
+by `stream_id` alone: one stream carries more than one projection (F.6 — deposit position,
+accrual schedule, maturity calendar, withholding ledger), and supersession / belief-history
+reads scope to the pair (migration 0010, `projections_current_belief_uq`). The extra `kind`
+discriminator is therefore a **surface extension that the §P3 decision already implies**,
+not a divergence from it: §P3's commitment is "a typed helper insulates family-schema code
+from the four-column join", and a helper that ignored `kind` could not address a single
+projection without bleeding across the others on the same stream.
+
+This amendment is **additive and §D5-conformant**: it records that the
+`(streamId, kind)` signature is **within** the §P3 decision and reverses no part of it. The
+§P3 Decision/Principle text above is unchanged; this notes that the shipped signature names
+the pair the store is keyed by. Judged non-contradicting at review per the
+[ADR-PC-020 §P9](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) explicit-drift
+workflow.
+
+---
+
+## Amendment — 2026-06-11: AsOf fails loud on overlapping belief intervals
+
+Added 2026-06-11 (bd `babelstone-zzi4`). The two-axis as-of read
+(`IProjectionStorage.ReadAsOfAsync`, backing the §P3 `AsOf` helper) selects the row whose
+world-time slice covers `validTime` and whose half-open belief interval
+`[recorded_at, superseded_at)` covers `knownAt`. At any single `(validTime, knownAt)` point
+**exactly one** belief should be live — the partial UNIQUE index
+`projections_current_belief_uq` (migration 0010) plus the contiguous supersede-then-insert
+pair (§P2) keep belief intervals non-overlapping for a covered valid-time.
+
+The read previously defended the single-belief case with `ORDER BY recorded_at DESC LIMIT 1`.
+That ordering is *correct* on the healthy path but, under the repo's **fail-loud** posture
+([feedback: hand-roll the engine core; fail-loud invariants]), it is the wrong response to a
+*broken* invariant: silently returning the most-recently-recorded belief would mask a corrupt
+store (two overlapping live belief intervals) behind a plausible-looking answer. The §P3
+decision's whole point — the helper as the *one* place the bitemporal join is written, so a
+correctness defect surfaces centrally — argues for surfacing, not swallowing, the violation.
+
+**Decision (additive, §D5-conformant — reverses no part of §P1/§P2/§P3):** `ReadAsOfAsync`
+keeps the deterministic `ORDER BY recorded_at DESC` ordering for the normal single-belief
+read, but now reads up to **two** matching rows and **throws
+`OverlappingBeliefIntervalException`** if a second row also covers the bitemporal point. One
+match (or none) is the healthy path and behaves exactly as before; more than one fails loud.
+Covered by an integration test
+(`AsOf_throws_when_two_belief_intervals_overlap_the_same_bitemporal_point`).
+
+A companion covering index (`projections_belief_history_idx`, migration 0014, bd
+`babelstone-b1fz`) sizes the superseded-row scan that `AsOf`/`HistoryOf` perform — the
+partial current-belief index excludes the superseded rows those reads depend on.
+
+---
+
 *Decided 2026-05-23 by jhosm. Accepted; Q-Y is a production gate, not required for the POC, which assumes bitemporality is needed for all purposes. Mechanism choice (Q-X) made ahead of the §6.3 spike because [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) narrows the candidate set to the application-level path.*
