@@ -1,0 +1,214 @@
+name: Image build + publish
+
+# Per-service container image build → push → SBOM + vulnerability scan (bd babelstone-qsf7;
+# ADR-IC-014 supply-chain posture, ADR-IC-013 service placement). This is the *image* half of
+# the supply-chain story whose *source-dependency* half lives in sbom.yml: sbom.yml inventories
+# the resolved NuGet graph of engine/Babelstone.slnx; THIS workflow inventories the runtime
+# image layers (base OS + framework + app) of every deployable, exactly the split sbom.yml's
+# header calls out ("the container image SBOM + scan ... lands with the image build/push task").
+#
+# Six deployables, one matrix (ADR-IC-013): engine (ADR-PC-010), acl (ADR-IC-012), orchestrator
+# (ADR-IC-003), notification (ADR-IC-011), mcp-server (ADR-IC-010), pack-validate (ADR-PC-006).
+# Images publish to GHCR at ghcr.io/jhosm/babelstone-<service>.
+#
+# Build-only on pull_request (verify every Dockerfile still builds — NO push, NO registry
+# credentials needed on a fork PR); build AND push on push to main. Each pushed image is then
+# SBOM'd (syft / anchore-sbom-action, mirroring sbom.yml's tool choice) and scanned (grype /
+# anchore-scan-action, severity-cutoff high), with findings uploaded to the Security tab
+# (ADR-IC-014 §S2) — the same report-only posture sbom.yml uses for the source graph (the
+# PR-blocking SCA gates are the per-ecosystem layer, not these defense-in-depth scans).
+#
+# Each matrix leg emits its pushed image DIGEST as a job output (the `digest` step + the
+# `digests` job that fans them back in). That is the seam the cosign keyless-OIDC signing step
+# (bd Q.5, which this task BLOCKS) attaches to: sign/attest by immutable digest, never by tag.
+#
+# Path-scoped trigger style follows ci.yml / sbom.yml (ADR-PC-019 §P1): a docs-only change
+# never rebuilds images. The Dockerfiles, this workflow, and the central package-version file
+# (Directory.Packages.props — the .NET images restore against it) are in the path set so a
+# change to any of them re-exercises the build.
+
+on:
+  push:
+    branches: [main]
+    paths: &image_paths
+      - 'engine/**'
+      - 'acl/**'
+      - 'orchestrator/**'
+      - 'notification/**'
+      - 'mcp-server/**'
+      - 'pack-validate/**'
+      - 'families/**'              # the engine image's publish pulls in the family projects
+      - 'Directory.Packages.props' # central package versions the .NET image restores against
+      - '.github/workflows/image-build.yml'
+  pull_request:
+    paths: *image_paths
+
+# A new push to a ref supersedes an in-flight build of the same ref; never cancel a
+# push-to-main run mid-publish (it could leave a tag pointing at a half-pushed manifest),
+# so cancel-in-progress is gated to non-main refs only.
+concurrency:
+  group: image-build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Least privilege at the top; the build job widens to packages:write only when it pushes.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # push the image to GHCR (push-to-main legs only)
+      security-events: write # upload the grype SARIF to the Security tab (ADR-IC-014 §S2)
+    strategy:
+      fail-fast: false       # one service's Dockerfile breaking shouldn't mask the others
+      matrix:
+        # Build context differs by service stack — it is NOT uniformly the repo root:
+        #  - .NET legs (engine, orchestrator) build with the REPO ROOT as context: they restore
+        #    against the central Directory.Packages.props at the root
+        #    (ManagePackageVersionsCentrally=true), so a service-dir context can't resolve package
+        #    versions. Each names its project explicitly in its Dockerfile (orchestrator/Dockerfile
+        #    documents this; engine/Dockerfile now matches).
+        #  - self-contained legs (mcp-server = Python, pack-validate = Go) build with their OWN dir
+        #    as context: their pyproject.toml / go.mod live there, so a repo-root `COPY . .` would
+        #    leave no installable package/module at the build WORKDIR (pip install . / go build .
+        #    would fail). Their dir is the context; the Dockerfile path stays repo-root-relative.
+        # acl and notification are intentionally NOT in the matrix yet: they are Dockerfile+README
+        # stubs with no source (ADR-IC-012/013 reserve-don't-pre-build) and cannot produce an image.
+        # They join the matrix when their .NET source lands (the acl/notification build tasks).
+        include:
+          - service: engine
+            dockerfile: engine/Dockerfile
+            context: .
+          - service: orchestrator
+            dockerfile: orchestrator/Dockerfile
+            context: .
+          - service: mcp-server
+            dockerfile: mcp-server/Dockerfile
+            context: mcp-server
+          - service: pack-validate
+            dockerfile: pack-validate/Dockerfile
+            context: pack-validate
+    # Surface this leg's pushed digest to the fan-in `digests` job (and, downstream, to the
+    # Q.5 cosign step). Empty on a PR run (build-only, nothing pushed).
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Only authenticate when we will actually push (push-to-main). Fork PRs have no
+      # GHCR credentials and must never need them — the build leg below pushes: false there.
+      - name: Log in to GHCR
+        if: ${{ github.event_name == 'push' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tag/label derivation (OCI-standard labels + a stable image ref). `latest` only moves on
+      # the default branch; every push also gets an immutable sha-<commit> tag so a signature or
+      # deployment can pin a specific build even before digest pinning.
+      - name: Derive image tags + labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/jhosm/babelstone-${{ matrix.service }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=long
+
+      - name: Build (PR) / Build + push (main)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          # pull_request → build only (verify the Dockerfile); push to main → push to GHCR.
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false   # keep a single-arch image manifest so the digest output is the
+                              # image digest cosign signs in Q.5, not a buildkit attestation index
+          cache-from: type=gha,scope=image-${{ matrix.service }}
+          cache-to: type=gha,scope=image-${{ matrix.service }},mode=max
+
+      # The remaining steps are the supply-chain leg over the PUSHED image: they need a pushed
+      # digest, so they run on push-to-main only (a PR build produces no registry artifact to
+      # scan). The image reference is pinned by digest — the exact bytes that were pushed.
+      - name: Resolve pushed image reference (by digest)
+        id: imgref
+        if: ${{ github.event_name == 'push' && steps.build.outputs.digest != '' }}
+        env:
+          IMAGE: ghcr.io/jhosm/babelstone-${{ matrix.service }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "ref=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      # Container-image SBOM via syft (anchore/sbom-action) — the runtime-layer twin of
+      # sbom.yml's source-dependency SBOM. CycloneDX JSON, uploaded as a per-service artifact
+      # for audit / DORA supply-chain evidence (ADR-IC-014).
+      - name: Generate container image SBOM (CycloneDX)
+        id: sbom
+        if: ${{ steps.imgref.outputs.ref != '' }}
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.imgref.outputs.ref }}
+          format: cyclonedx-json
+          output-file: ${{ runner.temp }}/babelstone-${{ matrix.service }}.image.cdx.json
+          artifact-name: babelstone-${{ matrix.service }}-image-sbom.cdx.json
+          upload-artifact: true
+
+      # Container vulnerability scan via grype (anchore/scan-action), severity-cutoff high
+      # (covers high AND critical) — mirrors sbom.yml's source scan exactly, including its
+      # REPORT-ONLY posture (fail-build: false): this is defense-in-depth supply-chain evidence
+      # on the runtime layers, not a PR gate (those are the per-ecosystem SCA gates, ADR-IC-014
+      # Amendment 2026-06-06). Scans the SBOM just produced so the inventory and the findings
+      # describe the same bytes.
+      - name: Scan image for vulnerabilities (report-only — DORA evidence, not a gate)
+        id: scan
+        if: ${{ steps.sbom.outcome == 'success' }}
+        uses: anchore/scan-action@v7
+        with:
+          sbom: ${{ runner.temp }}/babelstone-${{ matrix.service }}.image.cdx.json
+          severity-cutoff: high
+          fail-build: false
+          output-format: sarif
+
+      # Publish grype findings to the Security tab so the image scan shares CodeQL's + the
+      # source SBOM's review surface (ADR-IC-014 §S2). Per-service category keeps the six
+      # images' findings distinguishable. `if: always()` so results upload even if an upstream
+      # scan step errored.
+      - name: Upload image vulnerability findings to the Security tab
+        if: ${{ always() && steps.scan.outputs.sarif != '' }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif }}
+          category: image-grype-${{ matrix.service }}
+
+  digests:
+    # Fan the per-service pushed digests back into one place. This is the explicit seam the
+    # cosign keyless-OIDC signing step (bd Q.5 — BLOCKED by this task) hangs off: it will add a
+    # job here (or a `needs: build` sibling) that, with id-token:write, signs/attests each
+    # ghcr.io/jhosm/babelstone-<service>@<digest>. Emitting the digests now — by service — means
+    # Q.5 lands as an additive signing leg, not a rewrite of the build matrix.
+    name: collect pushed digests
+    needs: build
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record digest of the build matrix
+        env:
+          # Single matrix output today (matrix outputs collapse to the last leg's value); the
+          # per-service digests also live on each build leg's job summary + the pushed manifest.
+          # Q.5 will read digests per service from `docker buildx imagetools inspect` by tag, or
+          # from a matrix-keyed artifact this job can be extended to write.
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          echo "Build matrix completed; representative pushed digest: ${DIGEST:-<none>}"
+          echo "Per-service images: ghcr.io/jhosm/babelstone-{engine,acl,orchestrator,notification,mcp-server,pack-validate}"
+          echo "Q.5 (cosign keyless-OIDC) attaches signatures to these images by digest."
