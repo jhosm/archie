@@ -28,10 +28,19 @@ public sealed class TermDepositConstitutionService(
     VerifiedPack pack,
     string dayCountPrimitive,
     string withholdingPrimitive,
-    EarlyTerminationPolicy? earlyTerminationPolicy = null)
+    EarlyTerminationPolicy? earlyTerminationPolicy = null,
+    IReadOnlyCollection<string>? requiredPreconditions = null)
 {
     // The stream is keyed by the deposit id (v1: stream_id == deposit_id; partition_key == stream_id).
     private static readonly TermDepositFamilyModule Family = new();
+
+    // The product's required commercial-eligibility preconditions (ADR-PC-024 §1, from the product
+    // config's `required_preconditions`). Engine-instance config for the walking skeleton, mirroring
+    // the pinned-pack / early-termination-policy stand-ins (ADR-PC-009): a per-deposit config registry
+    // resolving it is later work. Defaults to an empty set — v1 launch products are NOT eligibility-
+    // gated (02 §4), so the common path never refuses on preconditions.
+    private readonly IReadOnlyCollection<string> _requiredPreconditions =
+        requiredPreconditions ?? Array.Empty<string>();
 
     /// <summary>
     /// Constitute a deposit: resolve the active rate sheet, stamp the TAN + version id, debit
@@ -43,6 +52,21 @@ public sealed class TermDepositConstitutionService(
     /// <returns>The new stream's head version (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
     public async Task<long> ConstituteAsync(ConstituteDepositCommand command, CancellationToken ct = default)
     {
+        // 0. Commercial-eligibility gate (ADR-PC-024 §5): refuse BEFORE any rate-sheet resolve or the
+        //    irreversible Core debit, as a PURE function of the command's resolved verdicts — no upstream
+        //    call, no in-engine evaluation. A required precondition that is absent or satisfied:false
+        //    yields DepositConstitutionFailed (reason ELIGIBILITY_NOT_MET) appended as the stream's first
+        //    and only event; no deposit is opened, so there is nothing to unwind (it is a refusal, not a
+        //    compensation). The verdicts the saga gathered ride on the command (ADR-PC-024 §3).
+        var refusal = TermDepositDecider.CheckPreconditions(
+            command.DepositId, _requiredPreconditions, command.Preconditions);
+        if (refusal is not null)
+        {
+            return await runtime.AppendAsync(
+                command.DepositId, expectedVersion: -1, [refusal],
+                Context(command.Actor, command.ConstitutedAt), ct);
+        }
+
         // 1. Resolve the rate sheet active at constitution (ADR-PC-008 §P3); fail loud if none.
         var resolution = await rateSheets.ResolveAsync(Family.FamilyName, command.ConstitutedAt, ct)
             ?? throw new DomainRejectedException(

@@ -3,6 +3,25 @@ using Babelstone.FinancialTypes;
 
 namespace Babelstone.Families.TermDeposit;
 
+/// <summary>
+/// A commercial-eligibility verdict recorded on a constitution event for AUDIT LINEAGE only
+/// (ADR-PC-024 §1): the opaque <c>{ satisfied, evidence_ref, evaluated_at }</c> triple an upstream
+/// authority resolved for one predicate, which the saga gathered and the decider stamps onto
+/// <see cref="DepositConstituted"/> / <see cref="DepositConstitutionFailed"/>. STRUCTURAL, not PII:
+/// <see cref="EvidenceRef"/> is a resolvable reference, never identity data (ADR-PC-004 §P2,
+/// ADR-PC-024 §1). The engine never re-evaluates a verdict; this record is a lineage artefact, not a
+/// decision input on replay (the refusal is re-derived from the COMMAND's verdicts, ADR-PC-024 §4).
+/// </summary>
+/// <param name="Key">The engine-owned closed verdict key, e.g. <c>is_new_money</c> (ADR-PC-024 §1).</param>
+/// <param name="Satisfied">Whether the upstream authority found the predicate satisfied.</param>
+/// <param name="EvidenceRef">An opaque reference to the upstream evidence — NOT identity data.</param>
+/// <param name="EvaluatedAt">When the upstream authority took the verdict (audit lineage / freshness).</param>
+public sealed record RecordedPreconditionVerdict(
+    string Key,
+    bool Satisfied,
+    string EvidenceRef,
+    DateTimeOffset EvaluatedAt);
+
 // The four AT_MATURITY term-deposit events (E.1, archie-uqlm). Each carries the
 // already-COMPUTED facts as Money — the financial-math kernel runs on the command/decider
 // side (E.3) that builds these, never inside a handler fold (handlers stay pure, BENG001/2/3).
@@ -29,6 +48,18 @@ namespace Babelstone.Families.TermDeposit;
 /// evolution); those historical deposits are NOT back-fillable because the code is discarded at
 /// constitution and the rate-sheet version is one-to-many to products. Prospective only
 /// (bd babelstone-v794).</param>
+/// <remarks>
+/// NOTE (ADR-PC-024 §1, F.9 bd babelstone-k6r8.2): for an ACCEPTED constitution the ADR also names
+/// this event as a home for the resolved commercial-eligibility verdicts "for audit lineage only".
+/// That lineage is NOT carried here in v1: <c>DepositConstituted</c> is a BUS-PUBLISHED event, and the
+/// Avro bus codec (<c>AvroEventSerializer</c>) enforces strict C#↔.avsc parity AND has no array-of-record
+/// support, so a verdict-list field would force the audit lineage onto the durable bus (widening the bus
+/// contract for store-only audit data) and require a generic-codec change. Per ADR-PC-028 the audit book
+/// of record is the JSON <c>events.payload</c>, not the Avro projection; the REFUSAL-path lineage that the
+/// load-bearing commitment (<c>CONSTITUTION_PRECONDITION_REFUSAL</c>) cares about rides
+/// <see cref="DepositConstitutionFailed.Preconditions"/> (store-only, no .avsc). Accepted-path
+/// on-envelope lineage is deferred to v1.x — see ADR-PC-024 §1 Amendment (2026-06-12).
+/// </remarks>
 public sealed record DepositConstituted(
     Guid DepositId,
     Money Principal,
@@ -71,10 +102,18 @@ public sealed record DepositMatured(
 /// about the customer (ADR-PC-004 §P2).</summary>
 /// <param name="FailureReason">Stable failure code (e.g. <c>RATE_SHEET_NOT_FOUND</c>).</param>
 /// <param name="FailureDetail">Human-readable detail about the config/rule that failed — never PII.</param>
+/// <param name="Preconditions">For an <c>ELIGIBILITY_NOT_MET</c> refusal (ADR-PC-024 §5), the
+/// commercial-eligibility verdicts the saga resolved upstream — recorded for AUDIT LINEAGE only
+/// (ADR-PC-024 §1), each an opaque <c>{ satisfied, evidence_ref, evaluated_at }</c> triple,
+/// STRUCTURAL not PII (ADR-PC-004 §P2). So the audit trail shows WHICH verdict drove the refusal and
+/// on what (referenced) evidence, beyond the unmet-key names in <paramref name="FailureDetail"/>.
+/// Optional/additive (defaulted empty) so non-eligibility failures (e.g. <c>RATE_SHEET_NOT_FOUND</c>)
+/// and pre-F.9 streams carry none and still replay (forward-only, bd babelstone-k6r8.2).</param>
 public sealed record DepositConstitutionFailed(
     Guid DepositId,
     string FailureReason,
-    string FailureDetail) : DomainEvent;
+    string FailureDetail,
+    IReadOnlyList<RecordedPreconditionVerdict>? Preconditions = null) : DomainEvent;
 
 /// <summary>Interest is paid out (the periodic/coupon variant, vs the single AT_MATURITY flow):
 /// <c>NetInterest = GrossInterest − WithholdingTax</c> conserved to the cent.</summary>

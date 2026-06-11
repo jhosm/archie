@@ -41,6 +41,141 @@ public sealed class TermDepositDeciderTests
         Assert.Equal("dpz_pt_12m_juros_venc", constituted.ProductCode);
     }
 
+    // ---- commercial-eligibility preconditions (ADR-PC-024, F.9 babelstone-k6r8.2) --------------
+    //
+    // CheckPreconditions is the pure heart of CONSTITUTION_PRECONDITION_REFUSAL (commitment-catalogue
+    // row 16): a required precondition absent or satisfied:false yields DepositConstitutionFailed,
+    // computed entirely from the command's verdicts — no upstream call, no clock, no in-engine
+    // evaluation (ADR-PC-024 §3–§5). The verdict's evaluated_at is upstream-supplied data on the
+    // command, never read from a clock here.
+
+    private static readonly DateTimeOffset EvaluatedAt = new(2026, 1, 14, 9, 0, 0, TimeSpan.Zero);
+
+    private static PreconditionVerdict Verdict(bool satisfied) =>
+        new(satisfied, EvidenceRef: "verdict-ref-001", EvaluatedAt: EvaluatedAt);
+
+    [Fact]
+    public void CheckPreconditions_ungated_product_never_refuses()
+    {
+        // v1 launch products declare no required_preconditions (02 §4) — the fast path returns null
+        // even when no verdicts ride on the command.
+        var refusal = TermDepositDecider.CheckPreconditions(
+            Guid.NewGuid(), requiredPreconditions: Array.Empty<string>(), verdicts: null);
+
+        Assert.Null(refusal);
+    }
+
+    [Fact]
+    public void CheckPreconditions_all_required_verdicts_satisfied_proceeds()
+    {
+        var depositId = Guid.NewGuid();
+        var verdicts = new Dictionary<string, PreconditionVerdict>
+        {
+            [TermDepositDecider.PreconditionIsNewMoney] = Verdict(satisfied: true),
+            [TermDepositDecider.PreconditionSalaryDomiciled] = Verdict(satisfied: true),
+        };
+
+        var refusal = TermDepositDecider.CheckPreconditions(
+            depositId,
+            [TermDepositDecider.PreconditionIsNewMoney, TermDepositDecider.PreconditionSalaryDomiciled],
+            verdicts);
+
+        Assert.Null(refusal); // every required precondition present and satisfied ⇒ constitute proceeds
+    }
+
+    [Fact]
+    public void CheckPreconditions_unsatisfied_verdict_refuses_with_eligibility_not_met()
+    {
+        var depositId = Guid.NewGuid();
+        var verdicts = new Dictionary<string, PreconditionVerdict>
+        {
+            [TermDepositDecider.PreconditionIsNewMoney] = Verdict(satisfied: true),
+            [TermDepositDecider.PreconditionSalaryDomiciled] = Verdict(satisfied: false), // upstream said NO
+        };
+
+        var refusal = TermDepositDecider.CheckPreconditions(
+            depositId,
+            [TermDepositDecider.PreconditionIsNewMoney, TermDepositDecider.PreconditionSalaryDomiciled],
+            verdicts);
+
+        var failed = Assert.IsType<DepositConstitutionFailed>(refusal);
+        Assert.Equal(depositId, failed.DepositId);
+        Assert.Equal(TermDepositDecider.EligibilityNotMetReason, failed.FailureReason);
+        Assert.Equal("ELIGIBILITY_NOT_MET", failed.FailureReason);
+        // Detail names the unmet KEY only (structural, never PII / never the evidence_ref).
+        Assert.Contains("salary_domiciled", failed.FailureDetail);
+        Assert.DoesNotContain("verdict-ref-001", failed.FailureDetail);
+        Assert.DoesNotContain("is_new_money", failed.FailureDetail); // the satisfied one is not listed
+
+        // The full resolved verdicts are recorded on the event for AUDIT LINEAGE (ADR-PC-024 §1),
+        // ordered by key (Ordinal) so the record is replay-identical. Both verdicts ride — the
+        // satisfied one too — so the trail shows which drove the refusal and on what (referenced) evidence.
+        Assert.NotNull(failed.Preconditions);
+        Assert.Collection(failed.Preconditions!,
+            v => { Assert.Equal("is_new_money", v.Key); Assert.True(v.Satisfied); Assert.Equal("verdict-ref-001", v.EvidenceRef); },
+            v => { Assert.Equal("salary_domiciled", v.Key); Assert.False(v.Satisfied); Assert.Equal(EvaluatedAt, v.EvaluatedAt); });
+    }
+
+    [Fact]
+    public void CheckPreconditions_absent_required_verdict_refuses()
+    {
+        var depositId = Guid.NewGuid();
+        // The saga failed to resolve salary_domiciled at all — an ABSENT verdict is a refusal, not a pass.
+        var verdicts = new Dictionary<string, PreconditionVerdict>
+        {
+            [TermDepositDecider.PreconditionIsNewMoney] = Verdict(satisfied: true),
+        };
+
+        var refusal = TermDepositDecider.CheckPreconditions(
+            depositId,
+            [TermDepositDecider.PreconditionIsNewMoney, TermDepositDecider.PreconditionSalaryDomiciled],
+            verdicts);
+
+        var failed = Assert.IsType<DepositConstitutionFailed>(refusal);
+        Assert.Equal(TermDepositDecider.EligibilityNotMetReason, failed.FailureReason);
+        Assert.Contains("salary_domiciled", failed.FailureDetail);
+    }
+
+    [Fact]
+    public void CheckPreconditions_no_verdicts_at_all_refuses_every_required_key()
+    {
+        var depositId = Guid.NewGuid();
+
+        // A gated product whose command carries NO verdicts (null map) refuses on all required keys,
+        // listed deterministically (Ordinal-sorted) so the recorded detail is replay-identical.
+        var refusal = TermDepositDecider.CheckPreconditions(
+            depositId,
+            [TermDepositDecider.PreconditionIsNewMoney, TermDepositDecider.PreconditionSalaryDomiciled],
+            verdicts: null);
+
+        var failed = Assert.IsType<DepositConstitutionFailed>(refusal);
+        Assert.Equal(TermDepositDecider.EligibilityNotMetReason, failed.FailureReason);
+        // Ordinal order: is_new_money < salary_domiciled.
+        Assert.Contains("is_new_money, salary_domiciled", failed.FailureDetail);
+    }
+
+    [Fact]
+    public void CheckPreconditions_is_a_deterministic_pure_function()
+    {
+        var depositId = Guid.NewGuid();
+        var verdicts = new Dictionary<string, PreconditionVerdict>
+        {
+            [TermDepositDecider.PreconditionIsNewMoney] = Verdict(satisfied: false),
+        };
+        IReadOnlyCollection<string> required = [TermDepositDecider.PreconditionIsNewMoney];
+
+        var first = TermDepositDecider.CheckPreconditions(depositId, required, verdicts)!;
+        var second = TermDepositDecider.CheckPreconditions(depositId, required, verdicts)!;
+
+        // Replay re-derives the identical outcome (ADR-PC-024 §4): same scalar fields and a
+        // CONTENT-identical recorded verdict lineage. (The lineage is a list, so equality is
+        // element-wise content, not array reference identity — what "identical outcome" means.)
+        Assert.Equal(first.DepositId, second.DepositId);
+        Assert.Equal(first.FailureReason, second.FailureReason);
+        Assert.Equal(first.FailureDetail, second.FailureDetail);
+        Assert.Equal(first.Preconditions, second.Preconditions); // IReadOnlyList<record> ⇒ element-wise record equality
+    }
+
     [Fact]
     public void DecideMaturity_reproduces_the_canonical_at_maturity_flow()
     {

@@ -7,6 +7,24 @@ namespace Babelstone.Families.TermDeposit.Application;
 // and rate_sheet_version_id are NOT command inputs — the service resolves them at
 // constitution from the rate sheet (ADR-PC-008 §P3) and stamps them onto the event.
 
+/// <summary>
+/// A resolved commercial-eligibility verdict the constitution saga gathered upstream and passes
+/// on the constitution command (ADR-PC-024 §1–§2). It asserts a <i>fact</i> — "an upstream
+/// authority evaluated this product-specific predicate for this customer at <see cref="EvaluatedAt"/>
+/// and it is <see cref="Satisfied"/> / not." The MEANING of each predicate (what counts as "new
+/// money", the look-back window, what a "salary domiciliation" is) is entirely upstream/pack-owned;
+/// the engine treats the verdict as OPAQUE and never re-evaluates it. The triple carries NO PII:
+/// <see cref="EvidenceRef"/> is a resolvable reference, never identity data (ADR-PC-024 §1, the
+/// PII-by-reference rule inherited from the signal-contract family).
+/// </summary>
+/// <param name="Satisfied">Whether the upstream authority found the predicate satisfied.</param>
+/// <param name="EvidenceRef">An opaque reference to the upstream evidence — NOT identity data.</param>
+/// <param name="EvaluatedAt">When the upstream authority took the verdict (audit lineage / freshness).</param>
+public sealed record PreconditionVerdict(
+    bool Satisfied,
+    string EvidenceRef,
+    DateTimeOffset EvaluatedAt);
+
 /// <summary>Open a term deposit: the principal, term, and pricing inputs fixed at constitution.</summary>
 /// <param name="ProductId">The variant id the rate sheet prices, e.g. <c>dpz_pt_12m_juros_venc</c>.</param>
 /// <param name="Role">The pricing role resolved from the deposit origin, e.g. <c>standard</c>.</param>
@@ -15,6 +33,12 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// <param name="PaymentPeriodMonths">The coupon cadence in months for PERIODIC deposits — 1
 /// (monthly) or 3 (quarterly), the only cadences v1 prices (02 §2.1, enforced by the CUE
 /// schema). Ignored (and conventionally 0) for AT_MATURITY and ADVANCE, which have no coupons.</param>
+/// <param name="Preconditions">The resolved commercial-eligibility verdicts the saga gathered
+/// upstream (ADR-PC-024), keyed by the engine's closed verdict-key taxonomy (e.g.
+/// <c>is_new_money</c>). The decider refuses the constitution when a verdict the product's
+/// <c>required_preconditions</c> demands is absent here or <c>Satisfied == false</c> — a PURE
+/// function of these verdicts, with no in-engine evaluation (ADR-PC-024 §3–§5). Defaults to
+/// empty: v1 launch products are not eligibility-gated (02 §4), so most commands carry none.</param>
 public sealed record ConstituteDepositCommand(
     Guid DepositId,
     long PrincipalCents,
@@ -27,7 +51,8 @@ public sealed record ConstituteDepositCommand(
     string AutoRenewalPolicy,
     string FundingAccount,
     string Actor,
-    int PaymentPeriodMonths = 0);
+    int PaymentPeriodMonths = 0,
+    IReadOnlyDictionary<string, PreconditionVerdict>? Preconditions = null);
 
 /// <summary>Mature a constituted deposit: accrue → withhold → pay out the AT_MATURITY single flow.</summary>
 /// <param name="PayoutAccount">The legacy current account credited the total payout (settlement).</param>

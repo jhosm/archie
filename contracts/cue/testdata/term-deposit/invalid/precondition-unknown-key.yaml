@@ -1,0 +1,25 @@
+# ADR-PC-024: required_preconditions is a CLOSED, engine-owned taxonomy
+# (#PreconditionKey). A key outside the set — here `is_vip`, a predicate the
+# engine does not declare — matches no branch and is rejected at depth 1. A
+# config cannot invent a verdict key the engine has no refusal semantics for.
+variant_id: dpz_pt_12m_flat_bad_precondition
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 365
+day_count: pt.act_360
+currency: EUR
+interest_variant: AT_MATURITY
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: new_money }
+required_preconditions:
+  - is_new_money
+  - is_vip
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000
+    basis: ACCRUED_INTEREST
+auto_renewal_policy: NONE
+principal_bounds:
+  min_cents: 50000
