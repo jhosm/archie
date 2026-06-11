@@ -13,7 +13,11 @@ RUN dotnet restore engine/src/Babelstone.Engine.Api/Babelstone.Engine.Api.csproj
 RUN dotnet publish engine/src/Babelstone.Engine.Api/Babelstone.Engine.Api.csproj \
     -c Release -o /app --no-restore
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+# Chiseled (distroless-style) runtime base: no shell / perl / ncurses / tar / full util-linux,
+# which is where the base-image OS CVEs that the image-build.yml grype scan flags (ADR-IC-014 §S2)
+# live. The `-extra` variant keeps tzdata + ICU/globalization — required for this engine's
+# timezone- and culture-sensitive date/accrual math. Runs as non-root (UID 1654) by default.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra
 WORKDIR /app
 COPY --from=build /app .
 ENTRYPOINT ["dotnet", "Babelstone.Engine.Api.dll"]

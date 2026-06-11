@@ -15,7 +15,11 @@ RUN dotnet restore orchestrator/src/Babelstone.Orchestrator/Babelstone.Orchestra
 RUN dotnet publish orchestrator/src/Babelstone.Orchestrator/Babelstone.Orchestrator.csproj \
     -c Release -o /app --no-restore
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0
+# Chiseled (distroless-style) runtime base: no shell / perl / ncurses / tar / full util-linux,
+# where the base-image OS CVEs the image-build.yml grype scan flags (ADR-IC-014 §S2) live. The
+# `-extra` variant keeps tzdata + ICU/globalization for the saga's date/culture-sensitive work.
+# Runs as non-root (UID 1654) by default.
+FROM mcr.microsoft.com/dotnet/runtime:10.0-noble-chiseled-extra
 WORKDIR /app
 COPY --from=build /app .
 ENTRYPOINT ["dotnet", "Babelstone.Orchestrator.dll"]

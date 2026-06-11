@@ -9,7 +9,10 @@ COPY . .
 RUN dotnet restore
 RUN dotnet publish -c Release -o /app --no-restore
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0
+# Chiseled (distroless-style) runtime base — no shell / perl / ncurses / tar / full util-linux,
+# where the base-image OS CVEs grype flags (ADR-IC-014 §S2) live; `-extra` keeps tzdata + ICU.
+# Runs as non-root (UID 1654) by default.
+FROM mcr.microsoft.com/dotnet/runtime:10.0-noble-chiseled-extra
 WORKDIR /app
 COPY --from=build /app .
 # ENTRYPOINT ["dotnet", "Babelstone.Notification.dll"]   # set with the build task
