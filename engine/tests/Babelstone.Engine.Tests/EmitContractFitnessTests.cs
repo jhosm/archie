@@ -92,12 +92,17 @@ public sealed class EmitContractFitnessTests
     /// <item><c>VerifiedPack</c> — the pinned per-instance configuration (ADR-PC-009).</item>
     /// <item><c>EarlyTerminationPolicy</c> — a pure penalty-band policy value object, no I/O.</item>
     /// <item><c>string</c> — primitive bindings (the day-count / withholding primitive ids).</item>
+    /// <item><c>IReadOnlyCollection</c> — the product's required commercial-eligibility preconditions
+    ///   (ADR-PC-024 §1, from the config's <c>required_preconditions</c>): a pure, read-only config
+    ///   value the decide path consumes synchronously to REFUSE before any debit — not a GL/notify
+    ///   signal port. Same ADR-PC-009 walking-skeleton config stand-in shape as the day-count primitive
+    ///   <c>string</c> and the <c>EarlyTerminationPolicy</c> value object above; no I/O, nothing to gate.</item>
     /// </list>
     /// </summary>
     private static readonly string[] AllowedDecideAppendDependencies =
     [
         "AggregateRuntime", "IRateSheetStore", "ISettlementPort", "VerifiedPack",
-        "EarlyTerminationPolicy", "string",
+        "EarlyTerminationPolicy", "string", "IReadOnlyCollection",
     ];
 
     /// <summary>

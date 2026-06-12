@@ -117,6 +117,21 @@ package family
 	// rate-sheet reference resolved at constitution (surface §2.3).
 	rate: #Rate
 
+	// --- commercial-eligibility preconditions (ADR-PC-024) --------------
+	// Which upstream-evaluated eligibility verdicts a product REQUIRES to be
+	// constituted: new-client-only promotions, new-money requirements, salary
+	// domiciliation, mortgage-linked preferential products (ADR-PC-024 §1).
+	// The engine OWNS the closed verdict-key taxonomy (#PreconditionKey) and the
+	// refusal semantics; the product config OWNS which keys a given product needs
+	// (this list); upstream OWNS evaluation (the saga resolves each verdict and
+	// passes it on the constitution command). The list is OPTIONAL and defaults
+	// to absent: v1 launch products are not eligibility-gated (02 §4), so most
+	// variants omit it. A key may not repeat (a set, not a bag); the leading
+	// element makes a present list ≥1 entry. The pack restricts which keys are
+	// LEGALLY permissible in a jurisdiction — a depth-3 pack-bound check, not
+	// expressible here without the pack (ADR-PC-024 §6 Residual risks).
+	required_preconditions?: [#PreconditionKey, ...#PreconditionKey]
+
 	// --- early termination: flat XOR banded (02 §2.5) -------------------
 	early_termination: #EarlyTermination
 
@@ -129,6 +144,18 @@ package family
 	// --- optional activation date (authoring §4 step 5) -----------------
 	effective_from?: =~"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
 }
+
+// #PreconditionKey — the engine-owned CLOSED taxonomy of commercial-eligibility
+// verdict keys a product may require (ADR-PC-024 §1, §6). The engine owns this set
+// and the refusal semantics; a config may only pick from it (a key the schema does
+// not declare fails depth 1, the same closed-struct guarantee as everywhere here).
+// Each key names a product-specific predicate evaluated UPSTREAM (CRM for new-client
+// / relationship, Core Banking for fund provenance / salary domiciliation, the credit
+// system for a linked mortgage) and resolved into the constitution command as an opaque
+// { satisfied, evidence_ref, evaluated_at } verdict — the engine never re-evaluates it
+// (ADR-PC-024 §2). Adding a predicate is a pack/config addition with zero generic-engine
+// diff; widening THIS taxonomy is the only engine change (ADR-PC-024 §6).
+#PreconditionKey: "is_new_client" | "is_new_money" | "salary_domiciled" | "mortgage_linked"
 
 // #Rate — exactly one of flat / stepped. Each branch is closed.
 #Rate: #FlatRate | #SteppedRate
@@ -204,4 +231,4 @@ let min_cents_9 = min_cents
 
 ## Governing ADRs
 
-[ADR-PC-006](../../product_concepts/adrs/ADR-PC-006-cue-schema-language.md)
+[ADR-PC-006](../../product_concepts/adrs/ADR-PC-006-cue-schema-language.md), [ADR-PC-024](../../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md)
