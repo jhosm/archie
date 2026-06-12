@@ -5,11 +5,14 @@
 
 FROM python:3.14-slim
 WORKDIR /app
-# Pull the latest Debian security patches into the base layer before installing the app. The
-# python:3.14-slim base lags Debian's published fixes, which is where the OS-package CVEs the
-# image-build.yml grype scan flags (ADR-IC-014 §S2) — libc6, perl-base, tar — live. There is no
-# chiseled Python image (unlike the .NET services), so patch-on-build is the slim path here; the
-# CPython-level CVEs clear only on a newer base tag, tracked as accepted residual risk.
+# Best-effort base hardening: apply whatever Debian security updates ARE published before
+# installing the app. This is cheap insurance, not a guaranteed fix — it only clears CVEs Debian
+# has already patched. Most of the OS-package CVEs the image-build.yml grype scan flags (ADR-IC-014
+# §S2) on this base — libc6, perl-base, tar, util-linux, ncurses — are currently unfixed upstream,
+# so they REMAIN as accepted residual risk after this step (verified: the post-rebuild scan cleared
+# none of them). The two CPython-level CVEs are interpreter-level and apt cannot touch them at all.
+# There is no chiseled Python image (unlike the .NET services), so the real remediation lever is a
+# newer base tag — surfaced automatically by the `docker` Dependabot ecosystem (.github/dependabot.yml).
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*

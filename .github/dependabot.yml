@@ -40,6 +40,29 @@ updates:
       github-actions:
         patterns: ["*"]
 
+  # Docker base images — the FROM tags in every service Dockerfile (ADR-IC-013). This is the
+  # automated lever that delivers base-image security rebumps over time: the image-build.yml
+  # grype scan (ADR-IC-014 §S2) reports base-OS package CVEs, but most clear only when the base
+  # tag advances (a newer mcr .NET chiseled build, a newer python:3.14-slim) — and without this
+  # ecosystem the floating tags never get proposed for a bump. Dependabot's docker updater PRs a
+  # newer version tag when one publishes; pinning a base by digest (not done here) would also
+  # catch same-tag rebuilds. Covers the six per-service Dockerfiles, including the acl/notification
+  # stubs so their bases stay current before their source lands.
+  - package-ecosystem: docker
+    directories:
+      - /engine
+      - /orchestrator
+      - /acl
+      - /notification
+      - /mcp-server
+      - /pack-validate
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      docker-base-images:
+        patterns: ["*"]
+
   # Python (mcp-server) lands when it gains a pyproject/requirements file — a visible,
   # intended Planned hole until then (ADR-IC-014):
   # - package-ecosystem: pip
