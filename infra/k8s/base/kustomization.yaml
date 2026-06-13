@@ -35,6 +35,7 @@ resources:
   - otel-collector.yaml
   - registry.yaml
   - eventcatalog.yaml
+  - core-acl-stub.yaml
 
 configMapGenerator:
   # POSTGRES_DB / POSTGRES_USER for the Postgres StatefulSet (mirrors compose).
@@ -50,6 +51,17 @@ configMapGenerator:
   - name: otel-collector-config
     files:
       - collector.yaml=../../otel/collector.yaml
+  # Core-ACL settlement-stub mappings — the SAME files the Compose stack mounts
+  # (../../wiremock/mappings), so the stub shape is identical across both stacks
+  # (bd babelstone-t7o3.4). One config source: a success mapping per settlement
+  # endpoint plus an InsufficientBalance refusal for the compensation path.
+  - name: core-acl-stub-mappings
+    files:
+      - reservations-success.json=../../wiremock/mappings/reservations-success.json
+      - reservations-insufficient.json=../../wiremock/mappings/reservations-insufficient.json
+      - debits-success.json=../../wiremock/mappings/debits-success.json
+      - reservations-release-success.json=../../wiremock/mappings/reservations-release-success.json
+      - debits-reverse-success.json=../../wiremock/mappings/debits-reverse-success.json
 
 generatorOptions:
   # Stable names so the volume/env references in the manifests stay valid (no

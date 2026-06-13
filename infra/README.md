@@ -29,6 +29,7 @@ skeletons). Brought up via the repo-root `Makefile`.
 | **Grafana LGTM** | Loki + Grafana + Tempo + Prometheus (all-in-one) | [ADR-IC-007](../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | **OCI registry** | Distribution registry for `oras`-pushed packs (by digest) | [ADR-PC-007](../docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md) |
 | **Catalogue portal host** | Static-site host (nginx) for the deferred catalogue portal; placeholder today | [ADR-IC-015](../docs/product-management/integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) (supersedes ADR-IC-008); host deploy deferred — bd babelstone-s4ol.1 |
+| **Core-ACL settlement stub** | WireMock stub for the saga's gated settlement legs (reserve/confirm/release/reverse); `Settlement:BaseUrl` → `localhost:8089`; mappings `wiremock/mappings/` | [ADR-PC-016](../docs/product-management/product_concepts/adrs/ADR-PC-016-legacy-current-account-adapter.md) / [ADR-PC-029](../docs/product-management/product_concepts/adrs/ADR-PC-029-engine-command-ingress.md); real ACL is DEF-1 — bd babelstone-ub9s |
 
 ### Quick start
 
@@ -94,8 +95,8 @@ before `make up`; defaults live in `compose.yaml`.
 The deployed counterpart of the Compose stack lives under [`k8s/`](./k8s/) —
 Kustomize manifests (base + `overlays/dev` + `overlays/ha`), per
 [ADR-IC-013 §D2](../docs/product-management/integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md)
-(IaC subtree co-located in the monorepo). It deploys the **same 9 backing-infra
-services** to Kubernetes: `overlays/dev` is single-replica dev/staging;
+(IaC subtree co-located in the monorepo). It deploys the **same 10 services**
+(9 backing-infra + the v1 Core-ACL settlement stub) to Kubernetes: `overlays/dev` is single-replica dev/staging;
 `overlays/ha` is the production-shaped HA topology (P.7).
 
 ```bash

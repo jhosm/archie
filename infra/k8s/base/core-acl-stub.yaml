@@ -1,0 +1,60 @@
+# The v1 Core-ACL SETTLEMENT stub (ADR-PC-016 / ADR-PC-029 slot 2; bd babelstone-t7o3.4) —
+# the same WireMock service as the Compose stack's core-acl-stub. The constitution saga's
+# gated money legs (ReserveAccountBalance → ConfirmDebit, and the Release/Reverse
+# compensations) are delivered HERE by the saga command dispatcher (bd babelstone-t7o3.3)
+# now that the engine's constitution append is DE-SETTLED (no eager in-engine debit). The
+# REAL ACL is DEF-1 (bd babelstone-ub9s); this stub stands in. Stub mappings come from the
+# core-acl-stub-mappings ConfigMap, generated from the SAME ../../wiremock/mappings files
+# the Compose stack mounts — one config source across both stacks.
+apiVersion: v1
+kind: Service
+metadata:
+  name: core-acl-stub
+  labels:
+    app.kubernetes.io/name: core-acl-stub
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: core-acl-stub
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-acl-stub
+  labels:
+    app.kubernetes.io/name: core-acl-stub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: core-acl-stub
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: core-acl-stub
+    spec:
+      containers:
+        - name: core-acl-stub
+          image: wiremock/wiremock:3.9.1
+          args: ["--verbose", "--disable-banner"]
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /__admin/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: mappings
+              mountPath: /home/wiremock/mappings
+              readOnly: true
+      volumes:
+        - name: mappings
+          configMap:
+            name: core-acl-stub-mappings

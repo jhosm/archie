@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "comment": "ReleaseBalanceReservation -> early-compensation domain reversal accepted (Document 05 Scenario A; ADR-IC-003 P6). Idempotent: a release on a never-held / already-released reservation is a no-op success (ADR-PC-016 Idempotency)."
+  },
+  "priority": 5,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/reservations/release"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "reservation": "released" }
+  }
+}

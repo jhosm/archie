@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "comment": "ConfirmDebit -> the irreversible Core debit confirmed (Document 05 step 4a; ADR-PC-016 Payload). The saga reaches this only from APPROVED, after the reversible hold succeeded (ADR-IC-003 P5). The de-settled engine no longer debits here (bd babelstone-t7o3.4) -- this leg IS the relocated debit."
+  },
+  "priority": 5,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/debits"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "debit": "confirmed" }
+  }
+}

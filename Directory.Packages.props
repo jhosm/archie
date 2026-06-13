@@ -53,6 +53,12 @@
     <PackageVersion Include="FsCheck.Xunit" Version="3.3.3" />
     <PackageVersion Include="Testcontainers" Version="4.12.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.12.0" />
+    <!-- WireMock.Net (bd babelstone-t7o3.4): the in-process Core-ACL settlement stub the saga command
+         DISPATCHER targets at v1 (the real ACL is DEF-1, bd ub9s). The gated-settlement integration
+         test stands up a WireMock server with success + InsufficientBalance/refusal mappings for the
+         settlement endpoints and points the dispatcher's SettlementBaseUrl at it — a TEST-only
+         dependency that does NOT widen the runtime orchestrator graph (ADR-PC-019 §P2). -->
+    <PackageVersion Include="WireMock.Net" Version="2.11.0" />
     <!-- Line/branch code-coverage collector (Q.y, babelstone-2t16.13). Each *.Tests.csproj
          carries a version-less <PackageReference Include="coverlet.collector"> with
          PrivateAssets="all" (a build-time-only collector, never shipped). CI collects via

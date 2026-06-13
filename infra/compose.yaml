@@ -111,6 +111,32 @@ services:
       retries: 12
       start_period: 10s
 
+  core-acl-stub:
+    image: wiremock/wiremock:3.9.1
+    container_name: babelstone-core-acl-stub
+    # The v1 Core-ACL SETTLEMENT stub (ADR-PC-016 / ADR-PC-029 slot 2; bd babelstone-t7o3.4). The
+    # constitution saga's gated money legs — ReserveAccountBalance → ConfirmDebit (and the
+    # ReleaseBalanceReservation / ReverseCoreDebit compensations) — are delivered HERE by the saga
+    # command dispatcher (bd babelstone-t7o3.3) over idempotent HTTP, now that the engine's constitution
+    # append is DE-SETTLED (no eager in-engine debit). This replaces the eager LoggingSettlementPort on
+    # the constitution path with a real, refusable HTTP target. The REAL ACL is DEF-1 (bd babelstone-ub9s);
+    # this stub stands in until then. Point the dispatcher at it with Settlement:BaseUrl (the orchestrator
+    # Program.cs default is http://localhost:8089 from the host; on this network it is http://core-acl-stub:8080).
+    # Static mappings (./wiremock/mappings) carry a success path per endpoint AND an InsufficientBalance
+    # refusal (a request body containing "insufficient" → 422) so the saga's fail-closed compensation is
+    # exercisable in the dev stack, mirroring the in-process WireMock.Net integration test.
+    command: ["--verbose", "--disable-banner"]
+    ports:
+      - "${CORE_ACL_STUB_PORT:-8089}:8080"
+    volumes:
+      - ./wiremock/mappings:/home/wiremock/mappings:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/__admin/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
   openbao:
     image: openbao/openbao:2.5.4
     container_name: babelstone-openbao

@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "comment": "ReserveAccountBalance REFUSED -> InsufficientBalance (ADR-PC-016 slot 5: the constitution debit is gated on funds). Higher-priority mapping; fires when the request body contains the marker 'insufficient', letting a dev/demo drive the saga fail-closed compensation toward DepositConstitutionFailed without a second stub. The dispatcher classifies this 422 (a 4xx) as a TERMINAL delivery failure it surfaces to the saga (ADR-PC-029 slot 5)."
+  },
+  "priority": 1,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/reservations",
+    "bodyPatterns": [
+      { "contains": "insufficient" }
+    ]
+  },
+  "response": {
+    "status": 422,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "category": "InsufficientBalance", "title": "insufficient funds" }
+  }
+}
