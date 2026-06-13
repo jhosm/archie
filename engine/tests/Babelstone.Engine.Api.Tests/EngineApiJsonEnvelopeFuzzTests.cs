@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -148,7 +149,17 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
     [MemberData(nameof(JsonBodyEndpoints))]
     public async Task A_malformed_json_body_is_always_a_4xx_never_a_500_and_never_hangs(string route, string seedJson)
     {
-        foreach (var body in MutationCorpus(seedJson))
+        var corpus = MutationCorpus(seedJson).ToList();
+
+        // Guard the gate itself: a future refactor that accidentally empties (or near-empties) the
+        // corpus would otherwise loop zero times and turn this test silently GREEN. The smallest seed
+        // body (the 3-field maturity/interest commands) still yields 56 bodies; 20 is a safe floor
+        // that catches an empty/collapsed corpus without being brittle to corpus tweaks.
+        Assert.True(
+            corpus.Count >= 20,
+            $"mutation corpus collapsed to {corpus.Count} bodies for {route} — the fuzz would vacuously pass");
+
+        foreach (var body in corpus)
         {
             using var content = new StringContent(body, Encoding.UTF8, "application/json");
             using var perRequest = new CancellationTokenSource(RequestTimeout);
@@ -171,7 +182,6 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
             Assert.True(
                 status >= 400 && status < 500,
                 $"POST {route} returned {status} (expected 4xx) on body: {Truncate(body)}");
-            Assert.NotEqual(HttpStatusCode.InternalServerError, response.StatusCode);
 
             response.Dispose();
         }
