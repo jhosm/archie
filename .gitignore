@@ -17,6 +17,10 @@ obj/
 # Code-coverage artefacts (Q.y, babelstone-2t16.13) — emitted by CI and local runs,
 # never committed: the .NET coverage/ tree + merged cobertura, the Go statement
 # profile, and the Python coverage.py data + cobertura XML.
+# CI writes the .NET tree to the repo-root coverage/ (--results-directory
+# coverage/unit, coverage/integration; merged coverage/merged.cobertura.xml);
+# the per-project /engine/coverage/ rule remains for runs scoped there.
+/coverage/
 /engine/coverage/
 coverage.out
 .coverage
