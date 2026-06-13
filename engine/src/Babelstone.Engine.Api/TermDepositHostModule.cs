@@ -36,7 +36,12 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<IEventSerializer>(),
             serviceProvider.GetRequiredService<IPiiProtector>(),
             serviceProvider.GetRequiredService<TimeProvider>(),
-            () => DepositPosition.Empty));
+            () => DepositPosition.Empty,
+            // The catalog-gated relay (ADR-IC-017 §P1): the runtime writes an outbox row — the only
+            // publishable artefact — ONLY for a catalogued integration event; an uncatalogued event is
+            // store-only by construction. The shared IIntegrationEventCatalog (the real AvroSchemaCatalog,
+            // registered in Program.cs) is the family-agnostic membership predicate.
+            integrationEventCatalog: serviceProvider.GetRequiredService<IIntegrationEventCatalog>()));
 
         // The term-deposit decider (ADR-PC-021): this module is its composition root (§D4).
         services.AddSingleton(serviceProvider => new TermDepositConstitutionService(

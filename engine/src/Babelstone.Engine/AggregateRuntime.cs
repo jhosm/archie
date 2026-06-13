@@ -50,8 +50,19 @@ public sealed class AggregateRuntime<TState>(
     TimeProvider clock,
     Func<TState> seedState,
     SnapshotStore<TState>? snapshots = null,
-    IPostCommitProjector? postCommitProjector = null)
+    IPostCommitProjector? postCommitProjector = null,
+    IIntegrationEventCatalog? integrationEventCatalog = null)
 {
+    // The catalog-gated-relay membership test (ADR-IC-017 §P1 / INTEGRATION_EVENT_CATALOG_GATED). The
+    // append always writes the events-envelope row (so EVERY event is appended, folded, replayable), but
+    // an OUTBOX row — the only thing the relay can ever publish — is written ONLY for a catalogued
+    // integration event. An uncatalogued event is store-only by construction. The default is
+    // publish-everything (the pre-ADR-IC-017 behaviour) so existing engine-internal/test wiring is
+    // unchanged; the PRODUCTION host injects the real AvroSchemaCatalog. The seam is FAMILY-AGNOSTIC
+    // (keyed by event_type string only), so the spine names no family — ENGINE_FAMILY_AGNOSTIC holds.
+    private readonly IIntegrationEventCatalog _integrationEventCatalog =
+        integrationEventCatalog ?? PublishAllIntegrationEventCatalog.Instance;
+
     /// <summary>Rehydrates from the latest verified snapshot, then folds the tail of events on top.</summary>
     public async Task<Hydrated<TState>> LoadAsync(Guid streamId, CancellationToken ct = default)
     {
@@ -208,17 +219,26 @@ public sealed class AggregateRuntime<TState>(
                 Payload: encoded.Bytes,
                 PayloadSchemaId: encoded.SchemaId));
 
-            outboxRows.Add(new OutboxRow(
-                EventId: eventId,
-                AggregateType: context.Family,
-                AggregateId: streamId,
-                SequenceNumber: sequence,
-                EventType: registration.EventType,
-                Payload: encoded.Bytes,
-                SchemaId: encoded.SchemaId,
-                Status: OutboxStatus.Pending,
-                CreatedAt: transactionTime,
-                PublishedAt: null));
+            // Catalog-gated relay (ADR-IC-017 §P1): the envelope above is ALWAYS written, but the outbox
+            // row — the relay's only publishable artefact — is written ONLY for a catalogued integration
+            // event. An uncatalogued event is store-only by construction (appended/folded/replayable,
+            // never on the bus). This is the append-side gate; it preserves append+outbox atomicity
+            // (ES_ATOMIC_APPEND_OUTBOX) because the envelope and any outbox rows still commit in the one
+            // sink transaction below. Fail-closed: a not-catalogued event_type simply gets no outbox row.
+            if (_integrationEventCatalog.IsCataloguedIntegrationEvent(registration.EventType))
+            {
+                outboxRows.Add(new OutboxRow(
+                    EventId: eventId,
+                    AggregateType: context.Family,
+                    AggregateId: streamId,
+                    SequenceNumber: sequence,
+                    EventType: registration.EventType,
+                    Payload: encoded.Bytes,
+                    SchemaId: encoded.SchemaId,
+                    Status: OutboxStatus.Pending,
+                    CreatedAt: transactionTime,
+                    PublishedAt: null));
+            }
         }
 
         await sink.AppendAsync(streamId, expectedVersion, envelopes, outboxRows, context.CommandId, ct);

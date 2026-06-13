@@ -13,7 +13,7 @@ namespace Babelstone.Engine.Avro;
 /// single governed source and are embedded so a deploy carries its own schemas. Adding a
 /// family is adding its <c>.avsc</c> — nothing in this catalog changes.
 /// </summary>
-public sealed class AvroSchemaCatalog
+public sealed class AvroSchemaCatalog : IIntegrationEventCatalog
 {
     private readonly IReadOnlyDictionary<string, AvroSchemaEntry> _byEventType;
     private readonly IReadOnlyDictionary<string, AvroSchemaEntry> _byRecordName;
@@ -55,6 +55,17 @@ public sealed class AvroSchemaCatalog
 
     /// <summary>Every catalogued entry (used to register/look up all schema_ids up front).</summary>
     public IReadOnlyCollection<AvroSchemaEntry> Entries => (IReadOnlyCollection<AvroSchemaEntry>)_byEventType.Values;
+
+    /// <summary>
+    /// The catalog-gated-relay membership test (ADR-IC-017 §P1): is this stored <c>event_type</c> a
+    /// catalogued integration event? The relay publishes a row IFF this is true — an uncatalogued event
+    /// is store-only by construction (appended, folded, replayable, but never on the durable bus).
+    /// FAIL-CLOSED: an unknown/uncatalogued event_type returns <c>false</c> (not published), never an
+    /// exception — the append path always succeeds; only the bus side is gated. Family-agnostic (it
+    /// reads the embedded schemas, never names a family), so it is the right shape to inject into the
+    /// engine spine's append seam without leaking a family specific.
+    /// </summary>
+    public bool IsCataloguedIntegrationEvent(string eventType) => _byEventType.ContainsKey(eventType);
 
     /// <summary>Resolves by stored <c>event_type</c> (the load path). Fail-loud on an unknown type.</summary>
     public AvroSchemaEntry ForEventType(string eventType)

@@ -12,6 +12,12 @@
          server (ADR-IC-010) calls. Authn/authz is the gateway's job (Epic J); this host is
          the auth-deferred dev boundary. -->
     <ProjectReference Include="../Babelstone.Engine/Babelstone.Engine.csproj" />
+    <!-- The governed embedded-schema catalogue (ADR-IC-002 / ADR-IC-015), wired as the
+         catalog-gated-relay membership predicate (ADR-IC-017 §P1): AvroSchemaCatalog implements the
+         spine's IIntegrationEventCatalog, so the relay publishes an event IFF it is catalogued. This
+         is a SPINE project (ENGINE_FAMILY_AGNOSTIC), and the host is the composition root that may
+         name a family (ADR-PC-021 A2), so this reference is legitimate here, not in the spine. -->
+    <ProjectReference Include="../Babelstone.Engine.Avro/Babelstone.Engine.Avro.csproj" />
     <ProjectReference Include="../Babelstone.EventStore/Babelstone.EventStore.csproj" />
     <ProjectReference Include="../Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <ProjectReference Include="../Babelstone.Packs/Babelstone.Packs.csproj" />

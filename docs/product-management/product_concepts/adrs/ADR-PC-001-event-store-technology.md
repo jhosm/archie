@@ -356,3 +356,52 @@ the Decision (PostgreSQL event store) or of any P-principle; it does not superse
 ADR. The §P1 envelope/`events`-table contract (every other column unchanged), §P2 atomic
 append + outbox, §P3 append-only-by-role, §P4 indices, and §P5 upgrade drill all remain
 binding as written.
+
+## Amendment — 2026-06-13: §P2 per-event coupling narrowed for the catalog-gated relay ([ADR-IC-017 §P1](../../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md))
+
+[ADR-IC-017 §P1](../../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md)
+(Accepted, 2026-06-13) decided the **catalog-gated relay**: the outbox relay publishes an
+event **iff** its `event_type` is a catalogued integration event, and an **uncatalogued
+event is store-only by construction** — appended, folded, replayable, but never on the
+durable bus. The implementing diff realises the gate on the *append side*:
+`AggregateRuntime.AppendAsync` **always** writes the `events`-envelope row but builds an
+`OutboxRow` only when the injected `IIntegrationEventCatalog` admits the `event_type`; a
+batch of only-uncatalogued events therefore commits with **zero** outbox rows (the
+`PostgresEventStore.AppendAsync` guard's lower bound relaxes from `1` to `0` to match).
+
+§P2 as written carries two distinct claims. The **single-transaction atomicity** claim —
+*"appends an event also inserts the corresponding outbox row in the same PostgreSQL
+transaction"*, the local-atomicity guarantee [ADR-IC-004 §P6](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)
+requires — still holds verbatim: whatever event rows and outbox rows an `append` carries
+commit in one transaction, neither half landing without the other. But §P2 *also* asserts
+a **reverse one-to-one coupling** — *"No engine code path may append an event without also
+writing the outbox row, and no code path may write the outbox row without an event"* — and
+the catalog-gated relay makes the **forward half** of that coupling false: an uncatalogued
+event is now legitimately appended with no outbox row. ADR-IC-017 §P1's own atomicity
+cross-reference ([ADR-IC-004 §P2](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md) /
+`ES_ATOMIC_APPEND_OUTBOX`, "preserved either way") is true of the single-transaction
+property but does not, on its own, narrow §P2's additional reverse-coupling clause; this
+amendment does so explicitly so a reader of §P2 does not see an invariant the code
+contradicts.
+
+*Revised 2026-06-13:* the §P2 per-event coupling narrows from **one-outbox-row-per-event**
+to **≤ one-outbox-row-per-event**. Precisely:
+
+- **Single-transaction atomicity is unchanged** — events and their outbox rows still
+  commit in one PostgreSQL transaction ([ADR-IC-004 §P6](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)),
+  and the guard still rejects *more* outbox rows than events (the upper bound: every
+  outbox row corresponds to one appended catalogued event).
+- **The reverse coupling relaxes on the forward half** — a catalogued event is appended
+  *with* its outbox row (as before); an **uncatalogued** event is appended *without* one,
+  store-only by construction per [ADR-IC-017 §P1](../../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md).
+  The other half stays binding: **no outbox row is ever written without its appended
+  event** (the upper-bound guard enforces it).
+
+This is an additive narrowing of §P2's per-event coupling to match a decision
+([ADR-IC-017 §P1](../../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md))
+that deliberately replaces "publish every appended event" with "publish only promoted
+events"; it does **not** reverse §P2's single-transaction atomicity guarantee or supersede
+this ADR. The §P1 envelope/`events`-table contract, §P3 append-only-by-role, §P4 indices,
+and §P5 upgrade drill all remain binding as written. The `ES_ATOMIC_APPEND_OUTBOX`
+catalogue claim's *"and vice versa"* clause is adjusted to the *"≤ one"* coupling in the
+same change ([commitment catalogue](./commitment-catalogue.md) row 1).
