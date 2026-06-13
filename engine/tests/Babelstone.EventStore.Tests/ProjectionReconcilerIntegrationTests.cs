@@ -301,7 +301,7 @@ public sealed class ProjectionReconcilerIntegrationTests(PostgresEventStoreFixtu
 
         public Task AppendAsync(
             Guid streamId, long expectedVersion, IReadOnlyList<EventEnvelope> events,
-            IReadOnlyList<OutboxRow> outboxRows, CancellationToken ct = default) =>
+            IReadOnlyList<OutboxRow> outboxRows, Guid? commandId = null, CancellationToken ct = default) =>
             throw new NotSupportedException("The reconciler and drainer only read.");
 
         public async IAsyncEnumerable<EventEnvelope> LoadAsync(

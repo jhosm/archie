@@ -16,12 +16,17 @@ public sealed class PostgresEventStore(string connectionString) : IEventStore
         long expectedVersion,
         IReadOnlyList<EventEnvelope> events,
         IReadOnlyList<OutboxRow> outboxRows,
+        Guid? commandId = null,
         CancellationToken ct = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(events.Count, 1, nameof(events));
         // §P2: an append never writes an event without its outbox row.
         ArgumentOutOfRangeException.ThrowIfLessThan(outboxRows.Count, 1, nameof(outboxRows));
         ValidateContiguous(streamId, expectedVersion, events);
+
+        // The head the append reaches (== expectedVersion + events.Count, validated contiguous
+        // above) — known before any row is written, so the idempotency receipt can record it.
+        var commitSequence = events[^1].SequenceNumber;
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(ct);
@@ -37,9 +42,33 @@ public sealed class PostgresEventStore(string connectionString) : IEventStore
 
         try
         {
+            // ADR-PC-029 slot 4 (ENGINE_COMMAND_IDEMPOTENT): record the command receipt BEFORE
+            // the events, in this same transaction. Writing it first means a replayed command id
+            // collides on command_dedup_pkey before the events are touched — so a concurrent
+            // duplicate that picked a different (server-generated) stream id still loses on the
+            // command id rather than opening a second stream. Atomic with the append: if the
+            // events/outbox INSERT then fails (e.g. a stream race), the receipt rolls back too.
+            if (commandId is { } id)
+            {
+                await InsertCommandReceiptAsync(connection, tx, id, streamId, commitSequence, ct);
+            }
+
             await InsertEventsAsync(connection, tx, events, ct);
             await InsertOutboxAsync(connection, tx, outboxRows, ct);
             await tx.CommitAsync(ct);
+        }
+        catch (PostgresException e)
+            when (e.SqlState == PostgresErrorCodes.UniqueViolation && e.ConstraintName == "command_dedup_pkey")
+        {
+            // Idempotent replay (ADR-PC-029 slot 4): this command id was already applied — a
+            // sequential retry that raced past the endpoint pre-check, or a concurrent duplicate.
+            // The command_dedup UNIQUE is the real guarantee: roll back (NO second append) and
+            // hand the caller the ORIGINAL outcome, read back from the committed receipt.
+            // PostgreSQL blocks the losing INSERT until the winner commits, so the receipt is
+            // visible by the time we observe the violation. Benign — not a concurrency conflict.
+            await tx.RollbackAsync(ct);
+            var receipt = await ReadCommandReceiptAsync(connectionString, commandId!.Value, ct);
+            throw new DuplicateCommandException(commandId.Value, receipt.StreamId, receipt.CommitSequence);
         }
         catch (PostgresException e)
             when (e.SqlState == PostgresErrorCodes.UniqueViolation && e.ConstraintName == "events_stream_seq_uq")
@@ -228,5 +257,50 @@ public sealed class PostgresEventStore(string connectionString) : IEventStore
         }
 
         await batch.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task InsertCommandReceiptAsync(
+        NpgsqlConnection connection, NpgsqlTransaction tx,
+        Guid commandId, Guid streamId, long commitSequence, CancellationToken ct)
+    {
+        // The ENGINE_COMMAND_IDEMPOTENT receipt (migration 0015), written in the append
+        // transaction. A duplicate command_id throws unique-violation on command_dedup_pkey —
+        // caught by AppendAsync as the idempotent-replay signal. created_at defaults to
+        // clock_timestamp() in the schema (an audit/retention stamp, never the dedup decision).
+        const string sql = """
+            INSERT INTO command_dedup (command_id, stream_id, commit_sequence)
+            VALUES (@command_id, @stream_id, @commit_sequence);
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, tx);
+        command.Parameters.AddWithValue("command_id", commandId);
+        command.Parameters.AddWithValue("stream_id", streamId);
+        command.Parameters.AddWithValue("commit_sequence", commitSequence);
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task<CommandReceipt> ReadCommandReceiptAsync(
+        string connectionString, Guid commandId, CancellationToken ct)
+    {
+        // Read the ORIGINAL receipt after a duplicate-command rollback (on a fresh connection,
+        // the rolled-back transaction can no longer query). PostgreSQL blocks the losing INSERT
+        // until the winner commits, so the receipt is committed and visible here by the time the
+        // unique-violation surfaces; an absent row would be a genuine invariant break, not a race.
+        const string sql =
+            "SELECT stream_id, commit_sequence FROM command_dedup WHERE command_id = @command_id;";
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("command_id", commandId);
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+        {
+            throw new InvalidOperationException(
+                $"command_dedup row for already-applied command {commandId} was unexpectedly absent.");
+        }
+
+        return new CommandReceipt(commandId, reader.GetGuid(0), reader.GetInt64(1));
     }
 }

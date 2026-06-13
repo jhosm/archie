@@ -41,10 +41,39 @@ public static class DepositsEndpoints
 
     private static async Task<IResult> ConstituteAsync(
         ConstituteDepositRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         TermDepositConstitutionService service,
+        ICommandLog commandLog,
         TimeProvider clock,
         CancellationToken ct)
     {
+        // ADR-PC-029 slot 1: the caller MUST supply a deterministic command id as the Idempotency-Key
+        // header (in practice the saga's saga_outbox row id). It is MANDATORY — the engine never
+        // accepts a non-idempotent constitution, so a caller that omits or malforms the key fails loud
+        // (400) rather than silently losing the dispatcher's at-least-once retry safety. The engine
+        // cannot generate one itself: a server-minted id would change on every retry and defeat the
+        // dedup entirely, so requiring it from the caller is the only safe contract.
+        if (idempotencyKey is null || !Guid.TryParse(idempotencyKey, out var commandId))
+        {
+            return Results.Problem(
+                "Idempotency-Key header is required and must be a UUID (ADR-PC-029 slot 1).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // Pre-check BEFORE any side effect (decide / eager settle / append): a known command id
+        // replays the original outcome with NO second settle and NO second append (slot 4). The
+        // crash-atomic guarantee is the in-transaction command_dedup INSERT inside the append (which
+        // raises DuplicateCommandException on a concurrent racer that slips past this read); this read
+        // keeps the common sequential retry off the write path entirely. The deposit id is read back
+        // from the receipt because it is an OUTPUT for a constitution.
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            return Results.Created(
+                $"/v1/deposits/{receipt.StreamId}",
+                new ConstituteDepositResponse(receipt.StreamId, "ACTIVE", receipt.CommitSequence));
+        }
+
         var depositId = request.DepositId ?? Guid.NewGuid();
         var command = new ConstituteDepositCommand(
             DepositId: depositId,
@@ -58,7 +87,8 @@ public static class DepositsEndpoints
             AutoRenewalPolicy: request.AutoRenewalPolicy,
             FundingAccount: request.FundingAccount,
             Actor: request.Actor ?? "mcp:dev",
-            PaymentPeriodMonths: request.PaymentPeriodMonths);
+            PaymentPeriodMonths: request.PaymentPeriodMonths,
+            CommandId: commandId);
 
         // The host shell is the composition root that knows the command, so the product-semantic
         // span is opened HERE, never in the pure decider/fold (ADR-PC-010 §P5 / ADR-IC-007 P2/P3).
@@ -74,6 +104,15 @@ public static class DepositsEndpoints
         try
         {
             commitSequence = await service.ConstituteAsync(command, ct);
+        }
+        catch (DuplicateCommandException dup)
+        {
+            // A concurrent duplicate slipped past the pre-check: the append rolled back (no second
+            // append) and handed back the ORIGINAL outcome. Return it verbatim — the same 201 the
+            // first apply returned (ADR-PC-029 slot 4 · idempotent replay).
+            return Results.Created(
+                $"/v1/deposits/{dup.StreamId}",
+                new ConstituteDepositResponse(dup.StreamId, "ACTIVE", dup.CommitSequence));
         }
         catch (ConcurrencyException)
         {

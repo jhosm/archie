@@ -60,14 +60,15 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
     ///
     /// Derived from the engine <c>Sql/*.sql</c> resources: events + outbox (0001), snapshots (0003),
     /// rate_sheets (0004), projections (0005), pack_versions (0006), projection_checkpoints (0011),
-    /// inbox (0012). <c>schema_migrations</c> is created by <see cref="MigrationRunner"/> in code (not a
+    /// inbox (0012), command_dedup (0015 — the generic command-ingress idempotency ledger, ADR-PC-029).
+    /// <c>schema_migrations</c> is created by <see cref="MigrationRunner"/> in code (not a
     /// <c>.sql</c> resource, so the parse never sees it today); it is listed defensively so that moving
     /// the ledger DDL into a migration file stays green.
     /// </summary>
     private static readonly string[] AllowedEngineTables =
     [
         "events", "outbox", "snapshots", "rate_sheets", "projections",
-        "pack_versions", "projection_checkpoints", "inbox", "schema_migrations",
+        "pack_versions", "projection_checkpoints", "inbox", "command_dedup", "schema_migrations",
     ];
 
     /// <summary>

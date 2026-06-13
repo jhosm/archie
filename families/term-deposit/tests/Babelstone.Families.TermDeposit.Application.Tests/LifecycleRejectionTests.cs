@@ -157,7 +157,7 @@ internal sealed class InMemoryEventStore : IEventStore
 
     public Task AppendAsync(
         Guid streamId, long expectedVersion, IReadOnlyList<EventEnvelope> events,
-        IReadOnlyList<OutboxRow> outboxRows, CancellationToken ct = default) =>
+        IReadOnlyList<OutboxRow> outboxRows, Guid? commandId = null, CancellationToken ct = default) =>
         throw new InvalidOperationException("InMemoryEventStore is read-only; the runtime uses a NullSink.");
 
     public Task<IReadOnlyList<Guid>> ReadStreamIdsAsync(string family, CancellationToken ct = default) =>

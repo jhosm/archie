@@ -33,7 +33,7 @@ public sealed class SinkTests
     {
         public Task AppendAsync(
             Guid streamId, long expectedVersion, IReadOnlyList<EventEnvelope> events,
-            IReadOnlyList<OutboxRow> outboxRows, CancellationToken ct = default)
+            IReadOnlyList<OutboxRow> outboxRows, Guid? commandId = null, CancellationToken ct = default)
             => throw new InvalidOperationException("the durable store must not be reached when wired with NullSink");
 
         public IAsyncEnumerable<EventEnvelope> LoadAsync(Guid streamId, long fromSequence = 0, CancellationToken ct = default)

@@ -22,13 +22,26 @@ public interface IEventStore
     /// </param>
     /// <param name="events">The event rows to append; must be non-empty.</param>
     /// <param name="outboxRows">The outbox rows to write in the same transaction; must be non-empty (§P2).</param>
+    /// <param name="commandId">
+    /// The caller's deterministic command id (ADR-PC-029 slot 4). When non-null, the append is
+    /// made <b>idempotent</b>: a receipt is written to the <c>command_dedup</c> ledger
+    /// (migration 0015) in the SAME transaction as the events + outbox, so a replay of the same
+    /// command id finds the receipt and raises <see cref="DuplicateCommandException"/> (carrying
+    /// the original head) instead of appending a second time. The receipt INSERT precedes the
+    /// events INSERT, so a concurrent duplicate loses on the command id before it can open a
+    /// second stream. <c>null</c> (the default) preserves the non-idempotent append unchanged.
+    /// </param>
     /// <param name="ct">Cancels the append before the transaction commits.</param>
     /// <exception cref="ConcurrencyException">The stream head did not match <paramref name="expectedVersion"/>.</exception>
+    /// <exception cref="DuplicateCommandException">
+    /// <paramref name="commandId"/> was already applied — the caller returns the original outcome.
+    /// </exception>
     Task AppendAsync(
         Guid                         streamId,
         long                         expectedVersion,
         IReadOnlyList<EventEnvelope> events,
         IReadOnlyList<OutboxRow>     outboxRows,
+        Guid?                        commandId = null,
         CancellationToken            ct = default);
 
     /// <summary>
@@ -68,4 +81,21 @@ public sealed class ConcurrencyException(Guid streamId, long expectedVersion, lo
     public Guid StreamId { get; } = streamId;
     public long ExpectedVersion { get; } = expectedVersion;
     public long ActualVersion { get; } = actualVersion;
+}
+
+/// <summary>
+/// Thrown when an append carries a <c>commandId</c> that has ALREADY been applied (the
+/// <c>command_dedup</c> primary key collided inside the append transaction) — the
+/// ENGINE_COMMAND_IDEMPOTENT guarantee (ADR-PC-029 slot 4). Unlike a
+/// <see cref="ConcurrencyException"/> (a genuinely conflicting writer), this is a benign
+/// replay: the transaction is rolled back (no second append) and the caller returns the
+/// <b>original</b> outcome carried here. The exact dedup row first written by the original
+/// append is read back to populate <see cref="StreamId"/> + <see cref="CommitSequence"/>.
+/// </summary>
+public sealed class DuplicateCommandException(Guid commandId, Guid streamId, long commitSequence)
+    : Exception($"Command {commandId} was already applied to stream {streamId} at commit_sequence {commitSequence}.")
+{
+    public Guid CommandId { get; } = commandId;
+    public Guid StreamId { get; } = streamId;
+    public long CommitSequence { get; } = commitSequence;
 }

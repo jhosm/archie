@@ -81,7 +81,8 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     public async Task Constitute_read_then_mature_drives_the_full_lifecycle_to_the_canonical_position()
     {
         // Constitute.
-        var constituteResponse = await _client.PostAsJsonAsync("/v1/deposits", new ConstituteDepositRequest(
+        // The Idempotency-Key is MANDATORY on constitution (ADR-PC-029 slot 1); a fresh key per test.
+        var constituteResponse = await PostConstituteAsync(new ConstituteDepositRequest(
             PrincipalCents: 1_000_000,
             ProductId: "dpz_pt_12m_juros_venc",
             Role: "standard",
@@ -89,7 +90,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
             StartDate: new DateOnly(2026, 1, 15),
             InterestVariant: "AT_MATURITY",
             AutoRenewalPolicy: "NONE",
-            FundingAccount: "PT50-DDA-001"), SnakeCase);
+            FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
 
         Assert.Equal(HttpStatusCode.Created, constituteResponse.StatusCode);
         var constituted = await constituteResponse.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase);
@@ -144,7 +145,8 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         // projection relay drains it) and the I.2 query surface serves it: the maturities range scan AND
         // the ONE canonical point lookup GET /v1/deposits/{id} — there is NO /read-model sibling.
         var maturityDate = new DateOnly(2027, 1, 15);
-        var constituteResponse = await _client.PostAsJsonAsync("/v1/deposits", new ConstituteDepositRequest(
+        // The Idempotency-Key is MANDATORY on constitution (ADR-PC-029 slot 1); a fresh key per test.
+        var constituteResponse = await PostConstituteAsync(new ConstituteDepositRequest(
             PrincipalCents: 1_000_000,
             ProductId: "dpz_pt_12m_juros_venc",
             Role: "standard",
@@ -152,7 +154,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
             StartDate: new DateOnly(2026, 1, 15),
             InterestVariant: "AT_MATURITY",
             AutoRenewalPolicy: "NONE",
-            FundingAccount: "PT50-DDA-001"), SnakeCase);
+            FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.Created, constituteResponse.StatusCode);
         var depositId = (await constituteResponse.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
 
@@ -208,7 +210,8 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         // canonical GET folds the stream — the authoritative read-your-writes fallback — and returns the
         // just-written deposit: one URL, correct read, no /read-model round-trip and no flaky wait.
         // (Once the projector catches up, the same URL serves the fast read-model row.)
-        var constituteResponse = await _client.PostAsJsonAsync("/v1/deposits", new ConstituteDepositRequest(
+        // The Idempotency-Key is MANDATORY on constitution (ADR-PC-029 slot 1); a fresh key per test.
+        var constituteResponse = await PostConstituteAsync(new ConstituteDepositRequest(
             PrincipalCents: 1_000_000,
             ProductId: "dpz_pt_12m_juros_venc",
             Role: "standard",
@@ -216,7 +219,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
             StartDate: new DateOnly(2026, 1, 15),
             InterestVariant: "AT_MATURITY",
             AutoRenewalPolicy: "NONE",
-            FundingAccount: "PT50-DDA-001"), SnakeCase);
+            FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.Created, constituteResponse.StatusCode);
         var constituted = (await constituteResponse.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!;
 
@@ -258,7 +261,9 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     {
         // The deployed sheet prices only dpz_pt_12m_juros_venc; an unpriced product is a domain
         // rejection (DomainRejectedException) -> 422, never a silent default rate and never a 500.
-        var response = await _client.PostAsJsonAsync("/v1/deposits", new ConstituteDepositRequest(
+        // A valid Idempotency-Key is supplied so the request reaches the domain check (the rejection
+        // is the 422 under test) rather than short-circuiting on the mandatory-key 400.
+        var response = await PostConstituteAsync(new ConstituteDepositRequest(
             PrincipalCents: 1_000_000,
             ProductId: "unpriced_product",
             Role: "standard",
@@ -266,7 +271,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
             StartDate: new DateOnly(2026, 1, 15),
             InterestVariant: "AT_MATURITY",
             AutoRenewalPolicy: "NONE",
-            FundingAccount: "PT50-DDA-001"), SnakeCase);
+            FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
@@ -323,5 +328,79 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         return dir is not null
             ? Path.Combine(dir.FullName, "packs")
             : throw new InvalidOperationException($"repo packs/ not found from {AppContext.BaseDirectory}");
+    }
+
+    [Fact]
+    public async Task ENGINE_COMMAND_IDEMPOTENT_a_replayed_idempotency_key_returns_the_original_and_appends_once()
+    {
+        // ADR-PC-029 slot 4 end-to-end: two POSTs with the SAME Idempotency-Key (the saga
+        // dispatcher's at-least-once retry) yield ONE deposit. The second is short-circuited by the
+        // engine's command-dedup pre-check and replays the original outcome — same deposit_id, same
+        // commit_sequence — with no second DepositConstituted on the stream.
+        var key = Guid.NewGuid().ToString();
+        var body = new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "dpz_pt_12m_juros_venc",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001");
+
+        var first = await PostConstituteAsync(body, key);
+        var second = await PostConstituteAsync(body, key);
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+
+        var firstBody = await first.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase);
+        var secondBody = await second.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase);
+        Assert.NotNull(firstBody);
+        Assert.NotNull(secondBody);
+
+        // The replay returns the ORIGINAL identity + read-your-writes token, verbatim.
+        Assert.Equal(firstBody.DepositId, secondBody.DepositId);
+        Assert.Equal(firstBody.CommitSequence, secondBody.CommitSequence);
+
+        // NO second append: exactly one DepositConstituted for the single deposit.
+        Assert.Equal(["term_deposit.DepositConstituted"], await EventTypesAsync(firstBody.DepositId));
+        Assert.Equal(1, await CountAsync("events", "stream_id", firstBody.DepositId));
+    }
+
+    [Theory]
+    [InlineData(null)]          // absent: the Idempotency-Key is MANDATORY (ADR-PC-029 slot 1)
+    [InlineData("not-a-uuid")]  // malformed: the command id must be a deterministic UUID
+    public async Task An_absent_or_malformed_idempotency_key_is_a_400(string? key)
+    {
+        // The command id MUST be a UUID supplied by the caller (ADR-PC-029 slot 1, the deterministic
+        // saga_outbox row id). The engine never accepts a non-idempotent constitution: an absent or
+        // non-UUID key fails loud (400), never a silent non-idempotent append.
+        var body = new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "dpz_pt_12m_juros_venc",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001");
+
+        var response = await PostConstituteAsync(body, idempotencyKey: key);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    private async Task<HttpResponseMessage> PostConstituteAsync(ConstituteDepositRequest body, string? idempotencyKey)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/v1/deposits")
+        {
+            Content = JsonContent.Create(body, options: SnakeCase),
+        };
+        if (idempotencyKey is not null)
+        {
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
+        }
+
+        return await _client.SendAsync(request);
     }
 }

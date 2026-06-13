@@ -93,6 +93,11 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
                     services.AddSingleton(TimeProvider.System);
                     services.AddSingleton<IEventStore, EmptyEventStore>();
                     services.AddSingleton<IEventSink, RejectingEventSink>();
+                    // The command-ingress idempotency ledger's read side (ADR-PC-029 slot 4). The fuzz
+                    // bodies carry no Idempotency-Key, so the endpoint never calls it — but it resolves
+                    // it from DI, so a fake must be registered or every constitution POST would 500 on
+                    // the missing service (exactly the unhandled-exception leak this fuzz guards).
+                    services.AddSingleton<ICommandLog, EmptyCommandLog>();
                     services.AddSingleton<IEventSerializer, JsonEventSerializer>();
                     services.AddSingleton<IPiiProtector, NullPiiProtector>();
                     services.AddSingleton<IRateSheetStore, UnpricedRateSheetStore>();
@@ -161,13 +166,22 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
 
         foreach (var body in corpus)
         {
-            using var content = new StringContent(body, Encoding.UTF8, "application/json");
+            // A valid Idempotency-Key so the BODY is what is fuzzed: the constitution route makes the
+            // key mandatory (ADR-PC-029 slot 1) and 400s without one BEFORE the handler runs, which
+            // would mask the body-handling branches this fuzz targets; maturity/interest ignore it. A
+            // malformed body still fails model binding (400) regardless; a well-formed-but-invalid body
+            // reaches the domain rejection (422). Either way the contract under test is 4xx-never-5xx.
+            using var request = new HttpRequestMessage(HttpMethod.Post, route)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            };
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString());
             using var perRequest = new CancellationTokenSource(RequestTimeout);
 
             HttpResponseMessage response;
             try
             {
-                response = await _client.PostAsync(route, content, perRequest.Token);
+                response = await _client.SendAsync(request, perRequest.Token);
             }
             catch (OperationCanceledException) when (perRequest.IsCancellationRequested)
             {
@@ -208,8 +222,14 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
             ["funding_account"] = "PT50-DDA-001",
         });
 
-        using var content = new StringContent(body, Encoding.UTF8, "application/json");
-        var response = await _client.PostAsync("/v1/deposits", content);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/deposits")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
+        // A valid Idempotency-Key so the request reaches the domain check (the 422 under test) rather
+        // than short-circuiting on the now-mandatory-key 400 (ADR-PC-029 slot 1).
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString());
+        var response = await _client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
@@ -381,7 +401,7 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
     {
         public Task AppendAsync(
             Guid streamId, long expectedVersion, IReadOnlyList<EventEnvelope> events,
-            IReadOnlyList<OutboxRow> outboxRows, CancellationToken ct = default) => Task.CompletedTask;
+            IReadOnlyList<OutboxRow> outboxRows, Guid? commandId = null, CancellationToken ct = default) => Task.CompletedTask;
 
         public async IAsyncEnumerable<EventEnvelope> LoadAsync(
             Guid streamId, long fromSequence = 0,
@@ -395,12 +415,21 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
             Task.FromResult<IReadOnlyList<Guid>>([]);
     }
 
+    /// <summary>A command log with no receipts: every TryGetAsync misses, so no fuzz body is ever a
+    /// replay. Registered only so the constitution endpoint resolves its ICommandLog dependency from DI
+    /// (the fuzz bodies carry no Idempotency-Key, so it is never actually called).</summary>
+    private sealed class EmptyCommandLog : ICommandLog
+    {
+        public Task<CommandReceipt?> TryGetAsync(Guid commandId, CancellationToken ct = default) =>
+            Task.FromResult<CommandReceipt?>(null);
+    }
+
     /// <summary>No command in this fuzz reaches an append (each rejects first); a call here would be a test bug.</summary>
     private sealed class RejectingEventSink : IEventSink
     {
         public Task AppendAsync(
             Guid streamId, long expectedVersion, IReadOnlyList<EventEnvelope> events,
-            IReadOnlyList<OutboxRow> outboxRows, CancellationToken ct = default) =>
+            IReadOnlyList<OutboxRow> outboxRows, Guid? commandId = null, CancellationToken ct = default) =>
             throw new InvalidOperationException(
                 "No fuzz body should reach an event append — every command rejects on a domain guard first.");
     }
