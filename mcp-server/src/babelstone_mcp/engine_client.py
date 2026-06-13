@@ -9,6 +9,7 @@ returning a partial/empty result — the MCP layer surfaces that to the agent.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import httpx
@@ -25,8 +26,18 @@ class EngineClient:
         """POST /v1/deposits — returns {deposit_id, status, commit_sequence}. Raises on a non-2xx
         engine response. ``commit_sequence`` is the read-your-writes token (ADR-IC-005 §P3): pass it
         back as ``min_sequence`` on the follow-up read to see the just-written deposit.
+
+        The engine MANDATES a UUID ``Idempotency-Key`` header (ADR-PC-029 slot 1) and 400s without it.
+        On the saga channel that key is the ``saga_outbox`` row id; on this agent channel there is no
+        such row (the agent is not the saga), so the client mints a fresh per-call UUID. Each tool
+        invocation is its own command, so a per-call key is the correct contract here — the MCP server
+        is a co-consumer of the engine command surface (ADR-IC-010 / ADR-PC-029 slot 6).
         """
-        response = await self._client.post(f"{self._base_url}/v1/deposits", json=request)
+        response = await self._client.post(
+            f"{self._base_url}/v1/deposits",
+            json=request,
+            headers={"Idempotency-Key": str(uuid.uuid4())},
+        )
         response.raise_for_status()
         return response.json()
 

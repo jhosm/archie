@@ -29,13 +29,21 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Npgsql is the only data dependency: the orchestrator persists saga state, the
-         transition history, and the inbox dedup row in the application database (ADR-IC-003
-         §S2 "saga state is a table in the application database"). NO Confluent/Avro surface
-         HERE — the substrate is decoupled from the consume loop (the engine's InboxPump
-         plugs in via its IInboxMessageHandler seam, G.2) so it is testable against a bare
-         PostgreSQL. -->
+    <!-- Npgsql is the orchestrator's data dependency: it persists saga state, the transition
+         history, the saga_outbox commands, and the inbox dedup row in the application database
+         (ADR-IC-003 §S2 "saga state is a table in the application database"). -->
     <PackageReference Include="Npgsql" />
+    <!-- Confluent.Kafka is the consume-loop dependency (t7o3.2): the orchestrator IS a Redpanda
+         consumer (ADR-IC-003 §S2 "a Redpanda consumer like every other service"), so the host-wired
+         SagaConsumeLoop subscribes to the saga's topics, reads the CloudEvents Binary-mode headers
+         (ADR-IC-015), and commits offsets. DELIBERATELY no Avro/Schema-Registry surface and no
+         engine-kernel reference: the saga keys its transition table on the event TYPE NAME alone
+         (ADR-IC-003 §P2), never the Avro payload, so the loop decodes HEADERS only — which keeps the
+         orchestrator subtree extraction-ready (ADR-PC-019 §P2: no Babelstone.Engine / Babelstone.Engine.Avro
+         to shed). The earlier "NO Confluent surface HERE" note (substrate H.1) is now lifted: H.1 built
+         the decoupled SagaAdvanceHandler against a bare PostgreSQL; t7o3.2 adds the real consume loop
+         that owns the connection/transaction/offset and drives that handler. -->
+    <PackageReference Include="Confluent.Kafka" />
     <!-- BackgroundService/IHostedService host shell for the saga worker (ADR-IC-003 §S2
          "a Redpanda consumer like every other service"). The same Microsoft.Extensions
          line the engine relay/consumer use. -->

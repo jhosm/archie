@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 
 import httpx
 import pytest
@@ -21,6 +22,7 @@ async def test_constitute_posts_snake_case_cents_and_returns_result() -> None:
         captured["method"] = request.method
         captured["url"] = str(request.url)
         captured["body"] = json.loads(request.content)
+        captured["idempotency_key"] = request.headers.get("Idempotency-Key")
         return httpx.Response(201, json={"deposit_id": "d-1", "status": "ACTIVE", "commit_sequence": 0})
 
     result = await _client(handler).constitute(
@@ -31,6 +33,27 @@ async def test_constitute_posts_snake_case_cents_and_returns_result() -> None:
     assert captured["method"] == "POST"
     assert captured["url"] == "http://engine/v1/deposits"
     assert captured["body"]["principal_cents"] == 1_000_000  # integer cents, never a float
+    # The engine now MANDATES a UUID Idempotency-Key (ADR-PC-029 slot 1) — 400 without it. The agent
+    # channel has no saga_outbox row id, so the client mints a fresh per-call UUID (ADR-IC-010).
+    assert captured["idempotency_key"] is not None
+    assert uuid.UUID(captured["idempotency_key"])  # parses as a UUID — raises otherwise
+
+
+async def test_constitute_mints_a_fresh_idempotency_key_per_call() -> None:
+    # Each constitute() call is its own command (the agent is not the saga), so two calls carry two
+    # distinct keys — the per-call UUID is generated client-side, not reused.
+    keys: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        keys.append(request.headers.get("Idempotency-Key"))
+        return httpx.Response(201, json={"deposit_id": "d-1", "status": "ACTIVE", "commit_sequence": 0})
+
+    client = _client(handler)
+    await client.constitute({"principal_cents": 1})
+    await client.constitute({"principal_cents": 2})
+
+    assert keys[0] is not None and keys[1] is not None
+    assert keys[0] != keys[1]
 
 
 async def test_deposit_position_gets_by_id() -> None:
