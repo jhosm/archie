@@ -39,7 +39,7 @@ jobs:
         id: filter
         with:
           filters: |
-            engine: ['engine/**']
+            engine: ['engine/**', '.github/scripts/coverage-floor-cobertura.py']
             pack_validate: ['pack-validate/**']
             families: ['families/**']
             contracts: ['contracts/**', 'scripts/avro-compat-check.sh', 'scripts/asyncapi-catalog-validate.sh', 'scripts/asyncapi-catalog-reconcile.sh']
@@ -112,8 +112,8 @@ jobs:
         # dotnet-coverage merge stitches every per-project coverage.cobertura.xml (both
         # tiers) into one repo-wide cobertura. The tool expands the ** glob itself
         # (cross-platform), so no shell globstar dependency. The merged report is what
-        # the artifact + summary below consume; a fail-closed floor GATE on it is the
-        # documented Phase 2 follow-up (see the PR body), deliberately not wired here.
+        # the artifact + summary below consume and what the fail-closed floor gate
+        # (Phase 2, "Coverage floor gate — .NET" below) reads.
         if: ${{ always() }}
         working-directory: engine
         run: |
@@ -124,10 +124,10 @@ jobs:
             echo "::warning::no per-project cobertura reports found — coverage merge skipped"
           fi
       - name: Coverage summary (ReportGenerator → step summary)
-        # An informational, NON-blocking summary rendered into the job's GitHub step
-        # summary. This is the advisory threshold posture Phase 1 ships; the blocking
-        # required-check floor is the Phase 2 follow-up (PR body), intentionally not a
-        # required gate yet (adding one to main-protect.json needs maintainer sign-off).
+        # The human-readable per-assembly breakdown rendered into the job's GitHub step
+        # summary. always() so the numbers are visible even on a red run — including the
+        # case where the fail-closed floor gate below trips, so a reviewer sees exactly
+        # which assemblies pulled the total under the floor.
         if: ${{ always() }}
         run: |
           dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.4.7 || true
@@ -139,6 +139,20 @@ jobs:
           if [ -f coverage/report/SummaryGithub.md ]; then
             cat coverage/report/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: "Coverage floor gate — .NET (Q.y Phase 2: line ≥ 85%, branch ≥ 75%)"
+        # Fail-closed floor on the MERGED cobertura. This step lives INSIDE the
+        # path-scoped `engine` job, which already feeds the always-run `CI gate`
+        # aggregator (ADR-PC-019 §P1) — so a breach fails this job → fails the gate →
+        # blocks the PR, with NO new required check added to main-protect.json (the
+        # destabilisation risk the Phase-1 PR flagged for a fresh required gate). The
+        # script reads the de-duplicated root counts and fails CLOSED on an empty/absent
+        # report (never a silent pass). No explicit `if:` → default success(): the floor
+        # is enforced only on an otherwise-green run, so a red test run is not buried
+        # under a second, confusing coverage error. The live full-suite (unit+Integration,
+        # kernel-excluded per engine/coverlet.runsettings) merged number measured from
+        # this branch's CI run 27474645928 is 94.51% line (2446/2588) / 81.89% branch
+        # (529/646) — so 85/75 leave ~9.5pt / ~6.9pt of headroom.
+        run: python3 .github/scripts/coverage-floor-cobertura.py coverage/merged.cobertura.xml 0.85 0.75
       - name: Publish merged coverage artifact (Q.y)
         # The merged cobertura (and the ReportGenerator HTML/markdown) as a downloadable
         # CI artifact — the deliverable for Phase 1 (emit + publish). always() so a red
@@ -170,10 +184,10 @@ jobs:
         #
         # Q.y (babelstone-2t16.13): statement coverage via `go test -coverprofile`
         # (Go has no native branch coverage — statement coverage only). The
-        # `go tool cover -func` total is echoed into the GitHub step summary as an
-        # informational, NON-blocking number; the profile is published as an
-        # artifact below. -coverpkg=./... so the profile attributes coverage to
-        # every package in the module, not just the one under test.
+        # `go tool cover -func` total is echoed into the GitHub step summary, and the
+        # fail-closed floor gate below enforces a minimum on that same total; the
+        # profile is published as an artifact too. -coverpkg=./... so the profile
+        # attributes coverage to every package in the module, not just the one under test.
         working-directory: pack-validate
         run: |
           go build -trimpath -ldflags "-X main.Version=${GITHUB_SHA::12}" ./...
@@ -182,6 +196,25 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           go tool cover -func=coverage.out | tail -1 >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - name: "Coverage floor gate — Go (Q.y Phase 2: statements ≥ 78%)"
+        # Fail-closed statement-coverage floor (Go has no native branch coverage). Runs
+        # inside the path-scoped `pack-validate` job → already part of the always-run
+        # `CI gate` aggregator (ADR-PC-019 §P1), so a breach blocks the PR with no new
+        # required check. Default success(): only enforced when the test step above was
+        # green (a failed `go test` already fails the job). Floor 78% sits below the
+        # 2026-06-10 baseline (81.6% statements) for headroom.
+        working-directory: pack-validate
+        run: |
+          floor=78.0
+          total="$(go tool cover -func=coverage.out | awk '/^total:/ {print $NF}' | tr -d '%')"
+          echo "Go statement coverage: ${total}%  (floor ${floor}%)"
+          if [ -z "$total" ]; then
+            echo "::error::could not read Go coverage total from coverage.out — failing closed"
+            exit 1
+          fi
+          awk -v t="$total" -v f="$floor" 'BEGIN { exit !(t + 0 >= f + 0) }' \
+            || { echo "::error::Go statement coverage ${total}% < floor ${floor}%"; exit 1; }
+          echo "OK: Go coverage floor satisfied"
       - name: Publish Go coverage artifact (Q.y)
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -315,16 +348,21 @@ jobs:
       - uses: jdx/mise-action@v4 # pins Python from mise.toml (3.14, ADR-IC-010)
       - name: Build + contract tests (ADR-IC-010, ADR-IC-013)
         # Q.y (babelstone-2t16.13): line + branch coverage via pytest-cov
-        # (--cov --cov-branch). Cobertura XML is emitted for the artifact below and a
-        # one-line total is rendered into the GitHub step summary — informational only,
-        # not a blocking gate (the floor is the Phase 2 follow-up in the PR body).
+        # (--cov --cov-branch). Cobertura XML is emitted for the artifact below and the
+        # term report is printed. The fail-closed floor is pytest-cov's own
+        # `--cov-fail-under=80`: it compares the COMBINED line+branch total (the "Cover"
+        # column) and exits non-zero below 80%, failing this path-scoped `mcp-server`
+        # job → the always-run `CI gate` aggregator (ADR-PC-019 §P1), with no new
+        # required check. 80% sits just below the 2026-06-10 baseline (81% combined);
+        # coverage.xml is still written before the fail-under check, so the artifact
+        # step below (always()) uploads the report even on a breach.
         working-directory: mcp-server
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install -e ".[dev]"
           .venv/bin/python -m pytest -q \
-            --cov=babelstone_mcp --cov-branch \
+            --cov=babelstone_mcp --cov-branch --cov-fail-under=80 \
             --cov-report=xml:coverage.xml --cov-report=term
       - name: Publish Python coverage artifact (Q.y)
         if: ${{ always() }}
