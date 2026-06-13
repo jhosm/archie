@@ -1,5 +1,6 @@
 using Babelstone.Orchestrator;
 using Babelstone.Orchestrator.Dispatch;
+using Babelstone.Orchestrator.Edge;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Migrations;
 using Babelstone.Orchestrator.Outbox;
@@ -9,16 +10,15 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 // The in-house saga orchestrator host (ADR-IC-003 "Event-driven application orchestrator").
-// A worker, not an HTTP API (ADR-IC-003 §S2 "a Redpanda consumer like every other service")
-// — so Host.CreateApplicationBuilder, not WebApplication. This composition root applies the
-// saga schema and wires the hand-rolled state machine, the persistence stores, the inbox-driven
-// advance handler, AND the Redpanda consume loop (t7o3.2) that actually READS events off the bus
-// and drives the saga. Before t7o3.2 nothing consumed events, so a started saga never progressed;
-// now the hosted SagaInboxConsumerService subscribes to the saga's topics, decodes each record's
-// CloudEvents headers into a PII-free SagaInboxEvent, and drives the SagaAdvanceHandler inside one
-// transaction that commits the Kafka offset only after the DB transaction commits.
-
-var builder = Host.CreateApplicationBuilder(args);
+// It is BOTH a Redpanda consumer (ADR-IC-003 §S2 "a Redpanda consumer like every other service")
+// AND — since I.1 — the application behind the EDGE that fronts the constitution saga (ADR-IC-006
+// §P4 / Document 05 §Step 0). So it is now a WebApplication, NOT Host.CreateApplicationBuilder:
+// the Kestrel HTTP surface (the 202 + SSE front door) runs ALONGSIDE the existing hosted services
+// — the migration service, the Redpanda consume loop (#167) that READS events off the bus and
+// advances the saga, and the saga command dispatcher (#170) that drains saga_outbox to the engine
+// over HTTP. Adding Kestrel is a FRAMEWORK reference, NOT an engine-kernel ProjectReference, so the
+// orchestrator subtree stays extraction-ready (ADR-PC-019 §P2).
+var builder = WebApplication.CreateBuilder(args);
 
 // The application-database connection string resolves from configuration at the composition
 // root (the same boundary the engine hosts use, ADR-PC-004 Amendment A1). The migration role
@@ -140,8 +140,26 @@ builder.Services.AddSingleton(sp => new SagaCommandDispatchDrainer(
     sp.GetRequiredService<IHttpClientFactory>()));
 builder.Services.AddHostedService<SagaCommandDispatcherService>();
 
-var host = builder.Build();
-await host.RunAsync();
+// The I.1 EDGE HTTP surface (ADR-IC-006 §P4 / Document 05 §Step 0): the 202 + process_id + SSE
+// front door that STARTS the saga (NOT a direct engine append — PR #149's rejected anti-pattern).
+// EdgeServices composes the EdgeSagaStarter (starts the ConstitutionProcess in-process within one
+// transaction, emitting the parallel commands to saga_outbox — nothing on the bus) and the
+// SagaStateReader the SSE stream observes the saga state through. It shares the SAME saga stores
+// the consume loop registered above (TryAdd keeps a single instance), and runs against the SAME
+// runtime DB credential. Nothing here is an engine-kernel reference — the subtree stays
+// extraction-ready (ADR-PC-019 §P2).
+EdgeServices.Register(builder.Services, runtimeConnectionString
+    ?? throw new InvalidOperationException(
+        "No orchestrator runtime connection string configured. Set ConnectionStrings:Orchestrator, " +
+        "Orchestrator:ConnectionString, or ORCHESTRATOR_CONNECTION_STRING."));
+
+var app = builder.Build();
+
+// Map the edge routes (POST /api/v1/deposits/constitute, GET /api/v1/processes/{id}/stream). The
+// hosted services (migration, consume loop, dispatcher) start on their own via the host lifecycle.
+ProcessApiEndpoints.Map(app);
+
+await app.RunAsync();
 
 namespace Babelstone.Orchestrator
 {

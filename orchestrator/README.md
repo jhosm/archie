@@ -2,6 +2,8 @@
 
 The in-house **saga orchestrator** — a Redpanda consumer that drives multi-step
 sagas with compensation, persisting saga state as rows in its application database.
+Since I.1 it also hosts the **edge-over-saga front door** (ADR-IC-006 §P4): the `202` +
+`process_id` + SSE stream that STARTS a saga and follows it to a terminal state.
 
 - **Build provenance:** in-house estate ("estate by role, in-house by provenance") — [ADR-IC-013](../docs/product-management/integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md)
 - **Runtime / stack:** .NET — the decisive S2 reason in [ADR-IC-003](../docs/product-management/integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md) is that the orchestrator "speaks the same language as every other service in the stack" (the .NET engine, [ADR-PC-010](../docs/product-management/product_concepts/adrs/ADR-PC-010-dotnet-hand-rolled-engine.md))
@@ -36,6 +38,18 @@ business logic.
   `MigrationRunner`/`MigrationSet` pattern lifted from `engine/Babelstone.EventStore.Migrations`.
   Provisions the `babelstone_orchestrator` runtime role (ADR-PC-001 §P3): UPDATE on
   `saga_state` (the one mutable table), append-only `saga_transition`/`inbox`.
+- **`Edge/` (I.1)** — the **edge-over-saga front door** (ADR-IC-006 §P4 / Document 05 §Step 0).
+  In plain terms: a client hits the edge, the edge STARTS the saga and immediately returns
+  `202 Accepted` with a `process_id` and an SSE `stream_url`; the stream follows the saga to a
+  terminal state. The orchestrator is the application BEHIND the Kong gateway (Boundary 1), so it
+  now hosts its own Kestrel HTTP surface (`Microsoft.NET.Sdk.Web`, a FRAMEWORK reference — NOT an
+  engine-kernel `ProjectReference`, so it stays extraction-ready per ADR-PC-019 §P2) ALONGSIDE the
+  consume loop + dispatcher. `EdgeSagaStarter` creates the `ConstitutionProcess` STARTED row and
+  drives the first transition IN-PROCESS in one transaction (emitting the parallel commands to
+  `saga_outbox` — **nothing on the bus**; the bus stays events-only). `ProcessApiEndpoints` maps
+  `POST /api/v1/deposits/constitute` and the SSE `GET /api/v1/processes/{id}/stream`, which streams
+  the structural saga state (never PII) and enforces **per-process authz** — the requester's
+  `client_id` must match the process's owning client (`process_id` is NOT a capability token).
 
 **No PII** (ADR-PC-004 §P2 / no-PII-on-the-durable-bus): every persisted column is a
 reference — a process id, a state label, a correlation GUID. A subject's PII never lands

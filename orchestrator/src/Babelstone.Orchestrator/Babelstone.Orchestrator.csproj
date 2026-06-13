@@ -1,4 +1,10 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<!-- Microsoft.NET.Sdk.Web adds the ASP.NET Core / Kestrel framework reference the I.1 edge
+     HTTP surface needs (ADR-IC-006 §P4 / Document 05 §Step 0): the orchestrator hosts its own
+     202 + SSE front door alongside the existing hosted consume loop + dispatcher + migration
+     service. This is a FRAMEWORK reference, NOT an engine-kernel ProjectReference — the
+     orchestrator subtree stays extraction-ready (ADR-PC-019 §P2: there is no Babelstone.Engine /
+     Babelstone.Engine.Avro to shed). The same SDK the engine API hosts use. -->
+<Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Babelstone.Orchestrator</RootNamespace>
@@ -44,17 +50,14 @@
          the decoupled SagaAdvanceHandler against a bare PostgreSQL; t7o3.2 adds the real consume loop
          that owns the connection/transaction/offset and drives that handler. -->
     <PackageReference Include="Confluent.Kafka" />
-    <!-- BackgroundService/IHostedService host shell for the saga worker (ADR-IC-003 §S2
-         "a Redpanda consumer like every other service"). The same Microsoft.Extensions
-         line the engine relay/consumer use. -->
-    <PackageReference Include="Microsoft.Extensions.Hosting" />
-    <!-- IHttpClientFactory for the saga command DISPATCHER (bd babelstone-t7o3.3, ADR-PC-029): the
-         dispatcher drains saga_outbox and delivers each decided command to the engine over idempotent
-         HTTP, so the saga actually DRIVES the engine. Commands ride HTTP point-to-point (Primitive 1,
-         ADR-PC-029 §3) — the durable bus stays events-only. A leaf Microsoft.Extensions package, so
-         it does NOT widen the runtime graph the way an engine-kernel ProjectReference would: the
-         orchestrator subtree stays extraction-ready (ADR-PC-019 §P2). -->
-    <PackageReference Include="Microsoft.Extensions.Http" />
+    <!-- BackgroundService/IHostedService (the saga worker host shell, ADR-IC-003 §S2) and
+         IHttpClientFactory (the saga command DISPATCHER, bd babelstone-t7o3.3 / ADR-PC-029) are
+         BOTH supplied by the Microsoft.AspNetCore.App shared framework the Microsoft.NET.Sdk.Web
+         brings in (for the I.1 edge HTTP surface) — so the explicit Hosting/Http PackageReferences
+         are pruned (NU1510). The dispatcher still rides HTTP point-to-point (the bus stays
+         events-only); the framework reference is ASP.NET Core, NOT an engine-kernel ProjectReference,
+         so the subtree stays extraction-ready (ADR-PC-019 §P2). -->
+
     <!-- The SHARED Babelstone telemetry surface (ADR-IC-007 Layer 1): the orchestrator opens
          its saga-advance spans on the SAME Babelstone.Engine ActivitySource the engine uses —
          one instrumentation scope across the estate, never a competing source — and tags them
