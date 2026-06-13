@@ -8,6 +8,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
     <!-- Real PostgreSQL (first-party module) + a generic container for Redpanda (no
          first-party Redpanda module — same shape as OpenBaoFixture). All tests here carry
          [Trait("Category","Integration")]; the default CI lane filters them out, the E.6

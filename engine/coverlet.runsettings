@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Coverlet (XPlat Code Coverage VSTest collector) configuration for the .NET coverage
+  lane (Q.y, babelstone-2t16.13). Passed to the engine CI job via the "dotnet test"
+  invocation over engine/Babelstone.slnx with the "XPlat Code Coverage" data collector
+  and the "settings" pointing at this file.
+
+  WHY THE KERNEL EXCLUDE EXISTS (this is load-bearing, do not drop it):
+  Coverlet's XPlat collector instruments each target assembly IN PLACE for the duration of
+  the run, rewriting the on-disk DLL to inject hit-recording machinery that itself pulls in
+  System.IO / System.Threading.Thread / System.Guid.NewGuid / System.DateTime.UtcNow. The
+  financial kernel carries a hard determinism fitness gate — KernelPurityTests
+  (Babelstone.FinancialMath.Tests, ADR-PC-010 §P5) — which reflects over the *on-disk bytes*
+  of Babelstone.FinancialTypes.dll and Babelstone.FinancialMath.dll via PEReader and fails the
+  build on any reference to that non-deterministic surface. Under instrumentation that gate
+  (correctly, from its own vantage) sees coverlet's injected references and fails.
+  Excluding the two pure-kernel modules from instrumentation keeps the §P5 gate intact (it
+  reads the real, un-rewritten kernel). Their BEHAVIOUR stays fully tested (the FinancialTypes /
+  FinancialMath suites run unchanged); only their line/branch numbers are absent from the
+  coverage report — an acceptable, documented trade for not silently breaking a hard ADR gate
+  (ADR-PC-020 §D3: divergence is allowed, silent divergence is not). The pure cores are the
+  measured-100% tier in the coverage baseline, so the report-side loss is the least impactful.
+-->
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat code coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <!-- Module-level excludes ([Assembly]Type glob). The two kernel modules are skipped
+               so the ADR-PC-010 §P5 determinism gate reads their un-instrumented bytes. -->
+          <Exclude>[Babelstone.FinancialTypes]*,[Babelstone.FinancialMath]*</Exclude>
+          <!-- Never instrument the test assemblies themselves or the generated Avro stubs. -->
+          <ExcludeByAttribute>GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute</ExcludeByAttribute>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

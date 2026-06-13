@@ -8,6 +8,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
     <!-- Real PostgreSQL (the inbox dedup table) + a generic container for Redpanda (no
          first-party Redpanda module). The Integration-trait tests carry
          [Trait("Category","Integration")]; the default CI lane filters them out. -->

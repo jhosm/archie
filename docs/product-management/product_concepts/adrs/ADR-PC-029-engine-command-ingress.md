@@ -1,0 +1,69 @@
+# ADR-PC-029: Engine Command Ingress — Synchronous Idempotent REST
+
+| Field | Value |
+|---|---|
+| Status | Accepted |
+| Date | 2026-06-13 |
+| Deciders | jhosm |
+| Shape | Contract-shape |
+| Counterparty | The constitution **saga** (orchestrator, [ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md)) — and, on the same surface, the edge ([ADR-IC-006](../../integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)) and the MCP server ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md)) |
+| Depends on | [ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md), [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md), [ADR-PC-027](./ADR-PC-027-deposit-read-surface-canonical-resource.md), [ADR-IC-005](../../integration_concepts/adrs/ADR-IC-005-cqrs-read-model-storage.md) |
+| Resolves | bd `babelstone-t7o3.5` |
+
+---
+
+## In plain English
+
+When the saga that orchestrates opening a deposit decides "now make the engine record this deposit," *how does that instruction reach the engine?* That seam was never written down. This ADR settles it: the saga (and the edge, and the agent channel) call the engine over **plain HTTP**, the same command surface they already use — and the engine makes those calls **safe to retry** by remembering a command it has already applied. Commands travel point-to-point over HTTP; the shared event bus stays for *facts* (events), not instructions. We deliberately did **not** put commands on Kafka at v1; that option is kept open as a documented, reversible scale-up path.
+
+## Context
+
+This contract fills the **single biggest undecided seam** in the move from the walking skeleton to the intended interaction model (see the ACTUAL→INTENDED graph; bd `babelstone-t7o3.5`). The intended flow is: edge → **saga orchestrates** ([ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md)) → the engine records the deposit → `DepositConstituted` is published as the saga's terminal integration fact. The saga emits commands (`ReserveAccountBalance`, `ConfirmDebit`, `ActivateDeposit`); the engine-bound ones must reach the engine. **No ADR, bd issue, or memory recorded how.** Today the engine wires a `NullInboxMessageHandler` (no command inbox) and exposes only synchronous REST; the saga's commands are typed but have no execution endpoint.
+
+Two candidate transports were weighed (the full pros/cons live in the decision thread; summarised here):
+
+| Transport | For | Against |
+|---|---|---|
+| **(2) Synchronous idempotent REST** — the saga's command dispatcher HTTP-POSTs the engine's existing command surface | Reuses the tested engine surface (least new code); **one** command ingress for saga + edge + MCP; aligns with [Primitive 1](../../integration_concepts/01-the-six-primitives.md) (*commands are point-to-point with a known destination*; the bus stays events-only, avoiding the "bus-as-RPC" smell doc 01 warns of); operationally simplest ([ADR-IC-000 S1](../../integration_concepts/adrs/ADR-IC-000-common-evaluation-criteria.md), the dominant force for a 1–2 person team); precedented by [ADR-IC-012](../../integration_concepts/adrs/ADR-IC-012-anti-corruption-layer-implementation.md)'s webhook inbound adapter; reversible | Synchronous coupling (caller handles retry/timeout); idempotency must be wired on the engine endpoint |
+| **(1) Engine Kafka command-inbox** — the saga publishes to a command topic; the engine consumes it | Architecturally symmetric (the `InboxConsumer` library exists); temporal decoupling + backpressure for the v4 load targets ([Epic L](../v1-build-backlog.md)) | Most *new* build (command topic, engine consumer, command schemas); **two** engine ingresses to keep coherent; blurs Primitive 1 (commands on the broker) |
+
+**Decision: Option 2 (REST).** For this team and stage the decisive forces — operational simplicity, reuse of the tested surface, Primitive 1's command/event split, and reversibility — favour REST. Option 1's real advantage (async resilience at scale) is unmeasured today, the saga's slower ACL/approval legs dominate latency, and the migration is low-regret (see §Residual risks + bd `babelstone-ne1m`). The orchestrator still needs the inbox library to consume *events*; REST simply avoids a **second**, command-facing inbox on the engine.
+
+This is the command-plane companion to [ADR-PC-027](./ADR-PC-027-deposit-read-surface-canonical-resource.md) (the read surface): together they fix the *shape* of the engine's HTTP boundary that [ADR-PC-021 §D5](./ADR-PC-021-application-layer-family-owned-deciders.md) realised but left unshaped. The secured edge stays Epic I/J.
+
+## Decision
+
+The engine's **command ingress is its synchronous HTTP command surface**, called point-to-point by the saga's command dispatcher (and the edge/MCP). All six contract slots:
+
+1. **Payload shape** — the existing engine command endpoints (the `POST /v1/deposits…` family that is the write companion to [ADR-PC-027](./ADR-PC-027-deposit-read-surface-canonical-resource.md)'s read surface); request bodies are the engine's own command DTOs (e.g. `ConstituteDepositCommand`-shaped JSON). The caller supplies a **command id** (an `Idempotency-Key` header, or a `command_id` field) — a deterministic UUID, in practice the saga's `saga_outbox` row id. The saga's *internal* command DTOs (`ActivateDeposit` etc.) are **translated** to engine command requests by the dispatcher (bd `babelstone-t7o3.3`); they are not themselves the wire shape.
+
+2. **Semantics** — a command expresses *intent to mutate one aggregate*. The engine validates, runs the pure decider ([ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md)), appends, and returns the new head `commit_sequence` (the [ADR-IC-005 §P3](../../integration_concepts/adrs/ADR-IC-005-cqrs-read-model-storage.md) read-your-writes token). The HTTP `2xx` **confirms the command was accepted and applied — it is not the saga's signal to advance.** The saga advances on the engine's resulting *event* (`DepositConstituted`), consumed via the orchestrator's event-consume loop (bd `babelstone-t7o3.2`). The engine-bound command is **de-settled**: it appends only; the money leg (`ReserveAccountBalance`/`ConfirmDebit`) is the saga's separate, gated step (bd `babelstone-t7o3.4`, [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md)), not an eager in-engine debit.
+
+3. **Ordering and delivery** — synchronous request/response over HTTP (point-to-point, [Primitive 1](../../integration_concepts/01-the-six-primitives.md)). Delivery is **at-least-once**: the dispatcher drains the transactional `saga_outbox` ([ADR-IC-004](../../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md) outbox semantics) and retries the HTTP call until a terminal response. Per-aggregate ordering is the caller's responsibility (the saga is single-writer per `process_id`); the engine additionally enforces optimistic concurrency on `(stream_id, sequence_number)` via `expectedVersion`. The durable Redpanda bus carries **events only** — no command topic at v1.
+
+4. **Idempotency** — the **engine (receiver) dedupes**, keyed on the caller's command id, scoped per aggregate. A replay of an already-applied command id returns the **original** result (the same `commit_sequence`) with no second append. This composes with the existing `expectedVersion` concurrency guard (which rejects genuinely conflicting concurrent writers). Uniqueness window: at least the stream's active lifetime; a bounded retention window is an implementation detail of bd `babelstone-t7o3.5`.
+
+5. **Error model** — synchronous and legible: `2xx` (applied, or idempotent replay) → the dispatcher marks the `saga_outbox` row delivered; `4xx` (the engine **refuses** — illegal lifecycle transition / validation, e.g. an `ELIGIBILITY_NOT_MET`-class refusal) → a terminal delivery outcome the dispatcher surfaces to the saga as a **failure branch** (compensation); `5xx`/timeout → transient, **retried** (idempotency makes retries safe). This boundary is **gated** for *delivery* (a refused command does not silently proceed) but it does **not** gate on downstream GL/notification — those remain post-commit, never-gating ([ADR-PC-012 slot 5](./ADR-PC-012-gl-posting-signal-contract.md) / [ADR-PC-025 slot 5](./ADR-PC-025-customer-notification-emit-contract.md)).
+
+6. **Ownership and versioning** — the **engine** owns the command-endpoint contract (the `/v1` command surface; [ADR-PC-027](./ADR-PC-027-deposit-read-surface-canonical-resource.md) owns the read companion). Breaking changes ship as a new versioned route or additive fields, never an in-place break. The orchestrator's dispatcher (bd `babelstone-t7o3.3`) is the in-house consumer; the edge and MCP are co-consumers of the same surface. The consumer↔provider contract is pinned by **Pact CDC tests** ([ADR-IC-009](../../integration_concepts/adrs/ADR-IC-009-testing-infrastructure.md)). **Reversibility:** the *transport* (HTTP) may migrate to a Kafka command-inbox post-v1 (bd `babelstone-ne1m`) by swapping the dispatcher's sink for a command topic and adding an engine `InboxConsumer` that calls the **same application service** — slots 1/2/4/5 are transport-independent and survive the migration unchanged.
+
+## Consequences
+
+**Easier:** reuses the engine's tested command surface (smallest delta to a running v1); the durable bus stays events-only; a single command ingress serves saga + edge + MCP; the v1→post-v1 transport change is low-regret (the contract is transport-independent).
+
+**Harder / locked-in:** the dispatcher carries synchronous-call concerns (engine address/health, retry, timeout); idempotency is not free — the engine command endpoint must honour the command id (this becomes an acceptance criterion of bd `babelstone-t7o3.5`); the saga's command-leg throughput couples to the engine's synchronous capacity (weak in practice — the ACL/approval legs dominate).
+
+## Residual risks
+
+- **The v1 choice is provisional pending load data.** If the load harness ([Epic L](../v1-build-backlog.md)) shows the engine command leg is a measured bottleneck under the v4 burst targets, or a "no synchronous in-estate calls" rule is later adopted, migrate to the Kafka command-inbox — tracked as bd `babelstone-ne1m` (deferred, post-v1).
+- **The engine command must be de-settled for this to be coherent.** Until the eager in-engine settlement is removed (bd `babelstone-t7o3.4`), the engine both settles *and* appends on the request path, which contradicts [ADR-PC-016 §68/§127](./ADR-PC-016-legacy-current-account-adapter.md) ("the constitution saga blocks on settlement confirmation before completing"). That divergence is acknowledged and tracked per the explicit-drift gate ([ADR-PC-020 §D3](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)).
+- **This contract does not commit** to the saga's *internal* command vocabulary, to the ACL settlement wire format ([DEF-1](../v1-build-backlog.md)), or to authentication on the surface (the secured edge is Epic I/J). It commits only the engine's command-ingress shape.
+
+## Verifiable commitments
+
+This contract's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for their exact claim, gate, and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- `ENGINE_COMMAND_IDEMPOTENT` — a replayed command id returns the original `commit_sequence` with no second append (slot 4 · Idempotency).
+- `ENGINE_COMMAND_PACT` — the orchestrator dispatcher ↔ engine command-endpoint contract holds, pinned by Pact CDC (slot 6 · Ownership/versioning).
+
+Both are `Planned` — the gates are named and the Test IDs reserved; the tests are written with the implementing issue (bd `babelstone-t7o3.5`). The `Planned` status is a deliberate, listed hole; visibility is the point.

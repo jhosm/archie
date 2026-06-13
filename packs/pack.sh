@@ -12,13 +12,26 @@
 #   build    <packdir> [--layout DIR]     validate, then oras push (prints digest)
 #   verify   <packdir> --digest SHA [--layout DIR]
 #                                         pull by digest + re-validate
-#   sign     <registry-ref>@<digest>      cosign sign  (keyless in CI — Q.5)
+#   push     <packdir> --registry REF --digest SHA [--layout DIR]
+#                                         copy a BUILT oci-layout into a real registry
+#                                         (oras cp, by digest) — needed because cosign
+#                                         signs a registry digest, not an oci-layout
+#   sign     <registry-ref>@<digest>      cosign sign  (production: keyless OIDC, §P2)
 #   verify-signature <registry-ref>@<digest>
 #                                         cosign verify (the validated-in-CI attestation)
 #
 # `validate` + `build` + `verify` are fully offline (oras OCI layout, no
-# registry, no docker) and run in the `packs` CI job. `sign`/`verify-signature`
-# need a registry + OIDC/key; keyless OIDC wiring into CI is story Q.5.
+# registry, no docker) and run in the `packs` CI job. `push`/`sign`/
+# `verify-signature` need a registry + OIDC/key.
+#
+# PRODUCTION signing is cosign KEYLESS OIDC (ADR-PC-007 §P2). `sign`/
+# `verify-signature` therefore default to keyless and only fall back to a key
+# pair when COSIGN_KEY is set — which the `packs` CI job does, against a
+# throwaway local registry, purely to EXERCISE the verify mechanism end-to-end.
+# That ephemeral-key CI loop is a TEST of the verify path, NOT a replacement for
+# the keyless-OIDC production path (see the `packs` job comments). COSIGN_EXTRA
+# passes registry flags (e.g. --allow-insecure-registry for the local plain-HTTP
+# registry) through to cosign without touching the production code path.
 set -euo pipefail
 
 readonly MEDIA_TYPE="application/vnd.babelstone.pack.v1+yaml"
@@ -149,9 +162,12 @@ validate_staging() {
 			sed 's/^/    /' /tmp/pack-cue-err
 			fail=1
 		elif [ "$n" = "0" ]; then
-			echo "  skip          depth-5 corpus: expected-events.yaml empty (generation pending, C.3)"
+			# C.3 landed the depth-5 SIMULATION (engine PackSimulationDepth5Tests gates the
+			# corpus event sequence + < 30 s budget); generating the byte-level expected-events
+			# corpus from it is the deferred half (bd babelstone-fnqa), so this stays a logged skip.
+			echo "  skip          depth-5 corpus: expected-events.yaml empty (byte-corpus generation pending; sim is PackSimulationDepth5Tests)"
 		else
-			echo "  note          depth-5 corpus present ($n) — depth-5 sim is C.3, not run here"
+			echo "  note          depth-5 corpus present ($n) — byte-corpus comparison is bd babelstone-fnqa; the sim runs as PackSimulationDepth5Tests"
 		fi
 	fi
 
@@ -272,18 +288,58 @@ cmd_verify() {
 	echo "OK (pulled by digest, re-validated)"
 }
 
+# Copy a BUILT oci-layout into a real registry, BY DIGEST. cosign signs a
+# registry digest reference, not the offline oci-layout `build` produces, so the
+# sign/verify loop needs the artefact in a registry first. `oras cp` preserves
+# the source digest on the destination, so the registry digest equals the
+# build digest (§P2 pull-by-digest invariant carries across). COSIGN_EXTRA-style
+# plain-HTTP handling is via --plain-http here (oras's own flag).
+cmd_push() {
+	local packdir="" layout="" digest="" registry="" plain_http=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--layout) layout="$2"; shift 2 ;;
+		--digest) digest="$2"; shift 2 ;;
+		--registry) registry="$2"; shift 2 ;;
+		# The DESTINATION is the (local, plain-HTTP) registry; the source is the
+		# on-disk oci-layout, so only --to-plain-http is needed.
+		--plain-http) plain_http="--to-plain-http"; shift ;;
+		*) packdir="$1"; shift ;;
+		esac
+	done
+	[ -n "$packdir" ] && [ -n "$digest" ] && [ -n "$registry" ] \
+		|| die "usage: pack.sh push <packdir> --registry REF --digest SHA [--layout DIR] [--plain-http]"
+	EXPECTED_KEY="$(basename "$packdir")"
+	[ -n "$layout" ] || layout="$ROOT/.pack-build/$EXPECTED_KEY"
+	echo "== push $EXPECTED_KEY @ $digest -> $registry ==" >&2
+	# Copy by digest from the local oci-layout into the registry; oras cp keeps
+	# the digest, so the registry ref to sign is "$registry@$digest". A tag is
+	# required as the cp destination reference; the artefact is still addressed
+	# by digest afterwards.
+	oras cp $plain_http --from-oci-layout "$layout@$digest" "$registry:$EXPECTED_KEY" >&2
+	echo "$registry@$digest"
+}
+
 cmd_sign() {
 	local ref="${1:?usage: pack.sh sign <registry-ref>@<digest>}"
-	echo "cosign sign $ref"
-	echo "  (production: keyless OIDC — story Q.5. Local: set COSIGN_KEY.)"
-	cosign sign ${COSIGN_KEY:+--key "$COSIGN_KEY"} "$ref"
+	echo "cosign sign $ref" >&2
+	# PRODUCTION is keyless OIDC (ADR-PC-007 §P2): no COSIGN_KEY ⇒ keyless.
+	# CI sets COSIGN_KEY to a throwaway key pair to exercise the loop offline.
+	# --yes skips the interactive confirmation so the command is non-interactive
+	# (keyless tlog upload / key-based overwrite). COSIGN_EXTRA carries registry
+	# flags (e.g. --allow-insecure-registry) for the local plain-HTTP registry.
+	# shellcheck disable=SC2086
+	cosign sign --yes ${COSIGN_KEY:+--key "$COSIGN_KEY"} ${COSIGN_EXTRA:-} "$ref"
 }
 
 cmd_verify_signature() {
 	local ref="${1:?usage: pack.sh verify-signature <registry-ref>@<digest>}"
 	# A verified signature is the attestation that CUE depths 1–4 passed in CI
-	# (ADR-PC-006 §P3): verified-signature ⇒ already-validated.
-	cosign verify ${COSIGN_KEY:+--key "${COSIGN_KEY%.key}.pub"} "$ref"
+	# (ADR-PC-006 §P3): verified-signature ⇒ already-validated. PRODUCTION is
+	# keyless OIDC (§P2); CI's COSIGN_KEY=<prefix>.key path verifies against the
+	# matching <prefix>.pub. COSIGN_EXTRA carries the local plain-HTTP flag.
+	# shellcheck disable=SC2086
+	cosign verify ${COSIGN_KEY:+--key "${COSIGN_KEY%.key}.pub"} ${COSIGN_EXTRA:-} "$ref"
 }
 
 EXPECTED_KEY=""
@@ -291,6 +347,7 @@ case "${1:-}" in
 validate) shift; cmd_validate "$@" ;;
 build) shift; cmd_build "$@" ;;
 verify) shift; cmd_verify "$@" ;;
+push) shift; cmd_push "$@" ;;
 sign) shift; cmd_sign "$@" ;;
 verify-signature) shift; cmd_verify_signature "$@" ;;
 *)
