@@ -48,6 +48,13 @@
          "a Redpanda consumer like every other service"). The same Microsoft.Extensions
          line the engine relay/consumer use. -->
     <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <!-- IHttpClientFactory for the saga command DISPATCHER (bd babelstone-t7o3.3, ADR-PC-029): the
+         dispatcher drains saga_outbox and delivers each decided command to the engine over idempotent
+         HTTP, so the saga actually DRIVES the engine. Commands ride HTTP point-to-point (Primitive 1,
+         ADR-PC-029 §3) — the durable bus stays events-only. A leaf Microsoft.Extensions package, so
+         it does NOT widen the runtime graph the way an engine-kernel ProjectReference would: the
+         orchestrator subtree stays extraction-ready (ADR-PC-019 §P2). -->
+    <PackageReference Include="Microsoft.Extensions.Http" />
     <!-- The SHARED Babelstone telemetry surface (ADR-IC-007 Layer 1): the orchestrator opens
          its saga-advance spans on the SAME Babelstone.Engine ActivitySource the engine uses —
          one instrumentation scope across the estate, never a competing source — and tags them
