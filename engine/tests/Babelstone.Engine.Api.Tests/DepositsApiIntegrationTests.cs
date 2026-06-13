@@ -238,6 +238,111 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.True(deposit.LastSequence >= constituted.CommitSequence);
     }
 
+    [Fact]
+    public async Task READ_AS_OF_SEQUENCE_folds_to_the_historical_state_at_a_point_not_current()
+    {
+        // The as-of / point-in-time read (I.2, bd babelstone-b4wp): drive a deposit through its full
+        // lifecycle (constitute → mature) so the stream carries several events, then ask
+        // "what did it look like AS OF the constitution sequence?" — the answer must reflect the
+        // HISTORICAL state at that point (Active, no accrued interest) and NOT the current Matured
+        // head. The axis is transaction-time by commit_sequence (deterministic, no wall-clock in the
+        // fold, ADR-PC-027 slot 3/4 generalised): fold the stream up to and including as_of_sequence.
+        var constituteResponse = await PostConstituteAsync(new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "dpz_pt_12m_juros_venc",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, constituteResponse.StatusCode);
+        var constituted = (await constituteResponse.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!;
+        var depositId = constituted.DepositId;
+        // The constitution event is sequence 0 (the head version the append reached).
+        var asOfConstitution = constituted.CommitSequence;
+
+        // Mature it — appends three more events (InterestAccrued, WithholdingApplied, DepositMatured),
+        // advancing the head well past the constitution sequence.
+        var maturityResponse = await _client.PostAsJsonAsync(
+            $"/v1/deposits/{depositId}/maturity", new MatureDepositRequest(), SnakeCase);
+        Assert.Equal(HttpStatusCode.OK, maturityResponse.StatusCode);
+        var maturedHead = (await maturityResponse.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase))!;
+        Assert.Equal("Matured", maturedHead.Lifecycle);
+        Assert.True(maturedHead.LastSequence > asOfConstitution);
+
+        // As-of the constitution sequence: the historical projection — Active, nothing accrued, no tax,
+        // no payout beyond principal — NOT the current matured numbers.
+        var asOf = await _client.GetFromJsonAsync<DepositResponse>(
+            $"/v1/deposits/{depositId}?as_of_sequence={asOfConstitution}", SnakeCase);
+        Assert.NotNull(asOf);
+        Assert.Equal(depositId, asOf.DepositId);
+        Assert.Equal("Active", asOf.Lifecycle);                 // historical lifecycle, not Matured
+        Assert.Equal(asOfConstitution, asOf.LastSequence);      // the answer reflects exactly that point
+        Assert.Equal(0, asOf.AccruedGrossInterestCents);        // nothing had accrued at constitution
+        Assert.Equal(0, asOf.WithholdingToDateCents);
+        Assert.Equal(0, asOf.NetInterestCents);
+        Assert.Equal(1_000_000, asOf.PrincipalCents);
+        Assert.Equal(0, asOf.CouponsPaid);
+
+        // Sanity: the current head (no as_of) is the matured state, proving as-of read a DIFFERENT point.
+        var current = await _client.GetFromJsonAsync<DepositResponse>($"/v1/deposits/{depositId}", SnakeCase);
+        Assert.NotNull(current);
+        Assert.Equal("Matured", current.Lifecycle);
+        Assert.True(current.AccruedGrossInterestCents > 0);
+    }
+
+    [Fact]
+    public async Task READ_AS_OF_SEQUENCE_beyond_head_is_a_clean_4xx_not_a_500()
+    {
+        // An as_of_sequence past the stream head is a client error (the caller asked for a point that
+        // does not exist yet), surfaced as a clean 4xx ProblemDetails — never a 500 and never a silent
+        // fold-to-head that would pretend a future point is "now".
+        var constituteResponse = await PostConstituteAsync(new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "dpz_pt_12m_juros_venc",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, constituteResponse.StatusCode);
+        var depositId = (await constituteResponse.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
+
+        var response = await _client.GetAsync($"/v1/deposits/{depositId}?as_of_sequence=999999");
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task READ_AS_OF_SEQUENCE_negative_is_a_clean_400_not_a_500()
+    {
+        // A malformed (negative) as_of_sequence is a bad request — a clean 400, never a 500.
+        var constituteResponse = await PostConstituteAsync(new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "dpz_pt_12m_juros_venc",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, constituteResponse.StatusCode);
+        var depositId = (await constituteResponse.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
+
+        var response = await _client.GetAsync($"/v1/deposits/{depositId}?as_of_sequence=-1");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task READ_AS_OF_SEQUENCE_on_an_unknown_deposit_is_404()
+    {
+        // An as-of read of a deposit that never existed is the same 404 the default read gives — the
+        // as_of axis does not change the unknown-stream verdict.
+        var response = await _client.GetAsync($"/v1/deposits/{Guid.NewGuid()}?as_of_sequence=0");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     private static async Task<T?> EventuallyAsync<T>(Func<Task<T?>> probe) where T : class
     {
         // The async projection relay polls every ~1s; give it generous headroom under a loaded CI box.

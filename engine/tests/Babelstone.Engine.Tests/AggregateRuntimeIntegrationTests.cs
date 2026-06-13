@@ -58,6 +58,57 @@ public sealed class AggregateRuntimeIntegrationTests(EngineFixture fixture) : IC
     }
 
     [Fact]
+    public async Task Load_as_of_sequence_folds_to_the_historical_state_at_a_point_not_current()
+    {
+        // The as-of / point-in-time fold (bd babelstone-b4wp): folding UP TO an inclusive sequence
+        // returns the historical state at that point, never the current head. The family-agnostic
+        // CounterFamily proves the KERNEL mechanism (no term-deposit specifics): 10 → 15 → 0 (Reset).
+        var runtime = fixture.DurableRuntime();
+        var streamId = Guid.NewGuid();
+        await runtime.AppendAsync(
+            streamId, -1, [new Incremented(10), new Incremented(5), new Reset()], fixture.Context());
+
+        // As of sequence 0: only the first event folded — Total == 10.
+        var atZero = await runtime.LoadAsOfSequenceAsync(streamId, 0);
+        Assert.Equal(10, atZero.State.Total);
+        Assert.Equal(0, atZero.Version);
+
+        // As of sequence 1: the first two — Total == 15 (the Reset at sequence 2 is the future).
+        var atOne = await runtime.LoadAsOfSequenceAsync(streamId, 1);
+        Assert.Equal(15, atOne.State.Total);
+        Assert.Equal(1, atOne.Version);
+
+        // The current head (no upper bound) folds the Reset too — Total == 0, proving as-of read a
+        // DIFFERENT point than "now".
+        var head = await runtime.LoadAsync(streamId);
+        Assert.Equal(0, head.State.Total);
+        Assert.Equal(2, head.Version);
+    }
+
+    [Fact]
+    public async Task Load_as_of_sequence_is_deterministic_and_reports_real_head_when_point_is_beyond_it()
+    {
+        var runtime = fixture.DurableRuntime();
+        var streamId = Guid.NewGuid();
+        await runtime.AppendAsync(streamId, -1, [new Incremented(2), new Incremented(3)], fixture.Context());
+
+        // Repeated as-of reads at the same point return identical state (pure fold, no clock).
+        var first = await runtime.LoadAsOfSequenceAsync(streamId, 1);
+        var second = await runtime.LoadAsOfSequenceAsync(streamId, 1);
+        Assert.Equal(first.State, second.State);
+
+        // A point BEYOND the head folds to the real head (Version 1 < 999) — the method never throws;
+        // the boundary (HTTP) reads Version < asOfSequence to reject the future point as a clean 4xx.
+        var beyond = await runtime.LoadAsOfSequenceAsync(streamId, 999);
+        Assert.Equal(1, beyond.Version);
+        Assert.Equal(5, beyond.State.Total);
+
+        // An unknown stream folds to Version -1 (the unknown-stream verdict the boundary maps to 404).
+        var unknown = await runtime.LoadAsOfSequenceAsync(Guid.NewGuid(), 0);
+        Assert.Equal(-1, unknown.Version);
+    }
+
+    [Fact]
     public async Task Cold_replay_is_deterministic()
     {
         var streamId = Guid.NewGuid();

@@ -136,10 +136,54 @@ public static class DepositsEndpoints
     private static async Task<IResult> GetDepositAsync(
         Guid id,
         [FromHeader(Name = "If-Min-Sequence")] long? minSequence,
+        [FromQuery(Name = "as_of_sequence")] long? asOfSequence,
         IDepositReadModelStore readModel,
         AggregateRuntime<DepositPosition> runtime,
         CancellationToken ct)
     {
+        // The as-of / point-in-time branch (the I.2 Query API as-of axis, bd babelstone-b4wp). When the
+        // caller asks "?as_of_sequence=N", they want the HISTORICAL projection at per-stream sequence N,
+        // not the current head — so this is NEVER served from the read model (which only ever holds the
+        // current belief, ADR-IC-005 §P2 — one row per stream, no temporal history). It folds the event
+        // stream up to and INCLUDING N (the same pure, deterministic fold the read-your-writes fallback
+        // uses, generalised with an upper bound). The axis is the per-stream commit_sequence — the only
+        // point identifier the event log carries a deterministic total order for; a wall-clock valid_time
+        // axis (?as_of=<timestamp>) is deferred to the bitemporal projection runtime (Epic D /
+        // ADR-PC-002), which the read model does not yet carry.
+        if (asOfSequence is not null)
+        {
+            // Malformed point: a negative sequence is a bad request (the per-stream sequence_number
+            // domain starts at 0). A clean 400, never a 500.
+            if (asOfSequence.Value < 0)
+            {
+                return Results.Problem(
+                    "as_of_sequence must be a non-negative per-stream sequence number.",
+                    statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var asOf = await runtime.LoadAsOfSequenceAsync(id, asOfSequence.Value, ct);
+
+            // A genuinely non-existent deposit folds to Version < 0 → 404 (the as_of axis does not
+            // change the unknown-stream verdict).
+            if (asOf.Version < 0)
+            {
+                return Results.NotFound();
+            }
+
+            // The point is past the stream head — the caller asked for a sequence that does not exist
+            // yet. The fold stopped at the real head (Version < the requested point), so we reject the
+            // future point as a clean 422, never a silent fold-to-head that would pretend a not-yet
+            // sequence is "now".
+            if (asOf.Version < asOfSequence.Value)
+            {
+                return Results.Problem(
+                    $"as_of_sequence {asOfSequence.Value} is beyond the stream head ({asOf.Version}).",
+                    statusCode: StatusCodes.Status422UnprocessableEntity);
+            }
+
+            return Results.Ok(DepositResponse.FromFold(asOf));
+        }
+
         // The ONE canonical deposit read (ADR-IC-005). Default path: serve the denormalized read-model
         // row — fast, eventually consistent, the 99% case (listings, dashboards). The aggregate fold is
         // NOT a public URL; it is the internal read-your-writes fallback this handler reaches for when:
