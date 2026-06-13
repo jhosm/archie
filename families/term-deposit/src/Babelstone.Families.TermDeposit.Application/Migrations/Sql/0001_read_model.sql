@@ -1,4 +1,12 @@
--- 0013_read_model.sql
+-- 0001_read_model.sql
+-- TERM-DEPOSIT FAMILY-OWNED migration (ADR-PC-021 family-owned ownership): relocated here from the
+-- engine event-store migration set (where it was 0013) so the engine migrations carry ZERO
+-- family-named tables. `read_model.deposits` is a family-NAMED table with family-typed query columns
+-- (`maturity_date`, `coupons_paid`, …); a family-named schema belongs in a family-owned migration set,
+-- not the engine's. This set runs under its own ledger (`schema_migrations_term_deposit`) on the SAME
+-- Postgres tier as the engine event store (ADR-IC-005 §S1), AFTER the engine migrations — see the
+-- hard engine-before-family ordering guard below.
+--
 -- D.4 CQRS read-model surface (ADR-IC-005): the denormalized, query-optimized read side
 -- for term deposits, on the SAME PostgreSQL tier as the event store (ADR-IC-005 §S1 — zero
 -- incremental infrastructure). This is DISTINCT from the bitemporal `projections` table
@@ -38,6 +46,25 @@
 -- needs it) and is rebuildable by TRUNCATE + re-fold (ADR-IC-005 §P5), UNLIKE the append-only
 -- `events` table which REVOKEs UPDATE/DELETE.
 
+-- Fail-loud engine-before-family ORDERING guard. The GRANTs below name the `babelstone_engine`
+-- runtime role, which is created by ENGINE migration 0002_append_only_role.sql — a hard ordering
+-- dependency now that this read model is a SEPARATE, family-owned migration set on the same tier
+-- (ADR-IC-005 §S1). If the engine schema is not yet present (the family runner ran before the
+-- engine's), the GRANTs would fail with an opaque "role does not exist" deep in the statement; this
+-- RAISEs a clear, actionable EXCEPTION up front instead, naming the ordering contract.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'babelstone_engine') THEN
+        RAISE EXCEPTION
+            'babelstone_engine role is absent: run the ENGINE event-store migrations '
+            '(0002_append_only_role.sql) BEFORE the term-deposit family read-model migrations. '
+            'The family read model lives on the same Postgres tier as the engine event store '
+            '(ADR-IC-005 §S1) and GRANTs on the engine runtime role, so engine-before-family is a '
+            'hard ordering dependency (ADR-PC-021 family-owned ownership).';
+    END IF;
+END
+$$;
+
 CREATE SCHEMA IF NOT EXISTS read_model;
 GRANT USAGE ON SCHEMA read_model TO babelstone_engine;
 
@@ -73,7 +100,7 @@ CREATE TABLE read_model.deposits (
     -- carries the real code end-to-end and adds the column under its true name.) Structural, NOT
     -- PII (ADR-PC-004 §P2). `product_code` is just a column on this (new) table; the DEFAULT '' is
     -- the resting value for the prospective-only semantics above (and mirrors the additive Avro
-    -- field's "" default, ADR-IC-002 §P3), not a back-fill of any pre-existing rows — 0013 is a
+    -- field's "" default, ADR-IC-002 §P3), not a back-fill of any pre-existing rows — this is a
     -- net-new migration, so there are no prior rows to be additive over.
     principal_cents       BIGINT       NOT NULL,
     tan_basis_points      INTEGER      NOT NULL,

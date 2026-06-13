@@ -124,7 +124,13 @@ internal static class TestRateSheets
     }
 }
 
-/// <summary>PG18 with the engine migrations applied (events, outbox, snapshots, rate_sheets).</summary>
+/// <summary>
+/// PG18 with the engine migrations applied (events, outbox, snapshots, rate_sheets, projections)
+/// AND the term-deposit family's own read-model migration (read_model.deposits). The read model is
+/// family-owned now (ADR-PC-021 family-owned ownership), so it ships in a SEPARATE migration set on
+/// the same tier (ADR-IC-005 §S1); the fixture applies ENGINE FIRST then FAMILY, the hard ordering
+/// the family migration's fail-loud role guard depends on.
+/// </summary>
 public sealed class ConstitutionFixture : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _pg = new PostgreSqlBuilder("postgres:18-alpine").Build();
@@ -134,7 +140,10 @@ public sealed class ConstitutionFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _pg.StartAsync();
+        // Engine event-store schema first (it creates the babelstone_engine role the family read
+        // model GRANTs on), then the family read-model schema — engine-before-family ordering.
         await new MigrationRunner(ConnectionString).ApplyAsync();
+        await new Babelstone.Families.TermDeposit.Application.Migrations.MigrationRunner(ConnectionString).ApplyAsync();
     }
 
     public async Task DisposeAsync() => await _pg.DisposeAsync();

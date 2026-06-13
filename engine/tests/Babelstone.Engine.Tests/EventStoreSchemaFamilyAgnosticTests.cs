@@ -22,9 +22,13 @@ namespace Babelstone.Engine.Tests;
 /// free and deterministic: it parses the DDL text, never stands up a database. Same disk/embedded-
 /// resource discipline and high comment density as the sibling fitness tests.
 ///
-/// SCOPE — WRITE-SIDE only. The read-side CQRS surface (the <c>read_model</c> schema, migration
-/// 0013) is DELIBERATELY EXCLUDED; see <see cref="ReadSideSchemas"/> for the rationale and the
-/// open relocate-or-exclude question it raises.
+/// SCOPE — the ENTIRE engine migration set. The engine now owns ZERO family tables: the read-side
+/// CQRS surface (the <c>read_model.deposits</c> table, formerly engine migration 0013) was RELOCATED
+/// to a term-deposit FAMILY-owned migration set (ADR-PC-021 family-owned ownership). So this gate no
+/// longer carves out a read-side schema — every deny scan runs over the whole engine
+/// <see cref="MigrationSet.All"/> with no exclusion, and an inverse positive guard
+/// (<see cref="No_engine_migration_creates_a_read_model_schema_or_deposits_object"/>) RED-fails if a
+/// family-named read model is ever re-introduced into the engine set.
 /// </summary>
 public sealed class EventStoreSchemaFamilyAgnosticTests
 {
@@ -68,49 +72,23 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
         ["family", "event_type"];
 
     /// <summary>
-    /// READ-SIDE schemas EXCLUDED from this write-side gate, with the rationale that makes the
-    /// exclusion a conscious decision rather than a silent gap.
-    ///
-    /// <c>read_model</c> (migration 0013) is the denormalized CQRS read surface (ADR-IC-005) — a
-    /// flat, query-optimized projection on the same PostgreSQL tier, DISTINCT from the write-side
-    /// event log (<c>events</c>/<c>outbox</c>) and the bitemporal belief store (<c>projections</c>).
-    /// It is a REBUILDABLE cache, not the source of truth: TRUNCATE + re-fold reconstructs it from
-    /// the opaque event log. This test gates the WRITE-SIDE event store (where opacity is the
-    /// load-bearing invariant — a family column there would diff the spine's source of truth), so
-    /// the read model is out of scope HERE by construction.
-    ///
-    /// ESCALATION (surfaced for the maintainer, NOT silently resolved): 0013 defines
-    /// <c>read_model.deposits</c> — a family-NAMED table, with family-typed columns
-    /// (<c>maturity_date</c>, <c>coupons_paid</c>, <c>withholding_to_date_cents</c>, …), living in
-    /// the ENGINE migrations project. Its own header argues it stays "family-agnostic" by storing
-    /// the family detail as opaque <c>BYTEA</c> (the <c>detail</c> column, citing ADR-PC-021 §P2) —
-    /// yet the table name and its typed query columns are unmistakably family-specific. So the open
-    /// question is: is a family-named read model legitimately EXCLUDED here (read-side, rebuildable,
-    /// ADR-IC-005 — the schema boundary is the design intent), or should it RELOCATE to a
-    /// family-owned migration project so the engine migrations carry zero family names at all? This
-    /// test PROPOSES the exclusion and documents it; it deliberately does NOT relocate 0013. The
-    /// relocate-or-exclude decision is raised in the PR body (ADRs touched/honoured, ADR-PC-021) for
-    /// the maintainer to settle.
-    /// </summary>
-    private static readonly string[] ReadSideSchemas = ["read_model"];
-
-    /// <summary>
-    /// No WRITE-SIDE table NAME may carry a family-domain token. The event store's tables are the
-    /// generic spine vocabulary (<c>events</c>, <c>outbox</c>, <c>snapshots</c>, <c>projections</c>,
-    /// <c>inbox</c>, …); a <c>deposits</c> / <c>coupons</c> / <c>maturity_calendar</c> table on the
-    /// write side would be a family leak. Read-side schemas (<see cref="ReadSideSchemas"/>) are
-    /// excluded.
+    /// No engine migration table NAME may carry a family-domain token. The event store's tables are
+    /// the generic spine vocabulary (<c>events</c>, <c>outbox</c>, <c>snapshots</c>,
+    /// <c>projections</c>, <c>inbox</c>, …); a <c>deposits</c> / <c>coupons</c> /
+    /// <c>maturity_calendar</c> table in the engine set would be a family leak. The read model
+    /// (<c>read_model.deposits</c>) is no longer here — it is family-owned (ADR-PC-021) — so the
+    /// whole engine set is scanned with no exclusion.
     /// </summary>
     [Fact]
-    public void No_write_side_table_name_is_family_typed()
+    public void No_engine_table_name_is_family_typed()
     {
-        var tables = WriteSideTableNames();
+        var tables = EngineTableNames();
 
         // Non-vacuity: the parse must actually find the spine's tables. If this drops to (near)
         // zero the regex broke and the deny scan would pass vacuously — fail loud instead.
         Assert.True(
             tables.Count >= 6,
-            $"expected to parse the write-side spine tables from the migration set, found only "
+            $"expected to parse the engine spine tables from the migration set, found only "
             + $"[{string.Join(", ", tables.OrderBy(t => t))}]; the CREATE TABLE parse likely broke.");
 
         var violations = tables
@@ -121,31 +99,32 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
 
         Assert.True(
             violations.Count == 0,
-            "ADR-PC-021 §P2 / ADR-PC-001 §P1 (EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC): no write-side "
-            + "event-store table may be family-typed — events stay opaque, keyed by the generic "
+            "ADR-PC-021 §P2 / ADR-PC-001 §P1 (EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC): no engine "
+            + "migration table may be family-typed — events stay opaque, keyed by the generic "
             + "family/event_type columns with the payload an opaque BYTEA. A family-named table "
-            + "belongs in a family-owned migration project (or, for a read model, the excluded "
-            + "read_model schema). Offending tables:\n  " + string.Join("\n  ", violations));
+            + "(including a read model like read_model.deposits) belongs in a family-owned migration "
+            + "set, never the engine's. Offending tables:\n  " + string.Join("\n  ", violations));
     }
 
     /// <summary>
-    /// No WRITE-SIDE column NAME (from <c>CREATE TABLE</c> or <c>ALTER TABLE … ADD COLUMN</c>) may
-    /// carry a family-domain token. The structural columns are the generic envelope (event_id,
+    /// No engine migration column NAME (from <c>CREATE TABLE</c> or <c>ALTER TABLE … ADD COLUMN</c>)
+    /// may carry a family-domain token. The structural columns are the generic envelope (event_id,
     /// stream_id, sequence_number, family, event_type, payload, …, ADR-PC-001 §P1); a
     /// <c>maturity_date</c> / <c>coupon_count</c> / <c>withholding_cents</c> column would push
-    /// family semantics into the opaque store. The generic key columns family/event_type are
-    /// explicitly allowed (<see cref="AllowedGenericKeyColumns"/>); read-side schemas are excluded.
+    /// family semantics into the engine store. The generic key columns family/event_type are
+    /// explicitly allowed (<see cref="AllowedGenericKeyColumns"/>); the read model is no longer here
+    /// (family-owned, ADR-PC-021), so the whole engine set is scanned with no exclusion.
     /// </summary>
     [Fact]
-    public void No_write_side_column_name_is_family_typed()
+    public void No_engine_column_name_is_family_typed()
     {
-        var columns = WriteSideColumns();
+        var columns = EngineColumns();
 
         // Non-vacuity: the spine declares dozens of columns (events alone has 16). A tiny count
         // means the column parse broke and the deny scan would pass vacuously.
         Assert.True(
             columns.Count >= 20,
-            $"expected to parse the write-side spine columns from the migration set, found only "
+            $"expected to parse the engine spine columns from the migration set, found only "
             + $"{columns.Count}; the column parse likely broke.");
 
         // The generic key columns are the opaque-keying mechanism, not a family leak — exclude them
@@ -159,25 +138,25 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
 
         Assert.True(
             violations.Count == 0,
-            "ADR-PC-021 §P2 / ADR-PC-001 §P1 (EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC): no write-side "
-            + "column may be family-typed — the event store carries the generic envelope columns "
-            + "and an opaque payload, never per-family structural columns. The generic family/"
+            "ADR-PC-021 §P2 / ADR-PC-001 §P1 (EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC): no engine "
+            + "migration column may be family-typed — the event store carries the generic envelope "
+            + "columns and an opaque payload, never per-family structural columns. The generic family/"
             + "event_type keys ARE allowed (that is the opaque keying). Move a family-typed column "
             + "into a family-owned projection/migration. Offending columns:\n  "
             + string.Join("\n  ", violations));
     }
 
     /// <summary>
-    /// No WRITE-SIDE foreign key may TARGET a family-typed table. A <c>REFERENCES deposits(id)</c>
+    /// No engine-migration foreign key may TARGET a family-typed table. A <c>REFERENCES deposits(id)</c>
     /// would couple the opaque event store to a family table even if the referencing column itself
     /// were generically named. The spine carries no cross-table FKs into family tables today (the
-    /// event log is a flat append-only relation, ADR-PC-001 §P1); this gate keeps it that way. Read-
-    /// side schemas are excluded.
+    /// event log is a flat append-only relation, ADR-PC-001 §P1); this gate keeps it that way. The
+    /// read model is no longer here (family-owned, ADR-PC-021), so the whole engine set is scanned.
     /// </summary>
     [Fact]
-    public void No_write_side_foreign_key_targets_a_family_typed_table()
+    public void No_engine_foreign_key_targets_a_family_typed_table()
     {
-        var fkTargets = WriteSideForeignKeyTargetTables();
+        var fkTargets = EngineForeignKeyTargetTables();
 
         var violations = fkTargets
             .Select(t => (table: t, token: MatchedFamilyToken(t)))
@@ -187,56 +166,68 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
 
         Assert.True(
             violations.Count == 0,
-            "ADR-PC-021 §P2 / ADR-PC-001 §P1 (EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC): no write-side "
-            + "foreign key may target a family-typed table — that would couple the opaque event "
-            + "store to a family's relational shape. Offending references:\n  "
+            "ADR-PC-021 §P2 / ADR-PC-001 §P1 (EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC): no engine "
+            + "migration foreign key may target a family-typed table — that would couple the opaque "
+            + "event store to a family's relational shape. Offending references:\n  "
             + string.Join("\n  ", violations));
     }
 
     /// <summary>
-    /// The excluded read-side schema must ACTUALLY exist in the migration set — a guard against the
-    /// exclusion silently becoming a no-op. If <c>read_model</c> is ever renamed or removed without
-    /// updating <see cref="ReadSideSchemas"/>, this fails and forces the exclusion list back into
-    /// lockstep with the schema (the same anti-vacuity discipline the sibling tests apply to their
-    /// allow/deny lists). It also documents WHY the family-named <c>read_model.deposits</c> table
-    /// does not trip the write-side gates above: it is in the excluded schema, by design.
+    /// INVERSE POSITIVE GUARD — the proof the relocation holds. No engine migration may create the
+    /// family-named <c>read_model</c> schema or a <c>deposits</c>-named object (table/index). The
+    /// read model was RELOCATED to a term-deposit family-owned migration set (ADR-PC-021 family-owned
+    /// ownership); re-introducing it into the engine set — a regression that would put a family table
+    /// back where this gate proves none lives — RED-fails here. This complements the three deny scans
+    /// above: they catch any family-typed identifier by heuristic; this pins the SPECIFIC artefacts
+    /// that were moved, so a literal re-add (a copy-back of the old 0013) is caught even if a future
+    /// refactor loosened the heuristic.
     /// </summary>
     [Fact]
-    public void Excluded_read_side_schemas_actually_exist_in_the_migration_set()
+    public void No_engine_migration_creates_a_read_model_schema_or_deposits_object()
     {
         var allSql = StripSqlComments(string.Concat(MigrationSet.All.Select(m => m.Sql + "\n")));
 
-        foreach (var schema in ReadSideSchemas)
-        {
-            Assert.True(
-                Regex.IsMatch(allSql, $@"\bCREATE\s+SCHEMA\b.*?\b{Regex.Escape(schema)}\b", RegexOptions.IgnoreCase),
-                $"excluded read-side schema '{schema}' is not created by any migration — the exclusion "
-                + "is now a dead no-op. Reconcile ReadSideSchemas with the migration set (the schema was "
-                + "renamed/removed) in the same change.");
-        }
+        Assert.False(
+            Regex.IsMatch(allSql, @"\bCREATE\s+SCHEMA\b[^;]*\bread_model\b", RegexOptions.IgnoreCase),
+            "ADR-PC-021 (EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC): an engine migration creates the "
+            + "family-named 'read_model' schema. The read model is FAMILY-OWNED — it belongs in the "
+            + "term-deposit family's migration set (Babelstone.Families.TermDeposit.Application."
+            + "Migrations), not the engine's. The engine event-store migrations must carry zero "
+            + "family-named tables.");
+
+        // A `deposits`-named object (CREATE TABLE/INDEX … deposits…) anywhere in the engine set is the
+        // relocated family table sneaking back. The deny scans above already catch the `deposits`
+        // token; this is the literal-artefact backstop, naming the specific moved object.
+        Assert.False(
+            Regex.IsMatch(allSql, @"\bCREATE\s+(?:TABLE|INDEX)\b[^;]*\bdeposits\b", RegexOptions.IgnoreCase),
+            "ADR-PC-021 (EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC): an engine migration creates a "
+            + "'deposits'-named object (the relocated family read model). read_model.deposits is "
+            + "family-owned (ADR-PC-021); the engine event-store migrations must carry zero "
+            + "family-named tables.");
     }
 
     // -----------------------------------------------------------------------------------------
-    // Parsing helpers — all operate over the COMMENT-STRIPPED, read-side-EXCLUDED migration text,
-    // so a family name that appears only in a SQL comment (e.g. "family-prefixed, e.g.
-    // 'term_deposit.deposit_position'" in 0010/0011/0012) or inside the read_model schema cannot
-    // trip any deny scan. Only executable DDL identifiers on the write side are examined.
+    // Parsing helpers — all operate over the COMMENT-STRIPPED migration text, so a family name that
+    // appears only in a SQL comment (e.g. "family-prefixed, e.g. 'term_deposit.deposit_position'" in
+    // 0010/0011/0012) cannot trip any deny scan. Only executable DDL identifiers are examined. The
+    // engine now owns ZERO family tables (the read model is family-owned, ADR-PC-021), so there is no
+    // read-side exclusion: the whole engine MigrationSet.All is scanned.
     // -----------------------------------------------------------------------------------------
 
     /// <summary>
-    /// Every <c>CREATE TABLE</c> table name on the WRITE side. Schema-qualified names are split, so
-    /// <c>read_model.deposits</c> is recognised as schema <c>read_model</c> (excluded) and an
-    /// unqualified <c>events</c> sits in the default <c>public</c> write side. The bare table name
-    /// (without the schema prefix) is what the deny scan sees.
+    /// Every <c>CREATE TABLE</c> table name in the engine migration set. Schema-qualified names are
+    /// split to their bare object name (<c>a.b</c> → <c>b</c>); the bare table name is what the deny
+    /// scan sees. The engine set carries no family-named table — that is what this gate proves.
     /// </summary>
-    private static IReadOnlyList<string> WriteSideTableNames()
+    private static IReadOnlyList<string> EngineTableNames()
     {
-        var sql = WriteSideSql();
+        var sql = EngineSql();
         var names = new List<string>();
 
         // CREATE TABLE [IF NOT EXISTS] [schema.]name ( — capture the (optionally schema-qualified)
-        // identifier. The schema prefix is already gone for read-side tables (WriteSideSql strips the
-        // whole read_model.* DDL), so any qualified name reaching here is a write-side schema.
+        // identifier, reduced to its bare object name. The engine set carries no schema-qualified
+        // family table (the read model is family-owned, ADR-PC-021), so every name here is a generic
+        // spine table.
         foreach (Match m in Regex.Matches(
             sql, @"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][\w.]*)", RegexOptions.IgnoreCase))
         {
@@ -247,19 +238,20 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
     }
 
     /// <summary>
-    /// Every WRITE-SIDE (table, column) pair declared by a <c>CREATE TABLE</c> body or an
-    /// <c>ALTER TABLE … ADD COLUMN</c>. For a <c>CREATE TABLE</c> it splits the parenthesised body on
-    /// top-level commas and reads the leading identifier of each clause that is a column definition
-    /// (skipping <c>CONSTRAINT</c> / table-level <c>PRIMARY KEY</c> / <c>UNIQUE</c> / <c>CHECK</c> /
-    /// <c>FOREIGN KEY</c> clauses). For an <c>ALTER … ADD COLUMN</c> it reads the added column name.
-    /// Keyed to the migrations' house DDL style; a column declared by an idiom this does not parse
-    /// must be added knowingly (the non-vacuity guard in the caller catches a wholesale parse break).
-    /// A column name wrapped in double-quotes (a quoted identifier, <c>"maturity_date" DATE</c>) is
-    /// handled — the surrounding quotes are stripped so the bare name still reaches the deny scan.
+    /// Every (table, column) pair declared by a <c>CREATE TABLE</c> body or an
+    /// <c>ALTER TABLE … ADD COLUMN</c> in the engine migration set. For a <c>CREATE TABLE</c> it
+    /// splits the parenthesised body on top-level commas and reads the leading identifier of each
+    /// clause that is a column definition (skipping <c>CONSTRAINT</c> / table-level
+    /// <c>PRIMARY KEY</c> / <c>UNIQUE</c> / <c>CHECK</c> / <c>FOREIGN KEY</c> clauses). For an
+    /// <c>ALTER … ADD COLUMN</c> it reads the added column name. Keyed to the migrations' house DDL
+    /// style; a column declared by an idiom this does not parse must be added knowingly (the
+    /// non-vacuity guard in the caller catches a wholesale parse break). A column name wrapped in
+    /// double-quotes (a quoted identifier, <c>"maturity_date" DATE</c>) is handled — the surrounding
+    /// quotes are stripped so the bare name still reaches the deny scan.
     /// </summary>
-    private static IReadOnlyList<(string Table, string Column)> WriteSideColumns()
+    private static IReadOnlyList<(string Table, string Column)> EngineColumns()
     {
-        var sql = WriteSideSql();
+        var sql = EngineSql();
         var columns = new List<(string, string)>();
 
         // --- CREATE TABLE bodies ---
@@ -307,13 +299,13 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
     }
 
     /// <summary>
-    /// Every table a WRITE-SIDE <c>REFERENCES</c> clause targets (the FK target table). Today the
-    /// spine declares none — the event log is a flat append-only relation — so this returns empty,
-    /// and the gate keeps a future family-targeting FK out.
+    /// Every table a <c>REFERENCES</c> clause in the engine migration set targets (the FK target
+    /// table). Today the spine declares none — the event log is a flat append-only relation — so this
+    /// returns empty, and the gate keeps a future family-targeting FK out.
     /// </summary>
-    private static IReadOnlyList<string> WriteSideForeignKeyTargetTables()
+    private static IReadOnlyList<string> EngineForeignKeyTargetTables()
     {
-        var sql = WriteSideSql();
+        var sql = EngineSql();
         var targets = new List<string>();
 
         // REFERENCES [schema.]table — the column-list that may follow is irrelevant to the target table.
@@ -327,43 +319,18 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
     }
 
     /// <summary>
-    /// The full migration-set SQL, COMMENT-STRIPPED and with the READ-SIDE schema DDL EXCLUDED. This
-    /// is the single text every write-side parse runs over, so the comment-strip and read-side
-    /// exclusion are applied once, consistently. Read off <see cref="MigrationSet.All"/> — the SAME
-    /// embedded resources <see cref="MigrationRunner"/> applies — so the gate sees exactly the
-    /// shipped schema, deterministically and with no database.
+    /// The full engine migration-set SQL, COMMENT-STRIPPED. This is the single text every parse runs
+    /// over, so the comment-strip is applied once, consistently. Read off
+    /// <see cref="MigrationSet.All"/> — the SAME embedded resources <see cref="MigrationRunner"/>
+    /// applies — so the gate sees exactly the shipped schema, deterministically and with no database.
+    /// No read-side exclusion: the engine set owns zero family tables (the read model is family-owned,
+    /// ADR-PC-021), so the whole set is in scope.
     /// </summary>
-    private static string WriteSideSql()
+    private static string EngineSql()
     {
         Assert.NotEmpty(MigrationSet.All); // non-vacuity: the embedded migrations were discovered.
 
-        var sql = StripSqlComments(string.Concat(MigrationSet.All.Select(m => m.Sql + "\n")));
-        return StripReadSideSchemaDdl(sql);
-    }
-
-    /// <summary>
-    /// Removes the DDL for every excluded read-side schema (<see cref="ReadSideSchemas"/>) so the
-    /// write-side parses never see it. Drops the <c>CREATE SCHEMA</c> statement and every statement
-    /// that names a <c>schema.</c>-qualified object (e.g. <c>CREATE TABLE read_model.deposits (…);</c>,
-    /// <c>CREATE INDEX … ON read_model.deposits (…);</c>, the <c>GRANT … ON read_model.deposits</c>).
-    /// Statement-level: it deletes from a statement's start to its terminating ';', so a multi-line
-    /// <c>CREATE TABLE read_model.deposits ( … );</c> is removed whole, body and all.
-    /// </summary>
-    private static string StripReadSideSchemaDdl(string sql)
-    {
-        foreach (var schema in ReadSideSchemas)
-        {
-            var s = Regex.Escape(schema);
-
-            // CREATE SCHEMA [IF NOT EXISTS] read_model;  — and any GRANT ... ON SCHEMA read_model ...;
-            sql = Regex.Replace(sql, $@"CREATE\s+SCHEMA\b[^;]*?\b{s}\b[^;]*;", string.Empty, RegexOptions.IgnoreCase);
-
-            // Any statement that mentions a `read_model.<object>` qualified name, removed start-to-';'.
-            // [^;]* on each side keeps the deletion bounded to the single statement that names it.
-            sql = Regex.Replace(sql, $@"[^;]*\b{s}\.[\w]+[^;]*;", string.Empty, RegexOptions.IgnoreCase);
-        }
-
-        return sql;
+        return StripSqlComments(string.Concat(MigrationSet.All.Select(m => m.Sql + "\n")));
     }
 
     /// <summary>

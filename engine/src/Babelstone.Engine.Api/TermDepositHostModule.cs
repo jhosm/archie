@@ -1,7 +1,9 @@
 using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
 using Babelstone.Families.TermDeposit.Application;
+using Babelstone.Families.TermDeposit.Application.Migrations;
 using Babelstone.RateSheets;
+using Microsoft.Extensions.Hosting;
 
 namespace Babelstone.Engine.Api;
 
@@ -75,7 +77,12 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             // folds the same deposit-position state into read_model.deposits (the I.2 Query API
             // surface). Composed here from the FAMILY-OWNED read-model store (the deposit-shaped
             // table is the family's domain shape, not the spine's — ADR-PC-021 §D2/§P2); the family
-            // supplies the fold + the state→row mapper over the generic ReadModelInfra<TRow>.
+            // supplies the fold + the state→row mapper over the generic ReadModelInfra<TRow>. The
+            // read_model.deposits schema itself is now FAMILY-OWNED too: the family's own migration
+            // set (Babelstone.Families.TermDeposit.Application.Migrations, 0001_read_model.sql)
+            // creates it, applied by the ReadModelMigrationHostedService registered below — the
+            // engine event-store migrations carry zero family-named tables (ADR-PC-021 family-owned
+            // ownership).
             var readModelInfra = new ReadModelInfra<DepositReadModelRow>(
                 serviceProvider.GetRequiredService<IDepositReadModelStore>(),
                 serviceProvider.GetRequiredService<IEventSerializer>());
@@ -89,7 +96,63 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<TimeProvider>()));
         services.AddSingleton(new ProjectionRelayOptions());
         services.AddHostedService<ProjectionRelayService>();
+
+        // The family OWNS its read-model schema (ADR-PC-021 family-owned ownership): read_model.deposits
+        // is a family-NAMED table, so its forward-only migration set lives in the family's Application
+        // assembly, not the engine's. The HOST is the composition root that may name a family (ADR-PC-021
+        // A2 — the spine still may not), so it is here, not in the spine, that we apply the family
+        // migration. This hosted service runs the family MigrationRunner on startup against the migration
+        // connection string (DDL privileges, ADR-PC-001 §P3). It assumes the ENGINE schema is already
+        // present — the engine host does NOT run the engine migrations today (only deployment machinery +
+        // tests do) — and the family migration's own fail-loud guard RAISEs if the babelstone_engine role
+        // (engine migration 0002) is absent, so an out-of-order run fails clearly rather than corrupting
+        // state.
+        //
+        // Resolution prefers a DEDICATED migration-role connection (the production split: DDL privileges
+        // separate from the runtime role, ADR-PC-001 §P3) and falls back to the runtime Engine connection
+        // for the dev/test path, which uses one superuser connection for both (the same single-connection
+        // dev posture Program.cs takes for ConnectionStrings:Engine). It still fails fast if NOTHING
+        // resolves, rather than booting against an un-migrated read model (mirroring the orchestrator's
+        // SagaMigrationHostedService).
+        var migrationConnectionString =
+            ctx.Configuration.GetConnectionString("EngineMigration")
+            ?? ctx.Configuration["Engine:MigrationConnectionString"]
+            ?? Environment.GetEnvironmentVariable("ENGINE_MIGRATION_CONNECTION_STRING")
+            ?? ctx.Configuration.GetConnectionString("Engine");
+        services.AddHostedService(_ => new ReadModelMigrationHostedService(migrationConnectionString));
     }
 
     public void MapEndpoints(IEndpointRouteBuilder app) => DepositsEndpoints.Map(app);
+}
+
+/// <summary>
+/// Applies the term-deposit family's read-model schema on startup (the family OWNS this schema —
+/// ADR-PC-021 family-owned ownership; <c>read_model.deposits</c> is a family-named table, so it lives
+/// in the family's migration set, not the engine's). A hosted service so the host's lifetime owns it;
+/// idempotent — a boot with nothing pending is a no-op (the family <see cref="MigrationRunner"/>'s own
+/// <c>schema_migrations_term_deposit</c> ledger guards it). Modelled on the orchestrator's
+/// <c>SagaMigrationHostedService</c>. Refuses to run with no migration connection string rather than
+/// booting against an un-migrated read model.
+///
+/// Engine-before-family ordering: this assumes the engine event-store schema is already present (the
+/// engine host runs no engine migrations today; deployment machinery + tests apply them). The family
+/// migration's fail-loud SQL guard RAISEs a clear error if the <c>babelstone_engine</c> role (engine
+/// migration 0002) is absent, so an out-of-order boot fails loud rather than silently.
+/// </summary>
+internal sealed class ReadModelMigrationHostedService(string? migrationConnectionString) : IHostedService
+{
+    public async Task StartAsync(CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(migrationConnectionString))
+        {
+            throw new InvalidOperationException(
+                "No engine migration connection string configured for the term-deposit read-model "
+                + "migrations. Set ConnectionStrings:EngineMigration, Engine:MigrationConnectionString, "
+                + "or ENGINE_MIGRATION_CONNECTION_STRING.");
+        }
+
+        await new MigrationRunner(migrationConnectionString).ApplyAsync(cancellationToken);
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
