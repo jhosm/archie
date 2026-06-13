@@ -149,9 +149,12 @@ validate_staging() {
 			sed 's/^/    /' /tmp/pack-cue-err
 			fail=1
 		elif [ "$n" = "0" ]; then
-			echo "  skip          depth-5 corpus: expected-events.yaml empty (generation pending, C.3)"
+			# C.3 landed the depth-5 SIMULATION (engine PackSimulationDepth5Tests gates the
+			# corpus event sequence + < 30 s budget); generating the byte-level expected-events
+			# corpus from it is the deferred half (bd babelstone-fnqa), so this stays a logged skip.
+			echo "  skip          depth-5 corpus: expected-events.yaml empty (byte-corpus generation pending; sim is PackSimulationDepth5Tests)"
 		else
-			echo "  note          depth-5 corpus present ($n) — depth-5 sim is C.3, not run here"
+			echo "  note          depth-5 corpus present ($n) — byte-corpus comparison is bd babelstone-fnqa; the sim runs as PackSimulationDepth5Tests"
 		fi
 	fi
 

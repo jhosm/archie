@@ -288,24 +288,80 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: jdx/mise-action@v4 # pins cue + oras from mise.toml
+      - uses: jdx/mise-action@v4 # pins cue + oras + go from mise.toml
+      - name: Validate the pack's variants through depths 1–4 (ADR-PC-006 §P3)
+        # Q.3: the static validator depths over the pack's own products. Build the
+        # Go validator once, then run the full depths-1→4 `validate` (syntactic →
+        # type → pack-compliance → regulatory) over every committed /product-configs
+        # variant against this pack — the depths-1–4 half of "validate depths 1–5".
+        # Depth 5 is the engine-side simulation (next step's note). A depth-N failure
+        # rejects here, exactly as the per-variant product-configs job does.
+        run: |
+          go -C pack-validate build -trimpath -o "$RUNNER_TEMP/pack-validate" .
+          shopt -s nullglob
+          found=0
+          for v in product-configs/*.yaml; do
+            found=1
+            echo "== depths 1–4: $v =="
+            "$RUNNER_TEMP/pack-validate" validate "$v" --pack packs/pt.2026.1
+          done
+          [ "$found" -eq 1 ] || echo "no variants in product-configs/ yet — nothing to validate at depths 1–4"
       - name: Build + verify the pack by digest (ADR-PC-006, ADR-PC-007)
-        # stage schemas + cue-vet manifest/data, oras push to an OCI layout,
-        # then pull strictly by sha256 digest and re-validate (§P2).
+        # stage schemas + cue-vet manifest/data (incl. the rate-sheet-ref files the
+        # manifest declares, against #RateSheetRefs), oras push to an OCI layout,
+        # then pull strictly by sha256 digest and re-validate (§P2). This is the
+        # offline OCI smoke: build → push-by-digest → pull-by-digest → re-validate.
         run: |
           DIGEST="$(./packs/pack.sh build packs/pt.2026.1)"
           ./packs/pack.sh verify packs/pt.2026.1 --digest "$DIGEST"
-      # TODO - cosign keyless verify (OIDC) lands with Q.5; pack-load smoke
-      # test (engine pulls + verifies + caches) lands with C.5.
+      # Depth-5 simulation (C.3, ADR-PC-006 §P4, PACK_SIM_DEPTH5_BUDGET): the engine-
+      # side smoke-load+rehydrate of the pack's sealed test corpus runs as the
+      # PackSimulationDepth5Tests Integration test in the `engine` job's Testcontainers
+      # lane — that job already triggers on packs/** + contracts/** changes (see its
+      # `if:`), so a pack or schema change re-runs depth 5 without a second container
+      # here. It loads pt.2026.1, constitutes each canonical instance through the
+      # hand-rolled append/replay substrate, cold-replays it, and asserts the event
+      # sequence in < 30 s. cosign keyless verify (OIDC) remains Q.5 — cosign signs a
+      # registry ref, not the offline oci-layout the `packs` job builds, so the
+      # sign/verify loop needs the Q.5 registry+OIDC wiring (pack.sh verify-signature
+      # is its home).
 
   rate-sheets:
     needs: changes
-    if: ${{ needs.changes.outputs.rate_sheets == 'true' }}
+    # Also runs on packs/contracts changes: a pack carries version-pinned rate-sheet
+    # REFS (rate-sheet-refs/*.yaml) validated against the #RateSheetRefs CUE schema,
+    # so a pack or schema change must re-check that the refs still conform.
+    if: ${{ needs.changes.outputs.rate_sheets == 'true' || needs.changes.outputs.packs == 'true' || needs.changes.outputs.contracts == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Validate rate-sheet schema (ADR-PC-008)
-        run: echo "TODO - rate-sheet schema validation; lands with rate-sheet tooling"
+      - uses: jdx/mise-action@v4 # pins cue from mise.toml
+      - name: Validate rate-sheet refs + any committed sheet data (ADR-PC-008)
+        # Q.3 rate-sheet schema validation, scoped to what exists today. The pack's
+        # rate-sheet REFS (the version-pinned pointers the engine resolves at
+        # constitution) are CUE-validated against #RateSheetRefs in pack/pack.cue —
+        # the one rate-sheet shape with a committed schema. The rate-sheet BODY
+        # (numerical TANs) lives in the rate_sheets table on its own cadence (surface
+        # §2); /rate-sheets is still a skeleton (no data, no body schema yet — that
+        # tooling is ADR-PC-008's storage/deploy API, not built), so a committed
+        # *.yaml here is a logged no-op until a sheet body + its schema land. Never a
+        # silent pass: an absent file is reported, a present one is validated.
+        run: |
+          set -euo pipefail
+          echo "== rate-sheet refs (pack #RateSheetRefs) =="
+          for ref in packs/*/rate-sheet-refs/*.yaml; do
+            [ -e "$ref" ] || continue
+            echo "  vet $ref"
+            mise exec -- cue vet -d '#RateSheetRefs' "$ref" contracts/cue/pack/pack.cue
+          done
+          shopt -s nullglob
+          sheets=(rate-sheets/*.yaml)
+          if [ ${#sheets[@]} -eq 0 ]; then
+            echo "no rate-sheet body data in /rate-sheets yet — body schema validation lands with the ADR-PC-008 deploy API"
+          else
+            echo "rate-sheet body files present but no committed body schema yet; deferring body validation to the ADR-PC-008 deploy API"
+            printf '  %s\n' "${sheets[@]}"
+          fi
 
   infra:
     needs: changes

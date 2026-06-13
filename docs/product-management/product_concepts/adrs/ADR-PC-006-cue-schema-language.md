@@ -177,4 +177,22 @@ This decision's load-bearing commitments are fitness functions in the [commitmen
 
 ---
 
+## Amendment — 2026-06-13: depth-5's first increment gates the event SEQUENCE; the `expected-events.yaml` byte corpus follows (C.3 implementation)
+
+Implementing C.3 ([bd babelstone-5qhp](../04-open-questions.md), with the CI wiring on [bd babelstone-fnqa](../04-open-questions.md)) landed depth-5 on the engine's own substrate exactly as §P4 decides — but revealed that the §P4 phrase "**asserts against `expected-events.yaml`**" cannot be the *byte-corpus* comparison in v1's first increment, because that artefact is itself blocked. This amendment is additive: it pins *what* depth-5 asserts in C.3 and time-bounds the byte-corpus comparison, leaving §P4's substrate decision (engine append/replay, session-scoped Testcontainers, no CUE, < 30 s) intact and implemented.
+
+### A1 · C.3 gates the engine substrate + budget + per-shape event SEQUENCE
+
+`PackSimulationDepth5Tests` (in the term-deposit Application test project, `Category=Integration`) loads the committed `pt.2026.1` pack, drives every canonical instance of `test-corpus/canonical-instances.yaml` through the engine's hand-rolled `append`/replay path into a session-scoped `Testcontainers.PostgreSql` fixture (constitute → intermediate coupons for PERIODIC → mature, all by **explicit command** — no clock-advance, A.8b stays out of scope), cold-replays each stream, and asserts the produced **`family.EventType` sequence** matches the documented per-interest-shape lifecycle. The whole corpus runs in well under the < 30 s `PACK_SIM_DEPTH5_BUDGET` ceiling (§P4 / commitment row 11, now `Live`). This is the depth-5 substrate and budget §P4 names, gating the regression-meaningful "engine + pack produce the right lifecycle shape from the sealed corpus".
+
+### A2 · The byte-level `expected-events.yaml` comparison is deferred
+
+`expected-events.yaml` is the ADR-PC-007 §P5 **generated** artefact (still the empty placeholder pack.sh treats as "generation pending"). Generating + comparing the full per-event payload corpus would serialise each event's fields, and `DepositConstituted` is a **bus-published** event whose Avro codec enforces strict C#↔`.avsc` parity and has no array-of-record support (the same constraint [ADR-PC-024 Amendment A2](./ADR-PC-024-constitution-precondition-contract.md) documents). Per [ADR-PC-028](./ADR-PC-028-event-store-payload-format.md) the audit book of record is the store JSON, so the byte-corpus generator/comparator is store-side work that does not need to widen the bus — but it is more than the C.3 increment, so it is **deferred**: depth-5 gates the event SEQUENCE now (A1) and the byte-level `expected-events.yaml` round-trip follows ([bd babelstone-fnqa](../04-open-questions.md)). Until then `expected-events.yaml` stays the logged-skip placeholder, never a silent pass.
+
+### A3 · This amends the decision; it does not supersede this ADR
+
+§P4 remains binding as written — depth-5 runs on the engine's hand-rolled append/replay substrate against a session-scoped `Testcontainers.PostgreSql` fixture, with no CUE and under the < 30 s budget. This amendment only **localises §P4's "asserts against `expected-events.yaml`" clause** to the structural event-sequence assertion in C.3 and time-bounds the byte-corpus comparison — it is appended to, not a revision of, §P4.
+
+---
+
 *Decided 2026-05-23 by jhosm. Supersedes the prior JSON-Schema + NJsonSchema iteration of ADR-PC-006 (removed before acceptance); JSON Schema retained as the named CUE-longevity fallback.*
