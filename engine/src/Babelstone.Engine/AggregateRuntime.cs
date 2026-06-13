@@ -5,6 +5,14 @@ using Babelstone.Telemetry;
 namespace Babelstone.Engine;
 
 /// <summary>Per-append envelope metadata the runtime cannot derive from the events themselves.</summary>
+/// <param name="CommandId">
+/// The caller's deterministic command id (ADR-PC-029 slot 4). When non-null it makes the append
+/// idempotent on the command id — the runtime threads it to the sink, which records a
+/// <c>command_dedup</c> receipt in the append transaction so a replay returns the original head
+/// rather than appending again. Carries the COMMAND identity, distinct from CorrelationId /
+/// CausationId (the EVENT-lineage trio that lands on each envelope). <c>null</c> = a
+/// non-idempotent append (engine-internal lifecycle steps that no external caller retries).
+/// </param>
 public sealed record AppendContext(
     string         Family,
     string         PackVersion,
@@ -12,7 +20,8 @@ public sealed record AppendContext(
     string         Actor,
     DateTimeOffset ValidTime,
     Guid?          CorrelationId = null,
-    Guid?          CausationId = null);
+    Guid?          CausationId = null,
+    Guid?          CommandId = null);
 
 /// <summary>
 /// The rehydrated state of a stream plus its head sequence (-1 when the stream is empty) and the
@@ -158,7 +167,7 @@ public sealed class AggregateRuntime<TState>(
                 PublishedAt: null));
         }
 
-        await sink.AppendAsync(streamId, expectedVersion, envelopes, outboxRows, ct);
+        await sink.AppendAsync(streamId, expectedVersion, envelopes, outboxRows, context.CommandId, ct);
 
         // Sync-mode projections (two-modes §5.4): once the event has committed, drive them within
         // a bounded budget. The hook NEVER rolls back the commit — "the event is true regardless

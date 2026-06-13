@@ -64,7 +64,7 @@ public sealed class TermDepositConstitutionService(
         {
             return await runtime.AppendAsync(
                 command.DepositId, expectedVersion: -1, [refusal],
-                Context(command.Actor, command.ConstitutedAt), ct);
+                Context(command.Actor, command.ConstitutedAt, command.CommandId), ct);
         }
 
         // 1. Resolve the rate sheet active at constitution (ADR-PC-008 §P3); fail loud if none.
@@ -108,10 +108,12 @@ public sealed class TermDepositConstitutionService(
         }
 
         // 6. Append the new stream (expectedVersion -1) — events + outbox in one transaction. The head
-        //    version it returns is the commit_sequence the caller threads for read-your-writes.
+        //    version it returns is the commit_sequence the caller threads for read-your-writes. The
+        //    command id (when supplied) makes this append idempotent: a replay returns this same head
+        //    with no second append (ADR-PC-029 slot 4).
         return await runtime.AppendAsync(
             command.DepositId, expectedVersion: -1, events,
-            Context(command.Actor, command.ConstitutedAt), ct);
+            Context(command.Actor, command.ConstitutedAt, command.CommandId), ct);
     }
 
     /// <summary>
@@ -484,6 +486,9 @@ public sealed class TermDepositConstitutionService(
             Lifecycle = DepositLifecycle.Active,
         };
 
-    private AppendContext Context(string actor, DateTimeOffset validTime) =>
-        new(Family.FamilyName, pack.VersionKey, Family.SchemaVersion, actor, validTime);
+    // commandId is the OPTIONAL command-ingress idempotency key (ADR-PC-029 slot 4): the
+    // constitution paths thread the command's CommandId so the append dedupes on it; the
+    // engine-internal lifecycle steps (maturity, coupon, termination, renewal) pass none.
+    private AppendContext Context(string actor, DateTimeOffset validTime, Guid? commandId = null) =>
+        new(Family.FamilyName, pack.VersionKey, Family.SchemaVersion, actor, validTime, CommandId: commandId);
 }

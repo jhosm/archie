@@ -208,7 +208,7 @@ public sealed class ProjectionRuntimeIntegrationTests(PostgresEventStoreFixture 
 
         public Task AppendAsync(
             Guid streamId, long expectedVersion, IReadOnlyList<EventEnvelope> events,
-            IReadOnlyList<OutboxRow> outboxRows, CancellationToken ct = default) =>
+            IReadOnlyList<OutboxRow> outboxRows, Guid? commandId = null, CancellationToken ct = default) =>
             throw new NotSupportedException("The drainer only reads.");
 
         public async IAsyncEnumerable<EventEnvelope> LoadAsync(

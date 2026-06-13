@@ -112,6 +112,11 @@ builder.Services.AddSingleton<ISettlementPort, LoggingSettlementPort>();
 builder.Services.AddSingleton<IEventStore>(_ => new PostgresEventStore(connectionString));
 builder.Services.AddSingleton<IEventSink>(serviceProvider =>
     new EventStoreSink(serviceProvider.GetRequiredService<IEventStore>()));
+// ADR-PC-029 slot 4 (ENGINE_COMMAND_IDEMPOTENT): the command-ingress idempotency ledger's READ
+// side — the pre-check a command endpoint consults BEFORE any side effect so an at-least-once
+// retry from the saga dispatcher replays the original outcome. The WRITE side is the
+// in-transaction command_dedup INSERT inside PostgresEventStore.AppendAsync (migration 0015).
+builder.Services.AddSingleton<ICommandLog>(_ => new PostgresCommandLog(connectionString));
 // D.2 projection runtime storage (ADR-PC-002 §P4): the byte-oriented projection + checkpoint
 // stores are family-agnostic spine components (ADR-PC-021), backed by the same PostgreSQL tier as
 // the event store. The family module composes the typed runtime (registry + drainer + relay) over

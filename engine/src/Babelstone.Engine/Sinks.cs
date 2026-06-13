@@ -18,6 +18,7 @@ public interface IEventSink
         long expectedVersion,
         IReadOnlyList<EventEnvelope> events,
         IReadOnlyList<OutboxRow> outboxRows,
+        Guid? commandId = null,
         CancellationToken ct = default);
 }
 
@@ -29,8 +30,11 @@ public sealed class EventStoreSink(IEventStore store) : IEventSink
         long expectedVersion,
         IReadOnlyList<EventEnvelope> events,
         IReadOnlyList<OutboxRow> outboxRows,
+        Guid? commandId = null,
         CancellationToken ct = default)
-        => store.AppendAsync(streamId, expectedVersion, events, outboxRows, ct);
+        // commandId threads through to the event store's append transaction, where a non-null
+        // value makes the append idempotent on the command id (ADR-PC-029 slot 4).
+        => store.AppendAsync(streamId, expectedVersion, events, outboxRows, commandId, ct);
 }
 
 /// <summary>
@@ -44,6 +48,7 @@ public sealed class NullSink : IEventSink
         long expectedVersion,
         IReadOnlyList<EventEnvelope> events,
         IReadOnlyList<OutboxRow> outboxRows,
+        Guid? commandId = null,
         CancellationToken ct = default)
         => Task.CompletedTask;
 }

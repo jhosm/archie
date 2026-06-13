@@ -39,6 +39,13 @@ public sealed record PreconditionVerdict(
 /// <c>required_preconditions</c> demands is absent here or <c>Satisfied == false</c> — a PURE
 /// function of these verdicts, with no in-engine evaluation (ADR-PC-024 §3–§5). Defaults to
 /// empty: v1 launch products are not eligibility-gated (02 §4), so most commands carry none.</param>
+/// <param name="CommandId">The caller's deterministic command id (ADR-PC-029 slot 4) — in
+/// practice the saga's <c>saga_outbox</c> row id, supplied by the dispatcher as the
+/// <c>Idempotency-Key</c>. The constitution append is idempotent on it: a replay returns the
+/// original <c>commit_sequence</c> with no second append (and, before any append, the endpoint
+/// short-circuits so the eager settlement is not re-run). The HTTP boundary makes it MANDATORY
+/// (a missing/malformed key is a 400); the type stays nullable only for direct in-process
+/// callers (family unit tests that construct the command without exercising idempotency).</param>
 public sealed record ConstituteDepositCommand(
     Guid DepositId,
     long PrincipalCents,
@@ -52,7 +59,8 @@ public sealed record ConstituteDepositCommand(
     string FundingAccount,
     string Actor,
     int PaymentPeriodMonths = 0,
-    IReadOnlyDictionary<string, PreconditionVerdict>? Preconditions = null);
+    IReadOnlyDictionary<string, PreconditionVerdict>? Preconditions = null,
+    Guid? CommandId = null);
 
 /// <summary>Mature a constituted deposit: accrue → withhold → pay out the AT_MATURITY single flow.</summary>
 /// <param name="PayoutAccount">The legacy current account credited the total payout (settlement).</param>
