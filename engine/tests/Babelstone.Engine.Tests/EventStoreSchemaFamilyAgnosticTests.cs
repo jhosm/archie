@@ -254,6 +254,8 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
     /// <c>FOREIGN KEY</c> clauses). For an <c>ALTER … ADD COLUMN</c> it reads the added column name.
     /// Keyed to the migrations' house DDL style; a column declared by an idiom this does not parse
     /// must be added knowingly (the non-vacuity guard in the caller catches a wholesale parse break).
+    /// A column name wrapped in double-quotes (a quoted identifier, <c>"maturity_date" DATE</c>) is
+    /// handled — the surrounding quotes are stripped so the bare name still reaches the deny scan.
     /// </summary>
     private static IReadOnlyList<(string Table, string Column)> WriteSideColumns()
     {
@@ -281,8 +283,11 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
                     continue;
                 }
 
-                // The column name is the leading identifier of the clause.
-                var nameMatch = Regex.Match(trimmed, @"^([A-Za-z_]\w*)");
+                // The column name is the leading identifier of the clause. Tolerate an OPTIONAL
+                // surrounding double-quote so a quoted identifier ("maturity_date" DATE) is caught
+                // too — the bare name is what the deny scan must see. The leading '"' is consumed
+                // here and the trailing one stripped, so the captured group is the unquoted name.
+                var nameMatch = Regex.Match(trimmed, @"^""?([A-Za-z_]\w*)""?");
                 if (nameMatch.Success)
                 {
                     columns.Add((table, nameMatch.Groups[1].Value));
