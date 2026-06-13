@@ -33,6 +33,8 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<IEventStore>(),
             serviceProvider.GetRequiredService<IEventSink>(),
             TermDepositFamilyModule.Registry(),
+            // The STORE codec (ADR-PC-028 §Decision): self-describing JSON fills events.payload (the
+            // book of record) and is the sole decode/replay path. UNCHANGED by the dual-encode split.
             serviceProvider.GetRequiredService<IEventSerializer>(),
             serviceProvider.GetRequiredService<IPiiProtector>(),
             serviceProvider.GetRequiredService<TimeProvider>(),
@@ -41,7 +43,14 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             // publishable artefact — ONLY for a catalogued integration event; an uncatalogued event is
             // store-only by construction. The shared IIntegrationEventCatalog (the real AvroSchemaCatalog,
             // registered in Program.cs) is the family-agnostic membership predicate.
-            integrationEventCatalog: serviceProvider.GetRequiredService<IIntegrationEventCatalog>()));
+            integrationEventCatalog: serviceProvider.GetRequiredService<IIntegrationEventCatalog>(),
+            // The BUS codec (ADR-PC-028 §Decision dual-encode / STORE_BUS_ENCODING_EQUIVALENCE): when
+            // Bus:Encoding=avro the host registers a BusEventSerializer (real Avro + registered
+            // schema_id, ADR-IC-002 §P3 / ADR-IC-004 §P3) and the runtime encodes the outbox row with
+            // it; with none registered this is null and the outbox reuses the JSON store codec (the
+            // pre-split single-encoding). Resolving it here is what triggers the lazy SR registration
+            // — only in avro mode, only at first command.
+            busSerializer: serviceProvider.GetService<BusEventSerializer>()?.Inner));
 
         // The term-deposit decider (ADR-PC-021): this module is its composition root (§D4).
         services.AddSingleton(serviceProvider => new TermDepositConstitutionService(
