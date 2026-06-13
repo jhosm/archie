@@ -153,7 +153,12 @@ for d in $CODE_DIRS; do
     elif grep -qiE '^\| *Status *\|.*(Superseded|Withdrawn)' "$f"; then
       err "$f" "Code anchor '$ref' points to a SUPERSEDED or WITHDRAWN ADR (ADR-PC-020 §P6)."
     fi
-  done < <(grep -rhoE "${CODE_INCLUDES[@]}" 'ADR-(PC|IC)-[0-9]{3}' "$d" 2>/dev/null | sort -u)
+    # -a (--binary-files=text): a fuzz-corpus test (e.g. EngineApiJsonEnvelopeFuzzTests.cs)
+    # embeds non-text bytes, so grep's binary heuristic (notably BSD/macOS grep) can emit a
+    # 'Binary file <path> matches' line in place of the -o matches — the loop then ingests it
+    # as a bogus anchor that resolves to no ADR. -a forces text so the file's real `// ADR-NNN`
+    # anchors are extracted and checked instead (bd babelstone-2t16.23).
+  done < <(grep -rahoE "${CODE_INCLUDES[@]}" 'ADR-(PC|IC)-[0-9]{3}' "$d" 2>/dev/null | sort -u)
 done
 [ "$anchors" -gt 0 ] || note "no code anchors yet — no engine source committed."
 
