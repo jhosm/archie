@@ -5,6 +5,23 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The family's OWN read-model schema, shipped as embedded, numbered, forward-only SQL
+         resources (ADR-PC-001 §P5), the same discipline as the engine event-store set. The
+         family-named read_model.deposits table is OWNED here (ADR-PC-021 family-owned ownership),
+         not in the engine migrations — so the engine event-store migrations carry zero
+         family-named tables. The MigrationRunner reads these out of the assembly so a deploy
+         carries its own schema; there is no loose-file lookup at runtime. -->
+    <EmbeddedResource Include="Migrations/Sql/*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Npgsql becomes a DIRECT dependency (it was only transitive via the engine ports): the
+         family now owns a MigrationRunner that runs DDL under the migration role (ADR-PC-001 §P3)
+         against the shared Postgres tier (ADR-IC-005 §S1), distinct from the engine runtime role. -->
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The term-deposit DECIDER (ADR-PC-021): the impure command-side layer that turns a
          command into events. Unlike the pure-fold project (Babelstone.Families.TermDeposit,
          which references only Engine + FinancialTypes so a fold cannot reach a DB), the

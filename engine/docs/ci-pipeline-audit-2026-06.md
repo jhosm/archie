@@ -171,6 +171,17 @@ This is NOT a case where the `.csproj` guard alone suffices: it provably misses 
 `read_model.deposits` leak. A schema-level gate is warranted; whether the read-model exclusion
 is "allowed" or "should be relocated" is the design call to escalate.
 
+> **RESOLVED 2026-06-13 (bd babelstone-2t16.18).** The maintainer settled the escalation on
+> option (b): `read_model.deposits` was **relocated** out of the engine migration set into a
+> term-deposit family-owned set (`Babelstone.Families.TermDeposit.Application/Migrations/`,
+> `0001_read_model.sql`), so the engine event-store migrations now carry **zero** family-named
+> tables. ADR-PC-021 was amended (2026-06-13) to extend the family-agnostic boundary from CODE
+> coupling (§P2) to migration-owned SCHEMA. The schema-level fitness function recommended above is
+> now `Live` as `EventStoreSchemaFamilyAgnosticTests` (commitment-catalogue row 12a,
+> `EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC`): it scans the **entire** engine `MigrationSet.All` with no
+> read-side carve-out and adds an inverse positive guard that RED-fails if a `read_model` schema or
+> `deposits`-named object ever re-appears in the engine set.
+
 ---
 
 ## 4. FRESHNESS sweep

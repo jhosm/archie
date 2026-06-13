@@ -37,7 +37,14 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _pg.StartAsync();
+        // Engine event-store schema first (it creates the babelstone_engine role the family read
+        // model GRANTs on), then the term-deposit family's OWN read-model migration set
+        // (read_model.deposits, ADR-PC-021 family-owned ownership) — engine-before-family ordering.
+        // The host's ReadModelMigrationHostedService would also apply the family migration on boot,
+        // but this fixture applies it up front so the schema is present before the host starts.
         await new MigrationRunner(_pg.GetConnectionString()).ApplyAsync();
+        await new Babelstone.Families.TermDeposit.Application.Migrations.MigrationRunner(
+            _pg.GetConnectionString()).ApplyAsync();
 
         // Deploy the rate sheet the constitute flow resolves (300 bps for dpz_pt_12m_juros_venc/standard).
         var rateSheets = new PostgresRateSheetStore(_pg.GetConnectionString());

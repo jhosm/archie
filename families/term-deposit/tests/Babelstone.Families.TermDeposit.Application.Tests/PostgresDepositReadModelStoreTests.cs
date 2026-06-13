@@ -10,9 +10,12 @@ namespace Babelstone.Families.TermDeposit.Application.Tests;
 /// (Testcontainers). The store is FAMILY-OWNED (ADR-PC-021 §D2/§P2 — the deposit-shaped table +
 /// maturity range scan name this family's domain shape, not the engine spine's), so its integration
 /// test lives in the family's Application tests, alongside the decider it composes with. Exercises
-/// the ADR-IC-005 CQRS read-model contract after migration 0013: the UPSERT-with-monotonicity-guard
+/// the ADR-IC-005 CQRS read-model contract after the FAMILY-OWNED read-model migration
+/// (Babelstone.Families.TermDeposit.Application.Migrations 0001_read_model.sql, relocated from the
+/// engine's former 0013 per ADR-PC-021 family-owned ownership): the UPSERT-with-monotonicity-guard
 /// write (§P2), the point lookup and maturity range scan, the freshness pair (§P3), and the
-/// truncate-and-rebuild path (§P5).
+/// truncate-and-rebuild path (§P5). The ConstitutionFixture applies the engine then the family
+/// migration set, engine-before-family.
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class PostgresDepositReadModelStoreTests(ConstitutionFixture fixture)

@@ -67,6 +67,7 @@ tracked separately — and is **not** the job of this seed.
 | 10 | **`pack-validate` depths 1–4 meet budget** synchronously at variant/pack-commit and on every PR — syntactic < 1 s, type < 5 s, pack-compliance < 10 s, regulatory-coherence < 10 s, aggregate < 30 s; a depth-N failure rejects the commit. | [ADR-PC-006 §P3](./ADR-PC-006-cue-schema-language.md) | benchmark (per-PR) | `PACK_VALIDATE_DEPTH_BUDGETS` | Live |
 | 11 | **Depth-5 simulation meets budget** — the sealed pack test-corpus, appended through the engine's hand-rolled append/replay substrate against a session-scoped Testcontainers PostgreSQL fixture, reproduces the expected event sequence in < 30 s in CI. *(C.3: Live via `PackSimulationDepth5Tests` — drives all five canonical pt.2026.1 instances through constitute→[coupons]→mature on the A.3 rehydrate substrate, asserts the per-shape event-type sequence, and gates the < 30 s budget; runs in the engine job's Testcontainers lane, which triggers on `packs`/`contracts` changes. The structural EVENT-SEQUENCE half is gated now; comparing the full byte-level `expected-events.yaml` corpus stays the logged-skip placeholder until the bus-Avro codec gains array-of-record support — see the test's scope note + bd babelstone-vcxq.)* | [ADR-PC-006 §P4](./ADR-PC-006-cue-schema-language.md) | benchmark (CI) | `PACK_SIM_DEPTH5_BUDGET` | Live |
 | 12 | The generic engine spine (`Babelstone.Engine`, `Babelstone.EventStore`, `Babelstone.RateSheets`, `Babelstone.Packs`, `Babelstone.FinancialMath`, `Babelstone.FinancialTypes`, `Babelstone.Engine.Avro`, `Babelstone.OutboxPublisher`) carries **no `ProjectReference` to any `families/**` project** — the `family → engine` arrow is one-way. | [ADR-PC-021 §P2 / §D2](./ADR-PC-021-application-layer-family-owned-deciders.md) | architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC` | Live |
+| 12a | The engine **event-store migration set** carries **no family-named table** — the entire engine `MigrationSet.All` is scanned for a family-typed table/column/FK, and an inverse positive guard RED-fails if a `read_model` schema or `deposits`-named object re-appears in the engine set. The schema-level twin of row 12: 12 guards the `family → engine` arrow at the `.csproj` level, 12a at the migration-schema level. | [ADR-PC-021 §A5–§A7](./ADR-PC-021-application-layer-family-owned-deciders.md) | architecture / dependency assertion (CI) | `EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC` | Live |
 | 13 | **Exactly one currently-believed projection row** per `(stream_id, projection_kind)`; a correction supersedes-then-inserts atomically and never overwrites or deletes the prior belief. | [ADR-PC-002 §P1 / §P2](./ADR-PC-002-application-level-bitemporality.md) | integration (Testcontainers) | `PROJECTION_ONE_CURRENT_BELIEF` | Planned |
 | 14 | **A cold projection rebuild reproduces byte-identical current-belief rows** — every stamp is event-derived (`recorded_at` = the event's transaction-time), never wall-clock. | [ADR-PC-002 §P4](./ADR-PC-002-application-level-bitemporality.md), [ADR-PC-010 §P5](./ADR-PC-010-dotnet-hand-rolled-engine.md) | integration (Testcontainers) | `PROJECTION_REBUILD_DETERMINISM` | Planned |
 | 15 | **A projection folded synchronously vs asynchronously yields identical rows**; the mode is declared per projection, not hardcoded into the engine. | [ADR-PC-002 §P4](./ADR-PC-002-application-level-bitemporality.md) | integration (Testcontainers) | `PROJECTION_MODE_EQUIVALENCE` | Planned |
@@ -261,6 +262,25 @@ enforced at the edge, that is an integration-estate fitness function, not a prod
 one. Row numbers are display indices, not the join key (Test IDs are) — the gap left at 6 is
 harmless and rows 7–17 keep their identifiers.
 
+**Schema-level family-agnosticism reconciliation (2026-06-13).** Row 12a
+(`EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC`) was added under the growth provision as the
+schema-level twin of row 12 (`ENGINE_FAMILY_AGNOSTIC`). Row 12 guards the `family → engine`
+arrow at the `.csproj`-reference level; 12a guards it at the migration-**schema** level — the
+engine event-store migration set may carry no family-named table. It lands `Live` with bd
+`babelstone-2t16.18`, which **relocated** the term-deposit CQRS read model
+(`read_model.deposits`, formerly engine migration `0013_read_model.sql`) into a family-owned
+migration set so the engine migrations carry zero family-named tables
+([ADR-PC-021 §A5–§A7](./ADR-PC-021-application-layer-family-owned-deciders.md), amended
+2026-06-13). The gate is `EventStoreSchemaFamilyAgnosticTests` (`Babelstone.Engine.Tests`): it
+parses the entire engine `MigrationSet.All` (no read-side carve-out, since the engine now owns
+zero family tables), runs three deny scans (no family-typed table name, column name, or FK
+target), and adds an inverse positive guard that RED-fails if a `read_model` schema or
+`deposits`-named object re-appears in the engine set. It is infrastructure-free and runs in CI's
+`engine` job (the non-Integration tier — same `ENGINE_FAMILY_AGNOSTIC` "runs in CI" bar), so it
+meets the `Live` criterion. The relocated read model's own schema/role assertions move to the
+family's Testcontainers integration tier (`ReadModelMigrationSchemaIntegrationTests` in
+`Babelstone.Families.TermDeposit.Application.Tests`).
+
 ## Coverage by pyramid level
 
 This is the shape [ADR-PC-020 §P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)
@@ -272,7 +292,7 @@ spawns a parallel suite:
 | Unit | `OBS_RESOURCE_ATTRS`, `OBS_SPAN_PRODUCT_SEMANTICS` |
 | Unit + analyser | `MONEY_BOUNDARY_FIXTURES`, `OBS_NO_PII_ATTRS` |
 | Analyser / CI gate | `DETERMINISM_GATE`, `NO_CLOCK_DRIVEN_ENGINE_SIGNAL` (analyser + contract) |
-| Architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC` |
+| Architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC`, `EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC` |
 | Integration (Testcontainers) | `ES_ATOMIC_APPEND_OUTBOX`, `REPLAY_PIN_PER_EVENT`, `BATCH_INGEST_IDEMPOTENT`, `OBS_TRACEPARENT_PROPAGATION`, `READ_YOUR_WRITES_FOLD_ON_TOKEN` |
 | Contract / saga | `GL_POST_FLAG_NEVER_GATES`, `NOTIFY_POST_FLAG_NEVER_GATES`, `IFRS9_POST_FLAG_NEVER_GATES`, `CONSTITUTION_PRECONDITION_REFUSAL` |
 | Benchmark (CI Integration lane) | `REPLAY_BUDGET_5S_30S` (v1 half; v4 30 s half deferred to L.3) |
