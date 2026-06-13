@@ -10,11 +10,12 @@ using Microsoft.Extensions.Hosting;
 // The in-house saga orchestrator host (ADR-IC-003 "Event-driven application orchestrator").
 // A worker, not an HTTP API (ADR-IC-003 §S2 "a Redpanda consumer like every other service")
 // — so Host.CreateApplicationBuilder, not WebApplication. This composition root applies the
-// saga schema and wires the hand-rolled state machine, the persistence stores, and the
-// inbox-driven advance handler. The Redpanda consume loop (the engine's InboxPump, G.2) is
-// wired onto the SagaAdvanceHandler here once H.2 (babelstone-n55u) brings the Confluent/Avro
-// host surface; this substrate (babelstone-mj2i) delivers the state machine + persistence +
-// idempotent advance the loop will drive.
+// saga schema and wires the hand-rolled state machine, the persistence stores, the inbox-driven
+// advance handler, AND the Redpanda consume loop (t7o3.2) that actually READS events off the bus
+// and drives the saga. Before t7o3.2 nothing consumed events, so a started saga never progressed;
+// now the hosted SagaInboxConsumerService subscribes to the saga's topics, decodes each record's
+// CloudEvents headers into a PII-free SagaInboxEvent, and drives the SagaAdvanceHandler inside one
+// transaction that commits the Kafka offset only after the DB transaction commits.
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -27,6 +28,15 @@ var migrationConnectionString =
     builder.Configuration.GetConnectionString("OrchestratorMigration")
     ?? builder.Configuration["Orchestrator:MigrationConnectionString"]
     ?? Environment.GetEnvironmentVariable("ORCHESTRATOR_MIGRATION_CONNECTION_STRING");
+
+// The RUNTIME-role connection the consume loop persists the saga through — the
+// babelstone_orchestrator role, distinct from the DDL migration role above (ADR-PC-001 §P3) and
+// resolved through the same credential boundary (ADR-PC-004 Amendment A1). It never rides a
+// message (ADR-IC-003 §P7) nor the bus (ADR-PC-004 §P2).
+var runtimeConnectionString =
+    builder.Configuration.GetConnectionString("Orchestrator")
+    ?? builder.Configuration["Orchestrator:ConnectionString"]
+    ?? Environment.GetEnvironmentVariable("ORCHESTRATOR_CONNECTION_STRING");
 
 // The hand-rolled ConstitutionProcess state machine (ADR-IC-003 §P2: the table is the spec).
 // One machine per saga type; H.3 renewal (babelstone-mtto) registers its own alongside.
@@ -49,7 +59,43 @@ builder.Services.AddSingleton(sp => new SagaAdvanceHandler(
     StartEventType = ConstitutionProcess.ConstitutionRequested,
 });
 
+// The schema migration runs FIRST (registered before the consume loop): hosted services start in
+// registration order, so the saga schema is applied before the consumer can write its first dedup
+// row. Idempotent — a boot with nothing pending is a no-op (the MigrationRunner ledger guards it).
 builder.Services.AddHostedService(sp => new SagaMigrationHostedService(migrationConnectionString));
+
+// The Redpanda consume loop (t7o3.2) — the same hosted-BackgroundService shape the engine's
+// outbox relay and inbox consumer use. Three pieces register here:
+//   • SagaInboxConsumerOptions — the broker endpoint, the consumer group id, and the topics the
+//     constitution saga reacts to (the internal deposits.process.events domain topic, Document 05
+//     §1). The Kafka bootstrap address is a broker ENDPOINT, not a credential — already plaintext in
+//     infra/compose.yaml and the k8s manifests — so it resolves straight from IConfiguration
+//     (Kafka:BootstrapServers via env/appsettings), distinct from the orchestrator runtime DB
+//     credential which goes through the ADR-PC-004 Amendment A1 boundary. The dev default matches the
+//     Redpanda external listener in infra/compose.yaml (localhost:19092).
+//   • SagaConsumeLoop — the impure shell that owns the consumer, the connection/transaction, and the
+//     offset commit (commit AFTER the DB tx → at-least-once delivery, effectively-once advance).
+//   • AddHostedService<SagaInboxConsumerService> — the poll loop that drives the loop with
+//     exponential backoff on a transient failure (the offset stays uncommitted → redelivery).
+var bootstrapServers = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:19092";
+var consumerGroupId = builder.Configuration["Kafka:GroupId"] ?? "babelstone-orchestrator";
+builder.Services.AddSingleton(new SagaInboxConsumerOptions
+{
+    // The runtime connection string must be present to consume: refusing here (rather than at the
+    // first consume) fails fast against a mis-wired deployment, the same stance the migration
+    // hosted service takes. A null/blank value throws a clear ArgumentException on the required-init.
+    ConnectionString = runtimeConnectionString
+        ?? throw new InvalidOperationException(
+            "No orchestrator runtime connection string configured. Set ConnectionStrings:Orchestrator, " +
+            "Orchestrator:ConnectionString, or ORCHESTRATOR_CONNECTION_STRING."),
+    BootstrapServers = bootstrapServers,
+    GroupId = consumerGroupId,
+    Topics = SagaConsumeTopics.ConstitutionProcessTopics,
+});
+builder.Services.AddSingleton(sp => new SagaConsumeLoop(
+    sp.GetRequiredService<SagaInboxConsumerOptions>(),
+    sp.GetRequiredService<SagaAdvanceHandler>()));
+builder.Services.AddHostedService<SagaInboxConsumerService>();
 
 var host = builder.Build();
 await host.RunAsync();
