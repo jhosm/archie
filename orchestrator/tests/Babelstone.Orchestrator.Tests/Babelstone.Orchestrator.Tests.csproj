@@ -12,6 +12,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
     <!-- Real PostgreSQL per the saga persistence tests (ADR-IC-009). The integration tests
          carry [Trait("Category","Integration")]; the default CI lane filters them out and
          the integration lane (Q.1) runs them — the same convention as the engine tests. -->

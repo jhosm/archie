@@ -15,6 +15,9 @@ dependencies = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
+    # Line + branch coverage for the MCP server (Q.y, babelstone-2t16.13). pytest-cov
+    # wraps coverage.py; CI runs it with --cov --cov-branch and emits cobertura XML.
+    "pytest-cov>=5",
 ]
 
 [project.scripts]

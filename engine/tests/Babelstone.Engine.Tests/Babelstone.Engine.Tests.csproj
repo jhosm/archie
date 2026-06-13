@@ -8,6 +8,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
     <PackageReference Include="Testcontainers.PostgreSql" />
     <!-- The A.8 side-effect-freedom test asserts zero rows directly across events/outbox/snapshots. -->
     <PackageReference Include="Npgsql" />

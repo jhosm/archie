@@ -75,6 +75,11 @@ jobs:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('engine/**/*.csproj') }}
           restore-keys: nuget-${{ runner.os }}-
+      - name: Restore local .NET tools (dotnet-coverage for the coverage merge)
+        # engine/.config/dotnet-tools.json pins dotnet-coverage (and stryker); restore it
+        # so the merge step below resolves the tool deterministically (Q.y, babelstone-2t16.13).
+        working-directory: engine
+        run: dotnet tool restore
       - name: Build + unit/analyser tests (ADR-PC-010, ADR-IC-009 unit tier)
         # restore + build (warnings-as-errors via Directory.Build.props) + all test
         # projects, incl. the Roslyn Money analysers. Needs no infrastructure, so it
@@ -83,7 +88,15 @@ jobs:
         # (OBS_RESOURCE_ATTRS / OBS-1) and TelemetrySpanTests (OBS_SPAN_PRODUCT_SEMANTICS / OBS-2)
         # in Babelstone.Engine.Tests run in this step — no new CI job. OBS-4 (traceparent over the
         # bus) is the deferred Integration tier (E.6 lane), per the commitment catalogue.
-        run: dotnet test engine/Babelstone.slnx --configuration Release --nologo --filter "Category!=Integration"
+        #
+        # Q.y (babelstone-2t16.13): line/branch coverage via the XPlat VSTest data collector
+        # (coverlet.collector, pinned centrally). The collector route is deliberate — the
+        # CLR-profiler "dotnet-coverage collect" route silently emits an empty line-rate=1
+        # cobertura on .NET 10. engine/coverlet.runsettings excludes the two pure-kernel
+        # modules from instrumentation so it does not break the ADR-PC-010 §P5 determinism
+        # gate (KernelPurityTests reads the on-disk kernel bytes). Per-project cobertura
+        # files land under coverage/unit/.
+        run: dotnet test engine/Babelstone.slnx --configuration Release --nologo --filter "Category!=Integration" --collect:"XPlat Code Coverage" --settings engine/coverlet.runsettings --results-directory coverage/unit
       - name: Integration tests (Testcontainers tier — E.6, ADR-IC-009)
         # The complementary `--filter "Category=Integration"` lane the unit step
         # above excludes: real PostgreSQL + Redpanda + OpenBao. Testcontainers
@@ -92,8 +105,52 @@ jobs:
         # (from A.1 on), the Redpanda outbox round-trip (E.4), and the
         # constitute→mature API E2E all run here without `make up`. Wiring this lane
         # is what lets ES_ATOMIC_APPEND_OUTBOX flip Planned→Live in the commitment
-        # catalogue (archie-2jum / E.6).
-        run: dotnet test engine/Babelstone.slnx --configuration Release --nologo --filter "Category=Integration"
+        # catalogue (archie-2jum / E.6). Coverage from this tier lifts the baseline
+        # the unit tier alone cannot reach (e.g. Engine.Api, EventStore.Migrations).
+        run: dotnet test engine/Babelstone.slnx --configuration Release --nologo --filter "Category=Integration" --collect:"XPlat Code Coverage" --settings engine/coverlet.runsettings --results-directory coverage/integration
+      - name: Merge per-project cobertura into one report (Q.y)
+        # dotnet-coverage merge stitches every per-project coverage.cobertura.xml (both
+        # tiers) into one repo-wide cobertura. The tool expands the ** glob itself
+        # (cross-platform), so no shell globstar dependency. The merged report is what
+        # the artifact + summary below consume; a fail-closed floor GATE on it is the
+        # documented Phase 2 follow-up (see the PR body), deliberately not wired here.
+        if: ${{ always() }}
+        working-directory: engine
+        run: |
+          if compgen -G "../coverage/*/*/coverage.cobertura.xml" > /dev/null; then
+            dotnet tool run dotnet-coverage merge "../coverage/**/coverage.cobertura.xml" \
+              -f cobertura -o ../coverage/merged.cobertura.xml
+          else
+            echo "::warning::no per-project cobertura reports found — coverage merge skipped"
+          fi
+      - name: Coverage summary (ReportGenerator → step summary)
+        # An informational, NON-blocking summary rendered into the job's GitHub step
+        # summary. This is the advisory threshold posture Phase 1 ships; the blocking
+        # required-check floor is the Phase 2 follow-up (PR body), intentionally not a
+        # required gate yet (adding one to main-protect.json needs maintainer sign-off).
+        if: ${{ always() }}
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.4.7 || true
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          reportgenerator \
+            -reports:coverage/merged.cobertura.xml \
+            -targetdir:coverage/report \
+            -reporttypes:"MarkdownSummaryGithub;Cobertura" || echo "reportgenerator summary skipped"
+          if [ -f coverage/report/SummaryGithub.md ]; then
+            cat coverage/report/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Publish merged coverage artifact (Q.y)
+        # The merged cobertura (and the ReportGenerator HTML/markdown) as a downloadable
+        # CI artifact — the deliverable for Phase 1 (emit + publish). always() so a red
+        # test run still publishes the coverage measured up to the failure.
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-dotnet
+          path: |
+            coverage/merged.cobertura.xml
+            coverage/report/
+          if-no-files-found: warn
 
   pack-validate:
     needs: changes
@@ -110,10 +167,28 @@ jobs:
         # suite carries the PACK_VALIDATE_DEPTH_BUDGETS fitness function and the
         # versioned JSON-contract test. Run from the module dir so fixture paths
         # resolve to /contracts/cue and /packs.
+        #
+        # Q.y (babelstone-2t16.13): statement coverage via `go test -coverprofile`
+        # (Go has no native branch coverage — statement coverage only). The
+        # `go tool cover -func` total is echoed into the GitHub step summary as an
+        # informational, NON-blocking number; the profile is published as an
+        # artifact below. -coverpkg=./... so the profile attributes coverage to
+        # every package in the module, not just the one under test.
         working-directory: pack-validate
         run: |
           go build -trimpath -ldflags "-X main.Version=${GITHUB_SHA::12}" ./...
-          go test ./...
+          go test -coverprofile=coverage.out -covermode=atomic -coverpkg=./... ./...
+          echo "### Go coverage (pack-validate)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          go tool cover -func=coverage.out | tail -1 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish Go coverage artifact (Q.y)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-go
+          path: pack-validate/coverage.out
+          if-no-files-found: warn
       - name: Go vulnerability scan (govulncheck — Go-native SCA gate, ADR-IC-014 Q.7c)
         # The Go twin of .NET's NuGetAudit (which gates the engine build). Reachability-based:
         # fails only on advisories actually called from this module's code, so it is low-noise
@@ -239,12 +314,25 @@ jobs:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4 # pins Python from mise.toml (3.14, ADR-IC-010)
       - name: Build + contract tests (ADR-IC-010, ADR-IC-013)
+        # Q.y (babelstone-2t16.13): line + branch coverage via pytest-cov
+        # (--cov --cov-branch). Cobertura XML is emitted for the artifact below and a
+        # one-line total is rendered into the GitHub step summary — informational only,
+        # not a blocking gate (the floor is the Phase 2 follow-up in the PR body).
         working-directory: mcp-server
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install -e ".[dev]"
-          .venv/bin/python -m pytest -q
+          .venv/bin/python -m pytest -q \
+            --cov=babelstone_mcp --cov-branch \
+            --cov-report=xml:coverage.xml --cov-report=term
+      - name: Publish Python coverage artifact (Q.y)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-python
+          path: mcp-server/coverage.xml
+          if-no-files-found: warn
 
   notification:
     needs: changes
