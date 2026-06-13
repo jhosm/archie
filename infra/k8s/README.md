@@ -2,7 +2,7 @@
 
 Kustomize manifests for the deployed **backing-infra** stack, per
 [ADR-IC-013 §D2](../../docs/product-management/integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md)
-(IaC subtree co-located in the monorepo). These deploy the **same 9 services**
+(IaC subtree co-located in the monorepo). These deploy the **same 10 services**
 as [`infra/compose.yaml`](../compose.yaml) to a Kubernetes cluster, shaped for a
 single **dev / staging** environment.
 
@@ -33,6 +33,7 @@ application/engine service images (they connect to this stack).
 | otel-collector | Deployment | 4317, 4318, 13133 | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | registry | StatefulSet + PVC | 5000 | [ADR-PC-007](../../docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md) |
 | eventcatalog (catalogue portal host) | Deployment | 80 | [ADR-IC-015](../../docs/product-management/integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) (supersedes ADR-IC-008); host deploy deferred — bd babelstone-s4ol.1 |
+| core-acl-stub (v1 Core-ACL settlement stub) | Deployment | 8080 | [ADR-PC-016](../../docs/product-management/product_concepts/adrs/ADR-PC-016-legacy-current-account-adapter.md) / [ADR-PC-029](../../docs/product-management/product_concepts/adrs/ADR-PC-029-engine-command-ingress.md) — WireMock; real ACL is DEF-1 (bd babelstone-ub9s) |
 
 All Services are `ClusterIP` (dev: reach them via `kubectl port-forward`).
 Ingress/gateway exposure beyond Kong is out of scope.

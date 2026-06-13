@@ -60,21 +60,15 @@ public sealed class EarlyTerminationHappyPathTests(ConstitutionFixture fixture)
         Assert.Equal(4, await fixture.CountAsync("events", "stream_id", depositId));
         Assert.Equal(4, await fixture.CountAsync("outbox", "aggregate_id", depositId));
 
-        // The legacy-settlement legs: debit the principal at constitution, credit the NET settlement
-        // (not the full principal) at the early break.
-        Assert.Collection(
-            settlement.Instructions,
-            debit =>
-            {
-                Assert.Equal(SettlementDirection.Debit, debit.Direction);
-                Assert.Equal(new Money(1_000_000), debit.Amount);
-            },
-            credit =>
-            {
-                Assert.Equal(SettlementDirection.Credit, credit.Direction);
-                Assert.Equal(new Money(1_001_100), credit.Amount);
-                Assert.Equal("early_termination", credit.Reason);
-            });
+        // The legacy-settlement legs (bd babelstone-t7o3.4): the CONSTITUTION path is de-settled — its
+        // principal debit is now the saga's gated step (ADR-PC-016 §68/§127), so it no longer leads.
+        // Early termination keeps its eager credit for now (its own saga has not landed): the NET
+        // settlement (not the full principal) at the break is the only settlement leg here.
+        Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "constitution");
+        var credit = Assert.Single(settlement.Instructions);
+        Assert.Equal(SettlementDirection.Credit, credit.Direction);
+        Assert.Equal(new Money(1_001_100), credit.Amount);
+        Assert.Equal("early_termination", credit.Reason);
     }
 
     [Fact]

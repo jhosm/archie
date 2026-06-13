@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "comment": "ReverseCoreDebit -> late-compensation domain reversal accepted (Document 05 Scenario B; ADR-IC-003 P6). The two-movement compensating credit that reverses a confirmed debit -- a domain action, never a rollback."
+  },
+  "priority": 5,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/debits/reverse"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "debit": "reversed" }
+  }
+}

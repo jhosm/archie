@@ -75,14 +75,15 @@ public sealed class ConstitutionPreconditionTests(ConstitutionFixture fixture)
             [TermDepositDecider.PreconditionSalaryDomiciled] = new(true, "ref-002", EvaluatedAt),
         }));
 
-        // All required verdicts satisfied ⇒ a normal constitution: the deposit is Active and the
-        // principal was debited (settlement fired).
+        // All required verdicts satisfied ⇒ a normal constitution: the deposit is Active and
+        // DepositConstituted was appended. Per bd babelstone-t7o3.4 the constitution path is now
+        // DE-SETTLED — the principal debit is the saga's gated ReserveAccountBalance→ConfirmDebit step
+        // (ADR-PC-016 §68/§127), NOT an eager in-engine debit — so NO settlement leg fires here, exactly
+        // as in the refusal case above (the difference is the deposit is Active, not Failed).
         var hydrated = await runtime.LoadAsync(depositId);
         Assert.Equal(DepositLifecycle.Active, hydrated.State.Lifecycle);
         await fixture.EventIdAsync(depositId, "term_deposit.DepositConstituted"); // throws if absent
-        var debit = Assert.Single(settlement.Instructions);
-        Assert.Equal(SettlementDirection.Debit, debit.Direction);
-        Assert.Equal("constitution", debit.Reason);
+        Assert.Empty(settlement.Instructions);
     }
 
     private static ConstituteDepositCommand Command(

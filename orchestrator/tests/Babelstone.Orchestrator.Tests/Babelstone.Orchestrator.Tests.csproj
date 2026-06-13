@@ -29,6 +29,10 @@
          babelstone-t7o3.3): the dispatcher delivers commands over HTTP, so the test host wires the
          same client factory the production Program.cs does. -->
     <PackageReference Include="Microsoft.Extensions.Http" />
+    <!-- WireMock.Net (bd babelstone-t7o3.4): the in-process Core-ACL settlement stub the gated-
+         settlement integration test points the dispatcher's SettlementBaseUrl at (the v1 stub; the
+         real ACL is DEF-1, bd ub9s). Test-only — it does NOT widen the runtime orchestrator graph. -->
+    <PackageReference Include="WireMock.Net" />
   </ItemGroup>
 
   <ItemGroup>

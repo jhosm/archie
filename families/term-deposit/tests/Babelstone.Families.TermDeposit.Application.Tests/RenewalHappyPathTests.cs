@@ -79,10 +79,14 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         var newConstitutionCausation = await fixture.FirstEventCausationIdAsync(newDepositId);
         Assert.Equal(maturedEventId, newConstitutionCausation);
 
-        // Settlement legs: constitution debit, maturity credit (principal+net out), rollover debit (back in).
+        // Settlement legs (bd babelstone-t7o3.4): the standalone CONSTITUTION path is de-settled — its
+        // principal debit is now the saga's gated step (ADR-PC-016 §68/§127), so it no longer leads the
+        // sequence. The RENEWAL path keeps its eager legs for now (its own saga has not landed): the
+        // closing maturity credit (principal+net out) and the rollover debit (the rolled-over principal
+        // back into the new instance).
+        Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "constitution");
         Assert.Collection(
             settlement.Instructions,
-            debit => Assert.Equal("constitution", debit.Reason),
             maturity =>
             {
                 Assert.Equal(SettlementDirection.Credit, maturity.Direction);

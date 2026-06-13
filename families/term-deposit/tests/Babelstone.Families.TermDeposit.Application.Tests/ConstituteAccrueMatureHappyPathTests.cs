@@ -55,21 +55,16 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         Assert.Equal(4, await fixture.CountAsync("events", "stream_id", depositId));
         Assert.Equal(4, await fixture.CountAsync("outbox", "aggregate_id", depositId));
 
-        // The legacy-settlement legs: debit the principal at constitution, credit the payout at maturity.
-        Assert.Collection(
-            settlement.Instructions,
-            debit =>
-            {
-                Assert.Equal(SettlementDirection.Debit, debit.Direction);
-                Assert.Equal(new Money(1_000_000), debit.Amount);
-                Assert.Equal("constitution", debit.Reason);
-            },
-            credit =>
-            {
-                Assert.Equal(SettlementDirection.Credit, credit.Direction);
-                Assert.Equal(new Money(1_021_900), credit.Amount);
-                Assert.Equal("maturity", credit.Reason);
-            });
+        // The legacy-settlement legs (bd babelstone-t7o3.4): the CONSTITUTION path is now de-settled —
+        // it appends DepositConstituted only, with NO in-engine money leg (the principal debit is the
+        // saga's gated ReserveAccountBalance→ConfirmDebit step, ADR-PC-016 §68/§127). The maturity credit
+        // is still eager (its own saga has not landed yet), so the only settlement leg here is maturity.
+        var credit = Assert.Single(settlement.Instructions);
+        Assert.Equal(SettlementDirection.Credit, credit.Direction);
+        Assert.Equal(new Money(1_021_900), credit.Amount);
+        Assert.Equal("maturity", credit.Reason);
+        // No "constitution" debit leg rode the engine's constitution append.
+        Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "constitution");
     }
 
     [Fact]
@@ -133,12 +128,13 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         Assert.Equal(15, await fixture.CountAsync("events", "stream_id", depositId));
         Assert.Equal(15, await fixture.CountAsync("outbox", "aggregate_id", depositId));
 
-        // Settlement legs: debit principal, 11 coupon credits (each the coupon net), then the maturity credit.
-        Assert.Equal(SettlementDirection.Debit, settlement.Instructions[0].Direction);
-        Assert.Equal(new Money(49_900_000), settlement.Instructions[0].Amount);
-        Assert.Equal("constitution", settlement.Instructions[0].Reason);
-        Assert.Equal(13, settlement.Instructions.Count); // 1 debit + 11 coupon credits + 1 maturity credit
-        Assert.All(settlement.Instructions.Skip(1).Take(11), c =>
+        // Settlement legs (bd babelstone-t7o3.4): the constitution path is now de-settled (NO principal
+        // debit on the engine append — that is the saga's gated step, ADR-PC-016 §68/§127). The coupon
+        // and maturity credits are still eager (their own sagas have not landed), so the legs are the
+        // 11 coupon credits then the maturity credit — 12, not 13.
+        Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "constitution");
+        Assert.Equal(12, settlement.Instructions.Count); // 11 coupon credits + 1 maturity credit
+        Assert.All(settlement.Instructions.Take(11), c =>
         {
             Assert.Equal(SettlementDirection.Credit, c.Direction);
             Assert.Equal("coupon", c.Reason);
@@ -147,7 +143,7 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         Assert.Equal(new Money(49_900_000 + 100_549), settlement.Instructions[^1].Amount);
 
         // The 11 paid-out coupon nets sum to the running net minus the final-at-maturity coupon (100,549).
-        var couponCreditTotal = settlement.Instructions.Skip(1).Take(11).Sum(c => c.Amount.Cents);
+        var couponCreditTotal = settlement.Instructions.Take(11).Sum(c => c.Amount.Cents);
         Assert.Equal(1_183_881L - 100_549L, couponCreditTotal);
     }
 
@@ -192,27 +188,17 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         Assert.Equal(3, await fixture.CountAsync("events", "stream_id", depositId));
         Assert.Equal(3, await fixture.CountAsync("outbox", "aggregate_id", depositId));
 
-        // Settlement: debit principal, credit the upfront interest net at t=0, credit the principal at maturity.
-        Assert.Collection(
-            settlement.Instructions,
-            debit =>
-            {
-                Assert.Equal(SettlementDirection.Debit, debit.Direction);
-                Assert.Equal(new Money(1_000_000), debit.Amount);
-                Assert.Equal("constitution", debit.Reason);
-            },
-            advance =>
-            {
-                Assert.Equal(SettlementDirection.Credit, advance.Direction);
-                Assert.Equal(new Money(21_900), advance.Amount);
-                Assert.Equal("advance_interest", advance.Reason);
-            },
-            maturity =>
-            {
-                Assert.Equal(SettlementDirection.Credit, maturity.Direction);
-                Assert.Equal(new Money(1_000_000), maturity.Amount);
-                Assert.Equal("maturity", maturity.Reason);
-            });
+        // Settlement (bd babelstone-t7o3.4): the constitution path is de-settled — NEITHER the principal
+        // debit NOR the ADVANCE upfront-interest credit rides the engine's constitution append; both are
+        // the saga's gated money legs (ADR-PC-016 §68/§127). The upfront InterestPaid EVENT still appends
+        // (interest IS recognised at t=0, asserted above), only its money leg is relocated. The maturity
+        // credit is still eager, so it is the only settlement leg here.
+        Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "constitution");
+        Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "advance_interest");
+        var maturity = Assert.Single(settlement.Instructions);
+        Assert.Equal(SettlementDirection.Credit, maturity.Direction);
+        Assert.Equal(new Money(1_000_000), maturity.Amount);
+        Assert.Equal("maturity", maturity.Reason);
     }
 
     /// <summary>

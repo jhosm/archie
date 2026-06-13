@@ -7,8 +7,9 @@ namespace Babelstone.Families.TermDeposit.Application;
 
 /// <summary>
 /// The term-deposit decider's impure orchestration (ADR-PC-021): it resolves the rate sheet
-/// and pack primitives, calls the pure <see cref="TermDepositDecider"/>, settles the money leg,
-/// and appends through the runtime. It depends only on generic engine ports
+/// and pack primitives, calls the pure <see cref="TermDepositDecider"/>, settles the money leg
+/// (for the lifecycle steps whose own sagas have not yet landed — constitution is now DE-SETTLED,
+/// bd babelstone-t7o3.4), and appends through the runtime. It depends only on generic engine ports
 /// (<see cref="AggregateRuntime{TState}"/>, <see cref="IRateSheetStore"/>, <see cref="ISettlementPort"/>)
 /// plus the pinned <see cref="VerifiedPack"/> — the dependency arrow is family→engine, never the
 /// reverse (ADR-PC-021 §D2).
@@ -43,11 +44,15 @@ public sealed class TermDepositConstitutionService(
         requiredPreconditions ?? Array.Empty<string>();
 
     /// <summary>
-    /// Constitute a deposit: resolve the active rate sheet, stamp the TAN + version id, debit
-    /// the principal, and append <c>DepositConstituted</c> as the stream's first event. For the
-    /// ADVANCE variant it ALSO accrues + withholds the full-term interest at t=0 and credits the
-    /// upfront net to the funding account (02 §2.1 <c>CF(0) = -C + J</c>), appending the upfront
-    /// <c>InterestPaid</c> triple alongside the constitution event in the same first transaction.
+    /// Constitute a deposit: resolve the active rate sheet, stamp the TAN + version id, and append
+    /// <c>DepositConstituted</c> as the stream's first event. The path is DE-SETTLED (bd
+    /// babelstone-t7o3.4): the principal debit is NOT done here — it is the constitution saga's gated
+    /// step (ReserveAccountBalance→ConfirmDebit against the Core ACL, ADR-PC-016 §68/§127 / ADR-PC-029
+    /// slot 2). The engine command DECIDES + APPENDS only; no money leg rides this path. For the ADVANCE
+    /// variant it ALSO accrues + withholds the full-term interest at t=0 (02 §2.1 <c>CF(0) = -C + J</c>)
+    /// and appends the upfront <c>InterestPaid</c> triple alongside the constitution event in the same
+    /// first transaction — the interest IS recognised in the engine's books at t=0, but its money leg is
+    /// likewise the saga's gated credit, not an eager in-engine settle.
     /// </summary>
     /// <returns>The new stream's head version (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
     public async Task<long> ConstituteAsync(ConstituteDepositCommand command, CancellationToken ct = default)
@@ -82,28 +87,25 @@ public sealed class TermDepositConstitutionService(
         // 3. Decide (pure): build the event, stamping the resolved TAN + the version it came from.
         var constituted = TermDepositDecider.DecideConstitution(command, tan, resolution.RateSheetVersionId);
 
-        // 4. Settle (ADR-PC-016): debit the principal from the funding account before recording it.
-        await settlement.SettleAsync(
-            new SettlementInstruction(
-                command.DepositId, SettlementDirection.Debit, constituted.Principal,
-                command.FundingAccount, "constitution"),
-            ct);
-
-        // 5. ADVANCE pays the full-term interest up front (t=0). Decide the upfront accrual+withholding
-        //    off the just-constituted position, credit the net, and append the InterestPaid triple in
-        //    the same first transaction as DepositConstituted (one atomic stream open).
+        // 4. DE-SETTLED constitution (bd babelstone-t7o3.4, ADR-PC-016 §68/§127). The engine no longer
+        //    debits the funding account on this path: settlement is the constitution SAGA's GATED step
+        //    (the orchestrator decides ReserveAccountBalance→ConfirmDebit, the dispatcher delivers them
+        //    to the Core ACL — ADR-PC-029 slot 2 "the engine-bound command is de-settled: it appends
+        //    only"). The engine command DECIDES + APPENDS only — no money leg rides this path. The other
+        //    lifecycle steps (maturity, coupon, early termination, renewal) still settle eagerly here
+        //    until their own sagas land; only the constitution path is relocated.
+        //
+        // 5. ADVANCE recognises the full-term interest at t=0 (CF(0) = -C + J). The upfront InterestPaid
+        //    TRIPLE is still appended in the same first transaction (the interest IS recognised in the
+        //    engine's books at constitution) — but its MONEY leg, like the principal debit, is now the
+        //    saga's gated credit, not an eager in-engine settle. We decide the triple (pure) and append it;
+        //    we do NOT call settlement here.
         var events = new List<DomainEvent> { constituted };
         if (command.InterestVariant == TermDepositDecider.Advance)
         {
             var (dayCount, withholdingBps) = ResolvePrimitives();
             var position = FoldHead(constituted);
             var advance = TermDepositDecider.DecideAdvance(position, dayCount, withholdingBps);
-            var paid = (InterestPaid)advance[^1];
-            await settlement.SettleAsync(
-                new SettlementInstruction(
-                    command.DepositId, SettlementDirection.Credit, paid.NetInterest,
-                    command.FundingAccount, "advance_interest"),
-                ct);
             events.AddRange(advance);
         }
 
