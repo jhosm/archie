@@ -49,20 +49,34 @@ public static class ProcessApiEndpoints
         EdgeOptions options,
         CancellationToken ct)
     {
-        // Light edge validation (Document 05 §Step 0 step 5): a structurally invalid request is
-        // rejected here, the application never starts a saga for it. client_id is required — it is
-        // the owning client the SSE read enforces against.
-        if (request is null || string.IsNullOrWhiteSpace(request.ClientId))
+        // Light edge validation (Document 05 §Step 0 step 5): a structurally malformed request is
+        // rejected here — the application never starts a saga for it.
+        if (request is null)
         {
             return Results.Problem(
                 statusCode: StatusCodes.Status400BadRequest,
-                title: "client_id is required to constitute a deposit.");
+                title: "A constitution request body is required.");
         }
 
-        // STARTS the saga (NOT a direct engine append): creates the ConstitutionProcess STARTED row,
-        // drives the first transition, emits the parallel commands — all in one transaction, nothing
-        // on the bus. The 202 means the SAGA started (Document 05 §Step 0).
-        var result = await starter.StartAsync(options.ConnectionString, request.ClientId, correlationId: null, ct);
+        // AUTHZ (ADR-IC-006 §P4 / Document 05 §Step 0): the owning client is the GATEWAY-ATTESTED
+        // caller — the signed client_id Kong propagates as EdgeAuth.ClientIdHeader — NOT a
+        // client-supplied body field. Binding the owner to the body would let any caller start a saga
+        // owned by an arbitrary client_id, defeating the SSE read's ownership check (which binds to
+        // this same attested header). Only Kong-fronted, mTLS-authenticated traffic reaches the
+        // orchestrator (ADR-IC-006 §P5), so an absent header means the request did not come through
+        // the gateway — reject it rather than start an unattributable saga.
+        var caller = context.Request.Headers[EdgeAuth.ClientIdHeader].ToString();
+        if (string.IsNullOrWhiteSpace(caller))
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status403Forbidden,
+                title: "Missing gateway-attested caller identity.");
+        }
+
+        // STARTS the saga (NOT a direct engine append): creates the ConstitutionProcess STARTED row
+        // owned by the attested caller, drives the first transition, emits the parallel commands —
+        // all in one transaction, nothing on the bus. The 202 means the SAGA started (Document 05 §Step 0).
+        var result = await starter.StartAsync(options.ConnectionString, caller, correlationId: null, ct);
 
         var stream = StreamUrlFor(result.PublicProcessId);
         return Results.Accepted(

@@ -47,16 +47,8 @@ public sealed class EdgeProcessApiIntegrationTests(OrchestratorPostgresFixture f
         await using var edge = NewEdge();
         using var client = edge.Client();
 
-        var response = await client.PostAsJsonAsync(
-            "/api/v1/deposits/constitute",
-            new
-            {
-                client_id = OwningClient,
-                product_code = "TD-TRAD-12M",
-                amount = 1_000_000,
-                source_account_ref = "acct-ref-001",
-                interest_account_ref = "acct-ref-001",
-            });
+        // The owning client is the gateway-attested caller (X-Client-Id), NOT a body field.
+        using var response = await PostConstituteAsync(client, attestedClientId: OwningClient);
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
 
@@ -81,6 +73,22 @@ public sealed class EdgeProcessApiIntegrationTests(OrchestratorPostgresFixture f
         Assert.Equal(
             new[] { ConstitutionProcess.ReserveAccountBalance, ConstitutionProcess.ValidateProductLimits },
             await OutboxCommandsAsync(saga.ProcessId));
+    }
+
+    [Fact]
+    public async Task Post_constitute_without_the_gateway_attested_client_id_is_403()
+    {
+        // ADR-IC-006 §P4 / §P5: the owning client is the gateway-attested caller (X-Client-Id),
+        // never a client-supplied body field. A request that did NOT come through Kong (no attested
+        // header) must not start a saga owned by an arbitrary/unattributable client_id — otherwise a
+        // caller could mint a saga under any owner and the SSE read's ownership check (bound to this
+        // same header) would be meaningless.
+        await using var edge = NewEdge();
+        using var client = edge.Client();
+
+        using var response = await PostConstituteAsync(client, attestedClientId: null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
     [Fact]
@@ -151,19 +159,32 @@ public sealed class EdgeProcessApiIntegrationTests(OrchestratorPostgresFixture f
 
     private static async Task<string> StartProcessAsync(HttpClient client)
     {
-        var response = await client.PostAsJsonAsync(
-            "/api/v1/deposits/constitute",
-            new
+        using var response = await PostConstituteAsync(client, attestedClientId: OwningClient);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return body.GetProperty("process_id").GetString()!;
+    }
+
+    // POST the constitution request, attaching the gateway-attested caller as the X-Client-Id header
+    // (what Kong propagates, ADR-IC-006 §P5) when supplied. The owning client is taken from that
+    // header, NOT the body — so the body carries only the deposit references.
+    private static Task<HttpResponseMessage> PostConstituteAsync(HttpClient client, string? attestedClientId)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/deposits/constitute")
+        {
+            Content = JsonContent.Create(new
             {
-                client_id = OwningClient,
                 product_code = "TD-TRAD-12M",
                 amount = 1_000_000,
                 source_account_ref = "acct-ref-001",
                 interest_account_ref = "acct-ref-001",
-            });
-        response.EnsureSuccessStatusCode();
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        return body.GetProperty("process_id").GetString()!;
+            }),
+        };
+        if (attestedClientId is not null)
+        {
+            request.Headers.Add(EdgeAuth.ClientIdHeader, attestedClientId);
+        }
+        return client.SendAsync(request);
     }
 
     private async Task DriveToTerminalAsync(Guid processId)
