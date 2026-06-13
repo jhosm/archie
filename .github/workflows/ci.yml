@@ -49,6 +49,13 @@ jobs:
             notification: ['notification/**']
             product_configs: ['product-configs/**']
             packs: ['packs/**']
+            # /rate-sheets is the home for versioned rate-sheet DATA on the treasury/ALM
+            # cadence (ADR-PC-019 §P1; CODEOWNERS treasury/ALM), still a README stub today.
+            # This filter already scopes that whole subtree, so the job below fires the moment
+            # data lands — no widening is needed for the data deliverable (bd babelstone-2t16.22).
+            # NB the rate-sheet storage + deploy API (the OTHER half of ADR-PC-008, C.6 /
+            # Babelstone.RateSheets[.Api]) lives under engine/** and is already built+tested by
+            # the `engine` job above — it is NOT what this job covers.
             rate_sheets: ['rate-sheets/**']
             infra: ['infra/**']
             docs: ['docs/**', '*.md', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
@@ -300,12 +307,22 @@ jobs:
 
   rate-sheets:
     needs: changes
+    # Path-scoped to rate-sheets/** (the changes filter above). That tree is still a README
+    # stub: per ADR-PC-019 §P1 it holds versioned rate-sheet DATA on the treasury/ALM cadence,
+    # which has not landed (the reserved config-data split, ADR-PC-019 Candidate C / §P2). So
+    # this job stays a logged no-op — not silent — until the data and its schema-validation
+    # tooling exist; the filter already covers the whole subtree, so it fires the moment they do.
+    # Scope note: the rate-sheet storage + deploy API (the other half of ADR-PC-008, C.6) is
+    # already built+tested by the `engine` job (Babelstone.RateSheets[.Api] under engine/**) —
+    # this job is for the DATA deliverable only, not that tooling (bd babelstone-2t16.22).
     if: ${{ needs.changes.outputs.rate_sheets == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - name: Validate rate-sheet schema (ADR-PC-008)
-        run: echo "TODO - rate-sheet schema validation; lands with rate-sheet tooling"
+        # Real rate-sheet schema validation lands with the rate-sheet data tooling; logged, never
+        # a silent pass (the product-configs job uses the same "no artefacts yet ⇒ log" pattern).
+        run: echo "no rate-sheet data in rate-sheets/ yet — schema validation lands with the rate-sheet data tooling (ADR-PC-008)"
 
   infra:
     needs: changes
