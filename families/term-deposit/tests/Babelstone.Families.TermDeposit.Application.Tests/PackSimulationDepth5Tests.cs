@@ -44,7 +44,7 @@ namespace Babelstone.Families.TermDeposit.Application.Tests;
 /// <c>expected-events.yaml</c> as the generated artefact this gate would regenerate and
 /// compare against. The bus-published Avro codec enforces strict C#↔.avsc parity and has no
 /// array-of-record support (see <see cref="DepositConstituted"/> remarks), so serialising a
-/// full per-event payload corpus is bus-contract-widening work tracked separately. This gate
+/// full per-event payload corpus is bus-contract-widening work tracked separately (bd babelstone-vcxq). This gate
 /// therefore asserts the structural EVENT-TYPE sequence each interest shape emits — the
 /// regression-meaningful "did the engine produce the right lifecycle shape from the pack" —
 /// rather than a byte corpus; <c>expected-events.yaml</c> stays the logged-skip placeholder
