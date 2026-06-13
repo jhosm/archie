@@ -41,6 +41,25 @@ public sealed record Hydrated<TState>(
 /// meet. The injected <see cref="TimeProvider"/> stamps transaction_time — handlers
 /// stay pure, the runtime owns the clock (ADR-PC-010 §P5).
 /// </summary>
+/// <param name="serializer">
+/// The STORE codec — encodes each event for the <c>events.payload</c> book of record and decodes it
+/// back on replay/fold. Per ADR-PC-028 this is the self-describing JSON store codec: the book of record
+/// is decodable with NO Schema Registry (EVENT_STORE_PAYLOAD_SELF_DESCRIBING). It is also the ONLY
+/// decode path (<see cref="FoldAsync"/> reads <c>events.payload</c> through it), so the bus codec never
+/// touches the store / replay path — the family-agnostic kernel stays registry-free.
+/// </param>
+/// <param name="busSerializer">
+/// The BUS codec — encodes a CATALOGUED event for its <c>outbox.payload</c> as real Avro plus the
+/// registered Schema-Registry <c>schema_id</c> (ADR-IC-002 §P3 / ADR-IC-004 §P3). When non-null the
+/// append DUAL-ENCODES inside the one sink transaction (ADR-PC-028 §Decision): JSON → store, Avro →
+/// outbox. Both encodings describe the same event (STORE_BUS_ENCODING_EQUIVALENCE). When <c>null</c>
+/// the outbox reuses <paramref name="serializer"/> for its bytes + <c>schema_id</c> — the pre-split
+/// single-codec behaviour, so engine-internal/test wiring that hands one codec is unchanged. The
+/// bus-encode runs ONLY where a catalogued event builds an outbox row, so an uncatalogued (store-only)
+/// event never triggers it. This is an <see cref="IEventSerializer"/> like the store codec — the
+/// concrete Avro/SR codec is injected by the host (Babelstone.Engine.Avro), so the kernel names neither
+/// Avro nor the Schema Registry (ENGINE_FAMILY_AGNOSTIC + EVENT_STORE_PAYLOAD_SELF_DESCRIBING hold).
+/// </param>
 public sealed class AggregateRuntime<TState>(
     IEventStore store,
     IEventSink sink,
@@ -51,8 +70,16 @@ public sealed class AggregateRuntime<TState>(
     Func<TState> seedState,
     SnapshotStore<TState>? snapshots = null,
     IPostCommitProjector? postCommitProjector = null,
-    IIntegrationEventCatalog? integrationEventCatalog = null)
+    IIntegrationEventCatalog? integrationEventCatalog = null,
+    IEventSerializer? busSerializer = null)
 {
+    // The bus (outbox) encoder. Defaults to the STORE codec so existing single-codec wiring is
+    // unchanged; the production host injects the real Avro+SR codec to make the outbox carry real Avro
+    // bytes + a registered schema_id while the store keeps self-describing JSON (ADR-PC-028 §Decision /
+    // STORE_BUS_ENCODING_EQUIVALENCE). It is an IEventSerializer (the kernel's family-agnostic,
+    // Avro-library-agnostic seam) — the kernel never names Avro or the Schema Registry.
+    private readonly IEventSerializer _busSerializer = busSerializer ?? serializer;
+
     // The catalog-gated-relay membership test (ADR-IC-017 §P1 / INTEGRATION_EVENT_CATALOG_GATED). The
     // append always writes the events-envelope row (so EVERY event is appended, folded, replayable), but
     // an OUTBOX row — the only thing the relay can ever publish — is written ONLY for a catalogued
@@ -197,7 +224,11 @@ public sealed class AggregateRuntime<TState>(
             }
 
             var protectedEvent = await protector.ProtectAsync(events[i], ct);
-            var encoded = serializer.Encode(protectedEvent);
+            // STORE encode (ADR-PC-028 §Decision): the events.payload book of record is self-describing
+            // JSON, decodable with no Schema Registry (EVENT_STORE_PAYLOAD_SELF_DESCRIBING). This is also
+            // the SOLE decode path — FoldAsync reads events.payload back through `serializer` — so the bus
+            // codec never touches the store / replay path.
+            var storeEncoded = serializer.Encode(protectedEvent);
             var eventId = Guid.NewGuid();
             var sequence = expectedVersion + 1 + i;
 
@@ -216,8 +247,8 @@ public sealed class AggregateRuntime<TState>(
                 CausationId: context.CausationId,
                 CorrelationId: context.CorrelationId,
                 Actor: context.Actor,
-                Payload: encoded.Bytes,
-                PayloadSchemaId: encoded.SchemaId));
+                Payload: storeEncoded.Bytes,
+                PayloadSchemaId: storeEncoded.SchemaId));
 
             // Catalog-gated relay (ADR-IC-017 §P1): the envelope above is ALWAYS written, but the outbox
             // row — the relay's only publishable artefact — is written ONLY for a catalogued integration
@@ -227,14 +258,24 @@ public sealed class AggregateRuntime<TState>(
             // sink transaction below. Fail-closed: a not-catalogued event_type simply gets no outbox row.
             if (_integrationEventCatalog.IsCataloguedIntegrationEvent(registration.EventType))
             {
+                // BUS encode (ADR-PC-028 §Decision dual-encode / STORE_BUS_ENCODING_EQUIVALENCE): the
+                // outbox row carries the BUS codec's bytes + its registered schema_id (real Avro +
+                // schema_id from the host's Avro+SR codec; ADR-IC-002 §P3 / ADR-IC-004 §P3), NOT the
+                // store's JSON. The encode runs HERE — only for a catalogued event, the exact place an
+                // outbox row exists — so an uncatalogued (store-only) event never bus-encodes (and a
+                // catalogued event by definition HAS an .avsc, so the Avro encode always succeeds). When
+                // no separate bus codec was injected, _busSerializer == `serializer`, reproducing the
+                // pre-split single-encoding. Both encodes feed the ONE sink transaction below
+                // (ES_ATOMIC_APPEND_OUTBOX preserved).
+                var busEncoded = _busSerializer.Encode(protectedEvent);
                 outboxRows.Add(new OutboxRow(
                     EventId: eventId,
                     AggregateType: context.Family,
                     AggregateId: streamId,
                     SequenceNumber: sequence,
                     EventType: registration.EventType,
-                    Payload: encoded.Bytes,
-                    SchemaId: encoded.SchemaId,
+                    Payload: busEncoded.Bytes,
+                    SchemaId: busEncoded.SchemaId,
                     Status: OutboxStatus.Pending,
                     CreatedAt: transactionTime,
                     PublishedAt: null));

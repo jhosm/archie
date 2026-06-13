@@ -137,10 +137,18 @@ builder.Services.AddSingleton<IProjectionCheckpointStore>(_ => new PostgresProje
 // read-model runner over it (TermDepositHostModule), folding the same deposit-position state the
 // live read path computes into the flat read-model row the I.2 Query API serves.
 builder.Services.AddSingleton<IDepositReadModelStore>(_ => new PostgresDepositReadModelStore(connectionString));
-// The JSON dev codec + null PII protector; the Avro + Schema-Registry codec (E.4,
-// Babelstone.Engine.Avro) is the production wiring follow-up.
+// The dual-encode split (ADR-PC-028 §Decision / STORE_BUS_ENCODING_EQUIVALENCE, bd babelstone-36mk):
+//   • STORE codec — the self-describing JSON JsonEventSerializer fills events.payload (the book of
+//     record, decodable with NO Schema Registry — EVENT_STORE_PAYLOAD_SELF_DESCRIBING). It is the
+//     runtime's `serializer` (and its sole decode/replay path), UNCHANGED.
+//   • BUS codec — registered IFF Bus:Encoding=avro: real Avro + a registered Schema-Registry schema_id
+//     (Babelstone.Engine.Avro) fills outbox.payload. Built lazily (the SR round-trip happens on first
+//     resolve), so the default JSON posture boots with no Schema Registry. The family modules thread
+//     the optional BusEventSerializer into their AggregateRuntime as `busSerializer`; with none
+//     registered the outbox reuses the JSON store codec (the pre-split single-encoding).
 builder.Services.AddSingleton<IEventSerializer, JsonEventSerializer>();
 builder.Services.AddSingleton<IPiiProtector, NullPiiProtector>();
+HostBusEncoding.AddBusEncoding(builder.Services, builder.Configuration);
 
 // Catalog-gated relay (ADR-IC-017 §P1 / INTEGRATION_EVENT_CATALOG_GATED): the engine publishes an
 // event onto the durable bus IFF it is a catalogued integration event. The governed embedded-schema
