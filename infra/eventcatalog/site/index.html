@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>babelstone — EventCatalog host</title>
+  <title>babelstone — catalogue portal host</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 46rem; margin: 4rem auto; padding: 0 1.5rem; line-height: 1.6; color: #1a1a2e; }
     code { background: #f0f0f5; padding: 0.1rem 0.35rem; border-radius: 4px; }
@@ -11,17 +11,24 @@
   </style>
 </head>
 <body>
-  <h1>EventCatalog — static-site host</h1>
-  <p>This is the local <strong>EventCatalog static-site host</strong> (ADR-IC-008). It serves
+  <h1>Catalogue portal — static-site host</h1>
+  <p>This is the local <strong>catalogue portal static-site host</strong> (P.5). It serves
      whatever static site is built into this directory.</p>
   <div class="note">
-    <p><strong>No catalog yet.</strong> The EventCatalog build — importing the AsyncAPI
-       specs that describe each integration event — is produced by <strong>Epic G.4</strong>,
-       which writes its static output here. This host (P.5) is only the serving mechanism,
-       mirroring how the OCI registry hosts packs whose content arrives with Epic C.4/C.5.</p>
+    <p><strong>No portal yet.</strong> <strong>Epic G.4</strong> (PR #110) superseded
+       <strong>ADR-IC-008</strong> (EventCatalog) with <strong>ADR-IC-015</strong>: the chosen
+       portal is now <strong>Backstage</strong>, and the portal-host deployment is explicitly
+       deferred to platform work (bd <code>babelstone-s4ol.1</code>). What G.4 <em>did</em>
+       ship is the governance layer that never depended on a portal — the AsyncAPI source files
+       under <code>contracts/catalog/events/</code>, the Backstage <code>catalog-info.yaml</code>
+       descriptor, and the hermetic CI gate (<code>scripts/asyncapi-catalog-validate.sh</code>).
+       Until the Backstage host lands, the estate operates Git-native (files + gate + GitHub's
+       renderer), the fallback posture ADR-IC-015 §9 records. This nginx host (P.5) is only the
+       serving mechanism, kept ready for whatever static portal is built here.</p>
   </div>
-  <p>Spec format: <strong>AsyncAPI</strong> (one file per integration event, version-controlled
-     alongside the Avro schema). Portal: <strong>EventCatalog</strong>, built to static HTML and
-     served from here.</p>
+  <p>Spec format: <strong>AsyncAPI 3.0</strong> (one file per integration event, version-controlled
+     alongside the Avro schema, ADR-IC-002). Portal: <strong>Backstage</strong> (Apache-2.0,
+     CNCF-graduated), which imports the same AsyncAPI files — host deployment deferred per
+     ADR-IC-015 §9.</p>
 </body>
 </html>

@@ -185,9 +185,12 @@ services:
   eventcatalog:
     image: nginx:1.27-alpine
     container_name: babelstone-eventcatalog
-    # EventCatalog static-site host (ADR-IC-008): serves the built catalog. The
-    # catalog itself (AsyncAPI specs → static build) is produced by Epic G.4 into
-    # eventcatalog/site/; today that dir holds a placeholder. Host only.
+    # Catalogue portal static-site host (P.5): serves whatever static portal is built
+    # into eventcatalog/site/. G.4 (PR #110) superseded ADR-IC-008 (EventCatalog) with
+    # ADR-IC-015 (Backstage) and DEFERRED the portal-host deployment to platform work
+    # (bd babelstone-s4ol.1) — so today this dir holds only a placeholder and the estate
+    # operates Git-native (the AsyncAPI source under contracts/catalog/events/ + the CI
+    # gate, ADR-IC-015 §9). Host only; the directory name is kept for path stability.
     ports:
       - "${EVENTCATALOG_PORT:-8082}:80"
     volumes:

@@ -1,4 +1,9 @@
-# EventCatalog host — nginx serves the built static catalog (ADR-IC-008).
+# Catalogue portal host — nginx serves whatever static portal is built into the
+# mounted dir. G.4 (PR #110) superseded ADR-IC-008 (EventCatalog) with ADR-IC-015
+# (Backstage) and DEFERRED the portal-host deployment to platform work
+# (bd babelstone-s4ol.1); until then the estate operates Git-native (the AsyncAPI
+# source + the CI gate, ADR-IC-015 §9). The `eventcatalog` name is kept for path
+# stability. Host only — no portal is built today.
 apiVersion: v1
 kind: Service
 metadata:

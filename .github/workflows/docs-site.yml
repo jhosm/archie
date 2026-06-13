@@ -8,9 +8,11 @@ name: Docs site
 # PRs touching those inputs (a pre-merge "does the site still build" check, NOT a
 # required gate — ADR-PC-019 §P1 aggregator rules don't apply); deploy runs only on
 # push to main, via the artifact-based Pages flow (no gh-pages branch). This repo
-# has ONE Pages slot: the EventCatalog site (ADR-IC-008, Epic G.4) composes into
-# this same artifact under a subpath when it lands — it must NOT add a second
-# deploy-pages workflow.
+# has ONE Pages slot: if a catalogue portal is ever published to Pages it composes
+# into this same artifact under a subpath — it must NOT add a second deploy-pages
+# workflow. (G.4/PR #110 superseded ADR-IC-008's EventCatalog static-site with
+# ADR-IC-015's Backstage portal, whose host deployment is deferred — bd
+# babelstone-s4ol.1 — and is a separate service, not a static site stitched here.)
 
 on:
   pull_request:
