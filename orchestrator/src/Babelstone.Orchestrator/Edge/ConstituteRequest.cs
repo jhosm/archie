@@ -18,18 +18,17 @@ namespace Babelstone.Orchestrator.Edge;
 /// the edge accepts the already-tokenised reference — keeping no PII on any saga row or the bus.
 /// </para>
 /// <para>
-/// <b><c>client_id</c> is in the BODY</b> for the constitution request (Document 05 §Step 0 body) —
-/// it names the owning client the saga is started for. The SSE read enforces the SAME client against
-/// the gateway-attested caller (<see cref="EdgeAuth"/>). An opaque business reference, not PII.
+/// <b>The owning client is NOT in this body.</b> It is the GATEWAY-ATTESTED caller — the signed
+/// <c>client_id</c> Kong propagates as the <see cref="EdgeAuth.ClientIdHeader"/> request header
+/// (Document 05 §Step 0 "claims propagated as signed assertions") — read by
+/// <c>ProcessApiEndpoints.ConstituteAsync</c> and persisted as the saga's owning client. A
+/// client-supplied body field is deliberately absent so a caller cannot start a saga owned by an
+/// arbitrary <c>client_id</c>; the SSE read binds ownership to the SAME attested header
+/// (<see cref="EdgeAuth"/>), so the start and read boundaries agree.
 /// </para>
 /// </remarks>
 public sealed record ConstituteRequest
 {
-    /// <summary>The owning client this deposit is constituted for (e.g. <c>CLI-2026-007842</c>).
-    /// Persisted as the saga's owning client; the SSE read enforces ownership against it.</summary>
-    [JsonPropertyName("client_id")]
-    public string? ClientId { get; init; }
-
     /// <summary>The product code being constituted (e.g. <c>TD-TRAD-12M</c>). A catalogue
     /// reference, not PII.</summary>
     [JsonPropertyName("product_code")]
