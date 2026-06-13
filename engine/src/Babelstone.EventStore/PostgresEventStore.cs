@@ -20,8 +20,14 @@ public sealed class PostgresEventStore(string connectionString) : IEventStore
         CancellationToken ct = default)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(events.Count, 1, nameof(events));
-        // §P2: an append never writes an event without its outbox row.
-        ArgumentOutOfRangeException.ThrowIfLessThan(outboxRows.Count, 1, nameof(outboxRows));
+        // §P2 atomicity (ES_ATOMIC_APPEND_OUTBOX): events and their outbox rows commit in ONE
+        // transaction — neither half can land without the other. ADR-IC-017 §P1 refines the OLD
+        // "one outbox row per event" coupling: an UNCATALOGUED event is store-only by construction,
+        // so it writes an event row but NO outbox row. A batch of only-uncatalogued events therefore
+        // legitimately carries zero outbox rows; the upper bound (never MORE outbox rows than events)
+        // still holds — every outbox row corresponds to one appended catalogued event. The single-
+        // transaction atomicity guarantee is unchanged; only the lower bound relaxes from 1 to 0.
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(outboxRows.Count, events.Count, nameof(outboxRows));
         ValidateContiguous(streamId, expectedVersion, events);
 
         // The head the append reaches (== expectedVersion + events.Count, validated contiguous

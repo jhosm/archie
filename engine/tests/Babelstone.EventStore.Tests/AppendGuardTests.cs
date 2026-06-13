@@ -22,12 +22,33 @@ public sealed class AppendGuardTests
     }
 
     [Fact]
-    public async Task Rejects_an_append_with_no_outbox_rows()
+    public async Task Allows_an_append_with_no_outbox_rows_past_the_guard()
     {
+        // ADR-IC-017 §P1 (catalog-gated relay): a batch of only UNCATALOGUED events is store-only —
+        // event rows but ZERO outbox rows. That is no longer an argument-guard rejection; the OLD
+        // "no event without its outbox row" lower bound relaxes from 1 to 0 (atomicity — one
+        // transaction — is unchanged; an outbox row, when present, still rides the same commit). With
+        // no outbox rows the append now PASSES the count + contiguity guards and proceeds to open a
+        // connection; against the unused connection string that surfaces as a connection-time failure
+        // (NpgsqlException / SocketException), NOT the ArgumentOutOfRangeException the old guard threw.
+        // Asserting "not the arg guard" keeps this in the Docker-free lane without a live DB.
         var streamId = Guid.NewGuid();
         var (e0, _) = TestData.Pair(streamId, 0);
+        var ex = await Record.ExceptionAsync(() => Store.AppendAsync(streamId, -1, [e0], []));
+        Assert.NotNull(ex);
+        Assert.IsNotType<ArgumentOutOfRangeException>(ex);
+    }
+
+    [Fact]
+    public async Task Rejects_more_outbox_rows_than_events()
+    {
+        // The upper bound still holds (ADR-IC-017 §P1): every outbox row corresponds to one appended
+        // catalogued event, so an append may never carry MORE outbox rows than events.
+        var streamId = Guid.NewGuid();
+        var (e0, o0) = TestData.Pair(streamId, 0);
+        var (_, oExtra) = TestData.Pair(streamId, 0);
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
-            Store.AppendAsync(streamId, -1, [e0], []));
+            Store.AppendAsync(streamId, -1, [e0], [o0, oExtra]));
     }
 
     [Fact]

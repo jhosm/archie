@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Babelstone.Engine;
 using Babelstone.Engine.Api;
+using Babelstone.Engine.Avro;
 using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
 using Babelstone.Families.TermDeposit.Application;
@@ -140,6 +141,15 @@ builder.Services.AddSingleton<IDepositReadModelStore>(_ => new PostgresDepositRe
 // Babelstone.Engine.Avro) is the production wiring follow-up.
 builder.Services.AddSingleton<IEventSerializer, JsonEventSerializer>();
 builder.Services.AddSingleton<IPiiProtector, NullPiiProtector>();
+
+// Catalog-gated relay (ADR-IC-017 §P1 / INTEGRATION_EVENT_CATALOG_GATED): the engine publishes an
+// event onto the durable bus IFF it is a catalogued integration event. The governed embedded-schema
+// catalogue (Babelstone.Engine.Avro.AvroSchemaCatalog) IS the family-agnostic membership predicate —
+// authoring a schema/AsyncAPI entry is the deliberate promotion (§P2), and an uncatalogued event is
+// store-only by construction (appended/folded/replayable, never on the bus). Family host modules
+// thread this into their AggregateRuntime. Registering the REAL catalogue here (not the publish-all
+// stand-in) is what makes the gate fail-closed in production.
+builder.Services.AddSingleton<IIntegrationEventCatalog>(_ => new AvroSchemaCatalog());
 
 // Composition at the edge (ADR-PC-021 §D4/§P4): the host enumerates the families it runs as
 // IFamilyHostModule contributions and lets each register its own runtime + decider and map its

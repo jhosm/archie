@@ -232,6 +232,72 @@ fi
 note ""
 
 # ---------------------------------------------------------------------------
+# §P3 (ADR-IC-017) — the REVERSE orphan check: NO_UNCATALOGUED_EVENT_ON_BUS.
+#
+# §P2 above proves catalog -> .avsc and .avsc -> catalog. ADR-IC-017 adds the
+# RUNTIME-anchored leg: with the catalog-gated relay, an event is on the bus IFF it is
+# catalogued, so the build-time mirror must anchor on the engine's actual event set — the
+# family DomainEvent records (the things the relay COULD publish) — not on the .avsc set.
+# This catches the drift §P2 cannot see: a catalogued .avsc whose record name is NOT a real
+# DomainEvent (a schema promoting an event the engine cannot even append — a phantom
+# promotion). The complementary "schemaless event is correctly store-only" direction is the
+# DESIRED state (ADR-IC-017 §P4) and is reported informationally, never failed.
+#
+# Hermetic: it scans families/**/Events.cs for `record <Name>(...) : ... DomainEvent`
+# declarations — the SAME on-disk regex idiom the .NET fitness test
+# (CatalogGatedRelayReverseOrphanTests) uses — so the gate needs no .NET build. The .NET
+# test is the authoritative biconditional proof (it has the real catalog + handler
+# registry); this is the contracts-job mirror that fails the PR at the schema layer.
+# ---------------------------------------------------------------------------
+note "-- §P3 (ADR-IC-017) reverse orphan: every catalogued .avsc is a real DomainEvent (NO_UNCATALOGUED_EVENT_ON_BUS) --"
+FAMILIES_DIR="${ASYNCAPI_CATALOG_FAMILIES_DIR:-families}"
+if [ -d "$AVRO_DIR" ] && [ -d "$FAMILIES_DIR" ]; then
+	command -v perl >/dev/null 2>&1 || { echo "FATAL: perl is required for the §P3 reverse-orphan scan"; exit 2; }
+	# The family DomainEvent record names, off disk (skip bin/obj build output). A single
+	# multiline-aware pass (perl -0777) over each Events.cs: `record [class] <Name> ... : ...
+	# DomainEvent`, with [^{;] stopping the base scan at the first { or ; so it never bleeds past
+	# the declaration into the next record. Mirrors the .NET fitness test's regex
+	# (CatalogGatedRelayReverseOrphanTests / EmitContractFitnessTests) — perl handles the
+	# multi-line positional-ctor records grep -z could not match portably on macOS/Linux.
+	domain_event_names="$(
+		find "$FAMILIES_DIR" -name 'Events.cs' \
+			-not -path '*/bin/*' -not -path '*/obj/*' -print0 \
+		| xargs -0 perl -0777 -ne \
+			'while (/record\s+(?:class\s+)?([A-Z]\w*)\b[^{;]*?:\s*[^{;]*?\bDomainEvent\b/sg) { print "$1\n"; }' \
+		| sort -u
+	)"
+
+	if [ -z "${domain_event_names//[$'\n']/}" ]; then
+		err "no family DomainEvent records found under $FAMILIES_DIR/**/Events.cs — the reverse-orphan scan is vacuous (ADR-IC-017 §P3)"
+	fi
+
+	# Every catalogued .avsc record name MUST be a real DomainEvent. A catalogued schema with no
+	# CLR event is a phantom promotion — drift the forward .avsc->catalog check cannot see.
+	while IFS= read -r -d '' avsc; do
+		record_name="$(jq -r '.name // empty' "$avsc")"
+		[ -n "$record_name" ] || { err "$avsc has no Avro record .name (ADR-IC-002 §P1)"; continue; }
+		if printf '%s\n' "$domain_event_names" | grep -qxF "$record_name"; then
+			note "  ok  $record_name is a DomainEvent (catalogued ⇔ relay-capable)"
+		else
+			err "catalogued schema '$avsc' (record '$record_name') has no family DomainEvent record — a catalog entry must promote a real, relay-capable event (ADR-IC-017 §P3, NO_UNCATALOGUED_EVENT_ON_BUS)"
+		fi
+	done < <(find "$AVRO_DIR" -name '*.avsc' -print0 | sort -z)
+
+	# Informational: the schemaless DomainEvents that are correctly store-only by construction
+	# (the DESIRED ADR-IC-017 §P4 state — e.g. DepositConstitutionFailed, whose coarse fact rides
+	# the saga's DepositCancelled). Listed for visibility; NEVER a failure.
+	catalogued_record_names="$(find "$AVRO_DIR" -name '*.avsc' -exec jq -r '.name // empty' {} \; | sort -u)"
+	while IFS= read -r name; do
+		[ -n "$name" ] || continue
+		printf '%s\n' "$catalogued_record_names" | grep -qxF "$name" \
+			|| note "  info  $name is store-only (uncatalogued, never on the bus — ADR-IC-017 §P4)"
+	done <<< "$domain_event_names"
+else
+	note "  no $AVRO_DIR or $FAMILIES_DIR — reverse-orphan scan skipped"
+fi
+note ""
+
+# ---------------------------------------------------------------------------
 # §P4 — breaking-change diff vs origin/main. Per file, diff the baseline version
 # against the working tree. A BREAKING change fails the build unless the file is
 # annotated info.x-breaking-change-approved: true.
