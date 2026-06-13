@@ -286,9 +286,19 @@ jobs:
     # schemas, so a schema change must re-validate every pack.
     if: ${{ needs.changes.outputs.packs == 'true' || needs.changes.outputs.contracts == 'true' }}
     runs-on: ubuntu-latest
+    services:
+      # A throwaway, plain-HTTP OCI registry so the cosign sign→verify loop below
+      # can run against a REAL registry digest (cosign signs a registry ref, not the
+      # offline oci-layout `pack.sh build` produces). It holds nothing past the job.
+      # The ubuntu-latest runner ships Docker; the service is reachable at
+      # localhost:5000 from job steps.
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
     steps:
       - uses: actions/checkout@v6
-      - uses: jdx/mise-action@v4 # pins cue + oras + go from mise.toml
+      - uses: jdx/mise-action@v4 # pins cue + oras + cosign + go from mise.toml
       - name: Validate the pack's variants through depths 1–4 (ADR-PC-006 §P3)
         # Q.3: the static validator depths over the pack's own products. Build the
         # Go validator once, then run the full depths-1→4 `validate` (syntactic →
@@ -311,9 +321,64 @@ jobs:
         # manifest declares, against #RateSheetRefs), oras push to an OCI layout,
         # then pull strictly by sha256 digest and re-validate (§P2). This is the
         # offline OCI smoke: build → push-by-digest → pull-by-digest → re-validate.
+        # The digest is exported for the cosign sign→verify step below.
         run: |
-          DIGEST="$(./packs/pack.sh build packs/pt.2026.1)"
-          ./packs/pack.sh verify packs/pt.2026.1 --digest "$DIGEST"
+          DIGEST="$(mise exec -- ./packs/pack.sh build packs/pt.2026.1)"
+          mise exec -- ./packs/pack.sh verify packs/pt.2026.1 --digest "$DIGEST"
+          echo "PACK_DIGEST=$DIGEST" >> "$GITHUB_ENV"
+      - name: cosign sign + verify the signed pack by digest (Q.3, ADR-PC-007 §P2)
+        # Q.3 "cosign verify" criterion: exercise the WHOLE signature-verification
+        # mechanism end-to-end, not just the by-digest OCI smoke above. push the built
+        # pack into the throwaway localhost:5000 registry (by digest, oras cp), cosign
+        # sign that registry digest, then assert pack.sh verify-signature PASSES on the
+        # signed digest and FAILS on an unsigned one — so the gate can genuinely fail
+        # (no theatre).
+        #
+        # CI-ONLY AFFORDANCE — NOT the production path: this uses an EPHEMERAL cosign
+        # key pair (generate-key-pair + COSIGN_PASSWORD) because cosign keyless OIDC
+        # needs a real OIDC identity provider that a self-contained CI job cannot
+        # stand up. PRODUCTION signing is cosign KEYLESS OIDC (ADR-PC-007 §P2);
+        # this loop tests the verify MECHANISM, it does not replace that path.
+        # --allow-insecure-registry (via COSIGN_EXTRA) + --plain-http target the
+        # local plain-HTTP registry only; production signs a TLS registry by OIDC.
+        env:
+          COSIGN_PASSWORD: ci-ephemeral-not-a-secret
+        run: |
+          set -euo pipefail
+          # Resolve the cosign binary path up-front (cwd-independent): `cosign
+          # generate-key-pair` writes to the CURRENT dir, so we cd into a scratch
+          # dir to keep the throwaway keys out of the tree — but `mise exec` resolves
+          # tools from the mise.toml found upward of cwd, which a /tmp dir lacks. The
+          # absolute path sidesteps that. pack.sh's own cosign/oras calls run via
+          # `mise exec --` from the workspace, where resolution works normally.
+          COSIGN_BIN="$(mise which cosign)"
+          WORK="$(mktemp -d)"; ( cd "$WORK" && "$COSIGN_BIN" generate-key-pair )
+          export COSIGN_KEY="$WORK/cosign.key"
+          export COSIGN_EXTRA="--allow-insecure-registry"
+
+          REG=localhost:5000/babelstone-packs/pt-deposit
+          # Copy the BUILT oci-layout into the registry, by digest (digest preserved).
+          SIGNED_REF="$(mise exec -- ./packs/pack.sh push packs/pt.2026.1 \
+            --registry "$REG" --digest "$PACK_DIGEST" --plain-http)"
+          echo "signed-ref: $SIGNED_REF"
+
+          # POSITIVE: sign the digest, then verify-signature MUST pass.
+          mise exec -- ./packs/pack.sh sign "$SIGNED_REF"
+          echo "== positive: verify the SIGNED digest (must PASS) =="
+          mise exec -- ./packs/pack.sh verify-signature "$SIGNED_REF"
+
+          # NEGATIVE: push a SECOND, UNSIGNED copy under a different tag and assert
+          # verify FAILS on it. If it unexpectedly PASSES, fail the job — a gate that
+          # cannot fail is theatre (ADR-PC-007 fail-loud / ADR-PC-020 §D3).
+          UNSIGNED_REG=localhost:5000/babelstone-packs/pt-deposit-unsigned
+          UNSIGNED_REF="$(mise exec -- ./packs/pack.sh push packs/pt.2026.1 \
+            --registry "$UNSIGNED_REG" --digest "$PACK_DIGEST" --plain-http)"
+          echo "== negative: verify the UNSIGNED digest (must FAIL) =="
+          if mise exec -- ./packs/pack.sh verify-signature "$UNSIGNED_REF" 2>/dev/null; then
+            echo "::error::cosign verify PASSED on an unsigned digest — the signature gate is not enforcing"
+            exit 1
+          fi
+          echo "negative check OK: verify correctly rejected the unsigned digest"
       # Depth-5 simulation (C.3, ADR-PC-006 §P4, PACK_SIM_DEPTH5_BUDGET): the engine-
       # side smoke-load+rehydrate of the pack's sealed test corpus runs as the
       # PackSimulationDepth5Tests Integration test in the `engine` job's Testcontainers
@@ -321,10 +386,10 @@ jobs:
       # `if:`), so a pack or schema change re-runs depth 5 without a second container
       # here. It loads pt.2026.1, constitutes each canonical instance through the
       # hand-rolled append/replay substrate, cold-replays it, and asserts the event
-      # sequence in < 30 s. cosign keyless verify (OIDC) remains Q.5 — cosign signs a
-      # registry ref, not the offline oci-layout the `packs` job builds, so the
-      # sign/verify loop needs the Q.5 registry+OIDC wiring (pack.sh verify-signature
-      # is its home).
+      # sequence in < 30 s. The cosign sign→verify loop above exercises the §P2
+      # signature-verification MECHANISM with an ephemeral key (a CI-only test of the
+      # verify path); PRODUCTION pack signing is cosign keyless OIDC (ADR-PC-007 §P2),
+      # whose bank-internal OIDC wiring is out of scope for this self-contained job.
 
   rate-sheets:
     needs: changes
