@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-06-13 |
 | Deciders | jhosm |
 | Shape | Contract-shape |
@@ -61,11 +61,9 @@ The engine's **command ingress is its synchronous HTTP command surface**, called
 
 ## Verifiable commitments
 
-This contract's load-bearing commitment is **not yet catalogued** (the ADR is `Proposed`); on acceptance it migrates to a Test-ID row in the [commitment catalogue](./commitment-catalogue.md) and is referenced here. Proposed (inline until catalogued):
+This contract's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for their exact claim, gate, and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
 
-| # | Commitment (§-anchor) | Gate (pyramid level) | Test ID | Status |
-|---|---|---|---|---|
-| 1 | A replayed command id returns the original `commit_sequence` with no second append (§4 idempotency) | integration (Testcontainers) | `ENGINE_COMMAND_IDEMPOTENT` | Planned |
-| 2 | The orchestrator dispatcher ↔ engine command endpoint contract holds (§6) | CDC (Pact, [ADR-IC-009](../../integration_concepts/adrs/ADR-IC-009-testing-infrastructure.md)) | `ENGINE_COMMAND_PACT` | Planned |
+- `ENGINE_COMMAND_IDEMPOTENT` — a replayed command id returns the original `commit_sequence` with no second append (slot 4 · Idempotency).
+- `ENGINE_COMMAND_PACT` — the orchestrator dispatcher ↔ engine command-endpoint contract holds, pinned by Pact CDC (slot 6 · Ownership/versioning).
 
-A `Planned` status is a deliberate, listed hole pending the implementing issue (bd `babelstone-t7o3.5`); visibility is the point.
+Both are `Planned` — the gates are named and the Test IDs reserved; the tests are written with the implementing issue (bd `babelstone-t7o3.5`). The `Planned` status is a deliberate, listed hole; visibility is the point.
