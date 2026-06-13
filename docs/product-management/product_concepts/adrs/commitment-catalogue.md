@@ -73,6 +73,10 @@ tracked separately — and is **not** the job of this seed.
 | 16 | A **required precondition** that is absent or `satisfied: false` yields `DepositConstitutionFailed`, computed as a **pure function of the command's verdicts** — no in-engine evaluation, no compensation. | [ADR-PC-024 slot 5](./ADR-PC-024-constitution-precondition-contract.md) | contract / saga | `CONSTITUTION_PRECONDITION_REFUSAL` | Planned |
 | 17 | **No engine-emitted event is produced by a clock/scheduler** — every emitted signal traces to a causing domain event, and no family schema declares a clock-driven "about-to-happen" event type. *(Gate is "analyser + contract": the contract half is Live via the emit-contract fitness tests, and the build-time analyser half is now Live too — `NoClockDrivenEngineSignalAnalyzer` (BENG004) flags a `DomainEvent`/`ScheduledEffect` emit whose construction a clock/scheduler/timer read flows into, catching the off-list clock-driven type name the lexical scan misses.)* | [ADR-PC-023 slot 1](./ADR-PC-023-temporal-signals-projection-derived.md) | analyser + contract | `NO_CLOCK_DRIVEN_ENGINE_SIGNAL` | Live |
 | 18 | The deposit read surface is **one canonical resource** (`GET /v1/deposits/{id}`, no storage-named sibling); it serves the denormalized read model by default and **folds the event stream as an internal read-your-writes fallback** when a caller's `If-Min-Sequence` token (a command's `commit_sequence`) outruns the projection — both paths fill the same `DepositResponse`. | [ADR-PC-027 slot 2/3](./ADR-PC-027-deposit-read-surface-canonical-resource.md) | integration (Testcontainers) | `READ_YOUR_WRITES_FOLD_ON_TOKEN` | Live |
+| 19 | A **replayed command id returns the original `commit_sequence` with no second append** — the engine (receiver) dedupes, keyed on the caller's command id, scoped per aggregate; composes with the `expectedVersion` concurrency guard. | [ADR-PC-029 slot 4](./ADR-PC-029-engine-command-ingress.md) | integration (Testcontainers) | `ENGINE_COMMAND_IDEMPOTENT` | Planned |
+| 20 | The **orchestrator dispatcher ↔ engine command-endpoint contract holds** — the consumer↔provider command surface is pinned, so a provider-side break fails the build. | [ADR-PC-029 slot 6](./ADR-PC-029-engine-command-ingress.md) | contract (Pact CDC, [ADR-IC-009](../../integration_concepts/adrs/ADR-IC-009-testing-infrastructure.md)) | `ENGINE_COMMAND_PACT` | Planned |
+| 21 | The relay publishes an event **iff** it is catalogued (an AsyncAPI/`.avsc` entry); an **uncatalogued event is store-only by construction** — appended, folded, replayable, but never on the durable bus. | [ADR-IC-017 §P1](../../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md) | integration (relay + Testcontainers) | `INTEGRATION_EVENT_CATALOG_GATED` | Planned |
+| 22 | **Every relay-publishable `event_type` has an AsyncAPI/`.avsc` entry** — the reverse orphan check that mirrors row 21's runtime rule at build time, making *catalogued ⇔ on the bus* a hermetic biconditional. | [ADR-IC-017 §P3](../../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md) | analyser / CI (`contracts` job) | `NO_UNCATALOGUED_EVENT_ON_BUS` | Planned |
 | OBS-1 | Every Babelstone .NET host stamps its tracer's **resource** with `service.name`, `service.namespace == "babelstone"`, and a non-blank `deployment.environment` — so every trace is attributable to a service, the estate, and an environment. | [ADR-IC-007 §P1](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_RESOURCE_ATTRS` | Live |
 | OBS-2 | The product-semantic spans (`accrual.computed`, `withholding.applied`) are emitted in the **impure runtime shell** (`AggregateRuntime.AppendAsync`'s span hook / the host endpoint), **never** in the pure decider/fold, and carry the structural `babelstone.partition_key` + `babelstone.product_code`. | [ADR-IC-007 §P2–§P3](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_SPAN_PRODUCT_SEMANTICS` | Live |
 | OBS-3 | **No PII in any telemetry signal** — span/log attributes carry only structural identifiers (the `babelstone.*` operational tier), never NIF/IBAN/account/name/email; money rides as integer cents. | [ADR-IC-007 §P4](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit / analyser | `OBS_NO_PII_ATTRS` | Planned |
@@ -171,6 +175,21 @@ ADR-IC-007 §P4) is not yet written, so the row does not yet resolve to its own 
 `OBS_TRACEPARENT_PROPAGATION` (OBS-4) stays `Planned`: cross-process `traceparent`
 propagation over the durable bus is documented here but deferred (the K.1 SCOPE-OUT) to
 the bus-relay work, and its lane is the deferred Testcontainers Integration tier.
+
+**ACTUAL→INTENDED reconciliation (2026-06-13, PR #163).** Four rows were added under the
+growth provision as [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) (engine command
+ingress) and [ADR-IC-017](../../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md)
+(integration-event promotion) moved from `Proposed` to `Accepted`, migrating their
+load-bearing commitments out of the ADRs' inline tables into this catalogue per the
+acceptance rule ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md));
+both ADRs' `## Verifiable commitments` sections now *reference* these rows by Test ID.
+All four start `Planned` — they are decision-time gates whose tests are written with the
+implementing issues, not yet shipped. `ENGINE_COMMAND_IDEMPOTENT` (row 19) and
+`ENGINE_COMMAND_PACT` (row 20) land with bd `babelstone-t7o3.5`; `INTEGRATION_EVENT_CATALOG_GATED`
+(row 21) and `NO_UNCATALOGUED_EVENT_ON_BUS` (row 22) land with the catalog-gated-relay
+implementing issue (ADR-IC-017 §P1/§P3). Rows 21–22 are the first **in-house ADR-IC**
+engine-boundary commitments catalogued here (the `OBS-*` rows aside), per the
+[§P11](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) in-house-estate reach.
 
 **Term-deposit scope review (2026-06-03).** Two rows were added under the growth
 provision from the §B in/out-of-scope review, both `Planned` (the work is **v1.x** /

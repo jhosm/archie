@@ -38,7 +38,7 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [026](../../product_concepts/adrs/ADR-PC-026-csharp-api-reference-docfx.md) | C# API-Reference Surface — DocFX to GitHub Pages | Tool-selection | Proposed |
 | [027](../../product_concepts/adrs/ADR-PC-027-deposit-read-surface-canonical-resource.md) | Deposit Read Surface — One Canonical Resource, Read-Model-Backed with Fold-on-Token | Contract-shape | Proposed |
 | [028](../../product_concepts/adrs/ADR-PC-028-event-store-payload-format.md) | Event-Store Payload Format — Self-Describing JSON, Decoupled from the Bus's Avro | Tool-selection | Proposed |
-| [029](../../product_concepts/adrs/ADR-PC-029-engine-command-ingress.md) | Engine Command Ingress — Synchronous Idempotent REST | Contract-shape | Proposed |
+| [029](../../product_concepts/adrs/ADR-PC-029-engine-command-ingress.md) | Engine Command Ingress — Synchronous Idempotent REST | Contract-shape | Accepted |
 
 ## ADR-IC — Integration estate
 
@@ -61,4 +61,4 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [014](../../integration_concepts/adrs/ADR-IC-014-static-analysis-and-supply-chain-scanning.md) | Static Analysis and Supply-Chain Scanning — GitHub-Native Trio (CodeQL + Dependabot + Secret Scanning) | — | Accepted |
 | [015](../../integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) | Event Catalog Governance Tooling — Backstage | — | Accepted |
 | [016](../../integration_concepts/adrs/ADR-IC-016-service-identity-and-mtls.md) | Service Identity, Transport Authentication, and Observability-Plane Access Control | — | Accepted |
-| [017](../../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md) | Integration-Event Promotion — Catalog-Gated Relay + Explicit Domain-vs-Integration Criterion | — | Proposed |
+| [017](../../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md) | Integration-Event Promotion — Catalog-Gated Relay + Explicit Domain-vs-Integration Criterion | — | Accepted |
