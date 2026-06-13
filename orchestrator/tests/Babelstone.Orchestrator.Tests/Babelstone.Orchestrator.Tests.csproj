@@ -20,9 +20,20 @@
          the integration lane (Q.1) runs them — the same convention as the engine tests. -->
     <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="Npgsql" />
+    <!-- The consume-loop integration test (t7o3.2) produces real CloudEvents-headed records onto
+         Redpanda and hosts the SagaInboxConsumerService, so it needs the Kafka producer and the
+         generic-host builder directly (alongside Babelstone.TestFixtures' shared RedpandaFixture). -->
+    <PackageReference Include="Confluent.Kafka" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/Babelstone.Orchestrator/Babelstone.Orchestrator.csproj" />
+    <!-- The SHARED Redpanda Testcontainers fixture (ic10): the single source of the broker setup
+         the engine producer/consumer lanes already reuse — the orchestrator's consume-loop lane
+         reuses it too rather than copy-pasting the broker bring-up. A TEST-only reference: it does
+         NOT widen the runtime orchestrator's dependency graph (ADR-PC-019 §P2 is a runtime-subtree
+         concern), so the extraction-ready boundary is unaffected. -->
+    <ProjectReference Include="../../../engine/tests/Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
   </ItemGroup>
 </Project>
