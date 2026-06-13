@@ -79,6 +79,60 @@ public sealed class AggregateRuntime<TState>(
     }
 
     /// <summary>
+    /// Rehydrates the stream's state AS OF a given per-stream <paramref name="asOfSequence"/> — the
+    /// transaction-time / point-in-time read (the I.2 Query API as-of axis, bd babelstone-b4wp).
+    /// Folds the stream from the start up to and INCLUDING <paramref name="asOfSequence"/> and stops,
+    /// so the returned <see cref="Hydrated{TState}"/> is the historical projection at that point, not
+    /// the current head. The fold is the SAME pure mechanism as <see cref="LoadAsync"/> (no clock, no
+    /// randomness, ADR-PC-010 §P5), so a repeated as-of read at a given sequence returns identical
+    /// state — deterministic by construction. The axis is the per-stream <c>sequence_number</c>
+    /// (commit_sequence), the only point identifier the event log carries a deterministic total order
+    /// for; a wall-clock <c>valid_time</c> axis waits on the bitemporal projection runtime (Epic D /
+    /// ADR-PC-002), which the read model does not yet carry.
+    /// </summary>
+    /// <param name="streamId">The stream to read.</param>
+    /// <param name="asOfSequence">
+    /// The inclusive upper bound on <c>sequence_number</c>. MUST be &gt;= 0 (the caller validates a
+    /// malformed/negative value at the boundary). A value at or below the stream head yields the
+    /// historical state at that point; a value past the head returns a fold whose
+    /// <see cref="Hydrated{TState}.Version"/> is the actual head (&lt; <paramref name="asOfSequence"/>),
+    /// which the caller detects to reject a "point that does not exist yet" as a clean 4xx — this
+    /// method never throws on an out-of-range point (it stays a pure fold; the boundary decides the
+    /// HTTP verdict). A non-existent stream folds to <see cref="Hydrated{TState}.Version"/> = -1.
+    /// </param>
+    /// <param name="ct">Cancels the enumeration between events.</param>
+    public async Task<Hydrated<TState>> LoadAsOfSequenceAsync(
+        Guid streamId, long asOfSequence, CancellationToken ct = default)
+    {
+        // No snapshots in v1 (snapshots is null on the term-deposit runtime), so a clean cold fold
+        // from sequence 0 is correct and cheap (deposit streams are short). When snapshotting lands,
+        // an as-of read must only use a snapshot whose AtSequence <= asOfSequence (a snapshot past the
+        // point is in the future relative to the read); a snapshot at-or-before the point seeds the
+        // fold, then the tail folds up to the point — tracked with the snapshot work (ADR-PC-003).
+        var state = seedState();
+        var version = -1L;
+        Guid? lastEventId = null;
+        DateTimeOffset? lastTransactionTime = null;
+
+        await foreach (var envelope in store.LoadAsync(streamId, 0, ct))
+        {
+            // The store streams in sequence_number order; stop once we pass the requested point so the
+            // fold reflects exactly the as-of state (events after the point are the "future" we exclude).
+            if (envelope.SequenceNumber > asOfSequence)
+            {
+                break;
+            }
+
+            state = await FoldAsync(state, envelope, unprotect: true, ct);
+            version = envelope.SequenceNumber;
+            lastEventId = envelope.EventId;
+            lastTransactionTime = envelope.TransactionTime;
+        }
+
+        return new Hydrated<TState>(state, version, lastEventId, lastTransactionTime);
+    }
+
+    /// <summary>
     /// Commits new domain events and their outbox rows in one transaction (via the sink).
     /// PII is encrypted here (the only OpenBao seam, §5.3); storage sees ciphertext-in-payload.
     /// </summary>
