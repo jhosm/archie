@@ -14,6 +14,9 @@
 bin/
 obj/
 
+# Mutation testing — Stryker.NET report/run output (.github/workflows/mutation.yml)
+StrykerOutput/
+
 # Code-coverage artefacts (Q.y, babelstone-2t16.13) — emitted by CI and local runs,
 # never committed: the .NET coverage/ tree + merged cobertura, the Go statement
 # profile, and the Python coverage.py data + cobertura XML.

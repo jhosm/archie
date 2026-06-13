@@ -3,7 +3,7 @@ name: Mutation testing
 # Periodic mutation testing — NOT per-push. Stryker.NET re-runs the whole test suite once
 # per mutant, so it is far too slow for the PR gate. It runs weekly and on demand, guarding
 # test *effectiveness*: a surviving mutant is a behaviour the suite does not actually pin.
-# Two scopes, each with its own config + score floor (engine/docs/mutation-testing.md):
+# Scopes, each with its own config + score floor (engine/docs/mutation-testing.md):
 #   - Engine spine (A.10): EventStore + Engine, stryker-config.json. The suite includes the
 #     Testcontainers integration tier (needs Docker), so these legs are slow. Mutants of
 #     interest: off-by-one on sequence_number, a dropped ORDER BY, a removed transaction
@@ -13,6 +13,23 @@ name: Mutation testing
 #     fast. Mutants of interest: the HALF_EVEN rounding direction and Int64 overflow guards at
 #     the Money boundary, day-count off-by-one, withholding flow-by-flow, and the IRR/TAEG
 #     solver's PV/derivative core (which the Newton+bisection fallback otherwise hides).
+#   - Term-deposit family: TermDeposit + TermDeposit.Application, scoped by
+#     stryker-config.family.json. The family cent-math (accrual schedule, withholding ledger,
+#     coupon/maturity arithmetic) is pure, so it borrows the kernel config's string/null-guard
+#     ignores but sits at a more modest start floor (break 70). Mutants of interest: an accrual
+#     day-count off-by-one, a withholding net = gross − tax slip, a flipped lifecycle-transition
+#     legality cell. The Application leg's read-model store carries a Testcontainers tier (real
+#     PostgreSQL), so this leg uses the Docker-backed ubuntu-latest runner.
+#   - Integration seams: OutboxPublisher (outbox→Redpanda drainer) + InboxConsumer (dedupe +
+#     poison-message sink), scoped by stryker-config.json. Both touch PostgreSQL via the
+#     Testcontainers tier, so they are Docker-backed and slow. Mutants of interest: a dropped
+#     drain-batch ORDER BY, a weakened message_id dedupe predicate, a poison-sink branch that
+#     never fires.
+#   - Boundary codec/data: RateSheets (TAN resolution), Packs (strict parse), Engine.Avro
+#     (codec field-binding), scoped by stryker-config.json. RateSheets/Packs carry Postgres/OCI
+#     Testcontainers tiers (Docker-backed); Engine.Avro's round-trip codec tests live in
+#     Babelstone.OutboxPublisher.Tests. Mutants of interest: a flipped effective-date comparison
+#     in TAN resolution, a relaxed strict-parse rejection, a swapped Avro field-binding offset.
 
 on:
   schedule:
@@ -47,6 +64,43 @@ jobs:
             project: Babelstone.FinancialMath.csproj
             test: tests/Babelstone.FinancialMath.Tests/Babelstone.FinancialMath.Tests.csproj
             config: stryker-config.kernel.json
+          # Term-deposit family (bd babelstone-2t16.16) — pure cent-math, kernel-style ignores,
+          # break floor 70 (stryker-config.family.json). The .Application leg's read-model store
+          # carries a Testcontainers (Postgres) tier, so the leg runs Docker-backed.
+          - name: TermDeposit
+            project: Babelstone.Families.TermDeposit.csproj
+            test: ../families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/Babelstone.Families.TermDeposit.Tests.csproj
+            config: stryker-config.family.json
+          - name: TermDepositApplication
+            project: Babelstone.Families.TermDeposit.Application.csproj
+            test: ../families/term-deposit/tests/Babelstone.Families.TermDeposit.Application.Tests/Babelstone.Families.TermDeposit.Application.Tests.csproj
+            config: stryker-config.family.json
+          # Integration seams (bd babelstone-2t16.17) — outbox drainer + inbox dedupe/poison sink.
+          # Both touch PostgreSQL via the Testcontainers tier → Docker-backed config, break 60.
+          - name: OutboxPublisher
+            project: Babelstone.OutboxPublisher.csproj
+            test: tests/Babelstone.OutboxPublisher.Tests/Babelstone.OutboxPublisher.Tests.csproj
+            config: stryker-config.json
+          - name: InboxConsumer
+            project: Babelstone.InboxConsumer.csproj
+            test: tests/Babelstone.InboxConsumer.Tests/Babelstone.InboxConsumer.Tests.csproj
+            config: stryker-config.json
+          # Boundary codec/data (bd babelstone-2t16.19) — TAN resolution, strict pack parse,
+          # Avro codec field-binding. RateSheets/Packs carry Postgres/OCI Testcontainers tiers →
+          # Docker-backed config, break 60. Engine.Avro's round-trip codec tests live in
+          # Babelstone.OutboxPublisher.Tests, so that is its test project.
+          - name: RateSheets
+            project: Babelstone.RateSheets.csproj
+            test: tests/Babelstone.RateSheets.Tests/Babelstone.RateSheets.Tests.csproj
+            config: stryker-config.json
+          - name: Packs
+            project: Babelstone.Packs.csproj
+            test: tests/Babelstone.Packs.Tests/Babelstone.Packs.Tests.csproj
+            config: stryker-config.json
+          - name: EngineAvro
+            project: Babelstone.Engine.Avro.csproj
+            test: tests/Babelstone.OutboxPublisher.Tests/Babelstone.OutboxPublisher.Tests.csproj
+            config: stryker-config.json
     steps:
       - uses: actions/checkout@v6
       # Toolchain from mise.toml (the .NET 10 SDK pin), as in ci.yml.
