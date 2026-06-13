@@ -25,6 +25,10 @@
          generic-host builder directly (alongside Babelstone.TestFixtures' shared RedpandaFixture). -->
     <PackageReference Include="Confluent.Kafka" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <!-- AddHttpClient + IHttpClientFactory for the dispatcher integration test's host (bd
+         babelstone-t7o3.3): the dispatcher delivers commands over HTTP, so the test host wires the
+         same client factory the production Program.cs does. -->
+    <PackageReference Include="Microsoft.Extensions.Http" />
   </ItemGroup>
 
   <ItemGroup>

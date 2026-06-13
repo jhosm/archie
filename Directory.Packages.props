@@ -30,6 +30,11 @@
     <PackageVersion Include="Apache.Avro" Version="1.12.1" />
     <!-- IHostedService/BackgroundService host for the relay's poll loop. -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
+    <!-- IHttpClientFactory for the saga command dispatcher (bd babelstone-t7o3.3, ADR-PC-029): the
+         dispatcher drains saga_outbox and delivers each command to the engine over idempotent HTTP.
+         The factory owns connection pooling/lifetime; the orchestrator stays extraction-ready
+         (ADR-PC-019 §P2) — this is a leaf Microsoft.Extensions package, NOT an engine-kernel ref. -->
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.9" />
     <!-- ILogger / EventId for the shared structured-log event-id contract (ADR-IC-007 Layer 1):
          the abstractions only — Babelstone.Telemetry stays backend-/hosting-free, the hosts bring
          the logging implementation. The same 10.0.8 line as the other Microsoft.Extensions pins. -->

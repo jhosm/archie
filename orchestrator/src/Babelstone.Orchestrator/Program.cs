@@ -1,4 +1,5 @@
 using Babelstone.Orchestrator;
+using Babelstone.Orchestrator.Dispatch;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Migrations;
 using Babelstone.Orchestrator.Outbox;
@@ -96,6 +97,48 @@ builder.Services.AddSingleton(sp => new SagaConsumeLoop(
     sp.GetRequiredService<SagaInboxConsumerOptions>(),
     sp.GetRequiredService<SagaAdvanceHandler>()));
 builder.Services.AddHostedService<SagaInboxConsumerService>();
+
+// The saga command DISPATCHER (bd babelstone-t7o3.3, ADR-PC-029). The consume loop above advances the
+// saga on EVENTS; the saga DECIDES commands and writes them to saga_outbox (the SagaCommandOutboxSink
+// write side). This dispatcher is the missing DELIVERY half: it drains saga_outbox and POSTs each
+// command to its target over idempotent HTTP, so the saga actually DRIVES the engine. Four pieces
+// register here, the same hosted-BackgroundService shape as the engine's outbox relay — but
+// delivering to HTTP, not Redpanda (commands ride HTTP point-to-point, Primitive 1; the bus stays
+// events-only):
+//   • SagaCommandDispatcherOptions — the runtime DB connection + the two configurable HTTP targets.
+//     The engine command surface (Engine:BaseUrl) and the Core-ACL/settlement target
+//     (Settlement:BaseUrl) are service ENDPOINTS, not credentials, so they resolve straight from
+//     IConfiguration — distinct from the runtime DB credential (ADR-PC-004 Amendment A1 boundary),
+//     which is the SAME runtimeConnectionString the consume loop persists through. The settlement
+//     target is a WireMock stub at v1 (the real ACL is DEF-1, bd ub9s); routing it through config
+//     means a later deploy repoints it with no code change.
+//   • ICommandRouter (SagaCommandRouter) — the pure command-name → (target, route) seam:
+//     ActivateDeposit → the engine's POST /v1/deposits (the Pact-pinned route), the settlement legs
+//     → the settlement target.
+//   • AddHttpClient — IHttpClientFactory owns connection pooling/lifetime for the dispatcher's POSTs.
+//   • AddHostedService<SagaCommandDispatcherService> — the poll loop that drains PENDING rows and
+//     applies the ADR-PC-029 slot-5 error model (2xx → PUBLISHED, 4xx → terminal FAILED surfaced for
+//     compensation, 5xx/timeout → stay PENDING and retry; idempotency makes the retry safe).
+var engineBaseUrl = builder.Configuration["Engine:BaseUrl"]
+    ?? builder.Configuration.GetConnectionString("Engine")
+    ?? "http://localhost:8080";
+var settlementBaseUrl = builder.Configuration["Settlement:BaseUrl"] ?? "http://localhost:8089";
+builder.Services.AddSingleton(new SagaCommandDispatcherOptions
+{
+    ConnectionString = runtimeConnectionString
+        ?? throw new InvalidOperationException(
+            "No orchestrator runtime connection string configured. Set ConnectionStrings:Orchestrator, " +
+            "Orchestrator:ConnectionString, or ORCHESTRATOR_CONNECTION_STRING."),
+    EngineBaseUrl = engineBaseUrl,
+    SettlementBaseUrl = settlementBaseUrl,
+});
+builder.Services.AddSingleton<ICommandRouter, SagaCommandRouter>();
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton(sp => new SagaCommandDispatchDrainer(
+    sp.GetRequiredService<SagaCommandDispatcherOptions>(),
+    sp.GetRequiredService<ICommandRouter>(),
+    sp.GetRequiredService<IHttpClientFactory>()));
+builder.Services.AddHostedService<SagaCommandDispatcherService>();
 
 var host = builder.Build();
 await host.RunAsync();
