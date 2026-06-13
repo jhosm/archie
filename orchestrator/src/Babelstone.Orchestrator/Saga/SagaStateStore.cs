@@ -54,6 +54,46 @@ public sealed class SagaStateStore
     }
 
     /// <summary>
+    /// Start a saga the EDGE owns (I.1, ADR-IC-006 §P4 / Document 05 §Step 0): the same INSERT as
+    /// <see cref="TryStartAsync"/> but ALSO persisting the client-facing <paramref name="publicProcessId"/>
+    /// (the <c>PROC-…</c> reference the edge returns + the SSE <c>stream_url</c> is keyed on) and the
+    /// <paramref name="owningClientId"/> the SSE read enforces ownership against. Idempotent on the
+    /// process id exactly like <see cref="TryStartAsync"/> — a duplicate start collides on
+    /// <c>saga_state_pkey</c> and returns false. Runs inside the caller's transaction so the start row,
+    /// the first transition, and the emitted commands commit atomically (the edge is the producer; it
+    /// puts NOTHING on the durable bus). Both extra columns are structural references, never PII
+    /// (ADR-PC-004 §P2).
+    /// </summary>
+    /// <returns>True if this call created the saga; false if it already existed.</returns>
+    public async Task<bool> TryStartWithEdgeIdentityAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid processId,
+        string sagaType,
+        SagaState initialState,
+        Guid? correlationId,
+        string publicProcessId,
+        string owningClientId,
+        CancellationToken ct = default)
+    {
+        const string sql = """
+            INSERT INTO saga_state (process_id, saga_type, state, version, correlation_id, public_process_id, owning_client_id)
+            VALUES (@process_id, @saga_type, @state, 0, @correlation_id, @public_process_id, @owning_client_id)
+            ON CONFLICT (process_id) DO NOTHING;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("process_id", processId);
+        command.Parameters.AddWithValue("saga_type", sagaType);
+        command.Parameters.AddWithValue("state", SagaStateNames.ToName(initialState));
+        command.Parameters.AddWithValue("correlation_id", (object?)correlationId ?? DBNull.Value);
+        command.Parameters.AddWithValue("public_process_id", publicProcessId);
+        command.Parameters.AddWithValue("owning_client_id", owningClientId);
+
+        return await command.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    /// <summary>
     /// Load the current saga row, or null if no saga with that process id exists. A
     /// <c>FOR UPDATE</c> row lock serialises concurrent advancers on the same instance — the
     /// belt to the optimistic-concurrency braces, so the common single-process path takes
@@ -66,7 +106,7 @@ public sealed class SagaStateStore
         CancellationToken ct = default)
     {
         const string sql = """
-            SELECT process_id, saga_type, state, version, correlation_id
+            SELECT process_id, saga_type, state, version, correlation_id, public_process_id, owning_client_id
             FROM saga_state
             WHERE process_id = @process_id
             FOR UPDATE;
@@ -76,6 +116,37 @@ public sealed class SagaStateStore
         command.Parameters.AddWithValue("process_id", processId);
 
         await using var reader = await command.ExecuteReaderAsync(ct);
+        return await ReadInstanceAsync(reader, ct);
+    }
+
+    /// <summary>
+    /// Resolve the saga for a client-facing <paramref name="publicProcessId"/> (the <c>PROC-…</c>
+    /// reference the SSE <c>stream_url</c> carries), or null if no saga was minted for it. The SSE
+    /// read uses this to find the saga and then enforces <see cref="SagaInstance.OwningClientId"/>
+    /// against the requester (ADR-IC-006 §P4). A plain read (NO <c>FOR UPDATE</c>): the SSE path
+    /// observes the saga's state, it never advances it, so it must not take the advancer's row lock.
+    /// </summary>
+    public async Task<SagaInstance?> LoadByPublicIdAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string publicProcessId,
+        CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT process_id, saga_type, state, version, correlation_id, public_process_id, owning_client_id
+            FROM saga_state
+            WHERE public_process_id = @public_process_id;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("public_process_id", publicProcessId);
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        return await ReadInstanceAsync(reader, ct);
+    }
+
+    private static async Task<SagaInstance?> ReadInstanceAsync(NpgsqlDataReader reader, CancellationToken ct)
+    {
         if (!await reader.ReadAsync(ct))
         {
             return null;
@@ -86,7 +157,9 @@ public sealed class SagaStateStore
             SagaType: reader.GetString(1),
             State: SagaStateNames.FromName(reader.GetString(2)),
             Version: reader.GetInt64(3),
-            CorrelationId: reader.IsDBNull(4) ? null : reader.GetGuid(4));
+            CorrelationId: reader.IsDBNull(4) ? null : reader.GetGuid(4),
+            PublicProcessId: reader.IsDBNull(5) ? null : reader.GetString(5),
+            OwningClientId: reader.IsDBNull(6) ? null : reader.GetString(6));
     }
 
     /// <summary>

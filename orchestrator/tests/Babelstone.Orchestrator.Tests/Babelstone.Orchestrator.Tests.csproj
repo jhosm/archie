@@ -24,14 +24,24 @@
          Redpanda and hosts the SagaInboxConsumerService, so it needs the Kafka producer and the
          generic-host builder directly (alongside Babelstone.TestFixtures' shared RedpandaFixture). -->
     <PackageReference Include="Confluent.Kafka" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" />
-    <!-- AddHttpClient + IHttpClientFactory for the dispatcher integration test's host (bd
-         babelstone-t7o3.3): the dispatcher delivers commands over HTTP, so the test host wires the
-         same client factory the production Program.cs does. -->
-    <PackageReference Include="Microsoft.Extensions.Http" />
+    <!-- Microsoft.Extensions.Hosting (the consume-loop/dispatcher test hosts) and
+         Microsoft.Extensions.Http (IHttpClientFactory for the dispatcher test, bd babelstone-t7o3.3)
+         are supplied transitively by the Microsoft.AspNetCore.App framework reference below — added
+         for the I.1 edge-API test's Kestrel host — so the explicit PackageReferences are pruned
+         (NU1510, warnings-as-errors). -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The I.1 edge-API integration test (EdgeProcessApiIntegrationTests) hosts the orchestrator's
+         own Kestrel edge surface (WebApplication + minimal-API endpoints, ADR-IC-006 §P4) against a
+         migrated PG container, then drives the 202/saga-start + the SSE stream. A non-Web test SDK
+         does not transitively inherit the ASP.NET Core shared framework from a Web ProjectReference,
+         so reference it explicitly. TEST-only: it does not widen the runtime orchestrator graph. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <!-- WireMock.Net (bd babelstone-t7o3.4): the in-process Core-ACL settlement stub the gated-
          settlement integration test points the dispatcher's SettlementBaseUrl at (the v1 stub; the
-         real ACL is DEF-1, bd ub9s). Test-only — it does NOT widen the runtime orchestrator graph. -->
+         real ACL is DEF-1, bd ub9s). A third-party package — NOT supplied by the framework reference
+         — so it stays explicit. Test-only: it does NOT widen the runtime orchestrator graph. -->
     <PackageReference Include="WireMock.Net" />
   </ItemGroup>
 

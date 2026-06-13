@@ -15,9 +15,19 @@ namespace Babelstone.Orchestrator.Saga;
 /// writer race"). An advance succeeds only against the version it read.</param>
 /// <param name="CorrelationId">The originating request's correlation id, carried unchanged
 /// through the saga (ADR-IC-003 §P7). Null only for a row started without one.</param>
+/// <param name="PublicProcessId">The client-facing <c>PROC-…</c> reference the edge minted and
+/// returned (Document 05 §Step 0); the SSE <c>stream_url</c> is keyed on it. A structural,
+/// PII-free handle — NOT a capability token (ADR-IC-006 §P4). Null for a saga started by the
+/// consume loop rather than the edge (it has no public reference).</param>
+/// <param name="OwningClientId">The client that OWNS this process (the request's
+/// <c>client_id</c>). The SSE read enforces the requester's <c>client_id</c> matches this so a
+/// guessed/stolen <c>process_id</c> yields no updates (ADR-IC-006 §P4 / Document 05 §Step 0). An
+/// opaque business reference, NOT PII. Null for a consume-loop-started saga.</param>
 public sealed record SagaInstance(
     Guid ProcessId,
     string SagaType,
     SagaState State,
     long Version,
-    Guid? CorrelationId);
+    Guid? CorrelationId,
+    string? PublicProcessId = null,
+    string? OwningClientId = null);
