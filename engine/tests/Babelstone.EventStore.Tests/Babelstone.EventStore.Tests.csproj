@@ -8,6 +8,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
     <!-- Real PostgreSQL per test (ADR-IC-009). Tests touching it carry
          [Trait("Category","Integration")]; the default engine CI job filters
          them out and the integration lane (Q.1, gated on E.6) runs them. -->
