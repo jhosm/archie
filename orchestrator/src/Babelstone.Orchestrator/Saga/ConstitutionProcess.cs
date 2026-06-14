@@ -68,7 +68,8 @@ public sealed class ConstitutionProcess : TableStateMachine
     /// was sent, so the ACL cannot yet confirm whether the Core actually executed it (Document 05
     /// Scenario C; bd babelstone-t7o3.10). The saga must NOT blind-retry (it could double-debit); this
     /// event parks it in the first-class waiting state <see cref="SagaState.AwaitCoreClearance"/> until a
-    /// clearance query resolves the outcome (ADR-IC-003 §P5). The THIRD Core-ACL debit outcome alongside
+    /// clearance query resolves the outcome (ADR-IC-003 §P4 — a long wait is a named state, never a busy
+    /// retry). The THIRD Core-ACL debit outcome alongside
     /// <see cref="DebitConfirmed"/> (executed) and a refused debit. NOT a timeout — a timeout stays a
     /// transient idempotent retry; INDETERMINATE is an EXPLICIT ACL settlement signal.</summary>
     public const string CoreDebitIndeterminate = "CoreDebitIndeterminate";
@@ -76,7 +77,10 @@ public sealed class ConstitutionProcess : TableStateMachine
     /// moved (Document 05 Scenario C; bd babelstone-t7o3.10). Handled as a normal error: the saga
     /// fails CLOSED to <see cref="SagaState.DepositConstitutionFailed"/> with NO reversal, since nothing
     /// was committed. The fail counterpart of a late <see cref="DebitConfirmed"/> out of
-    /// <see cref="SagaState.AwaitCoreClearance"/>.</summary>
+    /// <see cref="SagaState.AwaitCoreClearance"/>. <b>Divergence (recorded — ADR-IC-003 Amendment A6):</b>
+    /// ADR-IC-012 §D5/§P5 (inherited by ADR-PC-016 §64) specify the steady-state disposition as
+    /// <c>RETRY_PERMITTED</c> (reissue with the same idempotency_key); at v1 there is no reissue producer,
+    /// so this fails closed, backed out by DEF-1 (bd babelstone-ub9s).</summary>
     public const string DebitNotExecuted = "DebitNotExecuted";
     /// <summary>An upstream precondition was REFUSED during the validation phase (H.2,
     /// babelstone-n55u): a verdict that did not <see cref="PreconditionVerdict.Accepts"/> arrived
@@ -112,7 +116,7 @@ public sealed class ConstitutionProcess : TableStateMachine
     /// clearance-job mechanism (Document 05 Scenario C; bd babelstone-t7o3.10). Emitted on entering
     /// <see cref="SagaState.AwaitCoreClearance"/>. A SINGLE event-driven query routed to the Settlement
     /// ACL (POST /v1/debits/clearance), NOT a poll loop — the wait is a first-class state, not a busy
-    /// retry (ADR-IC-003 §P5). Its delivery outcome bridges back to the clearance result: executed (2xx)
+    /// retry (ADR-IC-003 §P4). Its delivery outcome bridges back to the clearance result: executed (2xx)
     /// → a late <see cref="DebitConfirmed"/>; not-executed (4xx) → <see cref="DebitNotExecuted"/>.</summary>
     public const string QueryCoreDebitStatus = "QueryCoreDebitStatus";
 
@@ -233,7 +237,7 @@ public sealed class ConstitutionProcess : TableStateMachine
         // The ConfirmDebit was sent but the network dropped before its response arrived, so the ACL
         // reported INDETERMINATE: it is UNKNOWN whether the Core actually executed the debit. The saga
         // must NOT blind-retry (a retry could double-debit). It parks in the FIRST-CLASS waiting state
-        // AWAIT_CORE_CLEARANCE (ADR-IC-003 §P5 — a long wait is a named state, never a busy retry) and
+        // AWAIT_CORE_CLEARANCE (ADR-IC-003 §P4 — a long wait is a named state, never a busy retry) and
         // emits the clearance QUERY command (QueryCoreDebitStatus), a single event-driven query to the
         // Core ACL — "no blocking thread, no aggressive retries, no inventing state". CoreDebitIndeterminate
         // is the THIRD outcome of the irreversible debit, so like DebitConfirmed it is reachable ONLY from
@@ -245,6 +249,12 @@ public sealed class ConstitutionProcess : TableStateMachine
         //     no-op terminal: nothing committed, nothing to unwind). Document 05 says "handle as a normal
         //     error → retry or compensate"; at v1 a not-executed debit committed nothing, so the saga
         //     fails closed rather than reversing a debit that never happened.
+        //     DIVERGENCE (recorded — ADR-IC-003 Amendment A6, 2026-06-14): ADR-IC-012 §D5 step 5 / §P5
+        //     (inherited verbatim by ADR-PC-016 §64) specify the steady-state not-executed disposition as
+        //     RETRY_PERMITTED — "let the saga's compensation logic decide whether to reissue (with the same
+        //     idempotency_key)". At v1 there is NO reissue producer (DEF-1 / babelstone-ub9s lands the real
+        //     ACL state machine that owns RETRY_PERMITTED), so the saga fails CLOSED here instead. DEF-1
+        //     restores the RETRY_PERMITTED path; the divergence is dated and backed out there.
         //   • A clearance that itself cannot resolve (CompensationFailed) escalates to
         //     HUMAN_INTERVENTION_REQUIRED, never a swallowed/stranded saga (§P6 robustness).
         yield return ((SagaState.Approved, CoreDebitIndeterminate),

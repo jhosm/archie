@@ -235,8 +235,9 @@ public sealed record ReverseCoreDebitCommand : CommandPayload
 /// clearance-job mechanism (Document 05 Scenario C; bd babelstone-t7o3.10). Emitted on entering
 /// AWAIT_CORE_CLEARANCE, it asks the Core "was this debit actually executed?" BY REFERENCE — it
 /// carries the same opaque deposit and Core hold/txn references the debit used so the ACL can resolve
-/// the in-flight operation, never a fresh transaction. A single event-driven query (ADR-IC-003 §P5),
-/// not a poll. No PII — both fields are structural references.</summary>
+/// the in-flight operation, never a fresh transaction. A single event-driven query (ADR-IC-003 §P4 —
+/// a long wait is a first-class state, never a poll loop), not a poll. No PII — both fields are
+/// structural references.</summary>
 public sealed record QueryCoreDebitStatusCommand : CommandPayload
 {
     /// <summary>The deposit aggregate reference whose debit is being cleared (the Document 05
