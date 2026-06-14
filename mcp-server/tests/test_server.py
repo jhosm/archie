@@ -1,11 +1,46 @@
-"""Contract tests for the MCP surface — tool registration + the constitute/read mappings."""
+"""Contract tests for the MCP surface — tool registration + the constitute/read mappings.
+
+Each tool now reads the gateway-attested ``X-Client-Id`` / ``X-OAuth-Scope`` headers off the request
+context and enforces scope-per-tool (ADR-IC-010 §P4, Epic J). These tests inject a fake ``Context``
+carrying those headers so the direct-call mapping assertions exercise the same authorised path the
+secured transport would.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
+from starlette.requests import Request
+
 from babelstone_mcp import server
 from babelstone_mcp.engine_client import EngineClient
+
+
+class _FakeContext:
+    """A minimal stand-in for FastMCP's ``Context`` exposing ``request_context.request``."""
+
+    def __init__(self, *, client_id: str, scope: str) -> None:
+        scope_obj = {
+            "type": "http",
+            "method": "POST",
+            "path": "/mcp",
+            "query_string": b"",
+            "headers": [
+                (b"x-client-id", client_id.encode()),
+                (b"x-oauth-scope", scope.encode()),
+            ],
+        }
+        self.request_context = type(
+            "_RC", (), {"request": Request(scope_obj)}
+        )()
+
+
+def _read_ctx(client_id: str = "CLI-2026-007842") -> _FakeContext:
+    return _FakeContext(client_id=client_id, scope="deposits:read")
+
+
+def _write_ctx(client_id: str = "CLI-2026-007842") -> _FakeContext:
+    return _FakeContext(client_id=client_id, scope="deposits:write")
 
 _POSITION = {
     "deposit_id": "d-1",
@@ -105,7 +140,7 @@ async def test_get_deposit_tool_maps_id_to_the_engine_read() -> None:
     fake = _FakeEngine()
     server.set_engine(fake)
 
-    result = await server.get_deposit(deposit_id="d-42", min_sequence=7)
+    result = await server.get_deposit(deposit_id="d-42", ctx=_read_ctx(), min_sequence=7)
 
     assert fake.position_requested == "d-42"
     assert fake.min_sequence_requested == 7   # the read-your-writes token is threaded to the engine
@@ -121,7 +156,7 @@ async def test_mature_deposit_tool_maps_id_and_folds_interest() -> None:
     fake = _FakeEngine()
     server.set_engine(fake)
 
-    result = await server.mature_deposit(deposit_id="d-42")
+    result = await server.mature_deposit(deposit_id="d-42", ctx=_write_ctx())
 
     assert fake.matured == "d-42"
     assert result.deposit_id == "d-42"
@@ -134,7 +169,7 @@ async def test_pay_interest_tool_maps_id_and_folds_the_coupon() -> None:
     fake = _FakeEngine()
     server.set_engine(fake)
 
-    result = await server.pay_interest(deposit_id="d-42")
+    result = await server.pay_interest(deposit_id="d-42", ctx=_write_ctx())
 
     assert fake.interest_paid == "d-42"
     assert result.deposit_id == "d-42"
@@ -157,6 +192,7 @@ async def test_constitute_tool_maps_args_to_the_engine_request() -> None:
         term_days=365,
         start_date="2026-01-15",
         funding_account="PT50-DDA-001",
+        ctx=_write_ctx(),
     )
 
     assert result.deposit_id == "d-1"

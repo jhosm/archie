@@ -9,13 +9,17 @@ fast denormalized read model by default. For read-your-writes (e.g. reading righ
 constitute/mature), pass ``min_sequence`` = the ``commit_sequence`` that command returned: the
 engine then folds the event stream if the projection has not caught up, so you always see your own
 write. Money is integer cents; ``last_sequence`` on the result is the version served (thread it
-forward for monotonic reads). Scoped ``deposits:read`` at the gateway ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4).
+forward for monotonic reads).
+
+Requires ``deposits:read`` ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4) — the reserved read scope; a ``deposits:read`` token
+cannot reach the write tools.
 
 ## Signature
 
 | Parameter | Type | Default |
 |---|---|---|
 | `deposit_id` | `str` | — |
+| `ctx` | `Context` | — |
 | `min_sequence` | `int | None` | `None` |
 
 **Returns:** `DepositPosition`

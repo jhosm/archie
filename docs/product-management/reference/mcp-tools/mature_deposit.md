@@ -7,14 +7,16 @@ Mature (settle) a term deposit — runs accrual to term end and returns the matu
 ``deposit_id`` is the engine-assigned UUID. Returns the same ``DepositPosition`` shape with the
 interest fields now folded in (``accrued_gross_interest_cents``, ``withholding_to_date_cents``,
 ``net_interest_cents``, ``total_payout_cents``) and ``lifecycle`` = ``Matured``. Money is integer
-cents. Scoped ``deposits:write`` at the gateway ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). Settlement is irreversible, so if
-the secured edge classes it under §P8 it gets ``elicitation/create`` confirmation — that, like all
-auth on this dev server, is deferred to Epic J.
+cents.
+
+Requires ``deposits:write`` ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). Settlement is irreversible, so if the secured edge
+classes it under §P8 it gets ``elicitation/create`` confirmation — a deliberate follow-up (ar1y).
 
 ## Signature
 
 | Parameter | Type | Default |
 |---|---|---|
 | `deposit_id` | `str` | — |
+| `ctx` | `Context` | — |
 
 **Returns:** `DepositPosition`

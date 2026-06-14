@@ -9,6 +9,11 @@ requires-python = ">=3.10"
 dependencies = [
     "mcp==1.27.2",
     "httpx>=0.28,<1",
+    # Epic J (babelstone-e50n): decode the gateway-validated bearer JWT at the MCP app layer to
+    # re-check `aud` authoritatively (ADR-IC-010 §P3). Kong's jwt plugin already verified the
+    # SIGNATURE upstream, so the middleware decodes with verify_signature=False and asserts the
+    # audience itself — defense-in-depth alongside the Kong pre-function aud check.
+    "pyjwt>=2.8,<3",
 ]
 
 [project.optional-dependencies]

@@ -1,7 +1,10 @@
 # /mcp-server (Python MCP server on the official Python SDK).
 # Python pinned by mise.toml (3.14, ADR-IC-010); placement by ADR-IC-013.
-# E.5: the minimal dev server (constitute_deposit + get_deposit tools),
-# Streamable HTTP, hitting the engine command/query host directly. Auth is Epic J.
+# The four term-deposit tools (constitute_deposit / get_deposit / mature_deposit /
+# pay_interest) over Streamable HTTP, hitting the engine command/query host. Epic J
+# (babelstone-e50n) added the secured edge: the audience-checking ASGI middleware
+# (ADR-IC-010 §P3) + the RFC 9728 well-known route (§P2), with Kong fronting it (OAuth).
+# `python -m babelstone_mcp` serves the audience-wrapped app on 0.0.0.0:8080 (MCP_BIND_*).
 
 FROM python:3.14-slim
 WORKDIR /app
