@@ -240,6 +240,76 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
         Assert.Equal(2, AclRequests().Count(r => r.Path == "/v1/debits"));
     }
 
+    [Fact]
+    public async Task A_Core_stuck_on_not_executed_ESCALATES_after_the_reissue_budget_instead_of_looping_forever()
+    {
+        // bd babelstone-rq3e: the headline proof that the RETRY_PERMITTED reissue is BOUNDED. A Core that
+        // ALWAYS answers indeterminate on the debit AND not-executed on the clearance would, without the
+        // budget, reissue forever (each not-executed → a fresh ConfirmDebit → 202 → another clearance).
+        // The v1 saga-side reissue BUDGET caps the loop: after MaxReissues reissues the saga ESCALATES to
+        // HUMAN_INTERVENTION_REQUIRED via the orchestrator-derived ReissueBudgetExhausted event, never a
+        // busy retry, never stranded (ADR-IC-003 §P4 / §P6). This is defense-in-depth — the authoritative
+        // bound is the ACL clearance + §244 backlog alert (DEF-1), which the v1 WireMock shim does not have.
+        //
+        // ConfirmDebit ALWAYS returns 202 INDETERMINATE (the network never settles); the clearance ALWAYS
+        // returns 422 NOT_EXECUTED. So every cycle reissues — until the budget escalates and the loop stops.
+        _acl.Given(Request.Create().WithPath("/v1/debits").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode((int)HttpStatusCode.Accepted)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"status":"INDETERMINATE"}"""));
+        _acl.Given(Request.Create().WithPath("/v1/debits/clearance").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode((int)HttpStatusCode.UnprocessableEntity)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"status":"NOT_EXECUTED"}"""));
+
+        var processId = await StartSagaAsync(amountCents: 10_000_00);
+
+        // The engine is never reached on this path — the saga never activates (it escalates first). An
+        // unreachable engine URL proves no engine call is made.
+        const string unreachableEngine = "http://127.0.0.1:1";
+
+        using var host = BuildHost(engineBaseUrl: unreachableEngine, settlementBaseUrl: _acl.Url!);
+        await host.StartAsync();
+        try
+        {
+            // The saga escalates to HUMAN_INTERVENTION_REQUIRED — the loop TERMINATES (it does not spin
+            // forever). The 60s deadline is the liveness guarantee: if the budget were absent, this never trips.
+            await WaitUntilAsync(
+                async () => await StateAsync(processId) == SagaState.HumanInterventionRequired,
+                TimeSpan.FromSeconds(60),
+                "the saga did not escalate to HUMAN_INTERVENTION_REQUIRED after the reissue budget");
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+
+        // The budget bounded the loop EXACTLY: one original debit + MaxReissues reissues = MaxReissues + 1
+        // ConfirmDebit rows, and the saga parked in AWAIT_CORE_CLEARANCE that many times (one clearance
+        // cycle each), then escalated on the next not-executed.
+        var expectedDebits = ClearanceReissueBudget.MaxReissues + 1;
+        Assert.Equal(expectedDebits, await ConfirmDebitRowCountAsync(processId));
+        Assert.Equal(expectedDebits, await OutboxRowCountAsync(processId, ConstitutionProcess.QueryCoreDebitStatus));
+        Assert.Equal(expectedDebits, await ClearanceEntryCountAsync(processId));
+
+        // The escalation is recorded with the DISTINCT ReissueBudgetExhausted trigger (not CompensationFailed),
+        // landing in HUMAN_INTERVENTION_REQUIRED — the audit trail names the budget as the cause.
+        Assert.True(await BudgetEscalationTransitionExistsAsync(processId),
+            "no ReissueBudgetExhausted → HUMAN_INTERVENTION_REQUIRED transition was recorded");
+
+        // Final state is the escalation, NOT a terminal failure and NOT a reversal: nothing was ever
+        // committed (every debit was indeterminate-then-not-executed), so there is no money to reverse.
+        Assert.Equal(SagaState.HumanInterventionRequired, await StateAsync(processId));
+        var rows = await OutboxStatusesAsync(processId);
+        Assert.DoesNotContain(ConstitutionProcess.ReverseCoreDebit, rows.Keys);
+        Assert.DoesNotContain(ConstitutionProcess.ActivateDeposit, rows.Keys);
+
+        // The ACL saw EXACTLY the bounded number of debit sends and clearance queries — the reissue loop
+        // really went over the wire, and really stopped at the budget (not one send more).
+        Assert.Equal(expectedDebits, AclRequests().Count(r => r.Path == "/v1/debits"));
+        Assert.Equal(expectedDebits, AclRequests().Count(r => r.Path == "/v1/debits/clearance"));
+    }
+
     // ---- Host wiring (the FULL production composition: dispatcher + bridge + saga stores) -----------
 
     private IHost BuildHost(string engineBaseUrl, string settlementBaseUrl)
@@ -355,6 +425,50 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
         command.Parameters.AddWithValue("p", processId);
         command.Parameters.AddWithValue("c", ConstitutionProcess.ConfirmDebit);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> OutboxRowCountAsync(Guid processId, string commandType)
+    {
+        // Count saga_outbox rows of a given command_type — the reissue loop emits a fresh row per cycle,
+        // so a row count (not the command_type-keyed dictionary, which collapses duplicates) proves how
+        // many times a command was emitted.
+        await using var connection = await OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM saga_outbox WHERE process_id = @p AND command_type = @c;", connection);
+        command.Parameters.AddWithValue("p", processId);
+        command.Parameters.AddWithValue("c", commandType);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> ClearanceEntryCountAsync(Guid processId)
+    {
+        // The number of times the saga ENTERED AWAIT_CORE_CLEARANCE — its clearance-cycle count, read off
+        // the immutable transition log exactly as the budget gate reads it (SagaTransitionLog
+        // .CountEntriesIntoStateAsync). One entry per indeterminate debit (the original + each reissue).
+        await using var connection = await OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM saga_transition WHERE process_id = @p AND to_state = @s;", connection);
+        command.Parameters.AddWithValue("p", processId);
+        command.Parameters.AddWithValue("s", SagaStateNames.ToName(SagaState.AwaitCoreClearance));
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<bool> BudgetEscalationTransitionExistsAsync(Guid processId)
+    {
+        // The escalation is recorded with the DISTINCT ReissueBudgetExhausted trigger out of
+        // AWAIT_CORE_CLEARANCE into HUMAN_INTERVENTION_REQUIRED — the audit trail names the budget as the
+        // cause, never conflated with a CompensationFailed clearance failure.
+        await using var connection = await OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT COUNT(*) FROM saga_transition
+            WHERE process_id = @p AND from_state = @from AND to_state = @to AND event_type = @evt;
+            """, connection);
+        command.Parameters.AddWithValue("p", processId);
+        command.Parameters.AddWithValue("from", SagaStateNames.ToName(SagaState.AwaitCoreClearance));
+        command.Parameters.AddWithValue("to", SagaStateNames.ToName(SagaState.HumanInterventionRequired));
+        command.Parameters.AddWithValue("evt", ConstitutionProcess.ReissueBudgetExhausted);
+        return Convert.ToInt32(await command.ExecuteScalarAsync()) == 1;
     }
 
     private IReadOnlyList<AclRequest> AclRequests() =>

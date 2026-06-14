@@ -86,6 +86,21 @@ public sealed class ConstitutionProcess : TableStateMachine
     /// state, never a busy retry). The reissue counterpart of a late <see cref="DebitConfirmed"/> out of
     /// <see cref="SagaState.AwaitCoreClearance"/>.</summary>
     public const string DebitNotExecuted = "DebitNotExecuted";
+    /// <summary>Orchestrator self-signal (bd babelstone-rq3e): the indeterminate-clearance reissue
+    /// BUDGET is spent — the saga has parked in <see cref="SagaState.AwaitCoreClearance"/> more than the
+    /// permitted number of times, so instead of REISSUING the debit again on a not-executed clearance it
+    /// escalates. A DISTINCT escalation event (NOT <see cref="CompensationFailed"/> — the compensation did
+    /// not fail; the reissue budget did), so the transition log records EXACTLY why the saga went to
+    /// <see cref="SagaState.HumanInterventionRequired"/>. The impure shell (<c>SagaAdvanceHandler</c>)
+    /// substitutes this for <see cref="DebitNotExecuted"/> once the budget is spent (it counts prior
+    /// AWAIT_CORE_CLEARANCE entries and applies <see cref="Handlers.ClearanceReissueBudget"/>); the table
+    /// maps it to HUMAN_INTERVENTION_REQUIRED. This is a v1 LIVENESS backstop — the AUTHORITATIVE bound on
+    /// retries remains the ACL clearance job + the ADR-IC-012 §244 INDETERMINATE-backlog alert (DEF-1 /
+    /// babelstone-ub9s); the budget is defense-in-depth so a stubbed ACL cannot busy-loop the saga
+    /// (ADR-IC-003 §P4 — a long wait is a named state, never a busy retry; §P6 — escalate, never strand).
+    /// Like <see cref="ConstitutionApproved"/> on the approval fork, it is an orchestrator-derived event,
+    /// not a Core-ACL one — there is no Avro, no catalog entry, no schema-registry subject.</summary>
+    public const string ReissueBudgetExhausted = "ReissueBudgetExhausted";
     /// <summary>An upstream precondition was REFUSED during the validation phase (H.2,
     /// babelstone-n55u): a verdict that did not <see cref="PreconditionVerdict.Accepts"/> arrived
     /// before approval and before any irreversible effect. The fail-CLOSED trigger that lands the
@@ -258,9 +273,12 @@ public sealed class ConstitutionProcess : TableStateMachine
         //     SAFETY (no double-debit): because the not-executed verdict is Core ground truth that nothing
         //     was committed, reissuing cannot double-debit (ADR-IC-012 §P5 / §332 — double-debit prevented
         //     by construction). The same-idempotency-key re-send and the ACL's guard that only re-sends from
-        //     RETRY_PERMITTED are the ACL's machinery (DEF-1 / babelstone-ub9s), not the saga's. The BOUND
-        //     on retries is the ACL's clearance plus the §244 INDETERMINATE-backlog ALERT, NOT a saga
-        //     busy-retry (§P4: a long wait is a named state, never a busy retry).
+        //     RETRY_PERMITTED are the ACL's machinery (DEF-1 / babelstone-ub9s), not the saga's. The
+        //     AUTHORITATIVE bound on retries is the ACL's clearance plus the §244 INDETERMINATE-backlog
+        //     ALERT, NOT a saga busy-retry (§P4: a long wait is a named state, never a busy retry). At v1
+        //     that authoritative bound is not yet built (the ACL is a WireMock shim), so a saga-side reissue
+        //     BUDGET backstops the loop as DEFENSE-IN-DEPTH (the ReissueBudgetExhausted edge below; bd
+        //     babelstone-rq3e) — it does not replace the ACL's bound, it keeps a stubbed ACL from looping forever.
         //   • A clearance that itself cannot resolve (CompensationFailed) escalates to
         //     HUMAN_INTERVENTION_REQUIRED, never a swallowed/stranded saga (§P6 robustness).
         yield return ((SagaState.Approved, CoreDebitIndeterminate),
@@ -271,6 +289,19 @@ public sealed class ConstitutionProcess : TableStateMachine
         yield return ((SagaState.AwaitCoreClearance, DebitNotExecuted),
             TransitionOutcome.To(SagaState.Approved, ConfirmDebit));
         yield return ((SagaState.AwaitCoreClearance, CompensationFailed),
+            TransitionOutcome.To(SagaState.HumanInterventionRequired));
+        // Reissue BUDGET backstop (bd babelstone-rq3e). The ACL clearance is the AUTHORITATIVE convergence,
+        // but at v1 it is a stub, so a Core that keeps answering not-executed would reissue forever via the
+        // DebitNotExecuted edge above. The impure shell (SagaAdvanceHandler) counts prior AWAIT_CORE_CLEARANCE
+        // entries and, once the reissue budget is spent (Handlers.ClearanceReissueBudget), feeds
+        // ReissueBudgetExhausted INSTEAD of DebitNotExecuted — landing the saga in HUMAN_INTERVENTION_REQUIRED
+        // rather than busy-looping (ADR-IC-003 §P4 / §P6). ADR-IC-012 §D5 step 5 delegates the reissue decision
+        // to "the saga's compensation logic", so this budget CONFORMS — it is that logic deciding reissue-vs-
+        // escalate, not a divergence. The DECISION is pure (the count → disposition map); only the COUNT is
+        // impure. Like the (AwaitCoreClearance, CompensationFailed) escalation it emits NO command — an
+        // operator reconciles from the ops console (§S2). DISTINCT from CompensationFailed so the transition
+        // log records that the BUDGET, not a failed compensation, drove the escalation.
+        yield return ((SagaState.AwaitCoreClearance, ReissueBudgetExhausted),
             TransitionOutcome.To(SagaState.HumanInterventionRequired));
     }
 }

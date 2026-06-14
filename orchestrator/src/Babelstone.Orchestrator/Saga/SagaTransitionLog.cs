@@ -42,4 +42,39 @@ public sealed class SagaTransitionLog
         command.Parameters.AddWithValue("note", (object?)note ?? DBNull.Value);
         await command.ExecuteNonQueryAsync(ct);
     }
+
+    /// <summary>
+    /// Count the immutable transition rows that LANDED this saga in <paramref name="state"/> — i.e. the
+    /// number of times the saga has ENTERED that state. The transition trail (ADR-IC-003 §F2) is the saga's
+    /// only per-instance memory beyond its current <c>state</c> column, so a count over it is how a
+    /// (state, event)-keyed table reads history without carrying a counter on the saga row. Used by the
+    /// indeterminate-clearance reissue BUDGET (bd babelstone-rq3e): the count of AWAIT_CORE_CLEARANCE
+    /// entries is the saga's clearance-cycle count, which bounds the RETRY_PERMITTED reissue loop. Reads
+    /// only the structural <c>to_state</c> column (PII-free, ADR-PC-004 §P2).
+    /// </summary>
+    /// <remarks>
+    /// Runs on the SAME connection + transaction as the advance, so it reads under the <c>FOR UPDATE</c>
+    /// row lock the advance already holds on the <c>saga_state</c> row (<see cref="SagaStateStore.LoadAsync"/>):
+    /// concurrent advancers on the same instance are serialised, so the count is consistent with the move
+    /// about to be made. The budget it feeds is defense-in-depth, and the optimistic-concurrency version
+    /// guard owns correctness on the rare cross-instance race, so a count is never relied on for safety —
+    /// only for liveness.
+    /// </remarks>
+    public async Task<int> CountEntriesIntoStateAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid processId,
+        SagaState state,
+        CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT COUNT(*) FROM saga_transition
+            WHERE process_id = @process_id AND to_state = @to_state;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("process_id", processId);
+        command.Parameters.AddWithValue("to_state", SagaStateNames.ToName(state));
+        return Convert.ToInt32(await command.ExecuteScalarAsync(ct));
+    }
 }

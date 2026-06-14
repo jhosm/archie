@@ -146,6 +146,40 @@ public sealed class ConstitutionProcessTests
     }
 
     [Fact]
+    public void Reissue_budget_exhaustion_escalates_AWAIT_CORE_CLEARANCE_to_HUMAN_INTERVENTION_REQUIRED()
+    {
+        // bd babelstone-rq3e: the RETRY_PERMITTED reissue (the (AwaitCoreClearance, DebitNotExecuted) edge)
+        // is unbounded at the table level — the v1 saga-side BUDGET caps it. The impure shell substitutes
+        // the DISTINCT ReissueBudgetExhausted event once the budget is spent; the TABLE routes that event
+        // to HUMAN_INTERVENTION_REQUIRED with NO command (an operator reconciles). This pins the new edge.
+        AssertTransition(SagaState.AwaitCoreClearance, ConstitutionProcess.ReissueBudgetExhausted,
+            SagaState.HumanInterventionRequired);
+
+        // The escalation target is NOT terminal — an operator must still resolve it (§P6), exactly like the
+        // CompensationFailed escalation out of the same state.
+        Assert.False(SagaStateNames.IsTerminal(SagaState.HumanInterventionRequired));
+
+        // ReissueBudgetExhausted is an ESCALATION-ONLY event: the saga's ONLY budget-exhaustion edge is the
+        // one out of AWAIT_CORE_CLEARANCE, and it ALWAYS escalates and ALWAYS emits no command. A future
+        // edit that wired it to a reissue (or anywhere but HUMAN_INTERVENTION_REQUIRED) would trip here.
+        foreach (var ((from, evt), outcome) in _machine.Transitions)
+        {
+            if (evt == ConstitutionProcess.ReissueBudgetExhausted)
+            {
+                Assert.Equal(SagaState.AwaitCoreClearance, from);
+                Assert.Equal(SagaState.HumanInterventionRequired, outcome.Next);
+                Assert.Empty(outcome.Commands);
+            }
+        }
+
+        // The distinct event keeps the two escalations out of AWAIT_CORE_CLEARANCE separable in the audit
+        // trail: a budget exhaustion (ReissueBudgetExhausted) and a failed clearance (CompensationFailed)
+        // both reach HUMAN_INTERVENTION_REQUIRED but record DIFFERENT triggers — never conflated.
+        Assert.True(_machine.TryAdvance(SagaState.AwaitCoreClearance, ConstitutionProcess.ReissueBudgetExhausted, out _));
+        Assert.True(_machine.TryAdvance(SagaState.AwaitCoreClearance, ConstitutionProcess.CompensationFailed, out _));
+    }
+
+    [Fact]
     public void Indeterminate_debit_entry_is_reachable_only_from_APPROVED()
     {
         // §P5: CoreDebitIndeterminate is the irreversible-debit's THIRD outcome (alongside confirmed and

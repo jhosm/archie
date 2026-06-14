@@ -164,10 +164,36 @@ public sealed class SagaAdvanceHandler(
             return AdvanceOutcome.Terminal;
         }
 
+        // (2b) Indeterminate-clearance reissue BUDGET (bd babelstone-rq3e — a v1 LIVENESS backstop).
+        // A not-executed clearance normally REISSUES the debit (the RETRY_PERMITTED disposition; the
+        // (AwaitCoreClearance, DebitNotExecuted) → (Approved, ConfirmDebit) edge). The AUTHORITATIVE
+        // bound on that loop is the ACL clearance job + the ADR-IC-012 §244 backlog alert, but at v1
+        // that bound is not built (the ACL is a WireMock shim), so a Core stuck on not-executed would
+        // reissue forever. This shell counts how many times the saga has PARKED in AWAIT_CORE_CLEARANCE
+        // and, once the budget is spent, substitutes the DISTINCT ReissueBudgetExhausted event for
+        // DebitNotExecuted — the table then routes it to HUMAN_INTERVENTION_REQUIRED instead of another
+        // reissue (ADR-IC-003 §P4 — never a busy retry; §P6 — escalate, never strand). ADR-IC-012 §D5
+        // step 5 delegates the reissue decision to "the saga's compensation logic", so this CONFORMS.
+        // The COUNT is impure (it reads the log); the DECISION is pure (ClearanceReissueBudget.Decide),
+        // so the budget keeps the table the authority on what each event does (§P2) — the shell only
+        // chooses WHICH event applies, exactly as SelfEmitApprovalForkAsync chooses the fork event.
+        var effectiveEventType = message.EventType;
+        if (saga.State == SagaState.AwaitCoreClearance
+            && message.EventType == ConstitutionProcess.DebitNotExecuted)
+        {
+            var priorClearanceEntries = await _transitionLog.CountEntriesIntoStateAsync(
+                connection, transaction, saga.ProcessId, SagaState.AwaitCoreClearance, ct);
+            if (ClearanceReissueBudget.Decide(priorClearanceEntries) == ClearanceReissueDecision.Escalate)
+            {
+                effectiveEventType = ConstitutionProcess.ReissueBudgetExhausted;
+            }
+        }
+
         // (3) The state machine is the specification (ADR-IC-003 §P2): a (state, event) pair
         // not in the table is REJECTED, never silently applied. The caller routes a
-        // NoTransition to poison — an illegal transition cannot corrupt the saga.
-        if (!_machine.TryAdvance(saga.State, message.EventType, out var outcome))
+        // NoTransition to poison — an illegal transition cannot corrupt the saga. The lookup uses
+        // effectiveEventType so the budget's escalate decision (2b) is honoured by the SAME pure table.
+        if (!_machine.TryAdvance(saga.State, effectiveEventType, out var outcome))
         {
             await WriteInboxRowAsync(connection, transaction, message, "no-transition", ct);
             return AdvanceOutcome.NoTransition;
@@ -186,10 +212,15 @@ public sealed class SagaAdvanceHandler(
         }
 
         // (5) Persist the audit transition (ADR-IC-003 §F2) and the dedup row in the SAME
-        // transaction as the move.
+        // transaction as the move. The transition records the EFFECTIVE event the state machine applied
+        // (effectiveEventType) — for a budget escalation that is ReissueBudgetExhausted, so the audit
+        // trail names exactly WHY the saga went to HUMAN_INTERVENTION_REQUIRED. The dedup row below still
+        // keys on the PHYSICAL message (its real id + source topic), so the not-executed delivery dedups
+        // on its own id. This mirrors the self-emit fork, which logs the derived ConstitutionApproved /
+        // WorkflowApprovalRequired rather than the sibling validation that triggered it.
         await _transitionLog.AppendAsync(
             connection, transaction, saga.ProcessId, saga.State, outcome.Next,
-            message.EventType, message.MessageId,
+            effectiveEventType, message.MessageId,
             note: SagaStateNames.ToName(outcome.Next), ct);
 
         await WriteInboxRowAsync(
