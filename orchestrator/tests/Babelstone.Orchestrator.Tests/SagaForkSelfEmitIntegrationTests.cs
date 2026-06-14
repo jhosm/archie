@@ -206,10 +206,7 @@ public sealed class SagaForkSelfEmitIntegrationTests(OrchestratorPostgresFixture
     // --- helpers -----------------------------------------------------------------------
 
     private SagaAdvanceHandler NewHandler(ISagaCommandSink sink) =>
-        new(_machine, _stateStore, _transitionLog, sink, _businessRefStore)
-        {
-            StartEventType = ConstitutionProcess.ConstitutionRequested,
-        };
+        new(_machine, _stateStore, _transitionLog, sink, _businessRefStore);
 
     private static SagaInboxEvent Event(Guid processId, string eventType, Guid? correlationId = null) =>
         new(Guid.NewGuid(), processId, eventType, "deposits.process.events", correlationId);

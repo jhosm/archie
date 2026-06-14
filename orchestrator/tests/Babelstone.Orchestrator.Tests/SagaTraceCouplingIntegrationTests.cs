@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Babelstone.Orchestrator.Edge;
+using Babelstone.Orchestrator.Handlers;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
@@ -30,9 +32,12 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
     private static readonly string[] PiiKeyFragments =
         ["nif", "iban", "account", "email", "phone", "address", "tax_id"];
 
+    private const long ThresholdCents = 1_000_00;
+
     private readonly ConstitutionProcess _machine = new();
     private readonly SagaStateStore _stateStore = new();
     private readonly SagaTransitionLog _transitionLog = new();
+    private readonly SagaBusinessReferenceStore _businessRefStore = new();
 
     [Fact]
     public async Task A_migrated_saga_outbox_has_the_traceparent_column()
@@ -51,12 +56,18 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
         using var listener = CaptureListener(captured);
         ActivitySource.AddActivityListener(listener);
 
-        var processId = Guid.NewGuid();
         var correlationId = Guid.NewGuid();
-        var handler = NewHandler(new SagaCommandOutboxSink());
 
-        var started = Event(processId, ConstitutionProcess.ConstitutionRequested, correlationId, InboundTraceParent);
-        Assert.Equal(AdvanceOutcome.Started, await RunAsync(handler, started));
+        // The edge is the SOLE saga starter (bd babelstone-t7o3.9); it opens its OWN transaction, so
+        // the inbound-traceparent assertions are driven on an ADVANCE consumed AFTER the start. Note
+        // the edge-start emissions are captured too, but the advance span is the one under test.
+        var processId = await StartSagaWithReferencesAsync(correlationId);
+        captured.Clear();
+
+        // A consumed advance (BalanceReserved) carrying the inbound W3C traceparent — the advance is
+        // what the consume loop drives, and its span parents to the inbound trace.
+        var advance = Event(processId, ConstitutionProcess.BalanceReserved, correlationId, InboundTraceParent);
+        Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(NewHandler(new SagaCommandOutboxSink(_businessRefStore)), advance));
 
         var span = Assert.Single(captured, a => a.OperationName == BabelstoneAttributes.SpanSagaAdvance);
 
@@ -71,10 +82,10 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
         Assert.Equal(processId.ToString(), span.GetTagItem(BabelstoneAttributes.SagaProcessId));
         Assert.Equal(correlationId.ToString(), span.GetTagItem(BabelstoneAttributes.SagaCorrelationId));
         Assert.Equal(_machine.SagaType, span.GetTagItem(BabelstoneAttributes.SagaType));
-        Assert.Equal(ConstitutionProcess.ConstitutionRequested, span.GetTagItem(BabelstoneAttributes.SagaEventType));
-        Assert.Equal(started.MessageId.ToString(), span.GetTagItem(BabelstoneAttributes.SagaCausationId));
-        Assert.Equal("STARTED->PARALLEL_VALIDATION", span.GetTagItem(BabelstoneAttributes.SagaTransition));
-        Assert.Equal(nameof(AdvanceOutcome.Started), span.GetTagItem(BabelstoneAttributes.SagaOutcome));
+        Assert.Equal(ConstitutionProcess.BalanceReserved, span.GetTagItem(BabelstoneAttributes.SagaEventType));
+        Assert.Equal(advance.MessageId.ToString(), span.GetTagItem(BabelstoneAttributes.SagaCausationId));
+        Assert.Equal("PARALLEL_VALIDATION->AWAIT_LIMITS_VALIDATED", span.GetTagItem(BabelstoneAttributes.SagaTransition));
+        Assert.Equal(nameof(AdvanceOutcome.Advanced), span.GetTagItem(BabelstoneAttributes.SagaOutcome));
 
         // Every tag key is operational-tier (babelstone.* structural), none PII-ish (the same
         // structural fitness function the engine's TelemetrySpanTests asserts).
@@ -93,20 +104,30 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
         using var listener = CaptureListener(captured);
         ActivitySource.AddActivityListener(listener);
 
-        var processId = Guid.NewGuid();
-        var handler = NewHandler(new SagaCommandOutboxSink());
+        var handler = NewHandler(new SagaCommandOutboxSink(_businessRefStore));
 
+        // Edge-start the saga (its emissions carry no traceparent — the edge opens its own
+        // transaction), then drive both validations to VALIDATIONS_COMPLETE under the inbound trace.
+        // The completing advance self-emits ConfirmDebit — the command emitted UNDER the advance span,
+        // so its outbound traceparent is what threads downstream under the saga's trace.
+        var processId = await StartSagaWithReferencesAsync(Guid.NewGuid());
+        captured.Clear();
+
+        await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsValidated, traceParent: InboundTraceParent));
         Assert.Equal(
-            AdvanceOutcome.Started,
-            await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionRequested, Guid.NewGuid(), InboundTraceParent)));
+            AdvanceOutcome.Advanced,
+            await RunAsync(handler, Event(processId, ConstitutionProcess.BalanceReserved, traceParent: InboundTraceParent)));
 
-        var span = Assert.Single(captured, a => a.OperationName == BabelstoneAttributes.SpanSagaAdvance);
-        var traceParents = await OutboxTraceParentsAsync(processId);
+        // The completing advance is the one that emits ConfirmDebit; take its span (the last advance
+        // span captured under the inbound trace).
+        var span = captured.Last(a => a.OperationName == BabelstoneAttributes.SpanSagaAdvance);
 
-        // Two commands emitted; each carries an outbound traceparent that threads under THIS span
-        // (same trace id, the advance span's id as parent) — the downstream consumer continues the
-        // saga's trace. The trace id stays the upstream one (the saga is one trace end-to-end).
-        Assert.Equal(2, traceParents.Count);
+        // The outbox rows emitted UNDER an advance span carry a non-null outbound traceparent (the
+        // edge-start rows carry null); each threads under THIS span (same trace id, the advance span's
+        // id as parent) — the downstream consumer continues the saga's trace. The trace id stays the
+        // upstream one (the saga is one trace end-to-end).
+        var traceParents = (await OutboxTraceParentsAsync(processId)).Where(tp => tp is not null).ToList();
+        Assert.NotEmpty(traceParents);
         Assert.All(traceParents, tp =>
         {
             Assert.NotNull(tp);
@@ -122,15 +143,22 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
         // No ActivityListener attached ⇒ StartActivity returns null ⇒ the whole trace path is a
         // no-op: the advance still commits, and the outbox rows carry a NULL traceparent (a
         // downstream consumer roots its own trace). The trace coupling never gates the saga.
-        var processId = Guid.NewGuid();
-        var handler = NewHandler(new SagaCommandOutboxSink());
+        var handler = NewHandler(new SagaCommandOutboxSink(_businessRefStore));
 
+        // Edge-start, then drive both validations to VALIDATIONS_COMPLETE (the completing advance
+        // self-emits ConfirmDebit) — all with no tracer listening. The advance still commits and the
+        // emitted rows carry a NULL traceparent.
+        var processId = await StartSagaWithReferencesAsync(Guid.NewGuid());
+
+        await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsValidated));
         Assert.Equal(
-            AdvanceOutcome.Started,
-            await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionRequested, Guid.NewGuid())));
+            AdvanceOutcome.Advanced,
+            await RunAsync(handler, Event(processId, ConstitutionProcess.BalanceReserved)));
 
+        // Every outbox row — the two edge-start validation commands and the self-emitted ConfirmDebit
+        // — carries a NULL traceparent (no tracer was listening on any leg).
         var traceParents = await OutboxTraceParentsAsync(processId);
-        Assert.Equal(2, traceParents.Count);
+        Assert.NotEmpty(traceParents);
         Assert.All(traceParents, Assert.Null);
     }
 
@@ -144,14 +172,38 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
     };
 
     private SagaAdvanceHandler NewHandler(ISagaCommandSink sink) =>
-        new(_machine, _stateStore, _transitionLog, sink)
-        {
-            StartEventType = ConstitutionProcess.ConstitutionRequested,
-        };
+        new(_machine, _stateStore, _transitionLog, sink, _businessRefStore);
 
     private static SagaInboxEvent Event(
         Guid processId, string eventType, Guid? correlationId = null, string? traceParent = null) =>
         new(Guid.NewGuid(), processId, eventType, "deposits.process.events", correlationId, traceParent);
+
+    // Start the saga through the REAL edge starter (the sole start path, bd babelstone-t7o3.9): creates
+    // the STARTED row, pins the business references, drives STARTED + ConstitutionRequested →
+    // PARALLEL_VALIDATION. Returns the minted internal process id the advances then drive.
+    private async Task<Guid> StartSagaWithReferencesAsync(Guid correlationId)
+    {
+        var sink = new SagaCommandOutboxSink(_businessRefStore);
+        var starter = new EdgeSagaStarter(_machine, _stateStore, _transitionLog, sink, _businessRefStore)
+        {
+            StartEventType = ConstitutionProcess.ConstitutionRequested,
+        };
+
+        var result = await starter.StartAsync(
+            fixture.ConnectionString,
+            owningClientId: "CLI-2026-007842",
+            new EdgeBusinessFacts(
+                ProductRef: "TD-TRAD-12M",
+                AmountMinorUnits: 100_00,
+                SourceAccountRef: "acct-ref-001",
+                InterestAccountRef: null,
+                ClientType: ClientType.Existing,
+                AutoApprovalThresholdMinorUnits: ThresholdCents),
+            correlationId);
+
+        Assert.Equal(SagaState.ParallelValidation, result.State);
+        return result.ProcessId;
+    }
 
     private async Task<AdvanceOutcome> RunAsync(SagaAdvanceHandler handler, SagaInboxEvent message)
     {

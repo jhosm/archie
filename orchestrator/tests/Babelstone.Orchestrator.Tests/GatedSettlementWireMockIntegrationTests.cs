@@ -1,5 +1,7 @@
 using System.Net;
+using Babelstone.Orchestrator.Commands;
 using Babelstone.Orchestrator.Dispatch;
+using Babelstone.Orchestrator.Handlers;
 using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Microsoft.Extensions.DependencyInjection;
@@ -143,10 +145,12 @@ public sealed class GatedSettlementWireMockIntegrationTests : IAsyncLifetime
         // the dedicated /insufficient probe path, which the router maps via a refusing command name.
         var processId = Guid.NewGuid();
         await StartSagaAsync(processId, correlationId: null);
+        // A real ReserveAccountBalance leg (the factory builds its full payload); this test's host
+        // routes the reserve to the ACL's /insufficient probe path so the refusal mapping is reachable.
         var (reserveId, _) = await SeedCommandAsync(
-            processId, RefusingReserveCommandType, correlationId: null);
+            processId, ConstitutionProcess.ReserveAccountBalance, correlationId: null);
 
-        using var host = BuildHost(settlementBaseUrl: _acl.Url!);
+        using var host = BuildHost(settlementBaseUrl: _acl.Url!, refuseReserve: true);
         await host.StartAsync();
         try
         {
@@ -172,7 +176,7 @@ public sealed class GatedSettlementWireMockIntegrationTests : IAsyncLifetime
 
     // ---- Host wiring (mirrors the production dispatcher composition; engine target is never hit here) ----
 
-    private IHost BuildHost(string settlementBaseUrl)
+    private IHost BuildHost(string settlementBaseUrl, bool refuseReserve = false)
     {
         var options = new SagaCommandDispatcherOptions
         {
@@ -184,7 +188,7 @@ public sealed class GatedSettlementWireMockIntegrationTests : IAsyncLifetime
         };
         var builder = Host.CreateApplicationBuilder();
         builder.Services.AddSingleton(options);
-        builder.Services.AddSingleton<ICommandRouter>(new GatedSettlementRouter(options));
+        builder.Services.AddSingleton<ICommandRouter>(new GatedSettlementRouter(options, refuseReserve));
         builder.Services.AddHttpClient();
         builder.Services.AddSingleton(sp => new SagaCommandDispatchDrainer(
             sp.GetRequiredService<SagaCommandDispatcherOptions>(),
@@ -194,25 +198,24 @@ public sealed class GatedSettlementWireMockIntegrationTests : IAsyncLifetime
         return builder.Build();
     }
 
-    // A synthetic command name the test uses to drive the ACL's InsufficientBalance probe route. It is
-    // NOT a ConstitutionProcess command; the wrapper router below routes it to /v1/reservations/insufficient
-    // so the refusal mapping is reachable WITHOUT a second WireMock server or a stateful first-call-fails
-    // mapping — the production router (and its commands) is unchanged.
-    private const string RefusingReserveCommandType = "ReserveAccountBalanceInsufficient";
-
     /// <summary>
-    /// The production <see cref="SagaCommandRouter"/> plus one extra route for the test-only refusal
-    /// probe command. Every real command routes exactly as production; only the synthetic
-    /// <see cref="RefusingReserveCommandType"/> gains a route, to the ACL's /insufficient mapping.
+    /// The production <see cref="SagaCommandRouter"/>, optionally re-pointing the ReserveAccountBalance
+    /// leg at the ACL's /insufficient probe path so the refusal (422) mapping is reachable WITHOUT a
+    /// second WireMock server or a stateful first-call-fails mapping. The seeded command is a REAL
+    /// ReserveAccountBalance (the full-payload factory builds it — references are mandatory now, bd
+    /// babelstone-t7o3.9); only the test's ROUTE differs, never the production router or its commands.
+    /// When <paramref name="refuseReserve"/> is false this routes exactly as production.
     /// </summary>
-    private sealed class GatedSettlementRouter(SagaCommandDispatcherOptions options) : ICommandRouter
+    private sealed class GatedSettlementRouter(SagaCommandDispatcherOptions options, bool refuseReserve = false)
+        : ICommandRouter
     {
         private readonly SagaCommandRouter _production = new(options);
         private readonly string _settlementBaseUrl = options.SettlementBaseUrl;
 
-        public CommandRoute? Resolve(string commandType) => commandType == RefusingReserveCommandType
-            ? new CommandRoute(_settlementBaseUrl, "/v1/reservations/insufficient", HttpMethod.Post)
-            : _production.Resolve(commandType);
+        public CommandRoute? Resolve(string commandType) =>
+            refuseReserve && commandType == ConstitutionProcess.ReserveAccountBalance
+                ? new CommandRoute(_settlementBaseUrl, "/v1/reservations/insufficient", HttpMethod.Post)
+                : _production.Resolve(commandType);
     }
 
     /// <summary>Flatten the WireMock ACL's log into the load-bearing fields (path, method, the
@@ -238,10 +241,25 @@ public sealed class GatedSettlementWireMockIntegrationTests : IAsyncLifetime
     private async Task StartSagaAsync(Guid processId, Guid? correlationId)
     {
         var stateStore = new SagaStateStore();
+        var businessRefStore = new SagaBusinessReferenceStore();
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();
         await stateStore.TryStartAsync(
             connection, tx, processId, ConstitutionProcess.Type, SagaState.Started, correlationId);
+
+        // Pin the per-saga business references the full-payload factory reads (mandatory now — bd
+        // babelstone-t7o3.9). The FK requires the saga_state row to exist first (same transaction).
+        await businessRefStore.TryInsertAsync(
+            connection, tx,
+            new SagaBusinessReference(
+                ProcessId: processId,
+                ProductRef: "TD-TRAD-12M",
+                AmountMinorUnits: 100_00,
+                SourceAccountRef: "acct-ref-001",
+                InterestAccountRef: null,
+                DepositRef: "DEP-" + processId.ToString("N"),
+                ClientType: ClientType.Existing,
+                AutoApprovalThresholdMinorUnits: 1_000_00));
         await tx.CommitAsync();
     }
 

@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text;
+using Babelstone.Orchestrator.Edge;
+using Babelstone.Orchestrator.Handlers;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
@@ -52,45 +54,51 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// The hosted consume loop reads a produced <c>ConstitutionRequested</c> and advances the saga to
-    /// PARALLEL_VALIDATION end-to-end: a saga_state row exists in PARALLEL_VALIDATION, the inbox dedup
-    /// row landed (effectively-once), and the two validation commands were emitted to the outbox — all
-    /// driven by the REAL Confluent consumer, not by calling the handler directly.
+    /// The hosted consume loop reads a produced ADVANCE event and advances an EXISTING saga end-to-end:
+    /// the saga is edge-started first (the sole start path, bd babelstone-t7o3.9), then a produced
+    /// <c>BalanceReserved</c> drives it from PARALLEL_VALIDATION → AWAIT_LIMITS_VALIDATED, the inbox
+    /// dedup row lands (effectively-once), and the two validation commands the EDGE emitted are present
+    /// — all advanced by the REAL Confluent consumer, not by calling the handler directly.
     /// </summary>
     [Fact]
-    public async Task The_hosted_loop_consumes_a_started_event_and_advances_the_saga()
+    public async Task The_hosted_loop_consumes_an_advance_event_and_advances_the_saga()
     {
-        var processId = Guid.NewGuid();
-        var messageId = Guid.NewGuid();
-
-        // The constitution saga reacts to events on the engine's deposits-process topic. Produce the
-        // start event with the exact CloudEvents headers the outbox relay emits (ADR-IC-015).
         var topic = SagaConsumeTopics.ConstitutionProcessTopic;
-        await ProduceEventAsync(topic, messageId, processId, ConstitutionProcess.ConstitutionRequested);
+
+        // Edge-start the saga (creates the saga_state row + references + the minted process id, and
+        // emits the two parallel validation commands). The hosted loop's job is to ADVANCE it.
+        var processId = await StartSagaAtEdgeAsync();
+        Assert.Equal(SagaState.ParallelValidation, await StateOrNullAsync(processId));
+
+        // The constitution saga reacts to events on the engine's deposits-process topic. Produce an
+        // ADVANCE event with the exact CloudEvents headers the outbox relay emits (ADR-IC-015).
+        var messageId = Guid.NewGuid();
+        await ProduceEventAsync(topic, messageId, processId, ConstitutionProcess.BalanceReserved);
 
         using var host = BuildHost(topic, groupId: $"orch-consume-{Guid.NewGuid()}");
         await host.StartAsync();
         try
         {
             // The loop is asynchronous (subscribe → assign → consume → advance), so poll until the
-            // saga has been driven into PARALLEL_VALIDATION or the deadline elapses.
+            // saga has been driven into AWAIT_LIMITS_VALIDATED or the deadline elapses.
             await WaitUntilAsync(
-                async () => await StateOrNullAsync(processId) == SagaState.ParallelValidation,
+                async () => await StateOrNullAsync(processId) == SagaState.AwaitLimitsValidated,
                 TimeSpan.FromSeconds(40),
-                "the hosted loop did not advance the saga to PARALLEL_VALIDATION");
+                "the hosted loop did not advance the saga to AWAIT_LIMITS_VALIDATED");
         }
         finally
         {
             await host.StopAsync();
         }
 
-        // The saga reached PARALLEL_VALIDATION — driven entirely by the hosted consumer.
-        Assert.Equal(SagaState.ParallelValidation, await StateOrNullAsync(processId));
+        // The saga advanced — driven entirely by the hosted consumer.
+        Assert.Equal(SagaState.AwaitLimitsValidated, await StateOrNullAsync(processId));
 
         // Effectively-once: exactly one inbox dedup row for this message_id.
         Assert.Equal(1, await CountInboxAsync(messageId));
 
-        // The two parallel validation commands were emitted to the durable outbox (ADR-IC-003 §P1).
+        // The two parallel validation commands the EDGE emitted are in the durable outbox (the
+        // BalanceReserved advance emits no commands) (ADR-IC-003 §P1).
         Assert.Equal(
             new[] { ConstitutionProcess.ReserveAccountBalance, ConstitutionProcess.ValidateProductLimits },
             await OutboxCommandsAsync(processId));
@@ -104,22 +112,23 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task A_duplicate_delivery_through_the_loop_is_effectively_once()
     {
-        var processId = Guid.NewGuid();
-        var messageId = Guid.NewGuid();
         var topic = SagaConsumeTopics.ConstitutionProcessTopic;
 
-        // The SAME ce_id produced twice — the at-least-once redelivery the inbox absorbs.
-        await ProduceEventAsync(topic, messageId, processId, ConstitutionProcess.ConstitutionRequested);
-        await ProduceEventAsync(topic, messageId, processId, ConstitutionProcess.ConstitutionRequested);
+        // Edge-start the saga, then produce the SAME advance ce_id twice — the at-least-once
+        // redelivery the inbox absorbs (the loop ADVANCES; it never starts a saga, bd babelstone-t7o3.9).
+        var processId = await StartSagaAtEdgeAsync();
+        var messageId = Guid.NewGuid();
+        await ProduceEventAsync(topic, messageId, processId, ConstitutionProcess.BalanceReserved);
+        await ProduceEventAsync(topic, messageId, processId, ConstitutionProcess.BalanceReserved);
 
         using var host = BuildHost(topic, groupId: $"orch-consume-{Guid.NewGuid()}");
         await host.StartAsync();
         try
         {
             await WaitUntilAsync(
-                async () => await StateOrNullAsync(processId) == SagaState.ParallelValidation,
+                async () => await StateOrNullAsync(processId) == SagaState.AwaitLimitsValidated,
                 TimeSpan.FromSeconds(40),
-                "the hosted loop did not advance the saga to PARALLEL_VALIDATION");
+                "the hosted loop did not advance the saga to AWAIT_LIMITS_VALIDATED");
 
             // Give the loop a beat to consume + dedup the second physical delivery too.
             await WaitUntilAsync(
@@ -132,9 +141,9 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
             await host.StopAsync();
         }
 
-        // Effectively-once: one dedup row, one history record — the redelivery added nothing.
+        // Effectively-once: one dedup row, the saga moved once — the redelivery added nothing.
         Assert.Equal(1, await CountInboxAsync(messageId));
-        Assert.Equal(SagaState.ParallelValidation, await StateOrNullAsync(processId));
+        Assert.Equal(SagaState.AwaitLimitsValidated, await StateOrNullAsync(processId));
     }
 
     // ---- Host wiring (the SAME composition the production Program.cs uses) -------------------
@@ -145,15 +154,15 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
         builder.Services.AddSingleton<ISagaStateMachine, ConstitutionProcess>();
         builder.Services.AddSingleton<SagaStateStore>();
         builder.Services.AddSingleton<SagaTransitionLog>();
-        builder.Services.AddSingleton<ISagaCommandSink, SagaCommandOutboxSink>();
+        builder.Services.AddSingleton<SagaBusinessReferenceStore>();
+        builder.Services.AddSingleton<ISagaCommandSink>(sp =>
+            new SagaCommandOutboxSink(sp.GetRequiredService<SagaBusinessReferenceStore>()));
         builder.Services.AddSingleton(sp => new SagaAdvanceHandler(
             sp.GetRequiredService<ISagaStateMachine>(),
             sp.GetRequiredService<SagaStateStore>(),
             sp.GetRequiredService<SagaTransitionLog>(),
-            sp.GetRequiredService<ISagaCommandSink>())
-        {
-            StartEventType = ConstitutionProcess.ConstitutionRequested,
-        });
+            sp.GetRequiredService<ISagaCommandSink>(),
+            sp.GetRequiredService<SagaBusinessReferenceStore>()));
         builder.Services.AddSingleton(new SagaInboxConsumerOptions
         {
             ConnectionString = ConnectionString,
@@ -166,6 +175,38 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
             sp.GetRequiredService<SagaAdvanceHandler>()));
         builder.Services.AddHostedService<SagaInboxConsumerService>();
         return builder.Build();
+    }
+
+    // ---- Edge start (the sole start path, bd babelstone-t7o3.9) ------------------------------
+
+    // Start the saga through the REAL edge starter so the hosted loop has an EXISTING saga to advance:
+    // it creates the saga_state row, pins the references, drives STARTED → PARALLEL_VALIDATION, and
+    // emits the two parallel commands — all atomic. Returns the minted internal process id.
+    private async Task<Guid> StartSagaAtEdgeAsync()
+    {
+        var machine = new ConstitutionProcess();
+        var stateStore = new SagaStateStore();
+        var transitionLog = new SagaTransitionLog();
+        var businessRefStore = new SagaBusinessReferenceStore();
+        var sink = new SagaCommandOutboxSink(businessRefStore);
+        var starter = new EdgeSagaStarter(machine, stateStore, transitionLog, sink, businessRefStore)
+        {
+            StartEventType = ConstitutionProcess.ConstitutionRequested,
+        };
+
+        var result = await starter.StartAsync(
+            ConnectionString,
+            owningClientId: "CLI-2026-007842",
+            new EdgeBusinessFacts(
+                ProductRef: "TD-TRAD-12M",
+                AmountMinorUnits: 100_00,
+                SourceAccountRef: "acct-ref-001",
+                InterestAccountRef: null,
+                ClientType: ClientType.Existing,
+                AutoApprovalThresholdMinorUnits: 1_000_00));
+
+        Assert.Equal(SagaState.ParallelValidation, result.State);
+        return result.ProcessId;
     }
 
     // ---- Produce a CloudEvents-headed record (mirror the outbox relay's header subset) -------

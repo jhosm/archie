@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Babelstone.Orchestrator.Commands;
 using Babelstone.Orchestrator.Dispatch;
+using Babelstone.Orchestrator.Handlers;
 using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Microsoft.Extensions.DependencyInjection;
@@ -239,10 +240,26 @@ public sealed class SagaCommandDispatcherIntegrationTests : IAsyncLifetime
     private async Task StartSagaAsync(Guid processId, Guid? correlationId)
     {
         var stateStore = new SagaStateStore();
+        var businessRefStore = new SagaBusinessReferenceStore();
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();
         await stateStore.TryStartAsync(
             connection, tx, processId, ConstitutionProcess.Type, SagaState.Started, correlationId);
+
+        // Pin the per-saga business references the full-payload factory reads (mandatory now — bd
+        // babelstone-t7o3.9). The FK requires the saga_state row to exist first (same transaction).
+        // PII-free: integer cents + opaque references + a closed client-type code.
+        await businessRefStore.TryInsertAsync(
+            connection, tx,
+            new SagaBusinessReference(
+                ProcessId: processId,
+                ProductRef: "TD-TRAD-12M",
+                AmountMinorUnits: 100_00,
+                SourceAccountRef: "acct-ref-001",
+                InterestAccountRef: null,
+                DepositRef: "DEP-" + processId.ToString("N"),
+                ClientType: ClientType.Existing,
+                AutoApprovalThresholdMinorUnits: 1_000_00));
         await tx.CommitAsync();
     }
 

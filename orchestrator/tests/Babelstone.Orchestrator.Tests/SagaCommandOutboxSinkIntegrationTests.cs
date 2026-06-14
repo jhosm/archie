@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Babelstone.Orchestrator.Edge;
+using Babelstone.Orchestrator.Handlers;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
@@ -20,9 +22,12 @@ namespace Babelstone.Orchestrator.Tests;
 [Collection(nameof(OrchestratorPostgresCollection))]
 public sealed class SagaCommandOutboxSinkIntegrationTests(OrchestratorPostgresFixture fixture)
 {
+    private const long ThresholdCents = 1_000_00;
+
     private readonly ConstitutionProcess _machine = new();
     private readonly SagaStateStore _stateStore = new();
     private readonly SagaTransitionLog _transitionLog = new();
+    private readonly SagaBusinessReferenceStore _businessRefStore = new();
 
     [Fact]
     public async Task Migration_creates_the_saga_outbox_table()
@@ -35,15 +40,12 @@ public sealed class SagaCommandOutboxSinkIntegrationTests(OrchestratorPostgresFi
     [Fact]
     public async Task A_started_saga_writes_its_commands_as_durable_PII_free_outbox_rows()
     {
-        var processId = Guid.NewGuid();
         var correlationId = Guid.NewGuid();
-        var sink = new SagaCommandOutboxSink();
-        var handler = NewHandler(sink);
 
-        // STARTED + ConstitutionRequested emits ReserveAccountBalance + ValidateProductLimits.
-        Assert.Equal(
-            AdvanceOutcome.Started,
-            await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionRequested, correlationId)));
+        // The edge is the SOLE saga starter (bd babelstone-t7o3.9): it creates the STARTED row, pins
+        // the business references, and drives STARTED + ConstitutionRequested → PARALLEL_VALIDATION,
+        // emitting ReserveAccountBalance + ValidateProductLimits — all in one transaction.
+        var processId = await StartSagaWithReferencesAsync(correlationId);
 
         var rows = await OutboxRowsAsync(processId);
         Assert.Equal(
@@ -60,10 +62,13 @@ public sealed class SagaCommandOutboxSinkIntegrationTests(OrchestratorPostgresFi
 
         // Positive no-PII allow-list (ADR-PC-004 §P2) over the persisted payload bytes: every
         // property name in the durable body must be on the known-PII-free set. A field that is
-        // not on the list fails CLOSED.
+        // not on the list fails CLOSED. The bodies are now FULL business-reference payloads (the
+        // SagaCommandPayloadFactory sets the structural refs), so the allow-list admits the PII-free
+        // structural fields the factory writes — every one a token/reference, never a NIF/IBAN/name.
         var allowed = new HashSet<string>(StringComparer.Ordinal)
         {
-            "ProcessId", "CommandType", "CausationMessageId", "CorrelationId",
+            "$type", "ProcessId", "CommandType", "CausationMessageId", "CorrelationId",
+            "AccountRef", "ReservationRef", "DepositRef", "ProductRef",
         };
         foreach (var row in rows)
         {
@@ -87,9 +92,11 @@ public sealed class SagaCommandOutboxSinkIntegrationTests(OrchestratorPostgresFi
         var correlationId = Guid.NewGuid();
         var sink = new SagaCommandOutboxSink();
 
-        // Seed the saga row so the FK is satisfied, then emit the same logical command twice on
-        // two separate transactions (distinct delivery message ids).
+        // Seed the saga row so the FK is satisfied, pin the business references the full-payload
+        // factory reads (mandatory now — bd babelstone-t7o3.9), then emit the same logical command
+        // twice on two separate transactions (distinct delivery message ids).
         await StartBareSagaAsync(processId, correlationId);
+        await PinReferencesAsync(processId);
 
         await EmitOnceAsync(sink, processId, ConstitutionProcess.ConfirmDebit, causationId, correlationId);
         await EmitOnceAsync(sink, processId, ConstitutionProcess.ConfirmDebit, causationId, correlationId);
@@ -111,6 +118,7 @@ public sealed class SagaCommandOutboxSinkIntegrationTests(OrchestratorPostgresFi
         var processId = Guid.NewGuid();
         var correlationId = Guid.NewGuid();
         await StartBareSagaAsync(processId, correlationId);
+        await PinReferencesAsync(processId);
 
         var sink = new SagaCommandOutboxSink();
         await using (var connection = await OpenAsync())
@@ -125,14 +133,48 @@ public sealed class SagaCommandOutboxSinkIntegrationTests(OrchestratorPostgresFi
 
     // --- helpers -----------------------------------------------------------------------
 
-    private SagaAdvanceHandler NewHandler(ISagaCommandSink sink) =>
-        new(_machine, _stateStore, _transitionLog, sink)
+    // Start the saga through the REAL edge starter (the sole start path, bd babelstone-t7o3.9): it
+    // creates the STARTED row, pins the business references, and drives the first transition (emitting
+    // the two parallel commands) — all atomic. Returns the minted internal process id.
+    private async Task<Guid> StartSagaWithReferencesAsync(Guid correlationId)
+    {
+        var sink = new SagaCommandOutboxSink(_businessRefStore);
+        var starter = new EdgeSagaStarter(_machine, _stateStore, _transitionLog, sink, _businessRefStore)
         {
             StartEventType = ConstitutionProcess.ConstitutionRequested,
         };
 
-    private static SagaInboxEvent Event(Guid processId, string eventType, Guid? correlationId = null) =>
-        new(Guid.NewGuid(), processId, eventType, "deposits.process.events", correlationId);
+        var result = await starter.StartAsync(
+            fixture.ConnectionString,
+            owningClientId: "CLI-2026-007842",
+            new EdgeBusinessFacts(
+                ProductRef: "TD-TRAD-12M",
+                AmountMinorUnits: 100_00,
+                SourceAccountRef: "acct-ref-001",
+                InterestAccountRef: null,
+                ClientType: ClientType.Existing,
+                AutoApprovalThresholdMinorUnits: ThresholdCents),
+            correlationId);
+
+        Assert.Equal(SagaState.ParallelValidation, result.State);
+        return result.ProcessId;
+    }
+
+    // Pin a PII-free business-reference row for a saga whose STARTED row was created directly (the
+    // bare-start tests that then call sink.EmitAsync directly). References are mandatory for the
+    // full-payload factory (bd babelstone-t7o3.9); the FK requires the saga_state row to exist first.
+    private Task PinReferencesAsync(Guid processId) =>
+        RunHelper((c, tx) => _businessRefStore.TryInsertAsync(
+            c, tx,
+            new SagaBusinessReference(
+                ProcessId: processId,
+                ProductRef: "TD-TRAD-12M",
+                AmountMinorUnits: 100_00,
+                SourceAccountRef: "acct-ref-001",
+                InterestAccountRef: null,
+                DepositRef: "DEP-" + processId.ToString("N"),
+                ClientType: ClientType.Existing,
+                AutoApprovalThresholdMinorUnits: ThresholdCents)));
 
     private async Task RunHelper(Func<NpgsqlConnection, NpgsqlTransaction, Task> body)
     {
@@ -140,15 +182,6 @@ public sealed class SagaCommandOutboxSinkIntegrationTests(OrchestratorPostgresFi
         await using var tx = await connection.BeginTransactionAsync();
         await body(connection, tx);
         await tx.CommitAsync();
-    }
-
-    private async Task<AdvanceOutcome> RunAsync(SagaAdvanceHandler handler, SagaInboxEvent message)
-    {
-        await using var connection = await OpenAsync();
-        await using var tx = await connection.BeginTransactionAsync();
-        var outcome = await handler.AdvanceAsync(connection, tx, message);
-        await tx.CommitAsync();
-        return outcome;
     }
 
     private Task StartBareSagaAsync(Guid processId, Guid correlationId) =>

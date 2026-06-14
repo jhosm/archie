@@ -57,15 +57,15 @@ builder.Services.AddSingleton<SagaBusinessReferenceStore>();
 builder.Services.AddSingleton<ISagaCommandSink>(sp =>
     new SagaCommandOutboxSink(sp.GetRequiredService<SagaBusinessReferenceStore>()));
 
+// The consume loop ADVANCES sagas only — it never starts them. Sagas are started exclusively at the
+// edge (EdgeSagaStarter), which pins the business references in the same transaction as the STARTED
+// row; the loop resumes a saga on a consumed advance event (ADR-IC-003 §S2; bd babelstone-t7o3.9).
 builder.Services.AddSingleton(sp => new SagaAdvanceHandler(
     sp.GetRequiredService<ISagaStateMachine>(),
     sp.GetRequiredService<SagaStateStore>(),
     sp.GetRequiredService<SagaTransitionLog>(),
     sp.GetRequiredService<ISagaCommandSink>(),
-    sp.GetRequiredService<SagaBusinessReferenceStore>())
-{
-    StartEventType = ConstitutionProcess.ConstitutionRequested,
-});
+    sp.GetRequiredService<SagaBusinessReferenceStore>()));
 
 // The schema migration runs FIRST (registered before the consume loop): hosted services start in
 // registration order, so the saga schema is applied before the consumer can write its first dedup
