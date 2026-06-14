@@ -92,6 +92,38 @@ public sealed class ConstitutionResultEventsTests
     }
 
     [Fact]
+    public void Scenario_C_synthesized_ids_are_stable_per_command_so_a_re_drive_dedups()
+    {
+        // Scenario C re-drive idempotency (bd babelstone-t7o3.10): a crash between the ConfirmDebit's 202
+        // and the saga_outbox flip re-POSTs the SAME PENDING ConfirmDebit row, so the dispatcher
+        // re-synthesizes CoreDebitIndeterminate off the SAME command message_id. The id must be
+        // byte-stable so the second AdvanceAsync is an inbox dedup no-op (the saga lands in
+        // AWAIT_CORE_CLEARANCE exactly once, no double-advance, no second QueryCoreDebitStatus row).
+        var confirmDebitId = Guid.NewGuid();
+        Assert.Equal(
+            SagaSettlementResultEmit.MessageId(confirmDebitId, ConstitutionProcess.CoreDebitIndeterminate),
+            SagaSettlementResultEmit.MessageId(confirmDebitId, ConstitutionProcess.CoreDebitIndeterminate));
+
+        // The TIMELY DebitConfirmed (off the original ConfirmDebit) and the LATE clearance-driven
+        // DebitConfirmed (off the QueryCoreDebitStatus command) carry DISTINCT command message_ids, so
+        // their synthesized ids cannot collide in the inbox dedup — the late confirm is never absorbed as
+        // a replay of the timely one.
+        var clearanceQueryId = Guid.NewGuid();
+        Assert.NotEqual(
+            SagaSettlementResultEmit.MessageId(confirmDebitId, ConstitutionProcess.DebitConfirmed),
+            SagaSettlementResultEmit.MessageId(clearanceQueryId, ConstitutionProcess.DebitConfirmed));
+
+        // The clearance query's two verdicts (DebitConfirmed vs DebitNotExecuted) off the SAME query
+        // command get DISTINCT ids, and the not-executed id is stable for its own re-drive dedup.
+        Assert.NotEqual(
+            SagaSettlementResultEmit.MessageId(clearanceQueryId, ConstitutionProcess.DebitConfirmed),
+            SagaSettlementResultEmit.MessageId(clearanceQueryId, ConstitutionProcess.DebitNotExecuted));
+        Assert.Equal(
+            SagaSettlementResultEmit.MessageId(clearanceQueryId, ConstitutionProcess.DebitNotExecuted),
+            SagaSettlementResultEmit.MessageId(clearanceQueryId, ConstitutionProcess.DebitNotExecuted));
+    }
+
+    [Fact]
     public void The_settlement_result_id_never_collides_with_an_approval_fork_self_emit_id()
     {
         // The two id spaces are disjoint by construction (distinct namespace GUIDs), so even if a

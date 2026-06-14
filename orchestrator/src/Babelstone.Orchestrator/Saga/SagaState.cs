@@ -55,7 +55,7 @@ public enum SagaState
 
     /// <summary>An indeterminate Core debit outcome is being resolved by the clearance job
     /// (Document 05 Scenario C). A long wait expressed as a first-class state, never a busy retry
-    /// (ADR-IC-003 §P5). <b>Wired (bd babelstone-t7o3.10):</b> a <see cref="ConstitutionProcess.CoreDebitIndeterminate"/>
+    /// (ADR-IC-003 §P4 — "long waits are states, not blocked threads"). <b>Wired (bd babelstone-t7o3.10):</b> a <see cref="ConstitutionProcess.CoreDebitIndeterminate"/>
     /// from <see cref="Approved"/> ENTERS it (arming the clearance query
     /// <see cref="ConstitutionProcess.QueryCoreDebitStatus"/>), and the clearance result LEAVES it three
     /// ways — a LATE <see cref="ConstitutionProcess.DebitConfirmed"/> resumes the happy path (back to

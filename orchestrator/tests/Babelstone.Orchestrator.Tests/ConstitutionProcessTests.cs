@@ -112,9 +112,10 @@ public sealed class ConstitutionProcessTests
     {
         // Document 05 Scenario C (bd babelstone-t7o3.10): a ConfirmDebit whose response never arrived
         // (the ACL reported INDETERMINATE) must NOT blind-retry — it parks in the first-class waiting
-        // state AWAIT_CORE_CLEARANCE (ADR-IC-003 §P5), emitting the clearance QUERY command. The
-        // clearance result then either RESUMES the happy path (the debit DID execute → DebitConfirmed,
-        // late) or FAILS closed (the debit did NOT execute → DebitNotExecuted, no money moved).
+        // state AWAIT_CORE_CLEARANCE (ADR-IC-003 §P4 — a long wait is a named state, never a busy retry),
+        // emitting the clearance QUERY command. The clearance result then either RESUMES the happy path
+        // (the debit DID execute → DebitConfirmed, late) or FAILS closed (the debit did NOT execute →
+        // DebitNotExecuted, no money moved).
 
         // ENTRY: an INDETERMINATE debit from APPROVED parks the saga and arms the clearance query.
         AssertTransition(SagaState.Approved, ConstitutionProcess.CoreDebitIndeterminate,
@@ -126,7 +127,10 @@ public sealed class ConstitutionProcessTests
             SagaState.Approved, "ActivateDeposit");
 
         // EXIT fail: the clearance found the debit did NOT execute → fail-CLOSED terminal with NO
-        // reversal (no money moved, so there is nothing to compensate).
+        // reversal (no money moved, so there is nothing to compensate). DIVERGENCE recorded in
+        // ADR-IC-003 Amendment A6 (2026-06-14): ADR-IC-012 §D5/§P5 (inherited by ADR-PC-016 §64)
+        // decide the steady-state disposition as RETRY_PERMITTED; v1 fails closed (no reissue producer),
+        // backed out by DEF-1 (babelstone-ub9s).
         AssertTransition(SagaState.AwaitCoreClearance, ConstitutionProcess.DebitNotExecuted,
             SagaState.DepositConstitutionFailed);
         Assert.True(SagaStateNames.IsTerminal(SagaState.DepositConstitutionFailed));

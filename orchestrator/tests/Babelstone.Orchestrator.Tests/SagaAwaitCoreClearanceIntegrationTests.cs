@@ -22,7 +22,8 @@ namespace Babelstone.Orchestrator.Tests;
 /// bd babelstone-t7o3.10). When the network drops after a ConfirmDebit, the Core ACL returns an EXPLICIT
 /// INDETERMINATE signal (HTTP 202): the debit was accepted but it is UNKNOWN whether the Core executed
 /// it. The saga must NOT blind-retry (that could double-debit) — it parks in the first-class waiting
-/// state AWAIT_CORE_CLEARANCE (ADR-IC-003 §P5), emitting a single clearance QUERY (QueryCoreDebitStatus)
+/// state AWAIT_CORE_CLEARANCE (ADR-IC-003 §P4 — a long wait is a named state, never a busy retry),
+/// emitting a single clearance QUERY (QueryCoreDebitStatus)
 /// to the ACL. The clearance result then either RESUMES the happy path (the debit DID execute → a late
 /// DebitConfirmed → APPROVED → COMPLETED) or FAILS the saga CLOSED (the debit did NOT execute →
 /// DebitNotExecuted → DEPOSIT_CONSTITUTION_FAILED, no money moved, no reversal).

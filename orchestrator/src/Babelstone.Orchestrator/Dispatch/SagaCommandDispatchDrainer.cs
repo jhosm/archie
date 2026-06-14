@@ -225,7 +225,7 @@ public sealed class SagaCommandDispatchDrainer
                 // the ConfirmDebit (HTTP 202). The command WAS delivered — the ACL accepted it — so the row
                 // is terminal as a DELIVERY (PUBLISHED), not a FAILED refusal; what is unknown is the Core's
                 // EXECUTION, which the bridge hands to the saga via CoreDebitIndeterminate so it parks in
-                // AWAIT_CORE_CLEARANCE and emits the clearance query (ADR-IC-003 §P5, never a blind retry).
+                // AWAIT_CORE_CLEARANCE and emits the clearance query (ADR-IC-003 §P4, never a blind retry).
                 try
                 {
                     await BridgeResultAsync(connection, transaction, row, CommandDeliveryKind.Indeterminate, ct);
@@ -324,7 +324,8 @@ public sealed class SagaCommandDispatchDrainer
         // FIRST, and ONLY for ConfirmDebit, so it is never confused with a real 2xx-success on any other
         // leg, nor with a 4xx Refused or a 5xx/timeout Transient. The dispatcher flips the row to a
         // terminal status and the bridge self-advances the saga with CoreDebitIndeterminate, parking it in
-        // AWAIT_CORE_CLEARANCE (ADR-IC-003 §P5). A ConfirmDebit *timeout* is NOT this — it stays Transient
+        // AWAIT_CORE_CLEARANCE (ADR-IC-003 §P4 — a long wait is a first-class state). A ConfirmDebit
+        // *timeout* is NOT this — it stays Transient
         // (the catch block leaves the row PENDING for an idempotent retry); INDETERMINATE is an explicit
         // ACL signal, not the absence of a response.
         if (response.StatusCode == HttpStatusCode.Accepted

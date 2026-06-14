@@ -151,7 +151,7 @@ public static class ConstitutionResultEvents
         // The ConfirmDebit returned INDETERMINATE (the ACL accepted the debit but the network dropped
         // before it could confirm execution — Document 05 Scenario C, signalled as HTTP 202). The saga
         // must NOT blind-retry (it could double-debit): synthesize CoreDebitIndeterminate to park it in
-        // AWAIT_CORE_CLEARANCE, which arms the clearance QUERY (ADR-IC-003 §P5, a first-class wait).
+        // AWAIT_CORE_CLEARANCE, which arms the clearance QUERY (ADR-IC-003 §P4, a first-class wait).
         (ConstitutionProcess.ConfirmDebit, CommandDeliveryKind.Indeterminate) => ConstitutionProcess.CoreDebitIndeterminate,
 
         // The clearance QUERY resolved the indeterminate debit. The v1 ACL stub answers the clearance
@@ -161,7 +161,11 @@ public static class ConstitutionResultEvents
         //     arming ActivateDeposit), identical to a timely confirm.
         (ConstitutionProcess.QueryCoreDebitStatus, CommandDeliveryKind.Applied) => ConstitutionProcess.DebitConfirmed,
         //   • [REVIEW-FLAG C] 4xx → the debit did NOT execute: DebitNotExecuted fails the saga CLOSED
-        //     (no money moved → no reversal). The 4xx=not-executed mapping is a v1 STUB CONVENTION: the
+        //     (no money moved → no reversal). DIVERGENCE (ADR-IC-003 Amendment A6, 2026-06-14):
+        //     ADR-IC-012 §D5/§P5 (inherited by ADR-PC-016 §64) decide the steady-state disposition as
+        //     RETRY_PERMITTED (reissue with the same idempotency_key); v1 has no reissue producer, so the
+        //     saga fails closed instead — DEF-1 (babelstone-ub9s) restores RETRY_PERMITTED.
+        //     The 4xx=not-executed mapping is a v1 STUB CONVENTION: the
         //     dispatcher's slot-5 model classifies a 4xx as a terminal Refused, and the clearance stub
         //     reuses that to mean "the queried debit was not found / not executed". This is NOT the
         //     slot-5 "the engine refused an illegal/invalid command" semantics — it is a clearance VERDICT
