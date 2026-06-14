@@ -156,16 +156,33 @@ waterfall:
 - Below: the engine's real SLI metric names (`outbox_publish_lag_seconds`,
   `outbox_publish_latency_seconds`, `inbox_handled_total`).
 
-This panel is the **map**; Grafana Tempo is the **territory**. In **LIVE·engine** mode the same
-spans export through the OTel Collector to Grafana LGTM (`make up`, then Grafana on `localhost:3000`)
-— search Tempo by `babelstone.partition_key`. The in-app waterfall is a faithful, on-brand
-visualization of the instrumentation contract (deterministic in DEMO); it is *not* pulled from
-Tempo (see the epic for that follow-up). Honest framing, same as the MCP tab. (In **LIVE·saga** the
-engine isn't on the request path and the orchestrator isn't OTel-wired yet — see the gaps below.)
+This panel is the **map**; Grafana Tempo is the **territory** — and in **LIVE·engine** the tab pulls
+the **real trace** from Tempo (bd `babelstone-f0ic.9`):
+
+- The engine returns the active trace id on every response as **`X-Trace-Id`** (bd `babelstone-2dex`),
+  and its inbound request is now a server span, so the `deposit.*` spans nest under it as one trace.
+- After an operation the tab fetches `GET /tempo/api/traces/{id}` — `serve.py` proxies Grafana
+  Tempo's query API (same-origin, same no-CORS reason as `/v1`) — and renders the **actual** spans
+  with their real timings and `babelstone.*` attributes, labelled **✓ REAL · Grafana Tempo**. Open
+  the same trace in Grafana on `localhost:3000`.
+- Tempo has a few seconds of ingestion lag, so the fetch **polls** and shows "fetching the real
+  trace…" until it lands; if the LGTM stack isn't up it **degrades** to the illustrative waterfall
+  and says so. In **DEMO** the waterfall stays illustrative (deterministic, computed in-browser); in
+  **LIVE·saga** it's illustrative too (the engine isn't on the request path).
+
+**Bring-up for real traces** — the telemetry backend must be running so the engine's spans reach
+Tempo:
+
+```bash
+docker compose -f infra/compose.yaml up -d otel-collector grafana-lgtm   # collector → Tempo (3200 exposed)
+scripts/demo-mcp.sh up                                                    # the engine exports to the collector (:4317)
+python3 docs/demo/mission-control/serve.py                               # proxies /tempo/* to Tempo
+# open http://localhost:9000 → LIVE·engine → Telemetry ON → run an operation
+```
 
 Known gaps (engine-side, not demo bugs): the orchestrator isn't OTel-wired yet, so saga spans
 don't export; and W3C traceparent propagation across Redpanda is planned — so the cross-service
-saga trace is aspirational, while the per-deposit 3-span trace is real.
+saga trace is aspirational, while the per-deposit engine trace is real (and now shown from Tempo).
 
 ## How it maps to the real contract
 

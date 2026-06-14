@@ -360,7 +360,10 @@ body.console-open .hint-bar { display:none; }
     accrued: 0, withheld: 0, netPaid: 0,  // running tallies (demo + live coupon deltas)
     // LIVE·saga mode: the constitution saga driven through the orchestrator edge
     processId: null, streamUrl: null, sagaES: null,
-    sagaState: null, sagaVersion: -1, sagaTerminal: false, sagaSeenLeg: false, sagaSeenDebit: false
+    sagaState: null, sagaVersion: -1, sagaTerminal: false, sagaSeenLeg: false, sagaSeenDebit: false,
+    // LIVE·engine real traces (bd babelstone-f0ic.9): the engine's X-Trace-Id + the spans fetched
+    // from Grafana Tempo. traceState: "illustrative" | "pending" | "real" | "unavailable".
+    traceId: null, realTrace: null, traceState: "illustrative"
   };
 
   /* ---------------- elements ---------------- */
@@ -634,10 +637,15 @@ body.console-open .hint-bar { display:none; }
     var opts = { method: method, headers: Object.assign({ "Content-Type": "application/json" }, headers || {}) };
     if (body) opts.body = JSON.stringify(body);
     var res = await fetch(API_BASE + path, opts);
+    // The engine returns the active trace id on every response (X-Trace-Id, bd babelstone-2dex) —
+    // the key the Telemetry tab queries Grafana Tempo by. Capture it from WRITES (a POST's trace
+    // carries the deposit.* spans; a follow-up GET would only carry its own read span).
+    var traceId = res.headers.get("X-Trace-Id") || null;
+    if (method === "POST" && traceId && state.mode === "live") onEngineTrace(traceId);
     var text = await res.text();
     var json = text ? JSON.parse(text) : {};
     if (!res.ok) { var err = new Error((json.detail || json.title || res.statusText)); err.status = res.status; err.body = json; throw err; }
-    return { json: json, status: res.status };
+    return { json: json, status: res.status, traceId: traceId };
   }
   async function pingConn() {
     if (state.mode === "live") {
@@ -893,6 +901,7 @@ body.console-open .hint-bar { display:none; }
     state.couponsPaid = 0; state.numCoupons = 0; state.accrued = 0; state.withheld = 0; state.netPaid = 0;
     state.processId = null; state.streamUrl = null;
     state.sagaState = null; state.sagaVersion = -1; state.sagaTerminal = false; state.sagaSeenLeg = false; state.sagaSeenDebit = false;
+    state.traceId = null; state.realTrace = null; state.traceState = "illustrative";
     syncProduct();
     ledger.innerHTML = '<div class="empty"><span class="big">An empty stream.</span>Every command appends an immutable, sequence-numbered fact. Constitute a deposit to begin.</div>';
     passbook.innerHTML = '<div class="empty">No position yet.<br />The state on the right is a <i>fold</i> of the events on the left — never stored, always derivable.</div>';
@@ -938,43 +947,127 @@ body.console-open .hint-bar { display:none; }
     state.telemetry = on;
     el("telSeg").querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", (b.dataset.tel === "on") === on); });
     if (on) state.tab = "telemetry"; else if (state.operator !== "ai") state.tab = "mcp";
+    // Turning telemetry on AFTER an operation: fetch the real trace for the last engine write.
+    if (on && state.mode === "live" && state.traceId && state.traceState !== "real") {
+      state.traceState = "pending"; renderTrace(); fetchRealTrace(state.traceId);
+    }
     updateDrawer();
   }
 
   /* ---------------- telemetry / trace waterfall ---------------- */
   function pushSpan(name, durMs, attrs, verify) { state.spans.push({ name: name, dur: durMs, attrs: attrs, verify: !!verify }); renderTrace(); }
   function shortId() { return state.depositId ? state.depositId.slice(0, 8) + "…" : "—"; }
+
+  /* ---- LIVE·engine: the REAL trace, fetched from Grafana Tempo (bd babelstone-f0ic.9) ----
+     The engine returns X-Trace-Id on each write; serve.py proxies Tempo's query API at /tempo/*.
+     We poll (Tempo has a few seconds of ingestion lag) and, on success, swap the illustrative
+     waterfall for the engine's ACTUAL spans. If Tempo is unreachable we degrade to illustrative. */
+  function onEngineTrace(traceId) {
+    state.traceId = traceId; state.realTrace = null;
+    state.traceState = state.telemetry ? "pending" : "illustrative";
+    if (state.telemetry) { renderTrace(); fetchRealTrace(traceId); }
+  }
+  function parseOtlpTrace(data) {
+    var spans = [];
+    (data.batches || []).forEach(function (b) {
+      (b.scopeSpans || b.instrumentationLibrarySpans || []).forEach(function (ss) {
+        (ss.spans || []).forEach(function (s) {
+          var start = Number(s.startTimeUnixNano || 0), end = Number(s.endTimeUnixNano || 0);
+          var attrs = (s.attributes || []).map(function (a) {
+            var v = a.value || {};
+            var val = v.stringValue != null ? v.stringValue
+              : v.intValue != null ? v.intValue
+              : v.doubleValue != null ? v.doubleValue
+              : v.boolValue != null ? String(v.boolValue) : "";
+            return [a.key, String(val)];
+          }).filter(function (a) { return a[0].indexOf("babelstone.") === 0; });
+          spans.push({ name: s.name, start: start, durNs: Math.max(end - start, 0), attrs: attrs,
+                       verify: /withholding/i.test(s.name) });
+        });
+      });
+    });
+    spans.sort(function (a, b) { return a.start - b.start; });
+    return spans;
+  }
+  async function fetchRealTrace(traceId) {
+    await sleep(1200);                              // Tempo ingestion lag — avoid a sure first-miss
+    for (var i = 0; i < 8; i++) {
+      if (state.traceId !== traceId) return;        // superseded by a newer op or a reset
+      try {
+        var res = await fetch(API_BASE + "/tempo/api/traces/" + traceId);
+        if (res.ok) {
+          var spans = parseOtlpTrace(await res.json());
+          if (spans.length && state.traceId === traceId) {
+            state.realTrace = spans; state.traceState = "real"; renderTrace(); return;
+          }
+        }
+      } catch (e) { /* Tempo / proxy unreachable — retry, then degrade to illustrative */ }
+      await sleep(1500);
+    }
+    if (state.traceId === traceId) { state.traceState = "unavailable"; renderTrace(); }
+  }
+
   function renderTrace() {
     var wf = el("traceWaterfall");
-    if (!state.spans.length) {
-      wf.innerHTML = '<div class="empty">Run an operation to see the spans it emits.</div>';
+    var real = state.traceState === "real" && state.realTrace && state.realTrace.length;
+    if (!real && !state.spans.length) {
+      var msg = (state.mode === "live" && state.traceState === "pending")
+        ? "Fetching the real trace from Grafana Tempo…"
+        : "Run an operation to see the spans it emits.";
+      wf.innerHTML = '<div class="empty">' + msg + '</div>';
       el("traceMetrics").innerHTML = ""; el("traceFoot").innerHTML = ""; return;
     }
-    var total = state.spans.reduce(function (s, sp) { return s + sp.dur; }, 0);
-    var offset = 0;
-    var html = '<div class="root">trace · <b>' + shortId() + '</b> · ' + state.spans.length + ' spans · ' + total + 'ms · source <b>Babelstone.Engine</b></div>';
-    state.spans.forEach(function (sp) {
-      var leftPct = offset / total * 100, widthPct = Math.max(sp.dur / total * 100, 3);
-      var chips = sp.attrs.map(function (a) { return '<span class="chip-attr">' + a[0] + '=<b>' + a[1] + '</b></span>'; }).join("");
-      html += '<div class="span"><div class="span-row ' + (sp.verify ? "verify" : "") + '">' +
-        '<span class="sname">' + sp.name + '</span>' +
-        '<div class="track"><div class="bar" style="left:' + leftPct + '%;width:' + widthPct + '%"></div></div>' +
-        '<span class="dur">' + sp.dur + 'ms</span></div>' +
-        '<div class="span-attrs">' + chips + '</div></div>';
-      offset += sp.dur;
-    });
+    var html;
+    if (real) {
+      var t0 = state.realTrace[0].start;
+      var t1 = state.realTrace.reduce(function (m, s) { return Math.max(m, s.start + s.durNs); }, t0);
+      var spanNs = (t1 - t0) || 1;
+      html = '<div class="root">trace · <b>' + state.traceId.slice(0, 12) + '…</b> · ' + state.realTrace.length +
+        ' spans · ' + Math.round(spanNs / 1e6) + 'ms · source <b>Babelstone.Engine</b> · <span class="nopii">✓ REAL · Grafana Tempo</span></div>';
+      state.realTrace.forEach(function (sp) {
+        var leftPct = (sp.start - t0) / spanNs * 100, widthPct = Math.max(sp.durNs / spanNs * 100, 2);
+        var chips = sp.attrs.map(function (a) { return '<span class="chip-attr">' + a[0] + '=<b>' + a[1] + '</b></span>'; }).join("");
+        html += '<div class="span"><div class="span-row ' + (sp.verify ? "verify" : "") + '">' +
+          '<span class="sname">' + sp.name + '</span>' +
+          '<div class="track"><div class="bar" style="left:' + leftPct + '%;width:' + widthPct + '%"></div></div>' +
+          '<span class="dur">' + Math.round(sp.durNs / 1e6) + 'ms</span></div>' +
+          '<div class="span-attrs">' + chips + '</div></div>';
+      });
+    } else {
+      var total = state.spans.reduce(function (s, sp) { return s + sp.dur; }, 0);
+      var offset = 0;
+      html = '<div class="root">trace · <b>' + shortId() + '</b> · ' + state.spans.length + ' spans · ' + total +
+        'ms · source <b>Babelstone.Engine</b> · <span style="opacity:.6">illustrative</span></div>';
+      state.spans.forEach(function (sp) {
+        var leftPct = offset / total * 100, widthPct = Math.max(sp.dur / total * 100, 3);
+        var chips = sp.attrs.map(function (a) { return '<span class="chip-attr">' + a[0] + '=<b>' + a[1] + '</b></span>'; }).join("");
+        html += '<div class="span"><div class="span-row ' + (sp.verify ? "verify" : "") + '">' +
+          '<span class="sname">' + sp.name + '</span>' +
+          '<div class="track"><div class="bar" style="left:' + leftPct + '%;width:' + widthPct + '%"></div></div>' +
+          '<span class="dur">' + sp.dur + 'ms</span></div>' +
+          '<div class="span-attrs">' + chips + '</div></div>';
+        offset += sp.dur;
+      });
+    }
     wf.innerHTML = html;
     el("traceMetrics").innerHTML = [
       '<span class="metric">outbox_publish_lag_seconds <b>0.4</b></span>',
       '<span class="metric">outbox_publish_latency_seconds · p50 <b>0.011</b></span>',
       '<span class="metric">inbox_handled_total <b>—</b></span>'
     ].join("");
-    var env = state.mode === "live" ? "Development" : "demo";
-    var foot = 'service.name=<b>babelstone-engine-api</b> · service.namespace=<b>babelstone</b> · env=' + env + '<br>' +
+    var foot = 'service.name=<b>babelstone-engine-api</b> · service.namespace=<b>babelstone</b><br>' +
       '<span class="nopii">✓ No PII on spans</span> — operational tier only · ADR-IC-007 §P4 · ADR-PC-004 §P2<br>';
-    foot += state.mode === "live"
-      ? 'Spans export via the OTel Collector → search Grafana Tempo (localhost:3000) by <b>babelstone.partition_key</b>'
-      : 'In LIVE mode these export via the OTel Collector → Grafana Tempo';
+    if (real) {
+      foot += '✓ Pulled from <b>Grafana Tempo</b> by trace id (proxied at <code>/tempo</code>) — open it in Grafana on <b>localhost:3000</b>.';
+    } else if (state.mode === "live" && state.traceState === "unavailable") {
+      foot += 'Tempo had no trace yet (is the LGTM stack up? <code>docker compose -f infra/compose.yaml up -d otel-collector grafana-lgtm</code>) — showing the <b>illustrative</b> waterfall.';
+    } else if (state.mode === "live") {
+      foot += 'Exports via the OTel Collector → Grafana Tempo; the tab fetches the <b>real</b> trace by <b>X-Trace-Id</b> when the LGTM stack is up.';
+    } else if (state.mode === "saga") {
+      foot += 'LIVE·saga drives the constitution saga — the engine isn\'t on the request path and the orchestrator isn\'t OTel-wired (ADR-IC-007 §P1), so these are <b>illustrative</b>.';
+    } else {
+      foot += 'DEMO — <b>illustrative</b>, computed in-browser the engine\'s way. In LIVE·engine the tab shows the real Tempo trace.';
+    }
     el("traceFoot").innerHTML = foot;
   }
 

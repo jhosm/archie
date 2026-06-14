@@ -167,6 +167,8 @@ services:
     # OTLP ingest is NOT exposed to the host — the collector is the single entry.
     ports:
       - "${GRAFANA_PORT:-3000}:3000"   # Grafana UI
+      - "${TEMPO_PORT:-3200}:3200"     # Tempo query API (GET /api/traces/{id}) — Mission Control
+                                       # Telemetry tab reads real spans by trace id (bd babelstone-f0ic.9)
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health || exit 1"]
       interval: 10s
