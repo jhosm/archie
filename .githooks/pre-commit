@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 #
-# pre-commit — keep rendered C4 SVGs in sync with their PlantUML sources.
+# pre-commit — keep generated artefacts in sync with their sources, so a
+# committed artefact is never stale vs the source it is rendered from.
 #
-# Whenever a commit stages a *.puml file, re-render it to SVG with PlantUML and
-# stage the result, so a committed *.svg is never out of date with its source.
-# GitHub does not render PlantUML, so the committed SVG is what readers see.
+# Two concerns, each fired only when this commit stages a relevant source:
 #
-# Requirements: a JDK, Graphviz (dot), and the PlantUML CLI. See INSTALL.md.
+#   1. C4 SVGs   — re-render any staged *.puml to *.svg (GitHub can't render
+#                  PlantUML, so the committed SVG is what readers see).
+#   2. reference/ — regenerate docs/.../reference/ (ADR-PC-022 §P2) from its
+#                  Avro/CUE/MCP/ADR sources whenever one of those is staged, so
+#                  the docs-verify CI gate never trips on a forgotten `docs-gen`.
 #
-# Convention: each diagram's `@startuml <id>` MUST match its .puml filename
+# Requirements: PlantUML + Graphviz (for *.puml), and mise (for docs-gen — it
+# wraps `python3` in the pinned toolchain). See INSTALL.md.
+#
+# Convention (diagrams): each `@startuml <id>` MUST match its .puml filename
 # (without extension), so `foo.puml` renders to `foo.svg` beside it.
 #
 # Activate in a fresh clone with EITHER:
@@ -17,44 +23,88 @@
 
 set -euo pipefail
 
-# .puml sources staged in this commit (Added / Copied / Modified / Renamed).
-staged_puml="$(git -c core.quotepath=false diff --cached --name-only --diff-filter=ACMR -- '*.puml')"
-
-# Fast path: nothing diagram-related in this commit.
-[ -n "$staged_puml" ] || exit 0
-
-if ! command -v plantuml >/dev/null 2>&1; then
-  {
-    echo "pre-commit: this commit stages PlantUML source(s) but 'plantuml' is not installed:"
-    printf '  %s\n' $staged_puml
-    echo
-    echo "Install the renderer (see INSTALL.md):"
-    echo "  macOS:  brew install graphviz plantuml"
-    echo
-    echo "Bypassing with --no-verify would commit stale SVGs — install instead."
-  } >&2
-  exit 1
-fi
-
 repo_root="$(git rev-parse --show-toplevel)"
+
+# Sources staged in this commit (Added / Copied / Modified / Renamed).
+staged() { git -c core.quotepath=false diff --cached --name-only --diff-filter=ACMR -- "$@"; }
+
+staged_puml="$(staged '*.puml')"
+
+# Sources the generated reference/ tree is rendered from (scripts/docs-gen/generate.py):
+#   events/        <- contracts/avro/**/*.avsc
+#   family-schemas <- contracts/cue/**/*.cue   (also pack-format/ <- contracts/cue/pack/pack.cue)
+#   mcp-tools/     <- mcp-server/src/babelstone_mcp/server.py
+#   adr-index/     <- docs/**/adrs/ADR-*.md
+#   glossary/      <- engine/.../VerifiedPack.cs + engine/.../DayCount.cs
+staged_docs_src="$(staged \
+  'contracts/avro/**/*.avsc' \
+  'contracts/cue/**/*.cue' \
+  'mcp-server/src/babelstone_mcp/server.py' \
+  'docs/product-management/*/adrs/ADR-*.md' \
+  'docs/product-management/*/adrs/retired/ADR-*.md' \
+  'engine/src/Babelstone.Packs/VerifiedPack.cs' \
+  'engine/src/Babelstone.FinancialMath/DayCount.cs')"
+
+# Fast path: nothing this hook cares about is in the commit.
+[ -n "$staged_puml" ] || [ -n "$staged_docs_src" ] || exit 0
+
 status=0
 
-while IFS= read -r puml; do
-  [ -n "$puml" ] || continue
-  echo "pre-commit: rendering ${puml} -> SVG"
-  plantuml -tsvg "${repo_root}/${puml}"
-  svg="${repo_root}/${puml%.puml}.svg"
-  if [ -f "$svg" ]; then
-    git add -- "$svg"
-  else
+# ---------------------------------------------------------------------------
+# 1. Re-render staged PlantUML diagrams.
+# ---------------------------------------------------------------------------
+if [ -n "$staged_puml" ]; then
+  if ! command -v plantuml >/dev/null 2>&1; then
     {
-      echo "pre-commit: expected '${puml%.puml}.svg' but PlantUML did not produce it."
-      echo "  Ensure '@startuml' uses the id '$(basename "${puml%.puml}")' (matching the filename)."
+      echo "pre-commit: this commit stages PlantUML source(s) but 'plantuml' is not installed:"
+      printf '  %s\n' $staged_puml
+      echo
+      echo "Install the renderer (see INSTALL.md):"
+      echo "  macOS:  brew install graphviz plantuml"
+      echo
+      echo "Bypassing with --no-verify would commit stale SVGs — install instead."
     } >&2
-    status=1
+    exit 1
   fi
-done <<EOF
+
+  while IFS= read -r puml; do
+    [ -n "$puml" ] || continue
+    echo "pre-commit: rendering ${puml} -> SVG"
+    plantuml -tsvg "${repo_root}/${puml}"
+    svg="${repo_root}/${puml%.puml}.svg"
+    if [ -f "$svg" ]; then
+      git add -- "$svg"
+    else
+      {
+        echo "pre-commit: expected '${puml%.puml}.svg' but PlantUML did not produce it."
+        echo "  Ensure '@startuml' uses the id '$(basename "${puml%.puml}")' (matching the filename)."
+      } >&2
+      status=1
+    fi
+  done <<EOF
 $staged_puml
 EOF
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Regenerate the generated reference/ tree (ADR-PC-022 §P2).
+# ---------------------------------------------------------------------------
+if [ -n "$staged_docs_src" ]; then
+  if ! command -v mise >/dev/null 2>&1; then
+    {
+      echo "pre-commit: this commit stages a reference/ source but 'mise' is not installed,"
+      echo "so docs-gen cannot run in the pinned toolchain. Staged source(s):"
+      printf '  %s\n' $staged_docs_src
+      echo
+      echo "Install the toolchain (see INSTALL.md / CLAUDE.md): make bootstrap"
+      echo "Bypassing with --no-verify would commit a stale reference/ tree — install instead."
+    } >&2
+    exit 1
+  fi
+
+  echo "pre-commit: regenerating docs/.../reference/ (ADR-PC-022 §P2)"
+  ( cd "$repo_root" && mise exec -- python3 scripts/docs-gen/generate.py )
+  git add -- "${repo_root}/docs/product-management/reference"
+fi
 
 exit "$status"
