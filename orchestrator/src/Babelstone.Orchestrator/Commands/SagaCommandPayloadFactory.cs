@@ -91,6 +91,15 @@ public static class SagaCommandPayloadFactory
                 ProcessId = processId,
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
+                // CoreHoldRef is derived purely from the process id, so a RETRY_PERMITTED reissue of
+                // ConfirmDebit out of AWAIT_CORE_CLEARANCE (a DebitNotExecuted clearance) presents the
+                // SAME CORE-HOLD-<processId> reference as the original confirm — even though the saga's
+                // operational message_id differs per emission. That stable Core-facing reference is the
+                // external_reference the ACL folds into its idempotency key (ADR-IC-012 §P4), so the
+                // reissue cannot double-debit even in the worst case (the original silently executed but
+                // the clearance answered not-executed): the §332 guard returns the recorded core_reference
+                // rather than re-debiting. Do NOT mint a fresh ref here — the no-double-debit invariant
+                // at v1 (before DEF-1's ACL guard exists) rests on this reference being stable.
                 CoreHoldRef = DerivedRef(CoreHoldPrefix, processId),
             },
             ConstitutionProcess.ActivateDeposit => new ActivateDepositCommand
