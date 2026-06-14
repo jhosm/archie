@@ -183,6 +183,8 @@ Replicating JWT validation, SCA enforcement, rate limiting, and schema validatio
 - **Rate-limit state loss on restart (local mode):** In `local` mode, Kong's in-memory rate-limit counters reset on process restart. A restart mid-attack window allows a burst through the limit. At POC scale this is theoretical. Mitigation: Valkey-backed rate limiting (configuration-only change) before any load test or security assessment.
 - **Kong CE plugin availability by version:** The `opentelemetry`, `request-validator`, and upstream mTLS features cited in this ADR became available in Kong CE v3.x releases. The Kong CE release used at implementation must be v3.0 or later; the 2.x plugin matrix differs significantly.
 
+  *Revised 2026-06-14: this premise is partly wrong — `request-validator` is a Kong **Enterprise** plugin and is **not** in the Kong Gateway CE (Apache-2.0) bundled-plugin set the Decision selects (verified against the `kong:3.9.1` image; `opentelemetry` and upstream mTLS are confirmed CE-bundled). The §4 edge payload-validation obligation ("reject structurally invalid requests at the edge") is therefore realised in `infra/kong/kong.yml` with the CE-bundled `pre-function` body check — the same CE mechanism this ADR mandates for SCA enforcement (§P2) — and not with `request-validator`. The declarative JSON-schema `request-validator` returns on the Kong Enterprise / APISIX upgrade path (§S4). This is an explicit-drift acknowledgement (ADR-PC-020 §D3) for a code change that honours the §4 obligation on the selected edition; the Decision is unchanged.*
+
 ---
 
 ## Implementation Principles
