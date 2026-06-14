@@ -1,25 +1,37 @@
 #!/usr/bin/env python3
 """
-Mission Control dev server — serves the UI and reverse-proxies /v1/* to the engine.
+Mission Control dev server — serves the UI and reverse-proxies the backend APIs.
 
-Why this exists: the babelstone engine has no CORS, so a browser page on a different
-origin can't call it directly. This tiny stdlib-only server puts the UI and the engine
-behind ONE origin (http://localhost:9000): static files are served locally, and any
-request under /v1/ is forwarded to the engine. The browser sees same-origin — no CORS,
-no preflight, live mode "just works".
+Why this exists: the babelstone services have no CORS, so a browser page on a different
+origin can't call them directly. This tiny stdlib-only server puts the UI and the backends
+behind ONE origin (http://localhost:9000), so the browser sees same-origin — no CORS, no
+preflight, live mode "just works". It proxies two backends:
+
+  • /v1/*       → the ENGINE (LIVE·engine mode): the engine's own command/query surface
+                  (POST /v1/deposits, GET /v1/deposits/{id}, …). Engine-DIRECT, ADR-PC-029.
+
+  • /api/v1/*   → the ORCHESTRATOR edge (LIVE·saga mode): the constitution-saga front door
+                  (POST /api/v1/deposits/constitute → 202 + process_id + SSE stream,
+                  ADR-IC-006 §P4 / Document 05). This server also PLAYS THE GATEWAY: it
+                  injects the X-Client-Id the orchestrator's edge authz expects (the claim
+                  Kong would propagate, EdgeAuth). The browser's EventSource cannot set
+                  headers, so injecting here is what lets the SSE stream's per-process
+                  ownership check (which binds to the SAME client id as the start) pass.
 
 DEMO mode needs none of this — index.html is fully self-contained. You only need this
-server for LIVE mode.
+server for LIVE·engine (start the engine, scripts/demo-mcp.sh) or LIVE·saga (start the
+orchestrator + ACL stub, scripts/demo-saga.sh).
 
 Usage:
-    # 1. start the engine (see scripts/demo-mcp.sh) so it's listening on :8080
-    # 2. then:
     python3 docs/demo/mission-control/serve.py
-    # 3. open http://localhost:9000 and flip the Mode toggle to LIVE
+    # open http://localhost:9000 and flip the Mode toggle to LIVE·engine or LIVE·saga
 
 Options (env vars):
-    MC_PORT     port to serve the UI on            (default 9000)
-    ENGINE_URL  base URL of the running engine      (default http://localhost:8080)
+    MC_PORT           port to serve the UI on                  (default 9000)
+    ENGINE_URL        base URL of the engine (LIVE·engine)     (default http://localhost:8080)
+    ORCHESTRATOR_URL  base URL of the orchestrator (LIVE·saga) (default http://localhost:8090)
+    DEMO_CLIENT_ID    the gateway-attested caller injected on  (default CLI-DEMO-0001)
+                      /api/v1/* (an OPAQUE reference, never PII)
 """
 import os
 import sys
@@ -27,10 +39,11 @@ import http.server
 import socketserver
 import urllib.request
 import urllib.error
-from functools import partial
 
 PORT = int(os.environ.get("MC_PORT", "9000"))
 ENGINE_URL = os.environ.get("ENGINE_URL", "http://localhost:8080").rstrip("/")
+ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://localhost:8090").rstrip("/")
+DEMO_CLIENT_ID = os.environ.get("DEMO_CLIENT_ID", "CLI-DEMO-0001")
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 # headers we must not blindly copy when relaying
@@ -46,11 +59,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write("  %s\n" % (fmt % args))
 
-    def _is_api(self):
-        return self.path.startswith("/v1/")
+    def _route(self):
+        """Map the request path to a backend. Returns (base_url, injected_headers) or None
+        for a static file served locally."""
+        if self.path.startswith("/api/v1/"):
+            # The orchestrator edge. This server stands in for Kong: it injects the
+            # gateway-attested caller id the edge authz binds ownership to (EdgeAuth).
+            return ORCHESTRATOR_URL, {"X-Client-Id": DEMO_CLIENT_ID}
+        if self.path.startswith("/v1/"):
+            return ENGINE_URL, None
+        return None
 
-    def _relay(self, method):
-        url = ENGINE_URL + self.path
+    def _relay(self, method, base_url, inject):
+        url = base_url + self.path
         length = int(self.headers.get("Content-Length", 0) or 0)
         body = self.rfile.read(length) if length else None
 
@@ -58,19 +79,35 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         for k, v in self.headers.items():
             if k.lower() not in _HOP_BY_HOP:
                 req.add_header(k, v)
+        if inject:
+            for k, v in inject.items():
+                req.add_header(k, v)
+
+        # The SSE stream is long-lived (it follows the saga to a terminal state), so it must
+        # NOT use a read deadline — it streams until the saga finishes or the client leaves.
+        is_stream = self.path.endswith("/stream")
+        timeout = None if is_stream else 30
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                self._write_relay(resp.status, resp.headers, resp.read())
+            resp = urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as e:
-            # the engine's 4xx/5xx are meaningful (409, 422, 400) — pass them through verbatim
+            # the backends' 4xx/5xx are meaningful (409, 422, 400, 403) — pass them through verbatim
             self._write_relay(e.code, e.headers, e.read())
+            return
         except urllib.error.URLError as e:
             self.send_response(502)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(('{"title":"engine unreachable","detail":"%s — is it running on %s?"}'
-                              % (str(e.reason), ENGINE_URL)).encode())
+            self.wfile.write(('{"title":"backend unreachable","detail":"%s — is it running on %s?"}'
+                              % (str(e.reason), base_url)).encode())
+            return
+
+        ctype = resp.headers.get("Content-Type", "")
+        if "text/event-stream" in ctype:
+            self._stream_relay(resp)
+        else:
+            with resp:
+                self._write_relay(resp.status, resp.headers, resp.read())
 
     def _write_relay(self, status, headers, payload):
         self.send_response(status)
@@ -82,19 +119,42 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if payload:
             self.wfile.write(payload)
 
+    def _stream_relay(self, resp):
+        """Relay a Server-Sent Events response incrementally — flush each frame as it arrives
+        rather than buffering to EOF (an SSE stream has no EOF until the saga terminates)."""
+        self.send_response(resp.status)
+        for k, v in resp.headers.items():
+            if k.lower() not in _HOP_BY_HOP:
+                self.send_header(k, v)
+        self.end_headers()
+        try:
+            while True:
+                chunk = resp.read1(4096)  # whatever is available now, no wait-to-fill
+                if not chunk:
+                    break                 # upstream closed (saga reached a terminal state)
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass                          # the browser closed the EventSource — stop cleanly
+        finally:
+            resp.close()
+
     def do_GET(self):
-        if self._is_api():
-            return self._relay("GET")
+        route = self._route()
+        if route is not None:
+            return self._relay("GET", route[0], route[1])
         return super().do_GET()
 
     def do_POST(self):
-        if self._is_api():
-            return self._relay("POST")
+        route = self._route()
+        if route is not None:
+            return self._relay("POST", route[0], route[1])
         self.send_error(405)
 
     def do_PUT(self):
-        if self._is_api():
-            return self._relay("PUT")
+        route = self._route()
+        if route is not None:
+            return self._relay("PUT", route[0], route[1])
         self.send_error(405)
 
 
@@ -102,9 +162,10 @@ def main():
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.ThreadingTCPServer(("127.0.0.1", PORT), Handler) as httpd:
         print("Babelstone Mission Control")
-        print("  UI      http://localhost:%d" % PORT)
-        print("  engine  %s  (proxied at /v1/*)" % ENGINE_URL)
-        print("  mode    open the page, flip the toggle to LIVE")
+        print("  UI            http://localhost:%d" % PORT)
+        print("  engine        %s  (proxied at /v1/*      — LIVE·engine)" % ENGINE_URL)
+        print("  orchestrator  %s  (proxied at /api/v1/*  — LIVE·saga)" % ORCHESTRATOR_URL)
+        print("  mode          open the page, flip the toggle to LIVE·engine or LIVE·saga")
         print("  Ctrl-C to stop")
         try:
             httpd.serve_forever()
