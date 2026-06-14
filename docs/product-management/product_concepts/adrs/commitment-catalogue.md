@@ -83,6 +83,7 @@ tracked separately — and is **not** the job of this seed.
 | OBS-2 | The product-semantic spans (`accrual.computed`, `withholding.applied`) are emitted in the **impure runtime shell** (`AggregateRuntime.AppendAsync`'s span hook / the host endpoint), **never** in the pure decider/fold, and carry the structural `babelstone.partition_key` + `babelstone.product_code`. | [ADR-IC-007 §P2–§P3](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_SPAN_PRODUCT_SEMANTICS` | Live |
 | OBS-3 | **No PII in any telemetry signal** — span/log attributes carry only structural identifiers (the `babelstone.*` operational tier), never NIF/IBAN/account/name/email; money rides as integer cents. | [ADR-IC-007 §P4](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit / analyser | `OBS_NO_PII_ATTRS` | Planned |
 | OBS-4 | **W3C `traceparent` propagates across every process boundary**, including the durable bus (carried as an envelope/outbox header), so a `correlation_id` resolves a complete cross-process trace. | [ADR-IC-007 §P1 (Layer 1)](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | integration | `OBS_TRACEPARENT_PROPAGATION` | Planned |
+| OBS-5 | At the **synchronous HTTP boundary** the engine host joins the inbound trace and hands the trace id back to the caller: `AddAspNetCoreInstrumentation()` makes the request a SERVER span that adopts an inbound `traceparent` (so the `deposit.*` spans nest under it, not as roots), and **every** response carries the active trace id on the `X-Trace-Id` header as an opaque 32-hex id (never PII). A strict subset of OBS-4, scoped to in-process HTTP — bus/orchestrator propagation stays OBS-4·Planned. | [ADR-IC-007 §P1 (Layer 1)](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | integration | `OBS_TRACE_ID_SURFACED_HTTP` | Live |
 
 The "~8 load-bearing" of [ADR-PC-020 §P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)
 counts post-flag-never-gates (rows 5a–5c) as one invariant realised across the
@@ -164,7 +165,7 @@ note deferred to D.5. Those land under the existing `PROJECTION_ONE_CURRENT_BELI
 and `PROJECTION_REBUILD_DETERMINISM` (row 14) commitments — D.5 adds no new catalogue row for
 them; it is the acceptance/operational layer over D.2's already-catalogued plumbing.
 
-**Epic K reconciliation (K.1).** The four `OBS-*` rows land with K.1 (`babelstone-rzcl`),
+**Epic K reconciliation (K.1).** The first four `OBS-*` rows (OBS-1–OBS-4) land with K.1 (`babelstone-rzcl`),
 which ships the shared `ActivitySource` + `babelstone.*` attribute contract
 (`Babelstone.Telemetry`), the product-semantic spans in the impure runtime shell, and
 the OTLP + resource wiring on both .NET hosts. `OBS_RESOURCE_ATTRS` (OBS-1) and
@@ -177,6 +178,14 @@ ADR-IC-007 §P4) is not yet written, so the row does not yet resolve to its own 
 `OBS_TRACEPARENT_PROPAGATION` (OBS-4) stays `Planned`: cross-process `traceparent`
 propagation over the durable bus is documented here but deferred (the K.1 SCOPE-OUT) to
 the bus-relay work, and its lane is the deferred Testcontainers Integration tier.
+`OBS_TRACE_ID_SURFACED_HTTP` (OBS-5, added 2026-06-14 with bd `babelstone-2dex`) is `Live`:
+the engine host wires `AddAspNetCoreInstrumentation()` so the inbound request is a SERVER
+span that adopts an inbound `traceparent` (the `deposit.*` spans nest under it instead of
+starting as roots) and returns the active trace id to the caller on the `X-Trace-Id`
+response header. Its fitness test (`DepositsApiTracingIntegrationTests` in
+`Babelstone.Engine.Api.Tests`) runs in the Testcontainers Integration tier. It is a strict
+in-process subset of OBS-4 — the synchronous HTTP boundary only — so OBS-4 stays `Planned`
+for the bus/orchestrator legs.
 
 **ACTUAL→INTENDED reconciliation (2026-06-13, PR #163).** Four rows were added under the
 growth provision as [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) (engine command
@@ -299,7 +308,7 @@ spawns a parallel suite:
 | Unit + analyser | `MONEY_BOUNDARY_FIXTURES`, `OBS_NO_PII_ATTRS` |
 | Analyser / CI gate | `DETERMINISM_GATE`, `NO_CLOCK_DRIVEN_ENGINE_SIGNAL` (analyser + contract) |
 | Architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC`, `EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC` |
-| Integration (Testcontainers) | `ES_ATOMIC_APPEND_OUTBOX`, `REPLAY_PIN_PER_EVENT`, `BATCH_INGEST_IDEMPOTENT`, `OBS_TRACEPARENT_PROPAGATION`, `READ_YOUR_WRITES_FOLD_ON_TOKEN` |
+| Integration (Testcontainers) | `ES_ATOMIC_APPEND_OUTBOX`, `REPLAY_PIN_PER_EVENT`, `BATCH_INGEST_IDEMPOTENT`, `OBS_TRACEPARENT_PROPAGATION`, `OBS_TRACE_ID_SURFACED_HTTP`, `READ_YOUR_WRITES_FOLD_ON_TOKEN` |
 | Contract / saga | `GL_POST_FLAG_NEVER_GATES`, `NOTIFY_POST_FLAG_NEVER_GATES`, `IFRS9_POST_FLAG_NEVER_GATES`, `CONSTITUTION_PRECONDITION_REFUSAL` |
 | Benchmark (CI Integration lane) | `REPLAY_BUDGET_5S_30S` (v1 half; v4 30 s half deferred to L.3) |
 | Benchmark (per-PR / CI) | `PACK_VALIDATE_DEPTH_BUDGETS`, `PACK_SIM_DEPTH5_BUDGET` |
