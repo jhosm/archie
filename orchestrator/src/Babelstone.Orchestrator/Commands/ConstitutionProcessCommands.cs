@@ -37,6 +37,7 @@ namespace Babelstone.Orchestrator.Commands;
 [JsonDerivedType(typeof(ActivateDepositCommand), typeDiscriminator: ConstitutionProcess.ActivateDeposit)]
 [JsonDerivedType(typeof(ReleaseBalanceReservationCommand), typeDiscriminator: ConstitutionProcess.ReleaseBalanceReservation)]
 [JsonDerivedType(typeof(ReverseCoreDebitCommand), typeDiscriminator: ConstitutionProcess.ReverseCoreDebit)]
+[JsonDerivedType(typeof(QueryCoreDebitStatusCommand), typeDiscriminator: ConstitutionProcess.QueryCoreDebitStatus)]
 public abstract record CommandPayload
 {
     /// <summary>The saga instance this command belongs to (the Document 05 PROC-… reference).
@@ -228,4 +229,25 @@ public sealed record ReverseCoreDebitCommand : CommandPayload
 
     /// <inheritdoc />
     public override string CommandType => ConstitutionProcess.ReverseCoreDebit;
+}
+
+/// <summary>Core ACL: query the Core for the actual outcome of an INDETERMINATE debit — the v1
+/// clearance-job mechanism (Document 05 Scenario C; bd babelstone-t7o3.10). Emitted on entering
+/// AWAIT_CORE_CLEARANCE, it asks the Core "was this debit actually executed?" BY REFERENCE — it
+/// carries the same opaque deposit and Core hold/txn references the debit used so the ACL can resolve
+/// the in-flight operation, never a fresh transaction. A single event-driven query (ADR-IC-003 §P5),
+/// not a poll. No PII — both fields are structural references.</summary>
+public sealed record QueryCoreDebitStatusCommand : CommandPayload
+{
+    /// <summary>The deposit aggregate reference whose debit is being cleared (the Document 05
+    /// "reference: TD-DEP-…" the clearance job queries Core by).</summary>
+    public required string DepositRef { get; init; }
+
+    /// <summary>The opaque Core hold reference the indeterminate ConfirmDebit targeted — the SAME
+    /// derived reference the debit used, so the clearance query resolves exactly that operation. A
+    /// deterministic derived reference, NOT minted here.</summary>
+    public required string CoreHoldRef { get; init; }
+
+    /// <inheritdoc />
+    public override string CommandType => ConstitutionProcess.QueryCoreDebitStatus;
 }

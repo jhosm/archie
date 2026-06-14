@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "comment": "QueryCoreDebitStatus -> the indeterminate debit did NOT execute (Document 05 Scenario C; bd babelstone-t7o3.10). The clearance query asked Core 'was this debit actually executed?' and the answer is no -- no money moved. Higher-priority mapping; fires when the request body contains the marker 'not-executed', driving the saga fail-CLOSED (AWAIT_CORE_CLEARANCE -> DEPOSIT_CONSTITUTION_FAILED) with NO reversal. REVIEW-FLAG C: the 4xx=not-executed encoding is a v1 STUB CONVENTION -- the dispatcher's slot-5 model reads a 422 as a terminal Refused, and the clearance stub reuses that to mean 'debit not found / not executed'. This is NOT the slot-5 'illegal/invalid command' semantics; it is a clearance VERDICT piggybacked on the HTTP status because the v1 ACL has no event channel. DEF-1's real ACL emits a typed DebitNotExecuted event instead."
+  },
+  "priority": 4,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/debits/clearance",
+    "bodyPatterns": [
+      { "contains": "not-executed" }
+    ]
+  },
+  "response": {
+    "status": 422,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "status": "NOT_EXECUTED", "detail": "the queried debit was not executed in Core" }
+  }
+}

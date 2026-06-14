@@ -115,6 +115,16 @@ public static class SagaCommandPayloadFactory
                 CorrelationId = correlationId,
                 CoreTxnRef = DerivedRef(CoreTxnPrefix, processId),
             },
+            ConstitutionProcess.QueryCoreDebitStatus => new QueryCoreDebitStatusCommand
+            {
+                ProcessId = processId,
+                CausationMessageId = causationMessageId,
+                CorrelationId = correlationId,
+                DepositRef = reference.DepositRef,
+                // The SAME derived Core hold reference the indeterminate ConfirmDebit used, so the
+                // clearance query resolves exactly that in-flight operation (deterministic, not minted).
+                CoreHoldRef = DerivedRef(CoreHoldPrefix, processId),
+            },
             _ => null,
         };
     }

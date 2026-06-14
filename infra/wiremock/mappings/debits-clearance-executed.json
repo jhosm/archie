@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "comment": "QueryCoreDebitStatus -> the indeterminate debit DID execute (Document 05 Scenario C; bd babelstone-t7o3.10). The clearance query asked Core 'was this debit actually executed?' and the answer is yes -- so a LATE DebitConfirmed resumes the happy path (the saga walks AWAIT_CORE_CLEARANCE -> APPROVED, arming ActivateDeposit). Default clearance answer (priority 5); the not-executed mapping (debits-clearance-not-executed) overrides it on a marker. The 2xx=executed encoding is a v1 STUB CONVENTION -- DEF-1's real ACL emits typed clearance events instead (ADR-IC-003 Amendment 2026-06-14, extended for Scenario C)."
+  },
+  "priority": 5,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/debits/clearance"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "status": "EXECUTED", "core_txn_id": "CT-CLEARED" }
+  }
+}

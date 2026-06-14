@@ -220,6 +220,27 @@ public sealed class SagaCommandDispatchDrainer
                 Refused.Add(1, CommandTag(row.CommandType));
                 return true;
 
+            case DeliveryKind.Indeterminate:
+                // Scenario C (bd babelstone-t7o3.10): the ACL returned an EXPLICIT INDETERMINATE signal on
+                // the ConfirmDebit (HTTP 202). The command WAS delivered — the ACL accepted it — so the row
+                // is terminal as a DELIVERY (PUBLISHED), not a FAILED refusal; what is unknown is the Core's
+                // EXECUTION, which the bridge hands to the saga via CoreDebitIndeterminate so it parks in
+                // AWAIT_CORE_CLEARANCE and emits the clearance query (ADR-IC-003 §P5, never a blind retry).
+                try
+                {
+                    await BridgeResultAsync(connection, transaction, row, CommandDeliveryKind.Indeterminate, ct);
+                }
+                catch (SagaConcurrencyException)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return false;
+                }
+
+                await MarkPublishedAsync(connection, transaction, seq, ct);
+                await transaction.CommitAsync(ct);
+                Delivered.Add(1, CommandTag(row.CommandType));
+                return true;
+
             default:
                 // 5xx → transient: roll back (the flip never happened), leave PENDING, retry.
                 await transaction.RollbackAsync(ct);
@@ -295,6 +316,22 @@ public sealed class SagaCommandDispatchDrainer
 
         using var response = await client.SendAsync(request, ct);
         var status = (int)response.StatusCode;
+
+        // Scenario C (bd babelstone-t7o3.10): an EXPLICIT INDETERMINATE settlement signal on the
+        // irreversible ConfirmDebit. The chosen wire signal is HTTP 202 Accepted — the ACL accepted the
+        // debit but cannot yet confirm whether the Core executed it (the network dropped after the debit
+        // was sent). 202 is a 2xx, so it would otherwise be classified Applied below; we intercept it
+        // FIRST, and ONLY for ConfirmDebit, so it is never confused with a real 2xx-success on any other
+        // leg, nor with a 4xx Refused or a 5xx/timeout Transient. The dispatcher flips the row to a
+        // terminal status and the bridge self-advances the saga with CoreDebitIndeterminate, parking it in
+        // AWAIT_CORE_CLEARANCE (ADR-IC-003 §P5). A ConfirmDebit *timeout* is NOT this — it stays Transient
+        // (the catch block leaves the row PENDING for an idempotent retry); INDETERMINATE is an explicit
+        // ACL signal, not the absence of a response.
+        if (response.StatusCode == HttpStatusCode.Accepted
+            && row.CommandType == ConstitutionProcess.ConfirmDebit)
+        {
+            return DeliveryOutcome.IndeterminateOutcome;
+        }
 
         if (response.IsSuccessStatusCode)
         {
@@ -434,12 +471,15 @@ public sealed class SagaCommandDispatchDrainer
         Guid MessageId, string CommandType, byte[] Payload, string? TraceParent,
         Guid ProcessId, Guid? CorrelationId);
 
-    private enum DeliveryKind { Applied, Refused, Transient }
+    private enum DeliveryKind { Applied, Refused, Transient, Indeterminate }
 
     private sealed record DeliveryOutcome(DeliveryKind Kind, int StatusCode, string Reason)
     {
         public static readonly DeliveryOutcome AppliedOutcome = new(DeliveryKind.Applied, 0, string.Empty);
         public static readonly DeliveryOutcome TransientOutcome = new(DeliveryKind.Transient, 0, string.Empty);
+        // Scenario C (bd babelstone-t7o3.10): the explicit ACL INDETERMINATE signal (HTTP 202 on a
+        // ConfirmDebit). Terminal-as-delivered; the bridge maps it to CoreDebitIndeterminate.
+        public static readonly DeliveryOutcome IndeterminateOutcome = new(DeliveryKind.Indeterminate, 0, string.Empty);
         public static DeliveryOutcome RefusedOutcome(int statusCode, string reason) =>
             new(DeliveryKind.Refused, statusCode, reason);
     }

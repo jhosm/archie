@@ -107,6 +107,60 @@ public sealed class ConstitutionProcessTests
         Assert.True(SagaStateNames.IsTerminal(SagaState.CancelledAfterDebit));
     }
 
+    [Fact]
+    public void Indeterminate_debit_parks_in_AWAIT_CORE_CLEARANCE_and_resumes_or_fails_on_clearance()
+    {
+        // Document 05 Scenario C (bd babelstone-t7o3.10): a ConfirmDebit whose response never arrived
+        // (the ACL reported INDETERMINATE) must NOT blind-retry — it parks in the first-class waiting
+        // state AWAIT_CORE_CLEARANCE (ADR-IC-003 §P5), emitting the clearance QUERY command. The
+        // clearance result then either RESUMES the happy path (the debit DID execute → DebitConfirmed,
+        // late) or FAILS closed (the debit did NOT execute → DebitNotExecuted, no money moved).
+
+        // ENTRY: an INDETERMINATE debit from APPROVED parks the saga and arms the clearance query.
+        AssertTransition(SagaState.Approved, ConstitutionProcess.CoreDebitIndeterminate,
+            SagaState.AwaitCoreClearance, "QueryCoreDebitStatus");
+
+        // EXIT resume: the clearance found the debit DID execute → the LATE DebitConfirmed resumes the
+        // happy path exactly as a timely one would (back to APPROVED, arming ActivateDeposit).
+        AssertTransition(SagaState.AwaitCoreClearance, ConstitutionProcess.DebitConfirmed,
+            SagaState.Approved, "ActivateDeposit");
+
+        // EXIT fail: the clearance found the debit did NOT execute → fail-CLOSED terminal with NO
+        // reversal (no money moved, so there is nothing to compensate).
+        AssertTransition(SagaState.AwaitCoreClearance, ConstitutionProcess.DebitNotExecuted,
+            SagaState.DepositConstitutionFailed);
+        Assert.True(SagaStateNames.IsTerminal(SagaState.DepositConstitutionFailed));
+
+        // EXIT escalate (§P6 robustness): a clearance that itself cannot resolve (CompensationFailed)
+        // escalates to HUMAN_INTERVENTION_REQUIRED rather than stranding the saga.
+        AssertTransition(SagaState.AwaitCoreClearance, ConstitutionProcess.CompensationFailed,
+            SagaState.HumanInterventionRequired);
+
+        // The DebitNotExecuted EXIT emits NO reversal command — the no-money-moved terminal genuinely
+        // has nothing to compensate.
+        Assert.True(_machine.TryAdvance(SagaState.AwaitCoreClearance, ConstitutionProcess.DebitNotExecuted, out var fail));
+        Assert.Empty(fail.Commands);
+    }
+
+    [Fact]
+    public void Indeterminate_debit_entry_is_reachable_only_from_APPROVED()
+    {
+        // §P5: CoreDebitIndeterminate is the irreversible-debit's THIRD outcome (alongside confirmed and
+        // refused), so like DebitConfirmed it is only ever a legal advance out of APPROVED — never from
+        // a pre-approval validation state. Proven directly from the table.
+        foreach (var ((from, evt), _) in _machine.Transitions)
+        {
+            if (evt == ConstitutionProcess.CoreDebitIndeterminate)
+            {
+                Assert.Equal(SagaState.Approved, from);
+            }
+        }
+
+        // And it is NOT a legal move out of a pre-approval validation state.
+        Assert.False(_machine.TryAdvance(SagaState.ValidationsComplete, ConstitutionProcess.CoreDebitIndeterminate, out _));
+        Assert.False(_machine.TryAdvance(SagaState.ParallelValidation, ConstitutionProcess.CoreDebitIndeterminate, out _));
+    }
+
     [Theory]
     [InlineData("COMPENSATE_VALIDATIONS")]
     [InlineData("COMPENSATE_POST_DEBIT")]
@@ -138,13 +192,28 @@ public sealed class ConstitutionProcessTests
     [Fact]
     public void Irreversible_debit_only_follows_approval()
     {
-        // §P5: every state that ACCEPTS DebitConfirmed must itself be APPROVED — the
-        // irreversible effect never lands before approval. Proven directly from the table.
+        // §P5: every state that ACCEPTS DebitConfirmed must be at-or-past the APPROVED line — the
+        // irreversible effect never lands before approval. APPROVED accepts a timely confirm;
+        // AWAIT_CORE_CLEARANCE accepts a LATE confirm (Scenario C, bd babelstone-t7o3.10) — and that
+        // state is itself only reachable FROM APPROVED (the indeterminate debit entry), so the §P5
+        // ordering still holds: no DebitConfirmed source predates approval. Proven from the table.
+        var postApprovalConfirmSources = new[] { SagaState.Approved, SagaState.AwaitCoreClearance };
         foreach (var ((from, evt), _) in _machine.Transitions)
         {
             if (evt == ConstitutionProcess.DebitConfirmed)
             {
+                Assert.Contains(from, postApprovalConfirmSources);
+            }
+        }
+
+        // AWAIT_CORE_CLEARANCE is genuinely a post-approval state — it is entered ONLY from APPROVED
+        // (the indeterminate debit), so accepting a late DebitConfirmed there does not breach §P5.
+        foreach (var ((from, evt), outcome) in _machine.Transitions)
+        {
+            if (outcome.Next == SagaState.AwaitCoreClearance)
+            {
                 Assert.Equal(SagaState.Approved, from);
+                Assert.Equal(ConstitutionProcess.CoreDebitIndeterminate, evt);
             }
         }
     }
@@ -156,10 +225,13 @@ public sealed class ConstitutionProcessTests
         // irreversible commands (ConfirmDebit — convert the hold to a real debit; ActivateDeposit
         // — activate after the debit) may be EMITTED only by a transition that crosses INTO or
         // sits AT the irreversible phase. ConfirmDebit is armed exactly when the saga reaches
-        // APPROVED (from VALIDATIONS_COMPLETE or AWAIT_WORKFLOW_APPROVAL); ActivateDeposit only
-        // from APPROVED. Neither is ever emitted from a pre-approval validation state. Proven
-        // directly from the table — if a future edit emits either earlier, this fails.
+        // APPROVED (from VALIDATIONS_COMPLETE or AWAIT_WORKFLOW_APPROVAL); ActivateDeposit only from a
+        // post-approval state (APPROVED, or AWAIT_CORE_CLEARANCE on a Scenario-C late-confirm resume —
+        // bd babelstone-t7o3.10, itself reachable only from APPROVED). Neither is ever emitted from a
+        // pre-approval validation state. Proven directly from the table — if a future edit emits either
+        // earlier, this fails.
         var irreversibleApprovalEntries = new[] { SagaState.ValidationsComplete, SagaState.AwaitWorkflowApproval };
+        var postApprovalActivateSources = new[] { SagaState.Approved, SagaState.AwaitCoreClearance };
 
         foreach (var ((from, _), outcome) in _machine.Transitions)
         {
@@ -173,8 +245,9 @@ public sealed class ConstitutionProcessTests
 
             if (outcome.Commands.Contains(ConstitutionProcess.ActivateDeposit))
             {
-                // ActivateDeposit is emitted only from APPROVED.
-                Assert.Equal(SagaState.Approved, from);
+                // ActivateDeposit is emitted from a post-approval state: APPROVED (the normal step) or
+                // AWAIT_CORE_CLEARANCE (the late-confirm resume), the latter only reachable from APPROVED.
+                Assert.Contains(from, postApprovalActivateSources);
             }
         }
 
