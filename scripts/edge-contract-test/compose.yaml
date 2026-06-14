@@ -1,0 +1,123 @@
+# compose.yaml — the live-Kong runtime-contract harness (bd babelstone-abig + babelstone-1z0r).
+#
+# In plain English: this stands up the REAL edge gateway (kong:3.9.1, DB-less, the actual
+# infra/kong/kong.yml byte-for-byte) in front of two test doubles, so we can prove the edge
+# POLICIES actually behave at RUNTIME — not just that the config parses. The static gate
+# (scripts/kong-config-check.sh) proves syntax; THIS proves behaviour: PSD2 SCA enforcement,
+# the X-Client-Id IDOR fix, the pre-jwt-read-can't-leak property, and the SoR fail-closed
+# split-brain guard.
+#
+# Why the stubs answer to `orchestrator` and `engine`: the real kong.yml addresses its
+# upstreams as https://orchestrator:8080 / https://engine:8080 and the SoR Lua hardcodes
+# https://engine:8080/v1/deposits/{id}. By giving the stub containers those network ALIASES
+# we run the unmodified kong.yml — no route/Lua templating. tls_verify:false in kong.yml (its
+# POC posture) means Kong accepts the stubs' throwaway self-signed cert.
+#
+# NOT a production stack. Ephemeral test harness; `docker compose down -v` leaves nothing.
+
+name: babelstone-edge-contract
+
+services:
+  # One-shot: mint a throwaway self-signed TLS cert the two stubs share. SANs cover both
+  # service aliases so Kong's (skipped-anyway) verify and the stubs' own TLS are coherent.
+  certgen:
+    image: alpine/openssl:3.3.2
+    volumes:
+      - certs:/certs
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ ! -f /certs/stub.key ]; then
+          openssl req -x509 -newkey rsa:2048 -nodes \
+            -keyout /certs/stub.key -out /certs/stub.crt -days 7 \
+            -subj "/CN=babelstone-edge-stub" \
+            -addext "subjectAltName=DNS:orchestrator,DNS:engine,DNS:localhost"
+        fi
+        chmod 644 /certs/stub.key /certs/stub.crt
+        echo "certgen: stub cert ready"
+
+  # STUB UPSTREAM (echoes received headers) — answers to the `orchestrator` alias on :8080/TLS.
+  orchestrator-stub:
+    image: python:3.12-alpine
+    depends_on:
+      certgen:
+        condition: service_completed_successfully
+    volumes:
+      - certs:/certs:ro
+      - ./stubs/echo-upstream.py:/app/echo-upstream.py:ro
+    command: ["python3", "/app/echo-upstream.py"]
+    networks:
+      default:
+        aliases: ["orchestrator"]
+    healthcheck:
+      # -k: self-signed; any HTTP answer (200) means TLS is up.
+      test: ["CMD", "python3", "-c", "import ssl,urllib.request;ctx=ssl._create_unverified_context();urllib.request.urlopen('https://localhost:8080/healthz',context=ctx,timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # STUB ENGINE READ SURFACE (sor resolution + engine-SoR proxy target) — `engine` alias, :8080/TLS.
+  engine-stub:
+    image: python:3.12-alpine
+    depends_on:
+      certgen:
+        condition: service_completed_successfully
+    volumes:
+      - certs:/certs:ro
+      - ./stubs/engine-read.py:/app/engine-read.py:ro
+    command: ["python3", "/app/engine-read.py"]
+    networks:
+      default:
+        aliases: ["engine"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import ssl,urllib.request;ctx=ssl._create_unverified_context();urllib.request.urlopen('https://localhost:8080/v1/deposits/sor-engine',context=ctx,timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # The REAL edge gateway: kong:3.9.1, DB-less, the unmodified infra/kong/kong.yml.
+  kong:
+    image: kong:3.9.1
+    depends_on:
+      orchestrator-stub:
+        condition: service_healthy
+      engine-stub:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      # ── LOAD-BEARING (a real runtime finding this harness surfaced) ────────────────
+      # kong:3.9.1 defaults to `untrusted_lua = sandbox` with an EMPTY
+      # `untrusted_lua_sandbox_requires`. The real kong.yml's pre-functions
+      # `require("cjson.safe")` (SCA/body decode) and `require("resty.http")` (SoR
+      # resolution). Under the default sandbox those requires are BLOCKED, so EVERY
+      # constitute / SoR request 500s — a property `kong config parse` (the static gate)
+      # cannot see. The minimal, safe fix keeps the sandbox ON and allowlists EXACTLY the
+      # two modules the config legitimately needs. The deployed Kong (infra/compose.yaml,
+      # infra/k8s/base/kong.yaml) MUST carry this same setting for the edge policies to
+      # work at runtime — see the harness header / the PR body.
+      KONG_UNTRUSTED_LUA: "sandbox"
+      KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES: "cjson.safe,resty.http"
+      # The kong.yml opentelemetry plugin exports to otel-collector:4318. There is no
+      # collector in this harness; exports are async best-effort and do NOT block proxying.
+      KONG_LOG_LEVEL: "notice"
+    volumes:
+      # The REAL config, read-only, byte-for-byte (no templating).
+      - ../../infra/kong/kong.yml:/kong/kong.yml:ro
+    ports:
+      - "${KONG_PROXY_PORT:-8000}:8000"
+      - "${KONG_ADMIN_PORT:-8001}:8001"
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  certs:
+
+networks:
+  default:
