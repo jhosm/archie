@@ -36,8 +36,10 @@
 #        - the edge policies are attached (jwt, rate-limiting, payload validation
 #          (request-validator on Enterprise, or a CE pre-function body check — the edition
 #          actually selected), PSD2 SCA enforcement on the constitute money-mover (acr +
-#          auth_time freshness, ADR-IC-006 §P2), opentelemetry, and upstream mTLS to the
-#          orchestrator/engine). No fixed count — the inventory grows as routes/policies do.
+#          auth_time freshness, ADR-IC-006 §P2), gateway-attested caller identity
+#          (X-Client-Id from the validated jwt sub on both orchestrator routes, §P4),
+#          opentelemetry, and upstream mTLS to the orchestrator/engine). No fixed count —
+#          the inventory grows as routes/policies do.
 #        - the engine COMMAND surface (POST /v1/deposits) is NOT a public Kong route —
 #          it is the orchestrator's INTERNAL saga target (ADR-IC-006 §P5 mTLS boundary),
 #          never the public client write path.
@@ -116,6 +118,20 @@ have 'response_buffering: *false' "SSE stream route missing response_buffering: 
 # The edge policies (ADR-IC-006 §P2/§P3/§P4/§P5/§P6 + §Decision) — no fixed count; the
 # inventory grows as routes/policies are added, so assertions are listed, not enumerated.
 have 'name: *jwt' "missing the jwt plugin (token signature validation, ADR-IC-006 §1/§P7)"
+# jwt must have NO anonymous fallback. The SCA + X-Client-Id pre-functions read claims from the token
+# payload, and on Kong CE they run BEFORE jwt (static priority: pre-function 1000000 > jwt 1450; CE has
+# no dynamic `ordering`). That is safe ONLY because the GLOBAL jwt plugin 401s an unauthenticated /
+# invalid token BEFORE the upstream proxy — so a forged/tampered token never reaches the orchestrator
+# and the claims the pre-functions read never take effect. An `anonymous` consumer on jwt would let an
+# unauthenticated request fall through to the pre-functions' set_header and the orchestrator — breaking
+# both SCA and the X-Client-Id attestation. Lock it. (End-to-end lock: the §P2 contract test, bd abig.)
+# NOTE (deliberate simplicity): this greps the WHOLE config, not the jwt block specifically — today
+# jwt is the only plugin where `anonymous` is the dangerous fallback, and no `anonymous:` appears
+# anywhere. A future plugin that legitimately needs `anonymous` would require scoping this to the jwt
+# block. Likewise, the OTHER half of the precondition — jwt staying GLOBAL (top-level plugins, not a
+# route-scoped override) — is not yet gated here; `have 'name: *jwt'` only checks jwt exists. Both are
+# tracked hardening (bd babelstone-abig covers the runtime end-to-end lock).
+hasnot 'anonymous:' "the jwt plugin must have NO anonymous fallback — the SCA + X-Client-Id pre-functions read claims before jwt and rely on jwt 401'ing an unauthenticated request before upstream (ADR-IC-006 §1/§P7)"
 have 'name: *rate-limiting' "missing the rate-limiting plugin (ADR-IC-006 §P3)"
 # Payload validation (ADR-IC-006 §4): the constitute route must validate the request
 # body. The Enterprise `request-validator` plugin is NOT in Kong CE (the selected
@@ -134,6 +150,18 @@ grep -Eq 'name: *(request-validator|pre-function)' "$CONFIG" \
 # freshness, Document 10) is documented inline in kong.yml.
 have 'SCA_REQUIRED' "missing PSD2 SCA enforcement: the constitute route must reject a token without a valid SCA-completion claim with code SCA_REQUIRED (ADR-IC-006 §P2 / bd babelstone-6imx)"
 have 'kong\.response\.exit\(403' "missing the SCA 403 rejection: the constitute SCA pre-function must kong.response.exit(403, ...) on an absent/expired SCA claim (ADR-IC-006 §P2)"
+# Gateway-attested caller identity (ADR-IC-006 §P4, bd babelstone-bkqo). The orchestrator's
+# per-process OWNERSHIP check (EdgeAuth) trusts the X-Client-Id request header as the authenticated
+# caller and never re-reads the token (Boundary 2, Document 10). So the edge MUST derive X-Client-Id
+# from the VALIDATED jwt `sub` and OVERWRITE any client-supplied value (kong.service.request.set_header)
+# on EVERY orchestrator-bound route — the constitute POST and the SSE stream. A missing or
+# client-sourced value is an IDOR hole (a caller asserting another customer's identity). Asserting the
+# exact set_header("X-Client-Id", claims.sub) form, on BOTH routes (>=2), means a future edit cannot
+# silently drop the attestation or source it from anything but the validated token (ADR-PC-020 §D3).
+have 'set_header\("X-Client-Id", *claims\.sub\)' "missing gateway-attested caller identity: the edge must set X-Client-Id from the VALIDATED jwt sub, not a client value (IDOR; ADR-IC-006 §P4 / bd babelstone-bkqo)"
+xclient_count="$(grep -cF 'set_header("X-Client-Id", claims.sub)' "$CONFIG")"
+[ "${xclient_count:-0}" -ge 2 ] \
+  || fail "X-Client-Id attestation must cover BOTH orchestrator-bound routes (constitute + SSE stream); found $xclient_count of 2 (ADR-IC-006 §P4 / bd babelstone-bkqo)"
 have 'name: *opentelemetry' "missing the opentelemetry plugin (W3C traceparent, ADR-IC-006 §P6)"
 # Upstream mTLS to internal services (ADR-IC-006 §P5): the service presents a client
 # cert to the orchestrator/engine. Expressed via a client_certificate on the service.
