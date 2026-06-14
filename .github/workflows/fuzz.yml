@@ -60,6 +60,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4 # pins Go from mise.toml (ADR-PC-006)
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
 
       # Cache the Go fuzz cache so each weekly run continues exploring from the prior
       # run's generated corpus instead of restarting from the seeds. The run-id suffix
@@ -113,6 +119,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4 # pins the .NET 10 SDK from mise.toml (ADR-PC-010), as in ci.yml
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
       - name: Cache NuGet packages
         uses: actions/cache@v5
         with:
