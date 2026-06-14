@@ -148,11 +148,12 @@ waterfall:
 - Below: the engine's real SLI metric names (`outbox_publish_lag_seconds`,
   `outbox_publish_latency_seconds`, `inbox_handled_total`).
 
-This panel is the **map**; Grafana Tempo is the **territory**. In LIVE mode the same spans
-export through the OTel Collector to Grafana LGTM (`make up`, then Grafana on `localhost:3000`)
+This panel is the **map**; Grafana Tempo is the **territory**. In **LIVE·engine** mode the same
+spans export through the OTel Collector to Grafana LGTM (`make up`, then Grafana on `localhost:3000`)
 — search Tempo by `babelstone.partition_key`. The in-app waterfall is a faithful, on-brand
 visualization of the instrumentation contract (deterministic in DEMO); it is *not* pulled from
-Tempo (see the epic for that follow-up). Honest framing, same as the MCP tab.
+Tempo (see the epic for that follow-up). Honest framing, same as the MCP tab. (In **LIVE·saga** the
+engine isn't on the request path and the orchestrator isn't OTel-wired yet — see the gaps below.)
 
 Known gaps (engine-side, not demo bugs): the orchestrator isn't OTel-wired yet, so saga spans
 don't export; and W3C traceparent propagation across Redpanda is planned — so the cross-service
@@ -188,7 +189,7 @@ the rate sheet, not user input:
   interest is paid **at t=0**: constitution emits `DepositConstituted` + an upfront
   `InterestPaid`, and maturity returns principal only.
 
-**Early termination** is a **DEMO-only** action (the **Terminate early** button, disabled in LIVE).
+**Early termination** is a **DEMO-only** action (the **Terminate early** button, disabled in both LIVE modes).
 The engine has the decider — penalty bands, basis, payout floor — but **no HTTP endpoint yet**, so
 this can't run against the real engine. The demo shows an illustrative `DepositTerminatedEarly`
 (≈50% term elapsed, a 50%-of-accrued penalty band) and is labelled as such.
@@ -205,9 +206,10 @@ Smoke-tested against a real engine (`scripts/demo-mcp.sh up` → `serve.py`) on 
 - **`demo-mcp.sh` now prices all three products** (`venc` 300bps, `mensais` 325bps, `antecip` 300bps)
   so the engine no longer 422s the non-AT_MATURITY variants. (Production pricing belongs in the
   regulatory pack; this is the dev-fixture sheet the script deploys.)
-- **DEMO vs LIVE coupon nuance:** DEMO splits the term into even coupon windows; the engine computes
-  each coupon over the real calendar month (ACT/360), so LIVE per-coupon amounts differ slightly
-  between months (e.g. €19.50 then €20.15). LIVE is the engine's truth; DEMO is illustrative.
+- **DEMO vs LIVE·engine coupon nuance:** DEMO splits the term into even coupon windows; the engine
+  computes each coupon over the real calendar month (ACT/360), so LIVE·engine per-coupon amounts
+  differ slightly between months (e.g. €19.50 then €20.15). LIVE·engine is the engine's truth; DEMO
+  is illustrative.
 
 **Bring-up gotcha:** on a *pre-existing* Postgres volume, `scripts/demo-mcp.sh` skips all migrations
 when the `events` table already exists, leaving newer tables (`command_dedup`, …) absent → constitute
@@ -217,11 +219,15 @@ the migration-skip remains — tracked as a separate bug.)
 
 ## Notes / scope
 
-- AT_MATURITY, PERIODIC (coupons), and ADVANCE are wired in both modes; PERIODIC/ADVANCE LIVE
-  paths reconstruct ledger cards from the maturity/coupon response deltas (the engine exposes no
-  per-event feed), so the figures are the engine's and the card split is presentational.
+- The full lifecycle (AT_MATURITY, PERIODIC coupons, ADVANCE) is wired in **DEMO and LIVE·engine**;
+  LIVE·saga covers **constitution** only (the saga's current scope). In LIVE·engine the PERIODIC/
+  ADVANCE paths reconstruct ledger cards from the maturity/coupon response deltas (the engine exposes
+  no per-event feed), so the figures are the engine's and the card split is presentational.
 - Early termination is DEMO-only until the engine grows a termination endpoint.
-- In LIVE mode the engine doesn't expose a per-event feed, so the `InterestAccrued` /
+- In **LIVE·engine** mode the engine doesn't expose a per-event feed, so the `InterestAccrued` /
   `WithholdingApplied` / `DepositMatured` cards are reconstructed from the maturity response
   deltas — the figures are the engine's, the card breakdown is presentational.
+- In **LIVE·saga** mode the orchestrator exposes no per-event feed either, so the ledger is
+  reconstructed from the SSE **state** frames + the dispatched commands — the saga states are the
+  orchestrator's truth, the card breakdown is presentational.
 - Design tokens are shared with the deck (`docs/demo/index.html`) for one visual language.
