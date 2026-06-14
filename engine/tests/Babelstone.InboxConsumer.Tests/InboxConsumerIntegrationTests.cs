@@ -444,9 +444,11 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
             GroupId = $"g2-inbox-test-{Guid.NewGuid()}",
             Topics = [Topic],
         };
-        // Only the term-deposit events this consumer knows are registered — an unknown ce_type is poison.
+        // Only the catalogued term-deposit events this consumer knows are registered — an unknown
+        // ce_type is poison. After the ADR-IC-017 §P4 promotion pass the bus set is DepositConstituted,
+        // InterestPaid, DepositMatured (the de-promoted accrual mechanics never reach the bus).
         var resolver = InboxEventTypeResolver.FromTypes(
-            typeof(DepositConstituted), typeof(InterestAccrued), typeof(WithholdingApplied), typeof(DepositMatured));
+            typeof(DepositConstituted), typeof(InterestPaid), typeof(DepositMatured));
         // The writer-schema resolver makes the pump take the production SR-resolution decode path.
         return new InboxPump(options, _serializer, resolver, handler, poisonSink, writerSchemas: _writerSchemas);
     }
@@ -463,7 +465,7 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
             Topics = [Topic],
         };
         var resolver = InboxEventTypeResolver.FromTypes(
-            typeof(DepositConstituted), typeof(InterestAccrued), typeof(WithholdingApplied), typeof(DepositMatured));
+            typeof(DepositConstituted), typeof(InterestPaid), typeof(DepositMatured));
         return new InboxPump(options, _serializer, resolver, handler, poisonSink: null, writerSchemas: _writerSchemas);
     }
 

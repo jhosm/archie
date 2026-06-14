@@ -22,9 +22,11 @@ public sealed class WireFormatTests
     }
 
     [Theory]
+    // The catalogued (relay-publishable) set after the ADR-IC-017 §P4 promotion pass:
+    // DepositConstituted, InterestPaid, DepositMatured. The reverse-DNS transform itself is generic
+    // (it strips the aggregate prefix for ANY event_type), so the examples track the promoted set.
     [InlineData("term_deposit.DepositConstituted", "com.bank.deposits.DepositConstituted")]
-    [InlineData("term_deposit.InterestAccrued", "com.bank.deposits.InterestAccrued")]
-    [InlineData("term_deposit.WithholdingApplied", "com.bank.deposits.WithholdingApplied")]
+    [InlineData("term_deposit.InterestPaid", "com.bank.deposits.InterestPaid")]
     [InlineData("term_deposit.DepositMatured", "com.bank.deposits.DepositMatured")]
     public void Reverse_dns_ce_type_strips_aggregate_prefix(string eventType, string expected)
         => Assert.Equal(expected, OutboxDrainer.ReverseDnsType(eventType));

@@ -1,0 +1,94 @@
+asyncapi: '3.0.0'
+info:
+  title: InterestPaid
+  version: '1'
+  description: |
+    Interest is paid out on the term deposit — the coarse coupon/advance payout fact:
+    gross interest, the withholding tax withheld at payment, and the net interest actually
+    paid, in EUR cents, with the payment date. NetInterest = GrossInterest − WithholdingTax,
+    conserved to the cent.
+
+    Promoted to an integration event by the ADR-IC-017 §P4 classification pass: it is a
+    coarse, unambiguous business fact that named downstream contexts react to (GL/accounting
+    settlement, depositor-facing notifications, regulatory/management reporting). The
+    integration-relevant withholding AMOUNT rides this event on `withholding_tax_cents`, so a
+    separate WithholdingApplied integration event is redundant — the fine-grained accrual
+    mechanics (`InterestAccrued`, `WithholdingApplied`) stay internal/store-only.
+
+    Emitted: once per coupon period for the PERIODIC variant as the engine pays the coupon,
+    and once up-front for the ADVANCE variant. The single AT_MATURITY interest flow is carried
+    by `DepositMatured` (its net_interest_paid_cents), NOT by this event.
+
+    NOT emitted: for the AT_MATURITY variant (no intermediate coupons), nor before the first
+    coupon period closes, nor after the deposit has matured/terminated.
+  x-owner: term-deposit
+  x-owner-contact: deposits-team@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: CONTRACT_PERFORMANCE
+  # The ADR-IC-017 §P4 recorded consumer map: the named bounded contexts that react to
+  # interest being paid out (modelled on DepositMatured's payout-fact consumer list). No PII
+  # consumer is listed — the event carries only an opaque deposit_id reference (ADR-PC-004 §P2).
+  x-authorized-consumers:
+    - notification        # depositor-facing coupon/advance interest-paid confirmation (ADR-IC-011)
+    - acl                 # downstream core-banking GL/accounting settlement projection (ADR-IC-012)
+    - reporting           # regulatory + management interest-paid reporting (ADR-IC-005 read-model fan-out)
+channels:
+  term_deposit:
+    description: |
+      Event-carried-state-transfer stream for the term-deposit aggregate. Topic name ==
+      `aggregate_type` (the relay's documented convention, OutboxDrainer). One Avro schema
+      per event type (Option A, doc 08): each event is its own message on this channel.
+    x-compacted: false
+    messages:
+      InterestPaid:
+        $ref: '#/components/messages/InterestPaid'
+operations:
+  publishInterestPaid:
+    action: send
+    channel:
+      $ref: '#/channels/term_deposit'
+    messages:
+      - $ref: '#/channels/term_deposit/messages/InterestPaid'
+components:
+  messages:
+    InterestPaid:
+      name: InterestPaid
+      title: Interest Paid
+      summary: Interest is paid out on the term deposit (coupon/advance payout).
+      contentType: application/avro
+      bindings:
+        kafka:
+          # CloudEvents 1.0 Binary Content Mode — attributes ride as Kafka headers
+          # (OutboxDrainer.BuildHeaders); the value is the Avro business payload. No PII
+          # (ADR-PC-004 §P2).
+          key:
+            type: string
+            description: 'aggregate_id (DepositId) — the Kafka record key.'
+          bindingVersion: '0.5.0'
+      headers:
+        type: object
+        required:
+          - ce_specversion
+          - ce_id
+          - ce_source
+          - ce_type
+          - ce_time
+          - ce_subject
+          - ce_aggregatetype
+          - ce_datacontenttype
+        properties:
+          ce_specversion:      { type: string, const: '1.0' }
+          ce_id:               { type: string, format: uuid, description: 'Unique event ID (outbox event_id).' }
+          ce_source:           { type: string, description: 'URI of the producing service, e.g. urn:babelstone:engine.' }
+          ce_type:             { type: string, description: 'Reverse-DNS event type, e.g. com.bank.deposits.InterestPaid.' }
+          ce_time:             { type: string, format: date-time }
+          ce_datacontenttype:  { type: string, const: 'application/avro' }
+          ce_subject:          { type: string, description: 'aggregate_id — the specific deposit this event is about.' }
+          ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. term_deposit.' }
+      # §P6: payload is the governed Avro schema, referenced (not restated). The PR gate
+      # resolves the .avsc on disk hermetically; the main lane reconciles the subject below.
+      x-schema-registry-subject: deposits.term_deposit.InterestPaid-value
+      payload:
+        schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
+        schema:
+          $ref: '../../avro/deposits/term_deposit/InterestPaid.avsc'

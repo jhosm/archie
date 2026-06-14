@@ -332,11 +332,16 @@ public sealed class OutboxRelayHardeningTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// Appends <paramref name="count"/> deposit streams, each with the full FOUR-event maturity flow
-    /// (Constituted; then Accrued + WithholdingApplied + Matured in one multi-event append). The
-    /// second append stamps all three rows with ONE transaction_time, so they share <c>created_at</c>
-    /// and are ordered only by <c>sequence_number</c> — exactly the intra-append tie the §P2 drain
-    /// must order. Returns each aggregate's event_ids in per-stream sequence order.
+    /// Appends <paramref name="count"/> deposit streams, each with a FOUR-event flow (Constituted;
+    /// then two coupon payouts + Matured in one multi-event append). The events are the ADR-IC-017 §P4
+    /// CATALOGUED set (InterestPaid + DepositMatured): this seeder wires the Avro codec WITHOUT the
+    /// catalog gate, so every appended event must be Avro-encodable, and only the catalogued set is —
+    /// the de-promoted InterestAccrued/WithholdingApplied accrual mechanics can no longer be encoded.
+    /// Two InterestPaid coupons (distinct values) keep the multi-event append at THREE rows so an
+    /// aggregate still straddles the §P2 batch/cycle boundaries. The second append stamps all three
+    /// rows with ONE transaction_time, so they share <c>created_at</c> and are ordered only by
+    /// <c>sequence_number</c> — exactly the intra-append tie the §P2 drain must order. Returns each
+    /// aggregate's event_ids in per-stream sequence order.
     /// </summary>
     private async Task<List<(Guid AggregateId, List<Guid> SequencedEventIds)>> SeedMultiEventDepositsAsync(int count)
     {
@@ -350,10 +355,12 @@ public sealed class OutboxRelayHardeningTests : IAsyncLifetime
                 TermDays: 364, StartDate, MaturityDate, "AT_MATURITY", "NONE");
             await runtime.AppendAsync(depositId, expectedVersion: -1, [constituted], Ctx(), CancellationToken.None);
 
-            var accrued = new InterestAccrued(new Money(GrossCents), MaturityDate);
-            var withheld = new WithholdingApplied(new Money(TaxCents), new Money(NetCents));
+            // Two coupon payouts (the promoted InterestPaid) + the maturity payout — three catalogued
+            // events in one append (the multi-event tie the §P2 per-aggregate lock must order).
+            var coupon1 = new InterestPaid(depositId, new Money(GrossCents), new Money(TaxCents), new Money(NetCents), MaturityDate);
+            var coupon2 = new InterestPaid(depositId, new Money(GrossCents + 1), new Money(TaxCents), new Money(NetCents + 1), MaturityDate);
             var matured = new DepositMatured(new Money(PrincipalCents), new Money(NetCents), new Money(PayoutCents), MaturityDate);
-            await runtime.AppendAsync(depositId, expectedVersion: 0, [accrued, withheld, matured], Ctx(), CancellationToken.None);
+            await runtime.AppendAsync(depositId, expectedVersion: 0, [coupon1, coupon2, matured], Ctx(), CancellationToken.None);
 
             seeded.Add((depositId, await EventIdsBySequenceAsync(depositId)));
         }

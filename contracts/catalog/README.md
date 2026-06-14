@@ -18,14 +18,40 @@ contracts/catalog/
   catalog-info.yaml               # Backstage descriptor (the only portal-specific file)
   events/
     DepositConstituted.asyncapi.yaml
-    InterestAccrued.asyncapi.yaml
-    WithholdingApplied.asyncapi.yaml
+    InterestPaid.asyncapi.yaml
     DepositMatured.asyncapi.yaml
 ```
 
 Each file documents one event on the `term_deposit` channel (topic name == `aggregate_type`,
 the relay's documented convention). The events are **Option A** (doc 08): one Avro schema per
 event type, each its own message on the channel — not a discriminated single schema.
+
+## The promoted set — the ADR-IC-017 §P4 classification
+
+The catalogued set is the **deliberately-promoted integration-event surface**: the relay
+publishes an event **iff** it is catalogued here, so this directory *is* the recorded promotion
+record ([ADR-IC-017 §P1/§P2](../../docs/product-management/integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md)).
+The `x-authorized-consumers` field on each file is the recorded **consumer map** (§P4): the
+named bounded contexts that react to that fact.
+
+The current set — `DepositConstituted`, `InterestPaid`, `DepositMatured` — is the result of the
+§P4 per-event classification pass (the ADR delegates the verdicts to the implementing issue, not
+the schema set the estate happened to start with):
+
+| Event | Classification | Why |
+|---|---|---|
+| `DepositConstituted` | **integration** | Coarse "deposit opened" fact; notification + core-banking react. |
+| `InterestPaid` | **integration** | Coarse coupon/advance payout fact; GL/accounting, notifications, reporting react. Carries the withholding **amount** (`withholding_tax_cents`), so a separate `WithholdingApplied` event is redundant. |
+| `DepositMatured` | **integration** | Coarse maturity-payout fact; carries the AT_MATURITY net interest. |
+| `InterestAccrued` | **internal / store-only** | Fine-grained periodic accrual *mechanics*; no downstream context reacts to each accrual tick (fails §P4 tests 1 + 2). De-promoted. |
+| `WithholdingApplied` | **internal / store-only** | Tax-withholding *mechanics* at interest payment; the integration-relevant withholding amount already rides the coarse `InterestPaid`. De-promoted (redundant). |
+| `DepositConstitutionFailed` and the other F.2 lifecycle events | **internal / store-only** | Not yet a promoted coarse fact; a constitution refusal reaches the ecosystem via the saga's terminal event, not by promoting the engine's internal one (ADR-IC-017 §P4 Decision). |
+
+The de-promoted events still **exist** as `DomainEvent` records and are appended, folded, and
+replayable from the JSON event store ([ADR-PC-028](../../docs/product-management/product_concepts/adrs/ADR-PC-028-event-store-payload-format.md));
+they simply have no `.avsc`/AsyncAPI entry, so the catalog-gated relay keeps them store-only by
+construction. At v1 there are no live consumers, so removing their two registry subjects is a
+non-breaking change.
 
 ## The payload is referenced, never restated (Decision §1–§2)
 

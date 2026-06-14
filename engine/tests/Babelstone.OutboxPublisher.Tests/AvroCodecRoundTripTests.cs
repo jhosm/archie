@@ -129,23 +129,21 @@ public sealed class AvroCodecRoundTripTests
     }
 
     [Fact]
-    public void InterestAccrued_round_trips()
+    public void InterestPaid_round_trips_with_guid_money_legs_and_dateonly_preserved()
     {
+        // InterestPaid is the ADR-IC-017 §P4 promoted coupon/advance payout fact — the integration
+        // event that replaced the de-promoted InterestAccrued/WithholdingApplied accrual mechanics on
+        // the bus. It carries the deposit reference + the three money legs (gross/withheld/net) + the
+        // payment date; the codec must round-trip the uuid, the three longs, and the date logical type.
         var serializer = NewSerializer();
-        var original = new InterestAccrued(new Money(30_417), new DateOnly(2026, 12, 31));
+        var original = new InterestPaid(
+            DepositId: Guid.NewGuid(),
+            GrossInterest: new Money(30_417),
+            WithholdingTax: new Money(8_517),
+            NetInterest: new Money(21_900),
+            PaidOn: new DateOnly(2026, 12, 31));
 
-        var decoded = (InterestAccrued)serializer.Decode(serializer.Encode(original).Bytes, typeof(InterestAccrued));
-
-        Assert.Equal(original, decoded);
-    }
-
-    [Fact]
-    public void WithholdingApplied_round_trips()
-    {
-        var serializer = NewSerializer();
-        var original = new WithholdingApplied(new Money(8_517), new Money(21_900));
-
-        var decoded = (WithholdingApplied)serializer.Decode(serializer.Encode(original).Bytes, typeof(WithholdingApplied));
+        var decoded = (InterestPaid)serializer.Decode(serializer.Encode(original).Bytes, typeof(InterestPaid));
 
         Assert.Equal(original, decoded);
     }
@@ -177,23 +175,26 @@ public sealed class AvroCodecRoundTripTests
         // shared fields exactly — instead of mis-decoding → poison (the consumer-path limitation now fixed).
         //
         // Deliberately NON-null-requiring: the added field is a plain string with a default, so this
-        // does NOT depend on the parallel nullable-union lane (feat/avro-nullable-union).
+        // does NOT depend on the parallel nullable-union lane (feat/avro-nullable-union). Driven on
+        // InterestPaid — the ADR-IC-017 §P4 promoted coupon payout event — now that the de-promoted
+        // InterestAccrued has no catalogued reader schema to resolve against.
         var serializer = NewSerializer();
-        var catalog = new AvroSchemaCatalog();
-        var readerSchema = catalog.ForRecordName(nameof(InterestAccrued)).Schema;
 
-        // The writer's NEWER schema: the reader's two fields + a new defaulted trailing field the
-        // reader does not know. (Hand-built so the test stands on the documented BACKWARD shape rather
-        // than a future .avsc revision.)
+        // The writer's NEWER schema: the reader's InterestPaid fields + a new defaulted trailing field
+        // the reader does not know. (Hand-built so the test stands on the documented BACKWARD shape
+        // rather than a future .avsc revision.)
         const string writerJson = """
             {
               "type": "record",
               "namespace": "deposits.term_deposit",
-              "name": "InterestAccrued",
+              "name": "InterestPaid",
               "fields": [
+                { "name": "deposit_id", "type": { "type": "string", "logicalType": "uuid" } },
                 { "name": "gross_interest_cents", "type": "long" },
-                { "name": "as_of", "type": { "type": "int", "logicalType": "date" } },
-                { "name": "accrual_method", "type": "string", "default": "ACT_360" }
+                { "name": "withholding_tax_cents", "type": "long" },
+                { "name": "net_interest_cents", "type": "long" },
+                { "name": "paid_on", "type": { "type": "int", "logicalType": "date" } },
+                { "name": "payment_method", "type": "string", "default": "COUPON" }
               ]
             }
             """;
@@ -201,20 +202,28 @@ public sealed class AvroCodecRoundTripTests
 
         // Write a record under the NEWER writer schema (the new field populated), framed as the bare
         // Avro value the wire carries.
+        var depositId = Guid.NewGuid();
         var grossCents = 30_417L;
-        var asOf = new DateOnly(2026, 12, 31);
+        var taxCents = 8_517L;
+        var netCents = 21_900L;
+        var paidOn = new DateOnly(2026, 12, 31);
         var written = WriteUnderWriterSchema(writerSchema, record =>
         {
+            record.Add("deposit_id", depositId);
             record.Add("gross_interest_cents", grossCents);
-            record.Add("as_of", asOf.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
-            record.Add("accrual_method", "ACT_365");
+            record.Add("withholding_tax_cents", taxCents);
+            record.Add("net_interest_cents", netCents);
+            record.Add("paid_on", paidOn.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+            record.Add("payment_method", "ADVANCE");
         });
 
         // Decode writer→reader: the resolver-driven path the inbox consumer uses. The writer-only
-        // accrual_method is dropped; the shared fields decode to the original values.
-        var decoded = (InterestAccrued)serializer.Decode(written, typeof(InterestAccrued), writerSchema);
+        // payment_method is dropped; the shared fields decode to the original values.
+        var decoded = (InterestPaid)serializer.Decode(written, typeof(InterestPaid), writerSchema);
 
-        Assert.Equal(new InterestAccrued(new Money(grossCents), asOf), decoded);
+        Assert.Equal(
+            new InterestPaid(depositId, new Money(grossCents), new Money(taxCents), new Money(netCents), paidOn),
+            decoded);
     }
 
     [Fact]
@@ -225,33 +234,46 @@ public sealed class AvroCodecRoundTripTests
         // against the reader. A position-blind decode (the old writer == reader assumption applied to a
         // reordered writer) would read the bytes in the wrong order → garbage/poison; resolution fixes
         // it. Reorder is chosen precisely because it does NOT need a nullable union (feat/avro-nullable-union).
+        // Driven on the ADR-IC-017 §P4 promoted InterestPaid (the de-promoted InterestAccrued has no
+        // catalogued reader schema to resolve against).
         var serializer = NewSerializer();
 
-        // The writer's schema: the reader's fields, ORDER SWAPPED.
+        // The writer's schema: the reader's InterestPaid fields, ORDER SHUFFLED.
         const string writerJson = """
             {
               "type": "record",
               "namespace": "deposits.term_deposit",
-              "name": "InterestAccrued",
+              "name": "InterestPaid",
               "fields": [
-                { "name": "as_of", "type": { "type": "int", "logicalType": "date" } },
-                { "name": "gross_interest_cents", "type": "long" }
+                { "name": "paid_on", "type": { "type": "int", "logicalType": "date" } },
+                { "name": "net_interest_cents", "type": "long" },
+                { "name": "deposit_id", "type": { "type": "string", "logicalType": "uuid" } },
+                { "name": "gross_interest_cents", "type": "long" },
+                { "name": "withholding_tax_cents", "type": "long" }
               ]
             }
             """;
         var writerSchema = (Avro.RecordSchema)Avro.Schema.Parse(writerJson);
 
+        var depositId = Guid.NewGuid();
         var grossCents = 12_345L;
-        var asOf = new DateOnly(2026, 6, 30);
+        var taxCents = 3_456L;
+        var netCents = 8_889L;
+        var paidOn = new DateOnly(2026, 6, 30);
         var written = WriteUnderWriterSchema(writerSchema, record =>
         {
-            record.Add("as_of", asOf.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+            record.Add("paid_on", paidOn.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+            record.Add("net_interest_cents", netCents);
+            record.Add("deposit_id", depositId);
             record.Add("gross_interest_cents", grossCents);
+            record.Add("withholding_tax_cents", taxCents);
         });
 
-        var decoded = (InterestAccrued)serializer.Decode(written, typeof(InterestAccrued), writerSchema);
+        var decoded = (InterestPaid)serializer.Decode(written, typeof(InterestPaid), writerSchema);
 
-        Assert.Equal(new InterestAccrued(new Money(grossCents), asOf), decoded);
+        Assert.Equal(
+            new InterestPaid(depositId, new Money(grossCents), new Money(taxCents), new Money(netCents), paidOn),
+            decoded);
     }
 
     [Fact]
@@ -264,20 +286,26 @@ public sealed class AvroCodecRoundTripTests
         // schema resolution must DROP the writer-only optional field and recover the two shared fields
         // exactly. Without the codec's nullable-union support, the [null,T] union on the wire would
         // mis-decode → poison; here it resolves cleanly. This is the OPTIONAL analogue of the
-        // defaulted-field case above (which used a plain string default, not a union).
+        // defaulted-field case above (which used a plain string default, not a union). Driven on the
+        // ADR-IC-017 §P4 promoted InterestPaid (the de-promoted InterestAccrued has no catalogued
+        // reader schema to resolve against).
         var serializer = NewSerializer();
 
-        // The writer's NEWER schema: the reader's two fields + a new trailing OPTIONAL [null,string]
-        // field (null-first + default null, the ADR-IC-002 §P2 shape) the reader does not know.
+        // The writer's NEWER schema: the reader's InterestPaid fields + a new trailing OPTIONAL
+        // [null,string] field (null-first + default null, the ADR-IC-002 §P2 shape) the reader does
+        // not know.
         const string writerJson = """
             {
               "type": "record",
               "namespace": "deposits.term_deposit",
-              "name": "InterestAccrued",
+              "name": "InterestPaid",
               "fields": [
+                { "name": "deposit_id", "type": { "type": "string", "logicalType": "uuid" } },
                 { "name": "gross_interest_cents", "type": "long" },
-                { "name": "as_of", "type": { "type": "int", "logicalType": "date" } },
-                { "name": "accrual_note", "type": ["null", "string"], "default": null }
+                { "name": "withholding_tax_cents", "type": "long" },
+                { "name": "net_interest_cents", "type": "long" },
+                { "name": "paid_on", "type": { "type": "int", "logicalType": "date" } },
+                { "name": "coupon_note", "type": ["null", "string"], "default": null }
               ]
             }
             """;
@@ -286,20 +314,28 @@ public sealed class AvroCodecRoundTripTests
         // Write under the NEWER writer schema with the optional field PRESENT (a non-null value), to
         // prove the [null,T] union is materialised on the wire and still dropped on resolution — not
         // merely absent. The bare Avro value bytes are the wire substrate (no Confluent framing).
+        var depositId = Guid.NewGuid();
         var grossCents = 30_417L;
-        var asOf = new DateOnly(2026, 12, 31);
+        var taxCents = 8_517L;
+        var netCents = 21_900L;
+        var paidOn = new DateOnly(2026, 12, 31);
         var written = WriteUnderWriterSchema(writerSchema, record =>
         {
+            record.Add("deposit_id", depositId);
             record.Add("gross_interest_cents", grossCents);
-            record.Add("as_of", asOf.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
-            record.Add("accrual_note", "carried-over coupon");
+            record.Add("withholding_tax_cents", taxCents);
+            record.Add("net_interest_cents", netCents);
+            record.Add("paid_on", paidOn.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+            record.Add("coupon_note", "carried-over coupon");
         });
 
         // Decode writer→reader: the resolver-driven path the inbox consumer uses. The writer-only
-        // optional accrual_note is dropped; the shared fields decode to the original values.
-        var decoded = (InterestAccrued)serializer.Decode(written, typeof(InterestAccrued), writerSchema);
+        // optional coupon_note is dropped; the shared fields decode to the original values.
+        var decoded = (InterestPaid)serializer.Decode(written, typeof(InterestPaid), writerSchema);
 
-        Assert.Equal(new InterestAccrued(new Money(grossCents), asOf), decoded);
+        Assert.Equal(
+            new InterestPaid(depositId, new Money(grossCents), new Money(taxCents), new Money(netCents), paidOn),
+            decoded);
     }
 
     /// <summary>Write a GenericRecord under a specific WRITER schema and return the bare Avro value

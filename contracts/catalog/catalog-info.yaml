@@ -26,8 +26,7 @@ spec:
   type: url
   targets:
     - ./events/DepositConstituted.asyncapi.yaml
-    - ./events/InterestAccrued.asyncapi.yaml
-    - ./events/WithholdingApplied.asyncapi.yaml
+    - ./events/InterestPaid.asyncapi.yaml
     - ./events/DepositMatured.asyncapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
@@ -46,28 +45,15 @@ spec:
 apiVersion: backstage.io/v1alpha1
 kind: API
 metadata:
-  name: interest-accrued
-  title: InterestAccrued
-  description: A period's interest is accrued on the term deposit.
+  name: interest-paid
+  title: InterestPaid
+  description: Interest is paid out on the term deposit (coupon/advance payout) — the coarse payout fact GL, notifications, and reporting react to (ADR-IC-017 §P4).
 spec:
   type: asyncapi
   lifecycle: production
   owner: term-deposit
   definition:
-    $text: ./events/InterestAccrued.asyncapi.yaml
----
-apiVersion: backstage.io/v1alpha1
-kind: API
-metadata:
-  name: withholding-applied
-  title: WithholdingApplied
-  description: Withholding tax is applied to accrued interest on the term deposit.
-spec:
-  type: asyncapi
-  lifecycle: production
-  owner: term-deposit
-  definition:
-    $text: ./events/WithholdingApplied.asyncapi.yaml
+    $text: ./events/InterestPaid.asyncapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API
