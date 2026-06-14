@@ -171,7 +171,7 @@ make pack-validate     # validate a regulatory pack (PACK=pt.2026.1)
 
 - C4 architecture diagrams use **PlantUML** (C4-PlantUML macros). GitHub renders Mermaid but **not** PlantUML, so each `.puml` source under `docs/**/diagrams/` is pre-rendered to a committed `.svg` that the Markdown embeds.
 - **After editing a `.puml`, re-render it** so you can check the result: `plantuml -tsvg <file>.puml`. Requires `brew install graphviz plantuml` (full setup in `INSTALL.md`).
-- The `.githooks/pre-commit` hook re-renders any staged `.puml` and stages the SVG at commit time (the safety net); activate with `git config core.hooksPath .githooks` (a shim in `.git/hooks/` may already delegate to it).
+- The `.githooks/pre-commit` hook re-renders any staged `.puml` and stages the SVG at commit time (the safety net); it likewise regenerates `docs/.../reference/` (via `make docs-gen`, run through `mise`) and stages it whenever the commit touches a generated-reference source (`contracts/avro/**/*.avsc`, `contracts/cue/**/*.cue`, the MCP `server.py`, an `ADR-*.md`, or the glossary's `VerifiedPack.cs`/`DayCount.cs`), so the `docs-verify` CI gate never trips on a forgotten regen. Activate with `git config core.hooksPath .githooks` (a shim in `.git/hooks/` may already delegate to it).
 - Convention: `@startuml <id>` MUST match the `.puml` filename, so output lands at `<filename>.svg` (the hook relies on this).
 
 ## ADR governance & conformance
