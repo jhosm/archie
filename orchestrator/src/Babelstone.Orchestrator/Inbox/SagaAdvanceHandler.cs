@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Babelstone.Orchestrator.Handlers;
 using Babelstone.Orchestrator.Saga;
 using Babelstone.Telemetry;
 using Npgsql;
@@ -77,12 +78,14 @@ public sealed class SagaAdvanceHandler(
     ISagaStateMachine machine,
     SagaStateStore stateStore,
     SagaTransitionLog transitionLog,
-    ISagaCommandSink commandSink)
+    ISagaCommandSink commandSink,
+    SagaBusinessReferenceStore? businessReferenceStore = null)
 {
     private readonly ISagaStateMachine _machine = machine ?? throw new ArgumentNullException(nameof(machine));
     private readonly SagaStateStore _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
     private readonly SagaTransitionLog _transitionLog = transitionLog ?? throw new ArgumentNullException(nameof(transitionLog));
     private readonly ISagaCommandSink _commandSink = commandSink ?? throw new ArgumentNullException(nameof(commandSink));
+    private readonly SagaBusinessReferenceStore _businessReferenceStore = businessReferenceStore ?? new SagaBusinessReferenceStore();
 
     /// <summary>The event type that STARTS this saga type (ADR-IC-003 §P2): the only event
     /// that creates a fresh <c>saga_state</c> row rather than advancing an existing one.</summary>
@@ -218,8 +221,118 @@ public sealed class SagaAdvanceHandler(
                 message.MessageId, saga.CorrelationId ?? message.CorrelationId, ct, traceParent);
         }
 
+        // (7) Self-emit the approval fork (bd babelstone-t7o3.1). When this move landed the saga in
+        // VALIDATIONS_COMPLETE — both reversible validations have now completed — the orchestrator
+        // DECIDES the approval fork (auto-approve vs route-to-workflow) and feeds the chosen event
+        // (ConstitutionApproved / WorkflowApprovalRequired) back into THIS SAME advance path,
+        // IN-PROCESS within this transaction (nothing on the durable bus, ADR-IC-003 §S2). That is
+        // what crosses the saga into APPROVED (the auto path) or AWAIT_WORKFLOW_APPROVAL without an
+        // external trigger. The DECISION stays pure (ApprovalForkHandler.Decide on the edge-pinned
+        // input); this shell only loads the pinned references and schedules the next step.
+        if (outcome.Next == SagaState.ValidationsComplete)
+        {
+            await SelfEmitApprovalForkAsync(
+                connection, transaction, saga.ProcessId,
+                saga.CorrelationId ?? message.CorrelationId, span, ct);
+        }
+
         return AdvanceOutcome.Advanced;
     }
+
+    /// <summary>
+    /// The impure shell of the approval fork (bd babelstone-t7o3.1): the saga has just reached
+    /// VALIDATIONS_COMPLETE, so DECIDE the fork on the pinned business references and SELF-ADVANCE the
+    /// saga with the chosen event — all on the SAME transaction the caller owns, so the fork's move +
+    /// its emitted command commit atomically with the validation join that triggered it. Nothing rides
+    /// the durable bus.
+    /// </summary>
+    /// <remarks>
+    /// The fork can only be decided with pinned references (the edge wrote them at start). A saga
+    /// started WITHOUT them (a consume-loop-started saga that never went through the I.1 edge) has no
+    /// amount/threshold/client to decide on, so the self-emit is skipped — the saga rests in
+    /// VALIDATIONS_COMPLETE awaiting an external approval event, exactly as the substrate did. With
+    /// references present the DECISION is pure (ApprovalForkHandler.Decide) and the chosen event is
+    /// self-advanced through the SAME state machine, so it is auditable from the transition table
+    /// alone (§P2).
+    /// </remarks>
+    private async Task SelfEmitApprovalForkAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid processId,
+        Guid? correlationId,
+        Activity? span,
+        CancellationToken ct)
+    {
+        var reference = await _businessReferenceStore.LoadAsync(connection, transaction, processId, ct);
+        if (reference is null)
+        {
+            // No pinned references — the fork has nothing to decide on. Leave the saga in
+            // VALIDATIONS_COMPLETE for an external approval event (the substrate's behaviour).
+            return;
+        }
+
+        // PURE decision (ADR-PC-010 §P5): auto-approve vs route-to-workflow on the edge-pinned amount /
+        // threshold / client type — no clock, no I/O, no live-config dereference. NextEventType maps the
+        // decision to the DISTINCT driver event the table accepts out of VALIDATIONS_COMPLETE.
+        var decision = ApprovalForkHandler.Decide(SagaState.ValidationsComplete, reference.ToApprovalInput());
+        var forkEvent = ApprovalForkHandler.NextEventType(decision);
+
+        // The self-emitted event's message id is DETERMINISTIC (derived from process id + event type,
+        // never minted), so it dedups through the SAME inbox as an external advance: a re-drive of the
+        // join derives the same id and the dedup row collides — the fork is emitted exactly once.
+        var selfMessageId = SagaSelfEmit.MessageId(processId, forkEvent);
+
+        // Apply the fork event through the SAME pure state machine + persistence path the external
+        // advance uses, on this transaction. The saga is at VALIDATIONS_COMPLETE (version is current —
+        // this is the same row this transaction just advanced).
+        var saga = await _stateStore.LoadAsync(connection, transaction, processId, ct);
+        if (saga is null || saga.State != SagaState.ValidationsComplete)
+        {
+            return; // raced/already-advanced — the optimistic-concurrency guard owns correctness.
+        }
+
+        if (!_machine.TryAdvance(saga.State, forkEvent, out var outcome))
+        {
+            // The decider and the table agree by construction (the ApprovalForkHandler fitness test),
+            // so this is unreachable; rejecting rather than inventing a move keeps the table the spec.
+            return;
+        }
+
+        var won = await _stateStore.TryAdvanceAsync(
+            connection, transaction, saga.ProcessId, saga.Version, outcome.Next, ct);
+        if (!won)
+        {
+            throw new SagaConcurrencyException(saga.ProcessId, saga.Version);
+        }
+
+        await _transitionLog.AppendAsync(
+            connection, transaction, saga.ProcessId, saga.State, outcome.Next,
+            forkEvent, selfMessageId, note: SagaStateNames.ToName(outcome.Next), ct);
+
+        // Record the self-emit in the inbox too, keyed on the deterministic id — so a re-drive of the
+        // join short-circuits on the dedup SELECT before re-deciding the fork (effectively-once).
+        await WriteInboxRowAsync(
+            connection, transaction,
+            new SagaInboxEvent(selfMessageId, processId, forkEvent, SelfEmitSourceTopic, correlationId),
+            SagaStateNames.ToName(outcome.Next), ct);
+
+        span?.SetTag(
+            BabelstoneAttributes.SagaTransition,
+            $"{SagaStateNames.ToName(saga.State)}->{SagaStateNames.ToName(outcome.Next)}");
+
+        var traceParent = SagaTraceContext.FormatTraceParent(span);
+        foreach (var commandType in outcome.Commands)
+        {
+            await _commandSink.EmitAsync(
+                connection, transaction, saga.ProcessId, commandType,
+                selfMessageId, correlationId, ct, traceParent);
+        }
+    }
+
+    /// <summary>The synthetic source topic recorded on a self-emitted event's inbox dedup row. It is
+    /// an INTERNAL marker — the self-emit never touches the durable bus (ADR-IC-003 §S2) — so the
+    /// row's source is named distinctly from any real Redpanda topic.</summary>
+    private const string SelfEmitSourceTopic = "saga.self-emit";
 
     private async Task<AdvanceOutcome> StartAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, SagaInboxEvent message, Activity? span, CancellationToken ct)

@@ -23,4 +23,15 @@ public sealed record EdgeOptions
     /// a dead stream (SSE comment line, ADR-IC-006 §P4 "connections stay open for the full saga
     /// duration").</summary>
     public bool EmitKeepAlive { get; init; } = true;
+
+    /// <summary>
+    /// The auto-approval ceiling, in integer cents, PINNED onto each saga at start (bd
+    /// babelstone-t7o3.1; Document 05 step 3 "€25,000"). The approval fork compares the request's
+    /// amount against this scalar — a saga at or below it auto-approves (for an existing client),
+    /// above it routes to the external workflow. It is the policy in force at admission, captured
+    /// once at the edge and pinned onto the saga's business references so the fork decides
+    /// replay-stably; it is NEVER re-dereferenced from live config at decision time (ADR-PC-010 §P5).
+    /// Defaults to the Document 05 worked threshold (€25,000 = 2,500,000 cents).
+    /// </summary>
+    public long AutoApprovalThresholdMinorUnits { get; init; } = 25_000_00;
 }

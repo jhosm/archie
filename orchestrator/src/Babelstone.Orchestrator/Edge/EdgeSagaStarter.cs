@@ -1,3 +1,4 @@
+using Babelstone.Orchestrator.Handlers;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Saga;
 using Npgsql;
@@ -13,6 +14,32 @@ namespace Babelstone.Orchestrator.Edge;
 /// <param name="State">The state the saga rests in after the start drove its first transition.</param>
 public readonly record struct EdgeStartResult(
     Guid ProcessId, string PublicProcessId, string DepositId, SagaState State);
+
+/// <summary>
+/// The PII-free business facts the edge pins onto the saga at start (bd babelstone-t7o3.1) — the
+/// resolved inputs the approval fork and the command-payload assembly read later. Assembled by the
+/// edge HTTP shell from the request body (the amount + account/product references) and the
+/// edge-pinned policy (the client standing + the auto-approval threshold in force at admission).
+/// </summary>
+/// <remarks>
+/// Every field is a structural reference or an integer-cents scalar — NO PII (ADR-PC-004 §P2). The
+/// threshold and client type are PINNED at the edge so the fork decides replay-stably, never
+/// re-dereferencing live config at decision time (ADR-PC-010 §P5).
+/// </remarks>
+/// <param name="ProductRef">The product catalogue reference being constituted (request body).</param>
+/// <param name="AmountMinorUnits">The deposit principal in integer cents (request body).</param>
+/// <param name="SourceAccountRef">The opaque source-account token (request body).</param>
+/// <param name="InterestAccountRef">The opaque interest-account token, or null (request body).</param>
+/// <param name="ClientType">The client's standing, resolved at the edge — the fork's client input.</param>
+/// <param name="AutoApprovalThresholdMinorUnits">The auto-approval ceiling in integer cents, pinned
+/// at the edge from the policy in force at admission.</param>
+public sealed record EdgeBusinessFacts(
+    string ProductRef,
+    long AmountMinorUnits,
+    string SourceAccountRef,
+    string? InterestAccountRef,
+    ClientType ClientType,
+    long AutoApprovalThresholdMinorUnits);
 
 /// <summary>
 /// Starts the <see cref="ConstitutionProcess"/> saga from the EDGE (I.1, ADR-IC-006 §P4 / Document
@@ -53,31 +80,38 @@ public sealed class EdgeSagaStarter(
     ISagaStateMachine machine,
     SagaStateStore stateStore,
     SagaTransitionLog transitionLog,
-    ISagaCommandSink commandSink)
+    ISagaCommandSink commandSink,
+    SagaBusinessReferenceStore businessReferenceStore)
 {
     private readonly ISagaStateMachine _machine = machine ?? throw new ArgumentNullException(nameof(machine));
     private readonly SagaStateStore _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
     private readonly SagaTransitionLog _transitionLog = transitionLog ?? throw new ArgumentNullException(nameof(transitionLog));
     private readonly ISagaCommandSink _commandSink = commandSink ?? throw new ArgumentNullException(nameof(commandSink));
+    private readonly SagaBusinessReferenceStore _businessReferenceStore =
+        businessReferenceStore ?? throw new ArgumentNullException(nameof(businessReferenceStore));
 
     /// <summary>The event type that STARTS this saga type — the synthetic start signal the edge
     /// applies in-process (the same start event the consume loop would otherwise carry).</summary>
     public required string StartEventType { get; init; }
 
     /// <summary>
-    /// Start a fresh saga for <paramref name="owningClientId"/>. Mints the saga GUID + the public
-    /// references, then in one transaction creates the STARTED row, drives the first transition, and
-    /// emits its commands — all atomic (the edge's local transaction, Document 05 §Step 0). Returns
-    /// the references the 202 carries.
+    /// Start a fresh saga for <paramref name="owningClientId"/> carrying the request's
+    /// <paramref name="businessFacts"/>. Mints the saga GUID + the public references, then in one
+    /// transaction creates the STARTED row, PERSISTS the per-saga business references (so the approval
+    /// fork and the command-payload assembly can read them — bd babelstone-t7o3.1), drives the first
+    /// transition, and emits its commands — all atomic (the edge's local transaction, Document 05
+    /// §Step 0). Returns the references the 202 carries.
     /// </summary>
     public async Task<EdgeStartResult> StartAsync(
         string connectionString,
         string owningClientId,
+        EdgeBusinessFacts businessFacts,
         Guid? correlationId = null,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         ArgumentException.ThrowIfNullOrWhiteSpace(owningClientId);
+        ArgumentNullException.ThrowIfNull(businessFacts);
 
         // The impure shell mints the durable saga key and derives the client-facing references from
         // it (ADR-PC-010 §P5: GUID minting is a shell concern, never inside the decider).
@@ -99,6 +133,24 @@ public sealed class EdgeSagaStarter(
             throw new InvalidOperationException(
                 $"Saga {processId} already exists; the edge minted a colliding process id.");
         }
+
+        // (1b) Pin the per-saga business references (bd babelstone-t7o3.1). Written ONCE here, in the
+        // SAME transaction as the STARTED row, so the fork (at VALIDATIONS_COMPLETE) and the command
+        // assembly read the SAME facts the request carried. PII-free: integer cents + opaque
+        // references + a closed client-type code (ADR-PC-004 §P2). The deposit reference is the
+        // edge-derived DEP-… handle, paired with the process id.
+        await _businessReferenceStore.TryInsertAsync(
+            connection, transaction,
+            new SagaBusinessReference(
+                ProcessId: processId,
+                ProductRef: businessFacts.ProductRef,
+                AmountMinorUnits: businessFacts.AmountMinorUnits,
+                SourceAccountRef: businessFacts.SourceAccountRef,
+                InterestAccountRef: businessFacts.InterestAccountRef,
+                DepositRef: depositId,
+                ClientType: businessFacts.ClientType,
+                AutoApprovalThresholdMinorUnits: businessFacts.AutoApprovalThresholdMinorUnits),
+            ct);
 
         var state = _machine.InitialState;
 

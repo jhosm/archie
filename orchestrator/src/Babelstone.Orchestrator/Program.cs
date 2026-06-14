@@ -44,18 +44,25 @@ var runtimeConnectionString =
 builder.Services.AddSingleton<ISagaStateMachine, ConstitutionProcess>();
 builder.Services.AddSingleton<SagaStateStore>();
 builder.Services.AddSingleton<SagaTransitionLog>();
+// The per-saga business-reference store (bd babelstone-t7o3.1): the edge writes the pinned
+// references at start; the approval fork (self-emitted at VALIDATIONS_COMPLETE) and the
+// command-payload assembly read them. A shared singleton the sink and the advance handler both use.
+builder.Services.AddSingleton<SagaBusinessReferenceStore>();
 
 // The command sink is the outbox seam (ADR-IC-003 §P1). H.2 (babelstone-n55u) swaps the
 // substrate's in-memory RecordingCommandSink for the REAL durable writer: each command the saga
 // decides is a saga_outbox row committed in the SAME transaction as the state move (effectively-
-// once command emission). The recorder remains as a test stand-in only.
-builder.Services.AddSingleton<ISagaCommandSink, SagaCommandOutboxSink>();
+// once command emission). With the pinned business references present it writes the FULL typed
+// command payloads (bd babelstone-t7o3.1); the recorder remains as a test stand-in only.
+builder.Services.AddSingleton<ISagaCommandSink>(sp =>
+    new SagaCommandOutboxSink(sp.GetRequiredService<SagaBusinessReferenceStore>()));
 
 builder.Services.AddSingleton(sp => new SagaAdvanceHandler(
     sp.GetRequiredService<ISagaStateMachine>(),
     sp.GetRequiredService<SagaStateStore>(),
     sp.GetRequiredService<SagaTransitionLog>(),
-    sp.GetRequiredService<ISagaCommandSink>())
+    sp.GetRequiredService<ISagaCommandSink>(),
+    sp.GetRequiredService<SagaBusinessReferenceStore>())
 {
     StartEventType = ConstitutionProcess.ConstitutionRequested,
 });
