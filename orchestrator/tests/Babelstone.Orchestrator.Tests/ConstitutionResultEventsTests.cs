@@ -13,10 +13,12 @@ namespace Babelstone.Orchestrator.Tests;
 public sealed class ConstitutionResultEventsTests
 {
     [Theory]
-    // Forward / happy-path legs (2xx Applied → the leg's success result).
+    // Forward / happy-path ACL legs (2xx Applied → the leg's success result).
     [InlineData(ConstitutionProcess.ReserveAccountBalance, CommandDeliveryKind.Applied, ConstitutionProcess.BalanceReserved)]
     [InlineData(ConstitutionProcess.ConfirmDebit, CommandDeliveryKind.Applied, ConstitutionProcess.DebitConfirmed)]
-    [InlineData(ConstitutionProcess.ActivateDeposit, CommandDeliveryKind.Applied, ConstitutionProcess.ProcessConstituted)]
+    // NB: (ActivateDeposit, Applied) is DELIBERATELY absent — it drives no advance (ADR-PC-029 slot 2:
+    // the engine 2xx is not the advance signal; ProcessConstituted arrives off the bus). Asserted in
+    // Drives_no_advance_for_unmapped_outcomes below.
     // Post-debit compensation trigger (the headline): activation refused after the debit confirmed.
     [InlineData(ConstitutionProcess.ActivateDeposit, CommandDeliveryKind.Refused, ConstitutionProcess.ActivationFailed)]
     // Compensation legs accepted (2xx Applied → the reversal completed).
@@ -35,6 +37,11 @@ public sealed class ConstitutionResultEventsTests
     }
 
     [Theory]
+    // The engine-leg activation 2xx drives NO advance (ADR-PC-029 slot 2): the HTTP 2xx confirms the
+    // command was applied but is NOT the saga's signal to advance. The saga reaches COMPLETED only when
+    // the engine's real ProcessConstituted (DepositConstituted) event arrives off deposits.process.events
+    // via the consume loop — the bridge must not be a second producer for that transition.
+    [InlineData(ConstitutionProcess.ActivateDeposit, CommandDeliveryKind.Applied)]
     // ConfirmDebit refusal is NOT a mapped pair: a refused irreversible debit is the engine/ACL's
     // own concern, not a saga result event the bridge synthesizes (no transition is derived here).
     [InlineData(ConstitutionProcess.ConfirmDebit, CommandDeliveryKind.Refused)]

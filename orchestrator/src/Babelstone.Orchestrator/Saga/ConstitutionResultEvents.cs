@@ -29,15 +29,24 @@ public enum CommandDeliveryKind
 /// <remarks>
 /// <para>
 /// <b>Why this exists.</b> The constitution saga's state machine and consume loop are fully wired, but
-/// nothing produced the result events the saga consumes (<c>BalanceReserved</c>, <c>DebitConfirmed</c>,
-/// <c>ProcessConstituted</c>, <c>ActivationFailed</c>, <c>ReservationReleased</c>, <c>DebitReversed</c>,
+/// nothing produced the <b>Core-ACL</b> result events the saga consumes (<c>BalanceReserved</c>,
+/// <c>DebitConfirmed</c>, <c>ActivationFailed</c>, <c>ReservationReleased</c>, <c>DebitReversed</c>,
 /// <c>LimitsValidated</c>), so end-to-end the saga stalled at <c>PARALLEL_VALIDATION</c> and the
 /// post-debit compensation never fired. At v1 the real Core ACL is a WireMock shim (DEF-1 /
 /// babelstone-ub9s replaces it); rather than stand up a Kafka producer for that shim, the orchestrator
-/// SYNTHESIZES the result event from the command's own delivery outcome and self-advances IN-PROCESS,
+/// SYNTHESIZES the ACL result event from the command's own delivery outcome and self-advances IN-PROCESS,
 /// in the SAME transaction as the status flip — the SAME "rides nothing on the durable bus" pattern as
 /// the t7o3.1 approval-fork self-emit (<see cref="SagaSelfEmit"/>). These result events are INTERNAL
-/// orchestrator correlation signals: no Avro, no catalog entry, no schema-registry subject.
+/// orchestrator correlation signals: no Avro, no catalog entry, no schema-registry subject. The v1
+/// in-process synthesis is the divergence the ADR-IC-003 Amendment 2026-06-14 (A1) records, backed out
+/// when DEF-1 lands the real ACL producing these events on Redpanda.
+/// </para>
+/// <para>
+/// <b>The ENGINE leg is excluded by design (ADR-PC-029 slot 2).</b> <c>ProcessConstituted</c> is NOT
+/// synthesized here. The engine's <c>ActivateDeposit</c> HTTP 2xx confirms delivery but is "NOT the
+/// saga's signal to advance" — the saga advances on the engine's resulting <c>DepositConstituted</c>
+/// event off <c>deposits.process.events</c> via <see cref="Inbox.SagaConsumeLoop"/>. The engine relays
+/// that event on the durable bus for real even at v1, so there is no shim to stand in for.
 /// </para>
 /// <para>
 /// <b>Pure (ADR-PC-010 §P5).</b> No clock, no I/O, no randomness — a function of the command type and
@@ -62,13 +71,28 @@ public static class ConstitutionResultEvents
     /// <param name="kind">The terminal delivery kind the dispatcher classified the response into.</param>
     public static string? ForOutcome(string commandType, CommandDeliveryKind kind) => (commandType, kind) switch
     {
-        // --- Happy-path / forward legs (2xx Applied → the leg's success result) -------------------
+        // --- ACL settlement legs (2xx Applied → the leg's success result) -------------------------
+        // These are the Core-ACL money legs. At v1 the ACL is a WireMock shim with NO event producer,
+        // so the bridge SYNTHESIZES the result event from the command's own delivery outcome and
+        // self-advances in-process (the v1 stand-in for an event off Redpanda; recorded in the
+        // ADR-IC-003 Amendment 2026-06-14 A1, DEF-1 / babelstone-ub9s back-out). The engine leg
+        // (ActivateDeposit) is DELIBERATELY NOT here — see below.
         // The reversible balance hold succeeded (Document 05 step 2a) — half the parallel-validation join.
         (ConstitutionProcess.ReserveAccountBalance, CommandDeliveryKind.Applied) => ConstitutionProcess.BalanceReserved,
         // The reversible hold became a real debit (Document 05 step 4a).
         (ConstitutionProcess.ConfirmDebit, CommandDeliveryKind.Applied) => ConstitutionProcess.DebitConfirmed,
-        // The deposit was constituted by the engine (Document 05 step 6) — closes the saga COMPLETED.
-        (ConstitutionProcess.ActivateDeposit, CommandDeliveryKind.Applied) => ConstitutionProcess.ProcessConstituted,
+
+        // --- The engine leg (ActivateDeposit) APPLIED is DELIBERATELY NOT bridged ------------------
+        // ADR-PC-029 slot 2 (Accepted 2026-06-13) decides this verbatim: the engine's HTTP 2xx
+        // "confirms the command was accepted and applied — it is NOT the saga's signal to advance. The
+        // saga advances on the engine's resulting event (DepositConstituted), consumed via the
+        // orchestrator's event-consume loop (bd babelstone-t7o3.2)." So an Applied ActivateDeposit flips
+        // the saga_outbox row PUBLISHED (delivery confirmed) but synthesizes NO result event here — the
+        // saga walks APPROVED → COMPLETED only when the real ProcessConstituted (engine DepositConstituted)
+        // event arrives on deposits.process.events via SagaConsumeLoop (the path SagaConsumeTopics names).
+        // Bridging it here would be a SECOND, contradicting advance producer for the (Approved,
+        // ProcessConstituted) → Completed transition — exactly what slot 2 forbids. There is NO ACL
+        // synthesis shortcut for the engine leg: the engine relays DepositConstituted on the bus for real.
 
         // --- Post-debit compensation trigger (the headline) ---------------------------------------
         // The engine REFUSED the activation AFTER the debit confirmed (Document 05 Scenario B): the
@@ -101,11 +125,17 @@ public static class ConstitutionResultEvents
 
         // --- Reserve refusal [REVIEW-FLAG B] ------------------------------------------------------
         // A 422 InsufficientBalance on the reserve means NO hold was placed, so there is nothing to
-        // release: fail-CLOSED to PreconditionRefused → DEPOSIT_CONSTITUTION_FAILED (a no-op terminal).
-        // Matches ADR-PC-016 "InsufficientBalance → DepositConstitutionFailed" and the §P5 reversibility
-        // ordering (the refusal lands during the reversible validation phase, before any irreversible
-        // effect). Flagged for the financial-math + adr-conformance reviewers to confirm the wording
-        // "nothing to compensate" against ADR-PC-016 / ADR-PC-024.
+        // release: fail-CLOSED to PreconditionRefused → DEPOSIT_CONSTITUTION_FAILED. The DIRECTLY
+        // governing decision is ADR-PC-016 §70/§127 ("InsufficientBalance from the Core compensates and
+        // emits DepositConstitutionFailed with failure_reason: INSUFFICIENT_FUNDS") — a settlement
+        // delivery outcome, not an in-engine precondition verdict. ADR-PC-024 §5 ("the deposit is never
+        // constituted, so there is nothing to unwind") is cited only for the analogous NO-OP-TERMINAL
+        // SHAPE: a refused reserve placed no hold, so this terminal genuinely has nothing to compensate
+        // (the §P5 reversibility ordering holds — the refusal lands during the reversible validation
+        // phase, before any irreversible effect). NOTE: the v1 bridge synthesizes only the event TYPE;
+        // the §127 failure_reason taxonomy (INSUFFICIENT_FUNDS) is H.2's verdict (bd babelstone-n55u),
+        // NOT carried here — a future reader must not assume the v1 terminal already satisfies §127's
+        // reason contract.
         (ConstitutionProcess.ReserveAccountBalance, CommandDeliveryKind.Refused) => ConstitutionProcess.PreconditionRefused,
 
         // Everything else drives no advance — a graceful no-op (the command WAS delivered; the bridge

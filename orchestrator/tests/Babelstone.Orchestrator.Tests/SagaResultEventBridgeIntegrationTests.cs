@@ -22,10 +22,13 @@ namespace Babelstone.Orchestrator.Tests;
 /// constitution saga WALK to a terminal state and auto-compensate. The saga's state machine, consume
 /// loop, and command dispatcher were all wired, but nothing produced the result events the saga consumes
 /// — so the saga stalled at PARALLEL_VALIDATION and the post-debit compensation never fired. This bridge
-/// synthesizes each result event from the command's own delivery outcome (the v1 Core ACL is a WireMock
-/// shim with no event producer; DEF-1 / babelstone-ub9s replaces it) and self-advances the saga
+/// synthesizes each CORE-ACL result event from the command's own delivery outcome (the v1 Core ACL is a
+/// WireMock shim with no event producer; DEF-1 / babelstone-ub9s replaces it) and self-advances the saga
 /// IN-PROCESS in the SAME transaction as the saga_outbox status flip — nothing rides the durable bus
-/// (the SAME pattern as the t7o3.1 approval-fork self-emit).
+/// (the SAME pattern as the t7o3.1 approval-fork self-emit). The ENGINE leg is excluded (ADR-PC-029
+/// slot 2): the activation 2xx flips the row PUBLISHED but does NOT advance the saga — COMPLETED is
+/// reached only on the engine's real ProcessConstituted event off deposits.process.events, which these
+/// tests inject to stand in for the consume loop.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -78,14 +81,21 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Happy_path_drives_the_saga_to_COMPLETED_with_every_leg_published()
+    public async Task Happy_path_drives_the_saga_to_APPROVED_then_COMPLETES_on_the_engine_event()
     {
         // The saga starts at PARALLEL_VALIDATION (ReserveAccountBalance + ValidateProductLimits pending).
         // The dispatcher drains both: ValidateProductLimits auto-passes → LimitsValidated [REVIEW-FLAG A];
         // ReserveAccountBalance hits the ACL (2xx) → BalanceReserved. The join completes → the approval
         // fork self-emits ConstitutionApproved → APPROVED emits ConfirmDebit → DebitConfirmed → APPROVED
-        // emits ActivateDeposit → the engine stub 201 → ProcessConstituted → COMPLETED. Every step is the
-        // bridge synthesizing the result event off the command outcome and self-advancing the saga.
+        // emits ActivateDeposit → the engine stub 201. Every ACL step is the bridge synthesizing the
+        // result event off the command outcome.
+        //
+        // The ENGINE leg is DIFFERENT (ADR-PC-029 slot 2): the activation 2xx confirms delivery and
+        // flips the row PUBLISHED, but it is NOT the saga's advance signal — the saga REMAINS at APPROVED.
+        // It reaches COMPLETED only when the engine's real ProcessConstituted (DepositConstituted) event
+        // arrives off deposits.process.events via the consume loop. We assert the saga parks at APPROVED
+        // with ActivateDeposit PUBLISHED, THEN inject ProcessConstituted (standing in for the consume loop,
+        // exactly as Early_validation_rejection injects the H.2 LimitsRejected verdict) to complete it.
         var processId = await StartSagaAsync(amountCents: 10_000_00);
 
         // The engine stub accepts the activation (201 Created) — the happy path.
@@ -95,10 +105,21 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
         await host.StartAsync();
         try
         {
+            // The saga walks the ACL legs to APPROVED and the dispatcher delivers ActivateDeposit (201),
+            // but the engine 2xx does NOT advance it — it parks at APPROVED with the row PUBLISHED.
             await WaitUntilAsync(
-                async () => await StateAsync(processId) == SagaState.Completed,
+                async () => await StateAsync(processId) == SagaState.Approved
+                    && (await OutboxStatusesAsync(processId)).TryGetValue(
+                        ConstitutionProcess.ActivateDeposit, out var s) && s == "PUBLISHED",
                 TimeSpan.FromSeconds(60),
-                "the saga did not reach COMPLETED on the happy path");
+                "the saga did not park at APPROVED with ActivateDeposit delivered");
+
+            // It must NOT have self-advanced to COMPLETED off the engine 2xx (the slot-2 guarantee).
+            Assert.Equal(SagaState.Approved, await StateAsync(processId));
+
+            // The engine relays DepositConstituted on deposits.process.events → the consume loop drives
+            // (APPROVED, ProcessConstituted) → COMPLETED. We inject it here to stand in for that loop.
+            await InjectEventAsync(processId, ConstitutionProcess.ProcessConstituted);
         }
         finally
         {
