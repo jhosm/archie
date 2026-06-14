@@ -606,6 +606,12 @@ services:
                   -- route regex), never a client-trusted routing key. Absent/empty => refuse.
                   local instance_id = kong.request.get_uri_captures().named["instance_id"]
                   if type(instance_id) ~= "string" or instance_id == "" then return deny_sor() end
+                  -- URL-encode the segment before interpolating it into the read-surface URL: the
+                  -- route regex [^/]+ excludes '/' but still admits '?', '#', '%', space, etc., which
+                  -- could otherwise inject a query/fragment into the GET (a crafted instance_id cannot
+                  -- mis-route — the gateway only gates engine-vs-fail-closed — but encoding keeps the
+                  -- lookup unambiguous and the read a clean point-read). A normal GUID is unchanged.
+                  local instance_seg = ngx.escape_uri(instance_id)
 
                   -- Resolve `sor` off the engine read surface (GET /v1/deposits/{id}, ADR-PC-027 /
                   -- coexistence §6.2). The gateway READS `sor`; it never DECIDES it (§2). Done over
@@ -614,7 +620,7 @@ services:
                   local httpc = require("resty.http").new()
                   httpc:set_timeout(2000)
                   local res, err = httpc:request_uri(
-                    "https://engine:8080/v1/deposits/" .. instance_id,
+                    "https://engine:8080/v1/deposits/" .. instance_seg,
                     {
                       method = "GET",
                       ssl_verify = false,
