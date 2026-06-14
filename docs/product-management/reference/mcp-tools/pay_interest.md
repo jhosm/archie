@@ -10,13 +10,16 @@ coupon window is derived by the engine from the deposit's schedule and the coupo
 (not supplied here). Returns the same ``DepositPosition`` shape with the coupon's gross/withholding/
 net folded in and ``coupons_paid`` incremented; the final coupon is paid with the principal at
 maturity (use ``mature_deposit`` for that), so calling this once no intermediate coupon remains is
-rejected. Money is integer cents. Scoped ``deposits:write`` at the gateway ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). Like
-``mature_deposit``, the coupon settlement is irreversible; §P8 elicitation is deferred to Epic J.
+rejected. Money is integer cents.
+
+Requires ``deposits:write`` ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). Like ``mature_deposit``, the coupon settlement is
+irreversible; §P8 elicitation is a deliberate follow-up (ar1y).
 
 ## Signature
 
 | Parameter | Type | Default |
 |---|---|---|
 | `deposit_id` | `str` | — |
+| `ctx` | `Context` | — |
 
 **Returns:** `DepositPosition`

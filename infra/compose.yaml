@@ -119,6 +119,32 @@ services:
       retries: 12
       start_period: 10s
 
+  mcp-server:
+    # The MCP agent channel (ADR-IC-010 — Epic J / bd babelstone-e50n). The Python MCP
+    # server (FastMCP, Streamable HTTP) exposing the four term-deposit tools, fronted by
+    # Kong with OAuth (the mcp-server / mcp-well-known routes in kong/kong.yml). Built from
+    # the mcp-server/ subtree's Dockerfile. NO host port: agents reach it ONLY through Kong's
+    # edge proxy (8000) — never directly — so the audience check + scope enforcement always
+    # apply. On the default Compose network its hostname is `mcp-server`, matching the
+    # https://mcp-server:8080 upstream Kong dials.
+    build:
+      context: ../mcp-server
+    container_name: babelstone-mcp-server
+    environment:
+      # The engine command/query boundary the tools call (forward reference — the engine
+      # service lands with its subtree; hostname `engine` on this network, like kong's upstreams).
+      BABELSTONE_ENGINE_URL: http://engine:8080
+      # This server's canonical URI — tokens MUST carry it as `aud` (RFC 8707 / ADR-IC-010 §P3).
+      # Kept in sync with the MCP_SERVER_URI literal in the kong/kong.yml /mcp aud pre-function.
+      BABELSTONE_MCP_SERVER_URI: http://localhost:8000/mcp
+      # The IAM authorization server advertised in the RFC 9728 metadata (ADR-IC-010 §P2),
+      # matching the iam-issuer consumer key (`iss`) registered in kong/kong.yml.
+      BABELSTONE_IAM_URL: https://iam.babelstone.example/
+      # Bind all interfaces on :8080 so Kong reaches the upstream (the default is 0.0.0.0:8080,
+      # set explicitly for clarity — matches the https://mcp-server:8080 Kong upstream).
+      MCP_BIND_HOST: 0.0.0.0
+      MCP_BIND_PORT: "8080"
+
   core-acl-stub:
     image: wiremock/wiremock:3.9.1
     container_name: babelstone-core-acl-stub

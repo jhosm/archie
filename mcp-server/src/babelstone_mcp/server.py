@@ -1,27 +1,47 @@
-"""The FastMCP server: ``constitute_deposit``, ``get_deposit``, and ``mature_deposit`` tools.
+"""The FastMCP server: ``constitute_deposit``, ``get_deposit``, ``mature_deposit``, ``pay_interest``.
 
-All three map 1:1 to the engine's HTTP API. Per ADR-IC-010's 2026-05-31 amendment, the tool/resource
+All map 1:1 to the engine's HTTP API. Per ADR-IC-010's 2026-05-31 amendment, the tool/resource
 axis is *control ownership* (model-invokable vs host-attached), not CQRS command/query — so a read
-the agent fetches on demand is a tool, not a resource. ``constitute_deposit`` and ``mature_deposit``
-are writes (engine commands); ``get_deposit`` is the read-only ``deposit_position`` projection. Each
-declares a structured return type, so the SDK publishes an ``outputSchema`` (ADR-IC-010 P6 — mandatory
-on every tool). Auth is deferred — this dev server hits the engine directly (Epic J adds OAuth/Kong;
-the read tool's ``deposits:read`` scope vs the write tools' ``deposits:write`` is where the gateway
-tiers them, and §P8 elicitation on the irreversible writes is deferred with it).
+the agent fetches on demand is a tool, not a resource. ``constitute_deposit`` / ``mature_deposit`` /
+``pay_interest`` are writes (engine commands); ``get_deposit`` is the read-only ``deposit_position``
+projection. Each declares a structured return type, so the SDK publishes an ``outputSchema``
+(ADR-IC-010 P6 — mandatory on every tool).
+
+Auth (Epic J, babelstone-e50n): the secured edge fronts this server with Kong + OAuth. Every tool
+reads the gateway-attested caller identity (``X-Client-Id``, derived from the OAuth token ``sub`` —
+NEVER a tool argument; Document 11) from the request headers and enforces *scope-per-tool* (§P4) via
+``check_tool_scope``: ``get_deposit`` needs ``deposits:read``, the writes need ``deposits:write``.
+The authoritative ``aud`` re-check (§P3) and the public RFC 9728 metadata (§P2) live in ``app.py``.
+§P8 elicitation on the irreversible writes is a deliberate follow-up (ar1y).
 """
 
 from __future__ import annotations
 
 import os
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
+from .auth import AuthContext, check_tool_scope
 from .engine_client import EngineClient
 
 mcp = FastMCP("babelstone-deposits")
 
 _engine: EngineClient | None = None
+
+
+def _authorize(ctx: Context, tool: str) -> AuthContext:
+    """Build the gateway-attested ``AuthContext`` for this request and enforce the tool's scope.
+
+    Reads ``X-Client-Id`` / ``X-OAuth-Scope`` off the Starlette request the Streamable-HTTP transport
+    threads onto the request context (ADR-IC-010 §P3/§P4). The gateway set those headers from the
+    OAuth token; the identity is NEVER taken from a tool argument (Document 11). Raises ``McpError``
+    on a missing identity or insufficient scope before the engine is touched.
+    """
+    request = ctx.request_context.request
+    auth = AuthContext.from_headers(request.headers)
+    check_tool_scope(auth, tool)
+    return auth
 
 
 def engine() -> EngineClient:
@@ -57,6 +77,7 @@ async def constitute_deposit(
     term_days: int,
     start_date: str,
     funding_account: str,
+    ctx: Context,
     interest_variant: str = "AT_MATURITY",
     auto_renewal_policy: str = "NONE",
     payment_period_months: int = 0,
@@ -71,7 +92,11 @@ async def constitute_deposit(
     paid out to the current account, principal at maturity), or ADVANCE (full-term interest at t=0).
     ``payment_period_months`` is required for PERIODIC — 1 (monthly) or 3 (quarterly), the only
     cadences priced — and is 0/omitted for AT_MATURITY and ADVANCE.
+
+    Requires ``deposits:write`` (ADR-IC-010 §P4). The actor is the gateway-attested ``X-Client-Id``
+    (OAuth ``sub``), never a tool argument (Document 11).
     """
+    _authorize(ctx, "constitute_deposit")
     result = await engine().constitute(
         {
             "principal_cents": principal_cents,
@@ -127,7 +152,9 @@ class DepositPosition(BaseModel):
 
 
 @mcp.tool()
-async def get_deposit(deposit_id: str, min_sequence: int | None = None) -> DepositPosition:
+async def get_deposit(
+    deposit_id: str, ctx: Context, min_sequence: int | None = None
+) -> DepositPosition:
     """Read a term deposit's current state — the ONE canonical deposit resource (ADR-IC-005).
 
     ``deposit_id`` is the engine-assigned UUID returned by ``constitute_deposit``. Served from the
@@ -135,27 +162,33 @@ async def get_deposit(deposit_id: str, min_sequence: int | None = None) -> Depos
     constitute/mature), pass ``min_sequence`` = the ``commit_sequence`` that command returned: the
     engine then folds the event stream if the projection has not caught up, so you always see your own
     write. Money is integer cents; ``last_sequence`` on the result is the version served (thread it
-    forward for monotonic reads). Scoped ``deposits:read`` at the gateway (ADR-IC-010 §P4).
+    forward for monotonic reads).
+
+    Requires ``deposits:read`` (ADR-IC-010 §P4) — the reserved read scope; a ``deposits:read`` token
+    cannot reach the write tools.
     """
+    _authorize(ctx, "get_deposit")
     return DepositPosition(**await engine().deposit_position(deposit_id, min_sequence))
 
 
 @mcp.tool()
-async def mature_deposit(deposit_id: str) -> DepositPosition:
+async def mature_deposit(deposit_id: str, ctx: Context) -> DepositPosition:
     """Mature (settle) a term deposit — runs accrual to term end and returns the matured position.
 
     ``deposit_id`` is the engine-assigned UUID. Returns the same ``DepositPosition`` shape with the
     interest fields now folded in (``accrued_gross_interest_cents``, ``withholding_to_date_cents``,
     ``net_interest_cents``, ``total_payout_cents``) and ``lifecycle`` = ``Matured``. Money is integer
-    cents. Scoped ``deposits:write`` at the gateway (ADR-IC-010 §P4). Settlement is irreversible, so if
-    the secured edge classes it under §P8 it gets ``elicitation/create`` confirmation — that, like all
-    auth on this dev server, is deferred to Epic J.
+    cents.
+
+    Requires ``deposits:write`` (ADR-IC-010 §P4). Settlement is irreversible, so if the secured edge
+    classes it under §P8 it gets ``elicitation/create`` confirmation — a deliberate follow-up (ar1y).
     """
+    _authorize(ctx, "mature_deposit")
     return DepositPosition(**await engine().mature(deposit_id))
 
 
 @mcp.tool()
-async def pay_interest(deposit_id: str) -> DepositPosition:
+async def pay_interest(deposit_id: str, ctx: Context) -> DepositPosition:
     """Pay one PERIODIC coupon on a term deposit — accrues the next coupon window, withholds tax on
     that one flow, pays the net to the current account, and returns the updated position.
 
@@ -164,7 +197,10 @@ async def pay_interest(deposit_id: str) -> DepositPosition:
     (not supplied here). Returns the same ``DepositPosition`` shape with the coupon's gross/withholding/
     net folded in and ``coupons_paid`` incremented; the final coupon is paid with the principal at
     maturity (use ``mature_deposit`` for that), so calling this once no intermediate coupon remains is
-    rejected. Money is integer cents. Scoped ``deposits:write`` at the gateway (ADR-IC-010 §P4). Like
-    ``mature_deposit``, the coupon settlement is irreversible; §P8 elicitation is deferred to Epic J.
+    rejected. Money is integer cents.
+
+    Requires ``deposits:write`` (ADR-IC-010 §P4). Like ``mature_deposit``, the coupon settlement is
+    irreversible; §P8 elicitation is a deliberate follow-up (ar1y).
     """
+    _authorize(ctx, "pay_interest")
     return DepositPosition(**await engine().pay_interest(deposit_id))

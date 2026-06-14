@@ -176,8 +176,11 @@ have 'kong\.response\.exit\(403' "missing the SCA 403 rejection: the constitute 
 # silently drop the attestation or source it from anything but the validated token (ADR-PC-020 §D3).
 have 'set_header\("X-Client-Id", *claims\.sub\)' "missing gateway-attested caller identity: the edge must set X-Client-Id from the VALIDATED jwt sub, not a client value (IDOR; ADR-IC-006 §P4 / bd babelstone-bkqo)"
 xclient_count="$(grep -cF 'set_header("X-Client-Id", claims.sub)' "$CONFIG")"
-[ "${xclient_count:-0}" -ge 2 ] \
-  || fail "X-Client-Id attestation must cover BOTH orchestrator-bound routes (constitute + SSE stream); found $xclient_count of 2 (ADR-IC-006 §P4 / bd babelstone-bkqo)"
+# The attestation now covers THREE routes: the orchestrator constitute POST, the orchestrator
+# SSE stream, and the MCP Streamable-HTTP route (ADR-IC-010 §P3 — the agent channel attests
+# identity from the OAuth sub identically). A future edit cannot drop it on any of them.
+[ "${xclient_count:-0}" -ge 3 ] \
+  || fail "X-Client-Id attestation must cover the orchestrator constitute + SSE stream AND the MCP route (ADR-IC-010 §P3); found $xclient_count of 3 (ADR-IC-006 §P4 / ADR-IC-010 §P3)"
 have 'name: *opentelemetry' "missing the opentelemetry plugin (W3C traceparent, ADR-IC-006 §P6)"
 # Upstream mTLS to internal services (ADR-IC-006 §P5): the service presents a client
 # cert to the orchestrator/engine. Expressed via a client_certificate on the service.
@@ -271,6 +274,38 @@ have 'kong\.response\.exit\(503' "missing the fail-closed 503 refusal on the SoR
 # must not have re-introduced a command endpoint on the engine read surface. (No new
 # assertion needed: 3a's exact-path check already covers it; this comment records the
 # negative commitment is consciously preserved by the scaffold.)
+
+# ---------------------------------------------------------------------------
+# 3c. MCP agent channel (ADR-IC-010 — Epic J / bd babelstone-e50n).
+# ---------------------------------------------------------------------------
+# The bank's MCP server is one more route on this shared gateway (ADR-IC-010 §Decision
+# "behind Kong", §P5). These assertions lock in the THREE MCP-specific obligations so a
+# future edit cannot silently drop one (ADR-PC-020 §D3): the Streamable-HTTP route exists,
+# the RFC 8707 audience check rejects a wrong-aud token (§P3), the public RFC 9728 metadata
+# route is reachable (§P2), and the WWW-Authenticate refusal points at resource_metadata.
+
+# (i) The Streamable-HTTP transport route (ADR-IC-010 §P5): a single /mcp route. POST stays
+# jwt-covered by the global plugin (only the well-known route disables jwt).
+have '/mcp' "missing the MCP Streamable-HTTP route /mcp (ADR-IC-010 §P5)"
+
+# (ii) RFC 8707 audience binding (ADR-IC-010 §P3): the /mcp route's access pre-function MUST
+# reject a token whose `aud` is not this MCP server's canonical URI with code AUDIENCE_MISMATCH.
+# Asserting the code AND a 401 status are both present means a future edit cannot silently drop
+# the audience check (the token-replay defence — Document 10 Boundary 9 / Document 11).
+have 'AUDIENCE_MISMATCH' "missing the RFC 8707 audience check: the /mcp route must reject a wrong-aud token with code AUDIENCE_MISMATCH (ADR-IC-010 §P3)"
+have 'kong\.response\.exit\(401' "missing the audience 401 rejection: the /mcp aud pre-function must kong.response.exit(401, ...) on an audience mismatch (ADR-IC-010 §P3)"
+
+# (iii) RFC 9728 Protected Resource Metadata (ADR-IC-010 §P2): the public well-known route must
+# exist, and the audience 401 must carry a WWW-Authenticate resource_metadata pointer so a 401'd
+# client can discover the authorization server (§P3 / §P2).
+have '/\.well-known/oauth-protected-resource' "missing the RFC 9728 Protected Resource Metadata route /.well-known/oauth-protected-resource (ADR-IC-010 §P2)"
+have 'resource_metadata' "missing the WWW-Authenticate resource_metadata pointer on the MCP audience 401 (ADR-IC-010 §P2/§P3)"
+
+# (iv) The well-known route disables jwt (and ONLY that route) so the public metadata is reachable
+# unauthenticated, while POST /mcp stays jwt-covered. The global `hasnot 'anonymous:'` above still
+# holds — disabling the plugin on a read-only public metadata route is the ordering-safe way to
+# expose it (NOT an anonymous fallback, which would break the pre-function ordering-safety property).
+have 'name: *jwt' "missing the jwt plugin (also referenced route-disabled on the MCP well-known route, ADR-IC-010 §P2)"
 
 note "edge-contract assertions: OK"
 note "kong-config-check: all checks passed"

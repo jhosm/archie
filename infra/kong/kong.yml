@@ -639,6 +639,239 @@ services:
 
                   -- sor == engine: fall through and proxy to the engine upstream (this service).
 
+  # ── The MCP agent channel (ADR-IC-010 — Epic J / bd babelstone-e50n) ──────────────
+  # The bank's MCP server is ONE more route on this shared edge gateway (ADR-IC-010
+  # §Decision: "behind Kong", §P5). LLM agents reach the four term-deposit tools
+  # (constitute_deposit / get_deposit / mature_deposit / pay_interest) over Streamable
+  # HTTP. The route inherits the SAME edge tier as the orchestrator routes — the global
+  # jwt plugin validates the token signature, opentelemetry propagates the trace, mTLS
+  # (the shared client_certificate) secures the upstream — PLUS two MCP-specific
+  # obligations the spec imposes:
+  #
+  #   1. RFC 8707 audience binding (ADR-IC-010 §P3). The token's `aud` MUST equal this
+  #      MCP server's canonical URI; a token minted for another resource MUST be rejected
+  #      (the structural defence against token replay across MCP servers, Document 10
+  #      Boundary 9 / Document 11 §"token replay"). Kong CE's jwt plugin does NOT check
+  #      audience against a per-route value, and the Enterprise OIDC plugin (which would)
+  #      is not in CE — so §P3's aud check is a CE-bundled `pre-function` access snippet
+  #      here (exactly the SCA workaround pattern the constitute route uses), 401'ing on a
+  #      mismatch with a WWW-Authenticate header carrying resource_metadata. The Python app
+  #      layer re-checks `aud` AUTHORITATIVELY too (defense-in-depth, ADR-IC-010 §P3 — the
+  #      app, not the gateway, is the spec's authoritative resource server).
+  #
+  #   2. sub -> X-Client-Id attestation + scope passthrough (ADR-IC-010 §P3/§P4). As on
+  #      the orchestrator routes, the caller identity is the OAuth `sub`, attested to the
+  #      upstream as X-Client-Id and NEVER taken from a tool argument (Document 11
+  #      §"hallucinated parameters"). The granted OAuth scopes pass through as X-OAuth-Scope
+  #      so the app enforces scope-per-tool (§P4: deposits:read for the read tool,
+  #      deposits:write for the writes — one tool maps to exactly one scope, no god scope).
+  #
+  # The well-known discovery document (RFC 9728 Protected Resource Metadata, §P2) is a
+  # SEPARATE route with jwt route-disabled, so an agent with no token yet can discover the
+  # authorization server. POST /mcp itself STAYS jwt-covered by the global plugin.
+  - name: mcp-server
+    url: https://mcp-server:8080
+    # mTLS to the MCP server (ADR-IC-006 §P5 Boundary 2): the SAME POC client cert the
+    # orchestrator/engine services present. tls_verify false is the POC posture (flip on
+    # with the internal CA bundle at deploy, like every other upstream above).
+    client_certificate: 7e9b6f1a-2c4d-4e8a-9b1f-0a2c4d6e8f10
+    tls_verify: false
+    # Streamable HTTP's GET-with-SSE notification stream is long-lived (ADR-IC-010 §P5 /
+    # ADR-IC-006 §P4): the same 1800000 ms (30-min) read/write timeout as the saga SSE
+    # route, so a server-initiated notification stream is not cut by the gateway's default
+    # 60s read timeout.
+    read_timeout: 1800000
+    write_timeout: 1800000
+    routes:
+      # ── The MCP Streamable-HTTP transport: one route, both POST and GET (ADR-IC-010 §P5) ──
+      # POST carries JSON-RPC (tools/call, tools/list, initialize, …); GET opens the SSE
+      # notification stream. Buffering OFF (request + response) so the SSE frames flush
+      # immediately, mirroring the saga-stream route. strip_path false: the upstream app
+      # serves on /mcp (FastMCP streamable_http_path), so the path is preserved verbatim.
+      # NOTE: no request body validator here — a JSON-RPC body is method-polymorphic, so a
+      # structural schema gate would break legitimate calls (the app validates per-tool
+      # inputSchema instead). This is DELIBERATELY unlike the constitute route's body check.
+      - name: mcp-streamable-http
+        methods: ["POST", "GET"]
+        paths: ["/mcp"]
+        strip_path: false
+        request_buffering: false
+        response_buffering: false
+        plugins:
+          # ADR-IC-010 §P5 / ADR-IC-006 §P3: per-consumer rate limit on the agent channel.
+          # 5 req/min per consumer — the same tight budget as the constitute money-mover;
+          # the write tools move money, and an agent looping is the failure mode this caps.
+          - name: rate-limiting
+            config:
+              minute: 5
+              policy: local
+              limit_by: consumer
+              fault_tolerant: true
+          # ADR-IC-010 §P5 / ADR-IC-006 §P6: propagate the W3C traceparent into the MCP
+          # server so the agent tool call → engine span tree is one continuous trace.
+          - name: opentelemetry
+            config:
+              traces_endpoint: http://otel-collector:4318/v1/traces
+              propagation:
+                extract: ["w3c"]
+                inject: ["w3c"]
+                default_format: w3c
+              resource_attributes:
+                service.name: kong-edge
+          - name: pre-function
+            config:
+              access:
+                # ── (a) RFC 8707 audience check (ADR-IC-010 §P3) ─────────────────────────
+                # FIRST access-phase snippet. The token's `aud` MUST equal this MCP server's
+                # canonical URI (MCP_SERVER_URI below). A token issued for another resource is
+                # 401'd with a WWW-Authenticate header carrying resource_metadata (the RFC 9728
+                # well-known URL) and a stable body code AUDIENCE_MISMATCH — the spec's
+                # token-replay defence (Document 10 Boundary 9 / Document 11).
+                #
+                # ORDERING (read the constitute route's ORDERING note — the SAME property holds):
+                # on Kong CE, pre-function (priority 1000000) runs BEFORE jwt (1450), but the
+                # GLOBAL jwt plugin still gates the proxy — it 401s an unsigned/tampered token
+                # before upstream, with NO anonymous fallback (asserted by kong-config-check). So
+                # a request only REACHES the MCP server if jwt validated THIS SAME token; the
+                # claims this snippet reads are authentic end-to-end. We decode the payload only
+                # to read `aud` (jwt does not check audience against a per-route value on CE).
+                #
+                # `aud` may be a STRING or an ARRAY (RFC 7519 §4.1.3) — both handled. FAIL-CLOSED:
+                # a missing/malformed Authorization header, an undecodable payload, an absent
+                # `aud`, or a non-matching `aud` all exit 401 AUDIENCE_MISMATCH. No PII in the body
+                # or header (ADR-PC-004 §P2): a stable code + a generic message only. Decoding is
+                # defensive (cjson.safe + a pure base64url decoder), so a bad token can never 500.
+                - |
+                  local cjson = require("cjson.safe")
+
+                  -- This MCP server's canonical URI — the value tokens MUST carry as `aud`
+                  -- (RFC 8707 / ADR-IC-010 §P3). POC default; in deploy this is the public
+                  -- MCP server URL the IAM registers as a resource. Kept in sync with the app's
+                  -- BABELSTONE_MCP_SERVER_URI env (infra/compose.yaml).
+                  local MCP_SERVER_URI = "http://localhost:8000/mcp"
+                  -- The RFC 9728 Protected Resource Metadata URL, advertised in WWW-Authenticate
+                  -- so a 401'd client can discover the authorization server (ADR-IC-010 §P2/§P3).
+                  local RESOURCE_METADATA = "http://localhost:8000/.well-known/oauth-protected-resource"
+
+                  -- Single fail-closed exit: identical 401 + stable code for every audience
+                  -- failure, so no decode/parse branch leaks a distinguishing signal or PII.
+                  local function deny_aud()
+                    return kong.response.exit(401, {
+                      code = "AUDIENCE_MISMATCH",
+                      message = "The bearer token's audience does not match this MCP server (RFC 8707 / ADR-IC-010 §P3).",
+                    }, {
+                      ["WWW-Authenticate"] = 'Bearer error="invalid_token", error_description="audience mismatch", resource_metadata="' .. RESOURCE_METADATA .. '"',
+                    })
+                  end
+
+                  -- Pure base64url decoder (no padding assumptions) — same helper the SCA
+                  -- pre-functions use: JWT segments are unpadded base64url; translate -_ -> +/
+                  -- and re-pad before ngx.decode_base64. Any failure returns nil => deny.
+                  local function b64url_decode(seg)
+                    if type(seg) ~= "string" or seg == "" then return nil end
+                    local s = seg:gsub("-", "+"):gsub("_", "/")
+                    local pad = #s % 4
+                    if pad == 2 then s = s .. "=="
+                    elseif pad == 3 then s = s .. "="
+                    elseif pad == 1 then return nil end
+                    return ngx.decode_base64(s)
+                  end
+
+                  local auth = kong.request.get_header("authorization")
+                  if type(auth) ~= "string" then return deny_aud() end
+                  -- RFC 7235 auth-scheme is case-insensitive: accept Bearer/bearer/BEARER.
+                  local scheme, token = auth:match("^(%a+)%s+(.+)$")
+                  if not token or scheme:lower() ~= "bearer" then return deny_aud() end
+
+                  local _, payload_seg = token:match("^([^%.]+)%.([^%.]+)%.([^%.]+)$")
+                  if not payload_seg then return deny_aud() end
+
+                  local payload_json = b64url_decode(payload_seg)
+                  if not payload_json then return deny_aud() end
+
+                  local claims = cjson.decode(payload_json)
+                  if type(claims) ~= "table" then return deny_aud() end
+
+                  -- `aud` may be a string OR an array (RFC 7519 §4.1.3). Match either form.
+                  local aud = claims.aud
+                  local ok = false
+                  if type(aud) == "string" then
+                    ok = (aud == MCP_SERVER_URI)
+                  elseif type(aud) == "table" then
+                    for _, v in ipairs(aud) do
+                      if v == MCP_SERVER_URI then ok = true break end
+                    end
+                  end
+                  if not ok then return deny_aud() end
+                  -- aud matches: fall through to the identity attestation below.
+                # ── (b) sub -> X-Client-Id attestation (ADR-IC-010 §P3 / Document 11) ────
+                # The caller identity is the OAuth `sub`, attested to the MCP server as
+                # X-Client-Id and OVERWRITTEN so a client-supplied header can never assert
+                # someone else's identity (IDOR). The MCP tools read X-Client-Id as the
+                # gateway-attested actor and NEVER accept a client_id tool argument (Document 11
+                # §"hallucinated parameters"). A token with no usable `sub` cannot establish
+                # identity => fail closed. Mirrors the orchestrator routes' attestation.
+                - |
+                  local cjson = require("cjson.safe")
+                  local function deny_id()
+                    return kong.response.exit(401, {
+                      code = "AUDIENCE_MISMATCH",
+                      message = "The bearer token does not carry a usable subject for caller attestation (ADR-IC-010 §P3).",
+                    })
+                  end
+                  local function b64url_decode(seg)
+                    if type(seg) ~= "string" or seg == "" then return nil end
+                    local s = seg:gsub("-", "+"):gsub("_", "/")
+                    local pad = #s % 4
+                    if pad == 2 then s = s .. "=="
+                    elseif pad == 3 then s = s .. "="
+                    elseif pad == 1 then return nil end
+                    return ngx.decode_base64(s)
+                  end
+                  local auth = kong.request.get_header("authorization")
+                  if type(auth) ~= "string" then return deny_id() end
+                  local scheme, token = auth:match("^(%a+)%s+(.+)$")
+                  if not token or scheme:lower() ~= "bearer" then return deny_id() end
+                  local _, payload_seg = token:match("^([^%.]+)%.([^%.]+)%.([^%.]+)$")
+                  if not payload_seg then return deny_id() end
+                  local payload_json = b64url_decode(payload_seg)
+                  if not payload_json then return deny_id() end
+                  local claims = cjson.decode(payload_json)
+                  if type(claims) ~= "table" then return deny_id() end
+                  -- OVERWRITE any client-supplied X-Client-Id with the token `sub` (IDOR guard).
+                  if type(claims.sub) ~= "string" or claims.sub == "" then return deny_id() end
+                  kong.service.request.set_header("X-Client-Id", claims.sub)
+                  -- ── (c) scope -> X-OAuth-Scope passthrough (ADR-IC-010 §P4) ────────────
+                  -- Attest the granted OAuth scopes to the MCP server so it enforces
+                  -- scope-per-tool (deposits:read for the read tool, deposits:write for the
+                  -- writes — §P4). The `scope` claim is a space-delimited string (OAuth
+                  -- convention); pass it verbatim and OVERWRITE any client value. Absent =>
+                  -- empty scope (the app then rejects every tool — fail closed at the app).
+                  local scope = claims.scope
+                  if type(scope) == "string" and scope ~= "" then
+                    kong.service.request.set_header("X-OAuth-Scope", scope)
+                  else
+                    kong.service.request.set_header("X-OAuth-Scope", "")
+                  end
+
+      # ── RFC 9728 Protected Resource Metadata — public discovery (ADR-IC-010 §P2) ──
+      # GET /.well-known/oauth-protected-resource returns the metadata pointing at the
+      # IAM as the authorization server. It MUST be reachable WITHOUT a token (a client
+      # discovers the auth server BEFORE it has one), so the global jwt plugin is
+      # route-DISABLED here (plugins: [{name: jwt, enabled: false}]) — the ONLY route that
+      # disables jwt. POST /mcp above STAYS jwt-covered by the global plugin. NO anonymous
+      # consumer fallback is added anywhere (that would break the pre-function ordering-safety
+      # property on the OTHER routes — kong-config-check asserts none exists); disabling the
+      # plugin on THIS read-only public metadata route is the surgical, ordering-safe way to
+      # expose it.
+      - name: mcp-well-known
+        methods: ["GET"]
+        paths: ["/.well-known/oauth-protected-resource"]
+        strip_path: false
+        plugins:
+          - name: jwt
+            enabled: false
+
 # ── Edge policies attached GLOBALLY (apply to every route above) ─────────────────
 plugins:
   # ADR-IC-006 §1 / §P7: validate the OAuth 2.0 bearer token's signature (RS256/ES256),
