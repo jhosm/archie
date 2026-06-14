@@ -50,7 +50,7 @@ jobs:
             product_configs: ['product-configs/**']
             packs: ['packs/**']
             rate_sheets: ['rate-sheets/**']
-            infra: ['infra/**']
+            infra: ['infra/**', 'scripts/kong-config-check.sh', 'mise.toml']
             docs: ['docs/**', '*.md', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
             docs_gen: ['scripts/docs-gen/**', 'docs/product-management/reference/**', 'contracts/**', 'mcp-server/**', 'docs/product-management/**/adrs/ADR-*.md', 'Makefile']
 
@@ -560,9 +560,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      # Pin kustomize + kubeconform from mise.toml — the same single source of
+      # Pin kustomize + kubeconform + deck from mise.toml — the same single source of
       # truth as every dev machine (no second pin in this YAML to drift from).
       - uses: jdx/mise-action@v4
+      - name: Validate Kong edge config (deck + kong config parse + ADR-IC-006 assertions, I.3)
+        # The ADR-IC-006 §P1 declarative-config gate: Kong's ENTIRE edge config is the
+        # one git-tracked infra/kong/kong.yml (DB-less). A malformed route, a mistyped
+        # plugin config, or a silently-dropped edge policy fails HERE, not in prod. The
+        # script runs `deck file validate` (pinned deck), `kong config parse` on the
+        # pinned kong:3.9.1 image (Docker is available on ubuntu-latest), and the
+        # edge-contract fitness assertions (routes present, SSE settings, edge policies,
+        # and the engine COMMAND surface NOT publicly exposed — ADR-IC-006 §P5).
+        run: ./scripts/kong-config-check.sh
       - name: Validate K8s manifests (kustomize build + kubeconform, P.6 / P.7)
         # The base configMapGenerator reads ../../kong/kong.yml and
         # ../../otel/collector.yaml (the single config source the Compose stack
