@@ -457,9 +457,21 @@ services:
   # ── SoR routing for EXISTING-instance state-changing ops (ADR-PC-018 — I.5) ───────
   # During coexistence a state-changing operation against an EXISTING instance (terminate
   # early, withdraw partially, change auto-renewal) must land on the system that holds the
-  # system-of-record for THAT instance. The router resolves: instance_id -> sor -> backend
-  # (ADR-PC-018 §1) — engine-SoR ops to the engine, legacy-SoR ops to the legacy core.
+  # system-of-record for THAT instance. The GATEWAY resolves: instance_id -> sor -> backend
+  # (ADR-PC-018 §1) — engine-SoR ops to the engine, legacy/unresolved -> fail closed.
   # Routing to the wrong backend is the split-brain failure the whole design prevents.
+  #
+  # WHY ONE ROUTE, NOT A PATH-PER-SoR SCHEME (the split-brain-proofing — review must-fix).
+  # An earlier scaffold keyed the backend off a CLIENT-SUPPLIED `sor` path segment (an
+  # engine-vs-legacy class word in the URL). That inverts ADR-PC-018 §2: the router would
+  # then let the CALLER DECIDE `sor`, so a client could submit a legacy-SoR instance's op to
+  # the engine class and Kong would proxy a command to the system that does NOT hold the SoR
+  # — split-brain (§5). The fail-closed arm was real but trivially bypassable: a client that
+  # always names the engine class never hits it. So there is now ONE client-facing route,
+  # /api/v1/sor/instances/{id}/operations, with NO `sor` class word in the path. The gateway
+  # READS `sor` off the engine read surface (below) and DECIDES the backend itself; the path
+  # segment can no longer pick it (ADR-PC-018 §1/§2 followed literally — "the router reads
+  # `sor`; it never decides `sor`", and the path cannot decide it either).
   #
   # PLACEMENT (ADR-PC-018 §Decision option b / binding authority): the routing LOGIC lives
   # on THIS edge gateway, reusing the ADR-IC-006 tier, NOT in the engine and NOT duplicated
@@ -467,86 +479,159 @@ services:
   # engine-query above) but refuses to host the routing LOGIC in its own command/read
   # surfaces (ADR-PC-018 §6, the engine's negative commitment — honoured here: no command
   # endpoint is added to the engine read surface; the engine COMMAND POST /v1/deposits stays
-  # absent). The BINDING placement is the operating bank's channel tier; this is the
-  # engine/gateway-side SCAFFOLD, a position not a hard requirement on the bank.
+  # absent — /sor/instances/{id}/operations is a GATEWAY routing key, not an engine route).
+  # The BINDING placement is the operating bank's channel tier; this is the engine/gateway-
+  # side SCAFFOLD, a position not a hard requirement on the bank.
   #
-  # COEXISTENCE SCAFFOLD STATE: the legacy backend is NOT built in v1 (this repo has no
-  # legacy core). So the v1 scaffold has two arms:
-  #   • engine-SoR existing-instance ops -> the engine upstream (engine-sor-ops below);
-  #   • legacy-SoR or UNRESOLVABLE `sor` -> a documented placeholder service that FAILS
-  #     CLOSED (legacy-core-placeholder below): it REFUSES with "instance state unavailable"
-  #     (503 SOR_UNRESOLVED) rather than guessing a backend. Guessing = split-brain
-  #     (ADR-PC-018 §5: gated, not post-flagged; the router never guesses).
-  #
-  # `sor` SOURCE: the channel resolves `sor` from the unified read surface (the engine
-  # exposes it — coexistence §6.2 / engine-query above) and presents the resolved backend
-  # intent to the gateway as the request path/route below. The router READS `sor`; it never
-  # DECIDES it (ADR-PC-018 §2). Resolution is a pure, stateless, idempotent per-request
-  # lookup (ADR-PC-018 §3/§4) — the router holds NO state of its own.
+  # HOW THE GATEWAY RESOLVES `sor` (ADR-PC-018 §1/§2/§3/§4). The access-phase pre-function:
+  #   1. reads `instance_id` from the path (server-derived, not a client-trusted routing key);
+  #   2. resolves `sor` by GET-ing the engine read surface (GET /v1/deposits/{id}, which
+  #      carries the `sor` column — ADR-PC-027 / coexistence §6.2). This is the gateway
+  #      READING `sor`, never DECIDING it (§2); it is a pure, stateless, idempotent per-
+  #      request lookup holding no state of its own (§3/§4);
+  #   3. `sor == engine`  -> fall through and proxy to the engine upstream (this service);
+  #      `sor == legacy`  -> FAIL CLOSED 503 SOR_UNRESOLVED (legacy core not built in v1;
+  #                          guessing a backend = split-brain, §5);
+  #      unresolvable      -> FAIL CLOSED 503 SOR_UNRESOLVED (instance unknown to the read
+  #                          model / projection lag / read surface unreachable — refuse,
+  #                          never guess, §5: gated, not post-flagged).
+  # The fail-closed default is structural: the function returns engine ONLY on an explicit
+  # `sor == engine` read; every other outcome (legacy, 404, non-200, malformed body, missing
+  # column, network error) routes to deny(). A mis-route therefore requires the read surface
+  # to actively assert `engine`, not merely a client's path choice.
   - name: engine-sor-ops
     url: https://engine:8080
     client_certificate: 7e9b6f1a-2c4d-4e8a-9b1f-0a2c4d6e8f10
     tls_verify: false
     routes:
-      # Engine-SoR existing-instance state-changing operations. A v1 term deposit is
-      # engine-SoR (coexistence §3.1), so an op resolved to `sor = engine` routes to the
-      # engine upstream. SCAFFOLD: the concrete op surface is the orchestrator's saga
-      # target internally (ADR-IC-006 §P5); this route exists to make the engine-SoR arm
-      # of the instance_id -> sor -> backend resolution EXPLICIT and auditable in config.
-      # The path namespace (/sor/engine/...) is the gateway's routing key, NOT a new engine
-      # command endpoint — the engine COMMAND surface stays absent (ADR-PC-018 §6 honoured).
+      # The single SoR-routed existing-instance op surface. No `sor` in the path — the
+      # gateway resolves it (above). A request reaches the engine upstream ONLY if the
+      # pre-function below read `sor == engine` off the read surface for THIS instance_id.
       - name: sor-engine-ops
         methods: ["POST"]
-        paths: ["~/api/v1/sor/engine/instances/[^/]+/operations$"]
+        paths: ["~/api/v1/sor/instances/(?<instance_id>[^/]+)/operations$"]
         strip_path: false
         plugins:
+          # ADR-IC-006 §P3: 5 req/min per consumer — same tight budget as the constitute
+          # money-mover; an existing-instance op (early terminate, partial withdraw) moves
+          # money too.
           - name: rate-limiting
             config:
               minute: 5
               policy: local
               limit_by: consumer
               fault_tolerant: true
-
-  # ── Legacy-SoR / SoR-unresolved FAIL-CLOSED placeholder (ADR-PC-018 §5) ───────────
-  # The legacy core does not exist in this repo. A legacy-SoR or unresolvable-`sor`
-  # state-changing op must NEVER be guessed onto a backend — that is the split-brain
-  # outcome ADR-PC-018 prevents. This documented placeholder service REFUSES every such
-  # request with a stable 503 SOR_UNRESOLVED ("instance state unavailable"), fail-closed
-  # (ADR-PC-018 §5: gated, not post-flagged). When the bank's channel tier and the legacy
-  # integration are built, this placeholder is replaced by either a real legacy upstream
-  # or the channel-tier routing the ADR defers to (§Decision binding authority).
-  #
-  # The 503 (Service Unavailable) is deliberate: the SoR is real but the backend that
-  # holds it is unavailable to the gateway in v1 — a "try again shortly"-shaped refusal
-  # (ADR-PC-018 Consequences), not a 4xx client error. No upstream url is reachable; a
-  # pre-function terminates the request at the edge so NO backend is ever contacted.
-  - name: legacy-core-placeholder
-    # A non-routable placeholder URL: the pre-function below ALWAYS exits before proxy, so
-    # Kong never dials this host. Present only to satisfy the declarative schema (a service
-    # requires a url/host) — it is intentionally unreachable, reinforcing fail-closed.
-    url: http://legacy-core-not-built.invalid:80
-    routes:
-      # Legacy-SoR existing-instance ops AND the SoR-unresolved fallback (instance unknown
-      # to the read model / projection lag, ADR-PC-018 §5). Both resolve here and are
-      # refused — the router never guesses a backend.
-      - name: sor-legacy-or-unresolved
-        methods: ["POST"]
-        paths:
-          - "~/api/v1/sor/legacy/instances/[^/]+/operations$"
-          - "/api/v1/sor/unresolved/operations"
-        strip_path: false
-        plugins:
-          # FAIL CLOSED (ADR-PC-018 §5): refuse with a stable code, never guess a backend.
-          # Single exit, no PII (ADR-PC-004 §P2) — the body carries only a stable code + a
-          # generic message. Mirrors the SCA pre-function's defensive, single-exit shape.
           - name: pre-function
             config:
               access:
+                # ── PSD2 SCA enforcement + identity attestation (ADR-IC-006 §P2/§P4) ──────
+                # An existing-instance state-changing op (terminate early, withdraw partially)
+                # is a PIS-equivalent money-mover, the SAME class as constitute — so it carries
+                # the SAME SCA freshness gate (§P2: 403 SCA_REQUIRED on absent/stale SCA) and
+                # the SAME X-Client-Id attestation from the JWT `sub` (§P4: the upstream enforces
+                # per-instance OWNERSHIP on the gateway-attested id, never a client-set header —
+                # an IDOR guard, since this op targets a SPECIFIC instance). This is the SCA
+                # parity the review requires: a new money-mover route must not be less guarded
+                # than constitute. Logic mirrors the constitute route's first access snippet;
+                # see its ORDERING note (jwt gates the proxy, so the claims read here are
+                # authentic regardless of CE static plugin order). Fail-closed throughout.
                 - |
-                  return kong.response.exit(503, {
-                    code = "SOR_UNRESOLVED",
-                    message = "Instance state unavailable: the system-of-record for this instance cannot be resolved to an available backend, so the operation is refused rather than routed.",
-                  })
+                  local cjson = require("cjson.safe")
+
+                  local SCA_MAX_AGE = 300
+
+                  local function deny_sca()
+                    return kong.response.exit(403, {
+                      code = "SCA_REQUIRED",
+                      message = "Strong Customer Authentication (PSD2 SCA) is required for this operation.",
+                    })
+                  end
+
+                  local function b64url_decode(seg)
+                    if type(seg) ~= "string" or seg == "" then return nil end
+                    local s = seg:gsub("-", "+"):gsub("_", "/")
+                    local pad = #s % 4
+                    if pad == 2 then s = s .. "=="
+                    elseif pad == 3 then s = s .. "="
+                    elseif pad == 1 then return nil end
+                    return ngx.decode_base64(s)
+                  end
+
+                  local auth = kong.request.get_header("authorization")
+                  if type(auth) ~= "string" then return deny_sca() end
+                  local scheme, token = auth:match("^(%a+)%s+(.+)$")
+                  if not token or scheme:lower() ~= "bearer" then return deny_sca() end
+
+                  local _, payload_seg = token:match("^([^%.]+)%.([^%.]+)%.([^%.]+)$")
+                  if not payload_seg then return deny_sca() end
+
+                  local payload_json = b64url_decode(payload_seg)
+                  if not payload_json then return deny_sca() end
+
+                  local claims = cjson.decode(payload_json)
+                  if type(claims) ~= "table" then return deny_sca() end
+
+                  if type(claims.acr) ~= "string" or claims.acr == "" then return deny_sca() end
+
+                  local at = claims.auth_time
+                  if type(at) ~= "number" or at % 1 ~= 0 then return deny_sca() end
+                  local now = ngx.time()
+                  if at > now or (now - at) > SCA_MAX_AGE then return deny_sca() end
+
+                  -- Attest the caller identity (ADR-IC-006 §P4): OVERWRITE any client-supplied
+                  -- X-Client-Id with the token `sub` so the upstream's per-instance ownership
+                  -- check cannot be spoofed (IDOR). No usable `sub` => fail closed.
+                  if type(claims.sub) ~= "string" or claims.sub == "" then return deny_sca() end
+                  kong.service.request.set_header("X-Client-Id", claims.sub)
+                # ── SoR resolution: instance_id -> sor -> backend (ADR-PC-018 §1/§2/§5) ───
+                # The GATEWAY resolves `sor`; the client cannot. Reads the `sor` column off the
+                # engine read surface for THIS instance_id and proxies to the engine ONLY on an
+                # explicit `sor == engine`. Legacy / unknown / any read failure => fail closed
+                # 503 SOR_UNRESOLVED (never guess a backend — guessing is split-brain, §5).
+                # No PII in the refusal body or logs (ADR-PC-004 §P2): a stable code + generic
+                # message only. The lookup is read-only and idempotent (§3/§4); the router holds
+                # no state of its own.
+                - |
+                  local cjson = require("cjson.safe")
+
+                  -- Single fail-closed exit for every non-engine / unresolvable outcome.
+                  local function deny_sor()
+                    return kong.response.exit(503, {
+                      code = "SOR_UNRESOLVED",
+                      message = "Instance state unavailable: the system-of-record for this instance cannot be resolved to an available backend, so the operation is refused rather than routed.",
+                    })
+                  end
+
+                  -- instance_id is SERVER-derived from the matched path (the named capture in the
+                  -- route regex), never a client-trusted routing key. Absent/empty => refuse.
+                  local instance_id = kong.request.get_uri_captures().named["instance_id"]
+                  if type(instance_id) ~= "string" or instance_id == "" then return deny_sor() end
+
+                  -- Resolve `sor` off the engine read surface (GET /v1/deposits/{id}, ADR-PC-027 /
+                  -- coexistence §6.2). The gateway READS `sor`; it never DECIDES it (§2). Done over
+                  -- the in-cluster engine address with the gateway's mTLS client cert; verify is the
+                  -- POC posture of the engine-query service (flip on with the CA bundle at deploy).
+                  local httpc = require("resty.http").new()
+                  httpc:set_timeout(2000)
+                  local res, err = httpc:request_uri(
+                    "https://engine:8080/v1/deposits/" .. instance_id,
+                    {
+                      method = "GET",
+                      ssl_verify = false,
+                      headers = {
+                        ["Authorization"] = kong.request.get_header("authorization"),
+                        ["Accept"] = "application/json",
+                      },
+                    }
+                  )
+                  -- Any transport error, a non-200 (404 unknown instance / projection lag, 5xx),
+                  -- a non-table body, or a `sor` that is not exactly "engine" => fail closed.
+                  if not res or res.status ~= 200 then return deny_sor() end
+                  local body = cjson.decode(res.body)
+                  if type(body) ~= "table" then return deny_sor() end
+                  if body.sor ~= "engine" then return deny_sor() end
+
+                  -- sor == engine: fall through and proxy to the engine upstream (this service).
 
 # ── Edge policies attached GLOBALLY (apply to every route above) ─────────────────
 plugins:
