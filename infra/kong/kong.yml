@@ -1,8 +1,9 @@
 # Kong CE declarative configuration — DB-less mode (ADR-IC-006).
 # Kong is the single shared edge gateway; this file is its ENTIRE config surface.
 # Every edge policy — JWT validation, rate limiting, request validation, PSD2 SCA
-# pre-conditions, OTel context propagation, SSE saga-stream routes, and the MCP
-# server route (ADR-IC-010) — is a change to THIS file, deployed by reloading Kong
+# pre-conditions, gateway-attested caller identity (X-Client-Id from the JWT sub,
+# §P4), OTel context propagation, SSE saga-stream routes, and the MCP server route
+# (ADR-IC-010) — is a change to THIS file, deployed by reloading Kong
 # (a PR on the config, never a database mutation; ADR-IC-006 §P1).
 #
 # Validated in CI by scripts/kong-config-check.sh (make kong-config-check):
@@ -191,12 +192,27 @@ services:
               access:
                 # ── PSD2 SCA enforcement (ADR-IC-006 §P2 / bd babelstone-6imx, I.4) ──────────
                 # FIRST access-phase entry, so auth (SCA) precedes structural body validation.
-                # This runs AFTER the global `jwt` plugin (which validated the token's
-                # signature, expiry, and issuer and mapped it to a consumer), and BEFORE the
-                # request reaches the orchestrator. Kong CE has no native SCA plugin (§F2), so
-                # §P2 mandates exactly this CE-bundled pre-function access check: the gateway
-                # enforces SCA at the boundary; the orchestrator trusts the gateway assertion
-                # and does NOT re-check (Boundary 2, Document 10).
+                #
+                # ORDERING — why reading the token here is sound (READ THIS; the X-Client-Id
+                # attestation below relies on the same property). On Kong CE plugin execution is
+                # STATIC priority order and there is no dynamic ordering (the `ordering:` field is
+                # Enterprise-only — `kong config parse` rejects it on CE). The `pre-function`
+                # priority (1000000) is HIGHER than `jwt` (1450), so this snippet actually runs
+                # BEFORE jwt validates the signature. That is still safe because `jwt` is a GLOBAL
+                # access-phase plugin (top-level `plugins:` below, no `anonymous` bypass — both
+                # asserted by kong-config-check): it terminates the request with 401 BEFORE Kong
+                # proxies upstream unless the token is validly signed. So a request only REACHES
+                # the orchestrator if jwt validated THIS SAME token; a forged or tampered token
+                # (changing any claim breaks the signature) is 401'd before upstream, and the
+                # claims this snippet read never take effect. We re-decode the payload only to read
+                # claims jwt does not surface on the CE credential context — the security rests on
+                # jwt gating the proxy, NOT on plugin order. The ADR-IC-006 §P2 request-level CI
+                # contract test (bd babelstone-abig) is the end-to-end lock on this property.
+                #
+                # Kong CE has no native SCA plugin (§F2), so §P2 mandates exactly this CE-bundled
+                # pre-function access check: the gateway enforces SCA at the boundary; the
+                # orchestrator trusts the gateway assertion and does NOT re-check (Boundary 2,
+                # Document 10).
                 #
                 # Claim contract (Document 10 §"PSD2 SCA at Enrolment"/§"Step-Up"): the OIDC
                 # `acr` claim is the structural SCA-completion signal (a non-empty value =>
@@ -244,10 +260,10 @@ services:
                     return ngx.decode_base64(s)
                   end
 
-                  -- Read the validated bearer token from the Authorization header. The global
-                  -- jwt plugin already proved its signature/expiry/issuer; we re-read the raw
-                  -- token to inspect the SCA claims (Kong CE's jwt plugin does not surface
-                  -- arbitrary claims on the credential context).
+                  -- Read the bearer token from the Authorization header. We re-read the raw token
+                  -- to inspect the SCA claims (Kong CE's jwt plugin does not surface arbitrary
+                  -- claims on the credential context); per the ORDERING note above, jwt gates the
+                  -- proxy, so only a validly-signed token's claims take effect end-to-end.
                   local auth = kong.request.get_header("authorization")
                   if type(auth) ~= "string" then return deny() end
                   -- RFC 7235 auth-scheme is case-INSENSITIVE: accept Bearer/bearer/BEARER alike,
@@ -275,7 +291,19 @@ services:
                   if type(at) ~= "number" or at % 1 ~= 0 then return deny() end
                   local now = ngx.time()
                   if at > now or (now - at) > SCA_MAX_AGE then return deny() end
-                  -- SCA present and fresh: fall through to the structural body validation below.
+
+                  -- Attest the caller identity to the upstream (bd babelstone-bkqo, ADR-IC-006 §P4):
+                  -- the orchestrator trusts X-Client-Id as the gateway-attested client_id and enforces
+                  -- per-process OWNERSHIP on it (EdgeAuth) — it does NOT read the token. Derive that
+                  -- header from the token's `sub` (jwt gates the proxy — see the ORDERING note above
+                  -- — so a request reaches the orchestrator only if jwt SUBSEQUENTLY validates this
+                  -- same token's signature, making the sub authentic) and OVERWRITE it with set_header,
+                  -- so a client-supplied
+                  -- X-Client-Id can never reach the orchestrator and assert someone else's identity
+                  -- (IDOR). A token with no usable `sub` cannot establish ownership => fail closed.
+                  if type(claims.sub) ~= "string" or claims.sub == "" then return deny() end
+                  kong.service.request.set_header("X-Client-Id", claims.sub)
+                  -- SCA fresh + identity attested: fall through to structural body validation below.
                 - |
                   local cjson = require("cjson.safe")
                   -- Read the (already buffered) request body; reject a non-JSON or empty body.
@@ -333,6 +361,49 @@ services:
         strip_path: false
         request_buffering: false
         response_buffering: false
+        plugins:
+          # Attest the caller identity to the orchestrator (bd babelstone-bkqo, ADR-IC-006 §P4). The
+          # SSE stream enforces per-process OWNERSHIP — only the client that started a process may watch
+          # it — and the orchestrator keys that on the gateway-attested X-Client-Id (EdgeAuth), never on
+          # a value the client could set. Like the constitute route, derive X-Client-Id from the
+          # token `sub` and OVERWRITE any client-supplied value, so the stream cannot be hijacked by
+          # asserting another client's id (IDOR). The sub is authentic because the global `jwt` plugin
+          # gates the proxy (see the ORDERING note on the constitute route): a request reaches the
+          # orchestrator only if jwt validated this same token, regardless of plugin order. No SCA
+          # here: a progress read is not a money-mover (only the global jwt plugin gates it).
+          # Fail-closed: any missing/malformed token or absent `sub` exits 403, never falls open.
+          - name: pre-function
+            config:
+              access:
+                - |
+                  local cjson = require("cjson.safe")
+                  local function deny()
+                    return kong.response.exit(403, {
+                      code = "FORBIDDEN",
+                      message = "A valid authenticated identity is required for this operation.",
+                    })
+                  end
+                  local function b64url_decode(seg)
+                    if type(seg) ~= "string" or seg == "" then return nil end
+                    local s = seg:gsub("-", "+"):gsub("_", "/")
+                    local pad = #s % 4
+                    if pad == 2 then s = s .. "=="
+                    elseif pad == 3 then s = s .. "="
+                    elseif pad == 1 then return nil end
+                    return ngx.decode_base64(s)
+                  end
+                  local auth = kong.request.get_header("authorization")
+                  if type(auth) ~= "string" then return deny() end
+                  local scheme, token = auth:match("^(%a+)%s+(.+)$")
+                  if not token or scheme:lower() ~= "bearer" then return deny() end
+                  local _, payload_seg = token:match("^([^%.]+)%.([^%.]+)%.([^%.]+)$")
+                  if not payload_seg then return deny() end
+                  local payload_json = b64url_decode(payload_seg)
+                  if not payload_json then return deny() end
+                  local claims = cjson.decode(payload_json)
+                  if type(claims) ~= "table" then return deny() end
+                  if type(claims.sub) ~= "string" or claims.sub == "" then return deny() end
+                  kong.service.request.set_header("X-Client-Id", claims.sub)
 
   # ── CQRS query reads (engine upstream) ────────────────────────────────────────
   # ONLY the read surface (ADR-IC-005 / ADR-PC-027). The engine COMMAND POST
