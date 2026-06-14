@@ -11,9 +11,6 @@ namespace Babelstone.Orchestrator.Inbox;
 /// </summary>
 public enum AdvanceOutcome
 {
-    /// <summary>The saga was started (a <c>saga_state</c> row created in its initial state).</summary>
-    Started,
-
     /// <summary>An accepted transition: the state moved, the history row and commands were
     /// written, all committed.</summary>
     Advanced,
@@ -31,8 +28,9 @@ public enum AdvanceOutcome
     /// route the record to its poison/dead-letter seam rather than wedging the partition.</summary>
     NoTransition,
 
-    /// <summary>The triggering event referenced a process id with no saga row (and the event
-    /// is not a start event): there is nothing to advance. Rejected, not invented.</summary>
+    /// <summary>The triggering event referenced a process id with no saga row: there is nothing
+    /// to advance. Sagas are started ONLY at the edge (<c>EdgeSagaStarter</c>), so an advance
+    /// event for an unknown saga is rejected, not invented.</summary>
     UnknownSaga,
 }
 
@@ -86,10 +84,6 @@ public sealed class SagaAdvanceHandler(
     private readonly SagaTransitionLog _transitionLog = transitionLog ?? throw new ArgumentNullException(nameof(transitionLog));
     private readonly ISagaCommandSink _commandSink = commandSink ?? throw new ArgumentNullException(nameof(commandSink));
     private readonly SagaBusinessReferenceStore _businessReferenceStore = businessReferenceStore ?? new SagaBusinessReferenceStore();
-
-    /// <summary>The event type that STARTS this saga type (ADR-IC-003 §P2): the only event
-    /// that creates a fresh <c>saga_state</c> row rather than advancing an existing one.</summary>
-    public required string StartEventType { get; init; }
 
     /// <summary>
     /// Process one inbox event end-to-end in its own transaction: dedup, start-or-advance,
@@ -147,17 +141,15 @@ public sealed class SagaAdvanceHandler(
             return AdvanceOutcome.Duplicate;
         }
 
-        // (2) Start vs advance. The start event creates the saga row; everything else
-        // advances an existing one.
-        if (message.EventType == StartEventType)
-        {
-            return await StartAsync(connection, transaction, message, span, ct);
-        }
-
+        // (2) Advance only. Sagas are started exclusively at the edge (EdgeSagaStarter creates the
+        // saga_state row, pins the business references, and drives the first transition in one
+        // transaction). The consume loop NEVER starts a saga — it resumes one on a consumed advance
+        // event (ADR-IC-003 §S2). An event for a process with no saga row is therefore an advance for
+        // an unknown saga: dedup-rowed and rejected, never used to create a reference-less saga.
         var saga = await _stateStore.LoadAsync(connection, transaction, message.ProcessId, ct);
         if (saga is null)
         {
-            // An advance event for a process that was never started: nothing to drive.
+            // An advance event for a process that was never started at the edge: nothing to drive.
             // Record the dedup row so the offset can move past it, then reject.
             await WriteInboxRowAsync(connection, transaction, message, "unknown-saga", ct);
             return AdvanceOutcome.UnknownSaga;
@@ -247,11 +239,12 @@ public sealed class SagaAdvanceHandler(
     /// the durable bus.
     /// </summary>
     /// <remarks>
-    /// The fork can only be decided with pinned references (the edge wrote them at start). A saga
-    /// started WITHOUT them (a consume-loop-started saga that never went through the I.1 edge) has no
-    /// amount/threshold/client to decide on, so the self-emit is skipped — the saga rests in
-    /// VALIDATIONS_COMPLETE awaiting an external approval event, exactly as the substrate did. With
-    /// references present the DECISION is pure (ApprovalForkHandler.Decide) and the chosen event is
+    /// The fork is decided on the references the edge pinned at start. Every saga is started at the
+    /// edge (<c>EdgeSagaStarter</c> pins them in the SAME transaction as the STARTED row), so by the
+    /// time the saga reaches VALIDATIONS_COMPLETE the references are ALWAYS present — a saga with none
+    /// is a fail-closed error, not a degraded "rest and wait for an external approval" path (bd
+    /// babelstone-t7o3.9: babelstone is pre-production; the reference-less consume-loop fallback was
+    /// removed). The DECISION is pure (ApprovalForkHandler.Decide) and the chosen event is
     /// self-advanced through the SAME state machine, so it is auditable from the transition table
     /// alone (§P2).
     /// </remarks>
@@ -263,13 +256,10 @@ public sealed class SagaAdvanceHandler(
         Activity? span,
         CancellationToken ct)
     {
-        var reference = await _businessReferenceStore.LoadAsync(connection, transaction, processId, ct);
-        if (reference is null)
-        {
-            // No pinned references — the fork has nothing to decide on. Leave the saga in
-            // VALIDATIONS_COMPLETE for an external approval event (the substrate's behaviour).
-            return;
-        }
+        var reference = await _businessReferenceStore.LoadAsync(connection, transaction, processId, ct)
+            ?? throw new InvalidOperationException(
+                $"Saga {processId} reached VALIDATIONS_COMPLETE with no pinned business references; " +
+                $"every saga must be started at the edge (bd babelstone-t7o3.9). Cannot decide the approval fork.");
 
         // PURE decision (ADR-PC-010 §P5): auto-approve vs route-to-workflow on the edge-pinned amount /
         // threshold / client type — no clock, no I/O, no live-config dereference. NextEventType maps the
@@ -333,63 +323,6 @@ public sealed class SagaAdvanceHandler(
     /// an INTERNAL marker — the self-emit never touches the durable bus (ADR-IC-003 §S2) — so the
     /// row's source is named distinctly from any real Redpanda topic.</summary>
     private const string SelfEmitSourceTopic = "saga.self-emit";
-
-    private async Task<AdvanceOutcome> StartAsync(
-        NpgsqlConnection connection, NpgsqlTransaction transaction, SagaInboxEvent message, Activity? span, CancellationToken ct)
-    {
-        var created = await _stateStore.TryStartAsync(
-            connection, transaction, message.ProcessId, _machine.SagaType,
-            _machine.InitialState, message.CorrelationId, ct);
-
-        if (!created)
-        {
-            // A redelivered start for a saga that already exists: do not reset it. Dedup and
-            // report a duplicate (effectively-once start).
-            await WriteInboxRowAsync(connection, transaction, message, "already-started", ct);
-            return AdvanceOutcome.Duplicate;
-        }
-
-        // The start event can itself drive the first transition (e.g. STARTED +
-        // ConstitutionRequested → PARALLEL_VALIDATION, emitting the parallel commands). If
-        // the table has no transition for (initial, start-event), the saga simply rests in
-        // its initial state — a legitimate "created, awaiting first driver" shape.
-        if (_machine.TryAdvance(_machine.InitialState, message.EventType, out var outcome))
-        {
-            var won = await _stateStore.TryAdvanceAsync(
-                connection, transaction, message.ProcessId, 0, outcome.Next, ct);
-            if (!won)
-            {
-                throw new SagaConcurrencyException(message.ProcessId, 0);
-            }
-
-            await _transitionLog.AppendAsync(
-                connection, transaction, message.ProcessId, _machine.InitialState, outcome.Next,
-                message.EventType, message.MessageId, note: SagaStateNames.ToName(outcome.Next), ct);
-
-            // The start event drove the first transition: tag the move (H.5) and propagate THIS
-            // span's context outbound on every command it emitted (ADR-IC-007 Layer 1).
-            span?.SetTag(
-                BabelstoneAttributes.SagaTransition,
-                $"{SagaStateNames.ToName(_machine.InitialState)}->{SagaStateNames.ToName(outcome.Next)}");
-            var traceParent = SagaTraceContext.FormatTraceParent(span);
-            foreach (var commandType in outcome.Commands)
-            {
-                await _commandSink.EmitAsync(
-                    connection, transaction, message.ProcessId, commandType,
-                    message.MessageId, message.CorrelationId, ct, traceParent);
-            }
-        }
-        else
-        {
-            // No first-transition: record the creation itself as the opening history row.
-            await _transitionLog.AppendAsync(
-                connection, transaction, message.ProcessId, _machine.InitialState, _machine.InitialState,
-                message.EventType, message.MessageId, note: "started", ct);
-        }
-
-        await WriteInboxRowAsync(connection, transaction, message, "started", ct);
-        return AdvanceOutcome.Started;
-    }
 
     private static async Task<bool> IsDuplicateAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid messageId, CancellationToken ct)

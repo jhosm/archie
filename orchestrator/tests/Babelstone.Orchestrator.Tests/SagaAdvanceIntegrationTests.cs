@@ -1,3 +1,5 @@
+using Babelstone.Orchestrator.Edge;
+using Babelstone.Orchestrator.Handlers;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
@@ -18,9 +20,12 @@ namespace Babelstone.Orchestrator.Tests;
 [Collection(nameof(OrchestratorPostgresCollection))]
 public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixture)
 {
+    private const long ThresholdCents = 1_000_00;
+
     private readonly ConstitutionProcess _machine = new();
     private readonly SagaStateStore _stateStore = new();
     private readonly SagaTransitionLog _transitionLog = new();
+    private readonly SagaBusinessReferenceStore _businessRefStore = new();
 
     [Fact]
     public async Task Migration_creates_the_saga_schema()
@@ -34,34 +39,31 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
     [Fact]
     public async Task Start_then_full_happy_path_lands_in_COMPLETED_with_full_history()
     {
-        var processId = Guid.NewGuid();
         var correlationId = Guid.NewGuid();
-        var sink = new RecordingCommandSink();
-        var handler = NewHandler(sink);
+        var handler = NewHandler(new RecordingCommandSink());
 
-        // STARTED + ConstitutionRequested → PARALLEL_VALIDATION, emitting the two parallel commands.
-        Assert.Equal(AdvanceOutcome.Started,
-            await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionRequested, correlationId)));
+        // The edge is the SOLE saga starter (bd babelstone-t7o3.9): STARTED + ConstitutionRequested →
+        // PARALLEL_VALIDATION, pinning the references and emitting the two parallel commands. The
+        // amount is well under the threshold (auto-approve path).
+        var processId = await StartSagaWithReferencesAsync(correlationId, amountCents: 100_00);
         Assert.Equal(SagaState.ParallelValidation, await StateAsync(processId));
-        Assert.Equal(
-            new[] { "ReserveAccountBalance", "ValidateProductLimits" },
-            sink.Emitted.Select(c => c.CommandType).ToArray());
-        // The identity trio rides the emission (ADR-IC-003 §P7): correlation carried through.
-        Assert.All(sink.Emitted, c => Assert.Equal(correlationId, c.CorrelationId));
 
-        // Both validations (balance first → AWAIT_LIMITS_VALIDATED → join), approval, debit,
-        // activation, close.
+        // Both validations (balance first → AWAIT_LIMITS_VALIDATED → join). When the join lands in
+        // VALIDATIONS_COMPLETE the saga AUTO-self-emits ConstitutionApproved → APPROVED (emitting
+        // ConfirmDebit) in-process — the test does NOT feed an external ConstitutionApproved.
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.BalanceReserved)));
         Assert.Equal(SagaState.AwaitLimitsValidated, await StateAsync(processId));
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsValidated)));
-        Assert.Equal(SagaState.ValidationsComplete, await StateAsync(processId));
-        Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionApproved)));
+        // The self-emit fork already crossed VALIDATIONS_COMPLETE → APPROVED on the completing join.
+        Assert.Equal(SagaState.Approved, await StateAsync(processId));
+        // Debit confirmation arms activation, then activation closes the saga.
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.DebitConfirmed)));
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.ProcessConstituted)));
 
         Assert.Equal(SagaState.Completed, await StateAsync(processId));
 
-        // The append-only transition history records every accepted move, in order.
+        // The append-only transition history records every accepted move, in order — including the
+        // in-process VALIDATIONS_COMPLETE → APPROVED self-emit (no external approval event).
         var history = await HistoryAsync(processId);
         Assert.Equal(
             new[]
@@ -85,52 +87,57 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         // so it frequently arrives first). Driven end-to-end through the real handler, BOTH
         // orderings must land in VALIDATIONS_COMPLETE — neither poisons via NoTransition.
 
+        // The join completes into VALIDATIONS_COMPLETE, which AUTO-self-emits the auto-approve fork
+        // (amount under threshold) → APPROVED in the SAME advance. So the observable post-join state is
+        // APPROVED in BOTH orderings — the order-independence is on the JOIN itself (neither poisons).
+
         // Order A: balance first (was the only order the prior suite exercised).
-        var procA = Guid.NewGuid();
         var handlerA = NewHandler(new RecordingCommandSink());
-        await RunAsync(handlerA, Event(procA, ConstitutionProcess.ConstitutionRequested));
+        var procA = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handlerA, Event(procA, ConstitutionProcess.BalanceReserved)));
         Assert.Equal(SagaState.AwaitLimitsValidated, await StateAsync(procA));
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handlerA, Event(procA, ConstitutionProcess.LimitsValidated)));
-        Assert.Equal(SagaState.ValidationsComplete, await StateAsync(procA));
+        Assert.Equal(SagaState.Approved, await StateAsync(procA));
 
         // Order B (the COMMON one): limits first — the previously-unexercised reverse order that
         // used to poison the later-arriving BalanceReserved. Same destination, no NoTransition.
-        var procB = Guid.NewGuid();
         var handlerB = NewHandler(new RecordingCommandSink());
-        await RunAsync(handlerB, Event(procB, ConstitutionProcess.ConstitutionRequested));
+        var procB = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handlerB, Event(procB, ConstitutionProcess.LimitsValidated)));
         Assert.Equal(SagaState.AwaitBalanceReserved, await StateAsync(procB));
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handlerB, Event(procB, ConstitutionProcess.BalanceReserved)));
-        Assert.Equal(SagaState.ValidationsComplete, await StateAsync(procB));
+        Assert.Equal(SagaState.Approved, await StateAsync(procB));
     }
 
     [Fact]
     public async Task A_redelivered_message_id_is_a_no_op_effectively_once()
     {
-        var processId = Guid.NewGuid();
         var handler = NewHandler(new RecordingCommandSink());
 
-        var start = Event(processId, ConstitutionProcess.ConstitutionRequested);
-        Assert.Equal(AdvanceOutcome.Started, await RunAsync(handler, start));
+        // Edge-start the saga (the sole start path), then redeliver an ADVANCE event: the consume
+        // loop's dedup is what effectively-once guards. The start itself contributes one history row.
+        var processId = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
+
+        var advance = Event(processId, ConstitutionProcess.BalanceReserved);
+        Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, advance));
+        Assert.Equal(SagaState.AwaitLimitsValidated, await StateAsync(processId));
 
         // The SAME message_id redelivered: dedup short-circuits the advance — no second move.
-        Assert.Equal(AdvanceOutcome.Duplicate, await RunAsync(handler, start));
-        Assert.Equal(SagaState.ParallelValidation, await StateAsync(processId));
+        Assert.Equal(AdvanceOutcome.Duplicate, await RunAsync(handler, advance));
+        Assert.Equal(SagaState.AwaitLimitsValidated, await StateAsync(processId));
 
-        // Exactly one START transition recorded — the redelivery added no history row.
+        // Two transition rows — the edge START and the single advance; the redelivery added none.
         var history = await HistoryAsync(processId);
-        Assert.Single(history);
+        Assert.Equal(2, history.Length);
     }
 
     [Fact]
     public async Task Early_compensation_path_persists_and_reaches_CANCELLED()
     {
-        var processId = Guid.NewGuid();
         var sink = new RecordingCommandSink();
         var handler = NewHandler(sink);
 
-        await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionRequested));
+        var processId = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
         // A product-limit rejection drives the early compensation (Document 05 Scenario A).
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsRejected)));
         Assert.Equal(SagaState.CompensateValidations, await StateAsync(processId));
@@ -148,10 +155,9 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         // DEPOSIT_CONSTITUTION_FAILED state, emitting NO reversal command — nothing reversible was
         // committed, so there is nothing to compensate (a fail-CLOSED before any effect). Driven
         // end-to-end through the real handler + the durable outbox sink.
-        var processId = Guid.NewGuid();
-        var handler = NewHandler(new SagaCommandOutboxSink());
+        var handler = NewHandler(new SagaCommandOutboxSink(_businessRefStore));
 
-        await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionRequested));
+        var processId = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
         Assert.Equal(SagaState.ParallelValidation, await StateAsync(processId));
 
         Assert.Equal(
@@ -176,10 +182,9 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
     [Fact]
     public async Task A_failed_compensation_escalates_to_HUMAN_INTERVENTION_REQUIRED()
     {
-        var processId = Guid.NewGuid();
         var handler = NewHandler(new RecordingCommandSink());
 
-        await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionRequested));
+        var processId = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
         await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsRejected));
         // The compensation itself fails (the ACL reported INDETERMINATE): the saga escalates
         // rather than swallowing the failure (ADR-IC-003 §P6).
@@ -190,10 +195,9 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
     [Fact]
     public async Task An_event_for_a_terminal_saga_is_a_no_op()
     {
-        var processId = Guid.NewGuid();
         var handler = NewHandler(new RecordingCommandSink());
 
-        await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionRequested));
+        var processId = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
         await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsRejected));
         await RunAsync(handler, Event(processId, ConstitutionProcess.ReservationReleased));
         Assert.Equal(SagaState.Cancelled, await StateAsync(processId));
@@ -206,10 +210,9 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
     [Fact]
     public async Task An_illegal_transition_is_rejected_not_applied()
     {
-        var processId = Guid.NewGuid();
         var handler = NewHandler(new RecordingCommandSink());
 
-        await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionRequested));
+        var processId = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
         // DebitConfirmed out of PARALLEL_VALIDATION is not in the table (§P2): rejected.
         Assert.Equal(AdvanceOutcome.NoTransition, await RunAsync(handler, Event(processId, ConstitutionProcess.DebitConfirmed)));
         // State unchanged — the illegal event never moved the saga.
@@ -231,9 +234,7 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         // ADR-IC-003 §P1 / §Residual "Concurrent writer race": the WHERE version = ? predicate
         // rejects a writer that read a now-stale version. Two transactions both read version 1;
         // the first advances it to 2, the second's advance-against-1 matches zero rows.
-        var processId = Guid.NewGuid();
-        var handler = NewHandler(new RecordingCommandSink());
-        await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionRequested)); // version → 1
+        var processId = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00); // version → 1
 
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();
@@ -252,13 +253,37 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
     // --- helpers -----------------------------------------------------------------------
 
     private SagaAdvanceHandler NewHandler(ISagaCommandSink sink) =>
-        new(_machine, _stateStore, _transitionLog, sink)
+        new(_machine, _stateStore, _transitionLog, sink, _businessRefStore);
+
+    private static SagaInboxEvent Event(Guid processId, string eventType, Guid? correlationId = null) =>
+        new(Guid.NewGuid(), processId, eventType, "deposits.process.events", correlationId);
+
+    // Start the saga through the REAL edge starter (the sole start path, bd babelstone-t7o3.9): creates
+    // the STARTED row, pins the references, drives STARTED + ConstitutionRequested → PARALLEL_VALIDATION
+    // (emitting the two parallel commands), all atomic. Returns the minted internal process id.
+    private async Task<Guid> StartSagaWithReferencesAsync(Guid correlationId, long amountCents)
+    {
+        var sink = new SagaCommandOutboxSink(_businessRefStore);
+        var starter = new EdgeSagaStarter(_machine, _stateStore, _transitionLog, sink, _businessRefStore)
         {
             StartEventType = ConstitutionProcess.ConstitutionRequested,
         };
 
-    private static SagaInboxEvent Event(Guid processId, string eventType, Guid? correlationId = null) =>
-        new(Guid.NewGuid(), processId, eventType, "deposits.process.events", correlationId);
+        var result = await starter.StartAsync(
+            fixture.ConnectionString,
+            owningClientId: "CLI-2026-007842",
+            new EdgeBusinessFacts(
+                ProductRef: "TD-TRAD-12M",
+                AmountMinorUnits: amountCents,
+                SourceAccountRef: "acct-ref-001",
+                InterestAccountRef: null,
+                ClientType: ClientType.Existing,
+                AutoApprovalThresholdMinorUnits: ThresholdCents),
+            correlationId);
+
+        Assert.Equal(SagaState.ParallelValidation, result.State);
+        return result.ProcessId;
+    }
 
     private async Task<AdvanceOutcome> RunAsync(SagaAdvanceHandler handler, SagaInboxEvent message)
     {

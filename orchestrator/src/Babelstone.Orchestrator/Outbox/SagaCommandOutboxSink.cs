@@ -41,16 +41,21 @@ namespace Babelstone.Orchestrator.Outbox;
 /// consumer threads its spans under this saga's trace. NULL when no tracer was listening.
 /// </para>
 /// <para>
-/// <b>Full business-reference payloads (bd babelstone-t7o3.1).</b> When the saga has pinned
-/// <see cref="SagaBusinessReference"/>s (the edge wrote them at start), this sink builds the FULL
-/// typed <see cref="CommandPayload"/> through <see cref="SagaCommandPayloadFactory"/> — the
-/// ReserveAccountBalance body carries the real source account + a derived reservation reference, the
-/// ActivateDeposit body the deposit/Core-txn references, and so on — instead of the minimal
-/// <see cref="SagaCommandEnvelopeBody"/>. The full payload stays byte-stable (every derived
-/// reference is a deterministic function of the process id, never a minted value) and PII-free (a
-/// positive allow-list of structural references). The sink FALLS BACK to the seam envelope only
-/// when no references were pinned (a consume-loop-started saga that never went through the edge) —
-/// the substrate seam is preserved, the richer body is additive.
+/// <b>Full business-reference payloads (bd babelstone-t7o3.1).</b> The sink builds the FULL typed
+/// <see cref="CommandPayload"/> through <see cref="SagaCommandPayloadFactory"/> from the saga's
+/// pinned <see cref="SagaBusinessReference"/>s — the ReserveAccountBalance body carries the real
+/// source account + a derived reservation reference, the ActivateDeposit body the deposit/Core-txn
+/// references, and so on. The full payload stays byte-stable (every derived reference is a
+/// deterministic function of the process id, never a minted value) and PII-free (a positive
+/// allow-list of structural references).
+/// </para>
+/// <para>
+/// <b>References are mandatory — fail-closed (bd babelstone-t7o3.9).</b> Every saga is started at the
+/// edge (<c>EdgeSagaStarter</c>), which pins the business references in the SAME transaction as the
+/// STARTED row, so they are ALWAYS present by the time any command is emitted. A saga that reaches
+/// the sink with no pinned references throws rather than degrading to a minimal seam envelope — the
+/// pre-production reference-less consume-loop fallback was removed (babelstone is not in production,
+/// so no legacy start path needs preserving).
 /// </para>
 /// </remarks>
 public sealed class SagaCommandOutboxSink(SagaBusinessReferenceStore? businessReferenceStore = null) : ISagaCommandSink
@@ -73,23 +78,24 @@ public sealed class SagaCommandOutboxSink(SagaBusinessReferenceStore? businessRe
         ArgumentNullException.ThrowIfNull(transaction);
         ArgumentException.ThrowIfNullOrWhiteSpace(commandType);
 
-        // The LOGICAL payload body. With pinned business references present, build the FULL typed
-        // command payload (the real account/deposit/Core references) through the pure factory; with
-        // none — or no factory recipe for this command — fall back to the minimal seam envelope. BOTH
-        // are byte-stable (NO Guid.NewGuid, NO DateTimeOffset.UtcNow inside): re-emitting the same
-        // logical command produces identical bytes. The reference LOAD runs on the saga transaction,
-        // so it sees a row the same transaction may have just written (the edge start).
-        var reference = await _businessReferenceStore.LoadAsync(connection, transaction, processId, ct);
+        // The LOGICAL payload body: the FULL typed command payload (the real account/deposit/Core
+        // references) built through the pure factory from the saga's pinned business references. Every
+        // saga is started at the edge, which pins those references in the SAME transaction as the
+        // STARTED row (EdgeSagaStarter), so they are ALWAYS present here — a saga with none is a
+        // fail-closed error, not a degraded seam-envelope path (bd babelstone-t7o3.9: babelstone is
+        // pre-production; the consume-loop reference-less fallback was removed). The body is byte-stable
+        // (NO Guid.NewGuid, NO DateTimeOffset.UtcNow inside): re-emitting the same logical command
+        // produces identical bytes. The reference LOAD runs on the saga transaction, so it sees the row
+        // the same transaction wrote at start.
+        var reference = await _businessReferenceStore.LoadAsync(connection, transaction, processId, ct)
+            ?? throw new InvalidOperationException(
+                $"Saga {processId} has no pinned business references; every saga must be started at the edge " +
+                $"(bd babelstone-t7o3.9). Cannot assemble the '{commandType}' command payload.");
         CommandPayload body =
-            (reference is not null
-                ? SagaCommandPayloadFactory.Build(commandType, processId, causationMessageId, correlationId, reference)
-                : null)
-            ?? new SagaCommandEnvelopeBody(commandType)
-            {
-                ProcessId = processId,
-                CausationMessageId = causationMessageId,
-                CorrelationId = correlationId,
-            };
+            SagaCommandPayloadFactory.Build(commandType, processId, causationMessageId, correlationId, reference)
+            ?? throw new InvalidOperationException(
+                $"No command-payload recipe for '{commandType}' on saga {processId}; the factory must cover " +
+                $"every command the state machine emits (bd babelstone-t7o3.9).");
         var payload = body.ToBytes();
 
         // The OPERATIONAL delivery id — the one freshly minted value, an outbox COLUMN, never in
