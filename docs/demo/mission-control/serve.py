@@ -30,6 +30,8 @@ Options (env vars):
     MC_PORT           port to serve the UI on                  (default 9000)
     ENGINE_URL        base URL of the engine (LIVE·engine)     (default http://localhost:8080)
     ORCHESTRATOR_URL  base URL of the orchestrator (LIVE·saga) (default http://localhost:8090)
+    TEMPO_URL         base URL of Grafana Tempo's query API     (default http://localhost:3200)
+                      (LIVE·engine Telemetry tab → /tempo/api/traces/{id})
     DEMO_CLIENT_ID    the gateway-attested caller injected on  (default CLI-DEMO-0001)
                       /api/v1/* (an OPAQUE reference, never PII)
 """
@@ -43,6 +45,7 @@ import urllib.error
 PORT = int(os.environ.get("MC_PORT", "9000"))
 ENGINE_URL = os.environ.get("ENGINE_URL", "http://localhost:8080").rstrip("/")
 ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://localhost:8090").rstrip("/")
+TEMPO_URL = os.environ.get("TEMPO_URL", "http://localhost:3200").rstrip("/")
 DEMO_CLIENT_ID = os.environ.get("DEMO_CLIENT_ID", "CLI-DEMO-0001")
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -60,18 +63,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         sys.stderr.write("  %s\n" % (fmt % args))
 
     def _route(self):
-        """Map the request path to a backend. Returns (base_url, injected_headers) or None
-        for a static file served locally."""
+        """Map the request path to a backend. Returns (base_url, injected_headers, upstream_path)
+        or None for a static file served locally."""
         if self.path.startswith("/api/v1/"):
             # The orchestrator edge. This server stands in for Kong: it injects the
             # gateway-attested caller id the edge authz binds ownership to (EdgeAuth).
-            return ORCHESTRATOR_URL, {"X-Client-Id": DEMO_CLIENT_ID}
+            return ORCHESTRATOR_URL, {"X-Client-Id": DEMO_CLIENT_ID}, self.path
         if self.path.startswith("/v1/"):
-            return ENGINE_URL, None
+            return ENGINE_URL, None, self.path
+        if self.path.startswith("/tempo/"):
+            # Grafana Tempo's query API (LIVE·engine Telemetry tab, bd babelstone-f0ic.9): the UI
+            # fetches the REAL trace by id at /tempo/api/traces/{id}; strip the /tempo prefix so the
+            # upstream sees its own /api/... path. Read-only GETs of an opaque trace id — no PII.
+            return TEMPO_URL, None, self.path[len("/tempo"):]
         return None
 
-    def _relay(self, method, base_url, inject):
-        url = base_url + self.path
+    def _relay(self, method, base_url, inject, upstream_path):
+        url = base_url + upstream_path
         length = int(self.headers.get("Content-Length", 0) or 0)
         body = self.rfile.read(length) if length else None
 
@@ -142,19 +150,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         route = self._route()
         if route is not None:
-            return self._relay("GET", route[0], route[1])
+            return self._relay("GET", route[0], route[1], route[2])
         return super().do_GET()
 
     def do_POST(self):
         route = self._route()
         if route is not None:
-            return self._relay("POST", route[0], route[1])
+            return self._relay("POST", route[0], route[1], route[2])
         self.send_error(405)
 
     def do_PUT(self):
         route = self._route()
         if route is not None:
-            return self._relay("PUT", route[0], route[1])
+            return self._relay("PUT", route[0], route[1], route[2])
         self.send_error(405)
 
 
@@ -165,6 +173,7 @@ def main():
         print("  UI            http://localhost:%d" % PORT)
         print("  engine        %s  (proxied at /v1/*      — LIVE·engine)" % ENGINE_URL)
         print("  orchestrator  %s  (proxied at /api/v1/*  — LIVE·saga)" % ORCHESTRATOR_URL)
+        print("  tempo         %s  (proxied at /tempo/*   — LIVE·engine real traces)" % TEMPO_URL)
         print("  mode          open the page, flip the toggle to LIVE·engine or LIVE·saga")
         print("  Ctrl-C to stop")
         try:
