@@ -99,6 +99,14 @@ services:
       KONG_ADMIN_ACCESS_LOG: /dev/stdout
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_ERROR_LOG: /dev/stderr
+      # Keep the Lua sandbox ON (security) but allowlist the two stdlib/ngx modules the
+      # kong.yml pre-functions require — cjson.safe (SCA + body decode) and resty.http (SoR
+      # resolution). kong:3.9.1 defaults untrusted_lua=sandbox with an EMPTY requires-allowlist,
+      # which BLOCKS both require()s, so without this every constitute / SoR / SCA request 500s
+      # (bd babelstone-39jl). The static kong-config-check can't catch it (it loads no Lua
+      # module); the bd babelstone-abig / babelstone-1z0r runtime contract harness is the guard.
+      KONG_UNTRUSTED_LUA: "sandbox"
+      KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES: "cjson.safe,resty.http"
     ports:
       - "${KONG_PROXY_PORT:-8000}:8000"   # edge proxy — external surfaces route through here
       - "${KONG_ADMIN_PORT:-8001}:8001"   # admin API (local dev only; not exposed in prod)

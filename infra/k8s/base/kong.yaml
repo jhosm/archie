@@ -62,6 +62,14 @@ spec:
               value: /dev/stderr
             - name: KONG_ADMIN_ERROR_LOG
               value: /dev/stderr
+            # Keep the Lua sandbox ON but allowlist the two modules the kong.yml pre-functions
+            # require — cjson.safe (SCA + body decode) and resty.http (SoR resolution). kong:3.9.1
+            # defaults untrusted_lua=sandbox with an EMPTY requires-allowlist, so without this every
+            # edge request 500s (bd babelstone-39jl); the abig/1z0r runtime harness is the guard.
+            - name: KONG_UNTRUSTED_LUA
+              value: "sandbox"
+            - name: KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES
+              value: "cjson.safe,resty.http"
           volumeMounts:
             - name: kong-config
               mountPath: /kong
