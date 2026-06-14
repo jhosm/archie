@@ -84,19 +84,27 @@ python3 docs/demo/mission-control/serve.py
 # 3. open http://localhost:9000  → flip the Mode toggle to LIVE·saga → Constitute deposit
 ```
 
-You'll watch the saga stream out of the edge: `ConstitutionRequested` → `PARALLEL_VALIDATION`, with
-`ReserveAccountBalance` dispatched to the Core-ACL stub, and the position column tracking the saga's
-milestones (Requested → Validating → Approved & debited → Constituted).
+You'll watch the saga walk out of the edge: `ConstitutionRequested` → `PARALLEL_VALIDATION`
+(`ReserveAccountBalance` dispatched to the Core-ACL stub) → `VALIDATIONS_COMPLETE` → **`APPROVED`**,
+where the **irreversible `ConfirmDebit`** fires and `ActivateDeposit` is dispatched to the engine.
+The position column tracks the milestones (Requested → Validating → **Approved & debited** →
+Constituted).
 
-**The honest edge — the saga pauses at `PARALLEL_VALIDATION` by design today.** Its result events
-(`BalanceReserved` / `LimitsValidated`) are what advance it, and nothing *produces* those onto the
-internal `deposits.process.events` topic yet — that outcome-feedback bridge is **bd
-`babelstone-t7o3.8`** (in progress). So LIVE·saga proves the whole *command-plane* (edge → saga →
-dispatcher → settlement) end-to-end, and the saga runs through to a terminal `DepositConstituted`
-the moment t7o3.8 lands — the engine is added to `demo-saga.sh` at that point (it joins at the
-irreversible phase; the stranded happy path never reaches `ActivateDeposit`, so it isn't needed
-yet). This is the same honest framing as the MCP and Telemetry tabs: show what's real, name what's
-aspirational.
+**How far it goes — and the one honest gap.** With the **result-event bridge** (bd
+`babelstone-t7o3.8`, now merged) the orchestrator synthesizes each result event from the command's
+delivery outcome and self-advances the saga, so the happy path walks all the way to **`APPROVED`** —
+the reversible reserve *and* the irreversible debit both fire. It does **not** reach `COMPLETED`:
+`ActivateDeposit`-applied is deliberately *not* synthesized (ADR-PC-029 slot 2 — the saga advances on
+the engine's real `DepositConstituted`, not the command's HTTP 2xx), and the engine→saga completion
+correlation that would carry it `APPROVED → COMPLETED` is a separate, still-unbuilt bridge. So the
+demo stops at `APPROVED`; `ActivateDeposit` is dispatched to the engine on `:8080` — start the engine
+(`scripts/demo-mcp.sh up`) for it to land a **real deposit**. Same honest framing as the MCP and
+Telemetry tabs: show what's real, name what's aspirational.
+
+**The refusal branch reaches a terminal state.** Tick **force insufficient funds** (a LIVE·saga
+affordance) and the source account is flagged `insufficient`, so the Core-ACL stub `422`s the
+reservation: the saga **fails closed** — `PreconditionRefused` → terminal `DEPOSIT_CONSTITUTION_FAILED`,
+before any irreversible effect, nothing committed. That's the compensation/fail-closed beat, end to end.
 
 `serve.py` plays the **gateway** for this mode: it injects the `X-Client-Id` the edge's per-process
 authz binds ownership to (the claim Kong would propagate, ADR-IC-006 §P4) — the browser's
@@ -108,9 +116,9 @@ Other lifecycle actions (mature, coupons, retry, terminate) are disabled in LIVE
 covers **constitution** only today. Use DEMO or LIVE·engine to drive those.
 
 **Smoke-tested 2026-06-14** against a real orchestrator (`scripts/demo-saga.sh up` → `serve.py`):
-the edge returns `202` + a `PROC-…` id, the SSE stream emits `PARALLEL_VALIDATION`, the dispatcher
-delivers `ReserveAccountBalance` to the Core-ACL stub (`POST /v1/reservations`), and the UI renders
-the saga flow + the strand — confirmed in the browser and the orchestrator log. (A pre-existing
+the happy path walks to `APPROVED` (reserve **and** the irreversible debit both hit the Core-ACL stub
+— `POST /v1/reservations` + `POST /v1/debits`), and the refusal path reaches terminal
+`DEPOSIT_CONSTITUTION_FAILED` — both confirmed in the browser and the orchestrator DB. (A pre-existing
 Postgres volume is fine — the orchestrator uses its own `babelstone_orchestrator` database, distinct
 from the engine's, so there's no `inbox`-table collision with `demo-mcp.sh`.)
 
