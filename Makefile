@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 EVENTCATALOG_PORT ?= 8082
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo-mcp demo-mcp-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo-mcp demo-mcp-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -74,6 +74,9 @@ asyncapi-catalog-validate: ## AsyncAPI catalogue §P1–§P6 gate (fast, hermeti
 
 asyncapi-catalog-reconcile: ## Live check: catalogue subjects exist in a throwaway SR (ADR-IC-015 §8, needs Docker)
 	@./scripts/asyncapi-catalog-reconcile.sh
+
+kong-config-check: ## Validate the Kong edge config: deck + kong config parse + edge-contract assertions (ADR-IC-006 §P1, needs deck + Docker)
+	@./scripts/kong-config-check.sh
 
 validate-variant: ## Run pack-validate depths 1–4 on a variant (VARIANT=path PACK=pt.2026.1, ADR-PC-006)
 	@test -n "$(VARIANT)" || { echo "usage: make validate-variant VARIANT=<path/to/variant.yaml> [PACK=pt.2026.1]"; exit 2; }

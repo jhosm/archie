@@ -1,13 +1,330 @@
 # Kong CE declarative configuration — DB-less mode (ADR-IC-006).
 # Kong is the single shared edge gateway; this file is its ENTIRE config surface.
-# Every future edge policy — JWT validation, rate limiting, request validation,
-# PSD2 SCA pre-conditions, OTel context propagation, SSE saga-stream routes, and
-# the MCP server route (ADR-IC-010) — is a change to THIS file, deployed by
-# reloading Kong (a PR on the config, never a database mutation).
+# Every edge policy — JWT validation, rate limiting, request validation, PSD2 SCA
+# pre-conditions, OTel context propagation, SSE saga-stream routes, and the MCP
+# server route (ADR-IC-010) — is a change to THIS file, deployed by reloading Kong
+# (a PR on the config, never a database mutation; ADR-IC-006 §P1).
 #
-# No services/routes yet: the Deposits REST API and the MCP server land with
-# Epic I. Kong runs healthy on this empty declarative config.
+# Validated in CI by scripts/kong-config-check.sh (make kong-config-check):
+#   1. `deck file validate` (the ADR-IC-006 §P1 deck gate), and
+#   2. `kong config parse` (KONG_DATABASE=off) on the pinned kong:3.9.1 image, and
+#   3. edge-contract fitness assertions (routes present, SSE settings, edge policies,
+#      and the engine COMMAND surface NOT publicly exposed).
+#
+# ── The client-facing edge surface (ADR-IC-006 §Decision / Document 05) ──────────
+#
+#   I.1 edge-over-saga front door  → orchestrator upstream (the saga's own Kestrel
+#   surface, feat/edge-process-api):
+#     • POST /api/v1/deposits/constitute      202 + process_id + stream_url; STARTS the saga
+#     • GET  /api/v1/processes/{id}/stream     SSE saga-progress stream (long-lived)
+#
+#   CQRS query reads               → engine upstream (ADR-IC-005 / ADR-PC-027):
+#     • GET  /v1/deposits/{id} (and ?as_of_sequence=N)   one canonical read resource
+#     • GET  /v1/deposits/maturities                     the maturities range scan
+#
+#   The engine COMMAND surface (POST /v1/deposits) is DELIBERATELY ABSENT here. In the
+#   intended model the client starts the SAGA at the edge (constitute, above); the
+#   engine command is the ORCHESTRATOR's internal, mTLS-only saga target (the saga
+#   command dispatcher → POST /v1/deposits), NOT the public client write path
+#   (ADR-IC-006 §P5 Boundary 2 / Document 05). Exposing it publicly would let a client
+#   append to the engine bypassing the saga's money legs (reserve → debit) and the
+#   edge preconditions — so it is not a Kong route. The engine SERVICE below carries
+#   ONLY the two read routes.
+#
+# Upstream service names (orchestrator:8080, engine:8080) are the compose/k8s service
+# names those application images take when they land (the infra stack is backing
+# services only today; the app subtrees connect to it — infra/k8s/base/kustomization.yaml).
 
 _format_version: "3.0"
 
-services: []
+# ── mTLS to upstreams (ADR-IC-006 §P5 Boundary 2) ───────────────────────────────
+# Kong presents this client certificate to the internal services; each service trusts
+# the internal CA and rejects any connection without it at the transport layer. This
+# enforces Boundary 2 (API Gateway → Internal Services) mechanically, not by network
+# policy alone. The PEM material is injected at deploy time (a mounted secret / a
+# `deck sync` from a secret store) — the literals here are POC placeholders so the
+# declarative config parses and the gate can assert the mTLS boundary is wired. The
+# referenced certificates are attached to BOTH upstream services below.
+certificates:
+  - id: 7e9b6f1a-2c4d-4e8a-9b1f-0a2c4d6e8f10
+    # POC THROWAWAY self-signed keypair (CN=babelstone-edge-poc) — present so the
+    # declarative config is genuinely valid and `kong config parse` accepts it. NOT a
+    # secret and NOT the production gateway cert: at deploy time this is replaced by the
+    # real internal-CA-signed gateway client cert (a mounted secret / a `deck sync` from
+    # a secret store). Committing throwaway material keeps the gate self-contained while
+    # the mTLS boundary (ADR-IC-006 §P5) stays expressed in the config.
+    cert: |
+      -----BEGIN CERTIFICATE-----
+      MIIDHTCCAgWgAwIBAgIUfaHM5ukIJp1MpqoI0c15PdeDE8IwDQYJKoZIhvcNAQEL
+      BQAwHjEcMBoGA1UEAwwTYmFiZWxzdG9uZS1lZGdlLXBvYzAeFw0yNjA2MTQwNjA4
+      MTBaFw0zNjA2MTEwNjA4MTBaMB4xHDAaBgNVBAMME2JhYmVsc3RvbmUtZWRnZS1w
+      b2MwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCbbwOc44IupKLEA25y
+      dG8dijcgP+WIldU/zFAkxcsGcbmtPw7PVZXpKltJV1UCLDX23EVys73c3MfS3mI3
+      c1IWB4LJpFgo30e5ODllWlkXZoeRPRCjeev5CHLNQEcT1jinqPuzl69Bnf9mUDge
+      CW90wcZdlitv8ReP1wKlmsoeXbcCpvydrj89Esjv7PAHPgVNd5tYzYlXIQDEXFpF
+      gh01oGMwElW8K4paXLHzW8rrwBSyZI9AQ5TksH3pctFwCgrKPr6GmdATi65HJ3eu
+      VN/tR2NHDaHwoI7yVYRAZocjB/KiBG1kbI8tAZH7QftrmQ9Prgjd2nM9yTwNCO8q
+      5Z4TAgMBAAGjUzBRMB0GA1UdDgQWBBQQIPB83s1F3gR+M/gigZ9HN4HdnjAfBgNV
+      HSMEGDAWgBQQIPB83s1F3gR+M/gigZ9HN4HdnjAPBgNVHRMBAf8EBTADAQH/MA0G
+      CSqGSIb3DQEBCwUAA4IBAQAbzDbvrOZ12iAjki3pLauMFNsCAJhnLlUcSXd4lwMr
+      V6ZB5/RTylnSXtCPdXHNz0ymaco6DEgOH/VfNqKlYAYxEy7yXnj+N+xdV2ahncAW
+      x0XxXo3Uzz90FUeUiGpXFO74U2MLMIB1Fu4xhI2CJHCRklXlfPCeJ+nmGFTi4uyx
+      xn7MwXRG+HpUKT1VGH6QJX6EFWNOPsUD7xYdwSIhV/9rhLaeu4qsCYF3ad9Sk+7s
+      GzcDWfydPs2LaenATeGhDEEd9wqfIoc3h2tMydQJhXB7uSNTQ6YLbf905NMANeru
+      UBbM8eWHeLGq70tjBnZWgLMWYx6TlGxcp0QmPpjJ0Rx3
+      -----END CERTIFICATE-----
+    key: |
+      -----BEGIN PRIVATE KEY-----
+      MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCbbwOc44IupKLE
+      A25ydG8dijcgP+WIldU/zFAkxcsGcbmtPw7PVZXpKltJV1UCLDX23EVys73c3MfS
+      3mI3c1IWB4LJpFgo30e5ODllWlkXZoeRPRCjeev5CHLNQEcT1jinqPuzl69Bnf9m
+      UDgeCW90wcZdlitv8ReP1wKlmsoeXbcCpvydrj89Esjv7PAHPgVNd5tYzYlXIQDE
+      XFpFgh01oGMwElW8K4paXLHzW8rrwBSyZI9AQ5TksH3pctFwCgrKPr6GmdATi65H
+      J3euVN/tR2NHDaHwoI7yVYRAZocjB/KiBG1kbI8tAZH7QftrmQ9Prgjd2nM9yTwN
+      CO8q5Z4TAgMBAAECggEARDEtzBiSZkVLtaRtweAsWbDoY4k0+joGL3HDXYa7fm3J
+      kOT/6d26Iew31ZLvlD7yRAY6n8qUyz+/mVeAjqRVCJ4t9qpYFUJ0VKICqGE9ggM1
+      CfbZBGe6q+zVdRA0vtK203PTTeUH+klHoksie6cXE4nqLefy0a9b73rcyewBrdUv
+      oUkgA8A0xLRmvpI2U1mrsC2xDJiluddnxaTiLCxuY68k6NfVDqERkQbD2AP/ZC1H
+      NxUWRTNTgNaKVPilWbRB+41NFRcH3m2cpOjac6TTCxBqctNfFC4ULqkywsIL8f/7
+      VdDjOJPKkKMWbOvCUo4ivw2gkme9w1sj1qrseB5XiQKBgQDL1gAAPEpYM06zyjQB
+      gIUxonNda+g/qyzDTX7VrPctMP557mY4C8sd0oKoVTnrtKkLh04ChxpaukAuoMq1
+      NOVM0HOMoBFI66b7cNY/mOYSeywN8VpmvrclizIR5KryeE89XDOi6RCdx0Z2N3I0
+      vvhl0LmBQMkd0u5P1ZtMW+zLWwKBgQDDNgMaoIF2UdfjmWXjl5S30anhx5w1de9W
+      cV7TgNcqOoeqwzDCAlwRf+uNU2WqIWrMEZuaABqWgfpvDBX7YfQHayfsqIzR4SMH
+      BAzs6lLezwZbPXmgPuDf2pi784JcL8gYTfS3bthWhTZq/kZ58epirNqvnfSNJgEz
+      r+1JCItNqQKBgA6GW02o/is2zL7nA7mvrM4So2He1Jfk3LW2Cfmz75Ea0qdho4sO
+      3BRt8b2JBS2UnA8kPxzS/7/DUduAvbEX6dcFa5ZzuYeWszlrmvjBLnPWrxb3Qdfc
+      czSLrK+1ubC5ffwDW/KZ5QM5Nf4qiUrU6OJocy+QrEQhybWKpRxV2JPNAoGAbFnW
+      bzkXoqzav6GtRB4mlcDyIjfBJItJRRm4IH0q8G18T/P3ZDgbEjuGavMXQs85j/tV
+      +qyEFXYfovN6YAWGhXecuWb0gqoL3yEIa5fEV5dhV9NPZvp/psCWdfw7Jx/+WD8s
+      zYPg4GUgR1LLm3QDPLHk0AVEb/PgRugnNJphd8ECgYAuA+9NZRWJEPu+liiuVib6
+      PzFt6D6U9ZUdm3wo66GLDDyiyePqiBdApedhOZBAtVQuioW4Q1D9fj4VKow6IuQO
+      KESn3hDgR82VSU915RFNRhd/3ueTqFULhNYT9zTodnZRfQx0AJ7qwo2DyaRCyA7Z
+      F2Jrtmg+NftUfzn2pFXS2Q==
+      -----END PRIVATE KEY-----
+
+# ── JWT signing keys (ADR-IC-006 §1 / §P7) ──────────────────────────────────────
+# The `jwt` plugin validates a bearer token's signature against a key pre-registered
+# on the issuing CONSUMER. Kong CE's jwt plugin requires the IAM's public key to be
+# PRE-REGISTERED (ADR-IC-006 Consequences: "jwt plugin requires public key
+# pre-registration"; §P7: key rotation is a deliberate `deck sync`).
+#
+# RESIDUAL (ADR-IC-006 §P7): automatic JWKS rotation is NOT native to Kong CE's jwt
+# plugin — a key rotation is a deliberate three-step `deck sync` (add new, retain old
+# until tokens expire, remove old). If multi-issuer or frequent rotation becomes
+# burdensome, APISIX's openid-connect with JWKS polling is the documented upgrade path.
+consumers:
+  - username: iam-issuer
+    # The `key` is the JWT `iss` claim the IAM stamps; `algorithm` pins RS256
+    # (asymmetric, per ADR-IC-006 §1: "signature (RS256/ES256)"). `rsa_public_key` is
+    # a POC placeholder — replaced by the real IAM signing public key at deploy time.
+    jwt_secrets:
+      - key: https://iam.babelstone.example/
+        algorithm: RS256
+        # For RS256 the signature is verified against rsa_public_key; `secret` is
+        # unused for asymmetric algorithms but the schema requires the field present.
+        secret: unused-for-rs256
+        # POC THROWAWAY public key paired with the cert above — replaced by the real IAM
+        # signing public key at deploy time (a key rotation is a deliberate `deck sync`,
+        # ADR-IC-006 §P7). Present so the jwt entity validates and the gate runs.
+        rsa_public_key: |
+          -----BEGIN PUBLIC KEY-----
+          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm28DnOOCLqSixANucnRv
+          HYo3ID/liJXVP8xQJMXLBnG5rT8Oz1WV6SpbSVdVAiw19txFcrO93NzH0t5iN3NS
+          FgeCyaRYKN9HuTg5ZVpZF2aHkT0Qo3nr+QhyzUBHE9Y4p6j7s5evQZ3/ZlA4Hglv
+          dMHGXZYrb/EXj9cCpZrKHl23Aqb8na4/PRLI7+zwBz4FTXebWM2JVyEAxFxaRYId
+          NaBjMBJVvCuKWlyx81vK68AUsmSPQEOU5LB96XLRcAoKyj6+hpnQE4uuRyd3rlTf
+          7UdjRw2h8KCO8lWEQGaHIwfyogRtZGyPLQGR+0H7a5kPT64I3dpzPck8DQjvKuWe
+          EwIDAQAB
+          -----END PUBLIC KEY-----
+
+services:
+  # ── The I.1 constitute front door (orchestrator upstream, default timeouts) ────
+  - name: orchestrator-edge
+    url: https://orchestrator:8080
+    # mTLS to the orchestrator (ADR-IC-006 §P5): Kong presents the client cert above.
+    client_certificate: 7e9b6f1a-2c4d-4e8a-9b1f-0a2c4d6e8f10
+    # Trust the internal CA for the upstream TLS handshake (POC: skip verify until the
+    # internal CA bundle is mounted; flip to true with the CA at deploy time).
+    tls_verify: false
+    routes:
+      # POST /api/v1/deposits/constitute — STARTS the saga, returns 202 + stream_url.
+      # A financial operation: rate-limited tightly (ADR-IC-006 §P3) and payload-
+      # validated (§4). PSD2 SCA enforcement is bd babelstone-6imx (I.4), which DEPENDS
+      # ON this issue and builds on the jwt plugin below — NOT added here (out of scope).
+      - name: deposits-constitute
+        methods: ["POST"]
+        paths: ["/api/v1/deposits/constitute"]
+        strip_path: false
+        plugins:
+          # ADR-IC-006 §P3: 5 req/min per consumer — prevents accidental duplicate
+          # constitution attempts. `local` policy is fine at single-node POC scale
+          # (in-memory counters; Valkey-backed distributed counters are the §P3
+          # upgrade, a config-only change).
+          - name: rate-limiting
+            config:
+              minute: 5
+              policy: local
+              limit_by: consumer
+              fault_tolerant: true
+          # ADR-IC-006 §4: reject structurally invalid requests at the edge; the
+          # application never receives them. The validated shape mirrors the
+          # orchestrator's ConstituteRequest DTO (product_code, amount cents, opaque
+          # account refs — NO raw PII, ADR-PC-004 §P2: the body carries already-tokenised
+          # references).
+          #
+          # IMPLEMENTATION NOTE (ADR-IC-006 §4 + §S2 honoured on Kong CE): the ADR names
+          # the `request-validator` plugin for JSON-schema body validation, but that
+          # plugin ships ONLY in Kong ENTERPRISE — it is NOT in the Kong Gateway CE
+          # bundled-plugins set the ADR Decision actually selects (Apache-2.0 CE). The
+          # CE-native equivalent is a `pre-function` Lua snippet in the access phase —
+          # the SAME bundled mechanism the ADR mandates for SCA enforcement (§P2) and
+          # cites as the CE workaround pattern throughout (§F2, §P7). It validates the
+          # request body and returns 400 on a structurally invalid request, satisfying
+          # the §4 obligation ("reject structurally invalid requests at the edge") on the
+          # selected edition. Honoured, not diverged: the obligation is met by the
+          # edition-appropriate mechanism. The richer declarative JSON-schema form returns
+          # if/when the estate moves to Kong Enterprise or APISIX (the §S4 upgrade path).
+          - name: pre-function
+            config:
+              access:
+                - |
+                  local cjson = require("cjson.safe")
+                  -- Read the (already buffered) request body; reject a non-JSON or empty body.
+                  local raw = kong.request.get_raw_body()
+                  if not raw or raw == "" then
+                    return kong.response.exit(400, { message = "A constitution request body is required." })
+                  end
+                  local body = cjson.decode(raw)
+                  if type(body) ~= "table" then
+                    return kong.response.exit(400, { message = "Request body must be a JSON object." })
+                  end
+                  -- product_code: non-empty string (a catalogue reference, not PII).
+                  if type(body.product_code) ~= "string" or body.product_code == "" then
+                    return kong.response.exit(400, { message = "product_code is required and must be a non-empty string." })
+                  end
+                  -- amount: positive integer cents (the engine's money discipline).
+                  if type(body.amount) ~= "number" or body.amount % 1 ~= 0 or body.amount < 1 then
+                    return kong.response.exit(400, { message = "amount is required and must be a positive integer (cents)." })
+                  end
+                  -- source_account_ref: non-empty OPAQUE token, NOT a raw IBAN (ADR-PC-004 §P2).
+                  if type(body.source_account_ref) ~= "string" or body.source_account_ref == "" then
+                    return kong.response.exit(400, { message = "source_account_ref is required and must be a non-empty token." })
+                  end
+                  -- interest_account_ref: optional, but a string when present.
+                  if body.interest_account_ref ~= nil and type(body.interest_account_ref) ~= "string" then
+                    return kong.response.exit(400, { message = "interest_account_ref must be a string when present." })
+                  end
+
+  # ── The I.1 SSE saga-progress stream (orchestrator upstream, LONG timeouts) ────
+  # A SEPARATE service so the SSE-aware timeouts (ADR-IC-006 §P4) apply to THIS
+  # upstream ONLY and not to the constitute POST — Kong's read/write timeouts are a
+  # SERVICE property, and the ADR scopes them to "the Kong upstream definition for
+  # this path". Same orchestrator URL + the same mTLS client cert (§P5).
+  - name: orchestrator-sse
+    url: https://orchestrator:8080
+    client_certificate: 7e9b6f1a-2c4d-4e8a-9b1f-0a2c4d6e8f10
+    tls_verify: false
+    # SSE: no hard read/write timeout at the gateway for this long-lived stream —
+    # 1800000 ms (30 min) spans an approval-gated saga (ADR-IC-006 §P4). This overrides
+    # Kong's default 60s read timeout for this upstream only.
+    read_timeout: 1800000
+    write_timeout: 1800000
+    routes:
+      # GET /api/v1/processes/{id}/stream — the SSE saga-progress stream.
+      # Buffering OFF at the route (ADR-IC-006 §P4) so each event: frame flushes
+      # immediately. The upstream also sends X-Accel-Buffering: no
+      # (ProcessApiEndpoints.StreamAsync), which disables nginx/Kong buffering for the
+      # connection — the two together keep the long-lived stream flowing without a
+      # gateway timeout.
+      - name: processes-stream
+        methods: ["GET"]
+        # The {id} segment matched by a single-segment wildcard regex (Kong route
+        # regex): /api/v1/processes/<one-segment>/stream.
+        paths: ["~/api/v1/processes/[^/]+/stream$"]
+        strip_path: false
+        request_buffering: false
+        response_buffering: false
+
+  # ── CQRS query reads (engine upstream) ────────────────────────────────────────
+  # ONLY the read surface (ADR-IC-005 / ADR-PC-027). The engine COMMAND POST
+  # /v1/deposits is ABSENT by design (see the header note / ADR-IC-006 §P5).
+  - name: engine-query
+    url: https://engine:8080
+    client_certificate: 7e9b6f1a-2c4d-4e8a-9b1f-0a2c4d6e8f10
+    tls_verify: false
+    routes:
+      # GET /v1/deposits/maturities — the maturities range scan. Registered BEFORE the
+      # point-read so the literal "/maturities" is not swallowed by the {id} regex.
+      - name: deposits-maturities
+        methods: ["GET"]
+        paths: ["/v1/deposits/maturities"]
+        strip_path: false
+        plugins:
+          # General authenticated read budget (ADR-IC-006 §P3: 200 req/min per consumer).
+          - name: rate-limiting
+            config:
+              minute: 200
+              policy: local
+              limit_by: consumer
+              fault_tolerant: true
+
+      # GET /v1/deposits/{id} (and ?as_of_sequence=N) — the one canonical read resource.
+      # The {id} segment is a single path segment that is NOT the literal "maturities";
+      # a GUID-shaped segment (the engine's :guid constraint) excludes the word anyway.
+      - name: deposits-read
+        methods: ["GET"]
+        paths: ["~/v1/deposits/[^/]+$"]
+        strip_path: false
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 200
+              policy: local
+              limit_by: consumer
+              fault_tolerant: true
+
+# ── Edge policies attached GLOBALLY (apply to every route above) ─────────────────
+plugins:
+  # ADR-IC-006 §1 / §P7: validate the OAuth 2.0 bearer token's signature (RS256/ES256),
+  # expiry, and issuer against the pre-registered consumer key. Kong maps the validated
+  # token to the issuing consumer; the JWT `sub` claim is the client identity that the
+  # per-consumer rate limits key on (ADR-IC-006 §P3) and that the orchestrator reads as
+  # its gateway-attested caller. (The orchestrator's per-process OWNERSHIP check is the
+  # second layer, ADR-IC-006 §P4 — Kong validates the token, the app enforces ownership.)
+  - name: jwt
+    config:
+      # Standard bearer location: Authorization: Bearer <jwt> (and the `jwt` query/uri
+      # params disabled — header only). claims_to_verify enforces token expiry.
+      claims_to_verify: ["exp"]
+      key_claim_name: iss
+      maximum_expiration: 0
+      header_names: ["authorization"]
+
+  # ADR-IC-006 §P6: the opentelemetry plugin propagates the W3C `traceparent` header to
+  # every upstream request, so a distributed trace begins at the edge and continues
+  # through the orchestrator, the saga, and the engine — the same OTel-native signal as
+  # every other service (ADR-IC-007). It exports to the OTel Collector (the single OTLP
+  # entry point, ADR-IC-007 §P1) at its OTLP/HTTP traces endpoint.
+  - name: opentelemetry
+    config:
+      traces_endpoint: http://otel-collector:4318/v1/traces
+      # W3C trace-context in and out (the propagation format the whole stack uses): the
+      # plugin extracts an incoming `traceparent` and injects it on the upstream request.
+      propagation:
+        extract: ["w3c"]
+        inject: ["w3c"]
+        default_format: w3c
+      resource_attributes:
+        service.name: kong-edge
+
+  # ADR-IC-006 §P3 IP-level fallback: a coarse per-IP DDoS-mitigation limit that applies
+  # to ALL traffic (including any pre-auth path), layered under the per-consumer limits
+  # on the financial/read routes above. 30 req/min per IP (the §P3 unauthenticated-path
+  # budget), `local` policy at POC scale.
+  - name: rate-limiting
+    config:
+      minute: 30
+      policy: local
+      limit_by: ip
+      fault_tolerant: true
