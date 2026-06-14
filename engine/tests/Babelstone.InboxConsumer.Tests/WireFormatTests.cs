@@ -44,8 +44,9 @@ public sealed class WireFormatTests
 
     [Theory]
     [InlineData("com.bank.deposits.DepositConstituted", "DepositConstituted")]
+    [InlineData("com.bank.deposits.InterestPaid", "InterestPaid")]
     [InlineData("com.bank.deposits.DepositMatured", "DepositMatured")]
-    [InlineData("WithholdingApplied", "WithholdingApplied")] // no dots: the whole string is the record name
+    [InlineData("InterestPaid", "InterestPaid")] // no dots: the whole string is the record name
     [InlineData("", "")]
     public void RecordName_is_the_last_segment_of_a_reverse_dns_ce_type(string ceType, string expected)
         => Assert.Equal(expected, InboxPump.RecordName(ceType));

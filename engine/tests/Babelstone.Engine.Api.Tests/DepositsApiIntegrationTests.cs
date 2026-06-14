@@ -120,15 +120,20 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
 
         // Assert the durable event log directly, not just the folded projection: the
         // constitute→mature flow appended exactly the four canonical term-deposit events,
-        // in order, each paired with an outbox row (ES_ATOMIC_APPEND_OUTBOX) — the "events"
-        // leg of E.6's events+projection+published-messages triad, driven through MCP's HTTP
-        // surface rather than the runtime directly.
+        // in order — the "events" leg of E.6's events+projection+published-messages triad,
+        // driven through MCP's HTTP surface rather than the runtime directly. ALL FOUR are in
+        // the store (appended/folded/replayable from the JSON event store).
         Assert.Equal(
             ["term_deposit.DepositConstituted", "term_deposit.InterestAccrued",
              "term_deposit.WithholdingApplied", "term_deposit.DepositMatured"],
             await EventTypesAsync(depositId));
         Assert.Equal(4, await CountAsync("events", "stream_id", depositId));
-        Assert.Equal(4, await CountAsync("outbox", "aggregate_id", depositId));
+        // But ONLY the catalogued subset gets an outbox row (the bus surface) — the catalog-gated
+        // relay (ADR-IC-017 §P1) is wired in the host. After the §P4 promotion pass the AT_MATURITY
+        // flow's catalogued events are DepositConstituted + DepositMatured (2); the de-promoted
+        // InterestAccrued / WithholdingApplied accrual mechanics are store-only, so no outbox row.
+        // (InterestPaid, the promoted coupon-payout event, is NOT emitted by the AT_MATURITY flow.)
+        Assert.Equal(2, await CountAsync("outbox", "aggregate_id", depositId));
     }
 
     [Fact]

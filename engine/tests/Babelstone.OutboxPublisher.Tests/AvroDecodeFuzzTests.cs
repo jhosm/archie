@@ -54,8 +54,11 @@ public sealed class AvroDecodeFuzzTests(ITestOutputHelper output)
     // failure as a crash. Each decode runs on a worker with this timeout; exceeding it fails LOUD.
     private static readonly TimeSpan PerDecodeBudget = TimeSpan.FromSeconds(5);
 
-    // The catalogued, decodable events (the four with a committed .avsc under contracts/avro/). These
-    // are the only record names AvroEventSerializer can resolve, so they define the decode surface.
+    // The catalogued, decodable events (the three with a committed .avsc under contracts/avro/, after
+    // the ADR-IC-017 §P4 promotion pass: DepositConstituted, InterestPaid, DepositMatured). These are
+    // the only record names AvroEventSerializer can resolve, so they define the decode surface — the
+    // de-promoted InterestAccrued/WithholdingApplied are now schemaless/store-only and cannot be encoded
+    // or decoded as Avro at all.
     private static readonly (Type Type, Func<DomainEvent> Sample)[] DecodableEvents =
     [
         (typeof(DepositConstituted), () => new DepositConstituted(
@@ -70,8 +73,12 @@ public sealed class AvroDecodeFuzzTests(ITestOutputHelper output)
             AutoRenewalPolicy: "NONE",
             PaymentPeriodMonths: 3,
             ProductCode: "dpz_pt_12m_juros_venc")),
-        (typeof(InterestAccrued), () => new InterestAccrued(new Money(30_417), new DateOnly(2026, 12, 31))),
-        (typeof(WithholdingApplied), () => new WithholdingApplied(new Money(8_517), new Money(21_900))),
+        (typeof(InterestPaid), () => new InterestPaid(
+            DepositId: Guid.NewGuid(),
+            GrossInterest: new Money(30_417),
+            WithholdingTax: new Money(8_517),
+            NetInterest: new Money(21_900),
+            PaidOn: new DateOnly(2026, 12, 31))),
         (typeof(DepositMatured), () => new DepositMatured(
             PrincipalReturned: new Money(1_000_000),
             NetInterestPaid: new Money(21_900),

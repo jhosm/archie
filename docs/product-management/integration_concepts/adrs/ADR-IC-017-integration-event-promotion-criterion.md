@@ -90,3 +90,13 @@ This decision's load-bearing commitments are fitness functions in the [commitmen
 - `NO_UNCATALOGUED_EVENT_ON_BUS` — every relay-publishable `event_type` has an AsyncAPI/`.avsc` entry, the reverse orphan check that mirrors §P1 at build time (§P3).
 
 Both are `Planned` — the gates are named and the Test IDs reserved; the tests are written with the implementing issue (§P1/§P3). The `Planned` status is a deliberate, listed hole; visibility is the point.
+
+## §P4 classification pass — recorded verdict (2026-06-14)
+
+*Additive implementation note (not a change to the Decision above — §P4 explicitly delegates this classification pass to the implementing issue; this records its result).* The per-event §P4 ratification of the term-deposit running example was performed (bd `babelstone-a7d4.4`). The net **catalogued (promoted) integration-event set is `{ DepositConstituted, InterestPaid, DepositMatured }`** — down from the four schemas the estate started with. The recorded **consumer map** is the `x-authorized-consumers` field on each AsyncAPI file under [`contracts/catalog/events/`](../../../../contracts/catalog/events/); the [catalogue README](../../../../contracts/catalog/README.md#the-promoted-set--the-adr-ic-017-p4-classification) carries the full verdict table.
+
+- **`InterestPaid` — PROMOTED to integration (v1).** The coarse coupon/advance payout fact GL/accounting, notifications, and reporting react to; carries the withholding *amount* on `withholding_tax_cents`. The §P4 running example above (and the Residual-risks note) anticipated this as a v1.x *candidate*; the classification pass realised it in **v1**, so the running-example "v1.x" framing for `InterestPaid` is now historical.
+- **`InterestAccrued` / `WithholdingApplied` — DE-PROMOTED to internal / store-only.** Fine-grained periodic accrual and tax-withholding *mechanics*; no downstream context reacts to each tick (fail tests 1 + 2), and the integration-relevant withholding amount already rides the coarse `InterestPaid` (a separate event is redundant). Their `.avsc`/AsyncAPI entries and registry subjects were removed; at v1 there are no live consumers, so the removal is non-breaking.
+- **`DepositConstituted` / `DepositMatured` — stay integration.** Clear coarse facts (`DepositMatured` carries the AT_MATURITY maturity payout). `DepositConstitutionFailed` and the other F.2 lifecycle events stay internal/store-only per the Decision.
+
+The events de-promoted here still **exist** as `DomainEvent` records and are appended, folded, and replayable from the JSON event store ([ADR-PC-028](../../product_concepts/adrs/ADR-PC-028-event-store-payload-format.md)); only their bus schema was removed. Replay/fold is unaffected — the `.avsc` is bus-encode only.

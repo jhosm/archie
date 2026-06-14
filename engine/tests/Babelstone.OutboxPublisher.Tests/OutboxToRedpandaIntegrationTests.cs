@@ -18,11 +18,17 @@ using Xunit;
 namespace Babelstone.OutboxPublisher.Tests;
 
 /// <summary>
-/// The E.4 walking-skeleton round-trip (the fixture E.6 reuses): append the four term-deposit
+/// The E.4 walking-skeleton round-trip (the fixture E.6 reuses): append the catalogued term-deposit
 /// events through <see cref="AggregateRuntime{TState}"/> wired with the real Avro codec (so the
 /// outbox rows carry real SR schema_ids), run the relay <see cref="OutboxDrainer.DrainOnceAsync"/>
 /// to publish to Redpanda, then CONSUME and assert the Avro payload, the CloudEvents headers, and
 /// the PUBLISHED flip.
+///
+/// After the ADR-IC-017 §P4 promotion pass the bus-encodable set is the three CATALOGUED events
+/// (DepositConstituted, InterestPaid, DepositMatured); the de-promoted InterestAccrued/WithholdingApplied
+/// accrual mechanics have no .avsc, so the Avro codec cannot encode them — they are store-only and never
+/// appear here. This test wires the codec directly (NOT the catalog-gated runtime), so it appends only
+/// the catalogued set: a constitution, then a coupon payout (InterestPaid) and the maturity payout.
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class OutboxToRedpandaIntegrationTests : IAsyncLifetime
@@ -57,7 +63,7 @@ public sealed class OutboxToRedpandaIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Appends_drain_to_Redpanda_as_Avro_with_CloudEvents_headers_and_flip_to_published()
+    public async Task Catalogued_appends_drain_to_Redpanda_as_Avro_with_CloudEvents_headers_and_flip_to_published()
     {
         var depositId = Guid.NewGuid();
 
@@ -77,16 +83,17 @@ public sealed class OutboxToRedpandaIntegrationTests : IAsyncLifetime
             TimeProvider.System,
             () => DepositPosition.Empty);
 
-        // --- Act 1: append the four events (constitution, then the maturity flow). ---
+        // --- Act 1: append the three CATALOGUED events (constitution, a coupon payout, maturity). The
+        //     de-promoted InterestAccrued/WithholdingApplied have no .avsc and cannot be Avro-encoded,
+        //     so they are deliberately absent from this bus round-trip (ADR-IC-017 §P4). ---
         var constituted = new DepositConstituted(
             depositId, new Money(PrincipalCents), TanBasisPoints, "rs-2026-01",
             TermDays: 364, StartDate, MaturityDate, "AT_MATURITY", "NONE");
         await runtime.AppendAsync(depositId, expectedVersion: -1, [constituted], Ctx(), CancellationToken.None);
 
-        var accrued = new InterestAccrued(new Money(GrossCents), MaturityDate);
-        var withheld = new WithholdingApplied(new Money(TaxCents), new Money(NetCents));
+        var paid = new InterestPaid(depositId, new Money(GrossCents), new Money(TaxCents), new Money(NetCents), MaturityDate);
         var matured = new DepositMatured(new Money(PrincipalCents), new Money(NetCents), new Money(PayoutCents), MaturityDate);
-        await runtime.AppendAsync(depositId, expectedVersion: 0, [accrued, withheld, matured], Ctx(), CancellationToken.None);
+        await runtime.AppendAsync(depositId, expectedVersion: 0, [paid, matured], Ctx(), CancellationToken.None);
 
         // --- Act 2: drain the outbox to Redpanda. ---
         var options = new OutboxRelayOptions
@@ -97,22 +104,21 @@ public sealed class OutboxToRedpandaIntegrationTests : IAsyncLifetime
         };
         await using var drainer = new OutboxDrainer(options);
         var published = await drainer.DrainOnceAsync(CancellationToken.None);
-        Assert.Equal(4, published);
+        Assert.Equal(3, published);
 
         // --- Assert: the outbox rows all flipped to PUBLISHED. ---
         Assert.Equal(0, await CountPendingAsync(depositId));
-        Assert.Equal(4, await CountPublishedAsync(depositId));
+        Assert.Equal(3, await CountPublishedAsync(depositId));
 
-        // --- Assert: consume the four records from Redpanda and check Avro + headers. ---
-        var records = ConsumeAll(topic: "term_deposit", expected: 4);
-        Assert.Equal(4, records.Count);
+        // --- Assert: consume the three records from Redpanda and check Avro + headers. ---
+        var records = ConsumeAll(topic: "term_deposit", expected: 3);
+        Assert.Equal(3, records.Count);
 
-        // Per-aggregate order is preserved (ADR-IC-004 §P2): the four ce_type values in sequence.
+        // Per-aggregate order is preserved (ADR-IC-004 §P2): the three ce_type values in sequence.
         Assert.Equal(
             [
                 "com.bank.deposits.DepositConstituted",
-                "com.bank.deposits.InterestAccrued",
-                "com.bank.deposits.WithholdingApplied",
+                "com.bank.deposits.InterestPaid",
                 "com.bank.deposits.DepositMatured",
             ],
             records.Select(r => Header(r, "ce_type")).ToList());
@@ -142,15 +148,15 @@ public sealed class OutboxToRedpandaIntegrationTests : IAsyncLifetime
         // UTC-midnight DateTime (on the wire it is an int day-count since the Unix epoch).
         Assert.Equal(StartDate, DateOnly.FromDateTime((DateTime)constitutedRecord["start_date"]));
 
-        // The three maturity events carry the canonical money legs.
-        var accruedRecord = DeserializeValue(records[1].Message.Value);
-        Assert.Equal(GrossCents, (long)accruedRecord["gross_interest_cents"]);
+        // The promoted InterestPaid carries the coupon's three money legs + the deposit reference.
+        var paidRecord = DeserializeValue(records[1].Message.Value);
+        Assert.Equal(depositId, (Guid)paidRecord["deposit_id"]);
+        Assert.Equal(GrossCents, (long)paidRecord["gross_interest_cents"]);
+        Assert.Equal(TaxCents, (long)paidRecord["withholding_tax_cents"]);
+        Assert.Equal(NetCents, (long)paidRecord["net_interest_cents"]);
 
-        var withheldRecord = DeserializeValue(records[2].Message.Value);
-        Assert.Equal(TaxCents, (long)withheldRecord["tax_cents"]);
-        Assert.Equal(NetCents, (long)withheldRecord["net_cents"]);
-
-        var maturedRecord = DeserializeValue(records[3].Message.Value);
+        // The maturity event carries the canonical payout legs.
+        var maturedRecord = DeserializeValue(records[2].Message.Value);
         Assert.Equal(PayoutCents, (long)maturedRecord["total_payout_cents"]);
         Assert.Equal(NetCents, (long)maturedRecord["net_interest_paid_cents"]);
         Assert.Equal(PrincipalCents, (long)maturedRecord["principal_returned_cents"]);

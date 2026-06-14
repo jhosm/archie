@@ -161,8 +161,11 @@ public sealed class EmitContractFitnessTests
         Assert.NotEmpty(eventTypes);
 
         // Non-vacuity guard: the regex must extract ALL current family DomainEvent types, not a
-        // subset — 7 of these 11 have no .avsc, so a regex that silently dropped one would leave a
-        // schemaless event unguarded. If a family adds/removes an event, update this count knowingly.
+        // subset — 8 of these 11 have no .avsc (after the ADR-IC-017 §P4 promotion pass: InterestPaid
+        // gained an .avsc; InterestAccrued + WithholdingApplied lost theirs, de-promoted to internal /
+        // store-only), so a regex that silently dropped one would leave a schemaless event unguarded.
+        // If a family adds/removes an event, update this count knowingly. (The TOTAL DomainEvent count
+        // is unchanged — the §P4 change touches only WHICH of the 11 are catalogued, not Events.cs.)
         Assert.Equal(11, eventTypes.Count);
 
         var violations = eventTypes
@@ -406,10 +409,12 @@ public sealed class EmitContractFitnessTests
     }
 
     /// <summary>
-    /// NO-PII-ON-BUS — CLR half. The <c>.avsc</c> scan above covers only the 4 schema-backed events;
-    /// 7 of the 11 family events are schemaless today — including the most PII-adjacent
-    /// (<c>DepositTransferredToHeirs</c>'s <c>HeirCaseRef</c>, <c>DepositCorrected</c>'s
-    /// <c>PreviousValueRef</c>/<c>CorrectedValueRef</c>) and the highest-risk future
+    /// NO-PII-ON-BUS — CLR half. The <c>.avsc</c> scan above covers only the 3 schema-backed events
+    /// (the ADR-IC-017 §P4 promoted set: <c>DepositConstituted</c>, <c>InterestPaid</c>,
+    /// <c>DepositMatured</c>); 8 of the 11 family events are schemaless today — including the most
+    /// PII-adjacent (<c>DepositTransferredToHeirs</c>'s <c>HeirCaseRef</c>, <c>DepositCorrected</c>'s
+    /// <c>PreviousValueRef</c>/<c>CorrectedValueRef</c>), the de-promoted accrual mechanics
+    /// (<c>InterestAccrued</c>, <c>WithholdingApplied</c>), and the highest-risk future
     /// <c>NotificationDue</c> — so without this they ride to the bus unguarded until their
     /// <c>.avsc</c> exists. This scans the CLR record CONSTRUCTOR PARAMETER names off
     /// <c>families/**/Events.cs</c> (the same disk-scan idiom as <see cref="FamilyDomainEventTypeNames"/>),
@@ -490,7 +495,8 @@ public sealed class EmitContractFitnessTests
     /// The family <see cref="DomainEvent"/> type names declared in <c>families/**/Events.cs</c>, read
     /// off disk the same way <see cref="EngineFamilyAgnosticTests"/> reads the spine off its csproj —
     /// no family ProjectReference from this engine-spine test project (that would itself break
-    /// ENGINE_FAMILY_AGNOSTIC). 7 of the 11 current family events have no <c>.avsc</c>, so this scan
+    /// ENGINE_FAMILY_AGNOSTIC). 8 of the 11 current family events have no <c>.avsc</c> (ADR-IC-017 §P4
+    /// promoted set: <c>DepositConstituted</c>, <c>InterestPaid</c>, <c>DepositMatured</c>), so this scan
     /// is their ONLY naming guard — the regex must tolerate every record shape that lands a
     /// <c>: ... DomainEvent</c> base, not just the primary-ctor one:
     /// <list type="bullet">
@@ -500,7 +506,7 @@ public sealed class EmitContractFitnessTests
     /// </list>
     /// So it anchors on <c>record (class )?Name</c> and a <c>: ... DomainEvent</c> base WITHOUT
     /// requiring parens, stopping the base scan at the first <c>{</c> or <c>;</c> so it never bleeds
-    /// past the declaration. (The 4 schema-backed events are double-guarded by the <c>.avsc</c> scan.)
+    /// past the declaration. (The 3 schema-backed events are double-guarded by the <c>.avsc</c> scan.)
     /// </summary>
     private static IReadOnlyList<string> FamilyDomainEventTypeNames(string repoRoot)
     {

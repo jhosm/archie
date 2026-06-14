@@ -1,0 +1,13 @@
+{
+  "type": "record",
+  "namespace": "deposits.term_deposit",
+  "name": "InterestPaid",
+  "doc": "Interest is paid out — the coarse coupon/advance payout fact (the periodic/coupon variant, vs the single AT_MATURITY flow): NetInterest = GrossInterest − WithholdingTax conserved to the cent. PROMOTED to an integration event per ADR-IC-017 §P4 (coarse business fact; GL/accounting, notifications, and reporting react to it). The integration-relevant withholding AMOUNT rides here on withholding_tax_cents — the fine-grained WithholdingApplied/InterestAccrued accrual mechanics stay internal/store-only. Business payload only (ADR-IC-002 §P5); CloudEvents envelope rides in Kafka headers, NOT here. No PII (ADR-PC-004 §P2): deposit_id is an opaque reference, never depositor identity.",
+  "fields": [
+    { "name": "deposit_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "DepositId (Guid) — an opaque aggregate reference, NOT depositor identity (ADR-PC-004 §P2)." },
+    { "name": "gross_interest_cents", "type": "long", "doc": "GrossInterest as integer EUR cents (Money.Cents, ADR-PC-010 §P1)." },
+    { "name": "withholding_tax_cents", "type": "long", "doc": "WithholdingTax as integer EUR cents (Money.Cents) — the integration-relevant withholding amount carried on this coarse payout fact, so a separate WithholdingApplied integration event is redundant (ADR-IC-017 §P4)." },
+    { "name": "net_interest_cents", "type": "long", "doc": "NetInterest = GrossInterest − WithholdingTax as integer EUR cents (Money.Cents), conserved to the cent." },
+    { "name": "paid_on", "type": { "type": "int", "logicalType": "date" }, "doc": "PaidOn (DateOnly) as days since epoch." }
+  ]
+}
