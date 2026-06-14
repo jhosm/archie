@@ -31,6 +31,14 @@ public sealed class ConstitutionResultEventsTests
     [InlineData(ConstitutionProcess.ValidateProductLimits, CommandDeliveryKind.Applied, ConstitutionProcess.LimitsValidated)]
     // [REVIEW-FLAG B] ReserveAccountBalance refusal (422 InsufficientBalance) → fail-closed precondition.
     [InlineData(ConstitutionProcess.ReserveAccountBalance, CommandDeliveryKind.Refused, ConstitutionProcess.PreconditionRefused)]
+    // Scenario C (bd babelstone-t7o3.10): the ConfirmDebit returned INDETERMINATE (HTTP 202 — the ACL
+    // accepted the debit but cannot yet confirm whether the Core executed it) → enter AwaitCoreClearance.
+    [InlineData(ConstitutionProcess.ConfirmDebit, CommandDeliveryKind.Indeterminate, ConstitutionProcess.CoreDebitIndeterminate)]
+    // Clearance resolved EXECUTED (2xx) → the late DebitConfirmed that resumes the happy path.
+    [InlineData(ConstitutionProcess.QueryCoreDebitStatus, CommandDeliveryKind.Applied, ConstitutionProcess.DebitConfirmed)]
+    // [REVIEW-FLAG C] Clearance resolved NOT-EXECUTED (4xx) → DebitNotExecuted. The 4xx=not-executed
+    // encoding is a v1 stub convention; the real ACL/DEF-1 emits typed clearance events.
+    [InlineData(ConstitutionProcess.QueryCoreDebitStatus, CommandDeliveryKind.Refused, ConstitutionProcess.DebitNotExecuted)]
     public void Maps_each_command_outcome_to_its_result_event(string commandType, CommandDeliveryKind kind, string expected)
     {
         Assert.Equal(expected, ConstitutionResultEvents.ForOutcome(commandType, kind));
@@ -45,6 +53,12 @@ public sealed class ConstitutionResultEventsTests
     // ConfirmDebit refusal is NOT a mapped pair: a refused irreversible debit is the engine/ACL's
     // own concern, not a saga result event the bridge synthesizes (no transition is derived here).
     [InlineData(ConstitutionProcess.ConfirmDebit, CommandDeliveryKind.Refused)]
+    // An Indeterminate kind is ONLY meaningful for ConfirmDebit (the ACL's INDETERMINATE settlement
+    // signal); for any OTHER command it drives no advance — the kind is carved out, not a wildcard.
+    [InlineData(ConstitutionProcess.ReserveAccountBalance, CommandDeliveryKind.Indeterminate)]
+    [InlineData(ConstitutionProcess.QueryCoreDebitStatus, CommandDeliveryKind.Indeterminate)]
+    // ConfirmDebit APPLIED still maps (to DebitConfirmed, asserted above); but ConfirmDebit
+    // Indeterminate is the new Scenario-C branch. The clearance query has no Indeterminate mapping.
     // ValidateProductLimits never reaches a real Refused through the bridge (it has no route); a
     // Refused for it drives no advance (LimitsRejected is H.2's real verdict, not synthesized here).
     [InlineData(ConstitutionProcess.ValidateProductLimits, CommandDeliveryKind.Refused)]

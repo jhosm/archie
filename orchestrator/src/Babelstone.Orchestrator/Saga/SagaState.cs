@@ -54,12 +54,17 @@ public enum SagaState
     AwaitWorkflowApproval,
 
     /// <summary>An indeterminate Core debit outcome is being resolved by the clearance job
-    /// (Document 05 Scenario C). A long wait expressed as a state, never a busy retry.
-    /// <para><b>H.2-reserved (babelstone-n55u):</b> deliberately declared but not yet wired
-    /// into the <see cref="ConstitutionProcess"/> transition table — the indeterminate-debit
-    /// entry/exit edges (Scenario C: an INDETERMINATE Core debit enters it, the clearance
-    /// event leaves it) are H.2's business decision. Named here so the vocabulary is complete
-    /// and the gap is explicit (§P2 auditability), not a dropped edge.</para></summary>
+    /// (Document 05 Scenario C). A long wait expressed as a first-class state, never a busy retry
+    /// (ADR-IC-003 §P5). <b>Wired (bd babelstone-t7o3.10):</b> a <see cref="ConstitutionProcess.CoreDebitIndeterminate"/>
+    /// from <see cref="Approved"/> ENTERS it (arming the clearance query
+    /// <see cref="ConstitutionProcess.QueryCoreDebitStatus"/>), and the clearance result LEAVES it three
+    /// ways — a LATE <see cref="ConstitutionProcess.DebitConfirmed"/> resumes the happy path (back to
+    /// <see cref="Approved"/>), a <see cref="ConstitutionProcess.DebitNotExecuted"/> fails CLOSED to
+    /// <see cref="DepositConstitutionFailed"/> with no reversal (no money moved), and a
+    /// <see cref="ConstitutionProcess.CompensationFailed"/> escalates to
+    /// <see cref="HumanInterventionRequired"/> (§P6). The saga NEVER blind-retries the debit — it waits
+    /// and the system converges. (The "unwired / H.2-reserved" note was removed when the edges landed;
+    /// H.2 / babelstone-n55u is closed.)</summary>
     AwaitCoreClearance,
 
     /// <summary>A compensation (or an indeterminate effect) could not be resolved

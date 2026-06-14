@@ -17,6 +17,15 @@ public enum CommandDeliveryKind
     /// validation reject). A terminal failure: the failure/compensation result event (if any) is the
     /// one to synthesize.</summary>
     Refused,
+
+    /// <summary>The Core ACL returned an EXPLICIT INDETERMINATE settlement signal (HTTP 202 Accepted on a
+    /// ConfirmDebit, bd babelstone-t7o3.10): it accepted the debit but cannot yet confirm whether the Core
+    /// executed it (the network dropped after the debit was sent — Document 05 Scenario C). A TERMINAL
+    /// delivery outcome distinct from <see cref="Applied"/> (2xx success) and <see cref="Refused"/> (4xx):
+    /// the leg is neither confirmed nor refused, so the saga parks in <see cref="SagaState.AwaitCoreClearance"/>
+    /// rather than advancing or compensating. NOT a timeout — a ConfirmDebit timeout stays a transient,
+    /// idempotent retry; this is an explicit ACL signal that the row is terminally resolved-as-unknown.</summary>
+    Indeterminate,
 }
 
 /// <summary>
@@ -138,8 +147,32 @@ public static class ConstitutionResultEvents
         // reason contract.
         (ConstitutionProcess.ReserveAccountBalance, CommandDeliveryKind.Refused) => ConstitutionProcess.PreconditionRefused,
 
+        // --- Scenario C: indeterminate Core debit clearance (bd babelstone-t7o3.10) ----------------
+        // The ConfirmDebit returned INDETERMINATE (the ACL accepted the debit but the network dropped
+        // before it could confirm execution — Document 05 Scenario C, signalled as HTTP 202). The saga
+        // must NOT blind-retry (it could double-debit): synthesize CoreDebitIndeterminate to park it in
+        // AWAIT_CORE_CLEARANCE, which arms the clearance QUERY (ADR-IC-003 §P5, a first-class wait).
+        (ConstitutionProcess.ConfirmDebit, CommandDeliveryKind.Indeterminate) => ConstitutionProcess.CoreDebitIndeterminate,
+
+        // The clearance QUERY resolved the indeterminate debit. The v1 ACL stub answers the clearance
+        // POST with the outcome encoded as the HTTP status (DEF-1's real ACL will emit typed clearance
+        // events instead — see [REVIEW-FLAG C]):
+        //   • 2xx → the debit DID execute: a LATE DebitConfirmed resumes the happy path (back to APPROVED,
+        //     arming ActivateDeposit), identical to a timely confirm.
+        (ConstitutionProcess.QueryCoreDebitStatus, CommandDeliveryKind.Applied) => ConstitutionProcess.DebitConfirmed,
+        //   • [REVIEW-FLAG C] 4xx → the debit did NOT execute: DebitNotExecuted fails the saga CLOSED
+        //     (no money moved → no reversal). The 4xx=not-executed mapping is a v1 STUB CONVENTION: the
+        //     dispatcher's slot-5 model classifies a 4xx as a terminal Refused, and the clearance stub
+        //     reuses that to mean "the queried debit was not found / not executed". This is NOT the
+        //     slot-5 "the engine refused an illegal/invalid command" semantics — it is a clearance VERDICT
+        //     piggybacked on the HTTP status because the v1 ACL has no event channel. When DEF-1 lands, the
+        //     real ACL emits a typed DebitNotExecuted clearance event off its own topic and this mapping is
+        //     removed (recorded in the ADR-IC-003 Amendment 2026-06-14, extended for Scenario C).
+        (ConstitutionProcess.QueryCoreDebitStatus, CommandDeliveryKind.Refused) => ConstitutionProcess.DebitNotExecuted,
+
         // Everything else drives no advance — a graceful no-op (the command WAS delivered; the bridge
-        // simply synthesizes no correlation signal for it).
+        // simply synthesizes no correlation signal for it). NB: CommandDeliveryKind.Indeterminate is only
+        // meaningful for ConfirmDebit; for any other command it falls through here to null.
         _ => null,
     };
 }

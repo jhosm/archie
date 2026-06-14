@@ -63,6 +63,16 @@ public sealed class ConstitutionProcessCommandsTests
             },
             ConstitutionProcess.ReverseCoreDebit
         },
+        {
+            // Scenario C clearance query (bd babelstone-t7o3.10): carries the deposit + Core hold
+            // references it queries Core by — both structural, no PII.
+            new QueryCoreDebitStatusCommand
+            {
+                ProcessId = ProcessId, CausationMessageId = CausationId, CorrelationId = CorrelationId,
+                DepositRef = "DEP-2026-00012345", CoreHoldRef = "CORE-HOLD-554433",
+            },
+            ConstitutionProcess.QueryCoreDebitStatus
+        },
     };
 
     [Theory]

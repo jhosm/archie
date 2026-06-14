@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "comment": "ConfirmDebit -> INDETERMINATE (Document 05 Scenario C; bd babelstone-t7o3.10). The network dropped after the debit was sent, so the ACL cannot yet confirm whether the Core executed it. Higher-priority mapping; fires when the request body contains the marker 'indeterminate', letting a dev/demo drive the saga into AWAIT_CORE_CLEARANCE without a second stub. The signal is HTTP 202 Accepted -- an EXPLICIT indeterminate, distinct from a 2xx-success confirm (debits-success), a 4xx refusal, or a 5xx/timeout transient. The dispatcher classifies 202 on a ConfirmDebit as Indeterminate and the bridge synthesizes CoreDebitIndeterminate (ADR-IC-003 P5: a first-class wait, never a blind retry)."
+  },
+  "priority": 4,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/debits",
+    "bodyPatterns": [
+      { "contains": "indeterminate" }
+    ]
+  },
+  "response": {
+    "status": 202,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "status": "INDETERMINATE", "detail": "debit accepted; Core execution unconfirmed" }
+  }
+}

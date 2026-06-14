@@ -64,6 +64,20 @@ public sealed class ConstitutionProcess : TableStateMachine
     /// <summary>Core ACL: a compensation could not be completed — escalation trigger
     /// (Document 05 Scenario B "even worse case"). The ACL reported INDETERMINATE.</summary>
     public const string CompensationFailed = "CompensationFailed";
+    /// <summary>Core ACL: the ConfirmDebit returned INDETERMINATE — the network dropped after the debit
+    /// was sent, so the ACL cannot yet confirm whether the Core actually executed it (Document 05
+    /// Scenario C; bd babelstone-t7o3.10). The saga must NOT blind-retry (it could double-debit); this
+    /// event parks it in the first-class waiting state <see cref="SagaState.AwaitCoreClearance"/> until a
+    /// clearance query resolves the outcome (ADR-IC-003 §P5). The THIRD Core-ACL debit outcome alongside
+    /// <see cref="DebitConfirmed"/> (executed) and a refused debit. NOT a timeout — a timeout stays a
+    /// transient idempotent retry; INDETERMINATE is an EXPLICIT ACL settlement signal.</summary>
+    public const string CoreDebitIndeterminate = "CoreDebitIndeterminate";
+    /// <summary>Core ACL clearance: the indeterminate debit was resolved as NOT executed — no money
+    /// moved (Document 05 Scenario C; bd babelstone-t7o3.10). Handled as a normal error: the saga
+    /// fails CLOSED to <see cref="SagaState.DepositConstitutionFailed"/> with NO reversal, since nothing
+    /// was committed. The fail counterpart of a late <see cref="DebitConfirmed"/> out of
+    /// <see cref="SagaState.AwaitCoreClearance"/>.</summary>
+    public const string DebitNotExecuted = "DebitNotExecuted";
     /// <summary>An upstream precondition was REFUSED during the validation phase (H.2,
     /// babelstone-n55u): a verdict that did not <see cref="PreconditionVerdict.Accepts"/> arrived
     /// before approval and before any irreversible effect. The fail-CLOSED trigger that lands the
@@ -94,6 +108,13 @@ public sealed class ConstitutionProcess : TableStateMachine
     /// <summary>Core ACL: reverse the committed debit with a compensating credit — late
     /// compensation (Document 05 Scenario B). A DOMAIN reversal command (§P6).</summary>
     public const string ReverseCoreDebit = "ReverseCoreDebit";
+    /// <summary>Core ACL: query the Core for the actual outcome of an INDETERMINATE debit — the v1
+    /// clearance-job mechanism (Document 05 Scenario C; bd babelstone-t7o3.10). Emitted on entering
+    /// <see cref="SagaState.AwaitCoreClearance"/>. A SINGLE event-driven query routed to the Settlement
+    /// ACL (POST /v1/debits/clearance), NOT a poll loop — the wait is a first-class state, not a busy
+    /// retry (ADR-IC-003 §P5). Its delivery outcome bridges back to the clearance result: executed (2xx)
+    /// → a late <see cref="DebitConfirmed"/>; not-executed (4xx) → <see cref="DebitNotExecuted"/>.</summary>
+    public const string QueryCoreDebitStatus = "QueryCoreDebitStatus";
 
     public ConstitutionProcess()
         : base(Type, SagaState.Started, BuildTable())
@@ -206,6 +227,33 @@ public sealed class ConstitutionProcess : TableStateMachine
         yield return ((SagaState.CompensatePostDebit, DebitReversed),
             TransitionOutcome.To(SagaState.CancelledAfterDebit));
         yield return ((SagaState.CompensatePostDebit, CompensationFailed),
+            TransitionOutcome.To(SagaState.HumanInterventionRequired));
+
+        // Scenario C — INDETERMINATE Core debit clearance (Document 05 Scenario C; bd babelstone-t7o3.10).
+        // The ConfirmDebit was sent but the network dropped before its response arrived, so the ACL
+        // reported INDETERMINATE: it is UNKNOWN whether the Core actually executed the debit. The saga
+        // must NOT blind-retry (a retry could double-debit). It parks in the FIRST-CLASS waiting state
+        // AWAIT_CORE_CLEARANCE (ADR-IC-003 §P5 — a long wait is a named state, never a busy retry) and
+        // emits the clearance QUERY command (QueryCoreDebitStatus), a single event-driven query to the
+        // Core ACL — "no blocking thread, no aggressive retries, no inventing state". CoreDebitIndeterminate
+        // is the THIRD outcome of the irreversible debit, so like DebitConfirmed it is reachable ONLY from
+        // APPROVED (§P5). The clearance result then resolves the wait two ways:
+        //   • EXECUTED: the debit DID land (DebitConfirmed arrives LATE) → resume the happy path exactly
+        //     as a timely confirm would (back to APPROVED, arming ActivateDeposit).
+        //   • NOT EXECUTED: no money moved (DebitNotExecuted) → fail CLOSED to DEPOSIT_CONSTITUTION_FAILED
+        //     with NO reversal command — there is nothing to compensate (mirrors the PreconditionRefused
+        //     no-op terminal: nothing committed, nothing to unwind). Document 05 says "handle as a normal
+        //     error → retry or compensate"; at v1 a not-executed debit committed nothing, so the saga
+        //     fails closed rather than reversing a debit that never happened.
+        //   • A clearance that itself cannot resolve (CompensationFailed) escalates to
+        //     HUMAN_INTERVENTION_REQUIRED, never a swallowed/stranded saga (§P6 robustness).
+        yield return ((SagaState.Approved, CoreDebitIndeterminate),
+            TransitionOutcome.To(SagaState.AwaitCoreClearance, QueryCoreDebitStatus));
+        yield return ((SagaState.AwaitCoreClearance, DebitConfirmed),
+            TransitionOutcome.To(SagaState.Approved, ActivateDeposit));
+        yield return ((SagaState.AwaitCoreClearance, DebitNotExecuted),
+            TransitionOutcome.To(SagaState.DepositConstitutionFailed));
+        yield return ((SagaState.AwaitCoreClearance, CompensationFailed),
             TransitionOutcome.To(SagaState.HumanInterventionRequired));
     }
 }

@@ -52,6 +52,14 @@ public sealed class SagaCommandRouter(SagaCommandDispatcherOptions options) : IC
         ConstitutionProcess.ReverseCoreDebit =>
             new CommandRoute(_options.SettlementBaseUrl, "/v1/debits/reverse", HttpMethod.Post),
 
+        // The clearance query for an INDETERMINATE debit (Document 05 Scenario C; bd babelstone-t7o3.10) —
+        // the saga's single event-driven query to the Core ACL asking whether the debit actually executed.
+        // Routed to the same Settlement target as the other money legs; the v1 ACL stub answers with the
+        // outcome encoded as the HTTP status (2xx executed / 4xx not-executed). DEF-1's real ACL replaces
+        // this with typed clearance events.
+        ConstitutionProcess.QueryCoreDebitStatus =>
+            new CommandRoute(_options.SettlementBaseUrl, "/v1/debits/clearance", HttpMethod.Post),
+
         // Anything else (incl. the in-aggregate ValidateProductLimits) has no HTTP destination at v1.
         _ => null,
     };
