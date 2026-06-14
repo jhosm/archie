@@ -69,6 +69,12 @@ jobs:
       # .NET 10 LTS) so CI builds against the same SDK as every dev machine — no
       # second version pin in this YAML to drift from it.
       - uses: jdx/mise-action@v4
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
       - name: Cache NuGet packages
         uses: actions/cache@v5
         with:
@@ -176,6 +182,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4 # pins Go + cue from mise.toml (ADR-PC-006)
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
       - name: Build + test the Go validator (ADR-PC-006)
         # Reproducible build from the pinned go.mod (Open Action #2); the test
         # suite carries the PACK_VALIDATE_DEPTH_BUDGETS fitness function and the
@@ -242,6 +254,12 @@ jobs:
       # Pin CUE (and the rest) from mise.toml — same single source of truth as
       # every dev machine (CUE 0.16.1, ADR-PC-006), no second pin to drift from.
       - uses: jdx/mise-action@v4
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
       - name: CUE family-schema soundness (ADR-PC-006)
         # fmt + compile + accept-valid / reject-invalid fixtures, incl. the
         # closed-struct "no DSL escape hatch" guarantee. Same script dev runs
@@ -301,6 +319,12 @@ jobs:
       # engine") so CI builds against the same SDK as every dev machine — no second
       # version pin in this YAML to drift from it.
       - uses: jdx/mise-action@v4
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
       - name: Cache NuGet packages
         uses: actions/cache@v5
         with:
@@ -346,6 +370,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4 # pins Python from mise.toml (3.14, ADR-IC-010)
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
       - name: Build + contract tests (ADR-IC-010, ADR-IC-013)
         # Q.y (babelstone-2t16.13): line + branch coverage via pytest-cov
         # (--cov --cov-branch). Cobertura XML is emitted for the artifact below and the
@@ -390,6 +420,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4 # pins Go + cue from mise.toml
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
       - name: Validate every variant through depths 1–4 (ADR-PC-006, 01 §3)
         # Build the validator once, then run the full depths-1→4 `validate` over
         # each committed variant against the pack it pins. v1 ships one pack
@@ -425,6 +461,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4 # pins cue + oras + cosign + go from mise.toml
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
       - name: Validate the pack's variants through depths 1–4 (ADR-PC-006 §P3)
         # Q.3: the static validator depths over the pack's own products. Build the
         # Go validator once, then run the full depths-1→4 `validate` (syntactic →
@@ -527,6 +569,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4 # pins cue from mise.toml
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
       - name: Validate rate-sheet refs + any committed sheet data (ADR-PC-008)
         # Q.3 rate-sheet schema validation, scoped to what exists today. The pack's
         # rate-sheet REFS (the version-pinned pointers the engine resolves at
@@ -563,6 +611,12 @@ jobs:
       # Pin kustomize + kubeconform + deck from mise.toml — the same single source of
       # truth as every dev machine (no second pin in this YAML to drift from).
       - uses: jdx/mise-action@v4
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
       - name: Validate Kong edge config (deck + kong config parse + ADR-IC-006 assertions, I.3)
         # The ADR-IC-006 §P1 declarative-config gate: Kong's ENTIRE edge config is the
         # one git-tracked infra/kong/kong.yml (DB-less). A malformed route, a mistyped
@@ -694,6 +748,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v4 # pins Python + CUE from mise.toml (ADR-PC-006/022)
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
       - name: Reference is up to date with its sources (ADR-PC-022 §P2)
         # Regenerate into memory and diff against the committed tree; a non-empty
         # diff fails. Same check dev runs via `make docs-verify`.
