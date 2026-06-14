@@ -186,7 +186,7 @@ trap 'kill "$RATESHEET_PID" 2>/dev/null || true' EXIT
 wait_up "http://localhost:${RATESHEET_PORT}/" 60 "RateSheets.Api" "$RUNDIR/ratesheet-api.log"
 
 cat > "$RUNDIR/rate-sheet.json" <<JSON
-{"rate_sheet_version_id":"${RATE_SHEET_VERSION}","product_family":"term_deposit","pack_version":"pt.2026.1","effective_from":"2026-01-01T00:00:00+00:00","approved_by":"treasury.alm@bank.internal","approval_ref":"ALM-2026-019","products":{"${PRODUCT}":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":300}]}}}}
+{"rate_sheet_version_id":"${RATE_SHEET_VERSION}","product_family":"term_deposit","pack_version":"pt.2026.1","effective_from":"2026-01-01T00:00:00+00:00","approved_by":"treasury.alm@bank.internal","approval_ref":"ALM-2026-019","products":{"dpz_pt_12m_juros_venc":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":300}]}},"dpz_pt_12m_juros_mensais":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":325}]}},"dpz_pt_12m_juros_antecip":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":300}]}}}}
 JSON
 # Same version id, a DIFFERENT rate — must be refused (forward-only immutability, §P5).
 cat > "$RUNDIR/rate-sheet-conflict.json" <<JSON
@@ -239,6 +239,7 @@ JSON
 
 code="$(curl -sS -o "$RUNDIR/constitute-resp.json" -w '%{http_code}' \
   -X POST "${ENGINE_URL}/v1/deposits" -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $(uuidgen)" \
   --data-binary @"$RUNDIR/constitute-req.json")"
 [ "$code" = 201 ] || die "constitute expected 201, got $code  ($(cat "$RUNDIR/constitute-resp.json"))"
 DID="$(py -c "import json;print(json.load(open('$RUNDIR/constitute-resp.json'))['deposit_id'])")"
