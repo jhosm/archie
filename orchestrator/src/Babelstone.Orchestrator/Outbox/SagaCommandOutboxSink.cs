@@ -1,5 +1,6 @@
 using Babelstone.Orchestrator.Commands;
 using Babelstone.Orchestrator.Inbox;
+using Babelstone.Orchestrator.Saga;
 using Npgsql;
 
 namespace Babelstone.Orchestrator.Outbox;
@@ -39,9 +40,24 @@ namespace Babelstone.Orchestrator.Outbox;
 /// byte-stable logical body. The drain re-emits it as the outbound Kafka header so the downstream
 /// consumer threads its spans under this saga's trace. NULL when no tracer was listening.
 /// </para>
+/// <para>
+/// <b>Full business-reference payloads (bd babelstone-t7o3.1).</b> When the saga has pinned
+/// <see cref="SagaBusinessReference"/>s (the edge wrote them at start), this sink builds the FULL
+/// typed <see cref="CommandPayload"/> through <see cref="SagaCommandPayloadFactory"/> — the
+/// ReserveAccountBalance body carries the real source account + a derived reservation reference, the
+/// ActivateDeposit body the deposit/Core-txn references, and so on — instead of the minimal
+/// <see cref="SagaCommandEnvelopeBody"/>. The full payload stays byte-stable (every derived
+/// reference is a deterministic function of the process id, never a minted value) and PII-free (a
+/// positive allow-list of structural references). The sink FALLS BACK to the seam envelope only
+/// when no references were pinned (a consume-loop-started saga that never went through the edge) —
+/// the substrate seam is preserved, the richer body is additive.
+/// </para>
 /// </remarks>
-public sealed class SagaCommandOutboxSink : ISagaCommandSink
+public sealed class SagaCommandOutboxSink(SagaBusinessReferenceStore? businessReferenceStore = null) : ISagaCommandSink
 {
+    private readonly SagaBusinessReferenceStore _businessReferenceStore =
+        businessReferenceStore ?? new SagaBusinessReferenceStore();
+
     /// <inheritdoc />
     public async Task EmitAsync(
         NpgsqlConnection connection,
@@ -57,15 +73,23 @@ public sealed class SagaCommandOutboxSink : ISagaCommandSink
         ArgumentNullException.ThrowIfNull(transaction);
         ArgumentException.ThrowIfNullOrWhiteSpace(commandType);
 
-        // The LOGICAL payload body — built ONLY from the seam's references (process id, command
-        // type, identity trio). Byte-stable: NO Guid.NewGuid, NO DateTimeOffset.UtcNow inside.
-        // Re-emitting the same logical command produces identical bytes.
-        var body = new SagaCommandEnvelopeBody(commandType)
-        {
-            ProcessId = processId,
-            CausationMessageId = causationMessageId,
-            CorrelationId = correlationId,
-        };
+        // The LOGICAL payload body. With pinned business references present, build the FULL typed
+        // command payload (the real account/deposit/Core references) through the pure factory; with
+        // none — or no factory recipe for this command — fall back to the minimal seam envelope. BOTH
+        // are byte-stable (NO Guid.NewGuid, NO DateTimeOffset.UtcNow inside): re-emitting the same
+        // logical command produces identical bytes. The reference LOAD runs on the saga transaction,
+        // so it sees a row the same transaction may have just written (the edge start).
+        var reference = await _businessReferenceStore.LoadAsync(connection, transaction, processId, ct);
+        CommandPayload body =
+            (reference is not null
+                ? SagaCommandPayloadFactory.Build(commandType, processId, causationMessageId, correlationId, reference)
+                : null)
+            ?? new SagaCommandEnvelopeBody(commandType)
+            {
+                ProcessId = processId,
+                CausationMessageId = causationMessageId,
+                CorrelationId = correlationId,
+            };
         var payload = body.ToBytes();
 
         // The OPERATIONAL delivery id — the one freshly minted value, an outbox COLUMN, never in

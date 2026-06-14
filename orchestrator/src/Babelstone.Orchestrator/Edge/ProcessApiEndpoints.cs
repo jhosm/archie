@@ -73,10 +73,37 @@ public static class ProcessApiEndpoints
                 title: "Missing gateway-attested caller identity.");
         }
 
+        // Structural request validation (Document 05 §Step 0 step 5): the saga's business references
+        // are pinned from this body, so a request missing them — or carrying a negative amount —
+        // cannot start a coherent saga. Reject here; the application never starts a saga for it.
+        if (string.IsNullOrWhiteSpace(request.ProductCode)
+            || string.IsNullOrWhiteSpace(request.SourceAccountRef)
+            || request.Amount < 0)
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "A constitution request requires product_code, source_account_ref, and a non-negative amount.");
+        }
+
+        // Assemble the PII-free business facts the saga pins (bd babelstone-t7o3.1): the amount +
+        // account/product references come from the body; the approval-fork policy inputs are pinned at
+        // the edge — the auto-approval threshold from EdgeOptions (the policy in force at admission)
+        // and the client standing resolved here. The substrate treats the gateway-attested caller as
+        // an EXISTING relationship (the happy auto-approve path); a future change resolves the standing
+        // from the client profile behind the engine boundary (still PII-free here — a closed code).
+        var businessFacts = new EdgeBusinessFacts(
+            ProductRef: request.ProductCode,
+            AmountMinorUnits: request.Amount,
+            SourceAccountRef: request.SourceAccountRef,
+            InterestAccountRef: request.InterestAccountRef,
+            ClientType: Babelstone.Orchestrator.Handlers.ClientType.Existing,
+            AutoApprovalThresholdMinorUnits: options.AutoApprovalThresholdMinorUnits);
+
         // STARTS the saga (NOT a direct engine append): creates the ConstitutionProcess STARTED row
-        // owned by the attested caller, drives the first transition, emits the parallel commands —
-        // all in one transaction, nothing on the bus. The 202 means the SAGA started (Document 05 §Step 0).
-        var result = await starter.StartAsync(options.ConnectionString, caller, correlationId: null, ct);
+        // owned by the attested caller, pins the business references, drives the first transition,
+        // emits the parallel commands — all in one transaction, nothing on the bus. The 202 means the
+        // SAGA started (Document 05 §Step 0).
+        var result = await starter.StartAsync(options.ConnectionString, caller, businessFacts, correlationId: null, ct);
 
         var stream = StreamUrlFor(result.PublicProcessId);
         return Results.Accepted(

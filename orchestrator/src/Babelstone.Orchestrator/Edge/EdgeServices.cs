@@ -43,7 +43,12 @@ public static class EdgeServices
         services.TryAddSingleton<ISagaStateMachine, ConstitutionProcess>();
         services.TryAddSingleton<SagaStateStore>();
         services.TryAddSingleton<SagaTransitionLog>();
-        services.TryAddSingleton<ISagaCommandSink, SagaCommandOutboxSink>();
+        // The per-saga business-reference store (bd babelstone-t7o3.1): the edge writes the pinned
+        // references at start, the fork + the command-payload assembly read them. Registered before
+        // the sink so the sink resolves the SAME instance.
+        services.TryAddSingleton<SagaBusinessReferenceStore>();
+        services.TryAddSingleton<ISagaCommandSink>(sp =>
+            new SagaCommandOutboxSink(sp.GetRequiredService<SagaBusinessReferenceStore>()));
 
         services.TryAddSingleton(new EdgeOptions { ConnectionString = connectionString });
 
@@ -51,7 +56,8 @@ public static class EdgeServices
             sp.GetRequiredService<ISagaStateMachine>(),
             sp.GetRequiredService<SagaStateStore>(),
             sp.GetRequiredService<SagaTransitionLog>(),
-            sp.GetRequiredService<ISagaCommandSink>())
+            sp.GetRequiredService<ISagaCommandSink>(),
+            sp.GetRequiredService<SagaBusinessReferenceStore>())
         {
             StartEventType = ConstitutionProcess.ConstitutionRequested,
         });
