@@ -177,5 +177,48 @@ if grep -Eq 'paths:.*"/v1/deposits"' "$CONFIG" \
   fail "ADR-IC-006 §P5 violation: the engine COMMAND surface POST /v1/deposits is exposed as a public Kong route — it must be the orchestrator's INTERNAL saga target, not the public client write path"
 fi
 
+# ---------------------------------------------------------------------------
+# 3b. SoR-routing scaffold (ADR-PC-018 — I.5 / bd babelstone-r3rt).
+# ---------------------------------------------------------------------------
+# During coexistence a state-changing operation must land on the system that holds the
+# system-of-record (SoR) for that instance — the new engine (term deposits, v1) or the
+# legacy core (current accounts). Routing to the wrong backend is the split-brain
+# failure the whole design prevents. ADR-PC-018 places this routing on the EDGE GATEWAY
+# (option b, §Decision), not in the engine and not duplicated per-channel; the binding
+# placement is the bank's channel tier (§Decision binding authority / §6 slot 6). This
+# block asserts the gateway-side SCAFFOLD is present so a future edit cannot silently
+# drop it (ADR-PC-020 §D3 / ADR-PC-018 §5: fail closed, never guess a backend).
+
+# (i) New-constitution routing (ADR-PC-018 §1, the v1 load-bearing case): a NEW term
+# deposit is engine-SoR by the product_family + coexistence §3.1 cutover-date rule —
+# every term deposit constituted on/after cutover is engine-SoR, so it routes to the
+# engine/orchestrator WITHOUT an instance lookup. The constitute route already takes
+# this path; assert the routing intent is documented on it so the decision is auditable.
+have 'SoR: *engine \(new-constitution rule' "missing the documented new-constitution SoR-routing intent on the constitute route (engine-SoR by product_family + cutover rule, ADR-PC-018 §1 / coexistence §3.1)"
+
+# (ii) Existing-instance SoR routing keyed on `sor` (ADR-PC-018 §1/§2). For an existing
+# instance the router resolves instance_id -> sor -> backend. Engine-SoR existing-instance
+# state-changing ops route to the engine upstream; the read surface already exposes `sor`
+# (the engine owns the routing DATA, not the LOGIC — §Decision / §6). Assert the scaffold
+# names this resolution explicitly so the intent is auditable and cannot be dropped.
+have 'instance_id *-> *sor *-> *backend' "missing the documented instance_id -> sor -> backend SoR-resolution scaffold (ADR-PC-018 §1)"
+
+# (iii) FAIL-CLOSED default for an unresolvable / legacy `sor` (ADR-PC-018 §5). The legacy
+# backend is NOT built in v1, so a legacy-SoR or unresolvable-`sor` state-changing op must
+# be REFUSED ("instance state unavailable") — the router NEVER guesses a backend, because
+# guessing routes a command to a system that does not hold the SoR (split-brain). This is
+# a documented placeholder legacy service whose pre-function fails closed with a stable
+# code SOR_UNRESOLVED. Asserting the code AND a 503 refusal status are BOTH present means a
+# future edit cannot silently turn the refusal into a guess (ADR-PC-020 §D3 / ADR-PC-018 §5).
+have 'SOR_UNRESOLVED' "missing the fail-closed SoR refusal: an unresolvable/legacy-SoR state-changing op must be refused with code SOR_UNRESOLVED, never routed by guess (ADR-PC-018 §5)"
+have 'kong\.response\.exit\(503' "missing the fail-closed 503 refusal on the SoR-unresolved/legacy-placeholder route (ADR-PC-018 §5: refuse 'instance state unavailable', never guess a backend)"
+
+# (iv) Honour the engine's NEGATIVE commitment (ADR-PC-018 §6 / §Decision): the routing
+# logic lives in Kong, NOT in the engine. The engine COMMAND surface (POST /v1/deposits)
+# must STILL be absent as a public route — already asserted in 3a above; the SoR scaffold
+# must not have re-introduced a command endpoint on the engine read surface. (No new
+# assertion needed: 3a's exact-path check already covers it; this comment records the
+# negative commitment is consciously preserved by the scaffold.)
+
 note "edge-contract assertions: OK"
 note "kong-config-check: all checks passed"
