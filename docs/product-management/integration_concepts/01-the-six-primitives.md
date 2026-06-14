@@ -382,7 +382,7 @@ Happy-path saga of constitution:
 4. Deposit.activate()          → DepositConstituted
 ```
 
-(Client AML/KYC clearance is *not* a step here — it is a precondition at the edge, upstream of this saga and out of scope for the engine; see [ADR-IC-006](./adrs/ADR-IC-006-edge-api-gateway.md).)
+(Client AML/KYC is *not* a step here — it is adjudicated upstream of this saga and out of scope for the engine; where clearance is enforced at all it is an edge / gateway concern, see [ADR-IC-006](./adrs/ADR-IC-006-edge-api-gateway.md).)
 
 Imagine step 3 fails (Workflow rejects due to a supervening business reason). The capital **has already been debited**. Steps 1–2 **have already produced effects in the world**.
 
