@@ -84,5 +84,11 @@
     <PackageVersion Include="OpenTelemetry" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.16.0" />
+    <!-- ASP.NET Core inbound-request instrumentation (ADR-IC-007 Layer 1, bd babelstone-2dex):
+         turns each inbound HTTP request into a SERVER span that adopts the W3C traceparent when
+         present, so the engine's manual deposit.* spans nest under it instead of being roots.
+         Wired only in Babelstone.Engine.Api (the engine command/query host). Its own 1.15.x line,
+         the latest tracking the 1.16.0 core. -->
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
   </ItemGroup>
 </Project>

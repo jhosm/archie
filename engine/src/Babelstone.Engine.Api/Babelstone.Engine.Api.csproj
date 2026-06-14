@@ -42,5 +42,9 @@
     <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <!-- Inbound-request instrumentation (bd babelstone-2dex): the inbound HTTP request becomes a
+         SERVER span that adopts the caller's W3C traceparent, so the deposit.* custom spans nest
+         under it (parented to the inbound trace) rather than starting as disconnected roots. -->
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
   </ItemGroup>
 </Project>

@@ -34,6 +34,13 @@ builder.Services.AddOpenTelemetry()
             new KeyValuePair<string, object>(BabelstoneResource.DeploymentEnvironmentKey, BabelstoneResource.ResolveEnvironment()),
         ]))
     .WithTracing(tracing => tracing
+        // The inbound HTTP request becomes a SERVER span (bd babelstone-2dex). When the caller
+        // sends a W3C traceparent (ADR-IC-007 Layer 1 — traceparent is the join), that span adopts
+        // its trace id, so the manual deposit.* spans started in the endpoints (children of
+        // Activity.Current) nest under THIS trace instead of each becoming its own root. With no
+        // traceparent on the wire the server span starts a fresh trace and the deposit.* spans nest
+        // under it all the same — either way the request's work is one connected trace.
+        .AddAspNetCoreInstrumentation()
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
         .AddOtlpExporter())
     // Metrics (ADR-IC-007 Layer 1 / ADR-IC-004 §P4): listen to the engine's meter and export over
@@ -208,6 +215,32 @@ var app = builder.Build();
 app.Services.GetRequiredService<OutboxLagObserver>();
 
 app.UseExceptionHandler();
+
+// Hand the active trace id back to the caller on EVERY response — command and query alike
+// (bd babelstone-2dex; ADR-IC-007 Layer 1). The id is read from Activity.Current (the inbound
+// request's SERVER span, created by AddAspNetCoreInstrumentation above) inside Response.OnStarting,
+// so it is captured just before the headers flush, when the request activity is still current. The
+// value is the bare 32-hex W3C trace id (TraceResponseHeader.Name), which a caller — Mission
+// Control's Telemetry tab (bd babelstone-f0ic.9) — uses to fetch the trace from Grafana Tempo. The
+// trace id is an opaque operational identifier, never PII (ADR-IC-007 §P4 / ADR-PC-004 §P2). Placed
+// before endpoint mapping so it wraps every endpoint; a request with no server span (none here once
+// instrumentation is on) simply omits the header rather than emitting an empty one.
+app.Use(async (context, next) =>
+{
+    context.Response.OnStarting(() =>
+    {
+        var traceId = System.Diagnostics.Activity.Current?.TraceId.ToString();
+        if (traceId is not null && !context.Response.Headers.ContainsKey(TraceResponseHeader.Name))
+        {
+            context.Response.Headers[TraceResponseHeader.Name] = traceId;
+        }
+
+        return Task.CompletedTask;
+    });
+
+    await next(context);
+});
+
 foreach (var module in familyModules)
 {
     module.MapEndpoints(app);
