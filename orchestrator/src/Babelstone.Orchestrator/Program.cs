@@ -141,10 +141,18 @@ builder.Services.AddSingleton(new SagaCommandDispatcherOptions
 });
 builder.Services.AddSingleton<ICommandRouter, SagaCommandRouter>();
 builder.Services.AddHttpClient();
+// The SagaAdvanceHandler (registered above for the consume loop) is ALSO injected into the dispatcher
+// for the command-outcome → result-event bridge (bd babelstone-t7o3.8): at a terminal delivery outcome
+// the dispatcher maps (command_type, outcome) → a result event and self-advances the saga IN-PROCESS,
+// in the SAME connection+transaction as the saga_outbox status flip — nothing rides the durable bus
+// (the SAME pattern as the t7o3.1 approval-fork self-emit). That is what makes the saga walk to a
+// terminal state and auto-compensate (e.g. ActivateDeposit refused after the debit → ReverseCoreDebit
+// → CANCELLED_AFTER_DEBIT) instead of stalling at PARALLEL_VALIDATION.
 builder.Services.AddSingleton(sp => new SagaCommandDispatchDrainer(
     sp.GetRequiredService<SagaCommandDispatcherOptions>(),
     sp.GetRequiredService<ICommandRouter>(),
-    sp.GetRequiredService<IHttpClientFactory>()));
+    sp.GetRequiredService<IHttpClientFactory>(),
+    sp.GetRequiredService<SagaAdvanceHandler>()));
 builder.Services.AddHostedService<SagaCommandDispatcherService>();
 
 // The I.1 EDGE HTTP surface (ADR-IC-006 §P4 / Document 05 §Step 0): the 202 + process_id + SSE

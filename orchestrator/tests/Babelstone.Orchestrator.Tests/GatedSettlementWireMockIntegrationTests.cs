@@ -2,6 +2,7 @@ using System.Net;
 using Babelstone.Orchestrator.Commands;
 using Babelstone.Orchestrator.Dispatch;
 using Babelstone.Orchestrator.Handlers;
+using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Microsoft.Extensions.DependencyInjection;
@@ -190,12 +191,34 @@ public sealed class GatedSettlementWireMockIntegrationTests : IAsyncLifetime
         builder.Services.AddSingleton(options);
         builder.Services.AddSingleton<ICommandRouter>(new GatedSettlementRouter(options, refuseReserve));
         builder.Services.AddHttpClient();
+        // The command-outcome → result-event bridge (bd babelstone-t7o3.8) self-advances the saga on a
+        // terminal delivery outcome, so the drainer needs the SagaAdvanceHandler (+ its stores).
+        AddSagaAdvanceHandler(builder.Services);
         builder.Services.AddSingleton(sp => new SagaCommandDispatchDrainer(
             sp.GetRequiredService<SagaCommandDispatcherOptions>(),
             sp.GetRequiredService<ICommandRouter>(),
-            sp.GetRequiredService<IHttpClientFactory>()));
+            sp.GetRequiredService<IHttpClientFactory>(),
+            sp.GetRequiredService<SagaAdvanceHandler>()));
         builder.Services.AddHostedService<SagaCommandDispatcherService>();
         return builder.Build();
+    }
+
+    // The SagaAdvanceHandler composition (mirrors Program.cs): the bridge self-advances the saga through
+    // it on a terminal delivery outcome, on the SAME connection+transaction as the status flip.
+    private static void AddSagaAdvanceHandler(IServiceCollection services)
+    {
+        services.AddSingleton<ISagaStateMachine, ConstitutionProcess>();
+        services.AddSingleton<SagaStateStore>();
+        services.AddSingleton<SagaTransitionLog>();
+        services.AddSingleton<SagaBusinessReferenceStore>();
+        services.AddSingleton<ISagaCommandSink>(sp =>
+            new SagaCommandOutboxSink(sp.GetRequiredService<SagaBusinessReferenceStore>()));
+        services.AddSingleton(sp => new SagaAdvanceHandler(
+            sp.GetRequiredService<ISagaStateMachine>(),
+            sp.GetRequiredService<SagaStateStore>(),
+            sp.GetRequiredService<SagaTransitionLog>(),
+            sp.GetRequiredService<ISagaCommandSink>(),
+            sp.GetRequiredService<SagaBusinessReferenceStore>()));
     }
 
     /// <summary>

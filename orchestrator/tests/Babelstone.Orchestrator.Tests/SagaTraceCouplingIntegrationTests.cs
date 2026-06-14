@@ -69,7 +69,14 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
         var advance = Event(processId, ConstitutionProcess.BalanceReserved, correlationId, InboundTraceParent);
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(NewHandler(new SagaCommandOutboxSink(_businessRefStore)), advance));
 
-        var span = Assert.Single(captured, a => a.OperationName == BabelstoneAttributes.SpanSagaAdvance);
+        // Scope to THIS saga's advance span by its structural process_id tag, not the span name alone:
+        // the ActivityListener is process-global, and parallel integration test classes now also emit
+        // saga.advance spans (the dispatcher self-advances on a delivery outcome — bd babelstone-t7o3.8),
+        // so a bare name match would capture a sibling saga's span and break Assert.Single.
+        var span = Assert.Single(
+            captured,
+            a => a.OperationName == BabelstoneAttributes.SpanSagaAdvance
+                && (string?)a.GetTagItem(BabelstoneAttributes.SagaProcessId) == processId.ToString());
 
         // Parented onto the inbound traceparent: same trace, the inbound span as parent — the saga
         // joins the upstream distributed trace as a child.
@@ -119,8 +126,12 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
             await RunAsync(handler, Event(processId, ConstitutionProcess.BalanceReserved, traceParent: InboundTraceParent)));
 
         // The completing advance is the one that emits ConfirmDebit; take its span (the last advance
-        // span captured under the inbound trace).
-        var span = captured.Last(a => a.OperationName == BabelstoneAttributes.SpanSagaAdvance);
+        // span captured for THIS saga). Filter on the process_id tag, not the span name alone: the
+        // process-global listener also captures parallel test classes' saga.advance spans now that the
+        // dispatcher self-advances (bd babelstone-t7o3.8), so a sibling saga's span could otherwise win.
+        var span = captured.Last(
+            a => a.OperationName == BabelstoneAttributes.SpanSagaAdvance
+                && (string?)a.GetTagItem(BabelstoneAttributes.SagaProcessId) == processId.ToString());
 
         // The outbox rows emitted UNDER an advance span carry a non-null outbound traceparent (the
         // edge-start rows carry null); each threads under THIS span (same trace id, the advance span's

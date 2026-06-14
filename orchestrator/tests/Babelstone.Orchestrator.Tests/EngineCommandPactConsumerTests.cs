@@ -3,6 +3,8 @@ using System.Text.Json;
 using Babelstone.Orchestrator.Commands;
 using Babelstone.Orchestrator.Dispatch;
 using Babelstone.Orchestrator.Handlers;
+using Babelstone.Orchestrator.Inbox;
+using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -113,10 +115,27 @@ public sealed class EngineCommandPactConsumerTests : IAsyncLifetime
         });
         builder.Services.AddSingleton<ICommandRouter, SagaCommandRouter>();
         builder.Services.AddHttpClient();
+        // The command-outcome → result-event bridge (bd babelstone-t7o3.8) injects the SagaAdvanceHandler
+        // so the drainer can self-advance the saga on a terminal delivery outcome. This Pact test seeds a
+        // STARTED saga + a single ActivateDeposit; the synthesized ProcessConstituted has no transition
+        // from STARTED → NoTransition → graceful no-op, so the delivery contract assertions are unaffected.
+        builder.Services.AddSingleton<ISagaStateMachine, ConstitutionProcess>();
+        builder.Services.AddSingleton<SagaStateStore>();
+        builder.Services.AddSingleton<SagaTransitionLog>();
+        builder.Services.AddSingleton<SagaBusinessReferenceStore>();
+        builder.Services.AddSingleton<ISagaCommandSink>(sp =>
+            new SagaCommandOutboxSink(sp.GetRequiredService<SagaBusinessReferenceStore>()));
+        builder.Services.AddSingleton(sp => new SagaAdvanceHandler(
+            sp.GetRequiredService<ISagaStateMachine>(),
+            sp.GetRequiredService<SagaStateStore>(),
+            sp.GetRequiredService<SagaTransitionLog>(),
+            sp.GetRequiredService<ISagaCommandSink>(),
+            sp.GetRequiredService<SagaBusinessReferenceStore>()));
         builder.Services.AddSingleton(sp => new SagaCommandDispatchDrainer(
             sp.GetRequiredService<SagaCommandDispatcherOptions>(),
             sp.GetRequiredService<ICommandRouter>(),
-            sp.GetRequiredService<IHttpClientFactory>()));
+            sp.GetRequiredService<IHttpClientFactory>(),
+            sp.GetRequiredService<SagaAdvanceHandler>()));
         builder.Services.AddHostedService<SagaCommandDispatcherService>();
         return builder.Build();
     }

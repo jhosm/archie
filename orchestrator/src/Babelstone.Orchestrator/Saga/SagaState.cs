@@ -97,7 +97,10 @@ public enum SagaState
     /// <see cref="Cancelled"/> (a validation REJECTION that DID release a Core hold) because a
     /// precondition refusal is a fail-CLOSED before any effect, mirroring the edge precondition
     /// where "the orchestrator never starts" (ADR-PC-024 §5; Document 05
-    /// step 0 SCA/clearance pattern). Terminal.</summary>
+    /// step 0 SCA/clearance pattern). The settlement-driven flavour of this terminal — a Core
+    /// reserve refused for InsufficientBalance — is governed by ADR-PC-016 §70/§127
+    /// (InsufficientBalance → DepositConstitutionFailed, failure_reason: INSUFFICIENT_FUNDS); the
+    /// §127 reason taxonomy is H.2's verdict (babelstone-n55u), not carried at v1. Terminal.</summary>
     DepositConstitutionFailed,
 }
 
