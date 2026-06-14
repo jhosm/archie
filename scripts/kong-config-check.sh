@@ -33,8 +33,11 @@
 #          GET /api/v1/processes/{id}/stream (the I.1 edge-over-saga front door), plus
 #          the engine query reads GET /v1/deposits/{id} and /v1/deposits/maturities.
 #        - the SSE route carries its SSE-aware settings (long read_timeout, buffering off).
-#        - the five edge policies are attached (jwt, rate-limiting, request-validator,
-#          opentelemetry, and upstream mTLS to the orchestrator/engine).
+#        - the edge policies are attached (jwt, rate-limiting, payload validation
+#          (request-validator on Enterprise, or a CE pre-function body check — the edition
+#          actually selected), PSD2 SCA enforcement on the constitute money-mover (acr +
+#          auth_time freshness, ADR-IC-006 §P2), opentelemetry, and upstream mTLS to the
+#          orchestrator/engine). No fixed count — the inventory grows as routes/policies do.
 #        - the engine COMMAND surface (POST /v1/deposits) is NOT a public Kong route —
 #          it is the orchestrator's INTERNAL saga target (ADR-IC-006 §P5 mTLS boundary),
 #          never the public client write path.
@@ -110,7 +113,8 @@ have 'read_timeout: *1800000' "SSE stream route missing the 1800000ms (30-min) r
 have 'request_buffering: *false' "SSE stream route missing request_buffering: false (ADR-IC-006 §P4)"
 have 'response_buffering: *false' "SSE stream route missing response_buffering: false (ADR-IC-006 §P4)"
 
-# The five edge policies (ADR-IC-006 §P2/§P3/§P5/§P6 + §Decision).
+# The edge policies (ADR-IC-006 §P2/§P3/§P4/§P5/§P6 + §Decision) — no fixed count; the
+# inventory grows as routes/policies are added, so assertions are listed, not enumerated.
 have 'name: *jwt' "missing the jwt plugin (token signature validation, ADR-IC-006 §1/§P7)"
 have 'name: *rate-limiting' "missing the rate-limiting plugin (ADR-IC-006 §P3)"
 # Payload validation (ADR-IC-006 §4): the constitute route must validate the request

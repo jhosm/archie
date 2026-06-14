@@ -204,8 +204,10 @@ services:
                 # WHEN SCA happened. A constitution debits a payment account — a PIS-equivalent
                 # money-mover — so SCA must be FRESH, not merely present: `auth_time` may be no
                 # older than SCA_MAX_AGE seconds. (Doc 10: an `acr` too weak, or an `auth_time`
-                # too far in the past, fails the precondition.) AML/KYC is OUT of scope here —
-                # ADR-PC-013 is Withdrawn (00 §4); the edge enforces SCA ONLY, code SCA_REQUIRED.
+                # too far in the past, fails the precondition.) AML/KYC is OUT of scope here
+                # (00 §4: "fraud / AML, KYC are out-of-scope products"); the edge enforces SCA
+                # ONLY, code SCA_REQUIRED — there is no AML edge precondition (ADR-PC-013, the
+                # AML/KYC-upstream-precondition ADR, is Withdrawn 2026-06-03, adrs/retired/).
                 #
                 # FAIL-CLOSED: a missing Authorization header, a malformed token, an undecodable
                 # payload, an absent/empty `acr`, a missing/non-numeric/stale `auth_time` — every
@@ -248,8 +250,11 @@ services:
                   -- arbitrary claims on the credential context).
                   local auth = kong.request.get_header("authorization")
                   if type(auth) ~= "string" then return deny() end
-                  local token = auth:match("^[Bb]earer%s+(.+)$")
-                  if not token then return deny() end
+                  -- RFC 7235 auth-scheme is case-INSENSITIVE: accept Bearer/bearer/BEARER alike,
+                  -- so a fully-compliant client emitting a non-canonical scheme case is not
+                  -- spuriously 403'd. Still fail-closed: a non-Bearer scheme yields no token.
+                  local scheme, token = auth:match("^(%a+)%s+(.+)$")
+                  if not token or scheme:lower() ~= "bearer" then return deny() end
 
                   -- A compact JWS is header.payload.signature — exactly three dot-segments.
                   local h, payload_seg, sig = token:match("^([^%.]+)%.([^%.]+)%.([^%.]+)$")
