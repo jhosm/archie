@@ -35,14 +35,30 @@
 #        - the SSE route carries its SSE-aware settings (long read_timeout, buffering off).
 #        - the edge policies are attached (jwt, rate-limiting, payload validation
 #          (request-validator on Enterprise, or a CE pre-function body check — the edition
-#          actually selected), PSD2 SCA enforcement on the constitute money-mover (acr +
-#          auth_time freshness, ADR-IC-006 §P2), gateway-attested caller identity
-#          (X-Client-Id from the validated jwt sub on both orchestrator routes, §P4),
+#          actually selected), PSD2 SCA enforcement on the money-mover routes — constitute
+#          AND the SoR-routed existing-instance op (acr + auth_time freshness, ADR-IC-006
+#          §P2), gateway-attested caller identity (X-Client-Id from the validated jwt sub
+#          on the orchestrator routes and the SoR-routed op, §P4),
 #          opentelemetry, and upstream mTLS to the orchestrator/engine). No fixed count —
 #          the inventory grows as routes/policies do.
 #        - the engine COMMAND surface (POST /v1/deposits) is NOT a public Kong route —
 #          it is the orchestrator's INTERNAL saga target (ADR-IC-006 §P5 mTLS boundary),
 #          never the public client write path.
+#
+#   3b. SoR-routing scaffold (ADR-PC-018 §1/§2/§5 + coexistence §3.1/§6.2; ADR-IC-006 §P2/§P4)
+#       — the coexistence channel-routing contract, gated so a future edit cannot silently
+#       drop it (ADR-PC-020 §D3). Distinct provenance from block 3 above (which is bounded to
+#       ADR-IC-006 §Decision/§P1–§P6 + Document 05): these assertions are governed by
+#       ADR-PC-018 (the gateway resolves instance_id -> sor -> backend) and reuse the ADR-IC-006
+#       §P2/§P4 SCA + identity posture on the new money-mover route:
+#        - the new-constitution route documents engine-SoR by product_family + cutover rule;
+#        - the existing-instance op route names the instance_id -> sor -> backend resolution
+#          AND resolves `sor` itself off the engine read surface (no client-supplied `sor`
+#          path segment picks the backend — the split-brain-proofing, ADR-PC-018 §2);
+#        - the SoR-routed money-mover route carries the SAME SCA gate as constitute
+#          (SCA_REQUIRED freshness, ADR-IC-006 §P2) — no less-guarded new money path;
+#        - the fail-closed default (SOR_UNRESOLVED, 503) refuses a legacy/unresolved op
+#          rather than guessing a backend (ADR-PC-018 §5).
 #
 # Static-only (steps 1 + 3, no Docker; skips the kong-image parse) with:
 #   KONG_CHECK_STATIC_ONLY=1 ./scripts/kong-config-check.sh
@@ -185,9 +201,11 @@ fi
 # legacy core (current accounts). Routing to the wrong backend is the split-brain
 # failure the whole design prevents. ADR-PC-018 places this routing on the EDGE GATEWAY
 # (option b, §Decision), not in the engine and not duplicated per-channel; the binding
-# placement is the bank's channel tier (§Decision binding authority / §6 slot 6). This
-# block asserts the gateway-side SCAFFOLD is present so a future edit cannot silently
-# drop it (ADR-PC-020 §D3 / ADR-PC-018 §5: fail closed, never guess a backend).
+# placement is the bank's channel tier (§Decision binding authority / §6 slot 6). These
+# assertions lock in that the GATEWAY resolves `sor` (it is never picked by a client path
+# segment), that the SoR-routed money-mover is SCA-guarded to parity with constitute, and
+# that the fail-closed default is present — so a future edit cannot silently re-open the
+# split-brain mis-route (ADR-PC-020 §D3 / ADR-PC-018 §1/§2/§5).
 
 # (i) New-constitution routing (ADR-PC-018 §1, the v1 load-bearing case): a NEW term
 # deposit is engine-SoR by the product_family + coexistence §3.1 cutover-date rule —
@@ -197,21 +215,52 @@ fi
 have 'SoR: *engine \(new-constitution rule' "missing the documented new-constitution SoR-routing intent on the constitute route (engine-SoR by product_family + cutover rule, ADR-PC-018 §1 / coexistence §3.1)"
 
 # (ii) Existing-instance SoR routing keyed on `sor` (ADR-PC-018 §1/§2). For an existing
-# instance the router resolves instance_id -> sor -> backend. Engine-SoR existing-instance
-# state-changing ops route to the engine upstream; the read surface already exposes `sor`
-# (the engine owns the routing DATA, not the LOGIC — §Decision / §6). Assert the scaffold
-# names this resolution explicitly so the intent is auditable and cannot be dropped.
+# instance the GATEWAY resolves instance_id -> sor -> backend. Assert the scaffold names
+# this resolution explicitly so the intent is auditable and cannot be dropped.
 have 'instance_id *-> *sor *-> *backend' "missing the documented instance_id -> sor -> backend SoR-resolution scaffold (ADR-PC-018 §1)"
 
-# (iii) FAIL-CLOSED default for an unresolvable / legacy `sor` (ADR-PC-018 §5). The legacy
-# backend is NOT built in v1, so a legacy-SoR or unresolvable-`sor` state-changing op must
-# be REFUSED ("instance state unavailable") — the router NEVER guesses a backend, because
-# guessing routes a command to a system that does not hold the SoR (split-brain). This is
-# a documented placeholder legacy service whose pre-function fails closed with a stable
-# code SOR_UNRESOLVED. Asserting the code AND a 503 refusal status are BOTH present means a
-# future edit cannot silently turn the refusal into a guess (ADR-PC-020 §D3 / ADR-PC-018 §5).
+# (ii-a) THE SPLIT-BRAIN-PROOFING (ADR-PC-018 §2: the router READS sor, never DECIDES it;
+# and the client path must not decide it either). The gateway must RESOLVE `sor` itself —
+# off the engine read surface (GET /v1/deposits/{id}) — not trust a client-supplied `sor`
+# path segment. Assert the resolution lookup is present...
+have 'https://engine:8080/v1/deposits/" *\.\. *instance_id' "missing the gateway-side SoR resolution: the SoR-routed op route must READ \`sor\` off the engine read surface (GET /v1/deposits/{id}), not trust a client-supplied path segment (ADR-PC-018 §1/§2 — the cardinal split-brain guard)"
+have 'body\.sor *~= *"engine"' "missing the explicit engine-SoR gate: the op route must proxy to the engine ONLY on \`sor == engine\` read off the read surface, failing closed otherwise (ADR-PC-018 §2/§5)"
+# ...AND assert the OLD client-supplied path-per-SoR scheme is GONE (the inversion the
+# review flagged). No ROUTE PATH may key the backend on a /sor/engine or /sor/legacy path
+# segment — that would let the CALLER pick the backend (split-brain). The single op route
+# is /api/v1/sor/instances/{id}/operations with NO `sor` class word. Scope the check to
+# quoted path entries (a `paths:` array string or a `- "..."` list item) so it cannot be
+# tripped by an explanatory comment that merely names the rejected scheme.
+if grep -Eq '"[^"]*/sor/(engine|legacy|unresolved)/' "$CONFIG"; then
+  fail "ADR-PC-018 §2 violation (split-brain mis-route): a /sor/{engine|legacy|unresolved}/... route path lets the CLIENT pick the backend. The gateway must resolve instance_id -> sor -> backend itself; the op route must carry NO \`sor\` class word in the path (single route /api/v1/sor/instances/{id}/operations)"
+fi
+
+# (ii-b) SCA PARITY ON THE NEW MONEY-MOVER (ADR-IC-006 §P2). An existing-instance op
+# (terminate early, withdraw partially) is a PIS-equivalent money-mover, the same class as
+# constitute — so it must carry the same SCA freshness gate. Assert the SoR-routed op route
+# enforces SCA (acr + auth_time freshness, SCA_REQUIRED) like constitute, and attests the
+# caller identity (X-Client-Id from the jwt sub, §P4 — the per-instance ownership/IDOR
+# guard). The presence of the SCA window + the freshness check on this file is asserted via
+# the SCA_MAX_AGE constant and the SCA_REQUIRED code; that they appear on TWO money-mover
+# routes (constitute + sor-ops) is asserted by requiring at least two occurrences.
+if [ "$(grep -c 'SCA_MAX_AGE *= *300' "$CONFIG")" -lt 2 ]; then
+  fail "ADR-IC-006 §P2 regression: the SoR-routed existing-instance op is a money-mover but is NOT SCA-guarded to parity with constitute (expected the SCA freshness window on BOTH the constitute route and the sor-ops route)"
+fi
+if [ "$(grep -c 'auth_time' "$CONFIG")" -lt 2 ]; then
+  fail "ADR-IC-006 §P2 regression: the SoR-routed money-mover route is missing the auth_time SCA-freshness check that constitute carries"
+fi
+
+# (iii) FAIL-CLOSED default for an unresolvable / legacy `sor` (ADR-PC-018 §5). A legacy-SoR
+# or unresolvable-`sor` state-changing op must be REFUSED ("instance state unavailable") —
+# the router NEVER guesses a backend, because guessing routes a command to a system that
+# does not hold the SoR (split-brain). The op route's resolution pre-function fails closed
+# with a stable code SOR_UNRESOLVED + a 503 on every non-engine / unresolvable outcome.
+# Asserting the code AND a 503 refusal are BOTH present means a future edit cannot silently
+# turn the refusal into a guess (ADR-PC-020 §D3 / ADR-PC-018 §5). NOTE OF SCOPE: these
+# assert the refusal EXISTS, not that it cannot be bypassed — the bypass is closed by (ii-a)
+# above (the gateway resolves `sor`; the client path cannot pick the engine backend).
 have 'SOR_UNRESOLVED' "missing the fail-closed SoR refusal: an unresolvable/legacy-SoR state-changing op must be refused with code SOR_UNRESOLVED, never routed by guess (ADR-PC-018 §5)"
-have 'kong\.response\.exit\(503' "missing the fail-closed 503 refusal on the SoR-unresolved/legacy-placeholder route (ADR-PC-018 §5: refuse 'instance state unavailable', never guess a backend)"
+have 'kong\.response\.exit\(503' "missing the fail-closed 503 refusal on the SoR-routed op route (ADR-PC-018 §5: refuse 'instance state unavailable', never guess a backend)"
 
 # (iv) Honour the engine's NEGATIVE commitment (ADR-PC-018 §6 / §Decision): the routing
 # logic lives in Kong, NOT in the engine. The engine COMMAND surface (POST /v1/deposits)
