@@ -52,6 +52,9 @@ __pycache__/
 # Walking-skeleton demo runtime (scripts/demo-mcp.sh): logs + pidfiles
 /.demo-mcp/
 
+# Constitution-saga demo runtime (scripts/demo-saga.sh): logs + pidfiles
+/.demo-saga/
+
 # Build output — DocFX site (ADR-PC-026): generated API metadata + rendered site
 /docfx/api/
 /docfx/_site/

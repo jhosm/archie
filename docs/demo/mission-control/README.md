@@ -9,20 +9,30 @@ and watch the interest accrue, 28% withholding apply, and the payout resolve.
 
 This is a one-page web app that shows the bank working. The left column is the controls, the
 middle is the event stream (every change is a permanent, numbered fact), and the right is the
-deposit's current state — which is *computed* from those events, never stored. It runs in two
-modes: **DEMO** (no backend, perfectly deterministic, safe for a stage) and **LIVE** (driving
-the real engine). It shares the deck's exact look so the two feel like one product.
+deposit's current state — which is *computed* from those events, never stored. It runs in three
+modes: **DEMO** (no backend, perfectly deterministic, safe for a stage), **LIVE·engine** (driving
+the real engine directly), and **LIVE·saga** (opening the deposit the intended way — through the
+orchestrator edge and the constitution saga). It shares the deck's exact look so they feel like one product.
 
-## The two modes
+## The three modes
 
-| | DEMO | LIVE |
-| --- | --- | --- |
-| Backend needed | none | the engine on `:8080` + `serve.py` |
-| Determinism | total — same every time | real engine output |
-| Use it for | the stage, a laptop with no network, a leave-behind | proving it's genuinely real |
-| The money math | computed in-browser the engine's way (ACT/360, 28%) | computed by the engine kernel |
+| | DEMO | LIVE·engine | LIVE·saga |
+| --- | --- | --- | --- |
+| What it drives | nothing (in-browser) | the engine's command surface, **direct** | the deposit opened through the orchestrator **edge → constitution saga** |
+| Backend needed | none | the engine on `:8080` + `serve.py` | the orchestrator on `:8090` + Core-ACL stub + `serve.py` |
+| Bring-up | `open index.html` | `scripts/demo-mcp.sh up` | `scripts/demo-saga.sh up` |
+| What it proves | the math, on a stage with no network | the engine kernel is genuinely real | the **intended** command-plane: edge, saga, dispatcher, settlement |
+| Contract | — | `POST /v1/deposits` (ADR-PC-029) | `POST /api/v1/deposits/constitute` → 202 + SSE (ADR-IC-006 §P4) |
 
 Flip between them with the **Mode** toggle, top-right. DEMO is the default.
+
+**The engine-direct vs saga distinction matters.** LIVE·engine calls the engine's `/v1` command
+surface directly — a real, governed boundary (ADR-PC-029 lists the edge, MCP, and saga as
+co-callers of it), and it's faithful to the **MCP-operator** framing this demo uses. But it
+deliberately does *not* route through the **constitution saga**: the engine decides-and-appends, so
+there's no settlement leg, no approval gate, no compensation. LIVE·saga is the other half — it opens
+the deposit the way the production flow intends, edge → saga orchestrates → engine, so you see the
+saga's reversible money leg actually fire against the Core-ACL settlement target. (See `babelstone-f0ic.11`.)
 
 ### DEMO mode — zero setup
 
@@ -36,7 +46,7 @@ Everything works offline. The numbers are computed with the engine's own method
 (ACT/360 simple interest, 28% withholding), so a €10,000 / 12-month / 3% deposit matures to
 **€10,219.00** — the same figure the real engine produces.
 
-### LIVE mode — drives the real engine
+### LIVE·engine mode — drives the engine directly
 
 The engine has **no CORS**, so a browser can't call it cross-origin. `serve.py` solves this by
 serving the UI and the engine's `/v1/*` API from one origin (a reverse proxy) — no CORS, no
@@ -49,11 +59,60 @@ scripts/demo-mcp.sh up            # engine comes up on http://localhost:8080
 # 2. start Mission Control (stdlib only — no pip install)
 python3 docs/demo/mission-control/serve.py
 
-# 3. open http://localhost:9000  → flip the Mode toggle to LIVE
+# 3. open http://localhost:9000  → flip the Mode toggle to LIVE·engine
 ```
 
 The connection LED (top-right) turns green when the engine is reachable. Override defaults
 with env vars: `MC_PORT` (default 9000), `ENGINE_URL` (default `http://localhost:8080`).
+
+### LIVE·saga mode — drives the constitution saga
+
+This is the **intended** way a deposit is opened: a client hits the orchestrator's **edge front
+door**, which *starts* the constitution saga (ADR-IC-003 / Document 05) and returns `202 Accepted`
+with a `process_id` and an **SSE stream** that follows the saga to a terminal state. The saga decides
+its commands; the dispatcher (ADR-PC-029) delivers the reversible settlement leg
+(`ReserveAccountBalance`) to the **Core-ACL stub** over idempotent HTTP. Nothing rides the durable
+bus but events.
+
+```bash
+# 1. bring up the saga path: Postgres + Redpanda + Core-ACL stub + the orchestrator host
+scripts/demo-saga.sh up           # orchestrator edge comes up on http://localhost:8090
+
+# 2. start Mission Control (same proxy; it also forwards /api/v1/* to the orchestrator)
+python3 docs/demo/mission-control/serve.py
+
+# 3. open http://localhost:9000  → flip the Mode toggle to LIVE·saga → Constitute deposit
+```
+
+You'll watch the saga stream out of the edge: `ConstitutionRequested` → `PARALLEL_VALIDATION`, with
+`ReserveAccountBalance` dispatched to the Core-ACL stub, and the position column tracking the saga's
+milestones (Requested → Validating → Approved & debited → Constituted).
+
+**The honest edge — the saga pauses at `PARALLEL_VALIDATION` by design today.** Its result events
+(`BalanceReserved` / `LimitsValidated`) are what advance it, and nothing *produces* those onto the
+internal `deposits.process.events` topic yet — that outcome-feedback bridge is **bd
+`babelstone-t7o3.8`** (in progress). So LIVE·saga proves the whole *command-plane* (edge → saga →
+dispatcher → settlement) end-to-end, and the saga runs through to a terminal `DepositConstituted`
+the moment t7o3.8 lands — the engine is added to `demo-saga.sh` at that point (it joins at the
+irreversible phase; the stranded happy path never reaches `ActivateDeposit`, so it isn't needed
+yet). This is the same honest framing as the MCP and Telemetry tabs: show what's real, name what's
+aspirational.
+
+`serve.py` plays the **gateway** for this mode: it injects the `X-Client-Id` the edge's per-process
+authz binds ownership to (the claim Kong would propagate, ADR-IC-006 §P4) — the browser's
+`EventSource` can't set headers, so injecting it at the proxy is what lets the SSE stream's
+ownership check pass. Override defaults with env vars: `ORCHESTRATOR_URL` (default
+`http://localhost:8090`), `DEMO_CLIENT_ID` (default `CLI-DEMO-0001`, an opaque reference — never PII).
+
+Other lifecycle actions (mature, coupons, retry, terminate) are disabled in LIVE·saga: the saga
+covers **constitution** only today. Use DEMO or LIVE·engine to drive those.
+
+**Smoke-tested 2026-06-14** against a real orchestrator (`scripts/demo-saga.sh up` → `serve.py`):
+the edge returns `202` + a `PROC-…` id, the SSE stream emits `PARALLEL_VALIDATION`, the dispatcher
+delivers `ReserveAccountBalance` to the Core-ACL stub (`POST /v1/reservations`), and the UI renders
+the saga flow + the strand — confirmed in the browser and the orchestrator log. (A pre-existing
+Postgres volume is fine — the orchestrator uses its own `babelstone_orchestrator` database, distinct
+from the engine's, so there's no `inbox`-table collision with `demo-mcp.sh`.)
 
 ## The demo beats (what to click)
 
@@ -101,10 +160,17 @@ saga trace is aspirational, while the per-deposit 3-span trace is real.
 
 ## How it maps to the real contract
 
-LIVE mode speaks the engine's actual API (verified against `engine/src/Babelstone.Engine.Api`):
+**LIVE·engine** speaks the engine's actual API (verified against `engine/src/Babelstone.Engine.Api`):
 snake_case JSON, integer cents, a required `Idempotency-Key` UUID on constitute, and
 `If-Min-Sequence` on the follow-up read for read-your-writes. Endpoints used:
 `POST /v1/deposits`, `GET /v1/deposits/{id}`, `POST /v1/deposits/{id}/maturity`.
+
+**LIVE·saga** speaks the orchestrator edge's actual API (verified against
+`orchestrator/src/Babelstone.Orchestrator/Edge`): `POST /api/v1/deposits/constitute` →
+`202 Accepted` with `{deposit_id, process_id, status, stream_url}`, then a long-lived SSE
+`GET /api/v1/processes/{id}/stream` emitting `event: state` frames carrying the **structural** saga
+state only (`{process_id, state, version, terminal}` — never PII, ADR-PC-004 §P2). The `X-Client-Id`
+ownership header is injected by `serve.py` (the gateway stand-in).
 
 ## Product variants
 
@@ -127,7 +193,7 @@ The engine has the decider — penalty bands, basis, payout floor — but **no H
 this can't run against the real engine. The demo shows an illustrative `DepositTerminatedEarly`
 (≈50% term elapsed, a 50%-of-accrued penalty band) and is labelled as such.
 
-## LIVE mode — verified
+## LIVE·engine mode — verified
 
 Smoke-tested against a real engine (`scripts/demo-mcp.sh up` → `serve.py`) on 2026-06-14:
 

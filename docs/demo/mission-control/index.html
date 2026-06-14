@@ -241,7 +241,7 @@ body.console-open .hint-bar { display:none; }
   <div class="brand"><span class="dot"></span><b>BABELSTONE</b><span>Mission Control</span></div>
   <div class="controls">
     <div class="ctl-group"><span class="seg-label">Mode</span>
-      <div class="seg" id="modeSeg"><button data-mode="demo" class="on">DEMO</button><button data-mode="live">LIVE</button></div>
+      <div class="seg" id="modeSeg"><button data-mode="demo" class="on">DEMO</button><button data-mode="live">LIVE·engine</button><button data-mode="saga">LIVE·saga</button></div>
     </div>
     <div class="ctl-group"><span class="seg-label">Operator</span>
       <div class="seg alt" id="opSeg"><button data-op="human" class="on">YOU</button><button data-op="ai">CLAUDE</button></div>
@@ -342,6 +342,9 @@ body.console-open .hint-bar { display:none; }
   };
   var RATE_SHEET = "pt-deposits-2026.1";
   var API_BASE = "";                 // same-origin; live mode goes through the proxy (serve.py)
+  // The gateway-attested owner serve.py injects on /api/v1/* (LIVE·saga). Display-only here — the
+  // proxy is the source of truth (DEMO_CLIENT_ID env); an OPAQUE business reference, never PII.
+  var SAGA_CLIENT = "CLI-DEMO-0001";
   function product() { return PRODUCTS[el("product").value]; }
 
   /* ---------------- state ---------------- */
@@ -351,7 +354,10 @@ body.console-open .hint-bar { display:none; }
     principalCents: 0, termDays: 0, busy: false, spans: [],
     variant: "AT_MATURITY", tan: 300, ppm: 0,
     couponsPaid: 0, numCoupons: 0,
-    accrued: 0, withheld: 0, netPaid: 0   // running tallies (demo + live coupon deltas)
+    accrued: 0, withheld: 0, netPaid: 0,  // running tallies (demo + live coupon deltas)
+    // LIVE·saga mode: the constitution saga driven through the orchestrator edge
+    processId: null, streamUrl: null, sagaES: null,
+    sagaState: null, sagaVersion: -1, sagaTerminal: false, sagaSeenLeg: false
   };
 
   /* ---------------- elements ---------------- */
@@ -478,6 +484,98 @@ body.console-open .hint-bar { display:none; }
     requestAnimationFrame(frame);
   }
 
+  /* ---------------- LIVE·saga — the constitution saga, observed through the edge SSE stream -------- */
+  var SAGA_VALIDATING = ["PARALLEL_VALIDATION", "AWAIT_LIMITS_VALIDATED", "AWAIT_BALANCE_RESERVED",
+    "VALIDATIONS_COMPLETE", "AWAIT_WORKFLOW_APPROVAL", "AWAIT_CORE_CLEARANCE"];
+  var SAGA_FAILURE = ["CANCELLED", "CANCELLED_AFTER_DEBIT", "DEPOSIT_CONSTITUTION_FAILED",
+    "COMPENSATE_VALIDATIONS", "COMPENSATE_POST_DEBIT", "HUMAN_INTERVENTION_REQUIRED"];
+  function sagaIsFailure(s) { return SAGA_FAILURE.indexOf(s) >= 0; }
+  function sagaMilestone(s) {
+    if (s === "STARTED") return 1;
+    if (SAGA_VALIDATING.indexOf(s) >= 0) return 2;
+    if (s === "APPROVED") return 3;
+    if (s === "COMPLETED") return 4;
+    return 2;
+  }
+  function sagaStateBlurb(s) {
+    switch (s) {
+      case "STARTED": return "saga created · pinning business references";
+      case "PARALLEL_VALIDATION": return "reversible legs dispatched · awaiting BalanceReserved + LimitsValidated";
+      case "AWAIT_LIMITS_VALIDATED": return "Core hold reserved · awaiting product-limit check";
+      case "AWAIT_BALANCE_RESERVED": return "limits validated · awaiting Core balance hold";
+      case "VALIDATIONS_COMPLETE": return "both validations passed · awaiting approval";
+      case "AWAIT_WORKFLOW_APPROVAL": return "above auto-approval threshold · routed to workflow";
+      case "APPROVED": return "approved · irreversible Core debit + activation";
+      case "COMPLETED": return "deposit constituted · saga complete";
+      case "CANCELLED": return "validation failed · reversible hold released";
+      case "CANCELLED_AFTER_DEBIT": return "activation failed after debit · debit reversed";
+      case "DEPOSIT_CONSTITUTION_FAILED": return "precondition refused · nothing committed";
+      case "HUMAN_INTERVENTION_REQUIRED": return "compensation could not complete · escalated";
+      default: return s.toLowerCase().replace(/_/g, " ");
+    }
+  }
+  function openSagaStream() {
+    if (state.sagaES) { try { state.sagaES.close(); } catch (e) {} state.sagaES = null; }
+    var es = new EventSource(API_BASE + state.streamUrl);
+    state.sagaES = es;
+    es.addEventListener("state", function (ev) { try { onSagaState(JSON.parse(ev.data)); } catch (e) {} });
+    // EventSource auto-retries on a dropped connection; once the saga is terminal we close it
+    // ourselves (below), so any error after that is benign.
+    es.onerror = function () { if (state.sagaTerminal && state.sagaES) { try { state.sagaES.close(); } catch (e) {} state.sagaES = null; } };
+  }
+  function onSagaState(d) {
+    if (d.version === state.sagaVersion && d.state === state.sagaState) return;
+    var changed = d.state !== state.sagaState;
+    state.sagaState = d.state; state.sagaVersion = d.version; state.sagaTerminal = !!d.terminal;
+    if (changed) addEvent({ seq: "v" + d.version, name: "Saga · " + d.state, meta: sagaStateBlurb(d.state) });
+    // the reversible settlement leg is dispatched as validation begins — surface it once
+    if (d.state === "PARALLEL_VALIDATION" && !state.sagaSeenLeg) {
+      state.sagaSeenLeg = true;
+      addEvent({ seq: "→", name: "ReserveAccountBalance", meta: "dispatched to Core ACL · POST /v1/reservations · reversible hold", amtClass: "verify", verify: true });
+      mcpLog('', 'ReserveAccountBalance → Core ACL');
+    }
+    renderSagaProcess();
+    if (d.terminal) {
+      state.lifecycle = d.state;
+      if (state.sagaES) { try { state.sagaES.close(); } catch (e) {} state.sagaES = null; }
+      toast(d.state === "COMPLETED" ? "Saga complete · DepositConstituted" : "Saga ended · " + d.state, d.state === "COMPLETED" ? "verify" : "err");
+    }
+    setButtons();
+  }
+  function renderSagaProcess() {
+    var s = state.sagaState || "STARTED";
+    var failure = sagaIsFailure(s), complete = s === "COMPLETED";
+    var badge = complete ? "matured" : failure ? "terminated" : "active";
+    var cur = sagaMilestone(s);
+    var steps = ["Requested", "Validating (reversible)", "Approved & debited", "Constituted"];
+    var stepsHtml = steps.map(function (label, i) {
+      var n = i + 1;
+      var done = (!failure && cur > n) || (complete && n === 4);
+      var here = !failure && !complete && cur === n;
+      var mark = done ? "✓" : here ? "⋯" : "·";
+      var color = done ? "var(--verify)" : here ? "var(--gold)" : "var(--muted)";
+      return '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;color:' + color + '">' +
+             '<span style="width:14px;text-align:center">' + mark + '</span><span>' + label + '</span></div>';
+    }).join("");
+    var note = complete
+      ? '<div class="pb-sub" style="color:var(--verify)">✓ DepositConstituted — the saga drove edge → settlement → engine end-to-end.</div>'
+      : failure
+        ? '<div class="pb-sub" style="color:var(--wrong)">Compensation path · ' + sagaStateBlurb(s) + '.</div>'
+        : '<div class="pb-sub">Waiting in <b>' + s + '</b> for its result events. The outcome-feedback bridge that produces them (<b>bd&nbsp;t7o3.8</b>) isn\'t wired yet, so the saga pauses here by design — the command-plane plumbing (edge → saga → dispatcher → Core-ACL settlement) is live.</div>';
+    passbook.innerHTML =
+      '<span class="status-badge ' + badge + '"><span class="d"></span>' + s + '</span>' +
+      '<div class="pb-id">' + state.processId + '</div>' +
+      '<div class="pb-principal">' + euro(state.principalCents) + '</div>' +
+      '<div class="pb-sub">SAGA · ConstitutionProcess · owner ' + SAGA_CLIENT + '</div>' +
+      '<div class="pb-grid" style="display:block">' + stepsHtml + '</div>' +
+      note +
+      '<div class="pb-meta">' +
+        '<div class="cell"><div class="k">Deposit</div><div class="v">' + (state.depositId || "—") + '</div></div>' +
+        '<div class="cell"><div class="k">Version</div><div class="v">#' + state.sagaVersion + '</div></div>' +
+        '<div class="cell"><div class="k">Product</div><div class="v">' + el("product").value + '</div></div>' +
+      '</div>';
+  }
+
   /* ---------------- button enablement ---------------- */
   function setButtons() {
     var has = !!state.depositId;
@@ -485,16 +583,22 @@ body.console-open .hint-bar { display:none; }
     var active = has && !closed;
     var periodic = state.variant === "PERIODIC";
     var couponsLeft = state.couponsPaid < state.numCoupons - 1;  // last coupon settles at maturity
+    // LIVE·saga covers CONSTITUTION only — the saga has no maturity/coupon/retry/terminate legs yet,
+    // so those actions are disabled in saga mode (the engine-direct LIVE·engine mode drives them).
+    var saga = state.mode === "saga";
+    var sagaTip = "LIVE·saga covers constitution only — use DEMO or LIVE·engine for this";
     btnC.disabled = state.busy || has;
-    btnR.disabled = state.busy || !has || closed;
-    btnM.disabled = state.busy || !active;
-    // Pay coupon: PERIODIC only, while active and intermediate coupons remain
-    btnCoupon.style.display = periodic ? "" : "none";
-    btnCoupon.disabled = state.busy || !active || !periodic || !couponsLeft;
+    btnR.disabled = state.busy || !has || closed || saga;
+    btnM.disabled = state.busy || !active || saga;
+    btnR.title = saga ? sagaTip : "";
+    btnM.title = saga ? sagaTip : "";
+    // Pay coupon: PERIODIC only, while active and intermediate coupons remain (never in saga mode)
+    btnCoupon.style.display = (periodic && !saga) ? "" : "none";
+    btnCoupon.disabled = state.busy || !active || !periodic || !couponsLeft || saga;
     // Terminate early: DEMO-only (no live endpoint), while active
-    btnTerminate.style.display = active ? "" : "none";
-    btnTerminate.disabled = state.busy || !active || state.mode === "live";
-    btnTerminate.title = state.mode === "live" ? "No live endpoint yet — DEMO only" : "";
+    btnTerminate.style.display = (active && !saga) ? "" : "none";
+    btnTerminate.disabled = state.busy || !active || state.mode === "live" || saga;
+    btnTerminate.title = (state.mode === "live" || saga) ? "No live endpoint yet — DEMO only" : "";
     // lock the inputs once a deposit exists, so terms can't change mid-stream
     el("product").disabled = state.busy || has;
     el("principal").disabled = state.busy || has;
@@ -522,9 +626,15 @@ body.console-open .hint-bar { display:none; }
     return { json: json, status: res.status };
   }
   async function pingConn() {
-    if (state.mode !== "live") return;
-    try { await api("GET", "/v1/deposits/maturities?from=2000-01-01&to=2000-01-02"); setConn("ok", "live · engine reachable"); }
-    catch (e) { setConn("err", "live · engine unreachable"); }
+    if (state.mode === "live") {
+      try { await api("GET", "/v1/deposits/maturities?from=2000-01-01&to=2000-01-02"); setConn("ok", "live·engine · reachable"); }
+      catch (e) { setConn("err", "live·engine · unreachable"); }
+    } else if (state.mode === "saga") {
+      // the orchestrator 404s an unknown process stream — any HTTP answer (but a 502 proxy error)
+      // means the edge is reachable.
+      try { await api("GET", "/api/v1/processes/PROC-PING/stream"); setConn("ok", "live·saga · reachable"); }
+      catch (e) { setConn(e.status && e.status !== 502 ? "ok" : "err", "live·saga · " + (e.status && e.status !== 502 ? "reachable" : "unreachable")); }
+    }
   }
 
   /* =====================================================================
@@ -570,6 +680,30 @@ body.console-open .hint-bar { display:none; }
         renderPosition(p);
         toast("Constituted · commit #" + state.seq, "verify");
       } catch (e) { toast("Constitute failed (" + (e.status || "?") + "): " + e.message, "err"); state.depositId = null; }
+    } else if (state.mode === "saga") {
+      // LIVE·saga: open the deposit through the ORCHESTRATOR EDGE (Document 05 §Step 0). The edge
+      // STARTS the constitution saga and returns 202 + process_id + an SSE stream_url; serve.py plays
+      // the gateway, injecting the X-Client-Id the edge authz binds ownership to (EdgeAuth).
+      mcpLog('constitute_deposit(… via edge → saga …)');
+      try {
+        var sr = await api("POST", "/api/v1/deposits/constitute", {
+          product_code: prod, amount: principalCents,
+          source_account_ref: "ACCT-REF-DEMO-001", interest_account_ref: "ACCT-REF-DEMO-002"
+        });
+        state.depositId = sr.json.deposit_id;
+        state.processId = sr.json.process_id;
+        state.streamUrl = sr.json.stream_url;
+        state.lifecycle = "Processing"; state.sagaState = "STARTED"; state.sagaVersion = 0;
+        state.sagaTerminal = false; state.sagaSeenLeg = false;
+        mcpLog('', '202 · ' + state.processId);
+        addEvent({ seq: "▶", name: "ConstitutionRequested", meta: "saga STARTED · " + state.processId, amt: euro(principalCents), amtClass: "gold" });
+        renderSagaProcess();
+        openSagaStream();
+        toast("Saga started · " + state.processId.slice(0, 13) + "…", "verify");
+      } catch (e) {
+        toast("Constitute (saga) failed (" + (e.status || "?") + "): " + e.message, "err");
+        state.depositId = null; state.processId = null;
+      }
     } else {
       await sleep(550);
       state.depositId = uuid(); state.seq = 1; state.lifecycle = "Active";
@@ -737,8 +871,11 @@ body.console-open .hint-bar { display:none; }
   }
 
   function doReset() {
+    if (state.sagaES) { try { state.sagaES.close(); } catch (e) {} state.sagaES = null; }
     state.depositId = null; state.idemKey = null; state.seq = 0; state.lifecycle = null; state.busy = false;
     state.couponsPaid = 0; state.numCoupons = 0; state.accrued = 0; state.withheld = 0; state.netPaid = 0;
+    state.processId = null; state.streamUrl = null;
+    state.sagaState = null; state.sagaVersion = -1; state.sagaTerminal = false; state.sagaSeenLeg = false;
     syncProduct();
     ledger.innerHTML = '<div class="empty"><span class="big">An empty stream.</span>Every command appends an immutable, sequence-numbered fact. Constitute a deposit to begin.</div>';
     passbook.innerHTML = '<div class="empty">No position yet.<br />The state on the right is a <i>fold</i> of the events on the left — never stored, always derivable.</div>';
@@ -752,8 +889,16 @@ body.console-open .hint-bar { display:none; }
   function setMode(mode) {
     state.mode = mode;
     el("modeSeg").querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b.dataset.mode === mode); });
-    if (mode === "live") { setConn("err", "live · checking…"); pingConn(); el("hintBar").innerHTML = 'Mode <b>LIVE</b> · calls go through the proxy to the engine on :8080'; }
-    else { setConn("demo", "demo · no backend"); el("hintBar").innerHTML = 'Mode <b>DEMO</b> needs no backend · switch to <b>LIVE</b> to drive the real engine'; }
+    if (mode === "live") {
+      setConn("err", "live·engine · checking…"); pingConn();
+      el("hintBar").innerHTML = 'Mode <b>LIVE·engine</b> · the engine\'s own command surface, direct (ADR-PC-029) — start it with <code>scripts/demo-mcp.sh up</code>';
+    } else if (mode === "saga") {
+      setConn("err", "live·saga · checking…"); pingConn();
+      el("hintBar").innerHTML = 'Mode <b>LIVE·saga</b> · the deposit is opened through the orchestrator EDGE → constitution saga (ADR-IC-003) — start it with <code>scripts/demo-saga.sh up</code>';
+    } else {
+      setConn("demo", "demo · no backend");
+      el("hintBar").innerHTML = 'Mode <b>DEMO</b> needs no backend · <b>LIVE·engine</b> drives the engine direct · <b>LIVE·saga</b> drives the constitution saga';
+    }
     doReset();
   }
   function updateDrawer() {
