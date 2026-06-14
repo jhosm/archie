@@ -223,7 +223,10 @@ have 'instance_id *-> *sor *-> *backend' "missing the documented instance_id -> 
 # and the client path must not decide it either). The gateway must RESOLVE `sor` itself —
 # off the engine read surface (GET /v1/deposits/{id}) — not trust a client-supplied `sor`
 # path segment. Assert the resolution lookup is present...
-have 'https://engine:8080/v1/deposits/" *\.\. *instance_id' "missing the gateway-side SoR resolution: the SoR-routed op route must READ \`sor\` off the engine read surface (GET /v1/deposits/{id}), not trust a client-supplied path segment (ADR-PC-018 §1/§2 — the cardinal split-brain guard)"
+# Match the read-surface resolution GET itself (the engine deposit point-read URL the gateway
+# interpolates the captured instance segment into), not a specific Lua variable name — so a safe
+# refactor (e.g. URL-encoding the segment) cannot trip the gate while the resolution stays present.
+have 'https://engine:8080/v1/deposits/" *\.\. *instance_' "missing the gateway-side SoR resolution: the SoR-routed op route must READ \`sor\` off the engine read surface (GET /v1/deposits/{id}), not trust a client-supplied path segment (ADR-PC-018 §1/§2 — the cardinal split-brain guard)"
 have 'body\.sor *~= *"engine"' "missing the explicit engine-SoR gate: the op route must proxy to the engine ONLY on \`sor == engine\` read off the read surface, failing closed otherwise (ADR-PC-018 §2/§5)"
 # ...AND assert the OLD client-supplied path-per-SoR scheme is GONE (the inversion the
 # review flagged). No ROUTE PATH may key the backend on a /sor/engine or /sor/legacy path
