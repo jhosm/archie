@@ -108,14 +108,14 @@ public sealed class ConstitutionProcessTests
     }
 
     [Fact]
-    public void Indeterminate_debit_parks_in_AWAIT_CORE_CLEARANCE_and_resumes_or_fails_on_clearance()
+    public void Indeterminate_debit_parks_in_AWAIT_CORE_CLEARANCE_and_resumes_or_reissues_on_clearance()
     {
         // Document 05 Scenario C (bd babelstone-t7o3.10): a ConfirmDebit whose response never arrived
         // (the ACL reported INDETERMINATE) must NOT blind-retry — it parks in the first-class waiting
         // state AWAIT_CORE_CLEARANCE (ADR-IC-003 §P4 — a long wait is a named state, never a busy retry),
         // emitting the clearance QUERY command. The clearance result then either RESUMES the happy path
-        // (the debit DID execute → DebitConfirmed, late) or FAILS closed (the debit did NOT execute →
-        // DebitNotExecuted, no money moved).
+        // (the debit DID execute → DebitConfirmed, late) or REISSUES the debit (the debit did NOT execute
+        // → DebitNotExecuted → RETRY_PERMITTED, back to (APPROVED, ConfirmDebit)).
 
         // ENTRY: an INDETERMINATE debit from APPROVED parks the saga and arms the clearance query.
         AssertTransition(SagaState.Approved, ConstitutionProcess.CoreDebitIndeterminate,
@@ -126,24 +126,23 @@ public sealed class ConstitutionProcessTests
         AssertTransition(SagaState.AwaitCoreClearance, ConstitutionProcess.DebitConfirmed,
             SagaState.Approved, "ActivateDeposit");
 
-        // EXIT fail: the clearance found the debit did NOT execute → fail-CLOSED terminal with NO
-        // reversal (no money moved, so there is nothing to compensate). DIVERGENCE recorded in
-        // ADR-IC-003 Amendment A6 (2026-06-14): ADR-IC-012 §D5/§P5 (inherited by ADR-PC-016 §64)
-        // decide the steady-state disposition as RETRY_PERMITTED; v1 fails closed (no reissue producer),
-        // backed out by DEF-1 (babelstone-ub9s).
+        // EXIT reissue (RETRY_PERMITTED): the clearance found the debit did NOT execute → the saga
+        // REISSUES the debit, returning to (APPROVED, ConfirmDebit). This CONFORMS to ADR-IC-012 §D5
+        // step 5 / §P5 (inherited by ADR-PC-016 §64): "let the saga's compensation logic decide whether
+        // to reissue (with the same idempotency_key)". The reissue cannot double-debit — the not-executed
+        // clearance is Core ground truth that nothing was committed (ADR-IC-012 §P5/§332); the same-key
+        // guard is the ACL's machinery (DEF-1 / babelstone-ub9s).
         AssertTransition(SagaState.AwaitCoreClearance, ConstitutionProcess.DebitNotExecuted,
-            SagaState.DepositConstitutionFailed);
-        Assert.True(SagaStateNames.IsTerminal(SagaState.DepositConstitutionFailed));
+            SagaState.Approved, "ConfirmDebit");
 
         // EXIT escalate (§P6 robustness): a clearance that itself cannot resolve (CompensationFailed)
         // escalates to HUMAN_INTERVENTION_REQUIRED rather than stranding the saga.
         AssertTransition(SagaState.AwaitCoreClearance, ConstitutionProcess.CompensationFailed,
             SagaState.HumanInterventionRequired);
 
-        // The DebitNotExecuted EXIT emits NO reversal command — the no-money-moved terminal genuinely
-        // has nothing to compensate.
-        Assert.True(_machine.TryAdvance(SagaState.AwaitCoreClearance, ConstitutionProcess.DebitNotExecuted, out var fail));
-        Assert.Empty(fail.Commands);
+        // The reissue EXIT lands back at APPROVED (a non-terminal, in-flight state) — the saga is alive
+        // and re-attempting the debit, NOT parked in a terminal failure.
+        Assert.False(SagaStateNames.IsTerminal(SagaState.Approved));
     }
 
     [Fact]
@@ -228,22 +227,30 @@ public sealed class ConstitutionProcessTests
         // §P5 reversibility ordering as a COMMAND-reachability fitness function: the two
         // irreversible commands (ConfirmDebit — convert the hold to a real debit; ActivateDeposit
         // — activate after the debit) may be EMITTED only by a transition that crosses INTO or
-        // sits AT the irreversible phase. ConfirmDebit is armed exactly when the saga reaches
-        // APPROVED (from VALIDATIONS_COMPLETE or AWAIT_WORKFLOW_APPROVAL); ActivateDeposit only from a
-        // post-approval state (APPROVED, or AWAIT_CORE_CLEARANCE on a Scenario-C late-confirm resume —
-        // bd babelstone-t7o3.10, itself reachable only from APPROVED). Neither is ever emitted from a
-        // pre-approval validation state. Proven directly from the table — if a future edit emits either
-        // earlier, this fails.
-        var irreversibleApprovalEntries = new[] { SagaState.ValidationsComplete, SagaState.AwaitWorkflowApproval };
+        // sits AT the irreversible phase. ConfirmDebit is armed when the saga reaches APPROVED — from
+        // VALIDATIONS_COMPLETE or AWAIT_WORKFLOW_APPROVAL (the approval crossings), or from
+        // AWAIT_CORE_CLEARANCE on a Scenario-C not-executed REISSUE (RETRY_PERMITTED, bd babelstone-t7o3.10),
+        // that latter state being itself reachable only from APPROVED, so the reissue never predates
+        // approval. ActivateDeposit only from a post-approval state (APPROVED, or AWAIT_CORE_CLEARANCE on
+        // a late-confirm resume). Neither is ever emitted from a pre-approval validation state. Proven
+        // directly from the table — if a future edit emits either earlier, this fails.
+        var confirmDebitSources = new[]
+        {
+            SagaState.ValidationsComplete,
+            SagaState.AwaitWorkflowApproval,
+            SagaState.AwaitCoreClearance,
+        };
         var postApprovalActivateSources = new[] { SagaState.Approved, SagaState.AwaitCoreClearance };
 
         foreach (var ((from, _), outcome) in _machine.Transitions)
         {
             if (outcome.Commands.Contains(ConstitutionProcess.ConfirmDebit))
             {
-                // ConfirmDebit is armed on the crossing INTO APPROVED — its source is an approval
-                // entry, and its destination is APPROVED itself (the irreversible phase).
-                Assert.Contains(from, irreversibleApprovalEntries);
+                // ConfirmDebit is armed on a transition INTO APPROVED — from an approval crossing or
+                // the AWAIT_CORE_CLEARANCE reissue — and its destination is APPROVED itself (the
+                // irreversible phase). Every such source is at-or-past approval (AWAIT_CORE_CLEARANCE
+                // is reachable only from APPROVED, asserted below).
+                Assert.Contains(from, confirmDebitSources);
                 Assert.Equal(SagaState.Approved, outcome.Next);
             }
 
@@ -252,6 +259,18 @@ public sealed class ConstitutionProcessTests
                 // ActivateDeposit is emitted from a post-approval state: APPROVED (the normal step) or
                 // AWAIT_CORE_CLEARANCE (the late-confirm resume), the latter only reachable from APPROVED.
                 Assert.Contains(from, postApprovalActivateSources);
+            }
+        }
+
+        // AWAIT_CORE_CLEARANCE — the source of the reissue ConfirmDebit — is reachable ONLY from
+        // APPROVED (the indeterminate-debit entry), so emitting ConfirmDebit from it does NOT breach
+        // §P5: the reissue is genuinely a post-approval re-attempt, never a pre-approval debit.
+        foreach (var ((from, evt), outcome) in _machine.Transitions)
+        {
+            if (outcome.Next == SagaState.AwaitCoreClearance)
+            {
+                Assert.Equal(SagaState.Approved, from);
+                Assert.Equal(ConstitutionProcess.CoreDebitIndeterminate, evt);
             }
         }
 
