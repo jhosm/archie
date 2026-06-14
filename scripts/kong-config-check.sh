@@ -120,6 +120,16 @@ have 'name: *rate-limiting' "missing the rate-limiting plugin (ADR-IC-006 §P3)"
 # Enterprise/APISIX can swap to the declarative validator without tripping this gate.
 grep -Eq 'name: *(request-validator|pre-function)' "$CONFIG" \
   || fail "missing payload validation on the edge (ADR-IC-006 §4: request-validator on Enterprise, or a pre-function body check on Kong CE)"
+# PSD2 SCA enforcement on the constitute money-mover (ADR-IC-006 §P2, bd babelstone-6imx /
+# I.4). The constitute route's access-phase pre-function MUST reject a request whose bearer
+# token lacks a valid, fresh SCA-completion claim with `403 { code = "SCA_REQUIRED" }` — the
+# orchestrator never starts. Kong CE has no native SCA plugin (§F2), so §P2 mandates exactly
+# this CE-bundled pre-function access check. Asserting the rejection code AND the 403 status
+# are BOTH present in the config means a future edit cannot silently drop SCA enforcement
+# (ADR-PC-020 §D3: no silent divergence). The claim contract (acr SCA-completion + auth_time
+# freshness, Document 10) is documented inline in kong.yml.
+have 'SCA_REQUIRED' "missing PSD2 SCA enforcement: the constitute route must reject a token without a valid SCA-completion claim with code SCA_REQUIRED (ADR-IC-006 §P2 / bd babelstone-6imx)"
+have 'kong\.response\.exit\(403' "missing the SCA 403 rejection: the constitute SCA pre-function must kong.response.exit(403, ...) on an absent/expired SCA claim (ADR-IC-006 §P2)"
 have 'name: *opentelemetry' "missing the opentelemetry plugin (W3C traceparent, ADR-IC-006 §P6)"
 # Upstream mTLS to internal services (ADR-IC-006 §P5): the service presents a client
 # cert to the orchestrator/engine. Expressed via a client_certificate on the service.

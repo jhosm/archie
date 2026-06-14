@@ -149,9 +149,10 @@ services:
     tls_verify: false
     routes:
       # POST /api/v1/deposits/constitute — STARTS the saga, returns 202 + stream_url.
-      # A financial operation: rate-limited tightly (ADR-IC-006 §P3) and payload-
-      # validated (§4). PSD2 SCA enforcement is bd babelstone-6imx (I.4), which DEPENDS
-      # ON this issue and builds on the jwt plugin below — NOT added here (out of scope).
+      # A financial operation: rate-limited tightly (ADR-IC-006 §P3), PSD2-SCA-enforced
+      # (§P2, bd babelstone-6imx / I.4 — the access-phase SCA pre-function below builds on
+      # the global jwt plugin and runs FIRST, before structural body validation), and
+      # payload-validated (§4).
       - name: deposits-constitute
         methods: ["POST"]
         paths: ["/api/v1/deposits/constitute"]
@@ -188,6 +189,88 @@ services:
           - name: pre-function
             config:
               access:
+                # ── PSD2 SCA enforcement (ADR-IC-006 §P2 / bd babelstone-6imx, I.4) ──────────
+                # FIRST access-phase entry, so auth (SCA) precedes structural body validation.
+                # This runs AFTER the global `jwt` plugin (which validated the token's
+                # signature, expiry, and issuer and mapped it to a consumer), and BEFORE the
+                # request reaches the orchestrator. Kong CE has no native SCA plugin (§F2), so
+                # §P2 mandates exactly this CE-bundled pre-function access check: the gateway
+                # enforces SCA at the boundary; the orchestrator trusts the gateway assertion
+                # and does NOT re-check (Boundary 2, Document 10).
+                #
+                # Claim contract (Document 10 §"PSD2 SCA at Enrolment"/§"Step-Up"): the OIDC
+                # `acr` claim is the structural SCA-completion signal (a non-empty value =>
+                # SCA was completed), and `auth_time` (RFC-bound seconds-since-epoch) records
+                # WHEN SCA happened. A constitution debits a payment account — a PIS-equivalent
+                # money-mover — so SCA must be FRESH, not merely present: `auth_time` may be no
+                # older than SCA_MAX_AGE seconds. (Doc 10: an `acr` too weak, or an `auth_time`
+                # too far in the past, fails the precondition.) AML/KYC is OUT of scope here —
+                # ADR-PC-013 is Withdrawn (00 §4); the edge enforces SCA ONLY, code SCA_REQUIRED.
+                #
+                # FAIL-CLOSED: a missing Authorization header, a malformed token, an undecodable
+                # payload, an absent/empty `acr`, a missing/non-numeric/stale `auth_time` — every
+                # uncertainty exits 403 SCA_REQUIRED. Decoding is defensive (cjson.safe + a pure
+                # base64url decoder): a bad token can NEVER raise a 500. No PII in the body or
+                # logs (ADR-PC-004 §P2) — the 403 carries only a stable code + a generic message.
+                - |
+                  local cjson = require("cjson.safe")
+
+                  -- SCA-completion freshness window for a money-moving operation (seconds).
+                  -- A constitution is PIS-equivalent (Doc 10); SCA must be recent, not just
+                  -- ever-completed. 300s (5 min) is the POC default — tighten via IAM policy.
+                  local SCA_MAX_AGE = 300
+
+                  -- Single fail-closed exit: identical 403 + stable code for every SCA failure,
+                  -- so no decode/parse branch can leak a distinguishing signal or PII.
+                  local function deny()
+                    return kong.response.exit(403, {
+                      code = "SCA_REQUIRED",
+                      message = "Strong Customer Authentication (PSD2 SCA) is required for this operation.",
+                    })
+                  end
+
+                  -- Pure base64url decoder (no padding assumptions): JWT segments are base64url
+                  -- and unpadded. ngx.decode_base64 is standard base64, so translate -_ -> +/
+                  -- and re-pad before decoding. Any failure returns nil => deny().
+                  local function b64url_decode(seg)
+                    if type(seg) ~= "string" or seg == "" then return nil end
+                    local s = seg:gsub("-", "+"):gsub("_", "/")
+                    local pad = #s % 4
+                    if pad == 2 then s = s .. "=="
+                    elseif pad == 3 then s = s .. "="
+                    elseif pad == 1 then return nil end -- not a valid base64 length
+                    return ngx.decode_base64(s)
+                  end
+
+                  -- Read the validated bearer token from the Authorization header. The global
+                  -- jwt plugin already proved its signature/expiry/issuer; we re-read the raw
+                  -- token to inspect the SCA claims (Kong CE's jwt plugin does not surface
+                  -- arbitrary claims on the credential context).
+                  local auth = kong.request.get_header("authorization")
+                  if type(auth) ~= "string" then return deny() end
+                  local token = auth:match("^[Bb]earer%s+(.+)$")
+                  if not token then return deny() end
+
+                  -- A compact JWS is header.payload.signature — exactly three dot-segments.
+                  local h, payload_seg, sig = token:match("^([^%.]+)%.([^%.]+)%.([^%.]+)$")
+                  if not payload_seg then return deny() end
+
+                  local payload_json = b64url_decode(payload_seg)
+                  if not payload_json then return deny() end
+
+                  local claims = cjson.decode(payload_json)
+                  if type(claims) ~= "table" then return deny() end
+
+                  -- acr: the structural SCA-completion signal — must be a non-empty string.
+                  if type(claims.acr) ~= "string" or claims.acr == "" then return deny() end
+
+                  -- auth_time: when SCA was performed — must be a finite integer (seconds since
+                  -- epoch) and FRESH (no older than SCA_MAX_AGE; not in the future).
+                  local at = claims.auth_time
+                  if type(at) ~= "number" or at % 1 ~= 0 then return deny() end
+                  local now = ngx.time()
+                  if at > now or (now - at) > SCA_MAX_AGE then return deny() end
+                  -- SCA present and fresh: fall through to the structural body validation below.
                 - |
                   local cjson = require("cjson.safe")
                   -- Read the (already buffered) request body; reject a non-JSON or empty body.
