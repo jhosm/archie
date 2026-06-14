@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Babelstone — Mission Control</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+
+<style>
+:root {
+  /* shared design language with the deck (docs/demo/index.html) */
+  --ink:#0b0d11; --ink-2:#0e1116; --panel:#14181f; --panel-2:#1a1f28;
+  --paper:#ece7db; --paper-soft:#c7c3b8; --muted:#80858f; --faint:#565b65;
+  --gold:#e0b15e; --gold-deep:#b98a3c; --verify:#6fd6a0; --wrong:#e0735e;
+  --hair:rgba(236,231,219,0.12); --hair-soft:rgba(236,231,219,0.06);
+  --serif:"Fraunces","Iowan Old Style","Charter",Georgia,serif;
+  --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:"IBM Plex Mono","SF Mono","Menlo",ui-monospace,monospace;
+  --ease:cubic-bezier(0.22,0.61,0.36,1);
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+html,body { height:100%; }
+body {
+  background:var(--ink); color:var(--paper); font-family:var(--sans);
+  -webkit-font-smoothing:antialiased; overflow:hidden;
+  display:flex; flex-direction:column;
+}
+body::before {
+  content:""; position:fixed; inset:0; z-index:-2;
+  background:
+    radial-gradient(1100px 700px at 88% -10%, rgba(224,177,94,0.08), transparent 60%),
+    radial-gradient(900px 700px at -8% 110%, rgba(111,214,160,0.05), transparent 55%),
+    linear-gradient(160deg, var(--ink), var(--ink-2));
+}
+body::after {
+  content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; opacity:0.03;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---------------- top bar ---------------- */
+.topbar {
+  flex:none;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:1.1rem clamp(1.4rem,3vw,2.6rem); border-bottom:1px solid var(--hair);
+  background:rgba(11,13,17,0.6); backdrop-filter:blur(8px);
+}
+.brand { display:flex; align-items:center; gap:0.8rem; font-family:var(--mono); font-size:0.78rem; letter-spacing:0.22em; text-transform:uppercase; }
+.brand .dot { width:7px; height:7px; border-radius:50%; background:var(--gold); box-shadow:0 0 12px var(--gold); }
+.brand b { color:var(--gold); font-weight:600; letter-spacing:0.3em; }
+.brand span { color:var(--muted); }
+.controls { display:flex; align-items:center; gap:1.4rem; }
+
+.seg { display:inline-flex; border:1px solid var(--hair); border-radius:8px; overflow:hidden; font-family:var(--mono); font-size:0.72rem; }
+.seg button { background:transparent; color:var(--muted); border:0; padding:0.45rem 0.85rem; cursor:pointer; letter-spacing:0.1em; transition:all 0.2s var(--ease); }
+.seg button.on { background:var(--gold); color:var(--ink); font-weight:600; }
+.seg.alt button.on { background:var(--panel-2); color:var(--verify); }
+.seg-label { font-family:var(--mono); font-size:0.62rem; letter-spacing:0.18em; text-transform:uppercase; color:var(--faint); margin-right:0.5rem; }
+.ctl-group { display:flex; align-items:center; }
+
+.conn { display:flex; align-items:center; gap:0.5rem; font-family:var(--mono); font-size:0.68rem; letter-spacing:0.1em; color:var(--muted); }
+.conn .led { width:8px; height:8px; border-radius:50%; background:var(--faint); }
+.conn.ok .led { background:var(--verify); box-shadow:0 0 10px var(--verify); }
+.conn.err .led { background:var(--wrong); box-shadow:0 0 10px var(--wrong); }
+.conn.demo .led { background:var(--gold); box-shadow:0 0 10px var(--gold); }
+
+/* ---------------- layout ---------------- */
+.stage {
+  flex:1 1 auto; min-height:0;
+  display:grid; grid-template-columns:300px 1fr 380px; gap:0;
+}
+/* the AI console lives in normal flow at the bottom (see .console); when it opens it
+   takes layout space and the stage flexes smaller — so it can never cover the desk. */
+body.console-open .hint-bar { display:none; }
+@media (max-width:1100px){ body{ overflow:auto; } .stage{ grid-template-columns:1fr; grid-auto-rows:min-content; overflow:visible; } }
+.col { padding:clamp(1.2rem,2.2vw,2rem); overflow-y:auto; }
+.col.desk { border-right:1px solid var(--hair); display:flex; flex-direction:column; overflow:hidden; }
+/* fields scroll if cramped; the action buttons stay pinned to the bottom of the desk,
+   so they're always reachable — even with the AI console open. */
+.desk-fields { flex:1 1 auto; min-height:0; overflow-y:auto; }
+.col.position { border-left:1px solid var(--hair); background:rgba(20,24,31,0.35); }
+
+.col-title { font-family:var(--mono); font-size:0.66rem; letter-spacing:0.22em; text-transform:uppercase; color:var(--gold); margin-bottom:1.4rem; display:flex; align-items:center; gap:0.7rem; }
+.col-title::after { content:""; flex:1; height:1px; background:var(--hair); }
+
+/* ---------------- command desk ---------------- */
+.field { margin-bottom:1.2rem; }
+.field label { display:block; font-family:var(--mono); font-size:0.64rem; letter-spacing:0.14em; text-transform:uppercase; color:var(--muted); margin-bottom:0.45rem; }
+.field input, .field select {
+  width:100%; background:var(--ink-2); border:1px solid var(--hair); border-radius:8px;
+  color:var(--paper); font-family:var(--mono); font-size:0.92rem; padding:0.65rem 0.8rem;
+  transition:border-color 0.2s; appearance:none;
+}
+.field input:focus, .field select:focus { outline:none; border-color:var(--gold); }
+.field .hint { font-family:var(--mono); font-size:0.62rem; color:var(--faint); margin-top:0.35rem; }
+.field.readonly .val { font-family:var(--mono); font-size:0.92rem; color:var(--paper-soft); padding:0.65rem 0.8rem; border:1px dashed var(--hair); border-radius:8px; }
+.field.readonly .val b { color:var(--gold); }
+
+.actions { flex:none; margin-top:1.4rem; padding-top:1.2rem; border-top:1px solid var(--hair-soft); display:flex; flex-direction:column; gap:0.7rem; }
+.btn {
+  font-family:var(--mono); font-size:0.82rem; letter-spacing:0.04em; font-weight:600;
+  border:1px solid transparent; border-radius:9px; padding:0.8rem 1rem; cursor:pointer;
+  transition:transform 0.14s var(--ease), box-shadow 0.2s, background 0.2s, opacity 0.2s;
+  display:flex; align-items:center; justify-content:center; gap:0.5rem;
+}
+.btn.primary { background:var(--gold); color:var(--ink); box-shadow:0 8px 24px rgba(224,177,94,0.25); }
+.btn.primary:hover:not(:disabled) { transform:translateY(-2px); box-shadow:0 12px 30px rgba(224,177,94,0.35); }
+.btn.ghost { background:transparent; color:var(--paper-soft); border-color:var(--hair); }
+.btn.ghost:hover:not(:disabled) { border-color:var(--gold); color:var(--gold); }
+.btn.danger { background:transparent; color:var(--muted); border-color:var(--hair-soft); font-size:0.74rem; }
+.btn.danger:hover:not(:disabled){ color:var(--wrong); border-color:var(--wrong); }
+.btn:disabled { opacity:0.35; cursor:not-allowed; }
+.btn .mcp-tag { font-size:0.6rem; opacity:0.65; letter-spacing:0.08em; }
+
+/* ---------------- living ledger ---------------- */
+.ledger { position:relative; }
+.ledger .empty { color:var(--faint); font-family:var(--mono); font-size:0.82rem; text-align:center; padding:4rem 1rem; line-height:1.7; }
+.ledger .empty .big { display:block; font-family:var(--serif); font-size:1.6rem; color:var(--muted); margin-bottom:0.6rem; font-style:italic; }
+.ev {
+  position:relative; display:flex; align-items:center; gap:1rem; margin-bottom:0.85rem; padding-left:2rem;
+  animation:evIn 0.6s var(--ease) both;
+}
+@keyframes evIn { from { opacity:0; transform:translateX(-14px); } to { opacity:1; transform:none; } }
+.ev::before { /* spine */
+  content:""; position:absolute; left:7px; top:-0.85rem; bottom:50%; width:1px; background:var(--hair);
+}
+.ev:first-child::before { display:none; }
+.ev .node { position:absolute; left:3px; top:50%; transform:translateY(-50%); width:9px; height:9px; border-radius:50%; background:var(--gold); box-shadow:0 0 0 4px rgba(224,177,94,0.12); }
+.ev.verify .node { background:var(--verify); box-shadow:0 0 0 4px rgba(111,214,160,0.14); }
+.ev .card {
+  flex:1; background:linear-gradient(180deg,var(--panel),var(--panel-2));
+  border:1px solid var(--hair); border-left:2px solid var(--gold); border-radius:9px;
+  padding:0.75rem 0.95rem; display:flex; align-items:center; gap:0.9rem;
+  box-shadow:0 12px 32px rgba(0,0,0,0.3);
+}
+.ev.verify .card { border-left-color:var(--verify); }
+.ev .seq { font-family:var(--mono); font-size:0.68rem; font-weight:600; color:var(--ink); background:var(--gold); border-radius:4px; padding:0.12rem 0.42rem; }
+.ev.verify .seq { background:var(--verify); }
+.ev .body { flex:1; }
+.ev .name { font-family:var(--mono); font-size:0.86rem; color:var(--paper); font-weight:500; }
+.ev .meta { font-family:var(--mono); font-size:0.7rem; color:var(--muted); margin-top:0.18rem; }
+.ev .amt { font-family:var(--serif); font-size:1.05rem; color:var(--paper); }
+.ev .amt.gold { color:var(--gold); }
+.ev .amt.verify { color:var(--verify); }
+.ev .amt.wrong { color:var(--wrong); }
+
+/* ---------------- position passbook ---------------- */
+.passbook .empty { color:var(--faint); font-family:var(--mono); font-size:0.82rem; padding:3rem 0.5rem; text-align:center; line-height:1.7; }
+.status-badge {
+  display:inline-flex; align-items:center; gap:0.5rem; font-family:var(--mono); font-size:0.7rem;
+  letter-spacing:0.14em; text-transform:uppercase; padding:0.35rem 0.7rem; border-radius:100px;
+  border:1px solid var(--hair); color:var(--muted);
+}
+.status-badge .d { width:7px; height:7px; border-radius:50%; background:currentColor; }
+.status-badge.active { color:var(--gold); border-color:rgba(224,177,94,0.4); }
+.status-badge.matured { color:var(--verify); border-color:rgba(111,214,160,0.4); }
+.status-badge.terminated { color:var(--wrong); border-color:rgba(224,115,94,0.4); }
+
+.pb-id { font-family:var(--mono); font-size:0.68rem; color:var(--faint); margin:1rem 0 1.4rem; word-break:break-all; }
+.pb-principal { font-family:var(--serif); font-size:2.6rem; font-weight:500; line-height:1; }
+.pb-sub { font-family:var(--mono); font-size:0.68rem; color:var(--muted); letter-spacing:0.1em; margin-top:0.4rem; }
+
+.pb-grid { margin-top:1.8rem; display:flex; flex-direction:column; }
+.pb-row { display:flex; justify-content:space-between; align-items:baseline; padding:0.7rem 0; border-bottom:1px solid var(--hair-soft); }
+.pb-row .k { font-family:var(--mono); font-size:0.68rem; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); }
+.pb-row .v { font-family:var(--serif); font-size:1.2rem; }
+.pb-row .v.tax { color:var(--wrong); }
+.pb-row .v.net { color:var(--gold); }
+.pb-row.total { margin-top:0.4rem; border-bottom:0; border-top:1px solid var(--hair); padding-top:1rem; }
+.pb-row.total .k { color:var(--paper-soft); }
+.pb-row.total .v { font-size:1.8rem; color:var(--gold); }
+
+.pb-meta { margin-top:1.6rem; display:grid; grid-template-columns:1fr 1fr; gap:0.8rem; }
+.pb-meta .cell { background:var(--ink-2); border:1px solid var(--hair-soft); border-radius:8px; padding:0.7rem 0.8rem; }
+.pb-meta .cell .k { font-family:var(--mono); font-size:0.6rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--faint); }
+.pb-meta .cell .v { font-family:var(--mono); font-size:0.82rem; color:var(--paper-soft); margin-top:0.25rem; }
+
+/* ---------------- toast + MCP console ---------------- */
+.toast-wrap { position:fixed; top:74px; right:1.6rem; z-index:90; display:flex; flex-direction:column; gap:0.6rem; }
+.toast {
+  font-family:var(--mono); font-size:0.78rem; padding:0.7rem 1rem; border-radius:8px;
+  background:var(--panel-2); border:1px solid var(--hair); border-left:3px solid var(--gold);
+  box-shadow:0 14px 40px rgba(0,0,0,0.4); animation:toastIn 0.4s var(--ease) both; max-width:340px;
+}
+.toast.verify { border-left-color:var(--verify); color:var(--verify); }
+.toast.err { border-left-color:var(--wrong); color:var(--wrong); }
+@keyframes toastIn { from{ opacity:0; transform:translateX(20px);} to{opacity:1; transform:none;} }
+
+.console {
+  flex:none; width:100%;
+  background:rgba(8,10,13,0.95); border-top:1px solid var(--verify);
+  font-family:var(--mono); font-size:0.74rem; color:var(--paper-soft);
+  max-height:0; overflow:hidden; transition:max-height 0.35s var(--ease);
+}
+.console.show { max-height:252px; }
+@keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(111,214,160,0.5);} 70%{box-shadow:0 0 0 10px rgba(111,214,160,0);} 100%{box-shadow:0 0 0 0 rgba(111,214,160,0);} }
+/* tabbed drawer: MCP tool surface + Telemetry */
+.console .tabs { display:flex; align-items:center; gap:0.1rem; padding:0 1.4rem; border-bottom:1px solid var(--hair-soft); }
+.console .tab { background:transparent; border:0; border-bottom:2px solid transparent; color:var(--muted); font-family:var(--mono); font-size:0.64rem; letter-spacing:0.14em; text-transform:uppercase; padding:0.7rem 0.7rem 0.6rem; cursor:pointer; transition:color 0.2s; }
+.console .tab:hover { color:var(--paper-soft); }
+.console .tab.on { color:var(--verify); border-bottom-color:var(--verify); }
+.console .tab-note { margin-left:auto; color:var(--faint); font-size:0.62rem; letter-spacing:0.05em; padding:0.7rem 0; }
+.console .pane { padding:0.7rem 1.4rem 1rem; overflow-y:auto; max-height:204px; }
+.console .pane[hidden] { display:none; }
+/* MCP log */
+.console .line { padding:0.18rem 0; }
+.console .line .arrow { color:var(--verify); }
+.console .line .tool { color:var(--gold); }
+.console .line .ret { color:var(--muted); }
+.console .line .muted { color:var(--faint); }
+/* trace waterfall */
+.trace .root { color:var(--paper-soft); font-size:0.72rem; margin-bottom:0.6rem; }
+.trace .root b { color:var(--verify); }
+.trace .empty { color:var(--faint); font-size:0.74rem; padding:0.8rem 0; }
+.span { margin-bottom:0.2rem; }
+.span-row { display:grid; grid-template-columns:172px 1fr 52px; gap:0.8rem; align-items:center; }
+.span-row .sname { color:var(--paper); font-size:0.74rem; }
+.span-row .track { position:relative; height:13px; background:var(--ink-2); border:1px solid var(--hair-soft); border-radius:3px; }
+.span-row .bar { position:absolute; top:0; bottom:0; background:linear-gradient(90deg,var(--gold-deep),var(--gold)); border-radius:2px; transform-origin:left; animation:barIn 0.5s var(--ease) both; }
+.span-row.verify .bar { background:linear-gradient(90deg,#3f8c66,var(--verify)); }
+@keyframes barIn { from{ transform:scaleX(0); } to{ transform:scaleX(1); } }
+.span-row .dur { color:var(--muted); font-size:0.68rem; text-align:right; }
+.span-attrs { display:flex; flex-wrap:wrap; gap:0.4rem; margin:0.25rem 0 0.5rem 180px; }
+.chip-attr { font-size:0.62rem; color:var(--paper-soft); background:var(--ink-2); border:1px solid var(--hair-soft); border-radius:4px; padding:0.12rem 0.45rem; }
+.chip-attr b { color:var(--gold); }
+.trace-metrics { display:flex; flex-wrap:wrap; gap:0.9rem; margin-top:0.8rem; padding-top:0.7rem; border-top:1px solid var(--hair-soft); }
+.trace-metrics .metric { font-size:0.64rem; color:var(--muted); }
+.trace-metrics .metric b { color:var(--paper-soft); }
+.trace-foot { margin-top:0.7rem; color:var(--faint); font-size:0.63rem; line-height:1.6; }
+.trace-foot b { color:var(--paper-soft); }
+.trace-foot .nopii { color:var(--verify); }
+
+.hint-bar { position:fixed; left:50%; bottom:0.8rem; transform:translateX(-50%); font-family:var(--mono); font-size:0.66rem; color:var(--faint); letter-spacing:0.08em; z-index:40; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><span class="dot"></span><b>BABELSTONE</b><span>Mission Control</span></div>
+  <div class="controls">
+    <div class="ctl-group"><span class="seg-label">Mode</span>
+      <div class="seg" id="modeSeg"><button data-mode="demo" class="on">DEMO</button><button data-mode="live">LIVE</button></div>
+    </div>
+    <div class="ctl-group"><span class="seg-label">Operator</span>
+      <div class="seg alt" id="opSeg"><button data-op="human" class="on">YOU</button><button data-op="ai">CLAUDE</button></div>
+    </div>
+    <div class="ctl-group"><span class="seg-label">Telemetry</span>
+      <div class="seg alt" id="telSeg"><button data-tel="off" class="on">OFF</button><button data-tel="on">ON</button></div>
+    </div>
+    <div class="conn demo" id="conn"><span class="led"></span><span id="connText">demo · no backend</span></div>
+  </div>
+</div>
+
+<div class="stage">
+  <!-- COMMAND DESK -->
+  <div class="col desk">
+    <div class="col-title">Command desk</div>
+
+    <div class="desk-fields">
+    <div class="field">
+      <label for="principal">Principal</label>
+      <input id="principal" type="text" inputmode="numeric" value="10,000" />
+      <div class="hint">EUR · stored as integer cents</div>
+    </div>
+    <div class="field">
+      <label for="term">Term (days)</label>
+      <input id="term" type="number" value="365" min="1" />
+    </div>
+    <div class="field">
+      <label for="product">Product</label>
+      <select id="product">
+        <option value="dpz_pt_12m_juros_venc">12m · interest at maturity</option>
+        <option value="dpz_pt_12m_juros_mensais">12m · monthly coupons</option>
+        <option value="dpz_pt_12m_juros_antecip">12m · interest in advance</option>
+      </select>
+      <div class="hint" id="variantHint">interest_variant = AT_MATURITY</div>
+    </div>
+    <div class="field readonly">
+      <label>Rate (TAN)</label>
+      <div class="val"><b id="rateVal">3.00%</b> · <span id="rateBps">300 bps</span></div>
+      <div class="hint">from rate sheet pt-deposits-2026.1 — not user input</div>
+    </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" id="btnConstitute">Constitute deposit <span class="mcp-tag" data-mcponly>· constitute_deposit()</span></button>
+      <button class="btn ghost" id="btnRetry" disabled>Retry — same key <span class="mcp-tag">(idempotent)</span></button>
+      <button class="btn ghost" id="btnCoupon" disabled style="display:none">Pay coupon <span class="mcp-tag" id="couponMeta"></span></button>
+      <button class="btn primary" id="btnMature" disabled style="background:var(--verify)">Mature deposit <span class="mcp-tag" data-mcponly>· mature_deposit()</span></button>
+      <button class="btn ghost" id="btnTerminate" disabled style="display:none">Terminate early <span class="mcp-tag">· demo-only</span></button>
+      <button class="btn danger" id="btnReset">Reset</button>
+    </div>
+  </div>
+
+  <!-- LIVING LEDGER -->
+  <div class="col ledger-col">
+    <div class="col-title">Living ledger · immutable events</div>
+    <div class="ledger" id="ledger">
+      <div class="empty"><span class="big">An empty stream.</span>Every command appends an immutable, sequence-numbered fact. Constitute a deposit to begin.</div>
+    </div>
+  </div>
+
+  <!-- POSITION -->
+  <div class="col position">
+    <div class="col-title">Position · folded state</div>
+    <div class="passbook" id="passbook">
+      <div class="empty">No position yet.<br />The state on the right is a <i>fold</i> of the events on the left — never stored, always derivable.</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<div class="console" id="console">
+  <div class="tabs">
+    <button class="tab on" data-tab="mcp">MCP tool surface</button>
+    <button class="tab" data-tab="telemetry">Telemetry · OpenTelemetry</button>
+    <span class="tab-note" id="tabNote">illustrative — narrating the real contracts, not live model / Tempo traffic</span>
+  </div>
+  <div class="pane" id="paneMcp"><div id="consoleLog"></div></div>
+  <div class="pane" id="paneTrace" hidden>
+    <div class="trace" id="traceWaterfall"><div class="empty">Run an operation to see the spans it emits.</div></div>
+    <div class="trace-metrics" id="traceMetrics"></div>
+    <div class="trace-foot" id="traceFoot"></div>
+  </div>
+</div>
+
+<div class="hint-bar" id="hintBar">Mode <b>DEMO</b> needs no backend · switch to <b>LIVE</b> to drive the real engine</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------------- config ---------------- */
+  // The three real engine products (verified against the rate sheet + decider).
+  var PRODUCTS = {
+    dpz_pt_12m_juros_venc:    { label: "interest at maturity", variant: "AT_MATURITY", tan: 300, ppm: 0 },
+    dpz_pt_12m_juros_mensais: { label: "monthly coupons",      variant: "PERIODIC",    tan: 325, ppm: 1 },
+    dpz_pt_12m_juros_antecip: { label: "interest in advance",  variant: "ADVANCE",     tan: 300, ppm: 0 }
+  };
+  var RATE_SHEET = "pt-deposits-2026.1";
+  var API_BASE = "";                 // same-origin; live mode goes through the proxy (serve.py)
+  function product() { return PRODUCTS[el("product").value]; }
+
+  /* ---------------- state ---------------- */
+  var state = {
+    mode: "demo", operator: "human", telemetry: false, tab: "mcp",
+    depositId: null, idemKey: null, seq: 0, lifecycle: null,
+    principalCents: 0, termDays: 0, busy: false, spans: [],
+    variant: "AT_MATURITY", tan: 300, ppm: 0,
+    couponsPaid: 0, numCoupons: 0,
+    accrued: 0, withheld: 0, netPaid: 0   // running tallies (demo + live coupon deltas)
+  };
+
+  /* ---------------- elements ---------------- */
+  var el = function (id) { return document.getElementById(id); };
+  var ledger = el("ledger"), passbook = el("passbook");
+  var btnC = el("btnConstitute"), btnR = el("btnRetry"), btnM = el("btnMature"), btnReset = el("btnReset");
+  var btnCoupon = el("btnCoupon"), btnTerminate = el("btnTerminate");
+
+  /* ---------------- helpers ---------------- */
+  function parseCents(str) { var n = Number(String(str).replace(/[^0-9.]/g, "")); return Math.round(n * 100); }
+  function euro(cents) { return "€" + (cents / 100).toLocaleString("en-IE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function uuid() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+      var r = (Math.random() * 16) | 0, v = c === "x" ? r : (r & 0x3) | 0x8; return v.toString(16);
+    });
+  }
+  function addDays(iso, days) { var d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); }
+  function today() { return new Date().toISOString().slice(0, 10); }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  /* the engine's own math — ACT/360 simple interest + 28% withholding (demo mode) */
+  function computeInterest(principalCents, termDays, tanBps) {
+    var gross = Math.round(principalCents * (tanBps / 10000) * (termDays / 360));
+    var tax = Math.round(gross * 0.28);
+    return { gross: gross, tax: tax, net: gross - tax, total: principalCents + (gross - tax) };
+  }
+  function numCouponsFor(termDays, ppm) { return ppm > 0 ? Math.max(1, Math.round(termDays / (30.44 * ppm))) : 0; }
+  // one coupon window's flow (gross/withholding/net), computed per-flow so withholding rounds per coupon
+  function couponAmounts() {
+    var windowDays = state.termDays / state.numCoupons;
+    var gross = Math.round(state.principalCents * (state.tan / 10000) * (windowDays / 360));
+    var tax = Math.round(gross * 0.28);
+    return { gross: gross, tax: tax, net: gross - tax };
+  }
+  // build a position object (demo mode) from the running tallies
+  function demoPos(totalPayout) {
+    return {
+      deposit_id: state.depositId, principal_cents: state.principalCents, tan_basis_points: state.tan,
+      accrued_gross_interest_cents: state.accrued, withholding_to_date_cents: state.withheld, net_interest_cents: state.netPaid,
+      total_payout_cents: totalPayout, lifecycle: state.lifecycle, start_date: today(),
+      maturity_date: addDays(today(), state.termDays), rate_sheet_version_id: RATE_SHEET,
+      last_sequence: state.seq, coupons_paid: state.couponsPaid
+    };
+  }
+
+  function toast(msg, kind) {
+    var t = document.createElement("div");
+    t.className = "toast" + (kind ? " " + kind : "");
+    t.textContent = msg;
+    el("toasts").appendChild(t);
+    setTimeout(function () { t.style.transition = "opacity .4s, transform .4s"; t.style.opacity = "0"; t.style.transform = "translateX(20px)"; }, 3200);
+    setTimeout(function () { t.remove(); }, 3700);
+  }
+
+  function mcpLog(call, ret) {
+    if (state.operator !== "ai") return;
+    var line = document.createElement("div");
+    line.className = "line";
+    line.innerHTML = '<span class="arrow">→</span> <span class="tool">' + call + '</span>' + (ret ? ' <span class="ret">⤷ ' + ret + '</span>' : '');
+    el("consoleLog").appendChild(line);
+    el("consoleLog").scrollTop = el("consoleLog").scrollHeight;
+  }
+
+  /* ---------------- ledger rendering ---------------- */
+  function clearLedgerEmpty() { var e = ledger.querySelector(".empty"); if (e) e.remove(); }
+  function addEvent(opts) {
+    clearLedgerEmpty();
+    var row = document.createElement("div");
+    row.className = "ev" + (opts.verify ? " verify" : "");
+    row.innerHTML =
+      '<span class="node"></span>' +
+      '<div class="card">' +
+        '<span class="seq">#' + opts.seq + '</span>' +
+        '<div class="body"><div class="name">' + opts.name + '</div>' +
+        (opts.meta ? '<div class="meta">' + opts.meta + '</div>' : '') + '</div>' +
+        (opts.amt ? '<div class="amt ' + (opts.amtClass || '') + '">' + opts.amt + '</div>' : '') +
+      '</div>';
+    ledger.appendChild(row);
+    ledger.parentElement.scrollTop = ledger.parentElement.scrollHeight;
+  }
+  function flashLedger() {
+    ledger.style.transition = "none"; ledger.style.boxShadow = "inset 0 0 0 2px var(--verify)";
+    setTimeout(function () { ledger.style.transition = "box-shadow .8s"; ledger.style.boxShadow = "none"; }, 60);
+  }
+
+  /* ---------------- position rendering ---------------- */
+  function renderPosition(p, opts) {
+    opts = opts || {};
+    var badge = p.lifecycle === "Matured" ? "matured" : p.lifecycle === "TerminatedEarly" ? "terminated" : "active";
+    var totalLabel = p.lifecycle === "Matured" ? "Total payout" : p.lifecycle === "TerminatedEarly" ? "Net settlement" : "Current value";
+    var couponsCell = (state.ppm > 0 && p.coupons_paid !== undefined)
+      ? '<div class="cell"><div class="k">Coupons paid</div><div class="v">' + p.coupons_paid + ' / ' + state.numCoupons + '</div></div>' : '';
+    // the engine reports total_payout_cents = 0 while Active (it's the settled payout);
+    // show the capital on deposit as the "current value" instead of €0.00
+    var displayTotal = (p.lifecycle === "Active" && !p.total_payout_cents) ? p.principal_cents : p.total_payout_cents;
+    passbook.innerHTML =
+      '<span class="status-badge ' + badge + '"><span class="d"></span>' + (p.lifecycle || "Active") + '</span>' +
+      '<div class="pb-id">' + p.deposit_id + '</div>' +
+      '<div class="pb-principal">' + euro(p.principal_cents) + '</div>' +
+      '<div class="pb-sub">PRINCIPAL · ' + (p.tan_basis_points / 100).toFixed(2) + '% TAN · ' + state.variant + '</div>' +
+      '<div class="pb-grid">' +
+        '<div class="pb-row"><span class="k">Gross interest</span><span class="v" id="vGross">' + euro(p.accrued_gross_interest_cents) + '</span></div>' +
+        '<div class="pb-row"><span class="k">Withholding · 28%</span><span class="v tax" id="vTax">' + (p.withholding_to_date_cents ? "−" + euro(p.withholding_to_date_cents) : euro(0)) + '</span></div>' +
+        '<div class="pb-row"><span class="k">' + (state.ppm > 0 ? "Net interest paid" : "Net interest") + '</span><span class="v net" id="vNet">' + euro(p.net_interest_cents) + '</span></div>' +
+        '<div class="pb-row total"><span class="k">' + totalLabel + '</span><span class="v" id="vTotal">' + euro(displayTotal) + '</span></div>' +
+      '</div>' +
+      '<div class="pb-meta">' +
+        '<div class="cell"><div class="k">Start</div><div class="v">' + p.start_date + '</div></div>' +
+        '<div class="cell"><div class="k">Maturity</div><div class="v">' + p.maturity_date + '</div></div>' +
+        couponsCell +
+        '<div class="cell"><div class="k">Rate sheet</div><div class="v">' + p.rate_sheet_version_id + '</div></div>' +
+        '<div class="cell"><div class="k">Last seq</div><div class="v">#' + p.last_sequence + '</div></div>' +
+      '</div>';
+  }
+  function countUp(id, target, neg) {
+    var node = el(id); if (!node) return;
+    var start = performance.now(), dur = 1000;
+    function frame(t) {
+      var prog = Math.min(1, (t - start) / dur), e = 1 - Math.pow(1 - prog, 3);
+      node.textContent = (neg ? "−" : "") + euro(Math.round(target * e));
+      if (prog < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------------- button enablement ---------------- */
+  function setButtons() {
+    var has = !!state.depositId;
+    var closed = state.lifecycle === "Matured" || state.lifecycle === "TerminatedEarly";
+    var active = has && !closed;
+    var periodic = state.variant === "PERIODIC";
+    var couponsLeft = state.couponsPaid < state.numCoupons - 1;  // last coupon settles at maturity
+    btnC.disabled = state.busy || has;
+    btnR.disabled = state.busy || !has || closed;
+    btnM.disabled = state.busy || !active;
+    // Pay coupon: PERIODIC only, while active and intermediate coupons remain
+    btnCoupon.style.display = periodic ? "" : "none";
+    btnCoupon.disabled = state.busy || !active || !periodic || !couponsLeft;
+    // Terminate early: DEMO-only (no live endpoint), while active
+    btnTerminate.style.display = active ? "" : "none";
+    btnTerminate.disabled = state.busy || !active || state.mode === "live";
+    btnTerminate.title = state.mode === "live" ? "No live endpoint yet — DEMO only" : "";
+    // lock the inputs once a deposit exists, so terms can't change mid-stream
+    el("product").disabled = state.busy || has;
+    el("principal").disabled = state.busy || has;
+    el("term").disabled = state.busy || has;
+    document.querySelectorAll("[data-mcponly]").forEach(function (n) { n.style.display = state.operator === "ai" ? "" : "none"; });
+  }
+  function syncProduct() {
+    var p = product();
+    state.variant = p.variant; state.tan = p.tan; state.ppm = p.ppm;
+    el("rateVal").textContent = (p.tan / 100).toFixed(2) + "%";
+    el("rateBps").textContent = p.tan + " bps";
+    el("variantHint").textContent = "interest_variant = " + p.variant + (p.ppm ? " · payment_period_months = " + p.ppm : "");
+  }
+
+  /* =====================================================================
+     LIVE MODE — talk to the real engine (same origin, via serve.py proxy)
+     ===================================================================== */
+  async function api(method, path, body, headers) {
+    var opts = { method: method, headers: Object.assign({ "Content-Type": "application/json" }, headers || {}) };
+    if (body) opts.body = JSON.stringify(body);
+    var res = await fetch(API_BASE + path, opts);
+    var text = await res.text();
+    var json = text ? JSON.parse(text) : {};
+    if (!res.ok) { var err = new Error((json.detail || json.title || res.statusText)); err.status = res.status; err.body = json; throw err; }
+    return { json: json, status: res.status };
+  }
+  async function pingConn() {
+    if (state.mode !== "live") return;
+    try { await api("GET", "/v1/deposits/maturities?from=2000-01-01&to=2000-01-02"); setConn("ok", "live · engine reachable"); }
+    catch (e) { setConn("err", "live · engine unreachable"); }
+  }
+
+  /* =====================================================================
+     ACTIONS (mode-aware)
+     ===================================================================== */
+  async function doConstitute() {
+    if (state.busy) return;
+    syncProduct();
+    state.busy = true; setButtons();
+    var principalCents = parseCents(el("principal").value);
+    var termDays = Number(el("term").value) || 365;
+    var prod = el("product").value;
+    var start = today();
+    state.principalCents = principalCents; state.termDays = termDays;
+    state.idemKey = uuid();
+    state.couponsPaid = 0; state.numCoupons = numCouponsFor(termDays, state.ppm);
+    state.accrued = 0; state.withheld = 0; state.netPaid = 0;
+
+    var reqBody = {
+      principal_cents: principalCents, product_id: prod, role: "standard",
+      term_days: termDays, start_date: start, interest_variant: state.variant,
+      auto_renewal_policy: "NONE", funding_account: "PT50-DDA-001", payment_period_months: state.ppm
+    };
+    var ratePct = (state.tan / 100).toFixed(2) + "%";
+    mcpLog('constitute_deposit(principal_cents=' + principalCents + ', term_days=' + termDays + ', variant="' + state.variant + '")');
+
+    if (state.mode === "live") {
+      try {
+        var r = await api("POST", "/v1/deposits", reqBody, { "Idempotency-Key": state.idemKey });
+        state.depositId = r.json.deposit_id; state.seq = r.json.commit_sequence; state.lifecycle = r.json.status;
+        mcpLog('', 'commit #' + state.seq + ' · ' + state.depositId.slice(0, 8));
+        addEvent({ seq: state.seq, name: "DepositConstituted", meta: prod + " · " + ratePct + " · idem " + state.idemKey.slice(0, 8), amt: euro(principalCents), amtClass: "gold" });
+        pushSpan("deposit.constituted", 18, [["babelstone.partition_key", shortId()], ["babelstone.product_code", prod]]);
+        var g = await api("GET", "/v1/deposits/" + state.depositId, null, { "If-Min-Sequence": String(state.seq) });
+        var p = g.json;
+        state.accrued = p.accrued_gross_interest_cents; state.withheld = p.withholding_to_date_cents; state.netPaid = p.net_interest_cents;
+        // ADVANCE pays the full-term interest at t=0 — surface that as an InterestPaid card
+        if (state.variant === "ADVANCE" && p.net_interest_cents) {
+          addEvent({ seq: state.seq, name: "InterestPaid", meta: "paid in advance · t=0 · 28% withheld", amt: euro(p.net_interest_cents), amtClass: "verify", verify: true });
+          pushSpan("accrual.computed", 7, [["babelstone.partition_key", shortId()], ["babelstone.interest_cents", p.accrued_gross_interest_cents]]);
+          pushSpan("withholding.applied", 4, [["babelstone.partition_key", shortId()], ["babelstone.tax_cents", p.withholding_to_date_cents]], true);
+        }
+        renderPosition(p);
+        toast("Constituted · commit #" + state.seq, "verify");
+      } catch (e) { toast("Constitute failed (" + (e.status || "?") + "): " + e.message, "err"); state.depositId = null; }
+    } else {
+      await sleep(550);
+      state.depositId = uuid(); state.seq = 1; state.lifecycle = "Active";
+      mcpLog('', 'commit #1 · ' + state.depositId.slice(0, 8));
+      addEvent({ seq: 1, name: "DepositConstituted", meta: prod + " · " + ratePct + " · idem " + state.idemKey.slice(0, 8), amt: euro(principalCents), amtClass: "gold" });
+      pushSpan("deposit.constituted", 18, [["babelstone.partition_key", shortId()], ["babelstone.product_code", prod]]);
+      if (state.variant === "ADVANCE") {
+        var adv = computeInterest(principalCents, termDays, state.tan);
+        state.accrued = adv.gross; state.withheld = adv.tax; state.netPaid = adv.net; state.seq = 2;
+        addEvent({ seq: 2, name: "InterestPaid", meta: "paid in advance · t=0 · 28% withheld", amt: euro(adv.net), amtClass: "verify", verify: true });
+        pushSpan("accrual.computed", 7, [["babelstone.partition_key", shortId()], ["babelstone.interest_cents", adv.gross]]);
+        pushSpan("withholding.applied", 4, [["babelstone.partition_key", shortId()], ["babelstone.tax_cents", adv.tax]], true);
+      }
+      renderPosition(demoPos(principalCents));
+      toast("Constituted · commit #" + state.seq, "verify");
+    }
+    state.busy = false; setButtons();
+  }
+
+  async function doRetry() {
+    if (state.busy || !state.depositId) return;
+    state.busy = true; setButtons();
+    mcpLog('constitute_deposit(… same Idempotency-Key …)', 'replayed');
+    if (state.mode === "live") {
+      try {
+        var principalCents = state.principalCents, termDays = state.termDays, start = today();
+        var r = await api("POST", "/v1/deposits", {
+          principal_cents: principalCents, product_id: el("product").value, role: "standard",
+          term_days: termDays, start_date: start, interest_variant: "AT_MATURITY",
+          auto_renewal_policy: "NONE", funding_account: "PT50-DDA-001", deposit_id: state.depositId
+        }, { "Idempotency-Key": state.idemKey });
+        flashLedger();
+        toast("Duplicate caught · same commit #" + r.json.commit_sequence + " · no new event", "verify");
+      } catch (e) { toast("Retry: " + e.message, "err"); }
+    } else {
+      await sleep(400); flashLedger();
+      toast("Duplicate caught · same commit #" + state.seq + " · no new event", "verify");
+    }
+    state.busy = false; setButtons();
+  }
+
+  // PERIODIC coupon — uses the real POST /v1/deposits/{id}/interest endpoint (no MCP tool exists for it)
+  async function doCoupon() {
+    if (state.busy || !state.depositId || state.variant !== "PERIODIC") return;
+    state.busy = true; setButtons();
+    if (state.mode === "live") {
+      try {
+        var r = await api("POST", "/v1/deposits/" + state.depositId + "/interest", {});
+        var p = r.json;
+        var dGross = p.accrued_gross_interest_cents - state.accrued;
+        var dTax = p.withholding_to_date_cents - state.withheld;
+        var dNet = p.net_interest_cents - state.netPaid;
+        state.accrued = p.accrued_gross_interest_cents; state.withheld = p.withholding_to_date_cents;
+        state.netPaid = p.net_interest_cents; state.couponsPaid = p.coupons_paid; state.seq = p.last_sequence; state.lifecycle = p.lifecycle;
+        addEvent({ seq: p.last_sequence, name: "InterestPaid", meta: "coupon " + p.coupons_paid + "/" + state.numCoupons + " · 28% withheld", amt: euro(dNet), amtClass: "verify", verify: true });
+        pushSpan("accrual.computed", 7, [["babelstone.partition_key", shortId()], ["babelstone.interest_cents", dGross]]);
+        pushSpan("withholding.applied", 4, [["babelstone.partition_key", shortId()], ["babelstone.tax_cents", dTax]], true);
+        renderPosition(p);
+        toast("Coupon " + p.coupons_paid + " · " + euro(dNet) + " net", "verify");
+      } catch (e) { toast("Coupon failed (" + (e.status || "?") + "): " + e.message, "err"); }
+    } else {
+      await sleep(450);
+      var c = couponAmounts();
+      state.couponsPaid += 1; state.seq += 1;
+      state.accrued += c.gross; state.withheld += c.tax; state.netPaid += c.net;
+      addEvent({ seq: state.seq, name: "InterestPaid", meta: "coupon " + state.couponsPaid + "/" + state.numCoupons + " · 28% withheld", amt: euro(c.net), amtClass: "verify", verify: true });
+      pushSpan("accrual.computed", 7, [["babelstone.partition_key", shortId()], ["babelstone.interest_cents", c.gross]]);
+      pushSpan("withholding.applied", 4, [["babelstone.partition_key", shortId()], ["babelstone.tax_cents", c.tax]], true);
+      renderPosition(demoPos(state.principalCents));
+      toast("Coupon " + state.couponsPaid + " · " + euro(c.net) + " net", "verify");
+    }
+    state.busy = false; setButtons();
+  }
+
+  async function doMature() {
+    if (state.busy || !state.depositId) return;
+    state.busy = true; setButtons();
+    mcpLog('mature_deposit(deposit_id="' + state.depositId.slice(0, 8) + '…")');
+
+    if (state.mode === "live") {
+      try {
+        var r = await api("POST", "/v1/deposits/" + state.depositId + "/maturity", {});
+        var p = r.json; state.lifecycle = p.lifecycle;
+        var dGross = p.accrued_gross_interest_cents - state.accrued;
+        var dTax = p.withholding_to_date_cents - state.withheld;
+        // surface the maturity interest flow per variant
+        if (state.variant === "AT_MATURITY") {
+          addEvent({ seq: p.last_sequence - 2, name: "InterestAccrued", meta: "ACT/360 · " + p.term_days + "d", amt: euro(dGross), amtClass: "gold" });
+          addEvent({ seq: p.last_sequence - 1, name: "WithholdingApplied", meta: "28% IRS · flow-by-flow", amt: "−" + euro(dTax), amtClass: "wrong" });
+        } else if (state.variant === "PERIODIC" && dGross > 0) {
+          addEvent({ seq: p.last_sequence - 1, name: "InterestPaid", meta: "final coupon · 28% withheld", amt: euro(p.net_interest_cents - state.netPaid), amtClass: "verify", verify: true });
+        }
+        addEvent({ seq: p.last_sequence, name: "DepositMatured", meta: state.variant === "ADVANCE" ? "principal only · interest paid at t=0" : "matured " + p.maturity_date, amt: euro(p.total_payout_cents), amtClass: "verify", verify: true });
+        state.accrued = p.accrued_gross_interest_cents; state.withheld = p.withholding_to_date_cents; state.netPaid = p.net_interest_cents; state.seq = p.last_sequence;
+        if (dGross > 0) {
+          pushSpan("accrual.computed", 7, [["babelstone.partition_key", shortId()], ["babelstone.interest_cents", dGross]]);
+          pushSpan("withholding.applied", 4, [["babelstone.partition_key", shortId()], ["babelstone.tax_cents", dTax]], true);
+        }
+        renderPosition(p);
+        countUp("vTotal", p.total_payout_cents);
+        mcpLog('', 'payout ' + euro(p.total_payout_cents));
+        toast("Matured · payout " + euro(p.total_payout_cents), "verify");
+      } catch (e) { toast("Mature failed (" + (e.status || "?") + "): " + e.message, "err"); }
+    } else if (state.variant === "AT_MATURITY") {
+      var calc = computeInterest(state.principalCents, state.termDays, state.tan);
+      await sleep(500);
+      addEvent({ seq: 2, name: "InterestAccrued", meta: "ACT/360 · " + state.termDays + "d", amt: euro(calc.gross), amtClass: "gold" });
+      await sleep(650);
+      addEvent({ seq: 3, name: "WithholdingApplied", meta: "28% IRS · flow-by-flow", amt: "−" + euro(calc.tax), amtClass: "wrong" });
+      await sleep(650);
+      addEvent({ seq: 4, name: "DepositMatured", meta: "matured " + addDays(today(), state.termDays), amt: euro(calc.total), amtClass: "verify", verify: true });
+      state.lifecycle = "Matured"; state.seq = 4;
+      state.accrued = calc.gross; state.withheld = calc.tax; state.netPaid = calc.net;
+      renderPosition(demoPos(calc.total));
+      pushSpan("accrual.computed", 7, [["babelstone.partition_key", shortId()], ["babelstone.interest_cents", calc.gross]]);
+      pushSpan("withholding.applied", 4, [["babelstone.partition_key", shortId()], ["babelstone.tax_cents", calc.tax]], true);
+      countUp("vGross", calc.gross); countUp("vTax", calc.tax, true); countUp("vNet", calc.net); countUp("vTotal", calc.total);
+      mcpLog('', 'payout ' + euro(calc.total));
+      toast("Matured · payout " + euro(calc.total), "verify");
+    } else if (state.variant === "ADVANCE") {
+      await sleep(500);
+      state.seq += 1; state.lifecycle = "Matured";
+      addEvent({ seq: state.seq, name: "DepositMatured", meta: "principal only · interest paid at t=0", amt: euro(state.principalCents), amtClass: "verify", verify: true });
+      renderPosition(demoPos(state.principalCents));
+      countUp("vTotal", state.principalCents);
+      mcpLog('', 'payout ' + euro(state.principalCents));
+      toast("Matured · principal " + euro(state.principalCents), "verify");
+    } else { // PERIODIC — final coupon settles with the principal
+      var fc = couponAmounts();
+      await sleep(500);
+      state.couponsPaid += 1; state.seq += 1;
+      state.accrued += fc.gross; state.withheld += fc.tax; state.netPaid += fc.net;
+      addEvent({ seq: state.seq, name: "InterestPaid", meta: "final coupon " + state.couponsPaid + "/" + state.numCoupons + " · 28% withheld", amt: euro(fc.net), amtClass: "verify", verify: true });
+      pushSpan("accrual.computed", 7, [["babelstone.partition_key", shortId()], ["babelstone.interest_cents", fc.gross]]);
+      pushSpan("withholding.applied", 4, [["babelstone.partition_key", shortId()], ["babelstone.tax_cents", fc.tax]], true);
+      await sleep(650);
+      state.seq += 1; state.lifecycle = "Matured";
+      var total = state.principalCents + fc.net;
+      addEvent({ seq: state.seq, name: "DepositMatured", meta: "principal + final coupon", amt: euro(total), amtClass: "verify", verify: true });
+      renderPosition(demoPos(total));
+      countUp("vTotal", total);
+      mcpLog('', 'payout ' + euro(total));
+      toast("Matured · payout " + euro(total), "verify");
+    }
+    state.busy = false; setButtons();
+  }
+
+  // Early termination — DEMO-only: the engine has the decider (penalty bands, floor) but no HTTP endpoint yet.
+  async function doTerminate() {
+    if (state.busy || !state.depositId || state.mode === "live") return;
+    state.busy = true; setButtons();
+    await sleep(450);
+    var full = computeInterest(state.principalCents, state.termDays, state.tan);
+    var grossToDate = Math.round(full.gross * 0.5);          // ~half the term elapsed (illustrative)
+    var taxToDate = Math.round(grossToDate * 0.28);
+    var netToDate = grossToDate - taxToDate;
+    var penalty = Math.round(netToDate * 0.5);               // a 50%-of-accrued band (illustrative)
+    var netSettlement = state.principalCents + netToDate - penalty;
+    state.accrued = grossToDate; state.withheld = taxToDate; state.netPaid = netToDate;
+    state.seq += 1; state.lifecycle = "TerminatedEarly";
+    addEvent({ seq: state.seq, name: "DepositTerminatedEarly", meta: "−" + euro(penalty) + " penalty · ~50% term elapsed (illustrative)", amt: euro(netSettlement), amtClass: "wrong" });
+    renderPosition(demoPos(netSettlement));
+    toast("Terminated early · settled " + euro(netSettlement) + " (demo)", "err");
+    state.busy = false; setButtons();
+  }
+
+  function doReset() {
+    state.depositId = null; state.idemKey = null; state.seq = 0; state.lifecycle = null; state.busy = false;
+    state.couponsPaid = 0; state.numCoupons = 0; state.accrued = 0; state.withheld = 0; state.netPaid = 0;
+    syncProduct();
+    ledger.innerHTML = '<div class="empty"><span class="big">An empty stream.</span>Every command appends an immutable, sequence-numbered fact. Constitute a deposit to begin.</div>';
+    passbook.innerHTML = '<div class="empty">No position yet.<br />The state on the right is a <i>fold</i> of the events on the left — never stored, always derivable.</div>';
+    el("consoleLog").innerHTML = "";
+    state.spans = []; renderTrace();
+    setButtons();
+  }
+
+  /* ---------------- mode / operator toggles ---------------- */
+  function setConn(kind, text) { var c = el("conn"); c.className = "conn " + kind; el("connText").textContent = text; }
+  function setMode(mode) {
+    state.mode = mode;
+    el("modeSeg").querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b.dataset.mode === mode); });
+    if (mode === "live") { setConn("err", "live · checking…"); pingConn(); el("hintBar").innerHTML = 'Mode <b>LIVE</b> · calls go through the proxy to the engine on :8080'; }
+    else { setConn("demo", "demo · no backend"); el("hintBar").innerHTML = 'Mode <b>DEMO</b> needs no backend · switch to <b>LIVE</b> to drive the real engine'; }
+    doReset();
+  }
+  function updateDrawer() {
+    var show = state.operator === "ai" || state.telemetry;
+    el("console").classList.toggle("show", show);
+    document.body.classList.toggle("console-open", show);
+    el("paneMcp").hidden = state.tab !== "mcp";
+    el("paneTrace").hidden = state.tab !== "telemetry";
+    document.querySelectorAll("#console .tab").forEach(function (b) { b.classList.toggle("on", b.dataset.tab === state.tab); });
+  }
+  function setTab(t) { state.tab = t; updateDrawer(); }
+  function setOperator(op) {
+    state.operator = op;
+    el("opSeg").querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b.dataset.op === op); });
+    if (op === "ai" && !state.telemetry) state.tab = "mcp";
+    updateDrawer();
+    setButtons();
+  }
+  function setTelemetry(on) {
+    state.telemetry = on;
+    el("telSeg").querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", (b.dataset.tel === "on") === on); });
+    if (on) state.tab = "telemetry"; else if (state.operator !== "ai") state.tab = "mcp";
+    updateDrawer();
+  }
+
+  /* ---------------- telemetry / trace waterfall ---------------- */
+  function pushSpan(name, durMs, attrs, verify) { state.spans.push({ name: name, dur: durMs, attrs: attrs, verify: !!verify }); renderTrace(); }
+  function shortId() { return state.depositId ? state.depositId.slice(0, 8) + "…" : "—"; }
+  function renderTrace() {
+    var wf = el("traceWaterfall");
+    if (!state.spans.length) {
+      wf.innerHTML = '<div class="empty">Run an operation to see the spans it emits.</div>';
+      el("traceMetrics").innerHTML = ""; el("traceFoot").innerHTML = ""; return;
+    }
+    var total = state.spans.reduce(function (s, sp) { return s + sp.dur; }, 0);
+    var offset = 0;
+    var html = '<div class="root">trace · <b>' + shortId() + '</b> · ' + state.spans.length + ' spans · ' + total + 'ms · source <b>Babelstone.Engine</b></div>';
+    state.spans.forEach(function (sp) {
+      var leftPct = offset / total * 100, widthPct = Math.max(sp.dur / total * 100, 3);
+      var chips = sp.attrs.map(function (a) { return '<span class="chip-attr">' + a[0] + '=<b>' + a[1] + '</b></span>'; }).join("");
+      html += '<div class="span"><div class="span-row ' + (sp.verify ? "verify" : "") + '">' +
+        '<span class="sname">' + sp.name + '</span>' +
+        '<div class="track"><div class="bar" style="left:' + leftPct + '%;width:' + widthPct + '%"></div></div>' +
+        '<span class="dur">' + sp.dur + 'ms</span></div>' +
+        '<div class="span-attrs">' + chips + '</div></div>';
+      offset += sp.dur;
+    });
+    wf.innerHTML = html;
+    el("traceMetrics").innerHTML = [
+      '<span class="metric">outbox_publish_lag_seconds <b>0.4</b></span>',
+      '<span class="metric">outbox_publish_latency_seconds · p50 <b>0.011</b></span>',
+      '<span class="metric">inbox_handled_total <b>—</b></span>'
+    ].join("");
+    var env = state.mode === "live" ? "Development" : "demo";
+    var foot = 'service.name=<b>babelstone-engine-api</b> · service.namespace=<b>babelstone</b> · env=' + env + '<br>' +
+      '<span class="nopii">✓ No PII on spans</span> — operational tier only · ADR-IC-007 §P4 · ADR-PC-004 §P2<br>';
+    foot += state.mode === "live"
+      ? 'Spans export via the OTel Collector → search Grafana Tempo (localhost:3000) by <b>babelstone.partition_key</b>'
+      : 'In LIVE mode these export via the OTel Collector → Grafana Tempo';
+    el("traceFoot").innerHTML = foot;
+  }
+
+  /* ---------------- wire up ---------------- */
+  btnC.addEventListener("click", doConstitute);
+  btnR.addEventListener("click", doRetry);
+  btnCoupon.addEventListener("click", doCoupon);
+  btnM.addEventListener("click", doMature);
+  btnTerminate.addEventListener("click", doTerminate);
+  btnReset.addEventListener("click", doReset);
+  el("product").addEventListener("change", function () { if (!state.depositId) syncProduct(); setButtons(); });
+  el("modeSeg").addEventListener("click", function (e) { if (e.target.dataset.mode) setMode(e.target.dataset.mode); });
+  el("opSeg").addEventListener("click", function (e) { if (e.target.dataset.op) setOperator(e.target.dataset.op); });
+  el("telSeg").addEventListener("click", function (e) { if (e.target.dataset.tel) setTelemetry(e.target.dataset.tel === "on"); });
+  el("console").addEventListener("click", function (e) { if (e.target.dataset.tab) setTab(e.target.dataset.tab); });
+  el("principal").addEventListener("blur", function () {
+    var c = parseCents(this.value); if (c > 0) this.value = (c / 100).toLocaleString("en-IE");
+  });
+
+  syncProduct();
+  setButtons();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Babelstone — Banking software that's correct by construction</title>
+
+<!-- Distinctive type when online; graceful macOS-native fallback when offline (deck never breaks on stage). -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+
+<style>
+:root {
+  /* --- palette: certificate of correctness --- */
+  --ink:        #0b0d11;   /* deep blue-black canvas */
+  --ink-2:      #0e1116;
+  --panel:      #14181f;   /* elevated surface */
+  --panel-2:    #1a1f28;
+  --paper:      #ece7db;   /* warm off-white text */
+  --paper-soft: #c7c3b8;
+  --muted:      #80858f;   /* secondary text */
+  --faint:      #565b65;
+  --gold:       #e0b15e;   /* primary accent — minted / financial */
+  --gold-deep:  #b98a3c;
+  --verify:     #6fd6a0;   /* correctness signal */
+  --wrong:      #e0735e;   /* the naïve / incorrect comparison */
+  --hair:       rgba(236, 231, 219, 0.12);
+  --hair-soft:  rgba(236, 231, 219, 0.06);
+
+  --serif: "Fraunces", "Iowan Old Style", "Charter", "Palatino", Georgia, serif;
+  --sans:  "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --mono:  "IBM Plex Mono", "SF Mono", "Menlo", ui-monospace, monospace;
+
+  --maxw: 1180px;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* ---------- atmosphere: gradient mesh + grain ---------- */
+body::before {
+  content: "";
+  position: fixed; inset: 0;
+  background:
+    radial-gradient(1100px 720px at 82% -8%, rgba(224, 177, 94, 0.10), transparent 60%),
+    radial-gradient(900px 700px at -6% 108%, rgba(111, 214, 160, 0.06), transparent 55%),
+    linear-gradient(160deg, var(--ink) 0%, var(--ink-2) 100%);
+  z-index: -2;
+}
+body::after { /* fine grain overlay */
+  content: "";
+  position: fixed; inset: 0;
+  opacity: 0.035; z-index: -1; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---------- deck / slide scaffold ---------- */
+.deck { position: fixed; inset: 0; }
+
+.slide {
+  position: absolute; inset: 0;
+  display: none;
+  padding: clamp(2.4rem, 6vh, 5rem) clamp(2.4rem, 7vw, 7rem);
+  flex-direction: column;
+}
+.slide.active { display: flex; }
+
+.slide-inner {
+  margin: auto 0;
+  width: 100%;
+  max-width: var(--maxw);
+  align-self: center;
+}
+
+/* persistent chrome */
+.rail {
+  position: fixed; top: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1.5rem clamp(2.4rem, 7vw, 7rem);
+  font-family: var(--mono);
+  font-size: 0.72rem; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--faint); z-index: 30;
+}
+.rail .mark { color: var(--paper-soft); display: flex; gap: 0.7rem; align-items: center; }
+.rail .mark b { color: var(--gold); font-weight: 600; letter-spacing: 0.3em; }
+.rail .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 12px var(--gold); }
+
+.progress {
+  position: fixed; left: 0; bottom: 0; height: 2px;
+  background: linear-gradient(90deg, var(--gold-deep), var(--gold));
+  z-index: 40; transition: width 0.5s var(--ease);
+  box-shadow: 0 0 10px rgba(224,177,94,0.5);
+}
+.foot {
+  position: fixed; bottom: 0; right: 0;
+  padding: 1.3rem clamp(2.4rem, 7vw, 7rem);
+  font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.18em;
+  color: var(--faint); z-index: 30;
+}
+.foot b { color: var(--paper-soft); font-weight: 500; }
+
+/* ---------- typographic system ---------- */
+.kicker {
+  font-family: var(--mono);
+  font-size: 0.74rem; letter-spacing: 0.32em; text-transform: uppercase;
+  color: var(--gold); margin-bottom: 1.6rem;
+  display: inline-flex; align-items: center; gap: 0.8rem;
+}
+.kicker::before { content: ""; width: 34px; height: 1px; background: var(--gold); opacity: 0.7; }
+
+h1 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: clamp(2.6rem, 6.6vw, 5.6rem);
+  line-height: 0.98; letter-spacing: -0.018em;
+}
+h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: clamp(2.1rem, 5vw, 4rem);
+  line-height: 1.02; letter-spacing: -0.015em;
+}
+.lead {
+  font-size: clamp(1.05rem, 1.8vw, 1.5rem);
+  line-height: 1.5; color: var(--paper-soft);
+  font-weight: 300; max-width: 46ch; margin-top: 1.8rem;
+}
+.em-gold { color: var(--gold); }
+.em-verify { color: var(--verify); }
+.em-serif-i { font-style: italic; font-family: var(--serif); }
+
+/* ---------- reveal animation (per active slide) ---------- */
+.r { opacity: 0; transform: translateY(18px); }
+.slide.is-live .r {
+  animation: rise 0.85s var(--ease) forwards;
+  animation-delay: calc(var(--i, 0) * 110ms + 120ms);
+}
+@keyframes rise { to { opacity: 1; transform: none; } }
+
+/* ===================================================================
+   SLIDE 1 — title
+   =================================================================== */
+.title-wrap { position: relative; }
+.title-wrap h1 { max-width: 16ch; }
+.title-sub {
+  margin-top: 2.2rem; font-size: clamp(1.05rem, 1.9vw, 1.55rem);
+  font-weight: 300; color: var(--paper-soft); max-width: 44ch; line-height: 1.5;
+}
+.title-meta {
+  margin-top: 3.4rem; display: flex; gap: 2.4rem; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.14em;
+  color: var(--muted); text-transform: uppercase;
+}
+.title-meta span { display: flex; align-items: center; gap: 0.6rem; }
+.title-meta span::before { content: ""; width: 5px; height: 5px; background: var(--gold); border-radius: 50%; }
+
+/* floating ledger motif */
+.ledger-ghost {
+  position: absolute; right: -2rem; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 0.6rem; opacity: 0.5;
+  pointer-events: none;
+}
+@media (max-width: 1100px) { .ledger-ghost { display: none; } }
+
+/* ---------- living-ledger event cards ---------- */
+.ev {
+  font-family: var(--mono); font-size: 0.78rem;
+  background: linear-gradient(180deg, var(--panel), var(--panel-2));
+  border: 1px solid var(--hair); border-left: 2px solid var(--gold);
+  border-radius: 7px; padding: 0.7rem 0.95rem; width: 280px;
+  display: flex; align-items: center; gap: 0.8rem;
+  box-shadow: 0 14px 40px rgba(0,0,0,0.35);
+}
+.ev .seq {
+  color: var(--ink); background: var(--gold); font-weight: 600;
+  border-radius: 4px; padding: 0.1rem 0.45rem; font-size: 0.72rem;
+}
+.ev .name { color: var(--paper); font-weight: 500; }
+.ev .hash { color: var(--faint); margin-left: auto; font-size: 0.68rem; }
+.ev.verify { border-left-color: var(--verify); }
+.ev.verify .seq { background: var(--verify); }
+
+/* ===================================================================
+   generic content blocks
+   =================================================================== */
+.two-col {
+  display: grid; grid-template-columns: 1.05fr 0.95fr;
+  gap: clamp(2rem, 5vw, 5rem); align-items: center;
+}
+@media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+.stat-list { margin-top: 2.4rem; display: flex; flex-direction: column; gap: 1.3rem; }
+.stat-row { display: flex; gap: 1.2rem; align-items: flex-start; padding-left: 0.2rem; }
+.stat-row .bar { width: 2px; align-self: stretch; background: var(--hair); flex: none; position: relative; }
+.stat-row .bar::before { content: ""; position: absolute; top: 4px; left: -2px; width: 6px; height: 6px; border-radius: 50%; background: var(--gold); }
+.stat-row p { color: var(--paper-soft); font-weight: 300; font-size: clamp(1rem, 1.5vw, 1.25rem); line-height: 1.45; }
+.stat-row p b { color: var(--paper); font-weight: 500; }
+
+/* pillars (proof / rigor) */
+.pillars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.4rem; margin-top: 2.6rem; }
+@media (max-width: 900px) { .pillars { grid-template-columns: 1fr; } }
+.pillar {
+  background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent);
+  border: 1px solid var(--hair); border-radius: 12px; padding: 1.5rem 1.4rem;
+  position: relative; overflow: hidden;
+}
+.pillar::before {
+  content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 2px;
+  background: linear-gradient(90deg, var(--gold), transparent);
+}
+.pillar .ptag { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); }
+.pillar h3 { font-family: var(--serif); font-weight: 500; font-size: 1.5rem; margin: 0.7rem 0 0.6rem; line-height: 1.1; }
+.pillar p { color: var(--muted); font-size: 0.95rem; line-height: 1.5; font-weight: 300; }
+.pillar p b { color: var(--paper-soft); font-weight: 500; }
+.pillar .ref { margin-top: 1rem; font-family: var(--mono); font-size: 0.68rem; color: var(--faint); letter-spacing: 0.06em; }
+
+/* ===================================================================
+   SLIDE 6 accents — payout count-up, idempotency, withholding
+   =================================================================== */
+.payout-strip {
+  margin-top: 2.4rem; display: flex; align-items: stretch; gap: 0;
+  border: 1px solid var(--hair); border-radius: 12px; overflow: hidden;
+  background: linear-gradient(180deg, var(--panel), var(--ink-2));
+}
+.payout-cell { padding: 1.3rem 1.6rem; flex: 1; border-right: 1px solid var(--hair); }
+.payout-cell:last-child { border-right: 0; background: rgba(224,177,94,0.06); }
+.payout-cell .pl { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.payout-cell .pv { font-family: var(--serif); font-size: clamp(1.4rem, 2.6vw, 2.2rem); font-weight: 500; margin-top: 0.4rem; }
+.payout-cell .pv.tax { color: var(--wrong); }
+.payout-cell .pv.net { color: var(--gold); }
+.payout-cell .pv.verify { color: var(--verify); }
+
+/* interactive idempotency */
+.idem-demo { margin-top: 1.4rem; display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
+.btn {
+  font-family: var(--mono); font-size: 0.8rem; letter-spacing: 0.05em;
+  background: var(--gold); color: var(--ink); border: 0; border-radius: 7px;
+  padding: 0.7rem 1.2rem; cursor: pointer; font-weight: 600;
+  transition: transform 0.15s var(--ease), box-shadow 0.2s var(--ease);
+  box-shadow: 0 8px 24px rgba(224,177,94,0.25);
+}
+.btn:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(224,177,94,0.35); }
+.btn:active { transform: translateY(0); }
+.idem-feed { font-family: var(--mono); font-size: 0.82rem; color: var(--muted); min-height: 1.4em; }
+.idem-feed .ok { color: var(--paper); }
+.idem-feed .dup { color: var(--verify); }
+
+/* withholding comparison */
+.compare { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; margin-top: 1.4rem; }
+.compare .c {
+  border: 1px solid var(--hair); border-radius: 10px; padding: 1.1rem 1.2rem;
+  font-family: var(--mono);
+}
+.compare .c.bad { border-color: rgba(224,115,94,0.35); }
+.compare .c.good { border-color: rgba(111,214,160,0.4); background: rgba(111,214,160,0.05); }
+.compare .c .lbl { font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.compare .c .amt { font-family: var(--serif); font-size: 1.7rem; margin-top: 0.4rem; }
+.compare .c.bad .amt { color: var(--wrong); }
+.compare .c.good .amt { color: var(--verify); }
+.compare .c .note { font-size: 0.72rem; color: var(--faint); margin-top: 0.4rem; }
+.delta {
+  text-align: center; font-family: var(--mono); font-size: 0.8rem; color: var(--gold);
+  margin-top: 1rem; letter-spacing: 0.05em;
+}
+
+/* ===================================================================
+   SLIDE 5 — demo interstitial
+   =================================================================== */
+.slide.demo { align-items: center; justify-content: center; text-align: center; }
+.slide.demo .slide-inner { text-align: center; }
+.demo-eyebrow { font-family: var(--mono); letter-spacing: 0.4em; text-transform: uppercase; color: var(--gold); font-size: 0.85rem; }
+.demo-big { font-family: var(--serif); font-size: clamp(4rem, 13vw, 11rem); font-weight: 500; line-height: 0.9; margin: 1.5rem 0; letter-spacing: -0.02em; }
+.demo-cap { font-family: var(--mono); font-size: 0.85rem; color: var(--muted); letter-spacing: 0.1em; }
+.demo-pulse { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--verify); margin-right: 0.6rem; box-shadow: 0 0 0 0 rgba(111,214,160,0.6); animation: pulse 1.8s infinite; vertical-align: middle; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(111,214,160,0.5);} 70% { box-shadow: 0 0 0 16px rgba(111,214,160,0);} 100% { box-shadow: 0 0 0 0 rgba(111,214,160,0);} }
+
+/* moat / closing big statement */
+.big-statement h2 { max-width: 18ch; }
+.combo { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 2.2rem; }
+.combo .chip {
+  font-family: var(--mono); font-size: 0.82rem; letter-spacing: 0.04em;
+  border: 1px solid var(--hair); border-radius: 100px; padding: 0.6rem 1.1rem;
+  color: var(--paper-soft);
+}
+.combo .plus { color: var(--gold); align-self: center; font-family: var(--serif); font-size: 1.3rem; }
+
+/* status roadmap */
+.road { margin-top: 2.4rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; }
+@media (max-width: 900px) { .road { grid-template-columns: 1fr; } }
+.road .col h4 { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 1rem; }
+.road .now h4 { color: var(--verify); }
+.road .next h4 { color: var(--muted); }
+.road li { list-style: none; padding: 0.55rem 0; border-bottom: 1px solid var(--hair-soft); color: var(--paper-soft); font-weight: 300; display: flex; gap: 0.7rem; align-items: baseline; }
+.road li::before { content: "—"; color: var(--faint); }
+.road .now li::before { content: "✓"; color: var(--verify); }
+
+/* ---------- presenter notes overlay ---------- */
+.notes {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+  background: rgba(8,10,13,0.96); border-top: 1px solid var(--gold);
+  padding: 1.2rem clamp(2.4rem, 7vw, 7rem) 1.4rem;
+  font-family: var(--sans); color: var(--paper-soft); font-size: 0.95rem; line-height: 1.5;
+  display: none; max-height: 38vh; overflow-y: auto;
+  box-shadow: 0 -20px 60px rgba(0,0,0,0.5);
+}
+.notes.show { display: block; }
+.notes .ntag { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold); display: block; margin-bottom: 0.5rem; }
+
+/* help hint */
+.hint {
+  position: fixed; bottom: 1.3rem; left: 50%; transform: translateX(-50%);
+  font-family: var(--mono); font-size: 0.68rem; color: var(--faint); z-index: 30;
+  letter-spacing: 0.1em; opacity: 0.7; transition: opacity 0.4s;
+}
+.hint kbd { color: var(--paper-soft); border: 1px solid var(--hair); border-radius: 4px; padding: 0.05rem 0.35rem; }
+
+/* ---------- slide 11 — architecture appendix ---------- */
+.slide.arch { padding-top:2rem; padding-bottom:1.6rem; }
+.slide.arch .slide-inner { max-width:1240px; }
+.arch-head { display:flex; align-items:baseline; gap:1.4rem; flex-wrap:wrap; margin-bottom:1.1rem; }
+.arch-head h2 { font-size:clamp(1.5rem,2.8vw,2.3rem); }
+.arch-legend { font-family:var(--mono); font-size:0.72rem; color:var(--muted); letter-spacing:0.05em; display:flex; gap:1rem; }
+.arch-legend span { display:inline-flex; align-items:center; gap:0.4rem; }
+.arch-grid { display:grid; grid-template-columns:0.82fr 1.5fr 0.92fr; gap:0.85rem; align-items:stretch; }
+.arch-col { display:flex; flex-direction:column; gap:0.5rem; }
+.arch-col.rails { gap:0.85rem; }
+.abox { border:1px solid var(--hair); border-radius:8px; padding:0.5rem 0.75rem;
+  background:linear-gradient(180deg, rgba(255,255,255,0.022), transparent); }
+.abox.core { border-left:2px solid var(--gold); }
+.abox .an { font-family:var(--serif); font-size:1.02rem; font-weight:500; line-height:1.1; display:flex; align-items:center; gap:0.5rem; }
+.abox .ad { font-family:var(--mono); font-size:0.66rem; color:var(--muted); margin-top:0.18rem; line-height:1.35; }
+.adot { width:8px; height:8px; border-radius:50%; flex:none; }
+.adot.live { background:var(--verify); box-shadow:0 0 7px rgba(111,214,160,0.7); }
+.adot.partial { background:linear-gradient(90deg, var(--gold) 50%, transparent 50%); border:1px solid var(--gold); }
+.adot.planned { background:transparent; border:1px solid var(--faint); }
+.arch-rail { border:1px solid var(--hair); border-radius:10px; padding:0.85rem 0.85rem; flex:1;
+  background:linear-gradient(180deg, rgba(255,255,255,0.022), transparent); display:flex; flex-direction:column; justify-content:center; }
+.arch-rail .rk { font-family:var(--mono); font-size:0.6rem; letter-spacing:0.18em; text-transform:uppercase; color:var(--gold); margin-bottom:0.4rem; }
+.arch-rail .rn { font-family:var(--serif); font-size:1.1rem; font-weight:500; display:flex; align-items:center; gap:0.5rem; }
+.arch-rail .ri { font-family:var(--mono); font-size:0.66rem; color:var(--muted); margin-top:0.45rem; line-height:1.5; }
+.arch-cap { font-family:var(--mono); font-size:0.64rem; color:var(--faint); text-align:center; letter-spacing:0.12em; margin-bottom:0.4rem; }
+
+/* ---------- print → PDF leave-behind ---------- */
+@media print {
+  @page { size: 1280px 720px; margin: 0; }
+  html, body { overflow: visible; height: auto; }
+  .rail, .foot, .progress, .hint, .notes, .ledger-ghost { display: none !important; }
+  body::before, body::after { display: none; }
+  .deck { position: static; }
+  .slide { position: relative !important; display: flex !important; inset: auto;
+    width: 1280px; height: 720px; page-break-after: always; background: var(--ink); }
+  .slide.active { display: flex !important; }
+  .r { opacity: 1 !important; transform: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="rail">
+  <div class="mark"><span class="dot"></span><b>BABELSTONE</b><span>reference banking core</span></div>
+  <div id="slideCount">01 / 10</div>
+</div>
+
+<div class="deck" id="deck">
+
+  <!-- 1 — TITLE -->
+  <section class="slide" data-notes="Open with the one line and let it sit. This is an event-sourced deposit core that an AI can operate and that is correct by construction. Don't read the slide — say: 'Most banking software is trusted on faith. Ours is correct because of how it's built. Let me show you.'">
+    <div class="slide-inner title-wrap">
+      <div class="kicker r" style="--i:0">A reference banking core</div>
+      <h1 class="r" style="--i:1">Banking software<br />that's <span class="em-gold em-serif-i">correct by construction.</span></h1>
+      <p class="title-sub r" style="--i:3">An event-sourced deposit engine an AI can operate — and that can't lose money to bugs.</p>
+      <div class="title-meta r" style="--i:4">
+        <span>Event-sourced</span><span>AI-operable</span><span>Built by two</span>
+      </div>
+      <div class="ledger-ghost">
+        <div class="ev r" style="--i:2"><span class="seq">#1</span><span class="name">DepositConstituted</span><span class="hash">a3f…1c</span></div>
+        <div class="ev r" style="--i:3"><span class="seq">#2</span><span class="name">InterestPaid</span><span class="hash">b7e…04</span></div>
+        <div class="ev verify r" style="--i:4"><span class="seq">#3</span><span class="name">DepositMatured</span><span class="hash">d2a…9f</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 — PROBLEM -->
+  <section class="slide" data-notes="The status quo is fragile and expensive. Legacy cores are batch-driven black boxes. The real point: in banking a rounding error in interest or tax isn't a 'bug' — it's a regulatory event and real lost money. So nobody trusts the numbers, and because they don't trust them, nobody dares change the system. Stagnation by fear.">
+    <div class="slide-inner">
+      <div class="kicker r" style="--i:0">The problem</div>
+      <h2 class="r" style="--i:1">Core banking is a<br /><span class="em-gold">haunted house.</span></h2>
+      <div class="stat-list">
+        <div class="stat-row r" style="--i:2"><div class="bar"></div><p>Legacy cores are <b>opaque and batch-driven</b> — and terrifying to change.</p></div>
+        <div class="stat-row r" style="--i:3"><div class="bar"></div><p>A rounding error in interest or tax isn't a bug — it's a <b>regulatory event and real money lost.</b></p></div>
+        <div class="stat-row r" style="--i:4"><div class="bar"></div><p>So nobody fully trusts the numbers — and <b>nobody dares touch the system.</b></p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 — INSIGHT -->
+  <section class="slide" data-notes="This is the technical heart in one sentence. Two ideas: (1) Event sourcing — every change is an immutable, append-only fact; the ledger is the source of truth. (2) A pure kernel — the financial math has no clock, no I/O, no randomness, so identical inputs always produce identical money. Together: you can replay the entire bank from its events and get byte-identical state. Trust comes from determinism, not faith.">
+    <div class="slide-inner two-col">
+      <div>
+        <div class="kicker r" style="--i:0">The insight</div>
+        <h2 class="r" style="--i:1">Immutable ledger.<br /><span class="em-gold">Pure math.</span></h2>
+        <p class="lead r" style="--i:2">Every change is an immutable, replayable fact. The financial kernel is <b style="color:var(--paper)">pure</b> — no clock, no I/O, no randomness.</p>
+        <p class="lead r" style="--i:3; margin-top:1.2rem">Replay the whole bank → <span class="em-verify">byte-identical state.</span> Trust comes from determinism, not faith.</p>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:0.7rem;align-items:flex-start">
+        <div class="ev r" style="--i:2"><span class="seq">#1</span><span class="name">DepositConstituted</span><span class="hash">a3f…1c</span></div>
+        <div class="ev r" style="--i:3"><span class="seq">#2</span><span class="name">InterestPaid</span><span class="hash">b7e…04</span></div>
+        <div class="ev r" style="--i:4"><span class="seq">#3</span><span class="name">InterestPaid</span><span class="hash">c1d…77</span></div>
+        <div class="ev verify r" style="--i:5"><span class="seq">#4</span><span class="name">DepositMatured</span><span class="hash">d2a…9f</span></div>
+        <div class="r" style="--i:6;font-family:var(--mono);font-size:0.72rem;color:var(--faint);padding-left:0.3rem;margin-top:0.3rem">fold(events) → position · deterministic · replayable</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 — TWIST -->
+  <section class="slide" data-notes="The differentiator. BECAUSE every command is governed, idempotent and validated, it is safe to hand the controls to an LLM — it physically can't double-book or corrupt state. Babelstone exposes its operations as MCP tools, so Claude itself constitutes deposits, reads positions, settles maturities. This is the first banking core built to be AI-operable — not bolted on, designed in.">
+    <div class="slide-inner">
+      <div class="kicker r" style="--i:0">The twist</div>
+      <h2 class="r" style="--i:1">So safe an <span class="em-gold em-serif-i">AI</span> can run it.</h2>
+      <p class="lead r" style="--i:2">Every command is governed, idempotent, and validated — so the controls are safe to hand to a model.</p>
+      <div style="display:flex;gap:0.7rem;align-items:center;flex-wrap:wrap;margin-top:2rem">
+        <div class="ev r" style="--i:3;width:auto"><span class="seq">MCP</span><span class="name">constitute_deposit()</span></div>
+        <div class="ev r" style="--i:4;width:auto"><span class="seq">MCP</span><span class="name">get_deposit()</span></div>
+        <div class="ev verify r" style="--i:5;width:auto"><span class="seq">MCP</span><span class="name">mature_deposit()</span></div>
+      </div>
+      <p class="lead r" style="--i:6;margin-top:2rem"><span class="em-verify">The first banking core built to be AI-operable</span> — designed in, not bolted on.</p>
+    </div>
+  </section>
+
+  <!-- 5 — DEMO -->
+  <section class="slide demo" data-notes="STOP talking. Switch to the live Mission Control UI. Run the loop: constitute a €10,000 / 12-month deposit, watch the events animate into the ledger, mature it and watch the payout resolve with the 28% withholding. Then the kicker: click Constitute twice and show the duplicate gets caught — same commit, no second deposit. Let the product carry this slide.">
+    <div class="slide-inner">
+      <div class="demo-eyebrow r" style="--i:0">Live</div>
+      <div class="demo-big r" style="--i:1">Watch this.</div>
+      <div class="demo-cap r" style="--i:2"><span class="demo-pulse"></span>Babelstone Mission Control — constitute · accrue · mature</div>
+    </div>
+  </section>
+
+  <!-- 6 — PROOF / CORRECTNESS -->
+  <section class="slide" data-notes="The proof. Three guarantees. (1) No double-booking — idempotent commands; retrying a request replays the original result with zero duplicate appends (ADR-PC-029, live in the engine). Click the button twice to show it. (2) Right to the cent — Portuguese 28% withholding computed flow-by-flow; the naïve shortcut of scaling the rate is off by ~€4 on a €499k deposit — exactly the kind of error that becomes a regulator's headline. (3) Replayable truth — pure deciders, deterministic rebuild. The payout strip is the real worked example: €10,000 at 3% for a year → €304.17 gross, minus €85.17 tax, = €10,219.00.">
+    <div class="slide-inner">
+      <div class="kicker r" style="--i:0">The proof · correct by construction</div>
+      <div class="payout-strip r" style="--i:1">
+        <div class="payout-cell"><div class="pl">Principal</div><div class="pv">€10,000.00</div></div>
+        <div class="payout-cell"><div class="pl">Gross interest · 3% · 365d</div><div class="pv" id="grossVal">€0.00</div></div>
+        <div class="payout-cell"><div class="pl">Withholding · 28% IRS</div><div class="pv tax" id="taxVal">€0.00</div></div>
+        <div class="payout-cell"><div class="pl">Net payout</div><div class="pv net" id="netVal">€0.00</div></div>
+      </div>
+      <div class="pillars">
+        <div class="pillar r" style="--i:2">
+          <div class="ptag">No double-booking</div>
+          <h3>Idempotent by design</h3>
+          <p>Retry a command → the original result is <b>replayed</b>, with zero duplicate appends.</p>
+          <div class="idem-demo">
+            <button class="btn" id="idemBtn">Constitute €10,000</button>
+            <span class="idem-feed" id="idemFeed">&nbsp;</span>
+          </div>
+          <div class="ref">ADR-PC-029 · live in engine</div>
+        </div>
+        <div class="pillar r" style="--i:3">
+          <div class="ptag">Right to the cent</div>
+          <h3>Flow-by-flow tax</h3>
+          <p>28% withholding computed per cash-flow — the naïve rate-shortcut quietly drifts.</p>
+          <div class="compare">
+            <div class="c bad"><div class="lbl">Naïve scaling</div><div class="amt">€3,592</div><div class="note">subtly wrong</div></div>
+            <div class="c good"><div class="lbl">Flow-by-flow</div><div class="amt">€3,588</div><div class="note">correct</div></div>
+          </div>
+          <div class="delta">Δ €4 on a €499k deposit — a regulator's headline</div>
+        </div>
+        <div class="pillar r" style="--i:4">
+          <div class="ptag">Replayable truth</div>
+          <h3>Deterministic rebuild</h3>
+          <p>Pure deciders, no clock or I/O. <b>Replay the events, get identical money</b> — every time.</p>
+          <div class="ref">pure kernel · property-tested</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 — RIGOR -->
+  <section class="slide" data-notes="How it's built — this is what makes the correctness credible and what an investor underwrites. Four automated disciplines usually owned by a large platform team: architectural decisions are recorded AND enforced in CI (no silent drift); the reference docs are generated from the contracts and CI fails if they go stale; mutation testing actively hunts for logic holes the tests miss; and the regulatory packs are cosign-signed and pulled by content digest — a real supply chain. Punchline: a 50-person platform team's discipline, automated, run by two people.">
+    <div class="slide-inner">
+      <div class="kicker r" style="--i:0">How it's built</div>
+      <h2 class="r" style="--i:1">Built like <span class="em-gold">infrastructure</span>,<br />not a prototype.</h2>
+      <div class="pillars" style="margin-top:2.2rem">
+        <div class="pillar r" style="--i:2"><div class="ptag">Governance</div><h3>Drift, enforced</h3><p>Every architectural decision is recorded — and <b>CI fails on silent drift.</b></p></div>
+        <div class="pillar r" style="--i:3"><div class="ptag">Docs</div><h3>Generated, gated</h3><p>Reference docs are generated from the contracts and <b>gated against staleness.</b></p></div>
+        <div class="pillar r" style="--i:4"><div class="ptag">Tests</div><h3>Mutation-tested</h3><p>Mutation testing actively <b>hunts logic holes</b> the unit tests would miss.</p></div>
+        <div class="pillar r" style="--i:5"><div class="ptag">Supply chain</div><h3>Signed packs</h3><p>Regulatory packs are <b>cosign-signed</b> and pulled by content digest.</p></div>
+        <div class="pillar r" style="--i:6"><div class="ptag">Observability</div><h3>Observable by default</h3><p>OpenTelemetry traces &amp; metrics on every operation — <b>no PII on the wire.</b></p></div>
+        <div class="pillar r" style="--i:7"><div class="ptag">Resilience</div><h3>No single point of failure</h3><p>Stateless services run <b>active-active</b>; the event log &amp; bus replicate — synchronous Postgres standby (RPO&nbsp;≈&nbsp;0) &amp; a 3-node Redpanda quorum.</p></div>
+      </div>
+      <p class="lead r" style="--i:8;max-width:60ch;margin-top:2rem">A 50-person platform team's discipline — <span class="em-verify">automated, run by two.</span></p>
+    </div>
+  </section>
+
+  <!-- 8 — MOAT -->
+  <section class="slide big-statement" data-notes="Why this is defensible. Any of these alone is copyable. The MOAT is the combination — correctness + AI-operability + supply-chain integrity — held together coherently. Anyone can ship a CRUD bank in a weekend; rebuilding this trust surface takes years of taste and discipline. That coherence is the asset.">
+    <div class="slide-inner">
+      <div class="kicker r" style="--i:0">The moat</div>
+      <h2 class="r" style="--i:1">Hard to copy <span class="em-serif-i em-gold">on purpose.</span></h2>
+      <div class="combo">
+        <span class="chip r" style="--i:2">Correctness</span><span class="plus r" style="--i:2">+</span>
+        <span class="chip r" style="--i:3">AI-operability</span><span class="plus r" style="--i:3">+</span>
+        <span class="chip r" style="--i:4">Supply-chain integrity</span>
+      </div>
+      <p class="lead r" style="--i:5;max-width:54ch;margin-top:2.2rem">A CRUD bank is a weekend. This <b style="color:var(--paper)">trust surface</b> is years of taste and discipline — and it only works as a <span class="em-gold">whole.</span></p>
+    </div>
+  </section>
+
+  <!-- 9 — STATUS (placeholder) -->
+  <section class="slide" data-notes="PLACEHOLDER — revisit with real numbers. Be honest and specific: the core happy path runs end-to-end today with real financial math, real events, real traces — no stubs on the hot path. Frame what's next (Core-Banking settlement via the ACL, notification signals) as roadmap, not gap. Replace these bullets with current, verifiable status before presenting.">
+    <div class="slide-inner">
+      <div class="kicker r" style="--i:0">Where we are · draft</div>
+      <h2 class="r" style="--i:1">The hot path has <span class="em-verify">no stubs.</span></h2>
+      <div class="road">
+        <div class="col now r" style="--i:2">
+          <h4>Working today</h4>
+          <ul>
+            <li>Constitute → accrue → mature, end-to-end</li>
+            <li>Real financial math, property-tested</li>
+            <li>Idempotent commands, read-your-writes</li>
+            <li>AI-operable via MCP tools</li>
+            <li>Signed regulatory packs</li>
+          </ul>
+        </div>
+        <div class="col next r" style="--i:3">
+          <h4>Next</h4>
+          <ul>
+            <li>Core-Banking settlement (ACL)</li>
+            <li>Notification / completion signals</li>
+            <li>Additional product families</li>
+            <li>Mission Control UI (live + demo modes)</li>
+          </ul>
+        </div>
+      </div>
+      <p class="r" style="--i:4;font-family:var(--mono);font-size:0.72rem;color:var(--faint);margin-top:1.6rem;letter-spacing:0.08em">// placeholder — replace with current, verifiable figures before presenting</p>
+    </div>
+  </section>
+
+  <!-- 10 — ASK / VISION (placeholder) -->
+  <section class="slide" data-notes="PLACEHOLDER — your real ask goes here. Land the vision line, then state plainly what you're raising, for what, and the milestone it buys. Keep it to one breath. Replace the placeholder ask before presenting.">
+    <div class="slide-inner">
+      <div class="kicker r" style="--i:0">The vision · draft</div>
+      <h1 class="r" style="--i:1; font-size:clamp(2.2rem,5.2vw,4.4rem)">Correct by construction.<br /><span class="em-gold em-serif-i">Operable by anything.</span></h1>
+      <p class="lead r" style="--i:2;max-width:50ch">A banking core where every number is provable and every operation is safe — the substrate for the next generation of financial products.</p>
+      <div class="title-meta r" style="--i:3; margin-top:2.6rem">
+        <span>[ The ask goes here ]</span><span>[ Use of funds ]</span><span>[ Contact ]</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11 — APPENDIX: architecture -->
+  <section class="slide arch" data-notes="Appendix — the whole architecture on one board. Center stack is a request's journey, top to bottom: edge gateway → AI/API ingress → domain families → financial-math kernel → durable event log → bus → saga → downstream boundary. The side rails are cross-cutting: Observability (OpenTelemetry, no PII), Security/PII (OpenBao crypto-shredding), and Contracts/Governance (Avro/CUE schemas, signed packs, ADR drift gates). The dots are honest: ●live (incl. the orchestrator — saga consume loop is host-wired, started at the edge), ◐partial (used where a piece runs but isn't complete, e.g. Security/PII), ○planned (ACL + notification are still skeletons — only Dockerfile/README). Use this to answer 'what's actually built' without overclaiming.">
+    <div class="slide-inner">
+      <div class="arch-head r" style="--i:0">
+        <div class="kicker" style="margin-bottom:0">Appendix · architecture</div>
+        <h2>All the pieces, one board.</h2>
+        <div class="arch-legend">
+          <span><span class="adot live"></span>live</span>
+          <span><span class="adot partial"></span>partial</span>
+          <span><span class="adot planned"></span>planned</span>
+        </div>
+      </div>
+      <div class="arch-grid">
+        <!-- left rail -->
+        <div class="arch-col r" style="--i:1">
+          <div class="arch-rail">
+            <div class="rk">cross-cutting</div>
+            <div class="rn"><span class="adot live"></span>Observability</div>
+            <div class="ri">OpenTelemetry → Grafana LGTM<br />(Tempo · Prometheus · Loki)<br />traces · metrics · logs<br /><span style="color:var(--verify)">no PII on the wire</span></div>
+          </div>
+        </div>
+        <!-- center stack -->
+        <div class="arch-col">
+          <div class="arch-cap r" style="--i:1">constitute → event → settle</div>
+          <div class="abox core r" style="--i:2"><div class="an"><span class="adot live"></span>Kong API Gateway</div><div class="ad">declarative edge gateway · DB-less</div></div>
+          <div class="abox core r" style="--i:3"><div class="an"><span class="adot live"></span>MCP Server</div><div class="ad">AI-operable tool surface</div></div>
+          <div class="abox core r" style="--i:4"><div class="an"><span class="adot live"></span>Engine API</div><div class="ad">event-sourced kernel · command + read API</div></div>
+          <div class="abox core r" style="--i:5"><div class="an"><span class="adot live"></span>Product Families · term_deposit</div><div class="ad">pure deciders · folds · lifecycle</div></div>
+          <div class="abox core r" style="--i:6"><div class="an"><span class="adot live"></span>Financial-Math Kernel</div><div class="ad">ACT/360 interest · 28% withholding</div></div>
+          <div class="abox core r" style="--i:7"><div class="an"><span class="adot live"></span>Event Store · PostgreSQL</div><div class="ad">immutable log · projections · outbox</div></div>
+          <div class="abox core r" style="--i:8"><div class="an"><span class="adot live"></span>Event Bus · Redpanda</div><div class="ad">Kafka-compatible · Avro on the wire</div></div>
+          <div class="abox core r" style="--i:9"><div class="an"><span class="adot live"></span>Orchestrator</div><div class="ad">saga state machine · edge-started + consume loop</div></div>
+          <div class="abox core r" style="--i:10"><div class="an"><span class="adot planned"></span>Boundary · ACL + Notification</div><div class="ad">core-banking translation · completion signals</div></div>
+        </div>
+        <!-- right rail -->
+        <div class="arch-col rails r" style="--i:2">
+          <div class="arch-rail">
+            <div class="rk">cross-cutting</div>
+            <div class="rn"><span class="adot partial"></span>Security · PII</div>
+            <div class="ri">OpenBao · transit keys<br />crypto-shredding<br />(PII boundary in the engine)</div>
+          </div>
+          <div class="arch-rail">
+            <div class="rk">cross-cutting</div>
+            <div class="rn"><span class="adot live"></span>Contracts · Governance</div>
+            <div class="ri">Schema Registry · Avro / CUE<br />cosign-signed regulatory packs<br />ADR drift gates</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<div class="progress" id="progress"></div>
+<div class="foot">correct by construction · <b>babelstone</b></div>
+<aside class="notes" id="notes"><span class="ntag">Presenter note</span><div id="notesBody"></div></aside>
+<div class="hint" id="hint"><kbd>→</kbd> next · <kbd>n</kbd> notes · <kbd>f</kbd> fullscreen</div>
+
+<script>
+(function () {
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const total = slides.length;
+  const counter = document.getElementById('slideCount');
+  const progress = document.getElementById('progress');
+  const notes = document.getElementById('notes');
+  const notesBody = document.getElementById('notesBody');
+  const hint = document.getElementById('hint');
+  let i = 0, notesOn = false, payoutDone = false;
+
+  const pad = n => String(n + 1).padStart(2, '0');
+
+  function render() {
+    slides.forEach((s, n) => s.classList.toggle('active', n === i));
+    // restart reveal animation on the active slide
+    const cur = slides[i];
+    cur.classList.remove('is-live');
+    void cur.offsetWidth; // force reflow
+    cur.classList.add('is-live');
+
+    counter.textContent = pad(i) + ' / ' + pad(total - 1);
+    progress.style.width = ((i) / (total - 1) * 100) + '%';
+    notesBody.textContent = cur.dataset.notes || '—';
+
+    if (i === 5 && !payoutDone) { payoutDone = true; runPayout(); }
+    if (i !== 5) { payoutDone = false; resetPayout(); }
+  }
+
+  function go(n) { i = Math.max(0, Math.min(total - 1, n)); render(); }
+  function next() { go(i + 1); }
+  function prev() { go(i - 1); }
+
+  document.addEventListener('keydown', e => {
+    if (['ArrowRight', ' ', 'PageDown'].includes(e.key)) { e.preventDefault(); next(); }
+    else if (['ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); prev(); }
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(total - 1);
+    else if (e.key.toLowerCase() === 'f') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); }
+    else if (e.key.toLowerCase() === 'n') { notesOn = !notesOn; notes.classList.toggle('show', notesOn); }
+  });
+
+  // click-to-advance (ignore interactive controls)
+  document.getElementById('deck').addEventListener('click', e => {
+    if (e.target.closest('button, a')) return;
+    const back = e.clientX < window.innerWidth * 0.28;
+    back ? prev() : next();
+  });
+
+  setTimeout(() => { hint.style.opacity = '0'; }, 5000);
+
+  /* ----- slide 6: payout count-up ----- */
+  const fmt = c => '€' + (c / 100).toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  function animateTo(el, target, dur) {
+    const start = performance.now();
+    function frame(t) {
+      const p = Math.min(1, (t - start) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = fmt(Math.round(target * eased));
+      if (p < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+  function runPayout() {
+    setTimeout(() => {
+      animateTo(document.getElementById('grossVal'), 30417, 1100);
+      animateTo(document.getElementById('taxVal'), 8517, 1100);
+      animateTo(document.getElementById('netVal'), 1021900, 1300);
+    }, 500);
+  }
+  function resetPayout() {
+    ['grossVal', 'taxVal', 'netVal'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = '€0.00'; });
+  }
+
+  /* ----- slide 6: interactive idempotency ----- */
+  const idemBtn = document.getElementById('idemBtn');
+  const idemFeed = document.getElementById('idemFeed');
+  let constituted = false;
+  if (idemBtn) {
+    idemBtn.addEventListener('click', () => {
+      if (!constituted) {
+        constituted = true;
+        idemFeed.innerHTML = '<span class="ok">→ created · commit #2</span>';
+        idemBtn.textContent = 'Constitute again ↻';
+      } else {
+        idemFeed.innerHTML = '<span class="dup">✓ duplicate caught · same commit #2 · no second deposit</span>';
+      }
+    });
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>
