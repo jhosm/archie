@@ -59,12 +59,17 @@ public enum SagaState
     /// from <see cref="Approved"/> ENTERS it (arming the clearance query
     /// <see cref="ConstitutionProcess.QueryCoreDebitStatus"/>), and the clearance result LEAVES it three
     /// ways — a LATE <see cref="ConstitutionProcess.DebitConfirmed"/> resumes the happy path (back to
-    /// <see cref="Approved"/>), a <see cref="ConstitutionProcess.DebitNotExecuted"/> fails CLOSED to
-    /// <see cref="DepositConstitutionFailed"/> with no reversal (no money moved), and a
-    /// <see cref="ConstitutionProcess.CompensationFailed"/> escalates to
-    /// <see cref="HumanInterventionRequired"/> (§P6). The saga NEVER blind-retries the debit — it waits
-    /// and the system converges. (The "unwired / H.2-reserved" note was removed when the edges landed;
-    /// H.2 / babelstone-n55u is closed.)</summary>
+    /// <see cref="Approved"/>), a <see cref="ConstitutionProcess.DebitNotExecuted"/> REISSUES the debit
+    /// (back to <c>(<see cref="Approved"/>, ConfirmDebit)</c> — the <c>RETRY_PERMITTED</c> disposition of
+    /// ADR-IC-012 §D5 step 5 / §P5, inherited by ADR-PC-016 §64; Document 05 "handle as a normal error →
+    /// retry"), and a <see cref="ConstitutionProcess.CompensationFailed"/> escalates to
+    /// <see cref="HumanInterventionRequired"/> (§P6). The reissue cannot double-debit: a not-executed
+    /// clearance is Core GROUND TRUTH that the debit did NOT land (no money moved), so re-sending is safe
+    /// (ADR-IC-012 §P5 / §332 — double-debit prevented by construction); the same-idempotency-key re-send
+    /// and the ACL's "only re-send from RETRY_PERMITTED" guard are the ACL's machinery (DEF-1 / babelstone-ub9s),
+    /// and the retry BOUND is the ACL's clearance plus the §244 INDETERMINATE-backlog alert, NOT a saga
+    /// busy-retry. The saga NEVER blind-retries the debit — it waits, queries, and the system converges.
+    /// (The "unwired / H.2-reserved" note was removed when the edges landed; H.2 / babelstone-n55u is closed.)</summary>
     AwaitCoreClearance,
 
     /// <summary>A compensation (or an indeterminate effect) could not be resolved

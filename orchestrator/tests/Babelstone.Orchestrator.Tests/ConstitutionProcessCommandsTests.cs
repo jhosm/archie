@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Babelstone.Orchestrator.Commands;
+using Babelstone.Orchestrator.Handlers;
 using Babelstone.Orchestrator.Saga;
 using Xunit;
 
@@ -182,6 +183,42 @@ public sealed class ConstitutionProcessCommandsTests
         CommandPayload viaBase = body;
 
         Assert.Equal(body.ToBytes(), viaBase.ToBytes());
+    }
+
+    [Fact]
+    public void Reissued_ConfirmDebit_carries_the_SAME_CoreHoldRef_as_the_original()
+    {
+        // The no-double-debit invariant at v1 (bd babelstone-t7o3.10), before DEF-1's ACL guard
+        // exists. A RETRY_PERMITTED reissue of ConfirmDebit out of AWAIT_CORE_CLEARANCE (a
+        // DebitNotExecuted clearance) goes through the SAME factory with the SAME processId, so it
+        // must present the SAME CORE-HOLD-<processId> Core-facing reference as the original confirm.
+        // That stable reference is the external_reference the ACL folds into its idempotency key
+        // (ADR-IC-012 §P4), so even the worst case (original silently executed, clearance wrongly
+        // said not-executed) cannot double-debit — the §332 guard returns the recorded core_reference.
+        // The saga's operational message_id differing per emission does NOT touch this body field.
+        var reference = new SagaBusinessReference(
+            ProcessId: ProcessId,
+            ProductRef: "PROD-TD-12M",
+            AmountMinorUnits: 100_00,
+            SourceAccountRef: "ACCT-REF-0001",
+            InterestAccountRef: null,
+            DepositRef: "DEP-2026-00012345",
+            ClientType: ClientType.Existing,
+            AutoApprovalThresholdMinorUnits: 25_000_00);
+
+        var original = (ConfirmDebitCommand)SagaCommandPayloadFactory.Build(
+            ConstitutionProcess.ConfirmDebit, ProcessId, CausationId, CorrelationId, reference)!;
+        // The reissue is the SAME saga (same processId) but a DIFFERENT triggering event (the
+        // clearance result), so its causation differs — yet the Core-facing reference must not.
+        var reissue = (ConfirmDebitCommand)SagaCommandPayloadFactory.Build(
+            ConstitutionProcess.ConfirmDebit, ProcessId, Guid.NewGuid(), CorrelationId, reference)!;
+
+        Assert.Equal(original.CoreHoldRef, reissue.CoreHoldRef);
+        // And the clearance query that resolved the wait queried Core by that SAME reference, so the
+        // whole indeterminate→clearance→reissue cycle pins one Core hold (deterministic, not minted).
+        var clearance = (QueryCoreDebitStatusCommand)SagaCommandPayloadFactory.Build(
+            ConstitutionProcess.QueryCoreDebitStatus, ProcessId, CausationId, CorrelationId, reference)!;
+        Assert.Equal(original.CoreHoldRef, clearance.CoreHoldRef);
     }
 
     private static ReserveAccountBalanceCommand Reserve() => new()
