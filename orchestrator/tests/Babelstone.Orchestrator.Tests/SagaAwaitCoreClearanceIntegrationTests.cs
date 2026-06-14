@@ -25,8 +25,11 @@ namespace Babelstone.Orchestrator.Tests;
 /// state AWAIT_CORE_CLEARANCE (ADR-IC-003 §P4 — a long wait is a named state, never a busy retry),
 /// emitting a single clearance QUERY (QueryCoreDebitStatus)
 /// to the ACL. The clearance result then either RESUMES the happy path (the debit DID execute → a late
-/// DebitConfirmed → APPROVED → COMPLETED) or FAILS the saga CLOSED (the debit did NOT execute →
-/// DebitNotExecuted → DEPOSIT_CONSTITUTION_FAILED, no money moved, no reversal).
+/// DebitConfirmed → APPROVED → COMPLETED) or REISSUES the debit (the debit did NOT execute →
+/// DebitNotExecuted → RETRY_PERMITTED → back to APPROVED with a fresh ConfirmDebit → the reissue succeeds
+/// → COMPLETED). The reissue conforms to ADR-IC-012 §D5 step 5 / §P5 (inherited by ADR-PC-016 §64): a
+/// not-executed clearance is Core ground truth that nothing was committed, so reissuing the debit (with
+/// the same idempotency_key, the ACL's machinery in DEF-1) cannot double-debit (§P5/§332).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -63,15 +66,10 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
         _acl.Given(Request.Create().WithPath("/v1/reservations").UsingPost())
             .RespondWith(Response.Create().WithStatusCode((int)HttpStatusCode.Created).WithBody("""{"reservation":"held"}"""));
 
-        // ConfirmDebit → the EXPLICIT INDETERMINATE signal (HTTP 202): the ACL accepted the debit but
-        // cannot confirm Core execution (the network dropped). The dispatcher classifies 202 on a
-        // ConfirmDebit as Indeterminate → the bridge synthesizes CoreDebitIndeterminate → AWAIT_CORE_CLEARANCE.
-        _acl.Given(Request.Create().WithPath("/v1/debits").UsingPost())
-            .RespondWith(Response.Create().WithStatusCode((int)HttpStatusCode.Accepted)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody("""{"status":"INDETERMINATE"}"""));
-
-        // The clearance branch is configured per-test (executed → 200, not-executed → 422) in each Fact.
+        // The ConfirmDebit (/v1/debits) and the clearance (/v1/debits/clearance) stubs are configured
+        // PER-TEST in each Fact: the resume branch keeps a single always-202 ConfirmDebit, while the
+        // reissue branch needs a STATEFUL ConfirmDebit (202 INDETERMINATE on the first send, 201 SUCCESS
+        // on the RETRY_PERMITTED reissue) — so they cannot share one stub set up here.
     }
 
     public async Task DisposeAsync()
@@ -86,7 +84,13 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
         // Scenario C, the resume branch. ConfirmDebit returns 202 INDETERMINATE → the saga parks in
         // AWAIT_CORE_CLEARANCE and emits QueryCoreDebitStatus. The clearance query finds the debit DID
         // execute (200) → a LATE DebitConfirmed resumes the happy path (APPROVED → ActivateDeposit) and
-        // the engine event completes it.
+        // the engine event completes it. On this branch the debit is never reissued, so a single
+        // always-202 ConfirmDebit stub is enough.
+        _acl.Given(Request.Create().WithPath("/v1/debits").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode((int)HttpStatusCode.Accepted)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"status":"INDETERMINATE"}"""));
+
         _acl.Given(Request.Create().WithPath("/v1/debits/clearance").UsingPost())
             .RespondWith(Response.Create().WithStatusCode((int)HttpStatusCode.OK)
                 .WithHeader("Content-Type", "application/json")
@@ -141,11 +145,36 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Indeterminate_debit_fails_CLOSED_to_DEPOSIT_CONSTITUTION_FAILED_when_clearance_finds_it_not_executed()
+    public async Task Indeterminate_debit_REISSUES_the_debit_and_completes_when_clearance_finds_it_not_executed()
     {
-        // Scenario C, the fail branch. ConfirmDebit returns 202 INDETERMINATE → AWAIT_CORE_CLEARANCE,
-        // QueryCoreDebitStatus emitted. The clearance query finds the debit did NOT execute (422) → the
-        // saga fails CLOSED to DEPOSIT_CONSTITUTION_FAILED with NO reversal (no money moved).
+        // Scenario C, the RETRY_PERMITTED reissue branch (ADR-IC-012 §D5 step 5 / §P5; conforming).
+        // The FIRST ConfirmDebit returns 202 INDETERMINATE → AWAIT_CORE_CLEARANCE, QueryCoreDebitStatus
+        // emitted. The clearance query finds the debit did NOT execute (422 → DebitNotExecuted) → the
+        // saga REISSUES the debit (back to APPROVED with a fresh ConfirmDebit). The reissue is SAFE: the
+        // not-executed clearance is Core ground truth that nothing was committed, so reissuing cannot
+        // double-debit (§P5/§332). The reissued ConfirmDebit now succeeds (201) → DebitConfirmed →
+        // ActivateDeposit → (engine ProcessConstituted) → COMPLETED.
+        //
+        // A STATEFUL ConfirmDebit stub makes the reissue observable. The FIRST mapping carries no
+        // WhenStateIs, so it matches the scenario's initial (unset) state — the FIRST send answers 202
+        // INDETERMINATE and flips the scenario to "Reissued". The SECOND mapping matches WhenStateIs
+        // "Reissued" — the RETRY_PERMITTED reissue answers 201 Created → the dispatcher classifies it
+        // Applied → the bridge synthesizes the (timely) DebitConfirmed that walks the saga home.
+        const string scenario = "confirm-debit-reissue";
+        _acl.Given(Request.Create().WithPath("/v1/debits").UsingPost())
+            .InScenario(scenario)
+            .WillSetStateTo("Reissued")
+            .RespondWith(Response.Create().WithStatusCode((int)HttpStatusCode.Accepted)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"status":"INDETERMINATE"}"""));
+        _acl.Given(Request.Create().WithPath("/v1/debits").UsingPost())
+            .InScenario(scenario)
+            .WhenStateIs("Reissued")
+            .RespondWith(Response.Create().WithStatusCode((int)HttpStatusCode.Created)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"status":"EXECUTED","core_txn_id":"CT-REISSUED"}"""));
+
+        // The clearance query finds the (first) debit did NOT execute (422 = not-executed) → RETRY_PERMITTED.
         _acl.Given(Request.Create().WithPath("/v1/debits/clearance").UsingPost())
             .RespondWith(Response.Create().WithStatusCode((int)HttpStatusCode.UnprocessableEntity)
                 .WithHeader("Content-Type", "application/json")
@@ -153,34 +182,62 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
 
         var processId = await StartSagaAsync(amountCents: 10_000_00);
 
-        // No engine activation is reached on this path; an unreachable engine URL proves it.
-        using var host = BuildHost(engineBaseUrl: "http://engine.invalid", settlementBaseUrl: _acl.Url!);
+        // The engine stub accepts the activation that follows the successful reissue.
+        await using var engine = new RecordingHttpServer(_ => (HttpStatusCode.Created, "{}"));
+
+        using var host = BuildHost(engineBaseUrl: engine.BaseUrl, settlementBaseUrl: _acl.Url!);
         await host.StartAsync();
         try
         {
+            // The saga must first PARK in AWAIT_CORE_CLEARANCE (the indeterminate first debit) and arm
+            // the clearance query — never a blind retry.
             await WaitUntilAsync(
-                async () => await StateAsync(processId) == SagaState.DepositConstitutionFailed,
+                async () => (await OutboxStatusesAsync(processId)).ContainsKey(ConstitutionProcess.QueryCoreDebitStatus),
                 TimeSpan.FromSeconds(60),
-                "the saga did not fail closed to DEPOSIT_CONSTITUTION_FAILED on a not-executed clearance");
+                "the saga did not arm the clearance query on the indeterminate debit");
+
+            // The not-executed clearance reissues the debit (RETRY_PERMITTED): a SECOND ConfirmDebit row
+            // is emitted, the reissue succeeds (201), and the saga resumes to APPROVED with the
+            // (post-reissue) ActivateDeposit delivered. It then parks at APPROVED until the engine's
+            // ProcessConstituted event (slot 2), which we inject to stand in for the consume loop.
+            await WaitUntilAsync(
+                async () => await ConfirmDebitRowCountAsync(processId) >= 2
+                    && await StateAsync(processId) == SagaState.Approved
+                    && (await OutboxStatusesAsync(processId)).TryGetValue(
+                        ConstitutionProcess.ActivateDeposit, out var s) && s == "PUBLISHED",
+                TimeSpan.FromSeconds(60),
+                "the saga did not reissue the debit and resume to APPROVED with ActivateDeposit delivered");
+
+            await InjectEventAsync(processId, ConstitutionProcess.ProcessConstituted);
         }
         finally
         {
             await host.StopAsync();
         }
 
-        // The saga rests in the no-money-moved terminal — distinct from CANCELLED_AFTER_DEBIT (which
-        // means money DID move and was reversed): here nothing was committed, so nothing is compensated.
-        Assert.Equal(SagaState.DepositConstitutionFailed, await StateAsync(processId));
+        // The reissue resolved and the saga completed — NOT a no-money-moved terminal failure.
+        Assert.Equal(SagaState.Completed, await StateAsync(processId));
+
+        // EXACTLY TWO ConfirmDebit rows: the original indeterminate one, and the RETRY_PERMITTED reissue.
+        Assert.Equal(2, await ConfirmDebitRowCountAsync(processId));
 
         var rows = await OutboxStatusesAsync(processId);
-        Assert.Equal("PUBLISHED", rows[ConstitutionProcess.ConfirmDebit]);
         // The clearance query was a 422 → terminal FAILED (the dispatcher's slot-5 classification),
-        // which the bridge mapped to DebitNotExecuted (REVIEW-FLAG C: a v1 stub convention).
+        // which the bridge mapped to DebitNotExecuted (REVIEW-FLAG C: a v1 stub convention) → the reissue.
         Assert.Equal("FAILED", rows[ConstitutionProcess.QueryCoreDebitStatus]);
-        // NO reversal command was emitted — there is nothing to compensate.
+        // The (latest) ConfirmDebit row — the successful reissue — is delivered.
+        Assert.Equal("PUBLISHED", rows[ConstitutionProcess.ConfirmDebit]);
+        Assert.Equal("PUBLISHED", rows[ConstitutionProcess.ActivateDeposit]);
+        // NO reversal: the reissue path never reverses a debit (there was no committed debit to reverse,
+        // and the reissue is a forward retry, not a compensation).
         Assert.DoesNotContain(ConstitutionProcess.ReverseCoreDebit, rows.Keys);
+        // The saga never failed closed — DEPOSIT_CONSTITUTION_FAILED is not its terminal.
+        Assert.NotEqual(SagaState.DepositConstitutionFailed, await StateAsync(processId));
 
+        // The clearance query genuinely reached the ACL, and the ACL saw TWO debit sends (the original
+        // + the reissue) — the reissue actually went back over the wire.
         Assert.Contains(AclRequests(), r => r.Path == "/v1/debits/clearance");
+        Assert.Equal(2, AclRequests().Count(r => r.Path == "/v1/debits"));
     }
 
     // ---- Host wiring (the FULL production composition: dispatcher + bridge + saga stores) -----------
@@ -286,6 +343,18 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
         }
 
         return map;
+    }
+
+    private async Task<int> ConfirmDebitRowCountAsync(Guid processId)
+    {
+        // The RETRY_PERMITTED reissue emits a SECOND ConfirmDebit saga_outbox row, so the dictionary
+        // keyed by command_type (which collapses duplicates) cannot prove the reissue — count the rows.
+        await using var connection = await OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM saga_outbox WHERE process_id = @p AND command_type = @c;", connection);
+        command.Parameters.AddWithValue("p", processId);
+        command.Parameters.AddWithValue("c", ConstitutionProcess.ConfirmDebit);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
     private IReadOnlyList<AclRequest> AclRequests() =>

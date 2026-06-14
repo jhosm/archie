@@ -36,8 +36,9 @@ public sealed class ConstitutionResultEventsTests
     [InlineData(ConstitutionProcess.ConfirmDebit, CommandDeliveryKind.Indeterminate, ConstitutionProcess.CoreDebitIndeterminate)]
     // Clearance resolved EXECUTED (2xx) → the late DebitConfirmed that resumes the happy path.
     [InlineData(ConstitutionProcess.QueryCoreDebitStatus, CommandDeliveryKind.Applied, ConstitutionProcess.DebitConfirmed)]
-    // [REVIEW-FLAG C] Clearance resolved NOT-EXECUTED (4xx) → DebitNotExecuted. The 4xx=not-executed
-    // encoding is a v1 stub convention; the real ACL/DEF-1 emits typed clearance events.
+    // [REVIEW-FLAG C] Clearance resolved NOT-EXECUTED (4xx) → DebitNotExecuted, which drives the
+    // RETRY_PERMITTED reissue (conforming to ADR-IC-012 §D5/§P5). The 4xx=not-executed encoding is still
+    // a v1 stub convention; the real ACL/DEF-1 emits typed clearance events.
     [InlineData(ConstitutionProcess.QueryCoreDebitStatus, CommandDeliveryKind.Refused, ConstitutionProcess.DebitNotExecuted)]
     public void Maps_each_command_outcome_to_its_result_event(string commandType, CommandDeliveryKind kind, string expected)
     {

@@ -160,12 +160,13 @@ public static class ConstitutionResultEvents
         //   • 2xx → the debit DID execute: a LATE DebitConfirmed resumes the happy path (back to APPROVED,
         //     arming ActivateDeposit), identical to a timely confirm.
         (ConstitutionProcess.QueryCoreDebitStatus, CommandDeliveryKind.Applied) => ConstitutionProcess.DebitConfirmed,
-        //   • [REVIEW-FLAG C] 4xx → the debit did NOT execute: DebitNotExecuted fails the saga CLOSED
-        //     (no money moved → no reversal). DIVERGENCE (ADR-IC-003 Amendment A6, 2026-06-14):
-        //     ADR-IC-012 §D5/§P5 (inherited by ADR-PC-016 §64) decide the steady-state disposition as
-        //     RETRY_PERMITTED (reissue with the same idempotency_key); v1 has no reissue producer, so the
-        //     saga fails closed instead — DEF-1 (babelstone-ub9s) restores RETRY_PERMITTED.
-        //     The 4xx=not-executed mapping is a v1 STUB CONVENTION: the
+        //   • [REVIEW-FLAG C] 4xx → the debit did NOT execute: DebitNotExecuted now drives the
+        //     RETRY_PERMITTED reissue (CONFORMING — no divergence): the saga returns to (APPROVED,
+        //     ConfirmDebit) and reissues the debit, exactly as ADR-IC-012 §D5 step 5 / §P5 (inherited by
+        //     ADR-PC-016 §64) specify the not-executed disposition. The reissue cannot double-debit — the
+        //     not-executed clearance is Core ground truth that nothing was committed (ADR-IC-012 §P5/§332);
+        //     the same-idempotency-key guard is the ACL's machinery (DEF-1 / babelstone-ub9s).
+        //     The 4xx=not-executed mapping is STILL a v1 STUB CONVENTION: the
         //     dispatcher's slot-5 model classifies a 4xx as a terminal Refused, and the clearance stub
         //     reuses that to mean "the queried debit was not found / not executed". This is NOT the
         //     slot-5 "the engine refused an illegal/invalid command" semantics — it is a clearance VERDICT
