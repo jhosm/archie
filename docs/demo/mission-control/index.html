@@ -286,6 +286,9 @@ body.console-open .hint-bar { display:none; }
 
     <div class="actions">
       <button class="btn primary" id="btnConstitute">Constitute deposit <span class="mcp-tag" data-mcponly>· constitute_deposit()</span></button>
+      <label id="sagaInsufRow" style="display:none;align-items:center;gap:0.5rem;font-family:var(--mono);font-size:0.64rem;color:var(--muted);cursor:pointer;padding:0.1rem 0.2rem">
+        <input type="checkbox" id="sagaInsuf" /> force insufficient funds <span style="opacity:0.6">· refusal demo</span>
+      </label>
       <button class="btn ghost" id="btnRetry" disabled>Retry — same key <span class="mcp-tag">(idempotent)</span></button>
       <button class="btn ghost" id="btnCoupon" disabled style="display:none">Pay coupon <span class="mcp-tag" id="couponMeta"></span></button>
       <button class="btn primary" id="btnMature" disabled style="background:var(--verify)">Mature deposit <span class="mcp-tag" data-mcponly>· mature_deposit()</span></button>
@@ -357,7 +360,7 @@ body.console-open .hint-bar { display:none; }
     accrued: 0, withheld: 0, netPaid: 0,  // running tallies (demo + live coupon deltas)
     // LIVE·saga mode: the constitution saga driven through the orchestrator edge
     processId: null, streamUrl: null, sagaES: null,
-    sagaState: null, sagaVersion: -1, sagaTerminal: false, sagaSeenLeg: false
+    sagaState: null, sagaVersion: -1, sagaTerminal: false, sagaSeenLeg: false, sagaSeenDebit: false
   };
 
   /* ---------------- elements ---------------- */
@@ -528,11 +531,17 @@ body.console-open .hint-bar { display:none; }
     var changed = d.state !== state.sagaState;
     state.sagaState = d.state; state.sagaVersion = d.version; state.sagaTerminal = !!d.terminal;
     if (changed) addEvent({ seq: "v" + d.version, name: "Saga · " + d.state, meta: sagaStateBlurb(d.state) });
-    // the reversible settlement leg is dispatched as validation begins — surface it once
+    // surface the settlement legs as the saga crosses the matching phase (each once)
     if (d.state === "PARALLEL_VALIDATION" && !state.sagaSeenLeg) {
       state.sagaSeenLeg = true;
       addEvent({ seq: "→", name: "ReserveAccountBalance", meta: "dispatched to Core ACL · POST /v1/reservations · reversible hold", amtClass: "verify", verify: true });
       mcpLog('', 'ReserveAccountBalance → Core ACL');
+    }
+    if (d.state === "APPROVED" && !state.sagaSeenDebit) {
+      state.sagaSeenDebit = true;
+      addEvent({ seq: "→", name: "ConfirmDebit", meta: "dispatched to Core ACL · POST /v1/debits · the IRREVERSIBLE money leg", amtClass: "gold" });
+      addEvent({ seq: "→", name: "ActivateDeposit", meta: "dispatched to the engine · POST /v1/deposits (start the engine on :8080 to land a real deposit)" });
+      mcpLog('', 'ConfirmDebit → Core ACL · ActivateDeposit → engine');
     }
     renderSagaProcess();
     if (d.terminal) {
@@ -560,8 +569,10 @@ body.console-open .hint-bar { display:none; }
     var note = complete
       ? '<div class="pb-sub" style="color:var(--verify)">✓ DepositConstituted — the saga drove edge → settlement → engine end-to-end.</div>'
       : failure
-        ? '<div class="pb-sub" style="color:var(--wrong)">Compensation path · ' + sagaStateBlurb(s) + '.</div>'
-        : '<div class="pb-sub">Waiting in <b>' + s + '</b> for its result events. The outcome-feedback bridge that produces them (<b>bd&nbsp;t7o3.8</b>) isn\'t wired yet, so the saga pauses here by design — the command-plane plumbing (edge → saga → dispatcher → Core-ACL settlement) is live.</div>';
+        ? '<div class="pb-sub" style="color:var(--wrong)">Fail-closed · ' + sagaStateBlurb(s) + ' — nothing was committed.</div>'
+        : s === "APPROVED"
+          ? '<div class="pb-sub">Reached <b>APPROVED</b> — the reversible reserve <b>and</b> the irreversible debit both fired, and <b>ActivateDeposit</b> is dispatched to the engine. The final <b>APPROVED→COMPLETED</b> step awaits the engine→saga completion bridge (ADR-PC-029 slot 2) — start the engine on :8080 to land a real deposit.</div>'
+          : '<div class="pb-sub">Walking the reversible validations in <b>' + s + '</b> — reserve + product-limit checks, before any irreversible effect (the dispatcher delivers each leg to the Core-ACL stub).</div>';
     passbook.innerHTML =
       '<span class="status-badge ' + badge + '"><span class="d"></span>' + s + '</span>' +
       '<div class="pb-id">' + state.processId + '</div>' +
@@ -599,6 +610,9 @@ body.console-open .hint-bar { display:none; }
     btnTerminate.style.display = (active && !saga) ? "" : "none";
     btnTerminate.disabled = state.busy || !active || state.mode === "live" || saga;
     btnTerminate.title = (state.mode === "live" || saga) ? "No live endpoint yet — DEMO only" : "";
+    // the insufficient-funds refusal toggle is a LIVE·saga affordance only; lock it once started
+    el("sagaInsufRow").style.display = saga ? "flex" : "none";
+    el("sagaInsuf").disabled = state.busy || has;
     // lock the inputs once a deposit exists, so terms can't change mid-stream
     el("product").disabled = state.busy || has;
     el("principal").disabled = state.busy || has;
@@ -686,15 +700,18 @@ body.console-open .hint-bar { display:none; }
       // the gateway, injecting the X-Client-Id the edge authz binds ownership to (EdgeAuth).
       mcpLog('constitute_deposit(… via edge → saga …)');
       try {
+        // an "insufficient"-flagged source ref makes the Core-ACL stub 422 the reserve → the saga
+        // fails CLOSED to DEPOSIT_CONSTITUTION_FAILED (refusal demo); else the happy path to APPROVED.
+        var srcRef = el("sagaInsuf").checked ? "ACCT-insufficient-001" : "ACCT-REF-DEMO-001";
         var sr = await api("POST", "/api/v1/deposits/constitute", {
           product_code: prod, amount: principalCents,
-          source_account_ref: "ACCT-REF-DEMO-001", interest_account_ref: "ACCT-REF-DEMO-002"
+          source_account_ref: srcRef, interest_account_ref: "ACCT-REF-DEMO-002"
         });
         state.depositId = sr.json.deposit_id;
         state.processId = sr.json.process_id;
         state.streamUrl = sr.json.stream_url;
         state.lifecycle = "Processing"; state.sagaState = "STARTED"; state.sagaVersion = 0;
-        state.sagaTerminal = false; state.sagaSeenLeg = false;
+        state.sagaTerminal = false; state.sagaSeenLeg = false; state.sagaSeenDebit = false;
         mcpLog('', '202 · ' + state.processId);
         addEvent({ seq: "▶", name: "ConstitutionRequested", meta: "saga STARTED · " + state.processId, amt: euro(principalCents), amtClass: "gold" });
         renderSagaProcess();
@@ -875,7 +892,7 @@ body.console-open .hint-bar { display:none; }
     state.depositId = null; state.idemKey = null; state.seq = 0; state.lifecycle = null; state.busy = false;
     state.couponsPaid = 0; state.numCoupons = 0; state.accrued = 0; state.withheld = 0; state.netPaid = 0;
     state.processId = null; state.streamUrl = null;
-    state.sagaState = null; state.sagaVersion = -1; state.sagaTerminal = false; state.sagaSeenLeg = false;
+    state.sagaState = null; state.sagaVersion = -1; state.sagaTerminal = false; state.sagaSeenLeg = false; state.sagaSeenDebit = false;
     syncProduct();
     ledger.innerHTML = '<div class="empty"><span class="big">An empty stream.</span>Every command appends an immutable, sequence-numbered fact. Constitute a deposit to begin.</div>';
     passbook.innerHTML = '<div class="empty">No position yet.<br />The state on the right is a <i>fold</i> of the events on the left — never stored, always derivable.</div>';

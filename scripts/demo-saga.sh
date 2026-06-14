@@ -12,19 +12,24 @@
 #   2. build + start the orchestrator host (edge + consume loop + dispatcher); it applies its
 #      own saga schema on boot (SagaMigrationHostedService)
 #   3. drive POST /api/v1/deposits/constitute → assert 202 + process_id + stream_url
-#   4. read the SSE stream → assert the saga's structural state streams out
-#   5. confirm the dispatcher delivered ReserveAccountBalance to the Core-ACL stub
+#   4. read the SSE stream + assert the saga walked to APPROVED
+#   5. confirm BOTH settlement legs hit the Core-ACL stub (reversible reserve + irreversible debit)
+#   6. demo the refusal branch: an "insufficient" account → terminal DEPOSIT_CONSTITUTION_FAILED
 #
-# WHAT THIS SHOWS TODAY (the honest edge): the saga STARTS, persists, dispatches its reversible
-# settlement leg, and then WAITS in PARALLEL_VALIDATION for the result events (BalanceReserved /
-# LimitsValidated) that advance it. Nothing PRODUCES those onto deposits.process.events yet — that
-# is the outcome-feedback bridge, bd babelstone-t7o3.8 (IN PROGRESS). So the saga stops at
-# PARALLEL_VALIDATION by design here; this script proves the command-plane plumbing, and the saga
-# runs to terminal DepositConstituted the moment t7o3.8 lands (no script change needed — the engine
-# is added at step 2 then, joining at the irreversible phase). See the bd issue for the full scope.
+# WHAT THIS SHOWS (with the t7o3.8 result-event bridge now in main): the saga STARTS, then WALKS the
+# full reversible→irreversible flow — ReserveAccountBalance (→ BalanceReserved), the product-limit
+# auto-pass (→ LimitsValidated), auto-approval (→ ConstitutionApproved), and the IRREVERSIBLE
+# ConfirmDebit (→ DebitConfirmed) — landing at APPROVED. Both settlement legs hit the Core-ACL stub
+# (/v1/reservations + /v1/debits). At APPROVED it dispatches ActivateDeposit to the engine on :8080.
 #
-# The engine is NOT started here: the stranded happy path never reaches ActivateDeposit (emitted
-# only from APPROVED, post-debit), so no command is routed to the engine today.
+# The engine is NOT started here (lean bring-up). So ActivateDeposit has no target and the saga rests
+# at APPROVED — and the final APPROVED→COMPLETED step needs the engine's real DepositConstituted to
+# correlate back as ProcessConstituted, a SEPARATE bridge t7o3.8 deliberately excluded (ADR-PC-029
+# slot 2). Start the engine (scripts/demo-mcp.sh up) for ActivateDeposit to land a real deposit.
+#
+# The REFUSAL branch DOES reach a terminal state on its own: a source account flagged "insufficient"
+# makes the Core-ACL stub 422 the reservation → PreconditionRefused → DEPOSIT_CONSTITUTION_FAILED
+# (fail-closed, nothing committed). Step 6 demonstrates it.
 #
 # Usage:
 #   scripts/demo-saga.sh [up]    # bring up the saga path, leave the orchestrator running
@@ -86,6 +91,20 @@ wait_up() { # url timeout_seconds name logfile
 
 port_busy() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 dll_for()   { ls "$1"/bin/Debug/net*/"$2".dll 2>/dev/null | head -1; }
+
+# The current state of a saga, read from the orchestrator DB (the self-advance + consume loop mutate
+# saga_state). Echoes the SCREAMING_SNAKE state name, or empty if the row isn't there yet.
+saga_state_of() { # public_process_id
+  docker exec "$PG_CONTAINER" psql -U babelstone -d "$PG_ORCH_DB" -tAc \
+    "SELECT state FROM saga_state WHERE public_process_id='$1';" 2>/dev/null | tr -d '[:space:]'
+}
+
+# How many POSTs the Core-ACL stub received on a given path (its request journal is the proof).
+acl_count() { # urlPath
+  curl -sS -X POST "${ACL_URL}/__admin/requests/count" -H 'Content-Type: application/json' \
+    -d "{\"method\":\"POST\",\"urlPath\":\"$1\"}" 2>/dev/null \
+    | py -c "import json,sys;print(json.load(sys.stdin).get('count',0))" 2>/dev/null || echo 0
+}
 
 stop_pidfile() { # pidfile name
   local pidfile="$1" name="$2" pid
@@ -197,37 +216,63 @@ info "stream_url: ${STREAM}"
 # ---------------------------------------------------------------------------
 # 4. read the SSE stream → assert a structural state frame is emitted
 # ---------------------------------------------------------------------------
-say "4/5 Reading the saga's SSE stream (structural state only — no PII)"
-# The stream is long-lived (it follows the saga to a terminal state). Today the saga stops at
-# PARALLEL_VALIDATION, so the stream stays open emitting keep-alives — cap the read at a few seconds.
+say "4/6 Reading the SSE stream + waiting for the saga to walk to APPROVED"
+# The stream is long-lived; the saga self-advances fast as each leg is delivered. Capture a few
+# frames, then poll the persisted state until it reaches APPROVED (or time out).
 curl -sS --max-time 4 "${ORCH_URL}${STREAM}" -H "X-Client-Id: ${DEMO_CLIENT_ID}" \
   > "$RUNDIR/stream.txt" 2>/dev/null || true
-if grep -q '^event: state' "$RUNDIR/stream.txt"; then
-  STATE="$(grep '^data:' "$RUNDIR/stream.txt" | tail -1 | sed 's/^data: //')"
-  ok "SSE state frame received"
-  info "latest: ${STATE}"
+grep -q '^event: state' "$RUNDIR/stream.txt" \
+  && ok "SSE state frames received" \
+  || warn "no SSE state frame captured in the read window (see $RUNDIR/stream.txt)"
+FINAL=""
+for _ in $(seq 1 12); do
+  FINAL="$(saga_state_of "$PROC")"
+  [ "$FINAL" = "APPROVED" ] && break
+  sleep 1
+done
+if [ "$FINAL" = "APPROVED" ]; then
+  ok "saga walked STARTED → PARALLEL_VALIDATION → VALIDATIONS_COMPLETE → APPROVED"
+  info "reserve + limits + approval + the irreversible debit all fired; ActivateDeposit now dispatched to the engine"
 else
-  warn "no SSE state frame captured in the read window (see $RUNDIR/stream.txt)"
+  warn "saga at '${FINAL:-?}' (expected APPROVED — check $RUNDIR/orchestrator.log)"
 fi
 
 # ---------------------------------------------------------------------------
-# 5. confirm the dispatcher delivered ReserveAccountBalance to the Core-ACL stub
+# 5. confirm BOTH settlement legs hit the Core-ACL stub (reserve + irreversible debit)
 # ---------------------------------------------------------------------------
-say "5/5 Confirming the dispatcher delivered the reversible settlement leg"
-# The dispatcher drains saga_outbox on a poll loop; give it a moment, then ask the WireMock stub
-# whether it received the reservation POST (its request journal is the proof).
-for _ in 1 2 3 4 5 6; do
-  RCOUNT="$(curl -sS -X POST "${ACL_URL}/__admin/requests/count" \
-    -H 'Content-Type: application/json' \
-    -d '{"method":"POST","urlPath":"/v1/reservations"}' 2>/dev/null \
-    | py -c "import json,sys;print(json.load(sys.stdin).get('count',0))" 2>/dev/null || echo 0)"
-  [ "${RCOUNT:-0}" -ge 1 ] && break
+say "5/6 Confirming BOTH settlement legs hit the Core-ACL stub"
+RES="$(acl_count /v1/reservations)"
+DEB="$(acl_count /v1/debits)"
+[ "${RES:-0}" -ge 1 ] \
+  && ok "ReserveAccountBalance delivered (POST /v1/reservations ×${RES}) — the reversible hold" \
+  || warn "no reservation seen at the ACL stub (check $RUNDIR/orchestrator.log)"
+[ "${DEB:-0}" -ge 1 ] \
+  && ok "ConfirmDebit delivered (POST /v1/debits ×${DEB}) — the IRREVERSIBLE money leg" \
+  || warn "no debit seen at the ACL stub yet (dispatcher may still be draining — check $RUNDIR/orchestrator.log)"
+
+# ---------------------------------------------------------------------------
+# 6. demo the refusal branch — fail-closed terminal, no money moved
+# ---------------------------------------------------------------------------
+say "6/6 Demonstrating the refusal branch (fail-closed terminal)"
+# A source account flagged "insufficient" makes the Core-ACL stub 422 the reservation, so the saga
+# fails CLOSED before any irreversible effect: PreconditionRefused → DEPOSIT_CONSTITUTION_FAILED.
+cat > "$RUNDIR/refusal-req.json" <<JSON
+{"product_code":"dpz_pt_12m_juros_venc","amount":1000000,"source_account_ref":"ACCT-insufficient-001","interest_account_ref":"ACCT-REF-DEMO-002"}
+JSON
+RPROC="$(curl -sS -X POST "${ORCH_URL}/api/v1/deposits/constitute" \
+  -H 'Content-Type: application/json' -H "X-Client-Id: ${DEMO_CLIENT_ID}" \
+  --data-binary @"$RUNDIR/refusal-req.json" \
+  | py -c "import json,sys;print(json.load(sys.stdin)['process_id'])" 2>/dev/null || echo '')"
+RFINAL=""
+for _ in $(seq 1 12); do
+  RFINAL="$(saga_state_of "$RPROC")"
+  [ "$RFINAL" = "DEPOSIT_CONSTITUTION_FAILED" ] && break
   sleep 1
 done
-if [ "${RCOUNT:-0}" -ge 1 ]; then
-  ok "Core-ACL stub received ReserveAccountBalance (POST /v1/reservations ×${RCOUNT}) — the saga's reversible money leg fired"
+if [ "$RFINAL" = "DEPOSIT_CONSTITUTION_FAILED" ]; then
+  ok "refusal saga ${RPROC} reached terminal DEPOSIT_CONSTITUTION_FAILED (fail-closed — nothing committed)"
 else
-  warn "no reservation POST seen at the ACL stub yet (dispatcher poll may still be draining — check $RUNDIR/orchestrator.log)"
+  warn "refusal saga at '${RFINAL:-?}' (expected DEPOSIT_CONSTITUTION_FAILED — check $RUNDIR/orchestrator.log)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -239,10 +284,12 @@ $(printf '\033[1;32m✓ Constitution-saga path is up.\033[0m')
 
   orchestrator  ${ORCH_URL}   (edge + consume loop + dispatcher; logs: .demo-saga/orchestrator.log)
   Core-ACL stub ${ACL_URL}    (settlement; WireMock)
-  a saga was started as a smoke test: ${PROC}
+  happy-path saga: ${PROC} (→ APPROVED)   refusal saga: ${RPROC:-—} (→ DEPOSIT_CONSTITUTION_FAILED)
 
-The saga is now waiting in PARALLEL_VALIDATION for its result events. That outcome-feedback
-bridge is bd babelstone-t7o3.8 (IN PROGRESS); until it lands the saga stops here BY DESIGN.
+The happy-path saga walked to APPROVED — the reversible reserve AND the irreversible debit both
+fired against the Core-ACL stub. At APPROVED it dispatches ActivateDeposit to the engine on :8080;
+start the engine (scripts/demo-mcp.sh up) for it to land a REAL deposit. The final APPROVED→COMPLETED
+step needs the engine→saga completion bridge (ADR-PC-029 slot 2), a separate piece not built yet.
 
 Drive it from Mission Control's LIVE·saga mode:
 
