@@ -1,6 +1,8 @@
 using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Http.Headers;
+using Babelstone.Orchestrator.Inbox;
+using Babelstone.Orchestrator.Saga;
 using Babelstone.Telemetry;
 using Npgsql;
 
@@ -64,15 +66,18 @@ public sealed class SagaCommandDispatchDrainer
     private readonly SagaCommandDispatcherOptions _options;
     private readonly ICommandRouter _router;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly SagaAdvanceHandler _advanceHandler;
 
     public SagaCommandDispatchDrainer(
         SagaCommandDispatcherOptions options,
         ICommandRouter router,
-        IHttpClientFactory httpClientFactory)
+        IHttpClientFactory httpClientFactory,
+        SagaAdvanceHandler advanceHandler)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _router = router ?? throw new ArgumentNullException(nameof(router));
         _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+        _advanceHandler = advanceHandler ?? throw new ArgumentNullException(nameof(advanceHandler));
     }
 
     /// <summary>
@@ -117,10 +122,38 @@ public sealed class SagaCommandDispatchDrainer
             return false;
         }
 
-        // No route for this command type → terminal: surface it as FAILED rather than spin or drop.
+        // No route for this command type → terminal. Two cases:
         var route = _router.Resolve(row.CommandType);
         if (route is null)
         {
+            // [REVIEW-FLAG A] The in-aggregate ValidateProductLimits carve-out (bd babelstone-t7o3.8).
+            // It has NO HTTP route (the router returns null), but at v1 it AUTO-PASSES so the
+            // parallel-validation join can complete and the happy path reach COMPLETED. Treat it as a
+            // SYNTHETIC Applied: flip the row PUBLISHED AND self-advance the saga (LimitsValidated) in
+            // the same commit. Every OTHER no-route command STILL becomes terminal FAILED below. The
+            // real product-limits verdict (incl. LimitsRejected) is H.2 / babelstone-n55u.
+            if (row.CommandType == ConstitutionProcess.ValidateProductLimits)
+            {
+                try
+                {
+                    await BridgeResultAsync(connection, transaction, row, CommandDeliveryKind.Applied, ct);
+                }
+                catch (SagaConcurrencyException)
+                {
+                    // The in-tx self-advance lost the version race: roll back the WHOLE unit (the HTTP
+                    // leg was a no-op here anyway), leave the row PENDING, retry next cycle.
+                    await transaction.RollbackAsync(ct);
+                    return false;
+                }
+
+                await MarkPublishedAsync(connection, transaction, seq, ct);
+                await transaction.CommitAsync(ct);
+                Delivered.Add(1, CommandTag(row.CommandType));
+                return true;
+            }
+
+            // A genuinely undeliverable command (no route, not the auto-pass): surface it as FAILED
+            // rather than spin or drop. No saga self-advance — the bridge synthesizes nothing for it.
             await MarkFailedAsync(connection, transaction, seq, statusCode: 0,
                 reason: $"No HTTP route registered for command_type '{row.CommandType}'.", ct);
             await transaction.CommitAsync(ct);
@@ -143,9 +176,24 @@ public sealed class SagaCommandDispatchDrainer
             return false;
         }
 
+        // A terminal outcome (Applied/Refused) — the HTTP call happened ONCE this claim. The
+        // command-outcome → result-event bridge (bd babelstone-t7o3.8) self-advances the saga IN-PROCESS
+        // on the SAME connection+transaction as the status flip, so both land in one commit. The
+        // SagaConcurrencyException path rolls the WHOLE unit back (the HTTP leg already ran, but the
+        // engine's idempotency replays it on the next re-POST) — only the in-tx advance + flip retry.
         switch (outcome.Kind)
         {
             case DeliveryKind.Applied:
+                try
+                {
+                    await BridgeResultAsync(connection, transaction, row, CommandDeliveryKind.Applied, ct);
+                }
+                catch (SagaConcurrencyException)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return false;
+                }
+
                 // 2xx (applied or idempotent replay) → PUBLISHED.
                 await MarkPublishedAsync(connection, transaction, seq, ct);
                 await transaction.CommitAsync(ct);
@@ -153,7 +201,20 @@ public sealed class SagaCommandDispatchDrainer
                 return true;
 
             case DeliveryKind.Refused:
-                // 4xx → terminal FAILED, status + reason recorded for the compensation path.
+                try
+                {
+                    await BridgeResultAsync(connection, transaction, row, CommandDeliveryKind.Refused, ct);
+                }
+                catch (SagaConcurrencyException)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return false;
+                }
+
+                // 4xx → terminal FAILED, status + reason recorded for the compensation path. The bridge
+                // self-advanced the saga's failure/compensation branch (e.g. ActivationFailed →
+                // ReverseCoreDebit, or PreconditionRefused → DEPOSIT_CONSTITUTION_FAILED) in this SAME
+                // commit, so the row-FAILED and the saga advance are atomic.
                 await MarkFailedAsync(connection, transaction, seq, outcome.StatusCode, outcome.Reason, ct);
                 await transaction.CommitAsync(ct);
                 Refused.Add(1, CommandTag(row.CommandType));
@@ -164,6 +225,44 @@ public sealed class SagaCommandDispatchDrainer
                 await transaction.RollbackAsync(ct);
                 return false;
         }
+    }
+
+    /// <summary>
+    /// The command-outcome → result-event bridge (bd babelstone-t7o3.8). Map the terminal delivery
+    /// outcome of this command to the result-event type the saga consumes (<see cref="ConstitutionResultEvents"/>),
+    /// and if non-null, SELF-ADVANCE the saga in-process on the caller's connection+transaction via the
+    /// existing <see cref="SagaAdvanceHandler"/> — nothing rides the durable bus (the v1 Core ACL is a
+    /// WireMock shim with no event producer; DEF-1 / babelstone-ub9s replaces it). The synthesized
+    /// event's message id is DETERMINISTIC (derived from the command's message id + the result type), so
+    /// a re-POST of the same PENDING row re-derives the same id and the inbox dedup absorbs the
+    /// re-advance — effectively-once. A non-Advanced outcome (NoTransition/Terminal/Duplicate/UnknownSaga)
+    /// is a graceful no-op — the command WAS delivered; the advance just did not move the saga.
+    /// <see cref="SagaConcurrencyException"/> propagates to the caller, which rolls back and retries.
+    /// </summary>
+    private async Task BridgeResultAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, OutboxRow row,
+        CommandDeliveryKind kind, CancellationToken ct)
+    {
+        var resultEventType = ConstitutionResultEvents.ForOutcome(row.CommandType, kind);
+        if (resultEventType is null)
+        {
+            // No result event for this (command, kind): the bridge synthesizes nothing — the status
+            // flip still commits (the command WAS delivered).
+            return;
+        }
+
+        var resultMessageId = SagaSettlementResultEmit.MessageId(row.MessageId, resultEventType);
+        var evt = new SagaInboxEvent(
+            MessageId: resultMessageId,
+            ProcessId: row.ProcessId,
+            EventType: resultEventType,
+            SourceTopic: SagaSettlementResultEmit.SourceTopic,
+            CorrelationId: row.CorrelationId,
+            TraceParent: row.TraceParent);
+
+        // Self-advance on the SAME connection+transaction as the status flip. AdvanceAsync may return a
+        // non-Advanced outcome (a graceful no-op) or throw SagaConcurrencyException (the caller retries).
+        await _advanceHandler.AdvanceAsync(connection, transaction, evt, ct);
     }
 
     /// <summary>
@@ -268,9 +367,11 @@ public sealed class SagaCommandDispatchDrainer
     {
         // Re-read the row under FOR UPDATE SKIP LOCKED and re-check status = 'PENDING': a concurrent
         // dispatcher that already claimed it (the lock) or already flipped it (the status) is skipped,
-        // so the same command is never delivered twice by two instances.
+        // so the same command is never delivered twice by two instances. process_id + correlation_id are
+        // read so the command-outcome → result-event bridge (bd babelstone-t7o3.8) can correlate the
+        // delivery outcome back to the saga and self-advance it on this transaction.
         const string sql = """
-            SELECT message_id, command_type, payload, traceparent
+            SELECT message_id, command_type, payload, traceparent, process_id, correlation_id
             FROM saga_outbox
             WHERE seq = @seq AND status = 'PENDING'
             FOR UPDATE SKIP LOCKED;
@@ -288,7 +389,9 @@ public sealed class SagaCommandDispatchDrainer
             MessageId: reader.GetGuid(0),
             CommandType: reader.GetString(1),
             Payload: reader.GetFieldValue<byte[]>(2),
-            TraceParent: reader.IsDBNull(3) ? null : reader.GetString(3));
+            TraceParent: reader.IsDBNull(3) ? null : reader.GetString(3),
+            ProcessId: reader.GetGuid(4),
+            CorrelationId: reader.IsDBNull(5) ? null : reader.GetGuid(5));
     }
 
     private static async Task MarkPublishedAsync(
@@ -327,7 +430,9 @@ public sealed class SagaCommandDispatchDrainer
     private static KeyValuePair<string, object?> CommandTag(string commandType)
         => new("command_type", commandType);
 
-    private sealed record OutboxRow(Guid MessageId, string CommandType, byte[] Payload, string? TraceParent);
+    private sealed record OutboxRow(
+        Guid MessageId, string CommandType, byte[] Payload, string? TraceParent,
+        Guid ProcessId, Guid? CorrelationId);
 
     private enum DeliveryKind { Applied, Refused, Transient }
 
