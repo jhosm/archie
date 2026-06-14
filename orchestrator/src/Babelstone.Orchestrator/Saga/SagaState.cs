@@ -67,9 +67,15 @@ public enum SagaState
     /// clearance is Core GROUND TRUTH that the debit did NOT land (no money moved), so re-sending is safe
     /// (ADR-IC-012 §P5 / §332 — double-debit prevented by construction); the same-idempotency-key re-send
     /// and the ACL's "only re-send from RETRY_PERMITTED" guard are the ACL's machinery (DEF-1 / babelstone-ub9s),
-    /// and the retry BOUND is the ACL's clearance plus the §244 INDETERMINATE-backlog alert, NOT a saga
-    /// busy-retry. The saga NEVER blind-retries the debit — it waits, queries, and the system converges.
-    /// (The "unwired / H.2-reserved" note was removed when the edges landed; H.2 / babelstone-n55u is closed.)</summary>
+    /// and the AUTHORITATIVE retry BOUND is the ACL's clearance plus the §244 INDETERMINATE-backlog alert,
+    /// NOT a saga busy-retry. At v1 that authoritative bound is not yet built (the ACL is a WireMock shim),
+    /// so a saga-side reissue BUDGET backstops the loop as defense-in-depth (bd babelstone-rq3e): after a
+    /// bounded number of clearance cycles a not-executed clearance escalates to
+    /// <see cref="HumanInterventionRequired"/> (via the orchestrator-derived
+    /// <see cref="ConstitutionProcess.ReissueBudgetExhausted"/> event) instead of reissuing again — never a
+    /// busy retry, never a stranded saga (§P4 / §P6). The saga NEVER blind-retries the debit — it waits,
+    /// queries, and the system converges. (The "unwired / H.2-reserved" note was removed when the edges
+    /// landed; H.2 / babelstone-n55u is closed.)</summary>
     AwaitCoreClearance,
 
     /// <summary>A compensation (or an indeterminate effect) could not be resolved
