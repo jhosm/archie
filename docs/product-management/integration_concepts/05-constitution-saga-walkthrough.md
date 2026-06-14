@@ -45,7 +45,7 @@ The Deposits API gateway does **only** what fits within the 500ms:
 
 1. Authentication/authorization (token validated by upstream IAM; claims propagated as signed assertions)
 2. **PSD2 SCA pre-condition**: deposit constitution is a significant financial operation. The IAM must confirm that SCA has been completed for this session before the saga proceeds to any irreversible step. If SCA is absent or timed out, the edge returns `403` with reason `SCA_REQUIRED` — the orchestrator never starts. If SCA fails mid-saga (e.g., a step-up challenge times out during a long-running workflow approval), the orchestrator treats it as a `ConstitutionRejected` outcome and triggers the standard compensation path.
-3. **AML / KYC clearance pre-condition**: financial-crime adjudication (sanctions/PEP screening, KYC, source-of-funds) is **upstream of this engine** and is enforced here as a precondition, exactly like SCA. The edge requires an upstream-issued clearance assertion on the request; if it is absent or invalid, the edge returns `403` with reason `AML_CLEARANCE_REQUIRED` — the orchestrator never starts. The clearance assertion, its verdict, the screening model, and any SAR/STR workflow belong **entirely to the upstream financial-crime systems and the edge / gateway**; the **product engine neither receives nor persists** it. This clearance precondition is an **edge / gateway** concern ([ADR-IC-006](./adrs/ADR-IC-006-edge-api-gateway.md)), upstream of and out of scope for the product engine ([00 §4](../product_concepts/00-product-vision.md)); it is why there is **no `ValidateClientEligibility` step inside the saga below**.
+3. **AML / KYC is upstream — not an edge pre-condition here**: financial-crime adjudication (sanctions/PEP screening, KYC, source-of-funds) is **upstream of and out of scope for the product engine** ([00 §4](../product_concepts/00-product-vision.md)). A client is onboarded, KYC'd, and screened by the upstream financial-crime systems **before** they ever reach this flow; the product engine carries **no AML surface** — the request envelope has no clearance field, and there is no `AML_CLEARANCE_REQUIRED` edge check on this path (the engine's AML precondition contract was withdrawn — the edge now enforces only SCA, above). Where AML clearance is enforced at all it is an **edge / gateway** concern ([ADR-IC-006](./adrs/ADR-IC-006-edge-api-gateway.md)), not a per-request precondition this walkthrough models — which is why there is **no `ValidateClientEligibility` step inside the saga below**.
 4. **Synchronous idempotency check**: does `(client_id, idem-c4d8e2f1)` exist? The key is scoped to the client — see [Primitive 5](./01-the-six-primitives.md). If yes, return cached response. If no, proceed.
 5. **Light validations**: payload schema, product exists in catalogue (local read model), amount within product's limits
 6. **Creates the `ConstitutionProcess` aggregate** in state `STARTED`
@@ -106,7 +106,7 @@ The orchestrator transitions the `ConstitutionProcess` state to `PARALLEL_VALIDA
 → Command ValidateProductLimits (internal, to the Deposit aggregate itself)
 ```
 
-> **No eligibility step here.** AML/KYC/sanctions clearance was already enforced at the edge as a precondition (step 0) and adjudicated upstream of this engine — the saga performs no *financial-crime* eligibility adjudication — clearance is an edge precondition ([ADR-IC-006](./adrs/ADR-IC-006-edge-api-gateway.md)), upstream and out of scope for the engine ([00 §4](../product_concepts/00-product-vision.md)). (Commercial-eligibility *verdicts* — new-money, salary-domiciliation — when a product requires them are gathered upstream and refused by the decider per [ADR-PC-024](../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md); v1's products are not eligibility-gated, so none appears in this walkthrough.) What remains is `ValidateProductLimits` — a *product-engine* rule bound to the pack ("does the client already hold N of this product; is the amount in range"), **not** a financial-crime check.
+> **No eligibility step here.** AML/KYC/sanctions clearance is adjudicated **upstream of this engine** — a client is screened before they ever reach this flow (step 0 records it as upstream and out of scope), so the saga performs no *financial-crime* eligibility adjudication; where AML is enforced at all it is an edge / gateway concern ([ADR-IC-006](./adrs/ADR-IC-006-edge-api-gateway.md)), upstream and out of scope for the engine ([00 §4](../product_concepts/00-product-vision.md)). (Commercial-eligibility *verdicts* — new-money, salary-domiciliation — when a product requires them are gathered upstream and refused by the decider per [ADR-PC-024](../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md); v1's products are not eligibility-gated, so none appears in this walkthrough.) What remains is `ValidateProductLimits` — a *product-engine* rule bound to the pack ("does the client already hold N of this product; is the amount in range"), **not** a financial-crime check.
 
 The two carry the same `correlation_id`, `causation_id = msg-001-a7b3c`, and derived `idempotency_key`s (`idem-c4d8e2f1::reservation`, `idem-c4d8e2f1::limits`).
 
@@ -154,7 +154,7 @@ Inbox check for each event. When the two arrive, the orchestrator transitions th
 
 ### What Is Guaranteed
 
-- Client clearance (AML/KYC) was already a precondition at the edge — not re-checked here
+- Client AML/KYC was adjudicated upstream, before this flow — out of scope for the engine, not a step here
 - Balance is reserved (Core has hold)
 - Internal limits OK
 - **Nothing irreversible has happened yet.** The Core hold expires on its own if nothing is confirmed.
@@ -278,7 +278,7 @@ And displays "Deposit successfully constituted" to the client. Total perceived t
 ## The Complete Visual Flow (Happy Path)
 
 ```
-T+0ms     Edge: API receives, SCA + AML/KYC preconditions, light validations, local outbox
+T+0ms     Edge: API receives, SCA precondition, light validations, local outbox
           ConstitutionProcess: STARTED
           Deposit: DRAFT
           → HTTP 202 to client (~150ms)
@@ -316,7 +316,7 @@ Everything above has been the happy path. The robustness of the system is in kno
 
 ### Scenario A: Product Limit Exceeded (Fails Early, in Validation)
 
-`ValidateProductLimits` fails: the client already holds the maximum number of this product (or the amount is out of the product's range). The `Deposit` aggregate emits `LimitsRejected`. (Financial-crime eligibility is *not* a failure mode here — AML/KYC clearance was a precondition at the edge, so an uncleared client never reached this saga at all; commercial-eligibility refusals, when a product is gated, are a separate `DepositConstitutionFailed` path per [ADR-PC-024](../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md).)
+`ValidateProductLimits` fails: the client already holds the maximum number of this product (or the amount is out of the product's range). The `Deposit` aggregate emits `LimitsRejected`. (Financial-crime eligibility is *not* a failure mode here — AML/KYC is adjudicated upstream and out of scope for the engine, so an unscreened client is handled long before this saga and never appears in it; commercial-eligibility refusals, when a product is gated, are a separate `DepositConstitutionFailed` path per [ADR-PC-024](../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md).)
 
 The orchestrator receives. Transitions `ConstitutionProcess` to `COMPENSATE_VALIDATIONS`.
 
