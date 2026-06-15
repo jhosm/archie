@@ -85,6 +85,18 @@ public sealed class MultiSagaSubstrateTests
         // single shared predicate, so a state with an outgoing edge in one machine is non-terminal
         // THERE regardless of the other machine.
         Assert.True(constitution.IsTerminal(SagaState.Cancelled));
+
+        // HUMAN_INTERVENTION_REQUIRED is the behaviour-preserving override's locked invariant
+        // (bd babelstone-mtto PR1). ConstitutionProcess.IsTerminal delegates to SagaStateNames.IsTerminal
+        // (the pre-multi-saga predicate), so HIR stays NON-terminal — an operator resolves it (the
+        // resolution edge arrives in PR2). The substrate DEFAULT (pure table inspection) would call HIR
+        // terminal today (no outgoing edge), which is exactly the divergence the override exists to
+        // prevent: this assertion fails the moment the override is dropped and the refactor's behaviour
+        // change leaks back in. The stub, which never touches HIR, reports it terminal under the default —
+        // the two machines giving DIFFERENT answers for the SAME state is the whole point of per-machine
+        // IsTerminal.
+        Assert.False(constitution.IsTerminal(SagaState.HumanInterventionRequired));
+        Assert.True(new StubRenewalProcess().IsTerminal(SagaState.HumanInterventionRequired));
     }
 
     // ---- Pure: CompositeCommandRouter routes by saga_type (no DB) --------------------------------
@@ -254,6 +266,43 @@ public sealed class MultiSagaSubstrateTests
                 await RunAsync(handler, renewalId, StubRenewalProcess.RenewalCompleted));
         }
 
+        /// <summary>
+        /// The behaviour-preservation lock for the HUMAN_INTERVENTION_REQUIRED disposition
+        /// (bd babelstone-mtto PR1). Before the multi-saga refactor the advance handler asked
+        /// <see cref="SagaStateNames.IsTerminal"/>, which keeps HIR NON-terminal, so a late event on a
+        /// HIR-parked ConstitutionProcess saga fell through to the table lookup, found no <c>(HIR, *)</c>
+        /// row, and returned <see cref="AdvanceOutcome.NoTransition"/> (which the consume loop counts as
+        /// poison). The refactor switched the handler to <see cref="ISagaStateMachine.IsTerminal"/>; the
+        /// substrate DEFAULT (pure table inspection) would have reported HIR terminal (no outgoing edge)
+        /// and changed the disposition to <see cref="AdvanceOutcome.Terminal"/> — a different inbox
+        /// result_summary and a different metric, so replay would diverge from live. ConstitutionProcess
+        /// overrides IsTerminal to delegate to the static, restoring the pre-PR1 NoTransition disposition.
+        /// This test drives exactly that case and fails the moment the override is dropped.
+        /// </summary>
+        [Fact]
+        public async Task A_late_event_on_a_HIR_parked_constitution_saga_is_NoTransition_not_Terminal()
+        {
+            var sink = new RecordingCommandSink();
+            var handler = new SagaAdvanceHandler(
+                new ISagaStateMachine[] { new ConstitutionProcess(), new StubRenewalProcess() },
+                _stateStore, _transitionLog, sink, new SagaBusinessReferenceStore());
+
+            // Seed a ConstitutionProcess saga PARKED in HUMAN_INTERVENTION_REQUIRED — the
+            // production-reachable escalation state (a failed compensation / spent reissue budget land
+            // here). HIR has no outgoing edge in the table TODAY (the operator-resolution edge is PR2),
+            // so the substrate default would call it terminal; the override keeps it non-terminal.
+            var hirSagaId = await StartRowAsync(ConstitutionProcess.Type, SagaState.HumanInterventionRequired);
+
+            // A late event for that saga must take the NoTransition path (the pre-PR1 disposition), NOT
+            // the Terminal short-circuit: the routed machine reports HIR non-terminal, the table has no
+            // (HIR, *) row, so it is a structurally-impossible advance the consume loop routes to poison.
+            Assert.Equal(AdvanceOutcome.NoTransition,
+                await RunAsync(handler, hirSagaId, ConstitutionProcess.CompensationFailed));
+
+            // The saga did not move — HIR is preserved, not collapsed to a terminal.
+            Assert.Equal(SagaState.HumanInterventionRequired, await StateAsync(hirSagaId));
+        }
+
         [Fact]
         public async Task An_unregistered_saga_type_fails_closed()
         {
@@ -272,13 +321,15 @@ public sealed class MultiSagaSubstrateTests
 
         // ---- helpers ----------------------------------------------------------------------------
 
-        private async Task<Guid> StartRowAsync(string sagaType)
+        private Task<Guid> StartRowAsync(string sagaType) => StartRowAsync(sagaType, SagaState.Started);
+
+        private async Task<Guid> StartRowAsync(string sagaType, SagaState initialState)
         {
             var processId = Guid.NewGuid();
             await using var connection = await OpenAsync();
             await using var tx = await connection.BeginTransactionAsync();
             var created = await _stateStore.TryStartAsync(
-                connection, tx, processId, sagaType, SagaState.Started, correlationId: null);
+                connection, tx, processId, sagaType, initialState, correlationId: null);
             Assert.True(created);
             await tx.CommitAsync();
             return processId;

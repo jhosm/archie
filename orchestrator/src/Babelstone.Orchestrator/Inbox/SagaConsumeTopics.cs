@@ -38,6 +38,7 @@ namespace Babelstone.Orchestrator.Inbox;
 /// in its OWN Kafka consumer group, so the renewal saga (H.3, bd babelstone-mtto) extends this by
 /// subscribing the SAME family topic under its own group and dispatching the renewal facts it cares about
 /// — no engine change, no per-process topic, no shared-group contention.
+/// </para>
 /// <para>
 /// <b>The hosting substrate is now multi-saga (bd babelstone-mtto PR1).</b> The advance handler, the
 /// command router, and the result-event bridge are all keyed by <c>saga_type</c>, so a second saga is a
@@ -49,7 +50,6 @@ namespace Babelstone.Orchestrator.Inbox;
 /// <see cref="ConstitutionProcessTopics"/>, which stays the constitution consumer's subscription. The
 /// two consumer groups read the same family topic independently; only the saga whose transition table
 /// has a row for an inbound fact advances on it.</para>
-/// </para>
 /// <para>
 /// Kept as named constants (not buried literals) so the host wiring, the consume loop, and any test
 /// fixture reference the SAME topic names — a drift between "what the loop subscribes to" and "where

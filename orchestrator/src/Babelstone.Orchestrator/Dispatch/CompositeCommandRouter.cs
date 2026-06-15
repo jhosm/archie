@@ -36,6 +36,16 @@ public sealed class CompositeCommandRouter : ICommandRouter
             }
         }
 
+        // An empty registry is a wiring error, not a valid configuration — every Resolve() would
+        // return null and the drainer would surface every outbox row as a terminal-FAILED unroutable
+        // command. Fail-closed at construction, the same defensive stance SagaAdvanceHandler takes on
+        // an empty machine set (bd babelstone-mtto PR1).
+        if (map.Count == 0)
+        {
+            throw new ArgumentException(
+                "At least one ISagaCommandRouter must be registered.", nameof(routers));
+        }
+
         _routers = map;
     }
 

@@ -159,6 +159,29 @@ public sealed class ConstitutionProcess : TableStateMachine
     {
     }
 
+    /// <summary>
+    /// The ConstitutionProcess terminal set is NOT the substrate default "has no outgoing edge"
+    /// (bd babelstone-mtto PR1 — keeping the multi-saga generalisation behaviour-preserving). It
+    /// delegates to <see cref="SagaStateNames.IsTerminal"/>, the exact predicate the advance handler
+    /// used before PR1, so the disposition of every state — and in particular HUMAN_INTERVENTION_REQUIRED —
+    /// is unchanged by the refactor.
+    /// <para>
+    /// <b>Why the override is required, not optional.</b> HUMAN_INTERVENTION_REQUIRED appears in
+    /// <see cref="BuildTable"/> only as a <c>To()</c> target (the compensation / clearance escalations),
+    /// never as a <c>From</c>-key, so the base <see cref="TableStateMachine.IsTerminal"/> table inspection
+    /// would report it terminal (no outgoing edge). But HIR is a production-reachable ESCALATION state an
+    /// operator resolves OUT of — the operator-resolution edge does not exist YET (it arrives with PR2).
+    /// Treating it as terminal here would change the advance handler's disposition for a late event on a
+    /// HIR-parked saga from <see cref="Inbox.AdvanceOutcome.NoTransition"/> (the pre-PR1 path → poison-metric)
+    /// to <see cref="Inbox.AdvanceOutcome.Terminal"/> (a benign no-op), so a replayed event stream would diverge
+    /// from the live one. Delegating to the static keeps HIR non-terminal — identical to pre-PR1 — until PR2
+    /// adds the resolution edge (at which point the table inspection and this static AGREE on HIR and this
+    /// override can fold back into the substrate default). <see cref="SagaStateNames.IsTerminal"/> and this
+    /// machine's predicate are therefore the SAME answer by construction, which is what keeps the edge-SSE
+    /// read (<c>ProcessApiEndpoints</c>, on the static) and the advance handler (on this machine) consistent.
+    /// </para></summary>
+    public override bool IsTerminal(SagaState state) => SagaStateNames.IsTerminal(state);
+
     private static IEnumerable<((SagaState, string), TransitionOutcome)> BuildTable()
     {
         // Happy path (Document 05 steps 1–6). Reversible steps first (§P5).

@@ -121,12 +121,21 @@ public abstract class TableStateMachine : ISagaStateMachine
 
     /// <summary>
     /// A state is terminal when NO transition leaves it — a pure inspection of the table
-    /// itself, so the answer can never drift from the rows. For <see cref="ConstitutionProcess"/>
-    /// this identifies COMPLETED / CANCELLED / CANCELLED_AFTER_DEBIT / DEPOSIT_CONSTITUTION_FAILED
-    /// (no outgoing rows) and correctly excludes HUMAN_INTERVENTION_REQUIRED (an escalation state
-    /// the table routes INTO but that an operator may later resolve OUT OF). Override only for a
-    /// machine whose terminal set is NOT "has no outgoing edge".
-    /// </summary>
+    /// itself, so the answer can never drift from the rows. For a machine whose terminal set
+    /// IS exactly "has no outgoing edge" this is the right default; a machine with an
+    /// escalation/parking state the table routes INTO but does not yet route OUT of (so the
+    /// default would call it terminal even though it is operator-resolvable) MUST override.
+    /// <para>
+    /// <b><see cref="ConstitutionProcess"/> overrides this</b> precisely because of such a state:
+    /// HUMAN_INTERVENTION_REQUIRED appears in its table only as a <c>To()</c> target, never as a
+    /// <c>From</c>-key, so this default would report it terminal — but it is a production-reachable
+    /// escalation state an operator resolves out of (the resolution edge arrives with PR2,
+    /// bd babelstone-mtto). ConstitutionProcess.IsTerminal therefore delegates to
+    /// <see cref="SagaStateNames.IsTerminal"/> (the pre-multi-saga predicate), keeping HIR
+    /// NON-terminal and the refactor behaviour-preserving. So the substrate default and the
+    /// ConstitutionProcess answer DIVERGE on HIR today, by design — the override is what reconciles
+    /// them with pre-PR1 behaviour.
+    /// </para></summary>
     public virtual bool IsTerminal(SagaState state) => !_table.Keys.Any(k => k.Item1 == state);
 
     /// <summary>The full transition table, for inspection and the §P2 fitness test (the
