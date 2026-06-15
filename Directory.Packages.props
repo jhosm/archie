@@ -67,7 +67,7 @@
          collect" (CLR-profiler) route silently emits an empty line-rate=1 report on
          macOS/.NET 10 ("Profiler was not initialized"), so the collector is the one we use.
          The per-project reports are stitched with "dotnet-coverage merge" into one report. -->
-    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
 
     <!-- In-process ASP.NET Core host for the rate-sheet deploy endpoint tests. -->
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.9" />
