@@ -103,6 +103,99 @@ certificates:
       KESn3hDgR82VSU915RFNRhd/3ueTqFULhNYT9zTodnZRfQx0AJ7qwo2DyaRCyA7Z
       F2Jrtmg+NftUfzn2pFXS2Q==
       -----END PRIVATE KEY-----
+  - id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+    # POC THROWAWAY self-signed-chain keypair (CN=babelstone-mcp-client-poc), signed by the
+    # throwaway POC CA in infra/kong/mcp-poc-ca.crt. This is the client cert Kong PRESENTS to
+    # the mcp-server upstream for mutual TLS (ADR-IC-006 §P5 Boundary 2, ADR-IC-010 §P5). It is
+    # SCOPED to the mcp-server service only — the orchestrator-edge and engine services keep
+    # using the shared 7e9b6f1a-… client cert above, so flipping the MCP channel to true mTLS
+    # does not touch them.
+    # ⚠️  POC-to-production swap: at deploy time replace BOTH (1) this client cert with the real
+    #     internal-CA-signed Kong→MCP client cert AND (2) the ca_certificates entry below with the
+    #     internal CA bundle — two secrets, not one (mounted secret / a `deck sync`).
+    cert: |
+      -----BEGIN CERTIFICATE-----
+      MIIDRDCCAiygAwIBAgIUTgyYJEkrDSCIaoGXYaVnIBrFvIswDQYJKoZIhvcNAQEL
+      BQAwIDEeMBwGA1UEAwwVYmFiZWxzdG9uZS1tY3AtcG9jLWNhMB4XDTI2MDYxNTA4
+      MjcyOVoXDTM2MDYxMjA4MjcyOVowJDEiMCAGA1UEAwwZYmFiZWxzdG9uZS1tY3At
+      Y2xpZW50LXBvYzCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAONtu0lW
+      iWD1uLJbCCExrLlWW+faDbo3TTECwKyzfu7pdD6RNzMm06vHUGxK+0IiB10qOtCY
+      M41HkYOAGOBshxLBVwqUrzTbIVTH+0D8e9QTqUrAmI5pH0I1SUQMViwlIRQRIZKO
+      SjXwZKaxRXWoLSManUsugaALcM4kS018pG9qhf2UCHQ5I2Eka7l+WttPSXt3CoYS
+      KJ8WcEU3iSUZ/PJ/HaYRtHd9UMuph83MwZgUw42tUyjVI+SmPhm2Pqg58eEhwclT
+      FjYJbP4DsTvmXzDYxxeiued7gh+XlkeDCc9cSEE2t3uTO6jwch7G+70aNs/PMEhn
+      HXJJrcqg3dSYRL0CAwEAAaNyMHAwCQYDVR0TBAIwADAOBgNVHQ8BAf8EBAMCBaAw
+      EwYDVR0lBAwwCgYIKwYBBQUHAwIwHQYDVR0OBBYEFLNKHVykVje2ChH1KZpFAdaf
+      D3ePMB8GA1UdIwQYMBaAFOIF+gGATQvvWzPWQ0aU4Z8Or2dwMA0GCSqGSIb3DQEB
+      CwUAA4IBAQAACZ9BDr2zYmxodZfv1PbpusRCRDsqE1P8/0Cr9RtHaAAL/O+VL1vL
+      eBsfby3z63kg0UMDoSIYukH5IH91yWWOayha635ZxZilLdArfqzHxYO9izqvH/2p
+      qBmIbjMdo0ENJGWhsDEqmux5BkWw7khG9s7hhqydUsIfNp3vyqoqnoeHXBxLit9T
+      cCX2yRi4P1mB7HXtV/XQY/jSVdJ/q0CJNvvOoDqCiU5JuI46ncWZC6gJ7xTqNz6s
+      Q62j2ypaMAZ5AaI/5u5PYij6IGrrGgkiw+RhHDRWp/ym1p0IFAoscRCIpH929N8i
+      F8+RpSAQE37CoCkjfdIvonq4sAmxBGzU
+      -----END CERTIFICATE-----
+    key: |
+      -----BEGIN PRIVATE KEY-----
+      MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDjbbtJVolg9biy
+      WwghMay5Vlvn2g26N00xAsCss37u6XQ+kTczJtOrx1BsSvtCIgddKjrQmDONR5GD
+      gBjgbIcSwVcKlK802yFUx/tA/HvUE6lKwJiOaR9CNUlEDFYsJSEUESGSjko18GSm
+      sUV1qC0jGp1LLoGgC3DOJEtNfKRvaoX9lAh0OSNhJGu5flrbT0l7dwqGEiifFnBF
+      N4klGfzyfx2mEbR3fVDLqYfNzMGYFMONrVMo1SPkpj4Ztj6oOfHhIcHJUxY2CWz+
+      A7E75l8w2McXornne4Ifl5ZHgwnPXEhBNrd7kzuo8HIexvu9GjbPzzBIZx1ySa3K
+      oN3UmES9AgMBAAECggEAAc8kUkJcorzRqfmMvaww0jicT+KC1scMgiX3dRLodkC9
+      KqeVEinDkqDp7t1Ef74tjibWg5pHrrQHCvjAjz3NxURsdiprSmGuiNzJDuHzSjiY
+      fCkUDZigeweu0YUXmmT2jRD7J2NNC9N3DtcSKmFwGntiYkVjGpbSCucXAkLKPBNP
+      rr+dG4CRMDGFyBLhVCkqyFxTkf1jK2sx9vypmlerEW3lrE6yltVSvp7/9nBczPpr
+      sOAI46J6hXShl23SfsWm4Dlx/sUybxeGMBhvP2DUI1XrggY2xaEiWPeJgcj0LkLS
+      r2RwzTBhgbNfjabPEpV3YXa3HEecr/YrzW1RZGSZMQKBgQDznMWMAihQBzlx9b3B
+      V9jbTOzCL7kcbys8z6hbTfIXbdHwGMugl76QmAHE4cR+VqZqPM3JENx2ucdpvXHA
+      J83WIYycV3tPjz5xwLfD94nqDKCFKVjYHbGgs7USmX7EoxpAiznU937qRuYEpO1D
+      QJcGUr6hv9a7D8Es7lRtunQgIwKBgQDu/kmleRmnHFn3BD7tykHqfDxnSCDTfAQO
+      YKCRMYoRgEYr0IdwGBhUMsx3k3vebF72JHx2nTE77mWEdCAxmzGuy91i4jLY15dI
+      rz3YaFV+Oh/yFLoa06fYiGwaRgP1rmJNVYRRrL8wR2td6fWEu8G70SaJImYBsalb
+      FV1i0nPlnwKBgGeY/bFioX4W9GjwFjgIgaIQ/oY+ATyEUiDUNkZNyWwJOcQe50lt
+      /o5C9k2hrQwFEVQQc3rT/s1Gh/UBqUQMKU6sib1avofA5M8/I2bk9/NeV00JnkyZ
+      pBYxFgnI2M4Khnl4O6nDbmd2qw7CjFuTNiZsPcFPcaOvOXlACQt4xTV9AoGBAOvp
+      b2E8LSpcPiIrusKXiIGiqS16cYzROl/G2jj4ocWszZeqfEcWQc27Z0IR/5ALgaGP
+      WpzrhhIWvXcF+lF9VImrC5n0lySdi+Rft7jLJLk5PxeDhkG89E42PB+jRX1a6gZU
+      iAznbMKHfWBy9bxUamSvjE6J+g9qBDa43DoUa/sZAoGBAJCJqVoEMTgtLsdkCPIK
+      5G1h3C4bhb17ztUXl4DzuSU5kCZZumE3FjpPaYOfK0v8N2H2DwIfxDiQ0yxh4mcX
+      DPnO7oN+rYdqTf/pZ0EBYdk45SjGJjbzfPmOUwsuKlqxkASTDqO1TGBkKQiX9pB2
+      UPJqfcDr2jcpNprSF/ieNm34
+      -----END PRIVATE KEY-----
+
+# ── Trusted CA for upstream-server-cert verification (ADR-IC-006 §P5, ADR-IC-010 §P5) ─
+# When a service sets tls_verify: true Kong validates the upstream's SERVER certificate
+# against a CA referenced here. The mcp-server service (below) flips tls_verify to true
+# and points at this CA, completing the MCP channel's mutual-TLS lock (bd babelstone-29ic).
+# This POC CA is the throwaway issuer in infra/kong/mcp-poc-ca.crt; the harness
+# (scripts/mcp-contract-test/) generates the mcp-server's TLS server cert from the matching
+# mcp-poc-ca.key so Kong's verify passes against the SAME committed CA — the config runs
+# byte-for-byte, no templating.
+# ⚠️  At deploy time replace this PEM with the internal CA bundle that signs the real
+#     mcp-server TLS cert (a mounted secret / a `deck sync`).
+ca_certificates:
+  - id: f0e1d2c3-b4a5-6789-cdef-012345678901
+    cert: |
+      -----BEGIN CERTIFICATE-----
+      MIIDEDCCAfigAwIBAgIUfYZUFJ8QHSp6YHfjTLOVypx+st0wDQYJKoZIhvcNAQEL
+      BQAwIDEeMBwGA1UEAwwVYmFiZWxzdG9uZS1tY3AtcG9jLWNhMB4XDTI2MDYxNTA4
+      MjcxOVoXDTM2MDYxMjA4MjcxOVowIDEeMBwGA1UEAwwVYmFiZWxzdG9uZS1tY3At
+      cG9jLWNhMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn5T1b7Iwtt4N
+      I+I3q6ZtHpAy7AHbJ8TXuXLKrQ6EL+7rm0QHwZyJnHGbizr91rwou5+Jt7ceKP1c
+      wunm1W6lQRjfOkA9JufD5ltzmoF/EB7I0XNOOwdp04ZcldjTac3OClDuN01hvMlH
+      XJpuSxISno/gg8TJO1Dr+iSzWS2H4GglntvIP8IZGNVBpN6wpw4mdH/xZthIOR6i
+      XS3PuSSqdSwHrxurL/i5I9A/b1fmTX9Jx72VBk0be3shMZbeWb2IpCc/j+udQbMM
+      NWz+QQQEc8QafKP4SI99FF/4PZe9sZg6yeg/xQLWZ2UUuhTiS+gk/YrAZGV8e4BK
+      LA5d//5ZHQIDAQABo0IwQDAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIB
+      BjAdBgNVHQ4EFgQU4gX6AYBNC+9bM9ZDRpThnw6vZ3AwDQYJKoZIhvcNAQELBQAD
+      ggEBACNcfWmS/wuEB9gM6c3UU94DY8Fvu0kpN1zBfY+LoO0LkJksGFREVFY0da1j
+      DSaQvywEAOwayvkbonWaJ1EV5HaNQegVzj2Ml2FAsr3X6UsyZAFkmXXXXdHWWrmF
+      GWRdZ3OOsV5lBucoe8KzJaG9k7WjcWqC2ougCh0Ex3kERueuAVZ9pinSAZdBT9za
+      banWLvV9KMD1/LeyjUYdqIpM7AVM3A8U98f9RKyL0kqOx1rbxFL+77k0wZocbgE1
+      yKoVH282o0B82vgx9MMxaq4cJ+vhvFcHUANt7rN7IuFnOY/lWA9zS5z9PgFk3V57
+      DtJI1N8sIX60R517r+xi+FoCm2I=
+      -----END CERTIFICATE-----
 
 # ── JWT signing keys (ADR-IC-006 §1 / §P7) ──────────────────────────────────────
 # The `jwt` plugin validates a bearer token's signature against a key pre-registered
@@ -671,11 +764,26 @@ services:
   # authorization server. POST /mcp itself STAYS jwt-covered by the global plugin.
   - name: mcp-server
     url: https://mcp-server:8080
-    # mTLS to the MCP server (ADR-IC-006 §P5 Boundary 2): the SAME POC client cert the
-    # orchestrator/engine services present. tls_verify false is the POC posture (flip on
-    # with the internal CA bundle at deploy, like every other upstream above).
-    client_certificate: 7e9b6f1a-2c4d-4e8a-9b1f-0a2c4d6e8f10
-    tls_verify: false
+    # MUTUAL TLS to the MCP server (ADR-IC-006 §P5 Boundary 2, ADR-IC-010 §P5 — bd babelstone-29ic).
+    # Unlike the orchestrator/engine services (still tls_verify:false POC posture), the MCP agent
+    # channel runs FULL mutual TLS:
+    #   - client_certificate: the MCP-scoped POC client cert (a1b2c3d4-…) Kong PRESENTS to uvicorn,
+    #     which requires it (ssl_cert_reqs=CERT_REQUIRED). A Kong-bypassing actor on the upstream
+    #     network has no client cert and is rejected at the TLS handshake — closing the trust gap the
+    #     app.py docstring used to flag (a forged token + spoofed X-Client-Id can no longer reach the
+    #     upstream by sitting on the network).
+    #   - tls_verify: true + ca_certificate: Kong VERIFIES the mcp-server's TLS server cert against the
+    #     POC CA (f0e1d2c3-…). The committed POC CA (infra/kong/mcp-poc-ca.crt) signs the harness
+    #     mcp-server cert, so the live-Kong runtime contract test (scripts/mcp-contract-test/) passes
+    #     against the SAME CA the config carries — no kong.yml templating (bd babelstone-5ot0).
+    # SCOPED to this service only: the shared 7e9b6f1a-… cert + tls_verify:false on the other upstreams
+    # is unchanged. At deploy time both this client cert AND the ca_certificates bundle are swapped for
+    # the real internal-CA material (two secrets — see the certificate comments above).
+    client_certificate: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+    tls_verify: true
+    tls_verify_depth: 1
+    ca_certificates:
+      - f0e1d2c3-b4a5-6789-cdef-012345678901
     # Streamable HTTP's GET-with-SSE notification stream is long-lived (ADR-IC-010 §P5 /
     # ADR-IC-006 §P4): the same 1800000 ms (30-min) read/write timeout as the saga SSE
     # route, so a server-initiated notification stream is not cut by the gateway's default

@@ -20,9 +20,14 @@
 #   scripts/mint-edge-token.sh --no-sca             # omit acr/auth_time  -> exercises 403 SCA_REQUIRED
 #   scripts/mint-edge-token.sh --auth-age 600       # SCA 10 min ago      -> exercises 403 (stale, >300s)
 #   scripts/mint-edge-token.sh --ttl -60            # already-expired exp  -> exercises 401 (jwt plugin)
+#   scripts/mint-edge-token.sh --aud http://localhost:8000/mcp --scope "deposits:read"  # MCP agent token
+#   scripts/mint-edge-token.sh --aud http://localhost:8000/mcp --no-sub  # exercises the MCP deny_id() 401
 #
 # Flags:
 #   --sub <id>         JWT `sub` = caller client_id              (default: CLI-2026-007842)
+#   --no-sub           OMIT the `sub` claim entirely            (=> MCP /mcp deny_id() 401; no X-Client-Id)
+#   --aud <uri>        add an `aud` claim (RFC 8707 resource)   (default: none — orchestrator routes ignore aud)
+#   --scope <string>   add a space-delimited `scope` claim      (default: none — the MCP route maps scope→X-OAuth-Scope)
 #   --acr <value>      `acr` claim (the SCA level)               (default: urn:bank:sca:2fa)
 #   --auth-age <secs>  seconds since SCA completed               (default: 0 = now; >300 => stale 403)
 #   --ttl <secs>       token lifetime; `exp` = now + ttl         (default: 3600; <=0 => expired 401)
@@ -37,6 +42,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 SUB="CLI-2026-007842"
+NO_SUB=0
+AUD=""
+SCOPE=""
 ACR="urn:bank:sca:2fa"
 AUTH_AGE=0
 TTL=3600
@@ -54,6 +62,9 @@ usage() { sed -n '2,40p' "$0"; exit "${1:-0}"; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --sub)        SUB="$2"; shift 2 ;;
+    --no-sub)     NO_SUB=1; shift ;;
+    --aud)        AUD="$2"; shift 2 ;;
+    --scope)      SCOPE="$2"; shift 2 ;;
     --acr)        ACR="$2"; shift 2 ;;
     --auth-age)   AUTH_AGE="$2"; shift 2 ;;
     --ttl)        TTL="$2"; shift 2 ;;
@@ -85,9 +96,22 @@ awk '/-----BEGIN PRIVATE KEY-----/{f=1} f{sub(/^[[:space:]]+/,""); print} /-----
 NOW="$(date +%s)"
 EXP=$((NOW + TTL))
 
-# Build the claims. acr + auth_time are present unless --no-sca; auth_time is `now - auth-age` so a
-# large --auth-age produces a STALE (expired-SCA) token the pre-function rejects with 403.
-CLAIMS="\"iss\":\"$ISS\",\"sub\":\"$SUB\",\"iat\":$NOW,\"exp\":$EXP"
+# Build the claims. The base is iss/iat/exp; `sub` is present unless --no-sub (omitting it
+# exercises the MCP route's deny_id() 401 — no usable subject to attest as X-Client-Id). acr +
+# auth_time are present unless --no-sca; auth_time is `now - auth-age` so a large --auth-age
+# produces a STALE (expired-SCA) token the pre-function rejects with 403. `aud` (RFC 8707) and
+# `scope` (OAuth) are added only when supplied — the MCP route checks aud == MCP_SERVER_URI and
+# maps scope -> X-OAuth-Scope; the orchestrator routes ignore both.
+CLAIMS="\"iss\":\"$ISS\",\"iat\":$NOW,\"exp\":$EXP"
+if [ "$NO_SUB" -eq 0 ]; then
+  CLAIMS="$CLAIMS,\"sub\":\"$SUB\""
+fi
+if [ -n "$AUD" ]; then
+  CLAIMS="$CLAIMS,\"aud\":\"$AUD\""
+fi
+if [ -n "$SCOPE" ]; then
+  CLAIMS="$CLAIMS,\"scope\":\"$SCOPE\""
+fi
 if [ "$NO_SCA" -eq 0 ]; then
   AUTH_TIME=$((NOW - AUTH_AGE))
   CLAIMS="$CLAIMS,\"acr\":\"$ACR\",\"auth_time\":$AUTH_TIME"

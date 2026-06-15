@@ -5,6 +5,11 @@ deposit position (GET), and mature (POST). Money crosses the wire as integer cen
 snake_case.
 The client is fail-loud: a non-2xx engine response raises (``raise_for_status``) rather than
 returning a partial/empty result — the MCP layer surfaces that to the agent.
+
+Every method takes an optional ``client_id`` — the gateway-attested caller (the OAuth ``sub`` Kong
+overwrote into ``X-Client-Id``, ADR-IC-010 §P3 / Document 11). When given, the client FORWARDS it to
+the engine as an ``X-Client-Id`` header so the engine sees who acted, for audit and ownership — the
+identity always originates from the gateway-attested token ``sub``, never a tool argument.
 """
 
 from __future__ import annotations
@@ -14,6 +19,18 @@ from typing import Any
 
 import httpx
 
+# The gateway-attested caller header the MCP server forwards to the engine (ADR-IC-010 §P3).
+CLIENT_ID_HEADER = "X-Client-Id"
+
+
+def _with_client_id(headers: dict[str, str] | None, client_id: str | None) -> dict[str, str] | None:
+    """Add ``X-Client-Id`` to ``headers`` when ``client_id`` is given (attested caller, §P3)."""
+    if not client_id:
+        return headers
+    merged = dict(headers or {})
+    merged[CLIENT_ID_HEADER] = client_id
+    return merged
+
 
 class EngineClient:
     """Calls the engine's deposits HTTP API. Inject an ``httpx.AsyncClient`` in tests."""
@@ -22,7 +39,9 @@ class EngineClient:
         self._base_url = base_url.rstrip("/")
         self._client = client or httpx.AsyncClient(timeout=30.0)
 
-    async def constitute(self, request: dict[str, Any]) -> dict[str, Any]:
+    async def constitute(
+        self, request: dict[str, Any], client_id: str | None = None
+    ) -> dict[str, Any]:
         """POST /v1/deposits — returns {deposit_id, status, commit_sequence}. Raises on a non-2xx
         engine response. ``commit_sequence`` is the read-your-writes token (ADR-IC-005 §P3): pass it
         back as ``min_sequence`` on the follow-up read to see the just-written deposit.
@@ -36,13 +55,13 @@ class EngineClient:
         response = await self._client.post(
             f"{self._base_url}/v1/deposits",
             json=request,
-            headers={"Idempotency-Key": str(uuid.uuid4())},
+            headers=_with_client_id({"Idempotency-Key": str(uuid.uuid4())}, client_id),
         )
         response.raise_for_status()
         return response.json()
 
     async def deposit_position(
-        self, deposit_id: str, min_sequence: int | None = None
+        self, deposit_id: str, min_sequence: int | None = None, client_id: str | None = None
     ) -> dict[str, Any]:
         """GET /v1/deposits/{id} — the ONE canonical deposit resource (ADR-IC-005). Served from the
         denormalized read model by default; when ``min_sequence`` is given (a commit_sequence token),
@@ -51,24 +70,27 @@ class EngineClient:
         """
         headers = {"If-Min-Sequence": str(min_sequence)} if min_sequence is not None else None
         response = await self._client.get(
-            f"{self._base_url}/v1/deposits/{deposit_id}", headers=headers
+            f"{self._base_url}/v1/deposits/{deposit_id}",
+            headers=_with_client_id(headers, client_id),
         )
         response.raise_for_status()
         return response.json()
 
-    async def mature(self, deposit_id: str) -> dict[str, Any]:
+    async def mature(self, deposit_id: str, client_id: str | None = None) -> dict[str, Any]:
         """POST /v1/deposits/{id}/maturity — settles the deposit, returns the matured position.
 
         Same position shape as ``deposit_position`` with ``lifecycle`` = ``Matured``. Raises on a
         non-2xx engine response (e.g. 422 if the deposit cannot mature).
         """
         response = await self._client.post(
-            f"{self._base_url}/v1/deposits/{deposit_id}/maturity", json={}
+            f"{self._base_url}/v1/deposits/{deposit_id}/maturity",
+            json={},
+            headers=_with_client_id(None, client_id),
         )
         response.raise_for_status()
         return response.json()
 
-    async def pay_interest(self, deposit_id: str) -> dict[str, Any]:
+    async def pay_interest(self, deposit_id: str, client_id: str | None = None) -> dict[str, Any]:
         """POST /v1/deposits/{id}/interest — pays one PERIODIC coupon, returns the updated position.
 
         Same position shape as ``deposit_position`` with the coupon's gross/withholding/net folded
@@ -77,7 +99,9 @@ class EngineClient:
         deposit is not Active, not PERIODIC, or has no intermediate coupon left).
         """
         response = await self._client.post(
-            f"{self._base_url}/v1/deposits/{deposit_id}/interest", json={}
+            f"{self._base_url}/v1/deposits/{deposit_id}/interest",
+            json={},
+            headers=_with_client_id(None, client_id),
         )
         response.raise_for_status()
         return response.json()
