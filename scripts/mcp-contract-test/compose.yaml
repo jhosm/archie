@@ -113,9 +113,9 @@ services:
       - "${MCP_SERVER_DIRECT_PORT:-8015}:8080"
     healthcheck:
       # The public well-known path needs no auth; a TLS GET that returns 200 means uvicorn's TLS is
-      # up. ssl._create_unverified_context skips server-cert verification; CERT_REQUIRED on the
-      # SERVER side does not demand a client cert from localhost here only because the healthcheck
-      # presents the same cert via load_cert_chain — simpler: use the mcp-server cert as the client.
+      # up. create_default_context(cafile=...) VERIFIES the server cert against the committed POC CA;
+      # load_cert_chain presents the mcp-server cert as the CLIENT cert, which CERT_REQUIRED accepts
+      # because it is signed by that same CA. (check_hostname is off: the cert CN is mcp-server.)
       test:
         - "CMD"
         - "python3"

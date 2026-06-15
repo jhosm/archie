@@ -90,6 +90,14 @@ services:
     container_name: babelstone-kong
     # Kong Gateway CE in DB-less declarative mode (ADR-IC-006): no gateway database,
     # no Admin API to protect at runtime, no migrations. Config is kong/kong.yml.
+    depends_on:
+      # Don't let the gateway start serving before its only live upstream's TLS listener is ready,
+      # so a /mcp request right after `make up` can't race the upstream and 502 (bd babelstone-5ot0
+      # review). In the dev stack mcp-server is the sole real Kong upstream — orchestrator/engine are
+      # not yet compose services — so gating Kong on it is the operationally-correct dev-stack guard
+      # (the bd babelstone-5ot0 runtime harness gates Kong on mcp-server the same way).
+      mcp-server:
+        condition: service_healthy
     environment:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /kong/kong.yml
@@ -190,6 +198,28 @@ services:
       MCP_TLS_KEYFILE: /certs/mcp-server.key
       MCP_TLS_CA_CERTS: /certs/ca.crt
       MCP_TLS_CERT_REQS: "2"
+    healthcheck:
+      # `make up --wait` must not report ready until uvicorn's TLS listener is actually serving:
+      # Kong is gated on this (below), and a /mcp request right after `make up` would otherwise hit
+      # the gateway before the upstream is up and 502 (bd babelstone-5ot0 review). A plain probe
+      # won't do — uvicorn now REQUIRES a client cert (CERT_REQUIRED) — so the probe presents the
+      # mcp-server cert as the client cert (signed by the same POC CA, so CERT_REQUIRED accepts it)
+      # and verifies the server cert against that CA. The public well-known path is unauthenticated
+      # at the app layer, so a 200 means TLS is up. (check_hostname off: the cert CN is mcp-server.)
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - |
+          import ssl, urllib.request
+          ctx = ssl.create_default_context(cafile="/certs/ca.crt")
+          ctx.check_hostname = False
+          ctx.load_cert_chain("/certs/mcp-server.crt", "/certs/mcp-server.key")
+          urllib.request.urlopen("https://localhost:8080/.well-known/oauth-protected-resource", context=ctx, timeout=2)
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 5s
 
   core-acl-stub:
     image: wiremock/wiremock:3.9.1
