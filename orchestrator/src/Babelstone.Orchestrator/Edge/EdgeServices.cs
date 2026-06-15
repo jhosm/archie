@@ -52,10 +52,11 @@ public static class EdgeServices
 
         services.TryAddSingleton(new EdgeOptions { ConnectionString = connectionString });
 
-        // The impure shell's clock (ADR-PC-010 §P5): the edge pins each saga's start_date from it at
-        // admission (bd babelstone-t7o3.11), so the saga's command bytes carry no clock. The system
-        // clock in production; a test injects a fixed TimeProvider for a deterministic pinned date.
-        services.TryAddSingleton(TimeProvider.System);
+        // No clock is registered at the edge (Fork B rework, bd babelstone-t7o3.11): the engine is now
+        // the constitution authority, so it derives start_date from the constitution instant it stamps
+        // (ADR-PC-010 §P5) — the edge no longer pins start_date and the saga's command bytes carry no
+        // clock (matching the ProcessApiEndpoints "No clock is needed at the edge" note). The earlier
+        // edge-side TimeProvider registration was the rejected v1 stand-in's and is removed.
 
         services.TryAddSingleton(sp => new EdgeSagaStarter(
             sp.GetRequiredService<ISagaStateMachine>(),

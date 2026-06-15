@@ -205,7 +205,7 @@ the rate sheet, not user input:
 
 - **12m · interest at maturity** (`dpz_pt_12m_juros_venc`, 3.00%) — the canonical flow:
   constitute → mature pays gross − 28% withholding + principal.
-- **12m · monthly coupons** (`dpz_pt_12m_juros_mensais`, 3.25%, PERIODIC) — a **Pay coupon**
+- **12m · monthly coupons** (`dpz_pt_12m_juros_mensal`, 3.25%, PERIODIC) — a **Pay coupon**
   button appears; each click pays one coupon via the real `POST /v1/deposits/{id}/interest`
   endpoint, emitting an `InterestPaid` event with its own flow-by-flow 28% withholding. The
   position tracks coupons paid (e.g. 3 / 12) and net interest to date; maturity settles the

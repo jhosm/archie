@@ -54,17 +54,6 @@ public sealed class TermDepositConstitutionService(
         requiredPreconditions ?? Array.Empty<string>();
 
     /// <summary>
-    /// Constitute a deposit: resolve the active rate sheet, stamp the TAN + version id, and append
-    /// <c>DepositConstituted</c> as the stream's first event. The path is DE-SETTLED (bd
-    /// babelstone-t7o3.4): the principal debit is NOT done here — it is the constitution saga's gated
-    /// step (ReserveAccountBalance→ConfirmDebit against the Core ACL, ADR-PC-016 §68/§127 / ADR-PC-029
-    /// slot 2). The engine command DECIDES + APPENDS only; no money leg rides this path. For the ADVANCE
-    /// variant it ALSO accrues + withholds the full-term interest at t=0 (02 §2.1 <c>CF(0) = -C + J</c>)
-    /// and appends the upfront <c>InterestPaid</c> triple alongside the constitution event in the same
-    /// first transaction — the interest IS recognised in the engine's books at t=0, but its money leg is
-    /// likewise the saga's gated credit, not an eager in-engine settle.
-    /// </summary>
-    /// <summary>
     /// Constitute a deposit from the MINIMAL saga request (Fork B rework, bd t7o3.11 / 3k10 / c8d8):
     /// resolve the product code to its structural facts ENGINE-SIDE, then run the same
     /// resolve→decide→append constitution the full-command path runs. The saga sends only
@@ -124,6 +113,19 @@ public sealed class TermDepositConstitutionService(
         return await ConstituteAsync(command, ct);
     }
 
+    /// <summary>
+    /// Constitute a deposit from the FULL command: resolve the active rate sheet, stamp the TAN +
+    /// version id, and append <c>DepositConstituted</c> as the stream's first event. The path is
+    /// DE-SETTLED (bd babelstone-t7o3.4): the principal debit is NOT done here — it is the constitution
+    /// saga's gated step (ReserveAccountBalance→ConfirmDebit against the Core ACL, ADR-PC-016 §68/§127 /
+    /// ADR-PC-029 slot 2). The engine command DECIDES + APPENDS only; no money leg rides this path. For
+    /// the ADVANCE variant it ALSO accrues + withholds the full-term interest at t=0 (02 §2.1
+    /// <c>CF(0) = -C + J</c>) and appends the upfront <c>InterestPaid</c> triple alongside the
+    /// constitution event in the same first transaction — the interest IS recognised in the engine's
+    /// books at t=0, but its money leg is likewise the saga's gated credit, not an eager in-engine settle.
+    /// This is the shared tail the minimal path (<see cref="ConstituteFromProductConfigAsync"/>) funnels
+    /// into after resolving the structural facts engine-side.
+    /// </summary>
     /// <returns>The new stream's head version (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
     public async Task<long> ConstituteAsync(ConstituteDepositCommand command, CancellationToken ct = default)
     {

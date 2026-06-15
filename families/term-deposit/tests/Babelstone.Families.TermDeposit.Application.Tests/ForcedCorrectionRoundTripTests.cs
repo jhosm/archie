@@ -151,7 +151,7 @@ public sealed class ForcedCorrectionRoundTripTests(ConstitutionFixture fixture)
         versionId: "pt-deposits-2026.1",
         effectiveFrom: new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero),
         ("dpz_pt_12m_juros_venc", "standard", 300),
-        ("dpz_pt_12m_juros_mensais", "standard", 325),
+        ("dpz_pt_12m_juros_mensal", "standard", 325),
         ("dpz_pt_12m_juros_antecip", "standard", 300));
 
     /// <summary>
