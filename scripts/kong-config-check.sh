@@ -176,11 +176,18 @@ have 'kong\.response\.exit\(403' "missing the SCA 403 rejection: the constitute 
 # silently drop the attestation or source it from anything but the validated token (ADR-PC-020 §D3).
 have 'set_header\("X-Client-Id", *claims\.sub\)' "missing gateway-attested caller identity: the edge must set X-Client-Id from the VALIDATED jwt sub, not a client value (IDOR; ADR-IC-006 §P4 / bd babelstone-bkqo)"
 xclient_count="$(grep -cF 'set_header("X-Client-Id", claims.sub)' "$CONFIG")"
-# The attestation now covers THREE routes: the orchestrator constitute POST, the orchestrator
-# SSE stream, and the MCP Streamable-HTTP route (ADR-IC-010 §P3 — the agent channel attests
-# identity from the OAuth sub identically). A future edit cannot drop it on any of them.
-[ "${xclient_count:-0}" -ge 3 ] \
-  || fail "X-Client-Id attestation must cover the orchestrator constitute + SSE stream AND the MCP route (ADR-IC-010 §P3); found $xclient_count of 3 (ADR-IC-006 §P4 / ADR-IC-010 §P3)"
+# The attestation now covers FOUR routes: the orchestrator constitute POST, the orchestrator SSE
+# stream, the engine SoR-ops route, and the MCP Streamable-HTTP route (ADR-IC-010 §P3 — the agent
+# channel attests identity from the OAuth sub identically). A future edit cannot drop it on any.
+[ "${xclient_count:-0}" -ge 4 ] \
+  || fail "X-Client-Id attestation must cover the orchestrator constitute + SSE stream + engine SoR-ops AND the MCP route (ADR-IC-010 §P3); found $xclient_count of 4 (ADR-IC-006 §P4 / ADR-IC-010 §P3)"
+# Scoped guard (a global count grows slack as routes are added): pin the attestation to the MCP
+# route SPECIFICALLY by extracting the mcp-streamable-http route block (up to the next route) and
+# requiring the set_header inside it — so a future edit cannot silently delete the agent channel's
+# anti-spoofing identity guard while the global count stays >= 4 (ADR-IC-010 §P3 / Document 11 IDOR).
+mcp_xclient="$(awk '/^      - name: mcp-streamable-http$/{f=1;next} /^      - name: /{f=0} f' "$CONFIG" | grep -cF 'set_header("X-Client-Id", claims.sub)')"
+[ "${mcp_xclient:-0}" -ge 1 ] \
+  || fail "the mcp-streamable-http route must attest X-Client-Id from the jwt sub within its own block (ADR-IC-010 §P3 / Document 11 — the agent-channel IDOR guard); found $mcp_xclient"
 have 'name: *opentelemetry' "missing the opentelemetry plugin (W3C traceparent, ADR-IC-006 §P6)"
 # Upstream mTLS to internal services (ADR-IC-006 §P5): the service presents a client
 # cert to the orchestrator/engine. Expressed via a client_certificate on the service.

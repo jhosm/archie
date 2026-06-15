@@ -20,6 +20,15 @@ The ``aud`` claim may be a STRING or a LIST of strings per RFC 7519 §4.1.3 — 
 success the gateway-attested ``X-Client-Id`` and ``X-OAuth-Scope`` headers are passed through to the
 tools unchanged (the tools read them via ``auth.AuthContext``); the middleware never derives identity
 from the token itself (Document 11 — identity comes from the gateway-attested ``sub``).
+
+**Trust precondition (read before deploy).** The app trusts those gateway-attested headers ONLY
+because Kong is the sole ingress (this service exposes no host port) and Kong OVERWRITES
+``X-Client-Id``/``X-OAuth-Scope`` from the validated ``sub``/``scope`` — the same EdgeAuth trust
+model the orchestrator uses. That trust currently rests on network topology, NOT on enforced
+upstream mTLS: the uvicorn upstream runs plain HTTP, so a Kong-bypassing actor on the upstream
+network could present a forged token + a spoofed ``X-Client-Id``. Enforcing upstream mTLS
+(``ssl_cert_reqs=CERT_REQUIRED`` + Kong ``tls_verify``) before production is tracked in
+bd ``babelstone-29ic``; the end-to-end gateway runtime contract test is bd ``babelstone-5ot0``.
 """
 
 from __future__ import annotations
