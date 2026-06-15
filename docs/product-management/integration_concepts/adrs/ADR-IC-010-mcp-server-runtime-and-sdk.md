@@ -385,7 +385,7 @@ This decision's load-bearing commitments are fitness functions in the [commitmen
 
 The wrong-resource boundary invariant this decision rests on is now wired to a catalogue Test ID — the gap that stood here ("to be catalogued under the catalogue's growth provision when the MCP server is implemented") is closed because the secured MCP edge shipped (bd `babelstone-e50n`):
 
-- `MCP_WRONG_RESOURCE_TOKEN_REJECTED` — **wrong-resource token is rejected at the boundary**: a request bearing a token whose `aud` claim is not the MCP server's canonical URI receives `401` with code `AUDIENCE_MISMATCH` before any application code runs (§P3; the RFC 8707 audience-binding / Principle-2 contract of [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) / [ADR-IC-009](./ADR-IC-009-testing-infrastructure.md)). Realised at both the Kong edge and the app-layer `AudienceMiddleware` — **`Live`** per the catalogue (the single source of truth for status).
+- `MCP_WRONG_RESOURCE_TOKEN_REJECTED` — **wrong-resource token is rejected at the boundary**: a request bearing a token whose `aud` claim is not the MCP server's canonical URI receives `401` with code `AUDIENCE_MISMATCH` before any application/tool code runs (§P3, the governing source; the RFC 8707 audience-binding / Principle-2 contract of [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) / [ADR-IC-009](./ADR-IC-009-testing-infrastructure.md) are supporting cross-refs). Realised at both the Kong edge and the app-layer `AudienceMiddleware` — **`Live`** per the catalogue (the single source of truth for status).
 
 The other boundary invariant this decision rests on remains a deliberate, visible gap — to be catalogued under the catalogue's growth provision when its contract test is wired:
 
