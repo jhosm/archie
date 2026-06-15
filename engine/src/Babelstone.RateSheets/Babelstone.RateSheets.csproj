@@ -10,5 +10,12 @@
          hand-rolled against the table contract (no ORM, ADR-PC-010); the body model
          and validator are pure System.Text.Json with no datastore surface. -->
     <PackageReference Include="Npgsql" />
+    <!-- YAML reader for the committed product-configs/*.yaml (YamlProductConfigStore): the
+         engine resolves product_code → structural facts (term/variant/renewal/cadence) at
+         constitution from these auditor-readable files — the same parser Babelstone.Packs uses for
+         pack data. A structural READ of the SHAPE fields only; closed-schema validation is the CUE
+         depths-1–4 gate (ADR-PC-006), not re-run here. The IProductConfigStore seam stays
+         family-agnostic (ADR-PC-021 §P2). -->
+    <PackageReference Include="YamlDotNet" />
   </ItemGroup>
 </Project>

@@ -48,31 +48,10 @@ public sealed record ConstituteRequest
     [JsonPropertyName("interest_account_ref")]
     public string? InterestAccountRef { get; init; }
 
-    // ---- Optional STRUCTURAL product facts (bd babelstone-t7o3.11) ---------------------------------
-    // The deposit's structural shape the engine's ConstituteDepositRequest needs (term, variant,
-    // renewal policy, coupon cadence, pricing role). A client that knows the product (the MCP agent or
-    // Mission Control, both reading the product catalogue) MAY supply them; when omitted, the edge
-    // resolves them from the product_code via EdgeProductCatalog (the walking-skeleton stand-in for a
-    // product-config registry — a per-deposit registry is later work, ADR-PC-009). The RATE is NEVER
-    // supplied here — the engine resolves it in-transaction (bd babelstone-3k10). All structural, no PII.
-
-    /// <summary>The deposit term in days (e.g. 365). Resolved from <see cref="ProductCode"/> when null.</summary>
-    [JsonPropertyName("term_days")]
-    public int? TermDays { get; init; }
-
-    /// <summary>The interest-variant code (AT_MATURITY / PERIODIC / ADVANCE). Resolved from the product when null.</summary>
-    [JsonPropertyName("interest_variant")]
-    public string? InterestVariant { get; init; }
-
-    /// <summary>The auto-renewal policy code (NONE / SAME_TERM_*). Resolved from the product when null.</summary>
-    [JsonPropertyName("auto_renewal_policy")]
-    public string? AutoRenewalPolicy { get; init; }
-
-    /// <summary>The PERIODIC coupon cadence in months (0 for AT_MATURITY/ADVANCE). Resolved from the product when null.</summary>
-    [JsonPropertyName("payment_period_months")]
-    public int? PaymentPeriodMonths { get; init; }
-
-    /// <summary>The pricing role for the rate-sheet resolve (e.g. standard). Resolved from the product when null.</summary>
-    [JsonPropertyName("role")]
-    public string? Role { get; init; }
+    // The deposit's STRUCTURAL shape (term / interest variant / renewal policy / coupon cadence /
+    // pricing role) is NOT on this request (Fork B rework, bd t7o3.11 / 3k10 / c8d8). The orchestrator
+    // carries no product-family knowledge: the engine resolves the shape from the product_code at
+    // constitution (the maintainer's Q2 choice — the engine is the single home of product config,
+    // ADR-PC-009 / ADR-PC-008 §S2). The RATE is likewise the engine's in-transaction resolve. The edge
+    // forwards only the product code, the amount, and the account references.
 }

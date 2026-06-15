@@ -27,15 +27,18 @@ public sealed class SagaBusinessReferenceStore
     {
         ArgumentNullException.ThrowIfNull(reference);
 
+        // The 0006 shape ONLY (Fork B rework, bd t7o3.11 / 3k10 / c8d8): the orchestrator carries NO
+        // product-family knowledge, so the structural product facts the rejected v1 stand-in stored here
+        // (migration 0007: term_days / interest_variant / auto_renewal_policy / payment_period_months /
+        // role / start_date) are GONE — the engine resolves them from the product code at constitution
+        // (ADR-PC-009). product_ref is the product code; the engine looks the shape up.
         const string sql = """
             INSERT INTO saga_business_ref (
                 process_id, product_ref, amount_minor_units, source_account_ref,
-                interest_account_ref, deposit_ref, client_type, auto_approval_threshold_minor_units,
-                term_days, interest_variant, auto_renewal_policy, payment_period_months, role, start_date)
+                interest_account_ref, deposit_ref, client_type, auto_approval_threshold_minor_units)
             VALUES (
                 @process_id, @product_ref, @amount_minor_units, @source_account_ref,
-                @interest_account_ref, @deposit_ref, @client_type, @auto_approval_threshold_minor_units,
-                @term_days, @interest_variant, @auto_renewal_policy, @payment_period_months, @role, @start_date)
+                @interest_account_ref, @deposit_ref, @client_type, @auto_approval_threshold_minor_units)
             ON CONFLICT (process_id) DO NOTHING;
             """;
 
@@ -48,14 +51,6 @@ public sealed class SagaBusinessReferenceStore
         command.Parameters.AddWithValue("deposit_ref", reference.DepositRef);
         command.Parameters.AddWithValue("client_type", ClientTypeNames.ToName(reference.ClientType));
         command.Parameters.AddWithValue("auto_approval_threshold_minor_units", reference.AutoApprovalThresholdMinorUnits);
-        // The STRUCTURAL product facts the engine's ConstituteDepositRequest carries (bd babelstone-t7o3.11),
-        // pinned at the edge for replay-stability. start_date is a DateOnly mapped to a DATE column.
-        command.Parameters.AddWithValue("term_days", reference.TermDays);
-        command.Parameters.AddWithValue("interest_variant", reference.InterestVariant);
-        command.Parameters.AddWithValue("auto_renewal_policy", reference.AutoRenewalPolicy);
-        command.Parameters.AddWithValue("payment_period_months", reference.PaymentPeriodMonths);
-        command.Parameters.AddWithValue("role", reference.Role);
-        command.Parameters.AddWithValue("start_date", reference.StartDate);
 
         return await command.ExecuteNonQueryAsync(ct) == 1;
     }
@@ -72,10 +67,10 @@ public sealed class SagaBusinessReferenceStore
         Guid processId,
         CancellationToken ct = default)
     {
+        // The 0006 shape ONLY (Fork B rework): no structural product facts — the engine resolves them.
         const string sql = """
             SELECT product_ref, amount_minor_units, source_account_ref, interest_account_ref,
-                   deposit_ref, client_type, auto_approval_threshold_minor_units,
-                   term_days, interest_variant, auto_renewal_policy, payment_period_months, role, start_date
+                   deposit_ref, client_type, auto_approval_threshold_minor_units
             FROM saga_business_ref
             WHERE process_id = @process_id;
             """;
@@ -97,13 +92,7 @@ public sealed class SagaBusinessReferenceStore
             InterestAccountRef: reader.IsDBNull(3) ? null : reader.GetString(3),
             DepositRef: reader.GetString(4),
             ClientType: ClientTypeNames.FromName(reader.GetString(5)),
-            AutoApprovalThresholdMinorUnits: reader.GetInt64(6),
-            TermDays: reader.GetInt32(7),
-            InterestVariant: reader.GetString(8),
-            AutoRenewalPolicy: reader.GetString(9),
-            PaymentPeriodMonths: reader.GetInt32(10),
-            Role: reader.GetString(11),
-            StartDate: reader.GetFieldValue<DateOnly>(12));
+            AutoApprovalThresholdMinorUnits: reader.GetInt64(6));
     }
 }
 

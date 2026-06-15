@@ -87,6 +87,10 @@ public sealed class EmitContractFitnessTests
     /// <list type="bullet">
     /// <item><c>AggregateRuntime</c> — the engine append spine; emission rides its post-commit outbox.</item>
     /// <item><c>IRateSheetStore</c> — rate/config resolution, READ before the pure decide (no gate).</item>
+    /// <item><c>IProductConfigStore</c> — product-config resolution (Fork B rework, bd t7o3.11 / 3k10 /
+    ///   c8d8): the engine resolves <c>product_code → structural facts</c> (term / variant / renewal /
+    ///   cadence / role) READ before the pure decide, exactly like the rate-sheet resolve — a config READ,
+    ///   no gate, not a GL/notify signal port (ADR-PC-009 / ADR-PC-008 §S2).</item>
     /// <item><c>ISettlementPort</c> — the money-movement leg (ADR-PC-016): a legitimate PRE-flag
     ///   debit/credit, a DISTINCT concern from a GL-posting or notification SIGNAL.</item>
     /// <item><c>VerifiedPack</c> — the pinned per-instance configuration (ADR-PC-009).</item>
@@ -101,7 +105,7 @@ public sealed class EmitContractFitnessTests
     /// </summary>
     private static readonly string[] AllowedDecideAppendDependencies =
     [
-        "AggregateRuntime", "IRateSheetStore", "ISettlementPort", "VerifiedPack",
+        "AggregateRuntime", "IRateSheetStore", "IProductConfigStore", "ISettlementPort", "VerifiedPack",
         "EarlyTerminationPolicy", "string", "IReadOnlyCollection",
     ];
 

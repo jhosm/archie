@@ -52,6 +52,17 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             // — only in avro mode, only at first command.
             busSerializer: serviceProvider.GetService<BusEventSerializer>()?.Inner));
 
+        // The engine-side product-config store (Fork B rework, bd t7o3.11 / 3k10 / c8d8, ADR-PC-009):
+        // the engine resolves product_code → the structural facts (term / variant / renewal policy /
+        // coupon cadence / role) at constitution from the committed product-configs/*.yaml, so the
+        // orchestrator carries NO product-family knowledge — the engine is the single home of product
+        // config. Disk-backed and load-once (mirrors HostPack / HostPackStore); the dir is configurable
+        // via Engine:ProductConfigsDir and auto-found from the binary otherwise. This is a family-agnostic
+        // spine seam (IProductConfigStore lives in Babelstone.RateSheets) consumed by the family decider —
+        // the family→spine arrow keeps EngineFamilyAgnosticTests green.
+        services.AddSingleton<IProductConfigStore>(
+            _ => new YamlProductConfigStore(ctx.Configuration["Engine:ProductConfigsDir"]));
+
         // The term-deposit decider (ADR-PC-021): this module is its composition root (§D4).
         services.AddSingleton(serviceProvider => new TermDepositConstitutionService(
             serviceProvider.GetRequiredService<AggregateRuntime<DepositPosition>>(),
@@ -70,7 +81,11 @@ public sealed class TermDepositHostModule : IFamilyHostModule
                 new EarlyTerminationBand(UpToDays: 30, PenaltyBasisPoints: 10_000, PenaltyBasis.AccruedInterest),
                 new EarlyTerminationBand(UpToDays: 90, PenaltyBasisPoints: 5_000, PenaltyBasis.AccruedInterest),
                 new EarlyTerminationBand(UpToDays: null, PenaltyBasisPoints: 2_500, PenaltyBasis.AccruedInterest),
-            ])));
+            ]),
+            // The engine-side product-config resolver (Fork B rework): the minimal saga body
+            // {deposit_id, product_id, principal_cents, funding_account} resolves its structural facts
+            // through this seam at constitution (ADR-PC-009 / ADR-PC-008 §S2).
+            productConfigStore: serviceProvider.GetRequiredService<IProductConfigStore>()));
 
         // D.2 projection runtime (ADR-PC-002 §P4, two-modes §5.4): the family declares its
         // projections (currently just the deposit position) + their folds; the generic runtime

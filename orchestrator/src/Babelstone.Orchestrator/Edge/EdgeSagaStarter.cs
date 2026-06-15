@@ -33,33 +33,20 @@ public readonly record struct EdgeStartResult(
 /// <param name="ClientType">The client's standing, resolved at the edge — the fork's client input.</param>
 /// <param name="AutoApprovalThresholdMinorUnits">The auto-approval ceiling in integer cents, pinned
 /// at the edge from the policy in force at admission.</param>
-/// <param name="TermDays">The deposit term in days — a STRUCTURAL product fact resolved from the product
-/// code at admission and sent in the engine's ConstituteDepositRequest (bd babelstone-t7o3.11). Defaults
-/// to the 12-month walking-skeleton value.</param>
-/// <param name="InterestVariant">The interest-variant code (e.g. AT_MATURITY), resolved from the product
-/// at admission. Defaults to AT_MATURITY.</param>
-/// <param name="AutoRenewalPolicy">The auto-renewal policy code (e.g. NONE), resolved at admission.
-/// Defaults to NONE.</param>
-/// <param name="PaymentPeriodMonths">The PERIODIC coupon cadence in months (0 for AT_MATURITY/ADVANCE),
-/// resolved at admission. Defaults to 0.</param>
-/// <param name="Role">The pricing role for the rate-sheet resolve (e.g. standard), resolved at admission.
-/// Defaults to "standard".</param>
-/// <param name="StartDate">The deposit start date PINNED at the edge at admission — sent as the engine's
-/// start_date. Pinned (not "today at the engine") so the saga's command bytes carry no clock
-/// (ADR-PC-010 §P5). Defaults to <see cref="DateOnly.MinValue"/>; the edge pins the admission date.</param>
+/// <remarks>
+/// <b>No product-family knowledge at the edge (Fork B rework, bd t7o3.11 / 3k10 / c8d8).</b> The
+/// structural product facts (term / interest variant / renewal policy / coupon cadence / role / start
+/// date) the rejected v1 stand-in resolved here are GONE — the engine resolves them from the product
+/// code at constitution (the maintainer's Q2 choice, ADR-PC-009). The edge pins only the amount +
+/// account/product references + the approval-fork inputs; <see cref="ProductRef"/> is the product code.
+/// </remarks>
 public sealed record EdgeBusinessFacts(
     string ProductRef,
     long AmountMinorUnits,
     string SourceAccountRef,
     string? InterestAccountRef,
     ClientType ClientType,
-    long AutoApprovalThresholdMinorUnits,
-    int TermDays = 365,
-    string InterestVariant = "AT_MATURITY",
-    string AutoRenewalPolicy = "NONE",
-    int PaymentPeriodMonths = 0,
-    string Role = "standard",
-    DateOnly StartDate = default);
+    long AutoApprovalThresholdMinorUnits);
 
 /// <summary>
 /// Starts the <see cref="ConstitutionProcess"/> saga from the EDGE (I.1, ADR-IC-006 §P4 / Document
@@ -169,16 +156,7 @@ public sealed class EdgeSagaStarter(
                 InterestAccountRef: businessFacts.InterestAccountRef,
                 DepositRef: depositId,
                 ClientType: businessFacts.ClientType,
-                AutoApprovalThresholdMinorUnits: businessFacts.AutoApprovalThresholdMinorUnits,
-                // The STRUCTURAL product facts the engine's ConstituteDepositRequest carries
-                // (bd babelstone-t7o3.11), pinned at the edge for replay-stability. The engine resolves
-                // the RATE in-transaction (bd babelstone-3k10); these are the structural shape, not price.
-                TermDays: businessFacts.TermDays,
-                InterestVariant: businessFacts.InterestVariant,
-                AutoRenewalPolicy: businessFacts.AutoRenewalPolicy,
-                PaymentPeriodMonths: businessFacts.PaymentPeriodMonths,
-                Role: businessFacts.Role,
-                StartDate: businessFacts.StartDate),
+                AutoApprovalThresholdMinorUnits: businessFacts.AutoApprovalThresholdMinorUnits),
             ct);
 
         var state = _machine.InitialState;

@@ -30,10 +30,20 @@ public sealed class TermDepositConstitutionService(
     string dayCountPrimitive,
     string withholdingPrimitive,
     EarlyTerminationPolicy? earlyTerminationPolicy = null,
-    IReadOnlyCollection<string>? requiredPreconditions = null)
+    IReadOnlyCollection<string>? requiredPreconditions = null,
+    IProductConfigStore? productConfigStore = null)
 {
     // The stream is keyed by the deposit id (v1: stream_id == deposit_id; partition_key == stream_id).
     private static readonly TermDepositFamilyModule Family = new();
+
+    // The engine-side product-config resolver (Fork B rework, bd t7o3.11 / 3k10 / c8d8). The engine is
+    // the single home of product config (the maintainer's Q2 choice): it resolves product_code → the
+    // structural facts (term / variant / renewal policy / cadence / role) at constitution, so the
+    // orchestrator carries NO product-family knowledge. Optional only so the existing direct callers
+    // that already supply the full ConstituteDepositCommand (family unit tests, ADR-PC-024 paths)
+    // keep working; the minimal saga path (ConstituteFromProductConfigAsync) requires it and fails
+    // loud if it is absent.
+    private readonly IProductConfigStore? _productConfigStore = productConfigStore;
 
     // The product's required commercial-eligibility preconditions (ADR-PC-024 §1, from the product
     // config's `required_preconditions`). Engine-instance config for the walking skeleton, mirroring
@@ -54,6 +64,66 @@ public sealed class TermDepositConstitutionService(
     /// first transaction — the interest IS recognised in the engine's books at t=0, but its money leg is
     /// likewise the saga's gated credit, not an eager in-engine settle.
     /// </summary>
+    /// <summary>
+    /// Constitute a deposit from the MINIMAL saga request (Fork B rework, bd t7o3.11 / 3k10 / c8d8):
+    /// resolve the product code to its structural facts ENGINE-SIDE, then run the same
+    /// resolve→decide→append constitution the full-command path runs. The saga sends only
+    /// <c>{deposit_id, product_id, principal_cents, funding_account}</c>; the engine looks up the term
+    /// / interest variant / renewal policy / coupon cadence / pricing role from its deployed
+    /// product-config store, so the orchestrator carries no product-family knowledge.
+    /// </summary>
+    /// <remarks>
+    /// <b>Step 0 — product-config resolve (engine-side, ADR-PC-009).</b> The structural facts are
+    /// resolved from <see cref="IProductConfigStore"/> here, BEFORE the rate-sheet resolve, in the same
+    /// service call. An unknown product code fails loud (<see cref="DomainRejectedException"/>), never a
+    /// silent default — the engine is the fail-loud authority on whether a product code is known. The
+    /// start date is derived from <see cref="MinimalConstituteDepositRequest.ConstitutedAt"/> (the
+    /// engine is now the event author; the host stamps the instant from its clock). The resolved facts
+    /// fill an internal <see cref="ConstituteDepositCommand"/> and the rest of the path is unchanged —
+    /// the rate-sheet resolve + the decide + the single atomic append+outbox (ADR-PC-008 §S2).
+    /// </remarks>
+    /// <returns>The new stream's head version (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
+    public async Task<long> ConstituteFromProductConfigAsync(
+        MinimalConstituteDepositRequest request, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var store = _productConfigStore
+            ?? throw new InvalidOperationException(
+                "No product-config store is configured for this engine instance; the minimal "
+                + "constitution path resolves product_code → structural facts engine-side and cannot "
+                + "run without it (Fork B rework, ADR-PC-009).");
+
+        // Step 0: resolve the STRUCTURAL facts from the deployed product config — fail loud on an
+        // unknown product code, exactly as an unpriced (product, role) fails the rate-sheet resolve.
+        var config = store.Resolve(request.ProductId)
+            ?? throw new DomainRejectedException(
+                $"No product config found for '{request.ProductId}'; cannot constitute "
+                + "(the engine resolves product_code → structural facts at constitution, ADR-PC-009).");
+
+        // The engine is now the event author: derive the start date from the host-stamped instant
+        // (ADR-PC-010 §P5 — the clock is the impure shell's; replay stability rides the Idempotency-Key
+        // dedup, ADR-PC-029 slot 4). The role is the config's default unless the caller overrode it
+        // (the orchestrator never does — the override is for direct callers).
+        var command = new ConstituteDepositCommand(
+            DepositId: request.DepositId,
+            PrincipalCents: request.PrincipalCents,
+            ProductId: request.ProductId,
+            Role: request.Role ?? config.DefaultRole,
+            TermDays: config.TermDays,
+            StartDate: DateOnly.FromDateTime(request.ConstitutedAt.UtcDateTime),
+            ConstitutedAt: request.ConstitutedAt,
+            InterestVariant: config.InterestVariant,
+            AutoRenewalPolicy: config.AutoRenewalPolicy,
+            FundingAccount: request.FundingAccount,
+            Actor: request.Actor,
+            PaymentPeriodMonths: config.PaymentPeriodMonths,
+            Preconditions: request.Preconditions,
+            CommandId: request.CommandId);
+
+        return await ConstituteAsync(command, ct);
+    }
+
     /// <returns>The new stream's head version (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
     public async Task<long> ConstituteAsync(ConstituteDepositCommand command, CancellationToken ct = default)
     {

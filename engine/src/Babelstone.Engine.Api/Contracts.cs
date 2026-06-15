@@ -7,22 +7,44 @@ namespace Babelstone.Engine.Api;
 // The deposits HTTP contract (ADR-PC-021 §D5 boundary). snake_case on the wire (the host's
 // JSON options), money as integer cents — never a nested object or a float (ADR-PC-010 §P1).
 
-/// <summary>Constitute a deposit. Per-deposit facts only; the TAN is resolved from the rate sheet, not supplied.</summary>
+/// <summary>
+/// Constitute a deposit. Per-deposit facts only; the TAN is resolved from the rate sheet, not supplied.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Structural facts are OPTIONAL — the engine resolves them from the product code (Fork B rework,
+/// bd t7o3.11 / 3k10 / c8d8, ADR-PC-009).</b> The saga now sends only the MINIMAL body —
+/// <c>product_id</c>, <c>principal_cents</c>, <c>funding_account</c>, <c>deposit_id</c> — and the engine
+/// looks up the term / interest variant / renewal policy / coupon cadence / pricing role from its
+/// deployed <c>product-configs/</c> store at constitution. So the orchestrator carries NO product-family
+/// knowledge; the engine is the single home of product config. The structural fields stay nullable so
+/// direct callers that DO know the shape (the MCP agent, API tests) may still supply them — when
+/// present they are honoured; when absent the engine resolves them. The start date is derived host-side
+/// from <c>constituted_at</c> (the engine is the constitution authority); the role defaults to the
+/// product config's default when omitted.
+/// </para>
+/// </remarks>
+/// <param name="Role">Optional pricing-role override; resolved from the product config (v1: <c>standard</c>) when null.</param>
+/// <param name="TermDays">Optional; resolved from the product config when null.</param>
+/// <param name="StartDate">Optional; host-stamped from <c>constituted_at</c> when null.</param>
+/// <param name="InterestVariant">Optional; resolved from the product config when null.</param>
+/// <param name="AutoRenewalPolicy">Optional; resolved from the product config when null.</param>
 /// <param name="PaymentPeriodMonths">PERIODIC coupon cadence in months (1 or 3); omit/0 for
-/// AT_MATURITY and ADVANCE. Optional so the AT_MATURITY walking-skeleton callers stay unchanged.</param>
+/// AT_MATURITY and ADVANCE. When the structural facts are resolved engine-side this is taken from the
+/// product config; a supplied value is honoured on the full-facts path.</param>
 public sealed record ConstituteDepositRequest(
     long PrincipalCents,
     string ProductId,
-    string Role,
-    int TermDays,
-    DateOnly StartDate,
-    string InterestVariant,
-    string AutoRenewalPolicy,
     string FundingAccount,
+    string? Role = null,
+    int? TermDays = null,
+    DateOnly? StartDate = null,
+    string? InterestVariant = null,
+    string? AutoRenewalPolicy = null,
     Guid? DepositId = null,
     DateTimeOffset? ConstitutedAt = null,
     string? Actor = null,
-    int PaymentPeriodMonths = 0);
+    int? PaymentPeriodMonths = null);
 
 /// <summary>
 /// The constitution outcome — the assigned id, lifecycle state (synchronous in the walking skeleton),
