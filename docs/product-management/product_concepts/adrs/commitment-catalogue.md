@@ -309,13 +309,14 @@ implemented"): bd `babelstone-e50n` shipped the secured MCP edge, so the wrong-r
 `resource_metadata` pointer for a wrong-`aud` token), which runs in CI's `mcp-server`
 job (`.github/workflows/ci.yml`). The **Kong-edge** leg is the static contract in
 `scripts/kong-config-check.sh` (the `AUDIENCE_MISMATCH` / `kong.response.exit(401` /
-`resource_metadata` assertions on the `/mcp` route), which runs in CI's `edge` job. The
+`resource_metadata` assertions on the `/mcp` route), which runs in CI's `infra` job
+(the "Validate Kong edge config" step invokes `scripts/kong-config-check.sh`). The
 §P6 coverage checker resolves the `Live` row by literal grep of the Test ID in the renamed
 pytest method under `mcp-server/` (the `mcp-server` subtree is in `CODE_DIRS`, `.py` in
 `CODE_INCLUDES`); the Kong-layer leg carries the Test ID as a traceability comment. This is
-the second in-house **ADR-IC** edge-boundary commitment catalogued here (alongside the
-ADR-IC-017 rows 21–22), per the [§P11](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)
-in-house-estate reach. The companion `outputSchema`-mandatory gap ADR-IC-010 also reserves
+an in-house **ADR-IC** commitment catalogued here (joining the existing ADR-IC estate rows —
+e.g. the ADR-IC-007 observability rows and the ADR-IC-017 bus event-promotion rows 21–22),
+per the [§P11](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) in-house-estate reach. The companion `outputSchema`-mandatory gap ADR-IC-010 also reserves
 stays uncatalogued — out of scope for this change.
 
 ## Coverage by pyramid level
