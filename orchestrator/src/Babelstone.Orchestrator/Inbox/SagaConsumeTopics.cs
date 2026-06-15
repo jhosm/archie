@@ -11,12 +11,24 @@ namespace Babelstone.Orchestrator.Inbox;
 /// <remarks>
 /// <para>
 /// The constitution saga's triggering events — the start signal (<c>ConstitutionRequested</c>), the
-/// validation results (<c>BalanceReserved</c>, <c>LimitsValidated</c>, …), and the closing
-/// <c>ProcessConstituted</c> — all flow on the internal DOMAIN topic <c>deposits.process.events</c>
+/// validation results (<c>BalanceReserved</c>, <c>LimitsValidated</c>, …), and the closing engine fact
+/// <c>DepositConstituted</c> (the VALUE of <see cref="Saga.ConstitutionProcess.ProcessConstituted"/>;
+/// bd babelstone-3klm) — all flow on the internal DOMAIN topic <c>deposits.process.events</c>
 /// (Document 05 §1 "publishes to the internal topic <c>deposits.process.events</c> … the
 /// Constitution Saga Orchestrator subscribes to this topic"; it stays in the Deposits context, not an
 /// integration topic — Document 10 "Only the Deposits service can produce to … <c>deposits.process.events</c>").
 /// This is the same <c>source_topic</c> every existing <see cref="SagaInboxEvent"/> fixture carries.
+/// </para>
+/// <para>
+/// <b>FLAG (bd babelstone-3klm) — the engine's relay topic differs from this committed topic.</b> The
+/// ADR-IC-003 2026-06-14 amendment and Document 05 commit the engine to relaying <c>DepositConstituted</c>
+/// on <c>deposits.process.events</c>, and that is what the saga subscribes to. But the engine's
+/// <c>OutboxDrainer</c> today publishes every fact to a topic named after its <c>aggregate_type</c>
+/// (<c>term_deposit</c> for a deposit stream), with NO router re-publishing <c>DepositConstituted</c> to
+/// <c>deposits.process.events</c>. Closing THAT gap (a routed/dedicated process topic, or subscribing the
+/// saga to <c>term_deposit</c>) is a separate engine-relay-routing decision left for the maintainer; this
+/// change closes only the EVENT-NAME mismatch so a <c>DepositConstituted</c> record arriving on the
+/// committed topic drives the saga to COMPLETED (ADR-PC-029 slot 2).
 /// </para>
 /// <para>
 /// Kept as a named constant (not a buried literal) so the host wiring, the consume loop, and any test
