@@ -232,3 +232,13 @@ async def pay_interest(deposit_id: str, ctx: Context) -> DepositPosition:
     """
     auth = _authorize(ctx, "pay_interest")
     return DepositPosition(**await engine().pay_interest(deposit_id, client_id=auth.client_id))
+
+
+# Side-effect imports register the resource template and the prompt templates on ``mcp`` at import
+# time (Epic J.2, bd babelstone-2ep0). They live at the BOTTOM of the module — both modules do
+# ``from .server import mcp``, so importing them here, after ``mcp`` is defined, avoids the circular
+# import. ``app.py`` already imports ``server`` to pick up the tool registrations; these riders mean
+# the same import now also brings the resource + prompt surfaces (ADR-IC-010 §A1). They ride the same
+# Streamable-HTTP /mcp route — no kong.yml change is needed.
+from . import prompts as _prompts  # noqa: E402,F401 — registers constitute_term_deposit + review_upcoming_maturities
+from . import resources as _resources  # noqa: E402,F401 — registers the bank://deposits/{id} resource template

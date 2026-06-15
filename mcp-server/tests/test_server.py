@@ -138,10 +138,27 @@ async def test_every_tool_is_registered_with_output_schema() -> None:
     assert by_name["pay_interest"].outputSchema is not None
 
 
-async def test_no_resource_templates_are_registered() -> None:
-    # The deposit read model moved from a resource template to the get_deposit tool.
+async def test_deposit_resource_template_is_registered() -> None:
+    # Epic J.2 (bd babelstone-2ep0): the deposit read model is ALSO exposed as a host-attached
+    # resource template alongside the get_deposit tool (ADR-IC-010 §A1). The on-demand agent read
+    # stays a tool; this template is the host-pinned ambient-context view of the same data.
     templates = await server.mcp.list_resource_templates()
-    assert [t.uriTemplate for t in templates] == []
+    assert "bank://deposits/{deposit_id}" in [t.uriTemplate for t in templates]
+
+
+async def test_no_static_resources_are_registered() -> None:
+    # Deposit ids are not server-enumerable, so the deposit surface is a template, not a static
+    # resource. The static resources list stays empty.
+    resources = await server.mcp.list_resources()
+    assert resources == []
+
+
+async def test_both_prompts_are_registered() -> None:
+    # Epic J.2: two vetted agent-workflow prompt templates (ADR-IC-010 §A1).
+    prompts = await server.mcp.list_prompts()
+    names = {p.name for p in prompts}
+    assert "constitute_term_deposit" in names
+    assert "review_upcoming_maturities" in names
 
 
 async def test_get_deposit_tool_maps_id_to_the_engine_read() -> None:
