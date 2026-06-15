@@ -74,7 +74,6 @@ die()  { printf '\n\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 PASS=0
 FAIL=0
-KNOWN=0
 declare -a RESULTS=()
 
 record() {
@@ -85,21 +84,6 @@ record() {
     FAIL=$((FAIL + 1)); printf '  \033[1;31m✗ %s — %s\033[0m\n' "$label" "$detail" >&2
   fi
   RESULTS+=("$verdict | $label | $detail")
-}
-
-# record_known <label> <PASS|FAIL> <detail> — for an assertion that surfaces a KNOWN, PRE-EXISTING,
-# out-of-this-lane defect. A FAIL here is printed loudly and tallied separately but does NOT fail the
-# run (this lane is the mTLS fix + runtime harness; the carved-out defect is its own follow-up).
-record_known() {
-  local label="$1" verdict="$2" detail="${3:-}"
-  if [ "$verdict" = "PASS" ]; then
-    PASS=$((PASS + 1)); ok "$label — $detail"
-    RESULTS+=("PASS | $label | $detail")
-  else
-    KNOWN=$((KNOWN + 1))
-    printf '  \033[1;33m⚠ %s — %s\033[0m\n' "$label" "$detail" >&2
-    RESULTS+=("KNOWN-FAIL | $label | $detail")
-  fi
 }
 
 assert_eq() {
@@ -392,18 +376,13 @@ for r in "${RESULTS[@]}"; do
   verdict="$(printf '%s' "$verdict" | tr -d ' ')"
   if [ "$verdict" = "PASS" ]; then
     printf '  \033[32mPASS\033[0m %s —%s\n' "$label" "$detail"
-  elif [ "$verdict" = "KNOWN-FAIL" ]; then
-    printf '  \033[1;33mKNOWN\033[0m %s —%s\n' "$label" "$detail"
   else
     printf '  \033[1;31mFAIL\033[0m %s —%s\n' "$label" "$detail"
   fi
 done
-printf '\n  Total: %d passed, %d failed, %d known-pre-existing (non-blocking)\n' "$PASS" "$FAIL" "$KNOWN"
+printf '\n  Total: %d passed, %d failed\n' "$PASS" "$FAIL"
 
 if [ "$FAIL" -ne 0 ]; then
   die "mcp-contract-test: $FAIL assertion(s) FAILED"
 fi
-if [ "$KNOWN" -ne 0 ]; then
-  printf '\n  \033[1;33mNote: %d KNOWN pre-existing defect(s) surfaced (non-blocking) — see the carved-out assertion notes.\033[0m\n' "$KNOWN"
-fi
-say "mcp-contract-test: all assertions GREEN (5ot0 + 29ic + the ziu3.2 well-known fix); $KNOWN known pre-existing defect(s) flagged"
+say "mcp-contract-test: all assertions GREEN (5ot0 + 29ic + the ziu3.2 well-known fix)"
