@@ -21,14 +21,16 @@ success the gateway-attested ``X-Client-Id`` and ``X-OAuth-Scope`` headers are p
 tools unchanged (the tools read them via ``auth.AuthContext``); the middleware never derives identity
 from the token itself (Document 11 — identity comes from the gateway-attested ``sub``).
 
-**Trust precondition (read before deploy).** The app trusts those gateway-attested headers ONLY
-because Kong is the sole ingress (this service exposes no host port) and Kong OVERWRITES
-``X-Client-Id``/``X-OAuth-Scope`` from the validated ``sub``/``scope`` — the same EdgeAuth trust
-model the orchestrator uses. That trust currently rests on network topology, NOT on enforced
-upstream mTLS: the uvicorn upstream runs plain HTTP, so a Kong-bypassing actor on the upstream
-network could present a forged token + a spoofed ``X-Client-Id``. Enforcing upstream mTLS
-(``ssl_cert_reqs=CERT_REQUIRED`` + Kong ``tls_verify``) before production is tracked in
-bd ``babelstone-29ic``; the end-to-end gateway runtime contract test is bd ``babelstone-5ot0``.
+**Trust precondition (enforced).** The app trusts those gateway-attested headers because Kong is
+the sole ingress (this service exposes no host port), Kong OVERWRITES ``X-Client-Id``/
+``X-OAuth-Scope`` from the validated ``sub``/``scope`` — the same EdgeAuth trust model the
+orchestrator uses — AND the Kong→MCP hop is now MUTUAL TLS. The uvicorn upstream requires a client
+certificate (``ssl_cert_reqs=CERT_REQUIRED`` when ``MCP_TLS_CA_CERTS`` is set; see
+``__main__.build_tls_kwargs``) and Kong presents one with ``tls_verify: true`` on the mcp-server
+service (ADR-IC-006 §P5 Boundary 2 / ADR-IC-010 §P5). So a Kong-bypassing actor on the upstream
+network — even with a forged token and a spoofed ``X-Client-Id`` — is rejected at the TLS handshake,
+not merely shielded by network topology (completed bd ``babelstone-29ic``; the end-to-end gateway
+runtime contract test is bd ``babelstone-5ot0`` / ``make mcp-contract-test``).
 """
 
 from __future__ import annotations

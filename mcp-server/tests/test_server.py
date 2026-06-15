@@ -75,20 +75,27 @@ class _FakeEngine(EngineClient):
         self.min_sequence_requested: int | None = None
         self.matured: str | None = None
         self.interest_paid: str | None = None
+        # The gateway-attested caller each call forwarded to the engine (ADR-IC-010 §P3).
+        self.client_id_forwarded: str | None = None
 
-    async def constitute(self, request: dict[str, Any]) -> dict[str, Any]:
+    async def constitute(
+        self, request: dict[str, Any], client_id: str | None = None
+    ) -> dict[str, Any]:
         self.constitute_request = request
+        self.client_id_forwarded = client_id
         return {"deposit_id": "d-1", "status": "ACTIVE", "commit_sequence": 0}
 
     async def deposit_position(
-        self, deposit_id: str, min_sequence: int | None = None
+        self, deposit_id: str, min_sequence: int | None = None, client_id: str | None = None
     ) -> dict[str, Any]:
         self.position_requested = deposit_id
         self.min_sequence_requested = min_sequence
+        self.client_id_forwarded = client_id
         return {**_POSITION, "deposit_id": deposit_id}
 
-    async def mature(self, deposit_id: str) -> dict[str, Any]:
+    async def mature(self, deposit_id: str, client_id: str | None = None) -> dict[str, Any]:
         self.matured = deposit_id
+        self.client_id_forwarded = client_id
         return {
             **_POSITION,
             "deposit_id": deposit_id,
@@ -99,8 +106,9 @@ class _FakeEngine(EngineClient):
             "lifecycle": "Matured",
         }
 
-    async def pay_interest(self, deposit_id: str) -> dict[str, Any]:
+    async def pay_interest(self, deposit_id: str, client_id: str | None = None) -> dict[str, Any]:
         self.interest_paid = deposit_id
+        self.client_id_forwarded = client_id
         return {
             **_POSITION,
             "deposit_id": deposit_id,
@@ -140,10 +148,14 @@ async def test_get_deposit_tool_maps_id_to_the_engine_read() -> None:
     fake = _FakeEngine()
     server.set_engine(fake)
 
-    result = await server.get_deposit(deposit_id="d-42", ctx=_read_ctx(), min_sequence=7)
+    result = await server.get_deposit(
+        deposit_id="d-42", ctx=_read_ctx(client_id="CLI-ATTESTED-99"), min_sequence=7
+    )
 
     assert fake.position_requested == "d-42"
     assert fake.min_sequence_requested == 7   # the read-your-writes token is threaded to the engine
+    # The gateway-attested caller (X-Client-Id, the OAuth sub) is forwarded to the engine (§P3).
+    assert fake.client_id_forwarded == "CLI-ATTESTED-99"
     assert result.deposit_id == "d-42"
     assert result.tan_basis_points == 300
     assert result.lifecycle == "Active"
@@ -181,6 +193,19 @@ async def test_pay_interest_tool_maps_id_and_folds_the_coupon() -> None:
     assert result.coupons_paid == 1
 
 
+async def test_every_write_tool_forwards_the_attested_caller_to_the_engine() -> None:
+    # The gateway-attested X-Client-Id (OAuth sub) is forwarded on EVERY engine call so the engine
+    # sees who acted (ADR-IC-010 §P3 / Document 11) — never a tool argument.
+    fake = _FakeEngine()
+    server.set_engine(fake)
+
+    await server.mature_deposit(deposit_id="d-42", ctx=_write_ctx(client_id="CLI-MATURE-1"))
+    assert fake.client_id_forwarded == "CLI-MATURE-1"
+
+    await server.pay_interest(deposit_id="d-42", ctx=_write_ctx(client_id="CLI-COUPON-2"))
+    assert fake.client_id_forwarded == "CLI-COUPON-2"
+
+
 async def test_constitute_tool_maps_args_to_the_engine_request() -> None:
     fake = _FakeEngine()
     server.set_engine(fake)
@@ -192,9 +217,10 @@ async def test_constitute_tool_maps_args_to_the_engine_request() -> None:
         term_days=365,
         start_date="2026-01-15",
         funding_account="PT50-DDA-001",
-        ctx=_write_ctx(),
+        ctx=_write_ctx(client_id="CLI-CONSTITUTE-3"),
     )
 
+    assert fake.client_id_forwarded == "CLI-CONSTITUTE-3"
     assert result.deposit_id == "d-1"
     assert result.status == "ACTIVE"
     assert result.commit_sequence == 0   # the read-your-writes token the agent threads to get_deposit

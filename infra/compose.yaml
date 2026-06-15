@@ -119,6 +119,36 @@ services:
       retries: 12
       start_period: 10s
 
+  # One-shot: from the committed throwaway POC CA (infra/kong/mcp-poc-ca.{crt,key}) generate the
+  # mcp-server's TLS server cert (CN=mcp-server) and copy the CA cert into the shared volume. The
+  # mcp-server presents that server cert and verifies Kong's client cert against the CA — the
+  # upstream half of the Kong→MCP mutual TLS (ADR-IC-006 §P5 Boundary 2 / ADR-IC-010 §P5, 29ic).
+  # ⚠️  POC material: at deploy time replace with the internal-CA-signed cert (a mounted secret).
+  mcp-certgen:
+    image: alpine/openssl:3.3.2
+    volumes:
+      - mcp-certs:/certs
+      - ./kong/mcp-poc-ca.crt:/poc-ca/ca.crt:ro
+      - ./kong/mcp-poc-ca.key:/poc-ca/ca.key:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        cp /poc-ca/ca.crt /certs/ca.crt
+        if [ ! -f /certs/mcp-server.key ]; then
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout /certs/mcp-server.key -out /certs/mcp-server.csr \
+            -subj "/CN=mcp-server"
+          openssl x509 -req -in /certs/mcp-server.csr \
+            -CA /poc-ca/ca.crt -CAkey /poc-ca/ca.key -CAcreateserial \
+            -out /certs/mcp-server.crt -days 7 \
+            -extfile /dev/stdin <<EOF
+        subjectAltName=DNS:mcp-server,DNS:localhost
+        EOF
+        fi
+        chmod 644 /certs/*.crt /certs/*.key
+        echo "mcp-certgen: mcp-server TLS cert (signed by the committed POC CA) ready"
+
   mcp-server:
     # The MCP agent channel (ADR-IC-010 — Epic J / bd babelstone-e50n). The Python MCP
     # server (FastMCP, Streamable HTTP) exposing the four term-deposit tools, fronted by
@@ -130,6 +160,12 @@ services:
     build:
       context: ../mcp-server
     container_name: babelstone-mcp-server
+    depends_on:
+      mcp-certgen:
+        condition: service_completed_successfully
+    volumes:
+      # The generated TLS material (server cert/key + the trusted CA), read-only.
+      - mcp-certs:/certs:ro
     environment:
       # The engine command/query boundary the tools call (forward reference — the engine
       # service lands with its subtree; hostname `engine` on this network, like kong's upstreams).
@@ -144,6 +180,16 @@ services:
       # set explicitly for clarity — matches the https://mcp-server:8080 Kong upstream).
       MCP_BIND_HOST: 0.0.0.0
       MCP_BIND_PORT: "8080"
+      # ── Upstream mutual TLS (ADR-IC-006 §P5 / ADR-IC-010 §P5, bd babelstone-29ic) ──────
+      # Kong dials https://mcp-server:8080 with tls_verify:true and presents a client cert.
+      # uvicorn serves TLS (server cert) and REQUIRES a client cert (MCP_TLS_CERT_REQS=2 →
+      # ssl.CERT_REQUIRED), verifying it against the CA — so a Kong-bypassing actor with no
+      # client cert is rejected at the handshake. Without these vars uvicorn would serve plain
+      # HTTP and Kong's TLS dial would 502 (the bug bd babelstone-5ot0's harness catches).
+      MCP_TLS_CERTFILE: /certs/mcp-server.crt
+      MCP_TLS_KEYFILE: /certs/mcp-server.key
+      MCP_TLS_CA_CERTS: /certs/ca.crt
+      MCP_TLS_CERT_REQS: "2"
 
   core-acl-stub:
     image: wiremock/wiremock:3.9.1
@@ -268,3 +314,6 @@ volumes:
   pgdata:
   rpdata:
   registrydata:
+  # Ephemeral mTLS material for the MCP agent channel — populated at-up by mcp-certgen from the
+  # committed POC CA (ADR-IC-006 §P5 / ADR-IC-010 §P5). Not a secret; regenerated on `make reset`.
+  mcp-certs:

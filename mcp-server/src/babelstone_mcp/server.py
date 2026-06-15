@@ -20,12 +20,37 @@ from __future__ import annotations
 import os
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
 
 from .auth import AuthContext, check_tool_scope
 from .engine_client import EngineClient
 
-mcp = FastMCP("babelstone-deposits")
+
+def _transport_security() -> TransportSecuritySettings:
+    """Allow the Host/Origin Kong forwards to the upstream (ADR-IC-010 §P5).
+
+    The MCP Streamable-HTTP transport applies DNS-rebinding protection: it 421s a request whose
+    ``Host`` is not allow-listed. Behind Kong the upstream receives ``Host: mcp-server:8080`` (the
+    docker-network upstream address Kong dials), which the default localhost-only allow-list
+    rejects. Because this server's ONLY ingress is Kong over enforced mutual TLS — a bypassing
+    actor is already rejected at the TLS handshake (``__main__.build_tls_kwargs``) — the Host
+    header is not the trust boundary here, so we allow-list the upstream address Kong uses plus the
+    local-dev addresses. ``BABELSTONE_ALLOWED_HOSTS`` / ``BABELSTONE_ALLOWED_ORIGINS`` override the
+    defaults (comma-separated) for a different deployment hostname.
+    """
+    default_hosts = "mcp-server:8080,mcp-server,localhost,localhost:8000,127.0.0.1,127.0.0.1:8080"
+    default_origins = "http://localhost:8000,https://mcp-server:8080"
+    hosts = os.environ.get("BABELSTONE_ALLOWED_HOSTS", default_hosts)
+    origins = os.environ.get("BABELSTONE_ALLOWED_ORIGINS", default_origins)
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[h.strip() for h in hosts.split(",") if h.strip()],
+        allowed_origins=[o.strip() for o in origins.split(",") if o.strip()],
+    )
+
+
+mcp = FastMCP("babelstone-deposits", transport_security=_transport_security())
 
 _engine: EngineClient | None = None
 
@@ -96,7 +121,7 @@ async def constitute_deposit(
     Requires ``deposits:write`` (ADR-IC-010 §P4). The actor is the gateway-attested ``X-Client-Id``
     (OAuth ``sub``), never a tool argument (Document 11).
     """
-    _authorize(ctx, "constitute_deposit")
+    auth = _authorize(ctx, "constitute_deposit")
     result = await engine().constitute(
         {
             "principal_cents": principal_cents,
@@ -108,7 +133,8 @@ async def constitute_deposit(
             "auto_renewal_policy": auto_renewal_policy,
             "funding_account": funding_account,
             "payment_period_months": payment_period_months,
-        }
+        },
+        client_id=auth.client_id,
     )
     return ConstituteDepositResult(
         deposit_id=result["deposit_id"],
@@ -167,8 +193,10 @@ async def get_deposit(
     Requires ``deposits:read`` (ADR-IC-010 §P4) — the reserved read scope; a ``deposits:read`` token
     cannot reach the write tools.
     """
-    _authorize(ctx, "get_deposit")
-    return DepositPosition(**await engine().deposit_position(deposit_id, min_sequence))
+    auth = _authorize(ctx, "get_deposit")
+    return DepositPosition(
+        **await engine().deposit_position(deposit_id, min_sequence, client_id=auth.client_id)
+    )
 
 
 @mcp.tool()
@@ -183,8 +211,8 @@ async def mature_deposit(deposit_id: str, ctx: Context) -> DepositPosition:
     Requires ``deposits:write`` (ADR-IC-010 §P4). Settlement is irreversible, so if the secured edge
     classes it under §P8 it gets ``elicitation/create`` confirmation — a deliberate follow-up (ar1y).
     """
-    _authorize(ctx, "mature_deposit")
-    return DepositPosition(**await engine().mature(deposit_id))
+    auth = _authorize(ctx, "mature_deposit")
+    return DepositPosition(**await engine().mature(deposit_id, client_id=auth.client_id))
 
 
 @mcp.tool()
@@ -202,5 +230,5 @@ async def pay_interest(deposit_id: str, ctx: Context) -> DepositPosition:
     Requires ``deposits:write`` (ADR-IC-010 §P4). Like ``mature_deposit``, the coupon settlement is
     irreversible; §P8 elicitation is a deliberate follow-up (ar1y).
     """
-    _authorize(ctx, "pay_interest")
-    return DepositPosition(**await engine().pay_interest(deposit_id))
+    auth = _authorize(ctx, "pay_interest")
+    return DepositPosition(**await engine().pay_interest(deposit_id, client_id=auth.client_id))

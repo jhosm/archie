@@ -91,3 +91,40 @@ async def test_non_2xx_raises_fail_loud() -> None:
 
     with pytest.raises(httpx.HTTPStatusError):
         await _client(handler).constitute({"principal_cents": 1})
+
+
+async def test_client_id_is_forwarded_as_x_client_id_on_every_surface() -> None:
+    # The gateway-attested caller (the OAuth sub Kong overwrote into X-Client-Id, ADR-IC-010 §P3)
+    # is forwarded to the engine on each surface so the engine sees who acted, for audit/ownership.
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.method + " " + request.url.path] = request.headers.get("X-Client-Id")
+        if request.method == "GET":
+            return httpx.Response(200, json={"deposit_id": "d-1"})
+        if request.url.path == "/v1/deposits":
+            return httpx.Response(201, json={"deposit_id": "d-1", "status": "ACTIVE", "commit_sequence": 0})
+        return httpx.Response(200, json={"deposit_id": "d-1"})
+
+    client = _client(handler)
+    await client.constitute({"principal_cents": 1}, client_id="CLI-7")
+    await client.deposit_position("d-1", client_id="CLI-7")
+    await client.mature("d-1", client_id="CLI-7")
+    await client.pay_interest("d-1", client_id="CLI-7")
+
+    assert seen["POST /v1/deposits"] == "CLI-7"
+    assert seen["GET /v1/deposits/d-1"] == "CLI-7"
+    assert seen["POST /v1/deposits/d-1/maturity"] == "CLI-7"
+    assert seen["POST /v1/deposits/d-1/interest"] == "CLI-7"
+
+
+async def test_no_client_id_means_no_x_client_id_header() -> None:
+    # When no caller is attested (e.g. a dev-direct call), no X-Client-Id is invented.
+    captured: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["x_client_id"] = request.headers.get("X-Client-Id")
+        return httpx.Response(200, json={"deposit_id": "d-1"})
+
+    await _client(handler).deposit_position("d-1")
+    assert captured["x_client_id"] is None

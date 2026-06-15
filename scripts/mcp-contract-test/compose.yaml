@@ -1,0 +1,171 @@
+# compose.yaml — the live-Kong MCP-edge runtime-contract harness (bd babelstone-5ot0 + babelstone-29ic).
+#
+# In plain English: this stands up the REAL edge gateway (kong:3.9.1, DB-less, the actual
+# infra/kong/kong.yml byte-for-byte) in front of the REAL Python MCP server (built from the
+# mcp-server/ subtree) and a stub engine. It proves the MCP agent channel actually BEHAVES at
+# runtime — that a real MCP `initialize` handshake completes through Kong, that the audience /
+# identity / scope gates fire, and that the Kong→mcp-server hop is MUTUAL TLS (the mcp-server
+# rejects any client without Kong's client cert). The static gate (scripts/kong-config-check.sh)
+# only proves the config parses; THIS proves the upstream-TLS bug is fixed (Kong dials
+# https://mcp-server:8080 — a plain-HTTP uvicorn would 502 the handshake).
+#
+# Why the mcp-server answers to the `mcp-server` alias: the real kong.yml addresses its upstream
+# as https://mcp-server:8080. Giving the container that network ALIAS lets the harness run the
+# unmodified kong.yml — no route/Lua templating. The engine stub answers to `engine`, matching
+# BABELSTONE_ENGINE_URL=http://engine:8080.
+#
+# Why the certs come from a committed POC CA: kong.yml now sets tls_verify:true on the mcp-server
+# service and points at the committed POC CA (infra/kong/mcp-poc-ca.crt). certgen signs the
+# mcp-server's TLS cert with the MATCHING committed POC CA KEY (infra/kong/mcp-poc-ca.key), so
+# Kong's verify passes against the SAME CA the config carries. Kong presents its committed client
+# cert (a1b2c3d4-…, also signed by that CA) to uvicorn; uvicorn verifies it against the same CA cert.
+#
+# NOT a production stack. Ephemeral test harness; `docker compose down -v` leaves nothing.
+
+name: babelstone-mcp-edge-contract
+
+services:
+  # One-shot: from the committed POC CA (key+cert mounted read-only) generate the mcp-server's
+  # TLS server cert (CN=mcp-server, SAN covers the alias + localhost) and copy the CA cert to the
+  # shared volume. uvicorn presents mcp-server.crt and verifies Kong's client cert against ca.crt.
+  certgen:
+    image: alpine/openssl:3.3.2
+    volumes:
+      - certs:/certs
+      - ../../infra/kong/mcp-poc-ca.crt:/poc-ca/ca.crt:ro
+      - ../../infra/kong/mcp-poc-ca.key:/poc-ca/ca.key:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        cp /poc-ca/ca.crt /certs/ca.crt
+        if [ ! -f /certs/mcp-server.key ]; then
+          openssl req -newkey rsa:2048 -nodes \
+            -keyout /certs/mcp-server.key -out /certs/mcp-server.csr \
+            -subj "/CN=mcp-server"
+          openssl x509 -req -in /certs/mcp-server.csr \
+            -CA /poc-ca/ca.crt -CAkey /poc-ca/ca.key -CAcreateserial \
+            -out /certs/mcp-server.crt -days 7 \
+            -extfile /dev/stdin <<EOF
+        subjectAltName=DNS:mcp-server,DNS:localhost
+        EOF
+        fi
+        chmod 644 /certs/*.crt /certs/*.key
+        echo "certgen: mcp-server TLS cert (signed by the committed POC CA) ready"
+
+  # STUB ENGINE — plain HTTP on the `engine` alias :8080. Records the headers the MCP server's
+  # engine call forwarded (so the harness reads X-Client-Id back from /echo/headers for A4).
+  engine:
+    image: python:3.12-alpine
+    volumes:
+      - ./stubs/engine-mcp-stub.py:/app/engine-mcp-stub.py:ro
+    command: ["python3", "/app/engine-mcp-stub.py"]
+    networks:
+      default:
+        aliases: ["engine"]
+    # Expose a host port (A4 read-back only): the harness GETs /echo/headers directly.
+    ports:
+      - "${MCP_ENGINE_STUB_PORT:-8014}:8080"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8080/v1/deposits/health',timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # The REAL MCP server, built from the mcp-server/ subtree. mTLS upstream: presents the certgen
+  # server cert, REQUIRES a client cert (MCP_TLS_CERT_REQS=2 → ssl.CERT_REQUIRED) verified against
+  # the POC CA. NO host port by default (Kong is the only ingress) — but the A7 fail-closed test
+  # maps a direct host port to prove a no-client-cert connection is rejected at the TLS layer.
+  mcp-server:
+    build:
+      context: ../../mcp-server
+    depends_on:
+      certgen:
+        condition: service_completed_successfully
+      engine:
+        condition: service_healthy
+    volumes:
+      - certs:/certs:ro
+    networks:
+      default:
+        aliases: ["mcp-server"]
+    environment:
+      # The engine boundary the tools call (the stub above).
+      BABELSTONE_ENGINE_URL: http://engine:8080
+      # This server's canonical URI — tokens MUST carry it as `aud`. Matches the kong.yml /mcp
+      # MCP_SERVER_URI literal ("http://localhost:8000/mcp"), the value Kong's aud pre-function
+      # checks, so the harness tokens satisfy BOTH the Kong check and the app-layer re-check.
+      BABELSTONE_MCP_SERVER_URI: http://localhost:8000/mcp
+      BABELSTONE_IAM_URL: https://iam.babelstone.example/
+      MCP_BIND_HOST: 0.0.0.0
+      MCP_BIND_PORT: "8080"
+      # ── The fix under test (bd babelstone-29ic): uvicorn upstream mTLS ────────────────
+      # Kong dials https://mcp-server:8080; uvicorn now serves TLS (server cert) AND requires a
+      # client cert (CERT_REQUIRED), so a Kong-bypassing actor with no client cert is rejected at
+      # the handshake. Before this lane uvicorn served plain HTTP → Kong 502'd the TLS handshake.
+      MCP_TLS_CERTFILE: /certs/mcp-server.crt
+      MCP_TLS_KEYFILE: /certs/mcp-server.key
+      MCP_TLS_CA_CERTS: /certs/ca.crt
+      MCP_TLS_CERT_REQS: "2"
+    ports:
+      # A7 ONLY: a direct line to the uvicorn TLS port, bypassing Kong, to prove a no-client-cert
+      # connection is rejected. Kong reaches the upstream over the docker network, not this port.
+      - "${MCP_SERVER_DIRECT_PORT:-8015}:8080"
+    healthcheck:
+      # The public well-known path needs no auth; a TLS GET that returns 200 means uvicorn's TLS is
+      # up. ssl._create_unverified_context skips server-cert verification; CERT_REQUIRED on the
+      # SERVER side does not demand a client cert from localhost here only because the healthcheck
+      # presents the same cert via load_cert_chain — simpler: use the mcp-server cert as the client.
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - |
+          import ssl, urllib.request
+          ctx = ssl.create_default_context(cafile="/certs/ca.crt")
+          ctx.check_hostname = False
+          ctx.load_cert_chain("/certs/mcp-server.crt", "/certs/mcp-server.key")
+          urllib.request.urlopen("https://localhost:8080/.well-known/oauth-protected-resource", context=ctx, timeout=2)
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 5s
+
+  # The REAL edge gateway: kong:3.9.1, DB-less, the unmodified infra/kong/kong.yml.
+  kong:
+    image: kong:3.9.1
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      # ── LOAD-BEARING (same finding the abig harness surfaced) ─────────────────────────
+      # kong:3.9.1 defaults to `untrusted_lua = sandbox` with an EMPTY sandbox-requires list.
+      # The real kong.yml's /mcp pre-functions `require("cjson.safe")`. Without this allowlist
+      # those requires are BLOCKED and EVERY /mcp request 500s — a property `kong config parse`
+      # cannot see. The deployed Kong (infra/compose.yaml, infra/k8s/base/kong.yaml) carries the
+      # same setting.
+      KONG_UNTRUSTED_LUA: "sandbox"
+      KONG_UNTRUSTED_LUA_SANDBOX_REQUIRES: "cjson.safe,resty.http"
+      KONG_LOG_LEVEL: "notice"
+    volumes:
+      # The REAL config, read-only, byte-for-byte (no templating). Kong reads its client cert
+      # (a1b2c3d4-…) and the trusted CA (f0e1d2c3-…) from this loaded declarative config.
+      - ../../infra/kong/kong.yml:/kong/kong.yml:ro
+    ports:
+      - "${MCP_KONG_PROXY_PORT:-8012}:8000"
+      - "${MCP_KONG_ADMIN_PORT:-8013}:8001"
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  certs:
+
+networks:
+  default:

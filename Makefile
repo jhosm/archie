@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 EVENTCATALOG_PORT ?= 8082
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo-mcp demo-mcp-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo-mcp demo-mcp-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -80,6 +80,9 @@ kong-config-check: ## Validate the Kong edge config: deck + kong config parse + 
 
 edge-contract-test: ## Live-Kong RUNTIME contract test: PSD2 SCA + X-Client-Id IDOR + SoR fail-closed (bd abig + 1z0r, needs Docker)
 	@./scripts/edge-contract-test.sh
+
+mcp-contract-test: ## Live-Kong MCP-edge RUNTIME contract test: real initialize + aud/sub/scope gates + upstream mTLS fail-closed (bd 5ot0 + 29ic, needs Docker)
+	@./scripts/mcp-contract-test.sh
 
 validate-variant: ## Run pack-validate depths 1–4 on a variant (VARIANT=path PACK=pt.2026.1, ADR-PC-006)
 	@test -n "$(VARIANT)" || { echo "usage: make validate-variant VARIANT=<path/to/variant.yaml> [PACK=pt.2026.1]"; exit 2; }

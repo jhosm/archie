@@ -6,6 +6,19 @@
 # Single-source-of-truth: the kong and otel ConfigMaps are generated FROM the
 # same files the Compose stack mounts (../../kong/kong.yml,
 # ../../otel/collector.yaml) — no duplicated config.
+#
+# MCP mutual-TLS parity (ADR-IC-006 §P5 / ADR-IC-010 §P5, bd babelstone-29ic): the
+# Compose stack now runs the Kong→mcp-server hop over MUTUAL TLS — kong.yml sets
+# tls_verify:true on the mcp-server service, presents a client cert (a1b2c3d4-…) and
+# trusts the POC CA (f0e1d2c3-…); uvicorn requires a client cert (MCP_TLS_* env →
+# __main__.build_tls_kwargs). When the mcp-server APPLICATION manifest lands here (it is
+# out of scope for this backing-infra-only base today), it MUST carry the same posture:
+# (1) MCP_TLS_CERTFILE / MCP_TLS_KEYFILE / MCP_TLS_CA_CERTS env pointing at a mounted TLS
+# Secret whose server cert is signed by the SAME CA kong.yml's ca_certificates trusts, and
+# (2) MCP_TLS_CERT_REQS=2 (CERT_REQUIRED). At deploy time the POC CA + Kong client cert in
+# kong.yml are swapped for the internal-CA bundle + the real Kong→MCP client cert (two
+# secrets). Until that manifest exists there is nothing to gate here — this note records the
+# contract so the parity is not silently dropped (ADR-PC-020 §D3).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
