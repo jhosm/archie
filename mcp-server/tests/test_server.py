@@ -138,19 +138,16 @@ async def test_every_tool_is_registered_with_output_schema() -> None:
     assert by_name["pay_interest"].outputSchema is not None
 
 
-async def test_deposit_resource_template_is_registered() -> None:
-    # Epic J.2 (bd babelstone-2ep0): the deposit read model is ALSO exposed as a host-attached
-    # resource template alongside the get_deposit tool (ADR-IC-010 §A1). The on-demand agent read
-    # stays a tool; this template is the host-pinned ambient-context view of the same data.
-    templates = await server.mcp.list_resource_templates()
-    assert "bank://deposits/{deposit_id}" in [t.uriTemplate for t in templates]
-
-
-async def test_no_static_resources_are_registered() -> None:
-    # Deposit ids are not server-enumerable, so the deposit surface is a template, not a static
-    # resource. The static resources list stays empty.
+async def test_no_resources_or_templates_are_registered() -> None:
+    # ADR-IC-010 §A2 (2026-05-31 amendment) replaced the `bank://deposits/{deposit_id}` resource
+    # template with the `get_deposit` tool: the single, lag-sensitive deposit position is a
+    # model-controlled on-demand read (a tool with a mandatory §P6 outputSchema), not host-attached
+    # context. So neither the static resource list NOR the resource-template list carries a deposit
+    # surface — the scoped MCP read surface is tools-only.
     resources = await server.mcp.list_resources()
     assert resources == []
+    templates = await server.mcp.list_resource_templates()
+    assert templates == []
 
 
 async def test_both_prompts_are_registered() -> None:

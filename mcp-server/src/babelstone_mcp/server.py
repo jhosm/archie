@@ -234,11 +234,16 @@ async def pay_interest(deposit_id: str, ctx: Context) -> DepositPosition:
     return DepositPosition(**await engine().pay_interest(deposit_id, client_id=auth.client_id))
 
 
-# Side-effect imports register the resource template and the prompt templates on ``mcp`` at import
-# time (Epic J.2, bd babelstone-2ep0). They live at the BOTTOM of the module — both modules do
-# ``from .server import mcp``, so importing them here, after ``mcp`` is defined, avoids the circular
-# import. ``app.py`` already imports ``server`` to pick up the tool registrations; these riders mean
-# the same import now also brings the resource + prompt surfaces (ADR-IC-010 §A1). They ride the same
-# Streamable-HTTP /mcp route — no kong.yml change is needed.
+# Side-effect import registers the prompt templates on ``mcp`` at import time (Epic J.2, bd
+# babelstone-2ep0). It lives at the BOTTOM of the module — ``prompts`` does ``from .server import
+# mcp``, so importing it here, after ``mcp`` is defined, avoids the circular import. ``app.py``
+# already imports ``server`` to pick up the tool registrations; this rider means the same import now
+# also brings the prompt surface (ADR-IC-010 §A1). The prompts ride the same Streamable-HTTP /mcp
+# route — no kong.yml change is needed.
+#
+# There is deliberately NO deposit *resource*: ADR-IC-010 §A2 (2026-05-31 amendment) replaced the
+# ``bank://deposits/{deposit_id}`` resource template with the ``get_deposit`` tool — the single,
+# lag-sensitive deposit position is a model-controlled on-demand read (a tool with a mandatory §P6
+# outputSchema), not host-attached context. Re-introducing that template would re-incur the exact
+# discoverability + untyped-body trade-offs §A2 rejected (Document 11 §"single deposit → tool").
 from . import prompts as _prompts  # noqa: E402,F401 — registers constitute_term_deposit + review_upcoming_maturities
-from . import resources as _resources  # noqa: E402,F401 — registers the bank://deposits/{id} resource template
