@@ -143,7 +143,7 @@ have 'response_buffering: *false' "SSE stream route missing response_buffering: 
 # route, leaving the public well-known route with none. These assertions lock that shape so a
 # future edit can neither re-introduce the global jwt nor drop jwt from an authenticated route
 # (ADR-PC-020 §D3: no silent divergence).
-have 'name: *jwt' "missing the jwt plugin (token signature validation — must be attached per-route on the authenticated routes, ADR-IC-006 §1/§P7 / ADR-IC-010 §P2)"
+have 'name: *jwt' "missing the jwt plugin (token signature validation — must be attached per-route on the authenticated routes, ADR-IC-006 §1 / ADR-IC-010 §P2)"
 
 # (a) jwt MUST be attached to EACH of the six authenticated routes (deposits-constitute,
 # processes-stream, deposits-maturities, deposits-read, sor-engine-ops, mcp-streamable-http).
@@ -152,7 +152,7 @@ have 'name: *jwt' "missing the jwt plugin (token signature validation — must b
 # the top-level `plugins:` key. Count the route-level `- name: jwt` entries: there must be >= 6.
 jwt_route_count="$(grep -cE '^ {10}- name: jwt$' "$CONFIG" || true)"
 [ "${jwt_route_count:-0}" -ge 6 ] \
-  || fail "jwt must be attached to EACH of the six authenticated routes (deposits-constitute, processes-stream, deposits-maturities, deposits-read, sor-engine-ops, mcp-streamable-http); found $jwt_route_count route-level jwt entries (ADR-IC-006 §1/§P7 / ADR-IC-010 §P2 Amendment 2026-06-15)"
+  || fail "jwt must be attached to EACH of the six authenticated routes (deposits-constitute, processes-stream, deposits-maturities, deposits-read, sor-engine-ops, mcp-streamable-http); found $jwt_route_count route-level jwt entries (ADR-IC-006 §1 / ADR-IC-010 §P2 Amendment 2026-06-15)"
 
 # (b) jwt MUST NOT appear in the top-level (global) `plugins:` block. A global jwt is the defect
 # the fix removes — with the well-known route's `enabled: false` ignored by CE, a global jwt
@@ -189,7 +189,7 @@ wk_jwt="$(awk '/^      - name: mcp-well-known$/{f=1;next} /^      - name: /{f=0}
 # NOTE: this greps the WHOLE config, not a jwt block specifically — today jwt is the only plugin
 # where `anonymous` is the dangerous fallback, and no `anonymous:` appears anywhere. A future plugin
 # that legitimately needs `anonymous` would require scoping this to the jwt blocks.
-hasnot 'anonymous:' "the jwt plugin must have NO anonymous fallback — the SCA + X-Client-Id + aud pre-functions read claims before jwt and rely on each route's jwt 401'ing an unauthenticated request before upstream (ADR-IC-006 §1/§P7)"
+hasnot 'anonymous:' "the jwt plugin must have NO anonymous fallback — the SCA + X-Client-Id + aud pre-functions read claims before jwt and rely on each route's jwt 401'ing an unauthenticated request before upstream (ADR-IC-006 §1)"
 have 'name: *rate-limiting' "missing the rate-limiting plugin (ADR-IC-006 §P3)"
 # Payload validation (ADR-IC-006 §4): the constitute route must validate the request
 # body. The Enterprise `request-validator` plugin is NOT in Kong CE (the selected

@@ -770,6 +770,15 @@ services:
                   -- coexistence §6.2). The gateway READS `sor`; it never DECIDES it (§2). Done over
                   -- the in-cluster engine address with the gateway's mTLS client cert; verify is the
                   -- POC posture of the engine-query service (flip on with the CA bundle at deploy).
+                  -- ORDERING NOTE (see this route's jwt block): on Kong CE this pre-function runs at
+                  -- priority 1000000, BEFORE jwt (1450), so this read-surface GET can fire while the
+                  -- request's own jwt has NOT yet validated the MAIN request — it forwards the request's
+                  -- (possibly forged/tampered) Authorization header. This is safe because (1) it is a
+                  -- READ of the read surface, never the money-mover command; (2) the deposits-read route
+                  -- this GET hits is itself a no-anonymous jwt route, so a forged token 401s the lookup
+                  -- itself against the real engine; and (3) the main money-moving POST is still 401'd by
+                  -- THIS route's jwt before any upstream proxy. No state-changing op rides a not-yet-
+                  -- rejected token. The guarantee relies on the read surface staying jwt-gated.
                   local httpc = require("resty.http").new()
                   httpc:set_timeout(2000)
                   local res, err = httpc:request_uri(
