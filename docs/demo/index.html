@@ -350,6 +350,48 @@ h2 {
 .arch-rail .ri { font-family:var(--mono); font-size:0.66rem; color:var(--muted); margin-top:0.45rem; line-height:1.5; }
 .arch-cap { font-family:var(--mono); font-size:0.64rem; color:var(--faint); text-align:center; letter-spacing:0.12em; margin-bottom:0.4rem; }
 
+/* ---------- slide 12 — extensibility: new family vs new variant ---------- */
+.slide.ext { padding-top:2rem; padding-bottom:1.6rem; }
+.slide.ext .slide-inner { max-width:1240px; }
+.ext-head { display:flex; align-items:baseline; gap:1.4rem; flex-wrap:wrap; margin-bottom:1.4rem; }
+.ext-head h2 { font-size:clamp(1.5rem,2.8vw,2.3rem); }
+.ext-head .arch-legend span { gap:0.45rem; }
+.ext-grid { display:grid; grid-template-columns:1fr 1fr; gap:1.4rem; align-items:stretch; }
+@media (max-width:900px){ .ext-grid { grid-template-columns:1fr; } }
+.ext-card { border:1px solid var(--hair); border-radius:12px; padding:1.3rem 1.4rem; position:relative; overflow:hidden;
+  background:linear-gradient(180deg, rgba(255,255,255,0.022), transparent); display:flex; flex-direction:column; }
+.ext-card::before { content:""; position:absolute; top:0; left:0; width:100%; height:2px; }
+.ext-card.code::before { background:linear-gradient(90deg, var(--gold), transparent); }
+.ext-card.config::before { background:linear-gradient(90deg, var(--verify), transparent); }
+.ext-card .xk { font-family:var(--mono); font-size:0.66rem; letter-spacing:0.18em; text-transform:uppercase; }
+.ext-card.code .xk { color:var(--gold); }
+.ext-card.config .xk { color:var(--verify); }
+.ext-card h3 { font-family:var(--serif); font-weight:500; font-size:1.55rem; margin:0.5rem 0 0.15rem; line-height:1.05; }
+.ext-card .xex { font-family:var(--mono); font-size:0.7rem; color:var(--muted); margin-bottom:1.1rem; line-height:1.4; }
+.ext-card .xex em { color:var(--paper-soft); font-style:normal; }
+.ext-list { display:flex; flex-direction:column; gap:0.6rem; }
+.xrow { display:flex; align-items:flex-start; gap:0.65rem; }
+.xrow .xdot { width:7px; height:7px; border-radius:2px; flex:none; margin-top:0.4rem; }
+.ext-card.code .xdot { background:var(--gold); }
+.ext-card.config .xdot { background:var(--verify); }
+.xrow .xt { font-size:0.92rem; color:var(--paper-soft); font-weight:300; line-height:1.3; }
+.xrow .xt b { color:var(--paper); font-weight:500; }
+.xrow .xt .xm { font-family:var(--mono); font-size:0.7rem; color:var(--muted); display:block; margin-top:0.12rem; letter-spacing:0.02em; }
+.ext-verdict { font-family:var(--mono); font-size:0.72rem; letter-spacing:0.08em; margin-top:auto; padding-top:1rem; margin-top:1.1rem;
+  padding-top:0.9rem; border-top:1px solid var(--hair-soft); display:flex; justify-content:space-between; gap:1rem; align-items:baseline; }
+.ext-verdict .vref { color:var(--faint); font-size:0.64rem; }
+.ext-card.code .ext-verdict { color:var(--gold); }
+.ext-card.config .ext-verdict { color:var(--verify); }
+.ext-punch { margin-top:1.4rem; font-size:clamp(1rem,1.55vw,1.3rem); font-weight:300; color:var(--paper-soft); max-width:74ch; line-height:1.45; }
+.ext-punch b { color:var(--paper); font-weight:500; }
+/* board echo — a miniature of slide 11's pieces; lit chips = touched */
+.board-echo { display:flex; flex-wrap:wrap; gap:0.32rem; margin:0.1rem 0 1rem; }
+.board-echo .bk { width:100%; font-family:var(--mono); font-size:0.6rem; letter-spacing:0.16em; text-transform:uppercase; color:var(--faint); margin-bottom:0.15rem; }
+.bchip { font-family:var(--mono); font-size:0.61rem; letter-spacing:0.02em; padding:0.26rem 0.46rem; border-radius:5px;
+  border:1px solid var(--hair-soft); color:var(--faint); background:rgba(255,255,255,0.012); white-space:nowrap; line-height:1; }
+.bchip.touch { color:var(--gold); border-color:rgba(224,177,94,0.55); background:rgba(224,177,94,0.10); font-weight:500; }
+.bchip.touch.new::before { content:"+ "; color:var(--gold); }
+
 /* ---------- print → PDF leave-behind ---------- */
 @media print {
   @page { size: 1280px 720px; margin: 0; }
@@ -608,6 +650,75 @@ h2 {
           </div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- 12 — APPENDIX: extensibility (new family vs new variant) -->
+  <section class="slide ext" data-notes="Appendix — read this against the board on slide 11. The lit chips are exactly the pieces from that diagram a change touches. A NEW FAMILY (left) lights up ONE box — Product Families (you add a new one beside term_deposit) — plus the Contracts · Governance rail (new Avro + CUE schemas, a new EventCatalog entry). Everything else on the board is reused unchanged: the Engine API, the Financial-Math Kernel, the Event Store, the Event Bus, the Orchestrator, the MCP surface, the gateway, observability. That is the family-agnostic engine of ADR-PC-021 made visible — the engine never names a family, so a new one is additive, not invasive. The code you actually write is the family's own events, pure folds, lifecycle legality table and decider, then a few lines of host wiring. A NEW VARIANT (right) lights up NO box at all: a 12-month deposit becomes a 24-month with quarterly coupons by publishing a product-config YAML, a rate-sheet row and a pack pin — pure data the engine resolves at constitution, validated by CUE and pulled by signature. Punchline: most new products are a config file a regulator can read; touching the architecture is the exception.">
+    <div class="slide-inner">
+      <div class="ext-head r" style="--i:0">
+        <div class="kicker" style="margin-bottom:0">Appendix · extensibility</div>
+        <h2>Two ways to grow — on the same board.</h2>
+        <div class="arch-legend">
+          <span><span class="adot" style="background:var(--gold)"></span>touched</span>
+          <span><span class="adot" style="background:transparent;border:1px solid var(--faint)"></span>reused unchanged</span>
+        </div>
+      </div>
+      <div class="ext-grid">
+        <!-- NEW FAMILY — code -->
+        <div class="ext-card code r" style="--i:1">
+          <div class="xk">New product family</div>
+          <h3>Lights up one box</h3>
+          <div class="xex">e.g. term deposits → <em>savings accounts</em> · <em>credit lines</em> — a different lifecycle</div>
+          <div class="board-echo">
+            <span class="bk">the slide-11 board · touched ↓</span>
+            <span class="bchip">Kong Gateway</span>
+            <span class="bchip">MCP Server</span>
+            <span class="bchip">Engine API</span>
+            <span class="bchip touch new">Product Families</span>
+            <span class="bchip">Financial-Math</span>
+            <span class="bchip">Event Store</span>
+            <span class="bchip">Event Bus</span>
+            <span class="bchip">Orchestrator</span>
+            <span class="bchip">Boundary</span>
+            <span class="bchip">Observability</span>
+            <span class="bchip">Security · PII</span>
+            <span class="bchip touch">Contracts · Gov</span>
+          </div>
+          <div class="ext-list">
+            <div class="xrow"><span class="xdot"></span><span class="xt"><b>+ Product Families</b> — events, pure folds, lifecycle table, decider<span class="xm">families/&lt;x&gt;/ · IFamilyModule · IFamilyHostModule + Program.cs</span></span></div>
+            <div class="xrow"><span class="xdot"></span><span class="xt"><b>Contracts · Governance</b> — new schemas<span class="xm">Avro .avsc · EventCatalog entry · closed CUE #Family</span></span></div>
+          </div>
+          <div class="ext-verdict"><span>compile · deploy · the rest of the board unchanged</span><span class="vref">ADR-PC-010 · 021</span></div>
+        </div>
+        <!-- NEW VARIANT — config -->
+        <div class="ext-card config r" style="--i:2">
+          <div class="xk">New product variant</div>
+          <h3>Lights up no box</h3>
+          <div class="xex">e.g. <em>dpz_pt_12m_juros_venc</em> → <em>dpz_pt_24m_juros_trimestral</em> — same engine</div>
+          <div class="board-echo">
+            <span class="bk">the slide-11 board · every box reused as-is ↓</span>
+            <span class="bchip">Kong Gateway</span>
+            <span class="bchip">MCP Server</span>
+            <span class="bchip">Engine API</span>
+            <span class="bchip">Product Families</span>
+            <span class="bchip">Financial-Math</span>
+            <span class="bchip">Event Store</span>
+            <span class="bchip">Event Bus</span>
+            <span class="bchip">Orchestrator</span>
+            <span class="bchip">Boundary</span>
+            <span class="bchip">Observability</span>
+            <span class="bchip">Security · PII</span>
+            <span class="bchip">Contracts · Gov</span>
+          </div>
+          <div class="ext-list">
+            <div class="xrow"><span class="xdot"></span><span class="xt"><b>Product-config YAML</b> + <b>rate-sheet row</b> + <b>pack pin</b><span class="xm">term · coupon · early-exit · bounds — resolved engine-side at constitution</span></span></div>
+            <div class="xrow"><span class="xdot"></span><span class="xt"><b>Sealed test corpus</b><span class="xm">canonical inputs → generated expected events</span></span></div>
+          </div>
+          <div class="ext-verdict"><span>zero code · zero deploy · CUE + signature gated</span><span class="vref">ADR-PC-007 · 008 · 009</span></div>
+        </div>
+      </div>
+      <p class="ext-punch r" style="--i:3">A new family is <b>additive, not invasive</b> — it touches one box because the engine never learns a product's name. A new variant is just <b>a config file a regulator can read.</b></p>
     </div>
   </section>
 
