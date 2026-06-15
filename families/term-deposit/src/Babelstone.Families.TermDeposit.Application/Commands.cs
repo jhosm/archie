@@ -62,6 +62,62 @@ public sealed record ConstituteDepositCommand(
     IReadOnlyDictionary<string, PreconditionVerdict>? Preconditions = null,
     Guid? CommandId = null);
 
+/// <summary>
+/// The MINIMAL constitution request the saga now sends (Fork B rework, bd t7o3.11 / 3k10 / c8d8):
+/// a product code, the principal, the funding account, and the deposit id — and NOTHING about the
+/// product's SHAPE. The engine resolves the structural facts (term / interest variant / renewal
+/// policy / coupon cadence / pricing role) from its deployed product-config store at constitution,
+/// so the orchestrator carries no product-family knowledge — the maintainer's Q2 choice. The engine
+/// is the single home of product config, and the only authority that knows what a product code means.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>The structural facts are resolved engine-side, in the SAME transaction as the rate-sheet
+/// resolve (ADR-PC-008 §S2 / ADR-PC-009).</b> The service looks up the product config (term / variant
+/// / renewal policy / cadence / default role), derives the start date from
+/// <see cref="ConstitutedAt"/> (the engine is now the constitution authority — see §P5 below), then
+/// runs the existing resolve→decide→append choreography. An unknown product code fails LOUD, never a
+/// silent default — the same fail-loud discipline as an unpriced (product, role).
+/// </para>
+/// <para>
+/// <b>start_date / replay-stability (ADR-PC-010 §P5).</b> Where the rejected stand-in PINNED the start
+/// date at the orchestrator edge so the saga's command bytes carried no clock, the engine is now the
+/// event author and derives the start date from <see cref="ConstitutedAt"/> (host-stamped by the
+/// engine's injected <c>TimeProvider</c>, the impure-shell clock). Replay stability is preserved by
+/// the Idempotency-Key dedup (ADR-PC-029 slot 4): a replayed constitution with the same
+/// <see cref="CommandId"/> returns the original outcome with NO second append, so the start date is
+/// never re-derived on a replay.
+/// </para>
+/// <para>
+/// <b>No PII (ADR-PC-004 §P2).</b> Every field is a structural reference or an integer-cents scalar —
+/// the catalogue product code, integer-cents principal, the opaque funding-account token, the
+/// process-id deposit id. NEVER a raw IBAN / NIF / name.
+/// </para>
+/// </remarks>
+/// <param name="DepositId">The stream/aggregate id (= the saga's process_id), so the relayed
+/// <c>DepositConstituted</c> carries <c>ce_subject = process_id</c> and the orchestrator correlates it.</param>
+/// <param name="ProductId">The product code the engine resolves both the SHAPE and the rate from.</param>
+/// <param name="PrincipalCents">The deposit principal in integer cents.</param>
+/// <param name="FundingAccount">The opaque funding-account token (a reference, not an IBAN).</param>
+/// <param name="ConstitutedAt">The instant the sheet is resolved as-of, the event's valid time, and
+/// the source of the derived start date. Host-stamped by the engine's clock when the caller omits it.</param>
+/// <param name="Actor">The acting principal recorded on the append (e.g. <c>mcp:dev</c>).</param>
+/// <param name="CommandId">The deterministic command id (the saga_outbox row id) — the Idempotency-Key
+/// the constitution append dedups on (ADR-PC-029 slot 4).</param>
+/// <param name="Role">An OPTIONAL pricing-role override; when null the product config's default role
+/// (v1: <c>standard</c>) is used. The orchestrator never sends this — it is for direct callers.</param>
+/// <param name="Preconditions">The resolved commercial-eligibility verdicts (ADR-PC-024), if any.</param>
+public sealed record MinimalConstituteDepositRequest(
+    Guid DepositId,
+    string ProductId,
+    long PrincipalCents,
+    string FundingAccount,
+    DateTimeOffset ConstitutedAt,
+    string Actor,
+    Guid? CommandId = null,
+    string? Role = null,
+    IReadOnlyDictionary<string, PreconditionVerdict>? Preconditions = null);
+
 /// <summary>Mature a constituted deposit: accrue → withhold → pay out the AT_MATURITY single flow.</summary>
 /// <param name="PayoutAccount">The legacy current account credited the total payout (settlement).</param>
 public sealed record MatureDepositCommand(

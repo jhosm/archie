@@ -154,26 +154,22 @@ public sealed class EngineCommandPactConsumerTests : IAsyncLifetime
         // babelstone-t7o3.9). The FK requires the saga_state row to exist first (same transaction).
         await businessRefStore.TryInsertAsync(
             connection, tx,
+            // The MINIMAL business reference (Fork B rework, bd t7o3.11 / 3k10 / c8d8): the orchestrator
+            // pins only the product code + amount + account/threshold references. The structural product
+            // facts the rejected v1 stand-in pinned here are GONE — the engine resolves them from the
+            // product code at constitution (the maintainer's Q2 choice, ADR-PC-009). The product code is
+            // a real launch variant so the dispatched body matches what the PROVIDER half
+            // (EngineCommandPactProviderTests) replays against the REAL engine — both halves pin the same
+            // minimal {deposit_id, product_id, principal_cents, funding_account} contract shape.
             new SagaBusinessReference(
                 ProcessId: processId,
-                ProductRef: "TD-TRAD-12M",
+                ProductRef: "dpz_pt_12m_juros_venc",
                 AmountMinorUnits: 100_00,
                 SourceAccountRef: "acct-ref-001",
                 InterestAccountRef: null,
                 DepositRef: "DEP-" + processId.ToString("N"),
                 ClientType: ClientType.Existing,
-                AutoApprovalThresholdMinorUnits: 1_000_00,
-                // Pin the STRUCTURAL product facts explicitly with a realistic StartDate (not the
-                // DateOnly.MinValue 0001-01-01 record default): the body this seeds is the one the
-                // PROVIDER half (EngineCommandPactProviderTests) replays against the REAL engine, whose
-                // in-transaction rate resolve looks for a sheet active ON start_date — a 0001-01-01 anchor
-                // would find no sheet and 4xx, breaking provider verification (bd babelstone-t7o3.11).
-                TermDays: 365,
-                InterestVariant: "AT_MATURITY",
-                AutoRenewalPolicy: "NONE",
-                PaymentPeriodMonths: 0,
-                Role: "standard",
-                StartDate: new DateOnly(2026, 1, 15)));
+                AutoApprovalThresholdMinorUnits: 1_000_00));
         await tx.CommitAsync();
     }
 

@@ -75,20 +75,8 @@ public static class DepositsEndpoints
         }
 
         var depositId = request.DepositId ?? Guid.NewGuid();
-        var command = new ConstituteDepositCommand(
-            DepositId: depositId,
-            PrincipalCents: request.PrincipalCents,
-            ProductId: request.ProductId,
-            Role: request.Role,
-            TermDays: request.TermDays,
-            StartDate: request.StartDate,
-            ConstitutedAt: request.ConstitutedAt ?? clock.GetUtcNow(),
-            InterestVariant: request.InterestVariant,
-            AutoRenewalPolicy: request.AutoRenewalPolicy,
-            FundingAccount: request.FundingAccount,
-            Actor: request.Actor ?? "mcp:dev",
-            PaymentPeriodMonths: request.PaymentPeriodMonths,
-            CommandId: commandId);
+        var constitutedAt = request.ConstitutedAt ?? clock.GetUtcNow();
+        var actor = request.Actor ?? "mcp:dev";
 
         // The host shell is the composition root that knows the command, so the product-semantic
         // span is opened HERE, never in the pure decider/fold (ADR-PC-010 §P5 / ADR-IC-007 P2/P3).
@@ -103,7 +91,27 @@ public static class DepositsEndpoints
         long commitSequence;
         try
         {
-            commitSequence = await service.ConstituteAsync(command, ct);
+            // Fork B rework (bd t7o3.11 / 3k10 / c8d8): when the body omits the structural facts — the
+            // MINIMAL saga body {deposit_id, product_id, principal_cents, funding_account} — the engine
+            // RESOLVES the term / interest variant / renewal policy / coupon cadence / role from its
+            // deployed product-config store, IN-TRANSACTION alongside the rate-sheet resolve (ADR-PC-008
+            // §S2 / ADR-PC-009). The orchestrator carries no product-family knowledge. A direct caller
+            // (the MCP agent, API tests) that DOES supply the full shape stays on the explicit path,
+            // which honours every supplied field unchanged.
+            commitSequence = HasStructuralFacts(request)
+                ? await service.ConstituteAsync(
+                    BuildFullCommand(request, depositId, constitutedAt, actor, commandId), ct)
+                : await service.ConstituteFromProductConfigAsync(
+                    new MinimalConstituteDepositRequest(
+                        DepositId: depositId,
+                        ProductId: request.ProductId,
+                        PrincipalCents: request.PrincipalCents,
+                        FundingAccount: request.FundingAccount,
+                        ConstitutedAt: constitutedAt,
+                        Actor: actor,
+                        CommandId: commandId,
+                        Role: request.Role),
+                    ct);
         }
         catch (DuplicateCommandException dup)
         {
@@ -132,6 +140,44 @@ public static class DepositsEndpoints
         return Results.Created(
             $"/v1/deposits/{depositId}", new ConstituteDepositResponse(depositId, "ACTIVE", commitSequence));
     }
+
+    /// <summary>
+    /// True when the caller supplied the full structural shape (term + start date + interest variant +
+    /// renewal policy) on the body — the explicit, full-facts path a direct caller (the MCP agent, API
+    /// tests) takes. False means the MINIMAL saga body, where the engine resolves the shape from the
+    /// product config (Fork B rework, bd t7o3.11 / 3k10 / c8d8). Either all four are present or the
+    /// engine resolves all of them — a partial shape is treated as minimal so a missing field is
+    /// resolved rather than silently defaulted.
+    /// </summary>
+    private static bool HasStructuralFacts(ConstituteDepositRequest request) =>
+        request.TermDays is not null
+        && request.StartDate is not null
+        && !string.IsNullOrWhiteSpace(request.InterestVariant)
+        && !string.IsNullOrWhiteSpace(request.AutoRenewalPolicy);
+
+    /// <summary>
+    /// Build the full <see cref="ConstituteDepositCommand"/> from a body that carries the complete
+    /// structural shape (the explicit, full-facts path). Honours every supplied field unchanged —
+    /// <see cref="HasStructuralFacts"/> guards that the four shape fields are present, so the
+    /// non-null assertions hold; the role defaults to <c>standard</c> and the cadence to 0 when those
+    /// optional fields are omitted on the full path.
+    /// </summary>
+    private static ConstituteDepositCommand BuildFullCommand(
+        ConstituteDepositRequest request, Guid depositId, DateTimeOffset constitutedAt, string actor, Guid commandId) =>
+        new(
+            DepositId: depositId,
+            PrincipalCents: request.PrincipalCents,
+            ProductId: request.ProductId,
+            Role: request.Role ?? "standard",
+            TermDays: request.TermDays!.Value,
+            StartDate: request.StartDate!.Value,
+            ConstitutedAt: constitutedAt,
+            InterestVariant: request.InterestVariant!,
+            AutoRenewalPolicy: request.AutoRenewalPolicy!,
+            FundingAccount: request.FundingAccount,
+            Actor: actor,
+            PaymentPeriodMonths: request.PaymentPeriodMonths ?? 0,
+            CommandId: commandId);
 
     private static async Task<IResult> GetDepositAsync(
         Guid id,

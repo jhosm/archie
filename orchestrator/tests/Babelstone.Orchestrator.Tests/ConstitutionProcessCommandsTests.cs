@@ -219,7 +219,7 @@ public sealed class ConstitutionProcessCommandsTests
     // ---- ActivateDeposit serializes the engine's ConstituteDepositRequest (bd babelstone-t7o3.11) ----
 
     [Fact]
-    public void ActivateDeposit_body_is_a_snake_case_ConstituteDepositRequest_with_deposit_id_equal_to_process_id()
+    public void ActivateDeposit_body_is_a_minimal_snake_case_ConstituteDepositRequest_with_deposit_id_equal_to_process_id()
     {
         // ActivateDeposit is delivered to the engine's POST /v1/deposits, so its wire body is the
         // engine's snake_case ConstituteDepositRequest — NOT the polymorphic saga envelope. The
@@ -231,12 +231,18 @@ public sealed class ConstitutionProcessCommandsTests
         Assert.Equal(ProcessId, root.GetProperty("deposit_id").GetGuid());
         Assert.Equal("dpz_pt_12m_juros_venc", root.GetProperty("product_id").GetString());
         Assert.Equal(100_00, root.GetProperty("principal_cents").GetInt64());
-        Assert.Equal("standard", root.GetProperty("role").GetString());
-        Assert.Equal(365, root.GetProperty("term_days").GetInt32());
-        Assert.Equal("2026-01-15", root.GetProperty("start_date").GetString());
-        Assert.Equal("AT_MATURITY", root.GetProperty("interest_variant").GetString());
-        Assert.Equal("NONE", root.GetProperty("auto_renewal_policy").GetString());
         Assert.Equal("acct-ref-001", root.GetProperty("funding_account").GetString());
+
+        // The orchestrator carries NO product-family knowledge (Fork B rework, bd t7o3.11 / 3k10 / c8d8):
+        // the STRUCTURAL product facts are resolved ENGINE-side from the product code, so the body must
+        // NOT carry them. This is the load-bearing assertion of the rework — the orchestrator stopped
+        // knowing what a product code means (the maintainer's Q2 choice, ADR-PC-009).
+        Assert.False(root.TryGetProperty("role", out _));
+        Assert.False(root.TryGetProperty("term_days", out _));
+        Assert.False(root.TryGetProperty("start_date", out _));
+        Assert.False(root.TryGetProperty("interest_variant", out _));
+        Assert.False(root.TryGetProperty("auto_renewal_policy", out _));
+        Assert.False(root.TryGetProperty("payment_period_months", out _));
 
         // The TAN is NEVER sent — the engine resolves the rate in-transaction (bd babelstone-3k10).
         Assert.False(root.TryGetProperty("tan_basis_points", out _));
@@ -262,8 +268,7 @@ public sealed class ConstitutionProcessCommandsTests
         // is the opaque source-account TOKEN the edge pinned, not an IBAN.
         var allowed = new HashSet<string>(StringComparer.Ordinal)
         {
-            "deposit_id", "product_id", "principal_cents", "role", "term_days", "start_date",
-            "interest_variant", "auto_renewal_policy", "funding_account", "payment_period_months",
+            "deposit_id", "product_id", "principal_cents", "funding_account",
         };
 
         using var document = JsonDocument.Parse(Activate().ToBytes());
@@ -277,7 +282,9 @@ public sealed class ConstitutionProcessCommandsTests
     public void ActivateDeposit_assembled_by_the_factory_carries_the_pinned_business_facts_and_process_id()
     {
         // The factory builds the engine body from the pinned business reference: deposit_id = process_id,
-        // and the structural product facts come from the reference the edge pinned.
+        // and the MINIMAL facts (product code, principal, funding account) come from the reference. The
+        // structural product facts are NOT pinned at the edge any more — the engine resolves them from
+        // the product code (Fork B rework, bd t7o3.11 / 3k10 / c8d8, ADR-PC-009).
         var reference = new SagaBusinessReference(
             ProcessId: ProcessId,
             ProductRef: "dpz_pt_12m_juros_venc",
@@ -286,13 +293,7 @@ public sealed class ConstitutionProcessCommandsTests
             InterestAccountRef: null,
             DepositRef: "DEP-2026-00012345",
             ClientType: ClientType.Existing,
-            AutoApprovalThresholdMinorUnits: 25_000_00,
-            TermDays: 365,
-            InterestVariant: "AT_MATURITY",
-            AutoRenewalPolicy: "NONE",
-            PaymentPeriodMonths: 0,
-            Role: "standard",
-            StartDate: new DateOnly(2026, 1, 15));
+            AutoApprovalThresholdMinorUnits: 25_000_00);
 
         var command = (ActivateDepositCommand)SagaCommandPayloadFactory.Build(
             ConstitutionProcess.ActivateDeposit, ProcessId, CausationId, CorrelationId, reference)!;
@@ -303,7 +304,9 @@ public sealed class ConstitutionProcessCommandsTests
         Assert.Equal("dpz_pt_12m_juros_venc", root.GetProperty("product_id").GetString());
         Assert.Equal(100_00, root.GetProperty("principal_cents").GetInt64());
         Assert.Equal("acct-ref-001", root.GetProperty("funding_account").GetString());
-        Assert.Equal("2026-01-15", root.GetProperty("start_date").GetString());
+        // The structural facts are absent — resolved engine-side, not pinned at the edge.
+        Assert.False(root.TryGetProperty("start_date", out _));
+        Assert.False(root.TryGetProperty("term_days", out _));
     }
 
     private static ReserveAccountBalanceCommand Reserve() => new()
@@ -325,11 +328,5 @@ public sealed class ConstitutionProcessCommandsTests
         ProductCode = "dpz_pt_12m_juros_venc",
         PrincipalCents = 100_00,
         FundingAccount = "acct-ref-001",
-        Role = "standard",
-        TermDays = 365,
-        StartDate = new DateOnly(2026, 1, 15),
-        InterestVariant = "AT_MATURITY",
-        AutoRenewalPolicy = "NONE",
-        PaymentPeriodMonths = 0,
     };
 }

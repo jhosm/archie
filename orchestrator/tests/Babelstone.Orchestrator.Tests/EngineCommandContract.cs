@@ -49,23 +49,31 @@ public static class EngineCommandContract
         Assert.False(string.IsNullOrEmpty(request.IdempotencyKey), "Idempotency-Key must be present");
         Assert.True(Guid.TryParse(request.IdempotencyKey, out _), "Idempotency-Key must be a UUID");
 
-        // A well-formed JSON body that IS a snake_case ConstituteDepositRequest (bd babelstone-t7o3.11):
-        // the dispatcher's ActivateDeposit body now serializes the engine constitute shape, NOT the
-        // polymorphic saga envelope. The load-bearing clauses: the structural product facts the engine
-        // prices on (product_id, principal_cents, term_days, …) AND deposit_id — which the dispatcher
-        // sets to the saga's process_id so the relayed DepositConstituted carries ce_subject = process_id.
-        // The TAN is deliberately ABSENT: the engine resolves the rate in-transaction (bd babelstone-3k10).
+        // A well-formed JSON body that IS the MINIMAL snake_case ConstituteDepositRequest (Fork B
+        // rework, bd t7o3.11 / 3k10 / c8d8): the dispatcher's ActivateDeposit body now serializes ONLY
+        // {deposit_id, product_id, principal_cents, funding_account} — NOT the structural product facts
+        // (term_days / start_date / interest_variant / auto_renewal_policy / role) and NOT the polymorphic
+        // saga envelope. The engine RESOLVES the structural facts from its deployed product-config store
+        // at constitution, so the orchestrator carries NO product-family knowledge (the maintainer's Q2
+        // choice). deposit_id is the saga's process_id, so the relayed DepositConstituted carries
+        // ce_subject = process_id. The TAN is ABSENT: the engine resolves the rate in-transaction (3k10).
         Assert.False(string.IsNullOrWhiteSpace(request.Body), "request body must be present");
         using var document = JsonDocument.Parse(request.Body);
         var root = document.RootElement;
-        foreach (var field in new[]
-                 {
-                     "deposit_id", "product_id", "principal_cents", "role", "term_days",
-                     "start_date", "interest_variant", "auto_renewal_policy", "funding_account",
-                 })
+        foreach (var field in new[] { "deposit_id", "product_id", "principal_cents", "funding_account" })
         {
             Assert.True(root.TryGetProperty(field, out _),
-                $"the constitute body must carry '{field}' (ENGINE_COMMAND_PACT, bd babelstone-t7o3.11)");
+                $"the minimal constitute body must carry '{field}' (ENGINE_COMMAND_PACT, Fork B rework)");
+        }
+
+        // The orchestrator carries NO product-family knowledge: the structural product facts are
+        // resolved ENGINE-side now, so the dispatcher's body must NOT carry them (the load-bearing
+        // assertion of the Fork B rework — the orchestrator stopped knowing what a product code means).
+        foreach (var absent in new[] { "term_days", "start_date", "interest_variant", "auto_renewal_policy", "role" })
+        {
+            Assert.False(root.TryGetProperty(absent, out _),
+                $"the minimal constitute body must NOT carry '{absent}' — the engine resolves it from "
+                + "the product code (Fork B rework, ADR-PC-009)");
         }
 
         // deposit_id is a UUID (the saga's process_id) — the ce_subject correlation pin.

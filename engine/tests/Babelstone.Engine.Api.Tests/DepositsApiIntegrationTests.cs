@@ -500,6 +500,60 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Constitute_with_minimal_body_product_code_only_resolves_and_succeeds()
+    {
+        // Fork B rework (bd t7o3.11 / 3k10 / c8d8): the saga now POSTs a MINIMAL body — product_id +
+        // principal_cents + funding_account (+ deposit_id) — with NO structural facts. The engine
+        // RESOLVES the term / interest variant / renewal policy / coupon cadence / role from its
+        // deployed product-config store at constitution, IN-TRANSACTION with the rate-sheet resolve
+        // (ADR-PC-008 §S2 / ADR-PC-009), so the orchestrator carries NO product-family knowledge.
+        var depositId = Guid.NewGuid();
+        var body = new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "dpz_pt_12m_juros_venc",
+            FundingAccount: "PT50-DDA-001",
+            DepositId: depositId);
+
+        var response = await PostConstituteAsync(body, Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var constituted = await response.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase);
+        Assert.NotNull(constituted);
+        Assert.Equal("ACTIVE", constituted.Status);
+        // The engine honoured the supplied deposit_id as the stream id (ce_subject = process_id pin).
+        Assert.Equal(depositId, constituted.DepositId);
+
+        // Read the position back — the STRUCTURAL facts were resolved ENGINE-side from the product config
+        // (none were sent on the wire), and the TAN was resolved in-transaction from the rate sheet.
+        var active = await _client.GetFromJsonAsync<DepositResponse>(
+            $"/v1/deposits/{depositId}", SnakeCase);
+        Assert.NotNull(active);
+        Assert.Equal(1_000_000, active.PrincipalCents);
+        Assert.Equal(365, active.TermDays);
+        Assert.Equal("AT_MATURITY", active.InterestVariant);
+        Assert.Equal("NONE", active.AutoRenewalPolicy);
+        Assert.Equal(0, active.PaymentPeriodMonths);
+        Assert.Equal("dpz_pt_12m_juros_venc", active.ProductCode);
+        Assert.Equal(300, active.TanBasisPoints);
+        Assert.Equal("pt-deposits-2026.1", active.RateSheetVersionId);
+        Assert.Equal("Active", active.Lifecycle);
+    }
+
+    [Fact]
+    public async Task Constitute_with_minimal_body_for_an_unknown_product_is_a_422()
+    {
+        // The engine is the fail-loud authority on whether a product code is known: a minimal body for a
+        // product the engine holds NO config for is a clean 422 (DomainRejectedException), never a silent
+        // default — the same fail-loud discipline as an unpriced (product, role).
+        var body = new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "dpz_pt_unknown_product",
+            FundingAccount: "PT50-DDA-001");
+
+        var response = await PostConstituteAsync(body, Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    }
+
     private async Task<HttpResponseMessage> PostConstituteAsync(ConstituteDepositRequest body, string? idempotencyKey)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/v1/deposits")

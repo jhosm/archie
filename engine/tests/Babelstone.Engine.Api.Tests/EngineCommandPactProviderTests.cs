@@ -182,17 +182,16 @@ public sealed class EngineCommandPactProviderTests : IAsyncLifetime
 
     // ---- The contract request the dispatcher declares ------------------------------------------
 
-    /// <summary>The constitute request the dispatcher's ActivateDeposit translates to — the snake_case
-    /// body the engine's SnakeCaseLower options expect. The provider verification replays this exact
-    /// shape; a field-shape break here is a contract break.</summary>
+    /// <summary>The MINIMAL constitute request the dispatcher's ActivateDeposit now translates to (Fork B
+    /// rework, bd t7o3.11 / 3k10 / c8d8): the snake_case body carries only product_id + principal_cents +
+    /// funding_account (+ deposit_id, set per test). NO term_days / start_date / interest_variant /
+    /// auto_renewal_policy / role — the engine RESOLVES those from its deployed product-config store at
+    /// constitution, IN-TRANSACTION with the rate-sheet resolve (ADR-PC-008 §S2 / ADR-PC-009). The
+    /// provider verification replays this exact minimal shape; a field-shape break here is a contract
+    /// break. The engine still resolves the TAN in-transaction (no rate is ever sent).</summary>
     private static ConstituteDepositRequest ContractRequestBody() => new(
         PrincipalCents: 1_000_000,
         ProductId: "dpz_pt_12m_juros_venc",
-        Role: "standard",
-        TermDays: 365,
-        StartDate: new DateOnly(2026, 1, 15),
-        InterestVariant: "AT_MATURITY",
-        AutoRenewalPolicy: "NONE",
         FundingAccount: "PT50-DDA-001");
 
     private async Task<HttpResponseMessage> PostConstituteAsync(ConstituteDepositRequest body, string? idempotencyKey)

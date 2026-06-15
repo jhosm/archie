@@ -102,12 +102,13 @@ public static class SagaCommandPayloadFactory
                 // at v1 (before DEF-1's ACL guard exists) rests on this reference being stable.
                 CoreHoldRef = DerivedRef(CoreHoldPrefix, processId),
             },
-            // ActivateDeposit is the ENGINE-bound constitution command (bd babelstone-t7o3.11): its wire
-            // body is the engine's ConstituteDepositRequest (snake_case, deposit_id = process_id so
-            // ce_subject = process_id), carrying the STRUCTURAL product facts pinned at the edge. The
-            // engine resolves the RATE in-transaction (bd babelstone-3k10) — the TAN is deliberately not
-            // sent. The funding account is the source-account token; the product_id is the catalogue
-            // product reference. All fields are pinned scalars/references, so the body is byte-stable.
+            // ActivateDeposit is the ENGINE-bound constitution command (bd babelstone-t7o3.11 / 3k10 /
+            // c8d8): its wire body is the engine's MINIMAL ConstituteDepositRequest (snake_case,
+            // deposit_id = process_id so ce_subject = process_id), carrying only the product code,
+            // principal cents, and funding account. The ENGINE resolves both the structural shape (term /
+            // variant / renewal / cadence / role) AND the rate in-transaction — the orchestrator carries
+            // no product-family knowledge (the maintainer's Q2 choice, ADR-PC-009). All fields are
+            // references/scalars off the pinned reference, so the body is byte-stable.
             ConstitutionProcess.ActivateDeposit => new ActivateDepositCommand
             {
                 ProcessId = processId,
@@ -118,12 +119,6 @@ public static class SagaCommandPayloadFactory
                 ProductCode = reference.ProductRef,
                 PrincipalCents = reference.AmountMinorUnits,
                 FundingAccount = reference.SourceAccountRef,
-                Role = reference.Role,
-                TermDays = reference.TermDays,
-                StartDate = reference.StartDate,
-                InterestVariant = reference.InterestVariant,
-                AutoRenewalPolicy = reference.AutoRenewalPolicy,
-                PaymentPeriodMonths = reference.PaymentPeriodMonths,
             },
             ConstitutionProcess.ReleaseBalanceReservation => new ReleaseBalanceReservationCommand
             {

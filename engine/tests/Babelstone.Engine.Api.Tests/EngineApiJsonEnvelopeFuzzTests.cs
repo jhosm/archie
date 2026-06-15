@@ -113,11 +113,23 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
                         serviceProvider.GetRequiredService<TimeProvider>(),
                         () => DepositPosition.Empty));
 
+                    // The engine-side product-config store (Fork B rework, bd t7o3.11 / 3k10 / c8d8):
+                    // a body that omits the structural facts (the MINIMAL saga path) resolves them from
+                    // here, IN the same call, BEFORE the rate-sheet resolve. Loaded from the committed
+                    // product-configs/ tree (disk-backed, like the pack above) so a well-formed minimal
+                    // body with a KNOWN product code resolves the shape and then lands on the null
+                    // rate-sheet rejection (a 422), while a minimal body with an UNKNOWN product code
+                    // lands on the product-config rejection (also a 422) — never an infrastructure 500,
+                    // which is exactly the 4xx-never-5xx contract this fuzz guards.
+                    services.AddSingleton<IProductConfigStore>(
+                        _ => new YamlProductConfigStore(productConfigsDir: null));
+
                     // The REAL decider. Its constructor needs a VerifiedPack, but no path this test
                     // reaches dereferences it: constitution rejects on the null rate-sheet resolve
-                    // BEFORE the pack is read, and maturity/interest reject on the Pending-state
-                    // lifecycle guard BEFORE ResolvePrimitives(). The on-disk pt.2026.1 pack the
-                    // integration tests use is loaded once here purely to satisfy the ctor.
+                    // BEFORE the pack is read (the product-config resolve, when it runs, is BEFORE that
+                    // too and rejects an unknown code with a 422), and maturity/interest reject on the
+                    // Pending-state lifecycle guard BEFORE ResolvePrimitives(). The on-disk pt.2026.1 pack
+                    // the integration tests use is loaded once here purely to satisfy the ctor.
                     var pack = HostPack.Load(PacksDir(), "pt.2026.1");
                     services.AddSingleton(serviceProvider => new TermDepositConstitutionService(
                         serviceProvider.GetRequiredService<AggregateRuntime<DepositPosition>>(),
@@ -125,7 +137,8 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
                         serviceProvider.GetRequiredService<ISettlementPort>(),
                         pack,
                         dayCountPrimitive: "act_360",
-                        withholdingPrimitive: "irs_juros"));
+                        withholdingPrimitive: "irs_juros",
+                        productConfigStore: serviceProvider.GetRequiredService<IProductConfigStore>()));
                 })
                 .Configure(app =>
                 {
