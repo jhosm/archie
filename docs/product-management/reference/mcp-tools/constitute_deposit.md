@@ -16,6 +16,12 @@ cadences priced — and is 0/omitted for AT_MATURITY and ADVANCE.
 Requires ``deposits:write`` ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). The actor is the gateway-attested ``X-Client-Id``
 (OAuth ``sub``), never a tool argument (Document 11).
 
+§P8 form-mode elicitation (Epic J.4): when ``interest_variant`` is PERIODIC, the server pauses and
+asks the human to confirm the periodic-coupon choice before constituting — the non-irreversible
+parameter clarification §P8 reserves form mode for. If the human declines/cancels, the call is
+aborted with an ``McpError`` and no deposit is constituted. The confirmation prompt carries only
+generic text (no PII). The AT_MATURITY / ADVANCE variants do not trigger it.
+
 ## Signature
 
 | Parameter | Type | Default |

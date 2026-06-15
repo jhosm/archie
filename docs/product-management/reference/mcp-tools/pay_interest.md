@@ -13,7 +13,8 @@ maturity (use ``mature_deposit`` for that), so calling this once no intermediate
 rejected. Money is integer cents.
 
 Requires ``deposits:write`` ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). Like ``mature_deposit``, the coupon settlement is
-irreversible; §P8 elicitation is a deliberate follow-up (ar1y).
+irreversible; under §P8 it gets URL-mode step-up SCA — the v1 machinery is here, dormant behind
+``ELICITATION_URL_MODE_ENABLED`` (default off) until the SCA fork is resolved.
 
 ## Signature
 
