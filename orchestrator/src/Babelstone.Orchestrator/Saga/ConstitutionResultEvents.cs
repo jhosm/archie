@@ -54,7 +54,10 @@ public enum CommandDeliveryKind
 /// <b>The ENGINE leg is excluded by design (ADR-PC-029 slot 2).</b> <c>ProcessConstituted</c> is NOT
 /// synthesized here. The engine's <c>ActivateDeposit</c> HTTP 2xx confirms delivery but is "NOT the
 /// saga's signal to advance" — the saga advances on the engine's resulting <c>DepositConstituted</c>
-/// event off <c>deposits.process.events</c> via <see cref="Inbox.SagaConsumeLoop"/>. The engine relays
+/// event off the <c>term_deposit</c> FAMILY INTEGRATION topic (the engine relays it there, topic =
+/// <c>aggregate_type</c>; ADR-IC-003 A6 2026-06-15) via <see cref="Inbox.SagaConsumeLoop"/> —
+/// <c>deposits.process.events</c> is the orchestrator's OWN process topic, not where this engine fact
+/// arrives. The engine relays
 /// that event on the durable bus for real even at v1, so there is no shim to stand in for.
 /// </para>
 /// <para>
@@ -98,7 +101,9 @@ public static class ConstitutionResultEvents
         // orchestrator's event-consume loop (bd babelstone-t7o3.2)." So an Applied ActivateDeposit flips
         // the saga_outbox row PUBLISHED (delivery confirmed) but synthesizes NO result event here — the
         // saga walks APPROVED → COMPLETED only when the real engine DepositConstituted event arrives on
-        // deposits.process.events via SagaConsumeLoop and fires the table's (Approved, "DepositConstituted")
+        // the term_deposit FAMILY INTEGRATION topic (topic = aggregate_type; ADR-IC-003 A6 2026-06-15 —
+        // NOT deposits.process.events, which is the orchestrator's own process topic) via SagaConsumeLoop
+        // and fires the table's (Approved, "DepositConstituted")
         // row — that string IS the value of ConstitutionProcess.ProcessConstituted (bd babelstone-3klm, so
         // the engine's catalogued event name and the saga's transition key agree; the path
         // SagaConsumeTopics names). Bridging it here would be a SECOND, contradicting advance producer for
