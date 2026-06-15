@@ -185,10 +185,18 @@ public static class SagaStateNames
     /// terminal question off a loaded <see cref="SagaState"/> without a machine reference; a second
     /// saga's terminal check goes through <see cref="ISagaStateMachine.IsTerminal"/>, not here.
     /// HUMAN_INTERVENTION_REQUIRED is intentionally EXCLUDED (an operator may resolve it; the
-    /// ConstitutionProcessTests assert <c>IsTerminal(HumanInterventionRequired) == false</c>), which
-    /// matches the table-inspection answer the substrate's default gives (the table routes INTO it but
-    /// the operator-resolution edge would route OUT).
-    /// </para></summary>
+    /// ConstitutionProcessTests assert <c>IsTerminal(HumanInterventionRequired) == false</c>).
+    /// <para>
+    /// <b>This static is also the ConstitutionProcess machine's own terminal predicate</b>
+    /// (<see cref="ConstitutionProcess.IsTerminal"/> delegates here; bd babelstone-mtto PR1), so the
+    /// advance handler — which asks the routed machine — and the edge SSE read — which asks this static —
+    /// give the SAME answer for a ConstitutionProcess saga. NOTE the substrate DEFAULT
+    /// (<see cref="TableStateMachine.IsTerminal"/>, pure table inspection) would DIVERGE from this on
+    /// HIR: HIR has no outgoing edge in the table TODAY, so the default reports it terminal, whereas this
+    /// static keeps it non-terminal because an operator resolves it. That divergence is exactly why
+    /// ConstitutionProcess overrides the default to delegate here — the two reconcile (and the override can
+    /// fold away) once PR2 adds the operator-resolution edge OUT of HIR.
+    /// </para></para></summary>
     public static bool IsTerminal(SagaState state) => state is
         SagaState.Completed or SagaState.Cancelled or SagaState.CancelledAfterDebit
         or SagaState.DepositConstitutionFailed;
