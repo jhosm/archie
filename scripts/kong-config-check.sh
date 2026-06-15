@@ -299,6 +299,9 @@ have '/mcp' "missing the MCP Streamable-HTTP route /mcp (ADR-IC-010 §P5)"
 # reject a token whose `aud` is not this MCP server's canonical URI with code AUDIENCE_MISMATCH.
 # Asserting the code AND a 401 status are both present means a future edit cannot silently drop
 # the audience check (the token-replay defence — Document 10 Boundary 9 / Document 11).
+# This is the Kong-layer leg of catalogue Test ID MCP_WRONG_RESOURCE_TOKEN_REJECTED; the
+# app-layer leg is mcp-server/tests/test_auth.py's
+# test_MCP_WRONG_RESOURCE_TOKEN_REJECTED_* (ADR-PC-020 §P6).
 have 'AUDIENCE_MISMATCH' "missing the RFC 8707 audience check: the /mcp route must reject a wrong-aud token with code AUDIENCE_MISMATCH (ADR-IC-010 §P3)"
 have 'kong\.response\.exit\(401' "missing the audience 401 rejection: the /mcp aud pre-function must kong.response.exit(401, ...) on an audience mismatch (ADR-IC-010 §P3)"
 
