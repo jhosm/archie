@@ -25,12 +25,15 @@
 #                       engine reports it received X-Client-Id=attacker (Kong overwrote the client
 #                       value, the MCP server trusted the attested header, the tool forwarded it).
 #   A5 well-known/transport: GET /.well-known/oauth-protected-resource WITHOUT a token -> 200
-#                       (REAL server, jwt route-disabled); POST /mcp WITHOUT a token -> 401 (global jwt).
-#                       NOTE: the well-known→200 half surfaces a KNOWN PRE-EXISTING defect — on
-#                       kong:3.9.1 the route's `jwt enabled:false` does NOT suppress the global jwt
-#                       (proven below), so it 401s. Carved out as a non-blocking KNOWN-FAIL (its fix
-#                       is a separate drift-acknowledged lane, tracked as Q-BD in 04-open-questions.md);
-#                       the POST /mcp→401 half passes.
+#                       (REAL server, jwt is now de-globalized: it is attached per-route on the
+#                       authenticated routes only, NONE on well-known); POST /mcp WITHOUT a token
+#                       -> 401 (the per-route jwt on the mcp-streamable-http route).
+#                       This is the bd babelstone-ziu3.2 fix and a HARD assertion: it FAILED before
+#                       de-globalization (on kong:3.9.1 the well-known route's `jwt enabled:false`
+#                       did NOT suppress a same-named GLOBAL jwt, so the public RFC 9728 metadata
+#                       401'd — the defect recorded as Q-BD in 04-open-questions.md). The CE-correct
+#                       fix removes the global jwt and attaches it explicitly to each authenticated
+#                       route (ADR-IC-010 §P2 Amendment 2026-06-15), with NO anonymous consumer.
 #   A6 pre-jwt-read-cannot-leak: a token tampered AFTER signing (broken sig) -> 401 from jwt BEFORE
 #                       any upstream proxy; upstream NOT reached (mirrors abig(b)).
 #   A7 mTLS fail-closed: a client connecting DIRECTLY to uvicorn (bypassing Kong) WITHOUT a client
@@ -282,34 +285,36 @@ else
 fi
 
 # ════════════════════════════════════════════════════════════════════════════════════
-# A5 — public well-known (no token -> 200) vs guarded transport (no token -> 401 global jwt).
+# A5 — public well-known (no token -> 200) vs guarded transport (no token -> 401 per-route jwt).
 # ════════════════════════════════════════════════════════════════════════════════════
 say "A5 — well-known is public (200 no token); POST /mcp is jwt-gated (401 no token)"
-# KNOWN PRE-EXISTING DEFECT (carved out of this lane): the mcp-well-known route disables jwt via
-# `plugins: [{name: jwt, enabled: false}]` (kong.yml, committed in 3cfaf01 / bd babelstone-e50n,
-# BEFORE this branch). This harness PROVES at runtime that on kong:3.9.1 a route-level
-# `enabled: false` does NOT suppress a GLOBAL plugin — Kong falls back to the global jwt, so the
-# public RFC 9728 metadata 401s without a token (verified with a minimal reproduction). The CE-
-# correct fix is to route-scope the jwt plugin (attach it to the 6 authenticated routes, none on
-# well-known) WITHOUT an `anonymous:` consumer; that change also touches ADR-IC-010 §P2's stated
-# mechanism and kong-config-check's "well-known disables jwt" assertion (lines ~311-315), so it is
-# its OWN drift-acknowledged lane, not the mTLS lane. Recorded in the durable drift register as
-# Q-BD (docs/product-management/product_concepts/04-open-questions.md) per ADR-PC-020 §D3 — not just
-# here. Asserted as a non-blocking KNOWN-FAIL so the discovery is not lost.
+# THE bd babelstone-ziu3.2 FIX, asserted HARD (this assertion FAILED before de-globalization).
+# Before: the mcp-well-known route disabled jwt via `plugins: [{name: jwt, enabled: false}]` while
+# jwt was ALSO a GLOBAL plugin (top-level `plugins:`). On kong:3.9.1 a route-level `enabled: false`
+# does NOT suppress a same-named GLOBAL plugin — Kong falls back to the global jwt, so the public
+# RFC 9728 metadata 401'd without a token (the defect recorded as Q-BD in 04-open-questions.md,
+# committed in 3cfaf01 / bd babelstone-e50n).
+# Now: the jwt plugin is DE-GLOBALIZED (removed from the top-level `plugins:` block and attached
+# EXPLICITLY to each of the six authenticated routes — deposits-constitute, processes-stream,
+# deposits-maturities, deposits-read, sor-engine-ops, mcp-streamable-http), with NO `anonymous:`
+# consumer anywhere. The mcp-well-known route carries no jwt at all, so the public discovery
+# document is reachable WITHOUT a token (200), while POST /mcp stays gated by the per-route jwt on
+# mcp-streamable-http (401 with no token). This is ADR-IC-010 §P2 Amendment 2026-06-15 (A5/A6) and
+# the ordering-safety property (pre-function 1000000 > jwt 1450, no anonymous fallback) is unchanged
+# — the proxy gate is now the per-route jwt rather than the global jwt. A6 below re-proves it.
 WK_ST="$(curl -s -o /dev/null -w '%{http_code}' "$EDGE/.well-known/oauth-protected-resource")"
-if [ "$WK_ST" = "200" ]; then
-  record_known "A5 well-known no-token" PASS "got 200 (the pre-existing well-known jwt-disable defect is fixed)"
-else
-  record_known "A5 well-known no-token" FAIL "got $WK_ST, want 200 — KNOWN pre-existing kong:3.9.1 route-level jwt-disable defect (see note; separate follow-up)"
-fi
+assert_eq "A5 well-known no-token (public RFC 9728 discovery, ADR-IC-010 §P2)" "200" "$WK_ST"
 NOTOK_ST="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$EDGE/mcp" \
   -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d "$INIT_BODY")"
 assert_eq "A5 POST /mcp no-token" "401" "$NOTOK_ST"
 
 # ════════════════════════════════════════════════════════════════════════════════════
 # A6 — pre-jwt-read cannot leak: a token tampered AFTER signing -> 401 from jwt, no upstream.
-# (Mirrors abig(b): the /mcp pre-functions read claims pre-signature, but the global no-anonymous
-# jwt plugin 401s a bad signature before any upstream proxy — so a pre-jwt read never takes effect.)
+# (Mirrors abig(b): the /mcp pre-functions read claims pre-signature, but the PER-ROUTE no-anonymous
+# jwt plugin on mcp-streamable-http 401s a bad signature before any upstream proxy — so a pre-jwt
+# read never takes effect. After de-globalization the gate is the per-route jwt, not a global one;
+# the ordering-safety property is unchanged because pre-function priority 1000000 > jwt 1450 is
+# static regardless of where the jwt plugin is attached.)
 # ════════════════════════════════════════════════════════════════════════════════════
 say "A6 — a token tampered after signing (broken sig) is 401 from jwt BEFORE any upstream (CE ordering safety)"
 TOK_GOOD="$($MINT --aud "$MCP_AUD" --scope 'deposits:read' --sub attacker 2>/dev/null)"
@@ -399,6 +404,6 @@ if [ "$FAIL" -ne 0 ]; then
   die "mcp-contract-test: $FAIL assertion(s) FAILED"
 fi
 if [ "$KNOWN" -ne 0 ]; then
-  printf '\n  \033[1;33mNote: %d KNOWN pre-existing defect(s) surfaced (non-blocking for this lane) — see the carved-out assertion notes.\033[0m\n' "$KNOWN"
+  printf '\n  \033[1;33mNote: %d KNOWN pre-existing defect(s) surfaced (non-blocking) — see the carved-out assertion notes.\033[0m\n' "$KNOWN"
 fi
-say "mcp-contract-test: this lane's assertions GREEN (5ot0 + 29ic); $KNOWN known pre-existing defect(s) flagged"
+say "mcp-contract-test: all assertions GREEN (5ot0 + 29ic + the ziu3.2 well-known fix); $KNOWN known pre-existing defect(s) flagged"
