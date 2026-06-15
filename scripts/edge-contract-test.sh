@@ -31,9 +31,11 @@
 # WHY THIS IS SAFE ON KONG CE (the property abig exists to lock): on CE there is no dynamic
 # plugin `ordering:` (Enterprise-only). The SCA + X-Client-Id pre-functions run BEFORE jwt by
 # STATIC priority (pre-function 1000000 > jwt 1450), reading claims pre-signature-validation.
-# That is safe ONLY because the GLOBAL no-anonymous jwt plugin 401s a forged/tampered token
-# BEFORE any upstream proxy — so a claim a pre-function read off a bad token never takes
-# effect. Assertion (b) is the end-to-end lock on exactly that.
+# That is safe ONLY because the no-anonymous jwt plugin 401s a forged/tampered token BEFORE any
+# upstream proxy — so a claim a pre-function read off a bad token never takes effect. jwt is now
+# attached PER-ROUTE (de-globalized, ADR-IC-010 §P2 Amendment 2026-06-15), one no-anonymous
+# instance on each authenticated route; the static priority (and so this property) is independent
+# of where jwt is configured. Assertion (b) is the end-to-end lock on exactly that.
 #
 # CI-friendly: deterministic health waits (no sleep-and-pray), a trap that tears the stack
 # down on ANY exit, fixed host ports overridable via env. Toolchain: pure shell + docker +

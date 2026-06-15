@@ -245,7 +245,7 @@ services:
       # POST /api/v1/deposits/constitute — STARTS the saga, returns 202 + stream_url.
       # A financial operation: rate-limited tightly (ADR-IC-006 §P3), PSD2-SCA-enforced
       # (§P2, bd babelstone-6imx / I.4 — the access-phase SCA pre-function below builds on
-      # the global jwt plugin and runs FIRST, before structural body validation), and
+      # this route's per-route jwt plugin and runs FIRST, before structural body validation), and
       # payload-validated (§4).
       #
       # ── SoR-routing intent: SoR: engine (new-constitution rule) (ADR-PC-018 §1, I.5) ──
@@ -263,6 +263,22 @@ services:
         paths: ["/api/v1/deposits/constitute"]
         strip_path: false
         plugins:
+          # ── jwt: per-route (DE-GLOBALIZED, ADR-IC-010 §P2 Amendment 2026-06-15) ──────────
+          # Validate the OAuth 2.0 bearer token's signature (RS256/ES256), expiry, and issuer
+          # against the pre-registered consumer key (ADR-IC-006 §1/§P7). Kong maps the validated
+          # token to the issuing consumer; the JWT `sub` is the client identity the per-consumer
+          # rate limits key on (§P3) and the orchestrator reads as its gateway-attested caller.
+          # NO `anonymous` consumer — a forged/invalid token is 401'd here BEFORE upstream, which
+          # is what makes reading claims in the higher-priority pre-function below sound (the
+          # ORDERING note in the pre-function explains the property). This plugin was GLOBAL
+          # before; it is now attached explicitly on each authenticated route (the config is
+          # identical across routes) so the public mcp-well-known route can carry no jwt at all.
+          - name: jwt
+            config:
+              claims_to_verify: ["exp"]
+              key_claim_name: iss
+              maximum_expiration: 0
+              header_names: ["authorization"]
           # ADR-IC-006 §P3: 5 req/min per consumer — prevents accidental duplicate
           # constitution attempts. `local` policy is fine at single-node POC scale
           # (in-memory counters; Valkey-backed distributed counters are the §P3
@@ -302,10 +318,13 @@ services:
                 # STATIC priority order and there is no dynamic ordering (the `ordering:` field is
                 # Enterprise-only — `kong config parse` rejects it on CE). The `pre-function`
                 # priority (1000000) is HIGHER than `jwt` (1450), so this snippet actually runs
-                # BEFORE jwt validates the signature. That is still safe because `jwt` is a GLOBAL
-                # access-phase plugin (top-level `plugins:` below, no `anonymous` bypass — both
-                # asserted by kong-config-check): it terminates the request with 401 BEFORE Kong
-                # proxies upstream unless the token is validly signed. So a request only REACHES
+                # BEFORE jwt validates the signature. That is still safe because `jwt` is the
+                # PER-ROUTE access-phase plugin attached on THIS route above (de-globalized,
+                # ADR-IC-010 §P2 Amendment 2026-06-15; no `anonymous` bypass — both the per-route
+                # attachment and the absence of anonymous are asserted by kong-config-check): it
+                # terminates the request with 401 BEFORE Kong proxies upstream unless the token is
+                # validly signed. The static priority (and so this property) is independent of where
+                # jwt is configured — global or per-route. So a request only REACHES
                 # the orchestrator if jwt validated THIS SAME token; a forged or tampered token
                 # (changing any claim breaks the signature) is 401'd before upstream, and the
                 # claims this snippet read never take effect. We re-decode the payload only to read
@@ -466,15 +485,26 @@ services:
         request_buffering: false
         response_buffering: false
         plugins:
+          # jwt: per-route (de-globalized, ADR-IC-010 §P2 Amendment 2026-06-15). Same config as the
+          # constitute route — validate signature/expiry/issuer, NO anonymous consumer. This is the
+          # gate that makes reading the `sub` in the pre-function below sound (see the ORDERING note
+          # on the constitute route): a request reaches the orchestrator only if jwt validated this
+          # same token, regardless of CE static plugin order.
+          - name: jwt
+            config:
+              claims_to_verify: ["exp"]
+              key_claim_name: iss
+              maximum_expiration: 0
+              header_names: ["authorization"]
           # Attest the caller identity to the orchestrator (bd babelstone-bkqo, ADR-IC-006 §P4). The
           # SSE stream enforces per-process OWNERSHIP — only the client that started a process may watch
           # it — and the orchestrator keys that on the gateway-attested X-Client-Id (EdgeAuth), never on
           # a value the client could set. Like the constitute route, derive X-Client-Id from the
           # token `sub` and OVERWRITE any client-supplied value, so the stream cannot be hijacked by
-          # asserting another client's id (IDOR). The sub is authentic because the global `jwt` plugin
-          # gates the proxy (see the ORDERING note on the constitute route): a request reaches the
+          # asserting another client's id (IDOR). The sub is authentic because THIS route's `jwt` plugin
+          # (above) gates the proxy (see the ORDERING note on the constitute route): a request reaches the
           # orchestrator only if jwt validated this same token, regardless of plugin order. No SCA
-          # here: a progress read is not a money-mover (only the global jwt plugin gates it).
+          # here: a progress read is not a money-mover (only the per-route jwt plugin gates it).
           # Fail-closed: any missing/malformed token or absent `sub` exits 403, never falls open.
           - name: pre-function
             config:
@@ -524,6 +554,16 @@ services:
         paths: ["/v1/deposits/maturities"]
         strip_path: false
         plugins:
+          # jwt: per-route (de-globalized, ADR-IC-010 §P2 Amendment 2026-06-15). An authenticated
+          # read — validate signature/expiry/issuer, NO anonymous consumer. Same config as every
+          # other authenticated route; the de-globalization moved it from the top-level `plugins:`
+          # block to here so the public well-known route can carry no jwt.
+          - name: jwt
+            config:
+              claims_to_verify: ["exp"]
+              key_claim_name: iss
+              maximum_expiration: 0
+              header_names: ["authorization"]
           # General authenticated read budget (ADR-IC-006 §P3: 200 req/min per consumer).
           - name: rate-limiting
             config:
@@ -540,6 +580,15 @@ services:
         paths: ["~/v1/deposits/[^/]+$"]
         strip_path: false
         plugins:
+          # jwt: per-route (de-globalized, ADR-IC-010 §P2 Amendment 2026-06-15). An authenticated
+          # read — validate signature/expiry/issuer, NO anonymous consumer. Same config as every
+          # other authenticated route.
+          - name: jwt
+            config:
+              claims_to_verify: ["exp"]
+              key_claim_name: iss
+              maximum_expiration: 0
+              header_names: ["authorization"]
           - name: rate-limiting
             config:
               minute: 200
@@ -605,6 +654,17 @@ services:
         paths: ["~/api/v1/sor/instances/(?<instance_id>[^/]+)/operations$"]
         strip_path: false
         plugins:
+          # jwt: per-route (de-globalized, ADR-IC-010 §P2 Amendment 2026-06-15). A money-mover —
+          # validate signature/expiry/issuer, NO anonymous consumer. This is the gate that makes
+          # reading the SCA claims + `sub` in the pre-function below sound (see the ORDERING note on
+          # the constitute route): a forged/tampered token is 401'd here before upstream. Same config
+          # as every other authenticated route.
+          - name: jwt
+            config:
+              claims_to_verify: ["exp"]
+              key_claim_name: iss
+              maximum_expiration: 0
+              header_names: ["authorization"]
           # ADR-IC-006 §P3: 5 req/min per consumer — same tight budget as the constitute
           # money-mover; an existing-instance op (early terminate, partial withdraw) moves
           # money too.
@@ -736,10 +796,10 @@ services:
   # The bank's MCP server is ONE more route on this shared edge gateway (ADR-IC-010
   # §Decision: "behind Kong", §P5). LLM agents reach the four term-deposit tools
   # (constitute_deposit / get_deposit / mature_deposit / pay_interest) over Streamable
-  # HTTP. The route inherits the SAME edge tier as the orchestrator routes — the global
-  # jwt plugin validates the token signature, opentelemetry propagates the trace, mTLS
-  # (the shared client_certificate) secures the upstream — PLUS two MCP-specific
-  # obligations the spec imposes:
+  # HTTP. The route inherits the SAME edge tier as the orchestrator routes — its per-route
+  # jwt plugin validates the token signature (de-globalized, ADR-IC-010 §P2 Amendment
+  # 2026-06-15), opentelemetry propagates the trace, mTLS (the shared client_certificate)
+  # secures the upstream — PLUS two MCP-specific obligations the spec imposes:
   #
   #   1. RFC 8707 audience binding (ADR-IC-010 §P3). The token's `aud` MUST equal this
   #      MCP server's canonical URI; a token minted for another resource MUST be rejected
@@ -760,8 +820,9 @@ services:
   #      deposits:write for the writes — one tool maps to exactly one scope, no god scope).
   #
   # The well-known discovery document (RFC 9728 Protected Resource Metadata, §P2) is a
-  # SEPARATE route with jwt route-disabled, so an agent with no token yet can discover the
-  # authorization server. POST /mcp itself STAYS jwt-covered by the global plugin.
+  # SEPARATE route that carries NO jwt plugin (de-globalized — ADR-IC-010 §P2 Amendment
+  # 2026-06-15), so an agent with no token yet can discover the authorization server. POST
+  # /mcp itself STAYS jwt-covered by THIS route's per-route jwt plugin (attached below).
   - name: mcp-server
     url: https://mcp-server:8080
     # MUTUAL TLS to the MCP server (ADR-IC-006 §P5 Boundary 2, ADR-IC-010 §P5 — bd babelstone-29ic).
@@ -806,6 +867,20 @@ services:
         request_buffering: false
         response_buffering: false
         plugins:
+          # jwt: per-route (de-globalized, ADR-IC-010 §P2 Amendment 2026-06-15). The agent channel —
+          # validate signature/expiry/issuer, NO anonymous consumer. This is the gate that makes
+          # reading `aud` / `sub` / `scope` in the pre-functions below sound (see the ORDERING note on
+          # the constitute route + the aud pre-function note): a forged/tampered token is 401'd here
+          # before the MCP upstream. Same config as every other authenticated route. Before this
+          # change jwt was GLOBAL and the sibling mcp-well-known route tried to opt out with
+          # `enabled: false`; that did not work on Kong CE, so the global was removed and jwt is now
+          # attached here explicitly while well-known carries none (the public RFC 9728 route).
+          - name: jwt
+            config:
+              claims_to_verify: ["exp"]
+              key_claim_name: iss
+              maximum_expiration: 0
+              header_names: ["authorization"]
           # ADR-IC-010 §P5 / ADR-IC-006 §P3: per-consumer rate limit on the agent channel.
           # 5 req/min per consumer — the same tight budget as the constitute money-mover;
           # the write tools move money, and an agent looping is the failure mode this caps.
@@ -837,10 +912,12 @@ services:
                 # token-replay defence (Document 10 Boundary 9 / Document 11).
                 #
                 # ORDERING (read the constitute route's ORDERING note — the SAME property holds):
-                # on Kong CE, pre-function (priority 1000000) runs BEFORE jwt (1450), but the
-                # GLOBAL jwt plugin still gates the proxy — it 401s an unsigned/tampered token
-                # before upstream, with NO anonymous fallback (asserted by kong-config-check). So
-                # a request only REACHES the MCP server if jwt validated THIS SAME token; the
+                # on Kong CE, pre-function (priority 1000000) runs BEFORE jwt (1450), but THIS
+                # route's per-route jwt plugin (attached above — de-globalized, ADR-IC-010 §P2
+                # Amendment 2026-06-15) still gates the proxy — it 401s an unsigned/tampered token
+                # before upstream, with NO anonymous fallback (asserted by kong-config-check). The
+                # static priority (and so this property) is independent of where jwt is configured.
+                # So a request only REACHES the MCP server if jwt validated THIS SAME token; the
                 # claims this snippet reads are authentic end-to-end. We decode the payload only
                 # to read `aud` (jwt does not check audience against a per-route value on CE).
                 #
@@ -965,38 +1042,40 @@ services:
       # ── RFC 9728 Protected Resource Metadata — public discovery (ADR-IC-010 §P2) ──
       # GET /.well-known/oauth-protected-resource returns the metadata pointing at the
       # IAM as the authorization server. It MUST be reachable WITHOUT a token (a client
-      # discovers the auth server BEFORE it has one), so the global jwt plugin is
-      # route-DISABLED here (plugins: [{name: jwt, enabled: false}]) — the ONLY route that
-      # disables jwt. POST /mcp above STAYS jwt-covered by the global plugin. NO anonymous
-      # consumer fallback is added anywhere (that would break the pre-function ordering-safety
-      # property on the OTHER routes — kong-config-check asserts none exists); disabling the
-      # plugin on THIS read-only public metadata route is the surgical, ordering-safe way to
-      # expose it.
+      # discovers the auth server BEFORE it has one). This route therefore carries NO jwt
+      # plugin AT ALL — jwt is attached PER-ROUTE on the six authenticated routes only, and
+      # this public route is simply absent from that list (de-globalization, ADR-IC-010 §P2
+      # Amendment 2026-06-15 / bd babelstone-ziu3.2). This REPLACES the earlier mechanism —
+      # `plugins: [{name: jwt, enabled: false}]` while jwt was global — which did NOT work on
+      # Kong CE 3.9.1 (a route-level `enabled: false` does NOT suppress a same-named GLOBAL
+      # plugin, so this route still 401'd; the defect recorded as Q-BD in
+      # product_concepts/04-open-questions.md, proven by scripts/mcp-contract-test.sh A5).
+      # NO anonymous consumer is added anywhere (that would break the pre-function ordering-safety
+      # property on the authenticated routes — kong-config-check asserts none exists); the public
+      # metadata route reads NO identity and attests nothing, so leaving jwt off it is sound. The
+      # route has no `plugins:` block at all.
       - name: mcp-well-known
         methods: ["GET"]
         paths: ["/.well-known/oauth-protected-resource"]
         strip_path: false
-        plugins:
-          - name: jwt
-            enabled: false
 
 # ── Edge policies attached GLOBALLY (apply to every route above) ─────────────────
+# NOTE — jwt is DELIBERATELY NOT here (ADR-IC-010 §P2 Amendment 2026-06-15 / bd babelstone-ziu3.2).
+# jwt USED to be a global plugin in this block, with the mcp-well-known route trying to opt out via
+# `plugins: [{name: jwt, enabled: false}]` so the public RFC 9728 discovery document was reachable
+# without a token (ADR-IC-010 §P2). On Kong CE 3.9.1 that does NOT work: a route-level `enabled: false`
+# does NOT suppress a same-named GLOBAL plugin — Kong falls back to the global jwt, so the public
+# well-known route 401'd (recorded as Q-BD in product_concepts/04-open-questions.md; proven at runtime
+# by scripts/mcp-contract-test.sh A5). The CE-correct fix de-globalizes jwt: it is now attached
+# EXPLICITLY to EACH of the six AUTHENTICATED routes above (deposits-constitute, processes-stream,
+# deposits-maturities, deposits-read, sor-engine-ops, mcp-streamable-http), and the mcp-well-known route
+# carries NO jwt at all — so the public discovery document is reachable unauthenticated while every
+# authenticated route stays token-gated. NO anonymous consumer is added anywhere (that would let an
+# unauthenticated request fall through to the pre-functions' set_header and the upstream, breaking the
+# ordering-safety property — kong-config-check asserts none exists). The per-route jwt config is
+# identical on every authenticated route; scripts/kong-config-check.sh asserts the shape
+# (jwt on each of the six, none global, none on well-known, no anonymous).
 plugins:
-  # ADR-IC-006 §1 / §P7: validate the OAuth 2.0 bearer token's signature (RS256/ES256),
-  # expiry, and issuer against the pre-registered consumer key. Kong maps the validated
-  # token to the issuing consumer; the JWT `sub` claim is the client identity that the
-  # per-consumer rate limits key on (ADR-IC-006 §P3) and that the orchestrator reads as
-  # its gateway-attested caller. (The orchestrator's per-process OWNERSHIP check is the
-  # second layer, ADR-IC-006 §P4 — Kong validates the token, the app enforces ownership.)
-  - name: jwt
-    config:
-      # Standard bearer location: Authorization: Bearer <jwt> (and the `jwt` query/uri
-      # params disabled — header only). claims_to_verify enforces token expiry.
-      claims_to_verify: ["exp"]
-      key_claim_name: iss
-      maximum_expiration: 0
-      header_names: ["authorization"]
-
   # ADR-IC-006 §P6: the opentelemetry plugin propagates the W3C `traceparent` header to
   # every upstream request, so a distributed trace begins at the edge and continues
   # through the orchestrator, the saga, and the engine — the same OTel-native signal as

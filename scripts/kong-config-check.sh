@@ -133,21 +133,63 @@ have 'response_buffering: *false' "SSE stream route missing response_buffering: 
 
 # The edge policies (ADR-IC-006 §P2/§P3/§P4/§P5/§P6 + §Decision) — no fixed count; the
 # inventory grows as routes/policies are added, so assertions are listed, not enumerated.
-have 'name: *jwt' "missing the jwt plugin (token signature validation, ADR-IC-006 §1/§P7)"
-# jwt must have NO anonymous fallback. The SCA + X-Client-Id pre-functions read claims from the token
-# payload, and on Kong CE they run BEFORE jwt (static priority: pre-function 1000000 > jwt 1450; CE has
-# no dynamic `ordering`). That is safe ONLY because the GLOBAL jwt plugin 401s an unauthenticated /
-# invalid token BEFORE the upstream proxy — so a forged/tampered token never reaches the orchestrator
-# and the claims the pre-functions read never take effect. An `anonymous` consumer on jwt would let an
-# unauthenticated request fall through to the pre-functions' set_header and the orchestrator — breaking
-# both SCA and the X-Client-Id attestation. Lock it. (End-to-end lock: the §P2 contract test, bd abig.)
-# NOTE (deliberate simplicity): this greps the WHOLE config, not the jwt block specifically — today
-# jwt is the only plugin where `anonymous` is the dangerous fallback, and no `anonymous:` appears
-# anywhere. A future plugin that legitimately needs `anonymous` would require scoping this to the jwt
-# block. Likewise, the OTHER half of the precondition — jwt staying GLOBAL (top-level plugins, not a
-# route-scoped override) — is not yet gated here; `have 'name: *jwt'` only checks jwt exists. Both are
-# tracked hardening (bd babelstone-abig covers the runtime end-to-end lock).
-hasnot 'anonymous:' "the jwt plugin must have NO anonymous fallback — the SCA + X-Client-Id pre-functions read claims before jwt and rely on jwt 401'ing an unauthenticated request before upstream (ADR-IC-006 §1/§P7)"
+#
+# ── jwt is DE-GLOBALIZED and attached PER-ROUTE (ADR-IC-010 §P2 Amendment 2026-06-15) ──────
+# The jwt plugin was a GLOBAL plugin (top-level `plugins:`) with the mcp-well-known route trying
+# to opt out via `plugins: [{name: jwt, enabled: false}]`. On Kong CE 3.9.1 a route-level
+# `enabled: false` does NOT suppress a same-named GLOBAL plugin — Kong falls back to the global,
+# so the public RFC 9728 discovery route 401'd (bd babelstone-ziu3.2, recorded as Q-BD). The
+# CE-correct fix removes the global jwt and attaches an explicit jwt plugin to EACH authenticated
+# route, leaving the public well-known route with none. These assertions lock that shape so a
+# future edit can neither re-introduce the global jwt nor drop jwt from an authenticated route
+# (ADR-PC-020 §D3: no silent divergence).
+have 'name: *jwt' "missing the jwt plugin (token signature validation — must be attached per-route on the authenticated routes, ADR-IC-006 §1/§P7 / ADR-IC-010 §P2)"
+
+# (a) jwt MUST be attached to EACH of the six authenticated routes (deposits-constitute,
+# processes-stream, deposits-maturities, deposits-read, sor-engine-ops, mcp-streamable-http).
+# Route-level plugin list items sit at 10 spaces of indentation (6 for the route + 2 for
+# `plugins:` + 2 for the `- ` list item); the (now-removed) global entry sat at 2 spaces under
+# the top-level `plugins:` key. Count the route-level `- name: jwt` entries: there must be >= 6.
+jwt_route_count="$(grep -cE '^ {10}- name: jwt$' "$CONFIG" || true)"
+[ "${jwt_route_count:-0}" -ge 6 ] \
+  || fail "jwt must be attached to EACH of the six authenticated routes (deposits-constitute, processes-stream, deposits-maturities, deposits-read, sor-engine-ops, mcp-streamable-http); found $jwt_route_count route-level jwt entries (ADR-IC-006 §1/§P7 / ADR-IC-010 §P2 Amendment 2026-06-15)"
+
+# (b) jwt MUST NOT appear in the top-level (global) `plugins:` block. A global jwt is the defect
+# the fix removes — with the well-known route's `enabled: false` ignored by CE, a global jwt
+# 401s the public discovery route. Assert the TOTAL real (non-comment) jwt-name occurrences equal
+# the route-level count: any extra entry would be the global one (or a stray). This is sturdier
+# than grepping a fragile column for the global block, and it fails closed if a global jwt creeps
+# back. Comment lines that merely MENTION `name: jwt` (e.g. the historical `{name: jwt, enabled:
+# false}` explanation) are excluded so prose cannot inflate the count.
+jwt_total_count="$(grep -E 'name: jwt' "$CONFIG" | grep -cvE '^[[:space:]]*#' || true)"
+[ "${jwt_total_count:-0}" -eq "${jwt_route_count:-0}" ] \
+  || fail "jwt must NOT be in the global plugins: block after de-globalization; found $jwt_total_count total (non-comment) \`name: jwt\` entries but only $jwt_route_count route-level — the extra entry is a global (or misindented) jwt plugin and must be removed (ADR-IC-010 §P2 Amendment 2026-06-15)"
+
+# (c) The public RFC 9728 well-known route MUST NOT carry a jwt plugin (it is intentionally
+# unauthenticated so an agent can discover the authorization server before it has a token,
+# ADR-IC-010 §P2). Extract the mcp-well-known route block — up to the next route (6-space
+# `- name: `) OR a column-0 line (mcp-well-known is the last route, so the next top-level key,
+# e.g. `plugins:`, ends the block) — and assert no real jwt plugin inside it. Comment lines are
+# excluded so the historical `{name: jwt, enabled: false}` explanation in the following global-block
+# comment cannot trip the check.
+wk_jwt="$(awk '/^      - name: mcp-well-known$/{f=1;next} /^      - name: /{f=0} /^[^[:space:]#]/{f=0} f' "$CONFIG" | grep -E 'name: jwt' | grep -cvE '^[[:space:]]*#' || true)"
+[ "${wk_jwt:-0}" -eq 0 ] \
+  || fail "the mcp-well-known route must NOT carry a jwt plugin after de-globalization — it is the public RFC 9728 discovery route, reachable without a token (ADR-IC-010 §P2 Amendment 2026-06-15); found $wk_jwt jwt entr(y/ies) in its block"
+
+# (d) jwt must have NO anonymous fallback (UNCHANGED — still the load-bearing ordering-safety lock).
+# The SCA + X-Client-Id + aud pre-functions read claims from the token payload, and on Kong CE they
+# run BEFORE jwt (static priority: pre-function 1000000 > jwt 1450; CE has no dynamic `ordering`).
+# That is safe ONLY because a no-anonymous jwt 401s an unauthenticated / invalid token BEFORE the
+# upstream proxy — so a forged/tampered token never reaches the upstream and the claims the
+# pre-functions read never take effect. De-globalizing does not change this: every authenticated
+# route now carries its OWN no-anonymous jwt, so a forged token is still 401'd before upstream there.
+# An `anonymous` consumer on jwt would let an unauthenticated request fall through to the
+# pre-functions' set_header and the upstream — breaking SCA, the X-Client-Id attestation, and the
+# aud check. Lock it. (End-to-end lock: the §P2 contract tests, bd abig + 5ot0.)
+# NOTE: this greps the WHOLE config, not a jwt block specifically — today jwt is the only plugin
+# where `anonymous` is the dangerous fallback, and no `anonymous:` appears anywhere. A future plugin
+# that legitimately needs `anonymous` would require scoping this to the jwt blocks.
+hasnot 'anonymous:' "the jwt plugin must have NO anonymous fallback — the SCA + X-Client-Id + aud pre-functions read claims before jwt and rely on each route's jwt 401'ing an unauthenticated request before upstream (ADR-IC-006 §1/§P7)"
 have 'name: *rate-limiting' "missing the rate-limiting plugin (ADR-IC-006 §P3)"
 # Payload validation (ADR-IC-006 §4): the constitute route must validate the request
 # body. The Enterprise `request-validator` plugin is NOT in Kong CE (the selected
@@ -292,7 +334,8 @@ have 'kong\.response\.exit\(503' "missing the fail-closed 503 refusal on the SoR
 # route is reachable (§P2), and the WWW-Authenticate refusal points at resource_metadata.
 
 # (i) The Streamable-HTTP transport route (ADR-IC-010 §P5): a single /mcp route. POST stays
-# jwt-covered by the global plugin (only the well-known route disables jwt).
+# jwt-covered by the PER-ROUTE jwt plugin attached on mcp-streamable-http (de-globalization,
+# ADR-IC-010 §P2 Amendment 2026-06-15); only the public well-known route carries no jwt.
 have '/mcp' "missing the MCP Streamable-HTTP route /mcp (ADR-IC-010 §P5)"
 
 # (ii) RFC 8707 audience binding (ADR-IC-010 §P3): the /mcp route's access pre-function MUST
@@ -311,11 +354,15 @@ have 'kong\.response\.exit\(401' "missing the audience 401 rejection: the /mcp a
 have '/\.well-known/oauth-protected-resource' "missing the RFC 9728 Protected Resource Metadata route /.well-known/oauth-protected-resource (ADR-IC-010 §P2)"
 have 'resource_metadata' "missing the WWW-Authenticate resource_metadata pointer on the MCP audience 401 (ADR-IC-010 §P2/§P3)"
 
-# (iv) The well-known route disables jwt (and ONLY that route) so the public metadata is reachable
-# unauthenticated, while POST /mcp stays jwt-covered. The global `hasnot 'anonymous:'` above still
-# holds — disabling the plugin on a read-only public metadata route is the ordering-safe way to
-# expose it (NOT an anonymous fallback, which would break the pre-function ordering-safety property).
-have 'name: *jwt' "missing the jwt plugin (also referenced route-disabled on the MCP well-known route, ADR-IC-010 §P2)"
+# (iv) The public well-known route is reachable WITHOUT a token because jwt is DE-GLOBALIZED and
+# NOT attached to it (de-globalization fix, ADR-IC-010 §P2 Amendment 2026-06-15 — bd babelstone-ziu3.2),
+# while POST /mcp stays jwt-covered by the per-route jwt on mcp-streamable-http. The three structural
+# locks for this shape — jwt attached to each of the six authenticated routes, NONE on well-known,
+# and NO global jwt — are asserted in block 3 above (the jwt_route_count / jwt_total_count / wk_jwt
+# checks). The global `hasnot 'anonymous:'` above still holds: making the metadata route public by
+# leaving jwt OFF it is the ordering-safe mechanism (NOT an anonymous fallback, which would break the
+# pre-function ordering-safety property on the authenticated routes). The runtime end-to-end lock is
+# scripts/mcp-contract-test.sh A5 (well-known no-token -> 200; POST /mcp no-token -> 401).
 
 note "edge-contract assertions: OK"
 note "kong-config-check: all checks passed"
