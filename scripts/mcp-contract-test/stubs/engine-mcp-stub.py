@@ -48,6 +48,19 @@ _POSITION = {
     "last_updated": "2026-01-15T00:00:00+00:00",
 }
 
+# The ONLY request headers this stub echoes back. EngineClient forwards exactly these three
+# boundary headers (X-Client-Id, Idempotency-Key, If-Min-Sequence) and NEVER the bearer — so an
+# allowlist (rather than echoing every received header) means that even if a future change wrongly
+# forwarded Authorization, this throwaway double would not reflect a bearer over the harness's plain
+# HTTP. Lower-cased for case-insensitive matching; the A4 assertion reads X-Client-Id back.
+_ALLOWED_ECHO_HEADERS = frozenset({"x-client-id", "idempotency-key", "if-min-sequence"})
+
+
+def _record_allowed(headers) -> dict[str, str]:
+    """Keep only the allowlisted boundary headers, preserving the sender's original casing."""
+    return {k: v for k, v in headers.items() if k.lower() in _ALLOWED_ECHO_HEADERS}
+
+
 # Process-wide record of the headers the LAST GET /v1/deposits/{id} received. The harness
 # reads it back via GET /echo/headers after firing the tools/call. ThreadingHTTPServer shares
 # one handler-class namespace; a module-level dict is the simplest cross-request store.
@@ -89,7 +102,7 @@ class EngineHandler(BaseHTTPRequestHandler):
             # RECORD every header (so the harness can assert X-Client-Id was forwarded) and
             # always return a VALID position for any id — the MCP tool's pydantic parse must not
             # throw, whatever deposit id the harness chose.
-            _LAST_DEPOSIT_HEADERS = {k: v for k, v in self.headers.items()}
+            _LAST_DEPOSIT_HEADERS = _record_allowed(self.headers)
             instance = path[len(prefix):]
             self._json(200, {**_POSITION, "deposit_id": instance})
             return
@@ -101,7 +114,7 @@ class EngineHandler(BaseHTTPRequestHandler):
         # with a minimal valid result so any write tool the harness exercises does not throw.
         global _LAST_DEPOSIT_HEADERS
         self._drain()
-        _LAST_DEPOSIT_HEADERS = {k: v for k, v in self.headers.items()}
+        _LAST_DEPOSIT_HEADERS = _record_allowed(self.headers)
         path = urlparse(self.path).path
         if path.endswith("/maturity") or path.endswith("/interest"):
             self._json(200, {**_POSITION})

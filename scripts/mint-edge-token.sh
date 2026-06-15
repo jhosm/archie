@@ -79,6 +79,10 @@ while [ $# -gt 0 ]; do
 done
 
 command -v openssl >/dev/null 2>&1 || { echo "openssl is required" >&2; exit 1; }
+# python3 builds the JSON header/payload via json.dumps so claim VALUES are escaped, not concatenated
+# into the JSON by hand. A value like --scope 'x","admin":true' would otherwise inject a forged
+# (signed) claim; json.dumps makes it an inert string. POC-only, but a footgun worth closing.
+command -v python3 >/dev/null 2>&1 || { echo "python3 is required (used to build the JWT claims safely)" >&2; exit 1; }
 [ -f "$KONG_YML" ] || { echo "kong.yml not found: $KONG_YML" >&2; exit 1; }
 
 # base64url with no padding (the JWT segment encoding).
@@ -95,33 +99,41 @@ awk '/-----BEGIN PRIVATE KEY-----/{f=1} f{sub(/^[[:space:]]+/,""); print} /-----
 
 NOW="$(date +%s)"
 EXP=$((NOW + TTL))
+AUTH_TIME=$((NOW - AUTH_AGE))
 
-# Build the claims. The base is iss/iat/exp; `sub` is present unless --no-sub (omitting it
-# exercises the MCP route's deny_id() 401 — no usable subject to attest as X-Client-Id). acr +
-# auth_time are present unless --no-sca; auth_time is `now - auth-age` so a large --auth-age
-# produces a STALE (expired-SCA) token the pre-function rejects with 403. `aud` (RFC 8707) and
-# `scope` (OAuth) are added only when supplied — the MCP route checks aud == MCP_SERVER_URI and
-# maps scope -> X-OAuth-Scope; the orchestrator routes ignore both.
-CLAIMS="\"iss\":\"$ISS\",\"iat\":$NOW,\"exp\":$EXP"
-if [ "$NO_SUB" -eq 0 ]; then
-  CLAIMS="$CLAIMS,\"sub\":\"$SUB\""
-fi
-if [ -n "$AUD" ]; then
-  CLAIMS="$CLAIMS,\"aud\":\"$AUD\""
-fi
-if [ -n "$SCOPE" ]; then
-  CLAIMS="$CLAIMS,\"scope\":\"$SCOPE\""
-fi
-if [ "$NO_SCA" -eq 0 ]; then
-  AUTH_TIME=$((NOW - AUTH_AGE))
-  CLAIMS="$CLAIMS,\"acr\":\"$ACR\",\"auth_time\":$AUTH_TIME"
-fi
+# Build and base64url-encode the JWT header + payload with python's json.dumps so every claim VALUE
+# is JSON-escaped, never concatenated into the JSON by hand. The base payload is iss/iat/exp; `sub`
+# is present unless --no-sub (omitting it exercises the MCP route's deny_id() 401 — no usable subject
+# to attest as X-Client-Id); acr + auth_time are present unless --no-sca (auth_time = now - auth-age,
+# so a large --auth-age yields a STALE token the pre-function 403s); `aud` (RFC 8707) and `scope`
+# (OAuth) are added only when supplied — the MCP route checks aud == MCP_SERVER_URI and maps scope
+# -> X-OAuth-Scope; the orchestrator routes ignore both. All flags/values cross the boundary as argv,
+# so nothing the caller passes can break out of its string and inject an extra (signed) claim.
+read -r H P <<EOF
+$(python3 - "$ISS" "$NOW" "$EXP" "$NO_SUB" "$SUB" "$AUD" "$SCOPE" "$NO_SCA" "$ACR" "$AUTH_TIME" <<'PY'
+import base64, json, sys
+iss, now, exp, no_sub, sub, aud, scope, no_sca, acr, auth_time = sys.argv[1:11]
 
-HEADER='{"alg":"RS256","typ":"JWT"}'
-PAYLOAD="{$CLAIMS}"
+def b64url(obj):
+    raw = json.dumps(obj, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
-H="$(printf '%s' "$HEADER"  | b64url)"
-P="$(printf '%s' "$PAYLOAD" | b64url)"
+claims = {"iss": iss, "iat": int(now), "exp": int(exp)}
+if no_sub == "0":
+    claims["sub"] = sub
+if aud:
+    claims["aud"] = aud
+if scope:
+    claims["scope"] = scope
+if no_sca == "0":
+    claims["acr"] = acr
+    claims["auth_time"] = int(auth_time)
+
+print(b64url({"alg": "RS256", "typ": "JWT"}), b64url(claims))
+PY
+)
+EOF
+[ -n "$H" ] && [ -n "$P" ] || { echo "failed to build the JWT header/payload" >&2; exit 1; }
 SIGNING_INPUT="$H.$P"
 SIG="$(printf '%s' "$SIGNING_INPUT" | openssl dgst -sha256 -sign "$KEYFILE" -binary | b64url)"
 JWT="$SIGNING_INPUT.$SIG"

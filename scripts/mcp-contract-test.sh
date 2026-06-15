@@ -29,7 +29,8 @@
 #                       NOTE: the well-known→200 half surfaces a KNOWN PRE-EXISTING defect — on
 #                       kong:3.9.1 the route's `jwt enabled:false` does NOT suppress the global jwt
 #                       (proven below), so it 401s. Carved out as a non-blocking KNOWN-FAIL (its fix
-#                       is a separate drift-acknowledged lane); the POST /mcp→401 half passes.
+#                       is a separate drift-acknowledged lane, tracked as Q-BD in 04-open-questions.md);
+#                       the POST /mcp→401 half passes.
 #   A6 pre-jwt-read-cannot-leak: a token tampered AFTER signing (broken sig) -> 401 from jwt BEFORE
 #                       any upstream proxy; upstream NOT reached (mirrors abig(b)).
 #   A7 mTLS fail-closed: a client connecting DIRECTLY to uvicorn (bypassing Kong) WITHOUT a client
@@ -162,6 +163,32 @@ mcp_post() {
 }
 mbody() { cat /tmp/mcp_body.$$ 2>/dev/null || true; }
 
+# mcp_post_ok <token> <json-rpc body> [extra curl -H args...] — like mcp_post, but TOLERATES the
+# per-consumer rate limit on the happy-path assertions. The mcp-streamable-http route caps the
+# agent channel at 5 req/min limit_by:consumer (kong.yml:812-816), and EVERY POC token maps to the
+# SAME `iam-issuer` consumer (the shared `iss` key), so the harness's own valid-token requests
+# (A3 init, A4 init+notif+tools/call, A7-via-Kong) share ONE 5/min budget — clean runs sit AT it,
+# one request from a 429 (an added probe, a retry, or a minute-window boundary trips it). Rather
+# than weaken the byte-for-byte real kong.yml, this helper retries ONCE on a 429, sleeping the
+# `Retry-After`/`RateLimit-Reset` seconds Kong returns (fixed-window local policy → ≤60s) so the
+# contract test cannot flake on its OWN green path. Negative-path assertions keep using mcp_post
+# (they are rejected by jwt/pre-function BEFORE rate-limiting counts them, so they never 429).
+mcp_post_ok() {
+  local st
+  st="$(mcp_post "$@")"
+  if [ "$st" = "429" ]; then
+    local reset
+    reset="$(grep -i '^retry-after:' /tmp/mcp_hdr.$$ | tr -d '\r' | awk '{print $2}' || true)"
+    [ -z "$reset" ] && reset="$(grep -i '^ratelimit-reset:' /tmp/mcp_hdr.$$ | tr -d '\r' | awk '{print $2}' || true)"
+    # Default to a full fixed-window if Kong did not surface a reset hint; +1s for clock skew.
+    case "$reset" in (''|*[!0-9]*) reset=60 ;; esac
+    info "rate-limited (429) on a happy-path request; waiting ${reset}s for the per-consumer window to reset, then retrying once"
+    sleep $((reset + 1))
+    st="$(mcp_post "$@")"
+  fi
+  printf '%s' "$st"
+}
+
 # jsonrpc_field <jq-path> — read a field off the /mcp response whether it is a plain JSON body or
 # an SSE `data:` frame (FastMCP Streamable HTTP may return either).
 jsonrpc_field() {
@@ -213,7 +240,7 @@ fi
 # ════════════════════════════════════════════════════════════════════════════════════
 say "A3 — a valid token completes a REAL MCP Streamable-HTTP initialize through Kong (the 502→200 fix)"
 TOK_OK="$($MINT --aud "$MCP_AUD" --scope 'deposits:read deposits:write' --sub CLI-MCP-001 2>/dev/null)"
-ST="$(mcp_post "$TOK_OK" "$INIT_BODY")"
+ST="$(mcp_post_ok "$TOK_OK" "$INIT_BODY")"
 PROTO="$(jsonrpc_field '.result.protocolVersion')"
 SRVNAME="$(jsonrpc_field '.result.serverInfo.name')"
 SESSION_ID="$(grep -i '^mcp-session-id:' /tmp/mcp_hdr.$$ | tr -d '\r' | awk '{print $2}' || true)"
@@ -234,16 +261,16 @@ info "Mcp-Session-Id: ${SESSION_ID:-<none>}"
 say "A4 — tools/call get_deposit: a client-supplied X-Client-Id:victim is OVERWRITTEN to the sub (attacker) all the way to the engine"
 TOK_ATTACKER="$($MINT --aud "$MCP_AUD" --scope 'deposits:read' --sub attacker 2>/dev/null)"
 # A fresh MCP session: initialize, capture Mcp-Session-Id, send the initialized notification, then tools/call.
-ST="$(mcp_post "$TOK_ATTACKER" "$INIT_BODY" -H 'X-Client-Id: victim')"
+ST="$(mcp_post_ok "$TOK_ATTACKER" "$INIT_BODY" -H 'X-Client-Id: victim')"
 A4_SESSION="$(grep -i '^mcp-session-id:' /tmp/mcp_hdr.$$ | tr -d '\r' | awk '{print $2}' || true)"
 if [ -z "$A4_SESSION" ]; then
   record "A4 X-Client-Id IDOR" FAIL "no Mcp-Session-Id from initialize (status=$ST) — cannot drive tools/call"
 else
   # The MCP spec requires the `notifications/initialized` notification before normal requests.
   NOTIF_BODY='{"jsonrpc":"2.0","method":"notifications/initialized"}'
-  mcp_post "$TOK_ATTACKER" "$NOTIF_BODY" -H 'X-Client-Id: victim' -H "Mcp-Session-Id: $A4_SESSION" >/dev/null 2>&1 || true
+  mcp_post_ok "$TOK_ATTACKER" "$NOTIF_BODY" -H 'X-Client-Id: victim' -H "Mcp-Session-Id: $A4_SESSION" >/dev/null 2>&1 || true
   CALL_BODY='{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_deposit","arguments":{"deposit_id":"d-echo-test"}}}'
-  ST="$(mcp_post "$TOK_ATTACKER" "$CALL_BODY" -H 'X-Client-Id: victim' -H "Mcp-Session-Id: $A4_SESSION")"
+  ST="$(mcp_post_ok "$TOK_ATTACKER" "$CALL_BODY" -H 'X-Client-Id: victim' -H "Mcp-Session-Id: $A4_SESSION")"
   # Read what the engine stub recorded on its GET /v1/deposits/{id} (via the host-mapped echo port).
   FWD="$(curl -fsS "$ENGINE_ECHO/echo/headers" 2>/dev/null \
         | jq -r '.received_headers["X-Client-Id"] // .received_headers["x-client-id"] // empty' 2>/dev/null || true)"
@@ -266,8 +293,9 @@ say "A5 — well-known is public (200 no token); POST /mcp is jwt-gated (401 no 
 # correct fix is to route-scope the jwt plugin (attach it to the 6 authenticated routes, none on
 # well-known) WITHOUT an `anonymous:` consumer; that change also touches ADR-IC-010 §P2's stated
 # mechanism and kong-config-check's "well-known disables jwt" assertion (lines ~311-315), so it is
-# its OWN drift-acknowledged lane, not the mTLS lane. Tracked as a follow-up; asserted here as a
-# non-blocking KNOWN-FAIL so the discovery is not lost.
+# its OWN drift-acknowledged lane, not the mTLS lane. Recorded in the durable drift register as
+# Q-BD (docs/product-management/product_concepts/04-open-questions.md) per ADR-PC-020 §D3 — not just
+# here. Asserted as a non-blocking KNOWN-FAIL so the discovery is not lost.
 WK_ST="$(curl -s -o /dev/null -w '%{http_code}' "$EDGE/.well-known/oauth-protected-resource")"
 if [ "$WK_ST" = "200" ]; then
   record_known "A5 well-known no-token" PASS "got 200 (the pre-existing well-known jwt-disable defect is fixed)"
@@ -315,19 +343,30 @@ say "A7 — direct to uvicorn with NO client cert is rejected at the TLS handsha
 #     A CERT_REQUIRED server aborts the handshake -> python ssl raises -> we print TLS_REJECTED.
 DIRECT="https://localhost:${MCP_SERVER_DIRECT_PORT}/.well-known/oauth-protected-resource"
 NOCLIENT_RESULT="$(python3 - "$DIRECT" "$POC_CA" <<'PY'
-import ssl, sys, urllib.request
+import http.client, socket, ssl, sys, urllib.request
 url, cafile = sys.argv[1], sys.argv[2]
 ctx = ssl.create_default_context(cafile=cafile)
 ctx.check_hostname = False  # cert CN is mcp-server, we dial localhost
 # Deliberately present NO client cert (no load_cert_chain): a CERT_REQUIRED server must reject us.
+# We classify by FAILURE MODE so the assertion cannot PASS for the wrong reason. A CERT_REQUIRED
+# server that has the client cert it requires missing aborts the connection AFTER we reach it — it
+# surfaces as a clean ssl.SSLError, or (commonly) as a ConnectionResetError / RemoteDisconnected
+# (the server closes the socket without a response). Those mean TLS_REJECTED. By contrast a port
+# that is not bound / not routable (server never came up) raises ConnectionRefusedError / timeout /
+# gaierror — that is NOT a TLS rejection, so we report it distinctly and the assertion FAILS loudly
+# instead of green-passing for the wrong reason. (RemoteDisconnected/ConnectionReset/Refused all
+# carry errno=None at the HTTP layer, so we discriminate on TYPE, not errno.)
 try:
     urllib.request.urlopen(url, context=ctx, timeout=5)
     print("REACHED")  # should never happen — the server demands a client cert
 except ssl.SSLError:
-    print("TLS_REJECTED")
-except OSError:
-    # The TLS alert can surface as a connection reset rather than a clean SSLError.
-    print("TLS_REJECTED")
+    print("TLS_REJECTED")  # the server aborted the TLS handshake (no acceptable client cert)
+except (ConnectionResetError, http.client.RemoteDisconnected, BrokenPipeError):
+    print("TLS_REJECTED")  # reached the server; it closed the connection (no client cert) — the lock
+except (ConnectionRefusedError, socket.timeout, socket.gaierror) as e:
+    print("CONN_FAILED:%s" % (type(e).__name__,))  # never reached the server — NOT a TLS rejection
+except OSError as e:
+    print("CONN_FAILED:%s" % (type(e).__name__,))   # any other transport failure — fail loudly
 PY
 )"
 assert_eq "A7 no-client-cert rejected" "TLS_REJECTED" "$NOCLIENT_RESULT"
@@ -338,7 +377,7 @@ assert_eq "A7 no-client-cert rejected" "TLS_REJECTED" "$NOCLIENT_RESULT"
 #     reuse the /mcp initialize path (not the well-known route) so the probe exercises the SAME
 #     mTLS hop and is independent of the well-known-route jwt-disable defect (see A5's note).
 say "A7 — the WITH-client-cert path (via Kong) completes: a real /mcp initialize over mTLS returns 200"
-VIAKONG_ST="$(mcp_post "$TOK_OK" "$INIT_BODY")"
+VIAKONG_ST="$(mcp_post_ok "$TOK_OK" "$INIT_BODY")"
 assert_eq "A7 via-Kong mTLS completes" "200" "$VIAKONG_ST"
 
 # ── summary ─────────────────────────────────────────────────────────────────────────
