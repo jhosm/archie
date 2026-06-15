@@ -97,10 +97,12 @@ public static class ConstitutionResultEvents
         // saga advances on the engine's resulting event (DepositConstituted), consumed via the
         // orchestrator's event-consume loop (bd babelstone-t7o3.2)." So an Applied ActivateDeposit flips
         // the saga_outbox row PUBLISHED (delivery confirmed) but synthesizes NO result event here — the
-        // saga walks APPROVED → COMPLETED only when the real ProcessConstituted (engine DepositConstituted)
-        // event arrives on deposits.process.events via SagaConsumeLoop (the path SagaConsumeTopics names).
-        // Bridging it here would be a SECOND, contradicting advance producer for the (Approved,
-        // ProcessConstituted) → Completed transition — exactly what slot 2 forbids. There is NO ACL
+        // saga walks APPROVED → COMPLETED only when the real engine DepositConstituted event arrives on
+        // deposits.process.events via SagaConsumeLoop and fires the table's (Approved, "DepositConstituted")
+        // row — that string IS the value of ConstitutionProcess.ProcessConstituted (bd babelstone-3klm, so
+        // the engine's catalogued event name and the saga's transition key agree; the path
+        // SagaConsumeTopics names). Bridging it here would be a SECOND, contradicting advance producer for
+        // the (Approved, ProcessConstituted) → Completed transition — exactly what slot 2 forbids. There is NO ACL
         // synthesis shortcut for the engine leg: the engine relays DepositConstituted on the bus for real.
 
         // --- Post-debit compensation trigger (the headline) ---------------------------------------

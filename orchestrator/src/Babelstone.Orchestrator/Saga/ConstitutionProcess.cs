@@ -52,9 +52,24 @@ public sealed class ConstitutionProcess : TableStateMachine
     /// <summary>Deposit aggregate: activation failed AFTER the debit — the late-failure
     /// trigger (Document 05 Scenario B).</summary>
     public const string ActivationFailed = "ActivationFailed";
-    /// <summary>Deposit aggregate: the deposit was constituted; closes the saga
-    /// (Document 05 step 6).</summary>
-    public const string ProcessConstituted = "ProcessConstituted";
+    /// <summary>Deposit aggregate: the deposit was constituted; closes the saga (Document 05 step 6).
+    /// <para>
+    /// <b>The VALUE is the engine's catalogued event name, not a saga-internal label (bd babelstone-3klm).</b>
+    /// The saga reaches COMPLETED on the engine's resulting <c>DepositConstituted</c> EVENT — the ADR-PC-029
+    /// slot-2 bus-resume advance, NOT the <c>ActivateDeposit</c> HTTP 2xx (which bd babelstone-t7o3.8
+    /// deliberately stopped self-advancing on). The engine's outbox relay publishes that fact with
+    /// <c>ce_type = com.bank.deposits.DepositConstituted</c>, and the consume loop keys the transition
+    /// table on the <c>ce_type</c>'s record name (<see cref="Inbox.SagaConsumeLoop.RecordName"/> →
+    /// <c>"DepositConstituted"</c>), correlated to this saga by <c>ce_subject → process_id</c>. So this
+    /// constant's VALUE must be that exact record name, <c>"DepositConstituted"</c> — otherwise a real
+    /// bus event lands as <c>AdvanceOutcome.NoTransition</c> (poison) and the happy path strands at
+    /// APPROVED. The C# identifier stays <c>ProcessConstituted</c> (the saga's vocabulary for "the process
+    /// constituted the deposit"); ADR-IC-003's 2026-06-14 amendment already treats
+    /// <c>DepositConstituted</c>/<c>ProcessConstituted</c> as the same engine-relayed fact, so aligning the
+    /// value to the engine's name is the conformant move, not a divergence — no Accepted ADR Decision is
+    /// edited.
+    /// </para></summary>
+    public const string ProcessConstituted = "DepositConstituted";
     /// <summary>Core ACL: the reversible hold was released — compensation done
     /// (Document 05 Scenario A).</summary>
     public const string ReservationReleased = "ReservationReleased";
