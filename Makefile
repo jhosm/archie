@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 EVENTCATALOG_PORT ?= 8082
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo-mcp demo-mcp-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo-mcp demo-mcp-down demo-saga demo-saga-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -187,3 +187,9 @@ demo-mcp: ## Run the Epic-E walking skeleton end-to-end (Postgres→deploy→eng
 
 demo-mcp-down: ## Stop the demo's engine + MCP processes (Postgres is left running)
 	@./scripts/demo-mcp.sh down
+
+demo-saga: ## Run the constitution-SAGA path end-to-end (edge→saga→dispatcher→settlement→engine→COMPLETED), leave it up
+	@./scripts/demo-saga.sh up
+
+demo-saga-down: ## Stop the saga demo's engine + orchestrator processes (Postgres/Redpanda/ACL-stub are left running)
+	@./scripts/demo-saga.sh down

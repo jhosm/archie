@@ -197,6 +197,12 @@ make contracts-check   # CUE schema fmt + fixture validation (ADR-PC-006)
 make pack-validate     # validate a regulatory pack (PACK=pt.2026.1)
 ```
 
+**Runnable demos (Mission Control UI):**
+- `make demo-mcp` — engine-DIRECT walking skeleton (Postgres-only): deploy → engine → MCP.
+- `make demo-saga` — the full intended path: edge → constitution saga → dispatcher → settlement → engine → terminal `COMPLETED` (Postgres + Redpanda + Core-ACL stub + engine + orchestrator on a shared Redpanda).
+- Both leave Docker infra UP; the `*-down` target stops only the .NET hosts — run `make down` to stop infra. Drive the UI with `python3 docs/demo/mission-control/serve.py` → `http://localhost:9000` (proxies `/v1/*`→engine, `/api/v1/*`→orchestrator).
+- Gotcha: the engine does NOT apply event-store migrations on boot (only its family read-model migration, which needs the `babelstone_engine` role from migration 0002). A host must apply `engine/src/Babelstone.EventStore.Migrations/Sql/0001..0015` to the `babelstone` DB first — the demo scripts do this.
+
 ## Diagrams
 
 - C4 architecture diagrams use **PlantUML** (C4-PlantUML macros). GitHub renders Mermaid but **not** PlantUML, so each `.puml` source under `docs/**/diagrams/` is pre-rendered to a committed `.svg` that the Markdown embeds.
