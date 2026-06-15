@@ -30,9 +30,11 @@ public sealed record SagaInboxConsumerOptions
     public required string GroupId { get; init; }
 
     /// <summary>
-    /// The topics the saga reacts to — the constitution saga's events flow on the internal
-    /// <c>deposits.process.events</c> domain topic (<see cref="SagaConsumeTopics.ConstitutionProcessTopic"/>,
-    /// Document 05 §1).
+    /// The topics the saga reacts to — the orchestrator-produced process topic
+    /// (<see cref="SagaConsumeTopics.ConstitutionProcessTopic"/>, Document 05 §1) AND the engine's
+    /// term-deposit FAMILY INTEGRATION topic (<see cref="SagaConsumeTopics.TermDepositIntegrationTopic"/>),
+    /// where the closing <c>DepositConstituted</c> fact arrives (bd babelstone-t7o3.11 Fork A). In
+    /// production this is <see cref="SagaConsumeTopics.ConstitutionProcessTopics"/>.
     /// </summary>
     public required IReadOnlyList<string> Topics { get; init; }
 

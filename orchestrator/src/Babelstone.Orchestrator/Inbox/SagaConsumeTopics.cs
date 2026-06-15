@@ -10,41 +10,62 @@ namespace Babelstone.Orchestrator.Inbox;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The constitution saga's triggering events — the start signal (<c>ConstitutionRequested</c>), the
-/// validation results (<c>BalanceReserved</c>, <c>LimitsValidated</c>, …), and the closing engine fact
-/// <c>DepositConstituted</c> (the VALUE of <see cref="Saga.ConstitutionProcess.ProcessConstituted"/>;
-/// bd babelstone-3klm) — all flow on the internal DOMAIN topic <c>deposits.process.events</c>
-/// (Document 05 §1 "publishes to the internal topic <c>deposits.process.events</c> … the
-/// Constitution Saga Orchestrator subscribes to this topic"; it stays in the Deposits context, not an
-/// integration topic — Document 10 "Only the Deposits service can produce to … <c>deposits.process.events</c>").
-/// This is the same <c>source_topic</c> every existing <see cref="SagaInboxEvent"/> fixture carries.
+/// The constitution saga reacts to events from TWO sources, each on its own topic (ADR-IC-003 §S2
+/// 2026-06-15 amendment; bd babelstone-t7o3.11):
+/// <list type="bullet">
+///   <item><b><see cref="ConstitutionProcessTopic"/> (<c>deposits.process.events</c>)</b> — the internal
+///   DOMAIN topic for ORCHESTRATOR-produced process events (the start signal
+///   <c>ConstitutionRequested</c> and any future process-internal facts). It stays in the Deposits
+///   context, not an integration topic (Document 05 §1 / Document 10 "Only the Deposits service can
+///   produce to … <c>deposits.process.events</c>"). The substrate's <see cref="SagaInboxEvent"/> fixtures
+///   carry this as their <c>source_topic</c>.</item>
+///   <item><b><see cref="TermDepositIntegrationTopic"/> (<c>term_deposit</c>)</b> — the FAMILY
+///   INTEGRATION topic the engine publishes every term-deposit fact to. The engine's
+///   <c>OutboxDrainer</c> names the topic after the <c>aggregate_type</c> (<c>term_deposit</c>) and keeps
+///   the engine kernel family-agnostic; it never routes a fact to a per-process topic. So the closing
+///   engine fact <c>DepositConstituted</c> (the VALUE of
+///   <see cref="Saga.ConstitutionProcess.ProcessConstituted"/>; bd babelstone-3klm) arrives HERE, with
+///   <c>ce_subject = aggregate_id</c>. The saga POSTs <c>deposit_id = process_id</c> to the engine
+///   (bd babelstone-t7o3.11 / 3k10), so <c>aggregate_id == process_id</c> and the consume loop correlates
+///   the integration fact back to the saga by identity (<c>ce_subject → process_id</c>).</item>
+/// </list>
 /// </para>
 /// <para>
-/// <b>FLAG (bd babelstone-3klm) — the engine's relay topic differs from this committed topic.</b> The
-/// ADR-IC-003 2026-06-14 amendment and Document 05 commit the engine to relaying <c>DepositConstituted</c>
-/// on <c>deposits.process.events</c>, and that is what the saga subscribes to. But the engine's
-/// <c>OutboxDrainer</c> today publishes every fact to a topic named after its <c>aggregate_type</c>
-/// (<c>term_deposit</c> for a deposit stream), with NO router re-publishing <c>DepositConstituted</c> to
-/// <c>deposits.process.events</c>. Closing THAT gap (a routed/dedicated process topic, or subscribing the
-/// saga to <c>term_deposit</c>) is a separate engine-relay-routing decision left for the maintainer; this
-/// change closes only the EVENT-NAME mismatch so a <c>DepositConstituted</c> record arriving on the
-/// committed topic drives the saga to COMPLETED (ADR-PC-029 slot 2).
+/// <b>This IS the multi-saga dispatch model (Fork A, bd babelstone-t7o3.11).</b> The orchestrator —
+/// not the engine — bridges the family topic to the saga. The consume loop keys the transition table on
+/// the inbound event's TYPE NAME alone (the <c>ce_type</c>'s record name, ADR-IC-003 §P2); an event with
+/// no <c>(state, type)</c> transition is a benign no-op (NoTransition → committed past). Each saga runs
+/// in its OWN Kafka consumer group, so the renewal saga (H.3, bd babelstone-mtto) extends this by
+/// subscribing the SAME family topic under its own group and dispatching the renewal facts it cares about
+/// — no engine change, no per-process topic, no shared-group contention.
 /// </para>
 /// <para>
-/// Kept as a named constant (not a buried literal) so the host wiring, the consume loop, and any test
-/// fixture reference the SAME topic name — a drift between "what the loop subscribes to" and "where
+/// Kept as named constants (not buried literals) so the host wiring, the consume loop, and any test
+/// fixture reference the SAME topic names — a drift between "what the loop subscribes to" and "where
 /// the events are produced" is impossible to introduce silently.
 /// </para>
 /// </remarks>
 public static class SagaConsumeTopics
 {
-    /// <summary>The internal domain topic the <see cref="Saga.ConstitutionProcess"/> saga's
-    /// triggering events flow on (Document 05 §1).</summary>
+    /// <summary>The internal domain topic for ORCHESTRATOR-produced process events — the start signal
+    /// (<c>ConstitutionRequested</c>) and any future process-internal facts (Document 05 §1). NOT where
+    /// the engine's integration facts arrive — those land on <see cref="TermDepositIntegrationTopic"/>.</summary>
     public const string ConstitutionProcessTopic = "deposits.process.events";
 
-    /// <summary>The default topic set a constitution-saga consumer subscribes to (today: just the one
-    /// process topic). A list so a future saga that reacts to events on more than one topic — e.g. a
-    /// renewal saga (H.3) keyed on a separate aggregate's topic — extends it without changing the
-    /// loop's shape.</summary>
-    public static IReadOnlyList<string> ConstitutionProcessTopics { get; } = [ConstitutionProcessTopic];
+    /// <summary>The term-deposit FAMILY INTEGRATION topic the engine's <c>OutboxDrainer</c> publishes
+    /// every term-deposit fact to (topic = <c>aggregate_type</c>; ADR-IC-004 §Consequences). The closing
+    /// engine fact <c>DepositConstituted</c> arrives here with <c>ce_subject = aggregate_id</c>, which the
+    /// saga pins to its own <c>process_id</c> by POSTing <c>deposit_id = process_id</c> to the engine
+    /// (bd babelstone-t7o3.11 / 3k10). The saga subscribes to it to advance on the engine's REAL event
+    /// (ADR-PC-029 slot 2), keeping the engine kernel family-agnostic (the orchestrator reads the family
+    /// topic; the engine adds no routing).</summary>
+    public const string TermDepositIntegrationTopic = "term_deposit";
+
+    /// <summary>The topic set a constitution-saga consumer subscribes to: the orchestrator-produced
+    /// process topic AND the engine's term-deposit integration topic (bd babelstone-t7o3.11). A list so a
+    /// future saga that reacts to events on more than one topic — e.g. the renewal saga (H.3,
+    /// bd babelstone-mtto) on its own consumer group over the SAME family topic — extends it without
+    /// changing the loop's shape.</summary>
+    public static IReadOnlyList<string> ConstitutionProcessTopics { get; } =
+        [ConstitutionProcessTopic, TermDepositIntegrationTopic];
 }

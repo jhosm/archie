@@ -189,20 +189,141 @@ public sealed record ConfirmDebitCommand : CommandPayload
     public override string CommandType => ConstitutionProcess.ConfirmDebit;
 }
 
-/// <summary>Deposit aggregate: activate the deposit after the debit (Document 05 step 4b).
-/// Reachable ONLY from APPROVED (§P5). Carries the deposit reference and the opaque
-/// upstream-issued Core txn reference; no PII.</summary>
+/// <summary>
+/// Deposit aggregate: activate (constitute) the deposit after the debit (Document 05 step 4b).
+/// Reachable ONLY from APPROVED (§P5). Unlike the other saga commands, this one is delivered to the
+/// ENGINE's <c>POST /v1/deposits</c> command surface (the Pact-pinned route, ADR-PC-029 slot 1), so its
+/// wire body is the engine's <c>Babelstone.Engine.Api.ConstituteDepositRequest</c> shape
+/// — NOT the polymorphic saga-command envelope. The body carries the per-deposit STRUCTURAL facts the
+/// saga pinned at the edge (bd babelstone-t7o3.11): the product code, principal cents, term, interest
+/// variant, renewal policy, payment cadence, pricing role, funding account, and the pinned start date.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>deposit_id = process_id (the ce_subject correlation pin, bd babelstone-t7o3.11 / 3k10).</b> The
+/// engine honours the supplied <c>deposit_id</c> AS the stream/aggregate id, so the
+/// <c>DepositConstituted</c> the engine relays carries <c>ce_subject = aggregate_id = process_id</c>.
+/// That is what lets the orchestrator's consume loop correlate the engine's REAL integration fact
+/// (arriving on the <c>term_deposit</c> family topic) back to THIS saga by identity. We send the raw
+/// <see cref="CommandPayload.ProcessId"/> GUID as the engine's <c>deposit_id</c>; the <c>DEP-…</c>
+/// <see cref="DepositRef"/> is the EDGE-facing client reference, a separate concern.
+/// </para>
+/// <para>
+/// <b>The engine resolves the RATE in-transaction (bd babelstone-3k10 / ADR-PC-008 §S2).</b> This body
+/// carries the structural product facts but NOT the TAN — the engine resolves the active rate sheet and
+/// stamps the rate in the SAME transaction as the constitution append + outbox (the de-settled
+/// constitution path). The structural facts are pinned at the edge for replay-stability; a per-deposit
+/// product-config registry resolving them engine-side (so the saga could send a truly minimal body) is
+/// the documented later work in <c>TermDepositConstitutionService</c> (ADR-PC-009).
+/// </para>
+/// <para>
+/// <b>Byte-stable, PII-free (ADR-PC-010 §P5 / ADR-PC-004 §P2).</b> Every field is a pinned scalar or a
+/// structural reference — integer-cents principal, the catalogue product code, the term/variant/policy
+/// codes, the pinned start date, the opaque funding-account token. NO clock, NO minted GUID inside the
+/// body (the process id is a carried reference; the start date is pinned at the edge), so re-emitting
+/// the same logical command yields identical bytes. NEVER a raw IBAN/NIF/name.
+/// </para>
+/// </remarks>
 public sealed record ActivateDepositCommand : CommandPayload
 {
-    /// <summary>The deposit aggregate reference to activate.</summary>
+    /// <summary>The deposit aggregate reference to activate (the EDGE-facing <c>DEP-…</c> handle, kept
+    /// for the audit trail; the engine stream id is <see cref="CommandPayload.ProcessId"/>).</summary>
     public required string DepositRef { get; init; }
 
     /// <summary>The opaque Core transaction reference the debit produced (e.g. CT-…) — issued
     /// upstream by Core, carried through; NOT minted here.</summary>
     public required string CoreTxnRef { get; init; }
 
+    /// <summary>The product catalogue code the engine prices and constitutes (e.g.
+    /// <c>dpz_pt_12m_juros_venc</c>). Pinned at the edge; maps to the engine's <c>product_id</c>.</summary>
+    public required string ProductCode { get; init; }
+
+    /// <summary>The deposit principal in integer cents — the engine's <c>principal_cents</c>.</summary>
+    public required long PrincipalCents { get; init; }
+
+    /// <summary>The opaque funding-account token to debit — the engine's <c>funding_account</c>. A
+    /// token, NOT a raw IBAN (ADR-PC-004 §P2).</summary>
+    public required string FundingAccount { get; init; }
+
+    /// <summary>The pricing role for the rate-sheet resolve (e.g. <c>standard</c>). The engine's
+    /// <c>role</c>; pinned at the edge.</summary>
+    public required string Role { get; init; }
+
+    /// <summary>The deposit term in days — the engine's <c>term_days</c>. A structural product fact
+    /// pinned at the edge.</summary>
+    public required int TermDays { get; init; }
+
+    /// <summary>The deposit start date, PINNED at the edge at admission — the engine's <c>start_date</c>.
+    /// Pinned (not "today at the engine") so the body is byte-stable and the constitution replay-stable
+    /// (ADR-PC-010 §P5: no clock in the saga's command bytes).</summary>
+    public required DateOnly StartDate { get; init; }
+
+    /// <summary>The interest variant code (e.g. <c>AT_MATURITY</c>) — the engine's <c>interest_variant</c>.</summary>
+    public required string InterestVariant { get; init; }
+
+    /// <summary>The auto-renewal policy code (e.g. <c>NONE</c>) — the engine's <c>auto_renewal_policy</c>.</summary>
+    public required string AutoRenewalPolicy { get; init; }
+
+    /// <summary>The PERIODIC coupon cadence in months (0 for AT_MATURITY / ADVANCE) — the engine's
+    /// <c>payment_period_months</c>.</summary>
+    public required int PaymentPeriodMonths { get; init; }
+
     /// <inheritdoc />
     public override string CommandType => ConstitutionProcess.ActivateDeposit;
+
+    /// <summary>
+    /// Serialize to the ENGINE's <c>ConstituteDepositRequest</c> wire shape (snake_case, money as integer
+    /// cents) — NOT the polymorphic saga-command envelope, because this command is delivered to the
+    /// engine's <c>POST /v1/deposits</c> surface, whose SnakeCaseLower deserializer would reject a
+    /// <c>$type</c> discriminator. <c>deposit_id</c> is the raw <see cref="CommandPayload.ProcessId"/>, so
+    /// <c>ce_subject = process_id</c> on the relayed <c>DepositConstituted</c> (bd babelstone-t7o3.11).
+    /// PURE and byte-stable: every field is a pinned scalar/reference — no clock, no minted GUID.
+    /// </summary>
+    public override byte[] ToBytes() =>
+        System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+            new EngineConstituteBody(
+                PrincipalCents: PrincipalCents,
+                ProductId: ProductCode,
+                Role: Role,
+                TermDays: TermDays,
+                StartDate: StartDate,
+                InterestVariant: InterestVariant,
+                AutoRenewalPolicy: AutoRenewalPolicy,
+                FundingAccount: FundingAccount,
+                DepositId: ProcessId,
+                PaymentPeriodMonths: PaymentPeriodMonths),
+            EngineConstituteSerializerOptions);
+
+    /// <summary>The byte-stable, snake_case serializer the engine's constitute surface expects
+    /// (SnakeCaseLower; <c>DateOnly</c> as ISO yyyy-MM-dd). A FIXED, explicit policy — no indentation,
+    /// declaration-order properties — so the same logical command yields identical bytes.</summary>
+    internal static readonly System.Text.Json.JsonSerializerOptions EngineConstituteSerializerOptions = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower,
+        WriteIndented = false,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never,
+    };
+
+    /// <summary>
+    /// The engine's <c>ConstituteDepositRequest</c> shape mirrored here so the orchestrator emits the
+    /// engine wire body WITHOUT a project reference to <c>Babelstone.Engine.Api</c> (extraction-ready,
+    /// ADR-PC-019 §P2 — the orchestrator never depends on the engine kernel/host). Field order + names
+    /// mirror the engine contract; the snake_case policy maps them onto the wire. The TAN is deliberately
+    /// absent — the engine resolves the rate in-transaction (bd babelstone-3k10). The Pact-style CDC
+    /// (<c>EngineCommandContract</c> + <c>EngineCommandPactProviderTests</c>) pins this shape against the
+    /// REAL engine, so a drift between this mirror and the engine contract is a build failure.
+    /// </summary>
+    private readonly record struct EngineConstituteBody(
+        long PrincipalCents,
+        string ProductId,
+        string Role,
+        int TermDays,
+        DateOnly StartDate,
+        string InterestVariant,
+        string AutoRenewalPolicy,
+        string FundingAccount,
+        Guid DepositId,
+        int PaymentPeriodMonths);
 }
 
 /// <summary>Core ACL: release the reversible hold — early compensation (Document 05 Scenario A).

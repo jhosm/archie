@@ -30,10 +30,12 @@ public sealed class SagaBusinessReferenceStore
         const string sql = """
             INSERT INTO saga_business_ref (
                 process_id, product_ref, amount_minor_units, source_account_ref,
-                interest_account_ref, deposit_ref, client_type, auto_approval_threshold_minor_units)
+                interest_account_ref, deposit_ref, client_type, auto_approval_threshold_minor_units,
+                term_days, interest_variant, auto_renewal_policy, payment_period_months, role, start_date)
             VALUES (
                 @process_id, @product_ref, @amount_minor_units, @source_account_ref,
-                @interest_account_ref, @deposit_ref, @client_type, @auto_approval_threshold_minor_units)
+                @interest_account_ref, @deposit_ref, @client_type, @auto_approval_threshold_minor_units,
+                @term_days, @interest_variant, @auto_renewal_policy, @payment_period_months, @role, @start_date)
             ON CONFLICT (process_id) DO NOTHING;
             """;
 
@@ -46,6 +48,14 @@ public sealed class SagaBusinessReferenceStore
         command.Parameters.AddWithValue("deposit_ref", reference.DepositRef);
         command.Parameters.AddWithValue("client_type", ClientTypeNames.ToName(reference.ClientType));
         command.Parameters.AddWithValue("auto_approval_threshold_minor_units", reference.AutoApprovalThresholdMinorUnits);
+        // The STRUCTURAL product facts the engine's ConstituteDepositRequest carries (bd babelstone-t7o3.11),
+        // pinned at the edge for replay-stability. start_date is a DateOnly mapped to a DATE column.
+        command.Parameters.AddWithValue("term_days", reference.TermDays);
+        command.Parameters.AddWithValue("interest_variant", reference.InterestVariant);
+        command.Parameters.AddWithValue("auto_renewal_policy", reference.AutoRenewalPolicy);
+        command.Parameters.AddWithValue("payment_period_months", reference.PaymentPeriodMonths);
+        command.Parameters.AddWithValue("role", reference.Role);
+        command.Parameters.AddWithValue("start_date", reference.StartDate);
 
         return await command.ExecuteNonQueryAsync(ct) == 1;
     }
@@ -64,7 +74,8 @@ public sealed class SagaBusinessReferenceStore
     {
         const string sql = """
             SELECT product_ref, amount_minor_units, source_account_ref, interest_account_ref,
-                   deposit_ref, client_type, auto_approval_threshold_minor_units
+                   deposit_ref, client_type, auto_approval_threshold_minor_units,
+                   term_days, interest_variant, auto_renewal_policy, payment_period_months, role, start_date
             FROM saga_business_ref
             WHERE process_id = @process_id;
             """;
@@ -86,7 +97,13 @@ public sealed class SagaBusinessReferenceStore
             InterestAccountRef: reader.IsDBNull(3) ? null : reader.GetString(3),
             DepositRef: reader.GetString(4),
             ClientType: ClientTypeNames.FromName(reader.GetString(5)),
-            AutoApprovalThresholdMinorUnits: reader.GetInt64(6));
+            AutoApprovalThresholdMinorUnits: reader.GetInt64(6),
+            TermDays: reader.GetInt32(7),
+            InterestVariant: reader.GetString(8),
+            AutoRenewalPolicy: reader.GetString(9),
+            PaymentPeriodMonths: reader.GetInt32(10),
+            Role: reader.GetString(11),
+            StartDate: reader.GetFieldValue<DateOnly>(12));
     }
 }
 

@@ -39,6 +39,22 @@ namespace Babelstone.Orchestrator.Saga;
 /// <param name="ClientType">The client's standing as the approval fork reads it (existing / new).</param>
 /// <param name="AutoApprovalThresholdMinorUnits">The auto-approval ceiling PINNED at the edge in
 /// integer cents — the fork's threshold argument, never a live-config dereference.</param>
+/// <param name="TermDays">The deposit term in days — a STRUCTURAL product fact pinned at the edge, sent
+/// in the engine's ConstituteDepositRequest (bd babelstone-t7o3.11). The engine resolves the RATE
+/// in-transaction; these structural facts are pinned for replay-stability (ADR-PC-008 §S2 /
+/// ADR-PC-009). Defaults to the 12-month walking-skeleton value.</param>
+/// <param name="InterestVariant">The interest-variant code (e.g. AT_MATURITY) — pinned at the edge,
+/// sent to the engine. Defaults to the walking-skeleton AT_MATURITY.</param>
+/// <param name="AutoRenewalPolicy">The auto-renewal policy code (e.g. NONE) — pinned at the edge, sent
+/// to the engine. Defaults to the walking-skeleton NONE.</param>
+/// <param name="PaymentPeriodMonths">The PERIODIC coupon cadence in months (0 for AT_MATURITY/ADVANCE)
+/// — pinned at the edge, sent to the engine. Defaults to 0.</param>
+/// <param name="Role">The pricing role for the rate-sheet resolve (e.g. standard) — pinned at the edge,
+/// sent to the engine. Defaults to the walking-skeleton "standard".</param>
+/// <param name="StartDate">The deposit start date PINNED at the edge at admission — sent as the engine's
+/// start_date. Pinned (not "today at the engine") so the saga's command bytes carry NO clock and the
+/// constitution replays stably (ADR-PC-010 §P5). Defaults to <see cref="DateOnly.MinValue"/>; the edge
+/// pins the admission date.</param>
 public sealed record SagaBusinessReference(
     Guid ProcessId,
     string ProductRef,
@@ -47,7 +63,13 @@ public sealed record SagaBusinessReference(
     string? InterestAccountRef,
     string DepositRef,
     ClientType ClientType,
-    long AutoApprovalThresholdMinorUnits)
+    long AutoApprovalThresholdMinorUnits,
+    int TermDays = 365,
+    string InterestVariant = "AT_MATURITY",
+    string AutoRenewalPolicy = "NONE",
+    int PaymentPeriodMonths = 0,
+    string Role = "standard",
+    DateOnly StartDate = default)
 {
     /// <summary>
     /// The edge-pinned inputs the pure approval fork decides over (Document 05 step 3). A pure

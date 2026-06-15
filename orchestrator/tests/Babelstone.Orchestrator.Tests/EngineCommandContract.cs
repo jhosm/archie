@@ -49,12 +49,28 @@ public static class EngineCommandContract
         Assert.False(string.IsNullOrEmpty(request.IdempotencyKey), "Idempotency-Key must be present");
         Assert.True(Guid.TryParse(request.IdempotencyKey, out _), "Idempotency-Key must be a UUID");
 
-        // A well-formed JSON body (the byte-stable logical payload the sink persisted). The engine's
-        // ConstituteDepositRequest fields are snake_case (SnakeCaseLower); the substrate's seam body
-        // is the structural envelope today — the provider verification pins the FULL constitute body
-        // shape against the real engine.
+        // A well-formed JSON body that IS a snake_case ConstituteDepositRequest (bd babelstone-t7o3.11):
+        // the dispatcher's ActivateDeposit body now serializes the engine constitute shape, NOT the
+        // polymorphic saga envelope. The load-bearing clauses: the structural product facts the engine
+        // prices on (product_id, principal_cents, term_days, …) AND deposit_id — which the dispatcher
+        // sets to the saga's process_id so the relayed DepositConstituted carries ce_subject = process_id.
+        // The TAN is deliberately ABSENT: the engine resolves the rate in-transaction (bd babelstone-3k10).
         Assert.False(string.IsNullOrWhiteSpace(request.Body), "request body must be present");
         using var document = JsonDocument.Parse(request.Body);
+        var root = document.RootElement;
+        foreach (var field in new[]
+                 {
+                     "deposit_id", "product_id", "principal_cents", "role", "term_days",
+                     "start_date", "interest_variant", "auto_renewal_policy", "funding_account",
+                 })
+        {
+            Assert.True(root.TryGetProperty(field, out _),
+                $"the constitute body must carry '{field}' (ENGINE_COMMAND_PACT, bd babelstone-t7o3.11)");
+        }
+
+        // deposit_id is a UUID (the saga's process_id) — the ce_subject correlation pin.
+        Assert.True(Guid.TryParse(root.GetProperty("deposit_id").GetString(), out _),
+            "deposit_id must be the saga's process_id (a UUID) so ce_subject = process_id");
     }
 
     /// <summary>The contract's expected 201 response body: a ConstituteDepositResponse with the
