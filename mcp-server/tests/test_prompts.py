@@ -43,6 +43,7 @@ async def test_prompts_list_includes_review_upcoming_maturities() -> None:
 
 _CONSTITUTE_ARGS = {
     "product_id": "dpz_pt_12m",
+    "role": "standard",
     "principal_cents": 100000,
     "term_days": 365,
     "start_date": "2026-06-15",
@@ -53,6 +54,15 @@ _CONSTITUTE_ARGS = {
 async def test_constitute_prompt_renders_product_id() -> None:
     result = await server.mcp.get_prompt("constitute_term_deposit", _CONSTITUTE_ARGS)
     assert "dpz_pt_12m" in _text(result)
+
+
+async def test_constitute_prompt_renders_role() -> None:
+    # `role` is a REQUIRED constitute_deposit argument (server.py); the vetted prompt must name it
+    # in Step 1, or an agent following it verbatim builds a call that fails inputSchema validation.
+    result = await server.mcp.get_prompt("constitute_term_deposit", _CONSTITUTE_ARGS)
+    text = _text(result)
+    assert "role:" in text
+    assert "standard" in text
 
 
 async def test_constitute_prompt_renders_principal_cents() -> None:

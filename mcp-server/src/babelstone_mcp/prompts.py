@@ -24,32 +24,44 @@ from .server import mcp
     name="constitute_term_deposit",
     description=(
         "Vetted procedure for constituting a term deposit on behalf of a customer. Instructs the "
-        "agent to call constitute_deposit with the supplied parameters, confirm the deposit_id, then "
-        "read the confirmed position with get_deposit using the commit_sequence token for "
-        "read-your-writes. The tool-call step requires deposits:write scope; rendering this prompt "
-        "requires no scope (it is a pure template)."
+        "agent to call constitute_deposit with the supplied parameters (product_id, role, "
+        "principal_cents, term_days, start_date, funding_account, interest_variant, and "
+        "payment_period_months for PERIODIC), confirm the deposit_id, then read the confirmed "
+        "position with get_deposit using the commit_sequence token for read-your-writes. The "
+        "tool-call step requires deposits:write scope; rendering this prompt requires no scope (it "
+        "is a pure template)."
     ),
 )
 def constitute_term_deposit(
     product_id: str,
+    role: str,
     principal_cents: int,
     term_days: int,
     start_date: str,
     funding_account: str,
     interest_variant: str = "AT_MATURITY",
+    payment_period_months: int = 0,
 ) -> list[UserMessage]:
-    """Prompt template for opening a term deposit — encodes the bank-vetted call sequence."""
+    """Prompt template for opening a term deposit — encodes the bank-vetted call sequence.
+
+    ``role`` is the pricing role the rate sheet keys on (e.g. ``standard``); it is a REQUIRED
+    constitute_deposit argument, so the rendered Step 1 always names it. ``payment_period_months``
+    is the PERIODIC coupon cadence (1 monthly, 3 quarterly) and is 0 for AT_MATURITY / ADVANCE.
+    """
     text = (
         "You are assisting a customer to open a term deposit. "
         "Follow this procedure exactly and do not deviate from it.\n\n"
         "Step 1 — Constitute the deposit.\n"
         "Call the constitute_deposit tool with these parameters:\n"
         f"  product_id: {product_id!r}\n"
+        f"  role: {role!r}  (the pricing role the rate sheet keys on, e.g. 'standard')\n"
         f"  principal_cents: {principal_cents}  (integer cents — do NOT convert to a decimal)\n"
         f"  term_days: {term_days}\n"
         f"  start_date: {start_date!r}  (ISO-8601 YYYY-MM-DD)\n"
         f"  funding_account: {funding_account!r}\n"
         f"  interest_variant: {interest_variant!r}\n"
+        f"  payment_period_months: {payment_period_months}  (REQUIRED for PERIODIC — 1 monthly or "
+        "3 quarterly; leave 0 for AT_MATURITY and ADVANCE)\n"
         "Do NOT supply a client_id argument. The gateway attests the caller's identity from the "
         "OAuth token; a client_id argument would be ignored or rejected.\n\n"
         "Step 2 — Confirm to the customer.\n"
