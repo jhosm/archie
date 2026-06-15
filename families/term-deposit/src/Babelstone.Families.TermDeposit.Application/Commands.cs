@@ -83,10 +83,13 @@ public sealed record ConstituteDepositCommand(
 /// <b>start_date / replay-stability (ADR-PC-010 §P5).</b> Where the rejected stand-in PINNED the start
 /// date at the orchestrator edge so the saga's command bytes carried no clock, the engine is now the
 /// event author and derives the start date from <see cref="ConstitutedAt"/> (host-stamped by the
-/// engine's injected <c>TimeProvider</c>, the impure-shell clock). Replay stability is preserved by
-/// the Idempotency-Key dedup (ADR-PC-029 slot 4): a replayed constitution with the same
-/// <see cref="CommandId"/> returns the original outcome with NO second append, so the start date is
-/// never re-derived on a replay.
+/// engine's injected <c>TimeProvider</c>, the impure-shell clock). Replay stability holds because the
+/// derived start date is STAMPED onto <c>DepositConstituted</c> and folded VERBATIM by
+/// <c>DepositConstitutedHandler.Apply</c> — a full fold/rebuild reproduces the identical value and
+/// never re-reads the clock, so the start date is never re-derived on a replay. (The Idempotency-Key
+/// dedup, ADR-PC-029 slot 4, is the separate COMMAND-retry guarantee: a replayed constitution with the
+/// same <see cref="CommandId"/> returns the original outcome with no second append; it prevents a
+/// second clock read on a retry, but the load-bearing fold guarantee is the event-captured value.)
 /// </para>
 /// <para>
 /// <b>No PII (ADR-PC-004 §P2).</b> Every field is a structural reference or an integer-cents scalar —

@@ -9,12 +9,13 @@ namespace Babelstone.RateSheets;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The engine is the constitution authority (the maintainer's Q2 choice, ADR-PC-009 / ADR-PC-008
-/// §S2).</b> Where the rejected v1 stand-in pinned the structural facts at the orchestrator edge and
-/// shipped them on the wire, the engine now resolves them itself — alongside the rate-sheet resolve,
-/// in the SAME constitution transaction. The resolved facts are the SHAPE only (term, variant,
-/// renewal policy, coupon cadence, role); the TAN is a separate rate-sheet resolve (ADR-PC-008 §P3),
-/// and the day-count / withholding primitives are pack-resolved. This store NEVER carries a price.
+/// <b>The engine is the constitution authority (the maintainer's Q2 choice; resolution-in-transaction
+/// is ADR-PC-008 §S2).</b> Where the rejected v1 stand-in pinned the structural facts at the
+/// orchestrator edge and shipped them on the wire, the engine now resolves them itself — alongside the
+/// rate-sheet resolve, in the SAME constitution transaction (the ADR-PC-008 §S2 in-transaction
+/// property). The resolved facts are the SHAPE only (term, variant, renewal policy, coupon cadence,
+/// role); the TAN is a separate rate-sheet resolve (ADR-PC-008 §P3), and the day-count / withholding
+/// primitives are pack-resolved. This store NEVER carries a price.
 /// </para>
 /// <para>
 /// <b>Family-agnostic seam (ADR-PC-021 §D2/§P2).</b> This interface lives in the generic

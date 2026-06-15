@@ -73,14 +73,14 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         // The k6r8.1 fixture: EUR 499,000.00, TAN 3.25%, monthly (12 coupons), Act/360, IRS 28%,
         // 2026-01-01 → 2027-01-01. Flow-by-flow withholding makes Σ per-coupon net ≠ the aggregate
         // rate-scaling shortcut gross_agg × (1 − 0.28). The shared family sheet prices the monthly
-        // product (dpz_pt_12m_juros_mensais) at 325 bps.
+        // product (dpz_pt_12m_juros_mensal) at 325 bps.
         await fixture.EnsureRateSheetAsync(SharedSheet);
 
         var (runtime, service, settlement) = Compose(fixture.ConnectionString);
         var depositId = Guid.NewGuid();
 
         await service.ConstituteAsync(new ConstituteDepositCommand(
-            DepositId: depositId, PrincipalCents: 49_900_000, ProductId: "dpz_pt_12m_juros_mensais", Role: "standard",
+            DepositId: depositId, PrincipalCents: 49_900_000, ProductId: "dpz_pt_12m_juros_mensal", Role: "standard",
             TermDays: 365, StartDate: new DateOnly(2026, 1, 1),
             ConstitutedAt: new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
             InterestVariant: "PERIODIC", AutoRenewalPolicy: "NONE", FundingAccount: "PT50-DDA-001",
@@ -205,7 +205,7 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
     /// The one rate sheet the three Integration tests share (they share a Postgres container, and the
     /// engine resolves the latest sheet effective for the FAMILY, not by product). It is effective
     /// 2025-01-01 — before every constitution — and prices each variant's product: AT_MATURITY
-    /// (dpz_pt_12m_juros_venc) @ 300 bps, PERIODIC (dpz_pt_12m_juros_mensais) @ 325 bps, ADVANCE
+    /// (dpz_pt_12m_juros_venc) @ 300 bps, PERIODIC (dpz_pt_12m_juros_mensal) @ 325 bps, ADVANCE
     /// (dpz_pt_12m_juros_antecip) @ 300 bps. Its version id is the canonical pt-deposits-2026.1 the
     /// AT_MATURITY test asserts the stamped position carries.
     /// </summary>
@@ -213,7 +213,7 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         versionId: "pt-deposits-2026.1",
         effectiveFrom: new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero),
         ("dpz_pt_12m_juros_venc", "standard", 300),
-        ("dpz_pt_12m_juros_mensais", "standard", 325),
+        ("dpz_pt_12m_juros_mensal", "standard", 325),
         ("dpz_pt_12m_juros_antecip", "standard", 300));
 
     /// <summary>Compose the durable runtime + decider over the term-deposit family with the in-memory

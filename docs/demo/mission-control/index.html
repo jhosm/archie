@@ -272,7 +272,7 @@ body.console-open .hint-bar { display:none; }
       <label for="product">Product</label>
       <select id="product">
         <option value="dpz_pt_12m_juros_venc">12m · interest at maturity</option>
-        <option value="dpz_pt_12m_juros_mensais">12m · monthly coupons</option>
+        <option value="dpz_pt_12m_juros_mensal">12m · monthly coupons</option>
         <option value="dpz_pt_12m_juros_antecip">12m · interest in advance</option>
       </select>
       <div class="hint" id="variantHint">interest_variant = AT_MATURITY</div>
@@ -340,7 +340,7 @@ body.console-open .hint-bar { display:none; }
   // The three real engine products (verified against the rate sheet + decider).
   var PRODUCTS = {
     dpz_pt_12m_juros_venc:    { label: "interest at maturity", variant: "AT_MATURITY", tan: 300, ppm: 0 },
-    dpz_pt_12m_juros_mensais: { label: "monthly coupons",      variant: "PERIODIC",    tan: 325, ppm: 1 },
+    dpz_pt_12m_juros_mensal: { label: "monthly coupons",      variant: "PERIODIC",    tan: 325, ppm: 1 },
     dpz_pt_12m_juros_antecip: { label: "interest in advance",  variant: "ADVANCE",     tan: 300, ppm: 0 }
   };
   var RATE_SHEET = "pt-deposits-2026.1";
