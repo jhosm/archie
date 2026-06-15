@@ -81,6 +81,44 @@ class AuthContext:
         return cls(client_id=client_id, scopes=scopes)
 
 
+# Scope-per-resource (ADR-IC-010 §P4/§A3): the read/write tiering keys on SCOPE, not on MCP method.
+# A resource read that touches deposit data mirrors the get_deposit tool's read scope. Prompts are
+# pure templates (no engine call, no PII) and therefore carry NO scope guard — they are deliberately
+# absent from any scope registry so a read-only token can still enumerate and render them.
+RESOURCE_SCOPES: dict[str, str] = {
+    "deposit_position_resource": DEPOSITS_READ,
+}
+
+
+def check_resource_scope(auth: AuthContext, resource: str) -> None:
+    """Enforce scope-per-resource (ADR-IC-010 §P4/§A3). Raise ``McpError`` if ``auth`` lacks the
+    resource's scope.
+
+    Structurally identical to ``check_tool_scope`` but keyed on ``RESOURCE_SCOPES``: read resources
+    require ``deposits:read`` — the read/write tiering keys on SCOPE, not on the MCP method (§A3). An
+    unregistered resource name is rejected (no implicit grant).
+    """
+    required = RESOURCE_SCOPES.get(resource)
+    if required is None:
+        raise McpError(
+            ErrorData(
+                code=INVALID_PARAMS,
+                message=f"Unknown resource '{resource}' has no scope mapping (ADR-IC-010 §P4).",
+            )
+        )
+    if required not in auth.scopes:
+        raise McpError(
+            ErrorData(
+                code=INVALID_PARAMS,
+                message=(
+                    f"Insufficient scope for resource '{resource}': requires '{required}'. The OAuth "
+                    "token presented does not carry it (ADR-IC-010 §P4/§A3 — read resources require "
+                    "deposits:read; the tiering keys on scope, not on MCP method)."
+                ),
+            )
+        )
+
+
 def check_tool_scope(auth: AuthContext, tool: str) -> None:
     """Enforce scope-per-tool (ADR-IC-010 §P4). Raise ``McpError`` if ``auth`` lacks the tool's scope.
 
