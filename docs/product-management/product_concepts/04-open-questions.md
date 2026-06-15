@@ -5,7 +5,7 @@
 > Two registers run in parallel:
 >
 > - **§§1–8** — brief-level decisions. §§1–5 are the original drafting-pass set; §§6–8 surfaced in a later register audit. §§3 and 4 are Resolved; §5 has narrowed and largely folded into Q-AG; §1 has a structured unblocking agenda pending the legacy-inventory meeting; §7 has a recommended v1 position pending DPO confirmation; §8 is Resolved for v1 (pin-at-constitution; per-primitive forward policy confirmed, v2+ deferred); §§2, 6 remain open.
-> - **Q-I through Q-BC** — lettered questions, in a continuing letter sequence. Q-I–Q-AO from the original five design-note companions; Q-AP–Q-AT from the moratoria design note; Q-AU–Q-BC collect cross-cutting and integration-shape gaps that none of the existing design notes own.
+> - **Q-I through Q-BD** — lettered questions, in a continuing letter sequence. Q-I–Q-AO from the original five design-note companions; Q-AP–Q-AT from the moratoria design note; Q-AU–Q-BD collect cross-cutting and integration-shape gaps that none of the existing design notes own.
 >
 > Future sessions add lettered entries; when one resolves, fold the resolution into the relevant numbered document and annotate the entry here.
 
@@ -126,7 +126,7 @@ This interacts with [§4](#4-configurability-depth) (configurability depth): the
 
 ---
 
-## Q-I through Q-BC: Lettered Questions
+## Q-I through Q-BD: Lettered Questions
 
 Q-I–Q-AO are opened by the design-notes companions, one block per companion. Q-AP onward collect gaps the design notes do not own — integration shapes the brief declares in-scope without a companion document, plus operational and strategic peers of the existing operational questions. Skim by letter range; drill into the source for the trade-off space.
 
@@ -198,7 +198,7 @@ Payment moratoria and EBA forbearance on credit instances (v2+).
 - **Q-AS. TAEG re-disclosure timing.** When the moratorium ends and the schedule is recomputed, re-disclosure of TAEG via SECCI/FINE has a timing question — is the customer disclosed *before* the new schedule takes effect (giving an opt-out window) or *at* the moment it takes effect? Pack-defined per legal basis; PT default needs an explicit choice.
 - **Q-AT. Cross-moratorium handling.** An instance receives a second moratorium before the first ends (e.g. flood after pandemic). Engine semantics: nested application is rejected at the command layer; revoke-and-replace is the path. The pack-and-policy-level question is whether the legal-basis combination supports it. Probably pack-defined per pair of bases.
 
-### Q-AU through Q-BC — cross-cutting and integration-shape gaps
+### Q-AU through Q-BD — cross-cutting and integration-shape gaps
 
 Gaps the existing design notes do not own. Some are integration shapes the brief declares in-scope (per [00 §4](./00-product-vision.md)) but have no companion design note; others sit at the engine ↔ operator boundary, peer to Q5, Q-AG, Q-AJ.
 
@@ -215,6 +215,7 @@ Gaps the existing design notes do not own. Some are integration shapes the brief
 - **Q-BA. Customer-master cutover mechanism.** If §6 lands a brief-level position, the operational mechanism is a separate design question — same shape as Q-AD (cutover-day load risk) but for customer records rather than product instances. Qualitatively harder because every other system holds customer references; a customer-ID change cascades across channels, payments, marketing, regulatory reporting. Probably needs a long alias-table period during which both IDs resolve.
 - **Q-BB. Data-residency policy per pack.** PT pack data hosted where, ES pack data hosted where, each operator's regulator imposing supervisory expectations on regulated-data location, GDPR baseline, operating-bank policy. Touches the [00 §5](./00-product-vision.md) deployment model: single-codebase does not imply single-deployment, and per-pack residency may demand per-pack deployment topology. v5+ urgency; v1 should not foreclose any credible v5 residency shape — specifically, the event store should not assume single-region storage.
 - **Q-BC. Build-vs-buy revisit trip-wires.** [00 §1.5](./00-product-vision.md) commits the bank to revisit build-vs-buy at any point, but does not name what fires the conversation. Candidates: aggregate v1–v3 calendar slip beyond a stated multiple of plan; pack-maintenance staffing gap persisting beyond a stated quarter count; integration-asset value re-estimated downward by an external audit; vendor product capability inflection (a vendor ships something materially closer to the engine's wedge). Without trip-wires, the revisit is reactive — a steering-committee mood swing — rather than evidence-driven.
+- **Q-BD. MCP well-known route is NOT publicly reachable on kong:3.9.1 — a §P2-vs-runtime drift (carved-out follow-up).** In plain English: the OAuth discovery document the MCP spec says an agent must be able to read *without* a token currently returns "401 unauthorized" on our gateway, because the way we tried to make that one route public does not actually work on the Kong version we run. Nothing is insecure — the protected `/mcp` channel is correctly locked — but a client doing spec-compliant discovery hits a wall, so it needs fixing in its own change. **Context.** [ADR-IC-010 §P2](../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) (Accepted) states the RFC 9728 protected-resource metadata at `/.well-known/oauth-protected-resource` is reachable *unauthenticated*, and the edge encodes that intent by attaching `plugins: [{name: jwt, enabled: false}]` to the `mcp-well-known` route (`infra/kong/kong.yml`, committed in `3cfaf01` / bd babelstone-e50n — *before* the mTLS lane). The live-Kong runtime harness (`scripts/mcp-contract-test.sh`, assertion A5) PROVES at runtime that on **kong:3.9.1** a route-level `enabled: false` does **not** suppress a *global* `jwt` plugin — Kong falls back to the global plugin, so the public metadata 401s. This is a genuine contradiction of §P2's *stated mechanism* (not its intent). **Why it is its own lane.** The mTLS-runtime-contract lane (bd babelstone-5ot0 + babelstone-29ic) neither authored nor touched the contradicting route, so under [ADR-PC-020 §D3](./adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md) it is not the change that owes the §P2 amendment; the harness records the divergence as a **non-blocking KNOWN-FAIL** so the discovery is not lost. **Unblocked by** the fix itself: route-scope the `jwt` plugin (attach it to the authenticated routes, leave `mcp-well-known` with none) **without** an `anonymous:` consumer, which also touches §P2's stated mechanism and `kong-config-check`'s "well-known disables jwt" assertion — so that change carries the [ADR-IC-010 §P2](../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) amendment (per [ADR-PC-020 §D3](./adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md) / the `amend-adr` flow) in the same commit.
 
 ---
 
