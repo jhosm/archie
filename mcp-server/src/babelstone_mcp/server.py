@@ -15,10 +15,14 @@ The authoritative ``aud`` re-check (§P3) and the public RFC 9728 metadata (§P2
 
 §P8 human-in-the-loop elicitation (Epic J.4, bd babelstone-ar1y) is wired here via ``elicitation.py``:
 ``constitute_deposit`` uses FORM mode to confirm a PERIODIC interest selection (a non-irreversible
-parameter clarification — live), and ``mature_deposit`` / ``pay_interest`` carry the URL-mode step-up
-SCA machinery for irreversible settlement, dormant behind ``ELICITATION_URL_MODE_ENABLED`` (default
-off) until the SCA-trigger + token-re-entry fork is resolved (see ``_maybe_stepup_sca``). The
-elicitation messages ride the same Streamable-HTTP ``/mcp`` route — no kong.yml change is needed.
+parameter clarification — live and §P8-conformant), and ``mature_deposit`` / ``pay_interest`` carry
+the URL-mode step-up-SCA TRANSPORT for irreversible settlement, dormant behind
+``ELICITATION_URL_MODE_ENABLED`` (default off). ⚠️ Enabling that flag does NOT enforce SCA: §P8's
+load-bearing rule is that the irreversible action transitions on the BANK's own out-of-band signal,
+not on anything the agent reports back, and that completion half (the SCA-trigger + token-re-entry
+fork) is deliberately UNWIRED in v1 (see ``_maybe_stepup_sca``). So the enabled path surfaces the
+consent prompt only; it is not a real gate and must not be mistaken for one. The elicitation messages
+ride the same Streamable-HTTP ``/mcp`` route — no kong.yml change is needed.
 """
 
 from __future__ import annotations
@@ -32,8 +36,8 @@ from pydantic import BaseModel, Field
 
 from .auth import AuthContext, check_tool_scope
 from .elicitation import (
-    _PERIODIC_CONFIRM_MSG,
-    _STEPUP_MSG,
+    PERIODIC_CONFIRM_MSG,
+    STEPUP_MSG,
     ElicitationAborted,
     PeriodicInterestConfirmation,
     aborted_error,
@@ -42,10 +46,18 @@ from .elicitation import (
 )
 from .engine_client import EngineClient
 
-# §P8 URL-mode step-up SCA is the v1 MACHINERY (built + tested), kept DORMANT by default behind this
+# §P8 URL-mode step-up SCA is the v1 TRANSPORT (built + tested), kept DORMANT by default behind this
 # flag until the maintainer resolves the SCA-trigger + token-re-entry fork (see the money-mover tools
 # below). With it off, mature_deposit / pay_interest behave exactly as before. Tests flip it on to
 # exercise the affordance. Read as a bool from the environment ("true"/"1"/"yes" enable it).
+#
+# ⚠️ ENABLING THIS DOES NOT ENFORCE SCA. With the flag on, settlement proceeds on the agent-reported
+# *navigate-consent* (an AcceptedUrlElicitation) — which is NOT proof SCA completed. ADR-IC-010 §P8 /
+# Document 11 require the irreversible action to transition from the BANK's own out-of-band signal,
+# not from anything the agent reports back; that out-of-band-completion half (Q1/Q2 in
+# _maybe_stepup_sca) is deliberately UNWIRED in v1. So this flag surfaces the consent prompt as a
+# transport demo only — it is NOT a real gate, and an operator must not mistake it for one. Real
+# enforcement awaits the Q1/Q2 wiring the maintainer owns.
 ELICITATION_URL_MODE_ENABLED = os.environ.get(
     "ELICITATION_URL_MODE_ENABLED", "false"
 ).strip().lower() in ("true", "1", "yes")
@@ -170,12 +182,12 @@ async def constitute_deposit(
     auth = _authorize(ctx, "constitute_deposit")
 
     # §P8 form mode — confirm the periodic-coupon selection (a non-irreversible clarification). The
-    # prompt is the static, PII-free _PERIODIC_CONFIRM_MSG; the schema is a single bool. A decline or
+    # prompt is the static, PII-free PERIODIC_CONFIRM_MSG; the schema is a single bool. A decline or
     # cancel aborts before any engine command runs.
     if interest_variant == "PERIODIC":
         try:
             answer = await elicit_form_clarification(
-                ctx, _PERIODIC_CONFIRM_MSG, PeriodicInterestConfirmation
+                ctx, PERIODIC_CONFIRM_MSG, PeriodicInterestConfirmation
             )
         except ElicitationAborted:
             answer = None  # decline / cancel — treated as non-confirmation below
@@ -273,9 +285,12 @@ async def mature_deposit(deposit_id: str, ctx: Context) -> DepositPosition:
     ``net_interest_cents``, ``total_payout_cents``) and ``lifecycle`` = ``Matured``. Money is integer
     cents.
 
-    Requires ``deposits:write`` (ADR-IC-010 §P4). Settlement is irreversible, so under §P8 it gets
-    URL-mode ``elicitation/create`` step-up SCA — the v1 machinery is here, dormant behind
-    ``ELICITATION_URL_MODE_ENABLED`` (default off) until the SCA fork below is resolved.
+    Requires ``deposits:write`` (ADR-IC-010 §P4). Settlement is irreversible, so under §P8 it carries
+    the URL-mode ``elicitation/create`` step-up-SCA TRANSPORT — present but dormant behind
+    ``ELICITATION_URL_MODE_ENABLED`` (default off). ⚠️ Enabling that flag does NOT enforce SCA:
+    settlement still proceeds on the agent-reported navigate-consent, not the bank's own out-of-band
+    signal §P8 requires. Real enforcement awaits the SCA-trigger + token-re-entry wiring (the Q1/Q2
+    fork below); until then the enabled path is a consent-prompt demo, not a gate.
     """
     auth = _authorize(ctx, "mature_deposit")
     await _maybe_stepup_sca(ctx, "MATURE_DEPOSIT")
@@ -295,8 +310,11 @@ async def pay_interest(deposit_id: str, ctx: Context) -> DepositPosition:
     rejected. Money is integer cents.
 
     Requires ``deposits:write`` (ADR-IC-010 §P4). Like ``mature_deposit``, the coupon settlement is
-    irreversible; under §P8 it gets URL-mode step-up SCA — the v1 machinery is here, dormant behind
-    ``ELICITATION_URL_MODE_ENABLED`` (default off) until the SCA fork is resolved.
+    irreversible; under §P8 it carries the URL-mode step-up-SCA TRANSPORT — present but dormant behind
+    ``ELICITATION_URL_MODE_ENABLED`` (default off). ⚠️ Enabling that flag does NOT enforce SCA: the
+    coupon still settles on the agent-reported navigate-consent, not the bank's own out-of-band signal
+    §P8 requires. Real enforcement awaits the SCA-trigger + token-re-entry wiring (the Q1/Q2 fork
+    below); until then the enabled path is a consent-prompt demo, not a gate.
     """
     auth = _authorize(ctx, "pay_interest")
     await _maybe_stepup_sca(ctx, "PAY_INTEREST")
@@ -308,13 +326,22 @@ async def _maybe_stepup_sca(ctx: Context, operation_code: str) -> None:
 
     When ``ELICITATION_URL_MODE_ENABLED`` is on, mint a fresh elicitation_id (a UUID — NOT the
     deposit id), build the bank-controlled step-up URL for ``operation_code``, and ask the human (via
-    URL-mode ``elicitation/create``) to complete SCA out-of-band. On accept we proceed to the engine;
-    on decline/cancel we abort with a static, PII-free ``McpError``. When the flag is off (the
-    default), this is a no-op — the tool behaves exactly as before.
+    URL-mode ``elicitation/create``) to navigate to it. On accept we proceed to the engine; on
+    decline/cancel we abort with a static, PII-free ``McpError``. When the flag is off (the default),
+    this is a no-op — the tool behaves exactly as before.
+
+    ⚠️ THIS IS A TRANSPORT, NOT A GATE. The accept this proceeds on is the agent reporting the human
+    consented to NAVIGATE — it is NOT proof SCA completed. ADR-IC-010 §P8 / Document 11 require the
+    irreversible action to transition from the bank's OWN out-of-band signal, not from the agent's
+    report; that completion half is the Q1/Q2 fork below and is deliberately UNWIRED in v1. So with
+    the flag on, settlement still proceeds on the agent-reported accept — which is exactly the shape
+    §P8 forbids for a real gate. The flag is therefore default-OFF and the enabled path is a
+    consent-prompt demo only. This deferral is recorded in the durable register at
+    docs/.../product_concepts/04-open-questions.md (Q-BE), per ADR-PC-020 §D3/§P9.
 
     ─────────────────────────────────────────────────────────────────────────────────────────────
     MAINTAINER FLAG — the step-up SCA fork (do NOT resolve speculatively; bd babelstone-ar1y ships
-    the elicitation MACHINERY + this affordance, NOT a security gate):
+    the elicitation TRANSPORT + this affordance, NOT a security gate):
 
     Q1 — SCA-TRIGGER DETECTION: how does this tool know fresh SCA is actually needed?
        (a) the engine returns a structured ``SCA_REQUIRED`` on a money-mover called without a
@@ -348,7 +375,7 @@ async def _maybe_stepup_sca(ctx: Context, operation_code: str) -> None:
     elicitation_id = str(uuid.uuid4())  # a UUID, never the deposit id (no business identity leaks)
     try:
         await elicit_url_stepup(
-            ctx, _STEPUP_MSG, _stepup_url(operation_code, elicitation_id), elicitation_id
+            ctx, STEPUP_MSG, _stepup_url(operation_code, elicitation_id), elicitation_id
         )
     except ElicitationAborted:
         raise aborted_error(

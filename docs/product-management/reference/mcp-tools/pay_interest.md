@@ -13,8 +13,11 @@ maturity (use ``mature_deposit`` for that), so calling this once no intermediate
 rejected. Money is integer cents.
 
 Requires ``deposits:write`` ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). Like ``mature_deposit``, the coupon settlement is
-irreversible; under §P8 it gets URL-mode step-up SCA — the v1 machinery is here, dormant behind
-``ELICITATION_URL_MODE_ENABLED`` (default off) until the SCA fork is resolved.
+irreversible; under §P8 it carries the URL-mode step-up-SCA TRANSPORT — present but dormant behind
+``ELICITATION_URL_MODE_ENABLED`` (default off). ⚠️ Enabling that flag does NOT enforce SCA: the
+coupon still settles on the agent-reported navigate-consent, not the bank's own out-of-band signal
+§P8 requires. Real enforcement awaits the SCA-trigger + token-re-entry wiring (the Q1/Q2 fork
+below); until then the enabled path is a consent-prompt demo, not a gate.
 
 ## Signature
 

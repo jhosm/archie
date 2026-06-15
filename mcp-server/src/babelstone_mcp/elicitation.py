@@ -8,18 +8,28 @@ the SDK's three-way accept/decline/cancel result into a clean signal — the val
 accept, or a single ``ElicitationAborted`` exception the calling tool catches and surfaces as an
 ``McpError`` on decline/cancel.
 
-Formally: this realises ADR-IC-010 §P8 (URL mode for irreversible operations, form mode for
-non-irreversible parameter clarifications) and Document 11 §Human-in-the-Loop. Two helpers:
+Formally: this provides the URL-mode and form-mode elicitation *transport* for ADR-IC-010 §P8
+(URL mode for irreversible operations, form mode for non-irreversible parameter clarifications) and
+Document 11 §Human-in-the-Loop. The form-mode half is fully realised (it confirms a non-irreversible
+choice, which §P8 reserves form mode for). The URL-mode half is the transport only: §P8's
+saga-transition invariant — "the customer's SCA-bound action at the bank-controlled URL is what
+transitions the saga, not anything the agent reports back" — is deliberately left UNWIRED in v1
+(its saga-orchestrator half is owned elsewhere; see ``server.py``'s ``_maybe_stepup_sca`` flag).
+So this module does NOT by itself satisfy §P8 for an irreversible op; it supplies the prompt the
+human navigates from. Two helpers:
 
   * ``elicit_form_clarification`` — form mode (``ctx.elicit``), for confirming a non-irreversible
     choice. Returns the validated schema instance on accept.
-  * ``elicit_url_stepup`` — URL mode (``ctx.elicit_url``), the machinery for step-up SCA on an
-    irreversible operation. Returns ``True`` on accept (the human consented to navigate).
+  * ``elicit_url_stepup`` — URL mode (``ctx.elicit_url``), the transport for a step-up-SCA prompt on
+    an irreversible operation. Returns ``True`` on accept — but see the warning below: an accept is
+    only the agent reporting the human consented to NAVIGATE; it is NOT proof SCA completed, so a
+    caller MUST NOT treat it as the §P8 saga-transition signal.
 
 NO-PII INVARIANT (ADR-PC-004 §P2, Document 11 §"prompt injection via bank-returned content"): the
 ``message`` handed to either helper MUST be a static, generic string — never an f-string
 interpolated from engine response data or tool arguments. The two module-level message constants
-(``_PERIODIC_CONFIRM_MSG`` / ``_STEPUP_MSG``) are the canonical generic prompts; callers reuse them.
+(``PERIODIC_CONFIRM_MSG`` / ``STEPUP_MSG``) are the canonical generic prompts; callers import and
+reuse them (hence they are public, not underscore-prefixed).
 The only dynamic content allowed in a URL is a stable operation code and an ``elicitation_id`` UUID
 (which is NOT a business identifier). No deposit id, client id, IBAN, or amount ever reaches the
 elicitation channel — identity stays the gateway-attested ``X-Client-Id`` (Document 11), and the
@@ -66,12 +76,14 @@ class PeriodicInterestConfirmation(BaseModel):
 
 
 # Static, generic, PII-free human-facing prompts (the no-PII invariant). Never interpolate engine
-# response data or tool arguments into these — that is the whole point of pinning them here.
-_PERIODIC_CONFIRM_MSG = (
+# response data or tool arguments into these — that is the whole point of pinning them here. These
+# are deliberately PUBLIC (no leading underscore): server.py imports and reuses them, so the names
+# advertise the intended cross-module use rather than signalling module-private implementation.
+PERIODIC_CONFIRM_MSG = (
     "You selected periodic interest payments. Please confirm: do you want coupons paid "
     "periodically to your current account, rather than all interest at maturity?"
 )
-_STEPUP_MSG = (
+STEPUP_MSG = (
     "This operation requires additional authentication. Please complete the verification at the "
     "provided URL in your bank-controlled context, then retry."
 )
@@ -99,16 +111,22 @@ async def elicit_form_clarification(
 async def elicit_url_stepup(
     ctx: object, message: str, url: str, elicitation_id: str
 ) -> bool:
-    """URL-mode elicitation: direct the human to a bank-controlled URL, return their consent.
+    """URL-mode elicitation: direct the human to a bank-controlled URL, return their navigate-consent.
 
-    The machinery for step-up SCA on an irreversible operation (ADR-IC-010 §P8). Calls
-    ``ctx.elicit_url(message, url, elicitation_id)``. Returns ``True`` on accept (the human
-    consented to navigate out-of-band). On decline or cancel, raises ``ElicitationAborted``.
+    The TRANSPORT for a step-up-SCA prompt on an irreversible operation (ADR-IC-010 §P8). Calls
+    ``ctx.elicit_url(message, url, elicitation_id)``. Returns ``True`` on accept, ``raise``s
+    ``ElicitationAborted`` on decline/cancel.
+
+    ⚠️ ``True`` here means ONLY that the agent reported the human consented to NAVIGATE to the URL —
+    NOT that SCA completed. Per the MCP SDK the actual interaction happens out-of-band, and per
+    ADR-IC-010 §P8 / Document 11 the irreversible action must transition "from the bank's own signal,
+    not from anything the agent reports back." So a caller MUST NOT treat this ``True`` as the
+    §P8 saga-transition signal — that out-of-band completion half is not wired in v1 (see
+    ``server.py``'s ``_maybe_stepup_sca`` flag). This helper supplies the prompt; it does not enforce
+    a gate.
 
     ``message`` must be a static, generic string; ``url`` may contain ONLY a stable operation code
-    and the ``elicitation_id`` UUID (never a deposit id, client id, IBAN, or amount). The actual SCA
-    interaction happens out-of-band in a bank-controlled context — the agent is not in the trust
-    path for the confirmation (Document 11 §Human-in-the-Loop).
+    and the ``elicitation_id`` UUID (never a deposit id, client id, IBAN, or amount).
     """
     result = await ctx.elicit_url(message, url, elicitation_id)  # type: ignore[attr-defined]
     if isinstance(result, AcceptedUrlElicitation):

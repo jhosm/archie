@@ -9,9 +9,12 @@ interest fields now folded in (``accrued_gross_interest_cents``, ``withholding_t
 ``net_interest_cents``, ``total_payout_cents``) and ``lifecycle`` = ``Matured``. Money is integer
 cents.
 
-Requires ``deposits:write`` ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). Settlement is irreversible, so under §P8 it gets
-URL-mode ``elicitation/create`` step-up SCA — the v1 machinery is here, dormant behind
-``ELICITATION_URL_MODE_ENABLED`` (default off) until the SCA fork below is resolved.
+Requires ``deposits:write`` ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). Settlement is irreversible, so under §P8 it carries
+the URL-mode ``elicitation/create`` step-up-SCA TRANSPORT — present but dormant behind
+``ELICITATION_URL_MODE_ENABLED`` (default off). ⚠️ Enabling that flag does NOT enforce SCA:
+settlement still proceeds on the agent-reported navigate-consent, not the bank's own out-of-band
+signal §P8 requires. Real enforcement awaits the SCA-trigger + token-re-entry wiring (the Q1/Q2
+fork below); until then the enabled path is a consent-prompt demo, not a gate.
 
 ## Signature
 

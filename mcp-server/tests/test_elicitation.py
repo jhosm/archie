@@ -24,9 +24,9 @@ from mcp.server.elicitation import (
 )
 
 from babelstone_mcp.elicitation import (
+    PERIODIC_CONFIRM_MSG,
+    STEPUP_MSG,
     PeriodicInterestConfirmation,
-    _PERIODIC_CONFIRM_MSG,
-    _STEPUP_MSG,
     ElicitationAborted,
     elicit_form_clarification,
     elicit_url_stepup,
@@ -72,13 +72,13 @@ async def test_elicit_form_clarification_accept_returns_validated_data() -> None
     )
 
     result = await elicit_form_clarification(
-        ctx, _PERIODIC_CONFIRM_MSG, PeriodicInterestConfirmation
+        ctx, PERIODIC_CONFIRM_MSG, PeriodicInterestConfirmation
     )
 
     assert isinstance(result, PeriodicInterestConfirmation)
     assert result.confirmed is True
     # The helper hands the SDK exactly the message + schema it was given (no rewriting).
-    assert ctx.elicit_called_with == (_PERIODIC_CONFIRM_MSG, PeriodicInterestConfirmation)
+    assert ctx.elicit_called_with == (PERIODIC_CONFIRM_MSG, PeriodicInterestConfirmation)
 
 
 async def test_elicit_form_clarification_decline_raises_elicitation_aborted() -> None:
@@ -86,7 +86,7 @@ async def test_elicit_form_clarification_decline_raises_elicitation_aborted() ->
 
     with pytest.raises(ElicitationAborted):
         await elicit_form_clarification(
-            ctx, _PERIODIC_CONFIRM_MSG, PeriodicInterestConfirmation
+            ctx, PERIODIC_CONFIRM_MSG, PeriodicInterestConfirmation
         )
 
 
@@ -95,7 +95,7 @@ async def test_elicit_form_clarification_cancel_raises_elicitation_aborted() -> 
 
     with pytest.raises(ElicitationAborted):
         await elicit_form_clarification(
-            ctx, _PERIODIC_CONFIRM_MSG, PeriodicInterestConfirmation
+            ctx, PERIODIC_CONFIRM_MSG, PeriodicInterestConfirmation
         )
 
 
@@ -106,12 +106,12 @@ async def test_elicit_url_stepup_accept_returns_true() -> None:
     ctx = _ElicitingFakeContext(elicit_url_result=AcceptedUrlElicitation())
 
     result = await elicit_url_stepup(
-        ctx, _STEPUP_MSG, "https://example.test/sca/stepup?operation=MATURE_DEPOSIT", "elicit-1"
+        ctx, STEPUP_MSG, "https://example.test/sca/stepup?operation=MATURE_DEPOSIT", "elicit-1"
     )
 
     assert result is True
     assert ctx.elicit_url_called_with == (
-        _STEPUP_MSG,
+        STEPUP_MSG,
         "https://example.test/sca/stepup?operation=MATURE_DEPOSIT",
         "elicit-1",
     )
@@ -121,14 +121,14 @@ async def test_elicit_url_stepup_decline_raises_elicitation_aborted() -> None:
     ctx = _ElicitingFakeContext(elicit_url_result=DeclinedElicitation())
 
     with pytest.raises(ElicitationAborted):
-        await elicit_url_stepup(ctx, _STEPUP_MSG, "https://example.test/sca", "elicit-2")
+        await elicit_url_stepup(ctx, STEPUP_MSG, "https://example.test/sca", "elicit-2")
 
 
 async def test_elicit_url_stepup_cancel_raises_elicitation_aborted() -> None:
     ctx = _ElicitingFakeContext(elicit_url_result=CancelledElicitation())
 
     with pytest.raises(ElicitationAborted):
-        await elicit_url_stepup(ctx, _STEPUP_MSG, "https://example.test/sca", "elicit-3")
+        await elicit_url_stepup(ctx, STEPUP_MSG, "https://example.test/sca", "elicit-3")
 
 
 # --- schema + no-PII structural guards --------------------------------------------------------
@@ -147,7 +147,7 @@ def test_no_pii_in_elicitation_message_constants() -> None:
     # Structural guard on the no-PII invariant (ADR-PC-004 §P2, Document 11 anti-injection rule):
     # the human-facing message constants must carry only generic text — no deposit id, client id,
     # IBAN, email, or amount-looking digits.
-    for msg in (_PERIODIC_CONFIRM_MSG, _STEPUP_MSG):
+    for msg in (PERIODIC_CONFIRM_MSG, STEPUP_MSG):
         lowered = msg.lower()
         assert "cli-" not in lowered  # client id prefix
         assert "dep-" not in lowered  # deposit id prefix

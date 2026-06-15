@@ -345,7 +345,9 @@ async def test_constitute_deposit_with_periodic_elicitation_declined_raises_mcp_
             payment_period_months=1,
         )
 
-    # Declining aborts BEFORE the engine command (no money moves on a non-confirmation).
+    # The clarification fired, and declining aborts BEFORE the engine command (no money moves on a
+    # non-confirmation).
+    assert ctx.elicit_called is True
     assert fake.constitute_request is None
     message = exc.value.error.message
     assert "did not confirm" in message.lower()
