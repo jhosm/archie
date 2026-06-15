@@ -162,7 +162,18 @@ public sealed class EngineCommandPactConsumerTests : IAsyncLifetime
                 InterestAccountRef: null,
                 DepositRef: "DEP-" + processId.ToString("N"),
                 ClientType: ClientType.Existing,
-                AutoApprovalThresholdMinorUnits: 1_000_00));
+                AutoApprovalThresholdMinorUnits: 1_000_00,
+                // Pin the STRUCTURAL product facts explicitly with a realistic StartDate (not the
+                // DateOnly.MinValue 0001-01-01 record default): the body this seeds is the one the
+                // PROVIDER half (EngineCommandPactProviderTests) replays against the REAL engine, whose
+                // in-transaction rate resolve looks for a sheet active ON start_date — a 0001-01-01 anchor
+                // would find no sheet and 4xx, breaking provider verification (bd babelstone-t7o3.11).
+                TermDays: 365,
+                InterestVariant: "AT_MATURITY",
+                AutoRenewalPolicy: "NONE",
+                PaymentPeriodMonths: 0,
+                Role: "standard",
+                StartDate: new DateOnly(2026, 1, 15)));
         await tx.CommitAsync();
     }
 

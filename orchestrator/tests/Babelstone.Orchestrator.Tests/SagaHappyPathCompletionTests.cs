@@ -124,10 +124,18 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// A saga walked to APPROVED reaches COMPLETED when the engine's real <c>DepositConstituted</c> event
-    /// arrives on <c>deposits.process.events</c> and the hosted consume loop drives it — proving the slot-2
-    /// advance is on the EVENT (correlated by <c>ce_subject → process_id</c>), not the activation 2xx.
+    /// A saga walked to APPROVED reaches COMPLETED when a <c>DepositConstituted</c> event arrives on
+    /// <c>deposits.process.events</c> and the hosted consume loop drives it — proving the slot-2 advance is
+    /// on the EVENT (correlated by <c>ce_subject → process_id</c>), not the activation 2xx.
     /// Driven by the REAL Confluent consumer, not a hand-fed <see cref="SagaInboxEvent"/>.
+    /// <para>
+    /// NB: this validates the bus-resume MECHANISM on the process topic only; it is NOT the production
+    /// engine→saga path. The engine actually relays <c>DepositConstituted</c> on the <c>term_deposit</c>
+    /// FAMILY topic (Fork A; ADR-IC-003 A6 2026-06-15), so the authoritative coverage for the production
+    /// path is the headline
+    /// <see cref="DepositConstituted_on_the_family_topic_correlated_via_ce_subject_advances_saga_to_COMPLETED"/>.
+    /// This second test guards the consume-loop/correlation mechanism independently of which topic carries it.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task DepositConstituted_bus_event_correlated_via_ce_subject_advances_saga_to_COMPLETED()

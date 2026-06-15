@@ -75,8 +75,12 @@ builder.Services.AddHostedService(sp => new SagaMigrationHostedService(migration
 // The Redpanda consume loop (t7o3.2) — the same hosted-BackgroundService shape the engine's
 // outbox relay and inbox consumer use. Three pieces register here:
 //   • SagaInboxConsumerOptions — the broker endpoint, the consumer group id, and the topics the
-//     constitution saga reacts to (the internal deposits.process.events domain topic, Document 05
-//     §1). The Kafka bootstrap address is a broker ENDPOINT, not a credential — already plaintext in
+//     constitution saga reacts to (SagaConsumeTopics.ConstitutionProcessTopics — BOTH the internal
+//     deposits.process.events domain topic for orchestrator-produced process events AND the engine's
+//     term_deposit FAMILY INTEGRATION topic where the closing DepositConstituted fact arrives, since
+//     the engine names its relay topic after the aggregate_type and stays family-agnostic; ADR-IC-003
+//     §S2 A6 2026-06-15, bd babelstone-t7o3.11 / Document 05 §1). The Kafka bootstrap address is a
+//     broker ENDPOINT, not a credential — already plaintext in
 //     infra/compose.yaml and the k8s manifests — so it resolves straight from IConfiguration
 //     (Kafka:BootstrapServers via env/appsettings), distinct from the orchestrator runtime DB
 //     credential which goes through the ADR-PC-004 Amendment A1 boundary. The dev default matches the
