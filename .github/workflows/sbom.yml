@@ -64,8 +64,16 @@ jobs:
       - name: Restore + publish the solution (ADR-PC-010)
         run: |
           dotnet restore engine/Babelstone.slnx
+          # -maxcpucount:1 serializes the per-project publish (bd babelstone-78g0).
+          # Publishing the whole solution — including every test project — into ONE shared
+          # --output dir under PARALLEL MSBuild races on shared files: the System.Diagnostics.*
+          # framework refs (MSB3026, retried) and Mvc.Testing's MvcTestingAppManifest.json
+          # (MSB4018 GenerateMvcTestManifestTask, FATAL — "file used by another process"),
+          # so the job flaked intermittently. A serial publish removes the race; the SBOM still
+          # inventories the full dependency closure, just one project at a time.
           dotnet publish engine/Babelstone.slnx \
             --configuration Release --no-restore --nologo \
+            -maxcpucount:1 \
             --output "$RUNNER_TEMP/publish"
 
       # CycloneDX SBOM via syft (anchore/sbom-action). Inventories the published output:
