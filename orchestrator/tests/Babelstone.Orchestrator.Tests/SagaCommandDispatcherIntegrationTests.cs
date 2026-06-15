@@ -234,11 +234,13 @@ public sealed class SagaCommandDispatcherIntegrationTests : IAsyncLifetime
         // ProcessConstituted from ActivateDeposit) have NO transition from STARTED → AdvanceAsync returns
         // NoTransition → a graceful no-op, so the PUBLISHED/FAILED row assertions still hold.
         AddSagaAdvanceHandler(builder.Services);
+        builder.Services.AddSingleton<IResultEventBridge, ConstitutionResultEvents.Bridge>();
         builder.Services.AddSingleton(sp => new SagaCommandDispatchDrainer(
             sp.GetRequiredService<SagaCommandDispatcherOptions>(),
             sp.GetRequiredService<ICommandRouter>(),
             sp.GetRequiredService<IHttpClientFactory>(),
-            sp.GetRequiredService<SagaAdvanceHandler>()));
+            sp.GetRequiredService<SagaAdvanceHandler>(),
+            sp.GetServices<IResultEventBridge>()));
         builder.Services.AddHostedService<SagaCommandDispatcherService>();
         return builder.Build();
     }

@@ -17,6 +17,31 @@ public interface ICommandRouter
     /// (e.g. ActivateDeposit → <c>/v1/deposits</c>, the Pact-pinned engine command route).
     /// </summary>
     CommandRoute? Resolve(string commandType);
+
+    /// <summary>
+    /// Resolve the HTTP target for <paramref name="commandType"/> emitted by the saga of
+    /// <paramref name="sagaType"/> (bd babelstone-mtto PR1 — the multi-saga substrate). The dispatcher
+    /// reads <c>saga_type</c> off the outbox row's owning saga and routes through the
+    /// <see cref="CompositeCommandRouter"/> so each saga type's commands reach its OWN router. A
+    /// single-saga router that only knows one type ignores <paramref name="sagaType"/> and delegates
+    /// to <see cref="Resolve(string)"/>; the composite uses it to pick the sub-router. Returns
+    /// <c>null</c> when no router is registered for the saga type or no route for the command.
+    /// </summary>
+    CommandRoute? Resolve(string commandType, string sagaType);
+}
+
+/// <summary>
+/// An <see cref="ICommandRouter"/> that serves exactly ONE saga type (bd babelstone-mtto PR1). The
+/// <see cref="CompositeCommandRouter"/> collects every registered <see cref="ISagaCommandRouter"/>
+/// into a <c>saga_type → router</c> map and delegates by the outbox row's <c>saga_type</c>. Mirrors
+/// <see cref="Saga.ISagaStateMachine.SagaType"/> / <see cref="Saga.IResultEventBridge.SagaType"/>:
+/// the same discriminator selects the machine, the bridge, and the router.
+/// </summary>
+public interface ISagaCommandRouter : ICommandRouter
+{
+    /// <summary>The saga type this router's command map serves — matches
+    /// <see cref="Saga.ISagaStateMachine.SagaType"/> and the persisted <c>saga_state.saga_type</c>.</summary>
+    string SagaType { get; }
 }
 
 /// <summary>The resolved HTTP target for one command type — a base URL, a relative route, and the

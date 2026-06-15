@@ -172,9 +172,23 @@ public static class SagaStateNames
         _ => throw new ArgumentException($"Unknown persisted saga state '{name}'.", nameof(name)),
     };
 
-    /// <summary>Whether a state is terminal — the saga is done and accepts no further
-    /// transitions (ADR-IC-003 §Context "Terminal"). A transition targeting a terminal
-    /// state is the saga's last; an event arriving for a terminal saga is a no-op advance.</summary>
+    /// <summary>Whether a state is terminal for the <see cref="ConstitutionProcess"/> — the saga is
+    /// done and accepts no further transitions (ADR-IC-003 §Context "Terminal"). A transition
+    /// targeting a terminal state is the saga's last; an event arriving for a terminal saga is a
+    /// no-op advance.
+    /// <para>
+    /// <b>This is the ConstitutionProcess-SCOPED terminal predicate</b> (bd babelstone-mtto PR1 — the
+    /// multi-saga substrate). The substrate-level terminal check is per-machine
+    /// (<see cref="ISagaStateMachine.IsTerminal"/>), asked AFTER routing the saga by its
+    /// <c>saga_type</c> — each saga type defines its OWN terminal set. This static stays because the
+    /// edge's SSE read (<c>ProcessApiEndpoints</c>) is ConstitutionProcess-bound and answers the
+    /// terminal question off a loaded <see cref="SagaState"/> without a machine reference; a second
+    /// saga's terminal check goes through <see cref="ISagaStateMachine.IsTerminal"/>, not here.
+    /// HUMAN_INTERVENTION_REQUIRED is intentionally EXCLUDED (an operator may resolve it; the
+    /// ConstitutionProcessTests assert <c>IsTerminal(HumanInterventionRequired) == false</c>), which
+    /// matches the table-inspection answer the substrate's default gives (the table routes INTO it but
+    /// the operator-resolution edge would route OUT).
+    /// </para></summary>
     public static bool IsTerminal(SagaState state) => state is
         SagaState.Completed or SagaState.Cancelled or SagaState.CancelledAfterDebit
         or SagaState.DepositConstitutionFailed;

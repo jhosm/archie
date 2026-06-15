@@ -72,18 +72,71 @@ public enum AdvanceOutcome
 /// ActivityKind)"/> returns <c>null</c> and the whole path is a near-zero-cost no-op.
 /// </para>
 /// </remarks>
-public sealed class SagaAdvanceHandler(
-    ISagaStateMachine machine,
-    SagaStateStore stateStore,
-    SagaTransitionLog transitionLog,
-    ISagaCommandSink commandSink,
-    SagaBusinessReferenceStore? businessReferenceStore = null)
+public sealed class SagaAdvanceHandler
 {
-    private readonly ISagaStateMachine _machine = machine ?? throw new ArgumentNullException(nameof(machine));
-    private readonly SagaStateStore _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
-    private readonly SagaTransitionLog _transitionLog = transitionLog ?? throw new ArgumentNullException(nameof(transitionLog));
-    private readonly ISagaCommandSink _commandSink = commandSink ?? throw new ArgumentNullException(nameof(commandSink));
-    private readonly SagaBusinessReferenceStore _businessReferenceStore = businessReferenceStore ?? new SagaBusinessReferenceStore();
+    private readonly IReadOnlyDictionary<string, ISagaStateMachine> _machines;
+    private readonly SagaStateStore _stateStore;
+    private readonly SagaTransitionLog _transitionLog;
+    private readonly ISagaCommandSink _commandSink;
+    private readonly SagaBusinessReferenceStore _businessReferenceStore;
+
+    /// <summary>
+    /// Host N saga state machines keyed by <c>saga_type</c> (bd babelstone-mtto PR1 — the multi-saga
+    /// substrate). On each advance the handler routes by the loaded saga's
+    /// <see cref="SagaInstance.SagaType"/> to the right machine; an unknown saga type is a fail-closed
+    /// error (the saga_state row names a machine that was never registered). A duplicate
+    /// <see cref="ISagaStateMachine.SagaType"/> is a wiring error and throws at construction — the
+    /// registry must be a function (the same stance <see cref="TableStateMachine"/> takes on a
+    /// duplicate transition).
+    /// </summary>
+    public SagaAdvanceHandler(
+        IEnumerable<ISagaStateMachine> machines,
+        SagaStateStore stateStore,
+        SagaTransitionLog transitionLog,
+        ISagaCommandSink commandSink,
+        SagaBusinessReferenceStore? businessReferenceStore = null)
+    {
+        ArgumentNullException.ThrowIfNull(machines);
+
+        var map = new Dictionary<string, ISagaStateMachine>(StringComparer.Ordinal);
+        foreach (var m in machines)
+        {
+            if (!map.TryAdd(m.SagaType, m))
+            {
+                throw new InvalidOperationException(
+                    $"Duplicate ISagaStateMachine for saga_type '{m.SagaType}': the saga-type → machine " +
+                    "registry must be a function (bd babelstone-mtto PR1).");
+            }
+        }
+
+        if (map.Count == 0)
+        {
+            throw new ArgumentException("At least one ISagaStateMachine must be registered.", nameof(machines));
+        }
+
+        _machines = map;
+        _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
+        _transitionLog = transitionLog ?? throw new ArgumentNullException(nameof(transitionLog));
+        _commandSink = commandSink ?? throw new ArgumentNullException(nameof(commandSink));
+        _businessReferenceStore = businessReferenceStore ?? new SagaBusinessReferenceStore();
+    }
+
+    /// <summary>
+    /// Convenience constructor for a single-saga host (the prior signature, kept so every existing
+    /// call site stays behaviour-preserving). Delegates to the N-machine constructor with a one-element
+    /// registry — the substrate path is identical, the saga simply routes to its only machine.
+    /// </summary>
+    public SagaAdvanceHandler(
+        ISagaStateMachine machine,
+        SagaStateStore stateStore,
+        SagaTransitionLog transitionLog,
+        ISagaCommandSink commandSink,
+        SagaBusinessReferenceStore? businessReferenceStore = null)
+        : this(
+            [machine ?? throw new ArgumentNullException(nameof(machine))],
+            stateStore, transitionLog, commandSink, businessReferenceStore)
+    {
+    }
 
     /// <summary>
     /// Process one inbox event end-to-end in its own transaction: dedup, start-or-advance,
@@ -111,7 +164,9 @@ public sealed class SagaAdvanceHandler(
         using var span = BabelstoneTelemetry.ActivitySource.StartActivity(
             BabelstoneAttributes.SpanSagaAdvance, ActivityKind.Consumer, parentContext);
         span?.SetTag(BabelstoneAttributes.SagaProcessId, message.ProcessId.ToString());
-        span?.SetTag(BabelstoneAttributes.SagaType, _machine.SagaType);
+        // The saga_type tag is set in AdvanceCoreAsync once the saga row is loaded and the machine is
+        // routed (bd babelstone-mtto PR1 — the handler hosts N machines, so the type comes from the
+        // loaded saga, not a single pre-bound machine).
         span?.SetTag(BabelstoneAttributes.SagaEventType, message.EventType);
         span?.SetTag(BabelstoneAttributes.SagaCausationId, message.MessageId.ToString());
         if (message.CorrelationId is { } correlation)
@@ -155,10 +210,26 @@ public sealed class SagaAdvanceHandler(
             return AdvanceOutcome.UnknownSaga;
         }
 
+        // (2a) Route to the machine for THIS saga's type (bd babelstone-mtto PR1 — the multi-saga
+        // substrate). The saga_state.saga_type the edge persisted at start selects the state machine;
+        // an unrecognised type is a fail-closed error (the row names a machine that was never
+        // registered), never a silent skip — the substrate cannot advance a saga it cannot decide.
+        if (!_machines.TryGetValue(saga.SagaType, out var machine))
+        {
+            throw new InvalidOperationException(
+                $"Saga {saga.ProcessId} has saga_type '{saga.SagaType}' but no ISagaStateMachine is " +
+                "registered for it. Register the machine in the host (bd babelstone-mtto PR1).");
+        }
+
+        // The saga type is operational, never PII — tag it now that the machine is routed.
+        span?.SetTag(BabelstoneAttributes.SagaType, saga.SagaType);
+
         // A saga that already reached a terminal state accepts no further transitions
-        // (ADR-IC-003 §Context "Terminal"). The late event is a no-op advance — dedup it so
-        // it does not redeliver forever, but do not move the state.
-        if (SagaStateNames.IsTerminal(saga.State))
+        // (ADR-IC-003 §Context "Terminal"). Each machine defines its OWN terminal set, so ask the
+        // routed machine (ISagaStateMachine.IsTerminal), not the ConstitutionProcess-scoped static.
+        // The late event is a no-op advance — dedup it so it does not redeliver forever, but do not
+        // move the state.
+        if (machine.IsTerminal(saga.State))
         {
             await WriteInboxRowAsync(connection, transaction, message, "terminal", ct);
             return AdvanceOutcome.Terminal;
@@ -177,8 +248,13 @@ public sealed class SagaAdvanceHandler(
         // The COUNT is impure (it reads the log); the DECISION is pure (ClearanceReissueBudget.Decide),
         // so the budget keeps the table the authority on what each event does (§P2) — the shell only
         // chooses WHICH event applies, exactly as SelfEmitApprovalForkAsync chooses the fork event.
+        // The budget substitution is ConstitutionProcess-specific (it reads that saga's AWAIT_CORE_CLEARANCE
+        // state and its DebitNotExecuted / ReissueBudgetExhausted events), so it is GUARDED on the saga
+        // type (bd babelstone-mtto PR1 — a no-op for every other saga type). The right long-term home is
+        // an optional ISagaStateMachine hook (PR2's concern); the guard keeps PR1 behaviour-preserving.
         var effectiveEventType = message.EventType;
-        if (saga.State == SagaState.AwaitCoreClearance
+        if (saga.SagaType == ConstitutionProcess.Type
+            && saga.State == SagaState.AwaitCoreClearance
             && message.EventType == ConstitutionProcess.DebitNotExecuted)
         {
             var priorClearanceEntries = await _transitionLog.CountEntriesIntoStateAsync(
@@ -193,7 +269,7 @@ public sealed class SagaAdvanceHandler(
         // not in the table is REJECTED, never silently applied. The caller routes a
         // NoTransition to poison — an illegal transition cannot corrupt the saga. The lookup uses
         // effectiveEventType so the budget's escalate decision (2b) is honoured by the SAME pure table.
-        if (!_machine.TryAdvance(saga.State, effectiveEventType, out var outcome))
+        if (!machine.TryAdvance(saga.State, effectiveEventType, out var outcome))
         {
             await WriteInboxRowAsync(connection, transaction, message, "no-transition", ct);
             return AdvanceOutcome.NoTransition;
@@ -252,10 +328,14 @@ public sealed class SagaAdvanceHandler(
         // what crosses the saga into APPROVED (the auto path) or AWAIT_WORKFLOW_APPROVAL without an
         // external trigger. The DECISION stays pure (ApprovalForkHandler.Decide on the edge-pinned
         // input); this shell only loads the pinned references and schedules the next step.
-        if (outcome.Next == SagaState.ValidationsComplete)
+        // GUARDED on the saga type (bd babelstone-mtto PR1): the fork is ConstitutionProcess-specific
+        // (VALIDATIONS_COMPLETE is a ConstitutionProcess state), so it is a no-op for every other saga
+        // type even if some future machine happens to reuse the VALIDATIONS_COMPLETE enum value. The
+        // long-term home is an optional ISagaStateMachine post-advance hook (PR2's concern).
+        if (saga.SagaType == ConstitutionProcess.Type && outcome.Next == SagaState.ValidationsComplete)
         {
             await SelfEmitApprovalForkAsync(
-                connection, transaction, saga.ProcessId,
+                connection, transaction, machine, saga.ProcessId,
                 saga.CorrelationId ?? message.CorrelationId, span, ct);
         }
 
@@ -282,6 +362,7 @@ public sealed class SagaAdvanceHandler(
     private async Task SelfEmitApprovalForkAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
+        ISagaStateMachine machine,
         Guid processId,
         Guid? correlationId,
         Activity? span,
@@ -312,7 +393,7 @@ public sealed class SagaAdvanceHandler(
             return; // raced/already-advanced — the optimistic-concurrency guard owns correctness.
         }
 
-        if (!_machine.TryAdvance(saga.State, forkEvent, out var outcome))
+        if (!machine.TryAdvance(saga.State, forkEvent, out var outcome))
         {
             // The decider and the table agree by construction (the ApprovalForkHandler fitness test),
             // so this is unreachable; rejecting rather than inventing a move keeps the table the spec.

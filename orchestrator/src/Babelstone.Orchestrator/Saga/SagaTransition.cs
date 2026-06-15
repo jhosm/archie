@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Linq;
 
 namespace Babelstone.Orchestrator.Saga;
 
@@ -59,6 +60,15 @@ public interface ISagaStateMachine
     /// reject, never apply (ADR-IC-003 §P2).
     /// </summary>
     bool TryAdvance(SagaState current, string eventType, out TransitionOutcome outcome);
+
+    /// <summary>
+    /// Whether <paramref name="state"/> is terminal for THIS machine — the saga accepts no
+    /// further transitions (ADR-IC-003 §Context "Terminal"). Each saga type defines its OWN
+    /// terminal set, so the multi-saga substrate asks the routed machine (NOT the
+    /// ConstitutionProcess-scoped <see cref="SagaStateNames.IsTerminal"/> static) once it has
+    /// keyed the machine by <c>saga_type</c>. A late event for a terminal saga is a no-op advance.
+    /// </summary>
+    bool IsTerminal(SagaState state);
 }
 
 /// <summary>
@@ -108,6 +118,16 @@ public abstract class TableStateMachine : ISagaStateMachine
     /// <inheritdoc />
     public bool TryAdvance(SagaState current, string eventType, out TransitionOutcome outcome)
         => _table.TryGetValue((current, eventType), out outcome);
+
+    /// <summary>
+    /// A state is terminal when NO transition leaves it — a pure inspection of the table
+    /// itself, so the answer can never drift from the rows. For <see cref="ConstitutionProcess"/>
+    /// this identifies COMPLETED / CANCELLED / CANCELLED_AFTER_DEBIT / DEPOSIT_CONSTITUTION_FAILED
+    /// (no outgoing rows) and correctly excludes HUMAN_INTERVENTION_REQUIRED (an escalation state
+    /// the table routes INTO but that an operator may later resolve OUT OF). Override only for a
+    /// machine whose terminal set is NOT "has no outgoing edge".
+    /// </summary>
+    public virtual bool IsTerminal(SagaState state) => !_table.Keys.Any(k => k.Item1 == state);
 
     /// <summary>The full transition table, for inspection and the §P2 fitness test (the
     /// table IS the documentation). Read-only; the saga's behaviour is auditable from here

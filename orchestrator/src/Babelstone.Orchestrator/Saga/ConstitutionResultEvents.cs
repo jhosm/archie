@@ -187,4 +187,22 @@ public static class ConstitutionResultEvents
         // meaningful for ConfirmDebit; for any other command it falls through here to null.
         _ => null,
     };
+
+    /// <summary>
+    /// The <see cref="IResultEventBridge"/> view of the constitution mapping (bd babelstone-mtto PR1 —
+    /// the multi-saga substrate). The static <see cref="ForOutcome(string, CommandDeliveryKind)"/>
+    /// IS the implementation — this adapter only carries the <see cref="ConstitutionProcess.Type"/>
+    /// discriminator so the dispatcher can resolve the right bridge by <c>saga_type</c>. No mapping
+    /// logic is duplicated: every existing call site of the static method (the tests, and — until the
+    /// dispatcher switched to the registry — the drainer) keeps working unchanged.
+    /// </summary>
+    public sealed class Bridge : IResultEventBridge
+    {
+        /// <inheritdoc />
+        public string SagaType => ConstitutionProcess.Type;
+
+        /// <inheritdoc />
+        public string? ForOutcome(string commandType, CommandDeliveryKind kind) =>
+            ConstitutionResultEvents.ForOutcome(commandType, kind);
+    }
 }

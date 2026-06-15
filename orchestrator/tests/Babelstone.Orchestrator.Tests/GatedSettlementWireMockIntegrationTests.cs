@@ -194,11 +194,15 @@ public sealed class GatedSettlementWireMockIntegrationTests : IAsyncLifetime
         // The command-outcome → result-event bridge (bd babelstone-t7o3.8) self-advances the saga on a
         // terminal delivery outcome, so the drainer needs the SagaAdvanceHandler (+ its stores).
         AddSagaAdvanceHandler(builder.Services);
+        // The per-saga-type result-event bridge (bd babelstone-mtto PR1): the drainer resolves it by
+        // saga_type. The constitution bridge keeps the v1 mapping unchanged.
+        builder.Services.AddSingleton<IResultEventBridge, ConstitutionResultEvents.Bridge>();
         builder.Services.AddSingleton(sp => new SagaCommandDispatchDrainer(
             sp.GetRequiredService<SagaCommandDispatcherOptions>(),
             sp.GetRequiredService<ICommandRouter>(),
             sp.GetRequiredService<IHttpClientFactory>(),
-            sp.GetRequiredService<SagaAdvanceHandler>()));
+            sp.GetRequiredService<SagaAdvanceHandler>(),
+            sp.GetServices<IResultEventBridge>()));
         builder.Services.AddHostedService<SagaCommandDispatcherService>();
         return builder.Build();
     }
@@ -239,6 +243,10 @@ public sealed class GatedSettlementWireMockIntegrationTests : IAsyncLifetime
             refuseReserve && commandType == ConstitutionProcess.ReserveAccountBalance
                 ? new CommandRoute(_settlementBaseUrl, "/v1/reservations/insufficient", HttpMethod.Post)
                 : _production.Resolve(commandType);
+
+        // Multi-saga overload (bd babelstone-mtto PR1): this gated router only serves the constitution
+        // saga, so it ignores sagaType and delegates to the single-arg map exactly as production does.
+        public CommandRoute? Resolve(string commandType, string sagaType) => Resolve(commandType);
     }
 
     /// <summary>Flatten the WireMock ACL's log into the load-bearing fields (path, method, the

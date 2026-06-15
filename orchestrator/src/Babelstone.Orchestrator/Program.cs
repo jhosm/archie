@@ -39,9 +39,17 @@ var runtimeConnectionString =
     ?? builder.Configuration["Orchestrator:ConnectionString"]
     ?? Environment.GetEnvironmentVariable("ORCHESTRATOR_CONNECTION_STRING");
 
-// The hand-rolled ConstitutionProcess state machine (ADR-IC-003 §P2: the table is the spec).
-// One machine per saga type; H.3 renewal (babelstone-mtto) registers its own alongside.
+// The hand-rolled saga state machines (ADR-IC-003 §P2: the table is the spec). The orchestrator
+// hosts N sagas keyed by saga_type (bd babelstone-mtto PR1 — the multi-saga substrate): each
+// ISagaStateMachine registration is collected (GetServices) and the SagaAdvanceHandler routes an
+// advance to the right machine by the loaded saga's saga_type. ConstitutionProcess is the only saga
+// at v1; H.3 renewal (babelstone-mtto PR2) registers its own ISagaStateMachine + ISagaCommandRouter
+// + IResultEventBridge alongside, with no substrate change.
 builder.Services.AddSingleton<ISagaStateMachine, ConstitutionProcess>();
+// The per-saga-type result-event bridge (bd babelstone-mtto PR1): the dispatcher resolves
+// (command_type, delivery_kind) → result-event by saga_type. ConstitutionResultEvents.Bridge is the
+// constitution mapping; PR2's renewal saga registers its own IResultEventBridge here.
+builder.Services.AddSingleton<IResultEventBridge, ConstitutionResultEvents.Bridge>();
 builder.Services.AddSingleton<SagaStateStore>();
 builder.Services.AddSingleton<SagaTransitionLog>();
 // The per-saga business-reference store (bd babelstone-t7o3.1): the edge writes the pinned
@@ -60,8 +68,11 @@ builder.Services.AddSingleton<ISagaCommandSink>(sp =>
 // The consume loop ADVANCES sagas only — it never starts them. Sagas are started exclusively at the
 // edge (EdgeSagaStarter), which pins the business references in the same transaction as the STARTED
 // row; the loop resumes a saga on a consumed advance event (ADR-IC-003 §S2; bd babelstone-t7o3.9).
+// GetServices (not GetRequiredService) collects EVERY ISagaStateMachine registration so the handler
+// hosts N saga types keyed by saga_type (bd babelstone-mtto PR1). With only ConstitutionProcess
+// registered the registry has one entry — behaviour-identical to before.
 builder.Services.AddSingleton(sp => new SagaAdvanceHandler(
-    sp.GetRequiredService<ISagaStateMachine>(),
+    sp.GetServices<ISagaStateMachine>(),
     sp.GetRequiredService<SagaStateStore>(),
     sp.GetRequiredService<SagaTransitionLog>(),
     sp.GetRequiredService<ISagaCommandSink>(),
@@ -143,7 +154,14 @@ builder.Services.AddSingleton(new SagaCommandDispatcherOptions
     EngineBaseUrl = engineBaseUrl,
     SettlementBaseUrl = settlementBaseUrl,
 });
-builder.Services.AddSingleton<ICommandRouter, SagaCommandRouter>();
+// The routing seam is now multi-saga (bd babelstone-mtto PR1): SagaCommandRouter is registered as an
+// ISagaCommandRouter (it serves saga_type ConstitutionProcess), and the CompositeCommandRouter is the
+// ICommandRouter the dispatcher consumes — it collects every ISagaCommandRouter (GetServices) into a
+// saga_type → router registry and delegates by the outbox row's saga_type. PR2's renewal saga adds its
+// own ISagaCommandRouter here and the composite routes it with no dispatcher change.
+builder.Services.AddSingleton<ISagaCommandRouter, SagaCommandRouter>();
+builder.Services.AddSingleton<ICommandRouter>(sp =>
+    new CompositeCommandRouter(sp.GetServices<ISagaCommandRouter>()));
 builder.Services.AddHttpClient();
 // The SagaAdvanceHandler (registered above for the consume loop) is ALSO injected into the dispatcher
 // for the command-outcome → result-event bridge (bd babelstone-t7o3.8): at a terminal delivery outcome
@@ -156,7 +174,8 @@ builder.Services.AddSingleton(sp => new SagaCommandDispatchDrainer(
     sp.GetRequiredService<SagaCommandDispatcherOptions>(),
     sp.GetRequiredService<ICommandRouter>(),
     sp.GetRequiredService<IHttpClientFactory>(),
-    sp.GetRequiredService<SagaAdvanceHandler>()));
+    sp.GetRequiredService<SagaAdvanceHandler>(),
+    sp.GetServices<IResultEventBridge>()));
 builder.Services.AddHostedService<SagaCommandDispatcherService>();
 
 // The I.1 EDGE HTTP surface (ADR-IC-006 §P4 / Document 05 §Step 0): the 202 + process_id + SSE

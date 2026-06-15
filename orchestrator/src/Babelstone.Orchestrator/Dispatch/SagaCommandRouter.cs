@@ -28,10 +28,19 @@ namespace Babelstone.Orchestrator.Dispatch;
 /// that gives it a dedicated route adds the entry here; until then it is an unrouted (terminal)
 /// command, never a silent guess.
 /// </remarks>
-public sealed class SagaCommandRouter(SagaCommandDispatcherOptions options) : ICommandRouter
+public sealed class SagaCommandRouter(SagaCommandDispatcherOptions options) : ISagaCommandRouter
 {
     private readonly SagaCommandDispatcherOptions _options =
         options ?? throw new ArgumentNullException(nameof(options));
+
+    /// <inheritdoc />
+    public string SagaType => ConstitutionProcess.Type;
+
+    /// <inheritdoc />
+    // This router knows ONLY the ConstitutionProcess command map, so sagaType is ignored here — the
+    // CompositeCommandRouter already selected THIS router by saga_type before calling. A command type
+    // not in the constitution map resolves to null exactly as the single-arg overload does.
+    public CommandRoute? Resolve(string commandType, string sagaType) => Resolve(commandType);
 
     /// <inheritdoc />
     public CommandRoute? Resolve(string commandType) => commandType switch
