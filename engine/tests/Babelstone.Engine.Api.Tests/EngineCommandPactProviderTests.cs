@@ -140,6 +140,46 @@ public sealed class EngineCommandPactProviderTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    /// <summary>
+    /// ENGINE_COMMAND_PACT — the deposit_id = process_id correlation pin (bd babelstone-t7o3.11 / 3k10).
+    /// The dispatcher POSTs <c>deposit_id = process_id</c>; the engine MUST honour that supplied id AS the
+    /// stream/aggregate id, so the resulting <c>DepositConstituted</c> the outbox relay publishes carries
+    /// <c>ce_subject = aggregate_id = process_id</c> and the orchestrator's consume loop correlates the
+    /// engine's REAL integration fact (on the <c>term_deposit</c> family topic) back to THIS saga by
+    /// identity. The engine resolves the RATE in-transaction (ADR-PC-008 §S2) from the structural body
+    /// alone — no TAN is supplied. This test pins the load-bearing clause: the 201's <c>deposit_id</c>
+    /// equals the supplied <c>process_id</c> (NOT a server-minted GUID).
+    /// </summary>
+    [Fact]
+    public async Task ENGINE_COMMAND_PACT_provider_honours_the_supplied_deposit_id_as_the_stream_id()
+    {
+        // The saga's process_id, sent as the engine's deposit_id (= the stream/aggregate id).
+        var processId = Guid.NewGuid();
+        var body = ContractRequestBody() with { DepositId = processId };
+        var idempotencyKey = Guid.NewGuid().ToString();
+
+        var response = await PostConstituteAsync(body, idempotencyKey);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var depositId = Guid.Parse(doc.RootElement.GetProperty("deposit_id").GetString()!);
+
+        // The engine used the SUPPLIED id as the stream id — so ce_subject = process_id on the relayed
+        // DepositConstituted, which is what closes the engine→saga correlation.
+        Assert.Equal(processId, depositId);
+
+        // Read-your-writes against the SAME id confirms the stream was opened under it (the engine folds
+        // the deposit at that stream id and serves it back), not under a server-minted id.
+        var commitSequence = doc.RootElement.GetProperty("commit_sequence").GetInt64();
+        var read = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"/v1/deposits/{processId}")
+        {
+            Headers = { { "If-Min-Sequence", commitSequence.ToString() } },
+        });
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        var readDoc = JsonDocument.Parse(await read.Content.ReadAsStringAsync());
+        Assert.Equal(processId, Guid.Parse(readDoc.RootElement.GetProperty("deposit_id").GetString()!));
+    }
+
     // ---- The contract request the dispatcher declares ------------------------------------------
 
     /// <summary>The constitute request the dispatcher's ActivateDeposit translates to — the snake_case

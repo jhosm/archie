@@ -47,6 +47,7 @@ public static class ProcessApiEndpoints
         HttpContext context,
         EdgeSagaStarter starter,
         EdgeOptions options,
+        TimeProvider clock,
         CancellationToken ct)
     {
         // Light edge validation (Document 05 §Step 0 step 5): a structurally malformed request is
@@ -85,6 +86,16 @@ public static class ProcessApiEndpoints
                 title: "A constitution request requires product_code, source_account_ref, and a non-negative amount.");
         }
 
+        // Resolve the deposit's STRUCTURAL shape (bd babelstone-t7o3.11): the term/variant/policy/cadence/
+        // role the engine's ConstituteDepositRequest needs. A client that knows the product may supply
+        // them on the body; otherwise the edge resolves them from the product_code via EdgeProductCatalog
+        // (the walking-skeleton product-config stand-in). The RATE is NEVER pinned here — the engine
+        // resolves it in-transaction (bd babelstone-3k10). The start date is PINNED at admission from the
+        // edge clock (the impure shell owns the clock, ADR-PC-010 §P5) so the saga's command bytes carry
+        // no clock and the constitution replays stably.
+        var shape = EdgeProductCatalog.Resolve(request.ProductCode);
+        var startDate = DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime);
+
         // Assemble the PII-free business facts the saga pins (bd babelstone-t7o3.1): the amount +
         // account/product references come from the body; the approval-fork policy inputs are pinned at
         // the edge — the auto-approval threshold from EdgeOptions (the policy in force at admission)
@@ -97,7 +108,13 @@ public static class ProcessApiEndpoints
             SourceAccountRef: request.SourceAccountRef,
             InterestAccountRef: request.InterestAccountRef,
             ClientType: Babelstone.Orchestrator.Handlers.ClientType.Existing,
-            AutoApprovalThresholdMinorUnits: options.AutoApprovalThresholdMinorUnits);
+            AutoApprovalThresholdMinorUnits: options.AutoApprovalThresholdMinorUnits,
+            TermDays: request.TermDays ?? shape.TermDays,
+            InterestVariant: request.InterestVariant ?? shape.InterestVariant,
+            AutoRenewalPolicy: request.AutoRenewalPolicy ?? shape.AutoRenewalPolicy,
+            PaymentPeriodMonths: request.PaymentPeriodMonths ?? shape.PaymentPeriodMonths,
+            Role: request.Role ?? shape.Role,
+            StartDate: startDate);
 
         // STARTS the saga (NOT a direct engine append): creates the ConstitutionProcess STARTED row
         // owned by the attested caller, pins the business references, drives the first transition,

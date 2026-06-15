@@ -21,6 +21,9 @@ public sealed class ConstitutionProcessCommandsTests
     private static readonly Guid CausationId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly Guid CorrelationId = Guid.Parse("33333333-3333-3333-3333-333333333333");
 
+    // The POLYMORPHIC saga-command DTOs — these serialize the saga envelope ($type discriminator +
+    // structural references). ActivateDeposit is NOT here: it serializes the engine's snake_case
+    // ConstituteDepositRequest instead (bd babelstone-t7o3.11), exercised by its own dedicated tests.
     public static TheoryData<CommandPayload, string> AllCommands() => new()
     {
         { Reserve(), ConstitutionProcess.ReserveAccountBalance },
@@ -39,14 +42,6 @@ public sealed class ConstitutionProcessCommandsTests
                 CoreHoldRef = "CORE-HOLD-554433",
             },
             ConstitutionProcess.ConfirmDebit
-        },
-        {
-            new ActivateDepositCommand
-            {
-                ProcessId = ProcessId, CausationMessageId = CausationId, CorrelationId = CorrelationId,
-                DepositRef = "DEP-2026-00012345", CoreTxnRef = "CT-2026-9988776655",
-            },
-            ConstitutionProcess.ActivateDeposit
         },
         {
             new ReleaseBalanceReservationCommand
@@ -221,6 +216,96 @@ public sealed class ConstitutionProcessCommandsTests
         Assert.Equal(original.CoreHoldRef, clearance.CoreHoldRef);
     }
 
+    // ---- ActivateDeposit serializes the engine's ConstituteDepositRequest (bd babelstone-t7o3.11) ----
+
+    [Fact]
+    public void ActivateDeposit_body_is_a_snake_case_ConstituteDepositRequest_with_deposit_id_equal_to_process_id()
+    {
+        // ActivateDeposit is delivered to the engine's POST /v1/deposits, so its wire body is the
+        // engine's snake_case ConstituteDepositRequest — NOT the polymorphic saga envelope. The
+        // load-bearing clause: deposit_id = process_id, so the relayed DepositConstituted carries
+        // ce_subject = process_id and the saga correlates the engine's real event back to itself.
+        using var document = JsonDocument.Parse(Activate().ToBytes());
+        var root = document.RootElement;
+
+        Assert.Equal(ProcessId, root.GetProperty("deposit_id").GetGuid());
+        Assert.Equal("dpz_pt_12m_juros_venc", root.GetProperty("product_id").GetString());
+        Assert.Equal(100_00, root.GetProperty("principal_cents").GetInt64());
+        Assert.Equal("standard", root.GetProperty("role").GetString());
+        Assert.Equal(365, root.GetProperty("term_days").GetInt32());
+        Assert.Equal("2026-01-15", root.GetProperty("start_date").GetString());
+        Assert.Equal("AT_MATURITY", root.GetProperty("interest_variant").GetString());
+        Assert.Equal("NONE", root.GetProperty("auto_renewal_policy").GetString());
+        Assert.Equal("acct-ref-001", root.GetProperty("funding_account").GetString());
+
+        // The TAN is NEVER sent — the engine resolves the rate in-transaction (bd babelstone-3k10).
+        Assert.False(root.TryGetProperty("tan_basis_points", out _));
+        Assert.False(root.TryGetProperty("tan", out _));
+        // No saga-envelope discriminator leaks onto the engine body (the engine would reject $type).
+        Assert.False(root.TryGetProperty("$type", out _));
+    }
+
+    [Fact]
+    public void ActivateDeposit_body_is_byte_stable_across_two_serializations()
+    {
+        // Byte-stable (ADR-PC-010 §P5): no clock, no minted GUID inside the body. The start date is
+        // PINNED at the edge (carried as a field), not "today at the engine", so re-emit is identical.
+        var command = Activate();
+        Assert.Equal(command.ToBytes(), command.ToBytes());
+    }
+
+    [Fact]
+    public void ActivateDeposit_body_is_a_positive_allow_list_of_PII_free_structural_fields()
+    {
+        // A POSITIVE allow-list (ADR-PC-004 §P2) over the ENGINE body's snake_case fields: every field
+        // is a structural product fact or an opaque reference — never a raw IBAN/NIF/name. funding_account
+        // is the opaque source-account TOKEN the edge pinned, not an IBAN.
+        var allowed = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "deposit_id", "product_id", "principal_cents", "role", "term_days", "start_date",
+            "interest_variant", "auto_renewal_policy", "funding_account", "payment_period_months",
+        };
+
+        using var document = JsonDocument.Parse(Activate().ToBytes());
+        foreach (var property in document.RootElement.EnumerateObject())
+        {
+            Assert.Contains(property.Name, allowed);
+        }
+    }
+
+    [Fact]
+    public void ActivateDeposit_assembled_by_the_factory_carries_the_pinned_business_facts_and_process_id()
+    {
+        // The factory builds the engine body from the pinned business reference: deposit_id = process_id,
+        // and the structural product facts come from the reference the edge pinned.
+        var reference = new SagaBusinessReference(
+            ProcessId: ProcessId,
+            ProductRef: "dpz_pt_12m_juros_venc",
+            AmountMinorUnits: 100_00,
+            SourceAccountRef: "acct-ref-001",
+            InterestAccountRef: null,
+            DepositRef: "DEP-2026-00012345",
+            ClientType: ClientType.Existing,
+            AutoApprovalThresholdMinorUnits: 25_000_00,
+            TermDays: 365,
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            PaymentPeriodMonths: 0,
+            Role: "standard",
+            StartDate: new DateOnly(2026, 1, 15));
+
+        var command = (ActivateDepositCommand)SagaCommandPayloadFactory.Build(
+            ConstitutionProcess.ActivateDeposit, ProcessId, CausationId, CorrelationId, reference)!;
+
+        using var document = JsonDocument.Parse(command.ToBytes());
+        var root = document.RootElement;
+        Assert.Equal(ProcessId, root.GetProperty("deposit_id").GetGuid());
+        Assert.Equal("dpz_pt_12m_juros_venc", root.GetProperty("product_id").GetString());
+        Assert.Equal(100_00, root.GetProperty("principal_cents").GetInt64());
+        Assert.Equal("acct-ref-001", root.GetProperty("funding_account").GetString());
+        Assert.Equal("2026-01-15", root.GetProperty("start_date").GetString());
+    }
+
     private static ReserveAccountBalanceCommand Reserve() => new()
     {
         ProcessId = ProcessId,
@@ -228,5 +313,23 @@ public sealed class ConstitutionProcessCommandsTests
         CorrelationId = CorrelationId,
         AccountRef = "ACCT-REF-0001",
         ReservationRef = "RSV-11111111",
+    };
+
+    private static ActivateDepositCommand Activate() => new()
+    {
+        ProcessId = ProcessId,
+        CausationMessageId = CausationId,
+        CorrelationId = CorrelationId,
+        DepositRef = "DEP-2026-00012345",
+        CoreTxnRef = "CT-2026-9988776655",
+        ProductCode = "dpz_pt_12m_juros_venc",
+        PrincipalCents = 100_00,
+        FundingAccount = "acct-ref-001",
+        Role = "standard",
+        TermDays = 365,
+        StartDate = new DateOnly(2026, 1, 15),
+        InterestVariant = "AT_MATURITY",
+        AutoRenewalPolicy = "NONE",
+        PaymentPeriodMonths = 0,
     };
 }

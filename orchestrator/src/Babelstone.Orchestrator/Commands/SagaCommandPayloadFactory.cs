@@ -102,6 +102,12 @@ public static class SagaCommandPayloadFactory
                 // at v1 (before DEF-1's ACL guard exists) rests on this reference being stable.
                 CoreHoldRef = DerivedRef(CoreHoldPrefix, processId),
             },
+            // ActivateDeposit is the ENGINE-bound constitution command (bd babelstone-t7o3.11): its wire
+            // body is the engine's ConstituteDepositRequest (snake_case, deposit_id = process_id so
+            // ce_subject = process_id), carrying the STRUCTURAL product facts pinned at the edge. The
+            // engine resolves the RATE in-transaction (bd babelstone-3k10) — the TAN is deliberately not
+            // sent. The funding account is the source-account token; the product_id is the catalogue
+            // product reference. All fields are pinned scalars/references, so the body is byte-stable.
             ConstitutionProcess.ActivateDeposit => new ActivateDepositCommand
             {
                 ProcessId = processId,
@@ -109,6 +115,15 @@ public static class SagaCommandPayloadFactory
                 CorrelationId = correlationId,
                 DepositRef = reference.DepositRef,
                 CoreTxnRef = DerivedRef(CoreTxnPrefix, processId),
+                ProductCode = reference.ProductRef,
+                PrincipalCents = reference.AmountMinorUnits,
+                FundingAccount = reference.SourceAccountRef,
+                Role = reference.Role,
+                TermDays = reference.TermDays,
+                StartDate = reference.StartDate,
+                InterestVariant = reference.InterestVariant,
+                AutoRenewalPolicy = reference.AutoRenewalPolicy,
+                PaymentPeriodMonths = reference.PaymentPeriodMonths,
             },
             ConstitutionProcess.ReleaseBalanceReservation => new ReleaseBalanceReservationCommand
             {

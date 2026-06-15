@@ -74,11 +74,60 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// THE HEADLINE. A saga walked to APPROVED reaches COMPLETED when the engine's real
-    /// <c>DepositConstituted</c> event arrives on <c>deposits.process.events</c> and the hosted consume
-    /// loop drives it — proving the slot-2 advance is on the EVENT (correlated by <c>ce_subject →
-    /// process_id</c>), not the activation 2xx. Driven by the REAL Confluent consumer, not a hand-fed
-    /// <see cref="SagaInboxEvent"/>.
+    /// THE HEADLINE (Fork A, bd babelstone-t7o3.11). A saga walked to APPROVED reaches COMPLETED when the
+    /// engine's real <c>DepositConstituted</c> event arrives on the FAMILY INTEGRATION topic
+    /// <c>term_deposit</c> — the topic the engine's <c>OutboxDrainer</c> actually publishes to
+    /// (topic = <c>aggregate_type</c>) — and the hosted consume loop, NOW SUBSCRIBED TO THE FULL
+    /// <see cref="SagaConsumeTopics.ConstitutionProcessTopics"/> set, drives it. This proves the
+    /// engine→saga event path is closed: the orchestrator reads the family topic (Fork A) and correlates
+    /// the integration fact to the saga by <c>ce_subject → process_id</c> (the saga POSTs
+    /// <c>deposit_id = process_id</c>, so <c>aggregate_id == process_id == ce_subject</c>; bd babelstone-3k10).
+    /// Driven by the REAL Confluent consumer, not a hand-fed <see cref="SagaInboxEvent"/>. Before this lane
+    /// the loop subscribed ONLY to <c>deposits.process.events</c>, so a real engine event on
+    /// <c>term_deposit</c> was never consumed and the saga stranded at APPROVED forever.
+    /// </summary>
+    [Fact]
+    public async Task DepositConstituted_on_the_family_topic_correlated_via_ce_subject_advances_saga_to_COMPLETED()
+    {
+        // Fork A: the engine publishes to the family integration topic (term_deposit), and the saga now
+        // subscribes to it. This is the topic the OutboxDrainer ACTUALLY produces to at runtime.
+        var topic = SagaConsumeTopics.TermDepositIntegrationTopic;
+
+        var processId = await StartSagaAndWalkToApprovedAsync();
+        Assert.Equal(SagaState.Approved, await StateOrNullAsync(processId));
+
+        // Produce the engine's REAL terminal fact onto the FAMILY topic: ce_type's record name is
+        // "DepositConstituted" and ce_subject is the deposit stream's aggregate_id — which equals the
+        // saga's process_id because the saga POSTs deposit_id = process_id to the engine (bd 3k10).
+        var messageId = Guid.NewGuid();
+        await ProduceDepositConstitutedAsync(topic, messageId, ceSubject: processId);
+
+        // The host subscribes to the FULL production topic set (both deposits.process.events AND
+        // term_deposit), exactly as Program.cs wires it — so this exercises the real Fork-A subscription.
+        using var host = BuildHost(SagaConsumeTopics.ConstitutionProcessTopics, groupId: $"orch-family-{Guid.NewGuid()}");
+        await host.StartAsync();
+        try
+        {
+            await WaitUntilAsync(
+                async () => await StateOrNullAsync(processId) == SagaState.Completed,
+                TimeSpan.FromSeconds(40),
+                "the hosted loop did not advance the saga to COMPLETED on the DepositConstituted event off the family topic");
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
+
+        Assert.Equal(SagaState.Completed, await StateOrNullAsync(processId));
+        Assert.True(SagaStateNames.IsTerminal(await StateOrNullAsync(processId) ?? SagaState.Started));
+        Assert.Equal(1, await CountInboxAsync(messageId));
+    }
+
+    /// <summary>
+    /// A saga walked to APPROVED reaches COMPLETED when the engine's real <c>DepositConstituted</c> event
+    /// arrives on <c>deposits.process.events</c> and the hosted consume loop drives it — proving the slot-2
+    /// advance is on the EVENT (correlated by <c>ce_subject → process_id</c>), not the activation 2xx.
+    /// Driven by the REAL Confluent consumer, not a hand-fed <see cref="SagaInboxEvent"/>.
     /// </summary>
     [Fact]
     public async Task DepositConstituted_bus_event_correlated_via_ce_subject_advances_saga_to_COMPLETED()
@@ -203,7 +252,9 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
 
     // ---- Host wiring (the SAME composition the production Program.cs uses) -------------------
 
-    private IHost BuildHost(string topic, string groupId)
+    private IHost BuildHost(string topic, string groupId) => BuildHost([topic], groupId);
+
+    private IHost BuildHost(IReadOnlyList<string> topics, string groupId)
     {
         var builder = Host.CreateApplicationBuilder();
         builder.Services.AddSingleton<ISagaStateMachine, ConstitutionProcess>();
@@ -223,7 +274,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
             ConnectionString = ConnectionString,
             BootstrapServers = _redpanda.BootstrapServers,
             GroupId = groupId,
-            Topics = [topic],
+            Topics = topics,
         });
         builder.Services.AddSingleton(sp => new SagaConsumeLoop(
             sp.GetRequiredService<SagaInboxConsumerOptions>(),
