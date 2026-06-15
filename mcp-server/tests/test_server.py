@@ -10,16 +10,37 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+from mcp.server.elicitation import (
+    AcceptedElicitation,
+    AcceptedUrlElicitation,
+    DeclinedElicitation,
+)
+from mcp.shared.exceptions import McpError
 from starlette.requests import Request
 
 from babelstone_mcp import server
+from babelstone_mcp.elicitation import PeriodicInterestConfirmation
 from babelstone_mcp.engine_client import EngineClient
 
 
 class _FakeContext:
-    """A minimal stand-in for FastMCP's ``Context`` exposing ``request_context.request``."""
+    """A minimal stand-in for FastMCP's ``Context`` exposing ``request_context.request``.
 
-    def __init__(self, *, client_id: str, scope: str) -> None:
+    Optionally carries pre-seeded elicitation results so the §P8 human-in-the-loop paths
+    (form-mode confirm on ``constitute_deposit``, URL-mode step-up on the money-movers) can be
+    exercised by direct tool calls without a live MCP session. ``elicit`` / ``elicit_url`` record
+    that they were called so tests can assert the elicitation fired (or did not).
+    """
+
+    def __init__(
+        self,
+        *,
+        client_id: str,
+        scope: str,
+        elicit_result: object | None = None,
+        elicit_url_result: object | None = None,
+    ) -> None:
         scope_obj = {
             "type": "http",
             "method": "POST",
@@ -33,6 +54,20 @@ class _FakeContext:
         self.request_context = type(
             "_RC", (), {"request": Request(scope_obj)}
         )()
+        self._elicit_result = elicit_result
+        self._elicit_url_result = elicit_url_result
+        self.elicit_called = False
+        self.elicit_url_called = False
+        self.elicit_url_args: tuple[str, str, str] | None = None
+
+    async def elicit(self, message: str, schema: type) -> object:
+        self.elicit_called = True
+        return self._elicit_result
+
+    async def elicit_url(self, message: str, url: str, elicitation_id: str) -> object:
+        self.elicit_url_called = True
+        self.elicit_url_args = (message, url, elicitation_id)
+        return self._elicit_url_result
 
 
 def _read_ctx(client_id: str = "CLI-2026-007842") -> _FakeContext:
@@ -245,3 +280,246 @@ async def test_constitute_tool_maps_args_to_the_engine_request() -> None:
     assert fake.constitute_request["interest_variant"] == "AT_MATURITY"
     assert fake.constitute_request["auto_renewal_policy"] == "NONE"
     assert fake.constitute_request["payment_period_months"] == 0
+
+
+# ---------------------------------------------------------------------------------------------
+# §P8 human-in-the-loop elicitation (Epic J.4, bd babelstone-ar1y)
+#
+# Form mode is the SHIPPABLE v1 path on the one non-irreversible clarification we have today:
+# constituting a PERIODIC deposit asks the human to confirm the periodic-coupon choice. URL mode is
+# the v1 MACHINERY for step-up SCA on the irreversible money-movers (mature / pay_interest), gated
+# behind ELICITATION_URL_MODE_ENABLED (default off) until the maintainer resolves the SCA-trigger +
+# token-re-entry fork. Both modes carry only generic text (no PII) in the prompt.
+# ---------------------------------------------------------------------------------------------
+
+
+def _constitute_periodic_ctx(
+    elicit_result: object, client_id: str = "CLI-2026-007842"
+) -> _FakeContext:
+    return _FakeContext(
+        client_id=client_id, scope="deposits:write", elicit_result=elicit_result
+    )
+
+
+async def test_constitute_deposit_with_periodic_elicitation_accepted() -> None:
+    fake = _FakeEngine()
+    server.set_engine(fake)
+    ctx = _constitute_periodic_ctx(
+        AcceptedElicitation(data=PeriodicInterestConfirmation(confirmed=True))
+    )
+
+    result = await server.constitute_deposit(
+        product_id="dpz_pt_12m_juros_mensal",
+        role="standard",
+        principal_cents=1_000_000,
+        term_days=365,
+        start_date="2026-01-15",
+        funding_account="PT50-DDA-001",
+        ctx=ctx,
+        interest_variant="PERIODIC",
+        payment_period_months=1,
+    )
+
+    # The human confirmed → the engine command runs and the result comes back normally.
+    assert ctx.elicit_called is True
+    assert fake.constitute_request is not None
+    assert fake.constitute_request["interest_variant"] == "PERIODIC"
+    assert result.deposit_id == "d-1"
+
+
+async def test_constitute_deposit_with_periodic_elicitation_declined_raises_mcp_error() -> None:
+    fake = _FakeEngine()
+    server.set_engine(fake)
+    ctx = _constitute_periodic_ctx(DeclinedElicitation())
+
+    with pytest.raises(McpError) as exc:
+        await server.constitute_deposit(
+            product_id="dpz_pt_12m_juros_mensal",
+            role="standard",
+            principal_cents=1_000_000,
+            term_days=365,
+            start_date="2026-01-15",
+            funding_account="PT50-DDA-001",
+            ctx=ctx,
+            interest_variant="PERIODIC",
+            payment_period_months=1,
+        )
+
+    # Declining aborts BEFORE the engine command (no money moves on a non-confirmation).
+    assert fake.constitute_request is None
+    message = exc.value.error.message
+    assert "did not confirm" in message.lower()
+    # No PII in the surfaced error (no funding account / client id leak).
+    assert "PT50" not in message
+    assert "CLI-" not in message
+
+
+async def test_constitute_deposit_with_periodic_explicit_no_raises_mcp_error() -> None:
+    # The human accepted the form but answered "no" (confirmed=False) — a semantic non-confirmation.
+    # The deposit must NOT be constituted, same as a decline.
+    fake = _FakeEngine()
+    server.set_engine(fake)
+    ctx = _constitute_periodic_ctx(
+        AcceptedElicitation(data=PeriodicInterestConfirmation(confirmed=False))
+    )
+
+    with pytest.raises(McpError) as exc:
+        await server.constitute_deposit(
+            product_id="dpz_pt_12m_juros_mensal",
+            role="standard",
+            principal_cents=1_000_000,
+            term_days=365,
+            start_date="2026-01-15",
+            funding_account="PT50-DDA-001",
+            ctx=ctx,
+            interest_variant="PERIODIC",
+            payment_period_months=1,
+        )
+
+    assert fake.constitute_request is None
+    assert "did not confirm" in exc.value.error.message.lower()
+
+
+async def test_constitute_deposit_at_maturity_skips_elicitation() -> None:
+    fake = _FakeEngine()
+    server.set_engine(fake)
+    # AT_MATURITY is not a periodic choice → no clarification fires.
+    ctx = _FakeContext(client_id="CLI-2026-007842", scope="deposits:write")
+
+    result = await server.constitute_deposit(
+        product_id="dpz_pt_12m_juros_venc",
+        role="standard",
+        principal_cents=1_000_000,
+        term_days=365,
+        start_date="2026-01-15",
+        funding_account="PT50-DDA-001",
+        ctx=ctx,
+        interest_variant="AT_MATURITY",
+    )
+
+    assert ctx.elicit_called is False
+    assert fake.constitute_request is not None
+    assert result.deposit_id == "d-1"
+
+
+# --- URL-mode step-up: mature_deposit --------------------------------------------------------
+
+
+async def test_mature_deposit_url_mode_enabled_accept_proceeds_to_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server, "ELICITATION_URL_MODE_ENABLED", True)
+    fake = _FakeEngine()
+    server.set_engine(fake)
+    ctx = _FakeContext(
+        client_id="CLI-MATURE-1",
+        scope="deposits:write",
+        elicit_url_result=AcceptedUrlElicitation(),
+    )
+
+    result = await server.mature_deposit(deposit_id="d-42", ctx=ctx)
+
+    assert ctx.elicit_url_called is True
+    assert fake.matured == "d-42"
+    assert result.lifecycle == "Matured"
+    # The URL carries only a stable op code + the elicitation UUID — never the deposit id.
+    _msg, url, _eid = ctx.elicit_url_args  # type: ignore[misc]
+    assert "operation=MATURE_DEPOSIT" in url
+    assert "d-42" not in url
+
+
+async def test_mature_deposit_url_mode_enabled_decline_raises_mcp_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server, "ELICITATION_URL_MODE_ENABLED", True)
+    fake = _FakeEngine()
+    server.set_engine(fake)
+    ctx = _FakeContext(
+        client_id="CLI-MATURE-1",
+        scope="deposits:write",
+        elicit_url_result=DeclinedElicitation(),
+    )
+
+    with pytest.raises(McpError) as exc:
+        await server.mature_deposit(deposit_id="d-42", ctx=ctx)
+
+    # Declining the step-up aborts before settlement; the error is static (no PII).
+    assert fake.matured is None
+    assert "d-42" not in exc.value.error.message
+
+
+async def test_mature_deposit_url_mode_disabled_skips_elicitation() -> None:
+    # Default deployment: URL mode off → the affordance is dormant, the tool behaves as before.
+    fake = _FakeEngine()
+    server.set_engine(fake)
+    ctx = _FakeContext(
+        client_id="CLI-MATURE-1",
+        scope="deposits:write",
+        elicit_url_result=AcceptedUrlElicitation(),
+    )
+
+    result = await server.mature_deposit(deposit_id="d-42", ctx=ctx)
+
+    assert ctx.elicit_url_called is False
+    assert fake.matured == "d-42"
+    assert result.lifecycle == "Matured"
+
+
+# --- URL-mode step-up: pay_interest ----------------------------------------------------------
+
+
+async def test_pay_interest_url_mode_enabled_accept_proceeds_to_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server, "ELICITATION_URL_MODE_ENABLED", True)
+    fake = _FakeEngine()
+    server.set_engine(fake)
+    ctx = _FakeContext(
+        client_id="CLI-COUPON-2",
+        scope="deposits:write",
+        elicit_url_result=AcceptedUrlElicitation(),
+    )
+
+    result = await server.pay_interest(deposit_id="d-42", ctx=ctx)
+
+    assert ctx.elicit_url_called is True
+    assert fake.interest_paid == "d-42"
+    assert result.coupons_paid == 1
+    _msg, url, _eid = ctx.elicit_url_args  # type: ignore[misc]
+    assert "operation=PAY_INTEREST" in url
+    assert "d-42" not in url
+
+
+async def test_pay_interest_url_mode_enabled_decline_raises_mcp_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(server, "ELICITATION_URL_MODE_ENABLED", True)
+    fake = _FakeEngine()
+    server.set_engine(fake)
+    ctx = _FakeContext(
+        client_id="CLI-COUPON-2",
+        scope="deposits:write",
+        elicit_url_result=DeclinedElicitation(),
+    )
+
+    with pytest.raises(McpError) as exc:
+        await server.pay_interest(deposit_id="d-42", ctx=ctx)
+
+    assert fake.interest_paid is None
+    assert "d-42" not in exc.value.error.message
+
+
+async def test_pay_interest_url_mode_disabled_skips_elicitation() -> None:
+    fake = _FakeEngine()
+    server.set_engine(fake)
+    ctx = _FakeContext(
+        client_id="CLI-COUPON-2",
+        scope="deposits:write",
+        elicit_url_result=AcceptedUrlElicitation(),
+    )
+
+    result = await server.pay_interest(deposit_id="d-42", ctx=ctx)
+
+    assert ctx.elicit_url_called is False
+    assert fake.interest_paid == "d-42"
+    assert result.coupons_paid == 1

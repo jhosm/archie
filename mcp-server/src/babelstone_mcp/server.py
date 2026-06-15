@@ -12,19 +12,59 @@ reads the gateway-attested caller identity (``X-Client-Id``, derived from the OA
 NEVER a tool argument; Document 11) from the request headers and enforces *scope-per-tool* (§P4) via
 ``check_tool_scope``: ``get_deposit`` needs ``deposits:read``, the writes need ``deposits:write``.
 The authoritative ``aud`` re-check (§P3) and the public RFC 9728 metadata (§P2) live in ``app.py``.
-§P8 elicitation on the irreversible writes is a deliberate follow-up (ar1y).
+
+§P8 human-in-the-loop elicitation (Epic J.4, bd babelstone-ar1y) is wired here via ``elicitation.py``:
+``constitute_deposit`` uses FORM mode to confirm a PERIODIC interest selection (a non-irreversible
+parameter clarification — live), and ``mature_deposit`` / ``pay_interest`` carry the URL-mode step-up
+SCA machinery for irreversible settlement, dormant behind ``ELICITATION_URL_MODE_ENABLED`` (default
+off) until the SCA-trigger + token-re-entry fork is resolved (see ``_maybe_stepup_sca``). The
+elicitation messages ride the same Streamable-HTTP ``/mcp`` route — no kong.yml change is needed.
 """
 
 from __future__ import annotations
 
 import os
+import uuid
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
 
 from .auth import AuthContext, check_tool_scope
+from .elicitation import (
+    _PERIODIC_CONFIRM_MSG,
+    _STEPUP_MSG,
+    ElicitationAborted,
+    PeriodicInterestConfirmation,
+    aborted_error,
+    elicit_form_clarification,
+    elicit_url_stepup,
+)
 from .engine_client import EngineClient
+
+# §P8 URL-mode step-up SCA is the v1 MACHINERY (built + tested), kept DORMANT by default behind this
+# flag until the maintainer resolves the SCA-trigger + token-re-entry fork (see the money-mover tools
+# below). With it off, mature_deposit / pay_interest behave exactly as before. Tests flip it on to
+# exercise the affordance. Read as a bool from the environment ("true"/"1"/"yes" enable it).
+ELICITATION_URL_MODE_ENABLED = os.environ.get(
+    "ELICITATION_URL_MODE_ENABLED", "false"
+).strip().lower() in ("true", "1", "yes")
+
+# Base for the bank-controlled step-up SCA URL the agent navigates the human to (URL mode). The only
+# dynamic parts of the constructed URL are a STABLE operation code and an elicitation_id UUID — never
+# a deposit id, client id, IBAN, or amount (the no-PII invariant). Overridable per deployment.
+_SCA_STEPUP_BASE_URL = os.environ.get(
+    "BABELSTONE_SCA_STEPUP_BASE_URL", "http://localhost:9999/sca"
+)
+
+
+def _stepup_url(operation_code: str, elicitation_id: str) -> str:
+    """Build the bank-controlled step-up SCA URL for ``operation_code`` (URL-mode elicitation).
+
+    Carries ONLY the stable operation code (e.g. ``MATURE_DEPOSIT``) and the elicitation_id UUID —
+    no business identifier (no deposit id) ever reaches the elicitation channel.
+    """
+    return f"{_SCA_STEPUP_BASE_URL}/stepup?operation={operation_code}&elicitation_id={elicitation_id}"
 
 
 def _transport_security() -> TransportSecuritySettings:
@@ -120,8 +160,33 @@ async def constitute_deposit(
 
     Requires ``deposits:write`` (ADR-IC-010 §P4). The actor is the gateway-attested ``X-Client-Id``
     (OAuth ``sub``), never a tool argument (Document 11).
+
+    §P8 form-mode elicitation (Epic J.4): when ``interest_variant`` is PERIODIC, the server pauses and
+    asks the human to confirm the periodic-coupon choice before constituting — the non-irreversible
+    parameter clarification §P8 reserves form mode for. If the human declines/cancels, the call is
+    aborted with an ``McpError`` and no deposit is constituted. The confirmation prompt carries only
+    generic text (no PII). The AT_MATURITY / ADVANCE variants do not trigger it.
     """
     auth = _authorize(ctx, "constitute_deposit")
+
+    # §P8 form mode — confirm the periodic-coupon selection (a non-irreversible clarification). The
+    # prompt is the static, PII-free _PERIODIC_CONFIRM_MSG; the schema is a single bool. A decline or
+    # cancel aborts before any engine command runs.
+    if interest_variant == "PERIODIC":
+        try:
+            answer = await elicit_form_clarification(
+                ctx, _PERIODIC_CONFIRM_MSG, PeriodicInterestConfirmation
+            )
+        except ElicitationAborted:
+            answer = None  # decline / cancel — treated as non-confirmation below
+        # Block on a decline/cancel (answer is None) AND on an explicit "no" (confirmed=False): only
+        # an affirmative accept proceeds to the irreversible-in-intent constitute command.
+        if answer is None or not answer.confirmed:
+            raise aborted_error(
+                "User did not confirm the periodic interest selection; the deposit was not "
+                "constituted (ADR-IC-010 §P8 form-mode confirmation)."
+            )
+
     result = await engine().constitute(
         {
             "principal_cents": principal_cents,
@@ -208,10 +273,12 @@ async def mature_deposit(deposit_id: str, ctx: Context) -> DepositPosition:
     ``net_interest_cents``, ``total_payout_cents``) and ``lifecycle`` = ``Matured``. Money is integer
     cents.
 
-    Requires ``deposits:write`` (ADR-IC-010 §P4). Settlement is irreversible, so if the secured edge
-    classes it under §P8 it gets ``elicitation/create`` confirmation — a deliberate follow-up (ar1y).
+    Requires ``deposits:write`` (ADR-IC-010 §P4). Settlement is irreversible, so under §P8 it gets
+    URL-mode ``elicitation/create`` step-up SCA — the v1 machinery is here, dormant behind
+    ``ELICITATION_URL_MODE_ENABLED`` (default off) until the SCA fork below is resolved.
     """
     auth = _authorize(ctx, "mature_deposit")
+    await _maybe_stepup_sca(ctx, "MATURE_DEPOSIT")
     return DepositPosition(**await engine().mature(deposit_id, client_id=auth.client_id))
 
 
@@ -228,10 +295,66 @@ async def pay_interest(deposit_id: str, ctx: Context) -> DepositPosition:
     rejected. Money is integer cents.
 
     Requires ``deposits:write`` (ADR-IC-010 §P4). Like ``mature_deposit``, the coupon settlement is
-    irreversible; §P8 elicitation is a deliberate follow-up (ar1y).
+    irreversible; under §P8 it gets URL-mode step-up SCA — the v1 machinery is here, dormant behind
+    ``ELICITATION_URL_MODE_ENABLED`` (default off) until the SCA fork is resolved.
     """
     auth = _authorize(ctx, "pay_interest")
+    await _maybe_stepup_sca(ctx, "PAY_INTEREST")
     return DepositPosition(**await engine().pay_interest(deposit_id, client_id=auth.client_id))
+
+
+async def _maybe_stepup_sca(ctx: Context, operation_code: str) -> None:
+    """§P8 URL-mode step-up SCA affordance on an irreversible money-mover (Epic J.4, ar1y).
+
+    When ``ELICITATION_URL_MODE_ENABLED`` is on, mint a fresh elicitation_id (a UUID — NOT the
+    deposit id), build the bank-controlled step-up URL for ``operation_code``, and ask the human (via
+    URL-mode ``elicitation/create``) to complete SCA out-of-band. On accept we proceed to the engine;
+    on decline/cancel we abort with a static, PII-free ``McpError``. When the flag is off (the
+    default), this is a no-op — the tool behaves exactly as before.
+
+    ─────────────────────────────────────────────────────────────────────────────────────────────
+    MAINTAINER FLAG — the step-up SCA fork (do NOT resolve speculatively; bd babelstone-ar1y ships
+    the elicitation MACHINERY + this affordance, NOT a security gate):
+
+    Q1 — SCA-TRIGGER DETECTION: how does this tool know fresh SCA is actually needed?
+       (a) the engine returns a structured ``SCA_REQUIRED`` on a money-mover called without a
+           fresh-enough SCA claim; this tool catches it, fires the step-up, then retries. Cleanest
+           signal; needs a bounded engine-side addition. RECOMMENDED.
+       (b) a Kong ``pre-function`` SCA gate on the ``/mcp`` route (mirroring the constitute REST
+           route, ADR-IC-006 §P2) returns 403 before this server is even reached — which KILLS the
+           tool call before elicitation can start. Structurally incompatible with firing elicitation
+           on the tool call; the agent would have to handle the 403 itself. The ``/mcp`` route has NO
+           such gate today — adding it is a maintainer decision, not this PR.
+       (c) proactive: always fire the step-up at the top of every money-mover (this stub's current
+           shape). Simplest; over-prompts users who already hold fresh SCA.
+
+    Q2 — TOKEN RE-ENTRY: after the human completes SCA at the bank URL, how does the fresh proof
+       flow back into the tool call?
+       (a) agent re-call with a new Bearer (PKCE/refresh) — simplest, needs an agent that can refresh.
+       (b) out-of-band: the bank's SCA completion signals the engine (a short-lived nonce tied to the
+           elicitation_id); the engine accepts the next call within a TTL. No agent token refresh,
+           but introduces session state in the engine.
+       (c) ``session.send_elicit_complete(elicitation_id)`` from the bank's SCA callback + agent
+           retry (still needs a fresh token if a Kong SCA gate exists).
+
+    Both questions touch the saga orchestrator (ADR-IC-010 §P8: "realised by the saga orchestrator")
+    and/or a new Kong gate — out of this lane's scope. v1 therefore: machinery present, flag default
+    OFF, and we deliberately do NOT call ``send_elicit_complete`` (no out-of-band completion wired
+    yet). Flip the default + wire Q1/Q2 once the maintainer decides.
+    ─────────────────────────────────────────────────────────────────────────────────────────────
+    """
+    if not ELICITATION_URL_MODE_ENABLED:
+        return
+    elicitation_id = str(uuid.uuid4())  # a UUID, never the deposit id (no business identity leaks)
+    try:
+        await elicit_url_stepup(
+            ctx, _STEPUP_MSG, _stepup_url(operation_code, elicitation_id), elicitation_id
+        )
+    except ElicitationAborted:
+        raise aborted_error(
+            "User did not complete step-up authentication; the operation was not performed "
+            "(ADR-IC-010 §P8 URL-mode step-up SCA)."
+        ) from None
 
 
 # Side-effect import registers the prompt templates on ``mcp`` at import time (Epic J.2, bd
