@@ -79,6 +79,7 @@ tracked separately — and is **not** the job of this seed.
 | 21 | The relay publishes an event **iff** it is catalogued (an AsyncAPI/`.avsc` entry); an **uncatalogued event is store-only by construction** — appended, folded, replayable, but never on the durable bus. *(Live via the append-side gate: `AggregateRuntime.AppendAsync` ALWAYS writes the events-envelope row but builds an `OutboxRow` — the relay's only publishable artefact — only when the injected family-agnostic `IIntegrationEventCatalog` (the real `AvroSchemaCatalog`, wired in `Program.cs`/`TermDepositHostModule`) catalogues the `event_type`; both halves still commit in the one sink transaction, so `ES_ATOMIC_APPEND_OUTBOX` holds (its lower bound relaxes from "one outbox row per event" to "≤ one per event"). Gated by `CatalogGatedRelayIntegrationTests` (Testcontainers Postgres): a catalogued `DepositConstituted` and an uncatalogued `InterestPaid` appended together — BOTH in the event store, only the catalogued one in the outbox — plus a store-only batch that appends with zero outbox rows.)* | [ADR-IC-017 §P1](../../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md) | integration (relay + Testcontainers) | `INTEGRATION_EVENT_CATALOG_GATED` | Live |
 | 22 | **Every relay-publishable `event_type` has an AsyncAPI/`.avsc` entry** — the reverse orphan check that mirrors row 21's runtime rule at build time, making *catalogued ⇔ on the bus* a hermetic biconditional. *(Live two ways: the pure .NET fitness test `CatalogGatedRelayReverseOrphanTests` (default lane) anchors on the RUNTIME event set — every `event_type` a loaded family registers a handler for — and asserts the gate predicate admits it IFF it is catalogued, the biconditional in full; the `contracts`-job shell gate `asyncapi-catalog-validate.sh` adds the schema-layer §P3 leg, asserting every catalogued `.avsc` record name is a real family `DomainEvent` (no phantom promotion). This catches a SCHEMALESS event the forward `.avsc`→catalog orphan check cannot see.)* | [ADR-IC-017 §P3](../../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md) | analyser / CI (`contracts` job) | `NO_UNCATALOGUED_EVENT_ON_BUS` | Live |
 | 23 | An **as-of / point-in-time read** of `GET /v1/deposits/{id}?as_of_sequence=N` folds the event stream up to and INCLUDING per-stream sequence `N` and returns the **historical projection at that point, not the current head** — the same pure, deterministic fold the read-your-writes fallback uses (no wall-clock in the fold), generalised with an inclusive upper bound. The axis is the per-stream `commit_sequence` (transaction-time); a malformed (negative) point is a `400` and a point beyond the head is a `422`, never a `500` and never a silent fold-to-head. A wall-clock `valid_time` axis (`?as_of=<timestamp>`) is deferred to the bitemporal projection runtime (Epic D / [ADR-PC-002](./ADR-PC-002-application-level-bitemporality.md)). | [ADR-PC-027 slot 2/3](./ADR-PC-027-deposit-read-surface-canonical-resource.md) | integration (Testcontainers) | `READ_AS_OF_SEQUENCE` | Live |
+| MCP-1 | **Wrong-resource token is rejected at the MCP boundary** — a request bearing a token whose `aud` claim is not the MCP server's canonical URI receives `401` with code `AUDIENCE_MISMATCH` (and a `WWW-Authenticate` header carrying `resource_metadata`) **before any application/tool code runs** (RFC 8707 audience binding; the token-replay defence). Realised at BOTH layers: the Kong edge pre-function (`scripts/kong-config-check.sh` static contract) and the app-layer audience re-check (`AudienceMiddleware`, pytest). | [ADR-IC-010 §P3](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) | contract (Kong static + app pytest) | `MCP_WRONG_RESOURCE_TOKEN_REJECTED` | Live |
 | OBS-1 | Every Babelstone .NET host stamps its tracer's **resource** with `service.name`, `service.namespace == "babelstone"`, and a non-blank `deployment.environment` — so every trace is attributable to a service, the estate, and an environment. | [ADR-IC-007 §P1](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_RESOURCE_ATTRS` | Live |
 | OBS-2 | The product-semantic spans (`accrual.computed`, `withholding.applied`) are emitted in the **impure runtime shell** (`AggregateRuntime.AppendAsync`'s span hook / the host endpoint), **never** in the pure decider/fold, and carry the structural `babelstone.partition_key` + `babelstone.product_code`. | [ADR-IC-007 §P2–§P3](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_SPAN_PRODUCT_SEMANTICS` | Live |
 | OBS-3 | **No PII in any telemetry signal** — span/log attributes carry only structural identifiers (the `babelstone.*` operational tier), never NIF/IBAN/account/name/email; money rides as integer cents. | [ADR-IC-007 §P4](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit / analyser | `OBS_NO_PII_ATTRS` | Planned |
@@ -296,6 +297,27 @@ meets the `Live` criterion. The relocated read model's own schema/role assertion
 family's Testcontainers integration tier (`ReadModelMigrationSchemaIntegrationTests` in
 `Babelstone.Families.TermDeposit.Application.Tests`).
 
+**MCP edge-boundary reconciliation (2026-06-15, bd babelstone-xma4).** Row MCP-1
+(`MCP_WRONG_RESOURCE_TOKEN_REJECTED`) was added under the growth provision and lands
+**`Live`**. It closes the deliberate, visible gap [ADR-IC-010 §Verifiable-commitments](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md)
+reserved ("No Test ID is wired yet … to be catalogued when the MCP server is
+implemented"): bd `babelstone-e50n` shipped the secured MCP edge, so the wrong-resource
+(RFC 8707 audience-binding) refusal now resolves to running tests at both layers. The
+**app-layer** leg is `mcp-server/tests/test_auth.py`'s
+`test_MCP_WRONG_RESOURCE_TOKEN_REJECTED_wrong_aud_is_rejected_401_audience_mismatch`
+(the `AudienceMiddleware` returns `401` + code `AUDIENCE_MISMATCH` + a `WWW-Authenticate`
+`resource_metadata` pointer for a wrong-`aud` token), which runs in CI's `mcp-server`
+job (`.github/workflows/ci.yml`). The **Kong-edge** leg is the static contract in
+`scripts/kong-config-check.sh` (the `AUDIENCE_MISMATCH` / `kong.response.exit(401` /
+`resource_metadata` assertions on the `/mcp` route), which runs in CI's `edge` job. The
+§P6 coverage checker resolves the `Live` row by literal grep of the Test ID in the renamed
+pytest method under `mcp-server/` (the `mcp-server` subtree is in `CODE_DIRS`, `.py` in
+`CODE_INCLUDES`); the Kong-layer leg carries the Test ID as a traceability comment. This is
+the second in-house **ADR-IC** edge-boundary commitment catalogued here (alongside the
+ADR-IC-017 rows 21–22), per the [§P11](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)
+in-house-estate reach. The companion `outputSchema`-mandatory gap ADR-IC-010 also reserves
+stays uncatalogued — out of scope for this change.
+
 ## Coverage by pyramid level
 
 This is the shape [ADR-PC-020 §P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)
@@ -309,7 +331,7 @@ spawns a parallel suite:
 | Analyser / CI gate | `DETERMINISM_GATE`, `NO_CLOCK_DRIVEN_ENGINE_SIGNAL` (analyser + contract) |
 | Architecture / dependency assertion (CI) | `ENGINE_FAMILY_AGNOSTIC`, `EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC` |
 | Integration (Testcontainers) | `ES_ATOMIC_APPEND_OUTBOX`, `REPLAY_PIN_PER_EVENT`, `BATCH_INGEST_IDEMPOTENT`, `OBS_TRACEPARENT_PROPAGATION`, `OBS_TRACE_ID_SURFACED_HTTP`, `READ_YOUR_WRITES_FOLD_ON_TOKEN` |
-| Contract / saga | `GL_POST_FLAG_NEVER_GATES`, `NOTIFY_POST_FLAG_NEVER_GATES`, `IFRS9_POST_FLAG_NEVER_GATES`, `CONSTITUTION_PRECONDITION_REFUSAL` |
+| Contract / saga | `GL_POST_FLAG_NEVER_GATES`, `NOTIFY_POST_FLAG_NEVER_GATES`, `IFRS9_POST_FLAG_NEVER_GATES`, `CONSTITUTION_PRECONDITION_REFUSAL`, `MCP_WRONG_RESOURCE_TOKEN_REJECTED` (Kong static + app pytest) |
 | Benchmark (CI Integration lane) | `REPLAY_BUDGET_5S_30S` (v1 half; v4 30 s half deferred to L.3) |
 | Benchmark (per-PR / CI) | `PACK_VALIDATE_DEPTH_BUDGETS`, `PACK_SIM_DEPTH5_BUDGET` |
 | Acceptance | `ZERO_ENGINE_DIFF_PER_VARIANT` |

@@ -101,7 +101,11 @@ async def test_well_known_returns_rfc9728_metadata_unauthenticated() -> None:
 # ── §P3 — audience re-check at the app layer ───────────────────────────────────────
 
 
-async def test_wrong_aud_is_rejected_401_audience_mismatch() -> None:
+async def test_MCP_WRONG_RESOURCE_TOKEN_REJECTED_wrong_aud_is_rejected_401_audience_mismatch() -> None:
+    # Realises catalogue Test ID MCP_WRONG_RESOURCE_TOKEN_REJECTED (ADR-IC-010 §P3): a token whose
+    # `aud` is not this server's canonical URI gets 401 + code AUDIENCE_MISMATCH before any app code
+    # runs. The Test ID is embedded in the method name so the ADR-PC-020 §P6 coverage checker
+    # (.github/scripts/spec-coverage-check.sh) resolves the Live row to this test by literal grep.
     async with _client() as client:
         resp = await client.post(
             "/mcp",

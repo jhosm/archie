@@ -383,9 +383,12 @@ Tools that map to irreversible operations (deposit constitution above the auto-a
 
 This decision's load-bearing commitments are fitness functions in the [commitment catalogue](../../product_concepts/adrs/commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
 
-The two boundary invariants this decision rests on are described in the body as existing CI contract tests, but neither is yet wired to a catalogue Test ID — a deliberate, visible gap to be catalogued under the catalogue's growth provision when the MCP server is implemented:
+The wrong-resource boundary invariant this decision rests on is now wired to a catalogue Test ID — the gap that stood here ("to be catalogued under the catalogue's growth provision when the MCP server is implemented") is closed because the secured MCP edge shipped (bd `babelstone-e50n`):
 
-- **Wrong-resource token is rejected at the boundary** — a request bearing a token whose `aud` claim is not the MCP server's canonical URI receives `401` from the MCP server before any application code runs (§P3; the Principle-2 contract test of [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) / [ADR-IC-009](./ADR-IC-009-testing-infrastructure.md)). No Test ID is wired yet.
+- `MCP_WRONG_RESOURCE_TOKEN_REJECTED` — **wrong-resource token is rejected at the boundary**: a request bearing a token whose `aud` claim is not the MCP server's canonical URI receives `401` with code `AUDIENCE_MISMATCH` before any application code runs (§P3; the RFC 8707 audience-binding / Principle-2 contract of [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) / [ADR-IC-009](./ADR-IC-009-testing-infrastructure.md)). Realised at both the Kong edge and the app-layer `AudienceMiddleware` — **`Live`** per the catalogue (the single source of truth for status).
+
+The other boundary invariant this decision rests on remains a deliberate, visible gap — to be catalogued under the catalogue's growth provision when its contract test is wired:
+
 - **Every tool carries a mandatory `outputSchema`** — a tool that returns free-text confirmation without a structured payload is rejected in CI by a contract test, and the rule holds for read tools too after the 2026-05-31 amendment (§P6; A2/A4). No Test ID is wired yet.
 
 This ADR's per-tool scope discipline (one tool maps to exactly one scope, no god scope, §P4) and elicitation-URL-mode rule for irreversible operations (the SCA-bound action transitions the saga, not the agent's report, §P8) are realised by the [ADR-IC-006](./ADR-IC-006-edge-api-gateway.md) gateway and the saga orchestrator respectively; they are governed there, not as this ADR's own catalogue rows.
