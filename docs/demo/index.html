@@ -391,6 +391,7 @@ h2 {
   border:1px solid var(--hair-soft); color:var(--faint); background:rgba(255,255,255,0.012); white-space:nowrap; line-height:1; }
 .bchip.touch { color:var(--gold); border-color:rgba(224,177,94,0.55); background:rgba(224,177,94,0.10); font-weight:500; }
 .bchip.touch.new::before { content:"+ "; color:var(--gold); }
+.bchip.wire { color:var(--gold-deep); border:1px dashed rgba(224,177,94,0.5); background:transparent; }
 
 /* ---------- print → PDF leave-behind ---------- */
 @media print {
@@ -654,13 +655,14 @@ h2 {
   </section>
 
   <!-- 12 — APPENDIX: extensibility (new family vs new variant) -->
-  <section class="slide ext" data-notes="Appendix — read this against the board on slide 11. The lit chips are exactly the pieces from that diagram a change touches. A NEW FAMILY (left) lights up ONE box — Product Families (you add a new one beside term_deposit) — plus the Contracts · Governance rail (new Avro + CUE schemas, a new EventCatalog entry). Everything else on the board is reused unchanged: the Engine API, the Financial-Math Kernel, the Event Store, the Event Bus, the Orchestrator, the MCP surface, the gateway, observability. That is the family-agnostic engine of ADR-PC-021 made visible — the engine never names a family, so a new one is additive, not invasive. The code you actually write is the family's own events, pure folds, lifecycle legality table and decider, then a few lines of host wiring. A NEW VARIANT (right) lights up NO box at all: a 12-month deposit becomes a 24-month with quarterly coupons by publishing a product-config YAML, a rate-sheet row and a pack pin — pure data the engine resolves at constitution, validated by CUE and pulled by signature. Punchline: most new products are a config file a regulator can read; touching the architecture is the exception.">
+  <section class="slide ext" data-notes="Appendix — read this against the board on slide 11. The lit chips are exactly the pieces a change touches. A NEW FAMILY (left) touches FOUR boxes, in two tiers. New code you write (solid): Product Families — the family's own events, pure folds, lifecycle legality table and decider; the Engine API — a new host module that maps the family's own /v1/<family> command + query surface (each family maps its own routes via IFamilyHostModule.MapEndpoints — term_deposit maps /v1/deposits); and Contracts · Governance — its Avro + closed CUE schemas and EventCatalog entries. Additive wiring (dashed, one line, no logic change): the Engine API composition list gains one entry — `familyModules = [new TermDepositHostModule(), …]` — plus a project reference; and the Orchestrator subscribes to the family's integration topic (SagaConsumeTopics), but the ConstitutionProcess saga is keyed by EVENT TYPE not family, so no saga logic changes. Everything else is reused unchanged: the Financial-Math Kernel, the Event Store, the Event Bus, the gateway, the MCP relay, observability, security. That is ADR-PC-021 §D4: the host composition stays family-count-invariant — a new family is a new module plus one line, never a surgical edit to existing logic. So: additive, not invasive — but be honest, it IS new code and a deploy. A NEW VARIANT (right) touches NO box: a 12-month deposit becomes a 24-month with quarterly coupons by publishing a product-config YAML, a rate-sheet row and a pack pin — pure data the engine resolves at constitution, CUE-validated and signature-pulled. Punchline: a new variant is a config file a regulator can read; a new family is new code that slots into the spine without disturbing it.">
     <div class="slide-inner">
       <div class="ext-head r" style="--i:0">
         <div class="kicker" style="margin-bottom:0">Appendix · extensibility</div>
         <h2>Two ways to grow — on the same board.</h2>
         <div class="arch-legend">
-          <span><span class="adot" style="background:var(--gold)"></span>touched</span>
+          <span><span class="adot" style="background:var(--gold)"></span>new code</span>
+          <span><span class="adot" style="background:transparent;border:1px dashed var(--gold)"></span>one-line wiring</span>
           <span><span class="adot" style="background:transparent;border:1px solid var(--faint)"></span>reused unchanged</span>
         </div>
       </div>
@@ -668,28 +670,30 @@ h2 {
         <!-- NEW FAMILY — code -->
         <div class="ext-card code r" style="--i:1">
           <div class="xk">New product family</div>
-          <h3>Lights up one box</h3>
+          <h3>Additive, not invasive</h3>
           <div class="xex">e.g. term deposits → <em>savings accounts</em> · <em>credit lines</em> — a different lifecycle</div>
           <div class="board-echo">
             <span class="bk">the slide-11 board · touched ↓</span>
             <span class="bchip">Kong Gateway</span>
             <span class="bchip">MCP Server</span>
-            <span class="bchip">Engine API</span>
+            <span class="bchip touch">Engine API</span>
             <span class="bchip touch new">Product Families</span>
             <span class="bchip">Financial-Math</span>
             <span class="bchip">Event Store</span>
             <span class="bchip">Event Bus</span>
-            <span class="bchip">Orchestrator</span>
+            <span class="bchip wire">Orchestrator</span>
             <span class="bchip">Boundary</span>
             <span class="bchip">Observability</span>
             <span class="bchip">Security · PII</span>
             <span class="bchip touch">Contracts · Gov</span>
           </div>
           <div class="ext-list">
-            <div class="xrow"><span class="xdot"></span><span class="xt"><b>+ Product Families</b> — events, pure folds, lifecycle table, decider<span class="xm">families/&lt;x&gt;/ · IFamilyModule · IFamilyHostModule + Program.cs</span></span></div>
-            <div class="xrow"><span class="xdot"></span><span class="xt"><b>Contracts · Governance</b> — new schemas<span class="xm">Avro .avsc · EventCatalog entry · closed CUE #Family</span></span></div>
+            <div class="xrow"><span class="xdot"></span><span class="xt"><b>+ Product Families</b> — events, pure folds, lifecycle table, decider<span class="xm">families/&lt;x&gt;/ · IFamilyModule</span></span></div>
+            <div class="xrow"><span class="xdot"></span><span class="xt"><b>Engine API</b> — host module + the family's <code>/v1/&lt;family&gt;</code> surface<span class="xm">IFamilyHostModule.MapEndpoints · + 1 line in familyModules[]</span></span></div>
+            <div class="xrow"><span class="xdot"></span><span class="xt"><b>Contracts · Governance</b> — new schemas<span class="xm">Avro .avsc · EventCatalog · closed CUE #Family</span></span></div>
+            <div class="xrow"><span class="xdot"></span><span class="xt"><b>Orchestrator</b> — subscribe the family topic <span style="color:var(--faint)">(no saga logic)</span><span class="xm">SagaConsumeTopics · saga keyed by event type, not family</span></span></div>
           </div>
-          <div class="ext-verdict"><span>compile · deploy · the rest of the board unchanged</span><span class="vref">ADR-PC-010 · 021</span></div>
+          <div class="ext-verdict"><span>new code + deploy · composition stays family-count-invariant</span><span class="vref">ADR-PC-021 §D4</span></div>
         </div>
         <!-- NEW VARIANT — config -->
         <div class="ext-card config r" style="--i:2">
@@ -718,7 +722,7 @@ h2 {
           <div class="ext-verdict"><span>zero code · zero deploy · CUE + signature gated</span><span class="vref">ADR-PC-007 · 008 · 009</span></div>
         </div>
       </div>
-      <p class="ext-punch r" style="--i:3">A new family is <b>additive, not invasive</b> — it touches one box because the engine never learns a product's name. A new variant is just <b>a config file a regulator can read.</b></p>
+      <p class="ext-punch r" style="--i:3">A new family is <b>new code that slots into the spine</b> — new modules + one composition line, never a rewrite of the kernel, store or bus. A new variant is just <b>a config file a regulator can read.</b></p>
     </div>
   </section>
 
