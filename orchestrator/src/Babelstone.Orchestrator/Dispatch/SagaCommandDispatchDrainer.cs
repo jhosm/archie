@@ -67,17 +67,40 @@ public sealed class SagaCommandDispatchDrainer
     private readonly ICommandRouter _router;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly SagaAdvanceHandler _advanceHandler;
+    private readonly IReadOnlyDictionary<string, IResultEventBridge> _bridges;
 
+    /// <summary>
+    /// Drain saga_outbox for N saga types (bd babelstone-mtto PR1 — the multi-saga substrate). Routing
+    /// and the command-outcome → result-event bridge are now keyed by the owning saga's
+    /// <c>saga_type</c> (read off the row's <c>saga_state</c> join): <paramref name="router"/> is the
+    /// <see cref="CompositeCommandRouter"/> and <paramref name="bridges"/> are the per-saga-type result
+    /// bridges. A duplicate <see cref="IResultEventBridge.SagaType"/> is a wiring error and throws.
+    /// </summary>
     public SagaCommandDispatchDrainer(
         SagaCommandDispatcherOptions options,
         ICommandRouter router,
         IHttpClientFactory httpClientFactory,
-        SagaAdvanceHandler advanceHandler)
+        SagaAdvanceHandler advanceHandler,
+        IEnumerable<IResultEventBridge> bridges)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _router = router ?? throw new ArgumentNullException(nameof(router));
         _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
         _advanceHandler = advanceHandler ?? throw new ArgumentNullException(nameof(advanceHandler));
+
+        ArgumentNullException.ThrowIfNull(bridges);
+        var bridgeMap = new Dictionary<string, IResultEventBridge>(StringComparer.Ordinal);
+        foreach (var bridge in bridges)
+        {
+            if (!bridgeMap.TryAdd(bridge.SagaType, bridge))
+            {
+                throw new InvalidOperationException(
+                    $"Duplicate IResultEventBridge for saga_type '{bridge.SagaType}': the saga-type → " +
+                    "bridge registry must be a function (bd babelstone-mtto PR1).");
+            }
+        }
+
+        _bridges = bridgeMap;
     }
 
     /// <summary>
@@ -122,8 +145,9 @@ public sealed class SagaCommandDispatchDrainer
             return false;
         }
 
-        // No route for this command type → terminal. Two cases:
-        var route = _router.Resolve(row.CommandType);
+        // No route for this command type → terminal. Two cases. Route by the owning saga's saga_type
+        // (bd babelstone-mtto PR1) so a second saga's commands resolve through its OWN sub-router.
+        var route = _router.Resolve(row.CommandType, row.SagaType);
         if (route is null)
         {
             // [REVIEW-FLAG A] The in-aggregate ValidateProductLimits carve-out (bd babelstone-t7o3.8).
@@ -132,7 +156,11 @@ public sealed class SagaCommandDispatchDrainer
             // SYNTHETIC Applied: flip the row PUBLISHED AND self-advance the saga (LimitsValidated) in
             // the same commit. Every OTHER no-route command STILL becomes terminal FAILED below. The
             // real product-limits verdict (incl. LimitsRejected) is H.2 / babelstone-n55u.
-            if (row.CommandType == ConstitutionProcess.ValidateProductLimits)
+            // GUARDED on the saga type (bd babelstone-mtto PR1): the auto-pass is ConstitutionProcess-
+            // specific, so a future saga with a same-named command is NOT silently auto-passed — it
+            // falls through to the terminal-FAILED arm like any other unrouted command.
+            if (row.SagaType == ConstitutionProcess.Type
+                && row.CommandType == ConstitutionProcess.ValidateProductLimits)
             {
                 try
                 {
@@ -264,7 +292,15 @@ public sealed class SagaCommandDispatchDrainer
         NpgsqlConnection connection, NpgsqlTransaction transaction, OutboxRow row,
         CommandDeliveryKind kind, CancellationToken ct)
     {
-        var resultEventType = ConstitutionResultEvents.ForOutcome(row.CommandType, kind);
+        // Resolve the result-event bridge for THIS saga's type (bd babelstone-mtto PR1 — the multi-saga
+        // substrate). A saga type with no registered bridge synthesizes nothing — the status flip still
+        // commits (the command WAS delivered; the saga simply has no in-process result-event mapping).
+        if (!_bridges.TryGetValue(row.SagaType, out var bridge))
+        {
+            return;
+        }
+
+        var resultEventType = bridge.ForOutcome(row.CommandType, kind);
         if (resultEventType is null)
         {
             // No result event for this (command, kind): the bridge synthesizes nothing — the status
@@ -408,11 +444,20 @@ public sealed class SagaCommandDispatchDrainer
         // so the same command is never delivered twice by two instances. process_id + correlation_id are
         // read so the command-outcome → result-event bridge (bd babelstone-t7o3.8) can correlate the
         // delivery outcome back to the saga and self-advance it on this transaction.
+        //
+        // The JOIN to saga_state reads the owning saga's saga_type (bd babelstone-mtto PR1 — the
+        // multi-saga substrate) so routing and the result bridge can pick the right per-saga-type
+        // sub-router/bridge. It is a read-only PK-join (saga_state's PK is process_id), O(1) per row,
+        // and needs NO migration — the saga_type column has existed since the original schema. FOR
+        // UPDATE OF o locks ONLY the outbox row, never the saga_state row (which the advance handler
+        // locks FOR UPDATE on its own).
         const string sql = """
-            SELECT message_id, command_type, payload, traceparent, process_id, correlation_id
-            FROM saga_outbox
-            WHERE seq = @seq AND status = 'PENDING'
-            FOR UPDATE SKIP LOCKED;
+            SELECT o.message_id, o.command_type, o.payload, o.traceparent, o.process_id, o.correlation_id,
+                   s.saga_type
+            FROM saga_outbox o
+            JOIN saga_state s ON s.process_id = o.process_id
+            WHERE o.seq = @seq AND o.status = 'PENDING'
+            FOR UPDATE OF o SKIP LOCKED;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -429,7 +474,8 @@ public sealed class SagaCommandDispatchDrainer
             Payload: reader.GetFieldValue<byte[]>(2),
             TraceParent: reader.IsDBNull(3) ? null : reader.GetString(3),
             ProcessId: reader.GetGuid(4),
-            CorrelationId: reader.IsDBNull(5) ? null : reader.GetGuid(5));
+            CorrelationId: reader.IsDBNull(5) ? null : reader.GetGuid(5),
+            SagaType: reader.GetString(6));
     }
 
     private static async Task MarkPublishedAsync(
@@ -470,7 +516,7 @@ public sealed class SagaCommandDispatchDrainer
 
     private sealed record OutboxRow(
         Guid MessageId, string CommandType, byte[] Payload, string? TraceParent,
-        Guid ProcessId, Guid? CorrelationId);
+        Guid ProcessId, Guid? CorrelationId, string SagaType);
 
     private enum DeliveryKind { Applied, Refused, Transient, Indeterminate }
 

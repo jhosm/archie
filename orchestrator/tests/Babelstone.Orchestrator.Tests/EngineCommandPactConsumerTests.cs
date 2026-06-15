@@ -131,11 +131,13 @@ public sealed class EngineCommandPactConsumerTests : IAsyncLifetime
             sp.GetRequiredService<SagaTransitionLog>(),
             sp.GetRequiredService<ISagaCommandSink>(),
             sp.GetRequiredService<SagaBusinessReferenceStore>()));
+        builder.Services.AddSingleton<IResultEventBridge, ConstitutionResultEvents.Bridge>();
         builder.Services.AddSingleton(sp => new SagaCommandDispatchDrainer(
             sp.GetRequiredService<SagaCommandDispatcherOptions>(),
             sp.GetRequiredService<ICommandRouter>(),
             sp.GetRequiredService<IHttpClientFactory>(),
-            sp.GetRequiredService<SagaAdvanceHandler>()));
+            sp.GetRequiredService<SagaAdvanceHandler>(),
+            sp.GetServices<IResultEventBridge>()));
         builder.Services.AddHostedService<SagaCommandDispatcherService>();
         return builder.Build();
     }
