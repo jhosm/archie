@@ -543,7 +543,7 @@ body.console-open .hint-bar { display:none; }
     if (d.state === "APPROVED" && !state.sagaSeenDebit) {
       state.sagaSeenDebit = true;
       addEvent({ seq: "→", name: "ConfirmDebit", meta: "dispatched to Core ACL · POST /v1/debits · the IRREVERSIBLE money leg", amtClass: "gold" });
-      addEvent({ seq: "→", name: "ActivateDeposit", meta: "dispatched to the engine · POST /v1/deposits (start the engine on :8080 to land a real deposit)" });
+      addEvent({ seq: "→", name: "ActivateDeposit", meta: "dispatched to the engine · POST /v1/deposits — lands a real deposit; the saga now awaits the engine's DepositConstituted" });
       mcpLog('', 'ConfirmDebit → Core ACL · ActivateDeposit → engine');
     }
     renderSagaProcess();
@@ -574,7 +574,7 @@ body.console-open .hint-bar { display:none; }
       : failure
         ? '<div class="pb-sub" style="color:var(--wrong)">Fail-closed · ' + sagaStateBlurb(s) + ' — nothing was committed.</div>'
         : s === "APPROVED"
-          ? '<div class="pb-sub">Reached <b>APPROVED</b> — the reversible reserve <b>and</b> the irreversible debit both fired, and <b>ActivateDeposit</b> is dispatched to the engine. The final <b>APPROVED→COMPLETED</b> step awaits the engine→saga completion bridge (ADR-PC-029 slot 2) — start the engine on :8080 to land a real deposit.</div>'
+          ? '<div class="pb-sub">Reached <b>APPROVED</b> — the reversible reserve <b>and</b> the irreversible debit both fired, and <b>ActivateDeposit</b> landed a real deposit in the engine. Awaiting the engine\'s <b>DepositConstituted</b> event to carry the saga <b>APPROVED→COMPLETED</b> (ADR-PC-029 slot 2 — the advance is on the engine\'s event, never the HTTP 2xx).</div>'
           : '<div class="pb-sub">Walking the reversible validations in <b>' + s + '</b> — reserve + product-limit checks, before any irreversible effect (the dispatcher delivers each leg to the Core-ACL stub).</div>';
     passbook.innerHTML =
       '<span class="status-badge ' + badge + '"><span class="d"></span>' + s + '</span>' +
@@ -709,7 +709,8 @@ body.console-open .hint-bar { display:none; }
       mcpLog('constitute_deposit(… via edge → saga …)');
       try {
         // an "insufficient"-flagged source ref makes the Core-ACL stub 422 the reserve → the saga
-        // fails CLOSED to DEPOSIT_CONSTITUTION_FAILED (refusal demo); else the happy path to APPROVED.
+        // fails CLOSED to DEPOSIT_CONSTITUTION_FAILED (refusal demo); else the happy path runs
+        // reserve → debit → ActivateDeposit → the engine's DepositConstituted carries it to COMPLETED.
         var srcRef = el("sagaInsuf").checked ? "ACCT-insufficient-001" : "ACCT-REF-DEMO-001";
         var sr = await api("POST", "/api/v1/deposits/constitute", {
           product_code: prod, amount: principalCents,

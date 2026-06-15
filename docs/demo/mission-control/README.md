@@ -19,9 +19,9 @@ orchestrator edge and the constitution saga). It shares the deck's exact look so
 | | DEMO | LIVE·engine | LIVE·saga |
 | --- | --- | --- | --- |
 | What it drives | nothing (in-browser) | the engine's command surface, **direct** | the deposit opened through the orchestrator **edge → constitution saga** |
-| Backend needed | none | the engine on `:8080` + `serve.py` | the orchestrator on `:8090` + Core-ACL stub + `serve.py` |
+| Backend needed | none | the engine on `:8080` + `serve.py` | the engine on `:8080` + the orchestrator on `:8090` + Core-ACL stub + `serve.py` |
 | Bring-up | `open index.html` | `scripts/demo-mcp.sh up` | `scripts/demo-saga.sh up` |
-| What it proves | the math, on a stage with no network | the engine kernel is genuinely real | the **intended** command-plane: edge, saga, dispatcher, settlement |
+| What it proves | the math, on a stage with no network | the engine kernel is genuinely real | the **intended** command-plane end to end: edge → saga → dispatcher → settlement → engine → terminal completion |
 | Contract | — | `POST /v1/deposits` (ADR-PC-029) | `POST /api/v1/deposits/constitute` → 202 + SSE (ADR-IC-006 §P4) |
 
 Flip between them with the **Mode** toggle, top-right. DEMO is the default.
@@ -71,14 +71,15 @@ This is the **intended** way a deposit is opened: a client hits the orchestrator
 door**, which *starts* the constitution saga (ADR-IC-003 / Document 05) and returns `202 Accepted`
 with a `process_id` and an **SSE stream** that follows the saga to a terminal state. The saga decides
 its commands; the dispatcher (ADR-PC-029) delivers the reversible settlement leg
-(`ReserveAccountBalance`) to the **Core-ACL stub** over idempotent HTTP. Nothing rides the durable
-bus but events.
+(`ReserveAccountBalance`) to the **Core-ACL stub** over idempotent HTTP, and `ActivateDeposit` lands a
+real deposit in the **engine**, whose `DepositConstituted` event flows back over the bus to complete
+the saga. Nothing rides the durable bus but events.
 
 ```bash
-# 1. bring up the saga path: Postgres + Redpanda + Core-ACL stub + the orchestrator host
-scripts/demo-saga.sh up           # orchestrator edge comes up on http://localhost:8090
+# 1. bring up the full saga path: Postgres + Redpanda + Core-ACL stub + the ENGINE + the orchestrator
+scripts/demo-saga.sh up           # engine on :8080, orchestrator edge on http://localhost:8090
 
-# 2. start Mission Control (same proxy; it also forwards /api/v1/* to the orchestrator)
+# 2. start Mission Control (same proxy; it forwards /api/v1/* to the orchestrator and /v1/* to the engine)
 python3 docs/demo/mission-control/serve.py
 
 # 3. open http://localhost:9000  → flip the Mode toggle to LIVE·saga → Constitute deposit
@@ -86,20 +87,20 @@ python3 docs/demo/mission-control/serve.py
 
 You'll watch the saga walk out of the edge: `ConstitutionRequested` → `PARALLEL_VALIDATION`
 (`ReserveAccountBalance` dispatched to the Core-ACL stub) → `VALIDATIONS_COMPLETE` → **`APPROVED`**,
-where the **irreversible `ConfirmDebit`** fires and `ActivateDeposit` is dispatched to the engine.
-The position column tracks the milestones (Requested → Validating → **Approved & debited** →
-Constituted).
+where the **irreversible `ConfirmDebit`** fires and `ActivateDeposit` is dispatched to the engine →
+**`COMPLETED`**, when the engine's real `DepositConstituted` event arrives back over the bus. The
+position column tracks the milestones (Requested → Validating → **Approved & debited** → Constituted).
 
-**How far it goes — and the one honest gap.** With the **result-event bridge** (bd
-`babelstone-t7o3.8`, now merged) the orchestrator synthesizes each result event from the command's
-delivery outcome and self-advances the saga, so the happy path walks all the way to **`APPROVED`** —
-the reversible reserve *and* the irreversible debit both fire. It does **not** reach `COMPLETED`:
-`ActivateDeposit`-applied is deliberately *not* synthesized (ADR-PC-029 slot 2 — the saga advances on
-the engine's real `DepositConstituted`, not the command's HTTP 2xx), and the engine→saga completion
-correlation that would carry it `APPROVED → COMPLETED` is a separate, still-unbuilt bridge. So the
-demo stops at `APPROVED`; `ActivateDeposit` is dispatched to the engine on `:8080` — start the engine
-(`scripts/demo-mcp.sh up`) for it to land a **real deposit**. Same honest framing as the MCP and
-Telemetry tabs: show what's real, name what's aspirational.
+**How far it goes — all the way to terminal completion.** With the **result-event bridge** (bd
+`babelstone-t7o3.8`) the orchestrator synthesizes each settlement result event from the command's
+delivery outcome and self-advances the saga to **`APPROVED`** — the reversible reserve *and* the
+irreversible debit both fire. From there `ActivateDeposit` lands a **real, de-settled deposit** in the
+engine; the engine appends `DepositConstituted` and its catalog-gated outbox relay publishes that fact
+onto the `term_deposit` family topic; the orchestrator's consume loop reads it off Redpanda,
+correlates `ce_subject → process_id`, and advances **`APPROVED → COMPLETED`** (bd
+`babelstone-t7o3.11`). This is the **ADR-PC-029 slot-2** contract working end to end: the saga advances
+on the engine's real **event**, never on the `ActivateDeposit` HTTP `2xx`. At `COMPLETED` the bank
+genuinely holds the deposit — `GET /v1/deposits/{process_id}` on the engine returns it `Active`.
 
 **The refusal branch reaches a terminal state.** Tick **force insufficient funds** (a LIVE·saga
 affordance) and the source account is flagged `insufficient`, so the Core-ACL stub `422`s the
@@ -115,12 +116,15 @@ ownership check pass. Override defaults with env vars: `ORCHESTRATOR_URL` (defau
 Other lifecycle actions (mature, coupons, retry, terminate) are disabled in LIVE·saga: the saga
 covers **constitution** only today. Use DEMO or LIVE·engine to drive those.
 
-**Smoke-tested 2026-06-14** against a real orchestrator (`scripts/demo-saga.sh up` → `serve.py`):
-the happy path walks to `APPROVED` (reserve **and** the irreversible debit both hit the Core-ACL stub
-— `POST /v1/reservations` + `POST /v1/debits`), and the refusal path reaches terminal
-`DEPOSIT_CONSTITUTION_FAILED` — both confirmed in the browser and the orchestrator DB. (A pre-existing
-Postgres volume is fine — the orchestrator uses its own `babelstone_orchestrator` database, distinct
-from the engine's, so there's no `inbox`-table collision with `demo-mcp.sh`.)
+**Smoke-tested 2026-06-15** against a real engine + orchestrator (`scripts/demo-saga.sh up` →
+`serve.py`): the happy path walks all the way to terminal `COMPLETED` (reserve **and** the irreversible
+debit both hit the Core-ACL stub — `POST /v1/reservations` + `POST /v1/debits` — then the engine's real
+`DepositConstituted` carries the saga `APPROVED → COMPLETED`, and the engine holds the deposit `Active`
+at `GET /v1/deposits/{process_id}`), and the refusal path reaches terminal
+`DEPOSIT_CONSTITUTION_FAILED` before approval — both confirmed in the browser and the orchestrator DB.
+(A pre-existing Postgres volume is fine — the orchestrator uses its own `babelstone_orchestrator`
+database, distinct from the engine's `babelstone`, so there's no `inbox`-table collision with
+`demo-mcp.sh`.)
 
 ## The demo beats (what to click)
 
@@ -168,7 +172,9 @@ the **real trace** from Tempo (bd `babelstone-f0ic.9`):
 - Tempo has a few seconds of ingestion lag, so the fetch **polls** and shows "fetching the real
   trace…" until it lands; if the LGTM stack isn't up it **degrades** to the illustrative waterfall
   and says so. In **DEMO** the waterfall stays illustrative (deterministic, computed in-browser); in
-  **LIVE·saga** it's illustrative too (the engine isn't on the request path).
+  **LIVE·saga** it's illustrative too — the browser drives the orchestrator edge, not the engine
+  directly, so no `X-Trace-Id` is surfaced to fetch the trace by (the engine's spans *do* reach Tempo
+  on the saga path; the UI just has no id to correlate them).
 
 **Bring-up for real traces** — the telemetry backend must be running so the engine's spans reach
 Tempo:
