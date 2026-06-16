@@ -24,7 +24,9 @@ orchestrator edge and the constitution saga). It shares the deck's exact look so
 | What it proves | the math, on a stage with no network | the engine kernel is genuinely real | the **intended** command-plane end to end: edge → saga → dispatcher → settlement → engine → terminal completion |
 | Contract | — | `POST /v1/deposits` (ADR-PC-029) | `POST /api/v1/deposits/constitute` → 202 + SSE (ADR-IC-006 §P4) |
 
-Flip between them with the **Mode** toggle, top-right. DEMO is the default.
+Flip between them with the **Mode** toggle, top-right. DEMO is the default. Independently of the
+Mode, the **Operator** toggle (`YOU` / `CLAUDE`) overlays the real-Claude agent — see
+[The AI-native framing](#the-ai-native-framing) below.
 
 **The engine-direct vs saga distinction matters.** LIVE·engine calls the engine's `/v1` command
 surface directly — a real, governed boundary (ADR-PC-029 lists the edge, MCP, and saga as
@@ -269,9 +271,6 @@ the migration-skip remains — tracked as a separate bug.)
   ADVANCE paths reconstruct ledger cards from the maturity/coupon response deltas (the engine exposes
   no per-event feed), so the figures are the engine's and the card split is presentational.
 - Early termination is DEMO-only until the engine grows a termination endpoint.
-- In **LIVE·engine** mode the engine doesn't expose a per-event feed, so the `InterestAccrued` /
-  `WithholdingApplied` / `DepositMatured` cards are reconstructed from the maturity response
-  deltas — the figures are the engine's, the card breakdown is presentational.
 - In **LIVE·saga** mode the orchestrator exposes no per-event feed either, so the ledger is
   reconstructed from the SSE **state** frames + the dispatched commands — the saga states are the
   orchestrator's truth, the card breakdown is presentational.
