@@ -133,7 +133,10 @@ builder.Services.AddSingleton(new SagaInboxConsumerOptions
     // hosted service takes.
     ConnectionString = sagaModuleContext.RuntimeConnectionString,
     BootstrapServers = bootstrapServers,
-    GroupId = consumeModule.ConsumerGroupId,
+    // The module names its own consumer group; an operator MAY still override it via
+    // Kafka:GroupId (the pre-substrate knob — kept so a deployment that set it does not
+    // silently switch groups and re-read offsets). Defaults to the module's value.
+    GroupId = builder.Configuration["Kafka:GroupId"] ?? consumeModule.ConsumerGroupId,
     Topics = consumeModule.ConsumeTopics,
 });
 builder.Services.AddSingleton(sp => new SagaConsumeLoop(

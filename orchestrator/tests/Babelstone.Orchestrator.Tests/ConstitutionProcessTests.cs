@@ -372,19 +372,34 @@ public sealed class ConstitutionProcessTests
     public void Every_state_name_round_trips()
     {
         // The state vocabulary is now family-owned string constants (ADR-IC-018 §D3) — the state IS the
-        // persisted column form, so the old enum↔string bijection is identity by construction. Assert
-        // every ConstitutionProcess.States constant is a non-blank SCREAMING_SNAKE label that round-trips
-        // to itself, so a constant can never silently become blank or rewrite its persisted form.
+        // persisted column form. PIN the exact persisted set at the UNIT level: the state strings are the
+        // book-of-record discriminator on saga_state.state, so a typo/rename/silent-blank is a data-compat
+        // break on replay/resume. The full-set equality below catches that without Docker (the prior
+        // `Assert.Equal(state, state)` round-trip was a tautology that left this guarded only by the
+        // Testcontainers integration tier — closed here per the ae187bd review).
         var stateConstants = typeof(ConstitutionProcess.States)
             .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
             .Where(f => f.IsLiteral && f.FieldType == typeof(string))
-            .Select(f => (string)f.GetValue(null)!);
+            .Select(f => (string)f.GetValue(null)!)
+            .ToHashSet(StringComparer.Ordinal);
 
-        foreach (var state in stateConstants)
+        // The 15 persisted state strings (the verbatim pre-substrate SagaStateNames.ToName forms). Any
+        // drift from this set — a renamed constant, a typo, a blank, an added/removed state — fails here.
+        var expectedPersistedStates = new HashSet<string>(StringComparer.Ordinal)
         {
-            Assert.False(string.IsNullOrWhiteSpace(state));
-            Assert.Equal(state, state);
-        }
+            "STARTED", "PARALLEL_VALIDATION", "AWAIT_LIMITS_VALIDATED", "AWAIT_BALANCE_RESERVED",
+            "VALIDATIONS_COMPLETE", "APPROVED", "AWAIT_WORKFLOW_APPROVAL", "AWAIT_CORE_CLEARANCE",
+            "HUMAN_INTERVENTION_REQUIRED", "COMPENSATE_VALIDATIONS", "COMPENSATE_POST_DEBIT",
+            "COMPLETED", "CANCELLED", "CANCELLED_AFTER_DEBIT", "DEPOSIT_CONSTITUTION_FAILED",
+        };
+
+        Assert.All(stateConstants, state => Assert.False(string.IsNullOrWhiteSpace(state)));
+        Assert.True(
+            stateConstants.SetEquals(expectedPersistedStates),
+            "ConstitutionProcess.States drifted from the pinned persisted-string set. "
+            + $"Only in the constants: [{string.Join(", ", stateConstants.Except(expectedPersistedStates).Order())}]. "
+            + $"Only expected: [{string.Join(", ", expectedPersistedStates.Except(stateConstants).Order())}]. "
+            + "These strings are the book-of-record saga_state.state form — a change is a replay/resume data-compat break.");
     }
 
     private void AssertTransition(string from, string evt, string expectedNext, params string[] expectedCommands)
