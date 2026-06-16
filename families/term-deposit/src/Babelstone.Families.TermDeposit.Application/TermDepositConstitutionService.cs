@@ -492,7 +492,7 @@ public sealed class TermDepositConstitutionService(
             renewalConstitutionEvents.AddRange(advance);
         }
 
-        // 7. Open the new stream (expectedVersion -1) — its causation_id roots at the closing
+        // 8. Open the new stream (expectedVersion -1) — its causation_id roots at the closing
         //    DepositMatured (02 §2.4.4 step 2). The CommandId makes this append idempotent: a replay
         //    returns the new stream's head with no second append (ADR-PC-029 slot 4).
         return await runtime.AppendAsync(

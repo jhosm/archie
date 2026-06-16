@@ -97,6 +97,26 @@ public sealed class RenewalRejectionTests
         Assert.Contains("Matured", ex.Message);
     }
 
+    [Fact]
+    public async Task ConstituteRenewalAsync_rejects_a_closing_deposit_with_no_funding_account()
+    {
+        // Safety guard (bd babelstone-mtto.5): the renewal rolls the principal over against the CLOSING
+        // deposit's funding token, resolved engine-side. A pre-mtto.5 closing deposit (constituted before
+        // funding_account was persisted) folds to an EMPTY funding token; ConstituteRenewalAsync must FAIL
+        // LOUD rather than debit an invented/empty account — the engine never invents a funding reference.
+        // The closing deposit is Matured + non-NONE, so the NONE and Matured-precondition guards pass and
+        // the empty-funding guard is what fires — BEFORE any sheet resolve or settlement (the throwing
+        // ports prove neither is touched). MaturedStream constitutes WITHOUT funding_account (the field
+        // defaults to ""), exactly the pre-field shape this guard protects against.
+        var depositId = Guid.NewGuid();
+        var service = ServiceOverStream(depositId, MaturedStream(depositId, "SAME_TERM_CURRENT_RATE"));
+
+        var ex = await Assert.ThrowsAsync<DomainRejectedException>(() =>
+            service.ConstituteRenewalAsync(ConstituteRenewalCommand(depositId)));
+
+        Assert.Contains("funding_account", ex.Message);
+    }
+
     // ---- seed streams + command -----------------------------------------------------------------
 
     // The command is MINIMAL (bd babelstone-mtto.5): no product / role / funding. Every rejection here
