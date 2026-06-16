@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using Babelstone.TestFixtures;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using Xunit;
@@ -25,7 +26,7 @@ public sealed class OpenBaoFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _container.StartAsync();
+        await _container.GatedStartAsync();
 
         // Dev mode does not mount transit by default — enable it once for the suite.
         using var http = NewHttpClient();

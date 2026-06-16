@@ -7,6 +7,7 @@ using Babelstone.Packs;
 using Babelstone.RateSheets;
 using Babelstone.RateSheets.Api;
 using Babelstone.Telemetry;
+using Babelstone.TestFixtures;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -48,7 +49,7 @@ public sealed class RateSheetDeployApiIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _pg.StartAsync();
+        await _pg.GatedStartAsync();
         await new MigrationRunner(_pg.GetConnectionString()).ApplyAsync();
 
         Environment.SetEnvironmentVariable(ConnectionStringEnvVar, _pg.GetConnectionString());

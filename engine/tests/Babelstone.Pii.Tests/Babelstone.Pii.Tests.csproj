@@ -20,5 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Babelstone.Pii/Babelstone.Pii.csproj" />
+    <!-- The shared ContainerStartupGate (throttles concurrent Testcontainers startups). -->
+    <ProjectReference Include="../Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
   </ItemGroup>
 </Project>

@@ -74,7 +74,7 @@ public sealed class RedpandaFixture : IAsyncLifetime
             })
             .Build();
 
-        await _container.StartAsync();
+        await _container.GatedStartAsync();
 
         var kafkaPort = _container.GetMappedPublicPort(KafkaExternalPort);
         var srPort = _container.GetMappedPublicPort(SchemaRegistryPort);

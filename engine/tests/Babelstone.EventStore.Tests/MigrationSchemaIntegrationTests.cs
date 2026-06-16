@@ -1,4 +1,5 @@
 using Babelstone.EventStore.Migrations;
+using Babelstone.TestFixtures;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -21,7 +22,7 @@ public sealed class MigrationSchemaIntegrationTests : IAsyncLifetime
 
     private string ConnectionString => _pg.GetConnectionString();
 
-    public async Task InitializeAsync() => await _pg.StartAsync();
+    public async Task InitializeAsync() => await _pg.GatedStartAsync();
 
     public async Task DisposeAsync() => await _pg.DisposeAsync();
 

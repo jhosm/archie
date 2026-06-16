@@ -62,7 +62,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await Task.WhenAll(_redpanda.InitializeAsync(), _pg.StartAsync());
+        await Task.WhenAll(_redpanda.InitializeAsync(), _pg.GatedStartAsync());
         await new Migrations.MigrationRunner(ConnectionString).ApplyAsync();
     }
 

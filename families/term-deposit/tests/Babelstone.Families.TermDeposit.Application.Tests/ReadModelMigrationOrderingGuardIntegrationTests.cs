@@ -1,4 +1,5 @@
 using Babelstone.Families.TermDeposit.Application.Migrations;
+using Babelstone.TestFixtures;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -34,7 +35,7 @@ public sealed class ReadModelMigrationOrderingGuardIntegrationTests : IAsyncLife
 
     private string ConnectionString => _pg.GetConnectionString();
 
-    public async Task InitializeAsync() => await _pg.StartAsync();
+    public async Task InitializeAsync() => await _pg.GatedStartAsync();
 
     public async Task DisposeAsync() => await _pg.DisposeAsync();
 

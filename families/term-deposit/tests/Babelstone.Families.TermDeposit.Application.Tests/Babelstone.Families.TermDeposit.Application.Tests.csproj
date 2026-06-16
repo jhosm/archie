@@ -29,5 +29,7 @@
     <ProjectReference Include="../../../../engine/src/Babelstone.Packs/Babelstone.Packs.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.FinancialMath/Babelstone.FinancialMath.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+    <!-- The shared ContainerStartupGate (throttles concurrent Testcontainers startups). -->
+    <ProjectReference Include="../../../../engine/tests/Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
   </ItemGroup>
 </Project>

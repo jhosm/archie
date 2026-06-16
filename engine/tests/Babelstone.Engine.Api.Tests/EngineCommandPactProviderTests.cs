@@ -4,6 +4,7 @@ using System.Text.Json;
 using Babelstone.Engine.Api;
 using Babelstone.EventStore.Migrations;
 using Babelstone.RateSheets;
+using Babelstone.TestFixtures;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -57,7 +58,7 @@ public sealed class EngineCommandPactProviderTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _pg.StartAsync();
+        await _pg.GatedStartAsync();
         await new MigrationRunner(_pg.GetConnectionString()).ApplyAsync();
         await new Babelstone.Families.TermDeposit.Application.Migrations.MigrationRunner(
             _pg.GetConnectionString()).ApplyAsync();
