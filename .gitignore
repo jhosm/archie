@@ -58,6 +58,9 @@ __pycache__/
 # Real-Claude agent demo runtime (scripts/demo-agent.sh): logs + pidfiles
 /.demo-agent/
 
+# Unified full-backend demo runtime (scripts/demo-all.sh): logs + pidfiles
+/.demo-all/
+
 # Build output — DocFX site (ADR-PC-026): generated API metadata + rendered site
 /docfx/api/
 /docfx/_site/

@@ -20,6 +20,9 @@
 #   6. confirm BOTH settlement legs hit the Core-ACL stub (reversible reserve + irreversible debit)
 #   7. demo the refusal branch: an "insufficient" account → terminal DEPOSIT_CONSTITUTION_FAILED
 #
+# For the WHOLE UI (this saga path AND LIVE·engine AND Operator=CLAUDE, all in one bring-up so you can
+# flip modes in the browser), see scripts/demo-all.sh / `make demo`.
+#
 # WHAT THIS SHOWS (with the engine→saga completion bridge now in main, bd babelstone-t7o3.11 / PR #200):
 # the saga STARTS, WALKS the full reversible→irreversible flow — ReserveAccountBalance (→ BalanceReserved),
 # the product-limit auto-pass (→ LimitsValidated), auto-approval (→ ConstitutionApproved), the IRREVERSIBLE
@@ -45,6 +48,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=scripts/demo-lib.sh
+. "$ROOT/scripts/demo-lib.sh"
 
 # --- configuration (overridable; defaults match infra/compose.yaml + Program.cs defaults) ---
 PG_PORT="${PG_PORT:-5432}"
@@ -87,32 +92,7 @@ RUNDIR="$ROOT/.demo-saga"                              # logs + pidfiles (gitign
 # SSE-read ownership checks agree (EdgeAuth). ---
 DEMO_CLIENT_ID="${DEMO_CLIENT_ID:-CLI-DEMO-0001}"
 
-# --- pretty output (mirrors demo-mcp.sh) ---
-say()  { printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }
-ok()   { printf '  \033[32m✓ %s\033[0m\n' "$*"; }
-info() { printf '  \033[2m%s\033[0m\n' "$*"; }
-warn() { printf '  \033[33m! %s\033[0m\n' "$*"; }
-die()  { printf '\n\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
-
-py() { mise exec -- python "$@"; }   # pinned interpreter, for JSON assertions
-
-# Wait until an HTTP endpoint answers at all (any status != 000 means the port is live).
-wait_up() { # url timeout_seconds name logfile
-  local url="$1" timeout="$2" name="$3" log="${4:-}" i=0 code
-  while :; do
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$url" 2>/dev/null || true)"
-    [ -n "$code" ] && [ "$code" != "000" ] && { ok "$name is up ($url → HTTP $code)"; return 0; }
-    i=$((i + 1))
-    if [ "$i" -ge "$timeout" ]; then
-      [ -n "$log" ] && { printf '\n--- last 30 lines of %s ---\n' "$log"; tail -n 30 "$log" 2>/dev/null || true; }
-      die "$name did not come up at $url within ${timeout}s"
-    fi
-    sleep 1
-  done
-}
-
-port_busy() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
-dll_for()   { ls "$1"/bin/Debug/net*/"$2".dll 2>/dev/null | head -1; }
+# --- saga/ACL inspection helpers (specific to this path; the shared helpers live in demo-lib.sh) ---
 
 # The current state of a saga, read from the orchestrator DB (the self-advance + consume loop mutate
 # saga_state). Echoes the SCREAMING_SNAKE state name, or empty if the row isn't there yet.
@@ -134,18 +114,6 @@ acl_count() { # urlPath
   curl -sS -X POST "${ACL_URL}/__admin/requests/count" -H 'Content-Type: application/json' \
     -d "{\"method\":\"POST\",\"urlPath\":\"$1\"}" 2>/dev/null \
     | py -c "import json,sys;print(json.load(sys.stdin).get('count',0))" 2>/dev/null || echo 0
-}
-
-stop_pidfile() { # pidfile name
-  local pidfile="$1" name="$2" pid
-  if [ -f "$pidfile" ]; then
-    pid="$(cat "$pidfile" 2>/dev/null || true)"
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      ok "stopped $name (pid $pid)"
-    fi
-    rm -f "$pidfile"
-  fi
 }
 
 teardown() {
@@ -181,10 +149,7 @@ ALL_GREEN=true
 # 0. preflight
 # ---------------------------------------------------------------------------
 say "Preflight"
-command -v docker >/dev/null 2>&1 || die "docker not found on PATH"
-docker info >/dev/null 2>&1 || die "docker is not running — start Docker Desktop and retry"
-command -v mise >/dev/null 2>&1 || die "mise not found — run 'make bootstrap' first"
-command -v lsof >/dev/null 2>&1 || die "lsof not found (needed for the port-clash guard)"
+require_demo_tools
 if port_busy "$ORCH_PORT"; then
   die "port $ORCH_PORT is busy (orchestrator edge). Stop whatever holds it, or set ORCH_PORT to a free port."
 fi
@@ -204,19 +169,10 @@ ok "docker, mise, lsof present; ports $ORCH_PORT (orchestrator), $ENGINE_PORT (e
 # ---------------------------------------------------------------------------
 say "1/7 Starting Postgres + Redpanda + the Core-ACL settlement stub"
 $COMPOSE up -d --wait postgres redpanda core-acl-stub
-until docker exec "$PG_CONTAINER" pg_isready -U babelstone -d babelstone >/dev/null 2>&1; do sleep 1; done
+wait_postgres "$PG_CONTAINER"
 ok "Postgres on :${PG_PORT}, Redpanda on :${REDPANDA_KAFKA_PORT}, Core-ACL stub on :${CORE_ACL_STUB_PORT}"
 
-# The orchestrator's dedicated application database (ADR-IC-003 §S2). CREATE DATABASE cannot run in a
-# transaction and errors if it exists, so guard on pg_database. Idempotent across re-runs.
-if docker exec "$PG_CONTAINER" psql -U babelstone -d babelstone -tAc \
-     "SELECT 1 FROM pg_database WHERE datname='${PG_ORCH_DB}'" 2>/dev/null | grep -q 1; then
-  ok "orchestrator database '${PG_ORCH_DB}' already present"
-else
-  docker exec "$PG_CONTAINER" psql -U babelstone -d babelstone -c "CREATE DATABASE ${PG_ORCH_DB}" >/dev/null \
-    || die "could not create orchestrator database '${PG_ORCH_DB}'"
-  ok "created orchestrator database '${PG_ORCH_DB}' (the saga schema is applied by the host on boot)"
-fi
+create_orchestrator_db "$PG_CONTAINER" "$PG_ORCH_DB"
 
 # ---------------------------------------------------------------------------
 # 2. stand up the ENGINE: event-store schema → rate sheet → engine host on Redpanda
@@ -224,28 +180,15 @@ fi
 # The engine is the ActivateDeposit target AND the source of the terminal DepositConstituted event.
 # It needs (a) the event-store schema applied to the `babelstone` DB — the engine does NOT apply this
 # on boot, only its family read-model migration (which itself REQUIRES the `babelstone_engine` role
-# that 0002 creates, so a full 0001..0015 apply is load-bearing, not optional); (b) a rate sheet so
-# the in-tx rate resolve succeeds (ADR-PC-008); (c) the SAME Redpanda the orchestrator consumes, so
-# its outbox relay publishes DepositConstituted onto `term_deposit`.
+# that 0002 creates, so a full apply is load-bearing, not optional); (b) a rate sheet so the in-tx
+# rate resolve succeeds (ADR-PC-008); (c) the SAME Redpanda the orchestrator consumes, so its outbox
+# relay publishes DepositConstituted onto `term_deposit`.
 # ---------------------------------------------------------------------------
 say "2/7 Standing up the engine (event-store schema → rate sheet → host on Redpanda)"
 
-# (a) event-store schema — forward-only SQL, no runner; apply 0001..0015 in order (as demo-mcp.sh does).
-# Guard on the LAST migration's artifact (command_dedup, 0015), not the first (events, 0001): if a
-# prior run applied 0001 but died mid-way, guarding on `events` would skip the rest and leave the DB
-# partially migrated (e.g. no babelstone_engine role from 0002 → the engine crashes on boot). Guarding
-# on the last table means a re-run resumes the apply instead of silently skipping it.
-if docker exec "$PG_CONTAINER" psql -U babelstone -d "$ENGINE_DB" -tAc \
-     "SELECT to_regclass('public.command_dedup') IS NOT NULL;" 2>/dev/null | grep -q t; then
-  ok "engine event-store schema already present (command_dedup table exists) — skipping migrations"
-else
-  for f in "$MIGRATIONS_DIR"/0*.sql; do
-    info "applying $(basename "$f")"
-    docker exec -i "$PG_CONTAINER" psql -U babelstone -d "$ENGINE_DB" -v ON_ERROR_STOP=1 -q < "$f" \
-      || die "engine migration $(basename "$f") failed"
-  done
-  ok "applied: events, outbox, snapshots, rate_sheets, command_dedup (+ babelstone_engine role)"
-fi
+# (a) event-store schema — shared applier (guards on the LAST migration, command_dedup; fails loud on
+# a partially-migrated volume rather than silently skipping or blindly re-running 0001).
+apply_event_store_schema "$PG_CONTAINER" "$ENGINE_DB" "$MIGRATIONS_DIR"
 
 # build the engine + rate-sheet hosts up front (first run restores NuGet — be patient).
 mise exec -- dotnet build engine/src/Babelstone.RateSheets.Api/Babelstone.RateSheets.Api.csproj --nologo -v q \
@@ -260,41 +203,28 @@ ok "engine + rate-sheet hosts built"
 # (b) seed the rate sheet through the C.6 deploy API (the validated seam, not a raw INSERT). The
 # transient deploy host is reaped immediately after — the engine reads the rate_sheets table directly.
 info "deploying rate sheet ${RATE_SHEET_VERSION} (prices ${PRODUCT} at 300 bps; the in-tx resolve needs it)"
-ConnectionStrings__RateSheets="$ENGINE_CONN" ASPNETCORE_URLS="$RATESHEET_URL" \
-  ASPNETCORE_ENVIRONMENT=Development \
-  nohup mise exec -- dotnet "$RATESHEET_DLL" > "$RUNDIR/ratesheet-api.log" 2>&1 &
-RATESHEET_PID=$!
-trap 'kill "$RATESHEET_PID" 2>/dev/null || true' EXIT
-wait_up "${RATESHEET_URL}/" 60 "RateSheets.Api" "$RUNDIR/ratesheet-api.log"
 cat > "$RUNDIR/rate-sheet.json" <<JSON
 {"rate_sheet_version_id":"${RATE_SHEET_VERSION}","product_family":"term_deposit","pack_version":"pt.2026.1","effective_from":"2026-01-01T00:00:00+00:00","approved_by":"treasury.alm@bank.internal","approval_ref":"ALM-2026-019","products":{"${PRODUCT}":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":300}]}}}}
 JSON
-code="$(curl -sS -o "$RUNDIR/deploy-resp.json" -w '%{http_code}' \
-  -X POST "${RATESHEET_URL}/v1/rate-sheets" \
-  -H 'Content-Type: application/json' -H 'X-Deploy-Actor: demo-saga' \
-  --data-binary @"$RUNDIR/rate-sheet.json")"
-case "$code" in
-  201) ok "rate sheet ${RATE_SHEET_VERSION} deployed (201 Created)" ;;
-  200) ok "rate sheet ${RATE_SHEET_VERSION} already present, identical (200 OK)" ;;
-  *)   die "rate-sheet deploy expected 201 or 200, got $code  ($(cat "$RUNDIR/deploy-resp.json"))" ;;
-esac
-kill "$RATESHEET_PID" 2>/dev/null || true
-trap - EXIT
-ok "stopped the transient deploy host (the engine reads rate_sheets directly)"
+saga_deploy() { # base_url
+  local url="$1" code
+  code="$(ratesheet_post "$url" demo-saga "$RUNDIR/rate-sheet.json" "$RUNDIR/deploy-resp.json")"
+  case "$code" in
+    201) ok "rate sheet ${RATE_SHEET_VERSION} deployed (201 Created)" ;;
+    200) ok "rate sheet ${RATE_SHEET_VERSION} already present, identical (200 OK)" ;;
+    *)   die "rate-sheet deploy expected 201 or 200, got $code  ($(cat "$RUNDIR/deploy-resp.json"))" ;;
+  esac
+}
+with_ratesheet_host "$RATESHEET_DLL" "$ENGINE_CONN" "$RATESHEET_URL" \
+  "$RUNDIR/ratesheet-api.log" saga_deploy
 
 # (c) start the engine host on :ENGINE_PORT pointed at the SAME Redpanda + the `babelstone` DB. The
-# Kafka bootstrap is set EXPLICITLY (Program.cs defaults to it, but the saga path depends on the
-# outbox relay actually reaching this broker — don't rely on the default coinciding). The engine
-# applies its family read-model migration on boot (needs the babelstone_engine role from step (a)).
+# Kafka bootstrap is set EXPLICITLY (the saga path depends on the outbox relay actually reaching this
+# broker — don't rely on the Program.cs default coinciding). The engine applies its family read-model
+# migration on boot (needs the babelstone_engine role from step (a)).
 say "Starting the engine host on ${ENGINE_URL} (Kafka → the shared Redpanda; outbox relay publishes DepositConstituted)"
-ConnectionStrings__Engine="$ENGINE_CONN" \
-  Engine__PacksDir="$ROOT/packs" Engine__PackVersion=pt.2026.1 \
-  Kafka__BootstrapServers="localhost:${REDPANDA_KAFKA_PORT}" \
-  ASPNETCORE_URLS="$ENGINE_URL" ASPNETCORE_ENVIRONMENT=Development \
-  nohup mise exec -- dotnet "$ENGINE_DLL" > "$RUNDIR/engine.log" 2>&1 &
-echo $! > "$RUNDIR/engine.pid"
-# The engine 404s an unknown deposit id — a clean "the command/query surface is live" probe.
-wait_up "${ENGINE_URL}/v1/deposits/00000000-0000-0000-0000-000000000000" 90 "engine host" "$RUNDIR/engine.log"
+start_engine_host "$ENGINE_DLL" "$ENGINE_CONN" "$ENGINE_URL" "$ROOT/packs" \
+  "$RUNDIR/engine.pid" "$RUNDIR/engine.log" "localhost:${REDPANDA_KAFKA_PORT}"
 
 # ---------------------------------------------------------------------------
 # 3. build + start the orchestrator host (edge + consume loop + dispatcher)
@@ -307,21 +237,11 @@ ORCH_DLL="$(dll_for orchestrator/src/Babelstone.Orchestrator Babelstone.Orchestr
 ok "built"
 
 say "Starting the orchestrator host on ${ORCH_URL} (it applies its own saga schema on boot)"
-# Connection strings resolve at the composition root (ADR-PC-004 Amendment A1). For the demo the
-# bootstrap `babelstone` user serves BOTH the migration (DDL) and runtime roles; the least-privilege
-# babelstone_orchestrator runtime role + its envelope are asserted by the orchestrator's own tests,
-# not the demo. The Kafka/Engine/Settlement targets are ENDPOINTS, not credentials. Engine__BaseUrl
-# points the dispatcher's ActivateDeposit at the engine host started above.
-ConnectionStrings__OrchestratorMigration="$ORCH_CONN" \
-  ConnectionStrings__Orchestrator="$ORCH_CONN" \
-  Kafka__BootstrapServers="localhost:${REDPANDA_KAFKA_PORT}" \
-  Settlement__BaseUrl="$ACL_URL" \
-  Engine__BaseUrl="$ENGINE_URL" \
-  ASPNETCORE_URLS="$ORCH_URL" ASPNETCORE_ENVIRONMENT=Development \
-  nohup mise exec -- dotnet "$ORCH_DLL" > "$RUNDIR/orchestrator.log" 2>&1 &
-echo $! > "$RUNDIR/orchestrator.pid"
-# The edge 404s an unknown process id — a clean "the HTTP surface is live" probe.
-wait_up "${ORCH_URL}/api/v1/processes/PROC-UNKNOWN/stream" 60 "orchestrator host" "$RUNDIR/orchestrator.log"
+# For the demo the bootstrap `babelstone` user serves BOTH the migration (DDL) and runtime roles; the
+# least-privilege babelstone_orchestrator runtime role + its envelope are asserted by the orchestrator's
+# own tests, not the demo. Engine__BaseUrl points the dispatcher's ActivateDeposit at the engine above.
+start_orchestrator_host "$ORCH_DLL" "$ORCH_CONN" "localhost:${REDPANDA_KAFKA_PORT}" \
+  "$ACL_URL" "$ENGINE_URL" "$ORCH_URL" "$RUNDIR/orchestrator.pid" "$RUNDIR/orchestrator.log"
 
 # ---------------------------------------------------------------------------
 # 4. drive the edge front door → assert 202 + process_id + stream_url

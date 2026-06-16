@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 EVENTCATALOG_PORT ?= 8082
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -179,8 +179,14 @@ verify: ## Smoke-test the stack: Postgres reachable, Redpanda healthy, SR respon
 	@echo "✓ Stack verified."
 
 ## ----------------------------------------------------------------------------
-## Walking-skeleton demo (Epic E — thin term-deposit slice via MCP, bd 7puj)
+## Mission Control demos (shared bring-up lib: scripts/demo-lib.sh)
 ## ----------------------------------------------------------------------------
+
+demo: ## Run the WHOLE Mission Control backend (every mode + Operator YOU/CLAUDE) in one bring-up; open :9000 and flip freely. Optional ANTHROPIC_API_KEY enables the real agent.
+	@./scripts/demo-all.sh up
+
+demo-down: ## Stop every demo host the unified bring-up started (Postgres/Redpanda/ACL-stub are left running)
+	@./scripts/demo-all.sh down
 
 demo-mcp: ## Run the Epic-E walking skeleton end-to-end (Postgres→deploy→engine→MCP), leave it up
 	@./scripts/demo-mcp.sh up
