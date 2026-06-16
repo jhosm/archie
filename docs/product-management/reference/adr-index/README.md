@@ -62,3 +62,4 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [015](../../integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) | Event Catalog Governance Tooling — Backstage | — | Accepted |
 | [016](../../integration_concepts/adrs/ADR-IC-016-service-identity-and-mtls.md) | Service Identity, Transport Authentication, and Observability-Plane Access Control | — | Accepted |
 | [017](../../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md) | Integration-Event Promotion — Catalog-Gated Relay + Explicit Domain-vs-Integration Criterion | — | Accepted |
+| [018](../../integration_concepts/adrs/ADR-IC-018-family-owned-saga-modules.md) | Saga Orchestrator — Family-Owned Saga Modules over a Family-Agnostic Substrate | Tool-selection (ADR-IC-000 common criteria; the residual structural/engineering-practice class — F1/F2 do not discriminate, the same class as ADR-PC-021 and ADR-PC-019) | Accepted |
