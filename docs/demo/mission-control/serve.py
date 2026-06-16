@@ -18,6 +18,12 @@ preflight, live mode "just works". It proxies two backends:
                   headers, so injecting here is what lets the SSE stream's per-process
                   ownership check (which binds to the SAME client id as the start) pass.
 
+  • /agent/*    → the real-Claude AGENT host (LIVE·agent mode, bd babelstone-f0ic.6): POST
+                  /agent/stream {"instruction": "…"} → a text/event-stream of the model's
+                  narration + REAL MCP tool calls/results. The agent loop and the Anthropic
+                  API key live in that host, server-side — never here, never the browser. The
+                  /stream suffix routes it through the same long-lived SSE relay below.
+
 DEMO mode needs none of this — index.html is fully self-contained. You only need this
 server for LIVE·engine (start the engine, scripts/demo-mcp.sh) or LIVE·saga (start the
 orchestrator + ACL stub, scripts/demo-saga.sh).
@@ -34,6 +40,8 @@ Options (env vars):
                       (LIVE·engine Telemetry tab → /tempo/api/traces/{id})
     DEMO_CLIENT_ID    the gateway-attested caller injected on  (default CLI-DEMO-0001)
                       /api/v1/* (an OPAQUE reference, never PII)
+    AGENT_URL         base URL of the real-Claude agent host    (default http://localhost:8091)
+                      (LIVE·agent mode, /agent/* → POST /agent/stream)
 """
 import os
 import sys
@@ -46,6 +54,7 @@ PORT = int(os.environ.get("MC_PORT", "9000"))
 ENGINE_URL = os.environ.get("ENGINE_URL", "http://localhost:8080").rstrip("/")
 ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://localhost:8090").rstrip("/")
 TEMPO_URL = os.environ.get("TEMPO_URL", "http://localhost:3200").rstrip("/")
+AGENT_URL = os.environ.get("AGENT_URL", "http://localhost:8091").rstrip("/")
 DEMO_CLIENT_ID = os.environ.get("DEMO_CLIENT_ID", "CLI-DEMO-0001")
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -71,6 +80,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return ORCHESTRATOR_URL, {"X-Client-Id": DEMO_CLIENT_ID}, self.path
         if self.path.startswith("/v1/"):
             return ENGINE_URL, None, self.path
+        if self.path.startswith("/agent/"):
+            # The real-Claude agent host (LIVE·agent mode, bd babelstone-f0ic.6). No header
+            # injection: the agent host holds its OWN identity + Anthropic key and connects to the
+            # MCP server itself. POST /agent/stream returns text/event-stream; the /stream suffix
+            # routes it through the long-lived, no-deadline SSE relay below.
+            return AGENT_URL, None, self.path
         if self.path.startswith("/tempo/"):
             # Grafana Tempo's query API (LIVE·engine Telemetry tab, bd babelstone-f0ic.9): the UI
             # fetches the REAL trace by id at /tempo/api/traces/{id}; strip the /tempo prefix so the
@@ -174,6 +189,7 @@ def main():
         print("  engine        %s  (proxied at /v1/*      — LIVE·engine)" % ENGINE_URL)
         print("  orchestrator  %s  (proxied at /api/v1/*  — LIVE·saga)" % ORCHESTRATOR_URL)
         print("  tempo         %s  (proxied at /tempo/*   — LIVE·engine real traces)" % TEMPO_URL)
+        print("  agent         %s  (proxied at /agent/*   — LIVE·agent real Claude)" % AGENT_URL)
         print("  mode          open the page, flip the toggle to LIVE·engine or LIVE·saga")
         print("  Ctrl-C to stop")
         try:

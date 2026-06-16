@@ -36,6 +36,9 @@ agent = [
 
 [project.scripts]
 babelstone-mcp = "babelstone_mcp.__main__:main"
+# The real-Claude demo agent host (bd babelstone-f0ic.6.2) — POST /agent/stream -> SSE. Needs the
+# `agent` extra (anthropic) + ANTHROPIC_API_KEY at request time.
+babelstone-agent = "babelstone_mcp.agent.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
