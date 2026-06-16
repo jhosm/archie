@@ -80,6 +80,26 @@ public sealed class SagaAdvanceHandler
     private readonly SagaInboxWriter _inboxWriter = new();
 
     /// <summary>
+    /// The event-auto-start registry (ADR-IC-018 §P5/§D5), keyed by the module's
+    /// <see cref="AutoStartRule.StartEventType"/> (the <c>ce_type</c> record name that starts a new
+    /// instance). Empty when no <see cref="SagaStartMode.EventAutoStarted"/> module is registered (the
+    /// edge-only host), in which case the <c>UnknownSaga</c> branch is unchanged. Built ONCE at
+    /// construction from the registered modules' declared rules — the substrate reads only a module's
+    /// declared <c>StartEventType</c>, its machine's <see cref="ISagaStateMachine.InitialState"/>, and the
+    /// rule's header predicate; it names NO family (the rule and the predicate live in the family module).
+    /// </summary>
+    private readonly IReadOnlyDictionary<string, AutoStartEntry> _autoStartModules;
+
+    /// <summary>One event-auto-start rule resolved to what the start needs (ADR-IC-018 §P5). PII-free,
+    /// substrate-internal — NOT one of the three concrete saga interfaces the
+    /// ORCHESTRATOR_SUBSTRATE_NO_CONCRETE_SAGA gate forbids (it is a plain projection of a module's
+    /// declared rule). The predicate is the family's; the substrate only invokes it.</summary>
+    private sealed record AutoStartEntry(
+        string SagaType,
+        string InitialState,
+        Func<IReadOnlyDictionary<string, string>, bool>? HeaderPredicate);
+
+    /// <summary>
     /// Host N saga state machines keyed by <c>saga_type</c> (bd babelstone-mtto PR1 — the multi-saga
     /// substrate). On each advance the handler routes by the loaded saga's
     /// <see cref="SagaInstance.SagaType"/> to the right machine; an unknown saga type is a fail-closed
@@ -99,7 +119,8 @@ public sealed class SagaAdvanceHandler
         IEnumerable<ISagaStateMachine> machines,
         SagaStateStore stateStore,
         SagaTransitionLog transitionLog,
-        ISagaCommandSink commandSink)
+        ISagaCommandSink commandSink,
+        IEnumerable<ISagaModule>? modules = null)
     {
         ArgumentNullException.ThrowIfNull(machines);
 
@@ -123,6 +144,47 @@ public sealed class SagaAdvanceHandler
         _stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
         _transitionLog = transitionLog ?? throw new ArgumentNullException(nameof(transitionLog));
         _commandSink = commandSink ?? throw new ArgumentNullException(nameof(commandSink));
+
+        // Build the event-auto-start registry (ADR-IC-018 §P5/§D5) from the EventAutoStarted modules the
+        // host passed (null for an edge-only host → no auto-start). The substrate reads only a module's
+        // DECLARED rule + its machine's InitialState; it names no family. A module whose StartMode is
+        // EventAutoStarted MUST carry an AutoStartRule (the contract pairs them) — a null rule there is a
+        // wiring error, surfaced fail-closed. Keyed by StartEventType; a duplicate start event across two
+        // auto-start modules is a wiring error (the registry must be a function), the same stance the
+        // machine registry takes on a duplicate saga_type.
+        var autoStart = new Dictionary<string, AutoStartEntry>(StringComparer.Ordinal);
+        if (modules is not null)
+        {
+            foreach (var module in modules)
+            {
+                if (module.StartMode != SagaStartMode.EventAutoStarted)
+                {
+                    continue;
+                }
+
+                var rule = module.AutoStartRule
+                    ?? throw new InvalidOperationException(
+                        $"Module '{module.SagaType}' is EventAutoStarted but declares no AutoStartRule " +
+                        "(ADR-IC-018 §P5: the start mode and the rule are paired).");
+
+                if (!map.TryGetValue(module.SagaType, out var machine))
+                {
+                    throw new InvalidOperationException(
+                        $"Auto-start module '{module.SagaType}' has no registered ISagaStateMachine; " +
+                        "register the machine in the host (ADR-IC-018 §P4).");
+                }
+
+                if (!autoStart.TryAdd(rule.StartEventType,
+                        new AutoStartEntry(module.SagaType, machine.InitialState, rule.HeaderPredicate)))
+                {
+                    throw new InvalidOperationException(
+                        $"Duplicate auto-start StartEventType '{rule.StartEventType}': two modules cannot " +
+                        "auto-start on the same event type — the registry must be a function (ADR-IC-018 §P5).");
+                }
+            }
+        }
+
+        _autoStartModules = autoStart;
     }
 
     /// <summary>
@@ -199,18 +261,52 @@ public sealed class SagaAdvanceHandler
             return AdvanceOutcome.Duplicate;
         }
 
-        // (2) Advance only. Sagas are started exclusively at the edge (EdgeSagaStarter creates the
-        // saga_state row, pins the business references, and drives the first transition in one
-        // transaction). The consume loop NEVER starts a saga — it resumes one on a consumed advance
-        // event (ADR-IC-003 §S2). An event for a process with no saga row is therefore an advance for
-        // an unknown saga: dedup-rowed and rejected, never used to create a reference-less saga.
+        // (2) Load-or-auto-start. EDGE-started sagas (the constitution saga) already have a saga_state
+        // row by the time their advance events arrive — the consume loop only resumes them. But an
+        // EVENT-AUTO-STARTED saga (the renewal saga, ADR-IC-018 §P5) is BORN here: its start event is a
+        // bus fact (DepositMatured) with no prior row, so a LoadAsync miss is NOT necessarily "unknown".
         var saga = await _stateStore.LoadAsync(connection, transaction, message.ProcessId, ct);
         if (saga is null)
         {
-            // An advance event for a process that was never started at the edge: nothing to drive.
-            // Record the dedup row so the offset can move past it, then reject.
-            await WriteInboxRowAsync(connection, transaction, message, "unknown-saga", ct);
-            return AdvanceOutcome.UnknownSaga;
+            // Does any EventAutoStarted module declare THIS event type as its start trigger, with its
+            // header predicate satisfied (ADR-IC-018 §P5/§D5)? The substrate evaluates only the DECLARED
+            // rule + the record's CloudEvents extension HEADERS (never the Avro payload) — it names no
+            // family. The predicate sees the extension-attribute map the consume loop projected
+            // (autorenewalpolicy, …); a null map is an empty one so a predicate that reads a missing key
+            // simply fails. A non-auto-start event for an unknown process is the existing rejection path.
+            if (!_autoStartModules.TryGetValue(message.EventType, out var autoStart)
+                || !PredicatePasses(autoStart.HeaderPredicate, message.ExtensionHeaders))
+            {
+                // An advance event for a process that was never started (and no auto-start rule matches):
+                // nothing to drive. Record the dedup row so the offset can move past it, then reject.
+                await WriteInboxRowAsync(connection, transaction, message, "unknown-saga", ct);
+                return AdvanceOutcome.UnknownSaga;
+            }
+
+            // Auto-start (ADR-IC-018 §P5): create the saga_state row (process_id = ce_subject, the saga's
+            // InitialState, its saga_type) and fall through to advance it with this SAME start event — all
+            // in the loop's ONE transaction (start + first transition + dedup row commit atomically). The
+            // INSERT is idempotent on process_id: a redelivered start (a replayed DepositMatured) collides
+            // on the PK and TryStartAsync returns false, so we reload the existing row rather than reset a
+            // running/terminal saga (Risk R4 — the existing terminal guard then no-ops a late re-start).
+            var created = await _stateStore.TryStartAsync(
+                connection, transaction, message.ProcessId,
+                autoStart.SagaType, autoStart.InitialState, message.CorrelationId, ct);
+
+            saga = created
+                ? new SagaInstance(
+                    message.ProcessId, autoStart.SagaType, autoStart.InitialState,
+                    Version: 0, message.CorrelationId)
+                : await _stateStore.LoadAsync(connection, transaction, message.ProcessId, ct);
+
+            if (saga is null)
+            {
+                // A racer started it then the row vanished — structurally impossible under the FK/PK, but
+                // fail-closed rather than NPE: redeliver (the transaction rolls back, nothing committed).
+                throw new InvalidOperationException(
+                    $"Auto-start of saga {message.ProcessId} ('{autoStart.SagaType}') created no row and the " +
+                    "reload found none — the start INSERT and reload are inconsistent (ADR-IC-018 §P5).");
+            }
         }
 
         // (2a) Route to the machine for THIS saga's type (bd babelstone-mtto PR1 — the multi-saga
@@ -299,11 +395,13 @@ public sealed class SagaAdvanceHandler
         // (6) Emit the decided commands through the outbox seam (ADR-IC-003 §P1, §P7). Each
         // carries the identity trio AND the OUTBOUND traceparent (H.5) — this span's context, so
         // the downstream consumer threads its spans under this saga's trace. All land atomically
-        // with the state move.
+        // with the state move. The sink is routed to THIS saga's type (bd babelstone-mtto PR2 —
+        // each family assembles its OWN command bodies); a single-saga host's sink is used as-is.
+        var sink = SinkFor(saga.SagaType);
         var traceParent = SagaTraceContext.FormatTraceParent(span);
         foreach (var commandType in outcome.Commands)
         {
-            await _commandSink.EmitAsync(
+            await sink.EmitAsync(
                 connection, transaction, saga.ProcessId, commandType,
                 message.MessageId, saga.CorrelationId ?? message.CorrelationId, ct, traceParent);
         }
@@ -322,11 +420,37 @@ public sealed class SagaAdvanceHandler
             await hook.OnAdvancedAsync(
                 connection, transaction, machine, saga.ProcessId, outcome.Next,
                 saga.CorrelationId ?? message.CorrelationId, span,
-                _stateStore, _transitionLog, _commandSink, _inboxWriter, ct);
+                _stateStore, _transitionLog, sink, _inboxWriter, ct);
         }
 
         return AdvanceOutcome.Advanced;
     }
+
+    /// <summary>
+    /// Resolve the command sink for <paramref name="sagaType"/> (bd babelstone-mtto PR2). A multi-saga
+    /// host injects a <see cref="CompositeSagaCommandSink"/>, which routes to the family typed sink for
+    /// this saga; a single-saga host (and every existing test) injects one concrete sink directly, used
+    /// as-is. Keeps the substrate family-agnostic — it routes by the persisted saga_type, names no family.
+    /// </summary>
+    private ISagaCommandSink SinkFor(string sagaType) =>
+        _commandSink is CompositeSagaCommandSink composite
+            ? composite.For(sagaType)
+            : _commandSink;
+
+    /// <summary>
+    /// Evaluate an auto-start rule's optional header predicate (ADR-IC-018 §P5/§D5) against the record's
+    /// extension attributes. A null predicate means "every event of this type starts an instance". A null
+    /// header map is treated as empty, so a predicate that reads a missing key (e.g. <c>autorenewalpolicy
+    /// != NONE</c> on a record that carried no such header) simply returns false — the saga does not start.
+    /// </summary>
+    private static bool PredicatePasses(
+        Func<IReadOnlyDictionary<string, string>, bool>? predicate,
+        IReadOnlyDictionary<string, string>? headers)
+        => predicate is null
+            || predicate(headers ?? EmptyHeaders);
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyHeaders =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
     private static async Task<bool> IsDuplicateAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid messageId, CancellationToken ct)

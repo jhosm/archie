@@ -63,7 +63,13 @@ public static class EdgeServices
             sp.GetServices<ISagaStateMachine>().Single(m => m.SagaType == ConstitutionProcess.Type),
             sp.GetRequiredService<SagaStateStore>(),
             sp.GetRequiredService<SagaTransitionLog>(),
-            sp.GetRequiredService<ISagaCommandSink>(),
+            // Resolve the CONSTITUTION typed sink directly (bd babelstone-mtto PR2): the edge starts only
+            // the constitution saga, so it emits the constitution command bodies — NOT the multi-saga
+            // CompositeSagaCommandSink the advance handler uses (whose bare EmitAsync routes by saga_type
+            // and has none to route on here). The edge is already constitution-aware (it names the
+            // ConstitutionProcess machine + start event), so resolving its typed sink by saga_type is the
+            // same family-aware composition-root move, not new family leakage.
+            sp.GetServices<ISagaTypedCommandSink>().Single(s => s.SagaType == ConstitutionProcess.Type),
             sp.GetRequiredService<SagaBusinessReferenceStore>())
         {
             StartEventType = ConstitutionProcess.ConstitutionRequested,

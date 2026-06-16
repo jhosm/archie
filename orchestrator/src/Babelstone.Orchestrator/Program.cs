@@ -67,6 +67,12 @@ var sagaModuleContext = new SagaModuleContext(
 var sagaModules = new ISagaModule[]
 {
     new TermDepositSagaModule(sagaModuleContext),
+    // H.3 renewal (bd babelstone-mtto PR2): the SECOND saga on this substrate — an EventAutoStarted one.
+    // It starts on the engine's DepositMatured fact (a non-NONE ce_autorenewalpolicy header) and runs in
+    // its OWN consumer group over the SAME term_deposit topic. It carries NO product/role/funding config
+    // (ADR-IC-003 §A7): the engine resolves every renewal fact from the Matured closing deposit it loads
+    // (ADR-PC-009; bd babelstone-mtto.5), so the command body is the minimal { new_deposit_id }.
+    new RenewalSagaModule(sagaModuleContext),
 };
 
 foreach (var module in sagaModules)
@@ -80,6 +86,15 @@ foreach (var module in sagaModules)
     builder.Services.AddSingleton(module.ResultEventBridge);
     builder.Services.AddSingleton(module.CommandRouter);
 }
+
+// The multi-saga command sink (bd babelstone-mtto PR2): each family module registered its OWN
+// ISagaTypedCommandSink (it assembles its saga's command bodies — the constitution business-reference
+// payloads, the renewal wire bodies). The CompositeSagaCommandSink is the ISagaCommandSink the advance
+// handler consumes — it routes each emission to the typed sink for the advancing saga's saga_type,
+// naming no family. The edge starter resolves the constitution typed sink directly (it starts only that
+// saga); the advance handler uses the composite.
+builder.Services.AddSingleton<ISagaCommandSink>(sp =>
+    new CompositeSagaCommandSink(sp.GetServices<ISagaTypedCommandSink>()));
 
 // A saga_type → machine registry singleton for the edge SSE read (ADR-IC-018 §D3 / §7): the SSE loop
 // resolves the saga's machine by saga_type and asks IT whether a polled state is terminal — never a
@@ -97,11 +112,17 @@ builder.Services.AddSingleton<SagaTransitionLog>();
 // hosts N saga types keyed by saga_type (ADR-IC-018 §D2). The substrate handler carries no family
 // dependency — the per-saga reissue-budget / approval-fork logic is the family machine's optional
 // IEventSubstitutor / IPostAdvanceHook hooks (ADR-IC-018 §P6).
+// The sagaModules list is threaded in so the handler builds the EVENT-AUTO-START registry (ADR-IC-018
+// §P5): on a LoadAsync miss it checks whether an EventAutoStarted module (the renewal saga) declared
+// THIS event type as its start trigger with its header predicate satisfied, and if so starts the saga
+// and advances it with the start event in ONE transaction. The substrate reads only the modules'
+// DECLARED rules + the record's CloudEvents headers — it names no family.
 builder.Services.AddSingleton(sp => new SagaAdvanceHandler(
     sp.GetServices<ISagaStateMachine>(),
     sp.GetRequiredService<SagaStateStore>(),
     sp.GetRequiredService<SagaTransitionLog>(),
-    sp.GetRequiredService<ISagaCommandSink>()));
+    sp.GetRequiredService<ISagaCommandSink>(),
+    sagaModules));
 
 // The schema migration runs FIRST (registered before the consume loop): hosted services start in
 // registration order, so the saga schema is applied before the consumer can write its first dedup
@@ -122,27 +143,46 @@ builder.Services.AddHostedService(sp => new SagaMigrationHostedService(migration
 //     offset commit (commit AFTER the DB tx → at-least-once delivery, effectively-once advance).
 //   • AddHostedService<SagaInboxConsumerService> — the poll loop that drives the loop with
 //     exponential backoff on a transient failure (the offset stays uncommitted → redelivery).
-// At the current saga count the host runs ONE consume loop for the single (constitution) module; a
-// second module gets its OWN group + loop with no substrate change (ADR-IC-018 §P4 / Risk 3).
+// ONE consume loop PER MODULE, each on its OWN consumer group (ADR-IC-018 §P4 / Risk 3; bd
+// babelstone-mtto PR2). The substrate's hosted-service shape registered a SINGLE
+// SagaInboxConsumerOptions/SagaConsumeLoop/SagaInboxConsumerService as DI singletons; with a SECOND
+// module those singletons would COLLIDE (the first registration wins, so the renewal loop would never
+// run). The resolution: build a per-module options + loop and register the hosted service via a FACTORY
+// that closes over them — no shared singleton to collide on. Each loop owns its module's consumer group,
+// so the two sagas read the shared term_deposit topic independently (no shared-group contention). The
+// SagaAdvanceHandler is shared (it hosts all N machines + the auto-start registry); only the
+// options/loop/hosted-service are per-module.
 var bootstrapServers = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:19092";
-var consumeModule = sagaModules.Single();
-builder.Services.AddSingleton(new SagaInboxConsumerOptions
+foreach (var module in sagaModules)
 {
-    // The runtime connection string must be present to consume: refusing here (rather than at the
-    // first consume) fails fast against a mis-wired deployment, the same stance the migration
-    // hosted service takes.
-    ConnectionString = sagaModuleContext.RuntimeConnectionString,
-    BootstrapServers = bootstrapServers,
-    // The module names its own consumer group; an operator MAY still override it via
-    // Kafka:GroupId (the pre-substrate knob — kept so a deployment that set it does not
-    // silently switch groups and re-read offsets). Defaults to the module's value.
-    GroupId = builder.Configuration["Kafka:GroupId"] ?? consumeModule.ConsumerGroupId,
-    Topics = consumeModule.ConsumeTopics,
-});
-builder.Services.AddSingleton(sp => new SagaConsumeLoop(
-    sp.GetRequiredService<SagaInboxConsumerOptions>(),
-    sp.GetRequiredService<SagaAdvanceHandler>()));
-builder.Services.AddHostedService<SagaInboxConsumerService>();
+    var moduleOptions = new SagaInboxConsumerOptions
+    {
+        // The runtime connection string must be present to consume: refusing here (rather than at the
+        // first consume) fails fast against a mis-wired deployment, the same stance the migration
+        // hosted service takes.
+        ConnectionString = sagaModuleContext.RuntimeConnectionString,
+        BootstrapServers = bootstrapServers,
+        // The module names its OWN consumer group; an operator MAY still override it per saga_type via
+        // Kafka:GroupId:<SagaType> (the pre-substrate Kafka:GroupId knob, now keyed by saga so each
+        // module's group is independently overridable). Defaults to the module's value so existing
+        // committed offsets are preserved (a different group would re-read from the beginning).
+        GroupId = builder.Configuration[$"Kafka:GroupId:{module.SagaType}"]
+            ?? (module.StartMode == SagaStartMode.EdgeStarted
+                ? builder.Configuration["Kafka:GroupId"] ?? module.ConsumerGroupId
+                : module.ConsumerGroupId),
+        Topics = module.ConsumeTopics,
+        // An EventAutoStarted module's group is brand-new on first deploy, so it must start from EARLIEST
+        // to see existing DepositMatured facts on the retained topic rather than silently skipping the
+        // backlog (the default is already Earliest; pinned here for intent).
+        StartFromEarliest = true,
+    };
+
+    // Capture the per-module loop in the factory closure (NOT a DI singleton) so each hosted service
+    // gets its OWN loop+group; the shared advance handler is resolved from DI.
+    builder.Services.AddHostedService(sp =>
+        new SagaInboxConsumerService(
+            new SagaConsumeLoop(moduleOptions, sp.GetRequiredService<SagaAdvanceHandler>())));
+}
 
 // The saga command DISPATCHER (bd babelstone-t7o3.3, ADR-PC-029). The consume loop above advances the
 // saga on EVENTS; the saga DECIDES commands and writes them to saga_outbox (the SagaCommandOutboxSink

@@ -29,10 +29,18 @@ namespace Babelstone.Orchestrator.Inbox;
 /// saga-advance span onto the upstream trace so the saga's work is one connected distributed
 /// trace. Operational, NOT PII (an opaque <c>00-trace-span-flags</c> string). Null on a message
 /// that carried no trace context — the advance then roots a fresh trace.</param>
+/// <param name="ExtensionHeaders">The NON-standard CloudEvents extension attributes carried on the
+/// record (ADR-IC-018 §P5/§D5), keyed by attribute name WITHOUT the <c>ce_</c> prefix and lowercased
+/// (e.g. <c>ce_autorenewalpolicy</c> → <c>{ "autorenewalpolicy": "SAME_TERM_CURRENT_RATE" }</c>). The
+/// substrate's event-auto-start machinery reads ONLY these declared headers — never the Avro payload —
+/// to decide whether an unknown-saga event starts a new instance, so the extraction-ready,
+/// payload-blind boundary is preserved. Every value is a structural routing discriminator, NEVER PII
+/// (ADR-PC-004 §P2). Null when the record carried no extension attributes beyond the standard set.</param>
 public sealed record SagaInboxEvent(
     Guid MessageId,
     Guid ProcessId,
     string EventType,
     string SourceTopic,
     Guid? CorrelationId,
-    string? TraceParent = null);
+    string? TraceParent = null,
+    IReadOnlyDictionary<string, string>? ExtensionHeaders = null);

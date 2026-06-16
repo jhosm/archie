@@ -42,6 +42,84 @@ public interface ISagaCommandSink
 }
 
 /// <summary>
+/// An <see cref="ISagaCommandSink"/> that serves exactly ONE saga type (bd babelstone-mtto PR2) — the
+/// sink-side cousin of <see cref="Dispatch.ISagaCommandRouter"/> and <see cref="Saga.IResultEventBridge"/>.
+/// Each saga type's command bodies are assembled by its OWN family payload factory (the constitution
+/// sink builds the business-reference payloads; the renewal sink builds the renewal wire bodies), so a
+/// multi-saga host needs the SAME <c>saga_type → sink</c> routing the machine/router/bridge registries
+/// already use. The <see cref="CompositeSagaCommandSink"/> collects every registered typed sink and the
+/// advance handler routes by the advancing saga's <c>saga_type</c>. The substrate names no family.
+/// </summary>
+public interface ISagaTypedCommandSink : ISagaCommandSink
+{
+    /// <summary>The saga type this sink's command-payload assembly serves — matches
+    /// <see cref="Saga.ISagaStateMachine.SagaType"/> and the persisted <c>saga_state.saga_type</c>.</summary>
+    string SagaType { get; }
+}
+
+/// <summary>
+/// Routes a saga's command emission to the <see cref="ISagaTypedCommandSink"/> for its saga type (bd
+/// babelstone-mtto PR2). Built from every registered typed sink into a <c>saga_type → sink</c> registry;
+/// the advance handler resolves the sink for the advancing saga by <c>saga_type</c> before emitting. A
+/// duplicate <see cref="ISagaTypedCommandSink.SagaType"/> is a wiring error and throws (the registry must
+/// be a function — the same stance the machine/router/bridge registries take). This composite itself
+/// implements <see cref="ISagaCommandSink"/> only so it can be the handler's single injected sink; its
+/// own <see cref="EmitAsync"/> requires the caller (the handler) to have selected the right sub-sink via
+/// <see cref="For"/>, never a bare emit with no saga type (which throws).
+/// </summary>
+public sealed class CompositeSagaCommandSink : ISagaCommandSink
+{
+    private readonly IReadOnlyDictionary<string, ISagaTypedCommandSink> _sinks;
+
+    public CompositeSagaCommandSink(IEnumerable<ISagaTypedCommandSink> sinks)
+    {
+        ArgumentNullException.ThrowIfNull(sinks);
+        var map = new Dictionary<string, ISagaTypedCommandSink>(StringComparer.Ordinal);
+        foreach (var sink in sinks)
+        {
+            if (!map.TryAdd(sink.SagaType, sink))
+            {
+                throw new InvalidOperationException(
+                    $"Duplicate ISagaTypedCommandSink for saga_type '{sink.SagaType}': the saga-type → " +
+                    "sink registry must be a function (bd babelstone-mtto PR2).");
+            }
+        }
+
+        if (map.Count == 0)
+        {
+            throw new ArgumentException("At least one ISagaTypedCommandSink must be registered.", nameof(sinks));
+        }
+
+        _sinks = map;
+    }
+
+    /// <summary>The sink for <paramref name="sagaType"/>, or a fail-closed error if none is registered
+    /// (a saga whose type has no sink cannot emit — the substrate cannot assemble a payload it has no
+    /// factory for, never a silent skip).</summary>
+    public ISagaCommandSink For(string sagaType) =>
+        _sinks.TryGetValue(sagaType, out var sink)
+            ? sink
+            : throw new InvalidOperationException(
+                $"No ISagaTypedCommandSink registered for saga_type '{sagaType}'. Register the family's " +
+                "command sink in the host (bd babelstone-mtto PR2).");
+
+    /// <summary>NOT supported on the composite — the advance handler must select the typed sub-sink via
+    /// <see cref="For"/> (it knows the advancing saga's type). A bare emit has no saga type to route on.</summary>
+    public Task EmitAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid processId,
+        string commandType,
+        Guid causationMessageId,
+        Guid? correlationId,
+        CancellationToken ct = default,
+        string? traceParent = null)
+        => throw new NotSupportedException(
+            "CompositeSagaCommandSink routes by saga_type — call For(sagaType).EmitAsync(...). The advance "
+            + "handler selects the typed sub-sink; a bare emit carries no saga type to route on.");
+}
+
+/// <summary>
 /// The default <see cref="ISagaCommandSink"/>: an in-memory recorder that captures the
 /// commands a saga would emit without writing an outbox row (no real fan-out yet). It proves
 /// the advance handler decides and routes the right commands — the substrate's testable
