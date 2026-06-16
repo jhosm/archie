@@ -162,6 +162,65 @@ public sealed class OutboxToRedpandaIntegrationTests : IAsyncLifetime
         Assert.Equal(PrincipalCents, (long)maturedRecord["principal_returned_cents"]);
     }
 
+    /// <summary>
+    /// The end-to-end CE-extension-header seam (ADR-IC-018 §P5, bd mtto.1): a <c>DepositMatured</c>
+    /// carrying a non-NONE <c>auto_renewal_policy</c> must surface the policy as the promoted
+    /// <c>ce_autorenewalpolicy</c> header on the consumed Redpanda record — proven through the REAL
+    /// outbox <c>integration_headers</c> JSONB column and the relay (not just the in-memory
+    /// <c>BuildHeadersCore</c> transform). The sibling <c>DepositConstituted</c> declares no extension
+    /// header, so it must carry NONE — the relay names no event, it copies only what the event declared.
+    /// </summary>
+    [Fact]
+    public async Task DepositMatured_with_a_renewal_policy_drains_with_the_promoted_ce_autorenewalpolicy_header()
+    {
+        var depositId = Guid.NewGuid();
+
+        var catalog = new AvroSchemaCatalog();
+        using var schemaIds = ConfluentSchemaIdResolver.Create(catalog, _redpanda.SchemaRegistryUrl, registerIfAbsent: true);
+        var serializer = new AvroEventSerializer(catalog, schemaIds);
+
+        var store = new PostgresEventStore(ConnectionString);
+        var runtime = new AggregateRuntime<DepositPosition>(
+            store, new EventStoreSink(store), TermDepositFamilyModule.Registry(),
+            serializer, new NullPiiProtector(), TimeProvider.System, () => DepositPosition.Empty);
+
+        // Constitute with an auto-renewing policy, then mature carrying that policy. The maturity
+        // event's IntegrationHeaders override declares {autorenewalpolicy}, which the append persists
+        // into the outbox integration_headers JSONB column.
+        var constituted = new DepositConstituted(
+            depositId, new Money(PrincipalCents), TanBasisPoints, "rs-2026-01",
+            TermDays: 364, StartDate, MaturityDate, "AT_MATURITY", "SAME_TERM_CURRENT_RATE");
+        await runtime.AppendAsync(depositId, expectedVersion: -1, [constituted], Ctx(), CancellationToken.None);
+
+        var matured = new DepositMatured(
+            new Money(PrincipalCents), new Money(NetCents), new Money(PayoutCents), MaturityDate,
+            AutoRenewalPolicy: "SAME_TERM_CURRENT_RATE");
+        await runtime.AppendAsync(depositId, expectedVersion: 0, [matured], Ctx(), CancellationToken.None);
+
+        var options = new OutboxRelayOptions
+        {
+            ConnectionString = ConnectionString,
+            BootstrapServers = _redpanda.BootstrapServers,
+            Source = "urn:babelstone:engine:test",
+        };
+        await using var drainer = new OutboxDrainer(options);
+        Assert.Equal(2, await drainer.DrainOnceAsync(CancellationToken.None));
+
+        var records = ConsumeAll(topic: "term_deposit", expected: 2);
+        Assert.Equal(2, records.Count);
+
+        // The maturity record carries the promoted extension header verbatim — through the real
+        // outbox JSONB column and the relay, the full seam.
+        var maturedRecord = records.Single(r => Header(r, "ce_type") == "com.bank.deposits.DepositMatured");
+        Assert.Equal("SAME_TERM_CURRENT_RATE", Header(maturedRecord, "ce_autorenewalpolicy"));
+        // …and the durable Avro payload carries the field too.
+        Assert.Equal("SAME_TERM_CURRENT_RATE", (string)DeserializeValue(maturedRecord.Message.Value)["auto_renewal_policy"]);
+
+        // The constitution event declared no extension header → the relay emits none.
+        var constitutedRecord = records.Single(r => Header(r, "ce_type") == "com.bank.deposits.DepositConstituted");
+        Assert.False(constitutedRecord.Message.Headers.TryGetLastBytes("ce_autorenewalpolicy", out _));
+    }
+
     private static AppendContext Ctx() => new(
         Family: "term_deposit",
         PackVersion: "pt.2026.1",
