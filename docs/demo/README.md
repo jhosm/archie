@@ -10,71 +10,42 @@ This is the pitch for babelstone. The deck is a single web page that looks polis
 browser, and exports to PDF; the story leads with the wow (an AI can operate the bank), proves it
 with correctness (it can't double-book or miscompute tax), and defends it with engineering rigor
 (the moat). The Mission Control UI then shows the real bank working — constitute a deposit, watch
-the immutable events stream in, mature it, and see the money + the OpenTelemetry trace.
+the immutable events stream in, mature it, and see the money + the OpenTelemetry trace — and, with
+the real-Claude agent, watch a model itself drive those operations through the MCP tools.
 
-## Running the live demo (end-to-end)
+## Running the full demo
 
-The full live demo is the deck **plus** the UI driving the real engine. Run everything from the
-repo root. Prerequisites: Docker running, the pinned toolchain (`make doctor`), and a browser.
-macOS-tested.
+The full demo is the deck **plus** the UI driving the real backend. Run from the repo root; needs
+Docker, the pinned toolchain (`make doctor`), and a browser (macOS-tested). The UI's modes,
+per-mode bring-up, env vars, and gotchas live in **`mission-control/README.md`** — this is the
+presenter's choreography on top of it.
 
-**1. Bring up the engine** (Postgres + migrations + rate sheet + engine on `:8080`, plus the MCP
-server on `:8000`):
+**1. Bring it up.** Pick the path you want to show:
 
-```bash
-docker compose -f infra/compose.yaml down -v   # wipe any stale volume first (see "Gotchas")
-scripts/demo-mcp.sh up
-```
+- `ANTHROPIC_API_KEY=sk-ant-… make demo-agent` — **the strongest**: engine + MCP server + the
+  real-Claude **agent host** + the UI, one command. A real model operates the bank.
+- `make demo-mcp` then `python3 docs/demo/mission-control/serve.py` — the engine direct (**LIVE·engine**).
+- `make demo-saga` then `serve.py` — the constitution saga end to end (**LIVE·saga**).
 
-`up` self-checks a constitute → read → mature loop and prints the canonical numbers — if it
-finishes green, the engine is healthy.
+(DEMO mode needs none of this — see *Stage safety* below.)
 
-**2. Start the Mission Control UI** (serves the page and reverse-proxies `/v1/*` to the engine,
-so the browser is same-origin and CORS never bites):
+**2. Open both surfaces.** Deck — `open docs/demo/index.html`, then `f` for fullscreen. UI —
+http://localhost:9000, then flip the **Mode** toggle to **LIVE·engine** / **LIVE·saga** (the LED
+turns green when the backend is reachable).
 
-```bash
-python3 docs/demo/mission-control/serve.py     # → http://localhost:9000
-```
+**3. Present.** Run the deck to **slide 5 ("Watch this")**, cut to the UI, and drive the beats —
+**Constitute**, **Retry — same key** (idempotency, no second event), **Mature** (payout
+**€10,219.00**), **Operator → CLAUDE** (a real model calls the MCP tools — or an illustrative
+narration if the agent host is down), **Telemetry → ON** (the real OpenTelemetry trace), and the
+**monthly / advance** product variants. Then return to the deck for slides 6–11. Each beat's
+mechanics (and the ADR refs) are in `mission-control/README.md`.
 
-**3. Open both surfaces:**
+**4. Tear down.** `make demo-agent-down` (or `make demo-mcp-down` / `make demo-saga-down`), then
+`make down` to stop the Docker infra.
 
-- **Deck** — `open docs/demo/index.html`, then `f` for fullscreen.
-- **UI** — http://localhost:9000, then flip the **Mode** toggle to **LIVE** (the LED turns green:
-  "engine reachable").
-
-**4. Present.** Run the deck to **slide 5 ("Watch this")**, then cut to the UI and drive the loop:
-
-| In the UI (LIVE) | What it proves |
-| --- | --- |
-| **Constitute deposit** | a `DepositConstituted` event appears; the position folds out (ACTIVE, rate from the sheet) |
-| **Retry — same key** | "duplicate caught · same commit · no second event" — idempotency (ADR-PC-029) |
-| **Mature deposit** | `InterestAccrued → WithholdingApplied → DepositMatured`, payout **€10,219.00** |
-| **Operator → CLAUDE** | the bottom drawer shows the **MCP tool calls** behind each action |
-| **Telemetry → ON** | the **OpenTelemetry span waterfall** (real attributes, no PII) |
-| **Product → monthly / advance** | the PERIODIC (coupons) and ADVANCE (interest upfront) variants |
-
-Then return to the deck for slides 6–11 (proof, rigor, moat, status, ask, architecture appendix).
-
-**5. Tear down:**
-
-```bash
-pkill -f serve.py
-scripts/demo-mcp.sh down
-docker compose -f infra/compose.yaml down       # add -v to also wipe the volume
-```
-
-**Stage safety:** if the laptop or network misbehaves, flip the UI **Mode** toggle to **DEMO** —
-it's fully deterministic, needs no backend, and computes the same numbers the engine does. You can
-run the entire walkthrough in DEMO and never touch steps 1–2.
-
-### Gotchas
-
-- **Always wipe the volume first** (`down -v`) on a returning machine. `demo-mcp.sh` skips
-  migrations when the `events` table already exists, so a stale volume can miss newer tables
-  (`command_dedup`, …) and the constitute call 500s. (Tracked: `babelstone-qotf`.)
-- **Variants need a priced rate sheet** — the script's dev sheet prices all three products
-  (`venc`/`mensais`/`antecip`); if you swap in a different sheet, PERIODIC/ADVANCE will 422 until
-  it prices them. See `mission-control/README.md` for the LIVE-mode details.
+**Stage safety.** If the laptop or network misbehaves, flip the UI **Mode** toggle to **DEMO** —
+fully deterministic, no backend, the same numbers the engine computes. You can give the entire
+walkthrough in DEMO and never bring up a backend.
 
 ## Presenting the deck
 
@@ -131,4 +102,5 @@ a shared design language. Each slide is a `<section class="slide">`; presenter n
 - Real figures and framing for slides 9 (status) and 10 (the ask).
 
 The Mission Control UI that slide 5 hands off to lives in `mission-control/` — see its README for
-the two modes (DEMO / LIVE), the telemetry tab, and the product variants.
+the three modes (DEMO / LIVE·engine / LIVE·saga), the real-Claude agent (Operator → CLAUDE), the
+telemetry tab, and the product variants.
