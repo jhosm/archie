@@ -163,6 +163,77 @@ public sealed class AvroCodecRoundTripTests
         Assert.Equal(original, decoded);
     }
 
+    [Fact]
+    public void DepositMatured_round_trips_the_auto_renewal_policy_additive_field()
+    {
+        // The CE-header seam (ADR-IC-018 §P5) added auto_renewal_policy to DepositMatured's .avsc as an
+        // optional [null,string] field (null default, BACKWARD-compatible per ADR-IC-002 §P2). A deposit
+        // carrying a real policy must survive the wire — proving the .avsc field, not just the C# record,
+        // carries it (otherwise the policy would silently drop and the relay would promote no
+        // ce_autorenewalpolicy header). The C# field is a non-nullable string default ""; a non-empty
+        // value rides the union's string branch and round-trips exactly.
+        var serializer = NewSerializer();
+        var original = new DepositMatured(
+            PrincipalReturned: new Money(1_000_000),
+            NetInterestPaid: new Money(21_900),
+            TotalPayout: new Money(1_021_900),
+            MaturedOn: new DateOnly(2026, 12, 31),
+            AutoRenewalPolicy: "SAME_TERM_CURRENT_RATE");
+
+        var decoded = (DepositMatured)serializer.Decode(serializer.Encode(original).Bytes, typeof(DepositMatured));
+
+        Assert.Equal(original, decoded);
+        Assert.Equal("SAME_TERM_CURRENT_RATE", decoded.AutoRenewalPolicy);
+    }
+
+    [Fact]
+    public void DepositMatured_decodes_pre_field_bytes_written_without_auto_renewal_policy()
+    {
+        // BACKWARD compatibility (ADR-IC-002 §P2): bytes written by an OLD producer whose DepositMatured
+        // schema has NO auto_renewal_policy field must still decode against the NEW reader schema. Avro
+        // resolution fills the missing field from its schema default (null), so the decoded event carries
+        // a null policy — for which DepositMatured.IntegrationHeaders declares no extension header, the
+        // correct behaviour for a pre-seam stream. This is what guarantees the additive field does not
+        // poison historical DepositMatured streams.
+        var serializer = NewSerializer();
+
+        // The OLD writer schema: DepositMatured's four original fields, NO auto_renewal_policy.
+        const string writerJson = """
+            {
+              "type": "record",
+              "namespace": "deposits.term_deposit",
+              "name": "DepositMatured",
+              "fields": [
+                { "name": "principal_returned_cents", "type": "long" },
+                { "name": "net_interest_paid_cents", "type": "long" },
+                { "name": "total_payout_cents", "type": "long" },
+                { "name": "matured_on", "type": { "type": "int", "logicalType": "date" } }
+              ]
+            }
+            """;
+        var writerSchema = (Avro.RecordSchema)Avro.Schema.Parse(writerJson);
+
+        var maturedOn = new DateOnly(2026, 12, 31);
+        var written = WriteUnderWriterSchema(writerSchema, record =>
+        {
+            record.Add("principal_returned_cents", 1_000_000L);
+            record.Add("net_interest_paid_cents", 21_900L);
+            record.Add("total_payout_cents", 1_021_900L);
+            record.Add("matured_on", maturedOn.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+        });
+
+        // Decode old-writer → new-reader: the resolver-driven path the inbox consumer uses. The missing
+        // auto_renewal_policy falls to the reader schema's null default.
+        var decoded = (DepositMatured)serializer.Decode(written, typeof(DepositMatured), writerSchema);
+
+        Assert.Equal(new Money(1_000_000), decoded.PrincipalReturned);
+        Assert.Equal(new Money(21_900), decoded.NetInterestPaid);
+        Assert.Equal(new Money(1_021_900), decoded.TotalPayout);
+        Assert.Equal(maturedOn, decoded.MaturedOn);
+        Assert.Null(decoded.AutoRenewalPolicy);            // absent field → null (schema default)
+        Assert.Null(decoded.IntegrationHeaders);           // null/empty policy declares no ce_ header
+    }
+
     // ---- Schema RESOLUTION (writer != reader) — ADR-IC-002 §Consequences BACKWARD evolution ----------
 
     [Fact]

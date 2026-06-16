@@ -7,6 +7,7 @@
     { "name": "principal_returned_cents", "type": "long", "doc": "PrincipalReturned as integer EUR cents (Money.Cents)." },
     { "name": "net_interest_paid_cents", "type": "long", "doc": "NetInterestPaid as integer EUR cents (Money.Cents)." },
     { "name": "total_payout_cents", "type": "long", "doc": "TotalPayout as integer EUR cents (Money.Cents)." },
-    { "name": "matured_on", "type": { "type": "int", "logicalType": "date" }, "doc": "MaturedOn (DateOnly) as days since epoch." }
+    { "name": "matured_on", "type": { "type": "int", "logicalType": "date" }, "doc": "MaturedOn (DateOnly) as days since epoch." },
+    { "name": "auto_renewal_policy", "type": ["null", "string"], "default": null, "doc": "Renewal policy (NONE/SAME_TERM_CURRENT_RATE/SAME_TERM_SAME_RATE), folded from DepositConstituted. Null for pre-field streams (BACKWARD-compatible additive field, ADR-IC-002 §P2). A structural enum token, not PII (ADR-PC-004 §P2). Promoted to the ce_autorenewalpolicy CloudEvents extension header by the outbox relay (ADR-IC-018 §P5)." }
   ]
 }

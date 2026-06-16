@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Diagnostics.Metrics;
 using System.Globalization;
+using System.Text.Json;
 using Babelstone.EventStore;
 using Babelstone.Telemetry;
 using Confluent.Kafka;
@@ -163,17 +164,35 @@ public sealed class OutboxDrainer : IAsyncDisposable
 
     // CloudEvents 1.0 Binary Content Mode (ADR-IC-015): attributes as Kafka headers, the Avro
     // value as the message value. Every header here is derivable from the outbox row alone.
-    private Headers BuildHeaders(OutboxRow row)
+    private Headers BuildHeaders(OutboxRow row) => BuildHeadersCore(row, _options.Source);
+
+    // The pure header transform, lifted to internal static so it is unit-testable without a producer
+    // or DB (mirrors ReverseDnsType / ToConfluentWireFormat). The only instance input is the source
+    // URI, passed explicitly.
+    internal static Headers BuildHeadersCore(OutboxRow row, string source)
     {
         var headers = new Headers();
         Add(headers, "ce_specversion", "1.0");
         Add(headers, "ce_id", row.EventId.ToString());
-        Add(headers, "ce_source", _options.Source);
+        Add(headers, "ce_source", source);
         Add(headers, "ce_type", ReverseDnsType(row.EventType));
         Add(headers, "ce_time", row.CreatedAt.ToString("O", CultureInfo.InvariantCulture));
         Add(headers, "ce_datacontenttype", "application/avro");
         Add(headers, "ce_subject", row.AggregateId.ToString());
         Add(headers, "ce_aggregatetype", row.AggregateType);
+        // The family-declared CloudEvents extension attributes (ADR-IC-018 §P5): each entry the event
+        // declared (via DomainEvent.IntegrationHeaders, persisted on the row's integration_headers
+        // column) becomes a ce_<key> header, e.g. autorenewalpolicy -> ce_autorenewalpolicy. The relay
+        // names no key — it copies whatever the event declared, so the seam is family-agnostic. Still
+        // derivable from the outbox row alone (ADR-IC-004): the column IS on the row.
+        if (row.IntegrationHeaders is { } extensions)
+        {
+            foreach (var (key, value) in extensions)
+            {
+                Add(headers, $"ce_{key}", value);
+            }
+        }
+
         return headers;
     }
 
@@ -229,7 +248,7 @@ public sealed class OutboxDrainer : IAsyncDisposable
                 LIMIT @batch_size
             )
             SELECT o.event_id, o.aggregate_type, o.aggregate_id, o.sequence_number, o.event_type,
-                   o.payload, o.schema_id, o.status, o.created_at, o.published_at
+                   o.payload, o.schema_id, o.status, o.created_at, o.published_at, o.integration_headers
             FROM outbox o
             JOIN candidate c ON c.event_id = o.event_id
             WHERE o.status = 'PENDING'
@@ -260,7 +279,13 @@ public sealed class OutboxDrainer : IAsyncDisposable
         SchemaId: r.GetInt32(6),
         Status: r.GetString(7) == "PUBLISHED" ? OutboxStatus.Published : OutboxStatus.Pending,
         CreatedAt: r.GetFieldValue<DateTimeOffset>(8),
-        PublishedAt: r.IsDBNull(9) ? null : r.GetFieldValue<DateTimeOffset>(9));
+        PublishedAt: r.IsDBNull(9) ? null : r.GetFieldValue<DateTimeOffset>(9),
+        // The family-declared CloudEvents extension attributes (ADR-IC-018 §P5), read back from the
+        // integration_headers JSONB column. NULL (the common case, every pre-seam row) → no extension
+        // headers; BuildHeaders then emits the standard CE set only.
+        IntegrationHeaders: r.IsDBNull(10)
+            ? null
+            : JsonSerializer.Deserialize<Dictionary<string, string>>(r.GetFieldValue<string>(10)));
 
     private static async Task<double> MarkPublishedAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid eventId, CancellationToken ct)

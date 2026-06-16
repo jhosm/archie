@@ -81,12 +81,35 @@ public sealed record InterestAccrued(Money GrossInterest, DateOnly AsOf) : Domai
 /// <c>Withholding.Withhold(gross, 2800) → (Tax, Net)</c>, with <c>Net = Gross − Tax</c> conserved to the cent.</summary>
 public sealed record WithholdingApplied(Money Tax, Money Net) : DomainEvent;
 
-/// <summary>The deposit matures and pays out: <c>TotalPayout = Principal + NetInterest</c>.</summary>
+/// <summary>The deposit matures and pays out: <c>TotalPayout = Principal + NetInterest</c>.
+/// <para><paramref name="AutoRenewalPolicy"/> carries the deposit's renewal policy
+/// (<c>NONE</c>/<c>SAME_TERM_CURRENT_RATE</c>/<c>SAME_TERM_SAME_RATE</c>), folded from
+/// <c>DepositConstituted</c>, so a header-only consumer can route on it without decoding the
+/// payload. Defaulted to <c>""</c> for backward compatibility with pre-field streams (the Avro
+/// <c>auto_renewal_policy</c> field is the nullable, null-defaulted union, ADR-IC-002 §P2). A
+/// structural enum token, never PII (ADR-PC-004 §P2).</para></summary>
 public sealed record DepositMatured(
     Money PrincipalReturned,
     Money NetInterestPaid,
     Money TotalPayout,
-    DateOnly MaturedOn) : DomainEvent;
+    DateOnly MaturedOn,
+    string AutoRenewalPolicy = "") : DomainEvent
+{
+    /// <summary>
+    /// Declares the renewal policy as the <c>autorenewalpolicy</c> CloudEvents extension attribute
+    /// (ADR-IC-018 §P5), which the outbox relay promotes to the <c>ce_autorenewalpolicy</c> header —
+    /// letting a renewal saga filter header-only. Emitted ONLY when the policy is non-empty: an
+    /// empty/absent policy (pre-field streams) declares no extension header, leaving the relay's
+    /// standard CE header set untouched. The token is structural, not PII (ADR-PC-004 §P2).
+    /// </summary>
+    public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
+        string.IsNullOrEmpty(AutoRenewalPolicy)
+            ? null
+            : new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["autorenewalpolicy"] = AutoRenewalPolicy,
+            };
+}
 
 // The seven remaining term-deposit events (F.2, babelstone-5czr) — the full lifecycle
 // beyond the AT_MATURITY happy path. Same discipline as the four above: each carries

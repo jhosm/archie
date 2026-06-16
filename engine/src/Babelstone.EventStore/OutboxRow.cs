@@ -22,4 +22,10 @@ public sealed record OutboxRow(
     int                  SchemaId,             // schema-registry id, embedded at write (§P3)
     OutboxStatus         Status,
     DateTimeOffset       CreatedAt,
-    DateTimeOffset?      PublishedAt);
+    DateTimeOffset?      PublishedAt,
+    // CloudEvents extension attributes the event declared (DomainEvent.IntegrationHeaders), persisted
+    // as the integration_headers JSONB column (migration 0016). The relay promotes each entry to a
+    // ce_<key> header (OutboxDrainer.BuildHeaders, ADR-IC-018 §P5) — keeping every emitted header
+    // derivable from the outbox row alone (ADR-IC-004). Null for events that declare none; optional +
+    // null-defaulted so every existing construction site stays source-compatible.
+    IReadOnlyDictionary<string, string>? IntegrationHeaders = null);

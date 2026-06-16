@@ -71,6 +71,13 @@ components:
           ce_datacontenttype:  { type: string, const: 'application/avro' }
           ce_subject:          { type: string, description: 'aggregate_id — the specific deposit this event is about.' }
           ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. term_deposit.' }
+          # OPTIONAL CloudEvents extension attribute (ADR-IC-018 §P5, registered in ADR-IC-015):
+          # the renewal policy promoted from the auto_renewal_policy payload field by the outbox
+          # relay (OutboxDrainer.BuildHeaders) so a header-only consumer (the renewal saga) can
+          # route without decoding the Avro value. Present only when the deposit declared a policy;
+          # absent for pre-seam streams. A structural enum token, not PII (ADR-PC-004 §P2). NOT in
+          # `required` — an additive, BACKWARD-compatible header.
+          ce_autorenewalpolicy: { type: string, enum: ['NONE', 'SAME_TERM_CURRENT_RATE', 'SAME_TERM_SAME_RATE'], description: 'Renewal policy extension attribute (ADR-IC-018 §P5).' }
       # §P6: payload is the governed Avro schema, referenced (not restated). The PR gate
       # resolves the .avsc on disk hermetically; the main lane reconciles the subject below.
       x-schema-registry-subject: deposits.term_deposit.DepositMatured-value
