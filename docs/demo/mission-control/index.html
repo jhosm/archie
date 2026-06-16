@@ -220,6 +220,8 @@ body.console-open .hint-bar { display:none; }
 .span-row .track { position:relative; height:13px; background:var(--ink-2); border:1px solid var(--hair-soft); border-radius:3px; }
 .span-row .bar { position:absolute; top:0; bottom:0; background:linear-gradient(90deg,var(--gold-deep),var(--gold)); border-radius:2px; transform-origin:left; animation:barIn 0.5s var(--ease) both; }
 .span-row.verify .bar { background:linear-gradient(90deg,#3f8c66,var(--verify)); }
+.span-row.fail .bar { background:linear-gradient(90deg,#8c3f3f,var(--wrong)); }
+.span-row.fail .sname { color:var(--wrong); }
 @keyframes barIn { from{ transform:scaleX(0); } to{ transform:scaleX(1); } }
 .span-row .dur { color:var(--muted); font-size:0.68rem; text-align:right; }
 .span-attrs { display:flex; flex-wrap:wrap; gap:0.4rem; margin:0.25rem 0 0.5rem 180px; }
@@ -375,7 +377,7 @@ body.console-open .hint-bar { display:none; }
     accrued: 0, withheld: 0, netPaid: 0,  // running tallies (demo + live coupon deltas)
     // LIVE·saga mode: the constitution saga driven through the orchestrator edge
     processId: null, streamUrl: null, sagaES: null,
-    sagaState: null, sagaVersion: -1, sagaTerminal: false, sagaSeenLeg: false, sagaSeenDebit: false,
+    sagaState: null, sagaVersion: -1, sagaTerminal: false, sagaSeenLeg: false, sagaSeenDebit: false, sagaReached: 0,
     // LIVE·engine real traces (bd babelstone-f0ic.9): the engine's X-Trace-Id + the spans fetched
     // from Grafana Tempo. traceState: "illustrative" | "pending" | "real" | "unavailable".
     traceId: null, realTrace: null, traceState: "illustrative",
@@ -550,22 +552,35 @@ body.console-open .hint-bar { display:none; }
     if (d.version === state.sagaVersion && d.state === state.sagaState) return;
     var changed = d.state !== state.sagaState;
     state.sagaState = d.state; state.sagaVersion = d.version; state.sagaTerminal = !!d.terminal;
+    var pid = (state.processId || "").slice(0, 8) + "…";
     if (changed) addEvent({ seq: "v" + d.version, name: "Saga · " + d.state, meta: sagaStateBlurb(d.state) });
-    // surface the settlement legs as the saga crosses the matching phase (each once)
+    // surface the settlement legs as the saga crosses the matching phase (each once). The matching
+    // illustrative spans land on the Telemetry tab here too — the orchestrator isn't OTel-wired
+    // (ADR-IC-007 §P1), so these mirror the saga's real legs without claiming to be a Tempo trace.
     if (d.state === "PARALLEL_VALIDATION" && !state.sagaSeenLeg) {
       state.sagaSeenLeg = true;
       addEvent({ seq: "→", name: "ReserveAccountBalance", meta: "dispatched to Core ACL · POST /v1/reservations · reversible hold", amtClass: "verify", verify: true });
       mcpLog('', 'ReserveAccountBalance → Core ACL');
+      pushSpan("saga.reserve_balance", 14, [["babelstone.process_id", pid], ["babelstone.leg", "reversible"]], true);
+      pushSpan("saga.validate_limits", 9, [["babelstone.process_id", pid], ["babelstone.leg", "reversible"]]);
     }
     if (d.state === "APPROVED" && !state.sagaSeenDebit) {
       state.sagaSeenDebit = true;
       addEvent({ seq: "→", name: "ConfirmDebit", meta: "dispatched to Core ACL · POST /v1/debits · the IRREVERSIBLE money leg", amtClass: "gold" });
       addEvent({ seq: "→", name: "ActivateDeposit", meta: "dispatched to the engine · POST /v1/deposits — lands a real deposit; the saga now awaits the engine's DepositConstituted" });
       mcpLog('', 'ConfirmDebit → Core ACL · ActivateDeposit → engine');
+      pushSpan("saga.confirm_debit", 16, [["babelstone.process_id", pid], ["babelstone.leg", "irreversible"]]);
+      pushSpan("saga.activate_deposit", 11, [["babelstone.process_id", pid]]);
     }
     renderSagaProcess();
     if (d.terminal) {
       state.lifecycle = d.state;
+      if (d.state === "COMPLETED") {
+        pushSpan("deposit.constituted", 12, [["babelstone.process_id", pid], ["babelstone.outcome", "completed"]], true);
+      } else {
+        // fail-closed: nothing was committed — surface the refusal as a failed (red) span
+        pushSpan("saga.constitution_failed", 8, [["babelstone.process_id", pid], ["babelstone.outcome", "fail_closed"]], false, true);
+      }
       if (state.sagaES) { try { state.sagaES.close(); } catch (e) {} state.sagaES = null; }
       toast(d.state === "COMPLETED" ? "Saga complete · DepositConstituted" : "Saga ended · " + d.state, d.state === "COMPLETED" ? "verify" : "err");
     }
@@ -576,13 +591,19 @@ body.console-open .hint-bar { display:none; }
     var failure = sagaIsFailure(s), complete = s === "COMPLETED";
     var badge = complete ? "matured" : failure ? "terminated" : "active";
     var cur = sagaMilestone(s);
+    // Track the furthest milestone the saga actually entered. On a non-failure transition this only
+    // ever advances; on the terminal failure state it holds the step the saga died in — so we can mark
+    // the failure point ✗ instead of leaving every step a neutral "·" (which read as "Constituted").
+    if (!failure) state.sagaReached = Math.max(state.sagaReached || 0, cur);
+    var failAt = failure ? Math.max(state.sagaReached || 1, 1) : 0;
     var steps = ["Requested", "Validating (reversible)", "Approved & debited", "Constituted"];
     var stepsHtml = steps.map(function (label, i) {
       var n = i + 1;
-      var done = (!failure && cur > n) || (complete && n === 4);
+      var done = (!failure && cur > n) || (complete && n === 4) || (failure && n < failAt);
+      var failedHere = failure && n === failAt;
       var here = !failure && !complete && cur === n;
-      var mark = done ? "✓" : here ? "⋯" : "·";
-      var color = done ? "var(--verify)" : here ? "var(--gold)" : "var(--muted)";
+      var mark = done ? "✓" : failedHere ? "✗" : here ? "⋯" : "·";
+      var color = done ? "var(--verify)" : failedHere ? "var(--wrong)" : here ? "var(--gold)" : "var(--muted)";
       return '<div style="display:flex;gap:8px;align-items:center;padding:3px 0;color:' + color + '">' +
              '<span style="width:14px;text-align:center">' + mark + '</span><span>' + label + '</span></div>';
     }).join("");
@@ -739,9 +760,10 @@ body.console-open .hint-bar { display:none; }
         state.processId = sr.json.process_id;
         state.streamUrl = sr.json.stream_url;
         state.lifecycle = "Processing"; state.sagaState = "STARTED"; state.sagaVersion = 0;
-        state.sagaTerminal = false; state.sagaSeenLeg = false; state.sagaSeenDebit = false;
+        state.sagaTerminal = false; state.sagaSeenLeg = false; state.sagaSeenDebit = false; state.sagaReached = 0;
         mcpLog('', '202 · ' + state.processId);
         addEvent({ seq: "▶", name: "ConstitutionRequested", meta: "saga STARTED · " + state.processId, amt: euro(principalCents), amtClass: "gold" });
+        pushSpan("saga.constitution_requested", 6, [["babelstone.process_id", state.processId.slice(0, 8) + "…"], ["babelstone.amount_cents", principalCents]]);
         renderSagaProcess();
         openSagaStream();
         toast("Saga started · " + state.processId.slice(0, 13) + "…", "verify");
@@ -922,7 +944,7 @@ body.console-open .hint-bar { display:none; }
     state.depositId = null; state.idemKey = null; state.seq = 0; state.lifecycle = null; state.busy = false;
     state.couponsPaid = 0; state.numCoupons = 0; state.accrued = 0; state.withheld = 0; state.netPaid = 0;
     state.processId = null; state.streamUrl = null;
-    state.sagaState = null; state.sagaVersion = -1; state.sagaTerminal = false; state.sagaSeenLeg = false; state.sagaSeenDebit = false;
+    state.sagaState = null; state.sagaVersion = -1; state.sagaTerminal = false; state.sagaSeenLeg = false; state.sagaSeenDebit = false; state.sagaReached = 0;
     state.traceId = null; state.realTrace = null; state.traceState = "illustrative";
     syncProduct();
     ledger.innerHTML = '<div class="empty"><span class="big">An empty stream.</span>Every command appends an immutable, sequence-numbered fact. Constitute a deposit to begin.</div>';
@@ -979,7 +1001,7 @@ body.console-open .hint-bar { display:none; }
   }
 
   /* ---------------- telemetry / trace waterfall ---------------- */
-  function pushSpan(name, durMs, attrs, verify) { state.spans.push({ name: name, dur: durMs, attrs: attrs, verify: !!verify }); renderTrace(); }
+  function pushSpan(name, durMs, attrs, verify, fail) { state.spans.push({ name: name, dur: durMs, attrs: attrs, verify: !!verify, fail: !!fail }); renderTrace(); }
   function shortId() { return state.depositId ? state.depositId.slice(0, 8) + "…" : "—"; }
 
   /* ---- LIVE·engine: the REAL trace, fetched from Grafana Tempo (bd babelstone-f0ic.9) ----
@@ -1065,7 +1087,7 @@ body.console-open .hint-bar { display:none; }
       state.spans.forEach(function (sp) {
         var leftPct = offset / total * 100, widthPct = Math.max(sp.dur / total * 100, 3);
         var chips = sp.attrs.map(function (a) { return '<span class="chip-attr">' + a[0] + '=<b>' + a[1] + '</b></span>'; }).join("");
-        html += '<div class="span"><div class="span-row ' + (sp.verify ? "verify" : "") + '">' +
+        html += '<div class="span"><div class="span-row ' + (sp.fail ? "fail" : sp.verify ? "verify" : "") + '">' +
           '<span class="sname">' + sp.name + '</span>' +
           '<div class="track"><div class="bar" style="left:' + leftPct + '%;width:' + widthPct + '%"></div></div>' +
           '<span class="dur">' + sp.dur + 'ms</span></div>' +
