@@ -24,6 +24,15 @@ dev = [
     # wraps coverage.py; CI runs it with --cov --cov-branch and emits cobertura XML.
     "pytest-cov>=5",
 ]
+# The real-Claude demo agent (bd babelstone-f0ic.6.1) — an OPTIONAL extra so the core MCP server
+# install stays lean (it needs no LLM SDK). The Anthropic SDK with the MCP helpers binds the deposit
+# tools to Claude and runs the agentic loop. Bounded to <1 in the spirit of the project's
+# deliberate-upgrade discipline (this is the LLM SDK, distinct from the MCP SDK + protocol version
+# that ADR-IC-010 §P1 pins hard as `mcp==1.27.2`). The agent loop's unit tests use fakes and do NOT
+# require this extra installed.
+agent = [
+    "anthropic[mcp]>=0.92,<1",
+]
 
 [project.scripts]
 babelstone-mcp = "babelstone_mcp.__main__:main"
