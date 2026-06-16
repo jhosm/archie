@@ -329,7 +329,7 @@ body.console-open .hint-bar { display:none; }
   <div class="tabs">
     <button class="tab on" data-tab="mcp">MCP tool surface</button>
     <button class="tab" data-tab="telemetry">Telemetry · OpenTelemetry</button>
-    <span class="tab-note" id="tabNote">illustrative — narrating the real contracts, not live model / Tempo traffic</span>
+    <span class="tab-note" id="tabNote">live where wired — Operator CLAUDE runs a real model · LIVE·engine shows the real Tempo trace · illustrative otherwise</span>
   </div>
   <div class="pane" id="paneMcp">
     <div class="agent-bar" id="agentBar" hidden>
@@ -1174,13 +1174,18 @@ body.console-open .hint-bar { display:none; }
     } else if (f.event === "done") {
       agentLine('<span class="arrow" style="color:var(--verify)">✓</span> <span class="tool">' + esc(d.summary || "done") + '</span>', "banner");
     } else if (f.event === "error") {
-      agentLine('<span class="arrow" style="color:var(--wrong)">✗</span> <span class="ret" style="color:var(--wrong)">' + esc(d.message || "error") + '</span>', "err");
+      // A setup failure (kind "exception": missing ANTHROPIC_API_KEY, unreachable MCP server) is not
+      // a real model outcome — degrade to the illustrative narration. A refusal / turn-limit IS a
+      // real outcome, so surface it plainly.
+      if (d.kind === "exception") agentFallbackIllustrative(d.message);
+      else agentLine('<span class="arrow" style="color:var(--wrong)">✗</span> <span class="ret" style="color:var(--wrong)">' + esc(d.message || "error") + '</span>', "err");
     }
   }
-  // Mirror the Telemetry tab's degrade: when the agent host isn't reachable, show an
-  // explicitly-illustrative narration of what Claude would do (not live model traffic).
-  function agentFallbackIllustrative() {
-    agentLine('<span class="ret muted">agent host not reachable — showing an <b>illustrative</b> narration (start it with <code>make demo-agent</code>)</span>', "err");
+  // Mirror the Telemetry tab's degrade: when the real agent can't run (host down, or up but missing
+  // its API key), show an explicitly-illustrative narration of what Claude would do — never passing
+  // it off as live model traffic.
+  function agentFallbackIllustrative(reason) {
+    agentLine('<span class="ret muted">' + (reason ? esc(reason) + ' — ' : 'agent host not reachable — ') + 'showing an <b>illustrative</b> narration (start it with <code>make demo-agent</code> + ANTHROPIC_API_KEY)</span>', "err");
     agentLine('<span class="tool">I\'ll open the deposit, read it back, then mature it.</span>');
     agentLine('<span class="arrow">→</span> <span class="tool">constitute_deposit</span> <span class="ret">{"principal_cents":1000000,"term_days":365,"interest_variant":"AT_MATURITY"}</span>');
     agentLine('<span class="arrow" style="color:var(--verify)">⤷</span> <span class="ret">{"deposit_id":"…","status":"ACTIVE","commit_sequence":0}</span>');
