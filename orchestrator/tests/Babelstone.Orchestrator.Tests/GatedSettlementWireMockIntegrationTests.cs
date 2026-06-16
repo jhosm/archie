@@ -3,6 +3,7 @@ using Babelstone.Orchestrator.Dispatch;
 using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Saga;
+using Babelstone.TestFixtures;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
@@ -51,7 +52,7 @@ public sealed class GatedSettlementWireMockIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _pg.StartAsync();
+        await _pg.GatedStartAsync();
         await new Migrations.MigrationRunner(ConnectionString).ApplyAsync();
 
         // The v1 Core-ACL settlement stub. Five settlement endpoints (ADR-PC-016 §Payload), the same

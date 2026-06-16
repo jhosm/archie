@@ -20,5 +20,7 @@
     <ProjectReference Include="../../src/Babelstone.Engine.Api/Babelstone.Engine.Api.csproj" />
     <ProjectReference Include="../../src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />
     <ProjectReference Include="../../src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
+    <!-- The shared ContainerStartupGate (throttles concurrent Testcontainers startups). -->
+    <ProjectReference Include="../Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
   </ItemGroup>
 </Project>

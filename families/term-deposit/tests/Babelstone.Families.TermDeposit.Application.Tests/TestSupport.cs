@@ -3,6 +3,7 @@ using Babelstone.Engine;
 using Babelstone.EventStore.Migrations;
 using Babelstone.Packs;
 using Babelstone.RateSheets;
+using Babelstone.TestFixtures;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -139,7 +140,7 @@ public sealed class ConstitutionFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _pg.StartAsync();
+        await _pg.GatedStartAsync();
         // Engine event-store schema first (it creates the babelstone_engine role the family read
         // model GRANTs on), then the family read-model schema — engine-before-family ordering.
         await new MigrationRunner(ConnectionString).ApplyAsync();

@@ -1,5 +1,6 @@
 using Babelstone.EventStore.Migrations;
 using Babelstone.Packs;
+using Babelstone.TestFixtures;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Testcontainers.PostgreSql;
@@ -40,7 +41,7 @@ public sealed class HostPackLoadingOciBootTests
         // primary. The §P4 worklist read succeeds (empty), then the primary load resolves null and
         // throws — the exact PackLoadException Program.cs lets escape Main to exit non-zero.
         await using var pg = new PostgreSqlBuilder("postgres:18-alpine").Build();
-        await pg.StartAsync();
+        await pg.GatedStartAsync();
         try
         {
             await new MigrationRunner(pg.GetConnectionString()).ApplyAsync();

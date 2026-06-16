@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using Babelstone.Pii;
+using Babelstone.TestFixtures;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using Xunit;
@@ -42,7 +43,7 @@ public sealed class OpenBaoKvFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _container.StartAsync();
+        await _container.GatedStartAsync();
 
         using var admin = NewAdminClient();
 

@@ -26,5 +26,7 @@
     <!-- The verified-pack loader (C.5): the deploy's §P2 bound is read from the signed pack, so the
          tests construct VerifiedPack/PackParameters and stub IPackStore directly (ADR-PC-008 §P2). -->
     <ProjectReference Include="../../src/Babelstone.Packs/Babelstone.Packs.csproj" />
+    <!-- The shared ContainerStartupGate (throttles concurrent Testcontainers startups). -->
+    <ProjectReference Include="../Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
   </ItemGroup>
 </Project>

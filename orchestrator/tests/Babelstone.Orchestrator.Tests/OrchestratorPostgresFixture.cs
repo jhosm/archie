@@ -1,4 +1,5 @@
 using Babelstone.Orchestrator.Migrations;
+using Babelstone.TestFixtures;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -18,7 +19,7 @@ public sealed class OrchestratorPostgresFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _pg.StartAsync();
+        await _pg.GatedStartAsync();
         await new MigrationRunner(ConnectionString).ApplyAsync();
     }
 

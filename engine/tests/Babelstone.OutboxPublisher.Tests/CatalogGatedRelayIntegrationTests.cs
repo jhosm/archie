@@ -4,6 +4,7 @@ using Babelstone.EventStore;
 using Babelstone.EventStore.Migrations;
 using Babelstone.Families.TermDeposit;
 using Babelstone.FinancialTypes;
+using Babelstone.TestFixtures;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -49,7 +50,7 @@ public sealed class CatalogGatedRelayIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _pg.StartAsync();
+        await _pg.GatedStartAsync();
         await new MigrationRunner(ConnectionString).ApplyAsync();
     }
 

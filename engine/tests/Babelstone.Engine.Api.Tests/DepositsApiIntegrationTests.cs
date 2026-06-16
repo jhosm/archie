@@ -4,6 +4,7 @@ using System.Text.Json;
 using Babelstone.Engine.Api;
 using Babelstone.EventStore.Migrations;
 using Babelstone.RateSheets;
+using Babelstone.TestFixtures;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -36,7 +37,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _pg.StartAsync();
+        await _pg.GatedStartAsync();
         // Engine event-store schema first (it creates the babelstone_engine role the family read
         // model GRANTs on), then the term-deposit family's OWN read-model migration set
         // (read_model.deposits, ADR-PC-021 family-owned ownership) — engine-before-family ordering.

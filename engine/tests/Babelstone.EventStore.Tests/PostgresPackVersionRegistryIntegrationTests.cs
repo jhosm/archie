@@ -1,5 +1,6 @@
 using Babelstone.EventStore.Migrations;
 using Babelstone.Packs;
+using Babelstone.TestFixtures;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -24,7 +25,7 @@ public sealed class PostgresPackVersionRegistryIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _pg.StartAsync();
+        await _pg.GatedStartAsync();
         await new MigrationRunner(ConnectionString).ApplyAsync();
     }
 

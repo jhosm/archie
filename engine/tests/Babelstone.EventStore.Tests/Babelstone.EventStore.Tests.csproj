@@ -24,5 +24,7 @@
     <!-- D.2 projection-runtime integration tests drive the generic runtime (ProjectionDrainer /
          ProjectionRunner) over a real PostgreSQL projection store with a synthetic family fold. -->
     <ProjectReference Include="../../src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <!-- The shared ContainerStartupGate (throttles concurrent Testcontainers startups). -->
+    <ProjectReference Include="../Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
   </ItemGroup>
 </Project>

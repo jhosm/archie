@@ -26,5 +26,7 @@
     <ProjectReference Include="../../src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />
     <!-- The shared ActivitySource + babelstone.* attribute keys + resource helper under test. -->
     <ProjectReference Include="../../src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+    <!-- The shared ContainerStartupGate (throttles concurrent Testcontainers startups). -->
+    <ProjectReference Include="../Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
   </ItemGroup>
 </Project>

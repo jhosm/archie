@@ -41,7 +41,7 @@ public sealed class InboxConsumerIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await Task.WhenAll(_redpanda.InitializeAsync(), _pg.StartAsync());
+        await Task.WhenAll(_redpanda.InitializeAsync(), _pg.GatedStartAsync());
         await new Babelstone.EventStore.Migrations.MigrationRunner(ConnectionString).ApplyAsync();
 
         // The same Avro codec the relay encodes with, registered against the test SR so the produced

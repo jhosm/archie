@@ -1,5 +1,6 @@
 using Babelstone.EventStore.Migrations;
 using Babelstone.OutboxPublisher;
+using Babelstone.TestFixtures;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -31,7 +32,7 @@ public sealed class OutboxRelayHostingTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _pg.StartAsync();
+        await _pg.GatedStartAsync();
         await new MigrationRunner(_pg.GetConnectionString()).ApplyAsync();
 
         Environment.SetEnvironmentVariable("ConnectionStrings__Engine", _pg.GetConnectionString());

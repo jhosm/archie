@@ -1,4 +1,5 @@
 using Babelstone.Families.TermDeposit.Application.Migrations;
+using Babelstone.TestFixtures;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -32,7 +33,7 @@ public sealed class ReadModelMigrationSchemaIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _pg.StartAsync();
+        await _pg.GatedStartAsync();
         // Engine event-store schema first (creates the babelstone_engine role + the append-only
         // envelope), then the family read-model schema — engine-before-family ordering.
         await new EngineMigrationRunner(ConnectionString).ApplyAsync();

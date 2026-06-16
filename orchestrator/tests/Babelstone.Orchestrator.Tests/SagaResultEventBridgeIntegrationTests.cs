@@ -4,6 +4,7 @@ using Babelstone.Orchestrator.Edge;
 using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Saga;
+using Babelstone.TestFixtures;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
@@ -56,7 +57,7 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _pg.StartAsync();
+        await _pg.GatedStartAsync();
         await new Migrations.MigrationRunner(ConnectionString).ApplyAsync();
 
         // The v1 Core-ACL settlement stub. The four settlement routes the production SagaCommandRouter
