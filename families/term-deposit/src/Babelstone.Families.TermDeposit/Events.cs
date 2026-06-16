@@ -48,6 +48,24 @@ public sealed record RecordedPreconditionVerdict(
 /// evolution); those historical deposits are NOT back-fillable because the code is discarded at
 /// constitution and the rate-sheet version is one-to-many to products. Prospective only
 /// (bd babelstone-v794).</param>
+/// <param name="Role">The pricing role the rate sheet priced the TAN against
+/// (<c>ConstituteDepositCommand.Role</c>, e.g. <c>standard</c>) — a STRUCTURAL pricing dimension,
+/// NOT PII (ADR-PC-004 §P2). Stamped by the decider and folded onto the position so the engine can
+/// re-resolve the SAME <c>(product, role)</c> rate at auto-renewal entirely from the closing
+/// deposit, keeping product-family knowledge out of the orchestrator (ADR-IC-003 §A7,
+/// bd babelstone-mtto.5). Optional/additive (defaulted "") so pre-mtto.5 streams that never carried
+/// it still replay as the empty default (forward-only schema evolution); a renewal of such a
+/// pre-field deposit defaults the empty role to <c>standard</c> (the v1 default role).</param>
+/// <param name="FundingAccount">An OPAQUE funding-account TOKEN — a REFERENCE the engine resolves
+/// internally, NEVER an IBAN/cleartext account identifier (ADR-PC-004 §P2: references are allowed on
+/// the durable bus; PII is not). The legacy current account the principal was debited
+/// (<c>ConstituteDepositCommand.FundingAccount</c>). Stamped by the decider and folded onto the
+/// position so the engine can settle the auto-renewal rollover debit against the SAME funding
+/// reference entirely from the closing deposit, keeping product/funding knowledge out of the
+/// orchestrator (ADR-IC-003 §A7, bd babelstone-mtto.5). Optional/additive (defaulted "") so
+/// pre-mtto.5 streams that never carried it still replay as the empty default (forward-only schema
+/// evolution); a renewal of such a pre-field deposit fails loud rather than debit an empty funding
+/// reference.</param>
 /// <remarks>
 /// NOTE (ADR-PC-024 §1, F.9 bd babelstone-k6r8.2): for an ACCEPTED constitution the ADR also names
 /// this event as a home for the resolved commercial-eligibility verdicts "for audit lineage only".
@@ -71,7 +89,9 @@ public sealed record DepositConstituted(
     string InterestVariant,
     string AutoRenewalPolicy,
     int PaymentPeriodMonths = 0,
-    string ProductCode = "") : DomainEvent;
+    string ProductCode = "",
+    string Role = "",
+    string FundingAccount = "") : DomainEvent;
 
 /// <summary>Interest accrued for the period. For AT_MATURITY this is the single flow at
 /// maturity: <c>GrossInterest = Accrual.SimpleInterest(principal, tan, DayCount.Between(start, maturity, Act360))</c>.</summary>

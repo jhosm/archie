@@ -129,6 +129,67 @@ public sealed class AvroCodecRoundTripTests
     }
 
     [Fact]
+    public void DepositConstituted_round_trips_the_role_and_funding_account_additive_fields()
+    {
+        // bd babelstone-mtto.5: populated role + funding_account must survive the wire — proving the
+        // .avsc fields, not just the C# record, carry them (otherwise the engine could not recover the
+        // renewal's (product, role) re-resolution + rollover funding from the closing deposit). Both are
+        // STRUCTURAL: role is a pricing dimension, funding_account is an OPAQUE token (a reference, not
+        // an IBAN) — references are allowed on the bus (ADR-PC-004 §P2), PII is not.
+        var serializer = NewSerializer();
+        var original = new DepositConstituted(
+            DepositId: Guid.NewGuid(),
+            Principal: new Money(1_000_000),
+            TanBasisPoints: 300,
+            RateSheetVersionId: "pt-deposits-2026.1",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 1),
+            MaturityDate: new DateOnly(2027, 1, 1),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "SAME_TERM_CURRENT_RATE",
+            PaymentPeriodMonths: 0,
+            ProductCode: "dpz_pt_12m_juros_venc",
+            Role: "standard",
+            FundingAccount: "PT50-DDA-001");
+
+        var decoded = (DepositConstituted)serializer.Decode(
+            serializer.Encode(original).Bytes, typeof(DepositConstituted));
+
+        Assert.Equal(original, decoded);
+        Assert.Equal("standard", decoded.Role);
+        Assert.Equal("PT50-DDA-001", decoded.FundingAccount);
+    }
+
+    [Fact]
+    public void DepositConstituted_decodes_a_pre_mtto5_record_as_the_empty_role_and_funding_defaults()
+    {
+        // bd babelstone-mtto.5 added role + funding_account (additive, default ""). A record written
+        // before mtto.5 never carried them; constructing the C# record WITHOUT them (the "" defaults)
+        // and round-tripping proves the .avsc defaults decode — old records still replay as "" rather
+        // than failing to decode (forward-only evolution, ADR-IC-002 §P3, the same precedent as
+        // product_code). A renewal of such a deposit defaults the empty role to standard and fails loud
+        // on the empty funding token (TermDepositConstitutionService / decider), not here.
+        var serializer = NewSerializer();
+        var preFields = new DepositConstituted(
+            DepositId: Guid.NewGuid(),
+            Principal: new Money(1_000_000),
+            TanBasisPoints: 300,
+            RateSheetVersionId: "pt-deposits-2026.1",
+            TermDays: 364,
+            StartDate: new DateOnly(2026, 1, 1),
+            MaturityDate: new DateOnly(2026, 12, 31),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE");
+
+        var decoded = (DepositConstituted)serializer.Decode(
+            serializer.Encode(preFields).Bytes, typeof(DepositConstituted));
+
+        Assert.Equal(preFields, decoded);
+        Assert.Equal("", decoded.Role);
+        Assert.Equal("", decoded.FundingAccount);
+    }
+
+    [Fact]
     public void InterestPaid_round_trips_with_guid_money_legs_and_dateonly_preserved()
     {
         // InterestPaid is the ADR-IC-017 §P4 promoted coupon/advance payout fact — the integration

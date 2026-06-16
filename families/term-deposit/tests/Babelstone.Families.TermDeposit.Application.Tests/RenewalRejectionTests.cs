@@ -99,10 +99,11 @@ public sealed class RenewalRejectionTests
 
     // ---- seed streams + command -----------------------------------------------------------------
 
+    // The command is MINIMAL (bd babelstone-mtto.5): no product / role / funding. Every rejection here
+    // fires (NONE policy, not-yet-Matured, already-Renewed) BEFORE the engine would resolve product /
+    // role / funding off the closing deposit, so the dropped fields are irrelevant to these guards.
     private static ConstituteRenewalCommand ConstituteRenewalCommand(Guid depositId) =>
-        new(
-            DepositId: depositId, NewDepositId: Guid.NewGuid(), ProductId: "dpz_pt_12m_juros_venc",
-            Role: "standard", RenewedAt: RenewedAt, FundingAccount: "PT50-DDA-001", Actor: "test");
+        new(DepositId: depositId, NewDepositId: Guid.NewGuid(), RenewedAt: RenewedAt, Actor: "test");
 
     /// <summary>A bare constituted AT_MATURITY deposit with the given policy → folds to Active.</summary>
     private static DomainEvent[] ActiveStream(Guid depositId, string policy) =>

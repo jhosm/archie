@@ -27,6 +27,30 @@ public static class TermDepositDecider
     public const string RenewalSameTermCurrentRate = "SAME_TERM_CURRENT_RATE";
     public const string RenewalSameTermSameRate = "SAME_TERM_SAME_RATE";
 
+    /// <summary>The v1 default pricing role. For EVERY v1 launch product the engine's product-config
+    /// store resolves <c>ProductConfig.DefaultRole == "standard"</c>, so this constant equals that
+    /// config default for the only deposits that can exist in v1. A renewal of a deposit constituted
+    /// BEFORE the per-deposit <c>role</c> was persisted (bd babelstone-mtto.5) carries an empty closing
+    /// role; the renewal falls back to this default so the <c>(product, role)</c> re-resolution still
+    /// works rather than failing on an empty role (see <see cref="EffectiveRenewalRole"/>). NOTE: should
+    /// a future product carry a non-<c>standard</c> default role, this hardcoded fallback would diverge
+    /// from that config default for a pre-mtto.5 deposit of that product — a path that cannot occur in v1
+    /// (no such product, and no pre-mtto.5 deposit of one), flagged for re-resolution from the product
+    /// config if a per-deposit role-selector lands.</summary>
+    public const string DefaultRole = "standard";
+
+    /// <summary>
+    /// The effective pricing role for a renewal: the closing deposit's persisted role, or
+    /// <see cref="DefaultRole"/> when it is empty — the pre-field-deposit fallback (bd babelstone-mtto.5).
+    /// A deposit constituted before <c>role</c> was persisted folds to <c>Role == ""</c>; defaulting it
+    /// to <c>standard</c> (the v1 default role) keeps the renewal's <c>(product, role)</c> rate
+    /// re-resolution working rather than rejecting on an empty role. Pure — no clock, no I/O. The SAME
+    /// effective role feeds both the rate re-resolution and the renewed event's stamped role, so the
+    /// renewed instance is priced and recorded against one role (chain preservation).
+    /// </summary>
+    public static string EffectiveRenewalRole(DepositPosition closing) =>
+        string.IsNullOrEmpty(closing.Role) ? DefaultRole : closing.Role;
+
     /// <summary>The closed, engine-owned commercial-eligibility verdict-key taxonomy (ADR-PC-024 §1, §6) —
     /// the SAME tokens the CUE family schema's <c>#PreconditionKey</c> enumerates and a product's
     /// <c>required_preconditions</c> picks from. The engine owns this set and the refusal semantics;
@@ -46,7 +70,11 @@ public static class TermDepositDecider
     /// the start date and term — an explicit field on the event, not recomputed downstream. The
     /// catalogue <c>ProductCode</c> is stamped from the already-available <c>command.ProductId</c>
     /// (the structural product identifier the rate sheet priced the TAN against) so the D.4 read
-    /// model can denormalize it — no new command input (bd babelstone-v794).
+    /// model can denormalize it — no new command input (bd babelstone-v794). The pricing
+    /// <c>Role</c> and the opaque <c>FundingAccount</c> token are likewise stamped from the command
+    /// (both already command inputs) so a later auto-renewal can recover ALL renewal facts (product
+    /// / role / funding) from the closing deposit alone, keeping product/funding knowledge out of
+    /// the orchestrator (bd babelstone-mtto.5).
     /// </summary>
     public static DepositConstituted DecideConstitution(
         ConstituteDepositCommand command, int tanBasisPoints, string rateSheetVersionId) =>
@@ -67,7 +95,13 @@ public static class TermDepositDecider
             // list would force store-only audit lineage onto the durable bus. The REFUSAL-path lineage
             // (the load-bearing CONSTITUTION_PRECONDITION_REFUSAL commitment) rides DepositConstitutionFailed
             // (store-only JSON, ADR-PC-028); accepted-path on-envelope lineage is deferred to v1.x.
-            ProductCode: command.ProductId);
+            ProductCode: command.ProductId,
+            // The pricing role + opaque funding-account token the rate sheet priced / the principal
+            // was debited (bd babelstone-mtto.5). Persisted on the event (and folded onto the
+            // position) so a later auto-renewal recovers ALL renewal facts — product / role / funding
+            // — from the closing deposit it already loads, never from the renewal command.
+            Role: command.Role,
+            FundingAccount: command.FundingAccount);
 
     /// <summary>
     /// Decide commercial eligibility (ADR-PC-024 §5): refuse the constitution when a precondition the
@@ -462,9 +496,19 @@ public static class TermDepositDecider
     /// recomputed downstream. Pure: the rolled-over principal, resolved rate, and renewal date are explicit
     /// inputs (the service settles and threads the <c>causation_id</c> → closing <c>DepositMatured</c>).
     /// </summary>
+    /// <param name="role">The EFFECTIVE pricing role to stamp on the renewed instance — the closing
+    /// deposit's <see cref="DepositPosition.Role"/> carried forward, with the pre-field-deposit
+    /// fallback (empty → <c>standard</c>) ALREADY applied by the service (bd babelstone-mtto.5). It is
+    /// the SAME role the service re-resolved the rate against, so the renewed instance prices and
+    /// records the one role — chain preservation across renewal generations.</param>
+    /// <param name="fundingAccount">The opaque funding-account token to stamp on the renewed instance
+    /// — the closing deposit's <see cref="DepositPosition.FundingAccount"/> carried forward (the
+    /// service settles the rollover debit against this SAME reference and rejects an empty one before
+    /// reaching here, bd babelstone-mtto.5).</param>
     public static DepositConstituted DecideRenewalConstitution(
         DepositPosition closing, Guid newDepositId, Money rolloverPrincipal,
-        int tanBasisPoints, string rateSheetVersionId, DateOnly renewalDate) =>
+        int tanBasisPoints, string rateSheetVersionId, DateOnly renewalDate,
+        string role, string fundingAccount) =>
         new(
             DepositId: newDepositId,
             Principal: rolloverPrincipal,
@@ -480,7 +524,14 @@ public static class TermDepositDecider
             // the closing position's catalogue code forward (bd babelstone-v794). For a deposit
             // constituted before v794 the closing code is "" and the renewed instance inherits "" —
             // the renewal cannot manufacture a code the original never carried.
-            ProductCode: closing.ProductCode);
+            ProductCode: closing.ProductCode,
+            // The role + funding-account token carried forward from the closing deposit so the
+            // renewed instance records the SAME (product, role) it was repriced against and the SAME
+            // funding reference the rollover debited — chain preservation across renewal generations
+            // (bd babelstone-mtto.5). The effective role (with the pre-field fallback) and the funding
+            // token are resolved by the service and passed in; the decider stays pure.
+            Role: role,
+            FundingAccount: fundingAccount);
 
     /// <summary>
     /// Build the <see cref="DepositRenewed"/> link (02 §2.4.4 step 3) carrying the closing↔new deposit ids

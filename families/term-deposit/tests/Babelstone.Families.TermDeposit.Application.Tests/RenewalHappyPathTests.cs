@@ -51,11 +51,13 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         // into RenewAsync; it now runs FIRST and independently, leaving the closing stream Matured.
         await MatureAsync(service, depositId);
 
-        // Step 2: open the renewed instance off the Matured closing deposit.
+        // Step 2: open the renewed instance off the Matured closing deposit. The command is MINIMAL —
+        // it carries NO product / role / funding (bd babelstone-mtto.5): the engine recovers all three
+        // from the closing deposit's folded state.
         await service.ConstituteRenewalAsync(new ConstituteRenewalCommand(
-            DepositId: depositId, NewDepositId: newDepositId, ProductId: Product, Role: "standard",
+            DepositId: depositId, NewDepositId: newDepositId,
             RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero),
-            FundingAccount: "PT50-DDA-001", Actor: "saga:renewal", CommandId: Guid.NewGuid()));
+            Actor: "saga:renewal", CommandId: Guid.NewGuid()));
 
         // Step 3: link the renewal, folding the closing stream Matured → Renewed (terminal).
         await service.LinkRenewalAsync(new LinkRenewalCommand(
@@ -67,6 +69,11 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         var closing = (await runtime.LoadAsync(depositId)).State;
         Assert.Equal(DepositLifecycle.Renewed, closing.Lifecycle);
         Assert.Equal(new Money(1_021_900), closing.TotalPayout); // principal + net of the canonical flow
+        // The closing deposit persists the product / role / funding the constitution stamped (mtto.5) —
+        // these are the SOURCE the renewal recovers from (not the command, which carries none).
+        Assert.Equal(Product, closing.ProductCode);
+        Assert.Equal("standard", closing.Role);
+        Assert.Equal("PT50-DDA-001", closing.FundingAccount);
 
         // The renewed instance: a fresh Active deposit rolling the principal at the CURRENT 275bps rate
         // resolved off the later sheet, same 365-day term, new start = renewal date.
@@ -80,6 +87,12 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         Assert.Equal(new DateOnly(2027, 1, 15), renewed.StartDate); // new start = renewal date
         Assert.Equal(new DateOnly(2028, 1, 15), renewed.MaturityDate); // 2027-01-15 + 365d (2027 is not a leap year)
         Assert.Equal("SAME_TERM_CURRENT_RATE", renewed.AutoRenewalPolicy);
+        // The renewal RECOVERED product / role / funding from the closing deposit (mtto.5) and carried
+        // them forward onto the renewed instance — chain preservation, NOT a default. The re-resolution
+        // priced the SAME (product, role) the closing deposit carried.
+        Assert.Equal(Product, renewed.ProductCode);
+        Assert.Equal("standard", renewed.Role);
+        Assert.Equal("PT50-DDA-001", renewed.FundingAccount);
 
         // Event order (02 §2.4.4): closing stream = Constituted, Accrued, Withheld, Matured, Renewed (5);
         // the new stream = the single Constituted (1). DepositMatured precedes DepositConstituted precedes
@@ -131,10 +144,11 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         await ConstituteActiveAsync(service, depositId, "AT_MATURITY", "SAME_TERM_SAME_RATE");
         await MatureAsync(service, depositId);
 
+        // Minimal command — no product / role / funding (mtto.5); the engine recovers them from closing.
         await service.ConstituteRenewalAsync(new ConstituteRenewalCommand(
-            DepositId: depositId, NewDepositId: newDepositId, ProductId: Product, Role: "standard",
+            DepositId: depositId, NewDepositId: newDepositId,
             RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero),
-            FundingAccount: "PT50-DDA-001", Actor: "saga:renewal", CommandId: Guid.NewGuid()));
+            Actor: "saga:renewal", CommandId: Guid.NewGuid()));
 
         await service.LinkRenewalAsync(new LinkRenewalCommand(
             DepositId: depositId, NewDepositId: newDepositId,
@@ -146,6 +160,10 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         Assert.Equal("pt-deposits-2026.1", renewed.RateSheetVersionId); // the original version
         Assert.Equal("SAME_TERM_SAME_RATE", renewed.AutoRenewalPolicy);
         Assert.Equal(DepositLifecycle.Active, renewed.Lifecycle);
+        // product / role / funding recovered from the closing deposit and carried forward (mtto.5).
+        Assert.Equal(Product, renewed.ProductCode);
+        Assert.Equal("standard", renewed.Role);
+        Assert.Equal("PT50-DDA-001", renewed.FundingAccount);
 
         // The DepositRenewed link folds the closing deposit terminal.
         Assert.Equal(DepositLifecycle.Renewed, (await runtime.LoadAsync(depositId)).State.Lifecycle);
@@ -168,10 +186,11 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         await ConstituteActiveAsync(service, depositId, "ADVANCE", "SAME_TERM_SAME_RATE");
         await MatureAsync(service, depositId);
 
+        // Minimal command — no product / role / funding (mtto.5); the engine recovers them from closing.
         await service.ConstituteRenewalAsync(new ConstituteRenewalCommand(
-            DepositId: depositId, NewDepositId: newDepositId, ProductId: Product, Role: "standard",
+            DepositId: depositId, NewDepositId: newDepositId,
             RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero),
-            FundingAccount: "PT50-DDA-001", Actor: "saga:renewal", CommandId: Guid.NewGuid()));
+            Actor: "saga:renewal", CommandId: Guid.NewGuid()));
 
         await service.LinkRenewalAsync(new LinkRenewalCommand(
             DepositId: depositId, NewDepositId: newDepositId,
@@ -181,6 +200,10 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         var renewed = (await runtime.LoadAsync(newDepositId)).State;
         Assert.Equal(DepositLifecycle.Active, renewed.Lifecycle);
         Assert.Equal("ADVANCE", renewed.InterestVariant);
+        // product / role / funding recovered from the closing deposit and carried forward (mtto.5).
+        Assert.Equal(Product, renewed.ProductCode);
+        Assert.Equal("standard", renewed.Role);
+        Assert.Equal("PT50-DDA-001", renewed.FundingAccount);
 
         // The new ADVANCE stream carries the upfront interest (DepositConstituted + the single
         // InterestPaid DecideAdvance returns = 2 events), so the upfront interest IS recognised on the new

@@ -407,10 +407,35 @@ public sealed class TermDepositConstitutionService(
                 $"Deposit {command.DepositId} has auto_renewal_policy NONE; it terminates at maturity, never renews.");
         }
 
-        // 4. Pack-resolved primitives (fail loud). Resolve the renewal rate by policy — EXACTLY the
+        // 4. Resolve EVERY renewal fact from the CLOSING deposit, NOT the command (bd babelstone-mtto.5).
+        //    The closing deposit now persists role + funding alongside the already-persisted product code,
+        //    so the engine recovers product / role / funding from the folded state it just loaded —
+        //    keeping product-family knowledge out of the orchestrator (ADR-IC-003 §A7). The product code
+        //    is closing.ProductCode; the EFFECTIVE role applies the pre-field-deposit fallback (empty →
+        //    standard, the v1 default) so a renewal of a deposit constituted before role was persisted
+        //    still reprices; the funding token is closing.FundingAccount.
+        var productCode = closing.ProductCode;
+        var renewalRole = TermDepositDecider.EffectiveRenewalRole(closing);
+
+        // Fail LOUD on an empty funding token (a deposit constituted before funding_account was
+        // persisted): the renewal_rollover debit cannot target an empty/unknown funding reference, and
+        // the engine never invents one — the same fail-loud discipline as an unpriced (product, role) or
+        // an unknown product code. Checked before any sheet resolve or settlement.
+        var fundingAccount = closing.FundingAccount;
+        if (string.IsNullOrEmpty(fundingAccount))
+        {
+            throw new DomainRejectedException(
+                $"Deposit {command.DepositId} carries no funding_account (constituted before the field was "
+                + "persisted, bd babelstone-mtto.5); cannot constitute a renewal — the renewal_rollover debit "
+                + "has no funding reference to target and the engine never invents one.");
+        }
+
+        // 5. Pack-resolved primitives (fail loud). Resolve the renewal rate by policy — EXACTLY the
         //    monolith's step-6 logic: SAME_TERM_CURRENT_RATE re-resolves the sheet at the renewal moment
-        //    (the bank's then-current standard rate); SAME_TERM_SAME_RATE carries the original rate (the
-        //    pure decider picks). Re-resolution is fail-loud, exactly as constitution.
+        //    (the bank's then-current standard rate) against the CLOSING deposit's (product, role);
+        //    SAME_TERM_SAME_RATE carries the original rate (the pure decider picks). Re-resolution is
+        //    fail-loud, exactly as constitution. The same renewalRole feeds the re-resolution AND the
+        //    renewed event's stamped role, so the new instance is priced and recorded against one role.
         var (dayCount, withholdingBps) = ResolvePrimitives();
         var renewalDate = DateOnly.FromDateTime(command.RenewedAt.UtcDateTime);
         int renewalTan;
@@ -420,10 +445,10 @@ public sealed class TermDepositConstitutionService(
             var resolution = await rateSheets.ResolveAsync(Family.FamilyName, command.RenewedAt, ct)
                 ?? throw new DomainRejectedException(
                     $"No rate sheet effective for '{Family.FamilyName}' at {command.RenewedAt:O} to renew {command.DepositId}.");
-            var currentTan = resolution.ResolveTanBasisPoints(command.ProductId, command.Role, closing.RemainingPrincipal.Cents)
+            var currentTan = resolution.ResolveTanBasisPoints(productCode, renewalRole, closing.RemainingPrincipal.Cents)
                 ?? throw new DomainRejectedException(
                     $"Rate sheet '{resolution.RateSheetVersionId}' does not price " +
-                    $"({command.ProductId}, {command.Role}) at {closing.RemainingPrincipal.Cents}c to renew {command.DepositId}.");
+                    $"({productCode}, {renewalRole}) at {closing.RemainingPrincipal.Cents}c to renew {command.DepositId}.");
             (renewalTan, renewalRateSheetVersionId) =
                 TermDepositDecider.ResolveRenewalRate(closing, currentTan, resolution.RateSheetVersionId);
         }
@@ -434,21 +459,24 @@ public sealed class TermDepositConstitutionService(
                 TermDepositDecider.ResolveRenewalRate(closing, closing.TanBasisPoints, closing.RateSheetVersionId);
         }
 
-        // 5. Decide (pure): the new constitution from the rolled-over principal at the policy-resolved
-        //    rate, for the same term/variant/cadence/policy as the closing deposit (monolith step 7).
+        // 6. Decide (pure): the new constitution from the rolled-over principal at the policy-resolved
+        //    rate, for the same term/variant/cadence/policy as the closing deposit (monolith step 7),
+        //    carrying the closing deposit's product / role / funding forward onto the renewed event
+        //    (chain preservation across renewal generations, bd babelstone-mtto.5).
         var renewed = TermDepositDecider.DecideRenewalConstitution(
-            closing, command.NewDepositId, closing.RemainingPrincipal, renewalTan, renewalRateSheetVersionId, renewalDate);
+            closing, command.NewDepositId, closing.RemainingPrincipal, renewalTan, renewalRateSheetVersionId,
+            renewalDate, renewalRole, fundingAccount);
 
-        // 6. Settle the rolled-over principal into the new instance (the renewal_rollover debit, monolith
-        //    step 8a). The maturity credit already moved out in MatureAsync; only the rollover debit
-        //    settles here, so the settlement legs now SPLIT across two calls — maturity credit from
-        //    MatureAsync, rollover debit from here. ADVANCE pays its full-term interest up front (monolith
-        //    step 8b), the same as a fresh constitution; the upfront InterestPaid rides in the new
-        //    stream's first transaction.
+        // 7. Settle the rolled-over principal into the new instance (the renewal_rollover debit, monolith
+        //    step 8a) against the CLOSING deposit's funding token. The maturity credit already moved out in
+        //    MatureAsync; only the rollover debit settles here, so the settlement legs now SPLIT across two
+        //    calls — maturity credit from MatureAsync, rollover debit from here. ADVANCE pays its full-term
+        //    interest up front (monolith step 8b), the same as a fresh constitution; the upfront
+        //    InterestPaid rides in the new stream's first transaction.
         await settlement.SettleAsync(
             new SettlementInstruction(
                 command.NewDepositId, SettlementDirection.Debit, renewed.Principal,
-                command.FundingAccount, "renewal_rollover"),
+                fundingAccount, "renewal_rollover"),
             ct);
         var renewalConstitutionEvents = new List<DomainEvent> { renewed };
         if (renewed.InterestVariant == TermDepositDecider.Advance)
@@ -459,7 +487,7 @@ public sealed class TermDepositConstitutionService(
             await settlement.SettleAsync(
                 new SettlementInstruction(
                     command.NewDepositId, SettlementDirection.Credit, paid.NetInterest,
-                    command.FundingAccount, "advance_interest"),
+                    fundingAccount, "advance_interest"),
                 ct);
             renewalConstitutionEvents.AddRange(advance);
         }
@@ -590,6 +618,9 @@ public sealed class TermDepositConstitutionService(
             InterestVariant = constituted.InterestVariant,
             AutoRenewalPolicy = constituted.AutoRenewalPolicy,
             PaymentPeriodMonths = constituted.PaymentPeriodMonths,
+            ProductCode = constituted.ProductCode,
+            Role = constituted.Role,
+            FundingAccount = constituted.FundingAccount,
             RemainingPrincipal = constituted.Principal,
             Lifecycle = DepositLifecycle.Active,
         };
@@ -614,7 +645,9 @@ public sealed class TermDepositConstitutionService(
             InterestVariant: position.InterestVariant,
             AutoRenewalPolicy: position.AutoRenewalPolicy,
             PaymentPeriodMonths: position.PaymentPeriodMonths,
-            ProductCode: position.ProductCode);
+            ProductCode: position.ProductCode,
+            Role: position.Role,
+            FundingAccount: position.FundingAccount);
 
     // commandId is the OPTIONAL command-ingress idempotency key (ADR-PC-029 slot 4): the
     // constitution paths thread the command's CommandId so the append dedupes on it; the
