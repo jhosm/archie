@@ -1,8 +1,7 @@
 using System.Text.Json;
 using Babelstone.Orchestrator.Edge;
-using Babelstone.Orchestrator.Handlers;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
-using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Npgsql;
 using Xunit;
@@ -156,7 +155,7 @@ public sealed class SagaCommandOutboxSinkIntegrationTests(OrchestratorPostgresFi
                 AutoApprovalThresholdMinorUnits: ThresholdCents),
             correlationId);
 
-        Assert.Equal(SagaState.ParallelValidation, result.State);
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, result.State);
         return result.ProcessId;
     }
 

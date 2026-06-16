@@ -1,0 +1,28 @@
+<!-- The term-deposit family's SAGA modules (ADR-IC-018 §D1/§P1): the concrete ConstitutionProcess
+     state machine, its result-event bridge, command router, command DTOs + payload factory, the
+     family state vocabulary (ConstitutionProcess.States), the per-saga business-reference store, and
+     the ISagaModule (TermDepositSagaModule) the host composes. It depends ONLY on the substrate's
+     generic ports — the family → substrate arrow, never the reverse (ADR-IC-018 §D2), and never the
+     engine kernel (extraction-ready, ADR-PC-019 §P2). Build settings inherit from
+     families/Directory.Build.props → engine/Directory.Build.props (net10.0, nullable, warnings-as-errors). -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Families.TermDeposit.Orchestration</RootNamespace>
+    <AssemblyName>Babelstone.Families.TermDeposit.Orchestration</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Npgsql: the family's own SagaBusinessReferenceStore and SagaCommandOutboxSink persist the
+         per-saga business references + command outbox rows. No Confluent.Kafka: the family module
+         does not own the consume loop (the substrate does). -->
+    <PackageReference Include="Npgsql" />
+    <!-- IServiceCollection for TermDepositSagaModule.ConfigureServices. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The family → substrate arrow (ADR-IC-018 §D2/§P2): the only project reference, never the
+         reverse, never the engine kernel. -->
+    <ProjectReference Include="../../../../orchestrator/src/Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
+  </ItemGroup>
+</Project>

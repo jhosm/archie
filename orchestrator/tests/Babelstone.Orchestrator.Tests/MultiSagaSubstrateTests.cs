@@ -1,5 +1,6 @@
 using Babelstone.Orchestrator.Dispatch;
 using Babelstone.Orchestrator.Inbox;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Saga;
 using Npgsql;
 using Xunit;
@@ -32,8 +33,8 @@ public sealed class MultiSagaSubstrateTests
     /// A trivial second <see cref="ISagaStateMachine"/> for the routing proof. It REUSES existing
     /// <see cref="SagaState"/> enum values (no new state is added in PR1 — that is PR2's contract
     /// change) precisely so the test proves routing is MACHINE-keyed, not STATE-keyed: the same
-    /// <see cref="SagaState.Approved"/> is non-terminal for both machines, while
-    /// <see cref="SagaState.Completed"/> is terminal for both by table inspection. Its transitions
+    /// <see cref="ConstitutionProcess.States.Approved"/> is non-terminal for both machines, while
+    /// <see cref="ConstitutionProcess.States.Completed"/> is terminal for both by table inspection. Its transitions
     /// are deliberately distinct event names ("RenewalRequested" / "RenewalCompleted") so a
     /// ConstitutionProcess event never advances it and vice versa.
     /// </summary>
@@ -45,16 +46,16 @@ public sealed class MultiSagaSubstrateTests
         public const string ConstituteRenewal = "ConstituteRenewal";
 
         public StubRenewalProcess()
-            : base(Type, SagaState.Started, BuildTable())
+            : base(Type, ConstitutionProcess.States.Started, BuildTable())
         {
         }
 
-        private static IEnumerable<((SagaState, string), TransitionOutcome)> BuildTable()
+        private static IEnumerable<((string, string), TransitionOutcome)> BuildTable()
         {
-            yield return ((SagaState.Started, RenewalRequested),
-                TransitionOutcome.To(SagaState.Approved, ConstituteRenewal));
-            yield return ((SagaState.Approved, RenewalCompleted),
-                TransitionOutcome.To(SagaState.Completed));
+            yield return ((ConstitutionProcess.States.Started, RenewalRequested),
+                TransitionOutcome.To(ConstitutionProcess.States.Approved, ConstituteRenewal));
+            yield return ((ConstitutionProcess.States.Approved, RenewalCompleted),
+                TransitionOutcome.To(ConstitutionProcess.States.Completed));
         }
     }
 
@@ -67,24 +68,24 @@ public sealed class MultiSagaSubstrateTests
         var renewal = new StubRenewalProcess();
 
         // COMPLETED is terminal for BOTH (neither table has an outgoing edge from it).
-        Assert.True(constitution.IsTerminal(SagaState.Completed));
-        Assert.True(renewal.IsTerminal(SagaState.Completed));
+        Assert.True(constitution.IsTerminal(ConstitutionProcess.States.Completed));
+        Assert.True(renewal.IsTerminal(ConstitutionProcess.States.Completed));
 
         // APPROVED is non-terminal for BOTH — each has its OWN outgoing edge(s) from it
         // (ConstitutionProcess: DebitConfirmed/ActivationFailed/…; the stub: RenewalCompleted).
-        Assert.False(constitution.IsTerminal(SagaState.Approved));
-        Assert.False(renewal.IsTerminal(SagaState.Approved));
+        Assert.False(constitution.IsTerminal(ConstitutionProcess.States.Approved));
+        Assert.False(renewal.IsTerminal(ConstitutionProcess.States.Approved));
 
         // STARTED is the entry state of both — never terminal (each has an outgoing start edge).
-        Assert.False(constitution.IsTerminal(SagaState.Started));
-        Assert.False(renewal.IsTerminal(SagaState.Started));
+        Assert.False(constitution.IsTerminal(ConstitutionProcess.States.Started));
+        Assert.False(renewal.IsTerminal(ConstitutionProcess.States.Started));
 
         // The ConstitutionProcess-specific terminals (CANCELLED etc.) are terminal for it — but the
         // stub's table never routes into or out of them, so they are terminal for the stub too (no
         // outgoing edge). The point: IsTerminal is answered from EACH machine's OWN table, not a
         // single shared predicate, so a state with an outgoing edge in one machine is non-terminal
         // THERE regardless of the other machine.
-        Assert.True(constitution.IsTerminal(SagaState.Cancelled));
+        Assert.True(constitution.IsTerminal(ConstitutionProcess.States.Cancelled));
 
         // HUMAN_INTERVENTION_REQUIRED is the behaviour-preserving override's locked invariant
         // (bd babelstone-mtto PR1). ConstitutionProcess.IsTerminal delegates to SagaStateNames.IsTerminal
@@ -95,8 +96,8 @@ public sealed class MultiSagaSubstrateTests
         // change leaks back in. The stub, which never touches HIR, reports it terminal under the default —
         // the two machines giving DIFFERENT answers for the SAME state is the whole point of per-machine
         // IsTerminal.
-        Assert.False(constitution.IsTerminal(SagaState.HumanInterventionRequired));
-        Assert.True(new StubRenewalProcess().IsTerminal(SagaState.HumanInterventionRequired));
+        Assert.False(constitution.IsTerminal(ConstitutionProcess.States.HumanInterventionRequired));
+        Assert.True(new StubRenewalProcess().IsTerminal(ConstitutionProcess.States.HumanInterventionRequired));
     }
 
     // ---- Pure: CompositeCommandRouter routes by saga_type (no DB) --------------------------------
@@ -155,7 +156,7 @@ public sealed class MultiSagaSubstrateTests
         Assert.Throws<InvalidOperationException>(() => new SagaAdvanceHandler(
             new ISagaStateMachine[] { new ConstitutionProcess(), new ConstitutionProcess() },
             new SagaStateStore(), new SagaTransitionLog(),
-            new RecordingCommandSink(), new SagaBusinessReferenceStore()));
+            new RecordingCommandSink()));
     }
 
     [Fact]
@@ -164,7 +165,7 @@ public sealed class MultiSagaSubstrateTests
         Assert.Throws<ArgumentException>(() => new SagaAdvanceHandler(
             Array.Empty<ISagaStateMachine>(),
             new SagaStateStore(), new SagaTransitionLog(),
-            new RecordingCommandSink(), new SagaBusinessReferenceStore()));
+            new RecordingCommandSink()));
     }
 
     [Fact]
@@ -180,7 +181,7 @@ public sealed class MultiSagaSubstrateTests
         var handler = new SagaAdvanceHandler(
             new ISagaStateMachine[] { new ConstitutionProcess() },
             new SagaStateStore(), new SagaTransitionLog(),
-            new RecordingCommandSink(), new SagaBusinessReferenceStore());
+            new RecordingCommandSink());
 
         Assert.Throws<InvalidOperationException>(() => new SagaCommandDispatchDrainer(
             options, new CompositeCommandRouter([new SagaCommandRouter(options)]), httpFactory, handler,
@@ -232,7 +233,7 @@ public sealed class MultiSagaSubstrateTests
             // ONE handler, BOTH machines — the multi-saga substrate.
             var handler = new SagaAdvanceHandler(
                 new ISagaStateMachine[] { new ConstitutionProcess(), new StubRenewalProcess() },
-                _stateStore, _transitionLog, sink, new SagaBusinessReferenceStore());
+                _stateStore, _transitionLog, sink);
 
             // Seed one saga of EACH type directly in STARTED (the routing proof needs only a row with a
             // saga_type — not the full edge-start ceremony, which is ConstitutionProcess-specific).
@@ -242,13 +243,13 @@ public sealed class MultiSagaSubstrateTests
             // Advance the constitution saga on ITS event → its constitution edge (PARALLEL_VALIDATION).
             Assert.Equal(AdvanceOutcome.Advanced,
                 await RunAsync(handler, constitutionId, ConstitutionProcess.ConstitutionRequested));
-            Assert.Equal(SagaState.ParallelValidation, await StateAsync(constitutionId));
+            Assert.Equal(ConstitutionProcess.States.ParallelValidation, await StateAsync(constitutionId));
 
             // Advance the renewal saga on ITS event → its renewal edge (Approved). SAME handler, routed
             // to the OTHER machine purely by saga_type.
             Assert.Equal(AdvanceOutcome.Advanced,
                 await RunAsync(handler, renewalId, StubRenewalProcess.RenewalRequested));
-            Assert.Equal(SagaState.Approved, await StateAsync(renewalId));
+            Assert.Equal(ConstitutionProcess.States.Approved, await StateAsync(renewalId));
 
             // Cross-vocabulary events are NoTransition (the other machine has no such edge), NOT applied
             // to the wrong machine: the renewal event is illegal for the constitution saga and vice versa.
@@ -260,7 +261,7 @@ public sealed class MultiSagaSubstrateTests
             // The renewal saga completes on ITS terminal edge — and IsTerminal then short-circuits.
             Assert.Equal(AdvanceOutcome.Advanced,
                 await RunAsync(handler, renewalId, StubRenewalProcess.RenewalCompleted));
-            Assert.Equal(SagaState.Completed, await StateAsync(renewalId));
+            Assert.Equal(ConstitutionProcess.States.Completed, await StateAsync(renewalId));
             // A late event for the now-terminal renewal saga is a no-op advance (per-machine IsTerminal).
             Assert.Equal(AdvanceOutcome.Terminal,
                 await RunAsync(handler, renewalId, StubRenewalProcess.RenewalCompleted));
@@ -285,13 +286,13 @@ public sealed class MultiSagaSubstrateTests
             var sink = new RecordingCommandSink();
             var handler = new SagaAdvanceHandler(
                 new ISagaStateMachine[] { new ConstitutionProcess(), new StubRenewalProcess() },
-                _stateStore, _transitionLog, sink, new SagaBusinessReferenceStore());
+                _stateStore, _transitionLog, sink);
 
             // Seed a ConstitutionProcess saga PARKED in HUMAN_INTERVENTION_REQUIRED — the
             // production-reachable escalation state (a failed compensation / spent reissue budget land
             // here). HIR has no outgoing edge in the table TODAY (the operator-resolution edge is PR2),
             // so the substrate default would call it terminal; the override keeps it non-terminal.
-            var hirSagaId = await StartRowAsync(ConstitutionProcess.Type, SagaState.HumanInterventionRequired);
+            var hirSagaId = await StartRowAsync(ConstitutionProcess.Type, ConstitutionProcess.States.HumanInterventionRequired);
 
             // A late event for that saga must take the NoTransition path (the pre-PR1 disposition), NOT
             // the Terminal short-circuit: the routed machine reports HIR non-terminal, the table has no
@@ -300,7 +301,7 @@ public sealed class MultiSagaSubstrateTests
                 await RunAsync(handler, hirSagaId, ConstitutionProcess.CompensationFailed));
 
             // The saga did not move — HIR is preserved, not collapsed to a terminal.
-            Assert.Equal(SagaState.HumanInterventionRequired, await StateAsync(hirSagaId));
+            Assert.Equal(ConstitutionProcess.States.HumanInterventionRequired, await StateAsync(hirSagaId));
         }
 
         [Fact]
@@ -310,7 +311,7 @@ public sealed class MultiSagaSubstrateTests
             // A handler that knows ONLY the renewal machine.
             var handler = new SagaAdvanceHandler(
                 new ISagaStateMachine[] { new StubRenewalProcess() },
-                _stateStore, _transitionLog, sink, new SagaBusinessReferenceStore());
+                _stateStore, _transitionLog, sink);
 
             // A saga row whose saga_type has no registered machine: the advance must fail-closed (throw),
             // never silently skip — the substrate cannot decide a saga it has no machine for.
@@ -321,9 +322,9 @@ public sealed class MultiSagaSubstrateTests
 
         // ---- helpers ----------------------------------------------------------------------------
 
-        private Task<Guid> StartRowAsync(string sagaType) => StartRowAsync(sagaType, SagaState.Started);
+        private Task<Guid> StartRowAsync(string sagaType) => StartRowAsync(sagaType, ConstitutionProcess.States.Started);
 
-        private async Task<Guid> StartRowAsync(string sagaType, SagaState initialState)
+        private async Task<Guid> StartRowAsync(string sagaType, string initialState)
         {
             var processId = Guid.NewGuid();
             await using var connection = await OpenAsync();
@@ -346,7 +347,7 @@ public sealed class MultiSagaSubstrateTests
             return outcome;
         }
 
-        private async Task<SagaState> StateAsync(Guid processId)
+        private async Task<string> StateAsync(Guid processId)
         {
             await using var connection = await OpenAsync();
             await using var tx = await connection.BeginTransactionAsync();

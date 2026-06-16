@@ -1,9 +1,7 @@
 using System.Net;
-using Babelstone.Orchestrator.Commands;
 using Babelstone.Orchestrator.Dispatch;
-using Babelstone.Orchestrator.Handlers;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
-using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -221,8 +219,7 @@ public sealed class GatedSettlementWireMockIntegrationTests : IAsyncLifetime
             sp.GetRequiredService<ISagaStateMachine>(),
             sp.GetRequiredService<SagaStateStore>(),
             sp.GetRequiredService<SagaTransitionLog>(),
-            sp.GetRequiredService<ISagaCommandSink>(),
-            sp.GetRequiredService<SagaBusinessReferenceStore>()));
+            sp.GetRequiredService<ISagaCommandSink>()));
     }
 
     /// <summary>
@@ -276,7 +273,7 @@ public sealed class GatedSettlementWireMockIntegrationTests : IAsyncLifetime
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();
         await stateStore.TryStartAsync(
-            connection, tx, processId, ConstitutionProcess.Type, SagaState.Started, correlationId);
+            connection, tx, processId, ConstitutionProcess.Type, ConstitutionProcess.States.Started, correlationId);
 
         // Pin the per-saga business references the full-payload factory reads (mandatory now — bd
         // babelstone-t7o3.9). The FK requires the saga_state row to exist first (same transaction).

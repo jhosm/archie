@@ -1,4 +1,4 @@
-using Babelstone.Orchestrator.Handlers;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Saga;
 using Xunit;
 
@@ -37,7 +37,7 @@ public sealed class ApprovalForkHandlerTests
 
         // The fork is decided at VALIDATIONS_COMPLETE — after the reversible validations, before
         // any irreversible effect (Document 05 step 2c → 3).
-        var decision = ApprovalForkHandler.Decide(SagaState.ValidationsComplete, input);
+        var decision = ApprovalForkHandler.Decide(ConstitutionProcess.States.ValidationsComplete, input);
 
         Assert.Equal(expected, decision);
     }
@@ -54,13 +54,13 @@ public sealed class ApprovalForkHandlerTests
         Assert.Equal(
             ApprovalDecision.AutoApprove,
             ApprovalForkHandler.Decide(
-                SagaState.ValidationsComplete,
+                ConstitutionProcess.States.ValidationsComplete,
                 new ApprovalDecisionInput(amount, 40_000_00, ClientType.Existing)));
 
         Assert.Equal(
             ApprovalDecision.WorkflowApprovalRequired,
             ApprovalForkHandler.Decide(
-                SagaState.ValidationsComplete,
+                ConstitutionProcess.States.ValidationsComplete,
                 new ApprovalDecisionInput(amount, 25_000_00, ClientType.Existing)));
     }
 
@@ -71,9 +71,9 @@ public sealed class ApprovalForkHandlerTests
         // every call — no clock, no randomness could make two evaluations diverge.
         var input = new ApprovalDecisionInput(25_000_01, ThresholdCents, ClientType.Existing);
 
-        var first = ApprovalForkHandler.Decide(SagaState.ValidationsComplete, input);
-        var second = ApprovalForkHandler.Decide(SagaState.ValidationsComplete, input);
-        var third = ApprovalForkHandler.Decide(SagaState.ValidationsComplete, input);
+        var first = ApprovalForkHandler.Decide(ConstitutionProcess.States.ValidationsComplete, input);
+        var second = ApprovalForkHandler.Decide(ConstitutionProcess.States.ValidationsComplete, input);
+        var third = ApprovalForkHandler.Decide(ConstitutionProcess.States.ValidationsComplete, input);
 
         Assert.Equal(ApprovalDecision.WorkflowApprovalRequired, first);
         Assert.Equal(first, second);
@@ -102,12 +102,12 @@ public sealed class ApprovalForkHandlerTests
         var machine = new ConstitutionProcess();
 
         var autoEvent = ApprovalForkHandler.NextEventType(ApprovalDecision.AutoApprove);
-        Assert.True(machine.TryAdvance(SagaState.ValidationsComplete, autoEvent, out var autoOutcome));
-        Assert.Equal(SagaState.Approved, autoOutcome.Next);
+        Assert.True(machine.TryAdvance(ConstitutionProcess.States.ValidationsComplete, autoEvent, out var autoOutcome));
+        Assert.Equal(ConstitutionProcess.States.Approved, autoOutcome.Next);
 
         var workflowEvent = ApprovalForkHandler.NextEventType(ApprovalDecision.WorkflowApprovalRequired);
-        Assert.True(machine.TryAdvance(SagaState.ValidationsComplete, workflowEvent, out var workflowOutcome));
-        Assert.Equal(SagaState.AwaitWorkflowApproval, workflowOutcome.Next);
+        Assert.True(machine.TryAdvance(ConstitutionProcess.States.ValidationsComplete, workflowEvent, out var workflowOutcome));
+        Assert.Equal(ConstitutionProcess.States.AwaitWorkflowApproval, workflowOutcome.Next);
     }
 
     [Fact]
@@ -119,9 +119,9 @@ public sealed class ApprovalForkHandlerTests
         var input = new ApprovalDecisionInput(10_000_00, ThresholdCents, ClientType.Existing);
 
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => ApprovalForkHandler.Decide(SagaState.ParallelValidation, input));
+            () => ApprovalForkHandler.Decide(ConstitutionProcess.States.ParallelValidation, input));
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => ApprovalForkHandler.Decide(SagaState.Approved, input));
+            () => ApprovalForkHandler.Decide(ConstitutionProcess.States.Approved, input));
     }
 
     [Theory]
@@ -131,6 +131,6 @@ public sealed class ApprovalForkHandlerTests
     {
         var input = new ApprovalDecisionInput(amountCents, thresholdCents, ClientType.Existing);
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => ApprovalForkHandler.Decide(SagaState.ValidationsComplete, input));
+            () => ApprovalForkHandler.Decide(ConstitutionProcess.States.ValidationsComplete, input));
     }
 }

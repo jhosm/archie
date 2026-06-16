@@ -1,9 +1,8 @@
 using System.Globalization;
 using System.Text;
 using Babelstone.Orchestrator.Edge;
-using Babelstone.Orchestrator.Handlers;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
-using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Babelstone.TestFixtures;
 using Confluent.Kafka;
@@ -22,7 +21,7 @@ namespace Babelstone.Orchestrator.Tests;
 /// event is produced onto Redpanda, framed with the SAME CloudEvents Binary-mode headers the engine's
 /// outbox relay emits (ADR-IC-015), and the HOSTED <see cref="SagaInboxConsumerService"/> consume loop
 /// — the one wired into <c>Program.cs</c> — subscribes, decodes the headers into the PII-free
-/// <see cref="SagaInboxEvent"/>, and advances the saga to <see cref="SagaState.ParallelValidation"/>
+/// <see cref="SagaInboxEvent"/>, and advances the saga to <see cref="ConstitutionProcess.States.ParallelValidation"/>
 /// in one transaction whose offset commits only after the DB commit.
 /// </summary>
 /// <remarks>
@@ -68,7 +67,7 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
         // Edge-start the saga (creates the saga_state row + references + the minted process id, and
         // emits the two parallel validation commands). The hosted loop's job is to ADVANCE it.
         var processId = await StartSagaAtEdgeAsync();
-        Assert.Equal(SagaState.ParallelValidation, await StateOrNullAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, await StateOrNullAsync(processId));
 
         // The constitution saga reacts to events on the engine's deposits-process topic. Produce an
         // ADVANCE event with the exact CloudEvents headers the outbox relay emits (ADR-IC-015).
@@ -82,7 +81,7 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
             // The loop is asynchronous (subscribe → assign → consume → advance), so poll until the
             // saga has been driven into AWAIT_LIMITS_VALIDATED or the deadline elapses.
             await WaitUntilAsync(
-                async () => await StateOrNullAsync(processId) == SagaState.AwaitLimitsValidated,
+                async () => await StateOrNullAsync(processId) == ConstitutionProcess.States.AwaitLimitsValidated,
                 TimeSpan.FromSeconds(40),
                 "the hosted loop did not advance the saga to AWAIT_LIMITS_VALIDATED");
         }
@@ -92,7 +91,7 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
         }
 
         // The saga advanced — driven entirely by the hosted consumer.
-        Assert.Equal(SagaState.AwaitLimitsValidated, await StateOrNullAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.AwaitLimitsValidated, await StateOrNullAsync(processId));
 
         // Effectively-once: exactly one inbox dedup row for this message_id.
         Assert.Equal(1, await CountInboxAsync(messageId));
@@ -126,7 +125,7 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
         try
         {
             await WaitUntilAsync(
-                async () => await StateOrNullAsync(processId) == SagaState.AwaitLimitsValidated,
+                async () => await StateOrNullAsync(processId) == ConstitutionProcess.States.AwaitLimitsValidated,
                 TimeSpan.FromSeconds(40),
                 "the hosted loop did not advance the saga to AWAIT_LIMITS_VALIDATED");
 
@@ -143,7 +142,7 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
 
         // Effectively-once: one dedup row, the saga moved once — the redelivery added nothing.
         Assert.Equal(1, await CountInboxAsync(messageId));
-        Assert.Equal(SagaState.AwaitLimitsValidated, await StateOrNullAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.AwaitLimitsValidated, await StateOrNullAsync(processId));
     }
 
     // ---- Host wiring (the SAME composition the production Program.cs uses) -------------------
@@ -161,8 +160,7 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
             sp.GetRequiredService<ISagaStateMachine>(),
             sp.GetRequiredService<SagaStateStore>(),
             sp.GetRequiredService<SagaTransitionLog>(),
-            sp.GetRequiredService<ISagaCommandSink>(),
-            sp.GetRequiredService<SagaBusinessReferenceStore>()));
+            sp.GetRequiredService<ISagaCommandSink>()));
         builder.Services.AddSingleton(new SagaInboxConsumerOptions
         {
             ConnectionString = ConnectionString,
@@ -205,7 +203,7 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
                 ClientType: ClientType.Existing,
                 AutoApprovalThresholdMinorUnits: 1_000_00));
 
-        Assert.Equal(SagaState.ParallelValidation, result.State);
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, result.State);
         return result.ProcessId;
     }
 
@@ -243,7 +241,7 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
 
     // ---- Assertions ---------------------------------------------------------------------------
 
-    private async Task<SagaState?> StateOrNullAsync(Guid processId)
+    private async Task<string?> StateOrNullAsync(Guid processId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
@@ -251,7 +249,7 @@ public sealed class SagaConsumeLoopIntegrationTests : IAsyncLifetime
             "SELECT state FROM saga_state WHERE process_id = @p;", connection);
         command.Parameters.AddWithValue("p", processId);
         var raw = await command.ExecuteScalarAsync();
-        return raw is string name ? SagaStateNames.FromName(name) : null;
+        return raw is string name ? name : null;
     }
 
     private async Task<int> CountInboxAsync(Guid messageId)

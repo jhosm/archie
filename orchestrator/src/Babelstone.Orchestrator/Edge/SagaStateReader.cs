@@ -41,7 +41,7 @@ public sealed class SagaStateReader(string connectionString)
     /// Read the saga's current (state, version) by internal process id, or null if the row vanished.
     /// The SSE loop polls this to detect a state move (the loop owns the writes; this only reads).
     /// </summary>
-    public async Task<(SagaState State, long Version)?> CurrentAsync(Guid processId, CancellationToken ct = default)
+    public async Task<(string State, long Version)?> CurrentAsync(Guid processId, CancellationToken ct = default)
     {
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(ct);
@@ -55,6 +55,8 @@ public sealed class SagaStateReader(string connectionString)
             return null;
         }
 
-        return (SagaStateNames.FromName(reader.GetString(0)), reader.GetInt64(1));
+        // The persisted state IS the saga's wire string (ADR-IC-018 §D3) — read verbatim, no central
+        // enum round-trip. The SSE loop asks the routed machine whether it is terminal.
+        return (reader.GetString(0), reader.GetInt64(1));
     }
 }

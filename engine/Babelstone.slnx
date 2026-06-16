@@ -26,10 +26,16 @@
     <Project Path="../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
     <!-- The family decider / application layer (ADR-PC-021): the impure command-side project. -->
     <Project Path="../families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
+    <!-- The family's SAGA module (ADR-IC-018 §D1): the concrete ConstitutionProcess + bridge/router/
+         commands/state-vocabulary + the ISagaModule, depending only on the substrate (family → substrate). -->
+    <Project Path="../families/term-deposit/src/Babelstone.Families.TermDeposit.Orchestration/Babelstone.Families.TermDeposit.Orchestration.csproj" />
     <!-- The in-house saga orchestrator (ADR-IC-003, Epic H.1): the hand-rolled ConstitutionProcess
          state machine + saga-state/transition persistence + idempotent inbox-driven advance. An
          extraction-ready subtree (ADR-PC-019 §P2) that builds with the engine pipeline. -->
     <Project Path="../orchestrator/src/Babelstone.Orchestrator/Babelstone.Orchestrator.csproj" />
+    <!-- The family-AGNOSTIC saga substrate (ADR-IC-018 §P1/§P2): the runtime + stores + ports +
+         ISagaModule plug-in, carrying no families/** or engine-kernel reference. -->
+    <Project Path="../orchestrator/src/Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <!-- Shared test-support library (ic10): the single Redpanda Testcontainers fixture both the
