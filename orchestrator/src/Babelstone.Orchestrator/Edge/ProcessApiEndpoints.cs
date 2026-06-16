@@ -103,7 +103,7 @@ public static class ProcessApiEndpoints
             AmountMinorUnits: request.Amount,
             SourceAccountRef: request.SourceAccountRef,
             InterestAccountRef: request.InterestAccountRef,
-            ClientType: Babelstone.Orchestrator.Handlers.ClientType.Existing,
+            ClientType: Babelstone.Families.TermDeposit.Orchestration.ClientType.Existing,
             AutoApprovalThresholdMinorUnits: options.AutoApprovalThresholdMinorUnits);
 
         // STARTS the saga (NOT a direct engine append): creates the ConstitutionProcess STARTED row
@@ -123,6 +123,7 @@ public static class ProcessApiEndpoints
         string processId,
         HttpContext context,
         SagaStateReader reader,
+        IReadOnlyDictionary<string, ISagaStateMachine> machines,
         EdgeOptions options,
         CancellationToken ct)
     {
@@ -134,6 +135,17 @@ public static class ProcessApiEndpoints
         if (saga is null)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
+        // The terminal check is per-MACHINE (ADR-IC-018 §D3 — no central static predicate). Resolve the
+        // saga's state machine by its saga_type (fixed for the life of the stream) from the host's
+        // machine registry, then ask it whether each polled state is terminal — the SAME answer the
+        // advance handler gives, so the SSE read and the advance loop stay consistent (ADR-IC-018 §P6).
+        // A saga_type with no registered machine is a fail-closed wiring error.
+        if (!machines.TryGetValue(saga.SagaType, out var machine))
+        {
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
             return;
         }
 
@@ -168,11 +180,11 @@ public static class ProcessApiEndpoints
             var (state, version) = current.Value;
             if (version != emittedVersion)
             {
-                await WriteStateEventAsync(context, processId, state, version, ct);
+                await WriteStateEventAsync(context, machine, processId, state, version, ct);
                 emittedVersion = version;
             }
 
-            if (SagaStateNames.IsTerminal(state))
+            if (machine.IsTerminal(state))
             {
                 break; // terminal state emitted — the stream's job is done.
             }
@@ -196,14 +208,14 @@ public static class ProcessApiEndpoints
     }
 
     private static async Task WriteStateEventAsync(
-        HttpContext context, string processId, SagaState state, long version, CancellationToken ct)
+        HttpContext context, ISagaStateMachine machine, string processId, string state, long version, CancellationToken ct)
     {
         // A named SSE event carrying the STRUCTURAL saga state — process reference, business state
         // name, version, and whether it is terminal. JSON-shaped data on the SSE data: line. PII-free.
-        var stateName = SagaStateNames.ToName(state);
-        var terminal = SagaStateNames.IsTerminal(state) ? "true" : "false";
+        // The state IS the wire string (ADR-IC-018 §D3); terminality is the routed machine's answer.
+        var terminal = machine.IsTerminal(state) ? "true" : "false";
         var data =
-            $"{{\"process_id\":\"{processId}\",\"state\":\"{stateName}\",\"version\":{version},\"terminal\":{terminal}}}";
+            $"{{\"process_id\":\"{processId}\",\"state\":\"{state}\",\"version\":{version},\"terminal\":{terminal}}}";
         await WriteAsync(context, $"event: state\ndata: {data}\n\n", ct);
     }
 

@@ -1,9 +1,7 @@
 using System.Text.Json;
-using Babelstone.Orchestrator.Commands;
 using Babelstone.Orchestrator.Edge;
-using Babelstone.Orchestrator.Handlers;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
-using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Npgsql;
 using Xunit;
@@ -61,11 +59,11 @@ public sealed class SagaForkSelfEmitIntegrationTests(OrchestratorPostgresFixture
         // Both validations arrive (limits first, the common order). The SECOND one completes the join
         // into VALIDATIONS_COMPLETE — and the self-emit must, in that SAME advance, cross to APPROVED.
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsValidated)));
-        Assert.Equal(SagaState.AwaitBalanceReserved, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.AwaitBalanceReserved, await StateAsync(processId));
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.BalanceReserved)));
 
         // No external ConstitutionApproved was delivered — yet the saga is in APPROVED.
-        Assert.Equal(SagaState.Approved, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Approved, await StateAsync(processId));
 
         // The transition history records the self-emitted fork crossing.
         var history = await HistoryAsync(processId);
@@ -101,7 +99,7 @@ public sealed class SagaForkSelfEmitIntegrationTests(OrchestratorPostgresFixture
 
         await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsValidated));
         await RunAsync(handler, Event(processId, ConstitutionProcess.BalanceReserved));
-        Assert.Equal(SagaState.Approved, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Approved, await StateAsync(processId));
 
         var rows = await OutboxRowsAsync(processId);
 
@@ -164,7 +162,7 @@ public sealed class SagaForkSelfEmitIntegrationTests(OrchestratorPostgresFixture
         await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsValidated));
 
         // The over-threshold amount routed to the workflow — the saga is WAITING, not APPROVED.
-        Assert.Equal(SagaState.AwaitWorkflowApproval, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.AwaitWorkflowApproval, await StateAsync(processId));
 
         // No ConfirmDebit was emitted (the irreversible phase is gated behind the workflow approval).
         var commands = await OutboxCommandTypesAsync(processId);
@@ -174,7 +172,7 @@ public sealed class SagaForkSelfEmitIntegrationTests(OrchestratorPostgresFixture
         Assert.Equal(
             AdvanceOutcome.Advanced,
             await RunAsync(handler, Event(processId, ConstitutionProcess.ConstitutionApproved)));
-        Assert.Equal(SagaState.Approved, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Approved, await StateAsync(processId));
     }
 
     [Fact]
@@ -191,11 +189,11 @@ public sealed class SagaForkSelfEmitIntegrationTests(OrchestratorPostgresFixture
 
         var completing = Event(processId, ConstitutionProcess.BalanceReserved);
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, completing));
-        Assert.Equal(SagaState.Approved, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Approved, await StateAsync(processId));
 
         // Redeliver the SAME completing event id: dedup short-circuits — no re-fork, state unchanged.
         Assert.Equal(AdvanceOutcome.Duplicate, await RunAsync(handler, completing));
-        Assert.Equal(SagaState.Approved, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Approved, await StateAsync(processId));
 
         // Exactly one ConfirmDebit was emitted (the fork fired once).
         var confirms = (await OutboxCommandTypesAsync(processId))
@@ -206,7 +204,7 @@ public sealed class SagaForkSelfEmitIntegrationTests(OrchestratorPostgresFixture
     // --- helpers -----------------------------------------------------------------------
 
     private SagaAdvanceHandler NewHandler(ISagaCommandSink sink) =>
-        new(_machine, _stateStore, _transitionLog, sink, _businessRefStore);
+        new(_machine, _stateStore, _transitionLog, sink);
 
     private static SagaInboxEvent Event(Guid processId, string eventType, Guid? correlationId = null) =>
         new(Guid.NewGuid(), processId, eventType, "deposits.process.events", correlationId);
@@ -236,7 +234,7 @@ public sealed class SagaForkSelfEmitIntegrationTests(OrchestratorPostgresFixture
                 AutoApprovalThresholdMinorUnits: ThresholdCents),
             correlationId);
 
-        Assert.Equal(SagaState.ParallelValidation, result.State);
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, result.State);
         return result.ProcessId;
     }
 
@@ -249,7 +247,7 @@ public sealed class SagaForkSelfEmitIntegrationTests(OrchestratorPostgresFixture
         return outcome;
     }
 
-    private async Task<SagaState> StateAsync(Guid processId)
+    private async Task<string> StateAsync(Guid processId)
     {
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();

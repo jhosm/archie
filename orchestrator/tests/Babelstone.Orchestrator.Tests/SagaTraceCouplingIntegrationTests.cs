@@ -1,8 +1,7 @@
 using System.Diagnostics;
 using Babelstone.Orchestrator.Edge;
-using Babelstone.Orchestrator.Handlers;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
-using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Babelstone.Telemetry;
 using Npgsql;
@@ -183,7 +182,7 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
     };
 
     private SagaAdvanceHandler NewHandler(ISagaCommandSink sink) =>
-        new(_machine, _stateStore, _transitionLog, sink, _businessRefStore);
+        new(_machine, _stateStore, _transitionLog, sink);
 
     private static SagaInboxEvent Event(
         Guid processId, string eventType, Guid? correlationId = null, string? traceParent = null) =>
@@ -212,7 +211,7 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
                 AutoApprovalThresholdMinorUnits: ThresholdCents),
             correlationId);
 
-        Assert.Equal(SagaState.ParallelValidation, result.State);
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, result.State);
         return result.ProcessId;
     }
 

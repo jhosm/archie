@@ -65,5 +65,13 @@
          Confluent surface, so referencing it keeps the orchestrator extraction-ready
          (ADR-PC-019 §P2): Babelstone.Telemetry depends on nothing the orchestrator must shed. -->
     <ProjectReference Include="../../../engine/src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+
+    <!-- The family-agnostic saga substrate (ADR-IC-018 §P1): the host composes its runtime,
+         stores, and ports. -->
+    <ProjectReference Include="../Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
+    <!-- The term-deposit family's saga module (ADR-IC-018 §D4): the host is the §D4 composition
+         root — the standing, intended exemption (ADR-PC-021 §A2's pattern) that MAY reference a
+         family/** project so it can compose the modules. The substrate may NOT. -->
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Orchestration/Babelstone.Families.TermDeposit.Orchestration.csproj" />
   </ItemGroup>
 </Project>

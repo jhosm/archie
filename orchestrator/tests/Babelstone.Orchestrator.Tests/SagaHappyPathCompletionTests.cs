@@ -1,9 +1,8 @@
 using System.Globalization;
 using System.Text;
 using Babelstone.Orchestrator.Edge;
-using Babelstone.Orchestrator.Handlers;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
-using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Babelstone.TestFixtures;
 using Confluent.Kafka;
@@ -94,7 +93,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
         var topic = SagaConsumeTopics.TermDepositIntegrationTopic;
 
         var processId = await StartSagaAndWalkToApprovedAsync();
-        Assert.Equal(SagaState.Approved, await StateOrNullAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Approved, await StateOrNullAsync(processId));
 
         // Produce the engine's REAL terminal fact onto the FAMILY topic: ce_type's record name is
         // "DepositConstituted" and ce_subject is the deposit stream's aggregate_id — which equals the
@@ -109,7 +108,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
         try
         {
             await WaitUntilAsync(
-                async () => await StateOrNullAsync(processId) == SagaState.Completed,
+                async () => await StateOrNullAsync(processId) == ConstitutionProcess.States.Completed,
                 TimeSpan.FromSeconds(40),
                 "the hosted loop did not advance the saga to COMPLETED on the DepositConstituted event off the family topic");
         }
@@ -118,8 +117,8 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
             await host.StopAsync();
         }
 
-        Assert.Equal(SagaState.Completed, await StateOrNullAsync(processId));
-        Assert.True(SagaStateNames.IsTerminal(await StateOrNullAsync(processId) ?? SagaState.Started));
+        Assert.Equal(ConstitutionProcess.States.Completed, await StateOrNullAsync(processId));
+        Assert.True(ConstitutionProcess.States.IsTerminal(await StateOrNullAsync(processId) ?? ConstitutionProcess.States.Started));
         Assert.Equal(1, await CountInboxAsync(messageId));
     }
 
@@ -146,7 +145,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
         // loop only ADVANCES; it never starts a saga, bd babelstone-t7o3.9). The engine 2xx is not
         // exercised here — this test isolates the bus-resume advance the slot-2 contract names.
         var processId = await StartSagaAndWalkToApprovedAsync();
-        Assert.Equal(SagaState.Approved, await StateOrNullAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Approved, await StateOrNullAsync(processId));
 
         // Produce the engine's REAL terminal fact: ce_type's record name is "DepositConstituted" (the
         // engine's catalogued event), and ce_subject is the deposit stream id, which the slot-2
@@ -159,7 +158,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
         try
         {
             await WaitUntilAsync(
-                async () => await StateOrNullAsync(processId) == SagaState.Completed,
+                async () => await StateOrNullAsync(processId) == ConstitutionProcess.States.Completed,
                 TimeSpan.FromSeconds(40),
                 "the hosted loop did not advance the saga to COMPLETED on the DepositConstituted event");
         }
@@ -169,8 +168,8 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
         }
 
         // The saga reached its terminal success state, driven entirely by the real bus event.
-        Assert.Equal(SagaState.Completed, await StateOrNullAsync(processId));
-        Assert.True(SagaStateNames.IsTerminal(await StateOrNullAsync(processId) ?? SagaState.Started));
+        Assert.Equal(ConstitutionProcess.States.Completed, await StateOrNullAsync(processId));
+        Assert.True(ConstitutionProcess.States.IsTerminal(await StateOrNullAsync(processId) ?? ConstitutionProcess.States.Started));
 
         // Effectively-once: exactly one inbox dedup row for the event's ce_id.
         Assert.Equal(1, await CountInboxAsync(messageId));
@@ -195,7 +194,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
         try
         {
             await WaitUntilAsync(
-                async () => await StateOrNullAsync(processId) == SagaState.Completed,
+                async () => await StateOrNullAsync(processId) == ConstitutionProcess.States.Completed,
                 TimeSpan.FromSeconds(40),
                 "the hosted loop did not advance the saga to COMPLETED on the DepositConstituted event");
 
@@ -211,7 +210,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
         }
 
         Assert.Equal(1, await CountInboxAsync(messageId));
-        Assert.Equal(SagaState.Completed, await StateOrNullAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Completed, await StateOrNullAsync(processId));
     }
 
     /// <summary>
@@ -235,7 +234,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
         try
         {
             await WaitUntilAsync(
-                async () => await StateOrNullAsync(processId) == SagaState.Completed,
+                async () => await StateOrNullAsync(processId) == ConstitutionProcess.States.Completed,
                 TimeSpan.FromSeconds(40),
                 "the hosted loop did not advance the saga to COMPLETED");
 
@@ -255,7 +254,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
         }
 
         // Still COMPLETED — the late event moved nothing.
-        Assert.Equal(SagaState.Completed, await StateOrNullAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Completed, await StateOrNullAsync(processId));
     }
 
     // ---- Host wiring (the SAME composition the production Program.cs uses) -------------------
@@ -275,8 +274,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
             sp.GetRequiredService<ISagaStateMachine>(),
             sp.GetRequiredService<SagaStateStore>(),
             sp.GetRequiredService<SagaTransitionLog>(),
-            sp.GetRequiredService<ISagaCommandSink>(),
-            sp.GetRequiredService<SagaBusinessReferenceStore>()));
+            sp.GetRequiredService<ISagaCommandSink>()));
         builder.Services.AddSingleton(new SagaInboxConsumerOptions
         {
             ConnectionString = ConnectionString,
@@ -321,18 +319,18 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
                 ClientType: ClientType.Existing,
                 AutoApprovalThresholdMinorUnits: ThresholdCents),
             correlationId: Guid.NewGuid());
-        Assert.Equal(SagaState.ParallelValidation, result.State);
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, result.State);
         var processId = result.ProcessId;
 
-        var handler = new SagaAdvanceHandler(machine, stateStore, transitionLog, sink, businessRefStore);
+        var handler = new SagaAdvanceHandler(machine, stateStore, transitionLog, sink);
 
         // Parallel-validation join (balance first), then the auto-approval self-emit crosses
         // VALIDATIONS_COMPLETE → APPROVED in-process, then DebitConfirmed re-arms APPROVED.
         await AdvanceAsync(handler, processId, ConstitutionProcess.BalanceReserved);
         await AdvanceAsync(handler, processId, ConstitutionProcess.LimitsValidated);
-        Assert.Equal(SagaState.Approved, await StateOrNullAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Approved, await StateOrNullAsync(processId));
         await AdvanceAsync(handler, processId, ConstitutionProcess.DebitConfirmed);
-        Assert.Equal(SagaState.Approved, await StateOrNullAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Approved, await StateOrNullAsync(processId));
 
         return processId;
     }
@@ -382,7 +380,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
 
     // ---- Assertions ---------------------------------------------------------------------------
 
-    private async Task<SagaState?> StateOrNullAsync(Guid processId)
+    private async Task<string?> StateOrNullAsync(Guid processId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
@@ -390,7 +388,7 @@ public sealed class SagaHappyPathCompletionTests : IAsyncLifetime
             "SELECT state FROM saga_state WHERE process_id = @p;", connection);
         command.Parameters.AddWithValue("p", processId);
         var raw = await command.ExecuteScalarAsync();
-        return raw is string name ? SagaStateNames.FromName(name) : null;
+        return raw is string name ? name : null;
     }
 
     private async Task<int> CountInboxAsync(Guid messageId)

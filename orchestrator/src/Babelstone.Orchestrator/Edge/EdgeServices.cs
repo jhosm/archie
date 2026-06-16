@@ -1,6 +1,6 @@
 using System.Text.Json;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
-using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,29 +37,30 @@ public static class EdgeServices
             o.SerializerOptions.PropertyNameCaseInsensitive = false;
         });
 
-        // The saga state machine + persistence stores the edge starts the saga through. Singletons,
-        // matching the production composition. If the host already registered an ISagaStateMachine /
-        // store (it composes them for the consume loop), TryAdd keeps a single shared instance.
-        services.TryAddSingleton<ISagaStateMachine, ConstitutionProcess>();
+        // The generic substrate persistence stores the edge starts the saga through. Singletons,
+        // matching the production composition. If the host already registered a store (it composes them
+        // for the consume loop), TryAdd keeps a single shared instance. The state machine itself, the
+        // per-saga business-reference store, and the command sink are family-owned — the family's
+        // ISagaModule.ConfigureServices registers them (ADR-IC-018 §P4), the host's module loop registers
+        // the machines; EdgeServices no longer names the family for those.
         services.TryAddSingleton<SagaStateStore>();
         services.TryAddSingleton<SagaTransitionLog>();
-        // The per-saga business-reference store (bd babelstone-t7o3.1): the edge writes the pinned
-        // references at start, the fork + the command-payload assembly read them. Registered before
-        // the sink so the sink resolves the SAME instance.
-        services.TryAddSingleton<SagaBusinessReferenceStore>();
-        services.TryAddSingleton<ISagaCommandSink>(sp =>
-            new SagaCommandOutboxSink(sp.GetRequiredService<SagaBusinessReferenceStore>()));
 
         services.TryAddSingleton(new EdgeOptions { ConnectionString = connectionString });
 
         // No clock is registered at the edge (Fork B rework, bd babelstone-t7o3.11): the engine is now
         // the constitution authority, so it derives start_date from the constitution instant it stamps
         // (ADR-PC-010 §P5) — the edge no longer pins start_date and the saga's command bytes carry no
-        // clock (matching the ProcessApiEndpoints "No clock is needed at the edge" note). The earlier
-        // edge-side TimeProvider registration was the rejected v1 stand-in's and is removed.
+        // clock (matching the ProcessApiEndpoints "No clock is needed at the edge" note).
 
+        // The edge starts the CONSTITUTION saga (it is the only SagaStartMode.EdgeStarted saga, Document
+        // 05 §Step 0). The host composition root MAY name the family (ADR-IC-018 §D4 / ADR-PC-021 §A2
+        // exemption), so the edge resolves the constitution machine from the host's machine registry by
+        // its saga_type and pins the constitution start event. The family-owned business-ref store + sink
+        // are resolved from DI (registered by the module). A renewal saga is EventAutoStarted, so it is
+        // NOT wired here.
         services.TryAddSingleton(sp => new EdgeSagaStarter(
-            sp.GetRequiredService<ISagaStateMachine>(),
+            sp.GetServices<ISagaStateMachine>().Single(m => m.SagaType == ConstitutionProcess.Type),
             sp.GetRequiredService<SagaStateStore>(),
             sp.GetRequiredService<SagaTransitionLog>(),
             sp.GetRequiredService<ISagaCommandSink>(),

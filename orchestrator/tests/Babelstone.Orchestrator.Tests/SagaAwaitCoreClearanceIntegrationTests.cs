@@ -1,10 +1,8 @@
 using System.Net;
-using Babelstone.Orchestrator.Commands;
 using Babelstone.Orchestrator.Dispatch;
 using Babelstone.Orchestrator.Edge;
-using Babelstone.Orchestrator.Handlers;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
-using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -116,7 +114,7 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
             // (201) lands; it then parks at APPROVED until the engine's ProcessConstituted event (slot 2),
             // which we inject to stand in for the consume loop.
             await WaitUntilAsync(
-                async () => await StateAsync(processId) == SagaState.Approved
+                async () => await StateAsync(processId) == ConstitutionProcess.States.Approved
                     && (await OutboxStatusesAsync(processId)).TryGetValue(
                         ConstitutionProcess.ActivateDeposit, out var s) && s == "PUBLISHED",
                 TimeSpan.FromSeconds(60),
@@ -130,7 +128,7 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
         }
 
         // The saga resumed and completed — the late debit confirmation walked it home.
-        Assert.Equal(SagaState.Completed, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Completed, await StateAsync(processId));
 
         var rows = await OutboxStatusesAsync(processId);
         // The indeterminate ConfirmDebit row is terminal-as-delivered (PUBLISHED) — the command WAS
@@ -202,7 +200,7 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
             // ProcessConstituted event (slot 2), which we inject to stand in for the consume loop.
             await WaitUntilAsync(
                 async () => await ConfirmDebitRowCountAsync(processId) >= 2
-                    && await StateAsync(processId) == SagaState.Approved
+                    && await StateAsync(processId) == ConstitutionProcess.States.Approved
                     && (await OutboxStatusesAsync(processId)).TryGetValue(
                         ConstitutionProcess.ActivateDeposit, out var s) && s == "PUBLISHED",
                 TimeSpan.FromSeconds(60),
@@ -216,7 +214,7 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
         }
 
         // The reissue resolved and the saga completed — NOT a no-money-moved terminal failure.
-        Assert.Equal(SagaState.Completed, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Completed, await StateAsync(processId));
 
         // EXACTLY TWO ConfirmDebit rows: the original indeterminate one, and the RETRY_PERMITTED reissue.
         Assert.Equal(2, await ConfirmDebitRowCountAsync(processId));
@@ -232,7 +230,7 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
         // and the reissue is a forward retry, not a compensation).
         Assert.DoesNotContain(ConstitutionProcess.ReverseCoreDebit, rows.Keys);
         // The saga never failed closed — DEPOSIT_CONSTITUTION_FAILED is not its terminal.
-        Assert.NotEqual(SagaState.DepositConstitutionFailed, await StateAsync(processId));
+        Assert.NotEqual(ConstitutionProcess.States.DepositConstitutionFailed, await StateAsync(processId));
 
         // The clearance query genuinely reached the ACL, and the ACL saw TWO debit sends (the original
         // + the reissue) — the reissue actually went back over the wire.
@@ -275,7 +273,7 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
             // The saga escalates to HUMAN_INTERVENTION_REQUIRED — the loop TERMINATES (it does not spin
             // forever). The 60s deadline is the liveness guarantee: if the budget were absent, this never trips.
             await WaitUntilAsync(
-                async () => await StateAsync(processId) == SagaState.HumanInterventionRequired,
+                async () => await StateAsync(processId) == ConstitutionProcess.States.HumanInterventionRequired,
                 TimeSpan.FromSeconds(60),
                 "the saga did not escalate to HUMAN_INTERVENTION_REQUIRED after the reissue budget");
         }
@@ -299,7 +297,7 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
 
         // Final state is the escalation, NOT a terminal failure and NOT a reversal: nothing was ever
         // committed (every debit was indeterminate-then-not-executed), so there is no money to reverse.
-        Assert.Equal(SagaState.HumanInterventionRequired, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.HumanInterventionRequired, await StateAsync(processId));
         var rows = await OutboxStatusesAsync(processId);
         Assert.DoesNotContain(ConstitutionProcess.ReverseCoreDebit, rows.Keys);
         Assert.DoesNotContain(ConstitutionProcess.ActivateDeposit, rows.Keys);
@@ -335,8 +333,7 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
             sp.GetRequiredService<ISagaStateMachine>(),
             sp.GetRequiredService<SagaStateStore>(),
             sp.GetRequiredService<SagaTransitionLog>(),
-            sp.GetRequiredService<ISagaCommandSink>(),
-            sp.GetRequiredService<SagaBusinessReferenceStore>()));
+            sp.GetRequiredService<ISagaCommandSink>()));
 
         builder.Services.AddSingleton<IResultEventBridge, ConstitutionResultEvents.Bridge>();
         builder.Services.AddSingleton(sp => new SagaCommandDispatchDrainer(
@@ -375,7 +372,7 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
                 AutoApprovalThresholdMinorUnits: ThresholdCents),
             correlationId: Guid.NewGuid());
 
-        Assert.Equal(SagaState.ParallelValidation, result.State);
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, result.State);
         return result.ProcessId;
     }
 
@@ -384,7 +381,7 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
         var machine = new ConstitutionProcess();
         var handler = new SagaAdvanceHandler(
             machine, new SagaStateStore(), new SagaTransitionLog(),
-            new SagaCommandOutboxSink(new SagaBusinessReferenceStore()), new SagaBusinessReferenceStore());
+            new SagaCommandOutboxSink(new SagaBusinessReferenceStore()));
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();
         await handler.AdvanceAsync(connection, tx,
@@ -392,7 +389,7 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
         await tx.CommitAsync();
     }
 
-    private async Task<SagaState> StateAsync(Guid processId)
+    private async Task<string> StateAsync(Guid processId)
     {
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();
@@ -451,7 +448,7 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
         await using var command = new NpgsqlCommand(
             "SELECT COUNT(*) FROM saga_transition WHERE process_id = @p AND to_state = @s;", connection);
         command.Parameters.AddWithValue("p", processId);
-        command.Parameters.AddWithValue("s", SagaStateNames.ToName(SagaState.AwaitCoreClearance));
+        command.Parameters.AddWithValue("s", ConstitutionProcess.States.AwaitCoreClearance);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
@@ -467,8 +464,8 @@ public sealed class SagaAwaitCoreClearanceIntegrationTests : IAsyncLifetime
             WHERE process_id = @p AND from_state = @from AND to_state = @to AND event_type = @evt;
             """, connection);
         command.Parameters.AddWithValue("p", processId);
-        command.Parameters.AddWithValue("from", SagaStateNames.ToName(SagaState.AwaitCoreClearance));
-        command.Parameters.AddWithValue("to", SagaStateNames.ToName(SagaState.HumanInterventionRequired));
+        command.Parameters.AddWithValue("from", ConstitutionProcess.States.AwaitCoreClearance);
+        command.Parameters.AddWithValue("to", ConstitutionProcess.States.HumanInterventionRequired);
         command.Parameters.AddWithValue("evt", ConstitutionProcess.ReissueBudgetExhausted);
         return Convert.ToInt32(await command.ExecuteScalarAsync()) == 1;
     }

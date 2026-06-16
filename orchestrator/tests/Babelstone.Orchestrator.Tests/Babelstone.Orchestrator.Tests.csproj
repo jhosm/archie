@@ -47,6 +47,12 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Babelstone.Orchestrator/Babelstone.Orchestrator.csproj" />
+    <!-- The split substrate + family-module (ADR-IC-018): existing tests reference types from all
+         three layers, so the test project references all three. A test-project reference into
+         families/** is explicitly NOT gated by ORCHESTRATOR_FAMILY_AGNOSTIC (the gate targets only
+         the substrate projects, not test projects). -->
+    <ProjectReference Include="../../src/Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Orchestration/Babelstone.Families.TermDeposit.Orchestration.csproj" />
     <!-- The SHARED Redpanda Testcontainers fixture (ic10): the single source of the broker setup
          the engine producer/consumer lanes already reuse — the orchestrator's consume-loop lane
          reuses it too rather than copy-pasting the broker bring-up. A TEST-only reference: it does

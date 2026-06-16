@@ -3,10 +3,11 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Babelstone.Orchestrator.Edge;
 using Babelstone.Orchestrator.Inbox;
-using Babelstone.Orchestrator.Outbox;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Saga;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Xunit;
 
@@ -66,7 +67,7 @@ public sealed class EdgeProcessApiIntegrationTests(OrchestratorPostgresFixture f
         // (the start event drove the first transition), with the owning client persisted.
         var saga = await LoadByPublicIdAsync(processId);
         Assert.NotNull(saga);
-        Assert.Equal(SagaState.ParallelValidation, saga!.State);
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, saga!.State);
         Assert.Equal(OwningClient, saga.OwningClientId);
 
         // The two parallel validation commands were produced to saga_outbox — NOT to the bus.
@@ -198,7 +199,7 @@ public sealed class EdgeProcessApiIntegrationTests(OrchestratorPostgresFixture f
         var saga = await stateStore.LoadAsync(connection, tx, processId);
         Assert.NotNull(saga);
         Assert.True(await stateStore.TryAdvanceAsync(
-            connection, tx, processId, saga!.Version, SagaState.DepositConstitutionFailed));
+            connection, tx, processId, saga!.Version, ConstitutionProcess.States.DepositConstitutionFailed));
         await tx.CommitAsync();
     }
 
@@ -273,6 +274,20 @@ public sealed class EdgeProcessApiIntegrationTests(OrchestratorPostgresFixture f
         {
             var builder = WebApplication.CreateBuilder();
             builder.WebHost.UseUrls("http://127.0.0.1:0");
+
+            // Compose the term-deposit saga module exactly as the host does (ADR-IC-018 §P4): register the
+            // module's family-owned services (business-ref store + outbox sink) and the machine/bridge/router
+            // it contributes, plus the saga_type → machine registry the SSE read resolves terminality through.
+            // EdgeServices then wires the edge starter + SSE reader over those.
+            var context = new SagaModuleContext(connectionString, "http://engine", "http://settlement");
+            var module = new TermDepositSagaModule(context);
+            module.ConfigureServices(builder.Services, context);
+            builder.Services.AddSingleton(module.StateMachine);
+            builder.Services.AddSingleton(module.ResultEventBridge);
+            builder.Services.AddSingleton(module.CommandRouter);
+            builder.Services.AddSingleton<IReadOnlyDictionary<string, ISagaStateMachine>>(sp =>
+                sp.GetServices<ISagaStateMachine>().ToDictionary(m => m.SagaType, StringComparer.Ordinal));
+
             EdgeServices.Register(builder.Services, connectionString);
             _app = builder.Build();
             ProcessApiEndpoints.Map(_app);

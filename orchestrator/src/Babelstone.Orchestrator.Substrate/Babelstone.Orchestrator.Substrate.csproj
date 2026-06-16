@@ -1,0 +1,57 @@
+<!-- The family-AGNOSTIC saga substrate (ADR-IC-018 §P1/§P2): the runtime (advance handler,
+     consume loop, dispatcher), the generic saga stores, the state-machine + router + bridge
+     port abstractions, and the ISagaModule plug-in seam. It carries NO families/** reference
+     and NO engine-kernel reference — the family → substrate arrow is one-way (ADR-IC-018 §D2),
+     gated by ORCHESTRATOR_FAMILY_AGNOSTIC. A LIBRARY (Microsoft.NET.Sdk, not .Web): the edge
+     HTTP surface lives in the host. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Orchestrator</RootNamespace>
+    <AssemblyName>Babelstone.Orchestrator.Substrate</AssemblyName>
+
+    <!-- Shared engine build settings (mirrors the host csproj; the orchestrator subtree is
+         extraction-ready per ADR-PC-019 §P2, so it carries its own copy). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Doc COVERAGE is a docs concern, not a build gate (same stance as the host):
+         CS1591/CS1573 suppressed, doc ROT (malformed XML, broken refs) still fails. -->
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The DDL ships as embedded, numbered, forward-only SQL resources (ADR-PC-001 §P5).
+         They live with the MigrationSet that enumerates this assembly's own resources — the
+         generic saga_state / saga_transition / saga_outbox / inbox tables are family-agnostic. -->
+    <EmbeddedResource Include="Migrations/Sql/*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Npgsql is the substrate's data dependency: it persists saga state, the transition
+         history, the saga_outbox commands, and the inbox dedup row (ADR-IC-003 §S2). -->
+    <PackageReference Include="Npgsql" />
+    <!-- Confluent.Kafka is the consume-loop dependency: the substrate IS a Redpanda consumer
+         (ADR-IC-003 §S2), reading the CloudEvents Binary-mode headers (ADR-IC-015) — headers
+         only, never the Avro payload, so the substrate stays extraction-ready (ADR-PC-019 §P2). -->
+    <PackageReference Include="Confluent.Kafka" />
+    <!-- BackgroundService/IHostedService (the saga worker host shell), IServiceCollection (the
+         ISagaModule.ConfigureServices seam), and IHttpClientFactory (the dispatcher) come from the
+         Microsoft.Extensions.* packages directly, since this is a plain library SDK (not .Web).
+         Microsoft.Extensions.Hosting transitively brings the DI + hosting abstractions. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+
+    <!-- The SHARED Babelstone telemetry surface (ADR-IC-007 Layer 1): the substrate opens its
+         saga-advance spans on the SAME Babelstone.Engine ActivitySource the engine uses. A small
+         leaf library with no DB or Confluent surface, so referencing it keeps the substrate
+         extraction-ready (ADR-PC-019 §P2). This is the ONLY non-NuGet reference, and it carries
+         no family or engine-kernel dependency. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+  </ItemGroup>
+</Project>

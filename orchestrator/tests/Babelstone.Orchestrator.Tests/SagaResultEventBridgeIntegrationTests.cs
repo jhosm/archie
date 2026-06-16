@@ -1,10 +1,8 @@
 using System.Net;
-using Babelstone.Orchestrator.Commands;
 using Babelstone.Orchestrator.Dispatch;
 using Babelstone.Orchestrator.Edge;
-using Babelstone.Orchestrator.Handlers;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
-using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -108,14 +106,14 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
             // The saga walks the ACL legs to APPROVED and the dispatcher delivers ActivateDeposit (201),
             // but the engine 2xx does NOT advance it — it parks at APPROVED with the row PUBLISHED.
             await WaitUntilAsync(
-                async () => await StateAsync(processId) == SagaState.Approved
+                async () => await StateAsync(processId) == ConstitutionProcess.States.Approved
                     && (await OutboxStatusesAsync(processId)).TryGetValue(
                         ConstitutionProcess.ActivateDeposit, out var s) && s == "PUBLISHED",
                 TimeSpan.FromSeconds(60),
                 "the saga did not park at APPROVED with ActivateDeposit delivered");
 
             // It must NOT have self-advanced to COMPLETED off the engine 2xx (the slot-2 guarantee).
-            Assert.Equal(SagaState.Approved, await StateAsync(processId));
+            Assert.Equal(ConstitutionProcess.States.Approved, await StateAsync(processId));
 
             // The engine relays DepositConstituted on deposits.process.events → the consume loop drives
             // (APPROVED, ProcessConstituted) → COMPLETED. We inject it here to stand in for that loop.
@@ -126,7 +124,7 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
             await host.StopAsync();
         }
 
-        Assert.Equal(SagaState.Completed, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Completed, await StateAsync(processId));
 
         // The whole command set was driven and every routed leg PUBLISHED (ValidateProductLimits is the
         // no-route auto-pass — also PUBLISHED via the synthetic-Applied carve-out).
@@ -159,7 +157,7 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
         try
         {
             await WaitUntilAsync(
-                async () => await StateAsync(processId) == SagaState.CancelledAfterDebit,
+                async () => await StateAsync(processId) == ConstitutionProcess.States.CancelledAfterDebit,
                 TimeSpan.FromSeconds(60),
                 "the saga did not auto-reverse the debit to CANCELLED_AFTER_DEBIT");
         }
@@ -170,7 +168,7 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
 
         // The saga compensated: the debit was reversed and the saga rests in the distinct terminal that
         // says money DID move and was returned.
-        Assert.Equal(SagaState.CancelledAfterDebit, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.CancelledAfterDebit, await StateAsync(processId));
 
         var rows = await OutboxStatusesAsync(processId);
         // ConfirmDebit succeeded (the irreversible debit landed); ActivateDeposit was REFUSED (FAILED);
@@ -199,7 +197,7 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
         // Once in COMPENSATE_VALIDATIONS the still-pending Reserve/ValidateProductLimits legs synthesize
         // BalanceReserved/LimitsValidated, which have NO transition there → graceful no-ops.
         await InjectEventAsync(processId, ConstitutionProcess.LimitsRejected);
-        Assert.Equal(SagaState.CompensateValidations, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.CompensateValidations, await StateAsync(processId));
 
         // No engine activation is reached on this path; an unreachable engine URL proves it.
         using var host = BuildHost(engineBaseUrl: "http://engine.invalid", settlementBaseUrl: _acl.Url!);
@@ -207,7 +205,7 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
         try
         {
             await WaitUntilAsync(
-                async () => await StateAsync(processId) == SagaState.Cancelled,
+                async () => await StateAsync(processId) == ConstitutionProcess.States.Cancelled,
                 TimeSpan.FromSeconds(60),
                 "the saga did not release the hold and reach CANCELLED");
         }
@@ -216,7 +214,7 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
             await host.StopAsync();
         }
 
-        Assert.Equal(SagaState.Cancelled, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Cancelled, await StateAsync(processId));
 
         var rows = await OutboxStatusesAsync(processId);
         Assert.Equal("PUBLISHED", rows[ConstitutionProcess.ReleaseBalanceReservation]);
@@ -248,8 +246,7 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
             sp.GetRequiredService<ISagaStateMachine>(),
             sp.GetRequiredService<SagaStateStore>(),
             sp.GetRequiredService<SagaTransitionLog>(),
-            sp.GetRequiredService<ISagaCommandSink>(),
-            sp.GetRequiredService<SagaBusinessReferenceStore>()));
+            sp.GetRequiredService<ISagaCommandSink>()));
 
         builder.Services.AddSingleton<IResultEventBridge, ConstitutionResultEvents.Bridge>();
         builder.Services.AddSingleton(sp => new SagaCommandDispatchDrainer(
@@ -290,7 +287,7 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
                 AutoApprovalThresholdMinorUnits: ThresholdCents),
             correlationId: Guid.NewGuid());
 
-        Assert.Equal(SagaState.ParallelValidation, result.State);
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, result.State);
         return result.ProcessId;
     }
 
@@ -301,7 +298,7 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
         var machine = new ConstitutionProcess();
         var handler = new SagaAdvanceHandler(
             machine, new SagaStateStore(), new SagaTransitionLog(),
-            new SagaCommandOutboxSink(new SagaBusinessReferenceStore()), new SagaBusinessReferenceStore());
+            new SagaCommandOutboxSink(new SagaBusinessReferenceStore()));
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();
         await handler.AdvanceAsync(connection, tx,
@@ -309,7 +306,7 @@ public sealed class SagaResultEventBridgeIntegrationTests : IAsyncLifetime
         await tx.CommitAsync();
     }
 
-    private async Task<SagaState> StateAsync(Guid processId)
+    private async Task<string> StateAsync(Guid processId)
     {
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();

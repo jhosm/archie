@@ -1,9 +1,9 @@
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator;
 using Babelstone.Orchestrator.Dispatch;
 using Babelstone.Orchestrator.Edge;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Migrations;
-using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -39,44 +39,69 @@ var runtimeConnectionString =
     ?? builder.Configuration["Orchestrator:ConnectionString"]
     ?? Environment.GetEnvironmentVariable("ORCHESTRATOR_CONNECTION_STRING");
 
-// The hand-rolled saga state machines (ADR-IC-003 §P2: the table is the spec). The orchestrator
-// hosts N sagas keyed by saga_type (bd babelstone-mtto PR1 — the multi-saga substrate): each
-// ISagaStateMachine registration is collected (GetServices) and the SagaAdvanceHandler routes an
-// advance to the right machine by the loaded saga's saga_type. ConstitutionProcess is the only saga
-// at v1; H.3 renewal (babelstone-mtto PR2) registers its own ISagaStateMachine + ISagaCommandRouter
-// + IResultEventBridge alongside, with no substrate change.
-builder.Services.AddSingleton<ISagaStateMachine, ConstitutionProcess>();
-// The per-saga-type result-event bridge (bd babelstone-mtto PR1): the dispatcher resolves
-// (command_type, delivery_kind) → result-event by saga_type. ConstitutionResultEvents.Bridge is the
-// constitution mapping; PR2's renewal saga registers its own IResultEventBridge here.
-builder.Services.AddSingleton<IResultEventBridge, ConstitutionResultEvents.Bridge>();
+// The HTTP endpoints the saga command dispatcher delivers to (ADR-PC-029). The engine command surface
+// (Engine:BaseUrl) and the Core-ACL/settlement target (Settlement:BaseUrl) are service ENDPOINTS, not
+// credentials, so they resolve straight from IConfiguration — distinct from the runtime DB credential
+// (the ADR-PC-004 Amendment A1 boundary). Resolved up front so the family saga modules can pin them
+// onto their command routers via the SagaModuleContext below.
+var engineBaseUrl = builder.Configuration["Engine:BaseUrl"]
+    ?? builder.Configuration.GetConnectionString("Engine")
+    ?? "http://localhost:8080";
+var settlementBaseUrl = builder.Configuration["Settlement:BaseUrl"] ?? "http://localhost:8089";
+
+// The orchestrator hosts the FAMILY-AGNOSTIC substrate; each concrete saga is a FAMILY-OWNED MODULE
+// (ADR-IC-018 §D1/§D4/§P4). The host — the §D4 composition root, the standing exemption that MAY name a
+// family (ADR-PC-021 §A2 pattern) — holds an EXPLICIT module list at the current saga count (ADR-PC-021
+// §A3: explicit now, assembly-scan later) and loops over it: it lets each module register its
+// family-owned services (ConfigureServices) and registers the machine/bridge/router each contributes.
+// Adding a family's saga is a new module here, ZERO substrate diff (ADR-IC-018 §Consequences). H.3
+// renewal (babelstone-mtto PR2) is the next module — an EventAutoStarted one.
+var sagaModuleContext = new SagaModuleContext(
+    RuntimeConnectionString: runtimeConnectionString
+        ?? throw new InvalidOperationException(
+            "No orchestrator runtime connection string configured. Set ConnectionStrings:Orchestrator, " +
+            "Orchestrator:ConnectionString, or ORCHESTRATOR_CONNECTION_STRING."),
+    EngineBaseUrl: engineBaseUrl,
+    SettlementBaseUrl: settlementBaseUrl);
+
+var sagaModules = new ISagaModule[]
+{
+    new TermDepositSagaModule(sagaModuleContext),
+};
+
+foreach (var module in sagaModules)
+{
+    // The module registers its family-owned services (per-saga business-reference store, the outbox
+    // command sink that calls the family's payload factory, …). The substrate keeps only the ports.
+    module.ConfigureServices(builder.Services, sagaModuleContext);
+    // The machine, the result-event bridge, and the command router the module contributes — collected
+    // by the substrate handler/drainer/composite as the per-saga-type registries (GetServices).
+    builder.Services.AddSingleton(module.StateMachine);
+    builder.Services.AddSingleton(module.ResultEventBridge);
+    builder.Services.AddSingleton(module.CommandRouter);
+}
+
+// A saga_type → machine registry singleton for the edge SSE read (ADR-IC-018 §D3 / §7): the SSE loop
+// resolves the saga's machine by saga_type and asks IT whether a polled state is terminal — never a
+// central static predicate. The advance handler builds the same routing internally from GetServices.
+builder.Services.AddSingleton<IReadOnlyDictionary<string, ISagaStateMachine>>(sp =>
+    sp.GetServices<ISagaStateMachine>().ToDictionary(m => m.SagaType, StringComparer.Ordinal));
+
 builder.Services.AddSingleton<SagaStateStore>();
 builder.Services.AddSingleton<SagaTransitionLog>();
-// The per-saga business-reference store (bd babelstone-t7o3.1): the edge writes the pinned
-// references at start; the approval fork (self-emitted at VALIDATIONS_COMPLETE) and the
-// command-payload assembly read them. A shared singleton the sink and the advance handler both use.
-builder.Services.AddSingleton<SagaBusinessReferenceStore>();
-
-// The command sink is the outbox seam (ADR-IC-003 §P1). H.2 (babelstone-n55u) swaps the
-// substrate's in-memory RecordingCommandSink for the REAL durable writer: each command the saga
-// decides is a saga_outbox row committed in the SAME transaction as the state move (effectively-
-// once command emission). With the pinned business references present it writes the FULL typed
-// command payloads (bd babelstone-t7o3.1); the recorder remains as a test stand-in only.
-builder.Services.AddSingleton<ISagaCommandSink>(sp =>
-    new SagaCommandOutboxSink(sp.GetRequiredService<SagaBusinessReferenceStore>()));
 
 // The consume loop ADVANCES sagas only — it never starts them. Sagas are started exclusively at the
 // edge (EdgeSagaStarter), which pins the business references in the same transaction as the STARTED
 // row; the loop resumes a saga on a consumed advance event (ADR-IC-003 §S2; bd babelstone-t7o3.9).
 // GetServices (not GetRequiredService) collects EVERY ISagaStateMachine registration so the handler
-// hosts N saga types keyed by saga_type (bd babelstone-mtto PR1). With only ConstitutionProcess
-// registered the registry has one entry — behaviour-identical to before.
+// hosts N saga types keyed by saga_type (ADR-IC-018 §D2). The substrate handler carries no family
+// dependency — the per-saga reissue-budget / approval-fork logic is the family machine's optional
+// IEventSubstitutor / IPostAdvanceHook hooks (ADR-IC-018 §P6).
 builder.Services.AddSingleton(sp => new SagaAdvanceHandler(
     sp.GetServices<ISagaStateMachine>(),
     sp.GetRequiredService<SagaStateStore>(),
     sp.GetRequiredService<SagaTransitionLog>(),
-    sp.GetRequiredService<ISagaCommandSink>(),
-    sp.GetRequiredService<SagaBusinessReferenceStore>()));
+    sp.GetRequiredService<ISagaCommandSink>()));
 
 // The schema migration runs FIRST (registered before the consume loop): hosted services start in
 // registration order, so the saga schema is applied before the consumer can write its first dedup
@@ -85,35 +110,31 @@ builder.Services.AddHostedService(sp => new SagaMigrationHostedService(migration
 
 // The Redpanda consume loop (t7o3.2) — the same hosted-BackgroundService shape the engine's
 // outbox relay and inbox consumer use. Three pieces register here:
-//   • SagaInboxConsumerOptions — the broker endpoint, the consumer group id, and the topics the
-//     constitution saga reacts to (SagaConsumeTopics.ConstitutionProcessTopics — BOTH the internal
-//     deposits.process.events domain topic for orchestrator-produced process events AND the engine's
-//     term_deposit FAMILY INTEGRATION topic where the closing DepositConstituted fact arrives, since
-//     the engine names its relay topic after the aggregate_type and stays family-agnostic; ADR-IC-003
-//     §S2 A6 2026-06-15, bd babelstone-t7o3.11 / Document 05 §1). The Kafka bootstrap address is a
-//     broker ENDPOINT, not a credential — already plaintext in
-//     infra/compose.yaml and the k8s manifests — so it resolves straight from IConfiguration
-//     (Kafka:BootstrapServers via env/appsettings), distinct from the orchestrator runtime DB
-//     credential which goes through the ADR-PC-004 Amendment A1 boundary. The dev default matches the
-//     Redpanda external listener in infra/compose.yaml (localhost:19092).
+//   • SagaInboxConsumerOptions — the broker endpoint plus the consumer group id and the topics the
+//     saga reacts to, both DECLARED BY THE FAMILY SAGA MODULE (ISagaModule.ConsumerGroupId /
+//     ConsumeTopics; ADR-IC-018 §P4) — the host names no family topic. For the constitution module that
+//     is its own group over the internal deposits.process.events domain topic AND the engine's
+//     term_deposit FAMILY INTEGRATION topic where the closing DepositConstituted fact arrives
+//     (ADR-IC-003 §S2 A6 2026-06-15, bd babelstone-t7o3.11). The Kafka bootstrap address is a broker
+//     ENDPOINT, not a credential — already plaintext in infra/compose.yaml — so it resolves straight
+//     from IConfiguration (Kafka:BootstrapServers), distinct from the runtime DB credential.
 //   • SagaConsumeLoop — the impure shell that owns the consumer, the connection/transaction, and the
 //     offset commit (commit AFTER the DB tx → at-least-once delivery, effectively-once advance).
 //   • AddHostedService<SagaInboxConsumerService> — the poll loop that drives the loop with
 //     exponential backoff on a transient failure (the offset stays uncommitted → redelivery).
+// At the current saga count the host runs ONE consume loop for the single (constitution) module; a
+// second module gets its OWN group + loop with no substrate change (ADR-IC-018 §P4 / Risk 3).
 var bootstrapServers = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:19092";
-var consumerGroupId = builder.Configuration["Kafka:GroupId"] ?? "babelstone-orchestrator";
+var consumeModule = sagaModules.Single();
 builder.Services.AddSingleton(new SagaInboxConsumerOptions
 {
     // The runtime connection string must be present to consume: refusing here (rather than at the
     // first consume) fails fast against a mis-wired deployment, the same stance the migration
-    // hosted service takes. A null/blank value throws a clear ArgumentException on the required-init.
-    ConnectionString = runtimeConnectionString
-        ?? throw new InvalidOperationException(
-            "No orchestrator runtime connection string configured. Set ConnectionStrings:Orchestrator, " +
-            "Orchestrator:ConnectionString, or ORCHESTRATOR_CONNECTION_STRING."),
+    // hosted service takes.
+    ConnectionString = sagaModuleContext.RuntimeConnectionString,
     BootstrapServers = bootstrapServers,
-    GroupId = consumerGroupId,
-    Topics = SagaConsumeTopics.ConstitutionProcessTopics,
+    GroupId = consumeModule.ConsumerGroupId,
+    Topics = consumeModule.ConsumeTopics,
 });
 builder.Services.AddSingleton(sp => new SagaConsumeLoop(
     sp.GetRequiredService<SagaInboxConsumerOptions>(),
@@ -141,25 +162,16 @@ builder.Services.AddHostedService<SagaInboxConsumerService>();
 //   • AddHostedService<SagaCommandDispatcherService> — the poll loop that drains PENDING rows and
 //     applies the ADR-PC-029 slot-5 error model (2xx → PUBLISHED, 4xx → terminal FAILED surfaced for
 //     compensation, 5xx/timeout → stay PENDING and retry; idempotency makes the retry safe).
-var engineBaseUrl = builder.Configuration["Engine:BaseUrl"]
-    ?? builder.Configuration.GetConnectionString("Engine")
-    ?? "http://localhost:8080";
-var settlementBaseUrl = builder.Configuration["Settlement:BaseUrl"] ?? "http://localhost:8089";
 builder.Services.AddSingleton(new SagaCommandDispatcherOptions
 {
-    ConnectionString = runtimeConnectionString
-        ?? throw new InvalidOperationException(
-            "No orchestrator runtime connection string configured. Set ConnectionStrings:Orchestrator, " +
-            "Orchestrator:ConnectionString, or ORCHESTRATOR_CONNECTION_STRING."),
+    ConnectionString = sagaModuleContext.RuntimeConnectionString,
     EngineBaseUrl = engineBaseUrl,
     SettlementBaseUrl = settlementBaseUrl,
 });
-// The routing seam is now multi-saga (bd babelstone-mtto PR1): SagaCommandRouter is registered as an
-// ISagaCommandRouter (it serves saga_type ConstitutionProcess), and the CompositeCommandRouter is the
-// ICommandRouter the dispatcher consumes — it collects every ISagaCommandRouter (GetServices) into a
-// saga_type → router registry and delegates by the outbox row's saga_type. PR2's renewal saga adds its
-// own ISagaCommandRouter here and the composite routes it with no dispatcher change.
-builder.Services.AddSingleton<ISagaCommandRouter, SagaCommandRouter>();
+// The routing seam is multi-saga (ADR-IC-018 §D2): each family module contributed its own
+// ISagaCommandRouter via the module loop above (it serves its own saga_type). The CompositeCommandRouter
+// is the ICommandRouter the dispatcher consumes — it collects every ISagaCommandRouter (GetServices) into
+// a saga_type → router registry and delegates by the outbox row's saga_type, naming no family.
 builder.Services.AddSingleton<ICommandRouter>(sp =>
     new CompositeCommandRouter(sp.GetServices<ISagaCommandRouter>()));
 builder.Services.AddHttpClient();

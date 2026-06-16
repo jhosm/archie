@@ -1,4 +1,4 @@
-using Babelstone.Orchestrator.Handlers;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Saga;
 using Npgsql;
@@ -13,7 +13,7 @@ namespace Babelstone.Orchestrator.Edge;
 /// <param name="DepositId">The client-facing <c>DEP-…</c> deposit reference the 202 returns.</param>
 /// <param name="State">The state the saga rests in after the start drove its first transition.</param>
 public readonly record struct EdgeStartResult(
-    Guid ProcessId, string PublicProcessId, string DepositId, SagaState State);
+    Guid ProcessId, string PublicProcessId, string DepositId, string State);
 
 /// <summary>
 /// The PII-free business facts the edge pins onto the saga at start (bd babelstone-t7o3.1) — the
@@ -178,7 +178,7 @@ public sealed class EdgeSagaStarter(
 
             await _transitionLog.AppendAsync(
                 connection, transaction, processId, _machine.InitialState, outcome.Next,
-                StartEventType, causationId, note: SagaStateNames.ToName(outcome.Next), ct);
+                StartEventType, causationId, note: outcome.Next, ct);
 
             foreach (var commandType in outcome.Commands)
             {

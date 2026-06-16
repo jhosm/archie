@@ -1,7 +1,6 @@
 using Babelstone.Orchestrator.Edge;
-using Babelstone.Orchestrator.Handlers;
+using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
-using Babelstone.Orchestrator.Outbox;
 using Babelstone.Orchestrator.Saga;
 using Npgsql;
 using Xunit;
@@ -46,21 +45,21 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         // PARALLEL_VALIDATION, pinning the references and emitting the two parallel commands. The
         // amount is well under the threshold (auto-approve path).
         var processId = await StartSagaWithReferencesAsync(correlationId, amountCents: 100_00);
-        Assert.Equal(SagaState.ParallelValidation, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, await StateAsync(processId));
 
         // Both validations (balance first → AWAIT_LIMITS_VALIDATED → join). When the join lands in
         // VALIDATIONS_COMPLETE the saga AUTO-self-emits ConstitutionApproved → APPROVED (emitting
         // ConfirmDebit) in-process — the test does NOT feed an external ConstitutionApproved.
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.BalanceReserved)));
-        Assert.Equal(SagaState.AwaitLimitsValidated, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.AwaitLimitsValidated, await StateAsync(processId));
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsValidated)));
         // The self-emit fork already crossed VALIDATIONS_COMPLETE → APPROVED on the completing join.
-        Assert.Equal(SagaState.Approved, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Approved, await StateAsync(processId));
         // Debit confirmation arms activation, then activation closes the saga.
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.DebitConfirmed)));
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.ProcessConstituted)));
 
-        Assert.Equal(SagaState.Completed, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Completed, await StateAsync(processId));
 
         // The append-only transition history records every accepted move, in order — including the
         // in-process VALIDATIONS_COMPLETE → APPROVED self-emit (no external approval event).
@@ -95,18 +94,18 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         var handlerA = NewHandler(new RecordingCommandSink());
         var procA = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handlerA, Event(procA, ConstitutionProcess.BalanceReserved)));
-        Assert.Equal(SagaState.AwaitLimitsValidated, await StateAsync(procA));
+        Assert.Equal(ConstitutionProcess.States.AwaitLimitsValidated, await StateAsync(procA));
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handlerA, Event(procA, ConstitutionProcess.LimitsValidated)));
-        Assert.Equal(SagaState.Approved, await StateAsync(procA));
+        Assert.Equal(ConstitutionProcess.States.Approved, await StateAsync(procA));
 
         // Order B (the COMMON one): limits first — the previously-unexercised reverse order that
         // used to poison the later-arriving BalanceReserved. Same destination, no NoTransition.
         var handlerB = NewHandler(new RecordingCommandSink());
         var procB = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handlerB, Event(procB, ConstitutionProcess.LimitsValidated)));
-        Assert.Equal(SagaState.AwaitBalanceReserved, await StateAsync(procB));
+        Assert.Equal(ConstitutionProcess.States.AwaitBalanceReserved, await StateAsync(procB));
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handlerB, Event(procB, ConstitutionProcess.BalanceReserved)));
-        Assert.Equal(SagaState.Approved, await StateAsync(procB));
+        Assert.Equal(ConstitutionProcess.States.Approved, await StateAsync(procB));
     }
 
     [Fact]
@@ -120,11 +119,11 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
 
         var advance = Event(processId, ConstitutionProcess.BalanceReserved);
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, advance));
-        Assert.Equal(SagaState.AwaitLimitsValidated, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.AwaitLimitsValidated, await StateAsync(processId));
 
         // The SAME message_id redelivered: dedup short-circuits the advance — no second move.
         Assert.Equal(AdvanceOutcome.Duplicate, await RunAsync(handler, advance));
-        Assert.Equal(SagaState.AwaitLimitsValidated, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.AwaitLimitsValidated, await StateAsync(processId));
 
         // Two transition rows — the edge START and the single advance; the redelivery added none.
         var history = await HistoryAsync(processId);
@@ -140,12 +139,12 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         var processId = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
         // A product-limit rejection drives the early compensation (Document 05 Scenario A).
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsRejected)));
-        Assert.Equal(SagaState.CompensateValidations, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.CompensateValidations, await StateAsync(processId));
         // Compensation is a DOMAIN command, not a rollback (ADR-IC-003 §P6).
         Assert.Contains("ReleaseBalanceReservation", sink.Emitted.Select(c => c.CommandType));
 
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.ReservationReleased)));
-        Assert.Equal(SagaState.Cancelled, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Cancelled, await StateAsync(processId));
     }
 
     [Fact]
@@ -158,12 +157,12 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         var handler = NewHandler(new SagaCommandOutboxSink(_businessRefStore));
 
         var processId = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
-        Assert.Equal(SagaState.ParallelValidation, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, await StateAsync(processId));
 
         Assert.Equal(
             AdvanceOutcome.Advanced,
             await RunAsync(handler, Event(processId, ConstitutionProcess.PreconditionRefused)));
-        Assert.Equal(SagaState.DepositConstitutionFailed, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.DepositConstitutionFailed, await StateAsync(processId));
 
         // The ONLY outbox rows are the two validation commands from the start — the refusal added
         // NO reversal (no ReleaseBalanceReservation, no ReverseCoreDebit, nothing).
@@ -176,7 +175,7 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         Assert.Equal(
             AdvanceOutcome.Terminal,
             await RunAsync(handler, Event(processId, ConstitutionProcess.ProcessConstituted)));
-        Assert.Equal(SagaState.DepositConstitutionFailed, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.DepositConstitutionFailed, await StateAsync(processId));
     }
 
     [Fact]
@@ -189,7 +188,7 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         // The compensation itself fails (the ACL reported INDETERMINATE): the saga escalates
         // rather than swallowing the failure (ADR-IC-003 §P6).
         Assert.Equal(AdvanceOutcome.Advanced, await RunAsync(handler, Event(processId, ConstitutionProcess.CompensationFailed)));
-        Assert.Equal(SagaState.HumanInterventionRequired, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.HumanInterventionRequired, await StateAsync(processId));
     }
 
     [Fact]
@@ -200,11 +199,11 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         var processId = await StartSagaWithReferencesAsync(Guid.NewGuid(), amountCents: 100_00);
         await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsRejected));
         await RunAsync(handler, Event(processId, ConstitutionProcess.ReservationReleased));
-        Assert.Equal(SagaState.Cancelled, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Cancelled, await StateAsync(processId));
 
         // A late event for the now-terminal saga: dedup'd, recorded as a no-op, state unchanged.
         Assert.Equal(AdvanceOutcome.Terminal, await RunAsync(handler, Event(processId, ConstitutionProcess.ProcessConstituted)));
-        Assert.Equal(SagaState.Cancelled, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.Cancelled, await StateAsync(processId));
     }
 
     [Fact]
@@ -216,7 +215,7 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         // DebitConfirmed out of PARALLEL_VALIDATION is not in the table (§P2): rejected.
         Assert.Equal(AdvanceOutcome.NoTransition, await RunAsync(handler, Event(processId, ConstitutionProcess.DebitConfirmed)));
         // State unchanged — the illegal event never moved the saga.
-        Assert.Equal(SagaState.ParallelValidation, await StateAsync(processId));
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, await StateAsync(processId));
     }
 
     [Fact]
@@ -243,9 +242,9 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         Assert.NotNull(saga);
 
         // First advance against the read version wins.
-        Assert.True(await _stateStore.TryAdvanceAsync(connection, tx, processId, saga!.Version, SagaState.ValidationsComplete));
+        Assert.True(await _stateStore.TryAdvanceAsync(connection, tx, processId, saga!.Version, ConstitutionProcess.States.ValidationsComplete));
         // A SECOND advance against the SAME (now stale) version matches zero rows — rejected.
-        Assert.False(await _stateStore.TryAdvanceAsync(connection, tx, processId, saga.Version, SagaState.Approved));
+        Assert.False(await _stateStore.TryAdvanceAsync(connection, tx, processId, saga.Version, ConstitutionProcess.States.Approved));
 
         await tx.RollbackAsync();
     }
@@ -253,7 +252,7 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
     // --- helpers -----------------------------------------------------------------------
 
     private SagaAdvanceHandler NewHandler(ISagaCommandSink sink) =>
-        new(_machine, _stateStore, _transitionLog, sink, _businessRefStore);
+        new(_machine, _stateStore, _transitionLog, sink);
 
     private static SagaInboxEvent Event(Guid processId, string eventType, Guid? correlationId = null) =>
         new(Guid.NewGuid(), processId, eventType, "deposits.process.events", correlationId);
@@ -281,7 +280,7 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
                 AutoApprovalThresholdMinorUnits: ThresholdCents),
             correlationId);
 
-        Assert.Equal(SagaState.ParallelValidation, result.State);
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, result.State);
         return result.ProcessId;
     }
 
@@ -294,7 +293,7 @@ public sealed class SagaAdvanceIntegrationTests(OrchestratorPostgresFixture fixt
         return outcome;
     }
 
-    private async Task<SagaState> StateAsync(Guid processId)
+    private async Task<string> StateAsync(Guid processId)
     {
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();
