@@ -26,6 +26,14 @@ public static class DepositsEndpoints
         app.MapPost("/v1/deposits/{id:guid}/maturity", MatureAsync);
         app.MapPost("/v1/deposits/{id:guid}/interest", PayInterestAsync);
 
+        // The renewal-saga command surface (bd babelstone-mtto PR B): the two idempotent legs the
+        // renewal saga drives, replacing the retired monolithic RenewAsync. {id} is the CLOSING (Matured)
+        // deposit id; constitute-renewal opens the NEW stream (201 + Location /v1/deposits/{newId}),
+        // renewal-link folds the closing stream Matured → Renewed (200). Both carry a mandatory
+        // Idempotency-Key (ADR-PC-029 slot 4).
+        app.MapPost("/v1/deposits/{id:guid}/constitute-renewal", ConstituteRenewalAsync);
+        app.MapPost("/v1/deposits/{id:guid}/renewal-link", LinkRenewalAsync);
+
         // The CQRS query surface (ADR-IC-005, the I.2 Query API seam). ONE canonical deposit resource
         // — GET /v1/deposits/{id} — served from the denormalized read_model.deposits row by default and
         // folded from the event stream only as a read-your-writes fallback (see GetDepositAsync). There
@@ -381,5 +389,148 @@ public static class DepositsEndpoints
         // The post-append fold is authoritative (read-your-writes by construction): its head version is
         // the commit_sequence, carried on the response as last_sequence (DepositResponse.FromFold).
         return Results.Ok(DepositResponse.FromFold(hydrated));
+    }
+
+    /// <summary>
+    /// Step 2 of the renewal saga (bd babelstone-mtto PR B): open the renewed instance off a CLOSING
+    /// (Matured) deposit. <c>{id}</c> is the closing deposit id (the saga's process_id); the body carries
+    /// the new deposit id and the renewal facts. On success returns 201 with Location pointing at the NEW
+    /// stream — the renewed instance is the resource this opens (mirroring <see cref="ConstituteAsync"/>'s
+    /// 201). The full idempotency scaffold (ADR-PC-029 slot 4) is identical to ConstituteAsync.
+    /// </summary>
+    private static async Task<IResult> ConstituteRenewalAsync(
+        Guid id,
+        ConstituteRenewalRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        TermDepositConstitutionService service,
+        ICommandLog commandLog,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        // ADR-PC-029 slot 4: the dispatcher MUST supply a deterministic command id as the Idempotency-Key
+        // (the saga's saga_outbox row id). MANDATORY — the engine never accepts a non-idempotent renewal
+        // leg, so a missing/malformed key fails loud (400) rather than losing at-least-once retry safety.
+        if (idempotencyKey is null || !Guid.TryParse(idempotencyKey, out var commandId))
+        {
+            return Results.Problem(
+                "Idempotency-Key header is required and must be a UUID (ADR-PC-029 slot 4).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // Pre-check BEFORE any side effect: a known command id replays the original outcome with NO second
+        // settle and NO second append. The receipt's StreamId is the NEW deposit id (the append opened that
+        // stream), so the Location is read back from the receipt — it is an OUTPUT of this command.
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            return Results.Created(
+                $"/v1/deposits/{receipt.StreamId}",
+                new ConstituteRenewalResponse(id, receipt.StreamId, "ACTIVE", receipt.CommitSequence));
+        }
+
+        var renewedAt = request.RenewedAt ?? clock.GetUtcNow();
+        var actor = request.Actor ?? "saga:renewal";
+
+        long commitSequence;
+        try
+        {
+            commitSequence = await service.ConstituteRenewalAsync(
+                new ConstituteRenewalCommand(
+                    DepositId: id,
+                    NewDepositId: request.NewDepositId,
+                    ProductId: request.ProductId,
+                    Role: request.Role ?? "standard",
+                    RenewedAt: renewedAt,
+                    FundingAccount: request.FundingAccount,
+                    Actor: actor,
+                    CommandId: commandId),
+                ct);
+        }
+        catch (DuplicateCommandException dup)
+        {
+            // A concurrent duplicate slipped past the pre-check: the append rolled back (no second append)
+            // and handed back the ORIGINAL outcome — the same 201 the first apply returned (slot 4 replay).
+            return Results.Created(
+                $"/v1/deposits/{dup.StreamId}",
+                new ConstituteRenewalResponse(id, dup.StreamId, "ACTIVE", dup.CommitSequence));
+        }
+        catch (ConcurrencyException)
+        {
+            // The new stream already exists at a head (a non-idempotent collision on NewDepositId).
+            return Results.Problem(
+                $"Renewed deposit {request.NewDepositId} already exists.", statusCode: StatusCodes.Status409Conflict);
+        }
+        catch (DomainRejectedException e)
+        {
+            // Closing deposit not Matured, policy NONE, or an unpriced renewal rate — surface as a 422,
+            // never open the new stream on a silent default. Wiring faults propagate as 500, not a 422.
+            return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
+        return Results.Created(
+            $"/v1/deposits/{request.NewDepositId}",
+            new ConstituteRenewalResponse(id, request.NewDepositId, "ACTIVE", commitSequence));
+    }
+
+    /// <summary>
+    /// Step 3 of the renewal saga (bd babelstone-mtto PR B): append DepositRenewed to the CLOSING stream,
+    /// folding it Matured → Renewed. <c>{id}</c> is the closing deposit id; the body carries the new
+    /// deposit id whose head DepositConstituted fills the link. Returns 200 (it mutates an existing stream,
+    /// it does not create a resource). Full idempotency scaffold (ADR-PC-029 slot 4) as ConstituteAsync.
+    /// </summary>
+    private static async Task<IResult> LinkRenewalAsync(
+        Guid id,
+        LinkRenewalRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        TermDepositConstitutionService service,
+        ICommandLog commandLog,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        if (idempotencyKey is null || !Guid.TryParse(idempotencyKey, out var commandId))
+        {
+            return Results.Problem(
+                "Idempotency-Key header is required and must be a UUID (ADR-PC-029 slot 4).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // A known command id replays the original outcome (the closing stream's post-link head) with no
+        // second append. The receipt's StreamId is the CLOSING deposit id this command appended to.
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            return Results.Ok(new LinkRenewalResponse(id, request.NewDepositId, "RENEWED", receipt.CommitSequence));
+        }
+
+        var renewedAt = request.RenewedAt ?? clock.GetUtcNow();
+        var actor = request.Actor ?? "saga:renewal";
+
+        long commitSequence;
+        try
+        {
+            commitSequence = await service.LinkRenewalAsync(
+                new LinkRenewalCommand(
+                    DepositId: id,
+                    NewDepositId: request.NewDepositId,
+                    RenewedAt: renewedAt,
+                    Actor: actor,
+                    CommandId: commandId),
+                ct);
+        }
+        catch (DuplicateCommandException dup)
+        {
+            return Results.Ok(new LinkRenewalResponse(id, request.NewDepositId, "RENEWED", dup.CommitSequence));
+        }
+        catch (ConcurrencyException)
+        {
+            return Results.Problem($"Deposit {id} was modified concurrently.", statusCode: StatusCodes.Status409Conflict);
+        }
+        catch (DomainRejectedException e)
+        {
+            // Closing deposit not Matured, or the new stream missing — surface as a 422. Wiring faults 500.
+            return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
+        return Results.Ok(new LinkRenewalResponse(id, request.NewDepositId, "RENEWED", commitSequence));
     }
 }

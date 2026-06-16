@@ -345,93 +345,74 @@ public sealed class TermDepositConstitutionService(
     }
 
     /// <summary>
-    /// Auto-renew a maturing deposit (02 §2.4.4): emit <c>DepositMatured</c> for the closing instance,
-    /// constitute a fresh engine-native instance from the rolled-over principal, and link them with
-    /// <c>DepositRenewed</c> — the three events in that exact order. The maturity leg mirrors
-    /// <see cref="MatureAsync"/> (variant-branched accrue → withhold → mature, flow-by-flow withholding);
-    /// the renewal branches on the closing deposit's <c>auto_renewal_policy</c> for the new rate, and the
-    /// new <c>DepositConstituted</c> carries <c>causation_id</c> = the closing <c>DepositMatured</c>'s
-    /// event id (02 §2.4.4 step 2). Renewal is triggered MANUALLY here; the time scheduler is H.3.
+    /// Open the renewed instance — step 2 of the renewal saga (bd babelstone-mtto PR B; steps 6–8 of
+    /// the retired monolithic <c>RenewAsync</c>). Given the CLOSING deposit, which MUST already be
+    /// <see cref="DepositLifecycle.Matured"/> (the autonomous maturity leg ran first), this:
+    /// re-roots the new stream's causation at the closing <c>DepositMatured</c> event, resolves the
+    /// renewal rate by the closing deposit's <c>auto_renewal_policy</c>, settles the rollover debit,
+    /// and opens the NEW stream with <c>DepositConstituted</c> (plus the ADVANCE upfront-interest
+    /// triple for an ADVANCE variant). The maturity CREDIT is NOT this command's leg —
+    /// <see cref="MatureAsync"/> already credited it; only the <c>renewal_rollover</c> debit settles here.
     /// </summary>
     /// <remarks>
-    /// The three events span TWO streams, so they cannot commit in one append: <c>DepositMatured</c> and
-    /// <c>DepositRenewed</c> fold the closing deposit's stream, while the new <c>DepositConstituted</c>
-    /// opens a fresh stream keyed by <see cref="RenewDepositCommand.NewDepositId"/>. They are appended in
-    /// three steps to honour both the event order AND the causation link: the maturity leg appends first
-    /// (so its <c>DepositMatured</c> event id exists), then the new constitution opens its stream with that
-    /// id as <c>causation_id</c>, then <c>DepositRenewed</c> closes the old stream. The walking skeleton has
-    /// no cross-stream transaction; a renewal saga making the three-step append crash-atomic is later work
-    /// (tracked under bd babelstone-k4yr).
+    /// <para>
+    /// <b>Precondition is Matured, NOT Active</b> (the behavioural change from the monolith): the saga's
+    /// ConstituteRenewal command fires AFTER <see cref="MatureAsync"/> has committed, so the closing
+    /// stream head is already Matured. The F.3 <see cref="LifecycleTransitions"/> table has no
+    /// Renew-from-Matured row (Renew is legal only from Active), so this asserts
+    /// <c>Lifecycle == Matured</c> DIRECTLY rather than routing through the table — the same documented
+    /// F.3 exception the monolith's step 9 carried (its rationale at the now-retired L488–499).
+    /// </para>
+    /// <para>
+    /// <b>Idempotent per ADR-PC-029 slot 4.</b> The <c>constitute-renewal</c> endpoint takes a mandatory
+    /// <c>Idempotency-Key</c> → <see cref="ConstituteRenewalCommand.CommandId"/>, pre-checks the command
+    /// log, and the new-stream append's <c>command_dedup</c> raises <c>DuplicateCommandException</c>
+    /// on a concurrent racer. The financial math is preserved BYTE-IDENTICAL to the monolith: the same
+    /// pure deciders (<see cref="TermDepositDecider.ResolveRenewalRate"/>,
+    /// <see cref="TermDepositDecider.DecideRenewalConstitution"/>, <see cref="TermDepositDecider.DecideAdvance"/>)
+    /// decide the rate / new constitution / upfront interest — no money or rate math is re-derived here.
+    /// </para>
     /// </remarks>
-    public async Task RenewAsync(RenewDepositCommand command, CancellationToken ct = default)
+    /// <returns>The new stream's head version (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
+    public async Task<long> ConstituteRenewalAsync(ConstituteRenewalCommand command, CancellationToken ct = default)
     {
-        // 1. Rehydrate the closing deposit (must be Active to renew — the F.3 gate decides). The
-        //    renewal drives TWO transitions on this stream — Mature (step 5) then Renew (step 9) —
-        //    and each routes through the F.3 table at the point it fires (the table is the single
-        //    legality authority; no inline lifecycle literal lives here). This entry gate is the
-        //    Renew-intent check: Renew is legal only from Active, so it rejects renewing a closed
-        //    (e.g. already-Renewed/Matured) deposit before any work, sheet resolve, or settlement.
+        // 1. Rehydrate the CLOSING deposit. It MUST already be Matured — the autonomous maturity leg
+        //    (MatureAsync) precedes the saga, so by the time ConstituteRenewal fires the closing stream
+        //    head is Matured. The F.3 table has no Renew-from-Matured row (Renew is legal only from
+        //    Active, see LifecycleTransitions), so we assert the Matured precondition DIRECTLY rather
+        //    than through RejectIfIllegal — the same documented exception the monolith carried for its
+        //    DepositRenewed link append. This rejects a NOT-yet-matured (Active) or already-Renewed
+        //    closing deposit before any sheet resolve or settlement.
         var hydrated = await runtime.LoadAsync(command.DepositId, ct);
         var closing = hydrated.State;
-        RejectIfIllegal(closing.Lifecycle, LifecycleTransitions.Transition.Renew, command.DepositId, "renew");
+        if (closing.Lifecycle != DepositLifecycle.Matured)
+        {
+            throw new DomainRejectedException(
+                $"Deposit {command.DepositId} is {closing.Lifecycle}; cannot constitute a renewal " +
+                "(the closing deposit must already be Matured — the autonomous maturity leg precedes the " +
+                "renewal saga, and the F.3 table has no Renew-from-Matured row, so this is asserted directly).");
+        }
 
-        // 2. NONE never auto-renews: there is no new instance to constitute (02 §2.4.4). Reject loud
-        //    rather than silently fall through — only SAME_TERM_* policies reach the renewal flow.
+        // 2. The closing DepositMatured is the closing stream's head; its event id is the causation root
+        //    for the new instance (02 §2.4.4 step 2). On a freshly-matured-not-yet-linked stream the head
+        //    IS the DepositMatured, so LastEventId is exactly that event's id.
+        var maturedEventId = hydrated.LastEventId;
+
+        // 3. NONE never auto-renews: there is no new instance to constitute (02 §2.4.4). Reject loud —
+        //    this is the new rejection path for ConstituteRenewal (the saga's header filter never starts a
+        //    NONE-policy saga, but a direct caller is still rejected here, fail-loud not silent fall-through).
         if (closing.AutoRenewalPolicy == TermDepositDecider.RenewalNone)
         {
             throw new DomainRejectedException(
                 $"Deposit {command.DepositId} has auto_renewal_policy NONE; it terminates at maturity, never renews.");
         }
 
-        // 3. Opt-out window (02 §2.4.4): the depositor's final auto_renewal_optout_window_days before
-        //    maturity is when a customer-initiated termination still blocks the renewal without penalty.
-        //    The engine enforces that auto-renewal does NOT fire before that window has elapsed — i.e. not
-        //    before the maturity date — so a renewal triggered while the opt-out right is still open is
-        //    rejected. The window length is a pack parameter (parsed into PackParameters), read fail-loud.
-        var renewalDate = DateOnly.FromDateTime(command.RenewedAt.UtcDateTime);
-        var optOutWindowOpens = closing.MaturityDate.AddDays(-pack.Parameters.AutoRenewalOptoutWindowDays);
-        if (renewalDate < closing.MaturityDate)
-        {
-            var reason = renewalDate >= optOutWindowOpens
-                ? $"within the {pack.Parameters.AutoRenewalOptoutWindowDays}-day pre-maturity opt-out window"
-                : "before maturity";
-            throw new DomainRejectedException(
-                $"Deposit {command.DepositId} cannot auto-renew on {renewalDate:O} ({reason}); the opt-out " +
-                $"window closes at maturity {closing.MaturityDate:O} and renewal fires no earlier.");
-        }
-
-        // 4. Pack-resolved primitives (fail loud) and the maturity leg — the SAME variant-branched
-        //    accrue → withhold → mature the standalone MatureAsync runs (flow-by-flow withholding).
-        //    Renewal's maturity leg appends DepositMatured (folds the closing stream to Matured), so
-        //    it drives the very same Mature transition MatureAsync gates — route it through the F.3
-        //    table here too, BEFORE appending, so the one auditable table (not a scattered guard)
-        //    decides Mature legality on EVERY path. closing is the Active head loaded at step 1, so
-        //    this checks Mature-from-Active exactly as the standalone command does.
-        RejectIfIllegal(closing.Lifecycle, LifecycleTransitions.Transition.Mature, command.DepositId, "mature");
+        // 4. Pack-resolved primitives (fail loud). Resolve the renewal rate by policy — EXACTLY the
+        //    monolith's step-6 logic: SAME_TERM_CURRENT_RATE re-resolves the sheet at the renewal moment
+        //    (the bank's then-current standard rate); SAME_TERM_SAME_RATE carries the original rate (the
+        //    pure decider picks). Re-resolution is fail-loud, exactly as constitution.
         var (dayCount, withholdingBps) = ResolvePrimitives();
-        var maturityEvents = TermDepositDecider.DecideMaturity(closing, dayCount, withholdingBps);
-        var matured = (DepositMatured)maturityEvents[^1];
-
-        // 5. Settle the closing maturity payout (mirrors MatureAsync), then append the maturity leg as
-        //    step 1 of the renewal. The principal settles out here and back in at the new constitution, so
-        //    each leg's money movement matches its standalone command.
-        await settlement.SettleAsync(
-            new SettlementInstruction(
-                command.DepositId, SettlementDirection.Credit, matured.TotalPayout,
-                command.PayoutAccount, "maturity"),
-            ct);
-        await runtime.AppendAsync(
-            command.DepositId, hydrated.Version, maturityEvents,
-            Context(command.Actor, command.RenewedAt), ct);
-
-        // The closing DepositMatured is now the closing stream's head; its event id is the causation
-        // root for the new instance (02 §2.4.4 step 2). Reload to capture it (AppendAsync returns void).
-        var afterMaturity = await runtime.LoadAsync(command.DepositId, ct);
-        var maturedEventId = afterMaturity.LastEventId;
-
-        // 6. Resolve the renewal rate by policy: SAME_TERM_CURRENT_RATE re-resolves the sheet at the
-        //    renewal moment (the bank's then-current standard rate); SAME_TERM_SAME_RATE carries the
-        //    original rate (the pure decider picks). Re-resolution is fail-loud, exactly as constitution.
+        var renewalDate = DateOnly.FromDateTime(command.RenewedAt.UtcDateTime);
         int renewalTan;
         string renewalRateSheetVersionId;
         if (closing.AutoRenewalPolicy == TermDepositDecider.RenewalSameTermCurrentRate)
@@ -453,15 +434,17 @@ public sealed class TermDepositConstitutionService(
                 TermDepositDecider.ResolveRenewalRate(closing, closing.TanBasisPoints, closing.RateSheetVersionId);
         }
 
-        // 7. Decide (pure): the new constitution from the rolled-over principal at the policy-resolved
-        //    rate, for the same term/variant/cadence/policy as the closing deposit.
+        // 5. Decide (pure): the new constitution from the rolled-over principal at the policy-resolved
+        //    rate, for the same term/variant/cadence/policy as the closing deposit (monolith step 7).
         var renewed = TermDepositDecider.DecideRenewalConstitution(
             closing, command.NewDepositId, closing.RemainingPrincipal, renewalTan, renewalRateSheetVersionId, renewalDate);
 
-        // 8. Settle the rolled-over principal into the new instance (mirrors ConstituteAsync's debit),
-        //    then open the new stream (expectedVersion -1) as step 2 — its causation_id roots at the
-        //    closing DepositMatured. ADVANCE pays its full-term interest up front here, same as a fresh
-        //    constitution; the upfront InterestPaid rides in the new stream's first transaction.
+        // 6. Settle the rolled-over principal into the new instance (the renewal_rollover debit, monolith
+        //    step 8a). The maturity credit already moved out in MatureAsync; only the rollover debit
+        //    settles here, so the settlement legs now SPLIT across two calls — maturity credit from
+        //    MatureAsync, rollover debit from here. ADVANCE pays its full-term interest up front (monolith
+        //    step 8b), the same as a fresh constitution; the upfront InterestPaid rides in the new
+        //    stream's first transaction.
         await settlement.SettleAsync(
             new SettlementInstruction(
                 command.NewDepositId, SettlementDirection.Debit, renewed.Principal,
@@ -481,26 +464,75 @@ public sealed class TermDepositConstitutionService(
             renewalConstitutionEvents.AddRange(advance);
         }
 
-        await runtime.AppendAsync(
+        // 7. Open the new stream (expectedVersion -1) — its causation_id roots at the closing
+        //    DepositMatured (02 §2.4.4 step 2). The CommandId makes this append idempotent: a replay
+        //    returns the new stream's head with no second append (ADR-PC-029 slot 4).
+        return await runtime.AppendAsync(
             command.NewDepositId, expectedVersion: -1, renewalConstitutionEvents,
-            Context(command.Actor, command.RenewedAt) with { CausationId = maturedEventId }, ct);
+            Context(command.Actor, command.RenewedAt, command.CommandId) with { CausationId = maturedEventId }, ct);
+    }
 
-        // 9. Decide (pure) and append the DepositRenewed link as step 3, closing the old stream. It folds
-        //    the closing deposit to Renewed (terminal) — the old→new lookup the maturity calendar uses.
-        //    This append is NOT re-gated against the table: the stream head is now Matured (step 5 folded
-        //    it), and the F.3 table (babelstone-29v8) models Matured as terminal — Renew is legal only from
-        //    Active, with terminality expressed as absence from every source set. The spec-mandated closing
-        //    sequence (02 §2.4.4: DepositMatured THEN DepositRenewed) thus legally traverses
-        //    Active→Matured→Renewed, which the table cannot currently express (no Renew-from-Matured row).
-        //    The Renew legality IS checked once, at the step-1 entry gate while the deposit is still Active —
-        //    the only state the table makes Renew legal from. Making the table express this compound
-        //    sequence (a Renew-from-Matured row, or modelling renewal as a single Active→Renewed transition
-        //    whose DepositMatured is intrinsic) is an F.3 modelling decision tracked on babelstone-29v8;
-        //    until then this leg stays as the spec dictates rather than forcing F.3's terminal model open.
+    /// <summary>
+    /// Link the renewal — step 3 of the renewal saga (bd babelstone-mtto PR B; step 9 of the retired
+    /// monolithic <c>RenewAsync</c>): append <c>DepositRenewed</c> to the CLOSING stream, folding it
+    /// from Matured to Renewed (terminal) — the old→new lookup the maturity calendar uses. Loads the
+    /// closing (Matured) deposit and the new deposit (folding its head <c>DepositConstituted</c> for the
+    /// renewed facts), calls the pure <see cref="TermDepositDecider.DecideRenewalLink"/>, and appends at
+    /// the closing stream's post-maturity head.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>No F.3 re-gate</b> (mirroring the monolith's documented exception, the rationale at the now-
+    /// retired L488–499): the closing stream head is Matured, and the F.3 table models Matured as
+    /// terminal — Renew is legal only from Active (terminality is expressed as absence from every source
+    /// set). The spec-mandated closing sequence (02 §2.4.4: DepositMatured THEN DepositRenewed) thus
+    /// legally traverses Active→Matured→Renewed, which the table cannot currently express (no
+    /// Renew-from-Matured row). Renew legality is established at the saga-start precondition (only
+    /// non-NONE-policy deposits ever start a renewal saga) and the Matured-precondition assertion in
+    /// <see cref="ConstituteRenewalAsync"/>. Making the table express this compound sequence is an F.3
+    /// modelling decision tracked on bd babelstone-29v8; until then this leg stays as the spec dictates.
+    /// </para>
+    /// <para>
+    /// <b>Idempotent per ADR-PC-029 slot 4</b> — the <c>renewal-link</c> endpoint threads the mandatory
+    /// <c>Idempotency-Key</c> → <see cref="LinkRenewalCommand.CommandId"/> onto the closing-stream append.
+    /// </para>
+    /// </remarks>
+    /// <returns>The closing stream's head version after the link (ADR-IC-005 §P3 read-your-writes token).</returns>
+    public async Task<long> LinkRenewalAsync(LinkRenewalCommand command, CancellationToken ct = default)
+    {
+        // 1. Rehydrate the CLOSING deposit — it MUST be Matured (ConstituteRenewal opened the new stream
+        //    off this Matured head). Same direct Matured assertion as ConstituteRenewalAsync, for the same
+        //    F.3 reason (no Renew-from-Matured row): a not-yet-matured or already-Renewed closing deposit
+        //    is rejected before any append.
+        var closingHydrated = await runtime.LoadAsync(command.DepositId, ct);
+        var closing = closingHydrated.State;
+        if (closing.Lifecycle != DepositLifecycle.Matured)
+        {
+            throw new DomainRejectedException(
+                $"Deposit {command.DepositId} is {closing.Lifecycle}; cannot link a renewal " +
+                "(the closing deposit must be Matured — the renewal-link step folds Matured → Renewed).");
+        }
+
+        // 2. Reconstruct the renewed instance's constitution from the NEW stream's head DepositConstituted,
+        //    so DecideRenewalLink reads the new instance's pinned facts (rate / version / term / dates)
+        //    exactly as the monolith did from the in-call `renewed` event. The new stream's first event
+        //    IS the DepositConstituted ConstituteRenewalAsync appended.
+        var newHydrated = await runtime.LoadAsync(command.NewDepositId, ct);
+        if (newHydrated.Version < 0)
+        {
+            throw new DomainRejectedException(
+                $"Renewed deposit {command.NewDepositId} does not exist; cannot link the renewal " +
+                "(ConstituteRenewal must open the new stream before the link step).");
+        }
+        var renewed = ConstitutedFromPosition(newHydrated.State);
+
+        // 3. Decide (pure) and append the DepositRenewed link, folding the closing deposit to Renewed
+        //    (terminal). Appended at the closing stream's post-maturity head with optimistic concurrency.
+        //    The CommandId makes this append idempotent (ADR-PC-029 slot 4).
         var link = TermDepositDecider.DecideRenewalLink(closing, renewed);
-        await runtime.AppendAsync(
-            command.DepositId, afterMaturity.Version, [link],
-            Context(command.Actor, command.RenewedAt), ct);
+        return await runtime.AppendAsync(
+            command.DepositId, closingHydrated.Version, [link],
+            Context(command.Actor, command.RenewedAt, command.CommandId), ct);
     }
 
     /// <summary>
@@ -559,6 +591,28 @@ public sealed class TermDepositConstitutionService(
             RemainingPrincipal = constituted.Principal,
             Lifecycle = DepositLifecycle.Active,
         };
+
+    /// <summary>
+    /// Reconstruct the renewed instance's head <see cref="DepositConstituted"/> from the NEW stream's
+    /// folded position, so <see cref="LinkRenewalAsync"/> hands <see cref="TermDepositDecider.DecideRenewalLink"/>
+    /// the SAME pinned facts the monolith passed it from the in-call <c>renewed</c> event. Pure projection
+    /// off the position the new stream's <c>DepositConstituted</c> folded: <c>DecideRenewalLink</c> reads only
+    /// the rate / version / term / start / maturity / principal, all carried verbatim on the position
+    /// (RemainingPrincipal equals Principal for a fresh, un-withdrawn constitution). No clock, no I/O.
+    /// </summary>
+    private static DepositConstituted ConstitutedFromPosition(DepositPosition position) =>
+        new(
+            DepositId: position.DepositId,
+            Principal: position.Principal,
+            TanBasisPoints: position.TanBasisPoints,
+            RateSheetVersionId: position.RateSheetVersionId,
+            TermDays: position.TermDays,
+            StartDate: position.StartDate,
+            MaturityDate: position.MaturityDate,
+            InterestVariant: position.InterestVariant,
+            AutoRenewalPolicy: position.AutoRenewalPolicy,
+            PaymentPeriodMonths: position.PaymentPeriodMonths,
+            ProductCode: position.ProductCode);
 
     // commandId is the OPTIONAL command-ingress idempotency key (ADR-PC-029 slot 4): the
     // constitution paths thread the command's CommandId so the append dedupes on it; the
