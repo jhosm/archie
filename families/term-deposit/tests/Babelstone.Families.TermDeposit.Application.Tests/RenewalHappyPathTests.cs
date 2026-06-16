@@ -7,14 +7,24 @@ using Xunit;
 namespace Babelstone.Families.TermDeposit.Application.Tests;
 
 /// <summary>
-/// F.5 (babelstone-k4yr) auto-renewal end-to-end against real PostgreSQL (Testcontainers): a
-/// constituted Active deposit renews into a fresh engine-native instance, emitting
-/// <c>DepositMatured</c> → <c>DepositConstituted</c> (new stream) → <c>DepositRenewed</c> in that
-/// order across two streams, with the new constitution's <c>causation_id</c> rooted at the closing
-/// <c>DepositMatured</c> (02 §2.4.4). Tagged Integration — the Testcontainers lane. The pure
-/// policy/rate/link decisions are unit-tested in <c>TermDepositDeciderTests</c>; the guards in
-/// <c>RenewalRejectionTests</c>. This class gets its OWN container (IClassFixture instance per class),
-/// so it can deploy a later rate sheet without shadowing the other Integration tests' sheets.
+/// Renewal-saga end-to-end against real PostgreSQL (Testcontainers), decomposed per bd babelstone-mtto
+/// PR B. The retired monolithic <c>RenewAsync</c> did mature + constitute + link in one un-idempotent
+/// cross-stream call; the saga now drives the SAME postconditions through the autonomous maturity leg
+/// followed by two idempotent engine operations:
+/// <list type="number">
+/// <item>constitute an Active deposit (<c>ConstituteAsync</c>),</item>
+/// <item>mature it autonomously (<c>MatureAsync</c>) — this is the maturity leg the monolith folded in,</item>
+/// <item>open the renewed instance (<c>ConstituteRenewalAsync</c>), and</item>
+/// <item>link the two (<c>LinkRenewalAsync</c>).</item>
+/// </list>
+/// The closing stream still folds to Renewed (terminal); the new stream is Active at the policy-resolved
+/// rate; the <c>DepositConstituted</c> → <c>DepositMatured</c> → <c>DepositRenewed</c> order and the
+/// causation root at the closing <c>DepositMatured</c> are unchanged. The ONLY behavioural change is that
+/// the settlement legs now SPLIT across two calls — the maturity credit from <c>MatureAsync</c>, the
+/// rollover debit from <c>ConstituteRenewalAsync</c>. The financial math is byte-identical to the
+/// monolith (same pure deciders: <c>ResolveRenewalRate</c> / <c>DecideRenewalConstitution</c> /
+/// <c>DecideRenewalLink</c> / <c>DecideAdvance</c>). Tagged Integration — the Testcontainers lane; this
+/// class gets its OWN container so it can deploy a later rate sheet without shadowing other tests' sheets.
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
@@ -35,19 +45,25 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         var depositId = Guid.NewGuid();
         var newDepositId = Guid.NewGuid();
 
-        await service.ConstituteAsync(new ConstituteDepositCommand(
-            DepositId: depositId, PrincipalCents: 1_000_000, ProductId: Product, Role: "standard",
-            TermDays: 365, StartDate: new DateOnly(2026, 1, 15),
-            ConstitutedAt: new DateTimeOffset(2026, 1, 15, 0, 0, 0, TimeSpan.Zero),
-            InterestVariant: "AT_MATURITY", AutoRenewalPolicy: "SAME_TERM_CURRENT_RATE",
-            FundingAccount: "PT50-DDA-001", Actor: "mcp:dev"));
+        await ConstituteActiveAsync(service, depositId, "AT_MATURITY", "SAME_TERM_CURRENT_RATE");
 
-        await service.RenewAsync(new RenewDepositCommand(
-            DepositId: depositId, ProductId: Product, Role: "standard",
+        // Step 1 (autonomous): mature the closing deposit. This is the maturity leg the monolith folded
+        // into RenewAsync; it now runs FIRST and independently, leaving the closing stream Matured.
+        await MatureAsync(service, depositId);
+
+        // Step 2: open the renewed instance off the Matured closing deposit.
+        await service.ConstituteRenewalAsync(new ConstituteRenewalCommand(
+            DepositId: depositId, NewDepositId: newDepositId, ProductId: Product, Role: "standard",
             RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero),
-            NewDepositId: newDepositId, PayoutAccount: "PT50-DDA-001", FundingAccount: "PT50-DDA-001", Actor: "mcp:dev"));
+            FundingAccount: "PT50-DDA-001", Actor: "saga:renewal", CommandId: Guid.NewGuid()));
 
-        // The closing deposit: Active → Renewed (terminal), with its full AT_MATURITY maturity folded.
+        // Step 3: link the renewal, folding the closing stream Matured → Renewed (terminal).
+        await service.LinkRenewalAsync(new LinkRenewalCommand(
+            DepositId: depositId, NewDepositId: newDepositId,
+            RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero),
+            Actor: "saga:renewal", CommandId: Guid.NewGuid()));
+
+        // The closing deposit: Active → Matured → Renewed (terminal), with its full AT_MATURITY maturity folded.
         var closing = (await runtime.LoadAsync(depositId)).State;
         Assert.Equal(DepositLifecycle.Renewed, closing.Lifecycle);
         Assert.Equal(new Money(1_021_900), closing.TotalPayout); // principal + net of the canonical flow
@@ -74,16 +90,15 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         Assert.Equal(1, await fixture.CountAsync("outbox", "aggregate_id", newDepositId));
 
         // The causation link (02 §2.4.4 step 2): the new instance's DepositConstituted (sequence 0)
-        // roots at the closing DepositMatured's event id.
+        // roots at the closing DepositMatured's event id — unchanged from the monolith.
         var maturedEventId = await fixture.EventIdAsync(depositId, "term_deposit.DepositMatured");
         var newConstitutionCausation = await fixture.FirstEventCausationIdAsync(newDepositId);
         Assert.Equal(maturedEventId, newConstitutionCausation);
 
-        // Settlement legs (bd babelstone-t7o3.4): the standalone CONSTITUTION path is de-settled — its
-        // principal debit is now the saga's gated step (ADR-PC-016 §68/§127), so it no longer leads the
-        // sequence. The RENEWAL path keeps its eager legs for now (its own saga has not landed): the
-        // closing maturity credit (principal+net out) and the rollover debit (the rolled-over principal
-        // back into the new instance).
+        // Settlement legs now SPLIT across the two calls (the behavioural change). MatureAsync produces
+        // the closing maturity credit (principal + net out); ConstituteRenewalAsync produces the rollover
+        // debit (the rolled-over principal back into the new instance). The standalone CONSTITUTION path
+        // is de-settled (bd babelstone-t7o3.4), so there is no "constitution" leg.
         Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "constitution");
         Assert.Collection(
             settlement.Instructions,
@@ -113,17 +128,18 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         var depositId = Guid.NewGuid();
         var newDepositId = Guid.NewGuid();
 
-        await service.ConstituteAsync(new ConstituteDepositCommand(
-            DepositId: depositId, PrincipalCents: 1_000_000, ProductId: Product, Role: "standard",
-            TermDays: 365, StartDate: new DateOnly(2026, 1, 15),
-            ConstitutedAt: new DateTimeOffset(2026, 1, 15, 0, 0, 0, TimeSpan.Zero),
-            InterestVariant: "AT_MATURITY", AutoRenewalPolicy: "SAME_TERM_SAME_RATE",
-            FundingAccount: "PT50-DDA-001", Actor: "mcp:dev"));
+        await ConstituteActiveAsync(service, depositId, "AT_MATURITY", "SAME_TERM_SAME_RATE");
+        await MatureAsync(service, depositId);
 
-        await service.RenewAsync(new RenewDepositCommand(
-            DepositId: depositId, ProductId: Product, Role: "standard",
+        await service.ConstituteRenewalAsync(new ConstituteRenewalCommand(
+            DepositId: depositId, NewDepositId: newDepositId, ProductId: Product, Role: "standard",
             RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero),
-            NewDepositId: newDepositId, PayoutAccount: "PT50-DDA-001", FundingAccount: "PT50-DDA-001", Actor: "mcp:dev"));
+            FundingAccount: "PT50-DDA-001", Actor: "saga:renewal", CommandId: Guid.NewGuid()));
+
+        await service.LinkRenewalAsync(new LinkRenewalCommand(
+            DepositId: depositId, NewDepositId: newDepositId,
+            RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero),
+            Actor: "saga:renewal", CommandId: Guid.NewGuid()));
 
         var renewed = (await runtime.LoadAsync(newDepositId)).State;
         Assert.Equal(300, renewed.TanBasisPoints);                  // the ORIGINAL rate, not the current 275
@@ -134,6 +150,75 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         // The DepositRenewed link folds the closing deposit terminal.
         Assert.Equal(DepositLifecycle.Renewed, (await runtime.LoadAsync(depositId)).State.Lifecycle);
     }
+
+    [Fact]
+    public async Task Advance_renewal_pays_the_upfront_interest_on_the_new_stream()
+    {
+        // The ADVANCE variant recognises full-term interest at t=0 (02 §2.1 CF(0) = -C + J). The retired
+        // monolith's step 8b appended the upfront InterestPaid triple onto the NEW stream and settled the
+        // advance interest; ConstituteRenewalAsync preserves that exactly (DecideAdvance verbatim).
+        await fixture.EnsureRateSheetAsync(SheetAt("pt-deposits-2026.1", new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero), 300));
+        await fixture.EnsureRateSheetAsync(SheetAt("pt-deposits-2027.1", new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero), 275));
+
+        var (runtime, service, settlement) = Compose(fixture.ConnectionString);
+        var depositId = Guid.NewGuid();
+        var newDepositId = Guid.NewGuid();
+
+        // An ADVANCE deposit pays interest up front at constitution, so its t=0 settlement also runs.
+        await ConstituteActiveAsync(service, depositId, "ADVANCE", "SAME_TERM_SAME_RATE");
+        await MatureAsync(service, depositId);
+
+        await service.ConstituteRenewalAsync(new ConstituteRenewalCommand(
+            DepositId: depositId, NewDepositId: newDepositId, ProductId: Product, Role: "standard",
+            RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero),
+            FundingAccount: "PT50-DDA-001", Actor: "saga:renewal", CommandId: Guid.NewGuid()));
+
+        await service.LinkRenewalAsync(new LinkRenewalCommand(
+            DepositId: depositId, NewDepositId: newDepositId,
+            RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero),
+            Actor: "saga:renewal", CommandId: Guid.NewGuid()));
+
+        var renewed = (await runtime.LoadAsync(newDepositId)).State;
+        Assert.Equal(DepositLifecycle.Active, renewed.Lifecycle);
+        Assert.Equal("ADVANCE", renewed.InterestVariant);
+
+        // The new ADVANCE stream carries the upfront interest (DepositConstituted + the single
+        // InterestPaid DecideAdvance returns = 2 events), so the upfront interest IS recognised on the new
+        // stream — byte-identical to the monolith (its new-stream events were [renewed] + DecideAdvance).
+        // The closing stream folds Renewed terminal.
+        Assert.Equal(2, await fixture.CountAsync("events", "stream_id", newDepositId));
+        Assert.Equal(DepositLifecycle.Renewed, (await runtime.LoadAsync(depositId)).State.Lifecycle);
+        Assert.True(renewed.NetInterest.Cents > 0); // upfront interest recognised on the new stream
+
+        // The advance-interest credit settles on the new stream (monolith step 8b), alongside the
+        // closing maturity credit and the rollover debit.
+        Assert.Contains(settlement.Instructions, i => i.Reason == "advance_interest" && i.Direction == SettlementDirection.Credit);
+        Assert.Contains(settlement.Instructions, i => i.Reason == "renewal_rollover" && i.Direction == SettlementDirection.Debit);
+    }
+
+    // NOTE: command-id idempotency (ADR-PC-029 slot 4) is exercised at the ENDPOINT level, where the
+    // ICommandLog.TryGetAsync pre-check + DuplicateCommandException scaffold lives (mirroring
+    // ConstituteAsync) — see ENGINE_COMMAND_IDEMPOTENT_constitute_renewal_replay_* and
+    // ENGINE_COMMAND_IDEMPOTENT_renewal_link_replay_* in DepositsApiIntegrationTests. The service method
+    // alone does NOT short-circuit a sequential replay (it would ConcurrencyException on the second
+    // -1 append / reject the now-Renewed closing deposit) — the endpoint pre-check is the idempotency seam.
+
+    // ---- helpers --------------------------------------------------------------------------------
+
+    private static Task ConstituteActiveAsync(
+        TermDepositConstitutionService service, Guid depositId, string variant, string policy) =>
+        service.ConstituteAsync(new ConstituteDepositCommand(
+            DepositId: depositId, PrincipalCents: 1_000_000, ProductId: Product, Role: "standard",
+            TermDays: 365, StartDate: new DateOnly(2026, 1, 15),
+            ConstitutedAt: new DateTimeOffset(2026, 1, 15, 0, 0, 0, TimeSpan.Zero),
+            InterestVariant: variant, AutoRenewalPolicy: policy,
+            FundingAccount: "PT50-DDA-001", Actor: "mcp:dev", CommandId: Guid.NewGuid()));
+
+    private static Task<long> MatureAsync(TermDepositConstitutionService service, Guid depositId) =>
+        service.MatureAsync(new MatureDepositCommand(
+            DepositId: depositId,
+            MaturedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero),
+            PayoutAccount: "PT50-DDA-001", Actor: "mcp:dev"));
 
     private static RateSheet SheetAt(string versionId, DateTimeOffset effectiveFrom, int tanBasisPoints) =>
         TestRateSheets.FlatPriced(versionId, Product, "standard", tanBasisPoints, effectiveFrom);

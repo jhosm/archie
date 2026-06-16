@@ -554,9 +554,221 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Renewal_saga_legs_constitute_renewal_then_link_drive_the_full_renewal_over_HTTP()
+    {
+        // bd babelstone-mtto PR B end-to-end over the HTTP surface: constitute → mature (autonomous) →
+        // constitute-renewal (201 + Location to the NEW stream) → renewal-link (200), driving the SAME
+        // postconditions the retired monolithic RenewAsync did — the closing stream folds Renewed
+        // (terminal), the new stream is Active at the carried-forward rate. SAME_TERM_SAME_RATE keeps the
+        // single 300bps fixture sheet sufficient (no re-resolution).
+        var closingId = await ConstituteAndMatureAsync("SAME_TERM_SAME_RATE");
+        var newDepositId = Guid.NewGuid();
+
+        // Step 2: constitute-renewal — opens the new stream, 201 with Location pointing at /v1/deposits/{newId}.
+        var constituteRenewal = await PostJsonAsync(
+            $"/v1/deposits/{closingId}/constitute-renewal",
+            new ConstituteRenewalRequest(
+                NewDepositId: newDepositId, ProductId: "dpz_pt_12m_juros_venc", FundingAccount: "PT50-DDA-001",
+                Role: "standard", RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero)),
+            Guid.NewGuid().ToString());
+
+        Assert.Equal(HttpStatusCode.Created, constituteRenewal.StatusCode);
+        Assert.Equal($"/v1/deposits/{newDepositId}", constituteRenewal.Headers.Location?.ToString());
+        var renewalBody = await constituteRenewal.Content.ReadFromJsonAsync<ConstituteRenewalResponse>(SnakeCase);
+        Assert.NotNull(renewalBody);
+        Assert.Equal(closingId, renewalBody.DepositId);
+        Assert.Equal(newDepositId, renewalBody.NewDepositId);
+        Assert.Equal("ACTIVE", renewalBody.Status);
+
+        // The new stream reads back Active at the carried-forward 300bps original rate.
+        var renewed = await _client.GetFromJsonAsync<DepositResponse>($"/v1/deposits/{newDepositId}", SnakeCase);
+        Assert.NotNull(renewed);
+        Assert.Equal("Active", renewed.Lifecycle);
+        Assert.Equal(300, renewed.TanBasisPoints);
+        Assert.Equal(1_000_000, renewed.PrincipalCents);
+
+        // Step 3: renewal-link — folds the closing stream Matured → Renewed, 200.
+        var link = await PostJsonAsync(
+            $"/v1/deposits/{closingId}/renewal-link",
+            new LinkRenewalRequest(
+                NewDepositId: newDepositId, RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero)),
+            Guid.NewGuid().ToString());
+
+        Assert.Equal(HttpStatusCode.OK, link.StatusCode);
+        var linkBody = await link.Content.ReadFromJsonAsync<LinkRenewalResponse>(SnakeCase);
+        Assert.NotNull(linkBody);
+        Assert.Equal("RENEWED", linkBody.Status);
+
+        // The closing stream is now terminal Renewed (read-your-writes via the returned commit token).
+        var closingRequest = new HttpRequestMessage(HttpMethod.Get, $"/v1/deposits/{closingId}");
+        closingRequest.Headers.TryAddWithoutValidation(
+            "If-Min-Sequence", linkBody.CommitSequence.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var closingResponse = await _client.SendAsync(closingRequest);
+        var closing = await closingResponse.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
+        Assert.NotNull(closing);
+        Assert.Equal("Renewed", closing.Lifecycle);
+
+        // The new instance's DepositConstituted roots its causation at the closing DepositMatured (02 §2.4.4).
+        var maturedEventId = await EventIdAsync(closingId, "term_deposit.DepositMatured");
+        Assert.Equal(maturedEventId, await FirstEventCausationIdAsync(newDepositId));
+    }
+
+    [Fact]
+    public async Task ENGINE_COMMAND_IDEMPOTENT_constitute_renewal_replay_returns_the_original_and_appends_once()
+    {
+        // ADR-PC-029 slot 4: two POSTs to constitute-renewal with the SAME Idempotency-Key (the
+        // dispatcher's at-least-once retry) open the new stream ONCE. The second is short-circuited by the
+        // engine's command-dedup pre-check and replays the original outcome verbatim.
+        var closingId = await ConstituteAndMatureAsync("SAME_TERM_SAME_RATE");
+        var newDepositId = Guid.NewGuid();
+        var key = Guid.NewGuid().ToString();
+        var body = new ConstituteRenewalRequest(
+            NewDepositId: newDepositId, ProductId: "dpz_pt_12m_juros_venc", FundingAccount: "PT50-DDA-001",
+            Role: "standard", RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero));
+
+        var first = await PostJsonAsync($"/v1/deposits/{closingId}/constitute-renewal", body, key);
+        var second = await PostJsonAsync($"/v1/deposits/{closingId}/constitute-renewal", body, key);
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+        var firstBody = await first.Content.ReadFromJsonAsync<ConstituteRenewalResponse>(SnakeCase);
+        var secondBody = await second.Content.ReadFromJsonAsync<ConstituteRenewalResponse>(SnakeCase);
+        Assert.NotNull(firstBody);
+        Assert.NotNull(secondBody);
+
+        // The replay returns the ORIGINAL identity + read-your-writes token, verbatim.
+        Assert.Equal(firstBody.NewDepositId, secondBody.NewDepositId);
+        Assert.Equal(firstBody.CommitSequence, secondBody.CommitSequence);
+
+        // NO second append: exactly one DepositConstituted on the new stream.
+        Assert.Equal(1, await CountAsync("events", "stream_id", newDepositId));
+    }
+
+    [Fact]
+    public async Task ENGINE_COMMAND_IDEMPOTENT_renewal_link_replay_returns_the_original_and_appends_once()
+    {
+        // ADR-PC-029 slot 4: two POSTs to renewal-link with the SAME Idempotency-Key append DepositRenewed
+        // ONCE on the closing stream and replay the original outcome.
+        var closingId = await ConstituteAndMatureAsync("SAME_TERM_SAME_RATE");
+        var newDepositId = Guid.NewGuid();
+        await PostJsonAsync(
+            $"/v1/deposits/{closingId}/constitute-renewal",
+            new ConstituteRenewalRequest(
+                NewDepositId: newDepositId, ProductId: "dpz_pt_12m_juros_venc", FundingAccount: "PT50-DDA-001",
+                Role: "standard", RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero)),
+            Guid.NewGuid().ToString());
+
+        var key = Guid.NewGuid().ToString();
+        var body = new LinkRenewalRequest(
+            NewDepositId: newDepositId, RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero));
+
+        var first = await PostJsonAsync($"/v1/deposits/{closingId}/renewal-link", body, key);
+        var second = await PostJsonAsync($"/v1/deposits/{closingId}/renewal-link", body, key);
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var firstBody = await first.Content.ReadFromJsonAsync<LinkRenewalResponse>(SnakeCase);
+        var secondBody = await second.Content.ReadFromJsonAsync<LinkRenewalResponse>(SnakeCase);
+        Assert.NotNull(firstBody);
+        Assert.NotNull(secondBody);
+        Assert.Equal(firstBody.CommitSequence, secondBody.CommitSequence);
+
+        // Closing stream = Constituted, Accrued, Withheld, Matured, Renewed (5) — DepositRenewed once.
+        Assert.Equal(5, await CountAsync("events", "stream_id", closingId));
+    }
+
+    [Theory]
+    [InlineData(null)]          // absent: the Idempotency-Key is MANDATORY (ADR-PC-029 slot 4)
+    [InlineData("not-a-uuid")]  // malformed: the command id must be a deterministic UUID
+    public async Task A_renewal_leg_without_a_valid_idempotency_key_is_a_400(string? key)
+    {
+        var closingId = await ConstituteAndMatureAsync("SAME_TERM_SAME_RATE");
+        var response = await PostJsonAsync(
+            $"/v1/deposits/{closingId}/constitute-renewal",
+            new ConstituteRenewalRequest(
+                NewDepositId: Guid.NewGuid(), ProductId: "dpz_pt_12m_juros_venc", FundingAccount: "PT50-DDA-001"),
+            key);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Constitute_renewal_on_a_non_matured_deposit_is_a_422()
+    {
+        // The Matured-precondition guard at the HTTP boundary: constitute-renewal on a still-Active deposit
+        // (maturity has NOT run) is a clean 422 (DomainRejectedException), never opening the new stream.
+        var activeId = (await (await PostConstituteAsync(new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000, ProductId: "dpz_pt_12m_juros_venc", Role: "standard", TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15), InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "SAME_TERM_SAME_RATE", FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString()))
+            .Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
+
+        var response = await PostJsonAsync(
+            $"/v1/deposits/{activeId}/constitute-renewal",
+            new ConstituteRenewalRequest(
+                NewDepositId: Guid.NewGuid(), ProductId: "dpz_pt_12m_juros_venc", FundingAccount: "PT50-DDA-001"),
+            Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    }
+
+    /// <summary>Constitute a SAME_TERM_* deposit and mature it over HTTP, returning the (now Matured)
+    /// closing deposit id — the renewal saga's precondition head.</summary>
+    private async Task<Guid> ConstituteAndMatureAsync(string policy)
+    {
+        var constitute = await PostConstituteAsync(new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000, ProductId: "dpz_pt_12m_juros_venc", Role: "standard", TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15), InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: policy, FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, constitute.StatusCode);
+        var depositId = (await constitute.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
+
+        var maturity = await _client.PostAsJsonAsync(
+            $"/v1/deposits/{depositId}/maturity",
+            new MatureDepositRequest(MaturedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero)), SnakeCase);
+        Assert.Equal(HttpStatusCode.OK, maturity.StatusCode);
+        return depositId;
+    }
+
+    private async Task<Guid> EventIdAsync(Guid streamId, string eventType)
+    {
+        await using var connection = new NpgsqlConnection(_pg.GetConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT event_id FROM events WHERE stream_id = @id AND event_type = @type", connection);
+        command.Parameters.AddWithValue("id", streamId);
+        command.Parameters.AddWithValue("type", eventType);
+        return (Guid)(await command.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException($"no {eventType} on stream {streamId}"));
+    }
+
+    private async Task<Guid?> FirstEventCausationIdAsync(Guid streamId)
+    {
+        await using var connection = new NpgsqlConnection(_pg.GetConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT causation_id FROM events WHERE stream_id = @id AND sequence_number = 0", connection);
+        command.Parameters.AddWithValue("id", streamId);
+        var value = await command.ExecuteScalarAsync();
+        return value is DBNull or null ? null : (Guid)value;
+    }
+
     private async Task<HttpResponseMessage> PostConstituteAsync(ConstituteDepositRequest body, string? idempotencyKey)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/v1/deposits")
+        {
+            Content = JsonContent.Create(body, options: SnakeCase),
+        };
+        if (idempotencyKey is not null)
+        {
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
+        }
+
+        return await _client.SendAsync(request);
+    }
+
+    private async Task<HttpResponseMessage> PostJsonAsync<TBody>(string url, TBody body, string? idempotencyKey)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
             Content = JsonContent.Create(body, options: SnakeCase),
         };

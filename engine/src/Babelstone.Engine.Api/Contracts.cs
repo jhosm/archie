@@ -69,6 +69,53 @@ public sealed record PayInterestRequest(
     string? Actor = null);
 
 /// <summary>
+/// Step 2 of the renewal saga (bd babelstone-mtto PR B): open the renewed instance off a CLOSING
+/// (Matured) deposit. The route <c>{id}</c> is the closing deposit id; the body carries the new deposit
+/// id and the renewal facts. The engine reads the term / variant / cadence / policy off the (Matured)
+/// closing deposit — only the new-stream id, the re-pricing keys (product/role), the renewal instant and
+/// the funding account are supplied here. The instant is host-stamped if omitted.
+/// </summary>
+/// <param name="NewDepositId">The fresh stream id the renewed instance is constituted under (the saga
+/// derives it deterministically, so the renewal is a replayable command).</param>
+/// <param name="ProductId">The variant id the rate sheet re-prices against for SAME_TERM_CURRENT_RATE.</param>
+/// <param name="FundingAccount">The opaque funding-account token debited the rolled-over principal.</param>
+/// <param name="Role">An OPTIONAL pricing-role override; defaults to <c>standard</c>.</param>
+/// <param name="RenewedAt">The renewal instant — the new sheet is resolved as-of here and it is the new
+/// constitution's valid time (its DATE is the renewal/new-start date). Host-stamped if omitted.</param>
+/// <param name="Actor">The acting principal recorded on the new stream's append (defaults to <c>saga:renewal</c>).</param>
+public sealed record ConstituteRenewalRequest(
+    Guid NewDepositId,
+    string ProductId,
+    string FundingAccount,
+    string? Role = null,
+    DateTimeOffset? RenewedAt = null,
+    string? Actor = null);
+
+/// <summary>The constitute-renewal outcome: the closing deposit id, the NEW (renewed) deposit id, its
+/// lifecycle, and the new stream's <c>CommitSequence</c> (ADR-IC-005 §P3 read-your-writes token).</summary>
+public sealed record ConstituteRenewalResponse(
+    Guid DepositId, Guid NewDepositId, string Status, long CommitSequence);
+
+/// <summary>
+/// Step 3 of the renewal saga (bd babelstone-mtto PR B): link the renewal, folding the CLOSING stream
+/// Matured → Renewed. The route <c>{id}</c> is the closing deposit id; the body carries the new deposit
+/// id whose head DepositConstituted fills the <c>DepositRenewed</c> link. The instant is host-stamped if
+/// omitted.
+/// </summary>
+/// <param name="NewDepositId">The renewed instance's stream id (opened by constitute-renewal).</param>
+/// <param name="RenewedAt">The valid time recorded on the <c>DepositRenewed</c> append. Host-stamped if omitted.</param>
+/// <param name="Actor">The acting principal recorded on the closing stream's append (defaults to <c>saga:renewal</c>).</param>
+public sealed record LinkRenewalRequest(
+    Guid NewDepositId,
+    DateTimeOffset? RenewedAt = null,
+    string? Actor = null);
+
+/// <summary>The renewal-link outcome: the closing deposit id, the new deposit id, the closing deposit's
+/// terminal lifecycle (RENEWED), and the closing stream's post-link <c>CommitSequence</c>.</summary>
+public sealed record LinkRenewalResponse(
+    Guid DepositId, Guid NewDepositId, string Status, long CommitSequence);
+
+/// <summary>
 /// The deposit resource (ADR-PC-021 §D5 boundary), money as integer cents. There is ONE deposit
 /// resource — <c>GET /v1/deposits/{id}</c>; whether the answer is served from the denormalized
 /// read-model row (the fast, eventually-consistent default) or an authoritative fold of the event

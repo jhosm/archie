@@ -161,31 +161,7 @@ public sealed record TerminateEarlyCommand(
     string TerminationReason,
     string Actor);
 
-/// <summary>Auto-renew a maturing deposit (02 §2.4.4): mature the closing instance, constitute a
-/// fresh engine-native instance from the rolled-over principal at the policy-resolved rate, and link
-/// the two with <c>DepositRenewed</c>. The renewal branches on the closing deposit's
-/// <c>auto_renewal_policy</c> (folded onto the position from its <c>DepositConstituted</c>), so the
-/// policy is NOT a command input. Renewal is triggered MANUALLY here, exactly as maturity is — the
-/// time-based scheduler that auto-fires it on the renewal date is H.3, deliberately out of scope.</summary>
-/// <param name="ProductId">The variant id the rate sheet re-prices the new instance against for the
-/// SAME_TERM_CURRENT_RATE policy (the position carries only the resolved TAN, never the product/role
-/// keys, so the caller supplies them — mirroring <see cref="ConstituteDepositCommand"/>).</param>
-/// <param name="Role">The pricing role for the re-resolution (e.g. <c>standard</c>).</param>
-/// <param name="RenewedAt">The instant the renewal fires: the new sheet is resolved as-of here, and
-/// it is the closing maturity's and the new constitution's valid time. Its DATE is the renewal date.</param>
-/// <param name="NewDepositId">The fresh stream id the renewed instance is constituted under. Caller-
-/// supplied (not engine-generated) so the renewal is a deterministic, replayable command — the new
-/// id is the same on replay, and the <c>DepositRenewed</c> link is stable.</param>
-/// <param name="PayoutAccount">The legacy current account credited the closing maturity payout.</param>
-/// <param name="FundingAccount">The legacy current account debited the rolled-over principal of the
-/// new instance (the principal settles out at maturity and back in at the new constitution, so each
-/// leg's money movement matches its standalone command).</param>
-public sealed record RenewDepositCommand(
-    Guid DepositId,
-    string ProductId,
-    string Role,
-    DateTimeOffset RenewedAt,
-    Guid NewDepositId,
-    string PayoutAccount,
-    string FundingAccount,
-    string Actor);
+// The monolithic RenewDepositCommand (which drove the un-idempotent, three-step, cross-stream
+// RenewAsync) is RETIRED (bd babelstone-mtto PR B). Renewal is now two idempotent engine operations
+// with the maturity leg dropped — see ConstituteRenewalCommand / LinkRenewalCommand in
+// RenewalCommands.cs, driven by ConstituteRenewalAsync / LinkRenewalAsync.

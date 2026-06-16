@@ -5,103 +5,104 @@ using Xunit;
 namespace Babelstone.Families.TermDeposit.Application.Tests;
 
 /// <summary>
-/// F.5 (babelstone-k4yr) renewal-guard unit tests: the renewal rejections that fire BEFORE any
-/// rate-sheet resolve or settlement (the policy branch and the opt-out window). PURE — no Docker:
-/// the closing deposit's events are seeded into the in-memory <see cref="Babelstone.EventStore.IEventStore"/> (reusing
-/// <c>LifecycleRejectionTests</c>' helpers) and the service is wired with a <c>NullSink</c> plus a
-/// rate-sheet store and settlement port that fail if touched, so a rejection that resolves a sheet
-/// or moves money is caught loud. The happy-path renewal (append + fold over real Postgres) is the
-/// Integration tier in <c>RenewalHappyPathTests</c>.
+/// Renewal-guard unit tests (bd babelstone-mtto PR B), the semantic shift from the retired monolith.
+/// In the monolith <c>RenewAsync</c> ran on an ACTIVE deposit and matured it inline, so its guards
+/// rejected NONE-policy, pre-maturity (opt-out-window) and closed deposits. The renewal saga now runs
+/// AFTER the autonomous maturity leg, so <c>ConstituteRenewalAsync</c>'s precondition is the OPPOSITE:
+/// the closing deposit MUST already be <see cref="DepositLifecycle.Matured"/>. The guards therefore
+/// reframe:
+/// <list type="bullet">
+/// <item>NONE policy is still rejected (the new rejection path) — KEPT, retargeted to ConstituteRenewal.</item>
+/// <item>The old "pre-maturity opt-out window" rejections become the Matured-PRECONDITION guard: an
+/// Active (not-yet-matured) closing deposit is rejected, because maturity precedes the saga and
+/// pre-maturity renewal is structurally impossible on the saga path.</item>
+/// <item>An already-Renewed closing deposit is still rejected — KEPT, retargeted to ConstituteRenewal.</item>
+/// <item>The old "rejects renewing an already-matured deposit" INVERTS: a Matured closing deposit is now
+/// the HAPPY-PATH precondition (asserted positively in <c>RenewalHappyPathTests</c>), so that rejection
+/// is deleted.</item>
+/// </list>
+/// PURE — no Docker: the closing deposit's events are seeded into the in-memory event store and the
+/// service is wired with rate-sheet/settlement ports that FAIL if touched, so a rejection that resolves
+/// a sheet or moves money is caught loud (every rejection here fires before either). The happy-path
+/// renewal over real Postgres is the Integration tier in <c>RenewalHappyPathTests</c>.
 /// </summary>
 public sealed class RenewalRejectionTests
 {
     private static readonly DateOnly Start = new(2026, 1, 15);
     private static readonly DateOnly Maturity = new(2027, 1, 15);
+    private static readonly DateTimeOffset RenewedAt = new(2027, 1, 15, 0, 0, 0, TimeSpan.Zero);
 
     [Fact]
-    public async Task RenewAsync_rejects_a_NONE_policy_deposit()
+    public async Task ConstituteRenewalAsync_rejects_a_NONE_policy_deposit()
     {
-        // NONE terminates at maturity, never renews (02 §2.4.4). The rejection precedes the maturity
-        // leg, so no sheet is resolved and no money moves (the throwing ports prove it).
+        // NONE terminates at maturity, never renews (02 §2.4.4). The saga's header filter never starts a
+        // NONE-policy saga, but a direct call is still rejected — fail-loud, not a silent fall-through. The
+        // rejection precedes the rate resolve, so no sheet is resolved and no money moves (the throwing
+        // ports prove it). The closing deposit is Matured (the saga precondition), policy NONE.
         var depositId = Guid.NewGuid();
-        var service = ServiceOverStream(depositId, ActiveStream(depositId, "NONE"));
+        var service = ServiceOverStream(depositId, MaturedStream(depositId, "NONE"));
 
         var ex = await Assert.ThrowsAsync<DomainRejectedException>(() =>
-            service.RenewAsync(RenewCommand(depositId, new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero))));
+            service.ConstituteRenewalAsync(ConstituteRenewalCommand(depositId)));
 
         Assert.Contains("NONE", ex.Message);
     }
 
     [Fact]
-    public async Task RenewAsync_rejects_renewal_inside_the_pre_maturity_opt_out_window()
+    public async Task ConstituteRenewalAsync_rejects_an_Active_not_yet_matured_closing_deposit()
     {
-        // The opt-out window is the final 14 days before maturity (pt.2026.1 constants). A renewal dated
-        // 2027-01-05 (10 days before the 2027-01-15 maturity) is inside the window — the customer still
-        // holds the opt-out right, so auto-renewal must not fire. Rejected before any sheet/settlement.
+        // The Matured-PRECONDITION guard (the reframed opt-out-window rejection). Maturity is autonomous
+        // and precedes the renewal saga, so a closing deposit that is still ACTIVE cannot constitute a
+        // renewal — pre-maturity renewal is structurally impossible on the saga path. The F.3 table has no
+        // Renew-from-Matured row, so this is asserted directly. Rejected before any sheet/settlement.
         var depositId = Guid.NewGuid();
         var service = ServiceOverStream(depositId, ActiveStream(depositId, "SAME_TERM_CURRENT_RATE"));
 
         var ex = await Assert.ThrowsAsync<DomainRejectedException>(() =>
-            service.RenewAsync(RenewCommand(depositId, new DateTimeOffset(2027, 1, 5, 0, 0, 0, TimeSpan.Zero))));
+            service.ConstituteRenewalAsync(ConstituteRenewalCommand(depositId)));
 
-        Assert.Contains("opt-out window", ex.Message);
-        Assert.Contains("14", ex.Message); // names the pack-parameter window length
+        Assert.Contains("Active", ex.Message);
+        Assert.Contains("Matured", ex.Message); // names the precondition the Active deposit fails
     }
 
     [Fact]
-    public async Task RenewAsync_rejects_renewal_before_maturity_outside_the_window()
+    public async Task ConstituteRenewalAsync_rejects_an_already_Renewed_closing_deposit()
     {
-        // Well before the 14-day window (2026-06-01): the term is plainly not up. Still rejected — the
-        // opt-out right has not even opened, let alone closed. The message distinguishes this case.
-        var depositId = Guid.NewGuid();
-        var service = ServiceOverStream(depositId, ActiveStream(depositId, "SAME_TERM_SAME_RATE"));
-
-        var ex = await Assert.ThrowsAsync<DomainRejectedException>(() =>
-            service.RenewAsync(RenewCommand(depositId, new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero))));
-
-        Assert.Contains("before maturity", ex.Message);
-    }
-
-    [Fact]
-    public async Task RenewAsync_rejects_renewing_a_closed_deposit()
-    {
-        // The F.3 lifecycle gate: a Renewed (terminal) deposit cannot renew again. Same table the
-        // maturity/coupon rejections route through.
+        // A Renewed (terminal) closing deposit cannot constitute a second renewal: it is not Matured, so
+        // the Matured-precondition assertion rejects it (the F.3 terminal model, no Renew-from-Matured row).
         var depositId = Guid.NewGuid();
         var service = ServiceOverStream(depositId, RenewedStream(depositId));
 
         var ex = await Assert.ThrowsAsync<DomainRejectedException>(() =>
-            service.RenewAsync(RenewCommand(depositId, new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero))));
+            service.ConstituteRenewalAsync(ConstituteRenewalCommand(depositId)));
 
         Assert.Contains("Renewed", ex.Message);
-        Assert.Contains("Renew", ex.Message);
+        Assert.Contains("Matured", ex.Message); // the precondition the closed deposit fails
     }
 
     [Fact]
-    public async Task RenewAsync_rejects_renewing_an_already_matured_deposit()
+    public async Task LinkRenewalAsync_rejects_an_Active_not_yet_matured_closing_deposit()
     {
-        // A standalone-Matured (terminal) deposit cannot renew: the F.3 table makes Renew legal only
-        // from Active, so the step-1 entry gate rejects it before any maturity leg runs — no second
-        // DepositMatured is ever appended on the closed stream. This pins the renewal flow's Mature
-        // leg as table-governed too (the maturity leg only proceeds from an Active head); the throwing
-        // ports prove no sheet resolves and no money moves on the rejection.
+        // The link step folds Matured → Renewed, so it too requires a Matured closing head. An Active
+        // closing deposit is rejected before any append (the new stream is never even loaded).
         var depositId = Guid.NewGuid();
-        var service = ServiceOverStream(depositId, MaturedStream(depositId));
+        var newDepositId = Guid.NewGuid();
+        var service = ServiceOverStream(depositId, ActiveStream(depositId, "SAME_TERM_CURRENT_RATE"));
 
         var ex = await Assert.ThrowsAsync<DomainRejectedException>(() =>
-            service.RenewAsync(RenewCommand(depositId, new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero))));
+            service.LinkRenewalAsync(new LinkRenewalCommand(
+                DepositId: depositId, NewDepositId: newDepositId, RenewedAt: RenewedAt, Actor: "test")));
 
+        Assert.Contains("Active", ex.Message);
         Assert.Contains("Matured", ex.Message);
-        Assert.Contains("Renew", ex.Message); // the illegal transition the closed deposit cannot drive
     }
 
     // ---- seed streams + command -----------------------------------------------------------------
 
-    private static RenewDepositCommand RenewCommand(Guid depositId, DateTimeOffset renewedAt) =>
+    private static ConstituteRenewalCommand ConstituteRenewalCommand(Guid depositId) =>
         new(
-            DepositId: depositId, ProductId: "dpz_pt_12m_juros_venc", Role: "standard",
-            RenewedAt: renewedAt, NewDepositId: Guid.NewGuid(),
-            PayoutAccount: "PT50-DDA-001", FundingAccount: "PT50-DDA-001", Actor: "test");
+            DepositId: depositId, NewDepositId: Guid.NewGuid(), ProductId: "dpz_pt_12m_juros_venc",
+            Role: "standard", RenewedAt: RenewedAt, FundingAccount: "PT50-DDA-001", Actor: "test");
 
     /// <summary>A bare constituted AT_MATURITY deposit with the given policy → folds to Active.</summary>
     private static DomainEvent[] ActiveStream(Guid depositId, string policy) =>
@@ -110,14 +111,15 @@ public sealed class RenewalRejectionTests
             depositId, new Money(1_000_000), 300, "pt-deposits-2026.1", 365, Start, Maturity, "AT_MATURITY", policy),
     ];
 
-    /// <summary>A constituted + matured (but NOT renewed) deposit → folds to the terminal Matured state.</summary>
-    private static DomainEvent[] MaturedStream(Guid depositId) =>
+    /// <summary>A constituted + matured (but NOT renewed) deposit with the given policy → folds to the
+    /// terminal Matured state. This is the renewal saga's PRECONDITION head (maturity already ran).</summary>
+    private static DomainEvent[] MaturedStream(Guid depositId, string policy) =>
     [
         new DepositConstituted(
-            depositId, new Money(1_000_000), 300, "pt-deposits-2026.1", 365, Start, Maturity, "AT_MATURITY", "SAME_TERM_CURRENT_RATE"),
+            depositId, new Money(1_000_000), 300, "pt-deposits-2026.1", 365, Start, Maturity, "AT_MATURITY", policy),
         new InterestAccrued(new Money(30_417), Maturity),
         new WithholdingApplied(new Money(8_517), new Money(21_900)),
-        new DepositMatured(new Money(1_000_000), new Money(21_900), new Money(1_021_900), Maturity),
+        new DepositMatured(new Money(1_000_000), new Money(21_900), new Money(1_021_900), Maturity, policy),
     ];
 
     /// <summary>A constituted + matured + renewed deposit → folds to the terminal Renewed state.</summary>
@@ -127,7 +129,7 @@ public sealed class RenewalRejectionTests
             depositId, new Money(1_000_000), 300, "pt-deposits-2026.1", 365, Start, Maturity, "AT_MATURITY", "SAME_TERM_CURRENT_RATE"),
         new InterestAccrued(new Money(30_417), Maturity),
         new WithholdingApplied(new Money(8_517), new Money(21_900)),
-        new DepositMatured(new Money(1_000_000), new Money(21_900), new Money(1_021_900), Maturity),
+        new DepositMatured(new Money(1_000_000), new Money(21_900), new Money(1_021_900), Maturity, "SAME_TERM_CURRENT_RATE"),
         new DepositRenewed(depositId, Guid.NewGuid(), new Money(1_000_000), "pt-deposits-2026.1", 300, 365, Maturity, Maturity.AddDays(365)),
     ];
 
