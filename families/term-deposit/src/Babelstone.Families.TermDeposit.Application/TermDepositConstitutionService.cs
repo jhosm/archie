@@ -490,7 +490,9 @@ public sealed class TermDepositConstitutionService(
     /// Renew-from-Matured row). Renew legality is established at the saga-start precondition (only
     /// non-NONE-policy deposits ever start a renewal saga) and the Matured-precondition assertion in
     /// <see cref="ConstituteRenewalAsync"/>. Making the table express this compound sequence is an F.3
-    /// modelling decision tracked on bd babelstone-29v8; until then this leg stays as the spec dictates.
+    /// modelling decision tracked on bd babelstone-mtto.3 (babelstone-29v8 BUILT the F.3 table and is
+    /// closed; the Renew-from-Matured modelling + the pre-maturity opt-out-window enforcement this
+    /// decomposition deferred live on mtto.3); until then this leg stays as the spec dictates.
     /// </para>
     /// <para>
     /// <b>Idempotent per ADR-PC-029 slot 4</b> — the <c>renewal-link</c> endpoint threads the mandatory
