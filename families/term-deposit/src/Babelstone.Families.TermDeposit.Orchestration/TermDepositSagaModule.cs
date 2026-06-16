@@ -85,8 +85,10 @@ public sealed class TermDepositSagaModule : ISagaModule
         // The REAL outbox command sink (H.2): each command the saga decides is a saga_outbox row committed
         // in the SAME transaction as the state move. It calls the constitution-specific
         // SagaCommandPayloadFactory, so it is a family service (ADR-IC-018 §5) — the substrate keeps only
-        // the ISagaCommandSink port + the RecordingCommandSink test double.
-        services.TryAddSingleton<ISagaCommandSink>(sp =>
+        // the ISagaCommandSink port + the RecordingCommandSink test double. Registered as the TYPED-sink
+        // contract (bd babelstone-mtto PR2) so it joins the saga_type → sink registry the multi-saga host's
+        // CompositeSagaCommandSink builds; a second saga's typed sink registers alongside without collision.
+        services.AddSingleton<ISagaTypedCommandSink>(sp =>
             new SagaCommandOutboxSink(sp.GetRequiredService<SagaBusinessReferenceStore>()));
     }
 }

@@ -272,8 +272,56 @@ public sealed class SagaConsumeLoop : IDisposable
         var traceParent = NullableHeader(result, "traceparent");
         Guid? correlationId = Guid.TryParse(Header(result, "ce_correlationid"), out var c) ? c : null;
 
-        message = new SagaInboxEvent(messageId, processId, eventType, result.Topic, correlationId, traceParent);
+        // Extension attributes (ADR-IC-018 §P5/§D5): every ce_* header NOT in the standard CloudEvents
+        // set is a FAMILY-DECLARED routing discriminator the engine's outbox relay promoted from the
+        // event's IntegrationHeaders (e.g. ce_autorenewalpolicy). The substrate names no family — it
+        // copies whatever extension attributes the record carries, stripping the ce_ prefix and
+        // lowercasing the key, so the event-auto-start predicate reads HEADERS only, never the Avro
+        // payload (the extraction-ready, payload-blind boundary). Null when none are present.
+        var extensionHeaders = ExtractExtensionHeaders(result);
+
+        message = new SagaInboxEvent(
+            messageId, processId, eventType, result.Topic, correlationId, traceParent, extensionHeaders);
         return true;
+    }
+
+    /// <summary>
+    /// The standard CloudEvents Binary-mode headers (ADR-IC-015) + the W3C/orchestrator operational
+    /// headers the consume loop reads explicitly. Any OTHER <c>ce_*</c> header is a family-declared
+    /// extension attribute (ADR-IC-018 §P5) the substrate surfaces verbatim — it names no specific one.
+    /// </summary>
+    private static readonly HashSet<string> StandardHeaderKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "ce_specversion", "ce_id", "ce_source", "ce_type", "ce_time",
+        "ce_datacontenttype", "ce_subject", "ce_aggregatetype", "ce_correlationid",
+    };
+
+    /// <summary>
+    /// Project the record's NON-standard <c>ce_*</c> headers into the extension-attribute map the
+    /// auto-start machinery reads (ADR-IC-018 §P5/§D5): key = the attribute name without the <c>ce_</c>
+    /// prefix, lowercased (e.g. <c>ce_autorenewalpolicy</c> → <c>autorenewalpolicy</c>); value = the
+    /// UTF-8 header bytes. Returns null when no extension attribute is present so the common single-saga
+    /// path allocates nothing. PII-free by construction — these are structural routing discriminators
+    /// (ADR-PC-004 §P2), and the loop never decodes the Avro value to obtain them.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? ExtractExtensionHeaders(
+        ConsumeResult<byte[], byte[]> result)
+    {
+        Dictionary<string, string>? extensions = null;
+        foreach (var header in result.Message.Headers)
+        {
+            if (!header.Key.StartsWith("ce_", StringComparison.OrdinalIgnoreCase)
+                || StandardHeaderKeys.Contains(header.Key))
+            {
+                continue;
+            }
+
+            extensions ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            extensions[header.Key[3..].ToLowerInvariant()] =
+                Encoding.UTF8.GetString(header.GetValueBytes());
+        }
+
+        return extensions;
     }
 
     /// <summary>A compaction tombstone: a record present but with a null OR zero-length value (the GDPR

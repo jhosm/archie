@@ -331,7 +331,7 @@ public sealed class SagaCommandDispatchDrainer
         var client = _httpClientFactory.CreateClient();
         client.Timeout = _options.RequestTimeout;
 
-        using var request = new HttpRequestMessage(route.Method, CombineUrl(route.BaseUrl, route.Path))
+        using var request = new HttpRequestMessage(route.Method, CombineUrl(route.BaseUrl, route.Path, row.ProcessId))
         {
             // The byte-stable logical body the sink persisted — sent verbatim, no value minted here.
             Content = new ByteArrayContent(row.Payload),
@@ -514,8 +514,28 @@ public sealed class SagaCommandDispatchDrainer
         await command.ExecuteNonQueryAsync(ct);
     }
 
-    private static string CombineUrl(string baseUrl, string path) =>
-        $"{baseUrl.TrimEnd('/')}/{path.TrimStart('/')}";
+    /// <summary>
+    /// Combine the route base URL + path into the absolute target, substituting any
+    /// <c>{process_id}</c> token in the path with the outbox row's <c>process_id</c> (bd babelstone-mtto
+    /// PR2). This is the family-agnostic URL-templating seam: a command whose engine endpoint carries the
+    /// id in the PATH — e.g. the renewal saga's <c>POST /v1/deposits/{process_id}/constitute-renewal</c>,
+    /// where the closing deposit id IS the saga's process_id — declares the token in its
+    /// <see cref="CommandRoute.Path"/>, and the dispatcher (which already holds the row's process_id)
+    /// fills it. A path with no token is unchanged, so every existing body-based route (e.g.
+    /// ActivateDeposit → <c>/v1/deposits</c>) is untouched. The substrate names no family — it knows only
+    /// the row's process_id and the single generic token. The process id is a structural reference, not
+    /// PII (ADR-PC-004 §P2).
+    /// </summary>
+    private static string CombineUrl(string baseUrl, string path, Guid processId)
+    {
+        var resolvedPath = path.Replace(ProcessIdToken, processId.ToString(), StringComparison.Ordinal);
+        return $"{baseUrl.TrimEnd('/')}/{resolvedPath.TrimStart('/')}";
+    }
+
+    /// <summary>The single generic path-template token the dispatcher substitutes (bd babelstone-mtto
+    /// PR2): the saga's process_id. A family route that needs the id in the path declares this literal in
+    /// its <see cref="CommandRoute.Path"/>; the substrate fills it from the outbox row.</summary>
+    private const string ProcessIdToken = "{process_id}";
 
     private static KeyValuePair<string, object?> CommandTag(string commandType)
         => new("command_type", commandType);

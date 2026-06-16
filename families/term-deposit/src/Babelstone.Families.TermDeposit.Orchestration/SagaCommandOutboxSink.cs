@@ -56,10 +56,14 @@ namespace Babelstone.Families.TermDeposit.Orchestration;
 /// so no legacy start path needs preserving).
 /// </para>
 /// </remarks>
-public sealed class SagaCommandOutboxSink(SagaBusinessReferenceStore? businessReferenceStore = null) : ISagaCommandSink
+public sealed class SagaCommandOutboxSink(SagaBusinessReferenceStore? businessReferenceStore = null) : ISagaTypedCommandSink
 {
     private readonly SagaBusinessReferenceStore _businessReferenceStore =
         businessReferenceStore ?? new SagaBusinessReferenceStore();
+
+    /// <summary>The saga type this sink assembles command bodies for (bd babelstone-mtto PR2) — so the
+    /// multi-saga <c>CompositeSagaCommandSink</c> routes the constitution saga's commands here.</summary>
+    public string SagaType => ConstitutionProcess.Type;
 
     /// <inheritdoc />
     public async Task EmitAsync(
