@@ -1,0 +1,25 @@
+-- 0016_outbox_integration_headers.sql
+--
+-- Add the family-declared CloudEvents extension-header column to the outbox relay (ADR-IC-018
+-- §P5, amends ADR-IC-004 §P1's column set). A domain event may declare CloudEvents extension
+-- attributes (DomainEvent.IntegrationHeaders) — a structural routing discriminator a header-only
+-- consumer needs. The runtime carries them onto the outbox row, and the relay promotes each
+-- entry to a ce_<key> header (OutboxDrainer.BuildHeaders). Persisting them on the row keeps the
+-- ADR-IC-004 invariant "every emitted header is derivable from the outbox row alone" true: the
+-- column IS on the row.
+--
+-- The seam is GENERIC and family-agnostic: the column stores whatever map an event declares, the
+-- relay names no key. Its first user is term_deposit's DepositMatured (auto_renewal_policy →
+-- ce_autorenewalpolicy), but nothing here is term-deposit-specific. The values are structural
+-- routing tokens, never PII (ADR-PC-004 §P2).
+--
+-- BACKWARD-compatible by construction: ADD COLUMN ... NULL leaves every existing PENDING/PUBLISHED
+-- row with integration_headers = NULL, for which the relay emits no extension header (the correct
+-- behaviour for events that declared none). IF NOT EXISTS makes re-application idempotent. The
+-- column inherits the table-level SELECT/INSERT grants the babelstone_engine role already holds on
+-- outbox (0002) — the runtime INSERTs it in the append transaction and the relay SELECTs it on
+-- drain — so no new GRANT is owed.
+--
+-- Forward-only: once applied this migration is never edited (ADR-PC-001 §P5); shape changes land
+-- as new, higher-numbered migrations.
+ALTER TABLE outbox ADD COLUMN IF NOT EXISTS integration_headers JSONB NULL;

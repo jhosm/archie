@@ -278,7 +278,11 @@ public sealed class AggregateRuntime<TState>(
                     SchemaId: busEncoded.SchemaId,
                     Status: OutboxStatus.Pending,
                     CreatedAt: transactionTime,
-                    PublishedAt: null));
+                    PublishedAt: null,
+                    // The CloudEvents extension attributes this event declares (family-agnostic seam,
+                    // ADR-IC-018 §P5). Null for events that declare none — the common case. Carried onto
+                    // the outbox row so the relay can promote each to a ce_<key> header.
+                    IntegrationHeaders: events[i].IntegrationHeaders));
             }
         }
 

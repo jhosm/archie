@@ -5,7 +5,20 @@ namespace Babelstone.Engine;
 /// a concrete event are plaintext here; the runtime encrypts them at the boundary
 /// (ADR-PC-004 §P2) before they reach storage. Handlers never see ciphertext.
 /// </summary>
-public abstract record DomainEvent;
+public abstract record DomainEvent
+{
+    /// <summary>
+    /// CloudEvents extension attributes this event declares for the outbox relay to promote to
+    /// <c>ce_&lt;key&gt;</c> headers (ADR-IC-018 §P5). Key = the attribute name WITHOUT the <c>ce_</c>
+    /// prefix, lowercase; value = the string-encoded attribute value. The relay emits one
+    /// <c>ce_&lt;key&gt;</c> header per entry and names no key itself — this seam is generic and
+    /// family-agnostic: the relay copies whatever an event declares. Null (the base default) means the
+    /// event declares no extension headers, which is the case for every event that needs no header-only
+    /// routing discriminator. Override in a concrete family event to declare routing attributes; NEVER
+    /// put PII here — these values ride the durable bus as cleartext headers (ADR-PC-004 §P2).
+    /// </summary>
+    public virtual IReadOnlyDictionary<string, string>? IntegrationHeaders => null;
+}
 
 /// <summary>
 /// A side effect a handler wants to happen, returned as data rather than performed.

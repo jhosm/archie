@@ -246,7 +246,8 @@ public static class TermDepositDecider
         [
             new InterestAccrued(gross, end),
             new WithholdingApplied(withheld.Tax, withheld.Net),
-            new DepositMatured(position.Principal, withheld.Net, payout, end),
+            new DepositMatured(position.Principal, withheld.Net, payout, end,
+                AutoRenewalPolicy: position.AutoRenewalPolicy),
         ];
     }
 
@@ -269,14 +270,16 @@ public static class TermDepositDecider
         [
             new InterestAccrued(gross, position.MaturityDate),
             new WithholdingApplied(withheld.Tax, withheld.Net),
-            new DepositMatured(position.Principal, withheld.Net, payout, position.MaturityDate),
+            new DepositMatured(position.Principal, withheld.Net, payout, position.MaturityDate,
+                AutoRenewalPolicy: position.AutoRenewalPolicy),
         ];
     }
 
     /// <summary>ADVANCE maturity: principal only — interest was paid at t=0. Zero-interest payout.</summary>
     private static IReadOnlyList<DomainEvent> MatureAdvance(DepositPosition position) =>
     [
-        new DepositMatured(position.Principal, Money.Zero, position.Principal, position.MaturityDate),
+        new DepositMatured(position.Principal, Money.Zero, position.Principal, position.MaturityDate,
+            AutoRenewalPolicy: position.AutoRenewalPolicy),
     ];
 
     /// <summary>

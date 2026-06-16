@@ -1,5 +1,7 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace Babelstone.EventStore;
 
@@ -241,8 +243,8 @@ public sealed class PostgresEventStore(string connectionString) : IEventStore
         const string sql = """
             INSERT INTO outbox (
                 event_id, aggregate_type, aggregate_id, sequence_number, event_type, payload,
-                schema_id, status, created_at, published_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+                schema_id, status, created_at, published_at, integration_headers)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
             """;
 
         await using var batch = new NpgsqlBatch(connection, tx);
@@ -259,6 +261,17 @@ public sealed class PostgresEventStore(string connectionString) : IEventStore
             command.Parameters.Add(new NpgsqlParameter { Value = r.Status == OutboxStatus.Published ? "PUBLISHED" : "PENDING" });
             command.Parameters.Add(new NpgsqlParameter { Value = r.CreatedAt });
             command.Parameters.Add(new NpgsqlParameter { Value = (object?)r.PublishedAt ?? DBNull.Value });
+            // The family-declared CloudEvents extension attributes (ADR-IC-018 §P5), persisted as
+            // JSONB so the relay reads them back verbatim. A typed NpgsqlDbType.Jsonb parameter sends
+            // the serialized map; null integration_headers binds SQL NULL (no extension headers) — the
+            // common case and every pre-seam row.
+            command.Parameters.Add(new NpgsqlParameter
+            {
+                NpgsqlDbType = NpgsqlDbType.Jsonb,
+                Value = r.IntegrationHeaders is { } headers
+                    ? JsonSerializer.Serialize(headers)
+                    : DBNull.Value,
+            });
             batch.BatchCommands.Add(command);
         }
 

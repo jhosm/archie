@@ -12,7 +12,8 @@ The deposit matures and pays out: TotalPayout = Principal + NetInterest. Busines
 | `net_interest_paid_cents` | `long` | NetInterestPaid as integer EUR cents (Money.Cents). |
 | `total_payout_cents` | `long` | TotalPayout as integer EUR cents (Money.Cents). |
 | `matured_on` | `int` (`date`) | MaturedOn (DateOnly) as days since epoch. |
+| `auto_renewal_policy` | `null` \| `string` | Renewal policy (NONE/SAME_TERM_CURRENT_RATE/SAME_TERM_SAME_RATE), folded from DepositConstituted. Null for pre-field streams (BACKWARD-compatible additive field, [ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md) §P2). A structural enum token, not PII ([ADR-PC-004](../../product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) §P2). Promoted to the ce_autorenewalpolicy CloudEvents extension header by the outbox relay ([ADR-IC-018](../../integration_concepts/adrs/ADR-IC-018-family-owned-saga-modules.md) §P5). |
 
 ## Governing ADRs
 
-[ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md), [ADR-PC-004](../../product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)
+[ADR-IC-002](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md), [ADR-IC-018](../../integration_concepts/adrs/ADR-IC-018-family-owned-saga-modules.md), [ADR-PC-004](../../product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)
