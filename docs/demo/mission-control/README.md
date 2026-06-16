@@ -28,6 +28,31 @@ Flip between them with the **Mode** toggle, top-right. DEMO is the default. Inde
 Mode, the **Operator** toggle (`YOU` / `CLAUDE`) overlays the real-Claude agent — see
 [The AI-native framing](#the-ai-native-framing) below.
 
+### One command for all of it — `make demo`
+
+The three sections below each bring up **one** slice (and each proves one thing). If you just want to
+**open the UI and flip between every mode**, there's a single launcher that stands up the whole
+backend at once:
+
+```bash
+# ANTHROPIC_API_KEY is optional — set it to enable Operator=CLAUDE (the real agent)
+ANTHROPIC_API_KEY=sk-ant-…  make demo
+```
+
+`make demo` starts `serve.py` for you — then open **http://localhost:9000**.
+
+`make demo` (`scripts/demo-all.sh`) brings up Postgres + Redpanda + the Core-ACL stub, **one**
+Redpanda-wired engine on `:8080`, the orchestrator on `:8090`, the MCP server on `:8000`, the
+real-Claude agent host on `:8091` (only if `ANTHROPIC_API_KEY` is set — server-side only), and
+Mission Control on `:9000`. Then **DEMO / LIVE·engine / LIVE·saga** and **YOU / CLAUDE** all work
+against that one bring-up — no script-juggling, no port clash. Stop it with `make demo-down` (infra is
+left up; `make down` stops the stack).
+
+This works because the saga's Redpanda-wired engine is a strict **superset** of the walking-skeleton's
+Postgres-only one: LIVE·engine just calls `/v1` directly and doesn't care that the outbox is also
+publishing, so a single engine serves every mode. The four launchers share one bring-up library
+(`scripts/demo-lib.sh`); the per-slice scripts below stay for the minimal, fast, single-purpose runs.
+
 **The engine-direct vs saga distinction matters.** LIVE·engine calls the engine's `/v1` command
 surface directly — a real, governed boundary (ADR-PC-029 lists the edge, MCP, and saga as
 co-callers of it), and it's faithful to the **MCP-operator** framing this demo uses. But it
@@ -258,11 +283,15 @@ Smoke-tested against a real engine (`scripts/demo-mcp.sh up` → `serve.py`) on 
   differ slightly between months (e.g. €19.50 then €20.15). LIVE·engine is the engine's truth; DEMO
   is illustrative.
 
-**Bring-up gotcha:** on a *pre-existing* Postgres volume, `scripts/demo-mcp.sh` skips all migrations
-when the `events` table already exists, leaving newer tables (`command_dedup`, …) absent → constitute
-500s. Fix for a clean run: wipe the volume first (`docker compose -f infra/compose.yaml down -v`) so
-migrations apply fresh, then `up`. (The step-5 `Idempotency-Key` staleness is fixed on this branch;
-the migration-skip remains — tracked as a separate bug.)
+**Bring-up gotcha (pre-existing Postgres volume):** the forward-only migrations aren't individually
+re-runnable, so the shared applier (`scripts/demo-lib.sh`) guards on the last *table-creating* migration
+(`command_dedup`, 0015 — the trailing 0016 only adds a column via an idempotent `ALTER`): a
+fully-migrated volume is skipped cleanly, a clean volume gets the full apply, and
+a *partially*-migrated volume (has `events` but not `command_dedup` — e.g. seeded by an older
+`demo-mcp.sh` that stopped at `0004`) now **fails loud** with the wipe instruction instead of silently
+skipping into a runtime 500. To recover, wipe the volume and let migrations apply fresh:
+`docker compose -f infra/compose.yaml down -v`, then re-run. (Older note: `demo-mcp.sh` used to guard
+on the *first* table `events` and silently skip → constitute 500s; that bug is fixed by this unified guard.)
 
 ## Notes / scope
 

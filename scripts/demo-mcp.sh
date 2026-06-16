@@ -3,18 +3,18 @@
 # demo-mcp.sh — one-command walking-skeleton demo for Epic E (bd babelstone-7puj):
 # a thin term-deposit slice driven through the dev MCP server (ADR-IC-010 / E.5).
 #
-# It chains the manual runbook so a future run is one command:
-#   1. start PostgreSQL only (the engine's sole dependency — no Redpanda needed)
-#   2. apply the hand-rolled forward-only migrations (no migration runner exists)
-#   3. deploy the rate sheet via the REAL C.6 deploy API (Babelstone.RateSheets.Api,
-#      ADR-PC-008 §P2), asserting the 201-deploy / 200-idempotent-replay /
-#      409-forward-only-conflict semantics — the validated seam, not a raw INSERT
+# This is the MINIMAL live path — Postgres ONLY, no Redpanda, no orchestrator — so it boots fast and
+# fails in few ways (ideal on a stage). It chains the manual runbook into one command:
+#   1. start PostgreSQL only (the engine's sole dependency)
+#   2. apply the forward-only event-store schema (shared apply_event_store_schema)
+#   3. deploy the rate sheet via the REAL C.6 deploy API (ADR-PC-008 §P2), asserting
+#      201-deploy / 200-idempotent-replay / 409-forward-only-conflict — the validated seam
 #   4. start the engine command/query host (Babelstone.Engine.Api, ADR-PC-021 §D5)
-#   5. drive constitute -> read -> mature over HTTP and assert the canonical
-#      AT_MATURITY numbers (gross 30417 / tax 8517 / net 21900 / payout 1021900)
+#   5. drive constitute -> read -> mature over HTTP and assert the canonical AT_MATURITY numbers
 #   6. start the Python MCP server (Streamable HTTP) in front of the engine
-# then print the `claude mcp add` wiring + the prompts to exercise it from Claude Code.
-# The engine + MCP are left RUNNING; stop them with:  scripts/demo-mcp.sh down
+# then print the `claude mcp add` wiring. The engine + MCP are left RUNNING; stop with: down.
+#
+# For the WHOLE UI (every mode + Operator=CLAUDE) in one bring-up, see scripts/demo-all.sh / `make demo`.
 #
 # Usage:
 #   scripts/demo-mcp.sh [up]    # run the demo, leave engine + MCP up   (make demo-mcp)
@@ -25,6 +25,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=scripts/demo-lib.sh
+. "$ROOT/scripts/demo-lib.sh"
 
 # --- configuration (overridable; defaults match the MCP/FastMCP/dev-stack defaults) ---
 PG_PORT="${PG_PORT:-5432}"
@@ -46,55 +48,6 @@ MIGRATIONS_DIR="engine/src/Babelstone.EventStore.Migrations/Sql"
 # --- canonical scenario (1:1 with DepositsApiIntegrationTests) ---
 PRODUCT="dpz_pt_12m_juros_venc"
 RATE_SHEET_VERSION="pt-deposits-2026.1"
-
-# --- pretty output ---
-say()  { printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }
-ok()   { printf '  \033[32m✓ %s\033[0m\n' "$*"; }
-info() { printf '  \033[2m%s\033[0m\n' "$*"; }
-die()  { printf '\n\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
-
-py() { mise exec -- python "$@"; }   # pinned interpreter, for JSON assertions
-
-# Read a field out of a saved JSON response and assert it equals an expected value.
-assert_json() { # file field expected
-  local got
-  got="$(py -c "import json;print(json.load(open('$1')).get('$2'))")" \
-    || die "could not parse $2 from $1"
-  [ "$got" = "$3" ] || die "expected $2=$3 but got '$got'  (see $1)"
-  ok "$2 = $got"
-}
-
-# Wait until an HTTP endpoint answers at all (any status != 000 means the port is live).
-wait_up() { # url timeout_seconds name logfile
-  local url="$1" timeout="$2" name="$3" log="${4:-}" i=0 code
-  while :; do
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$url" 2>/dev/null || true)"
-    [ -n "$code" ] && [ "$code" != "000" ] && { ok "$name is up ($url → HTTP $code)"; return 0; }
-    i=$((i + 1))
-    if [ "$i" -ge "$timeout" ]; then
-      [ -n "$log" ] && { printf '\n--- last 30 lines of %s ---\n' "$log"; tail -n 30 "$log" 2>/dev/null || true; }
-      die "$name did not come up at $url within ${timeout}s"
-    fi
-    sleep 1
-  done
-}
-
-port_busy() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
-
-# Resolve the built DLL for a project (deterministic path → clean kill semantics).
-dll_for() { ls "$1"/bin/Debug/net*/"$2".dll 2>/dev/null | head -1; }
-
-stop_pidfile() { # pidfile name
-  local pidfile="$1" name="$2" pid
-  if [ -f "$pidfile" ]; then
-    pid="$(cat "$pidfile" 2>/dev/null || true)"
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-      ok "stopped $name (pid $pid)"
-    fi
-    rm -f "$pidfile"
-  fi
-}
 
 teardown() {
   say "Stopping the demo's engine + MCP (Postgres is left running — use 'make down' for the stack)"
@@ -122,17 +75,14 @@ mkdir -p "$RUNDIR"
 # 0. preflight
 # ---------------------------------------------------------------------------
 say "Preflight"
-command -v docker >/dev/null 2>&1 || die "docker not found on PATH"
-docker info >/dev/null 2>&1 || die "docker is not running — start Docker Desktop and retry"
-command -v mise >/dev/null 2>&1 || die "mise not found — run 'make bootstrap' first"
-command -v lsof >/dev/null 2>&1 || die "lsof not found (needed for the port-clash guard)"
-# The engine (8080) and MCP (8000) ports collide with the full stack's Redpanda Console
-# and Kong proxy. This demo needs Postgres ONLY, so those ports must be free.
+require_demo_tools
+# The engine (8080) and MCP (8000) ports collide with the full stack's Redpanda Console / Kong proxy
+# AND with a sibling demo's engine. This demo needs Postgres ONLY, so those ports must be free.
 if port_busy "$ENGINE_PORT"; then
-  die "port $ENGINE_PORT is busy — likely Redpanda Console from 'make up'. Run 'make down' (the demo needs Postgres only), or set ENGINE_PORT=8088."
+  die "port $ENGINE_PORT is busy (engine) — a sibling demo's engine (demo-saga/demo-all) or Redpanda Console from 'make up'. Stop it (the matching '*-down', or 'make down'), or set ENGINE_PORT=8088."
 fi
 if port_busy "$MCP_PORT"; then
-  die "port $MCP_PORT is busy — likely the Kong proxy from 'make up'. Run 'make down', or set MCP_PORT to a free port."
+  die "port $MCP_PORT is busy (MCP) — the Kong proxy from 'make up' or a sibling demo's MCP server. Stop it ('make down' / the matching '*-down'), or set MCP_PORT to a free port."
 fi
 ok "docker, mise, lsof present; ports $ENGINE_PORT (engine) and $MCP_PORT (MCP) are free"
 
@@ -141,24 +91,14 @@ ok "docker, mise, lsof present; ports $ENGINE_PORT (engine) and $MCP_PORT (MCP) 
 # ---------------------------------------------------------------------------
 say "1/6 Starting PostgreSQL (the only dependency the engine host needs)"
 $COMPOSE up -d --wait postgres
-until docker exec "$PG_CONTAINER" pg_isready -U babelstone -d babelstone >/dev/null 2>&1; do sleep 1; done
+wait_postgres "$PG_CONTAINER"
 ok "PostgreSQL accepting connections on localhost:${PG_PORT}"
 
 # ---------------------------------------------------------------------------
-# 2. migrations (forward-only SQL; no runner exists — apply in 0001..0004 order)
+# 2. event-store schema (forward-only SQL; shared applier, guards on command_dedup)
 # ---------------------------------------------------------------------------
 say "2/6 Applying the event-store schema"
-if docker exec "$PG_CONTAINER" psql -U babelstone -d babelstone -tAc \
-     "SELECT to_regclass('public.events') IS NOT NULL;" 2>/dev/null | grep -q t; then
-  ok "schema already present (events table exists) — skipping migrations"
-else
-  for f in "$MIGRATIONS_DIR"/0*.sql; do
-    info "applying $(basename "$f")"
-    docker exec -i "$PG_CONTAINER" psql -U babelstone -d babelstone -v ON_ERROR_STOP=1 -q < "$f" \
-      || die "migration $(basename "$f") failed"
-  done
-  ok "applied: events, outbox, snapshots, rate_sheets (+ append-only role)"
-fi
+apply_event_store_schema "$PG_CONTAINER" babelstone "$MIGRATIONS_DIR"
 
 # ---------------------------------------------------------------------------
 # pre-build the two hosts (so backgrounded launches start fast with clean PIDs)
@@ -177,14 +117,6 @@ ok "built"
 # 3. deploy the rate sheet via the C.6 API — assert 201 / 200 / 409
 # ---------------------------------------------------------------------------
 say "3/6 Deploying the rate sheet via the C.6 deploy API (validated seam, not a raw INSERT)"
-ConnectionStrings__RateSheets="$PG_CONN" ASPNETCORE_URLS="http://localhost:${RATESHEET_PORT}" \
-  ASPNETCORE_ENVIRONMENT=Development \
-  mise exec -- dotnet "$RATESHEET_DLL" > "$RUNDIR/ratesheet-api.log" 2>&1 &
-RATESHEET_PID=$!
-# The deploy host is transient: always reap it, even on a failed assertion.
-trap 'kill "$RATESHEET_PID" 2>/dev/null || true' EXIT
-wait_up "http://localhost:${RATESHEET_PORT}/" 60 "RateSheets.Api" "$RUNDIR/ratesheet-api.log"
-
 cat > "$RUNDIR/rate-sheet.json" <<JSON
 {"rate_sheet_version_id":"${RATE_SHEET_VERSION}","product_family":"term_deposit","pack_version":"pt.2026.1","effective_from":"2026-01-01T00:00:00+00:00","approved_by":"treasury.alm@bank.internal","approval_ref":"ALM-2026-019","products":{"dpz_pt_12m_juros_venc":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":300}]}},"dpz_pt_12m_juros_mensal":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":325}]}},"dpz_pt_12m_juros_antecip":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":300}]}}}}
 JSON
@@ -193,41 +125,31 @@ cat > "$RUNDIR/rate-sheet-conflict.json" <<JSON
 {"rate_sheet_version_id":"${RATE_SHEET_VERSION}","product_family":"term_deposit","pack_version":"pt.2026.1","effective_from":"2026-01-01T00:00:00+00:00","approved_by":"treasury.alm@bank.internal","approval_ref":"ALM-2026-019","products":{"${PRODUCT}":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":350}]}}}}
 JSON
 
-deploy() { # bodyfile  -> echoes the HTTP status
-  curl -sS -o "$RUNDIR/deploy-resp.json" -w '%{http_code}' \
-    -X POST "http://localhost:${RATESHEET_PORT}/v1/rate-sheets" \
-    -H 'Content-Type: application/json' -H 'X-Deploy-Actor: demo-mcp' \
-    --data-binary @"$1"
+# Runs inside with_ratesheet_host: asserts the deploy / idempotent-replay / forward-only-conflict trio.
+mcp_deploy() { # base_url
+  local url="$1" code
+  code="$(ratesheet_post "$url" demo-mcp "$RUNDIR/rate-sheet.json" "$RUNDIR/deploy-resp.json")"
+  case "$code" in
+    201) ok "deploy → 201 Created (new rate sheet ${RATE_SHEET_VERSION})" ;;
+    200) ok "deploy → 200 OK (rate sheet ${RATE_SHEET_VERSION} already present, identical)" ;;
+    *)   die "deploy expected 201 or 200, got $code  ($(cat "$RUNDIR/deploy-resp.json"))" ;;
+  esac
+  code="$(ratesheet_post "$url" demo-mcp "$RUNDIR/rate-sheet.json" "$RUNDIR/deploy-resp.json")"
+  [ "$code" = 200 ] || die "idempotent re-POST expected 200, got $code  ($(cat "$RUNDIR/deploy-resp.json"))"
+  ok "idempotent re-POST → 200 OK (replayed, no second write — ADR-PC-008 §P2)"
+  code="$(ratesheet_post "$url" demo-mcp "$RUNDIR/rate-sheet-conflict.json" "$RUNDIR/deploy-resp.json")"
+  [ "$code" = 409 ] || die "conflicting re-POST (different rate) expected 409, got $code  ($(cat "$RUNDIR/deploy-resp.json"))"
+  ok "conflicting re-POST (350 bps) → 409 Conflict (forward-only immutability — ADR-PC-008 §P5)"
 }
-
-code="$(deploy "$RUNDIR/rate-sheet.json")"
-case "$code" in
-  201) ok "deploy → 201 Created (new rate sheet ${RATE_SHEET_VERSION})" ;;
-  200) ok "deploy → 200 OK (rate sheet ${RATE_SHEET_VERSION} already present, identical)" ;;
-  *)   die "deploy expected 201 or 200, got $code  ($(cat "$RUNDIR/deploy-resp.json"))" ;;
-esac
-
-code="$(deploy "$RUNDIR/rate-sheet.json")"
-[ "$code" = 200 ] || die "idempotent re-POST expected 200, got $code  ($(cat "$RUNDIR/deploy-resp.json"))"
-ok "idempotent re-POST → 200 OK (replayed, no second write — ADR-PC-008 §P2)"
-
-code="$(deploy "$RUNDIR/rate-sheet-conflict.json")"
-[ "$code" = 409 ] || die "conflicting re-POST (different rate) expected 409, got $code  ($(cat "$RUNDIR/deploy-resp.json"))"
-ok "conflicting re-POST (350 bps) → 409 Conflict (forward-only immutability — ADR-PC-008 §P5)"
-
-kill "$RATESHEET_PID" 2>/dev/null || true
-trap - EXIT
-ok "stopped the transient deploy host (the engine reads rate_sheets directly)"
+with_ratesheet_host "$RATESHEET_DLL" "$PG_CONN" "http://localhost:${RATESHEET_PORT}" \
+  "$RUNDIR/ratesheet-api.log" mcp_deploy
 
 # ---------------------------------------------------------------------------
-# 4. start the engine command/query host on :ENGINE_PORT
+# 4. start the engine command/query host on :ENGINE_PORT (Postgres-only — no Kafka)
 # ---------------------------------------------------------------------------
 say "4/6 Starting the engine host on ${ENGINE_URL}"
-ConnectionStrings__Engine="$PG_CONN" Engine__PacksDir="$ROOT/packs" Engine__PackVersion=pt.2026.1 \
-  ASPNETCORE_URLS="$ENGINE_URL" ASPNETCORE_ENVIRONMENT=Development \
-  nohup mise exec -- dotnet "$ENGINE_DLL" > "$RUNDIR/engine.log" 2>&1 &
-echo $! > "$RUNDIR/engine.pid"
-wait_up "${ENGINE_URL}/v1/deposits/00000000-0000-0000-0000-000000000000" 60 "engine host" "$RUNDIR/engine.log"
+start_engine_host "$ENGINE_DLL" "$PG_CONN" "$ENGINE_URL" "$ROOT/packs" \
+  "$RUNDIR/engine.pid" "$RUNDIR/engine.log"
 
 # ---------------------------------------------------------------------------
 # 5. drive constitute -> read -> mature and assert the canonical numbers
@@ -266,18 +188,10 @@ ok "canonical numbers reproduced end-to-end through the engine's HTTP boundary"
 # 6. start the Python MCP server in front of the engine
 # ---------------------------------------------------------------------------
 say "6/6 Setting up + starting the Python MCP server"
-if [ ! -d mcp-server/.venv ]; then
-  (cd mcp-server && mise exec -- python -m venv .venv) || die "venv creation failed"
-fi
-VENV_PY="$ROOT/mcp-server/.venv/bin/python"
-(cd mcp-server && "$VENV_PY" -m pip install -q -e '.[dev]') || die "pip install failed"
-(cd mcp-server && "$VENV_PY" -m pytest -q) || die "MCP contract tests failed"
+setup_mcp_venv dev
+(cd mcp-server && "$ROOT/mcp-server/.venv/bin/python" -m pytest -q) || die "MCP contract tests failed"
 ok "MCP package installed; contract tests green"
-
-BABELSTONE_ENGINE_URL="$ENGINE_URL" \
-  nohup "$VENV_PY" -m babelstone_mcp > "$RUNDIR/mcp.log" 2>&1 &
-echo $! > "$RUNDIR/mcp.pid"
-wait_up "$MCP_URL" 30 "MCP server" "$RUNDIR/mcp.log"
+start_mcp_server "$ENGINE_URL" "$RUNDIR/mcp.pid" "$RUNDIR/mcp.log" "$MCP_URL"
 
 # ---------------------------------------------------------------------------
 # done — print the Claude Code wiring
