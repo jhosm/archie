@@ -4,9 +4,12 @@ namespace Babelstone.Families.TermDeposit.Application;
 // RenewAsync (which matured + constituted + linked in one cross-stream call) is decomposed into
 // TWO idempotent engine operations the renewal saga drives, with the MATURITY leg dropped:
 // maturity is now autonomous (MatureAsync runs first and the closing deposit is already Matured
-// when the saga fires). Each command carries only the per-step facts the engine needs; the
-// renewal rate, term, variant, cadence and policy are read off the (Matured) closing deposit, not
-// supplied here. The optional CommandId is the ADR-PC-029 slot 4 idempotency key (the saga's
+// when the saga fires). Each command carries only the per-step facts the engine needs; EVERY
+// renewal fact — the rate, term, variant, cadence, policy AND (bd babelstone-mtto.5) the product
+// code, pricing role and funding-account token — is read off the (Matured) closing deposit's folded
+// state, NOT supplied here. So the orchestrator carries no product-family knowledge (ADR-IC-003
+// §A7): the engine resolves product facts in-tx from the closing deposit it already loads. The
+// optional CommandId is the ADR-PC-029 slot 4 idempotency key (the saga's
 // saga_outbox row id, threaded by the dispatcher as the Idempotency-Key header) — a replay returns
 // the original outcome with no second append. It stays nullable only for direct in-process callers
 // (family unit tests that construct the command without exercising idempotency).
@@ -19,28 +22,28 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// (plus the ADVANCE upfront-interest triple for an ADVANCE variant). The maturity credit is NOT this
 /// command's leg — <see cref="TermDepositConstitutionService.MatureAsync"/> already credited it.
 /// </summary>
-/// <param name="DepositId">The CLOSING (Matured) deposit's stream id (= the saga's process_id).</param>
+/// <remarks>
+/// <b>The command is MINIMAL (bd babelstone-mtto.5): it carries NO product / role / funding.</b> The
+/// engine now resolves ALL renewal facts — <c>product_code</c>, <c>role</c>, <c>funding_account</c> —
+/// from the CLOSING deposit's folded state (now that <c>DepositConstituted</c> persists role + funding
+/// alongside the already-persisted product code), so the orchestrator carries NO product-family
+/// knowledge (the #200 / ADR-IC-003 §A7 principle "the engine resolves product facts in-tx"). The
+/// closing id stays in the URL path; the body becomes <c>{ new_deposit_id, renewed_at?, actor }</c>.
+/// </remarks>
+/// <param name="DepositId">The CLOSING (Matured) deposit's stream id (= the saga's process_id). Its
+/// folded state is the SINGLE source of the renewed instance's product / role / funding.</param>
 /// <param name="NewDepositId">The fresh stream id the renewed instance is constituted under. Caller-
 /// supplied (the saga derives it deterministically) so the renewal is a replayable command — the new
 /// id is the same on replay and the <c>DepositRenewed</c> link stays stable.</param>
-/// <param name="ProductId">The variant id the rate sheet re-prices the new instance against for the
-/// SAME_TERM_CURRENT_RATE policy (the position carries only the resolved TAN, never the product/role
-/// keys, so the caller supplies them — mirroring the retired <c>RenewDepositCommand</c>).</param>
-/// <param name="Role">The pricing role for the re-resolution (e.g. <c>standard</c>).</param>
 /// <param name="RenewedAt">The instant the renewal fires: the new sheet is resolved as-of here, and
 /// it is the new constitution's valid time. Its DATE is the renewal/new-start date.</param>
-/// <param name="FundingAccount">The legacy current account debited the rolled-over principal of the
-/// new instance (the renewal_rollover leg).</param>
 /// <param name="Actor">The acting principal recorded on the new stream's append.</param>
 /// <param name="CommandId">The deterministic command id (the saga_outbox row id) — the
 /// Idempotency-Key the new-stream append dedups on (ADR-PC-029 slot 4).</param>
 public sealed record ConstituteRenewalCommand(
     Guid DepositId,
     Guid NewDepositId,
-    string ProductId,
-    string Role,
     DateTimeOffset RenewedAt,
-    string FundingAccount,
     string Actor,
     Guid? CommandId = null);
 

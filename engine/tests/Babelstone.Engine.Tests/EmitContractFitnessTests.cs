@@ -463,6 +463,17 @@ public sealed class EmitContractFitnessTests
     /// <c>"tax"</c> — a tax amount/rate never contains the <c>_id</c> token). The fragment test still
     /// catches a genuine identity field (<c>customer_name</c>, <c>iban</c>, <c>nif</c>).
     /// </summary>
+    /// <remarks>
+    /// <c>funding_account</c> is the third allowed structural false positive (bd babelstone-mtto.5): it
+    /// matches the <c>account</c> fragment but is an OPAQUE funding-account TOKEN — a reference the engine
+    /// resolves internally, NEVER an IBAN/cleartext account identifier — exactly the references-allowed
+    /// case ADR-PC-004 §P2 permits on the bus and ADR-IC-003 already rides on the constitution command's
+    /// minimal body. It is whitelisted by its exact name (not by a loose <c>account</c>-suffix exclusion,
+    /// which would let a genuine <c>client_account</c>/<c>iban</c>-style identity field through). A future
+    /// account field that genuinely carries an identifier must NOT reuse this name.
+    /// </remarks>
+    private static readonly string[] AllowedStructuralReferenceFields = ["funding_account"];
+
     private static bool FieldNameCarriesPii(string loweredFieldName, string fragment)
     {
         if (!loweredFieldName.Contains(fragment, StringComparison.Ordinal))
@@ -474,6 +485,14 @@ public sealed class EmitContractFitnessTests
         // not PII (ADR-PC-025 PII-by-reference). e.g. heir_case_ref, subject_ref.
         if (loweredFieldName.EndsWith("_ref", StringComparison.Ordinal)
             || loweredFieldName.EndsWith("_id", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // funding_account is an opaque funding-account TOKEN (a reference, not an IBAN/cleartext), the
+        // references-allowed case (ADR-PC-004 §P2 / ADR-IC-003). Whitelisted by EXACT name so a genuine
+        // identity field carrying "account" (e.g. client_account) is still caught (bd babelstone-mtto.5).
+        if (AllowedStructuralReferenceFields.Contains(loweredFieldName, StringComparer.Ordinal))
         {
             return false;
         }

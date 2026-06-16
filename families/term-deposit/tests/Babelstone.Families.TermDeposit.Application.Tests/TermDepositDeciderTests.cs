@@ -434,6 +434,11 @@ public sealed class TermDepositDeciderTests
         MaturityDate = Maturity,
         InterestVariant = "AT_MATURITY",
         AutoRenewalPolicy = policy,
+        // The product / role / funding the constitution persisted (bd babelstone-mtto.5) — the SOURCE
+        // a renewal recovers from. Non-default values so the chain-preservation assertions are meaningful.
+        ProductCode = "dpz_pt_12m_juros_venc",
+        Role = "standard",
+        FundingAccount = "PT50-DDA-001",
         RemainingPrincipal = new Money(PrincipalCents),
         Lifecycle = DepositLifecycle.Active,
     };
@@ -472,7 +477,8 @@ public sealed class TermDepositDeciderTests
 
         var renewed = TermDepositDecider.DecideRenewalConstitution(
             closing, newDepositId, rolloverPrincipal: new Money(PrincipalCents),
-            tanBasisPoints: 275, rateSheetVersionId: "pt-deposits-2027.1", renewalDate: renewalDate);
+            tanBasisPoints: 275, rateSheetVersionId: "pt-deposits-2027.1", renewalDate: renewalDate,
+            role: TermDepositDecider.EffectiveRenewalRole(closing), fundingAccount: closing.FundingAccount);
 
         Assert.Equal(newDepositId, renewed.DepositId);
         Assert.Equal(new Money(PrincipalCents), renewed.Principal);   // rolled-over principal
@@ -483,6 +489,25 @@ public sealed class TermDepositDeciderTests
         Assert.Equal(renewalDate.AddDays(365), renewed.MaturityDate); // new maturity derived, not recomputed downstream
         Assert.Equal("AT_MATURITY", renewed.InterestVariant);         // same variant
         Assert.Equal("SAME_TERM_CURRENT_RATE", renewed.AutoRenewalPolicy); // same policy
+        // product / role / funding carried forward from the closing deposit (chain preservation, mtto.5).
+        Assert.Equal("dpz_pt_12m_juros_venc", renewed.ProductCode);
+        Assert.Equal("standard", renewed.Role);
+        Assert.Equal("PT50-DDA-001", renewed.FundingAccount);
+    }
+
+    [Fact]
+    public void EffectiveRenewalRole_carries_the_closing_role_forward_and_defaults_an_empty_one_to_standard()
+    {
+        // A deposit constituted WITH a role carries it forward unchanged.
+        var withRole = ClosingPosition("SAME_TERM_CURRENT_RATE") with { Role = "premium" };
+        Assert.Equal("premium", TermDepositDecider.EffectiveRenewalRole(withRole));
+
+        // The pre-field-deposit fallback (bd babelstone-mtto.5): a deposit constituted BEFORE role was
+        // persisted folds to Role == "" (the Avro default); the renewal defaults it to standard (the v1
+        // default role) so the (product, role) re-resolution still works rather than failing on "".
+        var preField = ClosingPosition("SAME_TERM_CURRENT_RATE") with { Role = "" };
+        Assert.Equal(TermDepositDecider.DefaultRole, TermDepositDecider.EffectiveRenewalRole(preField));
+        Assert.Equal("standard", TermDepositDecider.EffectiveRenewalRole(preField));
     }
 
     [Fact]
@@ -492,7 +517,8 @@ public sealed class TermDepositDeciderTests
         var newDepositId = Guid.NewGuid();
         var renewed = TermDepositDecider.DecideRenewalConstitution(
             closing, newDepositId, rolloverPrincipal: new Money(PrincipalCents),
-            tanBasisPoints: 275, rateSheetVersionId: "pt-deposits-2027.1", renewalDate: Maturity);
+            tanBasisPoints: 275, rateSheetVersionId: "pt-deposits-2027.1", renewalDate: Maturity,
+            role: TermDepositDecider.EffectiveRenewalRole(closing), fundingAccount: closing.FundingAccount);
 
         var link = TermDepositDecider.DecideRenewalLink(closing, renewed);
 

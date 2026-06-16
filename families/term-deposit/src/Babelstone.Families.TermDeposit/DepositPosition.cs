@@ -62,6 +62,16 @@ public enum DepositLifecycle
 /// from <c>DepositConstituted.ProductCode</c> — the structural product identifier the D.4 read model
 /// denormalizes (bd babelstone-v794). Empty ("") for deposits constituted before v794, which never
 /// carried it (the Avro default decodes to ""); not PII (ADR-PC-004 §P2).</param>
+/// <param name="Role">The pricing role the rate sheet priced the TAN against (e.g. <c>standard</c>),
+/// folded from <c>DepositConstituted.Role</c> — a STRUCTURAL pricing dimension, NOT PII
+/// (ADR-PC-004 §P2). Persisted so the engine re-resolves the SAME <c>(product, role)</c> rate at
+/// auto-renewal from the closing deposit, keeping product knowledge out of the orchestrator
+/// (bd babelstone-mtto.5). Empty ("") for deposits constituted before mtto.5 (the Avro default).</param>
+/// <param name="FundingAccount">The OPAQUE funding-account token the principal was debited (a
+/// reference the engine resolves internally, NOT an IBAN/cleartext — ADR-PC-004 §P2), folded from
+/// <c>DepositConstituted.FundingAccount</c>. Persisted so the engine settles the auto-renewal
+/// rollover debit against the SAME funding reference from the closing deposit (bd babelstone-mtto.5).
+/// Empty ("") for deposits constituted before mtto.5 (the Avro default).</param>
 public sealed record DepositPosition(
     Guid DepositId,
     Money Principal,
@@ -74,6 +84,8 @@ public sealed record DepositPosition(
     string AutoRenewalPolicy,
     int PaymentPeriodMonths,
     string ProductCode,
+    string Role,
+    string FundingAccount,
     Money AccruedGrossInterest,
     Money WithholdingToDate,
     Money NetInterest,
@@ -97,6 +109,8 @@ public sealed record DepositPosition(
         AutoRenewalPolicy: string.Empty,
         PaymentPeriodMonths: 0,
         ProductCode: string.Empty,
+        Role: string.Empty,
+        FundingAccount: string.Empty,
         AccruedGrossInterest: Money.Zero,
         WithholdingToDate: Money.Zero,
         NetInterest: Money.Zero,

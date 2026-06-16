@@ -70,24 +70,21 @@ public sealed record PayInterestRequest(
 
 /// <summary>
 /// Step 2 of the renewal saga (bd babelstone-mtto PR B): open the renewed instance off a CLOSING
-/// (Matured) deposit. The route <c>{id}</c> is the closing deposit id; the body carries the new deposit
-/// id and the renewal facts. The engine reads the term / variant / cadence / policy off the (Matured)
-/// closing deposit — only the new-stream id, the re-pricing keys (product/role), the renewal instant and
-/// the funding account are supplied here. The instant is host-stamped if omitted.
+/// (Matured) deposit. The route <c>{id}</c> is the closing deposit id; the body is MINIMAL
+/// (bd babelstone-mtto.5) — just the new deposit id, the renewal instant and the actor. The engine
+/// reads EVERY renewal fact — the term / variant / cadence / policy AND the product code, pricing role
+/// and funding-account token — off the (Matured) closing deposit's folded state, now that
+/// <c>DepositConstituted</c> persists role + funding alongside the already-persisted product code. So
+/// the orchestrator carries NO product-family knowledge (ADR-IC-003 §A7): the engine resolves product
+/// facts in-tx from the closing deposit it already loads. The instant is host-stamped if omitted.
 /// </summary>
 /// <param name="NewDepositId">The fresh stream id the renewed instance is constituted under (the saga
 /// derives it deterministically, so the renewal is a replayable command).</param>
-/// <param name="ProductId">The variant id the rate sheet re-prices against for SAME_TERM_CURRENT_RATE.</param>
-/// <param name="FundingAccount">The opaque funding-account token debited the rolled-over principal.</param>
-/// <param name="Role">An OPTIONAL pricing-role override; defaults to <c>standard</c>.</param>
 /// <param name="RenewedAt">The renewal instant — the new sheet is resolved as-of here and it is the new
 /// constitution's valid time (its DATE is the renewal/new-start date). Host-stamped if omitted.</param>
 /// <param name="Actor">The acting principal recorded on the new stream's append (defaults to <c>saga:renewal</c>).</param>
 public sealed record ConstituteRenewalRequest(
     Guid NewDepositId,
-    string ProductId,
-    string FundingAccount,
-    string? Role = null,
     DateTimeOffset? RenewedAt = null,
     string? Actor = null);
 

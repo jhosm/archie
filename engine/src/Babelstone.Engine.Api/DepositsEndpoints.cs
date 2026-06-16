@@ -393,10 +393,13 @@ public static class DepositsEndpoints
 
     /// <summary>
     /// Step 2 of the renewal saga (bd babelstone-mtto PR B): open the renewed instance off a CLOSING
-    /// (Matured) deposit. <c>{id}</c> is the closing deposit id (the saga's process_id); the body carries
-    /// the new deposit id and the renewal facts. On success returns 201 with Location pointing at the NEW
-    /// stream — the renewed instance is the resource this opens (mirroring <see cref="ConstituteAsync"/>'s
-    /// 201). The full idempotency scaffold (ADR-PC-029 slot 4) is identical to ConstituteAsync.
+    /// (Matured) deposit. <c>{id}</c> is the closing deposit id (the saga's process_id); the body is
+    /// MINIMAL (bd babelstone-mtto.5) — the new deposit id, the renewal instant and the actor. The engine
+    /// reads EVERY renewal fact (term / variant / cadence / policy AND product code / role / funding) off
+    /// the closing deposit's folded state, so the orchestrator carries no product-family knowledge
+    /// (ADR-IC-003 §A7). On success returns 201 with Location pointing at the NEW stream — the renewed
+    /// instance is the resource this opens (mirroring <see cref="ConstituteAsync"/>'s 201). The full
+    /// idempotency scaffold (ADR-PC-029 slot 4) is identical to ConstituteAsync.
     /// </summary>
     private static async Task<IResult> ConstituteRenewalAsync(
         Guid id,
@@ -438,10 +441,7 @@ public static class DepositsEndpoints
                 new ConstituteRenewalCommand(
                     DepositId: id,
                     NewDepositId: request.NewDepositId,
-                    ProductId: request.ProductId,
-                    Role: request.Role ?? "standard",
                     RenewedAt: renewedAt,
-                    FundingAccount: request.FundingAccount,
                     Actor: actor,
                     CommandId: commandId),
                 ct);

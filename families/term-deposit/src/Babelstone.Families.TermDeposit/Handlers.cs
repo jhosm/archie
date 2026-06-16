@@ -27,6 +27,13 @@ public sealed class DepositConstitutedHandler : IEventHandler<DepositPosition, D
             // pre-v794 deposits whose event decoded the Avro default. Copied verbatim — no clock,
             // no I/O, no derivation, so the fold stays pure/deterministic (BENG001/002/003).
             ProductCode = @event.ProductCode,
+            // The pricing role + opaque funding-account token carried onto the event
+            // (bd babelstone-mtto.5); "" for pre-mtto.5 deposits whose event decoded the Avro
+            // default. Copied verbatim — no clock, no I/O, no derivation — so the engine can
+            // re-resolve the renewal rate + settle the rollover debit from the closing deposit
+            // (the fold stays pure/deterministic, BENG001/002/003).
+            Role = @event.Role,
+            FundingAccount = @event.FundingAccount,
             // RemainingPrincipal tracks principal still on deposit; it starts at the full
             // principal and is reduced by partial withdrawals (the event carries the result).
             RemainingPrincipal = @event.Principal,

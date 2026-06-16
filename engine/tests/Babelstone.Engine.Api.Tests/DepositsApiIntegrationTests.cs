@@ -569,8 +569,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         var constituteRenewal = await PostJsonAsync(
             $"/v1/deposits/{closingId}/constitute-renewal",
             new ConstituteRenewalRequest(
-                NewDepositId: newDepositId, ProductId: "dpz_pt_12m_juros_venc", FundingAccount: "PT50-DDA-001",
-                Role: "standard", RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero)),
+                NewDepositId: newDepositId, RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero)),
             Guid.NewGuid().ToString());
 
         Assert.Equal(HttpStatusCode.Created, constituteRenewal.StatusCode);
@@ -581,12 +580,15 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal(newDepositId, renewalBody.NewDepositId);
         Assert.Equal("ACTIVE", renewalBody.Status);
 
-        // The new stream reads back Active at the carried-forward 300bps original rate.
+        // The new stream reads back Active at the carried-forward 300bps original rate, with the product
+        // code RECOVERED from the closing deposit (mtto.5: the minimal renewal body carries no product —
+        // the engine resolves it from the closing deposit's folded state).
         var renewed = await _client.GetFromJsonAsync<DepositResponse>($"/v1/deposits/{newDepositId}", SnakeCase);
         Assert.NotNull(renewed);
         Assert.Equal("Active", renewed.Lifecycle);
         Assert.Equal(300, renewed.TanBasisPoints);
         Assert.Equal(1_000_000, renewed.PrincipalCents);
+        Assert.Equal("dpz_pt_12m_juros_venc", renewed.ProductCode);
 
         // Step 3: renewal-link — folds the closing stream Matured → Renewed, 200.
         var link = await PostJsonAsync(
@@ -624,8 +626,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         var newDepositId = Guid.NewGuid();
         var key = Guid.NewGuid().ToString();
         var body = new ConstituteRenewalRequest(
-            NewDepositId: newDepositId, ProductId: "dpz_pt_12m_juros_venc", FundingAccount: "PT50-DDA-001",
-            Role: "standard", RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero));
+            NewDepositId: newDepositId, RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero));
 
         var first = await PostJsonAsync($"/v1/deposits/{closingId}/constitute-renewal", body, key);
         var second = await PostJsonAsync($"/v1/deposits/{closingId}/constitute-renewal", body, key);
@@ -655,8 +656,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         await PostJsonAsync(
             $"/v1/deposits/{closingId}/constitute-renewal",
             new ConstituteRenewalRequest(
-                NewDepositId: newDepositId, ProductId: "dpz_pt_12m_juros_venc", FundingAccount: "PT50-DDA-001",
-                Role: "standard", RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero)),
+                NewDepositId: newDepositId, RenewedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero)),
             Guid.NewGuid().ToString());
 
         var key = Guid.NewGuid().ToString();
@@ -686,8 +686,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         var closingId = await ConstituteAndMatureAsync("SAME_TERM_SAME_RATE");
         var response = await PostJsonAsync(
             $"/v1/deposits/{closingId}/constitute-renewal",
-            new ConstituteRenewalRequest(
-                NewDepositId: Guid.NewGuid(), ProductId: "dpz_pt_12m_juros_venc", FundingAccount: "PT50-DDA-001"),
+            new ConstituteRenewalRequest(NewDepositId: Guid.NewGuid()),
             key);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -705,8 +704,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
 
         var response = await PostJsonAsync(
             $"/v1/deposits/{activeId}/constitute-renewal",
-            new ConstituteRenewalRequest(
-                NewDepositId: Guid.NewGuid(), ProductId: "dpz_pt_12m_juros_venc", FundingAccount: "PT50-DDA-001"),
+            new ConstituteRenewalRequest(NewDepositId: Guid.NewGuid()),
             Guid.NewGuid().ToString());
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
