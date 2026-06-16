@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 EVENTCATALOG_PORT ?= 8082
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo-mcp demo-mcp-down demo-saga demo-saga-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -193,3 +193,9 @@ demo-saga: ## Run the constitution-SAGA path end-to-end (edge→saga→dispatche
 
 demo-saga-down: ## Stop the saga demo's engine + orchestrator processes (Postgres/Redpanda/ACL-stub are left running)
 	@./scripts/demo-saga.sh down
+
+demo-agent: ## Run the REAL-Claude path (engine→MCP→agent host→UI); flip Operator→CLAUDE to watch a model operate the bank (needs ANTHROPIC_API_KEY)
+	@./scripts/demo-agent.sh up
+
+demo-agent-down: ## Stop the agent demo's agent host + UI, then the engine + MCP (Postgres is left running)
+	@./scripts/demo-agent.sh down

@@ -55,6 +55,9 @@ __pycache__/
 # Constitution-saga demo runtime (scripts/demo-saga.sh): logs + pidfiles
 /.demo-saga/
 
+# Real-Claude agent demo runtime (scripts/demo-agent.sh): logs + pidfiles
+/.demo-agent/
+
 # Build output — DocFX site (ADR-PC-026): generated API metadata + rendered site
 /docfx/api/
 /docfx/_site/

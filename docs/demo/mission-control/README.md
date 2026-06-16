@@ -140,11 +140,25 @@ database, distinct from the engine's `babelstone`, so there's no `inbox`-table c
 
 ## The AI-native framing
 
-Flip the **Operator** toggle from `YOU` to `CLAUDE`. The same buttons now also surface the
-**MCP tool call** behind each action (`constitute_deposit(...)`, `mature_deposit(...)`) in the
-bottom drawer's **MCP tool surface** tab — making concrete that every operation here is a
-governed MCP tool an LLM can call. (The real MCP server is `mcp-server/`; this is the visual of
-what it exposes — labelled illustrative, not live model traffic.)
+Flip the **Operator** toggle from `YOU` to `CLAUDE` and an **instruction bar** appears in the
+bottom drawer's **MCP tool surface** tab. Type what you want — *"open a €10,000 12-month deposit
+and mature it"* — and hit **Run**: the browser POSTs it to the real-Claude **agent host**, which
+calls Claude with the babelstone deposit tools bound, lets the model decide and invoke them
+through the **real** secured MCP server (`mcp-server/`), and streams the model's narration + the
+**actual** tool calls and results back into the console. The living ledger and the position pane
+fold out of those real results — you watch the deposit materialise from the model's actions.
+
+This is live, not a mockup. Bring up the whole path with one command:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-… make demo-agent   # engine + MCP server + agent host + this UI
+```
+
+The `ANTHROPIC_API_KEY` lives **server-side only** in the agent host — never the browser, never
+committed. If the key (or the agent host) is missing, `CLAUDE` mode **degrades to an
+illustrative narration** of what the model would do — clearly labelled, never passed off as live
+traffic (the same degrade-to-illustrative posture the Telemetry tab uses when Grafana Tempo is
+unreachable). DEMO mode and the manual `YOU`-driven buttons need none of this.
 
 ## The observability beat (OpenTelemetry)
 
