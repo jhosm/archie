@@ -233,6 +233,15 @@ body.console-open .hint-bar { display:none; }
 .trace-foot .nopii { color:var(--verify); }
 
 .hint-bar { position:fixed; left:50%; bottom:0.8rem; transform:translateX(-50%); font-family:var(--mono); font-size:0.66rem; color:var(--faint); letter-spacing:0.08em; z-index:40; }
+
+/* LIVE·agent — the instruction bar + the real-agent console lines (bd babelstone-f0ic.6.3) */
+.console .agent-bar { display:flex; gap:0.5rem; align-items:center; padding:0.1rem 0 0.7rem; }
+.console .agent-bar[hidden] { display:none; }
+.console .agent-bar input { flex:1; background:var(--panel-2); border:1px solid var(--hair); color:var(--paper); font-family:var(--mono); font-size:0.7rem; padding:0.5rem 0.65rem; border-radius:5px; outline:none; }
+.console .agent-bar input:focus { border-color:var(--verify); }
+.console .agent-bar .btn { padding:0.5rem 1.05rem; white-space:nowrap; }
+.console .line.think { opacity:0.7; font-style:italic; }
+.console .line.banner { border-top:1px dashed var(--hair-soft); margin-top:0.35rem; padding-top:0.4rem; }
 </style>
 </head>
 <body>
@@ -322,7 +331,13 @@ body.console-open .hint-bar { display:none; }
     <button class="tab" data-tab="telemetry">Telemetry · OpenTelemetry</button>
     <span class="tab-note" id="tabNote">illustrative — narrating the real contracts, not live model / Tempo traffic</span>
   </div>
-  <div class="pane" id="paneMcp"><div id="consoleLog"></div></div>
+  <div class="pane" id="paneMcp">
+    <div class="agent-bar" id="agentBar" hidden>
+      <input id="agentInput" type="text" autocomplete="off" placeholder="Tell Claude what to do — e.g. open a €10,000 12-month deposit and mature it" />
+      <button class="btn primary" id="btnAgentRun">Run</button>
+    </div>
+    <div id="consoleLog"></div>
+  </div>
   <div class="pane" id="paneTrace" hidden>
     <div class="trace" id="traceWaterfall"><div class="empty">Run an operation to see the spans it emits.</div></div>
     <div class="trace-metrics" id="traceMetrics"></div>
@@ -363,7 +378,9 @@ body.console-open .hint-bar { display:none; }
     sagaState: null, sagaVersion: -1, sagaTerminal: false, sagaSeenLeg: false, sagaSeenDebit: false,
     // LIVE·engine real traces (bd babelstone-f0ic.9): the engine's X-Trace-Id + the spans fetched
     // from Grafana Tempo. traceState: "illustrative" | "pending" | "real" | "unavailable".
-    traceId: null, realTrace: null, traceState: "illustrative"
+    traceId: null, realTrace: null, traceState: "illustrative",
+    // LIVE·agent (bd babelstone-f0ic.6.3): a real Claude run driven via POST /agent/stream
+    agentBusy: false, agentAbort: null
   };
 
   /* ---------------- elements ---------------- */
@@ -601,14 +618,16 @@ body.console-open .hint-bar { display:none; }
     // so those actions are disabled in saga mode (the engine-direct LIVE·engine mode drives them).
     var saga = state.mode === "saga";
     var sagaTip = "LIVE·saga covers constitution only — use DEMO or LIVE·engine for this";
-    btnC.disabled = state.busy || has;
-    btnR.disabled = state.busy || !has || closed || saga;
-    btnM.disabled = state.busy || !active || saga;
+    // While the real agent is operating, lock the manual desk actions — the agent drives the engine
+    // itself, so a concurrent human click would race it.
+    btnC.disabled = state.busy || state.agentBusy || has;
+    btnR.disabled = state.busy || state.agentBusy || !has || closed || saga;
+    btnM.disabled = state.busy || state.agentBusy || !active || saga;
     btnR.title = saga ? sagaTip : "";
     btnM.title = saga ? sagaTip : "";
     // Pay coupon: PERIODIC only, while active and intermediate coupons remain (never in saga mode)
     btnCoupon.style.display = (periodic && !saga) ? "" : "none";
-    btnCoupon.disabled = state.busy || !active || !periodic || !couponsLeft || saga;
+    btnCoupon.disabled = state.busy || state.agentBusy || !active || !periodic || !couponsLeft || saga;
     // Terminate early: DEMO-only (no live endpoint), while active
     btnTerminate.style.display = (active && !saga) ? "" : "none";
     btnTerminate.disabled = state.busy || !active || state.mode === "live" || saga;
@@ -898,6 +917,8 @@ body.console-open .hint-bar { display:none; }
 
   function doReset() {
     if (state.sagaES) { try { state.sagaES.close(); } catch (e) {} state.sagaES = null; }
+    if (state.agentAbort) { try { state.agentAbort.abort(); } catch (e) {} state.agentAbort = null; }
+    state.agentBusy = false;
     state.depositId = null; state.idemKey = null; state.seq = 0; state.lifecycle = null; state.busy = false;
     state.couponsPaid = 0; state.numCoupons = 0; state.accrued = 0; state.withheld = 0; state.netPaid = 0;
     state.processId = null; state.streamUrl = null;
@@ -932,6 +953,8 @@ body.console-open .hint-bar { display:none; }
     var show = state.operator === "ai" || state.telemetry;
     el("console").classList.toggle("show", show);
     document.body.classList.toggle("console-open", show);
+    // The instruction bar is the real-agent trigger — shown only when Claude is the operator.
+    el("agentBar").hidden = state.operator !== "ai";
     el("paneMcp").hidden = state.tab !== "mcp";
     el("paneTrace").hidden = state.tab !== "telemetry";
     document.querySelectorAll("#console .tab").forEach(function (b) { b.classList.toggle("on", b.dataset.tab === state.tab); });
@@ -1072,6 +1095,131 @@ body.console-open .hint-bar { display:none; }
     el("traceFoot").innerHTML = foot;
   }
 
+  /* =====================================================================
+     LIVE·agent — the REAL Claude agent (bd babelstone-f0ic.6). Operator=CLAUDE
+     reveals an instruction bar; Run POSTs it to /agent/stream (proxied to the
+     agent host), then we render the model's narration + REAL MCP tool calls and
+     results, and fold the ledger + position out of those results. If the agent
+     host isn't reachable (DEMO / offline) we degrade to an illustrative
+     narration — mirroring the Telemetry tab's degrade-to-illustrative.
+     ===================================================================== */
+  function esc(s) {
+    return String(s).replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; });
+  }
+  function agentLine(html, cls) {
+    var line = document.createElement("div");
+    line.className = "line" + (cls ? " " + cls : "");
+    line.innerHTML = html;
+    var log = el("consoleLog");
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+  // Parse one SSE frame ("event: <name>\ndata: <json>") into { event, data }.
+  function parseSSE(raw) {
+    var ev = "message", data = "";
+    raw.split("\n").forEach(function (l) {
+      if (l.indexOf("event:") === 0) ev = l.slice(6).trim();
+      else if (l.indexOf("data:") === 0) data += l.slice(5).trim();
+    });
+    var parsed = null; try { parsed = data ? JSON.parse(data) : null; } catch (e) {}
+    return { event: ev, data: parsed };
+  }
+  function looksLikePosition(o) {
+    return o && typeof o === "object" && o.lifecycle !== undefined && o.principal_cents !== undefined;
+  }
+  // Drive the ledger + position from a real tool result, so you watch the deposit
+  // fold out of the model's actions (the issue's "watch-it-fold-out" moment).
+  function applyAgentTool(tool, out) {
+    if (!out || typeof out !== "object") return;
+    if (tool === "constitute_deposit" && out.deposit_id) {
+      state.depositId = out.deposit_id;
+      if (out.commit_sequence !== undefined) state.seq = out.commit_sequence;
+      state.lifecycle = out.status || "Active";
+      addEvent({ seq: state.seq, name: "DepositConstituted", meta: "deposit " + String(out.deposit_id).slice(0, 8) + "… · via Claude", amtClass: "gold" });
+      flashLedger();
+    } else if (looksLikePosition(out)) {
+      // a full position from get/mature/pay — sync the display state, then fold it out
+      state.depositId = out.deposit_id; state.lifecycle = out.lifecycle;
+      if (out.interest_variant) state.variant = out.interest_variant;
+      if (out.payment_period_months !== undefined) state.ppm = out.payment_period_months;
+      if (out.term_days !== undefined) state.numCoupons = numCouponsFor(out.term_days, state.ppm);
+      if (tool === "mature_deposit") {
+        addEvent({ seq: out.last_sequence, name: "DepositMatured", meta: "matured " + out.maturity_date + " · via Claude", amt: euro(out.total_payout_cents), amtClass: "verify", verify: true });
+        flashLedger();
+      } else if (tool === "pay_interest") {
+        addEvent({ seq: out.last_sequence, name: "InterestPaid", meta: "coupon " + out.coupons_paid + " · via Claude", amt: euro(out.net_interest_cents), amtClass: "verify", verify: true });
+        flashLedger();
+      }
+      renderPosition(out);  // a read (get_deposit) folds the position with no new ledger fact
+    }
+    setButtons();
+  }
+  function handleAgentFrame(f) {
+    var d = f.data || {};
+    if (f.event === "thinking") {
+      if (d.text) agentLine('<span class="arrow muted">…</span> <span class="ret">' + esc(d.text) + '</span>', "think");
+    } else if (f.event === "narration") {
+      if (d.text) agentLine('<span class="tool">' + esc(d.text) + '</span>');
+    } else if (f.event === "tool_call") {
+      var inp = ""; try { inp = JSON.stringify(d.input); } catch (e) { inp = ""; }
+      agentLine('<span class="arrow">→</span> <span class="tool">' + esc(d.tool) + '</span> <span class="ret">' + esc(inp) + '</span>');
+    } else if (f.event === "tool_result") {
+      if (d.is_error) {
+        agentLine('<span class="arrow" style="color:var(--wrong)">⤷</span> <span class="ret" style="color:var(--wrong)">' + esc(d.output) + '</span>', "err");
+      } else {
+        agentLine('<span class="arrow" style="color:var(--verify)">⤷</span> <span class="ret">' + esc(d.output) + '</span>');
+        var parsed = null; try { parsed = typeof d.output === "string" ? JSON.parse(d.output) : d.output; } catch (e) {}
+        if (parsed) applyAgentTool(d.tool, parsed);
+      }
+    } else if (f.event === "done") {
+      agentLine('<span class="arrow" style="color:var(--verify)">✓</span> <span class="tool">' + esc(d.summary || "done") + '</span>', "banner");
+    } else if (f.event === "error") {
+      agentLine('<span class="arrow" style="color:var(--wrong)">✗</span> <span class="ret" style="color:var(--wrong)">' + esc(d.message || "error") + '</span>', "err");
+    }
+  }
+  // Mirror the Telemetry tab's degrade: when the agent host isn't reachable, show an
+  // explicitly-illustrative narration of what Claude would do (not live model traffic).
+  function agentFallbackIllustrative() {
+    agentLine('<span class="ret muted">agent host not reachable — showing an <b>illustrative</b> narration (start it with <code>make demo-agent</code>)</span>', "err");
+    agentLine('<span class="tool">I\'ll open the deposit, read it back, then mature it.</span>');
+    agentLine('<span class="arrow">→</span> <span class="tool">constitute_deposit</span> <span class="ret">{"principal_cents":1000000,"term_days":365,"interest_variant":"AT_MATURITY"}</span>');
+    agentLine('<span class="arrow" style="color:var(--verify)">⤷</span> <span class="ret">{"deposit_id":"…","status":"ACTIVE","commit_sequence":0}</span>');
+    agentLine('<span class="arrow">→</span> <span class="tool">mature_deposit</span> <span class="ret">{"deposit_id":"…"}</span>');
+    agentLine('<span class="arrow" style="color:var(--verify)">⤷</span> <span class="ret">{"lifecycle":"Matured","total_payout_cents":1021900}</span>');
+    agentLine('<span class="arrow" style="color:var(--verify)">✓</span> <span class="tool">Matured to €10,219.00 (illustrative).</span>', "banner");
+    toast("Real agent unreachable — illustrative narration", "err");
+  }
+  async function runAgent() {
+    if (state.agentBusy) return;
+    var instruction = el("agentInput").value.trim();
+    if (!instruction) { toast("Type an instruction for Claude first.", "err"); return; }
+    state.agentBusy = true; setButtons(); el("btnAgentRun").disabled = true;
+    agentLine('<span class="tool" style="color:var(--gold)">● live · Claude operating the bank</span> <span class="ret">' + esc(instruction) + '</span>', "banner");
+    var ctrl = new AbortController(); state.agentAbort = ctrl;
+    try {
+      var res = await fetch(API_BASE + "/agent/stream", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction: instruction }), signal: ctrl.signal
+      });
+      if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
+      var reader = res.body.getReader(), dec = new TextDecoder(), buf = "";
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        buf += dec.decode(chunk.value, { stream: true });
+        var idx;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          var rawFrame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+          if (rawFrame.trim()) handleAgentFrame(parseSSE(rawFrame));
+        }
+      }
+    } catch (e) {
+      if (e.name !== "AbortError") agentFallbackIllustrative();   // unreachable → illustrative
+    } finally {
+      state.agentBusy = false; state.agentAbort = null; setButtons(); el("btnAgentRun").disabled = false;
+    }
+  }
+
   /* ---------------- wire up ---------------- */
   btnC.addEventListener("click", doConstitute);
   btnR.addEventListener("click", doRetry);
@@ -1084,6 +1232,8 @@ body.console-open .hint-bar { display:none; }
   el("opSeg").addEventListener("click", function (e) { if (e.target.dataset.op) setOperator(e.target.dataset.op); });
   el("telSeg").addEventListener("click", function (e) { if (e.target.dataset.tel) setTelemetry(e.target.dataset.tel === "on"); });
   el("console").addEventListener("click", function (e) { if (e.target.dataset.tab) setTab(e.target.dataset.tab); });
+  el("btnAgentRun").addEventListener("click", runAgent);
+  el("agentInput").addEventListener("keydown", function (e) { if (e.key === "Enter") runAgent(); });
   el("principal").addEventListener("blur", function () {
     var c = parseCents(this.value); if (c > 0) this.value = (c / 100).toLocaleString("en-IE");
   });
