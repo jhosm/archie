@@ -47,7 +47,7 @@ resources:
   - grafana-lgtm.yaml
   - otel-collector.yaml
   - registry.yaml
-  - eventcatalog.yaml
+  - backstage.yaml
   - core-acl-stub.yaml
 
 configMapGenerator:
@@ -75,6 +75,20 @@ configMapGenerator:
       - debits-success.json=../../wiremock/mappings/debits-success.json
       - reservations-release-success.json=../../wiremock/mappings/reservations-release-success.json
       - debits-reverse-success.json=../../wiremock/mappings/debits-reverse-success.json
+  # Backstage app-config (ADR-IC-015) — the SAME file the Compose stack mounts, so the
+  # portal config is one source across both stacks. The no-drift invariant: this restates
+  # no schema; its only catalogue content is the registered catalog-info.yaml Location.
+  - name: backstage-app-config
+    files:
+      - app-config.yaml=../../backstage/app-config.yaml
+  # Backstage catalogue descriptor. NOTE (human-handoff, ADR-IC-015 §9): a ConfigMap is flat
+  # — it cannot carry the events/ + reconciliation/ SUBDIRS that catalog-info.yaml $text-refs
+  # resolve against. This generates the top-level descriptor for path stability; a real deploy
+  # mounts the whole contracts/catalog/ tree (an init-container `git`-clone, or a build-time
+  # COPY into the app image) so the relative AsyncAPI refs resolve. Wiring that is platform work.
+  - name: backstage-catalog-descriptor
+    files:
+      - catalog-info.yaml=../../../contracts/catalog/catalog-info.yaml
 
 generatorOptions:
   # Stable names so the volume/env references in the manifests stay valid (no

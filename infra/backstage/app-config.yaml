@@ -1,0 +1,48 @@
+# Backstage app-config for the babelstone catalogue portal (ADR-IC-015).
+#
+# Backstage is the chosen catalogue portal (Apache-2.0, CNCF-graduated) that renders the
+# governed AsyncAPI integration-event catalogue. ADR-IC-015 supersedes ADR-IC-008
+# (EventCatalog, retired after its AsyncAPI generator plugin moved to AGPL-3.0/commercial).
+#
+# THE NO-DRIFT INVARIANT (ADR-IC-015 Decision §1–§2): this config restates NO schema. The only
+# catalogue content is the single registered Location below — contracts/catalog/catalog-info.yaml,
+# the descriptor that points at the AsyncAPI source files. Backstage is *only* the rendering
+# layer; the AsyncAPI files + the CI gate remain the governance source of truth. Adding an event
+# means adding its .asyncapi.yaml + a catalog-info.yaml entry, never editing Backstage config.
+#
+# HUMAN-HANDOFF TAIL (this file is the config; a running portal needs more — see infra/README.md
+# and infra/k8s/README.md): Backstage ships no turnkey image — an app must be scaffolded
+# (`npx @backstage/create-app`) and built into an image, with @backstage/plugin-catalog-backend-module-*
+# providers for AsyncAPI rendering. The Deployment/Service manifests + this config are the
+# infrastructure half; building+pushing that image and pointing the manifest at it is platform work.
+
+app:
+  title: babelstone catalogue
+  baseUrl: ${BACKSTAGE_BASE_URL:-http://localhost:7007}
+
+organization:
+  name: babelstone
+
+backend:
+  baseUrl: ${BACKSTAGE_BASE_URL:-http://localhost:7007}
+  listen:
+    port: 7007
+    host: 0.0.0.0
+  database:
+    client: pg
+    connection:
+      host: ${BACKSTAGE_PG_HOST:-backstage-db}
+      port: ${BACKSTAGE_PG_PORT:-5432}
+      user: ${BACKSTAGE_PG_USER:-backstage}
+      password: ${BACKSTAGE_PG_PASSWORD:-backstage}
+
+# The ONLY catalogue source: the in-repo Backstage descriptor. It is mounted into the
+# container at /catalog/catalog-info.yaml (see the Deployment / compose volume). All event +
+# reconciliation API entities, and the AsyncAPI definitions they $text-reference, flow from it.
+# No second registration, no inline entity, no schema copy — the no-drift invariant.
+catalog:
+  rules:
+    - allow: [Location, API]
+  locations:
+    - type: file
+      target: /catalog/catalog-info.yaml

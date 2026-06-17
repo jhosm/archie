@@ -8,13 +8,15 @@
 #     `kind: API` entity per consumer, `spec.type: reconciliation`, `spec.definition.$text`
 #     -> the relative descriptor (Backstage resolves $text relative to this file's location).
 #
-# The descriptors ship NOW; the Backstage HOST deployment is deferred to platform work
-# (ADR-IC-015 Decision §9, bd babelstone-s4ol.1). Until a Backstage instance exists this
-# file is inert — the source files + the CI gate (scripts/asyncapi-catalog-validate.sh)
-# remain the live governance surface (the Git-native fallback posture). No PII lives here
-# or in any referenced AsyncAPI / Avro / reconciliation artefact (ADR-PC-004 §P2): the
-# reconciliation contracts carry references (consumer names, projection-kind discriminators,
-# §7.1 pattern flags), never PII.
+# The descriptors ship as the source of truth; the Backstage HOST that renders them is
+# deployed by the infra/ manifests (infra/compose.yaml `backstage` service, infra/k8s/base/
+# backstage.yaml; ADR-IC-015 §9, bd babelstone-s4ol.1), which mount this file as the portal's
+# ONLY catalogue source. The remaining human-handoff step is building+pushing the Backstage
+# app image (no turnkey image exists) — until then the source files + the CI gate
+# (scripts/asyncapi-catalog-validate.sh) remain the live governance surface (the Git-native
+# fallback posture). No PII lives here or in any referenced AsyncAPI / Avro / reconciliation
+# artefact (ADR-PC-004 §P2): the reconciliation contracts carry references (consumer names,
+# projection-kind discriminators, §7.1 pattern flags), never PII.
 #
 # Register it later with, e.g.:
 #   catalog:

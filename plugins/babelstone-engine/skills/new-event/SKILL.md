@@ -184,7 +184,7 @@ avoid — the payload is business data only ([ADR-IC-002 §P5](docs/product-mana
 The governed catalogue is the set of **AsyncAPI 3.0** files under
 [`contracts/catalog/events/`](contracts/catalog/events/) — the *single source of truth*
 ([ADR-IC-015](docs/product-management/integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md);
-the Backstage portal and the generated `infra/eventcatalog/site` only *render* it). The
+the Backstage portal only *renders* it). The
 payload is **referenced, never restated** — the message's `payload.schema.$ref` points at
 your `.avsc`, so the catalogue never re-types fields.
 
