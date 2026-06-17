@@ -128,6 +128,24 @@ package pack
 	}
 }
 
+// primitives/renewal-policies.yaml — auto-renewal-policy RESTRICTIONS (02 §2.4.4).
+// Keyed by the lower_snake policy id (e.g. same_term_same_rate ← the
+// SAME_TERM_SAME_RATE enum the family schema's auto_renewal_policy declares).
+// `permitted_for` is the SAME pack-declared regulatory permitted-set the day-count
+// primitive uses: the product families that MAY use this restricted policy. 02
+// §2.4.4 calls SAME_TERM_SAME_RATE "less common, pack-restricted"; this file is
+// where that restriction lives, auditor-visible in the signed pack rather than a
+// hardcoded validator map. Only RESTRICTED policies appear here — NONE and
+// SAME_TERM_CURRENT_RATE are unrestricted and carry no entry. (F.5 follow-up,
+// bd babelstone-k6r8.6 / the babelstone-k4yr restriction the renewal decider
+// recorded as a missing pack primitive.)
+#RenewalPolicies: {
+	[string]: {
+		description: !=""
+		permitted_for: [...=~"^[a-z][a-z0-9_]*$"] | *[]
+	}
+}
+
 // Closed: an unknown/misspelled constant key (max_consuer_rate_bps) must fail
 // here, not bind to nothing at depth 3. New pack constants are added by an
 // explicit, additive edit to this definition — the same no-DSL-escape-hatch

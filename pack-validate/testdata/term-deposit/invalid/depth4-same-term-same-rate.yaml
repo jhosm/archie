@@ -1,0 +1,27 @@
+# INVALID @ depth 4: declares the SAME_TERM_SAME_RATE auto-renewal policy, which
+# 02 §2.4.4 calls "less common, pack-restricted". The family schema structurally
+# ALLOWS the policy (depths 1–2 pass), but pt.2026.1 does not permit it for a
+# term deposit (primitives/renewal-policies.yaml `permitted_for: []`), so the
+# depth-4 regulatory check rejects it (KindForbiddenRenewalPolicy). A variant
+# using NONE or SAME_TERM_CURRENT_RATE is fine — those are unrestricted.
+# (F.5 follow-up, bd k6r8.6.)
+variant_id: dpz_pt_12m_same_term_same_rate
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 365
+day_count: pt.act_360
+currency: EUR
+interest_variant: AT_MATURITY
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 5000
+    basis: ACCRUED_INTEREST
+# The pack-restricted policy this fixture exists to reject.
+auto_renewal_policy: SAME_TERM_SAME_RATE
+principal_bounds:
+  min_cents: 100000
+  max_cents: 50000000

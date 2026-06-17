@@ -18,6 +18,19 @@ public enum PenaltyBasis
 
     /// <summary>Penalty is a share of (principal + gross accrued interest).</summary>
     Both,
+
+    /// <summary>
+    /// Penalty is a RATE REDUCTION (F.11; fin-math §5): the depositor's elapsed-period interest is
+    /// recomputed at a lower "penalty rate", and the penalty is the FORFEITED difference
+    /// <c>J(original) − J(reduced)</c>. The band must carry a
+    /// <see cref="EarlyTerminationBand.ReducedRateBasisPoints"/>. Unlike the share-of-amount bases,
+    /// this is not a basis-point share — <see cref="EarlyTerminationBand.PenaltyBasisPoints"/> is
+    /// not used for the penalty amount (it is conventionally 0 for a rate-reduction band). The
+    /// depositor still keeps the reduced interest; only the difference is the penalty. Withholding
+    /// stays flow-by-flow on the REAL (original-rate) gross — the reduction is a penalty on the
+    /// gross, never a re-scaling of the withholding (fin-math §5.4).
+    /// </summary>
+    RateReduction,
 }
 
 /// <summary>
@@ -31,9 +44,18 @@ public enum PenaltyBasis
 /// <c>null</c> is the open-ended tail (02 §2.5: <c>up_to_days: null</c>) — it matches any elapsed
 /// term and so must be the LAST band in the schedule.</param>
 /// <param name="PenaltyBasisPoints">The penalty as a share of the chosen basis, in basis points
-/// (10000 = 100%). Non-negative; a 100%-of-accrued band wipes the accrued interest exactly.</param>
-/// <param name="Basis">Which capital the share applies to (accrued interest, principal, or both).</param>
-public sealed record EarlyTerminationBand(int? UpToDays, int PenaltyBasisPoints, PenaltyBasis Basis);
+/// (10000 = 100%). Non-negative; a 100%-of-accrued band wipes the accrued interest exactly. NOT
+/// used by the <see cref="PenaltyBasis.RateReduction"/> basis (the penalty there is the rate-cut
+/// forfeit, not a share — conventionally 0 on such a band).</param>
+/// <param name="Basis">Which capital the share applies to (accrued interest, principal, both, or —
+/// for <see cref="PenaltyBasis.RateReduction"/> — a recompute at a reduced rate).</param>
+/// <param name="ReducedRateBasisPoints">The reduced "penalty rate" (TAN basis points) the elapsed
+/// interest is recomputed at for a <see cref="PenaltyBasis.RateReduction"/> band (F.11). REQUIRED
+/// when <paramref name="Basis"/> is <see cref="PenaltyBasis.RateReduction"/> (the decider fails
+/// loud if absent), and IGNORED otherwise. Optional/defaulted <c>null</c> so the share-of-amount
+/// bands that never carry it are unchanged.</param>
+public sealed record EarlyTerminationBand(
+    int? UpToDays, int PenaltyBasisPoints, PenaltyBasis Basis, int? ReducedRateBasisPoints = null);
 
 /// <summary>
 /// A product's early-termination policy (02 §2.5; the CUE <c>#EarlyTermination</c>): either a flat
@@ -70,6 +92,17 @@ public sealed record EarlyTerminationPolicy(
     /// </summary>
     public static EarlyTerminationPolicy Flat(int penaltyBasisPoints, PenaltyBasis basis, long? floorCents = null) =>
         new([new EarlyTerminationBand(UpToDays: null, penaltyBasisPoints, basis)], floorCents);
+
+    /// <summary>
+    /// A flat RATE-REDUCTION policy (F.11): any early break recomputes the elapsed interest at
+    /// <paramref name="reducedRateBasisPoints"/>, and the penalty is the forfeited
+    /// <c>J(original) − J(reduced)</c>. The penalty-share basis points are 0 (unused for this basis).
+    /// </summary>
+    public static EarlyTerminationPolicy FlatRateReduction(int reducedRateBasisPoints, long? floorCents = null) =>
+        new(
+            [new EarlyTerminationBand(
+                UpToDays: null, PenaltyBasisPoints: 0, PenaltyBasis.RateReduction, reducedRateBasisPoints)],
+            floorCents);
 
     /// <summary>
     /// A banded policy (02 §2.5): the ordered (window → penalty) bands plus the optional floor.

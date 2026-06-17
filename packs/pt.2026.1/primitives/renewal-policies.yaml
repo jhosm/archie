@@ -1,0 +1,26 @@
+# Auto-renewal-policy restrictions (02 §2.4.4; surface §3.3). The family schema
+# (#TermDeposit.auto_renewal_policy) STRUCTURALLY allows NONE,
+# SAME_TERM_CURRENT_RATE, and SAME_TERM_SAME_RATE — depths 1–2 accept all three.
+# But 02 §2.4.4 calls SAME_TERM_SAME_RATE "less common, pack-restricted": a
+# product may only auto-renew at the ORIGINAL rate where the jurisdiction's pack
+# permits it. This file is where that restriction lives, mirroring the
+# `permitted_for` pattern day-count.yaml uses — the regulatory rule is
+# auditor-visible in the signed pack itself, not hardcoded in the validator.
+#
+# `permitted_for` is the SAME_TERM_SAME_RATE rule (F.5 follow-up, bd k6r8.6 /
+# the babelstone-k4yr restriction the decider recorded as missing): the product
+# families that MAY use the same-term-same-rate policy. For PT v1 the policy is
+# NOT permitted for term deposits (the launch products use NONE or
+# SAME_TERM_CURRENT_RATE, 02 §4), so the list is empty — a term-deposit variant
+# declaring SAME_TERM_SAME_RATE is rejected at depth 4. A later pack that
+# onboards a same-term-same-rate product adds `term_deposit` here, with zero
+# validator change (the rule is data, not code).
+#
+# NONE and SAME_TERM_CURRENT_RATE are UNRESTRICTED (every family may use them),
+# so they are not listed — only the restricted policy declares a permitted-set,
+# exactly as only the regulated day-counts narrow `permitted_for`.
+same_term_same_rate:
+  description: >-
+    Auto-renew at the deposit's original rate (02 §2.4.4). Pack-restricted: only
+    permitted for the families listed here.
+  permitted_for: []

@@ -94,6 +94,8 @@ const (
 	KindNonAscendingBands = "non_ascending_bands" // banded early-termination up_to_days not ascending
 	KindOpenTailNotLast   = "open_tail_not_last"  // the open (null) band tail is not the single last element
 	KindForbiddenDayCount = "forbidden_day_count" // the pack forbids this day-count for a deposit (PT: Act/360 only)
+
+	KindForbiddenRenewalPolicy = "forbidden_renewal_policy" // the pack forbids this auto-renewal policy for the family (02 §2.4.4: SAME_TERM_SAME_RATE is pack-restricted)
 )
 
 // Diagnostic is one finding. The shape is ADR-PC-006 §P2 verbatim:

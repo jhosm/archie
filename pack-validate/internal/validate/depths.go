@@ -96,6 +96,27 @@ func depth4Regulatory(vd variantData, fam Family, p *pack.Pack) []diag.Diagnosti
 		}
 	}
 
+	// (a2) the SAME_TERM_SAME_RATE auto-renewal policy is PACK-RESTRICTED (02 §2.4.4: "less
+	// common, pack-restricted"). The family schema structurally allows it (depths 1–2 pass), but
+	// a product may auto-renew at the ORIGINAL rate only where the pack permits it for this family.
+	// The permitted-set is PACK-DECLARED (primitives/renewal-policies.yaml `permitted_for`), so the
+	// regulatory rule is auditor-visible in the signed pack, not encoded here — mirroring the
+	// day-count `permitted_for` restriction above. NONE and SAME_TERM_CURRENT_RATE are unrestricted
+	// and never checked. (F.5 follow-up, bd k6r8.6 — the babelstone-k4yr restriction the engine's
+	// renewal decider recorded as "missing pack primitive".)
+	const sameTermSameRatePolicy = "SAME_TERM_SAME_RATE"
+	const sameTermSameRateKey = "same_term_same_rate" // the pack catalogue key (lower_snake of the policy)
+	if vd.AutoRenewalPolicy == sameTermSameRatePolicy &&
+		p.HasRenewalRestriction(sameTermSameRateKey) &&
+		!p.PermitsRenewalPolicyFor(sameTermSameRateKey, fam.Name) {
+		out = append(out, diag.Diagnostic{
+			Depth: diag.DepthRegulatory, Path: "auto_renewal_policy", Kind: diag.KindForbiddenRenewalPolicy,
+			Message: fmt.Sprintf(
+				"auto-renewal policy %q is pack-restricted and not permitted for a %s %s (pack %s; 02 §2.4.4)",
+				sameTermSameRatePolicy, strings.ToUpper(p.Namespace), fam.Name, p.Key),
+		})
+	}
+
 	// (b) stepped-rate step boundaries must be strictly ascending by from_day.
 	if vd.Rate.Stepped != nil {
 		prev := int64(-1)
