@@ -193,10 +193,16 @@ func Load(dir string) (*Pack, error) {
 	}
 
 	// renewal-policies.yaml declares auto-renewal-policy restrictions (02 §2.4.4). It is
-	// OPTIONAL: a pack predating the F.5 follow-up (bd k6r8.6) carries no file, which means
-	// "no policy is restricted" (every structurally-allowed policy is permitted) — the
-	// fail-OPEN default for a pre-restriction pack, so loading such a pack never errors. A
-	// present file narrows the set; an absent one leaves RenewalPolicies empty.
+	// OPTIONAL at RUNTIME load: a pack predating the F.5 follow-up (bd k6r8.6) carries no
+	// file, which means "no policy is restricted" (every structurally-allowed policy is
+	// permitted) — the fail-OPEN default for a pre-restriction pack, so loading such a pack
+	// never errors. A present file narrows the set; an absent one leaves RenewalPolicies empty.
+	//
+	// NOTE the deliberate asymmetry with the BUILD path: packs/pack.sh REQUIRES this file in
+	// every pack it builds (its FIXED_DATA_FILES sweep dies on an absent file), so any pack we
+	// AUTHOR from now on must ship it. This loader stays fail-open anyway because it also reads
+	// arbitrary/legacy packs at runtime, where backward compatibility outranks the build-time
+	// requirement. Build-time enforces the current required set; runtime tolerates older packs.
 	p.RenewalPolicies = map[string]RenewalPolicy{}
 	renewalPath := filepath.Join(dir, "primitives", "renewal-policies.yaml")
 	if _, statErr := os.Stat(renewalPath); statErr == nil {

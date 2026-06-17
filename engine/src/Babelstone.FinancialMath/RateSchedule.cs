@@ -162,6 +162,15 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
     /// over <c>[windowStart, windowEnd]</c> to the cent. Amount-tiered schedules ignore
     /// <paramref name="depositStart"/> (their boundaries are principal, not time) and price the
     /// window's day count directly. Rounds ONCE at the boundary.
+    /// <para><b>Step-up scope (v1).</b> A step-up vector's segment boundaries are ELAPSED DAYS from
+    /// <paramref name="depositStart"/>, so they are well-defined only for ACTUAL-day conventions
+    /// (<see cref="DayCountConvention.Act360"/>, <see cref="DayCountConvention.Act365"/>) — the only
+    /// conventions PT term deposits use (the pt.2026.1 pack resolves <c>pt.act_360</c>). On a 30/360
+    /// convention <see cref="DayCount.Between"/> returns the 30/360-ADJUSTED day count, not actual
+    /// elapsed days, so a day-indexed step boundary would no longer mean "this calendar day of the
+    /// term"; a step-up schedule on a 30/360 day-count is therefore rejected fail-loud rather than
+    /// silently mis-attributing days. (Amount-tiered schedules are convention-agnostic — their
+    /// boundaries are principal cents, not days — so this restriction does not apply to them.)</para>
     /// </summary>
     /// <param name="principal">The principal the interest accrues on.</param>
     /// <param name="depositStart">The deposit's start — the anchor the elapsed-day boundaries count from.</param>
@@ -189,6 +198,20 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
     private Money AccrueStepUpWindow(
         Money principal, DateOnly depositStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount)
     {
+        // Step-up segment boundaries are ELAPSED DAYS from the deposit anchor, so they are
+        // well-defined only for actual-day conventions. On 30/360 DayCount.Between returns the
+        // 30/360-adjusted count, not actual elapsed days — a day-indexed boundary would then mean
+        // the wrong calendar day, so fail loud rather than silently mis-attribute days (v1 scope:
+        // PT term deposits use pt.act_360). Amount-tiered schedules are exempt (principal-indexed).
+        if (dayCount == DayCountConvention.Thirty360European)
+        {
+            throw new ArgumentException(
+                "Step-up (crescente) rate schedules index their segment boundaries by elapsed days, " +
+                "which are only well-defined under actual-day conventions (Act/360, Act/365). The " +
+                $"30/360 convention ({dayCount}) returns adjusted, not actual, days and is not " +
+                "supported for step-up schedules in v1.", nameof(dayCount));
+        }
+
         var windowFactor = DayCount.Between(windowStart, windowEnd, dayCount);
         if (windowFactor.Days < 0)
         {

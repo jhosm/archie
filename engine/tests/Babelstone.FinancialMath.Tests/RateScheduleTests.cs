@@ -147,6 +147,57 @@ public class RateScheduleTests
             schedule.AccrueGross(threeThousand, Start, end, DayCountConvention.Act360));
     }
 
+    [Fact]
+    public void AmountTiered_prices_a_coupon_WINDOW_on_the_windows_day_count_not_the_full_term()
+    {
+        // escalonada is principal-indexed, so a PERIODIC coupon window must tier the principal over
+        // exactly the WINDOW's day count — not the whole term. This pins the AccrueGrossWindow
+        // AmountTiered branch, which every full-term AccrueGross test would miss: a mutation that
+        // fed the full term instead of the window would inflate the coupon and go uncaught.
+        var schedule = RateSchedule.AmountTiered([new RateSegment(0, 200), new RateSegment(500_000, 400)]);
+        var windowStart = Start.AddDays(31);
+        var windowEnd = Start.AddDays(62); // a 31-day coupon window partway through the term
+
+        // The tiered gross over JUST the window: each €5,000 tranche over 31 days, Act/360.
+        var windowFactor = DayCount.Between(windowStart, windowEnd, DayCountConvention.Act360);
+        decimal exact = (decimal)500_000L * 200 * windowFactor.Days / ((decimal)windowFactor.Basis * 10_000)
+                      + (decimal)500_000L * 400 * windowFactor.Days / ((decimal)windowFactor.Basis * 10_000);
+
+        var gross = schedule.AccrueGrossWindow(
+            TenThousand, Start, windowStart, windowEnd, DayCountConvention.Act360);
+
+        Assert.Equal(Money.FromCents(exact), gross);
+        // And strictly less than the full-term tiered accrual — proving it priced the window, not the term.
+        Assert.True(gross.Cents < schedule.AccrueGross(TenThousand, Start, Start.AddDays(360), DayCountConvention.Act360).Cents);
+    }
+
+    // --- step-up is defined only for actual-day conventions (v1 scope) --------------------------
+
+    [Fact]
+    public void StepUp_on_a_thirty360_day_count_fails_loud_rather_than_mis_attributing_days()
+    {
+        // Step-up boundaries are ELAPSED days; on 30/360 DayCount.Between returns adjusted days, so
+        // a day-indexed boundary would mean the wrong calendar day. v1 rejects it fail-loud.
+        var schedule = RateSchedule.StepUp([new RateSegment(0, 200), new RateSegment(180, 400)]);
+        var end = Start.AddDays(360);
+
+        var ex = Assert.Throws<ArgumentException>(() =>
+            schedule.AccrueGross(TenThousand, Start, end, DayCountConvention.Thirty360European));
+        Assert.Contains("actual-day", ex.Message);
+    }
+
+    [Fact]
+    public void AmountTiered_on_a_thirty360_day_count_is_allowed_principal_indexed_not_day_indexed()
+    {
+        // Amount-tiered boundaries are principal cents, not days, so the 30/360 restriction that
+        // applies to step-up does NOT apply here — it accrues without throwing.
+        var schedule = RateSchedule.AmountTiered([new RateSegment(0, 200), new RateSegment(500_000, 400)]);
+        var end = Start.AddDays(360);
+
+        var gross = schedule.AccrueGross(TenThousand, Start, end, DayCountConvention.Thirty360European);
+        Assert.True(gross.Cents > 0); // priced fine on a 30/360 convention
+    }
+
     // --- well-formedness guards ----------------------------------------------------------------
 
     [Fact]

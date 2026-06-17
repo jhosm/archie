@@ -46,6 +46,17 @@ readonly PACK_SCHEMA="$CONTRACTS_CUE/pack/pack.cue"
 # from pack.yaml at validate time (see manifest_data_files) — a pack that declares
 # an extra rate-sheet-ref then gets covered automatically, never silently skipped.
 # Plain string list for bash 3.2 portability.
+#
+# NOTE on primitives/renewal-policies.yaml (the F.5 follow-up, bd k6r8.6): this
+# BUILD path treats it as REQUIRED (the `[ -f ... ] || die` below) — every pack we
+# author from now on MUST ship it, so a new pack cannot silently omit the renewal
+# restriction. That is deliberately STRICTER than the pack-validate Go loader
+# (internal/pack/pack.go Load()), which fail-OPENS on an absent file so it can still
+# read a *legacy* pack authored before the restriction existed. The two are not in
+# tension: build-time authoring of a CURRENT pack is held to the current required
+# set, while runtime load of an ARBITRARY (possibly older) pack must stay backward
+# compatible. If a future pack must legitimately omit the file, relax it HERE (not in
+# the loader) and say why.
 readonly FIXED_DATA_FILES="
 pack.yaml|#Manifest
 primitives/day-count.yaml|#DayCounts
