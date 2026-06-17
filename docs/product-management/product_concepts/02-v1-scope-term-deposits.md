@@ -61,50 +61,62 @@ Events emitted by the engine onto the bank's event backbone. Names follow the [i
 
 ##### `DepositConstituted`
 
-A new deposit is created and funded. Also fires on engine-native auto-renewal, where `causation_id` points at the `DepositMatured` of the previous instance.
+A new deposit is created and funded. Also fires on engine-native auto-renewal, where `causation_id` (in the envelope headers, see §2.4.3) points at the `DepositMatured` of the previous instance.
+
+Canonical payload — [`DepositConstituted.avsc`](../../../contracts/avro/deposits/term_deposit/DepositConstituted.avsc):
 
 ```
-deposit_id, customer_id, current_account_id (debited for principal),
-principal_cents, currency, tan_basis_points, rate_sheet_version_id,
+deposit_id, principal_cents, tan_basis_points, rate_sheet_version_id,
 term_days, start_date, maturity_date,
-interest_variant ∈ {AT_MATURITY, PERIODIC, ADVANCE},
-payment_period_months  -- if PERIODIC
+interest_variant,           -- AT_MATURITY | PERIODIC | ADVANCE
 auto_renewal_policy,
-originating_legacy_id  -- optional; set when the instance renews a legacy
-                          deposit per [coexistence §9]
+payment_period_months,      -- PERIODIC coupon cadence in months; 0 for AT_MATURITY/ADVANCE
+product_code,               -- catalogue product code the rate sheet prices
+role,                       -- pricing role the TAN was priced against (e.g. standard)
+funding_account             -- OPAQUE funding-account token, NEVER an IBAN/cleartext id
 ```
+
+No `customer_id`, `currency`, or `originating_legacy_id` ride on the payload: the
+funding current account is carried as the opaque `funding_account` reference (never PII /
+IBAN, per [ADR-PC-004 §P2](./adrs/ADR-PC-004-pii-crypto-shredding.md)), the currency is
+always `EUR` (a fixed convention, §2.4.3), and the legacy-renewal link travels via
+`causation_id` in the envelope (per [coexistence §9](./feature-design-strangler-fig-coexistence.md)).
 
 ##### `DepositConstitutionFailed`
 
-The constitution saga compensated before completion.
+The constitution saga compensated before completion. A **store-only** event (no `.avsc`):
+it records why a constitution was rejected, carrying failure *codes* only — never anything
+about the customer ([ADR-PC-004 §P2](./adrs/ADR-PC-004-pii-crypto-shredding.md)). The
+engine record:
 
 ```
-deposit_id  -- the reserved ID that will not be used
-customer_id, current_account_id, attempted_principal_cents,
-failure_reason ∈ {INSUFFICIENT_FUNDS, COMPLIANCE_REJECTED,
-                  LIMIT_EXCEEDED, CORE_UNAVAILABLE,
-                  TIMEOUT, CUSTOMER_CANCELLED},
-compensation_completed_at
+deposit_id,             -- the reserved ID that will not be used
+failure_reason,         -- stable machine code, e.g. RATE_SHEET_NOT_FOUND
+failure_detail,         -- human-readable detail about the offending config/rule; never PII
+preconditions           -- optional; for an ELIGIBILITY_NOT_MET refusal, the audit-lineage
+                           verdicts the saga resolved upstream (ADR-PC-024 §1), each an opaque
+                           { satisfied, evidence_ref, evaluated_at } triple — structural, not PII
 ```
 
 ##### `InterestAccrued`
 
-An accrual computation runs — daily or at payment date.
+An accrual computation runs — daily or at payment date. A **store-only** fine-grained
+accrual fact: it has no `.avsc` and is not published to the bus — the integration-relevant
+interest amount rides the coarse `InterestPaid` payout fact instead (per [`InterestPaid.avsc`](../../../contracts/avro/deposits/term_deposit/InterestPaid.avsc) and [ADR-IC-017 §P4](../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md)). The engine record carries the already-computed gross interest and the period anchor:
 
 ```
-deposit_id, accrual_period_start, accrual_period_end,
-principal_cents, gross_interest_cents (TANB-based), day_count_basis
+gross_interest_cents, as_of
 ```
 
 ##### `WithholdingApplied`
 
-IRS withholding is computed on an interest payment.
+IRS withholding is computed on an interest payment (the PT rate is 28% / 2800 bp). A
+**store-only** fine-grained fact: like `InterestAccrued` it has no `.avsc` and is not
+published — the integration-relevant withholding *amount* rides `InterestPaid`'s
+`withholding_tax_cents` instead (per [`InterestPaid.avsc`](../../../contracts/avro/deposits/term_deposit/InterestPaid.avsc) and [ADR-IC-017 §P4](../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md)). The engine record carries the already-computed tax and resulting net, with `net = gross − tax` conserved to the cent:
 
 ```
-deposit_id, interest_payment_id,
-gross_interest_cents,
-withholding_rate_basis_points  -- 2800 for the PT 28%
-withholding_cents, net_interest_cents
+tax_cents, net_cents
 ```
 
 ##### `InterestPaid`
@@ -112,10 +124,12 @@ withholding_cents, net_interest_cents
 A periodic coupon (or the ADVANCE up-front interest) is accrued, withheld, and settled —
 the self-contained per-coupon flow.
 
+Canonical payload — [`InterestPaid.avsc`](../../../contracts/avro/deposits/term_deposit/InterestPaid.avsc):
+
 ```
 deposit_id,
 gross_interest_cents, withholding_tax_cents, net_interest_cents,
-payment_date
+paid_on
 ```
 
 The engine models `InterestPaid` as the **single, self-contained record for a coupon /
@@ -126,67 +140,78 @@ double-count, because all three folds accumulate the same running tallies.) AT_M
 uses the `InterestAccrued` + `WithholdingApplied` + `DepositMatured` triple and emits no
 `InterestPaid`; the PERIODIC intermediate coupons and the ADVANCE up-front flow emit
 `InterestPaid` alone. The credit's `target_current_account_id` is resolved by the ACL
-(see §2.4 note 2) and kept out of the structural event. The Avro wire contract for
-`InterestPaid` is authored at G.3 (bd `babelstone-c3bq`).
+(see §2.4 note 2) and kept out of the structural event.
 
 ##### `DepositMatured`
 
 A deposit reaches its maturity date.
 
+Canonical payload — [`DepositMatured.avsc`](../../../contracts/avro/deposits/term_deposit/DepositMatured.avsc):
+
 ```
-deposit_id, principal_cents,
-final_gross_interest_cents, final_net_interest_cents,
-total_payout_cents, target_current_account_id
+principal_returned_cents, net_interest_paid_cents, total_payout_cents,
+matured_on,
+auto_renewal_policy  -- NONE | SAME_TERM_CURRENT_RATE | SAME_TERM_SAME_RATE
+                        (nullable; folded from DepositConstituted; promoted to the
+                         ce_autorenewalpolicy header by the relay, per ADR-IC-018 §P5)
 ```
+
+The `deposit_id` is the envelope `instance_id` (§2.4.3), not a payload field. The gross
+interest is not re-stated here — it rides the `InterestAccrued`/`WithholdingApplied` flow;
+the settlement target current account is resolved by the ACL (see §2.4 note 2) and kept off
+the structural event.
 
 ##### `DepositRenewed`
 
-Linking event between the matured deposit and the engine-native instance constituted by auto-renewal. Not used for the cross-SoR (legacy → engine) renewal path — that links via `causation_id` and `originating_legacy_id` (per [coexistence §9](./feature-design-strangler-fig-coexistence.md)).
+Linking event between the matured deposit and the engine-native instance constituted by auto-renewal. Not used for the cross-SoR (legacy → engine) renewal path — that links via `causation_id` (per [coexistence §9](./feature-design-strangler-fig-coexistence.md)). A **store-only** event (no `.avsc`); the engine record also pins the rolled-over new-term facts (rate, TAN, term, maturity) resolved at the renewal moment:
 
 ```
-previous_deposit_id, new_deposit_id, renewal_date
+deposit_id, new_deposit_id,
+rollover_principal_cents,
+new_rate_sheet_version_id, new_tan_basis_points, new_term_days,
+renewal_date, new_maturity_date
 ```
 
 ##### `DepositTerminatedEarly`
 
-A deposit is closed before maturity at the depositor's request.
+A deposit is closed before maturity at the depositor's request. A **store-only** event
+(no `.avsc`). The engine record carries the settlement facts —
+`net_settlement_cents = principal_returned + net_accrued_interest − penalty` — with the
+gross accrued interest and withholding emitted as the paired `InterestAccrued` /
+`WithholdingApplied` flows (§2.5):
 
 ```
-deposit_id, termination_date,
-principal_returned_cents,
-accrued_interest_cents (gross),
-withholding_cents, net_payout_cents,
-early_termination_reason
+deposit_id,
+principal_returned_cents, penalty_cents, net_settlement_cents,
+terminated_on, termination_reason
 ```
 
 ##### `DepositPartiallyWithdrawn`
 
-A pack-conditional partial early withdrawal (PT pack permits this for some products). Preserves the deposit's historical link rather than terminating + reconstituting.
+A pack-conditional partial early withdrawal (PT pack permits this for some products). Preserves the deposit's historical link rather than terminating + reconstituting. A **store-only** event (no `.avsc`); the engine record reduces the principal:
 
 ```
-deposit_id, withdrawn_principal_cents,
-withholding_on_withdrawn_cents,
-remaining_principal_cents, withdrawal_date
+deposit_id, withdrawn_amount_cents,
+remaining_principal_cents, withdrawn_on
 ```
 
 ##### `DepositCorrected`
 
-Clerk-data-entry correction (wrong principal, wrong rate, wrong term). Required for bitemporal correctness — distinguishes *what we thought* from *what we now know* (per [event-store §6](./feature-design-event-store-projections.md)).
+Clerk-data-entry correction (wrong principal, wrong rate, wrong term). Required for bitemporal correctness — distinguishes *what we thought* from *what we now know* (per [event-store §6](./feature-design-event-store-projections.md)). A **store-only** event (no `.avsc`). The engine record corrects one field at a time, carrying opaque *references* to the old and new values (never PII, [ADR-PC-004 §P2](./adrs/ADR-PC-004-pii-crypto-shredding.md)); `effective_from` is the valid-time feeding the bitemporal supersession:
 
 ```
 deposit_id, correction_id,
-corrected_fields: { field: { old, new } },
-correction_reason, corrected_by
+corrected_field, previous_value_ref, corrected_value_ref,
+effective_from, correction_reason
 ```
 
 ##### `DepositTransferredToHeirs`
 
-Succession on death of holder. A lifecycle terminator that is neither maturity nor early termination.
+Succession on death of holder. A lifecycle terminator that is neither maturity nor early termination. A **store-only** event (no `.avsc`). It carries NO heir PII — no name, NIF, IBAN, or holder/heir id, in cleartext or ciphertext — only the opaque `heir_case_ref` (the succession-case reference); the engine resolves heir identity internally from it ([ADR-PC-004 §P2](./adrs/ADR-PC-004-pii-crypto-shredding.md)):
 
 ```
-deposit_id, transfer_id,
-from_holder_id, to_heirs: [{ heir_id, share }],
-succession_evidence_ref
+deposit_id, heir_case_ref,
+transferred_balance_cents, transfer_date
 ```
 
 #### 2.4.2 Cross-cutting generic events (engine-declared)

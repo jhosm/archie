@@ -54,8 +54,14 @@ the *pack* carries the day-count; it does **not** confirm the engine actually
 implements the formula. That binding is resolved only when the engine loads the
 pack — an unimplemented `formula_ref` throws there, never at validate time.
 
-So the authoritative list of implemented day-count primitives lives in **engine
-source**, in two places:
+The authoritative implemented set is rendered, field-for-field, in the generated
+[engine-primitives reference](../../product-management/reference/engine-primitives/README.md)
+— the `formula_ref` values the engine accepts and the convention each resolves to. Read it
+there, never a copy: it is regenerated from engine source (`make docs-gen`) and gated for
+drift in CI (`make docs-verify`), so it cannot go stale the way a hand-kept table here
+would.
+
+It is rendered from **engine source**, in two places:
 
 - [`Babelstone.Packs/VerifiedPack.cs`](../../../engine/src/Babelstone.Packs/VerifiedPack.cs)
   — `PackDayCount.ToConvention()` is the `formula_ref → convention` bridge: a
@@ -64,14 +70,6 @@ source**, in two places:
   silently"*).
 - [`Babelstone.FinancialMath/DayCount.cs`](../../../engine/src/Babelstone.FinancialMath/DayCount.cs)
   — the `DayCountConvention` enum and the math behind each.
-
-Today that switch accepts exactly three:
-
-| `formula_ref` | Convention |
-|---|---|
-| `engine.day_count.actual_360` | Actual/360 |
-| `engine.day_count.actual_365` | Actual/365 |
-| `engine.day_count.thirty_360_european` | 30E/360 (European) |
 
 > **The trap, stated as a hypothetical.** Suppose you declared
 > `act_act_isda → engine.day_count.actual_actual_isda` in a pack. The string is
@@ -83,13 +81,12 @@ Today that switch accepts exactly three:
 > shipped pack carries such a dead entry — a guard test, `PackDeclarationsResolveTests`,
 > asserts every declared day-count `formula_ref` resolves, so a future one fails CI.)
 
-> **Gap, stated honestly.** There is no *generated* catalogue of engine
-> primitives yet — unlike events, family schemas, and the pack-format, the
-> implemented-primitive set is not rendered into the
-> [generated reference](../../product-management/reference/README.md). Until a
-> renderer emits it, the `ToConvention()` switch above is the source of truth.
-> Other `formula_ref` primitives (e.g. withholding) follow the same pattern and
-> the same gap.
+> **Note.** The day-count primitive set *is* now a generated catalogue — the
+> [engine-primitives reference](../../product-management/reference/engine-primitives/README.md),
+> rendered from the `ToConvention()` switch alongside events, family schemas, and
+> the pack-format ([generated reference](../../product-management/reference/README.md)).
+> Other `formula_ref` primitives (e.g. withholding) follow the same pattern but
+> are not yet rendered; for those the engine source is still the source of truth.
 
 ## Steps
 
