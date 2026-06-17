@@ -66,6 +66,19 @@
          (ADR-PC-019 §P2): Babelstone.Telemetry depends on nothing the orchestrator must shed. -->
     <ProjectReference Include="../../../engine/src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
 
+    <!-- The host-side OTel SDK seam (ADR-IC-007 Layer 1, H.5): this composition root registers the
+         TracerProvider + OTLP exporter so the saga-advance spans (opened on the shared
+         Babelstone.Engine source above) and the edge SERVER span are actually created and exported
+         to the Collector (§P1). WITHOUT a tracer listening, every ActivitySource.StartActivity in the
+         substrate returns null and the whole saga-trace path is a no-op — which is exactly why
+         LIVE·saga showed no spans. Mirrors Babelstone.Engine.Api's host wiring; kept out of the
+         SDK-free Babelstone.Telemetry leaf (ADR-PC-019 §P2). NB: no HttpClient instrumentation — the
+         dispatcher injects the W3C traceparent MANUALLY from the durable outbox row
+         (SagaCommandDispatchDrainer), so auto-injection would write a competing header. -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+
     <!-- The family-agnostic saga substrate (ADR-IC-018 §P1): the host composes its runtime,
          stores, and ports. -->
     <ProjectReference Include="../Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />

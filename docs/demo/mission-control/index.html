@@ -677,11 +677,13 @@ body.console-open .hint-bar { display:none; }
     var opts = { method: method, headers: Object.assign({ "Content-Type": "application/json" }, headers || {}) };
     if (body) opts.body = JSON.stringify(body);
     var res = await fetch(API_BASE + path, opts);
-    // The engine returns the active trace id on every response (X-Trace-Id, bd babelstone-2dex) —
-    // the key the Telemetry tab queries Grafana Tempo by. Capture it from WRITES (a POST's trace
-    // carries the deposit.* spans; a follow-up GET would only carry its own read span).
+    // The engine AND the orchestrator edge return the active trace id on every response (X-Trace-Id,
+    // bd babelstone-2dex) — the key the Telemetry tab queries Grafana Tempo by. Capture it from WRITES:
+    // in LIVE·engine a POST's trace carries the deposit.* + Npgsql spans; in LIVE·saga the edge POST's
+    // trace id roots the WHOLE saga (the edge writes the first saga_outbox row with its traceparent),
+    // so it resolves to one connected trace across the orchestrator + engine once the saga runs.
     var traceId = res.headers.get("X-Trace-Id") || null;
-    if (method === "POST" && traceId && state.mode === "live") onEngineTrace(traceId);
+    if (method === "POST" && traceId && (state.mode === "live" || state.mode === "saga")) onEngineTrace(traceId);
     var text = await res.text();
     var json = text ? JSON.parse(text) : {};
     if (!res.ok) { var err = new Error((json.detail || json.title || res.statusText)); err.status = res.status; err.body = json; throw err; }
@@ -1037,19 +1039,30 @@ body.console-open .hint-bar { display:none; }
   }
   async function fetchRealTrace(traceId) {
     await sleep(1200);                              // Tempo ingestion lag — avoid a sure first-miss
-    for (var i = 0; i < 8; i++) {
+    // Poll until the trace stops GROWING, not just until it's non-empty. A LIVE·engine trace is
+    // complete on the first hit, but a LIVE·saga trace assembles ASYNCHRONOUSLY — the edge span lands
+    // first, then the dispatcher's engine leg + the saga-advance spans arrive over the next second or
+    // two as the saga runs. Returning on first-non-empty would freeze the waterfall at the lone edge
+    // span. So keep the LARGEST span set seen, re-render as it grows, and commit once it's been stable
+    // for two consecutive polls (or we exhaust the window). Harmless for engine mode (one extra poll).
+    var best = null, stable = 0;
+    for (var i = 0; i < 14; i++) {
       if (state.traceId !== traceId) return;        // superseded by a newer op or a reset
       try {
         var res = await fetch(API_BASE + "/tempo/api/traces/" + traceId);
         if (res.ok) {
           var spans = parseOtlpTrace(await res.json());
           if (spans.length && state.traceId === traceId) {
-            state.realTrace = spans; state.traceState = "real"; renderTrace(); return;
+            if (!best || spans.length > best.length) { best = spans; stable = 0; }
+            else { stable++; }
+            state.realTrace = best; state.traceState = "real"; renderTrace();
+            if (stable >= 2) return;                // grew, then settled — the full trace is in
           }
         }
       } catch (e) { /* Tempo / proxy unreachable — retry, then degrade to illustrative */ }
       await sleep(1500);
     }
+    if (best) return;                               // assembled but never fully settled — keep what we have
     if (state.traceId === traceId) { state.traceState = "unavailable"; renderTrace(); }
   }
 

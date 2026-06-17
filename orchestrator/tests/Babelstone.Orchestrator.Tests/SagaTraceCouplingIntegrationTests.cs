@@ -104,7 +104,7 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
     }
 
     [Fact]
-    public async Task The_emitted_outbox_rows_carry_the_outbound_traceparent_under_the_advance_span()
+    public async Task Every_emitted_outbox_row_threads_under_an_advance_span_in_the_one_saga_trace()
     {
         var captured = new List<Activity>();
         using var listener = CaptureListener(captured);
@@ -112,30 +112,49 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
 
         var handler = NewHandler(new SagaCommandOutboxSink(_businessRefStore));
 
-        // Edge-start the saga (its emissions carry no traceparent — the edge opens its own
-        // transaction), then drive both validations to VALIDATIONS_COMPLETE under the inbound trace.
-        // The completing advance self-emits ConfirmDebit — the command emitted UNDER the advance span,
-        // so its outbound traceparent is what threads downstream under the saga's trace.
-        var processId = await StartSagaWithReferencesAsync(Guid.NewGuid());
-        captured.Clear();
+        // In production the edge runs UNDER the inbound request's SERVER span (AddAspNetCoreInstrumentation),
+        // which roots the saga's trace. Model that with an ambient span carrying the inbound context, so
+        // the edge's OWN saga.advance span (and the validation commands it emits) thread under the SAME
+        // trace as the later consume-loop legs — the realistic end-to-end scenario, not the edge-in-a-vacuum
+        // one. The edge is a real saga advance (STARTED → PARALLEL_VALIDATION), so it now opens a
+        // saga.advance span like every other leg (ADR-IC-003 §P3) instead of emitting NULL-traceparent rows
+        // that orphaned the saga into a disconnected trace.
+        Guid processId;
+        using (BabelstoneTelemetry.ActivitySource.StartActivity(
+            "edge.request", ActivityKind.Server, SagaTraceContext.ParseTraceParent(InboundTraceParent)))
+        {
+            processId = await StartSagaWithReferencesAsync(Guid.NewGuid());
+        }
 
+        // Then drive both validations to VALIDATIONS_COMPLETE under the inbound trace; the completing
+        // advance self-emits ConfirmDebit under ITS span. (Do NOT clear `captured` — we need the edge
+        // advance span too.)
         await RunAsync(handler, Event(processId, ConstitutionProcess.LimitsValidated, traceParent: InboundTraceParent));
         Assert.Equal(
             AdvanceOutcome.Advanced,
             await RunAsync(handler, Event(processId, ConstitutionProcess.BalanceReserved, traceParent: InboundTraceParent)));
 
-        // The completing advance is the one that emits ConfirmDebit; take its span (the last advance
-        // span captured for THIS saga). Filter on the process_id tag, not the span name alone: the
-        // process-global listener also captures parallel test classes' saga.advance spans now that the
-        // dispatcher self-advances (bd babelstone-t7o3.8), so a sibling saga's span could otherwise win.
-        var span = captured.Last(
-            a => a.OperationName == BabelstoneAttributes.SpanSagaAdvance
-                && (string?)a.GetTagItem(BabelstoneAttributes.SagaProcessId) == processId.ToString());
+        // Every saga.advance span THIS saga opened — the edge's first-transition span PLUS the consume-loop
+        // legs. Filter on the process_id tag, not the span name alone: the process-global listener also
+        // captures parallel test classes' saga.advance spans (bd babelstone-t7o3.8), so a sibling saga's
+        // span could otherwise leak in.
+        var advanceSpanIds = captured
+            .Where(a => a.OperationName == BabelstoneAttributes.SpanSagaAdvance
+                && (string?)a.GetTagItem(BabelstoneAttributes.SagaProcessId) == processId.ToString())
+            .Select(a => a.SpanId.ToString())
+            .ToHashSet();
 
-        // The outbox rows emitted UNDER an advance span carry a non-null outbound traceparent (the
-        // edge-start rows carry null); each threads under THIS span (same trace id, the advance span's
-        // id as parent) — the downstream consumer continues the saga's trace. The trace id stays the
-        // upstream one (the saga is one trace end-to-end).
+        // The edge now contributes its OWN advance span: there is MORE than one advance span for the saga
+        // (the edge leg + at least the completing consume leg). This is the observability the edge used to
+        // drop on the floor.
+        Assert.True(
+            advanceSpanIds.Count >= 2,
+            $"expected the edge's saga.advance span PLUS at least one consume-loop advance span, saw {advanceSpanIds.Count}");
+
+        // Every emitted command carries a non-null outbound traceparent whose TRACE id is the saga's one
+        // trace (end-to-end, edge through engine) and whose PARENT is a real saga.advance span the
+        // orchestrator opened for this process — the edge validation commands under the edge span, the
+        // consume-loop commands under their leg's span. No row orphans the saga into a second trace.
         var traceParents = (await OutboxTraceParentsAsync(processId)).Where(tp => tp is not null).ToList();
         Assert.NotEmpty(traceParents);
         Assert.All(traceParents, tp =>
@@ -143,7 +162,7 @@ public sealed class SagaTraceCouplingIntegrationTests(OrchestratorPostgresFixtur
             Assert.NotNull(tp);
             var ctx = SagaTraceContext.ParseTraceParent(tp);
             Assert.Equal(InboundTraceId, ctx.TraceId.ToString());
-            Assert.Equal(span.SpanId.ToString(), ctx.SpanId.ToString());
+            Assert.Contains(ctx.SpanId.ToString(), advanceSpanIds);
         });
     }
 
