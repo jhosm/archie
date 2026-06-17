@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+    <!-- Decode the harness-produced Confluent wire-format value back to a GenericRecord so the smoke
+         test asserts the bytes ARE the engine's production bytes (§G1) without standing up a broker. -->
+    <PackageReference Include="Apache.Avro" />
+    <PackageReference Include="Confluent.Kafka" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Babelstone.LoadHarness/Babelstone.LoadHarness.csproj" />
+    <!-- The engine surfaces the smoke test asserts against (the same serializer + family + telemetry
+         the harness reuses): catalogue/serializer for the round-trip, the family event for generation,
+         the shared ActivitySource the observer listens to. -->
+    <ProjectReference Include="../../src/Babelstone.Engine.Avro/Babelstone.Engine.Avro.csproj" />
+    <ProjectReference Include="../../src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <ProjectReference Include="../../src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+    <ProjectReference Include="../../src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
+  </ItemGroup>
+</Project>

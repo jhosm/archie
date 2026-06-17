@@ -67,5 +67,13 @@
          integration tests (the latter [Trait("Category","Integration")], filtered out of the
          default lane). -->
     <Project Path="../orchestrator/tests/Babelstone.Orchestrator.Tests/Babelstone.Orchestrator.Tests.csproj" />
+    <!-- L.1 load harness smoke/self-test (ADR-PC-011): Docker-free determinism + envelope + observer tests. -->
+    <Project Path="load/Babelstone.LoadHarness.Tests/Babelstone.LoadHarness.Tests.csproj" />
+  </Folder>
+  <Folder Name="/load/">
+    <!-- The in-house .NET v4-scale load harness (ADR-PC-011, Epic L.1): a generator/driver/observer
+         that drives Redpanda with the engine's OWN Avro envelope code + seeded RNG + injected clock,
+         and reads boundary-to-commit latency from the engine's OpenTelemetry spans. -->
+    <Project Path="load/Babelstone.LoadHarness/Babelstone.LoadHarness.csproj" />
   </Folder>
 </Solution>
