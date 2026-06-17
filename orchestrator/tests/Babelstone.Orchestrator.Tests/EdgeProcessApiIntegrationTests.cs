@@ -282,6 +282,9 @@ public sealed class EdgeProcessApiIntegrationTests(OrchestratorPostgresFixture f
             var context = new SagaModuleContext(connectionString, "http://engine", "http://settlement");
             var module = new TermDepositSagaModule(context);
             module.ConfigureServices(builder.Services, context);
+            // The saga_outbox store's write side (ADR-IC-018 §D2) — registered as the host does, so the
+            // constitution typed sink can compose it (the row write moved off the family sink to the substrate).
+            builder.Services.AddSingleton<SagaOutboxWriter>();
             builder.Services.AddSingleton(module.StateMachine);
             builder.Services.AddSingleton(module.ResultEventBridge);
             builder.Services.AddSingleton(module.CommandRouter);

@@ -203,6 +203,9 @@ public sealed class RenewalSagaIntegrationTests : IAsyncLifetime
 
         builder.Services.AddSingleton<SagaStateStore>();
         builder.Services.AddSingleton<SagaTransitionLog>();
+        // The saga_outbox store's write side (ADR-IC-018 §D2) — registered as the host does, so the
+        // family typed sink can compose it (the row write moved off the family sink into the substrate).
+        builder.Services.AddSingleton<SagaOutboxWriter>();
         builder.Services.AddSingleton<ISagaCommandSink>(sp =>
             new CompositeSagaCommandSink(sp.GetServices<ISagaTypedCommandSink>()));
 
