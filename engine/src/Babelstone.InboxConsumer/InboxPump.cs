@@ -159,6 +159,11 @@ public sealed class InboxPump : IDisposable
                 EnableAutoCommit = false,
                 AutoOffsetReset = options.StartFromEarliest ? AutoOffsetReset.Earliest : AutoOffsetReset.Latest,
             };
+            // ADR-IC-016 plane ii: present this consumer's distinct SASL/SCRAM identity to Redpanda when
+            // a credential is configured (resolved by the host through ISecretProvider), so topic ACLs can
+            // scope it to only the topics it subscribes to. A no-op in local dev — additive, leaving the
+            // load-bearing auto-commit/offset-reset settings untouched.
+            options.Sasl.ApplyTo(config);
             _consumer = new ConsumerBuilder<byte[], byte[]>(config).Build();
             _ownsConsumer = true;
             _consumer.Subscribe(options.Topics);
