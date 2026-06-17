@@ -104,6 +104,11 @@ builder.Services.AddSingleton<IReadOnlyDictionary<string, ISagaStateMachine>>(sp
 
 builder.Services.AddSingleton<SagaStateStore>();
 builder.Services.AddSingleton<SagaTransitionLog>();
+// The saga_outbox store's write side (ADR-IC-018 §D2 — a SUBSTRATE component, alongside the saga_state
+// and saga_transition stores). Each family's typed command sink composes it: the sink assembles its own
+// payload bytes, the writer owns the row write + the operational message_id mint, identical for every
+// saga type (no per-family INSERT duplication).
+builder.Services.AddSingleton<SagaOutboxWriter>();
 
 // The consume loop ADVANCES sagas only — it never starts them. Sagas are started exclusively at the
 // edge (EdgeSagaStarter), which pins the business references in the same transaction as the STARTED

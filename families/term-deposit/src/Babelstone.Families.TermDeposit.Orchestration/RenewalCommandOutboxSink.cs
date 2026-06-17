@@ -5,22 +5,24 @@ namespace Babelstone.Families.TermDeposit.Orchestration;
 
 /// <summary>
 /// The <see cref="ISagaCommandSink"/> for the <see cref="RenewalProcess"/> saga (bd babelstone-mtto;
-/// the renewal counterpart of <see cref="SagaCommandOutboxSink"/>). It writes each renewal command the
-/// saga decided as a row in <c>saga_outbox</c> ON THE SAGA TRANSACTION, so the command commits ATOMICALLY
-/// with the state move, the transition-history row, and the inbox dedup row (ADR-IC-003 §P1). The
-/// dispatcher (<c>SagaCommandDispatchDrainer</c>) is the only reader; it POSTs the row to the engine's
-/// renewal legs, substituting the row's process_id into the {process_id} path template
+/// the renewal counterpart of <see cref="SagaCommandOutboxSink"/>). It owns ONLY the renewal-specific
+/// command-payload assembly (<see cref="RenewalCommandPayloadFactory"/>); the row write itself —
+/// appending to the substrate-owned <c>saga_outbox</c> store on the saga transaction — is delegated to
+/// the substrate's <see cref="SagaOutboxWriter"/> (ADR-IC-018 §D2 names <c>saga_outbox</c> a substrate
+/// store; the writer commits the row ATOMICALLY with the state move and the dedup row, ADR-IC-003 §P1).
+/// The dispatcher (<c>SagaCommandDispatchDrainer</c>) is the only reader; it POSTs the row to the
+/// engine's renewal legs, substituting the row's process_id into the {process_id} path template
 /// (<see cref="RenewalCommandRouter"/>).
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The impure shell owns the GUID + clock (ADR-PC-010 §P5).</b> The ONE freshly minted value is the
-/// delivery <c>message_id</c> — the Idempotency-Key the engine dedups on (ADR-PC-029 slot 4) — written to
-/// the outbox COLUMN, NEVER the body. <c>created_at</c> is the DB column default. The body is built
-/// byte-stably by <see cref="RenewalCommandPayloadFactory"/> from the process id alone (the new deposit id
-/// is the deterministic derivation, NO Guid.NewGuid; no wall clock — renewed_at is host-stamped
+/// <b>The payload is byte-stable (ADR-PC-010 §P5, crash-safe).</b> The body is built byte-stably by
+/// <see cref="RenewalCommandPayloadFactory"/> from the process id alone (the new deposit id is the
+/// deterministic derivation, NO <see cref="Guid.NewGuid"/>; no wall clock — renewed_at is host-stamped
 /// engine-side), so re-emitting the same logical command yields identical bytes and a crash-recovery
-/// reissue is replayable.
+/// reissue is replayable. The ONE freshly minted value — the delivery <c>message_id</c> the engine dedups
+/// on (ADR-PC-029 slot 4) — is minted by the <see cref="SagaOutboxWriter"/> as an outbox COLUMN, NEVER the
+/// body.
 /// </para>
 /// <para>
 /// <b>No per-saga state, NO product/role/funding config (UNLIKE the constitution sink).</b> The renewal
@@ -31,8 +33,10 @@ namespace Babelstone.Families.TermDeposit.Orchestration;
 /// PII-free (ADR-PC-004 §P2): a single derived deposit id — never a NIF/IBAN/name.
 /// </para>
 /// </remarks>
-public sealed class RenewalCommandOutboxSink : ISagaTypedCommandSink
+public sealed class RenewalCommandOutboxSink(SagaOutboxWriter? outbox = null) : ISagaTypedCommandSink
 {
+    private readonly SagaOutboxWriter _outbox = outbox ?? new SagaOutboxWriter();
+
     /// <inheritdoc />
     public string SagaType => RenewalProcess.Type;
 
@@ -47,8 +51,6 @@ public sealed class RenewalCommandOutboxSink : ISagaTypedCommandSink
         CancellationToken ct = default,
         string? traceParent = null)
     {
-        ArgumentNullException.ThrowIfNull(connection);
-        ArgumentNullException.ThrowIfNull(transaction);
         ArgumentException.ThrowIfNullOrWhiteSpace(commandType);
 
         // The LOGICAL payload body: the engine's renewal wire body, byte-stable (no minted GUID, no wall
@@ -59,23 +61,10 @@ public sealed class RenewalCommandOutboxSink : ISagaTypedCommandSink
                 $"No renewal command-payload recipe for '{commandType}' on saga {processId}; the factory " +
                 "must cover every command the RenewalProcess state machine emits (bd babelstone-mtto).");
 
-        // The OPERATIONAL delivery id — the one freshly minted value, an outbox COLUMN, never in the body
-        // (this is the impure shell; minting a GUID here is legitimate). created_at is the DB default.
-        var messageId = Guid.NewGuid();
-
-        const string sql = """
-            INSERT INTO saga_outbox (message_id, process_id, command_type, causation_id, correlation_id, payload, traceparent)
-            VALUES (@message_id, @process_id, @command_type, @causation_id, @correlation_id, @payload, @traceparent);
-            """;
-
-        await using var command = new NpgsqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("message_id", messageId);
-        command.Parameters.AddWithValue("process_id", processId);
-        command.Parameters.AddWithValue("command_type", commandType);
-        command.Parameters.AddWithValue("causation_id", causationMessageId);
-        command.Parameters.AddWithValue("correlation_id", (object?)correlationId ?? DBNull.Value);
-        command.Parameters.AddWithValue("payload", payload);
-        command.Parameters.AddWithValue("traceparent", (object?)traceParent ?? DBNull.Value);
-        await command.ExecuteNonQueryAsync(ct);
+        // The substrate's saga_outbox store owns the row write + the operational message_id mint
+        // (ADR-IC-018 §D2; the row commits atomically on this saga transaction, ADR-IC-003 §P1). This
+        // sink owns ONLY the family-specific payload assembly above.
+        await _outbox.AppendAsync(
+            connection, transaction, processId, commandType, causationMessageId, correlationId, payload, traceParent, ct);
     }
 }

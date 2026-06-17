@@ -107,6 +107,7 @@ public sealed class RenewalSagaModule : ISagaModule
         // fact from the Matured closing deposit it loads (ADR-PC-009; bd babelstone-mtto.5), so the command
         // body is the minimal { new_deposit_id }. Registered as the typed-sink contract so it joins the
         // saga_type → sink registry the host's composite builds.
-        services.AddSingleton<ISagaTypedCommandSink>(new RenewalCommandOutboxSink());
+        services.AddSingleton<ISagaTypedCommandSink>(sp =>
+            new RenewalCommandOutboxSink(sp.GetRequiredService<SagaOutboxWriter>()));
     }
 }
