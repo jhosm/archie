@@ -28,6 +28,19 @@ public static class BabelstoneAttributes
     /// <summary>The as-of date the computation is anchored to (a date, never a wall-clock-derived value at the call site).</summary>
     public const string AsOf = "babelstone.as_of";
 
+    /// <summary>
+    /// A PSEUDONYM for the customer a span needs to reference for debugging (ADR-IC-016 plane iii §8):
+    /// a short, salted, one-way hash of the raw <c>client_id</c>, NOT the id itself. The raw id is
+    /// PII (it keys into the Customer Data Store) and may never ride a telemetry signal; the
+    /// pseudonym lets an operator correlate the spans of one customer's debugging session without the
+    /// trace backend becoming a searchable index of personal data. It is reversible only inside the
+    /// Customer Data Store that holds the same salt — by design (Document 10 Principle 4). Derive it
+    /// with <see cref="ClientPseudonym.Of"/>; never set this key from a raw id. The key deliberately
+    /// avoids the <c>client</c>/<c>account</c>/<c>name</c> PII fragments the OBS-3 structural
+    /// assertion scans for: <c>subject_pseudonym</c> carries an opaque hash, never an identifier.
+    /// </summary>
+    public const string SubjectPseudonym = "babelstone.subject_pseudonym";
+
     /// <summary>Manual span name for a deposit constitution (ADR-IC-007 P2 <c>&lt;entity&gt;.&lt;operation&gt;</c>).</summary>
     public const string SpanConstituted = "deposit.constituted";
 

@@ -86,6 +86,24 @@ public sealed class TelemetrySpanTests
     }
 
     [Fact]
+    public void Subject_pseudonym_key_passes_the_structural_no_pii_scan()
+    {
+        // ADR-IC-016 plane iii §8: where a span must reference a customer, it carries a salted
+        // one-way pseudonym under babelstone.subject_pseudonym — never the raw client_id. The key
+        // itself must survive the OBS-3 fragment scan (it deliberately avoids "client"/"account"),
+        // and the attached VALUE is a hash, not the id.
+        var key = BabelstoneAttributes.SubjectPseudonym;
+        Assert.StartsWith("babelstone.", key);
+        var loweredKey = key.ToLowerInvariant();
+        Assert.DoesNotContain(PiiKeyFragments, fragment => loweredKey.Contains(fragment));
+
+        const string rawClientId = "PT-NIF-501234567";
+        var pseudonym = ClientPseudonym.Of(rawClientId, "an-example-salt-from-the-secret-boundary");
+        Assert.NotEqual(rawClientId, pseudonym);
+        Assert.DoesNotContain(rawClientId, pseudonym);
+    }
+
+    [Fact]
     public async Task Append_without_a_span_name_emits_no_activity()
     {
         var captured = new List<Activity>();

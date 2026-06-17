@@ -178,6 +178,12 @@ pass, and run in CI's `engine` job (the non-Integration tier). `OBS_NO_PII_ATTRS
 (OBS-3) stays `Planned`: the structural no-PII assertion rides inside `TelemetrySpanTests`
 today, but its dedicated build-time analyser gate (the cultural→mechanical control of
 ADR-IC-007 §P4) is not yet written, so the row does not yet resolve to its own gate.
+The **span-attribute pseudonymization** half of OBS-3 (ADR-IC-016 plane iii §8 — where a span
+must reference a customer, it carries a salted one-way hash under `babelstone.subject_pseudonym`,
+never the raw `client_id`) lands with `babelstone-njt2.2`: the `ClientPseudonym.Of(clientId, salt)`
+HMAC-SHA-256 derivation in `Babelstone.Telemetry` plus its `ClientPseudonymTests` pins
+(deterministic, salt-dependent, one-way, fail-loud on a missing salt). It extends OBS-3 without
+flipping the row — the same `Planned` status holds until the analyser gate is written.
 `OBS_TRACEPARENT_PROPAGATION` (OBS-4) stays `Planned`: cross-process `traceparent`
 propagation over the durable bus is documented here but deferred (the K.1 SCOPE-OUT) to
 the bus-relay work, and its lane is the deferred Testcontainers Integration tier.
