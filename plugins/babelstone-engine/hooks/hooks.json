@@ -1,0 +1,37 @@
+{
+  "SessionStart": [
+    {
+      "matcher": "",
+      "hooks": [
+        { "type": "command", "command": "bd prime" }
+      ]
+    }
+  ],
+  "PreToolUse": [
+    {
+      "matcher": "Edit|Write|MultiEdit",
+      "hooks": [
+        { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/adr-immutability.sh" }
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "Edit|Write|MultiEdit",
+      "hooks": [
+        { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/surface-engine-analysers.sh" },
+        { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/surface-pii-on-bus.sh" },
+        { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/surface-spec-coverage.sh" },
+        { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/render-plantuml.sh" }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "matcher": "",
+      "hooks": [
+        { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-push-protocol.sh" }
+      ]
+    }
+  ]
+}
