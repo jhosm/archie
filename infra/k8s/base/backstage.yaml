@@ -1,0 +1,150 @@
+# Backstage catalogue portal host (ADR-IC-015) — supersedes the retired EventCatalog
+# nginx placeholder (ADR-IC-008, retired). Backstage is the chosen portal (Apache-2.0,
+# CNCF-graduated) that RENDERS the governed AsyncAPI catalogue; it restates no schema —
+# its only catalogue source is the registered contracts/catalog/catalog-info.yaml
+# descriptor (the no-drift invariant, ADR-IC-015 Decision §1–§2).
+#
+# Backstage is a Node.js service + its own PostgreSQL backend (the S1 cost ADR-IC-015
+# records, paid only at host-deploy time). This manifest declares both.
+#
+# HUMAN-HANDOFF TAIL — these manifests are the infrastructure half; a truly running
+# portal additionally needs (platform work, requires a live cluster):
+#   1. A built Backstage app image. Backstage ships NO turnkey image — scaffold an app
+#      (`npx @backstage/create-app`), add the AsyncAPI catalog provider plugins, build +
+#      push an image, then replace the `image:` placeholder below with that reference.
+#   2. The catalog-info.yaml descriptor tree mounted at /catalog. In-cluster this is a
+#      ConfigMap or an init-container `git`-clone of contracts/catalog/; the kustomization
+#      generates a ConfigMap from the descriptor for the dev stack (see note in the README).
+#   3. The Backstage GDPR surface (ADR-IC-015 Residual Risk): once user/team identity data
+#      is entered for ownership/access control, it MUST go in the GDPR data inventory.
+# Until that image exists this Deployment will not become Ready — intentional; the estate
+# stays Git-native (files + CI gate) until the host is genuinely stood up (ADR-IC-015 §9).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backstage
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: catalogue-portal
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backstage
+  ports:
+    - name: http
+      port: 7007
+      targetPort: 7007
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backstage-db
+  labels:
+    app.kubernetes.io/name: backstage-db
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backstage-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backstage-db
+  labels:
+    app.kubernetes.io/name: backstage-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backstage-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backstage-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: backstage
+            - name: POSTGRES_PASSWORD
+              # Dev-only placeholder; a real deploy sources this from a Secret.
+              value: backstage
+            - name: POSTGRES_DB
+              value: backstage
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "backstage"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backstage
+  labels:
+    app.kubernetes.io/name: backstage
+    app.kubernetes.io/component: catalogue-portal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backstage
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backstage
+    spec:
+      containers:
+        - name: backstage
+          # PLACEHOLDER — replace with the pushed babelstone Backstage app image (see the
+          # human-handoff note above). There is no turnkey upstream image to pin here.
+          image: ghcr.io/jhosm/babelstone-backstage:placeholder
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 7007
+          env:
+            - name: BACKSTAGE_BASE_URL
+              value: http://localhost:7007
+            - name: BACKSTAGE_PG_HOST
+              value: backstage-db
+            - name: BACKSTAGE_PG_PORT
+              value: "5432"
+            - name: BACKSTAGE_PG_USER
+              value: backstage
+            - name: BACKSTAGE_PG_PASSWORD
+              value: backstage
+          volumeMounts:
+            # The app-config and the catalogue descriptor tree. The descriptor is the ONLY
+            # catalogue source (no-drift invariant) — Backstage resolves the $text AsyncAPI
+            # refs relative to catalog-info.yaml's mount location.
+            - name: backstage-app-config
+              mountPath: /app/app-config.production.yaml
+              subPath: app-config.yaml
+              readOnly: true
+            - name: catalog-descriptor
+              mountPath: /catalog
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7007
+            initialDelaySeconds: 20
+            periodSeconds: 15
+      volumes:
+        - name: backstage-app-config
+          configMap:
+            name: backstage-app-config
+        - name: catalog-descriptor
+          configMap:
+            name: backstage-catalog-descriptor

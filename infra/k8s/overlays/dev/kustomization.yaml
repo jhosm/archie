@@ -31,5 +31,7 @@ replicas:
     count: 1
   - name: registry
     count: 1
-  - name: eventcatalog
+  - name: backstage
+    count: 1
+  - name: backstage-db
     count: 1

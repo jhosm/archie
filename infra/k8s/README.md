@@ -32,7 +32,7 @@ application/engine service images (they connect to this stack).
 | grafana-lgtm | Deployment | **3000 only** | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | otel-collector | Deployment | 4317, 4318, 13133 | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | registry | StatefulSet + PVC | 5000 | [ADR-PC-007](../../docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md) |
-| eventcatalog (catalogue portal host) | Deployment | 80 | [ADR-IC-015](../../docs/product-management/integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) (supersedes ADR-IC-008); host deploy deferred — bd babelstone-s4ol.1 |
+| backstage (catalogue portal) + backstage-db | Deployment ×2 | 7007, 5432 | [ADR-IC-015](../../docs/product-management/integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) (supersedes the retired ADR-IC-008) — renders `catalog-info.yaml`; app image is human-handoff (bd babelstone-s4ol.1) |
 | core-acl-stub (v1 Core-ACL settlement stub) | Deployment | 8080 | [ADR-PC-016](../../docs/product-management/product_concepts/adrs/ADR-PC-016-legacy-current-account-adapter.md) / [ADR-PC-029](../../docs/product-management/product_concepts/adrs/ADR-PC-029-engine-command-ingress.md) — WireMock; real ACL is DEF-1 (bd babelstone-ub9s) |
 
 All Services are `ClusterIP` (dev: reach them via `kubectl port-forward`).

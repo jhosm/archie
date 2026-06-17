@@ -320,25 +320,59 @@ services:
       retries: 12
       start_period: 5s
 
-  eventcatalog:
-    image: nginx:1.27-alpine
-    container_name: babelstone-eventcatalog
-    # Catalogue portal static-site host (P.5): serves whatever static portal is built
-    # into eventcatalog/site/. G.4 (PR #110) superseded ADR-IC-008 (EventCatalog) with
-    # ADR-IC-015 (Backstage) and DEFERRED the portal-host deployment to platform work
-    # (bd babelstone-s4ol.1) — so today this dir holds only a placeholder and the estate
-    # operates Git-native (the AsyncAPI source under contracts/catalog/events/ + the CI
-    # gate, ADR-IC-015 §9). Host only; the directory name is kept for path stability.
-    ports:
-      - "${EVENTCATALOG_PORT:-8082}:80"
-    volumes:
-      - ./eventcatalog/site:/usr/share/nginx/html:ro
+  # Backstage catalogue portal host (ADR-IC-015) — supersedes the retired EventCatalog
+  # nginx placeholder (ADR-IC-008, retired after its AsyncAPI generator plugin moved to
+  # AGPL-3.0/commercial). Backstage (Apache-2.0, CNCF-graduated) RENDERS the governed
+  # AsyncAPI catalogue; it restates no schema — its only catalogue source is the registered
+  # contracts/catalog/catalog-info.yaml descriptor (the no-drift invariant, ADR-IC-015 Decision §1–§2).
+  #
+  # HUMAN-HANDOFF TAIL: Backstage ships no turnkey image — an app must be scaffolded
+  # (`npx @backstage/create-app`), the AsyncAPI catalog provider plugins added, and an image
+  # built + pushed; then point `image:` below at it. Until that image exists this service will
+  # not become healthy — intentional; the estate stays Git-native (AsyncAPI files + CI gate,
+  # ADR-IC-015 §9) until the host is genuinely stood up. The whole contracts/catalog/ tree is
+  # mounted at /catalog so catalog-info.yaml's relative $text AsyncAPI refs resolve.
+  backstage-db:
+    image: postgres:16-alpine
+    container_name: babelstone-backstage-db
+    environment:
+      POSTGRES_USER: backstage
+      POSTGRES_PASSWORD: backstage   # dev-only placeholder; a real deploy uses a secret
+      POSTGRES_DB: backstage
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/ >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U backstage"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 5s
+
+  backstage:
+    # PLACEHOLDER — replace with the pushed babelstone Backstage app image (see the handoff
+    # note above). There is no turnkey upstream image to pin here.
+    image: ghcr.io/jhosm/babelstone-backstage:placeholder
+    container_name: babelstone-backstage
+    depends_on:
+      backstage-db:
+        condition: service_healthy
+    environment:
+      BACKSTAGE_BASE_URL: "http://localhost:${BACKSTAGE_PORT:-7007}"
+      BACKSTAGE_PG_HOST: backstage-db
+      BACKSTAGE_PG_PORT: "5432"
+      BACKSTAGE_PG_USER: backstage
+      BACKSTAGE_PG_PASSWORD: backstage
+    ports:
+      - "${BACKSTAGE_PORT:-7007}:7007"
+    volumes:
+      # The app-config and the catalogue descriptor tree (read-only). The descriptor tree is
+      # the ONLY catalogue source — no schema is restated in Backstage config (no-drift).
+      - ./backstage/app-config.yaml:/app/app-config.production.yaml:ro
+      - ../contracts/catalog:/catalog:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7007/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
 volumes:
   pgdata:
