@@ -84,6 +84,7 @@ func TestInvalidFixturesRejectAtExpectedDepth(t *testing.T) {
 		{packInvalidDir, "depth4-act365-deposit.yaml", diag.DepthRegulatory, diag.KindForbiddenDayCount},
 		{packInvalidDir, "depth4-descending-steps.yaml", diag.DepthRegulatory, diag.KindNonAscendingSteps},
 		{packInvalidDir, "depth4-open-tail-not-last.yaml", diag.DepthRegulatory, diag.KindOpenTailNotLast},
+		{packInvalidDir, "depth4-same-term-same-rate.yaml", diag.DepthRegulatory, diag.KindForbiddenRenewalPolicy},
 	}
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {
@@ -252,6 +253,103 @@ func TestDepth4ReadsPackDeclaredDayCounts(t *testing.T) {
 		}
 		if !hasKind(rep.Diagnostics, diag.KindForbiddenDayCount) {
 			t.Errorf("expected a %q diagnostic, got %+v", diag.KindForbiddenDayCount, rep.Diagnostics)
+		}
+	})
+}
+
+// clonePackWithRenewalPolicies copies the real pt.2026.1 pack into a temp dir and writes
+// primitives/renewal-policies.yaml with renewalYAML (the empty string ⇒ NO file, i.e. the
+// pre-restriction fail-open pack). Lets a test prove the depth-4 SAME_TERM_SAME_RATE check
+// is driven by PACK DATA (`permitted_for`), not a hardcoded map: change the data, change
+// the verdict on the same variant + binary. Copies the same file set pack.Load reads.
+func clonePackWithRenewalPolicies(t *testing.T, renewalYAML string) string {
+	t.Helper()
+	dst := t.TempDir()
+	for _, rel := range []string{
+		"pack.yaml",
+		"primitives/day-count.yaml",
+		"primitives/withholding.yaml",
+		"primitives/reporting.yaml",
+		"parameters/constants.yaml",
+		"rate-sheet-refs/deposits-pt.yaml",
+	} {
+		src := filepath.Join(packDir, rel)
+		b, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		out := filepath.Join(dst, rel)
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(out, b, 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	if renewalYAML != "" {
+		rpPath := filepath.Join(dst, "primitives", "renewal-policies.yaml")
+		if err := os.WriteFile(rpPath, []byte(renewalYAML), 0o644); err != nil {
+			t.Fatalf("write renewal-policies.yaml: %v", err)
+		}
+	}
+	return dst
+}
+
+const (
+	sameTermSameRatePermittedForTermDeposit = `same_term_same_rate:
+  description: permitted for term deposits in this (hypothetical) pack
+  permitted_for: [term_deposit]
+`
+	sameTermSameRatePermittedForNothing = `same_term_same_rate:
+  description: pack-restricted, permitted for nobody
+  permitted_for: []
+`
+)
+
+// TestDepth4ReadsPackDeclaredRenewalPolicies proves the SAME_TERM_SAME_RATE restriction is
+// driven by PACK DATA (primitives/renewal-policies.yaml `permitted_for`), not a hardcoded
+// validator map — the data-driven mirror of the day-count test. The SAME variant declaring
+// auto_renewal_policy: SAME_TERM_SAME_RATE is accepted when the (cloned) pack permits it for
+// term_deposit, REJECTED at depth-4 (forbidden_renewal_policy) when permitted for nothing,
+// and (the fail-open default) accepted when the pack carries no renewal-policies file at all.
+func TestDepth4ReadsPackDeclaredRenewalPolicies(t *testing.T) {
+	variant := filepath.Join(packInvalidDir, "depth4-same-term-same-rate.yaml")
+
+	t.Run("permitted_for term_deposit ⇒ accepted at depth 4", func(t *testing.T) {
+		pk := clonePackWithRenewalPolicies(t, sameTermSameRatePermittedForTermDeposit)
+		rep, err := Run(Options{VariantPath: variant, SchemaDir: schemaDir, PackDir: pk, MaxDepth: diag.DepthRegulatory})
+		if err != nil {
+			t.Fatalf("toolchain error: %v", err)
+		}
+		if !rep.OK {
+			t.Fatalf("expected OK when the pack permits SAME_TERM_SAME_RATE, got diagnostics: %+v", rep.Diagnostics)
+		}
+	})
+
+	t.Run("permitted_for empty ⇒ rejected at depth 4", func(t *testing.T) {
+		pk := clonePackWithRenewalPolicies(t, sameTermSameRatePermittedForNothing)
+		rep, err := Run(Options{VariantPath: variant, SchemaDir: schemaDir, PackDir: pk, MaxDepth: diag.DepthRegulatory})
+		if err != nil {
+			t.Fatalf("toolchain error: %v", err)
+		}
+		if rep.OK {
+			t.Fatalf("expected depth-4 rejection when the pack permits nothing, got OK")
+		}
+		if !hasKind(rep.Diagnostics, diag.KindForbiddenRenewalPolicy) {
+			t.Errorf("expected a %q diagnostic, got %+v", diag.KindForbiddenRenewalPolicy, rep.Diagnostics)
+		}
+	})
+
+	t.Run("no renewal-policies file ⇒ fail-open, accepted", func(t *testing.T) {
+		// A pre-restriction pack (no renewal-policies.yaml) restricts no policy — the same
+		// variant is accepted, so adding the file is the only thing that turns the gate on.
+		pk := clonePackWithRenewalPolicies(t, "")
+		rep, err := Run(Options{VariantPath: variant, SchemaDir: schemaDir, PackDir: pk, MaxDepth: diag.DepthRegulatory})
+		if err != nil {
+			t.Fatalf("toolchain error: %v", err)
+		}
+		if !rep.OK {
+			t.Fatalf("expected OK for a pre-restriction pack, got diagnostics: %+v", rep.Diagnostics)
 		}
 	})
 }

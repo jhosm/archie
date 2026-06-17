@@ -33,11 +33,12 @@ type Pack struct {
 	Namespace  string            // jurisdiction namespace, e.g. "pt"
 	SchemaPins map[string]string // family → "<family>@YYYY.N"
 
-	DayCounts     map[string]DayCount      // primitives in primitives/day-count.yaml, keyed by reference id
-	Withholdings  map[string]bool          // primitive keys in primitives/withholding.yaml
-	Reporting     map[string]ReportingHook // hooks in primitives/reporting.yaml
-	Params        map[string]int64         // scalars in parameters/constants.yaml
-	RateSheetRefs []RateSheetRef           // refs in rate-sheet-refs/deposits-pt.yaml
+	DayCounts       map[string]DayCount      // primitives in primitives/day-count.yaml, keyed by reference id
+	Withholdings    map[string]bool          // primitive keys in primitives/withholding.yaml
+	Reporting       map[string]ReportingHook // hooks in primitives/reporting.yaml
+	RenewalPolicies map[string]RenewalPolicy // restrictions in primitives/renewal-policies.yaml
+	Params          map[string]int64         // scalars in parameters/constants.yaml
+	RateSheetRefs   []RateSheetRef           // refs in rate-sheet-refs/deposits-pt.yaml
 }
 
 // DayCount mirrors one entry of primitives/day-count.yaml. PermittedFor is the
@@ -98,6 +99,42 @@ func sortStrings(s []string) {
 	}
 }
 
+// RenewalPolicy mirrors one entry of primitives/renewal-policies.yaml. PermittedFor
+// is the pack-declared regulatory permitted-set for a RESTRICTED auto-renewal policy
+// (02 §2.4.4 — SAME_TERM_SAME_RATE is "less common, pack-restricted"): the product
+// families that may use it. The same `permitted_for` shape day-count.yaml uses, so the
+// regulatory rule is auditor-visible in the signed pack rather than a hardcoded Go map.
+type RenewalPolicy struct {
+	Description  string   `json:"description"`
+	PermittedFor []string `json:"permitted_for"`
+}
+
+// PermitsRenewalPolicyFor reports whether the pack declares the auto-renewal policy key
+// permitted for product family. A policy the pack does not carry a restriction entry for
+// returns false — only the RESTRICTED policies (SAME_TERM_SAME_RATE) declare a
+// permitted-set; the unrestricted ones (NONE, SAME_TERM_CURRENT_RATE) are never checked
+// against this map by the caller.
+func (p *Pack) PermitsRenewalPolicyFor(key, family string) bool {
+	rp, ok := p.RenewalPolicies[key]
+	if !ok {
+		return false
+	}
+	for _, f := range rp.PermittedFor {
+		if f == family {
+			return true
+		}
+	}
+	return false
+}
+
+// HasRenewalRestriction reports whether the pack carries a restriction entry for the
+// auto-renewal policy key. A policy with no entry is UNRESTRICTED (every family may use
+// it); only a policy with an entry is gated by PermitsRenewalPolicyFor.
+func (p *Pack) HasRenewalRestriction(key string) bool {
+	_, ok := p.RenewalPolicies[key]
+	return ok
+}
+
 // ReportingHook mirrors one entry of primitives/reporting.yaml.
 type ReportingHook struct {
 	Active    bool   `json:"active"`
@@ -153,6 +190,19 @@ func Load(dir string) (*Pack, error) {
 	p.Reporting = map[string]ReportingHook{}
 	if err := decodeYAML(ctx, filepath.Join(dir, "primitives", "reporting.yaml"), &p.Reporting); err != nil {
 		return nil, fmt.Errorf("reporting primitives: %w", err)
+	}
+
+	// renewal-policies.yaml declares auto-renewal-policy restrictions (02 §2.4.4). It is
+	// OPTIONAL: a pack predating the F.5 follow-up (bd k6r8.6) carries no file, which means
+	// "no policy is restricted" (every structurally-allowed policy is permitted) — the
+	// fail-OPEN default for a pre-restriction pack, so loading such a pack never errors. A
+	// present file narrows the set; an absent one leaves RenewalPolicies empty.
+	p.RenewalPolicies = map[string]RenewalPolicy{}
+	renewalPath := filepath.Join(dir, "primitives", "renewal-policies.yaml")
+	if _, statErr := os.Stat(renewalPath); statErr == nil {
+		if err := decodeYAML(ctx, renewalPath, &p.RenewalPolicies); err != nil {
+			return nil, fmt.Errorf("renewal-policy primitives: %w", err)
+		}
 	}
 
 	p.Params = map[string]int64{}

@@ -52,6 +52,7 @@ primitives/day-count.yaml|#DayCounts
 primitives/withholding.yaml|#Withholding
 primitives/fgd.yaml|#Fgd
 primitives/reporting.yaml|#Reporting
+primitives/renewal-policies.yaml|#RenewalPolicies
 parameters/constants.yaml|#Parameters
 test-corpus/canonical-instances.yaml|#CanonicalInstances
 "

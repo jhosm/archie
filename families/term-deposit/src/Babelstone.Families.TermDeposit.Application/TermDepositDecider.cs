@@ -182,6 +182,19 @@ public static class TermDepositDecider
                 .ToArray();
 
     /// <summary>
+    /// The resolved rate VECTOR a deposit accrues against (F.10): a step-up (<i>crescente</i>) or
+    /// amount-tiered (<i>escalonada</i>) <see cref="RateSchedule"/> when the caller resolved one at
+    /// constitution, or the degenerate FLAT schedule built from <paramref name="position"/>'s single
+    /// <see cref="DepositPosition.TanBasisPoints"/> otherwise. Centralising the "schedule-or-flat"
+    /// choice here keeps every accrual path (maturity, coupon, advance, early termination) folding
+    /// over ONE primitive — and a null schedule reproduces the pre-F.10 flat math byte-for-byte (a
+    /// one-segment flat vector equals <see cref="Accrual.SimpleInterest"/> to the cent), so the
+    /// vector is purely additive and the common flat product is unchanged. Pure: no clock, no I/O.
+    /// </summary>
+    private static RateSchedule ScheduleOrFlat(DepositPosition position, RateSchedule? schedule) =>
+        schedule ?? RateSchedule.Flat(position.TanBasisPoints);
+
+    /// <summary>
     /// Mature a deposit, branching on its interest variant (02 §2.1). Pure: the position carries
     /// every input, the pack supplies the convention and rate.
     /// <list type="bullet">
@@ -198,14 +211,21 @@ public static class TermDepositDecider
     /// Withholding is always flow-by-flow (one <see cref="Withholding.Withhold"/> per flow), never
     /// rate-scaled and never applied to an aggregate (fin-math §5.4).
     /// </summary>
+    /// <param name="schedule">The resolved rate VECTOR (F.10) the accrual folds over — a step-up or
+    /// amount-tiered <see cref="RateSchedule"/> when one was resolved at constitution, or
+    /// <c>null</c> for the flat single-TAN product (the pre-F.10 default, folded as a degenerate
+    /// flat schedule, byte-identical math). ADVANCE re-accrues nothing at maturity, so the schedule
+    /// does not reach its branch.</param>
     public static IReadOnlyList<DomainEvent> DecideMaturity(
-        DepositPosition position, DayCountConvention dayCount, int withholdingBasisPoints) =>
+        DepositPosition position, DayCountConvention dayCount, int withholdingBasisPoints,
+        RateSchedule? schedule = null) =>
         position.InterestVariant switch
         {
             Advance => MatureAdvance(position),
-            Periodic => MatureFinalCoupon(position, dayCount, withholdingBasisPoints),
+            Periodic => MatureFinalCoupon(position, dayCount, withholdingBasisPoints, ScheduleOrFlat(position, schedule)),
             // AT_MATURITY is the default — the single-flow full-term accrual.
-            _ => MatureSingleFlow(position, position.StartDate, position.MaturityDate, dayCount, withholdingBasisPoints),
+            _ => MatureSingleFlow(position, position.StartDate, position.MaturityDate, dayCount, withholdingBasisPoints,
+                ScheduleOrFlat(position, schedule)),
         };
 
     /// <summary>
@@ -229,12 +249,23 @@ public static class TermDepositDecider
     /// double-count every coupon. The AT_MATURITY single flow uses the Accrued+Withheld pair (it has
     /// no InterestPaid); the coupon flow uses InterestPaid. One accumulation path per flow.
     /// </remarks>
+    /// <param name="schedule">The resolved rate VECTOR (F.10) this coupon window accrues over — a
+    /// step-up <see cref="RateSchedule"/> (a quarterly coupon on a <i>crescente</i> deposit accrues
+    /// at the rate in force over ITS window, so a later coupon earns more) or <c>null</c> for the
+    /// flat product. AccrueGross over [periodStart, periodEnd] folds only the segments overlapping
+    /// the window, so the coupon prices the elapsed-day band it falls in.</param>
     public static IReadOnlyList<DomainEvent> DecideInterestPayment(
         DepositPosition position, DateOnly periodStart, DateOnly periodEnd,
-        DayCountConvention dayCount, int withholdingBasisPoints)
+        DayCountConvention dayCount, int withholdingBasisPoints, RateSchedule? schedule = null)
     {
-        var factor = DayCount.Between(periodStart, periodEnd, dayCount);
-        var gross = Accrual.SimpleInterest(position.Principal, position.TanBasisPoints, factor);
+        // The schedule is anchored at the deposit START, but a coupon window opens partway through
+        // the term. AccrueGrossWindow attributes each segment's days to the [periodStart, periodEnd]
+        // window relative to that anchor and rounds ONCE — so a window that straddles a step
+        // boundary is priced segment-by-segment, and a flat schedule reduces exactly to
+        // SimpleInterest over the window (the pre-F.10 coupon math, byte-identical).
+        var rates = ScheduleOrFlat(position, schedule);
+        var gross = rates.AccrueGrossWindow(
+            position.Principal, position.StartDate, periodStart, periodEnd, dayCount);
         var withheld = Withholding.Withhold(gross, withholdingBasisPoints);
 
         return [new InterestPaid(position.DepositId, withheld.Gross, withheld.Tax, withheld.Net, periodEnd)];
@@ -254,11 +285,16 @@ public static class TermDepositDecider
     /// <see cref="InterestAccrued"/> + <see cref="WithholdingApplied"/>, which would double-count the
     /// same tallies.
     /// </remarks>
+    /// <param name="schedule">The resolved rate VECTOR (F.10) the full-term interest folds over —
+    /// a step-up/amount-tiered <see cref="RateSchedule"/> resolved at constitution, or <c>null</c>
+    /// for the flat product. The whole-term gross is one flow at t=0 regardless of the vector
+    /// shape; the schedule only changes how that single gross figure is computed.</param>
     public static IReadOnlyList<DomainEvent> DecideAdvance(
-        DepositPosition position, DayCountConvention dayCount, int withholdingBasisPoints)
+        DepositPosition position, DayCountConvention dayCount, int withholdingBasisPoints,
+        RateSchedule? schedule = null)
     {
-        var factor = DayCount.Between(position.StartDate, position.MaturityDate, dayCount);
-        var gross = Accrual.SimpleInterest(position.Principal, position.TanBasisPoints, factor);
+        var gross = ScheduleOrFlat(position, schedule)
+            .AccrueGross(position.Principal, position.StartDate, position.MaturityDate, dayCount);
         var withheld = Withholding.Withhold(gross, withholdingBasisPoints);
 
         return [new InterestPaid(position.DepositId, withheld.Gross, withheld.Tax, withheld.Net, position.StartDate)];
@@ -266,13 +302,14 @@ public static class TermDepositDecider
 
     // ---- variant-specific maturity flows -------------------------------------------------------
 
-    /// <summary>AT_MATURITY: one accrual over the whole term, one withholding, payout = principal + net.</summary>
+    /// <summary>AT_MATURITY: one accrual over the whole term (folded over the resolved rate vector),
+    /// one withholding, payout = principal + net. The stepped/tiered vector folds into the SINGLE
+    /// maturity flow — still ONE InterestAccrued, so no contract change (F.10).</summary>
     private static IReadOnlyList<DomainEvent> MatureSingleFlow(
         DepositPosition position, DateOnly start, DateOnly end,
-        DayCountConvention dayCount, int withholdingBasisPoints)
+        DayCountConvention dayCount, int withholdingBasisPoints, RateSchedule schedule)
     {
-        var factor = DayCount.Between(start, end, dayCount);
-        var gross = Accrual.SimpleInterest(position.Principal, position.TanBasisPoints, factor);
+        var gross = schedule.AccrueGross(position.Principal, start, end, dayCount);
         var withheld = Withholding.Withhold(gross, withholdingBasisPoints);
         var payout = position.Principal + withheld.Net;
 
@@ -292,11 +329,13 @@ public static class TermDepositDecider
     /// coupons already paid — the bug this branch exists to avoid.
     /// </summary>
     private static IReadOnlyList<DomainEvent> MatureFinalCoupon(
-        DepositPosition position, DayCountConvention dayCount, int withholdingBasisPoints)
+        DepositPosition position, DayCountConvention dayCount, int withholdingBasisPoints, RateSchedule schedule)
     {
         var lastPaidThrough = CouponBoundary(position, position.CouponsPaid);
-        var factor = DayCount.Between(lastPaidThrough, position.MaturityDate, dayCount);
-        var gross = Accrual.SimpleInterest(position.Principal, position.TanBasisPoints, factor);
+        // Price the final coupon window over the resolved vector, anchored at the deposit start so
+        // the step in force across [lastPaidThrough, maturity] is the one applied (F.10).
+        var gross = schedule.AccrueGrossWindow(
+            position.Principal, position.StartDate, lastPaidThrough, position.MaturityDate, dayCount);
         var withheld = Withholding.Withhold(gross, withholdingBasisPoints);
         var payout = position.Principal + withheld.Net;
 
@@ -362,23 +401,36 @@ public static class TermDepositDecider
     /// <param name="dayCount">The pack-resolved day-count convention the elapsed accrual uses.</param>
     /// <param name="withholdingBasisPoints">The pack-resolved withholding rate, applied to the one accrued flow.</param>
     /// <param name="terminationReason">A stable, non-PII reason code recorded on the event (e.g. <c>CUSTOMER_REQUEST</c>).</param>
+    /// <param name="schedule">The resolved rate VECTOR (F.10) the elapsed-period interest folds over
+    /// — a step-up/amount-tiered <see cref="RateSchedule"/>, or <c>null</c> for the flat product.
+    /// A deposit broken mid-<i>crescente</i> accrues only the steps it actually reached (the vector
+    /// is clipped to the elapsed window). The RATE-REDUCTION penalty basis (F.11) reuses this same
+    /// vector to recompute the elapsed accrual at the band's reduced rate.</param>
     public static IReadOnlyList<DomainEvent> DecideEarlyTermination(
         DepositPosition position, DateOnly terminationDate, EarlyTerminationPolicy policy,
-        DayCountConvention dayCount, int withholdingBasisPoints, string terminationReason)
+        DayCountConvention dayCount, int withholdingBasisPoints, string terminationReason,
+        RateSchedule? schedule = null)
     {
-        // 1. Accrue the elapsed-period gross interest (start → termination), one flow on the resolved
-        //    day-count. SimpleInterest rejects a reversed interval, so a termination before the start
-        //    date fails loud rather than emitting negative interest.
-        var factor = DayCount.Between(position.StartDate, terminationDate, dayCount);
-        var grossAccrued = Accrual.SimpleInterest(position.RemainingPrincipal, position.TanBasisPoints, factor);
+        // 1. Accrue the elapsed-period gross interest (start → termination), one flow folded over the
+        //    resolved rate vector (flat for the common product). AccrueGross rejects a reversed
+        //    interval, so a termination before the start date fails loud rather than emitting
+        //    negative interest. This is the ACTUAL interest the deposit earned at its real rate(s).
+        var rates = ScheduleOrFlat(position, schedule);
+        var grossAccrued = rates.AccrueGross(
+            position.RemainingPrincipal, position.StartDate, terminationDate, dayCount);
 
-        // 2. Withhold that ONE flow — flow-by-flow (fin-math §5.4), never rate-scaled.
+        // 2. Withhold that ONE flow — flow-by-flow (fin-math §5.4), never rate-scaled. Withholding is
+        //    ALWAYS on the real gross the deposit earned, NEVER on a rate-reduced figure — the
+        //    rate-reduction penalty (F.11) is a separate haircut on the gross, applied AFTER tax in
+        //    the settlement conservation, so the depositor is taxed on what they earned and the
+        //    penalty is what they forfeit.
         var withheld = Withholding.Withhold(grossAccrued, withholdingBasisPoints);
 
         // 3. Select the band first-match against the elapsed term, then compute the penalty on its basis.
         var elapsedDays = terminationDate.DayNumber - position.StartDate.DayNumber;
         var band = policy.ResolveBand(elapsedDays);
-        var penalty = ComputePenalty(band, position.RemainingPrincipal, grossAccrued);
+        var penalty = ComputePenalty(
+            band, position.RemainingPrincipal, grossAccrued, rates, position.StartDate, terminationDate, dayCount);
 
         // 4. Settle principal + net accrued − penalty, then floor. The floor caps the EFFECTIVE penalty
         //    (never the principal/net legs) so the conservation settlement = principal + net − penalty
@@ -402,8 +454,46 @@ public static class TermDepositDecider
     /// single decimal computation rounded once at the Money boundary (ADR-PC-010 §P1–§P2) — never a
     /// rate scaled mid-calculation. The basis is the GROSS accrued interest, the principal, or both.
     /// </summary>
-    private static Money ComputePenalty(EarlyTerminationBand band, Money principal, Money grossAccrued)
+    private static Money ComputePenalty(
+        EarlyTerminationBand band, Money principal, Money grossAccrued,
+        RateSchedule rates, DateOnly start, DateOnly terminationDate, DayCountConvention dayCount)
     {
+        // RATE-REDUCTION basis (F.11): the penalty is NOT a basis-point share of an amount — it is
+        // the interest the depositor FORFEITS by being repriced to a lower rate for the elapsed
+        // period. penalty = J(original) − J(reduced), recomputing the SAME elapsed accrual at the
+        // band's reduced rate (a flat reduced rate over the elapsed window — the "penalty rate" a PT
+        // deposit drops to on an early break, 02 §2.5 / fin-math §5). The depositor still keeps the
+        // reduced interest; only the difference is the penalty. Computed on GROSS (pre-tax) so it
+        // composes with the same settlement conservation as every other basis; withholding upstream
+        // is on the real (original) gross, never on this reduced figure (fin-math §5.4).
+        if (band.Basis == PenaltyBasis.RateReduction)
+        {
+            var reducedRateBps = band.ReducedRateBasisPoints
+                ?? throw new InvalidOperationException(
+                    "An early-termination band with basis RATE_REDUCTION must carry a reduced_rate_basis_points " +
+                    "(the rate the elapsed interest is recomputed at); none was configured.");
+
+            // The reduced-rate gross over the SAME elapsed window. A flat reduced rate is the PT
+            // convention; we fold it as a flat schedule so the day-count/rounding is identical to
+            // the original accrual, and the subtraction is exact to the cent.
+            var reducedGross = RateSchedule.Flat(reducedRateBps)
+                .AccrueGross(principal, start, terminationDate, dayCount);
+
+            // The forfeit is non-negative when reduced_rate <= original effective rate (the only
+            // sensible configuration — a "reduction"). Guard it: a reduced rate ABOVE the original
+            // would make J(reduced) > J(original) and drive the penalty negative (a bonus), which the
+            // non-negative PenaltyAmount contract forbids — fail loud rather than record it.
+            if (reducedGross.Cents > grossAccrued.Cents)
+            {
+                throw new InvalidOperationException(
+                    $"RATE_REDUCTION penalty is negative: the reduced-rate interest ({reducedGross.Cents} cents) " +
+                    $"exceeds the actual accrued interest ({grossAccrued.Cents} cents). The reduced rate " +
+                    $"({reducedRateBps} bps) must not exceed the deposit's effective rate — a reduction lowers " +
+                    "the rate, it never raises it. Refusing to record a negative (bonus) penalty.");
+            }
+            return grossAccrued - reducedGross;
+        }
+
         var basisAmount = band.Basis switch
         {
             PenaltyBasis.AccruedInterest => grossAccrued,
@@ -473,9 +563,13 @@ public static class TermDepositDecider
     /// re-resolved <paramref name="currentTanBasisPoints"/> / <paramref name="currentRateSheetVersionId"/>.</item>
     /// <item><b>SAME_TERM_SAME_RATE</b> — the original rate: carry the closing deposit's
     /// <see cref="DepositPosition.TanBasisPoints"/> and <see cref="DepositPosition.RateSheetVersionId"/>
-    /// forward unchanged. NOTE (bd babelstone-k4yr follow-up): 02 §2.4.4 pack-RESTRICTS this policy, but
-    /// no pack primitive expressing that restriction exists yet — the policy is implemented here, the
-    /// missing restriction is recorded rather than silently inventing a new pack primitive.</item>
+    /// forward unchanged. 02 §2.4.4 pack-RESTRICTS this policy ("less common, pack-restricted"); that
+    /// restriction is now a pack primitive (bd babelstone-k6r8.6, the babelstone-k4yr follow-up): the
+    /// pack's <c>primitives/renewal-policies.yaml</c> <c>same_term_same_rate.permitted_for</c> set
+    /// declares which families may use it, and pack-validate's depth-4 check rejects a variant
+    /// declaring it where the pack does not permit it. This decider faithfully PRICES whatever
+    /// renewal policy the constituted deposit already carries — the policy could only have been
+    /// constituted if the variant cleared the pack restriction, so no re-check is needed here.</item>
     /// </list>
     /// <c>NONE</c> never reaches here (the service rejects it before deciding — there is no renewal to price).
     /// </summary>

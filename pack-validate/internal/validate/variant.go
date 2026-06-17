@@ -81,11 +81,12 @@ func peekVariant(ctx *cue.Context, path string) (m variantMeta, err error) {
 // contract. Pointers/empties distinguish "absent branch" (flat rate, flat
 // early-termination) from "present".
 type variantData struct {
-	VariantID       string `json:"variant_id"`
-	Schema          string `json:"schema"`
-	Pack            string `json:"pack"`
-	DayCount        string `json:"day_count"`
-	InterestVariant string `json:"interest_variant"`
+	VariantID         string `json:"variant_id"`
+	Schema            string `json:"schema"`
+	Pack              string `json:"pack"`
+	DayCount          string `json:"day_count"`
+	InterestVariant   string `json:"interest_variant"`
+	AutoRenewalPolicy string `json:"auto_renewal_policy"`
 
 	Rate struct {
 		Stepped *struct {
