@@ -1,0 +1,48 @@
+# Tempo (trace) datasource permissions — the load-bearing §P6 restriction (ADR-IC-007 §P6 /
+# ADR-IC-016 plane iii §7, bd babelstone-njt2.4):
+#
+#   "Grafana datasource permissions must restrict the Tempo datasource to `engineer` and
+#    `admin` roles. The `compliance-viewer` role accesses only the pre-built business dashboard
+#    and the Loki `business` stream — not ad-hoc trace exploration."
+#
+# In plain English: the trace store is the most sensitive datasource — it holds spans with
+# financial attributes (deposit amount, product, core txn id; ADR-IC-007 §P4 financial-restricted
+# tier). This file locks the Tempo datasource down so ONLY engineer + admin can query it. NOC and
+# compliance get NO Tempo access at all, which is the whole point of doc 10 Boundary 7.
+#
+# Provisioned as code so the restriction is reviewed in the same PR as the stack and active
+# before any financial span is visible. Loaded by Grafana's enterprise/OSS datasource-permission
+# provisioner; on the OSS tier where managed-permission provisioning is limited, the README
+# documents the upstream auth-gateway fallback that enforces the same Tempo lock at the edge.
+apiVersion: 1
+
+datasourcePermissions:
+  - name: 'Tempo'                       # the trace datasource — financial-restricted tier
+    permissions:
+      # Only engineer + admin may query traces. NOC and compliance are absent ⇒ no access.
+      - role: 'babelstone:engineer'
+        permission: 'Query'
+      - role: 'babelstone:admin'
+        permission: 'Query'
+
+  - name: 'Loki'                        # logs — business stream is compliance-readable
+    permissions:
+      - role: 'babelstone:engineer'
+        permission: 'Query'
+      - role: 'babelstone:admin'
+        permission: 'Query'
+      # Compliance reads the tier=business stream only; the stream filter is applied at query
+      # time (LogQL `{tier="business"}`) on top of this datasource grant.
+      - role: 'babelstone:compliance-viewer'
+        permission: 'Query'
+
+  - name: 'Prometheus'                  # metrics — operational tier, readable by all roles
+    permissions:
+      - role: 'babelstone:noc-viewer'
+        permission: 'Query'
+      - role: 'babelstone:engineer'
+        permission: 'Query'
+      - role: 'babelstone:compliance-viewer'
+        permission: 'Query'
+      - role: 'babelstone:admin'
+        permission: 'Query'

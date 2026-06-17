@@ -1,0 +1,77 @@
+# Grafana RBAC roles — provisioned as code (ADR-IC-007 §P6 / ADR-IC-016 plane iii §7,
+# bd babelstone-njt2.4). This is the §P6 "minimum role configuration", declarative so it is
+# reviewed in the same PR as the stack and in place BEFORE the first financial span attribute
+# is visible.
+#
+# In plain English: four roles. NOC sees operational health only (no trace queries — it must
+# not browse specific customer transactions). A developer/engineer sees everything for
+# debugging. Compliance sees the business dashboards + the business log stream for audit, but
+# NOT ad-hoc trace exploration. Admin runs the stack. The Tempo (trace) datasource is the
+# sensitive one — it carries financial attributes — so only engineer + admin may query it
+# (the datasource-permission overlay enforces that; see datasource-permissions.yaml).
+#
+# Grafana's provisioning loads these custom roles + fixed-role grants at startup. Where the OSS
+# tier cannot enforce a per-folder split natively (fine-grained folder RBAC is Enterprise), the
+# README documents the upstream auth-gateway fallback ADR-IC-007 §P6 names; the org-role +
+# datasource-permission split below IS enforceable on OSS.
+apiVersion: 2
+
+roles:
+  # NOC — operational health only. Maps to the org Viewer baseline MINUS trace access: granted
+  # dashboards + alert-state read, explicitly NOT the Tempo datasource (doc 10 Boundary 7:
+  # "NOC needs error rates and lag; it does not need specific client transaction details").
+  - name: 'babelstone:noc-viewer'
+    description: 'NOC — operational metrics dashboards + alert state; NO trace query access.'
+    version: 1
+    orgId: 1
+    permissions:
+      - action: 'dashboards:read'
+        scope: 'dashboards:*'
+      - action: 'alert.rules:read'
+        scope: 'folders:*'
+      - action: 'datasources:query'
+        scope: 'datasources:uid:prometheus'   # metrics only — NOT Tempo, NOT Loki business
+    global: false
+
+  # Engineer/developer — all signals, full trace/log/metric query (debugging a saga at 2am).
+  - name: 'babelstone:engineer'
+    description: 'Developer/engineer — all signals; full trace, log, and metric query.'
+    version: 1
+    orgId: 1
+    permissions:
+      - action: 'dashboards:read'
+        scope: 'dashboards:*'
+      - action: 'datasources:query'
+        scope: 'datasources:*'                 # Tempo (traces) + Loki + Prometheus
+      - action: 'datasources:explore'
+        scope: 'datasources:*'
+    global: false
+
+  # Compliance — business dashboards + the Loki tier=business stream for audit; NO ad-hoc trace
+  # exploration (ADR-IC-007 §P6: "accesses only the pre-built business dashboard and the Loki
+  # business stream — not ad-hoc trace exploration").
+  - name: 'babelstone:compliance-viewer'
+    description: 'Compliance — business metrics dashboard + Loki tier=business logs; NO trace query.'
+    version: 1
+    orgId: 1
+    permissions:
+      - action: 'dashboards:read'
+        scope: 'dashboards:*'
+      - action: 'datasources:query'
+        scope: 'datasources:uid:loki'          # business log stream (filtered at query time)
+    global: false
+
+  # Admin — full access including Grafana configuration. The standard fixed Admin role; named
+  # here for completeness of the §P6 four-role table.
+  - name: 'babelstone:admin'
+    description: 'Admin — full access including Grafana configuration.'
+    version: 1
+    orgId: 1
+    permissions:
+      - action: 'datasources:query'
+        scope: 'datasources:*'
+      - action: 'datasources.permissions:write'
+        scope: 'datasources:*'
+      - action: 'org.users:write'
+        scope: 'users:*'
+    global: false
