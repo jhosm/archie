@@ -190,7 +190,7 @@ The **explicit-drift gate** (ADR-PC-020 §D3): *no change may contradict an Acce
 - **PR-body gate** — every PR body MUST carry an "ADRs touched/honoured" section naming the ADRs it implements, amends, or honours (CI-enforced). Review starts from the decision, not the diff.
 - **`adr-conformance` subagent** (`plugins/babelstone-engine/agents/adr-conformance.md`, spawnable as `babelstone-engine:adr-conformance`) — run it before committing/PR on any diff touching engine/contract code or `docs/**/adrs/`. It catches internal-design drift no mechanical gate sees and, on a genuine contradiction, proposes the amend/supersede rather than letting it land silently. It is a dev-time judgement *layer* — the mechanical gates + the `commitment-catalogue.md` fitness functions remain authoritative.
 
-**Authoring skills** (`.claude/skills/`, see its README) make the conformant path the easy one: `new-adr` (scaffold with the right shape + dual number-check + Verifiable-commitments seed), `amend-adr` / `supersede-adr` (the §P9 one-command drift acknowledgment), `pack-author` (a `pt.YYYY.N` regulatory pack). Prefer them over hand-rolling these artefacts.
+**Authoring skills** (`plugins/babelstone-engine/skills/`, see its README — bundled in the `babelstone-engine` plugin) make the conformant path the easy one: `new-adr` (scaffold with the right shape + dual number-check + Verifiable-commitments seed), `amend-adr` / `supersede-adr` (the §P9 one-command drift acknowledgment), `pack-author` (a `pt.YYYY.N` regulatory pack). Prefer them over hand-rolling these artefacts.
 
 ## Document Conventions
 
