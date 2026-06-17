@@ -100,3 +100,17 @@ This contract is one half of **reconciliation flow 2** ([coexistence §7.3](../f
 This contract's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
 
 - `BATCH_INGEST_IDEMPOTENT` — re-ingesting a batch file produces no duplicate `LegacyInstanceObserved` events (slot 4 · Idempotency).
+
+---
+
+## Amendment — 2026-06-17: the cross-SoR renewal link rides `causation_id`, not an `originating_legacy_id` payload field
+
+When the canonical term-deposit Avro was authored, the engine-native [`DepositConstituted.avsc`](../../../../contracts/avro/deposits/term_deposit/DepositConstituted.avsc) was fixed with **no `originating_legacy_id` field** — the wire contract carries business payload only ([ADR-IC-002 §P5](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)) and the legacy-origin link lives entirely in the CloudEvents envelope. The §2 Semantics narrative above predates that Avro and still reads as if the renewal-created `DepositConstituted` *"carr[ies] `originating_legacy_id`"*. This amendment reconciles the narrative with the wire contract. It is additive and clarifying — it changes nothing about how legacy facts are ingested.
+
+### A1 · The renewal-created `DepositConstituted` carries no `originating_legacy_id` payload field
+
+Where §2 Semantics says the engine emits its native `DepositConstituted` *"linked by `causation_id` to the triggering `LegacyInstanceObserved` and carrying `originating_legacy_id`"*, read it as: **linked by the envelope `causation_id` alone.** The new `DepositConstituted`'s `causation_id` points at the triggering `LegacyInstanceObserved`, whose own payload carries `legacy_instance_id` — so the audit chain reaches the legacy identifier through that one-hop envelope walk (`DepositConstituted.causation_id` → `LegacyInstanceObserved` → `legacy_instance_id`), not through a `DepositConstituted` payload field. The canonical `DepositConstituted.avsc` has no such field; [coexistence §9.1](../feature-design-strangler-fig-coexistence.md) describes the same `causation_id`-only walk. This also keeps a legacy identifier — a cross-SoR reference — off the engine's own structural payload, consistent with the references-not-PII discipline ([ADR-PC-004 §P2](./ADR-PC-004-pii-crypto-shredding.md)).
+
+### A2 · This amends the decision; it does not supersede this ADR
+
+§1 (payload shape, the `LegacyInstanceObserved` canonical fields and closed `fact_kind` taxonomy), §3–§6, and the Reconciliation invariant remain binding **exactly as written**. The `LegacyInstanceObserved` contract — including its `legacy_instance_id` field, the load-bearing handle this amendment leans on — is unchanged. The amendment refines only the §2 Semantics description of the *downstream* engine-native `DepositConstituted` it triggers, to match the authored Avro; it is appended to §2, not a revision of it.

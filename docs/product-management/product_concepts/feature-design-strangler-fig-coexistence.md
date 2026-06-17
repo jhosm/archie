@@ -77,7 +77,7 @@ The asymmetry between with-a-plan and irregular families is load-bearing for the
 Every instance the engine constitutes carries, in addition to the envelope fields from [event-store §4.3](./feature-design-event-store-projections.md):
 
 - `sor: engine` — set at constitution, never changes.
-- `originating_legacy_id` (optional) — present when the engine instance was created by renewal of a legacy instance (see §9). Carries the legacy instance's identifier so the audit chain reaches across the SoR transition.
+- A legacy-origin link, for instances created by renewal of a legacy instance (see §9) — but **not as a `DepositConstituted` payload field.** The link travels in the *envelope* `causation_id`, which points at the triggering `LegacyInstanceObserved`, whose payload carries `legacy_instance_id`. The canonical [`DepositConstituted.avsc`](../../../contracts/avro/deposits/term_deposit/DepositConstituted.avsc) carries no `originating_legacy_id`; the audit chain reaches across the SoR transition through that envelope `causation_id` → `LegacyInstanceObserved` → `legacy_instance_id` walk (§9.1), not a payload field.
 - `cutover_cohort` (optional) — names the cutover event that created the instance's SoR status, for cohort analysis during the middle phase.
 
 Legacy instances carry no engine-side marker; the engine simply does not know about them except through the daily batch file (§5) and the unified read surface (§6).
@@ -321,7 +321,7 @@ When a legacy term deposit reaches its maturity date with an `auto_renewal_polic
 1. **Legacy matures the instance.** Legacy's batch file for the day includes a record: `legacy_instance_id`, `fact_kind: matured`, `fact_date`, `legacy_state_snapshot` showing final principal and final net interest.
 2. **Engine ingests the batch file.** The engine's ACL parses the record and emits a `LegacyInstanceObserved` event with `event_id: <uuid_1>`.
 3. **Engine evaluates the renewal policy.** The renewal policy (`SAME_TERM_CURRENT_RATE` or `SAME_TERM_SAME_RATE` per [02 §2.4](./02-v1-scope-term-deposits.md)) is encoded in the legacy state snapshot. The engine applies the current rate sheet ([surface §2](./feature-design-configuration-surface.md)) — the same rate sheet a customer would get for a new constitution — and computes the new deposit's terms.
-4. **Engine constitutes the new instance.** The engine emits `DepositConstituted` (family-specific) with `event_id: <uuid_2>`, `instance_id: <new_engine_uuid>`, `causation_id: <uuid_1>` (the `LegacyInstanceObserved` event from step 2), `originating_legacy_id: <legacy_instance_id>`, `pack_version` and `schema_version` pinned to the current versions.
+4. **Engine constitutes the new instance.** The engine emits `DepositConstituted` (family-specific) with `event_id: <uuid_2>`, `instance_id: <new_engine_uuid>`, `causation_id: <uuid_1>` (the `LegacyInstanceObserved` event from step 2), `pack_version` and `schema_version` pinned to the current versions. The legacy link rides the envelope `causation_id` alone — the canonical [`DepositConstituted.avsc`](../../../contracts/avro/deposits/term_deposit/DepositConstituted.avsc) carries no `originating_legacy_id` payload field; the legacy identifier is reached through the `LegacyInstanceObserved` payload (`legacy_instance_id`) the `causation_id` points at (step 2).
 5. **Engine debits the customer's current account on legacy for the new principal** (which is identical to the legacy instance's matured principal, possibly plus the net interest the customer chose to roll over).
 
 The causation chain is decidable from the event log alone: starting from the engine's `DepositConstituted`, following `causation_id` reaches the `LegacyInstanceObserved`; the `LegacyInstanceObserved`'s payload reaches `legacy_instance_id`; the legacy ID resolves to the legacy book's historical record. Audit can walk the chain across the SoR transition end-to-end.
@@ -345,7 +345,7 @@ The chain uses only events already declared in the brief:
 - `LegacyInstanceObserved` — cross-cutting, declared by the engine in [event-store §4.1](./feature-design-event-store-projections.md).
 - `DepositConstituted` — family-specific, declared by the term-deposit family schema, in the v1 catalogue in [02 §2.4](./02-v1-scope-term-deposits.md).
 
-The SoR-transition link is carried by `causation_id` and `originating_legacy_id`; no new event type is introduced to represent the transition itself. The transition is the *relationship* between two existing events, not an event in its own right. This keeps the event taxonomy lean and consistent with the engine-vs-family separation from [event-store §3](./feature-design-event-store-projections.md).
+The SoR-transition link is carried by the envelope `causation_id` alone — it points from the new `DepositConstituted` back to the triggering `LegacyInstanceObserved`, whose payload carries the `legacy_instance_id` (§9.1). No `originating_legacy_id` payload field on `DepositConstituted` is needed (the canonical `.avsc` carries none), and no new event type is introduced to represent the transition itself. The transition is the *relationship* between two existing events, not an event in its own right. This keeps the event taxonomy lean and consistent with the engine-vs-family separation from [event-store §3](./feature-design-event-store-projections.md).
 
 ---
 
