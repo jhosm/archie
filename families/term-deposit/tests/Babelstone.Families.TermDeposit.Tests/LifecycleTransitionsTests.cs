@@ -7,14 +7,25 @@ namespace Babelstone.Families.TermDeposit.Tests;
 /// F.3 (babelstone-29v8): the term-deposit lifecycle state machine — the one explicit,
 /// auditable transition-legality table. These are pure unit tests (no engine, no Docker) over
 /// <see cref="LifecycleTransitions.IsLegal"/>: they pin WHERE each transition is legal and that
-/// every terminal state is closed to every transition. The command logic that drives the
-/// downstream transitions (early termination F.4, renewal F.5, partial withdrawal F.12) is NOT
-/// tested here — F.3 owns only the legality table, those flows hang off it.
+/// every business-terminal state is closed to every BUSINESS transition. The command logic that
+/// drives the downstream transitions (early termination F.4, renewal F.5, partial withdrawal F.12)
+/// is NOT tested here — F.3 owns only the legality table, those flows hang off it.
+///
+/// <para><b>GDPR erasure is the one cross-cutting exception (bd babelstone-nzw6).</b> A
+/// business-terminal deposit (Matured/Failed/Renewed/TerminatedEarly/TransferredToHeirs) is closed
+/// to every <i>business</i> transition, but NOT to <see cref="Transition.Erase"/>: GDPR Article 17
+/// is a regulatory obligation that must be able to reach a deposit that still holds the subject's
+/// PII even after the business lifecycle has closed (a matured deposit still carries the customer's
+/// data until erased). So terminality is defined here against the BUSINESS transitions; the single
+/// regulatory <see cref="Transition.Erase"/> is tested separately. The truly-closed state is
+/// <see cref="DepositLifecycle.Erased"/> — closed to everything, including a re-erasure (idempotent).</para>
 /// </summary>
 public sealed class LifecycleTransitionsTests
 {
-    // The terminal ("closed") states: no transition is legal FROM any of them.
-    private static readonly DepositLifecycle[] Terminal =
+    // The business-terminal ("closed") states: no BUSINESS transition is legal FROM any of them.
+    // They remain open to the one cross-cutting regulatory transition (Erase) — see ErasedStates /
+    // the GDPR section below — because a closed deposit still holds the subject's PII until erased.
+    private static readonly DepositLifecycle[] BusinessTerminal =
     [
         DepositLifecycle.Matured,
         DepositLifecycle.Failed,
@@ -25,6 +36,11 @@ public sealed class LifecycleTransitionsTests
 
     // Every transition the table governs — the legality machine must answer for all of them.
     private static readonly Transition[] AllTransitions = Enum.GetValues<Transition>();
+
+    // The BUSINESS transitions (everything except the cross-cutting regulatory Erase). Terminality is
+    // defined against THESE — a closed deposit rejects every one of them.
+    private static readonly Transition[] BusinessTransitions =
+        AllTransitions.Where(t => t != Transition.Erase).ToArray();
 
     // ---- opening / rejecting: only from the seed Pending state -----------------------------------
 
@@ -37,7 +53,7 @@ public sealed class LifecycleTransitionsTests
 
         // Not from Active (already open) nor from any terminal state (constitute-once).
         Assert.False(IsLegal(DepositLifecycle.Active, opening));
-        foreach (var terminal in Terminal)
+        foreach (var terminal in BusinessTerminal)
         {
             Assert.False(IsLegal(terminal, opening));
         }
@@ -61,26 +77,64 @@ public sealed class LifecycleTransitionsTests
 
         // Not before the deposit exists …
         Assert.False(IsLegal(DepositLifecycle.Pending, transition));
-        // … and not once it has reached any terminal state.
-        foreach (var terminal in Terminal)
+        // … and not once it has reached any business-terminal state.
+        foreach (var terminal in BusinessTerminal)
         {
             Assert.False(IsLegal(terminal, transition));
         }
     }
 
-    // ---- terminality: every closed state rejects every transition --------------------------------
+    // ---- terminality: every closed state rejects every BUSINESS transition -----------------------
 
     [Fact]
-    public void Every_terminal_state_is_closed_to_every_transition()
+    public void Every_business_terminal_state_is_closed_to_every_business_transition()
     {
-        foreach (var terminal in Terminal)
+        foreach (var terminal in BusinessTerminal)
         {
-            foreach (var transition in AllTransitions)
+            foreach (var transition in BusinessTransitions)
             {
                 Assert.False(
                     IsLegal(terminal, transition),
-                    $"{transition} must be illegal from terminal state {terminal}");
+                    $"{transition} must be illegal from business-terminal state {terminal}");
             }
+        }
+    }
+
+    // ---- GDPR erasure: the one cross-cutting regulatory transition (bd babelstone-nzw6) -----------
+
+    [Fact]
+    public void Erasure_is_legal_from_every_state_that_still_holds_pii_live_or_closed()
+    {
+        // A live deposit and every business-terminal one still hold the subject's PII until erased —
+        // GDPR Article 17 must reach them all (ADR-PC-004 §P3).
+        Assert.True(IsLegal(DepositLifecycle.Active, Transition.Erase));
+        foreach (var terminal in BusinessTerminal)
+        {
+            Assert.True(
+                IsLegal(terminal, Transition.Erase),
+                $"Erase must be legal from {terminal}: a closed deposit still holds the subject's PII until erased.");
+        }
+    }
+
+    [Fact]
+    public void Erasure_is_illegal_from_Pending_and_from_an_already_erased_deposit()
+    {
+        // Pending: no deposit exists to erase. Erased: already erased — re-erasure is rejected as an
+        // illegal transition, which is also the idempotency guard (a second request is a no-op refusal).
+        Assert.False(IsLegal(DepositLifecycle.Pending, Transition.Erase));
+        Assert.False(IsLegal(DepositLifecycle.Erased, Transition.Erase));
+    }
+
+    [Fact]
+    public void Erased_is_truly_closed_to_every_transition()
+    {
+        // The Erased state is the genuinely-terminal one: closed to EVERY transition, business or
+        // regulatory — nothing operates on, reopens, or re-erases an erased deposit.
+        foreach (var transition in AllTransitions)
+        {
+            Assert.False(
+                IsLegal(DepositLifecycle.Erased, transition),
+                $"{transition} must be illegal from the terminal Erased state");
         }
     }
 

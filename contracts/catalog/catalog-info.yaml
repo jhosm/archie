@@ -33,6 +33,7 @@ spec:
     - ./events/DepositConstituted.asyncapi.yaml
     - ./events/InterestPaid.asyncapi.yaml
     - ./events/DepositMatured.asyncapi.yaml
+    - ./events/PersonalDataErasureRequested.asyncapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: Location
@@ -84,6 +85,19 @@ spec:
   owner: term-deposit
   definition:
     $text: ./events/DepositMatured.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: personal-data-erasure-requested
+  title: PersonalDataErasureRequested
+  description: GDPR right-to-be-forgotten — the subject's PII key was crypto-shredded (ADR-PC-004 §P3).
+spec:
+  type: asyncapi
+  lifecycle: production
+  owner: term-deposit
+  definition:
+    $text: ./events/PersonalDataErasureRequested.asyncapi.yaml
 ---
 # The per-consumer reconciliation contracts (event-store §7.3, bd babelstone-y1t7). Each is
 # a consumer's declared statement of what it reconciles against the engine's emitted events;

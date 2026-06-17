@@ -194,3 +194,51 @@ it does not reverse, narrow, or edit the Decision above.
   **out of scope** here and deferred to M.4 / [ADR-PC-005 §P4](./ADR-PC-005-dr-rto-rpo.md),
   exactly as for the transit usage (Residual Risk 1). The dev stack uses OpenBao in `-dev`
   mode (`infra/compose.yaml`).
+
+---
+
+*Revised 2026-06-17: Amendment A2 — the realised erasure event is the family-scoped `PersonalDataErasureRequested`.*
+
+In plain English: when the GDPR right-to-be-forgotten was actually built (bd `babelstone-nzw6`),
+the erasure fact landed as a **per-deposit** event the term-deposit family owns, rather than the
+engine-wide `SubjectErased` the original §P3 text named. The deposit gets a new terminal `Erased`
+lifecycle state, and the event carries a **salted one-way pseudonym** of the subject instead of the
+raw id — so even the "which subject" reference on the bus is non-reversible. The crypto-shred itself
+(destroy the subject's key) is unchanged; only the *shape of the recorded fact* changed. This
+amendment is **additive** — the key-store decision and the crypto-shred mechanism (§Decision, §P2,
+§P3's "key destruction = erasure") all stand verbatim.
+
+- **A2 · The recorded erasure fact (§P3 refinement).** §P3 named a "`SubjectErased`
+  (engine-cross-cutting)" event recording the erasure with its `transaction_time` and actor. The
+  realised event is **`PersonalDataErasureRequested`** — a **family-scoped, per-deposit** integration
+  event (the engine is aggregate-per-stream, so an erasure fact reads most naturally as a per-deposit
+  lifecycle event). It is folded by a **pure** handler into a new terminal
+  `DepositLifecycle.Erased` state and carries `{ deposit_id, subject_pseudonym, erased_on,
+  erasure_reason }`. The `transaction_time`/actor §P3 names ride on the `EventEnvelope` as for every
+  event (not on the payload). A subject holding several deposits gets one such fact per deposit; the
+  single key destruction (`IPiiKeyStore.DestroyKeyAsync`) shreds all of that subject's PII at once,
+  independent of how many deposit facts record it.
+
+- **A2 · The subject reference is a salted one-way pseudonym (a strengthening of §P2).** §P3's text
+  implied recording the subject directly; the realised event carries **`subject_pseudonym`** — a
+  salted HMAC one-way hash of the subject id ([ADR-IC-016 §8](../../integration_concepts/adrs/ADR-IC-016-service-identity-and-mtls.md)),
+  never the raw id. This is **stricter** than §P2 requires: even the "which subject was erased"
+  correlation reference is non-reversible on the durable bus, resolvable only inside the Customer Data
+  Store that holds the same salt. The raw subject id stays engine-internal at the OpenBao boundary.
+
+- **A2 · The null-PII-field behaviour (§P3) is unchanged and activates with real PII annotation.**
+  §P3's "replay and projection rebuild produce **null** in PII fields and intact structural state"
+  remains the contract. Under the current `NullPiiProtector` posture (no PII field is annotated/
+  encrypted yet — Epic C, `archie-e6fr.5`) there is no PII field to null, so today's realised flow
+  records the structural erasure fact and crypto-shreds the (placeholder) subject key; the
+  null-on-replay behaviour engages unchanged once real PII annotation lands and the real
+  `OpenBaoTransitClient` key store is wired (`OpenBao:Enabled`).
+
+- **A2 · This amends §P3; it does not supersede this ADR.** §Decision (OpenBao as the per-subject key
+  store; crypto-shred = key destruction; the engine never holds key material), §P2 (no PII/secrets on
+  the bus), and §P3's erasure semantics (key destruction yields unrecoverable plaintext; the audit
+  trail is preserved) all remain binding **as written**. This amendment refines only *the shape and
+  scope of the event that records the erasure*, and strengthens the subject reference to a salted
+  pseudonym. The Verifiable-commitments invariant (§ "Crypto-shred yields null PII + intact structural
+  state, and records the erasure") still holds — read "records the erasure" as the
+  `PersonalDataErasureRequested` fact; no Test ID is wired yet (unchanged).

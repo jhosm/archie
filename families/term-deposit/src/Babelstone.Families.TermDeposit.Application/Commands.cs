@@ -161,6 +161,32 @@ public sealed record TerminateEarlyCommand(
     string TerminationReason,
     string Actor);
 
+/// <summary>
+/// Record the GDPR Article 17 erasure fact on a deposit (bd babelstone-nzw6): append
+/// <see cref="PersonalDataErasureRequested"/> so the deposit folds to <c>Erased</c>. The actual
+/// crypto-shredding of the subject's key (<c>IPiiKeyStore.DestroyKeyAsync</c>, ADR-PC-004 §P3) is the
+/// caller's responsibility — it runs in the impure HOST shell (the OpenBao boundary lives in the
+/// engine host, not this PII-free Application layer) BEFORE this command is issued. So this command
+/// carries ONLY structural facts: the deposit id, a salted one-way subject pseudonym (never the raw
+/// subject id — ADR-IC-016 §8 / ADR-PC-004 §P2), the erasure date, and a reason code.
+/// </summary>
+/// <param name="SubjectPseudonym">A salted one-way hash of the data-subject id, derived by the host —
+/// an opaque audit/correlation reference, NEVER the raw subject id.</param>
+/// <param name="ErasedAt">The instant erasure took effect; its DATE is recorded on the event (audit
+/// lineage). Passed as an input so the append stays clock-free.</param>
+/// <param name="ErasureReason">A stable machine code (e.g. <c>GDPR_ARTICLE_17</c>) — never PII.</param>
+/// <param name="CommandId">The ingress idempotency key (ADR-PC-029 slot 4): the append dedupes on it
+/// in-transaction (the <c>command_dedup</c> INSERT), so an at-least-once retry of the SAME erasure
+/// returns the original outcome rather than double-appending. Mandatory for erasure — key destruction
+/// is irreversible, so a non-idempotent retry must be impossible.</param>
+public sealed record ErasePersonalDataCommand(
+    Guid DepositId,
+    string SubjectPseudonym,
+    DateTimeOffset ErasedAt,
+    string ErasureReason,
+    string Actor,
+    Guid CommandId);
+
 // The monolithic RenewDepositCommand (which drove the un-idempotent, three-step, cross-stream
 // RenewAsync) is RETIRED (bd babelstone-mtto PR B). Renewal is now two idempotent engine operations
 // with the maturity leg dropped — see ConstituteRenewalCommand / LinkRenewalCommand in
