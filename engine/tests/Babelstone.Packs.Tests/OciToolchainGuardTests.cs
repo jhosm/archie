@@ -63,4 +63,69 @@ public sealed class OciToolchainGuardTests
         // Defensive: an empty resolution is treated identically to null (not found).
         Assert.Throws<PackLoadException>(() => OciToolchainGuard.EnsureToolsAvailable(_ => string.Empty));
     }
+
+    [Fact]
+    public void Default_resolver_finds_real_tools_seeded_on_PATH_and_is_a_no_op()
+    {
+        // Exercises the PRODUCTION default ResolveOnPath (no injected resolver): seed PATH with a temp
+        // dir holding executable stub files named like the OS would launch the tool, and assert the
+        // guard resolves them and returns silently. This pins the real Path.PathSeparator split +
+        // File.Exists probe (incl. the Windows PATHEXT branch) that every other test bypasses.
+        using var seeded = SeededToolDir.With("oras", "cosign");
+        WithPath(seeded.Dir, () => OciToolchainGuard.EnsureToolsAvailable());
+    }
+
+    [Fact]
+    public void Default_resolver_throws_when_tools_are_absent_from_a_seeded_PATH()
+    {
+        // The mirror of the above through the SAME production code path: a PATH pointing at a temp dir
+        // that holds NEITHER tool resolves to null for both, so the default resolver makes the guard
+        // fail loud — proving the no-op above is the PATH lookup succeeding, not an unconditional pass.
+        using var empty = SeededToolDir.With();
+        WithPath(empty.Dir, () => Assert.Throws<PackLoadException>(() => OciToolchainGuard.EnsureToolsAvailable()));
+    }
+
+    /// <summary>Runs <paramref name="body"/> with PATH set to exactly <paramref name="dir"/>, restoring it after.</summary>
+    private static void WithPath(string dir, Action body)
+    {
+        var original = Environment.GetEnvironmentVariable("PATH");
+        Environment.SetEnvironmentVariable("PATH", dir);
+        try
+        {
+            body();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", original);
+        }
+    }
+
+    /// <summary>
+    /// A throwaway temp directory seeded with stub executables named the way the host OS would launch
+    /// each tool (bare name on Unix; <c>tool.exe</c> on Windows, matching the guard's PATHEXT probe).
+    /// </summary>
+    private sealed class SeededToolDir : IDisposable
+    {
+        public string Dir { get; }
+
+        private SeededToolDir(string dir) => Dir = dir;
+
+        public static SeededToolDir With(params string[] tools)
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "oci-guard-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var suffix = OperatingSystem.IsWindows() ? ".exe" : string.Empty;
+            foreach (var tool in tools)
+            {
+                File.WriteAllText(Path.Combine(dir, tool + suffix), "stub");
+            }
+
+            return new SeededToolDir(dir);
+        }
+
+        public void Dispose()
+        {
+            try { Directory.Delete(Dir, recursive: true); } catch { /* best-effort temp cleanup */ }
+        }
+    }
 }

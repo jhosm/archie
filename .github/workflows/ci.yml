@@ -600,10 +600,15 @@ jobs:
         run: |
           set -euo pipefail
           echo "== rate-sheet refs (pack #RateSheetRefs) =="
+          # Vet against the WHOLE pack/ CUE package (contracts/cue/pack/*.cue), not a hardcoded
+          # pack.cue — so this step matches the path-filter's globbed `contracts/cue/pack/**` and
+          # survives a rename of pack.cue within its directory (the filter's rename-resilience claim
+          # would otherwise trigger the job while a hardcoded path 404'd). The files are all
+          # `package pack`, so the glob loads them as one schema unit (bd 2t16.22).
           for ref in packs/*/rate-sheet-refs/*.yaml; do
             [ -e "$ref" ] || continue
             echo "  vet $ref"
-            mise exec -- cue vet -d '#RateSheetRefs' "$ref" contracts/cue/pack/pack.cue
+            mise exec -- cue vet -d '#RateSheetRefs' "$ref" contracts/cue/pack/*.cue
           done
           shopt -s nullglob
           sheets=(rate-sheets/*.yaml)
