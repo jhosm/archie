@@ -1,0 +1,125 @@
+{
+  "uid": "babelstone-compliance",
+  "title": "Babelstone — Compliance",
+  "description": "Business/audit view for the compliance persona (ADR-IC-007 §P6 compliance-viewer): saga lifecycle outcomes, deposit constitution volume, compensation activity, and the tier=business log stream — searchable by correlation_id (the PSD2 audit trail, ADR-IC-007 §P5). NO ad-hoc trace query (Tempo is engineer/admin-only); cross-signal navigation here is correlation_id → tier=business logs.",
+  "tags": ["babelstone", "persona:compliance", "K.4", "adr-ic-007", "tier:business"],
+  "schemaVersion": 39,
+  "editable": false,
+  "graphTooltip": 1,
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "1m",
+  "timezone": "",
+  "templating": {
+    "list": [
+      {
+        "name": "correlation_id",
+        "label": "correlation_id",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" },
+        "description": "Paste a correlation_id to scope the tier=business audit log panel to one originating request (Document 06 / ADR-IC-007 §P5)."
+      },
+      {
+        "name": "service",
+        "label": "service.name",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": { "query": "label_values(service_name)", "refId": "service" },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      { "name": "Annotations & Alerts", "enable": true, "datasource": { "type": "grafana", "uid": "-- Grafana --" }, "iconColor": "red", "type": "dashboard" }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Deposit lifecycle volume",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Deposit constitutions (24h)",
+      "description": "Count of completed saga inbox advances on the constitution topic — the business volume signal. Derived from inbox_handled_total on term_deposit (the saga advances on the engine's DepositConstituted event).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(inbox_handled_total{service_name=~\"$service\", source_topic=~\"term_deposit.*\"}[24h]))", "legendFormat": "constitutions/24h" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Saga commands refused (24h)",
+      "description": "saga_dispatch_refused_total: business operations a downstream target refused (4xx) → fail-closed compensation. A compliance-relevant rejection count (ADR-IC-003 / ADR-PC-029).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 } ] } }, "overrides": [] },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(saga_dispatch_refused_total{service_name=~\"$service\"}[24h]))", "legendFormat": "refused/24h" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Saga commands delivered (24h)",
+      "description": "saga_dispatch_delivered_total: business operations a downstream target accepted (2xx). The settled-money leg of the constitution saga.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(saga_dispatch_delivered_total{service_name=~\"$service\"}[24h]))", "legendFormat": "delivered/24h" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Saga outcome trend (delivered vs refused, /s)",
+      "description": "The business-outcome trend over the window. A refusal spike is an upstream/downstream availability or limits event the compliance team must be able to evidence (ADR-IC-003).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 7 },
+      "fieldConfig": {
+        "defaults": { "unit": "cps", "custom": { "drawStyle": "line", "fillOpacity": 15 } },
+        "overrides": [ { "matcher": { "id": "byFrameRefID", "options": "refused" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "delivered", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(saga_dispatch_delivered_total{service_name=~\"$service\"}[5m]))", "legendFormat": "delivered" },
+        { "refId": "refused", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(saga_dispatch_refused_total{service_name=~\"$service\"}[5m]))", "legendFormat": "refused" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Audit log — tier=business (PSD2 trail, ADR-IC-007 §P5)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "logs",
+      "title": "Business audit log — filter by $correlation_id",
+      "description": "The tier=business Loki stream (saga transitions, deposit lifecycle, compensation triggers). Paste a correlation_id in the variable above to scope to one originating request — the compliance persona's correlation_id → audit-log navigation (ADR-IC-007 §P5/§P6). Compliance has NO Tempo trace access by design; this stream + correlation_id is the sanctioned cross-signal path.",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 16 },
+      "options": { "showTime": true, "showLabels": false, "wrapLogMessage": true, "enableLogDetails": true, "dedupStrategy": "none", "sortOrder": "Descending" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{tier=\"business\"} |= \"$correlation_id\"",
+          "queryType": "range"
+        }
+      ]
+    }
+  ]
+}

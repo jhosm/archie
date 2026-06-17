@@ -1,0 +1,206 @@
+{
+  "uid": "babelstone-operator-noc",
+  "title": "Babelstone — Operator / NOC",
+  "description": "Operational-tier SLIs for the NOC persona (ADR-IC-007 §P6 noc-viewer): outbox publish lag, publish latency p99, inbox delivery health, saga dispatch outcomes. Metrics-only by design — no financial/personal attributes, no ad-hoc trace query. Exemplars on the latency panel let a deeper-access operator pivot metric→trace via correlation_id (ADR-IC-007 §P2/§S2).",
+  "tags": ["babelstone", "persona:operator", "persona:noc", "K.4", "adr-ic-007"],
+  "schemaVersion": 39,
+  "editable": false,
+  "graphTooltip": 1,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "timezone": "",
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "label": "service.name",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": { "query": "label_values(service_name)", "refId": "service" },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "topic",
+        "label": "source_topic",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": { "query": "label_values(inbox_handled_total, source_topic)", "refId": "topic" },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "name": "Annotations & Alerts",
+        "enable": true,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "iconColor": "red",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Outbox delivery SLI (ADR-IC-004 §P4)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Outbox publish lag — oldest PENDING row (s)",
+      "description": "outbox_publish_lag_seconds: age of the oldest unpublished outbox row. Warning >30s, Critical >300s (ADR-IC-004 §P4). Keeps climbing during an outage — the failure mode the SLI exists to catch.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 30 },
+              { "color": "red", "value": 300 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(outbox_publish_lag_seconds{service_name=~\"$service\"})",
+          "legendFormat": "lag"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Outbox publish latency p99 (s) — exemplars → trace",
+      "description": "p99 of outbox_publish_latency_seconds over 5m. Click an exemplar dot to jump to the Tempo trace (Prometheus exemplarTraceIdDestinations → trace_id, ADR-IC-007 §S2 metric→trace). Warning >5s (ADR-IC-004 G.1).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(outbox_publish_latency_seconds_bucket{service_name=~\"$service\"}[5m])))",
+          "legendFormat": "p99",
+          "exemplar": true
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(outbox_publish_latency_seconds_bucket{service_name=~\"$service\"}[5m])))",
+          "legendFormat": "p50",
+          "exemplar": false
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Inbox delivery health (G.2)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Inbox throughput by outcome (msg/s)",
+      "description": "Handled / duplicate / poison / tombstone rates by source_topic. Poison rising is a contract/registration gap; tombstones are routine GDPR erasure traffic and are tracked separately (ADR-IC-004 §Residual-risks).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 16, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "cps", "custom": { "drawStyle": "line", "fillOpacity": 15, "stacking": { "mode": "normal" } } },
+        "overrides": [
+          { "matcher": { "id": "byFrameRefID", "options": "poison" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "handled", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(inbox_handled_total{service_name=~\"$service\", source_topic=~\"$topic\"}[5m]))", "legendFormat": "handled" },
+        { "refId": "duplicate", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(inbox_duplicates_total{service_name=~\"$service\", source_topic=~\"$topic\"}[5m]))", "legendFormat": "duplicate" },
+        { "refId": "poison", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(inbox_poison_total{service_name=~\"$service\", source_topic=~\"$topic\"}[5m]))", "legendFormat": "poison" },
+        { "refId": "tombstone", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(inbox_tombstone_total{service_name=~\"$service\", source_topic=~\"$topic\"}[5m]))", "legendFormat": "tombstone" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Inbox poison — 1h (any > 0 → investigate)",
+      "description": "increase(inbox_poison_total[1h]). A healthy contract surface produces none — non-zero warrants investigation (matches the K.3 InboxPoisonRecordsAppearing alert).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(increase(inbox_poison_total{service_name=~\"$service\", source_topic=~\"$topic\"}[1h]))", "legendFormat": "poison/1h" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Saga command dispatch (ADR-IC-003)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Saga command outcomes (delivered vs refused, msg/s)",
+      "description": "saga_dispatch_delivered_total / saga_dispatch_refused_total. A sustained refusal rate means a downstream target is rejecting saga commands (4xx) → fail-closed compensation (ADR-IC-003 / ADR-PC-029).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "cps", "custom": { "drawStyle": "line", "fillOpacity": 15 } },
+        "overrides": [
+          { "matcher": { "id": "byFrameRefID", "options": "refused" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum", "lastNotNull"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "delivered", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(saga_dispatch_delivered_total{service_name=~\"$service\"}[5m]))", "legendFormat": "delivered" },
+        { "refId": "refused", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum(rate(saga_dispatch_refused_total{service_name=~\"$service\"}[5m]))", "legendFormat": "refused" }
+      ]
+    }
+  ]
+}
