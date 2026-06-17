@@ -1136,6 +1136,40 @@ body.console-open .hint-bar { display:none; }
     log.appendChild(line);
     log.scrollTop = log.scrollHeight;
   }
+  // Minimal, safe inline Markdown for the agent's prose: esc() first (neutralises & < > so the only
+  // tags in the result are the ones we insert — XSS-safe), then render **bold**, "- "/"* " bullets,
+  // and real line breaks. Claude's closing summaries are Markdown lists; without this they show raw
+  // asterisks collapsed onto one line.
+  function mdInline(s) {
+    return esc(s)
+      .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")       // **bold**
+      .replace(/(^|\n)[ \t]*[-*][ \t]+/g, "$1• ")        // "- item" / "* item" -> "• item"
+      .replace(/\n/g, "<br>");                           // preserve line breaks
+  }
+  // Claude's narration + thinking stream as many small deltas (loop.py yields one per content-block
+  // delta). Accumulate consecutive deltas of the SAME kind into one growing line — re-rendering its
+  // markdown each time — instead of spawning a line per token (which split words mid-token and
+  // repeated the "…" thinking marker on every chunk). A new kind, or any discrete event, starts fresh.
+  function agentStreamDelta(kind, text) {
+    var cur = state.agentCursor;
+    if (!cur || cur.kind !== kind) {
+      var line = document.createElement("div");
+      line.className = "line" + (kind === "thinking" ? " think" : "");
+      line.innerHTML = kind === "thinking"
+        ? '<span class="arrow muted">…</span> <span class="ret"></span>'
+        : '<span class="tool"></span>';
+      el("consoleLog").appendChild(line);
+      cur = state.agentCursor = {
+        kind: kind, text: "",
+        span: line.querySelector(kind === "thinking" ? ".ret" : ".tool")
+      };
+    }
+    cur.text += text;
+    cur.span.innerHTML = mdInline(cur.text);
+    var log = el("consoleLog"); log.scrollTop = log.scrollHeight;
+  }
+  // Close any open streaming line so the next discrete event (tool call/result/done/error) starts fresh.
+  function agentCursorReset() { state.agentCursor = null; }
   // Parse one SSE frame ("event: <name>\ndata: <json>") into { event, data }.
   function parseSSE(raw) {
     var ev = "message", data = "";
@@ -1179,13 +1213,15 @@ body.console-open .hint-bar { display:none; }
   function handleAgentFrame(f) {
     var d = f.data || {};
     if (f.event === "thinking") {
-      if (d.text) agentLine('<span class="arrow muted">…</span> <span class="ret">' + esc(d.text) + '</span>', "think");
+      if (d.text) agentStreamDelta("thinking", d.text);
     } else if (f.event === "narration") {
-      if (d.text) agentLine('<span class="tool">' + esc(d.text) + '</span>');
+      if (d.text) agentStreamDelta("narration", d.text);
     } else if (f.event === "tool_call") {
+      agentCursorReset();
       var inp = ""; try { inp = JSON.stringify(d.input); } catch (e) { inp = ""; }
       agentLine('<span class="arrow">→</span> <span class="tool">' + esc(d.tool) + '</span> <span class="ret">' + esc(inp) + '</span>');
     } else if (f.event === "tool_result") {
+      agentCursorReset();
       if (d.is_error) {
         agentLine('<span class="arrow" style="color:var(--wrong)">⤷</span> <span class="ret" style="color:var(--wrong)">' + esc(d.output) + '</span>', "err");
       } else {
@@ -1194,11 +1230,16 @@ body.console-open .hint-bar { display:none; }
         if (parsed) applyAgentTool(d.tool, parsed);
       }
     } else if (f.event === "done") {
-      agentLine('<span class="arrow" style="color:var(--verify)">✓</span> <span class="tool">' + esc(d.summary || "done") + '</span>', "banner");
+      // The model's closing prose already streamed as narration above — don't repeat d.summary; just
+      // mark completion (with the turn count when present).
+      agentCursorReset();
+      var turns = d.turns ? (" · " + d.turns + (d.turns === 1 ? " turn" : " turns")) : "";
+      agentLine('<span class="arrow" style="color:var(--verify)">✓</span> <span class="tool">done' + turns + '</span>', "banner");
     } else if (f.event === "error") {
       // A setup failure (kind "exception": missing ANTHROPIC_API_KEY, unreachable MCP server) is not
       // a real model outcome — degrade to the illustrative narration. A refusal / turn-limit IS a
       // real outcome, so surface it plainly.
+      agentCursorReset();
       if (d.kind === "exception") agentFallbackIllustrative(d.message);
       else agentLine('<span class="arrow" style="color:var(--wrong)">✗</span> <span class="ret" style="color:var(--wrong)">' + esc(d.message || "error") + '</span>', "err");
     }
@@ -1220,7 +1261,7 @@ body.console-open .hint-bar { display:none; }
     if (state.agentBusy) return;
     var instruction = el("agentInput").value.trim();
     if (!instruction) { toast("Type an instruction for Claude first.", "err"); return; }
-    state.agentBusy = true; setButtons(); el("btnAgentRun").disabled = true;
+    state.agentBusy = true; state.agentCursor = null; setButtons(); el("btnAgentRun").disabled = true;
     agentLine('<span class="tool" style="color:var(--gold)">● live · Claude operating the bank</span> <span class="ret">' + esc(instruction) + '</span>', "banner");
     var ctrl = new AbortController(); state.agentAbort = ctrl;
     try {
