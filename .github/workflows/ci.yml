@@ -49,7 +49,19 @@ jobs:
             notification: ['notification/**']
             product_configs: ['product-configs/**']
             packs: ['packs/**']
-            rate_sheets: ['rate-sheets/**']
+            # Every input the rate-sheets job's validation step reads (ci.yml `rate-sheets` job):
+            #   - rate-sheets/**                       the rate-sheet BODY data (numerical TANs)
+            #   - packs/**/rate-sheet-refs/**          the version-pinned rate-sheet REFS it cue-vets
+            #   - contracts/cue/pack/pack.cue          the #RateSheetRefs schema the refs vet against
+            # The refs + schema are also subsumed by the broad `packs`/`contracts` filters the job's
+            # `if:` already ORs in, but naming them here makes this filter a faithful, self-documenting
+            # picture of the job's input surface — so the job keeps a correct trigger even if those
+            # broad filters are later narrowed (no silent false-negative). Glob, not exact path, for
+            # pack.cue so a rename within that file's directory is still caught (bd 2t16.22).
+            rate_sheets:
+              - 'rate-sheets/**'
+              - 'packs/**/rate-sheet-refs/**'
+              - 'contracts/cue/pack/**'
             infra: ['infra/**', 'scripts/kong-config-check.sh', 'mise.toml']
             docs: ['docs/**', '*.md', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
             docs_gen: ['scripts/docs-gen/**', 'docs/product-management/reference/**', 'contracts/**', 'mcp-server/**', 'docs/product-management/**/adrs/ADR-*.md', 'Makefile']
