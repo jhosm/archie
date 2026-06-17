@@ -363,4 +363,105 @@ public sealed class MultiSagaSubstrateTests
             return connection;
         }
     }
+
+    // ---- DB-backed: the EVENT-AUTO-START guard against an empty-subject relay record ----------------
+
+    /// <summary>
+    /// The defensive-depth proof for the EVENT-AUTO-START branch (ADR-IC-018 §P5; bd babelstone-mtto.4
+    /// review). A renewal saga is BORN on a <c>DepositMatured</c> bus fact whose process id is the closing
+    /// deposit's <c>ce_subject</c>. The consume loop falls back to <see cref="Guid.Empty"/> when a record's
+    /// <c>ce_subject</c> is absent or unparseable (the intended UnknownSaga reject for an edge saga). The
+    /// engine relay ALWAYS stamps <c>ce_subject = aggregate_id</c>, so a missing/garbled subject is a
+    /// producer defect — and a malformed relay record must NEVER mint an empty-keyed renewal instance. This
+    /// asserts the guard: an auto-start-eligible event (the policy predicate would pass) with a
+    /// <see cref="Guid.Empty"/> process id is rejected as <see cref="AdvanceOutcome.UnknownSaga"/> and
+    /// creates NO saga row, while the SAME event with a valid non-empty subject auto-starts normally.
+    /// </summary>
+    [Trait("Category", "Integration")]
+    [Collection(nameof(OrchestratorPostgresCollection))]
+    public sealed class RenewalAutoStartEmptySubjectGuardIntegrationTests(OrchestratorPostgresFixture fixture)
+    {
+        private readonly SagaStateStore _stateStore = new();
+        private readonly SagaTransitionLog _transitionLog = new();
+
+        // The renewal saga's auto-start predicate keys on this extension header (autorenewalpolicy != NONE).
+        private static readonly IReadOnlyDictionary<string, string> RenewablePolicyHeaders =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["autorenewalpolicy"] = "SAME_TERM_CURRENT_RATE",
+            };
+
+        [Fact]
+        public async Task An_empty_subject_DepositMatured_does_NOT_mint_a_renewal_saga()
+        {
+            var handler = NewRenewalAutoStartHandler();
+
+            // An auto-start-eligible DepositMatured (the policy predicate WOULD pass) but with a Guid.Empty
+            // process id — what the consume loop produces from a relay record missing/garbling ce_subject.
+            // The guard must reject it as UnknownSaga, never mint a Guid.Empty-keyed saga.
+            var outcome = await RunAsync(handler, new SagaInboxEvent(
+                Guid.NewGuid(), Guid.Empty, RenewalProcess.DepositMatured, "test.injected",
+                CorrelationId: null, ExtensionHeaders: RenewablePolicyHeaders));
+
+            Assert.Equal(AdvanceOutcome.UnknownSaga, outcome);
+            // No empty-keyed saga row was created — the malformed record cannot mint a renewal instance.
+            Assert.Null(await StateOrNullAsync(Guid.Empty));
+        }
+
+        [Fact]
+        public async Task A_valid_subject_DepositMatured_auto_starts_the_renewal_saga()
+        {
+            // The positive control: the SAME event with a real (non-empty) ce_subject DOES auto-start, so the
+            // empty-subject guard is the only thing the negative test removes — not the auto-start path itself.
+            var handler = NewRenewalAutoStartHandler();
+            var closingDepositId = Guid.NewGuid();
+
+            var outcome = await RunAsync(handler, new SagaInboxEvent(
+                Guid.NewGuid(), closingDepositId, RenewalProcess.DepositMatured, "test.injected",
+                CorrelationId: null, ExtensionHeaders: RenewablePolicyHeaders));
+
+            Assert.Equal(AdvanceOutcome.Advanced, outcome);
+            // The saga was born and took its first edge → RENEWAL_CONSTITUTING.
+            Assert.Equal(RenewalProcess.States.RenewalConstituting, await StateOrNullAsync(closingDepositId));
+        }
+
+        // ---- helpers ----------------------------------------------------------------------------
+
+        private SagaAdvanceHandler NewRenewalAutoStartHandler()
+        {
+            // The real RenewalProcess machine + its module (so the substrate's auto-start registry is built
+            // from the module's declared AutoStartRule + header predicate). A bare recording sink is enough —
+            // the negative case emits no command; the positive case emits ConstituteRenewal, which the
+            // recording sink absorbs without a typed route.
+            var context = new SagaModuleContext(
+                RuntimeConnectionString: fixture.ConnectionString,
+                EngineBaseUrl: "http://engine.invalid",
+                SettlementBaseUrl: "http://settlement.invalid");
+            var module = new RenewalSagaModule(context);
+            return new SagaAdvanceHandler(
+                new ISagaStateMachine[] { module.StateMachine },
+                _stateStore, _transitionLog, new RecordingCommandSink(),
+                new ISagaModule[] { module });
+        }
+
+        private async Task<AdvanceOutcome> RunAsync(SagaAdvanceHandler handler, SagaInboxEvent message)
+        {
+            await using var connection = new NpgsqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var tx = await connection.BeginTransactionAsync();
+            var outcome = await handler.AdvanceAsync(connection, tx, message);
+            await tx.CommitAsync();
+            return outcome;
+        }
+
+        private async Task<string?> StateOrNullAsync(Guid processId)
+        {
+            await using var connection = new NpgsqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var tx = await connection.BeginTransactionAsync();
+            var saga = await _stateStore.LoadAsync(connection, tx, processId);
+            await tx.RollbackAsync();
+            return saga?.State;
+        }
+    }
 }

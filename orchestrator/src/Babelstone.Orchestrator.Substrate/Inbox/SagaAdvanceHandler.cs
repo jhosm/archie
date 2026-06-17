@@ -274,7 +274,15 @@ public sealed class SagaAdvanceHandler
             // family. The predicate sees the extension-attribute map the consume loop projected
             // (autorenewalpolicy, …); a null map is an empty one so a predicate that reads a missing key
             // simply fails. A non-auto-start event for an unknown process is the existing rejection path.
-            if (!_autoStartModules.TryGetValue(message.EventType, out var autoStart)
+            //
+            // GUARD: an EMPTY process id is never a startable subject. The consume loop falls back to
+            // Guid.Empty when a record's ce_subject is absent/unparseable (intended for the edge saga's
+            // UnknownSaga reject). For an auto-start event a malformed relay record must NOT mint an
+            // empty-keyed saga instance — the engine relay always stamps ce_subject = aggregate_id, so a
+            // missing/garbled subject is a producer defect, fail-closed to the existing UnknownSaga reject
+            // (the dedup row still advances the offset). Defensive depth on the §P5 auto-start branch.
+            if (message.ProcessId == Guid.Empty
+                || !_autoStartModules.TryGetValue(message.EventType, out var autoStart)
                 || !PredicatePasses(autoStart.HeaderPredicate, message.ExtensionHeaders))
             {
                 // An advance event for a process that was never started (and no auto-start rule matches):

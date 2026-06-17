@@ -154,7 +154,11 @@ public sealed class RenewalProcessSagaTests
     [Fact]
     public void New_deposit_id_is_deterministically_derived_from_the_process_id()
     {
-        var processId = Guid.NewGuid();
+        // Two FIXED process-id literals — the whole derivation is deterministic, so the test inputs are too
+        // (no Guid.NewGuid): the assertions pin concrete derived ids, not just "some random distinct pair".
+        var processId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var otherProcessId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+
         // Stable across calls (no Guid.NewGuid, no clock) — so a crash-recovery reissue targets the same
         // new stream and the renewal is replayable.
         Assert.Equal(
@@ -164,7 +168,7 @@ public sealed class RenewalProcessSagaTests
         Assert.NotEqual(RenewalCommandPayloadFactory.NewDepositId(processId), processId);
         Assert.NotEqual(
             RenewalCommandPayloadFactory.NewDepositId(processId),
-            RenewalCommandPayloadFactory.NewDepositId(Guid.NewGuid()));
+            RenewalCommandPayloadFactory.NewDepositId(otherProcessId));
     }
 
     private void AssertTransition(string from, string evt, string expectedNext, params string[] expectedCommands)
