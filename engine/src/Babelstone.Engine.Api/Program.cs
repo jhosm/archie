@@ -234,6 +234,26 @@ builder.Services.AddSingleton(serviceProvider =>
 builder.Services.AddHostedService<OutboxRelayService>();
 builder.Services.AddSingleton(new OutboxLagObserver(connectionString));
 
+// The dedup-ledger retention sweep (bd babelstone-e6fr.10), co-hosted in this process (the same
+// §5.1 in-process-loop shape as the outbox relay). It bounds the unbounded growth of the two dedup
+// ledgers — command_dedup (migration 0015) and inbox (migration 0012) — by deleting their aged tail
+// on a slow housekeeping cadence. The per-table retention windows are deliberately ASYMMETRIC: the
+// command window is load-bearing (ADR-PC-029 §4 — pruning a receipt before the stream's active
+// lifetime + the dispatcher's retry horizon elapses could replay a command into a DUPLICATE deposit),
+// so it defaults to 3 years; the inbox window is the simpler Kafka-retention × N (Document 04),
+// defaulting to 30 days. Both are overridable via the Engine:DedupRetention config section.
+builder.Services.AddSingleton(new DedupRetentionOptions
+{
+    ConnectionString = connectionString,
+    CommandDedupRetention = builder.Configuration.GetValue<TimeSpan?>("Engine:DedupRetention:CommandDedup")
+        ?? new DedupRetentionOptions { ConnectionString = connectionString }.CommandDedupRetention,
+    InboxRetention = builder.Configuration.GetValue<TimeSpan?>("Engine:DedupRetention:Inbox")
+        ?? new DedupRetentionOptions { ConnectionString = connectionString }.InboxRetention,
+});
+builder.Services.AddSingleton(serviceProvider =>
+    new DedupRetentionSweeper(serviceProvider.GetRequiredService<DedupRetentionOptions>()));
+builder.Services.AddHostedService<DedupRetentionSweepService>();
+
 var app = builder.Build();
 
 // Resolve the lag observer eagerly so its observable gauge is created BEFORE the first
