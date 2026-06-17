@@ -145,7 +145,7 @@ A generic tool may still be used freely in throwaway spikes (e.g., a quick k6 sm
 
 **Residual risk:**
 
-- §8.1 operator-calibration numbers (`N_acct`, `N_card`, `E_year`) are still pending; the harness is built against the §8.2 *shape*, parameterised so the absolute size is config. This ADR does not unblock that calibration — it is tracked under [Q-AK](../04-open-questions.md).
+- §8.1 operator-calibration numbers (`N_acct`, `N_card`, `E_year`) are config, not code; the harness is built against the §8.2 *shape*, parameterised so the absolute size is supplied at run time. *Resolved 2026-06-18 (maintainer decision, bd `foki`): the §8.1 placeholders (`N_acct` ~3M, `N_card` ~1.5M, `E_year` 200M–600M) are **accepted as the v1 RC gate target** — legitimate for a reference implementation with no single named operating bank. The harness ships them as `Calibration.V4Placeholder()`; an operating bank substitutes its actuals at deployment without touching harness code. The calibration is no longer a blocker.*
 - The three §8.6 non-goals (sharding [Q-AL](../04-open-questions.md), backpressure [Q-AM](../04-open-questions.md), cross-mode invariant under load [Q-AN](../04-open-questions.md)) are out of scope; the harness must not foreclose them but does not validate them.
 
 ---
@@ -176,7 +176,7 @@ As the test's last step, the observer triggers a cold rebuild of every projectio
 
 ## Open Actions
 
-1. **Operator calibration (§8.1)** — obtain `N_acct`, `N_card`, `E_year` from the operating bank and wire them into the harness config; the shape is independent of size but the thresholds run against real numbers. Tracked under [Q-AK](../04-open-questions.md).
+1. **Operator calibration (§8.1) — RESOLVED 2026-06-18 (bd `foki`).** The §8.1 placeholders (`N_acct` ~3M, `N_card` ~1.5M, `E_year` 200M–600M) are accepted as the v1 RC gate target; the shape is independent of size, so absolute numbers are config (`Calibration.V4Placeholder()`), substituted with an operating bank's actuals at deployment without code change. Tracked under [Q-AK](../04-open-questions.md).
 2. **Engine latency-span contract** — confirm the engine emits the boundary-to-commit span/metric P2 reads (a small ADR-PC-010 / [ADR-IC-007](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) implementation detail), so the observer has a defined telemetry surface to assert against.
 3. **Production-shaped sizing (§8.4)** — name the exact hardware profile in the harness config; it must match the v1 production deployment target, not a developer laptop or an oversized cluster.
 4. **CI cadence wiring (§8.4)** — gate the v1 RC pipeline on a green run; schedule the every-minor-release re-run through v3.
