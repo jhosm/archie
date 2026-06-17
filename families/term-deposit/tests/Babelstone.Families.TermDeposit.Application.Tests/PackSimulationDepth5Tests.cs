@@ -73,7 +73,7 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
         // constitution so as-of resolution always finds it.
         await fixture.EnsureRateSheetAsync(BuildCorpusSheet(corpus));
 
-        var (runtime, service) = Compose(fixture.ConnectionString);
+        var (runtime, service) = Compose(fixture.ConnectionString, EarlyTerminationPolicyFor(corpus));
 
         var sw = Stopwatch.StartNew();
         foreach (var instance in corpus.Instances)
@@ -93,8 +93,15 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
                 $"[{string.Join(", ", actualSequence)}].");
 
             // The fold rebuilds a terminal position — the lifecycle ran to completion, not a stub.
+            // Most variants mature; the 18-month `resgate escalonado` is driven to a BANDED early
+            // termination instead (its load-bearing behaviour, bd babelstone-3h64), so its terminal
+            // state is TerminatedEarly. The pinned TAN survives both terminal folds either way.
+            var variant = TermDepositVariants.For(instance.VariantId);
+            var expectedTerminal = variant.Lifecycle == SimulatedLifecycle.BandedEarlyTermination
+                ? DepositLifecycle.TerminatedEarly
+                : DepositLifecycle.Matured;
             var hydrated = await runtime.LoadAsync(depositId);
-            Assert.Equal(DepositLifecycle.Matured, hydrated.State.Lifecycle);
+            Assert.Equal(expectedTerminal, hydrated.State.Lifecycle);
             Assert.Equal(instance.RateBasisPoints, hydrated.State.TanBasisPoints);
         }
 
@@ -110,11 +117,15 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
     }
 
     /// <summary>
-    /// Drive one canonical instance to a terminal (Matured) state through EXPLICIT commands only —
-    /// the same manual triggering the E.3 happy-path test uses (no clock-advance, A.8b out of scope).
+    /// Drive one canonical instance to a terminal state through EXPLICIT commands only — the same
+    /// manual triggering the E.3 happy-path test uses (no clock-advance, A.8b out of scope).
     /// AT_MATURITY: constitute → mature. ADVANCE: constitute (pays interest up front) → mature.
     /// PERIODIC: constitute → pay every intermediate coupon → mature (the final coupon rides with
-    /// the principal). The interest shape and cadence are read off the variant the corpus names.
+    /// the principal). BANDED early termination (the 18-month <c>resgate escalonado</c> variant,
+    /// bd babelstone-3h64): constitute → break early on the resolved band schedule, so the
+    /// first-match banded penalty path is actually replayed rather than mapped to a plain
+    /// at-maturity shape. The interest shape, cadence, and (banded) break schedule are read off the
+    /// variant the corpus names.
     /// </summary>
     private static async Task DriveLifecycleAsync(
         TermDepositConstitutionService service, Guid depositId, CanonicalInstance instance)
@@ -136,6 +147,25 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             FundingAccount: "PT50-DDA-001",
             Actor: "depth5-sim",
             PaymentPeriodMonths: variant.PaymentPeriodMonths));
+
+        // The banded `resgate escalonado` variant breaks early on the resolved schedule instead of
+        // maturing — its distinctive behaviour (bd babelstone-3h64). The break date is an INPUT
+        // (start + the band-selecting BreakAfterDays), so the band first-match is deterministic and
+        // the produced sequence is identical on every run.
+        if (variant.Lifecycle == SimulatedLifecycle.BandedEarlyTermination)
+        {
+            var termination = variant.EarlyTermination
+                ?? throw new InvalidOperationException(
+                    $"{instance.VariantId} is a BANDED early-termination variant but carries no resolved schedule.");
+            var breakDate = startDate.AddDays(termination.BreakAfterDays);
+            await service.TerminateEarlyAsync(new TerminateEarlyCommand(
+                DepositId: depositId,
+                TerminatedAt: new DateTimeOffset(breakDate, TimeOnly.MinValue, TimeSpan.Zero),
+                PayoutAccount: "PT50-DDA-001",
+                TerminationReason: "CUSTOMER_REQUEST",
+                Actor: "depth5-sim"));
+            return;
+        }
 
         if (variant.InterestVariant == "PERIODIC")
         {
@@ -179,8 +209,19 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
         const string withheld = "term_deposit.WithholdingApplied";
         const string paid = "term_deposit.InterestPaid";
         const string matured = "term_deposit.DepositMatured";
+        const string terminatedEarly = "term_deposit.DepositTerminatedEarly";
 
         var variant = TermDepositVariants.For(instance.VariantId);
+
+        // The banded `resgate escalonado` variant breaks early rather than maturing: the elapsed
+        // flow accrues+withholds, then the deposit settles net of the first-match band penalty and
+        // closes with DepositTerminatedEarly (bd babelstone-3h64). Its terminal shape differs from
+        // the maturing variants' DepositMatured, so the corpus replay asserts the break sequence.
+        if (variant.Lifecycle == SimulatedLifecycle.BandedEarlyTermination)
+        {
+            return [c, accrued, withheld, terminatedEarly];
+        }
+
         switch (variant.InterestVariant)
         {
             case "AT_MATURITY":
@@ -255,9 +296,11 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
 
     /// <summary>Compose the durable runtime + constitution service over the term-deposit family,
     /// loading the SAME committed pt.2026.1 pack the corpus pins (the depth-5 pack-load path,
-    /// ADR-PC-006 §P4) — the identical composition root the E.3 happy-path test uses.</summary>
+    /// ADR-PC-006 §P4) — the identical composition root the E.3 happy-path test uses. The banded
+    /// early-termination policy is the engine-instance config the `resgate escalonado` break resolves
+    /// (ADR-PC-009 stand-in); the maturing variants never touch it (bd babelstone-3h64).</summary>
     private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service)
-        Compose(string connectionString)
+        Compose(string connectionString, EarlyTerminationPolicy? earlyTerminationPolicy)
     {
         var store = new PostgresEventStore(connectionString);
         var runtime = new AggregateRuntime<DepositPosition>(
@@ -266,8 +309,21 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             () => DepositPosition.Empty);
         var service = new TermDepositConstitutionService(
             runtime, new PostgresRateSheetStore(connectionString), new RecordingSettlementPort(),
-            SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros");
+            SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros",
+            earlyTerminationPolicy: earlyTerminationPolicy);
         return (runtime, service);
+    }
+
+    /// <summary>The single banded early-termination policy the corpus's break-early variant resolves
+    /// to (the 18-month `resgate escalonado`), or <c>null</c> if the corpus names no banded variant.
+    /// One policy per engine instance is the walking-skeleton stand-in (ADR-PC-009); the corpus only
+    /// breaks the one banded variant, so a single resolved schedule serves the whole run.</summary>
+    private static EarlyTerminationPolicy? EarlyTerminationPolicyFor(CanonicalCorpus corpus)
+    {
+        var banded = corpus.Instances
+            .Select(i => TermDepositVariants.For(i.VariantId).EarlyTermination)
+            .FirstOrDefault(t => t is not null);
+        return banded?.Policy;
     }
 
     private static TimeSpan ResolveBudget(TimeSpan spec)
