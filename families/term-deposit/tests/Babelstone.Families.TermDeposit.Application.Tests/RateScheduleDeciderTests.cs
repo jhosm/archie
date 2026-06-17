@@ -147,6 +147,45 @@ public sealed class RateScheduleDeciderTests
     }
 
     [Fact]
+    public void DecideInterestPayment_stepUp_coupon_window_STRADDLING_a_step_is_split_exactly_at_the_boundary()
+    {
+        // The subtlest cash-flow in F.10: a coupon window that crosses a step boundary. The schedule
+        // is anchored at the deposit start (day 0), so a window over days 170–201 of a [0→3%, 180→6%]
+        // crescente must accrue 10 days @ 3% (170–180) + 21 days @ 6% (180–201) — the split happens
+        // at the elapsed-day boundary, NOT at the window's edges. Asserted against an INDEPENDENTLY
+        // computed two-segment decimal rounded ONCE, so a re-anchoring or per-leg-rounding regression
+        // through the decider path is caught here (not only at the RateSchedule unit level).
+        var position = AtMaturityPosition(tanBps: 0, termDays: 360) with
+        {
+            InterestVariant = "PERIODIC",
+            PaymentPeriodMonths = 1,
+        };
+        var schedule = RateSchedule.StepUp([new RateSegment(0, 300), new RateSegment(180, 600)]);
+
+        var windowStart = Start.AddDays(170); // 10 days before the step
+        var windowEnd = Start.AddDays(201);   // 21 days after the step — a 31-day window straddling day 180
+
+        // Independent expected: 10 days @ 3% + 21 days @ 6% on €10,000, Act/360, summed in decimal
+        // and crossed to cents exactly ONCE (the single-rounding-boundary discipline).
+        decimal exact = (decimal)PrincipalCents * 300 * 10 / (360m * 10_000)
+                      + (decimal)PrincipalCents * 600 * 21 / (360m * 10_000);
+        var expected = Money.FromCents(exact);
+
+        var paid = (InterestPaid)TermDepositDecider.DecideInterestPayment(
+            position, windowStart, windowEnd, DayCountConvention.Act360, IrsBps, schedule)[0];
+
+        Assert.Equal(expected, paid.GrossInterest);
+
+        // Sanity: the straddle is strictly between a 31-day window held wholly at 3% and wholly at 6%.
+        var allLow = Accrual.SimpleInterest(
+            new Money(PrincipalCents), 300, DayCount.Between(windowStart, windowEnd, DayCountConvention.Act360));
+        var allHigh = Accrual.SimpleInterest(
+            new Money(PrincipalCents), 600, DayCount.Between(windowStart, windowEnd, DayCountConvention.Act360));
+        Assert.True(paid.GrossInterest.Cents > allLow.Cents);
+        Assert.True(paid.GrossInterest.Cents < allHigh.Cents);
+    }
+
+    [Fact]
     public void DecideInterestPayment_with_a_flat_schedule_equals_no_schedule()
     {
         var position = AtMaturityPosition(tanBps: 325, termDays: 360) with
