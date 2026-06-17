@@ -20,6 +20,7 @@ NOT for production. POC test double only.
 """
 import json
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -64,7 +65,32 @@ def _record_allowed(headers) -> dict[str, str]:
 # Process-wide record of the headers the LAST GET /v1/deposits/{id} received. The harness
 # reads it back via GET /echo/headers after firing the tools/call. ThreadingHTTPServer shares
 # one handler-class namespace; a module-level dict is the simplest cross-request store.
+#
+# Scoping is PER STUB PROCESS (one record, last-write-wins), which is sound because every
+# mcp-contract-test run gets its own engine-stub on its own host-mapped MCP_ENGINE_STUB_PORT
+# (mcp-contract-test.sh line ~55) and its own container — so two concurrent runs never share
+# this dict and never collide. The harness is also sequential (one tools/call, then one
+# /echo/headers read-back), so within a run there is no read-before-write race on the value.
+# The lock below is purely a memory-safety guard: ThreadingHTTPServer dispatches each request on
+# its own thread, so a concurrent reader of /echo/headers and a writer of /v1/deposits/{id}
+# could otherwise observe a torn dict. The lock makes write+read atomic; it does NOT add
+# per-request identity (which the per-run port already provides).
 _LAST_DEPOSIT_HEADERS: dict[str, str] = {}
+_HEADERS_LOCK = threading.Lock()
+
+
+def _store_headers(headers) -> None:
+    """Atomically replace the recorded boundary headers (thread-safe write)."""
+    snapshot = _record_allowed(headers)
+    with _HEADERS_LOCK:
+        _LAST_DEPOSIT_HEADERS.clear()
+        _LAST_DEPOSIT_HEADERS.update(snapshot)
+
+
+def _read_headers() -> dict[str, str]:
+    """Atomically read back a copy of the recorded boundary headers (thread-safe read)."""
+    with _HEADERS_LOCK:
+        return dict(_LAST_DEPOSIT_HEADERS)
 
 
 class EngineHandler(BaseHTTPRequestHandler):
@@ -84,12 +110,11 @@ class EngineHandler(BaseHTTPRequestHandler):
             self.rfile.read(length)
 
     def do_GET(self) -> None:  # noqa: N802
-        global _LAST_DEPOSIT_HEADERS
         path = urlparse(self.path).path
 
         # Read-back endpoint for the harness: what did the last engine read receive?
         if path == "/echo/headers":
-            self._json(200, {"received_headers": dict(_LAST_DEPOSIT_HEADERS)})
+            self._json(200, {"received_headers": _read_headers()})
             return
 
         # Liveness for the compose healthcheck.
@@ -102,7 +127,7 @@ class EngineHandler(BaseHTTPRequestHandler):
             # RECORD every header (so the harness can assert X-Client-Id was forwarded) and
             # always return a VALID position for any id — the MCP tool's pydantic parse must not
             # throw, whatever deposit id the harness chose.
-            _LAST_DEPOSIT_HEADERS = _record_allowed(self.headers)
+            _store_headers(self.headers)
             instance = path[len(prefix):]
             self._json(200, {**_POSITION, "deposit_id": instance})
             return
@@ -112,9 +137,8 @@ class EngineHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         # The engine command surface (constitute/mature/interest). Record headers too and answer
         # with a minimal valid result so any write tool the harness exercises does not throw.
-        global _LAST_DEPOSIT_HEADERS
         self._drain()
-        _LAST_DEPOSIT_HEADERS = _record_allowed(self.headers)
+        _store_headers(self.headers)
         path = urlparse(self.path).path
         if path.endswith("/maturity") or path.endswith("/interest"):
             self._json(200, {**_POSITION})

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import ssl
 
+import pytest
+
 from babelstone_mcp.__main__ import build_tls_kwargs
 
 
@@ -63,3 +65,25 @@ def test_cert_reqs_ignored_without_ca() -> None:
         {"MCP_TLS_CERTFILE": "/c", "MCP_TLS_KEYFILE": "/k", "MCP_TLS_CERT_REQS": "2"}
     )
     assert "ssl_cert_reqs" not in r
+
+
+# ── MCP_TLS_CERT_REQS guard (bd babelstone-ziu3.3 nit 3) ──────────────────────────────
+# A bad MCP_TLS_CERT_REQS must fail with an actionable message naming the variable + legal
+# values, not the bare ValueError that ``ssl.VerifyMode(int(raw))`` would raise.
+_BASE_TLS = {"MCP_TLS_CERTFILE": "/c", "MCP_TLS_KEYFILE": "/k", "MCP_TLS_CA_CERTS": "/ca"}
+
+
+def test_cert_reqs_non_numeric_raises_clear_error() -> None:
+    with pytest.raises(ValueError, match=r"MCP_TLS_CERT_REQS must be an integer.*'foo'"):
+        build_tls_kwargs({**_BASE_TLS, "MCP_TLS_CERT_REQS": "foo"})
+
+
+def test_cert_reqs_out_of_range_raises_clear_error() -> None:
+    with pytest.raises(ValueError, match=r"MCP_TLS_CERT_REQS=99 is not a valid ssl.VerifyMode"):
+        build_tls_kwargs({**_BASE_TLS, "MCP_TLS_CERT_REQS": "99"})
+
+
+def test_cert_reqs_none_is_accepted() -> None:
+    # 0 (CERT_NONE) is a legal VerifyMode int and must round-trip without raising.
+    r = build_tls_kwargs({**_BASE_TLS, "MCP_TLS_CERT_REQS": "0"})
+    assert r["ssl_cert_reqs"] == ssl.CERT_NONE
