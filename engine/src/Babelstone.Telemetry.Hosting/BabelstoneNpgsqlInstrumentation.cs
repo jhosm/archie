@@ -53,6 +53,13 @@ public static class BabelstoneNpgsqlInstrumentation
     /// query spans share the host's resource and exporter and nest under the request's trace.
     /// </summary>
     public static TracerProviderBuilder AddNpgsqlQueryTelemetry(this TracerProviderBuilder tracing)
+        // PII ENVELOPE — DO NOT pass NpgsqlTracingOptions that enable command-text/db.statement tags
+        // (ADR-IC-007 §P4 / OBS_NO_PII_ATTRS, ADR-PC-004 §P2). Bare AddNpgsql() uses the driver's
+        // default options, which attach the OPERATION shape (db.system, db.namespace, …) to spans but
+        // NOT the SQL statement text — so query parameter values never reach the trace backend. The
+        // class-level "tags the operation, not parameter values" guarantee holds ONLY while this stays
+        // default; enabling statement-text tagging here would be a silent PII regression, so any such
+        // change must be a deliberate, reviewed decision at this call site.
         => tracing.AddNpgsql();
 
     /// <summary>
