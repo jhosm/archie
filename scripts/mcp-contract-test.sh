@@ -126,11 +126,17 @@ $COMPOSE up -d --wait --build >/dev/null 2>&1 || {
 }
 
 say "Waiting for the Kong proxy to serve the parsed declarative config"
-for i in $(seq 1 30); do
-  if curl -fsS "$ADMIN/status" >/dev/null 2>&1; then ok "Kong admin /status is up"; break; fi
-  [ "$i" -eq 30 ] && die "Kong admin did not become ready"
+# Poll the admin /status until it answers, then fall through. The loop only ever exits via the
+# `break` (success) or by running out of attempts; the `die` AFTER the loop is the single,
+# explicit timeout path — clearer than testing `$i` against the bound inside the loop, and it
+# never sleeps after the final failed probe.
+KONG_READY=
+for _ in $(seq 1 30); do
+  if curl -fsS "$ADMIN/status" >/dev/null 2>&1; then KONG_READY=1; break; fi
   sleep 1
 done
+[ -n "$KONG_READY" ] || die "Kong admin did not become ready after 30s"
+ok "Kong admin /status is up"
 ROUTE_COUNT="$(curl -fsS "$ADMIN/routes" | jq '.data | length')"
 [ "${ROUTE_COUNT:-0}" -ge 5 ] || die "expected the real kong.yml routes to load (>=5), got ${ROUTE_COUNT:-0}"
 ok "Kong loaded $ROUTE_COUNT routes from the real kong.yml"

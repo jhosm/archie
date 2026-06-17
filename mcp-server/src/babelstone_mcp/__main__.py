@@ -64,8 +64,32 @@ def build_tls_kwargs(env: Mapping[str, str]) -> dict[str, Any]:
         kwargs["ssl_ca_certs"] = ca_certs
         # Default to CERT_REQUIRED (mutual TLS) once a CA is configured — fail closed.
         cert_reqs_str = env.get("MCP_TLS_CERT_REQS", str(ssl.CERT_REQUIRED.value))
-        kwargs["ssl_cert_reqs"] = ssl.VerifyMode(int(cert_reqs_str))
+        kwargs["ssl_cert_reqs"] = _parse_cert_reqs(cert_reqs_str)
     return kwargs
+
+
+def _parse_cert_reqs(raw: str) -> ssl.VerifyMode:
+    """Parse ``MCP_TLS_CERT_REQS`` into an ``ssl.VerifyMode``, failing with a clear message.
+
+    A bare ``ssl.VerifyMode(int(raw))`` raises a cryptic ``ValueError`` for either a non-numeric
+    string (``int("foo")``) or an out-of-range int (``ssl.VerifyMode(99)`` → "99 is not a valid
+    VerifyMode"). Neither tells an operator what the variable should be. This guard names the
+    offending value AND the three legal settings so the misconfiguration is fixable from the log
+    line alone (fail loud, ADR-IC-009).
+    """
+    legal = "0 (CERT_NONE), 1 (CERT_OPTIONAL), or 2 (CERT_REQUIRED)"
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(
+            f"MCP_TLS_CERT_REQS must be an integer {legal}; got {raw!r}."
+        ) from None
+    try:
+        return ssl.VerifyMode(value)
+    except ValueError:
+        raise ValueError(
+            f"MCP_TLS_CERT_REQS={value} is not a valid ssl.VerifyMode; expected {legal}."
+        ) from None
 
 
 def main() -> None:
