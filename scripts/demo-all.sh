@@ -13,6 +13,7 @@
 # need an engine on :8080. So a SINGLE engine serves LIVE·engine, LIVE·saga AND the agent path:
 #
 #   1. infra: Postgres + Redpanda + Core-ACL stub  (+ the orchestrator's dedicated DB)
+#      + the OTel Collector → Grafana/Tempo LGTM stack (so LIVE·engine Telemetry shows real spans)
 #   2. apply the event-store schema to the `babelstone` DB
 #   3. build the engine, rate-sheet and orchestrator hosts
 #   4. deploy the 3-product rate sheet (so the LIVE·engine variants all price)
@@ -30,7 +31,7 @@
 #   scripts/demo-all.sh down                              # stop every host (infra is left up)  (make demo-down)
 #
 # Overridable env: PG_PORT REDPANDA_KAFKA_PORT CORE_ACL_STUB_PORT ENGINE_PORT ORCH_PORT MCP_PORT
-#                  AGENT_BIND_PORT RATESHEET_PORT MC_PORT
+#                  AGENT_BIND_PORT RATESHEET_PORT MC_PORT OTLP_GRPC_PORT GRAFANA_PORT TEMPO_PORT
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -48,6 +49,9 @@ MCP_PORT="${MCP_PORT:-8000}"              # MCP server listen port (start_mcp_se
 AGENT_PORT="${AGENT_BIND_PORT:-8091}"     # real-Claude agent host
 RATESHEET_PORT="${RATESHEET_PORT:-8086}"  # transient RateSheets.Api deploy host (reaped after seeding)
 MC_PORT="${MC_PORT:-9000}"                # Mission Control UI / proxy
+OTLP_GRPC_PORT="${OTLP_GRPC_PORT:-4317}"  # OTel Collector OTLP/gRPC ingest (the engine exports here, ADR-IC-007 §P1)
+GRAFANA_PORT="${GRAFANA_PORT:-3000}"      # Grafana UI (open a real trace here)
+TEMPO_PORT="${TEMPO_PORT:-3200}"          # Tempo query API (Mission Control Telemetry tab reads real spans by trace id)
 
 COMPOSE="docker compose -f infra/compose.yaml"
 PG_CONTAINER="babelstone-postgres"
@@ -113,11 +117,16 @@ ok "docker, mise, lsof present; ports $ENGINE_PORT/$ORCH_PORT/$MCP_PORT/$AGENT_P
 
 # ---------------------------------------------------------------------------
 # 1. infra: Postgres + Redpanda + Core-ACL stub (+ orchestrator DB)
+#    + the OTel Collector → Grafana/Tempo LGTM stack, so the Telemetry tab in
+#    LIVE·engine mode pulls the REAL trace (with the Npgsql db.client query spans,
+#    bd scd2.3) instead of silently degrading to the illustrative waterfall. The
+#    engine exports OTLP to the collector on :4317 (ADR-IC-007 §P1); without these
+#    two services up, every span the engine emits is dropped on the floor.
 # ---------------------------------------------------------------------------
-say "1/8 Starting Postgres + Redpanda + the Core-ACL settlement stub"
-$COMPOSE up -d --wait postgres redpanda core-acl-stub
+say "1/8 Starting Postgres + Redpanda + the Core-ACL stub + the OTel/Tempo trace backend"
+$COMPOSE up -d --wait postgres redpanda core-acl-stub otel-collector grafana-lgtm
 wait_postgres "$PG_CONTAINER"
-ok "Postgres on :${PG_PORT}, Redpanda on :${REDPANDA_KAFKA_PORT}, Core-ACL stub on :${CORE_ACL_STUB_PORT}"
+ok "Postgres on :${PG_PORT}, Redpanda on :${REDPANDA_KAFKA_PORT}, Core-ACL stub on :${CORE_ACL_STUB_PORT}, OTel Collector on :${OTLP_GRPC_PORT} → Grafana/Tempo on :${GRAFANA_PORT}/:${TEMPO_PORT}"
 create_orchestrator_db "$PG_CONTAINER" "$PG_ORCH_DB"
 
 # ---------------------------------------------------------------------------
@@ -215,7 +224,7 @@ Open the UI and flip freely — one backend serves every mode:
   • open http://localhost:${MC_PORT}
   • Mode toggle → DEMO / LIVE·engine / LIVE·saga
   • Operator toggle → YOU / CLAUDE   (CLAUDE drives the engine-direct MCP tools, in any Mode)
-  • Telemetry toggle → ON   (LIVE·engine pulls the real Tempo trace if the LGTM stack is up)
+  • Telemetry toggle → ON   (LIVE·engine pulls the real Tempo trace — the LGTM stack is up; open it in Grafana on http://localhost:${GRAFANA_PORT})
 
 Stop every host when you're done (infra is left up — use 'make down' for the stack):
 
