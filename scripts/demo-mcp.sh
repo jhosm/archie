@@ -32,9 +32,9 @@ cd "$ROOT"
 PG_PORT="${PG_PORT:-5432}"
 RATESHEET_PORT="${RATESHEET_PORT:-5080}"   # the transient deploy host; any free port
 ENGINE_PORT="${ENGINE_PORT:-8080}"         # MUST match the MCP's BABELSTONE_ENGINE_URL default
-# FastMCP binds its default 8000 from code (server.py has no host/port override; configurable
-# binding is Epic J). It is NOT a knob here — overriding would only move the URL we poll, not
-# the listener. The engine URL the MCP targets IS wired (BABELSTONE_ENGINE_URL, set at launch).
+# The MCP server's listen port. Its __main__.py reads MCP_BIND_PORT and DEFAULTS to 8080 (the
+# in-container port Kong dials), so start_mcp_server pins MCP_BIND_PORT to this value — both to match
+# the URL we poll and to keep the MCP off the engine's :8080. (Engine J makes the host configurable.)
 MCP_PORT=8000
 
 COMPOSE="docker compose -f infra/compose.yaml"
@@ -191,7 +191,7 @@ say "6/6 Setting up + starting the Python MCP server"
 setup_mcp_venv dev
 (cd mcp-server && "$ROOT/mcp-server/.venv/bin/python" -m pytest -q) || die "MCP contract tests failed"
 ok "MCP package installed; contract tests green"
-start_mcp_server "$ENGINE_URL" "$RUNDIR/mcp.pid" "$RUNDIR/mcp.log" "$MCP_URL"
+start_mcp_server "$ENGINE_URL" "$MCP_PORT" "$RUNDIR/mcp.pid" "$RUNDIR/mcp.log" "$MCP_URL"
 
 # ---------------------------------------------------------------------------
 # done — print the Claude Code wiring

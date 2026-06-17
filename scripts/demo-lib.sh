@@ -185,11 +185,16 @@ setup_mcp_venv() { # extras
 }
 
 # Start the Python MCP server (Streamable HTTP) in front of the engine.
-start_mcp_server() { # engine_url pidfile logfile mcp_url
-  BABELSTONE_ENGINE_URL="$1" \
-    nohup "$ROOT/mcp-server/.venv/bin/python" -m babelstone_mcp > "$3" 2>&1 &
-  echo $! > "$2"
-  wait_up "$4" 30 "MCP server" "$3"
+#
+# The server (babelstone_mcp/__main__.py) reads MCP_BIND_HOST/MCP_BIND_PORT and DEFAULTS the port to
+# 8080 — the in-container port Kong dials. For the host-process demo we MUST pin it to the demo's MCP
+# port (8000), both so the readiness probe + the agent host's BABELSTONE_AGENT_MCP_URL find it and so
+# it doesn't collide with the engine on :8080. (We leave MCP_BIND_HOST at its 0.0.0.0 default.)
+start_mcp_server() { # engine_url mcp_port pidfile logfile mcp_url
+  BABELSTONE_ENGINE_URL="$1" MCP_BIND_PORT="$2" \
+    nohup "$ROOT/mcp-server/.venv/bin/python" -m babelstone_mcp > "$4" 2>&1 &
+  echo $! > "$3"
+  wait_up "$5" 30 "MCP server" "$4"
 }
 
 # ---------------------------------------------------------------------------
