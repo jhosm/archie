@@ -44,7 +44,7 @@ REDPANDA_KAFKA_PORT="${REDPANDA_KAFKA_PORT:-19092}"
 CORE_ACL_STUB_PORT="${CORE_ACL_STUB_PORT:-8089}"
 ENGINE_PORT="${ENGINE_PORT:-8080}"        # engine command/query host — serves LIVE·engine + LIVE·saga + MCP/agent
 ORCH_PORT="${ORCH_PORT:-8090}"            # orchestrator edge (LIVE·saga)
-MCP_PORT="${MCP_PORT:-8000}"              # MCP server (FastMCP binds 8000 from code — not a real knob, see demo-mcp.sh)
+MCP_PORT="${MCP_PORT:-8000}"              # MCP server listen port (start_mcp_server pins MCP_BIND_PORT to it; the server defaults to 8080 otherwise)
 AGENT_PORT="${AGENT_BIND_PORT:-8091}"     # real-Claude agent host
 RATESHEET_PORT="${RATESHEET_PORT:-8086}"  # transient RateSheets.Api deploy host (reaped after seeding)
 MC_PORT="${MC_PORT:-9000}"                # Mission Control UI / proxy
@@ -181,7 +181,7 @@ start_orchestrator_host "$ORCH_DLL" "$ORCH_CONN" "localhost:${REDPANDA_KAFKA_POR
 # ---------------------------------------------------------------------------
 say "7/8 Starting the MCP server (+ the real-Claude agent host if ANTHROPIC_API_KEY is set)"
 setup_mcp_venv agent
-start_mcp_server "$ENGINE_URL" "$RUNDIR/mcp.pid" "$RUNDIR/mcp.log" "$MCP_URL"
+start_mcp_server "$ENGINE_URL" "$MCP_PORT" "$RUNDIR/mcp.pid" "$RUNDIR/mcp.log" "$MCP_URL"
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   start_agent_host "http://localhost:${MCP_PORT}/mcp" "${AGENT_PORT}" "$RUNDIR/agent.pid" "$RUNDIR/agent.log"
   AGENT_NOTE="real model — Operator=CLAUDE runs Claude through the MCP tools"

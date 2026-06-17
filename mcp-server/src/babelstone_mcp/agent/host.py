@@ -107,12 +107,28 @@ def _build_anthropic_client() -> Any:
     return AsyncAnthropic()
 
 
+def _root_cause_message(exc: BaseException) -> str:
+    """Unwrap anyio's (possibly nested) ``ExceptionGroup``s to the leaf cause's message.
+
+    The MCP client and the Anthropic stream run inside anyio TaskGroups, which re-raise a failure
+    wrapped in a ``BaseExceptionGroup`` ("unhandled errors in a TaskGroup"). The message a human needs
+    (e.g. a 400 "credit balance too low", a 401, a 429) lives on the leaf, so descend the first
+    sub-exception until we reach a non-group. The depth cap guards against pathological nesting.
+    """
+    seen = 0
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions and seen < 10:
+        exc = exc.exceptions[0]
+        seen += 1
+    return str(exc) or exc.__class__.__name__
+
+
 async def run(instruction: str, *, config: AgentConfig | None = None) -> AsyncIterator[AgentEvent]:
     """Run ``instruction`` end to end: open Claude + the MCP session, then drive the loop.
 
-    Yields the same ``AgentEvent`` stream ``run_agent`` produces. On a setup failure (missing key,
-    unreachable MCP server) yields a single ``AgentError`` rather than raising, so a streaming caller
-    can surface it as a frame and degrade gracefully.
+    Yields the same ``AgentEvent`` stream ``run_agent`` produces. On ANY failure — a setup error
+    (missing key), an unreachable MCP server, OR a model API error mid-run (billing 400, auth 401,
+    rate-limit 429) — yields a single ``AgentError`` rather than raising, so a streaming caller can
+    surface it as a frame and degrade gracefully instead of seeing the SSE stream die silently.
     """
     cfg = config or AgentConfig.from_env()
     try:
@@ -124,20 +140,26 @@ async def run(instruction: str, *, config: AgentConfig | None = None) -> AsyncIt
     # The live MCP connection + loop drive — exercised by the end-to-end smoke (bd babelstone-f0ic.6.4),
     # not the unit tests (which target the loop/token/conversion against fakes).
     headers = demo_headers(audience=cfg.audience, client_id=cfg.client_id, scopes=cfg.scopes)  # pragma: no cover
-    async with streamablehttp_client(cfg.mcp_url, headers=headers) as (read, write, _get_session_id):  # pragma: no cover
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            listed = await session.list_tools()
-            tools = to_anthropic_tools(listed.tools)
-            dispatch = make_dispatch(session)
-            async for event in run_agent(
-                instruction,
-                client=client,
-                tools=tools,
-                dispatch=dispatch,
-                system=cfg.system,
-                model=cfg.model,
-                max_turns=cfg.max_turns,
-                max_tokens=cfg.max_tokens,
-            ):
-                yield event
+    try:  # pragma: no cover
+        async with streamablehttp_client(cfg.mcp_url, headers=headers) as (read, write, _get_session_id):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                listed = await session.list_tools()
+                tools = to_anthropic_tools(listed.tools)
+                dispatch = make_dispatch(session)
+                async for event in run_agent(
+                    instruction,
+                    client=client,
+                    tools=tools,
+                    dispatch=dispatch,
+                    system=cfg.system,
+                    model=cfg.model,
+                    max_turns=cfg.max_turns,
+                    max_tokens=cfg.max_tokens,
+                ):
+                    yield event
+    except Exception as exc:  # pragma: no cover - surface the failure as a frame, don't let it kill the stream
+        # A model API error (billing/auth/rate-limit) or an unreachable/failed MCP session lands here,
+        # typically wrapped in an anyio ExceptionGroup. CancelledError (BaseException) is deliberately
+        # NOT caught, so client disconnects still propagate. _root_cause_message digs out the leaf.
+        yield AgentError(_root_cause_message(exc), "exception")
