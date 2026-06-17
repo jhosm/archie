@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+    <!-- OTel SDK: builds a real TracerProvider/MeterProvider via the same extension methods the
+         hosts call, then asserts the Npgsql instrumentation is registered on it. The in-memory
+         metric reader proves the db.client.operation.duration histogram flows through that provider —
+         no Docker, no Postgres (K.5 fitness, bd scd2.3). -->
+    <PackageReference Include="OpenTelemetry" />
+    <!-- In-memory metric exporter: lets the histogram assertion run with no OTLP collector / Docker. -->
+    <PackageReference Include="OpenTelemetry.Exporter.InMemory" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The host-side seam under test. -->
+    <ProjectReference Include="../../src/Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
+  </ItemGroup>
+</Project>

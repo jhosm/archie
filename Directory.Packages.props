@@ -84,11 +84,27 @@
     <PackageVersion Include="OpenTelemetry" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.16.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.16.0" />
+    <!-- In-memory metric/span exporter (test-only): backs the Docker-free K.5 fitness test
+         (bd scd2.3) that asserts the Npgsql db.client.operation.duration histogram flows through a
+         provider built via the shared instrumentation seam. Same pinned 1.16.0 line; referenced only
+         by Babelstone.Telemetry.Hosting.Tests, never by a host. -->
+    <PackageVersion Include="OpenTelemetry.Exporter.InMemory" Version="1.16.0" />
     <!-- ASP.NET Core inbound-request instrumentation (ADR-IC-007 Layer 1, bd babelstone-2dex):
          turns each inbound HTTP request into a SERVER span that adopts the W3C traceparent when
          present, so the engine's manual deposit.* spans nest under it instead of being roots.
          Wired only in Babelstone.Engine.Api (the engine command/query host). Its own 1.15.x line,
          the latest tracking the 1.16.0 core. -->
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <!-- Npgsql's BUILT-IN OpenTelemetry instrumentation (ADR-IC-007 Layer 1, bd scd2.3 / K.5):
+         AddNpgsql() on the TracerProvider emits a CLIENT span per database command, and
+         AddNpgsqlInstrumentation() on the MeterProvider emits the stable OTel
+         db.client.operation.duration histogram — across EVERY engine Postgres call (event-store
+         appends, outbox drain + lag observer, projection/checkpoint stores), because they all run
+         on plain NpgsqlConnection/NpgsqlCommand which this instrumentation hooks globally. It is
+         registered on the SAME provider the hosts already configure (never a second, parallel one).
+         Pinned to the Npgsql 10.0.3 line so the instrumentation tracks the driver exactly. The
+         AddNpgsql/AddNpgsqlInstrumentation extensions live in the host-only Babelstone.Telemetry.Hosting
+         seam, keeping the engine-spine-referenced Babelstone.Telemetry SDK-free. -->
+    <PackageVersion Include="Npgsql.OpenTelemetry" Version="10.0.3" />
   </ItemGroup>
 </Project>

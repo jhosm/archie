@@ -19,6 +19,10 @@
          (BabelstoneResource) + the SDK hosting integration and OTLP exporter, for OBS-1 parity
          with the engine host. -->
     <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+    <!-- The host-side OTel-SDK seam (K.5, bd scd2.3): registers Npgsql's built-in query CLIENT spans
+         on this host's existing TracerProvider so the rate-sheet store's Postgres calls are visible in
+         the trace too (OBS-1 parity with the engine host). Kept out of the SDK-free Babelstone.Telemetry. -->
+    <ProjectReference Include="../Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
   </ItemGroup>

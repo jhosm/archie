@@ -40,6 +40,12 @@
          Babelstone.Telemetry (through Babelstone.Engine); referenced explicitly so the resource
          helper (BabelstoneResource) is a first-order dependency of the composition root. -->
     <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+    <!-- The host-side OTel-SDK seam (K.5, bd scd2.3): registers Npgsql's BUILT-IN query telemetry
+         (per-command CLIENT spans + the db.client.operation.duration histogram) onto THIS host's
+         existing TracerProvider + MeterProvider — covering every engine Postgres call (event-store
+         appends, outbox drain + lag observer, projection/checkpoint stores) with no per-call wiring
+         and no second, parallel provider. Kept out of the SDK-free Babelstone.Telemetry. -->
+    <ProjectReference Include="../Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
     <!-- Inbound-request instrumentation (bd babelstone-2dex): the inbound HTTP request becomes a

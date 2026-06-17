@@ -9,6 +9,7 @@ using Babelstone.OutboxPublisher;
 using Babelstone.Pii;
 using Babelstone.RateSheets;
 using Babelstone.Telemetry;
+using Babelstone.Telemetry.Hosting;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -42,6 +43,11 @@ builder.Services.AddOpenTelemetry()
         // under it all the same — either way the request's work is one connected trace.
         .AddAspNetCoreInstrumentation()
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
+        // Npgsql's built-in query CLIENT spans (K.5, bd scd2.3): one span per database command across
+        // every engine Postgres call (event-store appends, outbox drain + lag observer,
+        // projection/checkpoint stores), registered on THIS same provider so they nest under the
+        // request's server span and the manual deposit.* spans — never a second, parallel provider.
+        .AddNpgsqlQueryTelemetry()
         .AddOtlpExporter())
     // Metrics (ADR-IC-007 Layer 1 / ADR-IC-004 §P4): listen to the engine's meter and export over
     // OTLP to the Collector → Prometheus, where the §P4 warning/critical thresholds alert. The
@@ -51,6 +57,10 @@ builder.Services.AddOpenTelemetry()
     // registered below, so the instruments AddMeter picks up here are actually produced in-process.
     .WithMetrics(metrics => metrics
         .AddMeter(BabelstoneTelemetry.MeterName)
+        // Npgsql's built-in db.client.operation.duration histogram (K.5, bd scd2.3): query-latency
+        // per database command, emitted on THIS same meter provider so it is exported through the
+        // one OTLP pipe alongside the engine's own instruments (the outbox-lag SLI et al.).
+        .AddNpgsqlQueryTelemetry()
         .AddOtlpExporter());
 
 // snake_case on the wire (principal_cents, tan_basis_points, rate_sheet_version_id), money as
