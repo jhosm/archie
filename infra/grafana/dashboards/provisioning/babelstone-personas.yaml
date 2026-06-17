@@ -1,0 +1,36 @@
+# Grafana dashboard provider — the per-persona dashboards (K.4, bd babelstone-vk3x).
+#
+# This is a Grafana "dashboards provisioning" provider: it tells Grafana to load
+# every dashboard JSON under `options.path` on startup AND keep watching it, so the
+# three committed persona dashboards (operator/NOC, compliance, developer) appear
+# as code — never hand-built in the UI, never lost on a `make reset` (ADR-IC-007 §P6
+# "dashboards-as-code provisioning"; same as-code discipline the K.3 alert rules use).
+#
+# Wiring into the grafana/otel-lgtm:0.28.0 appliance (see infra/grafana/dashboards/README.md):
+# the appliance reads providers from conf/provisioning/dashboards/*.yaml relative to its
+# Grafana home (/otel-lgtm/grafana). Mount THIS file there and the JSON dir at the path below:
+#
+#   # infra/compose.yaml — grafana-lgtm service
+#   volumes:
+#     - ./grafana/dashboards/provisioning/babelstone-personas.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/babelstone-personas.yaml:ro
+#     - ./grafana/dashboards/json:/var/lib/grafana/dashboards/babelstone:ro
+#
+# (This subtree intentionally does NOT edit compose.yaml — it is the artefact a deploy
+#  mounts, mirroring how infra/grafana/prometheus/ ships the K.3 rules unmounted.)
+
+apiVersion: 1
+
+providers:
+  - name: "Babelstone — per-persona (K.4)"
+    type: file
+    # Provision into a dedicated Grafana folder so RBAC (ADR-IC-007 §P6) can scope
+    # folder-level access per role (noc-viewer / compliance-viewer / engineer / admin).
+    # The RBAC role→folder assignment itself is owned by infra/grafana/rbac/ (njt2.4 /
+    # PR #229), kept file-disjoint from this lane; this provider only NAMES the folder.
+    folder: "Babelstone"
+    allowUiUpdates: false
+    options:
+      # The committed dashboard JSON lives here in the repo; a deploy bind-mounts it to
+      # this in-container path (see the README + the compose snippet above).
+      path: /var/lib/grafana/dashboards/babelstone
+      foldersFromFilesStructure: false

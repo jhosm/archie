@@ -1,0 +1,131 @@
+{
+  "uid": "babelstone-developer",
+  "title": "Babelstone — Developer",
+  "description": "Full-signal deep-dive for the engineer persona (ADR-IC-007 §P6 engineer: all signals, full trace/log/metric query). Saga-advance spans, DB query-latency histogram (Npgsql db.client.operation.duration), and a correlation_id-driven Tempo trace search — the 2am debugging path from Document 06 (paste correlation_id → see the whole trace). Exemplars on every histogram pivot metric→trace→log (ADR-IC-007 §S2).",
+  "tags": ["babelstone", "persona:developer", "persona:engineer", "K.4", "adr-ic-007"],
+  "schemaVersion": 39,
+  "editable": false,
+  "graphTooltip": 1,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "timezone": "",
+  "templating": {
+    "list": [
+      {
+        "name": "correlation_id",
+        "label": "correlation_id",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" },
+        "description": "Paste a correlation_id (Primitive 4) to scope the trace-search and log panels to one originating request — the Document 06 debugging entry point. Carried on every manual span as babelstone.saga.correlation_id (ADR-IC-007 §P3)."
+      },
+      {
+        "name": "service",
+        "label": "service.name",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": { "query": "label_values(service_name)", "refId": "service" },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      { "name": "Annotations & Alerts", "enable": true, "datasource": { "type": "grafana", "uid": "-- Grafana --" }, "iconColor": "red", "type": "dashboard" }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Cross-signal navigation — paste a correlation_id",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "traces",
+      "title": "Traces for $correlation_id (TraceQL → Tempo)",
+      "description": "TraceQL search on babelstone.saga.correlation_id. Click a trace to open it; from a span, the Tempo datasource's traces-to-logs jumps to the same trace_id in Loki (ADR-IC-007 §S2 trace→log). This is the Document 06 30-second path: paste correlation_id, see every span across services.",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{ .babelstone.saga.correlation_id = \"$correlation_id\" }",
+          "limit": 50,
+          "tableType": "traces"
+        }
+      ]
+    },
+    {
+      "type": "logs",
+      "title": "Logs for $correlation_id (all tiers)",
+      "description": "Engineer-tier log query across every Loki stream filtered by correlation_id. Unlike the compliance dashboard (tier=business only), the engineer persona sees operational + debug streams too (ADR-IC-007 §P6).",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 11 },
+      "options": { "showTime": true, "showLabels": false, "wrapLogMessage": true, "enableLogDetails": true, "dedupStrategy": "none", "sortOrder": "Descending" },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "loki", "uid": "loki" }, "expr": "{service_name=~\"$service\"} |= \"$correlation_id\"", "queryType": "range" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "DB query latency (Npgsql, K.5)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "DB query duration p50/p95/p99 (s) — exemplars → trace",
+      "description": "Quantiles of db_client_operation_duration_seconds (Npgsql's OTel histogram: every event-store append, outbox drain/lag query, projection/checkpoint store). Exemplar dots link to the Tempo trace of the slow query (metric→trace, ADR-IC-007 §S2).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 22 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 8, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["max", "lastNotNull"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "p99", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.99, sum by (le) (rate(db_client_operation_duration_seconds_bucket{service_name=~\"$service\"}[5m])))", "legendFormat": "p99", "exemplar": true },
+        { "refId": "p95", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.95, sum by (le) (rate(db_client_operation_duration_seconds_bucket{service_name=~\"$service\"}[5m])))", "legendFormat": "p95", "exemplar": false },
+        { "refId": "p50", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.50, sum by (le) (rate(db_client_operation_duration_seconds_bucket{service_name=~\"$service\"}[5m])))", "legendFormat": "p50", "exemplar": false }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Outbox & inbox internals",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 30 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Outbox publish latency p99 by aggregate_type (s) — exemplars",
+      "description": "outbox_publish_latency_seconds p99 broken out by aggregate_type (the topic the row routes to). Exemplars link to the trace of the slow publish (ADR-IC-004 G.1 / ADR-IC-007 §S2).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 31 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 8, "showPoints": "never" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 5 } ] } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "histogram_quantile(0.99, sum by (le, babelstone_aggregate_type) (rate(outbox_publish_latency_seconds_bucket{service_name=~\"$service\"}[5m])))", "legendFormat": "{{babelstone_aggregate_type}}", "exemplar": true }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Inbox outcome rate by source_topic (msg/s)",
+      "description": "handled / duplicate / poison / tombstone broken out by source_topic — the engineer's view of consumer-side delivery health, finer-grained than the operator dashboard.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 31 },
+      "fieldConfig": { "defaults": { "unit": "cps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "handled", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (source_topic) (rate(inbox_handled_total{service_name=~\"$service\"}[5m]))", "legendFormat": "handled {{source_topic}}" },
+        { "refId": "poison", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "sum by (source_topic) (rate(inbox_poison_total{service_name=~\"$service\"}[5m]))", "legendFormat": "poison {{source_topic}}" }
+      ]
+    }
+  ]
+}
