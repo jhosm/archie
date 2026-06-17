@@ -71,6 +71,12 @@ public sealed class NpgsqlInstrumentationTests
 
         provider.ForceFlush();
 
+        // SCOPE OF THIS ASSERTION: it proves registration-BY-METER-NAME — that the seam's
+        // AddNpgsqlInstrumentation() registers AddMeter("Npgsql") on THIS provider, so any instrument
+        // emitted on a Meter("Npgsql") flows through. It does NOT exercise the driver's real
+        // MetricsReporter, so it cannot catch a future driver RENAME of the literal emitted instrument
+        // (e.g. "db.client.operation.duration" → something else) — that would only surface at runtime in
+        // Grafana. Read this as a registration guard, not an end-to-end metric-name contract.
         var metric = Assert.Single(exported, m => m.Name == "db.client.operation.duration");
         Assert.Equal(MetricType.Histogram, metric.MetricType);
         Assert.Equal(BabelstoneNpgsqlInstrumentation.InstrumentationScopeName, metric.MeterName);
@@ -80,6 +86,12 @@ public sealed class NpgsqlInstrumentationTests
     /// Guards the no-second-provider constraint and the scope-name contract: the seam registers the
     /// driver's own <c>Npgsql</c> scope, not a Babelstone-renamed one, so spans and the histogram carry
     /// the standard instrumentation scope a Grafana/Tempo query keys on.
+    /// <para>
+    /// Deliberately a constant pin with little INDEPENDENT mutation-coverage value: the two behavioural
+    /// tests above already self-correct on constant drift (they build the source/meter from this same
+    /// constant, so a wrong value flips them red). It is kept as an explicit, cheap contract pin of the
+    /// literal scope string a downstream Grafana/Tempo query depends on.
+    /// </para>
     /// </summary>
     [Fact]
     public void Instrumentation_scope_name_is_the_drivers_own_Npgsql_scope()
