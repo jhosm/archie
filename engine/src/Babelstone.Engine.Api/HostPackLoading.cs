@@ -54,6 +54,13 @@ public static class HostPackLoading
         }
 
         // ── OCI mode (ADR-PC-007 §P3/§P4) ──────────────────────────────────────────────────────
+        // Fail FAST, before any registry/pull/verify work: OCI mode shells out to oras + cosign at
+        // load time, but the chiseled runtime image (engine/Dockerfile) deliberately omits both. If
+        // either is absent we throw a clear, named PackLoadException here rather than letting it
+        // surface as an opaque "could not start 'oras'" deep in the eager-load loop (bd 4ow6). Disk
+        // mode returned above and never reaches this — it needs neither tool.
+        OciToolchainGuard.EnsureToolsAvailable();
+
         // The durable pack_versions registry resolves pins; cosign verifies; oras pulls by digest.
         var registry = new PostgresPackVersionRegistry(connectionString);
 
