@@ -128,42 +128,54 @@ public sealed class RenewalSagaIntegrationTests : IAsyncLifetime
     public async Task A_NONE_policy_matured_deposit_starts_NO_saga()
     {
         var topic = SagaConsumeTopics.TermDepositIntegrationTopic;
-        var closingDepositId = Guid.NewGuid();
+        var noneDepositId = Guid.NewGuid();
 
         // A NONE-policy DepositMatured: the deposit terminates at maturity, never renews. The auto-start
-        // header predicate (autorenewalpolicy != NONE) FAILS, so no saga is born.
-        var maturedMessageId = Guid.NewGuid();
-        await ProduceDepositMaturedAsync(topic, maturedMessageId, closingDepositId, "NONE");
+        // header predicate (autorenewalpolicy != NONE) FAILS, so no saga is born. It is produced FIRST.
+        var noneMessageId = Guid.NewGuid();
+        await ProduceDepositMaturedAsync(topic, noneMessageId, noneDepositId, "NONE");
 
-        // No leg should ever be POSTed — the engine stub records nothing for this deposit.
-        await using var engine = new RecordingHttpServer(_ => (HttpStatusCode.Created, "{}"));
+        // A renewing DepositMatured produced AFTER it — the DETERMINISTIC tail signal (no wall-clock sleep,
+        // ADR-PC-010 §P5). Both records land on the same single-partition family topic, so the in-order
+        // consume loop processes the NONE record BEFORE this one, and the dispatcher (one poll loop) drains
+        // commands in seq order. When THIS renewing saga reaches its terminal state and its legs are POSTed,
+        // the NONE record has provably already been consumed AND any command it had (wrongly) queued would
+        // have been POSTed earlier — so the absence of a NONE-deposit POST is a settled fact, not a timing race.
+        var renewingDepositId = Guid.NewGuid();
+        var renewingMessageId = Guid.NewGuid();
+        await ProduceDepositMaturedAsync(topic, renewingMessageId, renewingDepositId, "SAME_TERM_CURRENT_RATE");
+
+        // The engine stub: 201 constitute / 200 link for the renewing deposit. A NONE-deposit leg must NEVER
+        // be POSTed — if one were, the stub would record it and the final DoesNotContain assertion fails.
+        await using var engine = new RecordingHttpServer(req =>
+            req.Path.EndsWith("/constitute-renewal", StringComparison.Ordinal)
+                ? (HttpStatusCode.Created, "{}")
+                : (HttpStatusCode.OK, "{}"));
 
         using var host = BuildHost(engineBaseUrl: engine.BaseUrl);
         await host.StartAsync();
         try
         {
-            // The loop consumes the record (it is a real DepositMatured), but the predicate fails so the
-            // event is the existing UnknownSaga no-op: dedup-rowed, offset advanced, NO saga row created.
-            // Wait until the message has been deduped (consumed), then assert no saga exists.
+            // Deterministic gates: the NONE record was consumed (its dedup inbox row exists) AND the renewing
+            // saga — produced after it — has driven to terminal. The second gate proves the pipeline drained
+            // PAST the NONE record on both the consume and dispatch loops, with no sleep.
             await WaitUntilAsync(
-                async () => await CountInboxAsync(maturedMessageId) == 1,
-                TimeSpan.FromSeconds(40),
-                "the NONE-policy DepositMatured was not consumed");
-
-            // Give the dispatcher a beat in case a saga had (wrongly) started and queued a command.
-            await Task.Delay(TimeSpan.FromMilliseconds(750));
+                async () => await CountInboxAsync(noneMessageId) == 1
+                    && await StateOrNullAsync(renewingDepositId) == RenewalProcess.States.RenewalCompleted,
+                TimeSpan.FromSeconds(60),
+                "the NONE-policy DepositMatured was not consumed, or the trailing renewing saga did not complete");
         }
         finally
         {
             await host.StopAsync();
         }
 
-        // No saga was started — the header predicate gated it out at the substrate.
-        Assert.Null(await StateOrNullAsync(closingDepositId));
-        // And no renewal command was emitted or POSTed for this deposit.
-        Assert.Empty(await OutboxCommandsAsync(closingDepositId));
+        // No saga was started for the NONE deposit — the header predicate gated it out at the substrate.
+        Assert.Null(await StateOrNullAsync(noneDepositId));
+        // And no renewal command was emitted or POSTed for the NONE deposit (the renewing one drove fine).
+        Assert.Empty(await OutboxCommandsAsync(noneDepositId));
         Assert.DoesNotContain(engine.Requests,
-            r => r.Path.Contains(closingDepositId.ToString(), StringComparison.Ordinal));
+            r => r.Path.Contains(noneDepositId.ToString(), StringComparison.Ordinal));
     }
 
     // ---- Host wiring (the SAME composition the production Program.cs uses for the renewal module) -----
