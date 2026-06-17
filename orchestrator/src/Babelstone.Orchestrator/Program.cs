@@ -5,9 +5,12 @@ using Babelstone.Orchestrator.Edge;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Migrations;
 using Babelstone.Orchestrator.Saga;
+using Babelstone.Telemetry;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 // The in-house saga orchestrator host (ADR-IC-003 "Event-driven application orchestrator").
 // It is BOTH a Redpanda consumer (ADR-IC-003 §S2 "a Redpanda consumer like every other service")
@@ -19,6 +22,34 @@ using Microsoft.Extensions.Hosting;
 // over HTTP. Adding Kestrel is a FRAMEWORK reference, NOT an engine-kernel ProjectReference, so the
 // orchestrator subtree stays extraction-ready (ADR-PC-019 §P2).
 var builder = WebApplication.CreateBuilder(args);
+
+// OpenTelemetry tracing (ADR-IC-007 Layer 1, H.5): turn ON the tracer for this host. The saga
+// substrate already opens saga-advance spans on the shared Babelstone.Engine ActivitySource and
+// threads the W3C traceparent through the saga outbox + Kafka headers — but with NO TracerProvider
+// registered, every StartActivity returns null and the whole path is a no-op (which is why
+// LIVE·saga showed no real spans). Registering the provider + OTLP exporter here makes those spans
+// real and exports them to the Collector (§P1 — never direct-to-backend), so a saga becomes ONE
+// connected trace: the edge SERVER span → the saga-advance spans → (via the dispatcher's manually
+// propagated traceparent) the engine's deposit.* + Npgsql CLIENT spans. The resource stamps
+// service.name=babelstone-orchestrator + service.namespace=babelstone + deployment.environment so
+// every span is attributable (OBS-1); ResolveEnvironment fails fast on an unset environment.
+//
+// NB: AspNetCore instrumentation only (the edge SERVER span + inbound-traceparent join) + the shared
+// Babelstone.Engine source. Deliberately NO HttpClient instrumentation: the dispatcher injects the
+// traceparent MANUALLY off the durable outbox row (SagaCommandDispatchDrainer), so auto-injection
+// would emit a competing header. Tracing only — the orchestrator adds no MeterProvider here.
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource
+        .AddService(BabelstoneResource.OrchestratorServiceName)
+        .AddAttributes(
+        [
+            new KeyValuePair<string, object>(BabelstoneResource.ServiceNamespaceKey, BabelstoneResource.ServiceNamespace),
+            new KeyValuePair<string, object>(BabelstoneResource.DeploymentEnvironmentKey, BabelstoneResource.ResolveEnvironment()),
+        ]))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddSource(BabelstoneTelemetry.ActivitySourceName)
+        .AddOtlpExporter());
 
 // The application-database connection string resolves from configuration at the composition
 // root (the same boundary the engine hosts use, ADR-PC-004 Amendment A1). The migration role
@@ -252,6 +283,31 @@ EdgeServices.Register(builder.Services, runtimeConnectionString
         "Orchestrator:ConnectionString, or ORCHESTRATOR_CONNECTION_STRING."));
 
 var app = builder.Build();
+
+// Hand the active trace id back to the caller on every edge response (the SAME X-Trace-Id contract
+// the engine exposes — Babelstone.Engine.Api.TraceResponseHeader, bd babelstone-2dex / ADR-IC-007
+// Layer 1). The edge SERVER span (AddAspNetCoreInstrumentation) roots the saga's trace and writes
+// the first saga_outbox row with its traceparent, so THIS id is the whole saga's trace id — the key
+// Mission Control's Telemetry tab queries Grafana Tempo by to render the full distributed saga
+// trace. Read from Activity.Current in Response.OnStarting (captured just before the headers flush,
+// when the request activity is still current). The 32-hex W3C trace id is an opaque operational
+// identifier, never PII (ADR-IC-007 §P4 / ADR-PC-004 §P2). Placed before endpoint mapping so it
+// wraps every edge response, including the 202 the constitution POST returns.
+app.Use(async (context, next) =>
+{
+    context.Response.OnStarting(() =>
+    {
+        var traceId = System.Diagnostics.Activity.Current?.TraceId.ToString();
+        if (traceId is not null && !context.Response.Headers.ContainsKey("X-Trace-Id"))
+        {
+            context.Response.Headers["X-Trace-Id"] = traceId;
+        }
+
+        return Task.CompletedTask;
+    });
+
+    await next(context);
+});
 
 // Map the edge routes (POST /api/v1/deposits/constitute, GET /api/v1/processes/{id}/stream). The
 // hosted services (migration, consume loop, dispatcher) start on their own via the host lifecycle.

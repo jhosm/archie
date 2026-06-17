@@ -26,6 +26,12 @@ public static class BabelstoneResource
     /// <summary>The rate-sheet deploy host's <c>service.name</c> (ADR-PC-008 §P2).</summary>
     public const string RateSheetsApiServiceName = "babelstone-rate-sheets-api";
 
+    /// <summary>The saga orchestrator host's <c>service.name</c> (ADR-IC-018 §D4 composition root).
+    /// Its saga-advance spans (opened on the SHARED <c>Babelstone.Engine</c> source) carry this
+    /// service identity, so a saga trace shows the orchestrator and engine as distinct services
+    /// under one estate namespace.</summary>
+    public const string OrchestratorServiceName = "babelstone-orchestrator";
+
     /// <summary>
     /// Resolves <c>deployment.environment</c> from <c>DOTNET_ENVIRONMENT</c>, then
     /// <c>ASPNETCORE_ENVIRONMENT</c>. <b>Fails fast</b>: when neither variable is set (or both are
