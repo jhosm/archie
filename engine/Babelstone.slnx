@@ -10,6 +10,9 @@
     <Project Path="src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj" />
     <!-- The shared OTel instrumentation surface (ADR-IC-007 Layer 1, Epic K.1): ActivitySource + babelstone.* attribute keys. -->
     <Project Path="src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+    <!-- The HOST-side OTel-SDK seam (K.5, bd scd2.3): Npgsql built-in query-telemetry registration,
+         kept out of the SDK-free Babelstone.Telemetry so the engine spine never gains the SDK dep. -->
+    <Project Path="src/Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
     <!-- The real Avro IEventSerializer (E.4): Confluent/Avro deps stay out of Engine/EventStore. -->
     <Project Path="src/Babelstone.Engine.Avro/Babelstone.Engine.Avro.csproj" />
     <!-- The outbox→Redpanda relay (E.4): the only assembly touching both PostgreSQL and Redpanda. -->
@@ -49,6 +52,8 @@
     <Project Path="tests/Babelstone.EventStore.Tests/Babelstone.EventStore.Tests.csproj" />
     <Project Path="tests/Babelstone.Pii.Tests/Babelstone.Pii.Tests.csproj" />
     <Project Path="tests/Babelstone.Engine.Tests/Babelstone.Engine.Tests.csproj" />
+    <!-- K.5 (bd scd2.3): Docker-free fitness for the Npgsql built-in query-telemetry seam. -->
+    <Project Path="tests/Babelstone.Telemetry.Hosting.Tests/Babelstone.Telemetry.Hosting.Tests.csproj" />
     <Project Path="tests/Babelstone.Engine.Analyzers.Tests/Babelstone.Engine.Analyzers.Tests.csproj" />
     <Project Path="tests/Babelstone.Packs.Tests/Babelstone.Packs.Tests.csproj" />
     <Project Path="tests/Babelstone.Engine.Api.Tests/Babelstone.Engine.Api.Tests.csproj" />

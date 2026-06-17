@@ -3,6 +3,7 @@ using Babelstone.Packs;
 using Babelstone.RateSheets;
 using Babelstone.RateSheets.Api;
 using Babelstone.Telemetry;
+using Babelstone.Telemetry.Hosting;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -33,6 +34,10 @@ builder.Services.AddOpenTelemetry()
         ]))
     .WithTracing(tracing => tracing
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
+        // Npgsql's built-in query CLIENT spans (K.5, bd scd2.3): one span per database command the
+        // rate-sheet store issues, on THIS same provider so they share the host resource + OTLP pipe
+        // (OBS-1 parity with the engine host) — never a second, parallel provider.
+        .AddNpgsqlQueryTelemetry()
         .AddOtlpExporter())
     .WithLogging(
         logging => logging.AddOtlpExporter(),

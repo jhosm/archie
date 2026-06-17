@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Telemetry.Hosting</RootNamespace>
+    <AssemblyName>Babelstone.Telemetry.Hosting</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The HOST-side OTel-SDK seam (ADR-IC-007 Layer 1). Deliberately separate from
+         Babelstone.Telemetry: that project is referenced by the engine SPINE and so must stay
+         SDK-free (OpenTelemetry.Api only). Anything that touches the SDK builder types
+         (TracerProviderBuilder / MeterProviderBuilder) or a concrete instrumentation package lives
+         HERE, referenced only by the two HTTP hosts — never by the spine. -->
+    <PackageReference Include="OpenTelemetry" />
+    <!-- Npgsql's built-in OTel instrumentation (bd scd2.3 / K.5): AddNpgsql() (query CLIENT spans)
+         + AddNpgsqlInstrumentation() (db.client.operation.duration). Pinned to the Npgsql driver
+         line so the instrumentation tracks the driver. Confined to this host-only project so the
+         engine spine never gains a transitive Npgsql.OpenTelemetry dependency. -->
+    <PackageReference Include="Npgsql.OpenTelemetry" />
+  </ItemGroup>
+</Project>
