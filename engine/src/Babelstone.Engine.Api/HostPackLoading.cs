@@ -54,11 +54,16 @@ public static class HostPackLoading
         }
 
         // ── OCI mode (ADR-PC-007 §P3/§P4) ──────────────────────────────────────────────────────
-        // Fail FAST, before any registry/pull/verify work: OCI mode shells out to oras + cosign at
-        // load time, but the chiseled runtime image (engine/Dockerfile) deliberately omits both. If
-        // either is absent we throw a clear, named PackLoadException here rather than letting it
-        // surface as an opaque "could not start 'oras'" deep in the eager-load loop (bd 4ow6). Disk
-        // mode returned above and never reaches this — it needs neither tool.
+        // Preflight, before any registry/pull/verify work: OCI mode shells out to oras + cosign at
+        // load time. The production chiseled runtime image now BUNDLES both static binaries on PATH
+        // (engine/Dockerfile oci-tools stage, bd vrn4), so on the intended production path this is a
+        // silent no-op and the engine boots straight into OCI pack loading — the fail-FAST refusal
+        // bd 4ow6 shipped is lifted there. The guard is retained as a defense-in-depth safety net for
+        // the residual misconfiguration: OCI mode selected in some OTHER image that legitimately lacks
+        // the tools (a hand-rolled or older runtime). In that case it still throws a clear, named
+        // PackLoadException here rather than letting it surface as an opaque "could not start 'oras'"
+        // deep in the eager-load loop. Disk mode returned above and never reaches this — it needs
+        // neither tool.
         OciToolchainGuard.EnsureToolsAvailable();
 
         // The durable pack_versions registry resolves pins; cosign verifies; oras pulls by digest.
