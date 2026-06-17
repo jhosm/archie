@@ -155,16 +155,76 @@ internal sealed class CanonicalCorpus
 
 /// <summary>
 /// The structural facts of each committed <c>/product-configs</c> variant the depth-5 corpus names
-/// — the interest shape, term, and coupon cadence the simulation needs to drive the right lifecycle.
-/// These mirror the variant YAML the depths-1–4 validator checks (term_days / interest_variant /
-/// payment_period_months); the simulation reads them by variant id so a new corpus instance only
-/// needs its variant registered here, no per-instance code.
+/// — the interest shape, term, coupon cadence, and (for the banded early-termination variant) the
+/// resolved early-termination schedule the simulation needs to drive the right lifecycle. These
+/// mirror the variant YAML the depths-1–4 validator checks (term_days / interest_variant /
+/// payment_period_months / early_termination); the simulation reads them by variant id so a new
+/// corpus instance only needs its variant registered here, no per-instance code.
 /// </summary>
-internal sealed record VariantShape(string InterestVariant, int TermDays, int PaymentPeriodMonths);
+/// <param name="InterestVariant">The engine's interest shape (<c>AT_MATURITY</c>, <c>ADVANCE</c>,
+/// <c>PERIODIC</c>) — the same string the constitution command carries. The depth-5 driver also
+/// uses the special simulation marker <c>BANDED_EARLY_TERMINATION</c> (see <paramref name="Lifecycle"/>)
+/// to drive a banded break instead of running to maturity; that shape still constitutes as an
+/// underlying <c>AT_MATURITY</c> deposit, so this stays the real interest variant the constitution uses.</param>
+/// <param name="Lifecycle">Which terminal lifecycle the depth-5 simulation drives this variant to:
+/// <c>AtMaturity</c> (constitute → … → mature) for the four maturing shapes, or
+/// <c>BandedEarlyTermination</c> (constitute → break early on the resolved band schedule) for the
+/// 18-month <c>resgate escalonado</c> variant whose load-bearing behaviour is the banded penalty,
+/// not at-maturity payout (bd babelstone-3h64).</param>
+/// <param name="EarlyTermination">The resolved early-termination policy + the elapsed day the break
+/// fires at, ONLY for a <see cref="SimulatedLifecycle.BandedEarlyTermination"/> variant; <c>null</c>
+/// for the maturing shapes. The policy is the per-product config the bank's pricing team owns (02
+/// §2.5); the depth-5 simulation pins it as the deterministic regression schedule the corpus replays
+/// against, exactly as it pins the resolved rate (C.6).</param>
+internal sealed record VariantShape(
+    string InterestVariant,
+    int TermDays,
+    int PaymentPeriodMonths,
+    SimulatedLifecycle Lifecycle = SimulatedLifecycle.AtMaturity,
+    EarlyTerminationShape? EarlyTermination = null);
+
+/// <summary>Which terminal lifecycle the depth-5 simulation drives a variant to (bd babelstone-3h64).</summary>
+internal enum SimulatedLifecycle
+{
+    /// <summary>Constitute → (coupons) → mature: the four maturing interest shapes.</summary>
+    AtMaturity,
+
+    /// <summary>Constitute → break early on the resolved band schedule: the 18-month banded
+    /// <c>resgate escalonado</c> variant, whose distinctive behaviour is the first-match penalty
+    /// schedule, never exercised by an at-maturity run.</summary>
+    BandedEarlyTermination,
+}
+
+/// <summary>The resolved banded early-termination schedule the depth-5 simulation drives a
+/// <see cref="SimulatedLifecycle.BandedEarlyTermination"/> variant against, plus the elapsed day the
+/// break fires at (so the band first-match is deterministic and the expected sequence is fixed). The
+/// policy is the engine-instance early-termination config the service resolves (02 §2.5), pinned here
+/// as the regression schedule exactly as the corpus pins the resolved rate.</summary>
+/// <param name="Policy">The ordered (window → penalty) band schedule with its optional floor.</param>
+/// <param name="BreakAfterDays">Elapsed days from constitution to the simulated break — chosen so a
+/// specific band wins first-match, making the penalty (and thus the lifecycle shape) deterministic.</param>
+internal sealed record EarlyTerminationShape(EarlyTerminationPolicy Policy, int BreakAfterDays);
 
 internal static class TermDepositVariants
 {
-    // The five v1 launch variants (product-configs/*.yaml), one per interest shape (F.7).
+    // The §2.5-shaped banded schedule the 18-month `resgate escalonado` variant resolves to (the
+    // engine-instance early-termination config, ADR-PC-009 stand-in): a staggered penalty on the
+    // accrued interest — 100% inside the first band, 50% in the second, 25% on the open tail — no
+    // floor. This IS the variant's load-bearing behaviour; the depth-5 sim breaks at day 200 (the
+    // second band, ≤365d → 50% of accrued) so the banded first-match path is actually replayed
+    // rather than mapped to a plain at-maturity shape (bd babelstone-3h64).
+    private static readonly EarlyTerminationShape BandedResgateEscalonado = new(
+        EarlyTerminationPolicy.Banded(
+        [
+            new EarlyTerminationBand(UpToDays: 90, PenaltyBasisPoints: 10_000, PenaltyBasis.AccruedInterest),
+            new EarlyTerminationBand(UpToDays: 365, PenaltyBasisPoints: 5_000, PenaltyBasis.AccruedInterest),
+            new EarlyTerminationBand(UpToDays: null, PenaltyBasisPoints: 2_500, PenaltyBasis.AccruedInterest),
+        ]),
+        BreakAfterDays: 200);
+
+    // The five v1 launch variants (product-configs/*.yaml), one per interest shape (F.7). The
+    // 18-month `resgate escalonado` constitutes as an underlying AT_MATURITY deposit but the
+    // simulation drives it to a BANDED early termination — its distinctive behaviour (bd babelstone-3h64).
     private static readonly IReadOnlyDictionary<string, VariantShape> Shapes =
         new Dictionary<string, VariantShape>(StringComparer.Ordinal)
         {
@@ -172,7 +232,9 @@ internal static class TermDepositVariants
             ["dpz_pt_12m_juros_mensal"] = new("PERIODIC", TermDays: 365, PaymentPeriodMonths: 1),
             ["dpz_pt_24m_juros_trimestral"] = new("PERIODIC", TermDays: 730, PaymentPeriodMonths: 3),
             ["dpz_pt_6m_juros_antecipados"] = new("ADVANCE", TermDays: 180, PaymentPeriodMonths: 0),
-            ["dpz_pt_18m_resgate_escalonado"] = new("AT_MATURITY", TermDays: 545, PaymentPeriodMonths: 0),
+            ["dpz_pt_18m_resgate_escalonado"] = new(
+                "AT_MATURITY", TermDays: 545, PaymentPeriodMonths: 0,
+                SimulatedLifecycle.BandedEarlyTermination, BandedResgateEscalonado),
         };
 
     public static VariantShape For(string variantId) =>
