@@ -95,7 +95,9 @@ wait_postgres "$PG_CONTAINER"
 ok "PostgreSQL accepting connections on localhost:${PG_PORT}"
 
 # ---------------------------------------------------------------------------
-# 2. event-store schema (forward-only SQL; shared applier, guards on command_dedup)
+# 2. event-store schema (forward-only SQL; shared ledger applier — applies only
+#    the migrations a `schema_migrations` ledger hasn't recorded, so a pre-existing
+#    volume gets the genuinely-missing newer migrations, never a re-run of 0001)
 # ---------------------------------------------------------------------------
 say "2/6 Applying the event-store schema"
 apply_event_store_schema "$PG_CONTAINER" babelstone "$MIGRATIONS_DIR"
