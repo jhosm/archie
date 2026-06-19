@@ -15,6 +15,13 @@ public sealed record InboxConsumerOptions
     public required string BootstrapServers { get; init; }
 
     /// <summary>
+    /// The SASL/SCRAM credential this consumer presents to Redpanda (ADR-IC-016 plane ii). The host
+    /// resolves the username/password through <c>ISecretProvider</c> at the composition root and
+    /// supplies it here; left at its default (no username) SASL is OFF — the plaintext local-dev posture.
+    /// </summary>
+    public KafkaSaslOptions Sasl { get; init; } = new();
+
+    /// <summary>
     /// The Kafka consumer group id. Stable per logical consumer (ADR-IC-001): the offsets the
     /// group commits are what make a restart resume where it left off rather than re-reading the
     /// whole topic. Two processes in the same group share the partitions; the inbox dedup absorbs

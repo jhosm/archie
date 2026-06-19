@@ -1,0 +1,39 @@
+# Grafana teams ↔ role binding (ADR-IC-007 §P6 / bd babelstone-njt2.4). Teams are how a
+# deployment assigns people to the four roles without per-user grants: a person joins a team,
+# the team carries the role, the role carries the datasource/dashboard permissions above.
+#
+# In plain English: four teams, one per role. Put your NOC operators in the noc team, your
+# engineers in the engineering team, your compliance officers in the compliance team. Who is in
+# each team is deployment data (it comes from the org's SSO/IdP group mapping in production, not
+# from this file); this file declares the teams and which role each carries, so the mapping is
+# reviewable and stable.
+#
+# Production binds team membership to the IdP groups via SSO (ADR-IC-007 §P6 names SAML/OAuth/
+# LDAP as the Enterprise SSO path); for the self-hosted POC the teams exist and roles are bound,
+# and membership is seeded by the operator.
+apiVersion: 1
+
+teams:
+  - name: 'noc'
+    orgId: 1
+    description: 'Network Operations Center — operational health watch.'
+    roles:
+      - 'babelstone:noc-viewer'
+
+  - name: 'engineering'
+    orgId: 1
+    description: 'Engineers / developers — full-signal debugging.'
+    roles:
+      - 'babelstone:engineer'
+
+  - name: 'compliance'
+    orgId: 1
+    description: 'Compliance — audit trails, business metrics, business log stream.'
+    roles:
+      - 'babelstone:compliance-viewer'
+
+  - name: 'platform-admin'
+    orgId: 1
+    description: 'Platform administrators — full stack access + configuration.'
+    roles:
+      - 'babelstone:admin'

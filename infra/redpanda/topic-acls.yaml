@@ -1,0 +1,66 @@
+# Redpanda topic ACLs — the declarative source of truth for plane (ii) of ADR-IC-016
+# (Kafka SASL/SCRAM identity + topic authorization). Reviewed in the same PR as the
+# services that use it (ADR-IC-016 §5: "Topic ACLs are deployment configuration, reviewed
+# in the same PR as the service that uses them … declarative infrastructure, not convention").
+#
+# PLAIN ENGLISH: every service that talks to Redpanda logs in with its own username
+# (SASL/SCRAM — wired in code via KafkaSaslOptions, resolved from OpenBao through
+# ISecretProvider). This file says WHO may read or write WHICH topics. A compromised
+# publisher can then only publish to the topics it is granted here; it cannot reach into
+# another context's topics or issue commands. `apply-acls.sh` turns this file into live
+# `rpk` ACL rules against a cluster.
+#
+# Default posture (ADR-IC-001 §Principle 2 — "Kafka is a shared medium, not a trusted bus"):
+# the cluster denies by default once `--kafka-enable-authorization=true` is set; only the
+# grants below open access. Local dev (infra/compose.yaml `--mode dev-container`) runs WITHOUT
+# auth on loopback, so this file is a no-op there — it governs the authenticated deployment.
+#
+# Topic naming reality: the runtime routes a record to a topic named after `aggregate_type`
+# (ADR-IC-004 §Consequences) — e.g. `term_deposit` — while doc 10 / ADR-IC-016 refer to the
+# logical `deposits.integration.events` / `deposits.process.events` domain topics. Both names
+# are listed per principal so the ACL set covers the topics as deployed AND as the threat model
+# names them; trim to the cluster's actual topic list at apply time.
+
+# The service principals (the SASL/SCRAM usernames each KafkaSaslOptions.Username resolves to).
+# One distinct identity per client (ADR-IC-016 §4) so a compromise is contained to its grants.
+principals:
+  - name: svc-engine-deposits        # the Deposits engine API (event producer of record)
+    description: The term-deposit engine host — the only writer of deposit events.
+  - name: svc-outbox-publisher       # the IC-004 outbox relay (OutboxDrainer)
+    description: >-
+      The outbox→Redpanda relay. Its identity is DISTINCT from the Deposits API's (ADR-IC-016
+      §4) so a compromised publisher can publish only to the deposit topics, never issue commands.
+  - name: svc-orchestrator           # the saga orchestrator (InboxPump consumer + producer)
+    description: The constitution-saga orchestrator — consumes deposit/process events, produces process events.
+  - name: svc-inbox-consumer         # a generic downstream InboxPump consumer
+    description: A downstream consumer — read-only on the topics it subscribes to.
+
+# WRITE (produce) grants. Only the Deposits side may produce deposit events; no service may
+# produce to another context's topics (ADR-IC-016 §5 / doc 10 Boundary 3).
+produce:
+  - principal: svc-engine-deposits
+    topics: [term_deposit, deposits.integration.events, deposits.process.events]
+  - principal: svc-outbox-publisher
+    topics: [term_deposit, deposits.integration.events, deposits.process.events]
+  - principal: svc-orchestrator
+    # The orchestrator emits its own process events (saga commands / decided steps), never the
+    # engine's integration events — that asymmetry is the point (Principle 6 / ADR-IC-016 §2).
+    topics: [deposits.process.events]
+
+# READ (consume) grants + the consumer group each principal commits offsets under. Each consumer
+# is granted ONLY the topics it subscribes to (ADR-IC-016 §5 / doc 10 Boundary 4).
+consume:
+  - principal: svc-orchestrator
+    topics: [term_deposit, deposits.process.events]
+    groups: [constitution-process]      # ISagaModule.ConsumerGroupId
+  - principal: svc-inbox-consumer
+    topics: [term_deposit]
+    groups: [inbox-consumer]
+
+# Schema Registry write access is part of this plane (ADR-IC-016 §5): registration is a CI/CD
+# action, and a NONE-compatibility change needs elevated authorization — never an ad-hoc grant.
+# It is enforced at the registry/CI tier (scripts/avro-compat-check.sh + the registration job),
+# not as a Kafka topic ACL, and is recorded here only to keep the plane's surface in one place.
+schema_registry:
+  registration: ci-cd-only
+  none_compatibility_change: requires-elevated-authorization

@@ -345,6 +345,49 @@ public sealed class TermDepositConstitutionService(
     }
 
     /// <summary>
+    /// Record the GDPR Article 17 erasure fact on a deposit (bd babelstone-nzw6): append
+    /// <see cref="PersonalDataErasureRequested"/> so the deposit folds to <c>Erased</c>. This method is
+    /// the SECOND half of the right-to-be-forgotten flow — the host has ALREADY crypto-shredded the
+    /// subject's key (<c>IPiiKeyStore.DestroyKeyAsync</c>, ADR-PC-004 §P3) at the OpenBao boundary
+    /// before calling here, so this layer stays PII-free and only writes the structural audit fact.
+    /// </summary>
+    /// <remarks>
+    /// Order matters and is the host's contract: the key is destroyed FIRST, then this event is appended.
+    /// If the append fails after the key is gone, the (idempotent) destroy + a retried append converge —
+    /// the key stays destroyed (erasure is irreversible by design) and the audit fact lands on retry.
+    /// The lifecycle gate (F.3) makes erasing an already-Erased deposit illegal, which is also the
+    /// idempotency guard against a double-erase request. The event carries only the structural facts the
+    /// command supplies — never the raw subject id (ADR-PC-004 §P2).
+    /// </remarks>
+    public async Task<long> ErasePersonalDataAsync(ErasePersonalDataCommand command, CancellationToken ct = default)
+    {
+        // 1. Rehydrate the deposit (load-then-append on the live stream head).
+        var hydrated = await runtime.LoadAsync(command.DepositId, ct);
+        var position = hydrated.State;
+
+        // 2. Transition-legality gate (F.3): erasure is legal from any state that still holds the
+        //    subject's PII (live OR business-closed), never from Pending (no deposit) or Erased
+        //    (already erased — the idempotency guard). The single LifecycleTransitions table decides.
+        RejectIfIllegal(position.Lifecycle, LifecycleTransitions.Transition.Erase, command.DepositId, "erase personal data");
+
+        // 3. Append the structural audit fact. No decider/financial math — erasure carries no money;
+        //    the erasure DATE is derived from the command instant and passed as an input (no clock here).
+        var erasedOn = DateOnly.FromDateTime(command.ErasedAt.UtcDateTime);
+        var erased = new PersonalDataErasureRequested(
+            DepositId: command.DepositId,
+            SubjectPseudonym: command.SubjectPseudonym,
+            ErasedOn: erasedOn,
+            ErasureReason: command.ErasureReason);
+
+        // Thread the CommandId so the append's in-transaction command_dedup INSERT fires (ADR-PC-029
+        // slot 4): an at-least-once retry of the SAME erasure raises DuplicateCommandException and
+        // returns the original outcome, never a second append — irreversible key destruction demands it.
+        return await runtime.AppendAsync(
+            command.DepositId, hydrated.Version, [erased],
+            Context(command.Actor, command.ErasedAt, command.CommandId), ct);
+    }
+
+    /// <summary>
     /// Open the renewed instance — step 2 of the renewal saga (bd babelstone-mtto PR B; steps 6–8 of
     /// the retired monolithic <c>RenewAsync</c>). Given the CLOSING deposit, which MUST already be
     /// <see cref="DepositLifecycle.Matured"/> (the autonomous maturity leg ran first), this:

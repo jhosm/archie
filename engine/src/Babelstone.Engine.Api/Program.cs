@@ -165,6 +165,23 @@ builder.Services.AddSingleton<IDepositReadModelStore>(_ => new PostgresDepositRe
 //     registered the outbox reuses the JSON store codec (the pre-split single-encoding).
 builder.Services.AddSingleton<IEventSerializer, JsonEventSerializer>();
 builder.Services.AddSingleton<IPiiProtector, NullPiiProtector>();
+
+// The per-subject PII transit-key boundary (IPiiKeyStore, ADR-PC-004 §P2/§P3) — distinct from the
+// IPiiProtector encrypt seam above and the ISecretProvider KV seam: this is the GDPR crypto-shred
+// primitive (DestroyKeyAsync) the right-to-be-forgotten endpoint drives (bd babelstone-nzw6).
+// Default to the identity NullPiiKeyStore so `make up` / local dev wires the erasure flow end-to-end
+// without OpenBao (no PII is encrypted yet — the NullPiiProtector posture — so there is no real key to
+// shred). With OpenBao:Enabled the real per-subject transit keys drop in via the same seam, no code
+// change. The token is the AppRole client token the KV provider already authenticates with.
+builder.Services.AddSingleton<IPiiKeyStore>(_ =>
+    builder.Configuration.GetValue<bool>("OpenBao:Enabled")
+        ? new OpenBaoTransitClient(
+            new HttpClient { BaseAddress = new Uri(builder.Configuration["OpenBao:Address"] ?? "http://localhost:8200/") },
+            token: builder.Configuration["OpenBao:Token"]
+                ?? throw new InvalidOperationException("OpenBao:Enabled is set but OpenBao:Token is missing for the transit key store."),
+            mountPath: builder.Configuration["OpenBao:TransitMount"] ?? "transit")
+        : new NullPiiKeyStore());
+
 HostBusEncoding.AddBusEncoding(builder.Services, builder.Configuration);
 
 // Catalog-gated relay (ADR-IC-017 §P1 / INTEGRATION_EVENT_CATALOG_GATED): the engine publishes an

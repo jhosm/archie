@@ -5,19 +5,20 @@ using Xunit;
 namespace Babelstone.Families.TermDeposit.Tests;
 
 /// <summary>
-/// E.1 dispatch tests: the family module registers all eleven event types, and the engine
+/// E.1 dispatch tests: the family module registers all twelve event types, and the engine
 /// folds each through its handler into the deposit position. The canonical AT_MATURITY numbers
-/// match the decider + financial-math kernel (the §5.4 withholding split).
+/// match the decider + financial-math kernel (the §5.4 withholding split). The twelfth event is
+/// the GDPR-erasure fact (bd babelstone-nzw6), which the fold LABELS Erased.
 /// </summary>
 public sealed class TermDepositDispatchTests
 {
     private static readonly HandlerRegistry Registry = TermDepositFamilyModule.Registry();
 
     [Fact]
-    public void Module_registers_all_eleven_event_types()
+    public void Module_registers_all_twelve_event_types()
     {
         var module = new TermDepositFamilyModule();
-        Assert.Equal(11, module.Handlers.Count);
+        Assert.Equal(12, module.Handlers.Count);
     }
 
     [Fact]
@@ -113,7 +114,7 @@ public sealed class TermDepositDispatchTests
     }
 
     [Fact]
-    public void Dispatches_all_eleven_event_types_without_throwing()
+    public void Dispatches_all_twelve_event_types_without_throwing()
     {
         var seed = DepositPosition.Empty;
 
@@ -135,6 +136,7 @@ public sealed class TermDepositDispatchTests
             new DepositCorrected(Guid.NewGuid(), "corr-1", "principal", "ref-old", "ref-new",
                 new DateOnly(2026, 6, 15), "typo"),
             new DepositTransferredToHeirs(Guid.NewGuid(), "case-1", new Money(1_021_900), new DateOnly(2026, 6, 15)),
+            new PersonalDataErasureRequested(Guid.NewGuid(), "a1b2c3d4e5f60718", new DateOnly(2026, 6, 15), "GDPR_ARTICLE_17"),
         };
 
         foreach (var @event in events)
@@ -142,6 +144,32 @@ public sealed class TermDepositDispatchTests
             var state = Dispatch(seed, @event);
             Assert.NotNull(state);
         }
+    }
+
+    [Fact]
+    public void Erasure_fold_labels_the_deposit_Erased_and_leaves_structural_fields_intact()
+    {
+        // GDPR Article 17 (bd babelstone-nzw6 / ADR-PC-004 §P3): the impure shell crypto-shreds the
+        // subject's key BEFORE the event is appended; the fold only LABELS the deposit Erased. The
+        // structural (non-personal) fields — id, amounts, dates — stay queryable: the personal data
+        // lived behind the OpenBao key, never in this projection.
+        var depositId = Guid.NewGuid();
+        var active = Dispatch(DepositPosition.Empty, new DepositConstituted(
+            DepositId: depositId, Principal: new Money(1_000_000), TanBasisPoints: 300,
+            RateSheetVersionId: "rs-1", TermDays: 365, StartDate: new DateOnly(2026, 1, 15),
+            MaturityDate: new DateOnly(2027, 1, 15), InterestVariant: "AT_MATURITY", AutoRenewalPolicy: "NONE"));
+
+        var erased = Dispatch(active, new PersonalDataErasureRequested(
+            DepositId: depositId,
+            SubjectPseudonym: "a1b2c3d4e5f60718",
+            ErasedOn: new DateOnly(2026, 6, 15),
+            ErasureReason: "GDPR_ARTICLE_17"));
+
+        Assert.Equal(DepositLifecycle.Erased, erased.Lifecycle);
+        // Structural fields untouched — still queryable post-erasure.
+        Assert.Equal(depositId, erased.DepositId);
+        Assert.Equal(new Money(1_000_000), erased.Principal);
+        Assert.Equal(new DateOnly(2027, 1, 15), erased.MaturityDate);
     }
 
     private static DepositPosition Dispatch(DepositPosition state, DomainEvent @event)

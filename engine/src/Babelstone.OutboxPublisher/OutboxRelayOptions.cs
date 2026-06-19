@@ -13,6 +13,13 @@ public sealed record OutboxRelayOptions
     public required string BootstrapServers { get; init; }
 
     /// <summary>
+    /// The SASL/SCRAM credential the relay's producer presents to Redpanda (ADR-IC-016 plane ii). The
+    /// host resolves the username/password through <c>ISecretProvider</c> at the composition root and
+    /// supplies it here; left at its default (no username) SASL is OFF — the plaintext local-dev posture.
+    /// </summary>
+    public KafkaSaslOptions Sasl { get; init; } = new();
+
+    /// <summary>
     /// The CloudEvents <c>ce_source</c> — the URI of the producing service (ADR-IC-015).
     /// Constant per deployment; carried verbatim into every record header.
     /// </summary>

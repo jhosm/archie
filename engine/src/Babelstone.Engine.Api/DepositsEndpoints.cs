@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
 using Babelstone.Families.TermDeposit.Application;
+using Babelstone.Pii;
 using Babelstone.Telemetry;
 using Microsoft.AspNetCore.Mvc;
 
@@ -25,6 +26,11 @@ public static class DepositsEndpoints
         app.MapPost("/v1/deposits", ConstituteAsync);
         app.MapPost("/v1/deposits/{id:guid}/maturity", MatureAsync);
         app.MapPost("/v1/deposits/{id:guid}/interest", PayInterestAsync);
+
+        // GDPR Article 17 right-to-be-forgotten (bd babelstone-nzw6): crypto-shred the subject's PII
+        // key and record the erasure fact. A command surface, mandatory Idempotency-Key (ADR-PC-029
+        // slot 4) — erasure must be safely retryable since key destruction is irreversible.
+        app.MapPost("/v1/deposits/{id:guid}/erase-personal-data", ErasePersonalDataAsync);
 
         // The renewal-saga command surface (bd babelstone-mtto PR B): the two idempotent legs the
         // renewal saga drives, replacing the retired monolithic RenewAsync. {id} is the CLOSING (Matured)
@@ -389,6 +395,137 @@ public static class DepositsEndpoints
         // The post-append fold is authoritative (read-your-writes by construction): its head version is
         // the commit_sequence, carried on the response as last_sequence (DepositResponse.FromFold).
         return Results.Ok(DepositResponse.FromFold(hydrated));
+    }
+
+    /// <summary>The secret name the pseudonym HMAC salt resolves under through <c>ISecretProvider</c>
+    /// (ADR-PC-004 §A1). It is a SECRET — the same salt the Customer Data Store holds to reverse the
+    /// pseudonym (ADR-IC-016 §8) — never a compile-time constant, never logged.</summary>
+    private const string SubjectPseudonymSaltSecret = "SubjectPseudonymSalt";
+
+    /// <summary>
+    /// GDPR Article 17 right-to-be-forgotten (bd babelstone-nzw6): crypto-shred the data subject's
+    /// encryption key (ADR-PC-004 §P3) and record the structural erasure fact. After this the subject's
+    /// PII ciphertext is permanently unrecoverable and only the deposit's non-personal structural fields
+    /// remain queryable. The raw subject id is used ONLY at this host shell — to destroy the key and to
+    /// derive the salted one-way pseudonym that goes on the persisted event — and is never written to the
+    /// bus, a span, or the response (ADR-PC-004 §P2 / ADR-IC-016 §8).
+    /// </summary>
+    private static async Task<IResult> ErasePersonalDataAsync(
+        Guid id,
+        ErasePersonalDataRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        TermDepositConstitutionService service,
+        AggregateRuntime<DepositPosition> runtime,
+        IPiiKeyStore piiKeyStore,
+        ISecretProvider secrets,
+        ICommandLog commandLog,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        // ADR-PC-029 slot 4: a deterministic Idempotency-Key is MANDATORY — key destruction is
+        // irreversible, so a non-idempotent retry must never double-fire or be lost. Fail loud (400)
+        // rather than silently accept a non-idempotent erasure.
+        if (idempotencyKey is null || !Guid.TryParse(idempotencyKey, out var commandId))
+        {
+            return Results.Problem(
+                "Idempotency-Key header is required and must be a UUID (ADR-PC-029 slot 4).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        if (string.IsNullOrWhiteSpace(request.SubjectId))
+        {
+            return Results.Problem(
+                "subject_id is required to crypto-shred the subject's key.",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // Pre-check BEFORE any side effect (key destroy / append): a known command id replays the
+        // ORIGINAL outcome with NO second crypto-shred and NO second append (ADR-PC-029 slot 4). Returns
+        // the same commit_sequence the first apply did — the idempotent retry the mandatory key requires
+        // (NOT the lifecycle 422, which only guards a fresh re-erasure with a NEW command id).
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(new ErasePersonalDataResponse(
+                id, replay.State.Lifecycle.ToString().ToUpperInvariant(), receipt.CommitSequence));
+        }
+
+        var erasedAt = request.ErasedAt ?? clock.GetUtcNow();
+        var actor = request.Actor ?? "gdpr:erasure";
+        var reason = string.IsNullOrWhiteSpace(request.ErasureReason) ? "GDPR_ARTICLE_17" : request.ErasureReason;
+
+        // Open a product-semantic span in the impure host shell (never in a fold). It carries ONLY the
+        // structural partition_key and the salted subject_pseudonym — never the raw subject id
+        // (ADR-IC-016 §8 / catalogue OBS_NO_PII_ATTRS). With no tracer listening this is a no-op.
+        using var span = BabelstoneTelemetry.ActivitySource.StartActivity(
+            BabelstoneAttributes.SpanConstituted, ActivityKind.Internal);
+
+        // Derive the salted one-way pseudonym (the salt is an ISecretProvider secret — the same salt
+        // the Customer Data Store holds, ADR-IC-016 §8). This is the ONLY value derived from the raw
+        // subject id that ever leaves this method: the bus event and the span carry the hash, not the id.
+        string subjectPseudonym;
+        try
+        {
+            var salt = await secrets.GetSecretAsync(SubjectPseudonymSaltSecret, ct);
+            subjectPseudonym = ClientPseudonym.Of(request.SubjectId, salt);
+        }
+        catch (SecretProviderException)
+        {
+            // No salt configured ⇒ we cannot mint a non-reversible pseudonym, so we must NOT proceed
+            // (an un-salted reference would re-leak identity, ADR-IC-016 §8 residual risk). Fail loud.
+            return Results.Problem(
+                "Cannot derive the subject pseudonym: the pseudonym salt secret is not configured.",
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+
+        span?.SetTag(BabelstoneAttributes.PartitionKey, id.ToString());
+        span?.SetTag(BabelstoneAttributes.SubjectPseudonym, subjectPseudonym);
+
+        long commitSequence;
+        try
+        {
+            // Crypto-shred FIRST (ADR-PC-004 §P3) — irreversible, idempotent (destroying an absent key
+            // is a no-op). Then record the structural audit fact. If the append fails after the destroy,
+            // a retry re-destroys (no-op) and re-appends, converging on the erased state.
+            await piiKeyStore.DestroyKeyAsync(request.SubjectId, ct);
+
+            commitSequence = await service.ErasePersonalDataAsync(
+                new ErasePersonalDataCommand(
+                    DepositId: id,
+                    SubjectPseudonym: subjectPseudonym,
+                    ErasedAt: erasedAt,
+                    ErasureReason: reason,
+                    Actor: actor,
+                    CommandId: commandId),
+                ct);
+        }
+        catch (DuplicateCommandException dup)
+        {
+            // A concurrent duplicate slipped past the pre-check: the in-transaction command_dedup INSERT
+            // rolled the append back (no second append) and handed back the ORIGINAL outcome. Return it
+            // verbatim — the same idempotent replay slot 4 mandates (ADR-PC-029).
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(new ErasePersonalDataResponse(
+                id, replay.State.Lifecycle.ToString().ToUpperInvariant(), dup.CommitSequence));
+        }
+        catch (ConcurrencyException)
+        {
+            return Results.Problem($"Deposit {id} was modified concurrently.", statusCode: StatusCodes.Status409Conflict);
+        }
+        catch (DomainRejectedException e)
+        {
+            // Not erasable from the current lifecycle (no deposit, or already erased under a DIFFERENT
+            // command id — the lifecycle guard). Surface as 422; the key destroy above is idempotent so a
+            // re-erase is harmless. (A retry of the SAME command id is handled by the dedup paths above.)
+            return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
+        // Read back the erased position: only non-personal structural fields remain (the PII lived
+        // behind the now-destroyed key, never in this projection). Confirm the terminal Erased state.
+        var hydrated = await runtime.LoadAsync(id, ct);
+        return Results.Ok(
+            new ErasePersonalDataResponse(id, hydrated.State.Lifecycle.ToString().ToUpperInvariant(), commitSequence));
     }
 
     /// <summary>

@@ -69,6 +69,31 @@ public sealed record PayInterestRequest(
     string? Actor = null);
 
 /// <summary>
+/// Exercise the data subject's GDPR Article 17 right-to-be-forgotten on a deposit (bd babelstone-nzw6):
+/// the engine crypto-shreds the subject's encryption key (ADR-PC-004 §P3) and records the erasure fact.
+/// </summary>
+/// <remarks>
+/// <paramref name="SubjectId"/> is the raw data-subject key name — the ONE place it appears, in the
+/// request body of an authenticated erasure command (the caller is e.g. a compliance officer acting on a
+/// verified request). It is used at the host ONLY to (a) destroy the subject's key and (b) derive the
+/// salted one-way pseudonym that goes on the persisted event; it is NEVER stored on the bus or a span
+/// (ADR-PC-004 §P2). The host holds the pseudonym salt as a secret (ISecretProvider), not the request.
+/// </remarks>
+/// <param name="SubjectId">The data-subject key name to crypto-shred. Resolved at the host, never persisted.</param>
+/// <param name="ErasureReason">A stable machine code for the erasure (defaults to <c>GDPR_ARTICLE_17</c>) — never PII.</param>
+/// <param name="ErasedAt">The erasure instant; host-stamped if omitted.</param>
+/// <param name="Actor">The acting principal recorded on the append (defaults to <c>gdpr:erasure</c>).</param>
+public sealed record ErasePersonalDataRequest(
+    string SubjectId,
+    string? ErasureReason = null,
+    DateTimeOffset? ErasedAt = null,
+    string? Actor = null);
+
+/// <summary>The erasure outcome: the deposit, its terminal <c>ERASED</c> status, and the commit
+/// sequence of the appended audit fact. Carries no PII — the subject id is never echoed back.</summary>
+public sealed record ErasePersonalDataResponse(Guid DepositId, string Status, long CommitSequence);
+
+/// <summary>
 /// Step 2 of the renewal saga (bd babelstone-mtto PR B): open the renewed instance off a CLOSING
 /// (Matured) deposit. The route <c>{id}</c> is the closing deposit id; the body is MINIMAL
 /// (bd babelstone-mtto.5) — just the new deposit id, the renewal instant and the actor. The engine

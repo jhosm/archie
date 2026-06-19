@@ -4,7 +4,7 @@ namespace Babelstone.Families.TermDeposit;
 /// The term-deposit lifecycle state machine (F.3, babelstone-29v8): the ONE explicit, auditable
 /// transition-legality table for the aggregate — constitution → active → maturity / termination /
 /// succession → closed. F.2 (babelstone-5czr) landed the full <see cref="DepositLifecycle"/> enum
-/// and all eleven events but deliberately did NOT enforce transition legality ("the F.3 state
+/// and the family's events but deliberately did NOT enforce transition legality ("the F.3 state
 /// machine, deliberately NOT enforced here"); this type is that enforcement, owned by the family.
 /// </summary>
 /// <remarks>
@@ -68,6 +68,11 @@ public static class LifecycleTransitions
 
         /// <summary>Correct a recorded fact — <see cref="DepositCorrected"/> (state-preserving; the real bitemporal supersession is D.1/D.2).</summary>
         Correct,
+
+        /// <summary>Erase the subject's personal data — <see cref="PersonalDataErasureRequested"/>
+        /// (→ Erased). GDPR Article 17 (ADR-PC-004 §P3): legal from ANY state that still holds the
+        /// subject's PII (live OR already-closed), never from Pending (no deposit) or Erased (idempotent).</summary>
+        Erase,
     }
 
     // The transition-legality table: for each transition, the set of lifecycle states it may fire FROM.
@@ -76,10 +81,16 @@ public static class LifecycleTransitions
     //     or rejecting (FailConstitution) a deposit. A deposit can only be constituted once.
     //   - "Active" is the live, accruing deposit. Every operating transition — accrue, withhold, coupon,
     //     mature, renew, terminate-early, partial-withdraw, transfer-to-heirs, correct — fires only here.
-    //   - Matured / Failed / Renewed / TerminatedEarly / TransferredToHeirs are TERMINAL ("closed"):
-    //     no transition lists any of them as a legal source, so the decider rejects e.g. maturing a
-    //     Matured deposit or paying a coupon on a closed one. Terminality is expressed as ABSENCE from
-    //     every source set, not a separate flag — one table, no second place to keep in sync.
+    //   - Matured / Failed / Renewed / TerminatedEarly / TransferredToHeirs are BUSINESS-TERMINAL
+    //     ("closed"): no BUSINESS transition lists any of them as a legal source, so the decider rejects
+    //     e.g. maturing a Matured deposit or paying a coupon on a closed one. Business terminality is
+    //     expressed as ABSENCE from every business-transition source set — one table, no separate flag.
+    //   - The ONE exception is the cross-cutting regulatory Erase transition (GDPR Article 17,
+    //     ADR-PC-004 §P3): it DELIBERATELY lists the business-terminal states as legal sources, because a
+    //     closed deposit still holds the subject's PII until erased. Erasure is orthogonal to the business
+    //     lifecycle, not part of it — so "terminal to business operations" and "still erasable" coexist.
+    //   - Erased is the GENUINELY-terminal state: it is the legal source of NO transition (business or
+    //     regulatory), so even a re-erasure is rejected (the idempotency guard).
     private static readonly IReadOnlyDictionary<Transition, IReadOnlySet<DepositLifecycle>> LegalSources =
         new Dictionary<Transition, IReadOnlySet<DepositLifecycle>>
         {
@@ -99,6 +110,19 @@ public static class LifecycleTransitions
             [Transition.Renew] = Set(DepositLifecycle.Active),
             [Transition.TerminateEarly] = Set(DepositLifecycle.Active),
             [Transition.TransferToHeirs] = Set(DepositLifecycle.Active),
+
+            // GDPR erasure (ADR-PC-004 §P3): legal from any state that still holds the subject's PII —
+            // a live deposit OR an already-closed one (a Matured/TerminatedEarly/Renewed/
+            // TransferredToHeirs/Failed deposit still carries the subject's PII until erased). Excluded:
+            // Pending (no deposit exists to erase) and Erased itself (already erased — the decider
+            // rejects a re-erasure as an illegal transition, which is also the idempotency guard).
+            [Transition.Erase] = Set(
+                DepositLifecycle.Active,
+                DepositLifecycle.Matured,
+                DepositLifecycle.Failed,
+                DepositLifecycle.Renewed,
+                DepositLifecycle.TerminatedEarly,
+                DepositLifecycle.TransferredToHeirs),
         };
 
     /// <summary>

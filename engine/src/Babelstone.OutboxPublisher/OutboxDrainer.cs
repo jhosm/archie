@@ -69,6 +69,10 @@ public sealed class OutboxDrainer : IAsyncDisposable
                 EnableIdempotence = true,
                 Acks = Acks.All,
             };
+            // ADR-IC-016 plane ii: present the relay's distinct SASL/SCRAM identity to Redpanda when a
+            // credential is configured (resolved by the host through ISecretProvider). A no-op in local
+            // dev where no credential is supplied — additive, leaving idempotence/acks untouched.
+            options.Sasl.ApplyTo(config);
             _producer = new ProducerBuilder<byte[], byte[]>(config).Build();
             _ownsProducer = true;
         }

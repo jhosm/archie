@@ -43,6 +43,8 @@ public sealed class TermDepositFamilyModule : IFamilyModule
             new DispatchableHandler<DepositPosition, DepositCorrected>(new DepositCorrectedHandler())),
         new("term_deposit.DepositTransferredToHeirs", typeof(DepositTransferredToHeirs),
             new DispatchableHandler<DepositPosition, DepositTransferredToHeirs>(new DepositTransferredToHeirsHandler())),
+        new("term_deposit.PersonalDataErasureRequested", typeof(PersonalDataErasureRequested),
+            new DispatchableHandler<DepositPosition, PersonalDataErasureRequested>(new PersonalDataErasureRequestedHandler())),
     ];
 
     /// <summary>Convenience for tests and the durable runtime: the registry for this family alone.</summary>

@@ -28,6 +28,13 @@ public enum DepositLifecycle
 
     /// <summary>Balance transferred to the holder's heirs on succession (terminal).</summary>
     TransferredToHeirs,
+
+    /// <summary>GDPR Article 17 right-to-be-forgotten exercised — the subject's PII key was
+    /// crypto-shredded (ADR-PC-004 §P3) and only non-personal structural fields remain queryable
+    /// (terminal). Reachable from any non-Pending state: erasure is a regulatory obligation that can
+    /// land on a live OR an already-closed deposit (a matured/terminated deposit still holds the
+    /// subject's PII until erased).</summary>
+    Erased,
 }
 
 /// <summary>
