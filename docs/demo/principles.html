@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Babelstone — The design choices behind correct by construction</title>
+
+<!-- Distinctive type when online; graceful macOS-native fallback when offline (deck never breaks on stage). -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+
+<style>
+:root {
+  /* --- palette: shared with the pitch deck (index.html) --- */
+  --ink:        #0b0d11;
+  --ink-2:      #0e1116;
+  --panel:      #14181f;
+  --panel-2:    #1a1f28;
+  --paper:      #ece7db;
+  --paper-soft: #c7c3b8;
+  --muted:      #80858f;
+  --faint:      #565b65;
+  --gold:       #e0b15e;
+  --gold-deep:  #b98a3c;
+  --verify:     #6fd6a0;
+  --wrong:      #e0735e;
+  --hair:       rgba(236, 231, 219, 0.12);
+  --hair-soft:  rgba(236, 231, 219, 0.06);
+
+  --serif: "Fraunces", "Iowan Old Style", "Charter", "Palatino", Georgia, serif;
+  --sans:  "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --mono:  "IBM Plex Mono", "SF Mono", "Menlo", ui-monospace, monospace;
+
+  --maxw: 1180px;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* ---------- atmosphere ---------- */
+body::before {
+  content: "";
+  position: fixed; inset: 0;
+  background:
+    radial-gradient(1100px 720px at 82% -8%, rgba(224, 177, 94, 0.10), transparent 60%),
+    radial-gradient(900px 700px at -6% 108%, rgba(111, 214, 160, 0.06), transparent 55%),
+    linear-gradient(160deg, var(--ink) 0%, var(--ink-2) 100%);
+  z-index: -2;
+}
+body::after {
+  content: "";
+  position: fixed; inset: 0;
+  opacity: 0.035; z-index: -1; pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---------- deck / slide scaffold ---------- */
+.deck { position: fixed; inset: 0; }
+.slide {
+  position: absolute; inset: 0;
+  display: none;
+  padding: clamp(2.4rem, 6vh, 5rem) clamp(2.4rem, 7vw, 7rem);
+  flex-direction: column;
+}
+.slide.active { display: flex; }
+.slide-inner { margin: auto 0; width: 100%; max-width: var(--maxw); align-self: center; }
+
+/* persistent chrome */
+.rail {
+  position: fixed; top: 0; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1.5rem clamp(2.4rem, 7vw, 7rem);
+  font-family: var(--mono);
+  font-size: 0.72rem; letter-spacing: 0.22em; text-transform: uppercase;
+  color: var(--faint); z-index: 30;
+}
+.rail .mark { color: var(--paper-soft); display: flex; gap: 0.7rem; align-items: center; }
+.rail .mark b { color: var(--gold); font-weight: 600; letter-spacing: 0.3em; }
+.rail .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 12px var(--gold); }
+
+.progress {
+  position: fixed; left: 0; bottom: 0; height: 2px;
+  background: linear-gradient(90deg, var(--gold-deep), var(--gold));
+  z-index: 40; transition: width 0.5s var(--ease);
+  box-shadow: 0 0 10px rgba(224,177,94,0.5);
+}
+.foot {
+  position: fixed; bottom: 0; right: 0;
+  padding: 1.3rem clamp(2.4rem, 7vw, 7rem);
+  font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.18em;
+  color: var(--faint); z-index: 30;
+}
+.foot b { color: var(--paper-soft); font-weight: 500; }
+
+/* ---------- typographic system ---------- */
+.kicker {
+  font-family: var(--mono);
+  font-size: 0.74rem; letter-spacing: 0.32em; text-transform: uppercase;
+  color: var(--gold); margin-bottom: 1.6rem;
+  display: inline-flex; align-items: center; gap: 0.8rem;
+}
+.kicker::before { content: ""; width: 34px; height: 1px; background: var(--gold); opacity: 0.7; }
+.kicker.verify { color: var(--verify); }
+.kicker.verify::before { background: var(--verify); }
+
+h1 {
+  font-family: var(--serif); font-weight: 500;
+  font-size: clamp(2.6rem, 6.6vw, 5.6rem);
+  line-height: 0.98; letter-spacing: -0.018em;
+}
+h2 {
+  font-family: var(--serif); font-weight: 500;
+  font-size: clamp(2.1rem, 5vw, 4rem);
+  line-height: 1.02; letter-spacing: -0.015em;
+}
+.lead {
+  font-size: clamp(1.05rem, 1.8vw, 1.5rem);
+  line-height: 1.5; color: var(--paper-soft);
+  font-weight: 300; max-width: 46ch; margin-top: 1.8rem;
+}
+.em-gold { color: var(--gold); }
+.em-verify { color: var(--verify); }
+.em-wrong { color: var(--wrong); }
+.em-serif-i { font-style: italic; font-family: var(--serif); }
+.mono-note { font-family: var(--mono); font-size: 0.72rem; color: var(--faint); letter-spacing: 0.06em; }
+
+/* ---------- reveal animation ---------- */
+.r { opacity: 0; transform: translateY(18px); }
+.slide.is-live .r {
+  animation: rise 0.85s var(--ease) forwards;
+  animation-delay: calc(var(--i, 0) * 110ms + 120ms);
+}
+@keyframes rise { to { opacity: 1; transform: none; } }
+
+/* two-column generic */
+.two-col {
+  display: grid; grid-template-columns: 0.92fr 1.08fr;
+  gap: clamp(2rem, 5vw, 4.5rem); align-items: center;
+}
+@media (max-width: 960px) { .two-col { grid-template-columns: 1fr; } }
+.principle-no {
+  font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.3em;
+  color: var(--faint); margin-bottom: 0.9rem;
+}
+.takeaway {
+  margin-top: 1.8rem; padding-left: 1rem; border-left: 2px solid var(--gold);
+  font-size: clamp(0.98rem, 1.4vw, 1.18rem); color: var(--paper-soft); font-weight: 300; line-height: 1.5;
+}
+.takeaway b { color: var(--paper); font-weight: 500; }
+.ref { margin-top: 1.3rem; font-family: var(--mono); font-size: 0.68rem; color: var(--faint); letter-spacing: 0.06em; }
+
+/* event card (shared with pitch deck) */
+.ev {
+  font-family: var(--mono); font-size: 0.78rem;
+  background: linear-gradient(180deg, var(--panel), var(--panel-2));
+  border: 1px solid var(--hair); border-left: 2px solid var(--gold);
+  border-radius: 7px; padding: 0.6rem 0.85rem;
+  display: flex; align-items: center; gap: 0.7rem;
+  box-shadow: 0 14px 40px rgba(0,0,0,0.35);
+}
+.ev .seq { color: var(--ink); background: var(--gold); font-weight: 600; border-radius: 4px; padding: 0.1rem 0.45rem; font-size: 0.7rem; }
+.ev .name { color: var(--paper); font-weight: 500; }
+.ev.verify { border-left-color: var(--verify); }
+.ev.verify .seq { background: var(--verify); }
+
+/* shared stage frame for visuals */
+.stage {
+  position: relative; border: 1px solid var(--hair); border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.022), transparent);
+  padding: 1.4rem; overflow: hidden;
+}
+.stage .stage-cap {
+  font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 1rem; display: flex; align-items: center; gap: 0.6rem;
+}
+.stage .stage-cap .live { width: 7px; height: 7px; border-radius: 50%; background: var(--verify); box-shadow: 0 0 8px var(--verify); }
+
+/* buttons */
+.btn {
+  font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.04em;
+  background: var(--gold); color: var(--ink); border: 0; border-radius: 7px;
+  padding: 0.6rem 1.1rem; cursor: pointer; font-weight: 600;
+  transition: transform 0.15s var(--ease), box-shadow 0.2s var(--ease), background 0.2s;
+  box-shadow: 0 8px 24px rgba(224,177,94,0.22);
+}
+.btn:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(224,177,94,0.32); }
+.btn:active { transform: translateY(0); }
+.btn.ghost { background: transparent; color: var(--paper-soft); border: 1px solid var(--hair); box-shadow: none; }
+.btn.ghost:hover { border-color: var(--gold); color: var(--gold); }
+.btn.danger { background: var(--wrong); box-shadow: 0 8px 24px rgba(224,115,94,0.25); }
+
+/* ============================================================
+   PRINCIPLE 1 — functional core, imperative shell
+   ============================================================ */
+.core-fig { width: 100%; aspect-ratio: 1.18 / 1; max-height: 60vh; }
+.cf-label { font-family: var(--mono); font-size: 0.72rem; }
+.cf-strike { text-decoration: line-through; text-decoration-color: var(--wrong); }
+
+/* ============================================================
+   PRINCIPLE 2 — the fold (D3)
+   ============================================================ */
+.fold-wrap { display: grid; grid-template-columns: 1fr; gap: 0.8rem; }
+.fold-fig { width: 100%; height: clamp(280px, 46vh, 440px); }
+.fold-controls { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
+.fold-verdict {
+  font-family: var(--mono); font-size: 0.82rem; color: var(--muted);
+  margin-left: auto; display: flex; align-items: center; gap: 0.6rem;
+}
+.fold-verdict .match { color: var(--verify); }
+.fold-fallback {
+  font-family: var(--mono); font-size: 0.8rem; color: var(--paper-soft);
+  padding: 1.2rem; line-height: 1.6; display: none;
+}
+.lane-hash { font-family: var(--mono); }
+
+/* ============================================================
+   PRINCIPLE 3 — family-agnostic spine
+   ============================================================ */
+.spine-grid { display: grid; grid-template-columns: 1fr 1.25fr; gap: clamp(1.6rem, 4vw, 3.5rem); align-items: center; }
+@media (max-width: 960px) { .spine-grid { grid-template-columns: 1fr; } }
+.spine {
+  display: flex; flex-direction: column; gap: 0.55rem; position: relative;
+}
+.spine-box {
+  border: 1px solid var(--hair); border-radius: 9px; padding: 0.7rem 0.95rem;
+  background: linear-gradient(180deg, rgba(255,255,255,0.022), transparent);
+  display: flex; align-items: center; gap: 0.7rem;
+}
+.spine-box .sn { font-family: var(--serif); font-size: 1.02rem; font-weight: 500; }
+.spine-box .sd { font-family: var(--mono); font-size: 0.64rem; color: var(--muted); margin-left: auto; }
+.spine-box .pin { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+.spine-box.kernel { border-left: 2px solid var(--paper-soft); }
+.spine-box.kernel .pin { background: var(--paper-soft); }
+
+.slot {
+  border: 1px dashed var(--hair); border-radius: 9px; padding: 0.7rem 0.95rem;
+  display: flex; align-items: center; gap: 0.7rem; color: var(--faint);
+  transition: all 0.5s var(--ease);
+  font-family: var(--mono); font-size: 0.78rem;
+}
+.slot .badge { font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.1em; margin-left: auto; color: var(--faint); }
+.slot.snapped {
+  border-style: solid; border-color: rgba(224,177,94,0.55);
+  background: rgba(224,177,94,0.08); color: var(--paper);
+}
+.slot.snapped .badge { color: var(--gold); }
+.slot.snapped::before { content: "+ "; color: var(--gold); font-weight: 600; }
+.slot.savings.snapped { border-color: rgba(111,214,160,0.5); background: rgba(111,214,160,0.07); }
+.slot.savings.snapped .badge { color: var(--verify); }
+
+.counters { display: flex; gap: 1.6rem; margin-top: 1.6rem; }
+.counter .cv { font-family: var(--serif); font-size: clamp(2rem, 4vw, 3rem); font-weight: 500; }
+.counter .cv.zero { color: var(--verify); }
+.counter .cl { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin-top: 0.2rem; }
+
+/* ============================================================
+   PRINCIPLE 4 — no PII on the bus / crypto-shredding
+   ============================================================ */
+.pii-stage { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+.bus-lane {
+  position: relative; border: 1px solid var(--hair); border-radius: 12px;
+  padding: 1.1rem 1.2rem; background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+}
+.bus-lane .lane-k { font-family: var(--mono); font-size: 0.64rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.7rem; }
+.tokens { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.tok {
+  font-family: var(--mono); font-size: 0.74rem; padding: 0.45rem 0.7rem; border-radius: 6px;
+  border: 1px solid var(--hair); color: var(--paper-soft);
+}
+.tok.ref { border-color: rgba(224,177,94,0.5); color: var(--gold); }
+.tok.cipher { border-color: rgba(111,214,160,0.4); color: var(--verify); transition: all 0.6s var(--ease); }
+.tok.cipher.shredded { border-color: rgba(224,115,94,0.5); color: var(--wrong); text-decoration: line-through; opacity: 0.65; }
+.vault {
+  margin-top: 1rem; border: 1px solid var(--hair); border-radius: 12px; padding: 1.1rem 1.2rem;
+  display: flex; align-items: center; gap: 1rem;
+  background: linear-gradient(180deg, rgba(111,214,160,0.05), transparent);
+  transition: all 0.6s var(--ease);
+}
+.vault.shredded { background: linear-gradient(180deg, rgba(224,115,94,0.06), transparent); border-color: rgba(224,115,94,0.4); }
+.vault .key { font-family: var(--mono); font-size: 0.8rem; color: var(--verify); transition: all 0.5s; }
+.vault.shredded .key { color: var(--wrong); text-decoration: line-through; }
+.vault .vlbl { font-family: var(--mono); font-size: 0.66rem; color: var(--muted); }
+.pii-controls { display: flex; gap: 0.8rem; align-items: center; margin-top: 0.4rem; flex-wrap: wrap; }
+.pii-feed { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); min-height: 1.3em; }
+.pii-feed .erased { color: var(--wrong); }
+
+/* ============================================================
+   PRINCIPLE 5 — explicit-drift governance
+   ============================================================ */
+.gov-stage { display: grid; grid-template-columns: 1fr; gap: 1.1rem; }
+.gov-flow { display: grid; grid-template-columns: auto 1fr; gap: 0.9rem 1.1rem; align-items: center; }
+.gov-node {
+  border: 1px solid var(--hair); border-radius: 10px; padding: 0.85rem 1.1rem;
+  font-family: var(--mono); font-size: 0.8rem; background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+}
+.gov-node .gn-k { font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.gov-node .gn-v { color: var(--paper-soft); margin-top: 0.25rem; }
+.gate {
+  border-radius: 10px; padding: 0.85rem 1.1rem; font-family: var(--mono); font-size: 0.82rem;
+  border: 1px solid var(--hair); transition: all 0.45s var(--ease); text-align: center;
+}
+.gate.block { border-color: rgba(224,115,94,0.6); background: rgba(224,115,94,0.1); color: var(--wrong); }
+.gate.pass { border-color: rgba(111,214,160,0.55); background: rgba(111,214,160,0.09); color: var(--verify); }
+.gate.idle { color: var(--faint); }
+.gov-controls { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
+.gov-paths { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.4rem; }
+@media (max-width: 760px){ .gov-paths { grid-template-columns: 1fr; } }
+.gov-path {
+  border: 1px solid var(--hair); border-radius: 12px; padding: 1rem 1.1rem;
+  opacity: 0.5; transition: all 0.4s var(--ease);
+}
+.gov-path.active { opacity: 1; }
+.gov-path.silent { border-color: rgba(224,115,94,0.4); }
+.gov-path.silent.active { background: rgba(224,115,94,0.06); }
+.gov-path.amend { border-color: rgba(111,214,160,0.4); }
+.gov-path.amend.active { background: rgba(111,214,160,0.06); }
+.gov-path .gp-k { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; }
+.gov-path.silent .gp-k { color: var(--wrong); }
+.gov-path.amend .gp-k { color: var(--verify); }
+.gov-path h4 { font-family: var(--serif); font-weight: 500; font-size: 1.15rem; margin: 0.4rem 0 0.4rem; }
+.gov-path p { font-size: 0.86rem; color: var(--muted); font-weight: 300; line-height: 1.45; }
+
+/* ============================================================
+   PRINCIPLE 01 — purity: correct flow + impure→pure code
+   ============================================================ */
+.pc-flow { display:flex; align-items:stretch; gap:0.45rem; flex-wrap:wrap; margin-bottom:1.1rem; }
+.pc-pill {
+  font-family:var(--mono); font-size:0.66rem; padding:0.45rem 0.6rem; border-radius:7px;
+  border:1px solid var(--hair); color:var(--paper-soft); line-height:1.25; flex:1; min-width:120px;
+  background:rgba(255,255,255,0.018);
+}
+.pc-pill b { color:var(--paper); font-weight:600; }
+.pc-pill.core { border-color:rgba(224,177,94,0.55); background:rgba(224,177,94,0.07); }
+.pc-pill.core b { color:var(--gold); }
+.pc-pill .pe { color:var(--muted); display:block; font-size:0.59rem; margin-top:0.2rem; letter-spacing:0.02em; }
+.pc-pill.core .pe { color:var(--wrong); }
+.pc-arrow { color:var(--faint); font-family:var(--mono); align-self:center; font-size:0.8rem; }
+.code-tabs { display:flex; gap:0.5rem; margin-bottom:0.6rem; }
+.code-tab {
+  font-family:var(--mono); font-size:0.68rem; padding:0.32rem 0.7rem; border-radius:6px;
+  border:1px solid var(--hair); color:var(--muted); cursor:pointer; transition:all 0.2s;
+}
+.code-tab:hover { color:var(--paper-soft); }
+.code-tab.on { color:var(--ink); background:var(--gold); border-color:var(--gold); font-weight:600; }
+.code-tab.on.good { background:var(--verify); border-color:var(--verify); }
+.code {
+  font-family:var(--mono); font-size:0.73rem; line-height:1.55;
+  background:rgba(0,0,0,0.32); border:1px solid var(--hair); border-radius:10px;
+  padding:0.95rem 1.05rem; white-space:pre; overflow-x:auto; color:var(--paper-soft); min-height:128px;
+}
+.code .cm  { color:var(--faint); }
+.code .kw  { color:var(--gold); }
+.code .bad { color:var(--wrong); font-weight:600; }
+.code .good{ color:var(--verify); font-weight:600; }
+.code-pane { display:none; }
+.code-pane.on { display:block; animation:codeIn 0.4s var(--ease); }
+@keyframes codeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+
+/* fold slide — fit-to-screen overrides */
+.slide.fold h2 { font-size:clamp(1.7rem,3.6vw,2.9rem); max-width:24ch; }
+.slide.fold .lead { font-size:clamp(0.98rem,1.4vw,1.2rem); margin-top:1.1rem; max-width:64ch; }
+.slide.fold .stage { margin-top:1.2rem; padding:1.1rem 1.2rem; }
+.slide.fold .fold-fig { height:clamp(300px,44vh,360px); }
+
+/* governance — fit-to-screen overrides */
+.slide.gov h2 { font-size:clamp(1.5rem,3vw,2.5rem); }
+.slide.gov .stage { margin-top:1.1rem; padding:1.05rem 1.2rem; }
+.slide.gov .gov-stage { gap:0.75rem; }
+.slide.gov .gov-node { padding:0.65rem 0.95rem; }
+.slide.gov .gov-node .gn-v { line-height:1.35; }
+.slide.gov .gstep { padding:0.55rem 0.7rem; }
+.slide.gov .gov-path { padding:0.75rem 0.9rem; }
+.slide.gov .gov-path h4 { margin:0.3rem 0 0.3rem; font-size:1.05rem; }
+.slide.gov .gov-path p { font-size:0.82rem; }
+
+/* governance — workflow steps */
+.gov-steps { display:grid; grid-template-columns:repeat(4,1fr); gap:0.7rem; margin-top:0.2rem; }
+@media (max-width:760px){ .gov-steps { grid-template-columns:1fr 1fr; } }
+.gstep {
+  border:1px solid var(--hair); border-radius:9px; padding:0.7rem 0.8rem;
+  background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);
+}
+.gstep .gs-n {
+  font-family:var(--mono); font-size:0.62rem; color:var(--ink); background:var(--gold);
+  border-radius:4px; padding:0.05rem 0.4rem; font-weight:600;
+}
+.gstep .gs-t { font-size:0.8rem; color:var(--paper-soft); font-weight:300; line-height:1.35; margin-top:0.45rem; }
+.gstep .gs-t b { color:var(--paper); font-weight:500; }
+.gstep .gs-m { font-family:var(--mono); font-size:0.6rem; color:var(--muted); display:block; margin-top:0.3rem; letter-spacing:0.02em; }
+
+/* ---------- closing ---------- */
+.principles-list { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.7rem; margin-top: 2.4rem; }
+@media (max-width: 900px) { .principles-list { grid-template-columns: 1fr 1fr; } }
+.pl-item {
+  border: 1px solid var(--hair); border-radius: 10px; padding: 1rem 0.9rem;
+  background: linear-gradient(180deg, rgba(255,255,255,0.022), transparent);
+}
+.pl-item .pi-no { font-family: var(--mono); font-size: 0.64rem; color: var(--gold); letter-spacing: 0.1em; }
+.pl-item .pi-t { font-family: var(--serif); font-size: 1.02rem; font-weight: 500; margin-top: 0.45rem; line-height: 1.12; }
+
+/* ---------- presenter notes ---------- */
+.notes {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+  background: rgba(8,10,13,0.96); border-top: 1px solid var(--gold);
+  padding: 1.2rem clamp(2.4rem, 7vw, 7rem) 1.4rem;
+  font-family: var(--sans); color: var(--paper-soft); font-size: 0.95rem; line-height: 1.5;
+  display: none; max-height: 38vh; overflow-y: auto;
+  box-shadow: 0 -20px 60px rgba(0,0,0,0.5);
+}
+.notes.show { display: block; }
+.notes .ntag { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold); display: block; margin-bottom: 0.5rem; }
+
+.hint {
+  position: fixed; bottom: 1.3rem; left: 50%; transform: translateX(-50%);
+  font-family: var(--mono); font-size: 0.68rem; color: var(--faint); z-index: 30;
+  letter-spacing: 0.1em; opacity: 0.7; transition: opacity 0.4s;
+}
+.hint kbd { color: var(--paper-soft); border: 1px solid var(--hair); border-radius: 4px; padding: 0.05rem 0.35rem; }
+
+@media print {
+  @page { size: 1280px 720px; margin: 0; }
+  html, body { overflow: visible; height: auto; }
+  .rail, .foot, .progress, .hint, .notes { display: none !important; }
+  body::before, body::after { display: none; }
+  .deck { position: static; }
+  .slide { position: relative !important; display: flex !important; inset: auto;
+    width: 1280px; height: 720px; page-break-after: always; background: var(--ink); }
+  .slide.active { display: flex !important; }
+  .r { opacity: 1 !important; transform: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="rail">
+  <div class="mark"><span class="dot"></span><b>BABELSTONE</b><span>design principles</span></div>
+  <div id="slideCount">01 / 07</div>
+</div>
+
+<div class="deck" id="deck">
+
+  <!-- 1 — TITLE -->
+  <section class="slide" data-notes="Frame the deck: the pitch deck claims 'correct by construction.' THIS deck shows the five design choices that earn that claim. Each slide is one principle, one mechanism, one animation you can poke at. Say: 'Correctness isn't a feature we tested in. It's a consequence of five decisions. Here they are.'">
+    <div class="slide-inner">
+      <div class="kicker r" style="--i:0">The design choices</div>
+      <h1 class="r" style="--i:1">What makes it<br /><span class="em-gold em-serif-i">correct by construction.</span></h1>
+      <p class="lead r" style="--i:2">Not five features. Five decisions — each one a mechanism you can watch work.</p>
+      <div class="principles-list">
+        <div class="pl-item r" style="--i:3"><div class="pi-no">01</div><div class="pi-t">Functional core, imperative shell</div></div>
+        <div class="pl-item r" style="--i:4"><div class="pi-no">02</div><div class="pi-t">The fold is the truth</div></div>
+        <div class="pl-item r" style="--i:5"><div class="pi-no">03</div><div class="pi-t">A family-agnostic spine</div></div>
+        <div class="pl-item r" style="--i:6"><div class="pi-no">04</div><div class="pi-t">No PII on the bus</div></div>
+        <div class="pl-item r" style="--i:7"><div class="pi-no">05</div><div class="pi-t">Drift is explicit or it's blocked</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 — FUNCTIONAL CORE, IMPERATIVE SHELL -->
+  <section class="slide" data-notes="The structural choice everything else rests on. The flow strip (top right) reads the right way round: the SHELL is the only thing that touches the outside world. It loads the event history from Postgres and folds it to state; it hands the core plain DATA — (state, command); the core decides; the shell takes the resulting events and appends/publishes them. The database never calls the core — the shell mediates both sides. Then the code makes 'pure' concrete. Click 'impure' to show the trap: the interest calc secretly reads the wall clock (DateTime.UtcNow), hits the DB mid-calc (_db.LoadDayCount), and adds randomness — three hidden inputs, so two runs can disagree. Click 'pure': those three are lifted OUT to explicit parameters (rate, days). Now the same arguments always produce the same money. That's all 'no clock, no I/O, no random' means — and it's why replay (next slide) works.">
+    <div class="slide-inner two-col">
+      <div>
+        <div class="principle-no r" style="--i:0">PRINCIPLE 01</div>
+        <h2 class="r" style="--i:1">A pure core,<br /><span class="em-gold">a thin shell.</span></h2>
+        <p class="lead r" style="--i:2">The <b style="color:var(--paper)">shell</b> touches the world — loads, appends, publishes. The <b style="color:var(--paper)">core</b> only sees data and returns events.</p>
+        <div class="takeaway r" style="--i:3">"No clock, no I/O, no randomness" isn't a slogan — it means every input is an <b>explicit argument</b>. Same arguments → same money, every time.</div>
+        <div class="ref r" style="--i:4">decide(state, command) → events · the database never calls the core</div>
+      </div>
+      <div class="stage r" style="--i:2">
+        <div class="stage-cap"><span class="live"></span>the boundary, the right way round · and what "pure" means</div>
+        <div class="pc-flow">
+          <span class="pc-pill">shell · <b>load + fold</b><span class="pe">Postgres → state</span></span>
+          <span class="pc-arrow">→</span>
+          <span class="pc-pill core"><b>PURE CORE</b> · decide()<span class="pe">no clock · no I/O · no random</span></span>
+          <span class="pc-arrow">→</span>
+          <span class="pc-pill">shell · <b>append + publish</b><span class="pe">Postgres · Redpanda</span></span>
+        </div>
+        <div class="code-tabs">
+          <span class="code-tab" id="tabImpure">❌ impure</span>
+          <span class="code-tab on good" id="tabPure">✓ pure</span>
+        </div>
+        <div class="code-view">
+<div class="code-pane code" id="codeImpure"><span class="cm">// ❌ hidden inputs — two runs can disagree</span>
+Money Interest(Deposit d) =>
+    d.Principal
+      * RateOn(<span class="bad">DateTime.UtcNow</span>)    <span class="cm">// ← clock</span>
+      * <span class="bad">_db</span>.LoadDayCount(d.Id)     <span class="cm">// ← I/O</span>
+      * Jitter(<span class="bad">Random.Shared</span>);     <span class="cm">// ← randomness</span></div>
+<div class="code-pane code on" id="codePure"><span class="cm">// ✓ every input explicit — same args, same money</span>
+<span class="kw">static</span> Money Interest(
+    Money principal, <span class="good">Rate rate</span>, <span class="good">int days</span>) =>
+    principal.Times(rate).ForDays(days, Basis.Act360);
+
+<span class="cm">// clock, db, random → lifted out to the shell</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 — THE FOLD (D3 marquee) -->
+  <section class="slide fold" data-notes="The marquee. This is the consequence of a pure core: the event log IS the source of truth, and state is just fold(events). Because the fold is pure, replay is deterministic. The demo proves timing-independence: TWO lanes replay the SAME event log at DIFFERENT speeds — one fast, one slow — and both land on a byte-identical state hash. Speed doesn't matter; order does; the function is pure. That's why you can rebuild the entire bank from its events and get exactly the same money, every time. Hit Replay a few times. The hashes always match. Trust comes from determinism, not faith. (If D3 didn't load, a static fallback explains the same point.)">
+    <div class="slide-inner">
+      <div class="principle-no r" style="--i:0">PRINCIPLE 02</div>
+      <h2 class="r" style="--i:1">State is just <span class="em-gold">fold(events).</span></h2>
+      <p class="lead r" style="--i:2">So replay is <b style="color:var(--paper)">deterministic</b>: two lanes, same log, different speeds — both fold to a byte-identical state hash. Timing doesn't matter; the function is pure.</p>
+      <div class="stage r" style="--i:3; margin-top:1.6rem">
+        <div class="stage-cap"><span class="live"></span>API appends → append-only log → fold → position</div>
+        <div class="fold-wrap">
+          <svg class="fold-fig" id="foldFig" viewBox="0 0 1140 360" preserveAspectRatio="xMidYMid meet" aria-label="Two replay lanes folding the same event log"></svg>
+          <div class="fold-fallback" id="foldFallback">
+            fold([#1 Constituted, #2 InterestPaid, #3 InterestPaid, #4 Matured]) → position<br />
+            lane A (fast) → state hash <span style="color:var(--verify)">d2a…9f7c</span><br />
+            lane B (slow) → state hash <span style="color:var(--verify)">d2a…9f7c</span><br />
+            <span style="color:var(--verify)">✓ byte-identical — determinism, not timing</span>
+          </div>
+          <div class="fold-controls">
+            <button class="btn" id="foldReplay">▶ Replay (API → fold)</button>
+            <button class="btn ghost" id="foldReset">Reset</button>
+            <div class="fold-verdict" id="foldVerdict">append via API → log → fold</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 — FAMILY-AGNOSTIC SPINE -->
+  <section class="slide" data-notes="The extensibility choice. The engine doesn't know what a term deposit IS. The spine — API, event store, bus, projections, the math kernel — is generic. A product family plugs in as a MODULE: its own events, pure folds, lifecycle table, decider. Watch term_deposit snap in, then a second family (savings) snap into the same spine. The counters are the punchline: adding a family costs ONE composition line and ZERO edits to the kernel, store, or bus. That's ADR-PC-021 §D4 — the host composition stays family-count-invariant. New code, yes; a surgical rewrite of the core, never. Click 'Add a family' to add savings.">
+    <div class="slide-inner">
+      <div class="principle-no r" style="--i:0">PRINCIPLE 03</div>
+      <h2 class="r" style="--i:1">The engine doesn't know what a<br /><span class="em-gold">term deposit</span> is.</h2>
+      <div class="spine-grid" style="margin-top:2rem">
+        <div class="r" style="--i:2">
+          <p class="lead" style="margin-top:0">The spine is generic. A product <b style="color:var(--paper)">family</b> plugs in as a module — events, folds, lifecycle, decider.</p>
+          <div class="takeaway">Adding a family is <b>one composition line</b> and <b>zero edits</b> to the kernel, store, or bus.</div>
+          <div class="counters">
+            <div class="counter"><div class="cv" id="famCount">1</div><div class="cl">families</div></div>
+            <div class="counter"><div class="cv" id="wireCount">1</div><div class="cl">wiring lines</div></div>
+            <div class="counter"><div class="cv zero" id="kernelEdits">0</div><div class="cl">kernel edits</div></div>
+          </div>
+          <div class="fold-controls" style="margin-top:1.6rem">
+            <button class="btn" id="spineAdd">+ Add a family</button>
+            <button class="btn ghost" id="spineReset">Reset</button>
+          </div>
+          <div class="ref">ADR-PC-021 §D4 · composition stays family-count-invariant</div>
+        </div>
+        <div class="spine r" style="--i:3" id="spine">
+          <div class="spine-box"><span class="pin"></span><span class="sn">Engine API</span><span class="sd">command + query</span></div>
+          <div class="slot snapped" id="slotTd"><span class="badge">term_deposit</span>family module · events · folds · decider</div>
+          <div class="slot savings" id="slotSavings"><span class="badge">savings_account</span><span id="slotSavingsLbl">empty slot — snaps in on demand</span></div>
+          <div class="spine-box kernel"><span class="pin"></span><span class="sn">Financial-Math Kernel</span><span class="sd">reused as-is</span></div>
+          <div class="spine-box kernel"><span class="pin"></span><span class="sn">Event Store · Bus</span><span class="sd">reused as-is</span></div>
+          <div class="spine-box kernel"><span class="pin"></span><span class="sn">Projections</span><span class="sd">reused as-is</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 — NO PII ON THE BUS / CRYPTO-SHREDDING -->
+  <section class="slide" data-notes="The privacy choice — and it's a design choice, not a bolt-on. Personal data NEVER rides the durable bus, not even encrypted. The bus carries a REFERENCE — a pseudonym token. The real PII is encrypted and resolved only INSIDE the engine boundary, against OpenBao key material. The payoff is GDPR erasure done right: to forget a customer you don't chase down every copy across every topic and backup — you SHRED ONE KEY. Click 'GDPR erasure'. The key dies, and every encrypted copy everywhere becomes undecryptable garbage in one stroke. Crypto-shredding. That's why 'right to be forgotten' is a single, auditable operation here.">
+    <div class="slide-inner two-col">
+      <div>
+        <div class="principle-no r" style="--i:0">PRINCIPLE 04</div>
+        <h2 class="r" style="--i:1">No PII on the bus.<br /><span class="em-gold">Forget by shredding a key.</span></h2>
+        <p class="lead r" style="--i:2">The bus carries a <b style="color:var(--paper)">reference</b>, never the person. PII is encrypted and resolved only inside the engine boundary.</p>
+        <div class="takeaway r" style="--i:3">GDPR erasure isn't a hunt across every topic and backup. <b>Shred one key</b> → every copy, everywhere, is undecryptable at once.</div>
+        <div class="ref r" style="--i:4">OpenBao transit keys · crypto-shredding · PII boundary in the engine</div>
+      </div>
+      <div class="stage r" style="--i:2">
+        <div class="stage-cap"><span class="live"></span>the durable bus · and the vault behind the boundary</div>
+        <div class="pii-stage">
+          <div class="bus-lane">
+            <div class="lane-k">durable bus — what actually travels</div>
+            <div class="tokens">
+              <span class="tok ref">subject_ref: 7f3a…</span>
+              <span class="tok">DepositConstituted</span>
+              <span class="tok">amount: €10,000</span>
+              <span class="tok">term: 12m</span>
+            </div>
+            <div class="mono-note" style="margin-top:0.7rem">no name · no NIF · no address — only a reference</div>
+          </div>
+          <div class="vault" id="vault">
+            <span class="key" id="vaultKey">🔑 key 7f3a</span>
+            <div>
+              <div class="vlbl">OpenBao · inside the engine boundary</div>
+              <div class="tokens" style="margin-top:0.5rem">
+                <span class="tok cipher" id="cipher1">enc(João M.)</span>
+                <span class="tok cipher" id="cipher2">enc(NIF 21…)</span>
+                <span class="tok cipher" id="cipher3">enc(Rua…)</span>
+              </div>
+            </div>
+          </div>
+          <div class="pii-controls">
+            <button class="btn danger" id="shredBtn">GDPR erasure — shred the key</button>
+            <button class="btn ghost" id="shredReset">Reset</button>
+            <span class="pii-feed" id="shredFeed">&nbsp;</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 — EXPLICIT-DRIFT GOVERNANCE -->
+  <section class="slide gov" data-notes="The governance choice — how a two-person team keeps a 50-person platform's discipline. Every architectural decision is an Accepted ADR. The rule (ADR-PC-020 §D3): no change may contradict an Accepted ADR without amending or superseding it IN THE SAME change. Divergence is allowed. SILENT divergence is not. Two buttons: 'Contradict silently' → the CI drift gate slams red, BLOCKED. 'Amend the ADR' → the same change carries the dated amendment, gate goes green, it lands. The point: you can change your mind about anything, but the decision record can never quietly fall out of sync with the code. That's what makes the whole system reviewable from the decision down, not the diff up.">
+    <div class="slide-inner">
+      <div class="principle-no r" style="--i:0">PRINCIPLE 05</div>
+      <h2 class="r" style="--i:1">Divergence is allowed.<br /><span class="em-wrong">Silent</span> divergence <span class="em-gold">is blocked.</span></h2>
+      <div class="stage r" style="--i:2;margin-top:1.4rem">
+        <div class="stage-cap"><span class="live"></span>a concrete change meets an Accepted ADR · ADR-PC-020 §D3</div>
+        <div class="gov-stage">
+          <div class="gov-flow">
+            <div class="gov-node"><div class="gn-k">incoming change · PR #231</div><div class="gn-v" id="govChange">puts the customer <b style="color:var(--paper)">NIF</b> back in the <span style="color:var(--gold)">DepositConstituted</span> payload<br /><span style="color:var(--faint)">— contradicts the no-PII-on-the-bus rule (an Accepted ADR)</span></div></div>
+            <div class="gate idle" id="govGate">— waiting for a change —</div>
+          </div>
+          <div class="gov-controls">
+            <button class="btn danger" id="govSilent">Land it silently</button>
+            <button class="btn" id="govAmend">Acknowledge the drift</button>
+            <button class="btn ghost" id="govReset">Reset</button>
+          </div>
+          <div class="gov-steps">
+            <div class="gstep"><span class="gs-n">1</span><div class="gs-t"><b>Contradict.</b> A change conflicts with an Accepted ADR.<span class="gs-m">no-PII-on-the-bus rule</span></div></div>
+            <div class="gstep"><span class="gs-n">2</span><div class="gs-t"><b>Detect.</b> CI runs the drift gate — PR body must name ADRs, schema + conformance checks fire.<span class="gs-m">adr-conformance · PR gate</span></div></div>
+            <div class="gstep"><span class="gs-n">3</span><div class="gs-t"><b>Acknowledge.</b> Same change must amend or supersede the ADR — dated.<span class="gs-m">§P9 · Revised YYYY-MM-DD</span></div></div>
+            <div class="gstep"><span class="gs-n">4</span><div class="gs-t"><b>Stay in sync.</b> Record never drifts from code. Review starts from the decision.<span class="gs-m">reviewable by design</span></div></div>
+          </div>
+          <div class="gov-paths">
+            <div class="gov-path silent" id="pathSilent">
+              <div class="gp-k">land it silently → step 2 stops you</div>
+              <h4>CI drift gate · BLOCKED</h4>
+              <p>NIF on the bus, no ADR acknowledged. The gate hard-fails — the PR never merges.</p>
+            </div>
+            <div class="gov-path amend" id="pathAmend">
+              <div class="gp-k">acknowledge → steps 3–4</div>
+              <h4>Sanctioned · lands green</h4>
+              <p>Either keep the reference design (honour the ADR), or supersede it with a dated rationale — in the same PR.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 — CLOSING -->
+  <section class="slide" data-notes="Tie it together and hand back to the pitch. None of these five is exotic on its own. The asset is that they COMPOSE: a pure core makes replay deterministic; deterministic replay makes the event log the truth; a generic spine lets families plug into that truth; the PII boundary keeps the truth lawful; and the drift gate keeps the whole record honest as it grows. Correct by construction isn't a slogan — it's the sum of these five choices, held together coherently. End here, or jump back to the pitch deck's demo.">
+    <div class="slide-inner">
+      <div class="kicker verify r" style="--i:0">Why it composes</div>
+      <h2 class="r" style="--i:1">Five choices. <span class="em-gold em-serif-i">One property.</span></h2>
+      <p class="lead r" style="--i:2;max-width:60ch">A pure core makes replay deterministic. Determinism makes the log the truth. A generic spine lets families plug into that truth. The PII boundary keeps it lawful. The drift gate keeps the record honest as it grows.</p>
+      <div class="principles-list">
+        <div class="pl-item r" style="--i:3"><div class="pi-no">01</div><div class="pi-t">Pure core</div></div>
+        <div class="pl-item r" style="--i:4"><div class="pi-no">02</div><div class="pi-t">Deterministic fold</div></div>
+        <div class="pl-item r" style="--i:5"><div class="pi-no">03</div><div class="pi-t">Generic spine</div></div>
+        <div class="pl-item r" style="--i:6"><div class="pi-no">04</div><div class="pi-t">PII boundary</div></div>
+        <div class="pl-item r" style="--i:7"><div class="pi-no">05</div><div class="pi-t">Explicit drift</div></div>
+      </div>
+      <p class="r" style="--i:8;font-family:var(--mono);font-size:0.8rem;color:var(--verify);margin-top:2.2rem;letter-spacing:0.05em">correct by construction = the sum, held together coherently</p>
+    </div>
+  </section>
+
+</div>
+
+<div class="progress" id="progress"></div>
+<div class="foot">design principles · <b>babelstone</b></div>
+<aside class="notes" id="notes"><span class="ntag">Presenter note</span><div id="notesBody"></div></aside>
+<div class="hint" id="hint"><kbd>→</kbd> next · <kbd>n</kbd> notes · <kbd>f</kbd> fullscreen</div>
+
+<!-- D3 only powers the fold slide; everything else is dependency-free. Guarded so the deck never breaks offline. -->
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"
+        integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i"
+        crossorigin="anonymous" defer></script>
+<script>
+(function () {
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const total = slides.length;
+  const counter = document.getElementById('slideCount');
+  const progress = document.getElementById('progress');
+  const notes = document.getElementById('notes');
+  const notesBody = document.getElementById('notesBody');
+  const hint = document.getElementById('hint');
+  let i = 0, notesOn = false;
+
+  const pad = n => String(n + 1).padStart(2, '0');
+
+  function render() {
+    slides.forEach((s, n) => s.classList.toggle('active', n === i));
+    const cur = slides[i];
+    cur.classList.remove('is-live');
+    void cur.offsetWidth;
+    cur.classList.add('is-live');
+
+    counter.textContent = pad(i) + ' / ' + pad(total - 1);
+    progress.style.width = ((i) / (total - 1) * 100) + '%';
+    notesBody.textContent = cur.dataset.notes || '—';
+
+    if (i === 1) setTimeout(runPurify, 700);
+    if (i === 2) setTimeout(initFold, 200);
+  }
+
+  function go(n) { i = Math.max(0, Math.min(total - 1, n)); render(); }
+  function next() { go(i + 1); }
+  function prev() { go(i - 1); }
+
+  document.addEventListener('keydown', e => {
+    if (['ArrowRight', ' ', 'PageDown'].includes(e.key)) { e.preventDefault(); next(); }
+    else if (['ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); prev(); }
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(total - 1);
+    else if (e.key.toLowerCase() === 'f') { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); }
+    else if (e.key.toLowerCase() === 'n') { notesOn = !notesOn; notes.classList.toggle('show', notesOn); }
+  });
+
+  document.getElementById('deck').addEventListener('click', e => {
+    if (e.target.closest('button, a, .code-tab')) return;
+    const back = e.clientX < window.innerWidth * 0.28;
+    back ? prev() : next();
+  });
+
+  setTimeout(() => { hint.style.opacity = '0'; }, 5000);
+
+  /* ===== PRINCIPLE 01 — purity: impure ⇄ pure code ===== */
+  const tabImpure = document.getElementById('tabImpure');
+  const tabPure = document.getElementById('tabPure');
+  function showCode(which) {
+    const imp = which === 'impure';
+    const ci = document.getElementById('codeImpure');
+    const cp = document.getElementById('codePure');
+    if (!ci || !cp) return;
+    ci.classList.toggle('on', imp);
+    cp.classList.toggle('on', !imp);
+    if (tabImpure) tabImpure.classList.toggle('on', imp);
+    if (tabPure) tabPure.classList.toggle('on', !imp);
+  }
+  let codeTouched = false;
+  if (tabImpure) tabImpure.addEventListener('click', () => { codeTouched = true; showCode('impure'); });
+  if (tabPure) tabPure.addEventListener('click', () => { codeTouched = true; showCode('pure'); });
+  function runPurify() {
+    // auto-demo: show the trap, then lift the three offenders out to parameters —
+    // but never override a presenter who's already clicked a tab.
+    if (codeTouched) return;
+    showCode('impure');
+    setTimeout(() => { if (!codeTouched) showCode('pure'); }, 1400);
+  }
+
+  /* ===== PRINCIPLE 02 — the fold (D3): API appends → log → fold ===== */
+  const EVENTS = [
+    { seq: 1, name: 'DepositConstituted', delta: 1000000, call: 'POST /deposits' },
+    { seq: 2, name: 'InterestPaid',       delta: 10139,   call: 'POST /accrue' },
+    { seq: 3, name: 'InterestPaid',       delta: 10139,   call: 'POST /accrue' },
+    { seq: 4, name: 'DepositMatured',     delta: 0,       call: 'POST /mature' },
+  ];
+  // deterministic toy hash over the folded sequence (order-sensitive, timing-insensitive)
+  function stateHash(applied) {
+    let h = 2166136261 >>> 0;
+    applied.forEach(e => {
+      const s = e.seq + ':' + e.name + ':' + e.delta;
+      for (let c = 0; c < s.length; c++) { h ^= s.charCodeAt(c); h = Math.imul(h, 16777619) >>> 0; }
+    });
+    return ('00000000' + h.toString(16)).slice(-8);
+  }
+  let foldInited = false, foldTimers = [];
+  function clearFoldTimers() { foldTimers.forEach(clearTimeout); foldTimers = []; }
+
+  // layout (viewBox 1140×360) — three columns on a shared vertical band, equal 110px gaps
+  const API_X = 40, API_W = 180, LOG_X = 330, LOG_W = 230, ROW_H = 44, ROW_GAP = 14, LOG_Y = 64;
+  const LANE_X = 670, LANE_W = 430, LANE_H = 98;
+  const rowY = k => LOG_Y + k * (ROW_H + ROW_GAP);
+
+  const lanes = [
+    { y: 64,  label: 'lane A · fast', speed: 1.0, color: 'var(--gold)' },
+    { y: 184, label: 'lane B · slow', speed: 1.6, color: 'var(--verify)' },
+  ];
+
+  function initFold() {
+    const fig = document.getElementById('foldFig');
+    const fallback = document.getElementById('foldFallback');
+    if (!window.d3) { // graceful offline fallback
+      if (fig) fig.style.display = 'none';
+      if (fallback) fallback.style.display = 'block';
+      return;
+    }
+    if (foldInited) { runStory(); return; }
+    foldInited = true;
+    drawFold();
+    runStory();
+  }
+
+  function drawFold() {
+    const d3 = window.d3;
+    const svg = d3.select('#foldFig');
+    svg.selectAll('*').remove();
+
+    const defs = svg.append('defs');
+    defs.append('marker').attr('id', 'fmArrow').attr('markerWidth', 7).attr('markerHeight', 7)
+      .attr('refX', 5).attr('refY', 3).attr('orient', 'auto')
+      .append('path').attr('d', 'M0,0 L5,3 L0,6 Z').attr('fill', 'var(--faint)');
+
+    svg.append('text').attr('x', API_X).attr('y', 44).attr('fill', 'var(--muted)')
+      .attr('font-family', 'var(--mono)').attr('font-size', 13).attr('letter-spacing', 1.4).text('API CALLS');
+    svg.append('text').attr('x', LOG_X).attr('y', 44).attr('fill', 'var(--muted)')
+      .attr('font-family', 'var(--mono)').attr('font-size', 13).attr('letter-spacing', 1.4).text('APPEND-ONLY LOG');
+
+    // per event: a dimmed API chip, an arrow, and an empty (dashed) log slot
+    EVENTS.forEach((e, k) => {
+      const y = rowY(k);
+      const api = svg.append('g').attr('id', 'api' + k).attr('opacity', 0.3);
+      api.append('rect').attr('x', API_X).attr('y', y).attr('width', API_W).attr('height', ROW_H).attr('rx', 8)
+        .attr('fill', 'rgba(255,255,255,0.02)').attr('stroke', 'var(--hair)');
+      api.append('text').attr('x', API_X + 14).attr('y', y + ROW_H / 2 + 4.5).attr('fill', 'var(--paper-soft)')
+        .attr('font-family', 'var(--mono)').attr('font-size', 13).text(e.call);
+      svg.append('path').attr('id', 'apiArrow' + k)
+        .attr('d', `M${API_X + API_W + 6} ${y + ROW_H / 2} H${LOG_X - 8}`)
+        .attr('stroke', 'var(--hair)').attr('stroke-width', 1.4).attr('fill', 'none')
+        .attr('marker-end', 'url(#fmArrow)').attr('opacity', 0.25);
+      svg.append('g').attr('id', 'logslot' + k).append('rect')
+        .attr('x', LOG_X).attr('y', y).attr('width', LOG_W).attr('height', ROW_H).attr('rx', 8)
+        .attr('fill', 'none').attr('stroke', 'var(--hair-soft)').attr('stroke-dasharray', '3 4');
+    });
+
+    // two lanes (right): accumulator + hash readout — same top + height as the rows block
+    lanes.forEach((ln, li) => {
+      const g = svg.append('g').attr('class', 'lane').attr('id', 'lane' + li).attr('transform', `translate(${LANE_X},${ln.y})`);
+      g.append('text').attr('x', 0).attr('y', -8).attr('fill', 'var(--muted)')
+        .attr('font-family', 'var(--mono)').attr('font-size', 13).attr('letter-spacing', 1).text(ln.label);
+      g.append('rect').attr('class', 'acc').attr('width', LANE_W).attr('height', LANE_H).attr('rx', 11)
+        .attr('fill', 'rgba(255,255,255,0.02)').attr('stroke', 'var(--hair)');
+      g.append('text').attr('class', 'pos-label').attr('x', 22).attr('y', 28).attr('fill', 'var(--muted)')
+        .attr('font-family', 'var(--mono)').attr('font-size', 12).text('position');
+      g.append('text').attr('class', 'pos-val').attr('x', 22).attr('y', 62).attr('fill', ln.color)
+        .attr('font-family', 'var(--serif)').attr('font-size', 30).attr('font-weight', 500).text('€0.00');
+      g.append('text').attr('class', 'hash-val').attr('x', 22).attr('y', 88).attr('fill', 'var(--faint)')
+        .attr('font-family', 'var(--mono)').attr('font-size', 13).text('hash ········');
+    });
+  }
+
+  // PHASE 1 — an API call lands and appends one event to the log
+  function ingestEvent(k) {
+    const d3 = window.d3;
+    const e = EVENTS[k], y = rowY(k);
+    d3.select('#api' + k).transition().duration(280).attr('opacity', 1);
+    d3.select('#apiArrow' + k).transition().duration(280).attr('opacity', 0.9).attr('stroke', 'var(--gold)');
+
+    const slot = d3.select('#logslot' + k);
+    slot.selectAll('*').remove();
+    const row = slot.append('g').attr('opacity', 0).attr('transform', 'translate(16,0)');
+    row.append('rect').attr('class', 'rrect').attr('x', LOG_X).attr('y', y).attr('width', LOG_W).attr('height', ROW_H).attr('rx', 8)
+      .attr('fill', 'rgba(20,24,31,0.96)').attr('stroke', 'var(--gold)');
+    row.append('rect').attr('x', LOG_X).attr('y', y).attr('width', 30).attr('height', ROW_H).attr('rx', 8).attr('fill', 'var(--gold)');
+    row.append('text').attr('x', LOG_X + 15).attr('y', y + ROW_H / 2 + 4.5).attr('text-anchor', 'middle')
+      .attr('fill', 'var(--ink)').attr('font-family', 'var(--mono)').attr('font-size', 13).attr('font-weight', 600).text('#' + e.seq);
+    row.append('text').attr('x', LOG_X + 42).attr('y', y + ROW_H / 2 + 4.5).attr('fill', 'var(--paper)')
+      .attr('font-family', 'var(--mono)').attr('font-size', 12.5).text(e.name);
+    row.transition().duration(380).ease(d3.easeCubicOut).attr('opacity', 1).attr('transform', 'translate(0,0)');
+    row.select('.rrect').transition().delay(520).duration(620).attr('stroke', 'var(--hair)');
+    d3.select('#api' + k).transition().delay(620).duration(450).attr('opacity', 0.55);
+    d3.select('#apiArrow' + k).transition().delay(620).duration(450).attr('opacity', 0.3).attr('stroke', 'var(--hair)');
+  }
+
+  // PHASE 2 — fold the (now complete) log into each lane, at two tick-rates
+  function runFold() {
+    const d3 = window.d3; if (!d3) return;
+    const verdict = document.getElementById('foldVerdict');
+    verdict.innerHTML = 'folding — fold(events) → position…';
+    const baseTick = 880;
+    let hashes = [null, null];
+
+    lanes.forEach((ln, li) => {
+      const laneSel = d3.select('#lane' + li);
+      laneSel.select('.pos-val').text('€0.00');
+      laneSel.select('.hash-val').attr('fill', 'var(--faint)').text('hash ········');
+      let acc = 0; const applied = [];
+      EVENTS.forEach((e, k) => {
+        const t = setTimeout(() => {
+          acc += e.delta; applied.push(e);
+          flyToken(e, k, ln, li);
+          laneSel.select('.pos-val')
+            .text('€' + (acc / 100).toLocaleString('en-IE', { minimumFractionDigits: 2 }));
+          if (applied.length === EVENTS.length) {
+            const h = stateHash(applied);
+            hashes[li] = h;
+            laneSel.select('.hash-val').attr('fill', ln.color).text('hash ' + h);
+            checkMatch(hashes, verdict);
+          }
+        }, (k + 1) * baseTick * ln.speed);
+        foldTimers.push(t);
+      });
+    });
+  }
+
+  // the whole story: ingest the log via API calls, then fold it
+  const INGEST_GAP = 820;
+  function runStory() {
+    clearFoldTimers();
+    drawFold();
+    const verdict = document.getElementById('foldVerdict');
+    verdict.innerHTML = 'ingesting — events appended via API…';
+    EVENTS.forEach((e, k) => {
+      foldTimers.push(setTimeout(() => ingestEvent(k), 350 + k * INGEST_GAP));
+    });
+    foldTimers.push(setTimeout(runFold, 350 + EVENTS.length * INGEST_GAP + 500));
+  }
+
+  function flyToken(e, k, ln, li) {
+    const d3 = window.d3;
+    const svg = d3.select('#foldFig');
+    const startX = LOG_X + LOG_W, startY = rowY(k) + ROW_H / 2;
+    const endX = LANE_X + 210, endY = ln.y + LANE_H / 2;
+    const dot = svg.append('circle').attr('cx', startX).attr('cy', startY).attr('r', 5.5)
+      .attr('fill', ln.color).attr('opacity', 0.9);
+    dot.transition().duration(560).ease(d3.easeCubicOut)
+      .attr('cx', endX).attr('cy', endY).attr('opacity', 0).remove();
+  }
+
+  function checkMatch(hashes, verdict) {
+    if (hashes[0] && hashes[1]) {
+      const match = hashes[0] === hashes[1];
+      verdict.innerHTML = match
+        ? '<span class="match">✓ byte-identical — ' + hashes[0] + ' · determinism, not timing</span>'
+        : 'mismatch — ' + hashes[0] + ' ≠ ' + hashes[1];
+    }
+  }
+
+  const fr = document.getElementById('foldReplay');
+  const frs = document.getElementById('foldReset');
+  if (fr) fr.addEventListener('click', () => { if (window.d3) runStory(); });
+  if (frs) frs.addEventListener('click', () => { clearFoldTimers(); if (window.d3) { drawFold(); document.getElementById('foldVerdict').innerHTML = 'append via API → log → fold'; } });
+
+  /* ===== PRINCIPLE 03 — family-agnostic spine ===== */
+  const spineAdd = document.getElementById('spineAdd');
+  const spineReset = document.getElementById('spineReset');
+  let savingsIn = false;
+  if (spineAdd) spineAdd.addEventListener('click', () => {
+    if (savingsIn) return;
+    savingsIn = true;
+    document.getElementById('slotSavings').classList.add('snapped');
+    document.getElementById('slotSavingsLbl').textContent = 'family module · events · folds · decider';
+    document.getElementById('famCount').textContent = '2';
+    document.getElementById('wireCount').textContent = '2';
+    document.getElementById('kernelEdits').textContent = '0';
+    spineAdd.textContent = '✓ savings_account snapped in';
+  });
+  if (spineReset) spineReset.addEventListener('click', () => {
+    savingsIn = false;
+    document.getElementById('slotSavings').classList.remove('snapped');
+    document.getElementById('slotSavingsLbl').textContent = 'empty slot — snaps in on demand';
+    document.getElementById('famCount').textContent = '1';
+    document.getElementById('wireCount').textContent = '1';
+    document.getElementById('kernelEdits').textContent = '0';
+    spineAdd.textContent = '+ Add a family';
+  });
+
+  /* ===== PRINCIPLE 04 — crypto-shredding ===== */
+  const shredBtn = document.getElementById('shredBtn');
+  const shredReset = document.getElementById('shredReset');
+  const shredFeed = document.getElementById('shredFeed');
+  if (shredBtn) shredBtn.addEventListener('click', () => {
+    document.getElementById('vault').classList.add('shredded');
+    document.getElementById('vaultKey').textContent = '✗ key destroyed';
+    ['cipher1', 'cipher2', 'cipher3'].forEach((id, k) => {
+      setTimeout(() => document.getElementById(id).classList.add('shredded'), 120 * k);
+    });
+    shredFeed.innerHTML = '<span class="erased">one key shredded → every copy undecryptable</span>';
+  });
+  if (shredReset) shredReset.addEventListener('click', () => {
+    document.getElementById('vault').classList.remove('shredded');
+    document.getElementById('vaultKey').textContent = '🔑 key 7f3a';
+    ['cipher1', 'cipher2', 'cipher3'].forEach(id => document.getElementById(id).classList.remove('shredded'));
+    shredFeed.innerHTML = '&nbsp;';
+  });
+
+  /* ===== PRINCIPLE 05 — explicit-drift governance ===== */
+  const govGate = document.getElementById('govGate');
+  const govSilent = document.getElementById('govSilent');
+  const govAmend = document.getElementById('govAmend');
+  const govReset = document.getElementById('govReset');
+  function govSet(mode) {
+    const ps = document.getElementById('pathSilent');
+    const pa = document.getElementById('pathAmend');
+    ps.classList.toggle('active', mode === 'silent');
+    pa.classList.toggle('active', mode === 'amend');
+    govGate.className = 'gate ' + (mode === 'silent' ? 'block' : mode === 'amend' ? 'pass' : 'idle');
+    govGate.textContent = mode === 'silent' ? '✗ CI DRIFT GATE — BLOCKED'
+      : mode === 'amend' ? '✓ amendment present — LANDS'
+      : '— waiting for a change —';
+  }
+  if (govSilent) govSilent.addEventListener('click', () => govSet('silent'));
+  if (govAmend) govAmend.addEventListener('click', () => govSet('amend'));
+  if (govReset) govReset.addEventListener('click', () => govSet('idle'));
+
+  render();
+})();
+</script>
+</body>
+</html>
