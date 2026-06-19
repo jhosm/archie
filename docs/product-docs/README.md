@@ -40,12 +40,15 @@ product documentation.
 - [Write your first product variant](./tutorials/write-your-first-variant.md)
 
 **How-to**
+- [Author and deploy a complete rate-sheet version](./how-to/author-and-deploy-a-rate-sheet.md)
 - [Add a rate band](./how-to/add-a-rate-band.md)
 - [Add a day-count primitive](./how-to/add-a-day-count-primitive.md)
 - [Validate a pack locally](./how-to/validate-a-pack-locally.md)
+- [Interpret a validation failure (message decoder)](./how-to/interpret-a-validation-failure.md)
 - [Troubleshoot a variant rejection](./how-to/troubleshoot-a-variant-rejection.md)
 
 **Explanation**
 - [Why packs and rate sheets are separate](./explanation/why-packs-and-rate-sheets-are-separate.md)
+- [Rate-sheet versioning and point-in-time resolution](./explanation/rate-sheet-versioning-and-resolution.md)
 - [Reading a CUE schema](./explanation/reading-a-cue-schema.md)
 - [How packs and variants relate](./explanation/how-packs-and-variants-relate.md)
