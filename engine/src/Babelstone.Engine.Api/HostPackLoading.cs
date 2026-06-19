@@ -1,3 +1,4 @@
+using Babelstone.Engine.Hosting;
 using Babelstone.EventStore;
 using Babelstone.Packs;
 using Npgsql;

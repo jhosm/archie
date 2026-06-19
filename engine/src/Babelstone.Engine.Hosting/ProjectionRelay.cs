@@ -1,6 +1,8 @@
 using Babelstone.Engine;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
-namespace Babelstone.Engine.Api;
+namespace Babelstone.Engine.Hosting;
 
 /// <summary>Tuning for the in-process async projection relay.</summary>
 public sealed record ProjectionRelayOptions

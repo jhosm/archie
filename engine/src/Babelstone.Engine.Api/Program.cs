@@ -2,6 +2,7 @@ using System.Text.Json;
 using Babelstone.Engine;
 using Babelstone.Engine.Api;
 using Babelstone.Engine.Avro;
+using Babelstone.Engine.Hosting;
 using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
 using Babelstone.Families.TermDeposit.Application;
