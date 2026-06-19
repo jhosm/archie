@@ -241,15 +241,12 @@ builder.Services.AddSingleton(new OutboxLagObserver(connectionString));
 // command window is load-bearing (ADR-PC-029 §4 — pruning a receipt before the stream's active
 // lifetime + the dispatcher's retry horizon elapses could replay a command into a DUPLICATE deposit),
 // so it defaults to 3 years; the inbox window is the simpler Kafka-retention × N (Document 04),
-// defaulting to 30 days. Both are overridable via the Engine:DedupRetention config section.
-builder.Services.AddSingleton(new DedupRetentionOptions
-{
-    ConnectionString = connectionString,
-    CommandDedupRetention = builder.Configuration.GetValue<TimeSpan?>("Engine:DedupRetention:CommandDedup")
-        ?? new DedupRetentionOptions { ConnectionString = connectionString }.CommandDedupRetention,
-    InboxRetention = builder.Configuration.GetValue<TimeSpan?>("Engine:DedupRetention:Inbox")
-        ?? new DedupRetentionOptions { ConnectionString = connectionString }.InboxRetention,
-});
+// defaulting to 30 days. All four knobs — the two retention windows AND the operational tuning
+// (BatchSize, SweepInterval) — are overridable via the Engine:DedupRetention config section, so an
+// operator can retune the sweep (e.g. drain a first backlog faster, or ease off the primary) without
+// a recompile; an unset key keeps the conservative default. See DedupRetentionConfiguration.
+builder.Services.AddSingleton(
+    DedupRetentionConfiguration.FromConfiguration(builder.Configuration, connectionString));
 builder.Services.AddSingleton(serviceProvider =>
     new DedupRetentionSweeper(serviceProvider.GetRequiredService<DedupRetentionOptions>()));
 builder.Services.AddHostedService<DedupRetentionSweepService>();
