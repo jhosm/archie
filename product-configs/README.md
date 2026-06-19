@@ -23,12 +23,16 @@ approval (the pack). See [ADR-PC-019 F2](../docs/product-management/product_conc
 | `dpz_pt_24m_juros_trimestral.yaml` | `term_deposit@2026.1` | `pt.2026.1` | 24-month, PERIODIC quarterly coupons (`m=3`), Act/360 |
 | `dpz_pt_6m_juros_antecipados.yaml` | `term_deposit@2026.1` | `pt.2026.1` | 6-month, ADVANCE interest (juros antecipados), Act/360 |
 | `dpz_pt_18m_resgate_escalonado.yaml` | `term_deposit@2026.1` | `pt.2026.1` | 18-month, AT_MATURITY, banded early-termination schedule, Act/360 |
+| `dpz_pt_12m_resgate_parcial.yaml` | `term_deposit@2026.1` | `pt.2026.1` | 12-month, AT_MATURITY, partial-withdrawal policy (*resgate parcial*, F.12), Act/360 |
 
 `dpz_pt_12m_juros_venc` is the walking-skeleton variant (E.2). The four siblings
 land in F.7, completing the v1 input surface: every interest shape the family
 schema carries (the three `interest_variant`s × the flat/banded early-termination
 split) is represented by one variant and one sealed-corpus canonical instance
 ([packs/pt.2026.1/test-corpus](../packs/pt.2026.1/test-corpus/canonical-instances.yaml)).
+`dpz_pt_12m_resgate_parcial` is the F.12 follow-on: the first variant to declare a
+`partial_withdrawal` policy, so the partial-withdrawal decider is exercised by a
+real product (its own canonical instance lands with the depth-5 leg, F.12 wiring 4/4).
 The variants reference the rate sheet by ref only — no inline rates — and reuse
 the pack's existing primitives (`act_360`, `irs_juros`); TANB/TANL/TAE stay
 engine-computed (financial_concepts §5.4), never variant fields.
