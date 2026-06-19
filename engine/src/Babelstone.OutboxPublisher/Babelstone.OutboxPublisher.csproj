@@ -29,5 +29,11 @@
     <!-- The wire-format framing + reverse-DNS ce_type helpers are internal; the test project
          asserts them directly without widening the public surface. -->
     <InternalsVisibleTo Include="Babelstone.OutboxPublisher.Tests" />
+    <!-- The load harness mirrors the relay's framing/header contract in its own WireFormat.cs
+         (the relay's helpers being internal); the harness parity test (ADR-PC-011, bd a7f6) pins
+         WireFormat against the relay's OutboxDrainer.ToConfluentWireFormat / BuildHeadersCore /
+         ReverseDnsType so the duplicated framing cannot silently drift. Additive read-only grant —
+         no engine source changes. -->
+    <InternalsVisibleTo Include="Babelstone.LoadHarness.Tests" />
   </ItemGroup>
 </Project>
