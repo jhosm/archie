@@ -157,8 +157,20 @@ public sealed class TermDepositConstitutionService(
                 $"Rate sheet '{resolution.RateSheetVersionId}' does not price " +
                 $"({command.ProductId}, {command.Role}) at {command.PrincipalCents}c.");
 
-        // 3. Decide (pure): build the event, stamping the resolved TAN + the version it came from.
-        var constituted = TermDepositDecider.DecideConstitution(command, tan, resolution.RateSheetVersionId);
+        // 3. Resolve the product's F.12 partial-withdrawal policy from its product config and PIN it on
+        //    the constitution event (bd k6r8.8/qze9): like the rate, the policy is fixed at constitution
+        //    so a later config edit can never retroactively change a live deposit's withdrawal rights
+        //    (ADR-PC-009 per-instance pinning). A product the store does not carry — or no store
+        //    configured (direct callers) — pins the Unrestricted policy: no F.12 gates. Pure lookup,
+        //    no clock/I-O in the pinned value.
+        var partialWithdrawalPolicy = _productConfigStore?.Resolve(command.ProductId) is { } productConfig
+            ? PartialWithdrawalPolicy.FromProductConfig(productConfig)
+            : PartialWithdrawalPolicy.Unrestricted;
+
+        // 4. Decide (pure): build the event, stamping the resolved TAN + the version it came from + the
+        //    resolved partial-withdrawal policy.
+        var constituted = TermDepositDecider.DecideConstitution(
+            command, tan, resolution.RateSheetVersionId, partialWithdrawalPolicy);
 
         // 4. DE-SETTLED constitution (bd babelstone-t7o3.4, ADR-PC-016 §68/§127). The engine no longer
         //    debits the funding account on this path: settlement is the constitution SAGA's GATED step
@@ -347,25 +359,17 @@ public sealed class TermDepositConstitutionService(
 
     /// <summary>
     /// Withdraw part of a constituted deposit's principal before maturity (F.12; 02 §2.4.1, bd qze9):
-    /// rehydrate it (must be Active — the F.3 gate decides), resolve the product's partial-withdrawal
-    /// policy from its product config (bd k6r8.8), run the pure <see cref="PartialWithdrawalDecider"/>,
-    /// and append the single <c>DepositPartiallyWithdrawn</c> event reducing the principal. UNLIKE early
-    /// termination, a partial withdrawal CLOSES nothing and settles nothing — it is a principal reduction
-    /// only (02 §2.4.1), so there is NO settlement leg here; the deposit stays Active. Withdrawing the
-    /// whole balance is a termination (F.4), which the decider refuses. Triggered MANUALLY, as maturity is.
+    /// rehydrate it (must be Active — the F.3 gate decides), rebuild the product's partial-withdrawal
+    /// policy from the gates PINNED on the deposit at constitution (bd k6r8.8/qze9), run the pure
+    /// <see cref="PartialWithdrawalDecider"/>, and append the single <c>DepositPartiallyWithdrawn</c>
+    /// event reducing the principal. UNLIKE early termination, a partial withdrawal CLOSES nothing and
+    /// settles nothing — it is a principal reduction only (02 §2.4.1), so there is NO settlement leg here;
+    /// the deposit stays Active. Withdrawing the whole balance is a termination (F.4), which the decider
+    /// refuses. Triggered MANUALLY, as maturity is.
     /// </summary>
     /// <returns>The stream's head version after the withdrawal (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
     public async Task<long> WithdrawPartiallyAsync(PartialWithdrawCommand command, CancellationToken ct = default)
     {
-        // 0. The partial-withdrawal policy rides on the deposit's PRODUCT config (bd k6r8.8), not a command
-        //    input — resolved per-deposit from the product code the constitution stamped. Fail loud if no
-        //    product-config store is configured, exactly as the minimal constitution path does.
-        var store = _productConfigStore
-            ?? throw new InvalidOperationException(
-                "No product-config store is configured for this engine instance; the partial-withdrawal "
-                + "path resolves the F.12 policy from the deposit's product config and cannot run without "
-                + "it (ADR-PC-009 / bd k6r8.8).");
-
         // 1. Rehydrate the constituted position (load-then-append on the live stream head).
         var hydrated = await runtime.LoadAsync(command.DepositId, ct);
         var position = hydrated.State;
@@ -377,14 +381,12 @@ public sealed class TermDepositConstitutionService(
         RejectIfIllegal(
             position.Lifecycle, LifecycleTransitions.Transition.PartiallyWithdraw, command.DepositId, "withdraw partially");
 
-        // 2. Resolve the product's F.12 policy from its product config — fail loud on an unknown product
-        //    code, exactly as an unpriced (product, role) fails the rate-sheet resolve. A variant that
-        //    omits the partial_withdrawal block resolves to PartialWithdrawalPolicy.Unrestricted (02 §2.4.1).
-        var config = store.Resolve(position.ProductCode)
-            ?? throw new DomainRejectedException(
-                $"No product config found for '{position.ProductCode}'; cannot resolve the partial-"
-                + $"withdrawal policy for deposit {command.DepositId} (ADR-PC-009).");
-        var policy = PartialWithdrawalPolicy.FromProductConfig(config);
+        // 2. Rebuild the F.12 policy from the gates PINNED on the deposit at constitution (bd k6r8.8/qze9),
+        //    NOT from the live product config — so the rules a deposit is subject to are the ones fixed
+        //    when it was opened, immune to a later config edit (ADR-PC-009 per-instance pinning). 0/0/0
+        //    (a pre-F.12 deposit, or a variant that omitted the block) is the Unrestricted policy.
+        var policy = new PartialWithdrawalPolicy(
+            position.MinWithdrawalCents, position.MinRemainingBalanceCents, position.CarenciaDays);
 
         // 3. Decide (pure): the withdrawal DATE is derived from the command instant and passed as an INPUT
         //    — no clock in the decider. A partial withdrawal carries NO money leg (02 §2.4.1), so unlike
@@ -720,6 +722,9 @@ public sealed class TermDepositConstitutionService(
             ProductCode = constituted.ProductCode,
             Role = constituted.Role,
             FundingAccount = constituted.FundingAccount,
+            MinWithdrawalCents = constituted.MinWithdrawalCents,
+            MinRemainingBalanceCents = constituted.MinRemainingBalanceCents,
+            CarenciaDays = constituted.CarenciaDays,
             RemainingPrincipal = constituted.Principal,
             Lifecycle = DepositLifecycle.Active,
         };
@@ -746,7 +751,10 @@ public sealed class TermDepositConstitutionService(
             PaymentPeriodMonths: position.PaymentPeriodMonths,
             ProductCode: position.ProductCode,
             Role: position.Role,
-            FundingAccount: position.FundingAccount);
+            FundingAccount: position.FundingAccount,
+            MinWithdrawalCents: position.MinWithdrawalCents,
+            MinRemainingBalanceCents: position.MinRemainingBalanceCents,
+            CarenciaDays: position.CarenciaDays);
 
     // commandId is the OPTIONAL command-ingress idempotency key (ADR-PC-029 slot 4): the
     // constitution paths thread the command's CommandId so the append dedupes on it; the

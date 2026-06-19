@@ -188,11 +188,12 @@ internal sealed record VariantShape(
 /// <see cref="SimulatedLifecycle.PartialWithdrawal"/> variant with (bd k6r8.10): the elapsed day the
 /// withdrawal fires at and the fixed amount withdrawn. Both are INPUTS (start + N days, fixed cents) so
 /// the produced sequence is identical on every run and CI host, mirroring the banded leg's
-/// <see cref="EarlyTerminationShape.BreakAfterDays"/>. The policy itself is NOT pinned here — unlike the
-/// banded early-termination policy, the F.12 policy rides on the product config (k6r8.8), so the
-/// simulation resolves it from the REAL <c>resgate parcial</c> variant through the wired product-config
-/// store, exercising the whole F.12 chain end-to-end. The chosen values must clear that variant's gates
-/// (past the carência; at least the minimum withdrawal; leaving at least the minimum remaining balance).</summary>
+/// <see cref="EarlyTerminationShape.BreakAfterDays"/>. The policy itself is NOT carried here — the F.12
+/// policy rides on the product config (k6r8.8) and is resolved from the REAL <c>resgate parcial</c>
+/// variant AT CONSTITUTION through the wired product-config store, then PINNED on the deposit (the
+/// withdrawal reads the pinned policy off the position) — so the leg exercises the whole F.12 chain
+/// end-to-end. The chosen values must clear that variant's pinned gates (past the carência; at least the
+/// minimum withdrawal; leaving at least the minimum remaining balance).</summary>
 /// <param name="WithdrawAfterDays">Elapsed days from constitution to the simulated withdrawal — chosen
 /// strictly on/after the variant's carência so the lock-up gate passes.</param>
 /// <param name="WithdrawnCents">The fixed principal withdrawn, in cents — chosen to clear the minimum

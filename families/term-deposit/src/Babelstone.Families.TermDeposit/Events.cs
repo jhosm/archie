@@ -91,7 +91,17 @@ public sealed record DepositConstituted(
     int PaymentPeriodMonths = 0,
     string ProductCode = "",
     string Role = "",
-    string FundingAccount = "") : DomainEvent;
+    string FundingAccount = "",
+    // The F.12 partial-withdrawal policy PINNED at constitution (bd k6r8.8/qze9): the three gates a
+    // partial early withdrawal must clear, resolved from the product config and stamped here so a later
+    // config edit cannot retroactively change a live deposit's withdrawal rights — the same per-instance
+    // pinning the rate/term/variant get (ADR-PC-009). All three default to 0 (the Unrestricted policy),
+    // additive with Avro defaults so pre-F.12 records still decode (forward-only evolution, ADR-IC-002).
+    // Cents are `long` (not Money) to mirror PartialWithdrawalPolicy and keep the Avro field names
+    // `min_withdrawal_cents` / `min_remaining_balance_cents` clean (no double `_cents` suffix).
+    long MinWithdrawalCents = 0,
+    long MinRemainingBalanceCents = 0,
+    int CarenciaDays = 0) : DomainEvent;
 
 /// <summary>Interest accrued for the period. For AT_MATURITY this is the single flow at
 /// maturity: <c>GrossInterest = Accrual.SimpleInterest(principal, tan, DayCount.Between(start, maturity, Act360))</c>.</summary>

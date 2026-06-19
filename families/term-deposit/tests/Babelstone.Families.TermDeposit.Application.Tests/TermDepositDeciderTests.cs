@@ -29,7 +29,9 @@ public sealed class TermDepositDeciderTests
             ConstitutedAt: new DateTimeOffset(2026, 1, 15, 0, 0, 0, TimeSpan.Zero),
             InterestVariant: "AT_MATURITY", AutoRenewalPolicy: "NONE", FundingAccount: "PT50-DDA-001", Actor: "test");
 
-        var constituted = TermDepositDecider.DecideConstitution(command, tanBasisPoints: TanBps, rateSheetVersionId: "pt-deposits-2026.1");
+        var constituted = TermDepositDecider.DecideConstitution(
+            command, tanBasisPoints: TanBps, rateSheetVersionId: "pt-deposits-2026.1",
+            partialWithdrawalPolicy: PartialWithdrawalPolicy.Unrestricted);
 
         Assert.Equal(new Money(PrincipalCents), constituted.Principal);
         Assert.Equal(TanBps, constituted.TanBasisPoints);
@@ -39,6 +41,31 @@ public sealed class TermDepositDeciderTests
         // bd babelstone-v794: the catalogue product_code is stamped from the already-available
         // command.ProductId (no new command input) so the D.4 read model can denormalize it.
         Assert.Equal("dpz_pt_12m_juros_venc", constituted.ProductCode);
+        // Unrestricted policy ⇒ the three F.12 gates stamp as 0 (bd k6r8.8/qze9).
+        Assert.Equal(0, constituted.MinWithdrawalCents);
+        Assert.Equal(0, constituted.MinRemainingBalanceCents);
+        Assert.Equal(0, constituted.CarenciaDays);
+    }
+
+    [Fact]
+    public void DecideConstitution_pins_the_resolved_partial_withdrawal_policy_on_the_event()
+    {
+        // bd k6r8.8/qze9: the F.12 policy is resolved from the product config and PINNED on
+        // DepositConstituted at constitution (like the rate), so a later config edit cannot change a
+        // live deposit's withdrawal rights (ADR-PC-009). The decider stamps the passed policy verbatim.
+        var command = new ConstituteDepositCommand(
+            DepositId: Guid.NewGuid(), PrincipalCents: PrincipalCents, ProductId: "dpz_pt_12m_resgate_parcial",
+            Role: "standard", TermDays: 365, StartDate: Start,
+            ConstitutedAt: new DateTimeOffset(2026, 1, 15, 0, 0, 0, TimeSpan.Zero),
+            InterestVariant: "AT_MATURITY", AutoRenewalPolicy: "NONE", FundingAccount: "PT50-DDA-001", Actor: "test");
+
+        var constituted = TermDepositDecider.DecideConstitution(
+            command, tanBasisPoints: TanBps, rateSheetVersionId: "pt-deposits-2026.1",
+            partialWithdrawalPolicy: new PartialWithdrawalPolicy(50_000, 100_000, 90));
+
+        Assert.Equal(50_000, constituted.MinWithdrawalCents);
+        Assert.Equal(100_000, constituted.MinRemainingBalanceCents);
+        Assert.Equal(90, constituted.CarenciaDays);
     }
 
     // ---- commercial-eligibility preconditions (ADR-PC-024, F.9 babelstone-k6r8.2) --------------

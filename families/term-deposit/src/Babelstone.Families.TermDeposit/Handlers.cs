@@ -34,6 +34,14 @@ public sealed class DepositConstitutedHandler : IEventHandler<DepositPosition, D
             // (the fold stays pure/deterministic, BENG001/002/003).
             Role = @event.Role,
             FundingAccount = @event.FundingAccount,
+            // The F.12 partial-withdrawal policy PINNED at constitution (bd k6r8.8/qze9), copied
+            // verbatim onto the position — no clock, no I/O, no derivation (BENG001/002/003). The
+            // partial-withdrawal command path rebuilds the policy from these three folded fields, so
+            // a later config edit can never retroactively change a live deposit's withdrawal rights.
+            // 0/0/0 (the Avro default a pre-F.12 record decodes) ⇒ the Unrestricted policy.
+            MinWithdrawalCents = @event.MinWithdrawalCents,
+            MinRemainingBalanceCents = @event.MinRemainingBalanceCents,
+            CarenciaDays = @event.CarenciaDays,
             // RemainingPrincipal tracks principal still on deposit; it starts at the full
             // principal and is reduced by partial withdrawals (the event carries the result).
             RemainingPrincipal = @event.Principal,

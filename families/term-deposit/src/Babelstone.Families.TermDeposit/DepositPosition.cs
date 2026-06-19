@@ -79,6 +79,16 @@ public enum DepositLifecycle
 /// <c>DepositConstituted.FundingAccount</c>. Persisted so the engine settles the auto-renewal
 /// rollover debit against the SAME funding reference from the closing deposit (bd babelstone-mtto.5).
 /// Empty ("") for deposits constituted before mtto.5 (the Avro default).</param>
+/// <param name="MinWithdrawalCents">The F.12 partial-withdrawal policy PINNED at constitution (bd
+/// k6r8.8/qze9), folded from <c>DepositConstituted</c>: the smallest partial withdrawal the product
+/// allows, in cents (PartialWithdrawalPolicy.MinWithdrawalCents). The partial-withdrawal command path
+/// rebuilds the policy from these three folded fields, so the rules a live deposit is subject to are
+/// the ones fixed at constitution — not whatever the product config says later. 0 ⇒ Unrestricted (the
+/// value pre-F.12 deposits decode from the Avro default). Structural config, NOT PII (ADR-PC-004 §P2).</param>
+/// <param name="MinRemainingBalanceCents">The F.12 minimum remaining balance after a withdrawal, in
+/// cents, PINNED at constitution (PartialWithdrawalPolicy.MinRemainingBalanceCents). 0 ⇒ no floor.</param>
+/// <param name="CarenciaDays">The F.12 lock-up (carência) window in days from constitution, PINNED at
+/// constitution (PartialWithdrawalPolicy.CarenciaDays). A duration, not money. 0 ⇒ no lock-up.</param>
 public sealed record DepositPosition(
     Guid DepositId,
     Money Principal,
@@ -93,6 +103,9 @@ public sealed record DepositPosition(
     string ProductCode,
     string Role,
     string FundingAccount,
+    long MinWithdrawalCents,
+    long MinRemainingBalanceCents,
+    int CarenciaDays,
     Money AccruedGrossInterest,
     Money WithholdingToDate,
     Money NetInterest,
@@ -118,6 +131,9 @@ public sealed record DepositPosition(
         ProductCode: string.Empty,
         Role: string.Empty,
         FundingAccount: string.Empty,
+        MinWithdrawalCents: 0,
+        MinRemainingBalanceCents: 0,
+        CarenciaDays: 0,
         AccruedGrossInterest: Money.Zero,
         WithholdingToDate: Money.Zero,
         NetInterest: Money.Zero,

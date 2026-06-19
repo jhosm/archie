@@ -357,10 +357,11 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             runtime, new PostgresRateSheetStore(connectionString), new RecordingSettlementPort(),
             SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros",
             earlyTerminationPolicy: earlyTerminationPolicy,
-            // The F.12 partial-withdrawal policy rides on the product config (k6r8.8), so the
-            // partial-withdrawal leg resolves it from the REAL resgate-parcial variant on disk through
-            // this store — exercising the whole F.12 chain (schema → config → variant → wiring) end-to-end,
-            // not a pinned stand-in. Harmless for the maturing/banded variants, which never withdraw.
+            // The F.12 partial-withdrawal policy rides on the product config (k6r8.8). ConstituteAsync
+            // resolves it from the REAL resgate-parcial variant on disk through this store AT CONSTITUTION
+            // and PINS it on the deposit; the withdrawal leg then reads the pinned policy off the position
+            // — exercising the whole F.12 chain (schema → config → variant → wiring → corpus) end-to-end.
+            // Harmless for the maturing/banded variants, which never withdraw.
             productConfigStore: new YamlProductConfigStore(productConfigsDir: null));
         return (runtime, service);
     }

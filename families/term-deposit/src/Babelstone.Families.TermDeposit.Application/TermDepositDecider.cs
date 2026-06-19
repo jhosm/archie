@@ -77,7 +77,8 @@ public static class TermDepositDecider
     /// the orchestrator (bd babelstone-mtto.5).
     /// </summary>
     public static DepositConstituted DecideConstitution(
-        ConstituteDepositCommand command, int tanBasisPoints, string rateSheetVersionId) =>
+        ConstituteDepositCommand command, int tanBasisPoints, string rateSheetVersionId,
+        PartialWithdrawalPolicy partialWithdrawalPolicy) =>
         new(
             DepositId: command.DepositId,
             Principal: new Money(command.PrincipalCents),
@@ -101,7 +102,14 @@ public static class TermDepositDecider
             // position) so a later auto-renewal recovers ALL renewal facts — product / role / funding
             // — from the closing deposit it already loads, never from the renewal command.
             Role: command.Role,
-            FundingAccount: command.FundingAccount);
+            FundingAccount: command.FundingAccount,
+            // The F.12 partial-withdrawal policy resolved from the product config and PINNED here
+            // (bd k6r8.8/qze9): stamped at constitution exactly as the rate is, so the gates a live
+            // deposit is subject to are fixed for its life (ADR-PC-009). The impure service resolves
+            // the policy from the product config and passes it in; the decider stays pure.
+            MinWithdrawalCents: partialWithdrawalPolicy.MinWithdrawalCents,
+            MinRemainingBalanceCents: partialWithdrawalPolicy.MinRemainingBalanceCents,
+            CarenciaDays: partialWithdrawalPolicy.CarenciaDays);
 
     /// <summary>
     /// Decide commercial eligibility (ADR-PC-024 §5): refuse the constitution when a precondition the
@@ -625,7 +633,13 @@ public static class TermDepositDecider
             // (bd babelstone-mtto.5). The effective role (with the pre-field fallback) and the funding
             // token are resolved by the service and passed in; the decider stays pure.
             Role: role,
-            FundingAccount: fundingAccount);
+            FundingAccount: fundingAccount,
+            // The F.12 partial-withdrawal policy carried forward from the closing deposit (bd
+            // k6r8.8/qze9): the renewed instance is the SAME product, so it inherits the SAME pinned
+            // gates — chain preservation across renewal generations, exactly like product/role/funding.
+            MinWithdrawalCents: closing.MinWithdrawalCents,
+            MinRemainingBalanceCents: closing.MinRemainingBalanceCents,
+            CarenciaDays: closing.CarenciaDays);
 
     /// <summary>
     /// Build the <see cref="DepositRenewed"/> link (02 §2.4.4 step 3) carrying the closing↔new deposit ids
