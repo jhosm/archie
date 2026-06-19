@@ -13,6 +13,21 @@ NEVER a tool argument; Document 11) from the request headers and enforces *scope
 ``check_tool_scope``: ``get_deposit`` needs ``deposits:read``, the writes need ``deposits:write``.
 The authoritative ``aud`` re-check (§P3) and the public RFC 9728 metadata (§P2) live in ``app.py``.
 
+§P9 agent trust-model hardening (Epic J.5, bd babelstone-u01t): the agent is the UNTRUSTED caller
+(Document 11 §"Trust Model — The Agent Is Untrusted"). Three structural defences compose here. (1)
+*Typed-not-free-text*: every tool returns a structured ``outputSchema`` (§P6), never a free-text
+confirmation, so there is no untyped body for an injection to ride in. (2) *Sanitisation*: any
+customer-/external-writable free-text the engine returns is run through ``sanitize.sanitize_free_text``
+at the ``engine_client`` boundary (control-character + instruction-shape stripping, length cap, and a
+data-not-instruction fence) before it reaches a tool — the bank's second-line defence against prompt
+injection via bank-returned content (the agent vendor is the first line; the bank cannot control it).
+(3) *Hallucinated-parameter resistance*: the actor identity is the gateway-attested ``X-Client-Id``
+(OAuth ``sub``), NEVER a tool argument, and ``inputSchema`` is strict with no implicit defaults for
+security-relevant parameters. The deposit position has no customer free-text field today, so (2) is an
+identity transform now; it is the forward-safe choke point so a future free-text field is sanitised by
+construction. None of this *eliminates* the threat — it *reduces the attack surface*, the posture
+Document 11 §Trust Model commits the bank to.
+
 §P8 human-in-the-loop elicitation (Epic J.4, bd babelstone-ar1y) is wired here via ``elicitation.py``:
 ``constitute_deposit`` uses FORM mode to confirm a PERIODIC interest selection (a non-irreversible
 parameter clarification — live and §P8-conformant), and ``mature_deposit`` / ``pay_interest`` carry
