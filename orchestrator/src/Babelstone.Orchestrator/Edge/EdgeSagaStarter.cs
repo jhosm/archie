@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Saga;
+using Babelstone.Telemetry;
 using Npgsql;
 
 namespace Babelstone.Orchestrator.Edge;
@@ -167,6 +169,32 @@ public sealed class EdgeSagaStarter(
         // The start signal's causation id is the saga's own process id (the edge is the origin —
         // there is no upstream message that caused this start), a stable, PII-free reference.
         var causationId = processId;
+
+        // Open the edge's saga-advance span (H.5) on the SHARED Babelstone.Engine source. The saga's
+        // FIRST transition is EDGE-driven (STARTED → PARALLEL_VALIDATION), not consumed off the bus like
+        // later legs — but it IS an advance, so it gets the SAME saga.advance span shape every
+        // consume-loop leg gets (SagaAdvanceHandler), carrying the structural babelstone.saga.* tags
+        // ADR-IC-003 §P3 wants on EVERY span the orchestrator emits. The span nests under the edge's
+        // inbound request SERVER span (Activity.Current, AddAspNetCoreInstrumentation) — its parent in
+        // production — and ITS context becomes the outbound traceparent the emitted commands carry. That
+        // is what makes the WHOLE saga ONE connected trace: the dispatcher propagates it to the
+        // ACL/engine, the result events carry it back, and every later advance nests under it. Without
+        // it the edge-start rows carried a NULL traceparent and the consume loop rooted a DISCONNECTED
+        // trace — why LIVE·saga's Telemetry tab showed only the lone edge span. With no tracer listening
+        // StartActivity returns null and span?.* + FormatTraceParent are no-ops (rows stay null exactly
+        // as before — the no-tracer posture is unchanged). Tags are operational, never PII (§P4/§P2).
+        using var advanceSpan = BabelstoneTelemetry.ActivitySource.StartActivity(
+            BabelstoneAttributes.SpanSagaAdvance, ActivityKind.Internal);
+        advanceSpan?.SetTag(BabelstoneAttributes.SagaProcessId, processId.ToString());
+        advanceSpan?.SetTag(BabelstoneAttributes.SagaEventType, StartEventType);
+        advanceSpan?.SetTag(BabelstoneAttributes.SagaCausationId, causationId.ToString());
+        if (correlationId is { } correlation)
+        {
+            advanceSpan?.SetTag(BabelstoneAttributes.SagaCorrelationId, correlation.ToString());
+        }
+        // The outbound W3C traceparent the edge's emitted commands inherit (this advance span's context).
+        var traceParent = SagaTraceContext.FormatTraceParent(advanceSpan);
+
         if (_machine.TryAdvance(_machine.InitialState, StartEventType, out var outcome))
         {
             var won = await _stateStore.TryAdvanceAsync(
@@ -183,7 +211,7 @@ public sealed class EdgeSagaStarter(
             foreach (var commandType in outcome.Commands)
             {
                 await _commandSink.EmitAsync(
-                    connection, transaction, processId, commandType, causationId, correlationId, ct);
+                    connection, transaction, processId, commandType, causationId, correlationId, ct, traceParent);
             }
 
             state = outcome.Next;

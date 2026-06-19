@@ -19,7 +19,7 @@ reading source. The documentation estate already has two governed surfaces —
 
 - the **concern-axis corpus** (`docs/product-management/`, hand-authored, the normative
   spine), and
-- the **generated reference** (`docs/product-management/reference/`,
+- the **generated reference** (`docs/product-docs/reference/` — moved there 2026-06-19, bd `babelstone-sfnt.26`; `docs/product-management/reference/` at this ADR's authoring,
   [ADR-PC-022](./ADR-PC-022-product-documentation-architecture.md) §P2: rendered from
   *machine-readable contracts* — Avro, CUE, the MCP tool surface, ADR front-matter — as
   in-tree Markdown, byte-drift-gated by `make docs-verify`).
@@ -149,6 +149,23 @@ Markdown-corpus stitching are weak for a modern docs site. **Decisive: second-cl
    The `docs/**`, `README.md`, and `INSTALL.md` trigger inputs were dropped from
    `docs-site.yml` to match, and `docfx.json` no longer stitches `../docs` or the root
    READMEs.*
+
+   *Revised 2026-06-19 (bd `babelstone-sfnt.26`): the **landing page is now the
+   config-author product-docs README** (`docs/product-docs/README.md`), making
+   product-docs the site's front door rather than a bespoke one-paragraph page;
+   `docfx/index.md` is a one-line DocFX `[!include]` of that README, so it stays the
+   single source (no copy). The navbar's outbound link now points at
+   `…/tree/main/docs/product-docs` (was `…/docs`), since product-docs — which now
+   also hosts the moved generated `reference/` (ADR-PC-022 §P1, same-day amendment) —
+   is the docs root a reader should land in. The §P3 invariant is **deliberately
+   narrowed, not abandoned**: still exactly **one** corpus page is rendered here (the
+   README, as the home page), and the rest of the corpus is **not** stitched — it
+   reads on GitHub. The README's own deeper links (into `tutorials/`, `reference/`,
+   `../product-management/`) are not published in the site; they resolve on GitHub,
+   reached via the "Docs on GitHub" navbar entry — so the multi-version-404 problem
+   §P3 designs out is **contained to that single landing page**, whose job is to route
+   readers onward to the version-correct GitHub tree. This is a scoped exception (one
+   landing doc), not a return to the rejected corpus-wide stitching.*
 4. **§P4 — Publishing is the artifact-based GitHub Pages flow.**
    `.github/workflows/docs-site.yml` builds on PRs touching its inputs (build-only
    validation — *not* a required check, so the

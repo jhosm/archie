@@ -2,7 +2,7 @@
 
 # `get_deposit`
 
-Read a term deposit's current state — the ONE canonical deposit resource ([ADR-IC-005](../../integration_concepts/adrs/ADR-IC-005-cqrs-read-model-storage.md)).
+Read a term deposit's current state — the ONE canonical deposit resource ([ADR-IC-005](../../../product-management/integration_concepts/adrs/ADR-IC-005-cqrs-read-model-storage.md)).
 
 ``deposit_id`` is the engine-assigned UUID returned by ``constitute_deposit``. Served from the
 fast denormalized read model by default. For read-your-writes (e.g. reading right after a
@@ -11,7 +11,7 @@ engine then folds the event stream if the projection has not caught up, so you a
 write. Money is integer cents; ``last_sequence`` on the result is the version served (thread it
 forward for monotonic reads).
 
-Requires ``deposits:read`` ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4) — the reserved read scope; a ``deposits:read`` token
+Requires ``deposits:read`` ([ADR-IC-010](../../../product-management/integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4) — the reserved read scope; a ``deposits:read`` token
 cannot reach the write tools.
 
 ## Signature

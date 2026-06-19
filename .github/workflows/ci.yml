@@ -64,7 +64,30 @@ jobs:
               - 'contracts/cue/pack/**'
             infra: ['infra/**', 'scripts/kong-config-check.sh', 'mise.toml']
             docs: ['docs/**', '*.md', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
-            docs_gen: ['scripts/docs-gen/**', 'docs/product-management/reference/**', 'contracts/**', 'mcp-server/**', 'docs/product-management/**/adrs/ADR-*.md', 'Makefile']
+            # Every input scripts/docs-gen/generate.py reads to render docs/product-docs/reference/
+            # (ADR-PC-022 §P2). Kept FAITHFUL so any source change re-runs `make docs-verify`, and in
+            # sync with the .githooks/pre-commit `staged_docs_src` list that regenerates the same tree
+            # locally — the rate_sheets-filter discipline above (self-documenting input surface, bd sfnt.27):
+            #   events/                        <- contracts/avro/**/*.avsc               (via contracts/**)
+            #   family-schemas/ + pack-format/ <- contracts/cue/**                       (via contracts/**)
+            #   mcp-tools/                     <- mcp-server/src/babelstone_mcp/server.py (via mcp-server/**)
+            #   adr-index/                     <- docs/**/adrs/ADR-*.md AND .../adrs/retired/ADR-*.md
+            #                                     (the renderer globs retired/ too — the bare **/adrs/ADR-*.md
+            #                                      glob does NOT match a retired/ subdir, so it is named)
+            #   engine-primitives/             <- engine VerifiedPack.cs + DayCount.cs   (the day-count
+            #                                     formula_ref set the engine implements — were MISSING; sfnt.27)
+            #   glossary.md                    <- scripts/docs-gen/glossary-source.md     (via scripts/docs-gen/**)
+            # Plus docs/product-docs/reference/** itself, so hand-tampering with the generated tree is caught.
+            docs_gen:
+              - 'scripts/docs-gen/**'
+              - 'docs/product-docs/reference/**'
+              - 'contracts/**'
+              - 'mcp-server/**'
+              - 'docs/product-management/**/adrs/ADR-*.md'
+              - 'docs/product-management/**/adrs/retired/ADR-*.md'
+              - 'engine/src/Babelstone.Packs/VerifiedPack.cs'
+              - 'engine/src/Babelstone.FinancialMath/DayCount.cs'
+              - 'Makefile'
 
   engine:
     needs: changes
@@ -784,7 +807,7 @@ jobs:
               echo "::error file=$f::reference page is missing the generated banner (ADR-PC-022 §P2)"
               missing=1
             fi
-          done < <(find docs/product-management/reference -name '*.md' -print0)
+          done < <(find docs/product-docs/reference -name '*.md' -print0)
           test "$missing" -eq 0 && echo "all reference pages are bannered"
 
   gate:
