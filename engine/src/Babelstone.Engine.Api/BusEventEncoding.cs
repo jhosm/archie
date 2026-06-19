@@ -1,25 +1,9 @@
 using Babelstone.Engine;
 using Babelstone.Engine.Avro;
+using Babelstone.Engine.Hosting;
 using Confluent.SchemaRegistry;
 
 namespace Babelstone.Engine.Api;
-
-/// <summary>
-/// The BUS codec the engine write half hands its outbox rows (ADR-PC-028 §Decision dual-encode):
-/// real Avro bytes + a registered Schema-Registry <c>schema_id</c> (ADR-IC-002 §P3 / ADR-IC-004 §P3),
-/// distinct from the self-describing JSON the <c>events.payload</c> book of record keeps. A marker
-/// wrapper (not a bare <see cref="IEventSerializer"/>) so DI can tell the bus codec apart from the
-/// store codec — both implement the same family-agnostic seam.
-/// </summary>
-/// <remarks>
-/// The wrapper holds the concrete Avro codec; the engine kernel only ever sees the
-/// <see cref="IEventSerializer"/> seam, so the Avro/Schema-Registry surface stays confined to the host
-/// + <c>Babelstone.Engine.Avro</c> spine (EVENT_STORE_PAYLOAD_SELF_DESCRIBING / ENGINE_FAMILY_AGNOSTIC).
-/// Construction is LAZY at the host's composition root (see <see cref="HostBusEncoding"/>): the Avro+SR
-/// resolver only reaches the registry when this is first resolved, so a host that does not opt into
-/// Avro-on-bus (the default JSON posture) never needs a live Schema Registry to boot.
-/// </remarks>
-public sealed record BusEventSerializer(IEventSerializer Inner);
 
 /// <summary>
 /// Composes the engine host's bus-encoding posture (bd <c>babelstone-36mk</c>). Two modes, selected by

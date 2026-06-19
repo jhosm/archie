@@ -22,6 +22,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- ASP.NET Core abstractions for this family's OWN host composition (ADR-PC-021 §A1 — the
+         IFamilyHostModule, endpoints, and HTTP contracts relocated INTO the family here, 2026-06-20 /
+         bd babelstone-9w2k.1, so the host no longer compile-references the family for these types).
+         TermDepositHostModule registers services + maps the /v1/deposits surface; DepositsEndpoints
+         uses the minimal-API types (IEndpointRouteBuilder, Results, IResult, StatusCodes). A
+         FrameworkReference on a plain .NET SDK project — the family is not a web app, it contributes
+         its host wiring as a library the host composes (the family → engine/hosting arrow only). -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The term-deposit DECIDER (ADR-PC-021): the impure command-side layer that turns a
          command into events. Unlike the pure-fold project (Babelstone.Families.TermDeposit,
          which references only Engine + FinancialTypes so a fold cannot reach a DB), the
@@ -31,6 +42,12 @@
          handler-purity analyser here by design (ADR-PC-021 §P3): this is the impure layer. -->
     <ProjectReference Include="../Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <!-- The shared host-composition contract assembly (ADR-PC-021 §A1, relocated 2026-06-20):
+         IFamilyHostModule + FamilyHostContext + the family-agnostic in-process hosting components
+         (BusEventSerializer marker, ProjectionRelayService/Options) this family's module resolves.
+         Referencing it (not the host) is what lets the module live here without a family → host
+         cycle; Babelstone.Engine.Hosting → Babelstone.Engine keeps the arrow engine-ward. -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.FinancialMath/Babelstone.FinancialMath.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />

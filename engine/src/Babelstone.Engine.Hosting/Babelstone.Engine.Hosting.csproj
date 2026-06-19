@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Engine.Hosting</RootNamespace>
+    <AssemblyName>Babelstone.Engine.Hosting</AssemblyName>
+  </PropertyGroup>
+
+  <!-- ASP.NET Core abstractions for the host-composition seam (IServiceCollection,
+       IEndpointRouteBuilder, IConfiguration) and the in-process hosting components
+       (BackgroundService, ILogger). A FrameworkReference (not a NuGet PackageReference) on a
+       plain .NET SDK project: this is a hosting-CONTRACT library, not a web app, so it pulls in
+       the shared framework's ASP.NET types without being a Web SDK host itself. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The generic engine spine (ADR-PC-021 §P2): the host-composition seam threads the engine's
+         family-agnostic ports/primitives — IEventSerializer, ProjectionDrainer, ProjectionRegistry,
+         IPostCommitProjector. The arrow is hosting → engine (the same direction the host already
+         takes); the spine gains nothing and never references back. -->
+    <ProjectReference Include="../Babelstone.Engine/Babelstone.Engine.csproj" />
+    <!-- VerifiedPack — the per-deployment pinned pack FamilyHostContext carries to each family module
+         (ADR-PC-009), the one non-DI ingredient the seam hands across. -->
+    <ProjectReference Include="../Babelstone.Packs/Babelstone.Packs.csproj" />
+  </ItemGroup>
+</Project>

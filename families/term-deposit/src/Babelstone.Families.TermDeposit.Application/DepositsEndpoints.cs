@@ -1,12 +1,15 @@
 using System.Diagnostics;
+using Babelstone.Engine;
 using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
-using Babelstone.Families.TermDeposit.Application;
 using Babelstone.Pii;
 using Babelstone.Telemetry;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Routing;
 
-namespace Babelstone.Engine.Api;
+namespace Babelstone.Families.TermDeposit.Application;
 
 /// <summary>
 /// The deposits command/query endpoints (ADR-PC-021 §D5). The Python MCP server (ADR-IC-010)
