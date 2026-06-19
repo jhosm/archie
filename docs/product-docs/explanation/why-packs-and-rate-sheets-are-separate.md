@@ -202,7 +202,7 @@ in mind, every boundary in the configuration surface will make sense.
 [surface]: ../../product-management/product_concepts/feature-design-configuration-surface.md
 [adr007]: ../../product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md
 [adr008]: ../../product-management/product_concepts/adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md
-[ref]: ../../product-management/reference/README.md
+[ref]: ../reference/README.md
 [rateref]: ../../../packs/pt.2026.1/rate-sheet-refs/deposits-pt.yaml
 [constants]: ../../../packs/pt.2026.1/parameters/constants.yaml
 [howto-band]: ../how-to/add-a-rate-band.md

@@ -1,9 +1,11 @@
-# Top navbar for the API-reference site (ADR-PC-026 §P3). This site publishes ONLY
-# the C# API reference; the hand-authored corpus is read on GitHub (version-correct
-# relative links), not stitched here — so the navbar is a one-entry door plus an
-# outbound link to the repo docs. The outbound link pins `main` deliberately: this
-# Pages artifact is built and deployed only from `main`, so its chrome reflects main.
+# Top navbar for the docs site (ADR-PC-026 §P3, revised 2026-06-19 — bd sfnt.26).
+# The home page is the product-docs README (the config-author front door); this site
+# also publishes the C# API reference. The rest of the hand-authored corpus is read
+# on GitHub (version-correct relative links), not stitched here — so the navbar is
+# the API-reference entry plus an outbound link to the product-docs tree on GitHub.
+# The outbound link pins `main` deliberately: this Pages artifact is built and
+# deployed only from `main`, so its chrome reflects main.
 - name: API Reference
   href: api/
 - name: Docs on GitHub
-  href: https://github.com/jhosm/babelstone/tree/main/docs
+  href: https://github.com/jhosm/babelstone/tree/main/docs/product-docs

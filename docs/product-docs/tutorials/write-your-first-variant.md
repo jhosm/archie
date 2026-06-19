@@ -180,5 +180,5 @@ What we deliberately did **not** do yet:
 - [How to add a day-count primitive](../how-to/add-a-day-count-primitive.md) —
   the pack side of the `day_count` reference our variant named.
 - The rendered, drift-checked shape of every variant field lives in the
-  generated [term-deposit family-schema reference](../../product-management/reference/family-schemas/term-deposit.md)
+  generated [term-deposit family-schema reference](../reference/family-schemas/term-deposit.md)
   — look fields up there, never by retyping the schema.

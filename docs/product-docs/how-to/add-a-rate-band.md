@@ -164,5 +164,5 @@ These are honest limitations of the current local setup, not steady-state behavi
 
 - [Why packs and rate sheets are separate](../explanation/why-packs-and-rate-sheets-are-separate.md) — the cadence/approval rationale.
 - [ADR-PC-008](../../product-management/product_concepts/adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md) — storage, deploy API, idempotency, resolution.
-- [Generated reference home](../../product-management/reference/README.md) — the drift-proof field-level truth.
+- [Generated reference home](../reference/README.md) — the drift-proof field-level truth.
 - [Product-docs front door](../README.md).

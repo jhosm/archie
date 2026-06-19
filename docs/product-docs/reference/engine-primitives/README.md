@@ -12,4 +12,4 @@ The `formula_ref` values a pack's `primitives/day-count.yaml` may name (ADR-PC-0
 
 ## Governing ADRs
 
-[ADR-PC-006](../../product_concepts/adrs/ADR-PC-006-cue-schema-language.md), [ADR-PC-007](../../product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md), [ADR-PC-010](../../product_concepts/adrs/ADR-PC-010-dotnet-hand-rolled-engine.md), [ADR-PC-022](../../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md)
+[ADR-PC-006](../../../product-management/product_concepts/adrs/ADR-PC-006-cue-schema-language.md), [ADR-PC-007](../../../product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md), [ADR-PC-010](../../../product-management/product_concepts/adrs/ADR-PC-010-dotnet-hand-rolled-engine.md), [ADR-PC-022](../../../product-management/product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md)

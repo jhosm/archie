@@ -104,7 +104,7 @@ if [ -n "$staged_docs_src" ]; then
 
   echo "pre-commit: regenerating docs/.../reference/ (ADR-PC-022 §P2)"
   ( cd "$repo_root" && mise exec -- python3 scripts/docs-gen/generate.py )
-  git add -- "${repo_root}/docs/product-management/reference"
+  git add -- "${repo_root}/docs/product-docs/reference"
 fi
 
 exit "$status"

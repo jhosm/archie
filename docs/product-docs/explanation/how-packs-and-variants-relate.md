@@ -176,7 +176,7 @@ under it.
 
 [surface]: ../../product-management/product_concepts/feature-design-configuration-surface.md
 [authoring]: ../../product-management/product_concepts/feature-design-configuration-authoring.md
-[familyref]: ../../product-management/reference/family-schemas/term-deposit.md
+[familyref]: ../reference/family-schemas/term-deposit.md
 [adr006]: ../../product-management/product_concepts/adrs/ADR-PC-006-cue-schema-language.md
 [adr007]: ../../product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md
 [adr009]: ../../product-management/product_concepts/adrs/ADR-PC-009-per-instance-version-pinning.md

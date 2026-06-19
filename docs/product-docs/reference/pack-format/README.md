@@ -177,4 +177,4 @@ package pack
 
 ## Governing ADRs
 
-[ADR-PC-006](../../product_concepts/adrs/ADR-PC-006-cue-schema-language.md), [ADR-PC-007](../../product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md), [ADR-PC-008](../../product_concepts/adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md), [ADR-PC-009](../../product_concepts/adrs/ADR-PC-009-per-instance-version-pinning.md)
+[ADR-PC-006](../../../product-management/product_concepts/adrs/ADR-PC-006-cue-schema-language.md), [ADR-PC-007](../../../product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md), [ADR-PC-008](../../../product-management/product_concepts/adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md), [ADR-PC-009](../../../product-management/product_concepts/adrs/ADR-PC-009-per-instance-version-pinning.md)

@@ -1,10 +1,12 @@
 name: Docs site
 
 # DocFX site (ADR-PC-026 §P3): the C# XML-doc API reference, published to GitHub
-# Pages. The site renders ONLY the API surface — the hand-authored docs/ corpus is
-# NOT stitched in (it reads on GitHub natively, version-correct), so the trigger
-# inputs are just the API sources, the docfx/ config, and the toolchain pins — NOT
-# docs/**, README.md, or INSTALL.md, which no longer feed this site. Build runs on
+# Pages. The site renders the API surface PLUS one corpus landing page — the
+# product-docs README is the home page (§P3 revised 2026-06-19, bd sfnt.26); the
+# rest of the hand-authored corpus is NOT stitched in (it reads on GitHub natively,
+# version-correct). So the trigger inputs are the API sources, the docfx/ config,
+# the toolchain pins, and docs/product-docs/README.md (the home page source) — NOT
+# the rest of docs/** or INSTALL.md, which do not feed this site. Build runs on
 # PRs touching those inputs (a pre-merge "does the site still build" check, NOT a
 # required gate — ADR-PC-019 §P1 aggregator rules don't apply); deploy runs only on
 # push to main, via the artifact-based Pages flow (no gh-pages branch). This repo
@@ -20,6 +22,7 @@ on:
       - 'engine/**'
       - 'families/**'
       - 'docfx/**'
+      - 'docs/product-docs/README.md' # the DocFX home page is rendered from this file (§P3, bd sfnt.26)
       - '.config/dotnet-tools.json'
       - 'mise.toml'
       - '.github/workflows/docs-site.yml'

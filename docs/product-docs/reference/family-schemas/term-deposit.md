@@ -231,4 +231,4 @@ let min_cents_9 = min_cents
 
 ## Governing ADRs
 
-[ADR-PC-006](../../product_concepts/adrs/ADR-PC-006-cue-schema-language.md), [ADR-PC-024](../../product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md)
+[ADR-PC-006](../../../product-management/product_concepts/adrs/ADR-PC-006-cue-schema-language.md), [ADR-PC-024](../../../product-management/product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md)

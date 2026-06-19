@@ -6,25 +6,28 @@ It is deliberately separate from the internal design corpus under [`../product-m
 
 It is organised by the [Diátaxis](https://diataxis.fr) framework.
 
-## The three quadrants here
+## The four Diátaxis quadrants here
+
+Three are hand-authored (tutorials, how-to, explanation); the fourth — **reference** — is generated from the source of truth and diffed in CI, so it cannot drift.
 
 | Quadrant | For | When you reach for it |
 |---|---|---|
 | [tutorials/](./tutorials/author-your-first-pack.md) | learning | Zero to a first validated pack. Hold-your-hand, single happy path. |
 | [how-to/](./how-to/validate-a-pack-locally.md) | doing | You already know the shape; you need the recipe for one task. |
 | [explanation/](./explanation/why-packs-and-rate-sheets-are-separate.md) | understanding | The *why* behind the model — why packs and rate sheets live apart, how to read a CUE schema. |
+| [reference/](./reference/README.md) | looking up | The drift-proof, field-level truth — **generated, never hand-written**. |
 
-## Where is the reference quadrant?
+## The reference quadrant is generated, not hand-written
 
-There is no `reference/` quadrant **in this set, on purpose.** babelstone's reference is **generated from the source of truth and diffed in CI**, so it cannot drift. It lives at the canonical home:
+The `reference/` quadrant here is **generated from the source of truth and diffed in CI**, so it cannot drift. Do not hand-edit it: `make docs-gen` regenerates it and `make docs-verify` gates it in CI (ADR-PC-022). It lives alongside the other three quadrants:
 
-➡️ **[The generated reference](../product-management/reference/README.md)** — including the [pack manifest format](../product-management/reference/pack-format/README.md), [family schemas](../product-management/reference/family-schemas/README.md), [event payloads](../product-management/reference/events/README.md), and the [glossary](../product-management/reference/glossary.md).
+➡️ **[The generated reference](./reference/README.md)** — including the [pack manifest format](./reference/pack-format/README.md), [family schemas](./reference/family-schemas/README.md), [event payloads](./reference/events/README.md), and the [glossary](./reference/glossary.md).
 
 These pages follow the **link-don't-restate** discipline: the authoritative field-by-field truth (manifest fields, CUE field lists, event payloads, the pack-format schema) is **never retyped here** — we link to the generated source instead. Restating it would create a stale-able duplicate, the exact failure [ADR-PC-022](../product-management/product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md) forbids. A page here may show a short YAML snippet *as an illustration*, but for the contract it points you out.
 
 ## One persona today, more pages later
 
-The config author is the **first** reader, not the only one. Family-schema authors arrive later — and when they do, they get **more pages in these same three quadrants**, never a parallel persona tree. The structure is doc-type-shaped, not role-shaped, so it grows by adding pages.
+The config author is the **first** reader, not the only one. Family-schema authors arrive later — and when they do, they get **more pages in the three hand-authored quadrants** (tutorials, how-to, explanation; reference stays generated), never a parallel persona tree. The structure is doc-type-shaped, not role-shaped, so it grows by adding pages.
 
 ## The pages that exist now
 

@@ -33,7 +33,7 @@ act_360:
 
 The authoritative field-by-field shape (`#DayCounts`) is the
 [`pack.cue`](../../../contracts/cue/pack/pack.cue) schema, rendered in the
-generated [pack-format reference](../../product-management/reference/pack-format/README.md).
+generated [pack-format reference](../reference/pack-format/README.md).
 Do not copy a field table from elsewhere — link to those and you will never go
 stale.
 
@@ -55,7 +55,7 @@ implements the formula. That binding is resolved only when the engine loads the
 pack — an unimplemented `formula_ref` throws there, never at validate time.
 
 The authoritative implemented set is rendered, field-for-field, in the generated
-[engine-primitives reference](../../product-management/reference/engine-primitives/README.md)
+[engine-primitives reference](../reference/engine-primitives/README.md)
 — the `formula_ref` values the engine accepts and the convention each resolves to. Read it
 there, never a copy: it is regenerated from engine source (`make docs-gen`) and gated for
 drift in CI (`make docs-verify`), so it cannot go stale the way a hand-kept table here
@@ -82,9 +82,9 @@ It is rendered from **engine source**, in two places:
 > asserts every declared day-count `formula_ref` resolves, so a future one fails CI.)
 
 > **Note.** The day-count primitive set *is* now a generated catalogue — the
-> [engine-primitives reference](../../product-management/reference/engine-primitives/README.md),
+> [engine-primitives reference](../reference/engine-primitives/README.md),
 > rendered from the `ToConvention()` switch alongside events, family schemas, and
-> the pack-format ([generated reference](../../product-management/reference/README.md)).
+> the pack-format ([generated reference](../reference/README.md)).
 > Other `formula_ref` primitives (e.g. withholding) follow the same pattern but
 > are not yet rendered; for those the engine source is still the source of truth.
 

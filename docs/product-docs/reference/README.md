@@ -2,7 +2,7 @@
 
 # Reference
 
-**Generated, exhaustive, dry** — the generated lookup quadrant ([ADR-PC-022 §P2](../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md)). Every page here is rendered from a machine-readable source and regenerated-and-diffed in CI, so it **cannot drift**. Do not hand-edit; run `make docs-gen`.
+**Generated, exhaustive, dry** — the generated lookup quadrant ([ADR-PC-022 §P2](../../product-management/product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md)). Every page here is rendered from a machine-readable source and regenerated-and-diffed in CI, so it **cannot drift**. Do not hand-edit; run `make docs-gen`.
 
 | Set | Source | What |
 |---|---|---|

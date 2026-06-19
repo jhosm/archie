@@ -13,7 +13,7 @@ paid out to the current account, principal at maturity), or ADVANCE (full-term i
 ``payment_period_months`` is required for PERIODIC — 1 (monthly) or 3 (quarterly), the only
 cadences priced — and is 0/omitted for AT_MATURITY and ADVANCE.
 
-Requires ``deposits:write`` ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). The actor is the gateway-attested ``X-Client-Id``
+Requires ``deposits:write`` ([ADR-IC-010](../../../product-management/integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). The actor is the gateway-attested ``X-Client-Id``
 (OAuth ``sub``), never a tool argument (Document 11).
 
 §P8 form-mode elicitation (Epic J.4): when ``interest_variant`` is PERIODIC, the server pauses and
