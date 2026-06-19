@@ -13,6 +13,10 @@
          test asserts the bytes ARE the engine's production bytes (§G1) without standing up a broker. -->
     <PackageReference Include="Apache.Avro" />
     <PackageReference Include="Confluent.Kafka" />
+    <!-- Generic-container support for the §M.6 key-cardinality integration lane (bd c14p.2): a dev-mode
+         OpenBao the probe seeds + measures against. Carries [Trait("Category","Integration")] so the
+         default unit lane (Category!=Integration) skips it; it needs Docker. -->
+    <PackageReference Include="Testcontainers" />
   </ItemGroup>
 
   <ItemGroup>
@@ -25,5 +29,10 @@
     <ProjectReference Include="../../src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
     <ProjectReference Include="../../src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
+    <!-- The §M.6 key-cardinality probe seeds + measures against the engine's OWN OpenBao transit client
+         (bd c14p.2): Pii for the IPiiKeyStore/OpenBaoTransitClient, TestFixtures for the shared
+         ContainerStartupGate that throttles concurrent Testcontainers startups. -->
+    <ProjectReference Include="../../src/Babelstone.Pii/Babelstone.Pii.csproj" />
+    <ProjectReference Include="../../tests/Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
   </ItemGroup>
 </Project>
