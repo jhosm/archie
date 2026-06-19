@@ -1,6 +1,7 @@
 using Babelstone.EventStore.Migrations;
 using Babelstone.OutboxPublisher;
 using Babelstone.TestFixtures;
+using Confluent.Kafka;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -77,6 +78,52 @@ public sealed class OutboxRelayHostingTests : IAsyncLifetime
         Assert.NotNull(options);
         Assert.Equal(_pg.GetConnectionString(), options.ConnectionString);
         Assert.Equal("127.0.0.1:1", options.BootstrapServers);
+    }
+
+    [Fact]
+    public async Task Relay_options_default_to_SASL_off_when_no_identity_is_configured()
+    {
+        // The OFF-when-unconfigured posture (KAFKA_SASL_TOPIC_ACL / ADR-IC-016 §6): InitializeAsync
+        // sets no Kafka:Sasl:OutboxPublisher:Username, so the host resolves an empty credential, SASL
+        // is left OFF, and ApplyTo is a no-op — the plaintext loopback Redpanda (`make up`) posture.
+        // The secret provider is never consulted, so the host boots with no SASL secret present.
+        await using var factory = new WebApplicationFactory<Program>();
+        var options = factory.Services.GetRequiredService<OutboxRelayOptions>();
+
+        Assert.False(options.Sasl.IsConfigured);
+        Assert.Null(options.Sasl.Username);
+        Assert.Null(options.Sasl.Password);
+    }
+
+    [Fact]
+    public async Task Relay_options_carry_the_resolved_SCRAM_identity_when_configured()
+    {
+        // The host-side wiring njt2.1 deferred (bd babelstone-njt2.5): a configured per-service username
+        // turns SASL on, and the PASSWORD resolves at the composition root through the same
+        // ISecretProvider seam as ConnectionStrings:Engine — the configuration-backed provider reads
+        // ConnectionStrings:<SecretName>. So the relay options carry the distinct svc-outbox-publisher
+        // SCRAM identity (SASL_SSL + SCRAM-SHA-256 defaults), which is what authenticates the producer
+        // to Redpanda and lets the broker ACLs contain a compromise to that identity's grants.
+        Environment.SetEnvironmentVariable("Kafka__Sasl__OutboxPublisher__Username", "svc-outbox-publisher");
+        Environment.SetEnvironmentVariable(
+            "ConnectionStrings__OutboxPublisherSaslPassword", "resolved-from-isecretprovider");
+        try
+        {
+            await using var factory = new WebApplicationFactory<Program>();
+            var options = factory.Services.GetRequiredService<OutboxRelayOptions>();
+
+            Assert.True(options.Sasl.IsConfigured);
+            Assert.Equal("svc-outbox-publisher", options.Sasl.Username);
+            Assert.Equal("resolved-from-isecretprovider", options.Sasl.Password);
+            // Secure defaults: SCRAM over TLS, never cleartext PLAIN.
+            Assert.Equal(SaslMechanism.ScramSha256, options.Sasl.Mechanism);
+            Assert.Equal(SecurityProtocol.SaslSsl, options.Sasl.SecurityProtocol);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("Kafka__Sasl__OutboxPublisher__Username", null);
+            Environment.SetEnvironmentVariable("ConnectionStrings__OutboxPublisherSaslPassword", null);
+        }
     }
 
     [Fact]

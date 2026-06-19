@@ -71,12 +71,12 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.PropertyNameCaseInsensitive = false;
 });
 
-// Application / integration credentials (the DB connection string today, Redpanda SASL
-// later) resolve through the ISecretProvider boundary (ADR-PC-004 Amendment A1) — distinct
-// from the per-subject PII transit keys (IPiiKeyStore). Default to the configuration-backed
-// provider so `make up` keeps working with existing config; opt into OpenBao KV v2 with
-// OpenBao:Enabled=true. The resolved credential stays at this composition root: never on a
-// saga message (ADR-IC-003 §P7) nor the durable bus (ADR-PC-004 §P2).
+// Application / integration credentials (the DB connection string AND the Redpanda SASL/SCRAM
+// password — see the outbox-relay wiring below) resolve through the ISecretProvider boundary
+// (ADR-PC-004 Amendment A1) — distinct from the per-subject PII transit keys (IPiiKeyStore).
+// Default to the configuration-backed provider so `make up` keeps working with existing config;
+// opt into OpenBao KV v2 with OpenBao:Enabled=true. The resolved credential stays at this
+// composition root: never on a saga message (ADR-IC-003 §P7) nor the durable bus (ADR-PC-004 §P2).
 ISecretProvider secretProvider = builder.Configuration.GetValue<bool>("OpenBao:Enabled")
     ? new OpenBaoKvSecretProvider(
         new HttpClient { BaseAddress = new Uri(builder.Configuration["OpenBao:Address"] ?? "http://localhost:8200/") },
@@ -219,15 +219,25 @@ foreach (var module in familyModules)
 // The Kafka bootstrap address is a broker ENDPOINT, not a credential — it is already plaintext in
 // infra/compose.yaml and the k8s manifests — so it resolves straight from IConfiguration
 // (Kafka:BootstrapServers via env/appsettings), distinct from ConnectionStrings:Engine which goes
-// through the ISecretProvider credential boundary (ADR-PC-004 Amendment A1). When SASL credentials
-// land later (the Redpanda secret the Program.cs §54 note anticipates) THOSE will resolve through
-// ISecretProvider. The dev default matches the Redpanda external listener in infra/compose.yaml
-// (localhost:19092), the same convention `make up` exposes.
+// through the ISecretProvider credential boundary (ADR-PC-004 Amendment A1). The dev default matches
+// the Redpanda external listener in infra/compose.yaml (localhost:19092), the same convention
+// `make up` exposes.
 var bootstrapServers = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:19092";
+// The relay producer's SASL/SCRAM identity (ADR-IC-016 plane ii §4–§6 / KAFKA_SASL_TOPIC_ACL). njt2.1
+// added the KafkaSaslOptions applier + the Sasl property; THIS resolves the actual credential at the
+// composition root and puts it on the option. The username (svc-outbox-publisher) is declarative
+// config; the PASSWORD resolves through the SAME ISecretProvider seam as ConnectionStrings:Engine
+// (OpenBaoKvSecretProvider when OpenBao:Enabled, configuration-backed otherwise — §A1). The resolved
+// secret stays here in process memory to open the connection: never logged, never on a span, never on
+// the bus (ADR-PC-004 §P2). With no Kafka:Sasl:OutboxPublisher:Username configured this is the OFF
+// no-op posture (IsConfigured=false ⇒ ApplyTo does nothing), so plaintext loopback Redpanda (`make up`)
+// is unchanged — SASL turns on only when a deployment supplies the identity (SASL_SSL + SCRAM-SHA-256).
+var outboxPublisherSasl = await HostSasl.ResolveOutboxPublisherAsync(builder.Configuration, secretProvider);
 builder.Services.AddSingleton(new OutboxRelayOptions
 {
     ConnectionString = connectionString,
     BootstrapServers = bootstrapServers,
+    Sasl = outboxPublisherSasl,
 });
 builder.Services.AddSingleton(serviceProvider =>
     new OutboxDrainer(serviceProvider.GetRequiredService<OutboxRelayOptions>()));
