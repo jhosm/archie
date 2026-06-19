@@ -158,6 +158,39 @@ func depth4Regulatory(vd variantData, fam Family, p *pack.Pack) []diag.Diagnosti
 		prev = *b.UpToDays
 	}
 
+	// (d) + (e) F.12 partial-withdrawal cross-field coherence (only when the
+	// optional block is present). Like the steps/bands ordering checks above,
+	// these are STRUCTURAL coherence invariants — universal, not pack-declared:
+	// a policy that violates them makes the partial-withdrawal feature dead on
+	// every deposit, regardless of jurisdiction. CUE cannot express either
+	// element-wise across the two optional blocks, so the schema defers them
+	// here (term-deposit.cue #PartialWithdrawal comment; ADR-PC-006 depth-4).
+	if pw := vd.PartialWithdrawal; pw != nil {
+		// (d) the carência lock-up must be strictly shorter than the term — a
+		// lock-up that meets or outlasts the term leaves no day on which a
+		// partial withdrawal is ever legal.
+		if pw.CarenciaDays >= vd.TermDays {
+			out = append(out, diag.Diagnostic{
+				Depth: diag.DepthRegulatory, Path: "partial_withdrawal.carencia_days",
+				Kind: diag.KindCarenciaExceedsTerm,
+				Message: fmt.Sprintf("carencia_days %d is not strictly less than term_days %d — the lock-up outlasts the term, so no partial withdrawal could ever be legal",
+					pw.CarenciaDays, vd.TermDays),
+			})
+		}
+		// (e) the minimum remaining balance must be strictly below the corridor
+		// ceiling — only checkable when max_cents is present. If the floor meets
+		// or exceeds the ceiling, no deposit (≤ max_cents) could leave at least
+		// the floor on deposit while withdrawing a positive amount.
+		if max := vd.PrincipalBounds.MaxCents; max != nil && pw.MinRemainingBalanceCents >= *max {
+			out = append(out, diag.Diagnostic{
+				Depth: diag.DepthRegulatory, Path: "partial_withdrawal.min_remaining_balance_cents",
+				Kind: diag.KindRemainingExceedsMaxCents,
+				Message: fmt.Sprintf("min_remaining_balance_cents %d is not strictly less than principal_bounds.max_cents %d — no deposit in the corridor could ever host a legal partial withdrawal",
+					pw.MinRemainingBalanceCents, *max),
+			})
+		}
+	}
+
 	return out
 }
 

@@ -18,7 +18,7 @@ import (
 // own per-depth timing rather than re-measuring, so it gates the same numbers
 // the JSON contract reports.
 func TestPackValidateDepthBudgets(t *testing.T) {
-	valid := []string{"flat-at-maturity.yaml", "stepped-periodic.yaml", "advance-new-money.yaml"}
+	valid := []string{"flat-at-maturity.yaml", "stepped-periodic.yaml", "advance-new-money.yaml", "partial-withdrawal.yaml"}
 	for _, name := range valid {
 		t.Run(name, func(t *testing.T) {
 			rep, err := Run(opts(filepath.Join(cueValidDir, name), diag.DepthRegulatory))

@@ -87,6 +87,7 @@ type variantData struct {
 	DayCount          string `json:"day_count"`
 	InterestVariant   string `json:"interest_variant"`
 	AutoRenewalPolicy string `json:"auto_renewal_policy"`
+	TermDays          int64  `json:"term_days"` // for the F.12 carencia_days < term_days depth-4 check
 
 	Rate struct {
 		Stepped *struct {
@@ -102,6 +103,18 @@ type variantData struct {
 			UpToDays *int64 `json:"up_to_days"` // nil ⇒ the open (null) tail
 		} `json:"banded"`
 	} `json:"early_termination"`
+
+	PrincipalBounds struct {
+		MaxCents *int64 `json:"max_cents"` // nil ⇒ no upper corridor (max_cents is optional)
+	} `json:"principal_bounds"`
+
+	// PartialWithdrawal is nil when the variant omits the block (⇒ Unrestricted);
+	// present ⇒ the F.12 depth-4 cross-field coherence checks fire.
+	PartialWithdrawal *struct {
+		MinWithdrawalCents       int64 `json:"min_withdrawal_cents"`
+		MinRemainingBalanceCents int64 `json:"min_remaining_balance_cents"`
+		CarenciaDays             int64 `json:"carencia_days"`
+	} `json:"partial_withdrawal"`
 }
 
 // decodeVariant decodes the parsed variant value into the typed view. Only

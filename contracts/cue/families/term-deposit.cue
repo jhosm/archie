@@ -81,6 +81,24 @@ package family
 	// --- principal bounds (risk corridor, authoring §4 step 4) ----------
 	principal_bounds: #PrincipalBounds
 
+	// --- partial-withdrawal policy (F.12; 02 §2.4.1) --------------------
+	// Optional. Declares the three gates a partial early withdrawal must clear
+	// — a minimum withdrawal amount, a minimum remaining balance, and a lock-up
+	// (carência) window after constitution. The block mirrors the engine's
+	// PartialWithdrawalPolicy (MinWithdrawalCents / MinRemainingBalanceCents /
+	// CarenciaDays); it rides on the config as an explicit decider input
+	// resolved at constitution (ADR-PC-008; ADR-PC-021 §D3), never a command
+	// input. A variant that OMITS the block permits no F.12-gated partial
+	// withdrawals — it resolves to PartialWithdrawalPolicy.Unrestricted (the
+	// zero-gate policy), leaving only the structural rules the decider always
+	// applies (positive amount; cannot withdraw the whole balance — that is a
+	// termination, F.4). Two cross-field coherence invariants
+	// (min_remaining_balance_cents < principal_bounds.max_cents; carencia_days <
+	// term_days) are depth-4 regulatory checks the Go validator enforces — not
+	// expressible element-wise here, the same deferral as #SteppedRate.steps and
+	// #BandedPolicy.banded.
+	partial_withdrawal?: #PartialWithdrawal
+
 	// --- optional activation date (authoring §4 step 5) -----------------
 	effective_from?: =~"^[0-9]{4}-[0-9]{2}-[0-9]{2}$" // ISO-8601 date
 }
@@ -157,4 +175,20 @@ package family
 	if max_cents != _|_ {
 		max_cents: >=min_cents
 	}
+}
+
+// #PartialWithdrawal — the F.12 partial-withdrawal policy (02 §2.4.1). A closed
+// definition (ADR-PC-006): an unknown field inside the block fails depth 1, the
+// same no-escape-hatch guarantee as every other #Name here. Field names mirror
+// the engine's PartialWithdrawalPolicy record one-for-one. All amounts are
+// integer cents (#Cents); carencia_days is a non-negative day count — a
+// duration, not money, so it is declared inline as `int & >=0`, not a #Cents.
+// A 0 on any gate means "no minimum / no lock-up" (the degenerate-policy
+// semantics of PartialWithdrawalPolicy with that field zero). The two cross-field
+// coherence invariants that relate this block to term_days and
+// principal_bounds.max_cents are depth-4 Go checks, not expressed here.
+#PartialWithdrawal: {
+	min_withdrawal_cents:        #Cents
+	min_remaining_balance_cents: #Cents
+	carencia_days:               int & >=0
 }
