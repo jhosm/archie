@@ -1,5 +1,6 @@
 using Babelstone.Engine;
 using Babelstone.FinancialTypes;
+using Babelstone.RateSheets;
 
 namespace Babelstone.Families.TermDeposit.Application;
 
@@ -41,6 +42,24 @@ public sealed record PartialWithdrawalPolicy(
     /// withdraw the whole balance) still apply. Useful for a product that permits unrestricted partial
     /// withdrawals, and as the test/degenerate baseline.</summary>
     public static PartialWithdrawalPolicy Unrestricted { get; } = new(0L, 0L, 0);
+
+    /// <summary>
+    /// Resolve the policy from a product's resolved <see cref="ProductConfig"/> (bd k6r8.8): map the
+    /// three F.12 primitives the engine carries (<see cref="ProductConfig.MinWithdrawalCents"/> /
+    /// <see cref="ProductConfig.MinRemainingBalanceCents"/> / <see cref="ProductConfig.CarenciaDays"/>)
+    /// onto this policy. A config whose three gates are all zero — the shape of a variant that OMITS the
+    /// <c>partial_withdrawal</c> block — resolves to <see cref="Unrestricted"/> (02 §2.4.1). Pure: a
+    /// total function of the config, no clock and no I/O, so the constitution-boundary resolve stays
+    /// deterministic (ADR-PC-008; ADR-PC-021 §D3 — the decider still takes the policy as an explicit input).
+    /// </summary>
+    public static PartialWithdrawalPolicy FromProductConfig(ProductConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        return config is { MinWithdrawalCents: 0, MinRemainingBalanceCents: 0, CarenciaDays: 0 }
+            ? Unrestricted
+            : new PartialWithdrawalPolicy(
+                config.MinWithdrawalCents, config.MinRemainingBalanceCents, config.CarenciaDays);
+    }
 }
 
 /// <summary>

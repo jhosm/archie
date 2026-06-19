@@ -39,7 +39,8 @@ public sealed class YamlProductConfigStore : IProductConfigStore
 {
     // Tolerant by design: a product-config YAML carries blocks this store does not read (`rate:`,
     // `early_termination:`, `principal_bounds:`, `currency:`, `day_count:`, `schema:`, `pack:`), so
-    // unmatched keys are ignored rather than fatal. The closed-schema strictness lives in the CUE
+    // unmatched keys are ignored rather than fatal. It DOES read the optional `partial_withdrawal:`
+    // block (the F.12 policy primitives, bd k6r8.8). The closed-schema strictness lives in the CUE
     // depths-1–4 validator (ADR-PC-006), which the committed configs already pass in CI; this is the
     // runtime structural read of the SHAPE fields, not a re-run of that validation.
     private static readonly IDeserializer Deserializer = new DeserializerBuilder()
@@ -151,7 +152,15 @@ public sealed class YamlProductConfigStore : IProductConfigStore
             PaymentPeriodMonths: yaml.PaymentPeriodMonths,
             // v1 launch products all price under the standard role; the role-selector machinery on the
             // YAML's rate.flat.rate_ref is a follow-up, and the command may override the role anyway.
-            DefaultRole: "standard");
+            DefaultRole: "standard",
+            // F.12 partial-withdrawal gates (bd k6r8.8). An OMITTED partial_withdrawal block leaves all
+            // three at 0 — the engine resolves that to PartialWithdrawalPolicy.Unrestricted (02 §2.4.1).
+            // Present-but-zero on any gate means "no minimum / no lock-up" for that gate, the same
+            // degenerate semantics. The depth-4 coherence of the values (carencia < term; min-remaining <
+            // max corridor) was already enforced by pack-validate at deploy time (ADR-PC-006), not here.
+            MinWithdrawalCents: yaml.PartialWithdrawal?.MinWithdrawalCents ?? 0,
+            MinRemainingBalanceCents: yaml.PartialWithdrawal?.MinRemainingBalanceCents ?? 0,
+            CarenciaDays: yaml.PartialWithdrawal?.CarenciaDays ?? 0);
     }
 
     // Walk up from the running binary to the repo's product-configs/ tree — the same find-by-walking
@@ -181,5 +190,19 @@ public sealed class YamlProductConfigStore : IProductConfigStore
         public string? InterestVariant { get; set; }
         public string? AutoRenewalPolicy { get; set; }
         public int PaymentPeriodMonths { get; set; }
+
+        // The optional F.12 partial-withdrawal block (bd k6r8.8). Null when the variant omits it ⇒ the
+        // engine resolves PartialWithdrawalPolicy.Unrestricted. Field names mirror the CUE
+        // #PartialWithdrawal block (underscored keys via the deserializer's naming convention).
+        public PartialWithdrawalYaml? PartialWithdrawal { get; set; }
+    }
+
+    // The partial_withdrawal sub-block. Cents are long, carencia_days is an int day count — the same
+    // types the engine's PartialWithdrawalPolicy carries. Mutable, public-settable: YamlDotNet binds it.
+    private sealed class PartialWithdrawalYaml
+    {
+        public long MinWithdrawalCents { get; set; }
+        public long MinRemainingBalanceCents { get; set; }
+        public int CarenciaDays { get; set; }
     }
 }
