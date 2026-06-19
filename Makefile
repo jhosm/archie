@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 BACKSTAGE_PORT    ?= 7007
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -123,6 +123,13 @@ docs-site-serve: ## Build the DocFX site, then serve it on http://localhost:8080
 	@mise exec -- dotnet restore engine/Babelstone.slnx
 	@mise exec -- dotnet tool restore
 	@mise exec -- dotnet docfx docfx/docfx.json --serve
+
+## ----------------------------------------------------------------------------
+## Resilience drills (event-store §7.2 — projection rebuild; runbooks/)
+## ----------------------------------------------------------------------------
+
+projection-rebuild-drill: ## Run the monthly §7.2 projection-rebuild drill (FullRebuildDrillAsync via Testcontainers; needs Docker, bd babelstone-j67l)
+	@./scripts/projection-rebuild-drill.sh
 
 ## ----------------------------------------------------------------------------
 ## Local dev stack (infra/compose.yaml) — PostgreSQL + Redpanda + Console
