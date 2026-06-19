@@ -12,7 +12,7 @@ net folded in and ``coupons_paid`` incremented; the final coupon is paid with th
 maturity (use ``mature_deposit`` for that), so calling this once no intermediate coupon remains is
 rejected. Money is integer cents.
 
-Requires ``deposits:write`` ([ADR-IC-010](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). Like ``mature_deposit``, the coupon settlement is
+Requires ``deposits:write`` ([ADR-IC-010](../../../product-management/integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). Like ``mature_deposit``, the coupon settlement is
 irreversible; under §P8 it carries the URL-mode step-up-SCA TRANSPORT — present but dormant behind
 ``ELICITATION_URL_MODE_ENABLED`` (default off). ⚠️ Enabling that flag does NOT enforce SCA: the
 coupon still settles on the agent-reported navigate-consent, not the bank's own out-of-band signal

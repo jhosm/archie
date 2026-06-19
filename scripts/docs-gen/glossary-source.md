@@ -1,5 +1,5 @@
 <!-- Hand-authored TERM SOURCE for the glossary. Rendered (sorted + ADR-linkified
-     + bannered) to docs/product-management/reference/glossary.md by docs-gen.
+     + bannered) to docs/product-docs/reference/glossary.md by docs-gen.
      This file is the single source of the vocabulary; edit terms HERE, then run
      `make docs-gen`. One row per term: | Term | Definition |. ADR ids in a
      definition are linkified automatically. -->

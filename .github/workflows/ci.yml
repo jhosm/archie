@@ -64,7 +64,7 @@ jobs:
               - 'contracts/cue/pack/**'
             infra: ['infra/**', 'scripts/kong-config-check.sh', 'mise.toml']
             docs: ['docs/**', '*.md', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
-            docs_gen: ['scripts/docs-gen/**', 'docs/product-management/reference/**', 'contracts/**', 'mcp-server/**', 'docs/product-management/**/adrs/ADR-*.md', 'Makefile']
+            docs_gen: ['scripts/docs-gen/**', 'docs/product-docs/reference/**', 'contracts/**', 'mcp-server/**', 'docs/product-management/**/adrs/ADR-*.md', 'Makefile']
 
   engine:
     needs: changes
@@ -784,7 +784,7 @@ jobs:
               echo "::error file=$f::reference page is missing the generated banner (ADR-PC-022 §P2)"
               missing=1
             fi
-          done < <(find docs/product-management/reference -name '*.md' -print0)
+          done < <(find docs/product-docs/reference -name '*.md' -print0)
           test "$missing" -eq 0 && echo "all reference pages are bannered"
 
   gate:

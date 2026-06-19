@@ -233,9 +233,9 @@ in the generated, drift-checked reference, not by retyping a `.cue` file from
 memory:
 
 - The generated reference home —
-  [`reference/README.md`](../../product-management/reference/README.md)
+  [`reference/README.md`](../reference/README.md)
 - The pack-format schema, rendered —
-  [`reference/pack-format/README.md`](../../product-management/reference/pack-format/README.md)
+  [`reference/pack-format/README.md`](../reference/pack-format/README.md)
 
 And when you are ready to turn reading into a validation run on your own pack,
 follow [validate-a-pack-locally.md](../how-to/validate-a-pack-locally.md) or

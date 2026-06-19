@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Generate the docs/product-management/reference/ tree (ADR-PC-022 §P2).
+"""Generate the docs/product-docs/reference/ tree (ADR-PC-022 §P2).
+
+The reference quadrant moved from docs/product-management/reference/ to
+docs/product-docs/reference/ on 2026-06-19 (bd babelstone-sfnt.26 — product-docs
+became the docs front door); it is a *sibling* of docs/product-management/ now,
+not a child, so the relative links it emits to concept docs / ADRs carry an extra
+hop up to docs/ and back down into product-management/ (see `adr_link`).
 
 The generated reference quadrant (ADR-PC-022) is **generated, never
 hand-edited** — rendered from the machine-readable contracts so it cannot drift
@@ -31,7 +37,7 @@ from pathlib import Path
 
 # repo root = three levels up from this file (scripts/docs-gen/generate.py)
 ROOT = Path(__file__).resolve().parents[2]
-REF = ROOT / "docs" / "product-management" / "reference"
+REF = ROOT / "docs" / "product-docs" / "reference"
 ADR_DIRS = [
     ROOT / "docs" / "product-management" / "product_concepts" / "adrs",
     ROOT / "docs" / "product-management" / "integration_concepts" / "adrs",
@@ -67,15 +73,18 @@ def adr_slug_map() -> dict[str, str]:
     return out
 
 
-def adr_link(adr_id: str, slug: str, prefix: str = "../../") -> str:
+def adr_link(adr_id: str, slug: str, prefix: str = "../../../product-management/") -> str:
     """Relative link to an ADR file. `prefix` is the path from the page's own
-    directory up to docs/product-management/ (../../ for a reference/<set>/ page,
-    ../ for reference/glossary.md which sits one level shallower)."""
+    directory up to docs/product-management/. reference/ lives under
+    docs/product-docs/ (a sibling of product-management/), so the prefix climbs to
+    docs/ then descends into product-management/: ../../../product-management/ for a
+    reference/<set>/ page, ../../product-management/ for reference/glossary.md and
+    reference/README.md, which sit one level shallower."""
     ns = "product_concepts" if "-PC-" in adr_id else "integration_concepts"
     return f"{prefix}{ns}/adrs/{slug}"
 
 
-def linkify_adrs(text: str, slugs: dict[str, str], prefix: str = "../../") -> str:
+def linkify_adrs(text: str, slugs: dict[str, str], prefix: str = "../../../product-management/") -> str:
     """Turn bare ADR ids in prose into links (the id only; any §-anchor stays text)."""
     def repl(m: re.Match) -> str:
         aid = m.group(0)
@@ -85,7 +94,7 @@ def linkify_adrs(text: str, slugs: dict[str, str], prefix: str = "../../") -> st
     return ADR_RE.sub(repl, text)
 
 
-def adr_refs(text: str, slugs: dict[str, str], prefix: str = "../../") -> list[str]:
+def adr_refs(text: str, slugs: dict[str, str], prefix: str = "../../../product-management/") -> list[str]:
     """Sorted unique ADR ids mentioned in text, as markdown links."""
     found = sorted({m for m in ADR_RE.findall(text) if m in slugs})
     return [f"[{aid}]({adr_link(aid, slugs[aid], prefix)})" for aid in found]
@@ -327,7 +336,7 @@ def render_adr_index(slugs: dict[str, str]) -> dict[str, str]:
             num = m.group(0).split("-")[-1]
             # title without the "ADR-XX-NNN: " prefix
             t = re.sub(r"^ADR-(?:PC|IC)-\d{3}:\s*", "", info["title"])
-            link = f"../../{ns_dir}/adrs/{relpath}"
+            link = f"../../../product-management/{ns_dir}/adrs/{relpath}"
             rows.append(
                 f"| [{num}]({link}) | {strip_md(t)} | {strip_md(info['shape']) or '—'} "
                 f"| {strip_md(info['status']) or '—'} |"
@@ -340,8 +349,8 @@ def render_adr_index(slugs: dict[str, str]) -> dict[str, str]:
         "Every Architectural Decision Record across **both** namespaces, in one "
         "place — the joint landscape the per-namespace indexes do not give. "
         "Generated from each ADR's front-matter; the per-namespace README "
-        "indexes ([ADR-PC](../../product_concepts/adrs/README.md) · "
-        "[ADR-IC](../../integration_concepts/adrs/README.md)) carry the full "
+        "indexes ([ADR-PC](../../../product-management/product_concepts/adrs/README.md) · "
+        "[ADR-IC](../../../product-management/integration_concepts/adrs/README.md)) carry the full "
         "decision summaries.\n",
         *sections,
     ]
@@ -473,7 +482,7 @@ def render_glossary(slugs: dict[str, str]) -> dict[str, str]:
         "corpus. Each term is defined **once, here** — the generated reference is "
         "the single home for the vocabulary; other corpus docs link to this page "
         "(e.g. `glossary.md#family`) rather than redefining terms ([ADR-PC-022 §P1]"
-        "(../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md)). "
+        "(../../product-management/product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md)). "
         "For the full treatment, follow the linked ADR or concept doc.\n",
         "| Term | Definition |",
         "|---|---|",
@@ -482,7 +491,7 @@ def render_glossary(slugs: dict[str, str]) -> dict[str, str]:
     for term, dfn in rows:
         out.append(
             f'| <a id="{slugify(term)}"></a>**{term}** '
-            f"| {linkify_adrs(dfn, slugs, prefix='../')} |"
+            f"| {linkify_adrs(dfn, slugs, prefix='../../product-management/')} |"
         )
     return {"glossary.md": "\n".join(out).rstrip() + "\n"}
 
@@ -496,7 +505,7 @@ def render_root_index() -> dict[str, str]:
         "# Reference\n",
         "**Generated, exhaustive, dry** — the generated lookup quadrant "
         "([ADR-PC-022 §P2]"
-        "(../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md)). "
+        "(../../product-management/product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md)). "
         "Every page here is rendered from a machine-readable source and "
         "regenerated-and-diffed in CI, so it **cannot drift**. Do not hand-edit; "
         "run `make docs-gen`.\n",

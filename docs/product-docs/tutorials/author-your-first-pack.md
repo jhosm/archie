@@ -77,7 +77,7 @@ delta_summary: |
 We changed the version, recorded which pack we built on, and wrote a one-line
 summary of our change. (For what each manifest field means and which values are
 legal, see the generated
-[pack-format reference](../../product-management/reference/pack-format/README.md)
+[pack-format reference](../reference/pack-format/README.md)
 and its CUE source,
 [`pack.cue`](../../../contracts/cue/pack/pack.cue) — we link to those rather
 than restate them, so they can never go stale against this page.)
