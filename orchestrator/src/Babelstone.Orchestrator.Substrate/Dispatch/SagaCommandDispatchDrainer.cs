@@ -414,15 +414,26 @@ public sealed class SagaCommandDispatchDrainer
 
     private async Task<IReadOnlyList<long>> ReadPendingSeqAsync(CancellationToken ct)
     {
-        // The PENDING tail in EMISSION order (seq, monotone — independent of clock granularity). The
-        // partial index saga_outbox_pending_idx keeps this bounded to the unpublished tail. We read
-        // the candidate seqs without locking, then each DispatchOne claims its row FOR UPDATE SKIP
-        // LOCKED in its own transaction — so a slow HTTP call to one target does not hold a lock over
-        // the whole batch, and a concurrent dispatcher claims a disjoint set.
+        // The PER-AGGREGATE FIFO drain (bd babelstone-t7o3.7, ADR-PC-029 slot 3). We read at most ONE
+        // candidate per process_id — the EARLIEST still-PENDING seq for each saga instance (DISTINCT ON
+        // (process_id) … ORDER BY process_id, seq), served index-only by saga_outbox_pending_fifo_idx
+        // (migration 0007). Delivering only per-process heads means a later seq for an aggregate is never
+        // attempted before its earlier seq settles: if the head returns a transient 5xx and stays PENDING,
+        // it is STILL the head next cycle, so the same aggregate's next command waits behind it — FIFO per
+        // aggregate. DIFFERENT aggregates' heads are independent candidates, so they dispatch in parallel
+        // (and a per-process advisory lock in ClaimAsync serialises two pods on the SAME aggregate).
+        //
+        // The outer ORDER BY seq + LIMIT keeps the cross-aggregate batch bounded and fair (the globally
+        // oldest heads first). We read the candidate seqs without locking; each DispatchOne then claims its
+        // row FOR UPDATE SKIP LOCKED under that advisory lock in its own transaction — so a slow HTTP call
+        // to one target does not hold a lock over the whole batch.
         const string sql = """
-            SELECT seq
-            FROM saga_outbox
-            WHERE status = 'PENDING'
+            SELECT seq FROM (
+                SELECT DISTINCT ON (process_id) seq
+                FROM saga_outbox
+                WHERE status = 'PENDING'
+                ORDER BY process_id, seq
+            ) heads
             ORDER BY seq
             LIMIT @batch_size;
             """;
@@ -451,6 +462,20 @@ public sealed class SagaCommandDispatchDrainer
         // read so the command-outcome → result-event bridge (bd babelstone-t7o3.8) can correlate the
         // delivery outcome back to the saga and self-advance it on this transaction.
         //
+        // PER-AGGREGATE FIFO GUARD (bd babelstone-t7o3.7, ADR-PC-029 slot 3). Before the row lock, take a
+        // TRANSACTION-scoped advisory lock keyed on the saga instance: a single 64-bit key
+        // hashtextextended(process_id::text, FifoLockSalt). Same process_id → same key → the lock
+        // SERIALISES two dispatchers (or two in-flight claims) on the SAME aggregate; the loser's try
+        // returns false, the row is filtered out (claim skipped, retried next cycle once the holder
+        // commits and releases). DIFFERENT process_ids hash to different keys → no contention → they
+        // dispatch in PARALLEL. The lock is xact-scoped, so it auto-releases on this claim's commit OR
+        // rollback — a transient 5xx that rolls back frees the aggregate immediately for its retry, and a
+        // crash mid-claim releases it when the backend connection drops. The single-arg bigint form
+        // carries the FULL 64-bit hash (no int4 truncation/overflow), and FifoLockSalt namespaces the key
+        // space (as hashtextextended's seed) so a saga-FIFO lock cannot collide with another component's
+        // advisory locks on the same cluster. pg_try (not pg_advisory_xact_lock) NEVER blocks the drain
+        // thread — a contended aggregate is simply skipped this cycle, never a held connection waiting.
+        //
         // The JOIN to saga_state reads the owning saga's saga_type (bd babelstone-mtto PR1 — the
         // multi-saga substrate) so routing and the result bridge can pick the right per-saga-type
         // sub-router/bridge. It is a read-only PK-join (saga_state's PK is process_id), O(1) per row,
@@ -463,11 +488,13 @@ public sealed class SagaCommandDispatchDrainer
             FROM saga_outbox o
             JOIN saga_state s ON s.process_id = o.process_id
             WHERE o.seq = @seq AND o.status = 'PENDING'
+              AND pg_try_advisory_xact_lock(hashtextextended(o.process_id::text, @fifo_salt))
             FOR UPDATE OF o SKIP LOCKED;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("seq", seq);
+        command.Parameters.AddWithValue("fifo_salt", FifoLockSalt);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
         {
@@ -536,6 +563,17 @@ public sealed class SagaCommandDispatchDrainer
     /// PR2): the saga's process_id. A family route that needs the id in the path declares this literal in
     /// its <see cref="CommandRoute.Path"/>; the substrate fills it from the outbox row.</summary>
     private const string ProcessIdToken = "{process_id}";
+
+    /// <summary>
+    /// The namespace SEED of the per-aggregate FIFO advisory lock (bd babelstone-t7o3.7, ADR-PC-029
+    /// slot 3). Passed as <c>hashtextextended(process_id::text, FifoLockSalt)</c>, it derives a single
+    /// 64-bit advisory-lock key from the saga instance while namespacing the dispatcher's key space — two
+    /// components hashing the same text with different seeds land on different keys, so a saga-FIFO lock
+    /// cannot collide with another component's advisory locks on the same cluster. The single-arg
+    /// <c>pg_try_advisory_xact_lock(bigint)</c> form takes the full 64-bit hash directly (no int4
+    /// truncation). An arbitrary but STABLE value — only its reservation for this guard matters.
+    /// </summary>
+    private const long FifoLockSalt = 0x5A6A_4F58_4649_464FL; // 'ZjOXFIFO' — saga-outbox FIFO guard seed.
 
     private static KeyValuePair<string, object?> CommandTag(string commandType)
         => new("command_type", commandType);
