@@ -92,17 +92,33 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
                 $"[{string.Join(", ", expectedSequence)}] but the corpus replay produced " +
                 $"[{string.Join(", ", actualSequence)}].");
 
-            // The fold rebuilds a terminal position — the lifecycle ran to completion, not a stub.
-            // Most variants mature; the 18-month `resgate escalonado` is driven to a BANDED early
-            // termination instead (its load-bearing behaviour, bd babelstone-3h64), so its terminal
-            // state is TerminatedEarly. The pinned TAN survives both terminal folds either way.
+            // The fold rebuilds the expected end position. Most variants mature; the 18-month `resgate
+            // escalonado` is driven to a BANDED early termination (its load-bearing behaviour, bd
+            // babelstone-3h64), so its end state is TerminatedEarly; the `resgate parcial` variant is
+            // driven through a PARTIAL withdrawal (F.12, bd k6r8.10) and STAYS Active — a partial
+            // withdrawal is state-preserving (F.3), so it does not reach a terminal state. The pinned TAN
+            // survives every fold.
             var variant = TermDepositVariants.For(instance.VariantId);
-            var expectedTerminal = variant.Lifecycle == SimulatedLifecycle.BandedEarlyTermination
-                ? DepositLifecycle.TerminatedEarly
-                : DepositLifecycle.Matured;
+            var expectedTerminal = variant.Lifecycle switch
+            {
+                SimulatedLifecycle.BandedEarlyTermination => DepositLifecycle.TerminatedEarly,
+                SimulatedLifecycle.PartialWithdrawal => DepositLifecycle.Active,
+                _ => DepositLifecycle.Matured,
+            };
             var hydrated = await runtime.LoadAsync(depositId);
             Assert.Equal(expectedTerminal, hydrated.State.Lifecycle);
             Assert.Equal(instance.RateBasisPoints, hydrated.State.TanBasisPoints);
+
+            // The load-bearing F.12 evidence (bd k6r8.10): the terminal fold carries the REDUCED
+            // remaining principal (original − withdrawn) — proving DepositPartiallyWithdrawn replayed and
+            // the fold applied it, not just that the event was appended.
+            if (variant.Lifecycle == SimulatedLifecycle.PartialWithdrawal)
+            {
+                var withdrawal = variant.PartialWithdrawal!;
+                Assert.Equal(
+                    instance.PrincipalCents - withdrawal.WithdrawnCents,
+                    hydrated.State.RemainingPrincipal.Cents);
+            }
         }
 
         sw.Stop();
@@ -167,6 +183,26 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             return;
         }
 
+        // The `resgate parcial` variant withdraws part of its principal instead of maturing (F.12, bd
+        // k6r8.10). The withdrawal date (start + WithdrawAfterDays) and amount are INPUTS, so the band/
+        // carência evaluation is deterministic and the produced sequence is identical on every run. The
+        // F.12 policy is resolved engine-side from the deposit's product config (k6r8.8). A partial
+        // withdrawal is STATE-PRESERVING (F.3): the deposit stays Active afterward, so this leg does NOT
+        // run on to maturity — it ends at the withdrawal, the load-bearing event this corpus guards.
+        if (variant.Lifecycle == SimulatedLifecycle.PartialWithdrawal)
+        {
+            var withdrawal = variant.PartialWithdrawal
+                ?? throw new InvalidOperationException(
+                    $"{instance.VariantId} is a PARTIAL-withdrawal variant but carries no resolved withdrawal inputs.");
+            var withdrawnOn = startDate.AddDays(withdrawal.WithdrawAfterDays);
+            await service.WithdrawPartiallyAsync(new PartialWithdrawCommand(
+                DepositId: depositId,
+                WithdrawnAt: new DateTimeOffset(withdrawnOn, TimeOnly.MinValue, TimeSpan.Zero),
+                WithdrawnAmountCents: withdrawal.WithdrawnCents,
+                Actor: "depth5-sim"));
+            return;
+        }
+
         if (variant.InterestVariant == "PERIODIC")
         {
             // Pay each intermediate coupon. The final coupon is paid WITH the principal at
@@ -210,6 +246,7 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
         const string paid = "term_deposit.InterestPaid";
         const string matured = "term_deposit.DepositMatured";
         const string terminatedEarly = "term_deposit.DepositTerminatedEarly";
+        const string partiallyWithdrawn = "term_deposit.DepositPartiallyWithdrawn";
 
         var variant = TermDepositVariants.For(instance.VariantId);
 
@@ -220,6 +257,15 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
         if (variant.Lifecycle == SimulatedLifecycle.BandedEarlyTermination)
         {
             return [c, accrued, withheld, terminatedEarly];
+        }
+
+        // The `resgate parcial` variant withdraws part of its principal and STAYS Active (F.12, bd
+        // k6r8.10): a partial withdrawal is a principal reduction only — no accrual, withholding, or
+        // settlement leg (02 §2.4.1) — so the sequence is exactly the constitution followed by the single
+        // DepositPartiallyWithdrawn. It does NOT run on to maturity (the deposit is still open).
+        if (variant.Lifecycle == SimulatedLifecycle.PartialWithdrawal)
+        {
+            return [c, partiallyWithdrawn];
         }
 
         switch (variant.InterestVariant)
@@ -310,7 +356,12 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
         var service = new TermDepositConstitutionService(
             runtime, new PostgresRateSheetStore(connectionString), new RecordingSettlementPort(),
             SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros",
-            earlyTerminationPolicy: earlyTerminationPolicy);
+            earlyTerminationPolicy: earlyTerminationPolicy,
+            // The F.12 partial-withdrawal policy rides on the product config (k6r8.8), so the
+            // partial-withdrawal leg resolves it from the REAL resgate-parcial variant on disk through
+            // this store — exercising the whole F.12 chain (schema → config → variant → wiring) end-to-end,
+            // not a pinned stand-in. Harmless for the maturing/banded variants, which never withdraw.
+            productConfigStore: new YamlProductConfigStore(productConfigsDir: null));
         return (runtime, service);
     }
 
