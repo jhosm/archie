@@ -11,6 +11,7 @@ using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
 using Babelstone.Families.TermDeposit.Application;
 using Babelstone.Packs;
+using Babelstone.Pii;
 using Babelstone.RateSheets;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -103,6 +104,17 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
                     services.AddSingleton<IRateSheetStore, UnpricedRateSheetStore>();
                     services.AddSingleton<ISettlementPort, NoopSettlementPort>();
                     services.AddSingleton<IDepositReadModelStore, EmptyDepositReadModelStore>();
+
+                    // The GDPR right-to-be-forgotten endpoint's host-shell dependencies (bd babelstone-nzw6):
+                    // the crypto-shred key store and the KV secret seam for the pseudonym salt. The fuzz never
+                    // POSTs the erase route (it is not in JsonBodyEndpoints), but DepositsEndpoints.Map maps it,
+                    // so the minimal-API RequestDelegateFactory must infer its piiKeyStore/secrets parameters as
+                    // SERVICES. Without these two registrations that inference fails and the WHOLE composite
+                    // endpoint table fails to build — 500-ing EVERY route (constitution/maturity/interest
+                    // included), exactly the unhandled-exception leak this fuzz guards. Both fakes are total
+                    // (never throw), so any 5xx the fuzz sees stays a genuine boundary fault, not a bad fake.
+                    services.AddSingleton<IPiiKeyStore, NullPiiKeyStore>();
+                    services.AddSingleton<ISecretProvider, FixedSaltSecretProvider>();
 
                     services.AddSingleton(serviceProvider => new AggregateRuntime<DepositPosition>(
                         serviceProvider.GetRequiredService<IEventStore>(),
@@ -478,5 +490,17 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
         public Task<IReadOnlyList<DepositReadModelRow>> ListByMaturityAsync(
             DateOnly fromInclusive, DateOnly toExclusive, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<DepositReadModelRow>>([]);
+    }
+
+    /// <summary>A secret provider that resolves a fixed, non-empty salt and never throws. Registered only
+    /// so the mapped-but-un-fuzzed erase endpoint's <see cref="ISecretProvider"/> parameter infers as a
+    /// service (see the registration note above); no fuzz path invokes it.</summary>
+    private sealed class FixedSaltSecretProvider : ISecretProvider
+    {
+        public Task<string> GetSecretAsync(string name, CancellationToken ct = default) =>
+            Task.FromResult("fuzz-fixed-pseudonym-salt");
+
+        public Task<string> RefreshAsync(string name, CancellationToken ct = default) =>
+            Task.FromResult("fuzz-fixed-pseudonym-salt");
     }
 }
