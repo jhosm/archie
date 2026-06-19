@@ -19,8 +19,48 @@ from typing import Any
 
 import httpx
 
+from .sanitize import sanitize_free_text
+
 # The gateway-attested caller header the MCP server forwards to the engine (ADR-IC-010 §P3).
 CLIENT_ID_HEADER = "X-Client-Id"
+
+# Free-text fields in an engine deposit response that a CUSTOMER or an EXTERNAL party can write, and
+# which therefore carry a prompt-injection surface (Document 11 §Trust Model / ADR-IC-010 §P9). Each
+# is run through ``sanitize_free_text`` before it reaches a tool — the bank's second-line defence
+# against "the bank's own data attacking the bank's agent". The map value is the field's
+# business-justified max length (the "smallest length consistent with its business use" §P9 requires);
+# ``None`` uses the conservative sanitiser default.
+#
+# Every OTHER field the engine returns is a bank-controlled TYPED value — a UUID, an ISO date, an enum
+# lifecycle state, integer cents, a basis-point rate, a structural product code — with no injection
+# surface, so it is deliberately NOT sanitised (sanitising a typed value would corrupt it). The deposit
+# position the engine serves today is entirely typed and has no such field; this map is the forward-
+# safe choke point so the instant a customer-writable free-text field IS added to the read model, it
+# cannot reach the agent un-sanitised. Adding a customer-writable string to the engine response without
+# listing it here is the drift this central point exists to prevent.
+CUSTOMER_FREE_TEXT_FIELDS: dict[str, int | None] = {
+    # e.g. "customer_reference": 140, "beneficiary_name": 70 — none exist on the position yet.
+}
+
+
+def sanitize_engine_response(payload: dict[str, Any]) -> dict[str, Any]:
+    """Sanitise any customer-/external-writable free-text field in an engine response (§P9).
+
+    Returns a shallow copy with each :data:`CUSTOMER_FREE_TEXT_FIELDS` field run through
+    ``sanitize_free_text`` (control-character + instruction-shape stripping, length cap, and the
+    data-not-instruction fence). Typed bank-controlled fields are passed through untouched. With no
+    free-text field on the deposit position today this is an identity transform, but it is the single
+    boundary every engine read/write result flows through, so a future free-text field is sanitised
+    by construction rather than by remembering to.
+    """
+    if not CUSTOMER_FREE_TEXT_FIELDS:
+        return payload
+    sanitised = dict(payload)
+    for field, max_len in CUSTOMER_FREE_TEXT_FIELDS.items():
+        if field in sanitised and isinstance(sanitised[field], str):
+            kwargs = {"max_len": max_len} if max_len is not None else {}
+            sanitised[field] = sanitize_free_text(sanitised[field], **kwargs)
+    return sanitised
 
 
 def _with_client_id(headers: dict[str, str] | None, client_id: str | None) -> dict[str, str] | None:
@@ -58,7 +98,11 @@ class EngineClient:
             headers=_with_client_id({"Idempotency-Key": str(uuid.uuid4())}, client_id),
         )
         response.raise_for_status()
-        return response.json()
+        # §P9: routed through the same choke point as the reads so EVERY engine read/write result is
+        # sanitised by construction. The constitute result is {deposit_id, status, commit_sequence} —
+        # all typed/bank-controlled with no free-text surface — so this is an identity transform today;
+        # wrapping it keeps the "every result flows through" invariant literally true.
+        return sanitize_engine_response(response.json())
 
     async def deposit_position(
         self, deposit_id: str, min_sequence: int | None = None, client_id: str | None = None
@@ -74,7 +118,8 @@ class EngineClient:
             headers=_with_client_id(headers, client_id),
         )
         response.raise_for_status()
-        return response.json()
+        # §P9: sanitise any customer-writable free-text before the position reaches the agent.
+        return sanitize_engine_response(response.json())
 
     async def mature(self, deposit_id: str, client_id: str | None = None) -> dict[str, Any]:
         """POST /v1/deposits/{id}/maturity — settles the deposit, returns the matured position.
@@ -88,7 +133,8 @@ class EngineClient:
             headers=_with_client_id(None, client_id),
         )
         response.raise_for_status()
-        return response.json()
+        # §P9: sanitise any customer-writable free-text before the matured position reaches the agent.
+        return sanitize_engine_response(response.json())
 
     async def pay_interest(self, deposit_id: str, client_id: str | None = None) -> dict[str, Any]:
         """POST /v1/deposits/{id}/interest — pays one PERIODIC coupon, returns the updated position.
@@ -104,7 +150,8 @@ class EngineClient:
             headers=_with_client_id(None, client_id),
         )
         response.raise_for_status()
-        return response.json()
+        # §P9: sanitise any customer-writable free-text before the coupon position reaches the agent.
+        return sanitize_engine_response(response.json())
 
     async def aclose(self) -> None:
         await self._client.aclose()
