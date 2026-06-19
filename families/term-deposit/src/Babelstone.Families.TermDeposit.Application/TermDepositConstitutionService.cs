@@ -1,5 +1,6 @@
 using Babelstone.Engine;
 using Babelstone.FinancialMath;
+using Babelstone.FinancialTypes;
 using Babelstone.Packs;
 using Babelstone.RateSheets;
 
@@ -342,6 +343,61 @@ public sealed class TermDepositConstitutionService(
         await runtime.AppendAsync(
             command.DepositId, hydrated.Version, events,
             Context(command.Actor, command.TerminatedAt), ct);
+    }
+
+    /// <summary>
+    /// Withdraw part of a constituted deposit's principal before maturity (F.12; 02 §2.4.1, bd qze9):
+    /// rehydrate it (must be Active — the F.3 gate decides), resolve the product's partial-withdrawal
+    /// policy from its product config (bd k6r8.8), run the pure <see cref="PartialWithdrawalDecider"/>,
+    /// and append the single <c>DepositPartiallyWithdrawn</c> event reducing the principal. UNLIKE early
+    /// termination, a partial withdrawal CLOSES nothing and settles nothing — it is a principal reduction
+    /// only (02 §2.4.1), so there is NO settlement leg here; the deposit stays Active. Withdrawing the
+    /// whole balance is a termination (F.4), which the decider refuses. Triggered MANUALLY, as maturity is.
+    /// </summary>
+    /// <returns>The stream's head version after the withdrawal (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
+    public async Task<long> WithdrawPartiallyAsync(PartialWithdrawCommand command, CancellationToken ct = default)
+    {
+        // 0. The partial-withdrawal policy rides on the deposit's PRODUCT config (bd k6r8.8), not a command
+        //    input — resolved per-deposit from the product code the constitution stamped. Fail loud if no
+        //    product-config store is configured, exactly as the minimal constitution path does.
+        var store = _productConfigStore
+            ?? throw new InvalidOperationException(
+                "No product-config store is configured for this engine instance; the partial-withdrawal "
+                + "path resolves the F.12 policy from the deposit's product config and cannot run without "
+                + "it (ADR-PC-009 / bd k6r8.8).");
+
+        // 1. Rehydrate the constituted position (load-then-append on the live stream head).
+        var hydrated = await runtime.LoadAsync(command.DepositId, ct);
+        var position = hydrated.State;
+
+        // Transition-legality gate (F.3 state machine): a partial withdrawal is legal only from Active and
+        // is STATE-PRESERVING (the deposit stays Active afterward). The single LifecycleTransitions table
+        // decides, so a withdrawal on a Matured/closed (or not-yet-constituted) deposit is rejected
+        // uniformly with every other illegal transition. (The pure decider re-checks this defensively.)
+        RejectIfIllegal(
+            position.Lifecycle, LifecycleTransitions.Transition.PartiallyWithdraw, command.DepositId, "withdraw partially");
+
+        // 2. Resolve the product's F.12 policy from its product config — fail loud on an unknown product
+        //    code, exactly as an unpriced (product, role) fails the rate-sheet resolve. A variant that
+        //    omits the partial_withdrawal block resolves to PartialWithdrawalPolicy.Unrestricted (02 §2.4.1).
+        var config = store.Resolve(position.ProductCode)
+            ?? throw new DomainRejectedException(
+                $"No product config found for '{position.ProductCode}'; cannot resolve the partial-"
+                + $"withdrawal policy for deposit {command.DepositId} (ADR-PC-009).");
+        var policy = PartialWithdrawalPolicy.FromProductConfig(config);
+
+        // 3. Decide (pure): the withdrawal DATE is derived from the command instant and passed as an INPUT
+        //    — no clock in the decider. A partial withdrawal carries NO money leg (02 §2.4.1), so unlike
+        //    TerminateEarlyAsync there is no settlement.SettleAsync here; the decider returns the single
+        //    DepositPartiallyWithdrawn that reduces the principal.
+        var withdrawnOn = DateOnly.FromDateTime(command.WithdrawnAt.UtcDateTime);
+        var events = PartialWithdrawalDecider.Decide(
+            position, new Money(command.WithdrawnAmountCents), withdrawnOn, policy);
+
+        // 4. Append at the current head (optimistic concurrency on the second append). The returned head
+        //    version is the commit_sequence the caller threads for read-your-writes.
+        return await runtime.AppendAsync(
+            command.DepositId, hydrated.Version, events, Context(command.Actor, command.WithdrawnAt), ct);
     }
 
     /// <summary>

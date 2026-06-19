@@ -68,6 +68,17 @@ public sealed record PayInterestRequest(
     string? PayoutAccount = null,
     string? Actor = null);
 
+/// <summary>Withdraw part of a deposit's principal before maturity (F.12; 02 §2.4.1): a principal
+/// reduction that leaves the deposit Active. The product's policy (minimum withdrawal / minimum
+/// remaining balance / carência lock-up) is resolved ENGINE-side from the deposit's product config —
+/// not supplied here. The instant is host-stamped if omitted; its DATE is the as-of withdrawal date the
+/// carência is measured against. No payout account: a partial withdrawal carries no settlement leg.</summary>
+/// <param name="WithdrawnAmountCents">The principal to take out, in integer cents.</param>
+public sealed record PartialWithdrawRequest(
+    long WithdrawnAmountCents,
+    DateTimeOffset? WithdrawnAt = null,
+    string? Actor = null);
+
 /// <summary>
 /// Exercise the data subject's GDPR Article 17 right-to-be-forgotten on a deposit (bd babelstone-nzw6):
 /// the engine crypto-shreds the subject's encryption key (ADR-PC-004 §P3) and records the erasure fact.
