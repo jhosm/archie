@@ -40,6 +40,43 @@ public sealed class PostgresSnapshotStore(string connectionString) : ISnapshotSt
             CreatedAt: reader.GetFieldValue<DateTimeOffset>(6));
     }
 
+    public async Task<SnapshotRecord?> TryGetAtOrBeforeAsync(
+        Guid streamId, long atOrBeforeSequence, CancellationToken ct = default)
+    {
+        // The §P1 readLatestSnapshot(..., atOrBeforeSequence): the highest snapshot that does NOT
+        // sit past the as-of point. A snapshot above the point is "the future" relative to the read
+        // and is excluded by the WHERE bound, so an as-of fold never seeds from a snapshot ahead of
+        // its target.
+        const string sql = """
+            SELECT stream_id, at_sequence, last_event_id, state_hash, state, trusted, created_at
+            FROM snapshots
+            WHERE stream_id = @stream_id AND at_sequence <= @at_or_before
+            ORDER BY at_sequence DESC
+            LIMIT 1;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("stream_id", streamId);
+        command.Parameters.AddWithValue("at_or_before", atOrBeforeSequence);
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return new SnapshotRecord(
+            StreamId: reader.GetGuid(0),
+            AtSequence: reader.GetInt64(1),
+            LastEventId: reader.GetGuid(2),
+            StateHash: reader.GetString(3),
+            State: reader.GetFieldValue<byte[]>(4),
+            Trusted: reader.GetBoolean(5),
+            CreatedAt: reader.GetFieldValue<DateTimeOffset>(6));
+    }
+
     public async Task PutAsync(SnapshotRecord snapshot, CancellationToken ct = default)
     {
         // Re-putting the same (stream, sequence) overwrites — promotes to trusted or

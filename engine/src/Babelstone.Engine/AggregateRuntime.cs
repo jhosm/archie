@@ -92,7 +92,8 @@ public sealed class AggregateRuntime<TState>(
     IIntegrationEventCatalog? integrationEventCatalog = null,
     IEventSerializer? busSerializer = null,
     ISnapshotPolicy? snapshotPolicy = null,
-    Action<Exception>? onSnapshotError = null)
+    Action<Exception>? onSnapshotError = null,
+    ICalendarBoundaryPolicy? calendarBoundaryPolicy = null)
 {
     // The bus (outbox) encoder. Defaults to the STORE codec so existing single-codec wiring is
     // unchanged; the production host injects the real Avro+SR codec to make the outbox carry real Avro
@@ -110,6 +111,15 @@ public sealed class AggregateRuntime<TState>(
     // (keyed by event_type string only), so the spine names no family — ENGINE_FAMILY_AGNOSTIC holds.
     private readonly IIntegrationEventCatalog _integrationEventCatalog =
         integrationEventCatalog ?? PublishAllIntegrationEventCatalog.Instance;
+
+    // The calendar-boundary trigger of the composing snapshot policy (ADR-PC-003 §P2 / event-store
+    // §8.1). The runtime owns the transaction-time clock (ADR-PC-010 §P5), so IT — never a handler —
+    // decides whether an append crossed a reporting-period boundary, by comparing the previous head's
+    // transaction_time to this append's. Defaults to OFF (CalendarGranularity.None) so existing wiring
+    // that hands no policy keeps the pre-A.12 behaviour (per-N + lifecycle only); the production host
+    // injects a Month/Year policy from config. Only consulted when a snapshot store + policy are wired.
+    private readonly ICalendarBoundaryPolicy _calendarBoundaryPolicy =
+        calendarBoundaryPolicy ?? new CalendarBoundaryPolicy(CalendarGranularity.None);
 
     /// <summary>Rehydrates from the latest verified snapshot, then folds the tail of events on top.</summary>
     public async Task<Hydrated<TState>> LoadAsync(Guid streamId, CancellationToken ct = default)
@@ -140,11 +150,16 @@ public sealed class AggregateRuntime<TState>(
     /// <summary>
     /// Rehydrates the stream's state AS OF a given per-stream <paramref name="asOfSequence"/> — the
     /// transaction-time / point-in-time read (the I.2 Query API as-of axis, bd babelstone-b4wp).
-    /// Folds the stream from the start up to and INCLUDING <paramref name="asOfSequence"/> and stops,
-    /// so the returned <see cref="Hydrated{TState}"/> is the historical projection at that point, not
-    /// the current head. The fold is the SAME pure mechanism as <see cref="LoadAsync"/> (no clock, no
-    /// randomness, ADR-PC-010 §P5), so a repeated as-of read at a given sequence returns identical
-    /// state — deterministic by construction. The axis is the per-stream <c>sequence_number</c>
+    /// Honours snapshots (ADR-PC-003 §P3): it seeds from the latest VALID snapshot at or below
+    /// <paramref name="asOfSequence"/> and folds only the tail up to and INCLUDING that point — a
+    /// snapshot taken PAST the point is the future relative to the read and is excluded. With no
+    /// qualifying snapshot (asOf below the earliest snapshot, or no snapshots wired) it folds cold from
+    /// sequence 0 — the §P3 correctness fallback. Either way the returned <see cref="Hydrated{TState}"/>
+    /// is the historical projection at that point, not the current head, and is BYTE-IDENTICAL to a cold
+    /// fold to the point (the snapshot is hash-verified equivalent to a cold fold at its sequence —
+    /// <c>SnapshotEquivalenceProperties</c>). The fold is the SAME pure mechanism as
+    /// <see cref="LoadAsync"/> (no clock, no randomness, ADR-PC-010 §P5), so a repeated as-of read at a
+    /// given sequence returns identical state — deterministic by construction. The axis is the per-stream <c>sequence_number</c>
     /// (commit_sequence), the only point identifier the event log carries a deterministic total order
     /// for; a wall-clock <c>valid_time</c> axis waits on the bitemporal projection runtime (Epic D /
     /// ADR-PC-002), which the read model does not yet carry.
@@ -163,17 +178,29 @@ public sealed class AggregateRuntime<TState>(
     public async Task<Hydrated<TState>> LoadAsOfSequenceAsync(
         Guid streamId, long asOfSequence, CancellationToken ct = default)
     {
-        // No snapshots in v1 (snapshots is null on the term-deposit runtime), so a clean cold fold
-        // from sequence 0 is correct and cheap (deposit streams are short). When snapshotting lands,
-        // an as-of read must only use a snapshot whose AtSequence <= asOfSequence (a snapshot past the
-        // point is in the future relative to the read); a snapshot at-or-before the point seeds the
-        // fold, then the tail folds up to the point — tracked with the snapshot work (ADR-PC-003).
-        var state = seedState();
-        var version = -1L;
-        Guid? lastEventId = null;
-        DateTimeOffset? lastTransactionTime = null;
+        // Snapshot-then-tail for the as-of read (ADR-PC-003 §P3): seed from the latest VALID snapshot
+        // at or below the requested point and fold only the tail up to it. A snapshot taken PAST the
+        // point is in the future relative to the read, so TryGetAtOrBeforeAsync excludes it (the §P1
+        // readLatestSnapshot bound) — never the live-head TryGetAsync, which could sit ahead of the
+        // point. When no snapshot qualifies (asOf < the earliest snapshot, or no snapshots at all) the
+        // fold runs cold from sequence 0 — the §P3 correctness fallback. Because LoadAsync's snapshot is
+        // hash-verified to be byte-identical to a cold fold at its AtSequence (SnapshotEquivalenceProperties),
+        // seeding from it and folding the tail yields the SAME state a from-zero fold to the point would.
+        var snapshot = snapshots is null
+            ? null
+            : await snapshots.TryGetAtOrBeforeAsync(streamId, asOfSequence, ct);
+        var state = snapshot is null ? seedState() : snapshot.State;
+        var version = snapshot?.AtSequence ?? -1L;
+        Guid? lastEventId = snapshot?.LastEventId;
+        // Event-derived transaction_time of the last folded event (ADR-PC-010 §P5). A snapshot seed
+        // carries its CreatedAt — the append-stamped transaction_time it was taken at — so a stream
+        // fully covered by the snapshot (no tail before the point) still reports a real last_updated.
+        DateTimeOffset? lastTransactionTime = snapshot is null ? null : snapshot.CreatedAt;
+        // Read only the un-snapshotted tail (snapshot.AtSequence + 1 ..), the same tail LoadAsync reads;
+        // a cold read (no snapshot) starts at sequence 0.
+        var fromSequence = version + 1;
 
-        await foreach (var envelope in store.LoadAsync(streamId, 0, ct))
+        await foreach (var envelope in store.LoadAsync(streamId, fromSequence, ct))
         {
             // The store streams in sequence_number order; stop once we pass the requested point so the
             // fold reflects exactly the as-of state (events after the point are the "future" we exclude).
@@ -323,8 +350,9 @@ public sealed class AggregateRuntime<TState>(
         var newHead = expectedVersion + events.Count;
 
         // Snapshot write (ADR-PC-003 §P2 / event-store §8.1): AFTER the commit succeeds, evaluate the
-        // §8.1 trigger and cache the new head state if it fires. This is the write side LoadAsync's
-        // snapshot-then-tail read side was always waiting for. Three invariants the call below upholds:
+        // §8.1 COMPOSING trigger (per-N OR lifecycle-boundary OR calendar-boundary) and cache the new
+        // head state if any fires. This is the write side LoadAsync's snapshot-then-tail read side was
+        // always waiting for. Three invariants the call below upholds:
         //
         //  • EVENTUALLY-CONSISTENT, NOT TRANSACTIONAL with the append (§P2). The snapshot is written on
         //    its OWN connection after the append transaction has committed — never inside it — so a
@@ -337,7 +365,22 @@ public sealed class AggregateRuntime<TState>(
         //    can never change a read's answer, only its speed.
         if (snapshots is not null && snapshotPolicy is not null)
         {
-            await TrySnapshotAsync(streamId, newHead, transactionTime, context, ct);
+            // LIFECYCLE boundary: a pure structural property of the appended event TYPES (the family
+            // marks its own lifecycle events via DomainEvent.IsLifecycleBoundary — no clock, no I/O), so
+            // the engine stays family-agnostic. ANY lifecycle event in the batch makes the append a
+            // boundary (e.g. a constitution + an upfront-interest triple is still a constitution boundary).
+            var isLifecycleBoundary = false;
+            for (var i = 0; i < events.Count; i++)
+            {
+                if (events[i].IsLifecycleBoundary)
+                {
+                    isLifecycleBoundary = true;
+                    break;
+                }
+            }
+
+            await TrySnapshotAsync(
+                streamId, expectedVersion, newHead, transactionTime, isLifecycleBoundary, context, ct);
         }
 
         return newHead;
@@ -351,16 +394,21 @@ public sealed class AggregateRuntime<TState>(
     /// rebuild slower, never wrong (the cold fold is the correctness fallback, §8.2).
     /// </summary>
     /// <remarks>
-    /// Only the per-N trigger (<see cref="SnapshotContext.EventsSinceSnapshot"/>) is exercised here. The
-    /// lifecycle / calendar boundary flags are passed <c>false</c> because the family does not yet emit
-    /// boundary signals into the append path — composing those into the policy is the follow-up (bd
-    /// e6fr.12); this lane wires the runtime + the per-N cadence ON, the missing write side. The state
-    /// snapshotted is taken from <see cref="LoadAsync"/> (snapshot-then-tail), so the snapshot the policy
-    /// caches is by construction the same state a fold would reconstruct — keeping the cache a pure
-    /// optimisation (<c>SnapshotEquivalenceProperties</c>).
+    /// Composes ALL THREE triggers of ADR-PC-003 §P2 (event-store §8.1): the per-N count
+    /// (<see cref="SnapshotContext.EventsSinceSnapshot"/>), the lifecycle boundary
+    /// (<paramref name="isLifecycleBoundary"/>, OR'd from the appended events' <c>IsLifecycleBoundary</c>
+    /// by the caller), and the calendar boundary (computed HERE by comparing the previous head's
+    /// transaction_time to this append's via <see cref="_calendarBoundaryPolicy"/>). A snapshot is taken
+    /// if ANY fires. The boundary signals are family-supplied (lifecycle) or runtime-derived (calendar,
+    /// over the event-stamped transaction_time — never a fresh clock read), so the engine stays
+    /// family-agnostic and the trigger stays a deterministic function of the log. The state snapshotted
+    /// is taken from <see cref="LoadAsync"/> (snapshot-then-tail), so the snapshot the policy caches is by
+    /// construction the same state a fold would reconstruct — keeping the cache a pure optimisation
+    /// (<c>SnapshotEquivalenceProperties</c>).
     /// </remarks>
     private async Task TrySnapshotAsync(
-        Guid streamId, long newHead, DateTimeOffset transactionTime, AppendContext context, CancellationToken ct)
+        Guid streamId, long expectedVersion, long newHead, DateTimeOffset transactionTime,
+        bool isLifecycleBoundary, AppendContext context, CancellationToken ct)
     {
         try
         {
@@ -371,13 +419,27 @@ public sealed class AggregateRuntime<TState>(
             var existing = await snapshots!.TryGetAsync(streamId, ct);
             var eventsSinceSnapshot = existing is null ? newHead + 1 : newHead - existing.AtSequence;
 
-            // v1: only the per-N count is live; lifecycle/calendar boundary signals are not yet threaded
-            // into the append path (bd e6fr.12 composes them). The family stays the source of those flags
-            // when they land, so the engine remains family-agnostic (ENGINE_FAMILY_AGNOSTIC).
+            // CALENDAR boundary (§P2): did this append land in a later reporting period than the previous
+            // head? The runtime owns the transaction-time clock (ADR-PC-010 §P5), so it compares the
+            // PREVIOUS head's event-derived transaction_time against this append's — a deterministic
+            // function of the log, not a wall-clock read. The previous-head read runs ONLY when the
+            // calendar policy is active and this is not the first append (expectedVersion == -1 ⇒ no
+            // prior event, and a first append is a lifecycle boundary anyway) — so the common per-N-only
+            // wiring (a None calendar policy) pays no extra read.
+            var isCalendarBoundary =
+                _calendarBoundaryPolicy.IsActive
+                && expectedVersion >= 0
+                && _calendarBoundaryPolicy.CrossedBoundary(
+                    await PreviousHeadTransactionTimeAsync(streamId, expectedVersion, ct), transactionTime);
+
+            // The COMPOSING context (ADR-PC-003 §P2): per-N OR lifecycle OR calendar. CountBasedSnapshotPolicy
+            // ORs the three, so handing all three live signals is what turns the lifecycle/calendar triggers
+            // ON. The signals are family-supplied (lifecycle) or runtime-derived (calendar) — the engine
+            // names no family (ENGINE_FAMILY_AGNOSTIC).
             var snapshotContext = new SnapshotContext(
                 EventsSinceSnapshot: eventsSinceSnapshot,
-                IsLifecycleBoundary: false,
-                IsCalendarBoundary: false);
+                IsLifecycleBoundary: isLifecycleBoundary,
+                IsCalendarBoundary: isCalendarBoundary);
 
             if (!snapshotPolicy!.ShouldSnapshot(snapshotContext))
             {
@@ -410,6 +472,26 @@ public sealed class AggregateRuntime<TState>(
             // append failure to the caller.
             onSnapshotError?.Invoke(ex);
         }
+    }
+
+    /// <summary>
+    /// The event-derived transaction_time of the PREVIOUS head (the event at <paramref name="atSequence"/>),
+    /// used by the calendar-boundary trigger to decide whether THIS append crossed a reporting period.
+    /// Reads only that one event (the store streams in sequence order; we take the first at-or-after the
+    /// previous head and read no further), so it is a cheap point lookup — no fold, no decode. Returns null
+    /// if the event is somehow absent (defensive; the previous head must exist on a non-first append).
+    /// </summary>
+    private async Task<DateTimeOffset?> PreviousHeadTransactionTimeAsync(
+        Guid streamId, long atSequence, CancellationToken ct)
+    {
+        await foreach (var envelope in store.LoadAsync(streamId, atSequence, ct))
+        {
+            // The first streamed event is the previous head (sequence == atSequence); its transaction_time
+            // is all the calendar trigger needs. Stop immediately — no need to read the rest of the stream.
+            return envelope.TransactionTime;
+        }
+
+        return null;
     }
 
     private async Task<TState> FoldAsync(TState state, EventEnvelope envelope, bool unprotect, CancellationToken ct)

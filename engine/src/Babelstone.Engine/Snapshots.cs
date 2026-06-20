@@ -21,8 +21,22 @@ public interface IStateSerializer<TState>
 public sealed class SnapshotStore<TState>(ISnapshotStorage storage, IStateSerializer<TState> serializer)
 {
     public async Task<Snapshot<TState>?> TryGetAsync(Guid streamId, CancellationToken ct = default)
+        => Verify(streamId, await storage.TryGetLatestAsync(streamId, ct));
+
+    /// <summary>
+    /// The typed wrapper over <see cref="ISnapshotStorage.TryGetAtOrBeforeAsync"/>: the latest *valid*
+    /// snapshot at or below <paramref name="atOrBeforeSequence"/> (ADR-PC-003 §P1 readLatestSnapshot),
+    /// hash-verified the same way as <see cref="TryGetAsync"/>. Returns null when no snapshot covers
+    /// the point — the as-of read then folds cold from zero (the §P3 correctness fallback). A snapshot
+    /// taken PAST the point is excluded by the storage bound, so the as-of fold can never seed from a
+    /// future snapshot.
+    /// </summary>
+    public async Task<Snapshot<TState>?> TryGetAtOrBeforeAsync(
+        Guid streamId, long atOrBeforeSequence, CancellationToken ct = default)
+        => Verify(streamId, await storage.TryGetAtOrBeforeAsync(streamId, atOrBeforeSequence, ct));
+
+    private Snapshot<TState>? Verify(Guid streamId, SnapshotRecord? record)
     {
-        var record = await storage.TryGetLatestAsync(streamId, ct);
         if (record is null)
         {
             return null;
@@ -71,10 +85,90 @@ public interface ISnapshotPolicy
 /// <summary>
 /// Default policy: the per-N trigger (§8.1), configurable threshold. Lifecycle and
 /// calendar boundaries also fire when the caller flags them — those flags are supplied
-/// by the family (which knows its lifecycle events), so the engine stays family-agnostic.
+/// by the family (which knows its lifecycle events) and the runtime (which owns the
+/// transaction-time clock), so the engine stays family-agnostic. This is the COMPOSING
+/// policy of ADR-PC-003 §P2: a snapshot is taken if ANY of the three triggers fires.
 /// </summary>
 public sealed class CountBasedSnapshotPolicy(long threshold = 100) : ISnapshotPolicy
 {
     public bool ShouldSnapshot(SnapshotContext ctx)
         => ctx.EventsSinceSnapshot >= threshold || ctx.IsLifecycleBoundary || ctx.IsCalendarBoundary;
+}
+
+/// <summary>The calendar granularity a snapshot aligns to (ADR-PC-003 §P2 / event-store §8.1).</summary>
+public enum CalendarGranularity
+{
+    /// <summary>No calendar trigger — the per-N + lifecycle triggers stand alone.</summary>
+    None,
+
+    /// <summary>Month-end alignment: an append in a later month than the previous one is a boundary.</summary>
+    Month,
+
+    /// <summary>Year-end alignment: an append in a later year than the previous one is a boundary.</summary>
+    Year,
+}
+
+/// <summary>
+/// Decides whether an append crossed a CALENDAR BOUNDARY (ADR-PC-003 §P2 / event-store §8.1:
+/// "month-end and year-end alignment with reporting periods, regardless of event count"), so an as-of
+/// query at a period boundary returns without a long replay. The runtime owns the transaction-time
+/// clock (ADR-PC-010 §P5), so it asks this policy — never a handler — comparing the PREVIOUS head's
+/// transaction_time against THIS append's transaction_time. The comparison is over the
+/// already-stamped, event-derived transaction_time (not a fresh wall-clock read), so the boundary is a
+/// deterministic function of the log: a replay sees the same boundaries the live append did.
+/// </summary>
+public interface ICalendarBoundaryPolicy
+{
+    /// <summary>
+    /// Whether this policy can EVER fire — false for a <see cref="CalendarGranularity.None"/> policy. The
+    /// runtime checks this to skip the previous-head transaction_time lookup entirely when the calendar
+    /// trigger is off, so the common per-N-only wiring pays no extra read.
+    /// </summary>
+    bool IsActive { get; }
+
+    /// <summary>
+    /// True when <paramref name="appendTime"/> falls in a later calendar period (per the configured
+    /// granularity) than <paramref name="previousTime"/>. <paramref name="previousTime"/> is null for
+    /// the FIRST append on a stream (no prior event to compare against) — the constitution event is
+    /// already a lifecycle boundary, so a first append needs no calendar trigger and this returns false.
+    /// </summary>
+    bool CrossedBoundary(DateTimeOffset? previousTime, DateTimeOffset appendTime);
+}
+
+/// <summary>
+/// The calendar policy keyed by a single <see cref="CalendarGranularity"/> (per-family/host config:
+/// Engine:SnapshotCalendarGranularity). UTC-period comparison — an append whose transaction_time lands
+/// in a strictly later month (or year) than the previous head's transaction_time is a boundary. v1
+/// default is <see cref="CalendarGranularity.Month"/>; <see cref="CalendarGranularity.None"/> turns the
+/// calendar trigger off entirely (the per-N + lifecycle triggers still stand).
+/// </summary>
+public sealed class CalendarBoundaryPolicy(CalendarGranularity granularity = CalendarGranularity.Month)
+    : ICalendarBoundaryPolicy
+{
+    public bool IsActive => granularity != CalendarGranularity.None;
+
+    public bool CrossedBoundary(DateTimeOffset? previousTime, DateTimeOffset appendTime)
+    {
+        // No prior event ⇒ nothing to cross (the first append is a lifecycle boundary anyway); a
+        // None granularity disables the calendar trigger.
+        if (previousTime is not { } previous || granularity == CalendarGranularity.None)
+        {
+            return false;
+        }
+
+        // Compare on a UTC instant so a transaction_time's offset never shifts which period it lands in
+        // (transaction_time is stamped UTC by the runtime, but normalise defensively).
+        var previousUtc = previous.UtcDateTime;
+        var appendUtc = appendTime.UtcDateTime;
+
+        return granularity switch
+        {
+            // A strictly later month (year first, then month within a year) is a month-end crossing.
+            CalendarGranularity.Month =>
+                appendUtc.Year > previousUtc.Year
+                || (appendUtc.Year == previousUtc.Year && appendUtc.Month > previousUtc.Month),
+            CalendarGranularity.Year => appendUtc.Year > previousUtc.Year,
+            _ => false,
+        };
+    }
 }

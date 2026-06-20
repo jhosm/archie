@@ -112,6 +112,10 @@ public sealed class SnapshotWriteSideTests(EngineFixture fixture) : IClassFixtur
         public Task<SnapshotRecord?> TryGetLatestAsync(Guid streamId, CancellationToken ct = default)
             => Task.FromResult<SnapshotRecord?>(null);
 
+        public Task<SnapshotRecord?> TryGetAtOrBeforeAsync(
+            Guid streamId, long atOrBeforeSequence, CancellationToken ct = default)
+            => Task.FromResult<SnapshotRecord?>(null);
+
         public Task PutAsync(SnapshotRecord snapshot, CancellationToken ct = default)
             => throw new InvalidOperationException("snapshot store unavailable");
 

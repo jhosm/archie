@@ -13,6 +13,19 @@ public interface ISnapshotStorage
     Task<SnapshotRecord?> TryGetLatestAsync(Guid streamId, CancellationToken ct = default);
 
     /// <summary>
+    /// Returns the highest-sequence snapshot whose <c>at_sequence</c> is at or below
+    /// <paramref name="atOrBeforeSequence"/>, or null if no snapshot covers that point — the
+    /// <c>readLatestSnapshot(stream_id, …, atOrBeforeSequence)</c> read of [ADR-PC-003 §P1] that
+    /// the as-of / point-in-time replay needs. A snapshot taken PAST the requested point is in the
+    /// future relative to the read and must be skipped, so the as-of fold seeds only from a snapshot
+    /// at-or-before the point and folds the tail up to it (cold from zero when none qualifies — the
+    /// §P3 correctness fallback). <see cref="TryGetLatestAsync"/> is the special case
+    /// <c>atOrBeforeSequence = head</c>; the live-head load keeps using it.
+    /// </summary>
+    Task<SnapshotRecord?> TryGetAtOrBeforeAsync(
+        Guid streamId, long atOrBeforeSequence, CancellationToken ct = default);
+
+    /// <summary>
     /// Writes (or re-writes) the snapshot at its sequence. Eventually-consistent with
     /// the log, never transactional with the append (§8.1). Re-putting the same
     /// (stream, sequence) overwrites — e.g. to promote it to <c>trusted</c>.

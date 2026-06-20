@@ -66,15 +66,25 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             snapshots: new SnapshotStore<DepositPosition>(
                 serviceProvider.GetRequiredService<ISnapshotStorage>(),
                 new JsonStateSerializer<DepositPosition>()),
-            // The v1 cadence: the per-N count trigger (event-store §8.1 / ADR-PC-003 §P2). The threshold
-            // is configurable via Engine:SnapshotEveryNEvents (default 100 — the §8.1 "typically 100-1000"
-            // floor, comfortably above a term deposit's ~24-260-event lifecycle so the cold-replay budget,
-            // event-store §8.2, is met without churn). The lifecycle / calendar boundary triggers compose
-            // in later (bd e6fr.12); this lane wires the runtime + the count cadence, the missing write
-            // side. CountBasedSnapshotPolicy already ORs the boundary flags in, so e6fr.12 only has to
-            // supply them — no rewiring here.
+            // The v1 cadence: the COMPOSING per-N + lifecycle + calendar trigger (event-store §8.1 /
+            // ADR-PC-003 §P2). The per-N threshold is configurable via Engine:SnapshotEveryNEvents
+            // (default 100 — the §8.1 "typically 100-1000" floor, comfortably above a term deposit's
+            // ~24-260-event lifecycle so the cold-replay budget, event-store §8.2, is met without churn).
+            // CountBasedSnapshotPolicy ORs in the two boundary flags: the LIFECYCLE flag is supplied by the
+            // family's events (DepositConstituted/Matured/Renewed/… override DomainEvent.IsLifecycleBoundary),
+            // and the CALENDAR flag is computed by the runtime from the calendar policy below — so all three
+            // triggers (bd e6fr.12) are now live with no rewiring.
             snapshotPolicy: new CountBasedSnapshotPolicy(
                 ctx.Configuration.GetValue("Engine:SnapshotEveryNEvents", 100L)),
+            // The CALENDAR-boundary trigger (ADR-PC-003 §P2 / event-store §8.1): a snapshot at month-end /
+            // year-end so as-of queries at reporting-period boundaries return without a long replay. The
+            // granularity is per-family/host config via Engine:SnapshotCalendarGranularity (None/Month/Year;
+            // default Month). The runtime owns the transaction-time clock (ADR-PC-010 §P5), so IT — not a
+            // handler — decides the crossing by comparing the previous head's transaction_time to the
+            // append's; a None granularity turns the calendar trigger off entirely.
+            calendarBoundaryPolicy: new CalendarBoundaryPolicy(
+                ctx.Configuration.GetValue(
+                    "Engine:SnapshotCalendarGranularity", CalendarGranularity.Month)),
             // Fail-soft sink for a post-commit snapshot-write failure (ADR-PC-003 §P2): the append already
             // committed and IS the book of record, so a snapshot-write blip must not fail the command — it
             // is logged (so the §P6 snapshot-lag alarm sees it) and the next rebuild is merely slower, never
