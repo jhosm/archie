@@ -31,28 +31,28 @@ The earlier instinct to call a conta à ordem "out of scope because it is a paym
 
 A card/payment **authorization is a pipeline**, and the boundary cuts through it:
 
-| # | Stage | PT term | Owner |
+| # | Stage | Detail | Owner |
 |---|---|---|---|
-| 1 | Instrument valid? not blocked/expired? | *cartão válido* | External |
-| 2 | Customer authenticated (PIN / 3DS / SCA) | *autenticação forte (PSD2)* | External (regulated) |
-| 3 | **Funds available?** | *saldo disponível suficiente?* | **Engine** |
-| 4 | **Within product rules / limits / overdraft?** | *dentro do descoberto autorizado, limites do pack* | **Engine** |
-| 5 | **Earmark the funds (place the hold)** | *cativar o montante* | **Engine** |
-| 6 | Fraud screen | *análise de fraude* | External |
-| 7 | Effect on the rails | *liquidação na rede* | External |
+| 1 | Instrument valid? not blocked/expired? | *valid card* | External |
+| 2 | Customer authenticated (PIN / 3DS / SCA) | *strong authentication (PSD2)* | External (regulated) |
+| 3 | **Funds available?** | *sufficient available balance?* | **Engine** |
+| 4 | **Within product rules / limits / overdraft?** | *within descoberto autorizado, pack limits* | **Engine** |
+| 5 | **Earmark the funds (place the hold)** | *place the hold* | **Engine** |
+| 6 | Fraud screen | *fraud analysis* | External |
+| 7 | Effect on the rails | *network settlement* | External |
 
-Stages 3–5 are pure, deterministic *read-state-and-append* deciders — the same pattern a term deposit already uses to refuse an early withdrawal. The excluded stages are exactly the ones that need a clock, an external call, or a model. So the engine does not "do authorization" or "not do it": it owns **the ledger-and-rules core of the decision** and answers `autorizado` (+ a hold) or `recusado`, **in real time**.
+Stages 3–5 are pure, deterministic *read-state-and-append* deciders — the same pattern a term deposit already uses to refuse an early withdrawal. The excluded stages are exactly the ones that need a clock, an external call, or a model. So the engine does not "do authorization" or "not do it": it owns **the ledger-and-rules core of the decision** and answers `authorized` (+ a hold) or `declined`, **in real time**.
 
-### The hold (*cativo*) — why a transactional account fits the kernel natively
+### The hold — why a transactional account fits the kernel natively
 
-A transactional account carries two balances: the **saldo contabilístico** (accounting balance — what has posted) and the **saldo disponível** (what is spendable now). Their gap is the **montante cativo** — funds earmarked by approved-but-unsettled authorizations (the hotel *pré-autorização* is the canonical case). `saldo disponível` is therefore **not a stored number but a fold**: `saldo contabilístico − Σ(active cativos)`. The hold has an event lifecycle — `MontanteCativado` (authorize) → `CativoCapturado` (on *captura*/settlement) → `CativoExpirado` (on timeout) — each step a pure event. Holds are also what make concurrent authorization safe without locking: the first debit appends a `MontanteCativado` that lowers `saldo disponível` before the second is evaluated. Transactional accounts fit babelstone *natively*; they are not a concession.
+A transactional account carries two balances: the **accounting balance** (what has posted) and the **available balance** (what is spendable now). Their gap is the **held amount** — funds earmarked by approved-but-unsettled authorizations (the hotel pre-authorization is the canonical case). `available balance` is therefore **not a stored number but a fold**: `accounting balance − Σ(active holds)`. The hold has an event lifecycle — `HoldPlaced` (authorize) → `HoldCaptured` (on capture/settlement) → `HoldExpired` (on timeout) — each step a pure event. Holds are also what make concurrent authorization safe without locking: the first debit appends a `HoldPlaced` that lowers `available balance` before the second is evaluated. Transactional accounts fit babelstone *natively*; they are not a concession.
 
 **Candidates evaluated (scope postures):**
 
 | # | Candidate | Notes |
 |---|---|---|
 | A | **Pure product/accrual kernel** — own only product math + accrual lifecycle; push transactional balance accounts and any authorization role entirely external. | The original narrow reading. Exiles the most fundamental product shape and contradicts the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) intent to bring the conta à ordem onto the engine at v4. |
-| B | **Core product & account ledger** — own product math + account lifecycle + **transactional balance accounts** + the **ledger-and-rules core of authorization** (the saldo-disponível funds check, pack rules incl. *descoberto autorizado*, the *cativo*) as a **real-time dependency**; exclude the rails/scheme/clearing/settlement, instrument validation, SCA, fraud, payment initiation, origination, and collections enforcement. | The engine is the authoritative balance and answers debit attempts in real time; it never moves money on the wire. "Decide and record" is in; "physically move" is out. |
+| B | **Core product & account ledger** — own product math + account lifecycle + **transactional balance accounts** + the **ledger-and-rules core of authorization** (the available-balance funds check, pack rules incl. *descoberto autorizado*, the hold) as a **real-time dependency**; exclude the rails/scheme/clearing/settlement, instrument validation, SCA, fraud, payment initiation, origination, and collections enforcement. | The engine is the authoritative balance and answers debit attempts in real time; it never moves money on the wire. "Decide and record" is in; "physically move" is out. |
 | C | **Ledger + servicing orchestration** — B plus disbursement/direct-debit *orchestration* and running PARI/PERSI as engine state. | Widens into workflow the saga estate ([ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md)) already owns. |
 | D | **Full transaction processing incl. rails** — own authorization *end to end including the wire* (scheme, clearing, settlement). | A card-switch / payment-services-provider build; contradicts the no-wire boundary and the 1–2-person reference scope. |
 
@@ -92,7 +92,7 @@ All clear the hard filters; the decision is in S1–S4 and the reference-archite
 
 **S1 · Operational complexity for 1–2 people.** Moderate, and the right amount. B adds the transactional-account shape and a real-time authorization path, but stages 3–5 are pure deciders the engine already knows how to express, and the synchronous answer regime is the [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) command surface under a heavier load profile — an extension, not a new kind of component. C duplicates the saga estate; D adds a rails/scheme tier (latency SLAs, scheme certification, settlement) no 1–2-person team should own. B is the widest posture whose whole surface a small team can still build correctly.
 
-**S2 · Ecosystem coherence — decisive.** The kernel's value is **deterministic-fold purity** ([ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md), [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md)). B *preserves* it: a balance is a fold over postings, `saldo disponível` is a fold net of holds, and the authorization decision (stages 3–5) is a pure read-state-and-append — all replayable. The real-time requirement is a **non-functional** property (latency/availability), not an architectural impurity; the impure stages (SCA, fraud, rails) are precisely the ones held *outside*. D *breaks* purity by pulling clock/I/O-bound rails into the kernel; C drags orchestration state in. B keeps the engine one coherent kind of thing while owning the foundational shape.
+**S2 · Ecosystem coherence — decisive.** The kernel's value is **deterministic-fold purity** ([ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md), [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md)). B *preserves* it: a balance is a fold over postings, `available balance` is a fold net of holds, and the authorization decision (stages 3–5) is a pure read-state-and-append — all replayable. The real-time requirement is a **non-functional** property (latency/availability), not an architectural impurity; the impure stages (SCA, fraud, rails) are precisely the ones held *outside*. D *breaks* purity by pulling clock/I/O-bound rails into the kernel; C drags orchestration state in. B keeps the engine one coherent kind of thing while owning the foundational shape.
 
 **S3 · Exit cost.** B is well-placed. It keeps C (servicing) and D (rails) as *future widenings* if a real need appears, while not under-committing the way A does (A would have to be reopened the moment the conta à ordem migration of [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) lands). Starting at B avoids both an immediate reopen (A's fate) and a baked-in processor assumption (D's cost).
 
@@ -120,7 +120,7 @@ D is what a *full* card switch or PSP needs, and it is rejected precisely becaus
 
 ### babelstone is a core product & account ledger — it owns balances, rules, and the funds-and-rules core of real-time authorization; it never touches the wire.
 
-**Posture (B).** babelstone owns **product math**, the **account lifecycle**, **transactional balance accounts**, and the **ledger-and-rules core of authorization** — the `saldo disponível` funds check, the pack rules (limits, *descoberto autorizado*), and the *cativo* (hold) — answered as a **real-time dependency** of the authorization path. It is the authoritative balance. It **delegates** everything that physically moves money or authenticates/screens a payer: the rails/scheme, clearing, settlement, payment initiation, instrument validation, **SCA**, **fraud**, plus **origination/underwriting** and **collections enforcement**. The dividing line is **"decide and record" (in) vs "physically move / authenticate / screen" (out)**. The engine is not a payments processor (rejected D), an orchestrator (rejected C), or a narrow accrual kernel (rejected A).
+**Posture (B).** babelstone owns **product math**, the **account lifecycle**, **transactional balance accounts**, and the **ledger-and-rules core of authorization** — the `available balance` funds check, the pack rules (limits, *descoberto autorizado*), and the hold — answered as a **real-time dependency** of the authorization path. It is the authoritative balance. It **delegates** everything that physically moves money or authenticates/screens a payer: the rails/scheme, clearing, settlement, payment initiation, instrument validation, **SCA**, **fraud**, plus **origination/underwriting** and **collections enforcement**. The dividing line is **"decide and record" (in) vs "physically move / authenticate / screen" (out)**. The engine is not a payments processor (rejected D), an orchestrator (rejected C), or a narrow accrual kernel (rejected A).
 
 > **Real-time, technique deferred.** This ADR fixes the *commitment* — the engine answers authorization in real time and is the authoritative balance — not the *mechanism*. Whether that is a synchronous call ([ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) shape) or an asynchronous/reactive design with a fast round-trip is a runtime question deferred to a future ADR.
 
@@ -130,7 +130,7 @@ D is what a *full* card switch or PSP needs, and it is rejected precisely becaus
 1. **term_deposit** — a **liability** that accrues to maturity. *Built* (the reference family).
 2. **credito_pessoal** — a **closed-end asset** with a deterministic amortization schedule. *Next* — lowest architectural risk (mirror of the term deposit).
 3. **credit_card (account/revolving slice)** — an **open-end revolving asset** with a statement cycle. *After* — the scheme/auth/clearing/dispute machinery stays outside.
-4. **conta à ordem (transactional balance account)** — the **demand account**; the hub the others settle against. Introduces the saldo-disponível/contabilístico split, the *cativo* lifecycle, and real-time authorization (stages 3–5). It is the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) **v4 destination**: through v1–v3 the legacy core owns the conta à ordem balance and the engine holds **no shadow balance** (PC-016 unchanged); at v4 the account migrates onto the engine *as an instance of this capability*. The "no shadow balance" rule is a **coexistence-topology** rule, not a permanent prohibition: its source ([02 §3 commitment 1](../02-v1-scope-term-deposits.md)) defines it as *not mirroring* a balance the legacy core authoritatively owns — *"the engine does not maintain a shadow balance — that would be the double-counting failure mode."* The engine *being* the authoritative owner at v4 is the opposite of a shadow, so no contradiction arises.
+4. **conta à ordem (transactional balance account)** — the **demand account**; the hub the others settle against. Introduces the available/accounting balance split, the hold lifecycle, and real-time authorization (stages 3–5). It is the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) **v4 destination**: through v1–v3 the legacy core owns the conta à ordem balance and the engine holds **no shadow balance** (PC-016 unchanged); at v4 the account migrates onto the engine *as an instance of this capability*. The "no shadow balance" rule is a **coexistence-topology** rule, not a permanent prohibition: its source ([02 §3 commitment 1](../02-v1-scope-term-deposits.md)) defines it as *not mirroring* a balance the legacy core authoritatively owns — *"the engine does not maintain a shadow balance — that would be the double-counting failure mode."* The engine *being* the authoritative owner at v4 is the opposite of a shadow, so no contradiction arises.
 
 **Origination is upstream.** The engine receives an **already-approved, already-priced** instruction; solvency assessment, CRC, KYC/AML, and scoring live in external/ACL systems ([ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md) shape). The engine may **record** the decision for audit/replay; it never **makes** it.
 
@@ -148,14 +148,14 @@ The kernel **IS** responsible for, across every family:
 |---|---|---|---|---|
 | Product math | interest accrual, withholding | amortization schedule | revolving interest, grace period | fee/interest accrual (if any) |
 | Account lifecycle | constitute → accrue → mature | disburse → amortize → close | open → revolve → statement | open → active → dormant → close |
-| Authoritative balance | principal + accrued | outstanding capital | revolving balance | saldo contabilístico / disponível |
-| Real-time authorization (stages 3–5) | n/a | n/a | (limit check) | **funds + pack rules + *cativo*** |
+| Authoritative balance | principal + accrued | outstanding capital | revolving balance | accounting / available balance |
+| Real-time authorization (stages 3–5) | n/a | n/a | (limit check) | **funds + pack rules + hold** |
 | Regulatory-pack config | rate sheets, withholding | per-*finalidade* caps, selo, early-repay | TAEG cap, selo, min-payment | fees, **descoberto autorizado**, limits |
 | Audit / replay | ✓ | ✓ | ✓ | ✓ |
 
 The kernel **IS NOT** responsible for (delegated across the ACL / to external systems) — the more valuable half of the boundary:
 
-1. **No physical money movement.** No rails/scheme, no clearing, no settlement, no payment initiation. The engine emits a verdict (`autorizado` + *cativo*, or `recusado`) and consumes *captura*/settlement as postings; it never moves money on the wire.
+1. **No physical money movement.** No rails/scheme, no clearing, no settlement, no payment initiation. The engine emits a verdict (`authorized` + hold, or `declined`) and consumes capture/settlement as postings; it never moves money on the wire.
 2. **No authentication or fraud.** No SCA/3DS (stage 2 — regulated, external) and no fraud screening (stage 6 — model/I/O-bound, external).
 3. **No origination / underwriting.** No solvency, CRC, KYC/AML, scoring, affordability — the engine receives an already-approved, already-priced instruction ([ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md)).
 4. **No collections *enforcement*.** The engine may *record* PARI/PERSI transitions as events; it does not *run* the legal procedure.
@@ -169,11 +169,11 @@ Each family is added the [ADR-PC-021](./ADR-PC-021-application-layer-family-owne
 
 ### P3 — Authorization and holds: the engine owns stages 3–5 in real time
 
-- **The authorization decider.** On a debit attempt the engine answers an `autorizar`-style command: compute `saldo disponível` (= `saldo contabilístico − Σ active cativos`, a fold), apply pack rules (limits, *descoberto autorizado*), and append `MontanteCativado` (with the verdict) or a refusal. Pure, deterministic, replayable.
-- **The hold lifecycle.** `MontanteCativado` → `CativoCapturado` (on *captura*/settlement) → `CativoExpirado` (on timeout). `saldo disponível` is always a projection, never a stored mutable number.
+- **The authorization decider.** On a debit attempt the engine answers an `authorize`-style command: compute `available balance` (= `accounting balance − Σ active holds`, a fold), apply pack rules (limits, *descoberto autorizado*), and append `HoldPlaced` (with the verdict) or a refusal. Pure, deterministic, replayable.
+- **The hold lifecycle.** `HoldPlaced` → `HoldCaptured` (on capture/settlement) → `HoldExpired` (on timeout). `available balance` is always a projection, never a stored mutable number.
 - **Real-time dependency.** The engine is a live dependency of the authorization path; its latency and availability become payment-path concerns. The *technique* (synchronous vs asynchronous/reactive) is a deferred runtime ADR; the *commitment* (real-time answer, engine authoritative) is fixed here.
 - **Overdraft and limits are pack rules.** *Descoberto autorizado* and transaction/velocity limits are expressed in the regulatory/product pack and evaluated at stage 4 — so the same rule surface that prices a deposit also governs "can this debit go through." The pack grammar must therefore carry limit/overdraft constructs, not only rates.
-- **The settlement/posting feed.** *Captura* and other already-cleared movements arrive as events across the ACL; their shape, ordering, and idempotency are a future **contract-shape ADR**. Statement issuance (for the card and the conta à ordem) is a **sealed event**, not a replayable projection — an issued statement is legally immutable; corrections are new events on the next cycle. These are flagged as open questions owned by the relevant family + contract ADRs — **not decided here.**
+- **The settlement/posting feed.** Capture and other already-cleared movements arrive as events across the ACL; their shape, ordering, and idempotency are a future **contract-shape ADR**. Statement issuance (for the card and the conta à ordem) is a **sealed event**, not a replayable projection — an issued statement is legally immutable; corrections are new events on the next cycle. These are flagged as open questions owned by the relevant family + contract ADRs — **not decided here.**
 
 ---
 
@@ -196,7 +196,7 @@ Each family is added the [ADR-PC-021](./ADR-PC-021-application-layer-family-owne
 **Residual risks:**
 
 - **Real-time event-sourcing under load.** Answering authorization on the hot path with an append-only store is the central engineering risk; the technique ADR and the load harness ([ADR-PC-011](./ADR-PC-011-in-house-load-test-harness.md)) must prove it.
-- **Hold reconciliation.** *Cativo* expiry vs late *captura*, partial captures, and reversals are correctness-sensitive; owned by the conta à ordem / card family ADRs.
+- **Hold reconciliation.** Hold expiry vs late capture, partial captures, and reversals are correctness-sensitive; owned by the conta à ordem / card family ADRs.
 - **Pack-grammar expansion.** Expressing limits/overdraft as pack rules widens the [ADR-PC-006](./ADR-PC-006-cue-schema-language.md)/[ADR-PC-007](./ADR-PC-007-signed-yaml-oci-pack.md) surface; must stay declarative.
 - **"Recorded not executed" can blur** (items 3–5 of §P1). Mitigation: those events carry an upstream decision reference ([ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md)).
 
@@ -207,7 +207,7 @@ Each family is added the [ADR-PC-021](./ADR-PC-021-application-layer-family-owne
 1. **Promote the supporting research** into [`product_concepts/research/`](../research/) (done in the same change as this ADR).
 2. **Author the `credito_pessoal` family** ([ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) shape) — amortization schedule, disbursement, capped early repayment.
 3. **Scope the `credit_card` account-slice** — a future family ADR plus the §P3 settlement/posting-feed contract-shape ADR and the statement-issuance event design.
-4. **Scope the `conta à ordem` transactional-account family** — the *cativo*/hold model, `saldo disponível` as a fold, overdraft-as-pack-rule, and (separately) the **real-time authorization technique ADR** (sync vs async). Aligns with the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) v4 migration.
+4. **Scope the `conta à ordem` transactional-account family** — the hold model, `available balance` as a fold, overdraft-as-pack-rule, and (separately) the **real-time authorization technique ADR** (sync vs async). Aligns with the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) v4 migration.
 
 ---
 
@@ -215,7 +215,7 @@ Each family is added the [ADR-PC-021](./ADR-PC-021-application-layer-family-owne
 
 This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
 
-No *new* executable commitments are added by this scope/posture decision itself — it is realised by the *downstream* family and contract ADRs it governs. Two existing gates already enforce the boundary it draws: the `family → engine` one-way dependency is gated by **`ENGINE_FAMILY_AGNOSTIC`** ([ADR-PC-021 §P2](./ADR-PC-021-application-layer-family-owned-deciders.md)); and handler purity (no clock/I/O/randomness — the property that keeps stages 3–5 a pure fold and rejects posture D) is gated by the replay-determinism discipline. New commitments **will** be catalogued when the families land — in particular, when `conta à ordem` is authored, the *cativo* lifecycle determinism, `saldo disponível = saldo contabilístico − Σ cativos` as a rebuildable fold, and the authorization decider's purity are expected gates.
+No *new* executable commitments are added by this scope/posture decision itself — it is realised by the *downstream* family and contract ADRs it governs. Two existing gates already enforce the boundary it draws: the `family → engine` one-way dependency is gated by **`ENGINE_FAMILY_AGNOSTIC`** ([ADR-PC-021 §P2](./ADR-PC-021-application-layer-family-owned-deciders.md)); and handler purity (no clock/I/O/randomness — the property that keeps stages 3–5 a pure fold and rejects posture D) is gated by the replay-determinism discipline. New commitments **will** be catalogued when the families land — in particular, when `conta à ordem` is authored, the hold lifecycle determinism, `available balance = accounting balance − Σ holds` as a rebuildable fold, and the authorization decider's purity are expected gates.
 
 ---
 
@@ -234,4 +234,4 @@ No *new* executable commitments are added by this scope/posture decision itself 
 ---
 
 *Decided 2026-06-20 by jhosm.*
-*Revised 2026-06-20 (pre-acceptance): widened from a narrow product/accrual kernel (former posture A) to a **core product & account ledger** (posture B) — the engine owns transactional balance accounts as a general 4th product shape and the funds-and-rules core of authorization (stages 3–5: saldo disponível, pack rules/descoberto, the cativo) as a real-time dependency, while still stopping at the wire (no rails/scheme/SCA/fraud). Adds the conta à ordem to the roadmap as the ADR-PC-016 v4 destination. The candidate set was corrected: the original framing omitted this posture between the narrow kernel and full transaction processing.*
+*Revised 2026-06-20 (pre-acceptance): widened from a narrow product/accrual kernel (former posture A) to a **core product & account ledger** (posture B) — the engine owns transactional balance accounts as a general 4th product shape and the funds-and-rules core of authorization (stages 3–5: available balance, pack rules/descoberto autorizado, the hold) as a real-time dependency, while still stopping at the wire (no rails/scheme/SCA/fraud). Adds the conta à ordem to the roadmap as the ADR-PC-016 v4 destination. The candidate set was corrected: the original framing omitted this posture between the narrow kernel and full transaction processing.*
