@@ -34,11 +34,17 @@ public static class ProcessApiEndpoints
     /// <summary>The SSE stream route — keyed on the public <c>PROC-…</c> reference (Document 05).</summary>
     public const string StreamRoute = "/api/v1/processes/{processId}/stream";
 
+    /// <summary>The poll-once status route — the agent-channel sibling of the SSE stream (Document 11
+    /// Pattern 2; bd babelstone-vjoi). Same public <c>PROC-…</c> key, same per-process ownership auth;
+    /// returns a single coarse status SNAPSHOT instead of a long-lived stream.</summary>
+    public const string StatusRoute = "/api/v1/processes/{processId}/status";
+
     /// <summary>Map the edge routes onto <paramref name="endpoints"/>.</summary>
     public static void Map(IEndpointRouteBuilder endpoints)
     {
         endpoints.MapPost(ConstituteRoute, ConstituteAsync);
         endpoints.MapGet(StreamRoute, StreamAsync);
+        endpoints.MapGet(StatusRoute, StatusAsync);
     }
 
     // POST /api/v1/deposits/constitute — STARTS the saga, returns 202 + process_id + stream_url.
@@ -207,6 +213,62 @@ public static class ProcessApiEndpoints
         }
     }
 
+    // GET /api/v1/processes/{processId}/status — a single PII-free status SNAPSHOT (Document 11 Pattern 2;
+    // bd babelstone-vjoi). The poll-once sibling of the SSE stream: the MCP agent channel cannot hold a
+    // long-lived SSE connection through a tool call, so it POLLS this for the saga's COARSE lifecycle
+    // status. Same per-process ownership model as the stream — process_id is NOT a capability token.
+    private static async Task<IResult> StatusAsync(
+        string processId,
+        HttpContext context,
+        SagaStateReader reader,
+        IReadOnlyDictionary<string, ISagaStateMachine> machines,
+        IReadOnlyDictionary<string, ISagaAgentStatusMap> statusMaps,
+        CancellationToken ct)
+    {
+        // Per-process AUTHZ identical to the stream (ADR-IC-006 §P4 / Document 05 §Step 0): an unknown
+        // reference is 404, a known reference owned by ANOTHER client is 403 — never leak existence vs
+        // ownership beyond what the owner already knows. Resolve → 404, resolve machine + status map →
+        // 500 fail-closed wiring error, ownership mismatch → 403, in that order (mirrors StreamAsync).
+        var saga = await reader.ResolveAsync(processId, ct);
+        if (saga is null)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "Unknown process.");
+        }
+
+        // The terminal flag and the coarse status are BOTH per-saga-type, family-owned answers (ADR-IC-018
+        // §D3): resolve the machine (terminality) and the status map (coarse projection) by saga_type from
+        // the host registries. A saga_type missing either is a fail-closed wiring error, not a default.
+        if (!machines.TryGetValue(saga.SagaType, out var machine)
+            || !statusMaps.TryGetValue(saga.SagaType, out var statusMap))
+        {
+            return Results.Problem(
+                statusCode: StatusCodes.Status500InternalServerError,
+                title: "No state machine or agent-status map registered for the saga type.");
+        }
+
+        var caller = context.Request.Headers[EdgeAuth.ClientIdHeader].ToString();
+        if (string.IsNullOrEmpty(caller) || !string.Equals(caller, saga.OwningClientId, StringComparison.Ordinal))
+        {
+            return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "Not the owning client.");
+        }
+
+        // Read the current (state, version) once — a plain snapshot, no stream. The row vanishing for a
+        // resolved saga should not happen; treat it as 404 (the process is no longer addressable).
+        var current = await reader.CurrentAsync(saga.ProcessId, ct);
+        if (current is null)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "Unknown process.");
+        }
+
+        // The snapshot: the verbatim family state (ADR-IC-018 §D3), the COARSE agent-facing status the
+        // family projects it to, the optimistic-concurrency version, and the routed machine's terminality
+        // answer (the SAME predicate the stream uses, so poll and stream agree). All PII-free (ADR-PC-004
+        // §P2) — a process reference, a structural state label, a version, a bool.
+        var (state, version) = current.Value;
+        return Results.Ok(new ProcessStatusResponse(
+            processId, state, statusMap.StatusFor(state), version, machine.IsTerminal(state)));
+    }
+
     private static async Task WriteStateEventAsync(
         HttpContext context, ISagaStateMachine machine, string processId, string state, long version, CancellationToken ct)
     {
@@ -239,3 +301,19 @@ public static class ProcessApiEndpoints
 /// <param name="Status">The synchronous acceptance status ("PROCESSING").</param>
 /// <param name="StreamUrl">The SSE endpoint the client subscribes to for saga progress.</param>
 public sealed record ConstituteResponse(string DepositId, string ProcessId, string Status, string StreamUrl);
+
+/// <summary>
+/// The poll-once status snapshot the <c>get_process_status</c> tool reads (Document 11 Pattern 2; bd
+/// babelstone-vjoi). Every field is structural and PII-free (ADR-PC-004 §P2). Serialized snake_case by the
+/// edge's <c>JsonOptions</c> — <c>process_id</c>, <c>state</c>, <c>status</c>, <c>version</c>, <c>terminal</c>.
+/// </summary>
+/// <param name="ProcessId">The client-facing <c>PROC-…</c> process reference.</param>
+/// <param name="State">The verbatim family saga state (ADR-IC-018 §D3) — the operator-grade label.</param>
+/// <param name="Status">The COARSE agent-facing <see cref="Babelstone.Orchestrator.Saga.AgentStatus"/> the
+/// family projects <paramref name="State"/> to (PROCESSING / AWAITING_APPROVAL / ACTION_REQUIRED /
+/// COMPLETED / FAILED / CANCELLED).</param>
+/// <param name="Version">The optimistic-concurrency version this snapshot reflects.</param>
+/// <param name="Terminal">Whether the saga has reached a terminal state (the routed machine's answer —
+/// the same predicate the SSE stream uses).</param>
+public sealed record ProcessStatusResponse(
+    string ProcessId, string State, string Status, long Version, bool Terminal);

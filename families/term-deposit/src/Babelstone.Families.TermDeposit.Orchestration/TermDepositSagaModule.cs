@@ -94,5 +94,13 @@ public sealed class TermDepositSagaModule : ISagaModule
             new SagaCommandOutboxSink(
                 sp.GetRequiredService<SagaBusinessReferenceStore>(),
                 sp.GetRequiredService<SagaOutboxWriter>()));
+
+        // The agent-facing process-status map (bd babelstone-vjoi / Document 11 Pattern 2): the COARSE
+        // saga-state → AgentStatus projection the MCP get_process_status polling tool surfaces. A
+        // family-owned artifact (the family owns its state MEANING, ADR-IC-018 §D3) the edge resolves by
+        // saga_type — exactly as it resolves the machine for the terminality flag. Registered here next to
+        // the typed sink so it joins the saga_type → status-map registry the host builds; an EDGE-only
+        // consumer (the advance handler never reads it).
+        services.AddSingleton<ISagaAgentStatusMap>(new ConstitutionProcessAgentStatusMap());
     }
 }

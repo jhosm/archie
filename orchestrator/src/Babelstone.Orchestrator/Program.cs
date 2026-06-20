@@ -133,6 +133,15 @@ builder.Services.AddSingleton<ISagaCommandSink>(sp =>
 builder.Services.AddSingleton<IReadOnlyDictionary<string, ISagaStateMachine>>(sp =>
     sp.GetServices<ISagaStateMachine>().ToDictionary(m => m.SagaType, StringComparer.Ordinal));
 
+// A saga_type → agent-status-map registry singleton for the edge process-status read (bd
+// babelstone-vjoi / Document 11 Pattern 2): the get_process_status endpoint resolves the saga's COARSE
+// AgentStatus projection by saga_type — the SAME family-owned-vocabulary, resolve-by-saga_type move the
+// machine registry above uses for terminality (ADR-IC-018 §D3). Each family module registered its
+// ISagaAgentStatusMap in ConfigureServices; this collects them by saga_type. Edge-only — the advance
+// handler never reads it.
+builder.Services.AddSingleton<IReadOnlyDictionary<string, ISagaAgentStatusMap>>(sp =>
+    sp.GetServices<ISagaAgentStatusMap>().ToDictionary(m => m.SagaType, StringComparer.Ordinal));
+
 builder.Services.AddSingleton<SagaStateStore>();
 builder.Services.AddSingleton<SagaTransitionLog>();
 // The saga_outbox store's write side (ADR-IC-018 §D2 — a SUBSTRATE component, alongside the saga_state

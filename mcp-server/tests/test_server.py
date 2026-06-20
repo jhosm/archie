@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pytest
 from mcp.server.elicitation import (
     AcceptedElicitation,
@@ -22,6 +23,7 @@ from starlette.requests import Request
 from babelstone_mcp import server
 from babelstone_mcp.elicitation import PeriodicInterestConfirmation
 from babelstone_mcp.engine_client import EngineClient
+from babelstone_mcp.orchestrator_client import OrchestratorClient
 
 
 class _FakeContext:
@@ -157,6 +159,44 @@ class _FakeEngine(EngineClient):
         }
 
 
+class _FakeOrchestrator(OrchestratorClient):
+    """An orchestrator client that records the poll and returns a fixed status (or raises a chosen
+    HTTP status), bypassing the real httpx client."""
+
+    def __init__(
+        self, *, status: dict[str, Any] | None = None, raise_status: int | None = None
+    ) -> None:  # noqa: D401 — bypass the real httpx client
+        self.process_requested: str | None = None
+        # The gateway-attested caller forwarded to the orchestrator for the ownership check (§P3).
+        self.client_id_forwarded: str | None = None
+        self._status = status or _STATUS
+        self._raise_status = raise_status
+
+    async def process_status(
+        self, process_id: str, client_id: str | None = None
+    ) -> dict[str, Any]:
+        self.process_requested = process_id
+        self.client_id_forwarded = client_id
+        if self._raise_status is not None:
+            request = httpx.Request(
+                "GET", f"http://orchestrator/api/v1/processes/{process_id}/status"
+            )
+            response = httpx.Response(self._raise_status, request=request)
+            raise httpx.HTTPStatusError(
+                f"{self._raise_status}", request=request, response=response
+            )
+        return {**self._status, "process_id": process_id}
+
+
+_STATUS = {
+    "process_id": "PROC-2026-000123",
+    "state": "AWAIT_WORKFLOW_APPROVAL",
+    "status": "AWAITING_APPROVAL",
+    "version": 7,
+    "terminal": False,
+}
+
+
 async def test_every_tool_is_registered_with_output_schema() -> None:
     tools = await server.mcp.list_tools()
     by_name = {t.name: t for t in tools}
@@ -171,6 +211,9 @@ async def test_every_tool_is_registered_with_output_schema() -> None:
     assert by_name["mature_deposit"].outputSchema is not None
     assert "pay_interest" in by_name
     assert by_name["pay_interest"].outputSchema is not None
+    # The async-completion polling tool (Document 11 Pattern 2; bd babelstone-vjoi) — also a §P6 tool.
+    assert "get_process_status" in by_name
+    assert by_name["get_process_status"].outputSchema is not None
 
 
 async def test_no_resources_or_templates_are_registered() -> None:
@@ -211,6 +254,68 @@ async def test_get_deposit_tool_maps_id_to_the_engine_read() -> None:
     assert result.sor == "engine"
     assert result.product_code == "dpz_pt_12m_juros_venc"
     assert result.last_sequence == 0
+
+
+# --- get_process_status: the async-completion polling tool (Document 11 Pattern 2; bd vjoi) ----------
+
+
+async def test_get_process_status_maps_to_the_orchestrator_read() -> None:
+    fake = _FakeOrchestrator()
+    server.set_orchestrator(fake)
+
+    result = await server.get_process_status(
+        process_id="PROC-2026-000123", ctx=_read_ctx(client_id="CLI-POLL-1")
+    )
+
+    assert fake.process_requested == "PROC-2026-000123"
+    # The gateway-attested caller (X-Client-Id, the OAuth sub) is forwarded so the orchestrator can
+    # enforce per-process OWNERSHIP (§P3 / ADR-IC-006 §P4) — never a tool argument.
+    assert fake.client_id_forwarded == "CLI-POLL-1"
+    assert result.process_id == "PROC-2026-000123"
+    assert result.state == "AWAIT_WORKFLOW_APPROVAL"
+    assert result.status == "AWAITING_APPROVAL"   # the coarse agent-facing projection
+    assert result.version == 7
+    assert result.terminal is False
+
+
+async def test_get_process_status_requires_the_read_scope() -> None:
+    # get_process_status is a READ (deposits:read) — a write-only token cannot reach it, and the
+    # rejection happens BEFORE the orchestrator is touched (ADR-IC-010 §P4).
+    fake = _FakeOrchestrator()
+    server.set_orchestrator(fake)
+
+    with pytest.raises(McpError):
+        await server.get_process_status(process_id="PROC-1", ctx=_write_ctx())
+
+    assert fake.process_requested is None
+
+
+async def test_get_process_status_unknown_process_raises_clean_mcp_error() -> None:
+    # The orchestrator 404 (no such process) is an EXPECTED outcome — surfaced as a clean McpError, not
+    # a raw transport error.
+    fake = _FakeOrchestrator(raise_status=404)
+    server.set_orchestrator(fake)
+
+    with pytest.raises(McpError) as exc:
+        await server.get_process_status(process_id="PROC-NOPE", ctx=_read_ctx())
+
+    assert "no process found" in exc.value.error.message.lower()
+
+
+async def test_get_process_status_other_owner_raises_forbidden_mcp_error() -> None:
+    # The orchestrator 403 (the process is owned by another client) is surfaced as a clean McpError;
+    # process_id is not a capability token (ADR-IC-006 §P4). No caller-id leak in the message.
+    fake = _FakeOrchestrator(raise_status=403)
+    server.set_orchestrator(fake)
+
+    with pytest.raises(McpError) as exc:
+        await server.get_process_status(
+            process_id="PROC-OTHER", ctx=_read_ctx(client_id="CLI-NOT-OWNER")
+        )
+
+    message = exc.value.error.message
+    assert "different client" in message.lower() or "your own" in message.lower()
+    assert "CLI-NOT-OWNER" not in message
 
 
 async def test_mature_deposit_tool_maps_id_and_folds_interest() -> None:

@@ -45,8 +45,11 @@ from __future__ import annotations
 import os
 import uuid
 
+import httpx
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.shared.exceptions import McpError
+from mcp.types import INVALID_PARAMS, ErrorData
 from pydantic import BaseModel, Field
 
 from .auth import AuthContext, check_tool_scope
@@ -60,6 +63,7 @@ from .elicitation import (
     elicit_url_stepup,
 )
 from .engine_client import EngineClient
+from .orchestrator_client import OrchestratorClient
 
 # §P8 URL-mode step-up SCA is the v1 TRANSPORT (built + tested), kept DORMANT by default behind this
 # flag until the maintainer resolves the SCA-trigger + token-re-entry fork (see the money-mover tools
@@ -148,6 +152,30 @@ def set_engine(client: EngineClient) -> None:
     """Inject an engine client (tests / a configured host)."""
     global _engine
     _engine = client
+
+
+_orchestrator: OrchestratorClient | None = None
+
+
+def orchestrator() -> OrchestratorClient:
+    """The orchestrator client, lazily built from ``BABELSTONE_ORCHESTRATOR_URL`` (overridable in tests).
+
+    A SEPARATE boundary from the engine client (maintainer's vjoi decision, 2026-06-17): the orchestrator
+    owns saga state, so process status is read from it, not the engine. Defaults to the saga edge's
+    dev address (``http://localhost:8090``, the orchestrator host the demo starts; see serve.py).
+    """
+    global _orchestrator
+    if _orchestrator is None:
+        _orchestrator = OrchestratorClient(
+            os.environ.get("BABELSTONE_ORCHESTRATOR_URL", "http://localhost:8090")
+        )
+    return _orchestrator
+
+
+def set_orchestrator(client: OrchestratorClient) -> None:
+    """Inject an orchestrator client (tests / a configured host)."""
+    global _orchestrator
+    _orchestrator = client
 
 
 class ConstituteDepositResult(BaseModel):
@@ -289,6 +317,75 @@ async def get_deposit(
     return DepositPosition(
         **await engine().deposit_position(deposit_id, min_sequence, client_id=auth.client_id)
     )
+
+
+class ProcessStatus(BaseModel):
+    """Structured tool output (ADR-IC-010 §P6) — the coarse async-completion status of a saga process
+    (Document 11 Pattern 2; bd babelstone-vjoi). Every field is structural and PII-free (ADR-PC-004 §P2):
+    a process reference, a state label, a coarse status, a version, a bool — no NIF/IBAN/name/amount."""
+
+    process_id: str = Field(description="The public PROC-… process reference the saga edge minted.")
+    state: str = Field(
+        description="The verbatim saga state — the operator-grade label (e.g. PARALLEL_VALIDATION, "
+        "AWAIT_WORKFLOW_APPROVAL, COMPLETED). The family's own vocabulary."
+    )
+    status: str = Field(
+        description="The COARSE agent-facing status: PROCESSING (still working — poll again), "
+        "AWAITING_APPROVAL (paused on an approval), ACTION_REQUIRED (a bank operator must reconcile), "
+        "COMPLETED, FAILED, or CANCELLED."
+    )
+    version: int = Field(description="The saga's optimistic-concurrency version this snapshot reflects.")
+    terminal: bool = Field(description="Whether the saga reached a terminal state — stop polling when true.")
+
+
+@mcp.tool()
+async def get_process_status(process_id: str, ctx: Context) -> ProcessStatus:
+    """Poll the status of an in-flight saga process — the async-completion read (Document 11 Pattern 2).
+
+    ``process_id`` is the public ``PROC-…`` reference minted when a deposit constitution is STARTED through
+    the saga edge. Use it to poll a long-running request (parallel validations, an approval wait, core
+    clearance, automatic compensation) until ``terminal`` is true. Returns the coarse ``status`` an agent
+    acts on (PROCESSING / AWAITING_APPROVAL / ACTION_REQUIRED / COMPLETED / FAILED / CANCELLED) alongside
+    the verbatim ``state`` and the ``terminal`` flag.
+
+    Requires ``deposits:read`` (ADR-IC-010 §P4) — the reserved read scope; a ``deposits:read`` token can
+    poll status but cannot reach the write tools. The actor is the gateway-attested ``X-Client-Id`` (OAuth
+    ``sub``), never a tool argument (Document 11); the orchestrator enforces that you OWN the process —
+    polling another client's ``process_id`` returns a not-authorized error, never their status.
+
+    NOTE (bd babelstone-vjoi): this is the READ half of the loop. The current ``constitute_deposit`` tool
+    calls the engine DIRECTLY and returns a ``deposit_id``, not a saga ``process_id``, so an agent cannot
+    yet obtain a ``process_id`` purely over MCP — an orchestrator-routed constitution tool (bd
+    babelstone-ziu3.6) closes that producer gap. Until then this polls a ``process_id`` obtained out of
+    band (the browser/saga edge).
+    """
+    auth = _authorize(ctx, "get_process_status")
+    try:
+        result = await orchestrator().process_status(process_id, client_id=auth.client_id)
+    except httpx.HTTPStatusError as exc:
+        # 404 (no such process) and 403 (owned by another client) are EXPECTED business outcomes, not engine
+        # failures — surface a clean, PII-free McpError to the agent rather than a raw transport error. Any
+        # other non-2xx propagates (a genuine fault).
+        status_code = exc.response.status_code
+        if status_code == 404:
+            raise McpError(
+                ErrorData(
+                    code=INVALID_PARAMS,
+                    message=f"No process found for process_id '{process_id}'.",
+                )
+            ) from None
+        if status_code == 403:
+            raise McpError(
+                ErrorData(
+                    code=INVALID_PARAMS,
+                    message=(
+                        "That process is owned by a different client; you can only poll your own processes "
+                        "(ADR-IC-006 §P4 — process_id is not a capability token)."
+                    ),
+                )
+            ) from None
+        raise
+    return ProcessStatus(**result)
 
 
 @mcp.tool()

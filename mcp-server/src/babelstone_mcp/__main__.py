@@ -9,6 +9,8 @@ them it serves plain HTTP, so a developer can still hit it directly (demo-mcp.sh
 
 Env:
 - ``BABELSTONE_ENGINE_URL`` — the engine command/query host (default http://localhost:8080).
+- ``BABELSTONE_ORCHESTRATOR_URL`` — the saga orchestrator edge host the ``get_process_status`` polling
+  tool reads (default http://localhost:8090; Document 11 Pattern 2, bd babelstone-vjoi).
 - ``BABELSTONE_MCP_SERVER_URI`` — this server's canonical URI; tokens must carry it as ``aud`` (§P3).
 - ``BABELSTONE_IAM_URL`` — the authorization server advertised in the RFC 9728 metadata (§P2).
 - ``MCP_BIND_HOST`` / ``MCP_BIND_PORT`` — the listen address (default ``0.0.0.0`` : ``8080``). In a

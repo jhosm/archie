@@ -40,6 +40,10 @@ TOOL_SCOPES: dict[str, str] = {
     "mature_deposit": DEPOSITS_WRITE,
     "pay_interest": DEPOSITS_WRITE,
     "get_deposit": DEPOSITS_READ,
+    # The async-completion polling tool (Document 11 Pattern 2; bd babelstone-vjoi) is a READ — it only
+    # observes saga process status — so it carries the reserved read scope; a deposits:read token can poll
+    # status but cannot reach the write tools (§P4 — one tool maps to exactly one scope).
+    "get_process_status": DEPOSITS_READ,
 }
 
 

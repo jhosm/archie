@@ -109,5 +109,10 @@ public sealed class RenewalSagaModule : ISagaModule
         // saga_type → sink registry the host's composite builds.
         services.AddSingleton<ISagaTypedCommandSink>(sp =>
             new RenewalCommandOutboxSink(sp.GetRequiredService<SagaOutboxWriter>()));
+
+        // The renewal saga's agent-facing process-status map (bd babelstone-vjoi / Document 11 Pattern 2)
+        // — the renewal sibling of the constitution map, registered so it joins the saga_type → status-map
+        // registry the host builds. Family-owned state meaning (ADR-IC-018 §D3), edge-only consumer.
+        services.AddSingleton<ISagaAgentStatusMap>(new RenewalProcessAgentStatusMap());
     }
 }
