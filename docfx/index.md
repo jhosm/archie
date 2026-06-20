@@ -2,7 +2,12 @@
 
 # babelstone product documentation
 
-This is the documentation for **people using babelstone** — starting with the **config author**: the product manager, treasury/ALM, or compliance owner at an adopting bank who writes regulatory **packs** (`packs/pt.YYYY.N/`), configures **product variants**, and deploys **rate sheets**. You write YAML data and run validation; you do not work on the engine's source.
+This is the documentation for **people using babelstone**. It serves two readers so far:
+
+- the **config author** — the product manager, treasury/ALM, or compliance owner at an adopting bank who writes regulatory **packs** (`packs/pt.YYYY.N/`), configures **product variants**, and deploys **rate sheets**. You write YAML data and run validation; you do not work on the engine's source.
+- the **family-schema author** — a developer defining a new product family in the engine: its event records, pure fold handlers, the `IFamilyModule` binding, the lifecycle legality table, and projections. You write engine-side C# and the family's CUE contract, anchored on the real `term_deposit` reference family.
+
+Both readers share the **same** three hand-authored quadrants (tutorials, how-to, explanation) — the set is doc-type-shaped, not role-shaped, so it grows by adding pages, never a parallel per-persona tree.
 
 It is deliberately separate from the internal design corpus under [`../product-management/`](https://github.com/jhosm/babelstone/tree/main/docs/product-management), which is the engine team's concern-axis series and decision records (ADRs). That corpus answers *"what did we decide and why"*; this set answers *"how do I get my pack and variant right."*
 
@@ -35,21 +40,31 @@ The `reference/` quadrant here is **generated from the source of truth and diffe
 
 These pages follow the **link-don't-restate** discipline: the authoritative field-by-field truth (manifest fields, CUE field lists, event payloads, the pack-format schema) is **never retyped here** — we link to the generated source instead. Restating it would create a stale-able duplicate, the exact failure [ADR-PC-022](https://github.com/jhosm/babelstone/blob/main/docs/product-management/product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md) forbids. A page here may show a short YAML snippet *as an illustration*, but for the contract it points you out.
 
-## One persona today, more pages later
+## Two personas, one structure
 
-The config author is the **first** reader, not the only one. Family-schema authors arrive later — and when they do, they get **more pages in the three hand-authored quadrants** (tutorials, how-to, explanation; reference stays generated), never a parallel persona tree. The structure is doc-type-shaped, not role-shaped, so it grows by adding pages.
+The config author was the **first** reader; the **family-schema author** is the second, opened by adding pages to the same three hand-authored quadrants (tutorials, how-to, explanation; reference stays generated), never a parallel persona tree. Further readers (the integrator, the agent channel) arrive the same way. The structure is doc-type-shaped, not role-shaped, so it grows by adding pages.
+
+The family-schema author's pages link heavily into the engine-team corpus and the real `term_deposit` reference family rather than re-authoring the engine's design rationale — so there is no second copy to drift. The authoritative procedure they pair with is the [`new-family-schema`](https://github.com/jhosm/babelstone/blob/main/plugins/babelstone-engine/skills/new-family-schema/SKILL.md) and [`new-event`](https://github.com/jhosm/babelstone/blob/main/plugins/babelstone-engine/skills/new-event/SKILL.md) skills.
 
 ## The pages that exist now
 
-This is an **early slice** for the config author: the pack and **variant**
-authoring workflows for the worked example (`pt.2026.1`), not yet the full
-product documentation.
+This is an **early slice**: the config author's pack and **variant** authoring
+workflows for the worked example (`pt.2026.1`), plus the family-schema author's
+core inner loop anchored on the `term_deposit` reference family — not yet the full
+product documentation. Pages are grouped by reader within each quadrant.
 
 **Tutorials**
+
+*Config author*
 - [Author your first pack](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/tutorials/author-your-first-pack.md)
 - [Write your first product variant](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/tutorials/write-your-first-variant.md)
 
+*Family-schema author*
+- [Author your first family schema](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/tutorials/author-your-first-family-schema.md)
+
 **How-to**
+
+*Config author*
 - [Author and deploy a complete rate-sheet version](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/author-and-deploy-a-rate-sheet.md)
 - [Add a rate band](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/add-a-rate-band.md)
 - [Add a day-count primitive](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/add-a-day-count-primitive.md)
@@ -64,12 +79,22 @@ product documentation.
 - [Sign and publish a pack with cosign and ORAS](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/sign-and-publish-a-pack.md) — **provisional** (publish path partly unbuilt)
 - [Write a sealed test corpus for a pack](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/write-a-sealed-test-corpus.md)
 
+*Family-schema author*
+- [Structure event payloads](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/structure-event-payloads.md)
+- [Write and test pure event handlers (folds)](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/write-and-test-event-handlers.md)
+- [Author the family CUE schema](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/author-the-family-cue-schema.md)
+
 **Explanation**
+
+*Config author*
 - [Why packs and rate sheets are separate](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/explanation/why-packs-and-rate-sheets-are-separate.md)
 - [Rate-sheet versioning and point-in-time resolution](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/explanation/rate-sheet-versioning-and-resolution.md)
 - [Pack effective-date and per-instance pinning](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/explanation/pack-effective-date-and-per-instance-pinning.md)
 - [Reading a CUE schema](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/explanation/reading-a-cue-schema.md)
 - [How packs and variants relate](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/explanation/how-packs-and-variants-relate.md)
+
+*Family-schema author*
+- [The family lifecycle state machine](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/explanation/the-family-lifecycle-state-machine.md)
 
 **Catalogue**
 - [Term deposit — the product menu](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/catalogue/term-deposit.md)
