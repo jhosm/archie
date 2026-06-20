@@ -1,12 +1,214 @@
 # GENERATED ARTEFACT — DO NOT HAND-AUTHOR (ADR-PC-007 §P5).
 #
-# expected-events.yaml is produced by running the engine's hand-rolled
-# substrate over canonical-instances.yaml and committing the result, so the
-# sealed corpus cannot silently drift. The engine does not exist yet
-# (Epic A/B/D), so this file is an intentional empty placeholder: the depth-5
-# simulation gate (C.3) regenerates it once the engine can run the corpus, and
-# the pack-publish gate then blocks on any drift.
+# expected-events.yaml is produced by replaying the engine's hand-rolled substrate over
+# canonical-instances.yaml and committing the result, so the sealed corpus cannot silently
+# drift. The depth-5 simulation gate (C.3, PackSimulationDepth5Tests) asserts the replayed
+# event sequences field-for-field against this file and FAILS CI on any drift (F.8, bd up7t).
 #
-# Until then the pack-build gate treats an empty expected-events.yaml as
-# "corpus generation pending" (a logged skip), never as "corpus passed".
-expected: []
+# Regenerate with: BABELSTONE_DEPTH5_GENERATE=1 dotnet test on PackSimulationDepth5Tests.
+#
+# Every cents figure is what the ENGINE DECIDED, never hand-fudged. For the periodic / advance
+# / multi-coupon variants withholding is FLOW-BY-FLOW: 28% (2800 bp) on EACH coupon's gross,
+# rounded ONCE per cash-flow boundary, then summed — never round(gross_total × 0.72) and never
+# TANL = TANB × 0.72 (financial_concepts §5.4).
+tests:
+  - test_id: pt_dpz_12m_simple_with_irs
+    variant_id: dpz_pt_12m_juros_venc
+    events:
+      - type: term_deposit.DepositConstituted
+        fields:
+          principal_cents: 1000000
+          tan_basis_points: 300
+          term_days: 365
+      - type: term_deposit.InterestAccrued
+        fields:
+          gross_interest_cents: 30417
+      - type: term_deposit.WithholdingApplied
+        fields:
+          tax_cents: 8517
+          net_cents: 21900
+      - type: term_deposit.DepositMatured
+        fields:
+          principal_returned_cents: 1000000
+          net_interest_paid_cents: 21900
+          total_payout_cents: 1021900
+  - test_id: pt_dpz_12m_periodic_monthly_with_irs
+    variant_id: dpz_pt_12m_juros_mensal
+    events:
+      - type: term_deposit.DepositConstituted
+        fields:
+          principal_cents: 2500000
+          tan_basis_points: 325
+          term_days: 365
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 6319
+          withholding_tax_cents: 1769
+          net_interest_cents: 4550
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 6997
+          withholding_tax_cents: 1959
+          net_interest_cents: 5038
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 6771
+          withholding_tax_cents: 1896
+          net_interest_cents: 4875
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 6997
+          withholding_tax_cents: 1959
+          net_interest_cents: 5038
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 6771
+          withholding_tax_cents: 1896
+          net_interest_cents: 4875
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 6997
+          withholding_tax_cents: 1959
+          net_interest_cents: 5038
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 6997
+          withholding_tax_cents: 1959
+          net_interest_cents: 5038
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 6771
+          withholding_tax_cents: 1896
+          net_interest_cents: 4875
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 6997
+          withholding_tax_cents: 1959
+          net_interest_cents: 5038
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 6771
+          withholding_tax_cents: 1896
+          net_interest_cents: 4875
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 6997
+          withholding_tax_cents: 1959
+          net_interest_cents: 5038
+      - type: term_deposit.InterestAccrued
+        fields:
+          gross_interest_cents: 6997
+      - type: term_deposit.WithholdingApplied
+        fields:
+          tax_cents: 1959
+          net_cents: 5038
+      - type: term_deposit.DepositMatured
+        fields:
+          principal_returned_cents: 2500000
+          net_interest_paid_cents: 5038
+          total_payout_cents: 2505038
+  - test_id: pt_dpz_24m_periodic_quarterly_with_irs
+    variant_id: dpz_pt_24m_juros_trimestral
+    events:
+      - type: term_deposit.DepositConstituted
+        fields:
+          principal_cents: 5000000
+          tan_basis_points: 350
+          term_days: 730
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 44722
+          withholding_tax_cents: 12522
+          net_interest_cents: 32200
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 44722
+          withholding_tax_cents: 12522
+          net_interest_cents: 32200
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 44236
+          withholding_tax_cents: 12386
+          net_interest_cents: 31850
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 43750
+          withholding_tax_cents: 12250
+          net_interest_cents: 31500
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 44722
+          withholding_tax_cents: 12522
+          net_interest_cents: 32200
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 44722
+          withholding_tax_cents: 12522
+          net_interest_cents: 32200
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 44236
+          withholding_tax_cents: 12386
+          net_interest_cents: 31850
+      - type: term_deposit.InterestAccrued
+        fields:
+          gross_interest_cents: 43750
+      - type: term_deposit.WithholdingApplied
+        fields:
+          tax_cents: 12250
+          net_cents: 31500
+      - type: term_deposit.DepositMatured
+        fields:
+          principal_returned_cents: 5000000
+          net_interest_paid_cents: 31500
+          total_payout_cents: 5031500
+  - test_id: pt_dpz_6m_advance_with_irs
+    variant_id: dpz_pt_6m_juros_antecipados
+    events:
+      - type: term_deposit.DepositConstituted
+        fields:
+          principal_cents: 1500000
+          tan_basis_points: 275
+          term_days: 180
+      - type: term_deposit.InterestPaid
+        fields:
+          gross_interest_cents: 20625
+          withholding_tax_cents: 5775
+          net_interest_cents: 14850
+      - type: term_deposit.DepositMatured
+        fields:
+          principal_returned_cents: 1500000
+          net_interest_paid_cents: 0
+          total_payout_cents: 1500000
+  - test_id: pt_dpz_18m_banded_termination_with_irs
+    variant_id: dpz_pt_18m_resgate_escalonado
+    events:
+      - type: term_deposit.DepositConstituted
+        fields:
+          principal_cents: 4000000
+          tan_basis_points: 340
+          term_days: 545
+      - type: term_deposit.InterestAccrued
+        fields:
+          gross_interest_cents: 75556
+      - type: term_deposit.WithholdingApplied
+        fields:
+          tax_cents: 21156
+          net_cents: 54400
+      - type: term_deposit.DepositTerminatedEarly
+        fields:
+          principal_returned_cents: 4000000
+          penalty_amount_cents: 37778
+          net_settlement_amount_cents: 4016622
+  - test_id: pt_dpz_12m_partial_withdrawal
+    variant_id: dpz_pt_12m_resgate_parcial
+    events:
+      - type: term_deposit.DepositConstituted
+        fields:
+          principal_cents: 4000000
+          tan_basis_points: 300
+          term_days: 365
+      - type: term_deposit.DepositPartiallyWithdrawn
+        fields:
+          withdrawn_amount_cents: 1000000
+          remaining_principal_cents: 3000000
