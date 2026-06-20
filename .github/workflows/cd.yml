@@ -1,0 +1,234 @@
+name: CD — promote to P.6 (Kubernetes)
+
+# Continuous delivery for the deployed P.6 Kubernetes environments (Q.6 / bd babelstone-4c81).
+#
+# In plain English: CI (ci.yml) proves a change is sound; image-build.yml builds + cosign-signs
+# each deployable by immutable digest (Q.5). THIS workflow is the next step — it PROMOTES those
+# signed images into a P.6 Kubernetes environment. Before anything serves traffic it: (1) verifies
+# the images it is about to deploy are genuinely the cosign-signed bytes (verify by digest, never
+# by a movable tag); (2) gates the forward-only DB migrations (refuse a release that rewrote an
+# already-applied migration or would roll the schema backward); (3) renders + kubeconforms the
+# environment's Kustomize overlay; and (4) runs a declarative Kong `deck sync` with the REAL edge
+# mTLS + IAM key material pulled from OpenBao at sync time (bd babelstone-4c81.1) — never the
+# committed POC placeholders.
+#
+# Honours, as the deploy-time realisation of decisions CI only validates:
+#   • ADR-PC-019 §P1 — path-scoped monorepo CI; this is the promotion lane those subtrees feed.
+#   • ADR-IC-006 §P1 — DB-less declarative Kong; the edge is converged by `deck sync`, never an
+#     Admin-API mutation. §P5 — Boundary-2 upstream mTLS (real internal-CA cert + tls_verify on).
+#     §P7 — JWT key registration/rotation as the deliberate 3-step `deck sync`.
+#   • ADR-PC-018 — the SoR-routing edge config rides the same one git-tracked kong.yml this syncs.
+#
+# Promotion targets (P.6): the two Kustomize overlays under infra/k8s/overlays — `dev`
+# (single-replica) and `ha` (the P.7 production-shaped topology). The TARGET is chosen by the
+# manual dispatch input; a push-to-main run does the hermetic gates only (no cluster credentials
+# on the default runner — applying to a real cluster is an environment-gated, human-dispatched step).
+#
+# Security: NO real cert/key material is committed. The deck-sync step pulls the real material from
+# OpenBao at run time (a deploy-scoped token in an environment secret, never root, never the browser).
+# The committed kong.yml carries only the CI-parseable POC placeholder PEM that the render replaces.
+
+on:
+  # Hermetic gate lane: every push to main re-proves the promotion gates are GREEN (the
+  # render path, the cosign-verify wiring, the forward-only migration gate, the overlay
+  # render) without touching a live cluster/registry — the same path-scoped posture as CI.
+  push:
+    branches: [main]
+    paths: &cd_paths
+      - 'infra/k8s/**'
+      - 'infra/kong/**'
+      - 'scripts/deck-sync.sh'
+      - 'scripts/cd-migrate.sh'
+      - 'engine/src/Babelstone.EventStore.Migrations/**'
+      - 'orchestrator/src/Babelstone.Orchestrator.Substrate/Migrations/**'
+      - 'families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Migrations/**'
+      - '.github/workflows/cd.yml'
+  pull_request:
+    paths: *cd_paths
+  # Real promotion lane: a human dispatches a deploy to a named environment. The `environment:`
+  # binding (below) is where the cluster kubeconfig, the registry pull creds, and the OpenBao
+  # deploy token live as protected environment secrets — gated by whatever approvers the env requires.
+  workflow_dispatch:
+    inputs:
+      overlay:
+        description: 'Kustomize overlay to promote (infra/k8s/overlays/<overlay>)'
+        type: choice
+        options: [dev, ha]
+        default: dev
+      apply:
+        description: 'Actually apply to the cluster + deck sync (needs the environment secrets); false = gates + render only'
+        type: boolean
+        default: false
+
+concurrency:
+  # One promotion of a given ref at a time; never cancel an in-flight apply (a half-applied
+  # deploy is worse than a queued one), so cancel only on non-main refs.
+  group: cd-${{ github.ref }}-${{ github.event.inputs.overlay || 'gate' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ── 1 · cosign-verify the signed images by digest (Q.5 → Q.6 hand-off) ──────────────
+  verify-images:
+    name: verify signed images (cosign, by digest)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read     # read image manifests/signatures from GHCR
+      id-token: write     # cosign verify resolves the Fulcio/Rekor identity (keyless)
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      # On a real promotion the deployer pins each image by DIGEST (the exact bytes Q.5 signed)
+      # and verifies the keyless signature against the workflow OIDC identity that produced it —
+      # the image-build.yml identity (the engine-team identity in v1; bank-internal OIDC in prod,
+      # ADR-PC-007 §P2). We do NOT verify against live GHCR here (a push-to-main / PR run has no
+      # promotable digest set yet), so this step asserts the verify CONTRACT: the exact cosign
+      # invocation a deployer runs, with the identity regexes a promotion must pin. A real
+      # promotion supplies IMAGE_DIGESTS (newline-separated name@sha256:… refs) as an env secret.
+      - name: Assert the cosign-verify contract (identity-pinned, by digest)
+        env:
+          # The OIDC identity image-build.yml signs under — pin to the repo's signing workflow.
+          COSIGN_CERT_IDENTITY_REGEX: 'https://github.com/jhosm/babelstone/.github/workflows/image-build.yml@.*'
+          COSIGN_CERT_OIDC_ISSUER: 'https://token.actions.githubusercontent.com'
+          IMAGE_DIGESTS: ${{ secrets.PROMOTE_IMAGE_DIGESTS }}
+        run: |
+          set -euo pipefail
+          echo "Deployers verify each promoted image by DIGEST against the signing OIDC identity:"
+          echo "  cosign verify \\"
+          echo "    --certificate-identity-regexp '$COSIGN_CERT_IDENTITY_REGEX' \\"
+          echo "    --certificate-oidc-issuer '$COSIGN_CERT_OIDC_ISSUER' \\"
+          echo "    ghcr.io/jhosm/babelstone-<service>@sha256:<digest>"
+          if [ -n "${IMAGE_DIGESTS:-}" ]; then
+            echo "PROMOTE_IMAGE_DIGESTS provided — verifying each promoted image by digest."
+            while IFS= read -r ref; do
+              [ -z "$ref" ] && continue
+              echo "::group::cosign verify $ref"
+              cosign verify \
+                --certificate-identity-regexp "$COSIGN_CERT_IDENTITY_REGEX" \
+                --certificate-oidc-issuer "$COSIGN_CERT_OIDC_ISSUER" \
+                "$ref"
+              echo "::endgroup::"
+            done <<< "$IMAGE_DIGESTS"
+            echo "all promoted images verified by digest"
+          else
+            echo "No PROMOTE_IMAGE_DIGESTS set (gate lane) — verify CONTRACT asserted, no live digest to verify."
+          fi
+
+  # ── 2 · forward-only DB-migration gate (refuse a backward edit before promotion) ────
+  migration-gate:
+    name: forward-only migration gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }   # the immutability diff compares against origin/main
+      - name: Gate the three forward-only migration series (engine / orchestrator / family)
+        # No DB here — this is the static promotion gate: monotonic numbering + no already-committed
+        # migration rewritten vs origin/main. The live-ledger half (DB not ahead of the repo) runs at
+        # apply time inside the cluster. cd-migrate.sh is the single source the demo host + the engine
+        # runtime runner agree with on "applied".
+        run: ./scripts/cd-migrate.sh --gate-only
+
+  # ── 3 · render the target overlay + the OpenBao-backed deck-sync render path ─────────
+  render:
+    name: render overlay + deck-sync render path
+    needs: [verify-images, migration-gate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4   # pins kustomize + kubeconform + deck from mise.toml
+        with:
+          version: "2026.6.6"      # same TEMP pin as ci.yml's infra job (broken mise latest release)
+      - name: Render + kubeconform the promotion overlay (P.6)
+        # The overlay the dispatch chose (default dev on the gate lane). Same render command +
+        # --load-restrictor + pinned kubeconform as ci.yml's infra job, so CD agrees with CI on
+        # "a valid manifest set".
+        env:
+          OVERLAY: ${{ github.event.inputs.overlay || 'dev' }}
+        run: |
+          set -euo pipefail
+          echo "== rendering infra/k8s/overlays/$OVERLAY =="
+          mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$OVERLAY" \
+            | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
+      - name: Prove the OpenBao-backed deck-sync render path (dry-run, no secrets, bd 4c81.1)
+        # deck-sync.sh --dry-run synthesises throwaway PEM in-process and exercises the WHOLE
+        # render: splice the real-material seams (edge + mcp client certs, internal CA bundle, IAM
+        # RS256 pubkey) by entity id, flip tls_verify on (§P5 reverse half), fail-closed if any POC
+        # body survived, then `deck file validate`. It proves the path a real `deck sync` takes
+        # WITHOUT a live OpenBao or any committed secret — the CI-runnable half of bd 4c81.1.
+        run: ./scripts/deck-sync.sh --dry-run
+
+  # ── 4 · the real promotion: apply to the cluster + deck sync with OpenBao material ──
+  promote:
+    name: promote to ${{ github.event.inputs.overlay }} (apply)
+    # Only on an explicit human dispatch with apply=true; the `environment:` gate is where the
+    # cluster kubeconfig + OpenBao deploy token + registry creds live as protected secrets.
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.apply == 'true' }}
+    needs: [render]
+    runs-on: ubuntu-latest
+    environment: ${{ format('p6-{0}', github.event.inputs.overlay) }}
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
+      - uses: jdx/mise-action@v4
+        with:
+          version: "2026.6.6"
+      - name: Install kubectl + cosign
+        uses: sigstore/cosign-installer@v3
+      # 4a — forward-only migrations applied to the live DBs BEFORE the new images serve.
+      #      Each series points at its own logical DB; the environment supplies the libpq env
+      #      (PGHOST/PGUSER/PGPASSWORD/PGDATABASE) or a --psql conn from an environment secret.
+      - name: Apply forward-only migrations to the environment DBs
+        env:
+          PGHOST: ${{ secrets.PGHOST }}
+          PGUSER: ${{ secrets.PGUSER }}
+          PGPASSWORD: ${{ secrets.PGPASSWORD }}
+          PGDATABASE: ${{ secrets.PGDATABASE }}
+        run: ./scripts/cd-migrate.sh
+      # 4b — apply the rendered overlay to the cluster (kubeconfig from the environment secret).
+      - name: kubectl apply the rendered overlay
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_B64 }}
+          OVERLAY: ${{ github.event.inputs.overlay }}
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+          printf '%s' "$KUBECONFIG_DATA" | base64 -d > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+          mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$OVERLAY" \
+            | kubectl apply -f -
+      # 4c — declarative Kong deck sync with the REAL edge mTLS + IAM key from OpenBao (bd 4c81.1).
+      #      BAO_ADDR/BAO_TOKEN are environment secrets (a deploy-scoped policy, never root).
+      - name: deck sync the edge config (real OpenBao mTLS + IAM key, ADR-IC-006 §P1/§P5/§P7)
+        env:
+          BAO_ADDR: ${{ secrets.BAO_ADDR }}
+          BAO_TOKEN: ${{ secrets.BAO_DEPLOY_TOKEN }}
+          KONG_ADMIN_ADDR: ${{ secrets.KONG_ADMIN_ADDR }}
+        run: ./scripts/deck-sync.sh --kong-addr "$KONG_ADMIN_ADDR"
+
+  # ── always-run aggregator (same gate pattern as ci.yml) ─────────────────────────────
+  gate:
+    name: CD gate
+    needs: [verify-images, migration-gate, render, promote]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every triggered CD job to have passed (skipped is OK)
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "upstream job results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::a required CD job did not pass (result=$r)"; exit 1 ;;
+            esac
+          done
+          echo "all triggered CD jobs passed"
