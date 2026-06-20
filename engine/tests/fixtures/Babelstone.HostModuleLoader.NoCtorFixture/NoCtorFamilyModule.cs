@@ -12,6 +12,8 @@ public sealed class NoCtorFamilyModule : IFamilyHostModule
 {
     public NoCtorFamilyModule(string _) { }
     public string FamilyName => "needs_ctor_arg";
+    public string SchemaVersion => "needs_ctor_arg@2026.1";
+    public string AggregateType => "needs_ctor_arg";
     public void ConfigureServices(IServiceCollection services, FamilyHostContext ctx) { }
     public void MapEndpoints(IEndpointRouteBuilder app) { }
 }

@@ -1,0 +1,23 @@
+# The family-manifest (ADR-PC-007 §P1; bd babelstone-9w2k.3). Pins the FAMILY
+# SET this deployment is allowed to run — the same fail-closed pinning #Manifest
+# applies to schema versions (schema_pins), applied here to the family roster.
+#
+# At host load the engine's HostModuleLoader cross-checks each scanned family
+# IFamilyHostModule against THIS list and FAILS CLOSED (ADR-PC-009 §P1) on:
+#   • a discovered module whose family_name/schema_version is not pinned here, or
+#   • a family pinned here for which no module loaded.
+# Skew matters because every module stamps schema_version onto every
+# EventEnvelope (ADR-PC-009 §P1); a newer-than-pinned module would corrupt the
+# audit/replay trail. Auditor-readable: `cat` + `diff`, no tooling.
+#
+# schema_version MUST agree with the SAME family's pack.yaml schema_pins entry
+# (term_deposit: term_deposit@2026.1) — one pin, named twice for the two readers
+# (the engine schema registry vs the host module roster). aggregate_type is the
+# event-envelope aggregate_type / bus topic (== family_name, the documented
+# convention); plugin_assembly is the .NET assembly carrying the family's
+# IFamilyHostModule, so a skew message can name the offending box.
+families:
+  - family_name: term_deposit
+    aggregate_type: term_deposit
+    schema_version: term_deposit@2026.1
+    plugin_assembly: Babelstone.Families.TermDeposit.Application

@@ -65,6 +65,7 @@ primitives/fgd.yaml|#Fgd
 primitives/reporting.yaml|#Reporting
 primitives/renewal-policies.yaml|#RenewalPolicies
 parameters/constants.yaml|#Parameters
+families.yaml|#FamilyManifest
 test-corpus/canonical-instances.yaml|#CanonicalInstances
 "
 

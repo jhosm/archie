@@ -4,9 +4,8 @@ using Babelstone.Engine.Api;
 using Babelstone.Engine.Avro;
 using Babelstone.Engine.Hosting;
 using Babelstone.EventStore;
-using Babelstone.Families.TermDeposit;
-using Babelstone.Families.TermDeposit.Application;
 using Babelstone.OutboxPublisher;
+using Babelstone.Packs;
 using Babelstone.Pii;
 using Babelstone.RateSheets;
 using Babelstone.Telemetry;
@@ -151,18 +150,13 @@ builder.Services.AddSingleton<IProjectionCheckpointStore>(_ => new PostgresProje
 // discipline (the only code that touches the snapshots table is PostgresSnapshotStore). Migration 0003
 // owns the `snapshots` table.
 builder.Services.AddSingleton<ISnapshotStorage>(_ => new PostgresSnapshotStore(connectionString));
-// D.4 CQRS read model (ADR-IC-005): the denormalized query surface on the SAME PostgreSQL tier.
-// The read_model schema is FAMILY-OWNED (ADR-PC-021 family-owned ownership): the term-deposit
-// family's own migration set (Babelstone.Families.TermDeposit.Application.Migrations,
-// 0001_read_model.sql) creates read_model.deposits, applied by the family's
-// ReadModelMigrationHostedService (TermDepositHostModule) — the engine event-store migrations carry
-// zero family-named tables. The deposit-shaped table + the maturity range scan name one family's
-// domain shape, so the store is FAMILY-OWNED too (ADR-PC-021 §D2/§P2): the engine spine exposes
-// only the generic IReadModelStore<TRow> primitive, and the term-deposit family supplies its typed
-// row + this Postgres store. The host (composition root) resolves the family store and composes the
-// read-model runner over it (TermDepositHostModule), folding the same deposit-position state the
-// live read path computes into the flat read-model row the I.2 Query API serves.
-builder.Services.AddSingleton<IDepositReadModelStore>(_ => new PostgresDepositReadModelStore(connectionString));
+// D.4 CQRS read model (ADR-IC-005): the denormalized read-model STORE is FAMILY-OWNED (ADR-PC-021
+// §D2/§P2 family-owned ownership) — the deposit-shaped table is one family's domain shape, so its
+// IDepositReadModelStore / PostgresDepositReadModelStore registration moved INTO TermDepositHostModule
+// (bd babelstone-9w2k.5), where the read-model runner over it is already composed. The host no longer
+// names a family read-model type; the module registers its own store from the host's already-secret-
+// resolved engine connection string (FamilyHostContext.EngineConnectionString), so the ISecretProvider
+// boundary (ADR-PC-004 A1) still lives only at this composition root.
 // The dual-encode split (ADR-PC-028 §Decision / STORE_BUS_ENCODING_EQUIVALENCE, bd babelstone-36mk):
 //   • STORE codec — the self-describing JSON JsonEventSerializer fills events.payload (the book of
 //     record, decodable with NO Schema Registry — EVENT_STORE_PAYLOAD_SELF_DESCRIBING). It is the
@@ -213,9 +207,30 @@ builder.Services.AddSingleton<IIntegrationEventCatalog>(_ => new AvroSchemaCatal
 // throw), and returns them STABLY ordered so the engine-before-family read-model migration ordering
 // (§A6) stays reproducible across boots. Reflection is confined to this composition root (ADR-PC-010
 // §P5), never the dispatch spine. The ConfigureServices / MapEndpoints loops below are unchanged.
-var familyHostContext = new FamilyHostContext(pack, builder.Configuration);
+var familyHostContext = new FamilyHostContext(pack, builder.Configuration, connectionString);
 IReadOnlyList<IFamilyHostModule> familyModules =
     new HostModuleLoader().LoadAll(HostModuleLoader.FamilyHostAssemblies());
+
+// MANDATORY fail-closed version-skew cross-check (bd babelstone-9w2k.3 / ADR-PC-007 §P1 / ADR-PC-009
+// §P1): the pinned pack's family-manifest (families.yaml) is the authoritative per-deployment family
+// set. Each discovered module stamps its SchemaVersion onto every EventEnvelope (§P1), so a family or
+// schema-version skew between the code that loaded and the pack the instance is pinned to is an
+// audit/replay hazard — the adversarial design review judged this cross-check MANDATORY, not optional.
+// It throws on a skew or on a pinned family with no loadable module; we log at Critical (naming the
+// offending assembly) and let it escape so the host exits non-zero BEFORE serving, exactly like an
+// unverifiable pack does in HostPackLoading. Disk and OCI pack modes both carry the manifest.
+try
+{
+    HostModuleLoader.CrossCheckAgainstPackManifest(familyModules, pack);
+}
+catch (PackLoadException ex)
+{
+    packLoadLoggerFactory.CreateLogger("Babelstone.Engine.Api.FamilyManifest").LogCritical(ex,
+        "FATAL: family-manifest cross-check failed for pinned pack '{Version}' — refusing to serve "
+        + "(bd babelstone-9w2k.3 / ADR-PC-009 §P1).", pack.VersionKey);
+    throw;
+}
+
 foreach (var module in familyModules)
 {
     module.ConfigureServices(builder.Services, familyHostContext);

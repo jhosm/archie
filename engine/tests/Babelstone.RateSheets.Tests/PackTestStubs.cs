@@ -40,6 +40,7 @@ internal static class PackTestStubs
             Fgds: new Dictionary<string, PackFgd>(),
             Reportings: new Dictionary<string, PackReporting>(),
             Parameters: new PackParameters(maxConsumerRateBps, AutoRenewalOptoutWindowDays: 14),
-            RateSheetRefs: []);
+            RateSheetRefs: [],
+            Families: []);
     }
 }

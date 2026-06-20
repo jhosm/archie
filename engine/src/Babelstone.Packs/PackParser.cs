@@ -99,7 +99,37 @@ public static class PackParser
             }
         }
 
-        return new VerifiedPack(manifest, dayCounts, withholdings, fgds, reportings, parameters, rateSheetRefs);
+        var families = ParseFamilies(files, expectedVersionKey);
+
+        return new VerifiedPack(manifest, dayCounts, withholdings, fgds, reportings, parameters, rateSheetRefs, families);
+    }
+
+    /// <summary>
+    /// Parses the family-manifest (families.yaml; ADR-PC-007 §P1, bd babelstone-9w2k.3) — the pinned
+    /// FAMILY SET the host cross-checks scanned modules against (ADR-PC-009 §P1). A missing file, an
+    /// empty entry, or a null/empty required field fails loud as a <see cref="PackLoadException"/>, the
+    /// same fail-loud structural-parse stance as every other pack file. The closed-schema rejection
+    /// (unknown field, malformed schema_version) rides on the verified cosign signature (§P2).
+    /// </summary>
+    private static IReadOnlyList<PackFamily> ParseFamilies(IReadOnlyDictionary<string, byte[]> files, string vk)
+    {
+        var dto = Deserialize<FamilyManifestDto>(files, "families.yaml", vk);
+        var families = new List<PackFamily>();
+        foreach (var family in dto.Families ?? [])
+        {
+            if (family is null)
+            {
+                throw new PackLoadException(vk, null, "'families.yaml' has an empty family entry.");
+            }
+
+            families.Add(new PackFamily(
+                Required(family.FamilyName, vk, "families.yaml family.family_name"),
+                Required(family.AggregateType, vk, "families.yaml family.aggregate_type"),
+                Required(family.SchemaVersion, vk, "families.yaml family.schema_version"),
+                Required(family.PluginAssembly, vk, "families.yaml family.plugin_assembly")));
+        }
+
+        return families;
     }
 
     private static PackManifest ParseManifest(IReadOnlyDictionary<string, byte[]> files, string vk)
@@ -253,5 +283,18 @@ public static class PackParser
     {
         public string? ProductFamily { get; set; }
         public string? RateSheetVersionId { get; set; }
+    }
+
+    private sealed class FamilyManifestDto
+    {
+        public List<FamilyEntryDto?>? Families { get; set; }
+    }
+
+    private sealed class FamilyEntryDto
+    {
+        public string? FamilyName { get; set; }
+        public string? AggregateType { get; set; }
+        public string? SchemaVersion { get; set; }
+        public string? PluginAssembly { get; set; }
     }
 }

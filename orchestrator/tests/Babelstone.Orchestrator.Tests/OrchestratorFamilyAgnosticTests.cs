@@ -155,6 +155,131 @@ public sealed class OrchestratorFamilyAgnosticTests
             + string.Join("\n  ", violations));
     }
 
+    /// <summary>
+    /// ORCHESTRATOR_SUBSTRATE_NO_FAMILY_TOPIC_CONSTANT (bd babelstone-9w2k.5; honours ADR-IC-018 §D2/§P4 +
+    /// ADR-IC-003 §S2). The substrate's saga subscription wiring (<c>Inbox/</c>) names NO per-family topic
+    /// constant — the topics it subscribes to arrive EXCLUSIVELY from the family module's
+    /// <c>ISagaModule.ConsumeTopics</c> via the <c>required</c> <see cref="SagaInboxConsumerOptions.Topics"/>
+    /// (derived from the AsyncAPI catalogue, bd babelstone-9w2k.4). A hardcoded family topic literal here —
+    /// e.g. a <c>"term_deposit"</c> constant or a <c>"deposits.process.events"</c> subscription string —
+    /// would be the precise per-family edit the family-count-invariant epic removes: a missed/forgotten
+    /// topic is a saga that silently never advances (no replay-safe recovery), so this is CI-gated. A
+    /// source scan over the substrate's consume wiring with comments and string literals... wait, NO: a
+    /// family topic WOULD be a string literal, so we scan the RAW source (literals included) but strip only
+    /// COMMENTS — a family named in an explanatory comment is fine; a family topic in a literal is the
+    /// regression. The complement of <c>Substrate_assembly_defines_no_concrete_saga_implementation</c>:
+    /// that guards the saga TYPE level, this guards the topic-SUBSCRIPTION level.
+    /// </summary>
+    [Fact]
+    public void Substrate_subscription_wiring_names_no_per_family_topic_constant()
+    {
+        var inboxDir = Path.Combine(
+            RepoRoot(), "orchestrator", "src", "Babelstone.Orchestrator.Substrate", "Inbox");
+        Assert.True(Directory.Exists(inboxDir), $"substrate Inbox/ wiring dir not found: {inboxDir}");
+
+        // Family tokens that must never appear as a topic constant in the substrate's subscription wiring.
+        // The load-bearing rule is the term-deposit family vocabulary (the only loaded family); a new
+        // family adds its tokens in the same spirit the spine allowlists track their ADR enumeration.
+        string[] familyTopicTokens =
+        [
+            "term_deposit",
+            "deposits.process.events",
+            "TermDeposit",
+        ];
+
+        var violations = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(inboxDir, "*.cs", SearchOption.AllDirectories))
+        {
+            // Strip only COMMENTS (not string literals — a family TOPIC would be a literal, which is
+            // exactly what we want to catch). A family named in a comment is allowed.
+            var code = StripComments(File.ReadAllText(file));
+            foreach (var token in familyTopicTokens)
+            {
+                if (code.Contains(token, StringComparison.Ordinal))
+                {
+                    violations.Add($"{Path.GetFileName(file)} names '{token}'");
+                }
+            }
+        }
+
+        Assert.True(
+            violations.Count == 0,
+            "ADR-IC-018 §D2/§P4 / ADR-IC-003 §S2 (bd babelstone-9w2k.5): the orchestrator substrate's saga "
+            + "subscription wiring must name no per-family topic constant — the consume topics arrive only "
+            + "from the family module's ISagaModule.ConsumeTopics via the required Topics option. A "
+            + "hardcoded family topic here is the per-family edit the family-count-invariant epic removes. "
+            + "Offending references (in code, not comments):\n  "
+            + string.Join("\n  ", violations));
+    }
+
+    /// <summary>Strips <c>//</c> and <c>/* */</c> comments, leaving string literals intact (a family topic IS a literal).</summary>
+    private static string StripComments(string source)
+    {
+        var output = new System.Text.StringBuilder(source.Length);
+        var i = 0;
+        while (i < source.Length)
+        {
+            var c = source[i];
+            var next = i + 1 < source.Length ? source[i + 1] : '\0';
+
+            if (c == '/' && next == '/')
+            {
+                while (i < source.Length && source[i] != '\n')
+                {
+                    i++;
+                }
+
+                continue;
+            }
+
+            if (c == '/' && next == '*')
+            {
+                i += 2;
+                while (i + 1 < source.Length && !(source[i] == '*' && source[i + 1] == '/'))
+                {
+                    i++;
+                }
+
+                i += 2;
+                output.Append(' ');
+                continue;
+            }
+
+            // Skip OVER a string/char literal verbatim (keep its body — a family topic literal must be seen).
+            if (c is '"' or '\'')
+            {
+                var quote = c;
+                output.Append(c);
+                i++;
+                while (i < source.Length)
+                {
+                    output.Append(source[i]);
+                    if (source[i] == '\\' && i + 1 < source.Length)
+                    {
+                        output.Append(source[i + 1]);
+                        i += 2;
+                        continue;
+                    }
+
+                    if (source[i] == quote)
+                    {
+                        i++;
+                        break;
+                    }
+
+                    i++;
+                }
+
+                continue;
+            }
+
+            output.Append(c);
+            i++;
+        }
+
+        return output.ToString();
+    }
+
     /// <summary>Every <c>ProjectReference Include="…"</c> in a <c>.csproj</c>, namespace-agnostic.</summary>
     private static IEnumerable<string> ProjectReferenceIncludes(string csprojPath)
     {

@@ -169,6 +169,31 @@ package pack
 }
 
 // ---------------------------------------------------------------------------
+// families.yaml — the family-manifest (ADR-PC-007 §P1; bd babelstone-9w2k.3).
+// Pins the FAMILY SET a deployment carrying this pack is allowed to run, the
+// same way #Manifest.schema_pins pins each family's SCHEMA version. The host's
+// HostModuleLoader cross-checks each scanned IFamilyHostModule against THIS list
+// at load and FAILS CLOSED on a family/schema-version skew or a declared family
+// with no loadable module (ADR-PC-009 §P1: the pinned pack is the authoritative
+// per-deployment family set; every module stamps schema_version onto every
+// EventEnvelope, so skew is an audit/replay hazard). The schema_version here
+// equals the family module's IFamilyModule.SchemaVersion (e.g.
+// term_deposit@2026.1) and MUST be consistent with the SAME family's
+// #Manifest.schema_pins entry — a closed cross-pin, auditor-visible by `cat`.
+// `aggregate_type` is the event-envelope aggregate_type / bus topic the family
+// writes under (the engine's documented convention aggregate_type == family_name
+// == topic, ADR-IC-004 §Consequences); `plugin_assembly` names the .NET assembly
+// carrying the family's IFamilyHostModule, so a skew message can name the box.
+#FamilyManifest: {
+	families: [...{
+		family_name:     =~"^[a-z][a-z0-9_]*$"
+		aggregate_type:  =~"^[a-z][a-z0-9_]*$"
+		schema_version:  #SchemaRef // <family>@YYYY.N, the SAME shape as schema_pins
+		plugin_assembly: =~"^[A-Za-z][A-Za-z0-9_.]*$"
+	}]
+}
+
+// ---------------------------------------------------------------------------
 // test-corpus/canonical-instances.yaml — sealed regression inputs (surface
 // §3.9). expected-events.yaml is engine-GENERATED (ADR-PC-007 §P5), never
 // hand-authored, so it has no input-side schema here.

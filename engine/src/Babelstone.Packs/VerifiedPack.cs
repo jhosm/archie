@@ -16,7 +16,8 @@ public sealed record VerifiedPack(
     IReadOnlyDictionary<string, PackFgd> Fgds,
     IReadOnlyDictionary<string, PackReporting> Reportings,
     PackParameters Parameters,
-    IReadOnlyList<PackRateSheetRef> RateSheetRefs)
+    IReadOnlyList<PackRateSheetRef> RateSheetRefs,
+    IReadOnlyList<PackFamily> Families)
 {
     /// <summary>The immutable composite version key <c>&lt;pack_id&gt;.&lt;pack_version&gt;</c> (e.g. <c>pt.2026.1</c>).</summary>
     public string VersionKey => $"{Manifest.PackId}.{Manifest.PackVersion}";
@@ -98,3 +99,18 @@ public sealed record PackParameters(int MaxConsumerRateBps, int AutoRenewalOptou
 
 /// <summary>A version-pinned rate-sheet reference (rate-sheet-refs/*.yaml); the sheet body lives in C.6.</summary>
 public sealed record PackRateSheetRef(string ProductFamily, string RateSheetVersionId);
+
+/// <summary>
+/// One entry of the pack's family-manifest (families.yaml; ADR-PC-007 §P1, bd babelstone-9w2k.3):
+/// the FAMILY SET this deployment is pinned to run. The host's <c>HostModuleLoader</c> cross-checks
+/// each scanned family host module against these entries and fails closed on a family/schema-version
+/// skew or a pinned family with no loadable module (ADR-PC-009 §P1 — the pinned pack is the
+/// authoritative per-deployment family set; every module stamps <see cref="SchemaVersion"/> onto every
+/// EventEnvelope, so a newer-than-pinned module is an audit/replay hazard).
+/// </summary>
+/// <param name="FamilyName">The family id (e.g. <c>term_deposit</c>) — matches the module's <c>FamilyName</c>.</param>
+/// <param name="AggregateType">The event-envelope aggregate_type / bus topic the family writes under (== <see cref="FamilyName"/>, the documented convention; ADR-IC-004 §Consequences).</param>
+/// <param name="SchemaVersion">The pinned family schema version (e.g. <c>term_deposit@2026.1</c>) — matches <c>IFamilyModule.SchemaVersion</c> and the same family's <c>schema_pins</c> entry.</param>
+/// <param name="PluginAssembly">The .NET assembly carrying the family's <c>IFamilyHostModule</c>, so a skew message can name the offending box.</param>
+public sealed record PackFamily(
+    string FamilyName, string AggregateType, string SchemaVersion, string PluginAssembly);

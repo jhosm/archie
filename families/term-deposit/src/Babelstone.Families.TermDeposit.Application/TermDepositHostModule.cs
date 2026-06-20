@@ -27,7 +27,20 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// </summary>
 public sealed class TermDepositHostModule : IFamilyHostModule
 {
-    public string FamilyName => "term_deposit";
+    // The single source of truth for this family's identity is its fold module — the SAME
+    // FamilyName/SchemaVersion that stamps every EventEnvelope (ADR-PC-009 §P1). Deriving the
+    // host-module identity from it (rather than re-declaring literals) means the load-time
+    // family-manifest cross-check (bd babelstone-9w2k.3) compares the pinned pack against the
+    // value that actually rides on events — no second place to drift.
+    private static readonly TermDepositFamilyModule FoldModule = new();
+
+    public string FamilyName => FoldModule.FamilyName;
+
+    public string SchemaVersion => FoldModule.SchemaVersion;
+
+    // aggregate_type == family_name by the engine's documented convention (the runtime sets
+    // EventEnvelope.AggregateType = family; ADR-IC-004 §Consequences).
+    public string AggregateType => FoldModule.FamilyName;
 
     public void ConfigureServices(IServiceCollection services, FamilyHostContext ctx)
     {
@@ -129,6 +142,18 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             // {deposit_id, product_id, principal_cents, funding_account} resolves its structural facts
             // through this seam at constitution (ADR-PC-009 / ADR-PC-008 §S2).
             productConfigStore: serviceProvider.GetRequiredService<IProductConfigStore>()));
+
+        // The FAMILY-OWNED read-model store (ADR-PC-021 §D2/§P2; relocated from Program.cs by bd
+        // babelstone-9w2k.5). read_model.deposits is a family-NAMED, deposit-shaped table — one family's
+        // domain shape, not the spine's — so its IDepositReadModelStore registration belongs HERE, in the
+        // family's host module, NOT in the host (which must name no family read-model type for the
+        // ENGINE_API_HOST_FAMILY_AGNOSTIC fitness gate). The connection string is the host's
+        // already-secret-resolved engine credential threaded via FamilyHostContext.EngineConnectionString,
+        // so the ISecretProvider boundary (ADR-PC-004 A1) stays at the host composition root — the family
+        // module never re-crosses it. The projection runtime below resolves this store for the read-model
+        // runner; the family's ReadModelMigrationHostedService (registered below) owns the table's schema.
+        services.AddSingleton<IDepositReadModelStore>(
+            _ => new PostgresDepositReadModelStore(ctx.EngineConnectionString));
 
         // The operator pack-migration write-path (ADR-PC-009 §P3, surface §3.6): re-pin a live instance
         // to a newer pack by appending the engine-declared PackVersionMigrated through this family's

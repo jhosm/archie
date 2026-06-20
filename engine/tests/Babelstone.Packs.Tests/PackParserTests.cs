@@ -102,6 +102,43 @@ public sealed class PackParserTests
     }
 
     [Fact]
+    public void Family_manifest_pins_the_term_deposit_family(/* bd babelstone-9w2k.3 */)
+    {
+        // The pinned family set the host cross-checks scanned modules against (ADR-PC-009 §P1). The
+        // schema_version here must agree with the SAME family's schema_pins entry — one pin, two readers.
+        var families = Pt2026().Families;
+        Assert.Single(families);
+        var termDeposit = families[0];
+        Assert.Equal("term_deposit", termDeposit.FamilyName);
+        Assert.Equal("term_deposit", termDeposit.AggregateType);
+        Assert.Equal("term_deposit@2026.1", termDeposit.SchemaVersion);
+        Assert.Equal("Babelstone.Families.TermDeposit.Application", termDeposit.PluginAssembly);
+        Assert.Equal(Pt2026().Manifest.SchemaPins["term_deposit"], termDeposit.SchemaVersion);
+    }
+
+    [Fact]
+    public void A_family_manifest_entry_missing_a_required_field_fails_loud()
+    {
+        // The structural parse null-checks every required field, so a family entry with no schema_version
+        // fails loud (naming the file + field) rather than constructing a record with a default.
+        var files = PackTestData.LoadPt2026();
+        files["families.yaml"] = Encoding.UTF8.GetBytes(
+            "families:\n  - family_name: term_deposit\n    aggregate_type: term_deposit\n"
+            + "    plugin_assembly: Babelstone.Families.TermDeposit.Application\n");
+        var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
+        Assert.Contains("schema_version", ex.Message);
+    }
+
+    [Fact]
+    public void A_missing_family_manifest_file_fails_loud()
+    {
+        var files = PackTestData.LoadPt2026();
+        files.Remove("families.yaml");
+        var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
+        Assert.Contains("families.yaml", ex.Message);
+    }
+
+    [Fact]
     public void A_version_key_mismatch_fails_loud()
     {
         var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(PackTestData.LoadPt2026(), "pt.2026.2"));

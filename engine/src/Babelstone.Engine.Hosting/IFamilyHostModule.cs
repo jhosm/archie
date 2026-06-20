@@ -38,6 +38,22 @@ public interface IFamilyHostModule
     string FamilyName { get; }
 
     /// <summary>
+    /// The family schema version this module composes (e.g. <c>"term_deposit@2026.1"</c>) — the SAME value
+    /// the family's <c>IFamilyModule.SchemaVersion</c> stamps onto every <c>EventEnvelope</c> (ADR-PC-009 §P1).
+    /// The host's <c>HostModuleLoader</c> cross-checks this against the pinned pack's family-manifest at load
+    /// and FAILS CLOSED on a skew (bd babelstone-9w2k.3) — a newer-than-pinned module is an audit/replay hazard.
+    /// </summary>
+    string SchemaVersion { get; }
+
+    /// <summary>
+    /// The event-envelope <c>aggregate_type</c> / bus topic this family writes under — by the engine's
+    /// documented convention this equals <see cref="FamilyName"/> (ADR-IC-004 §Consequences). Carried so the
+    /// load-time cross-check against the pack family-manifest is over the full pinned tuple
+    /// (family_name, aggregate_type, schema_version), not a subset.
+    /// </summary>
+    string AggregateType { get; }
+
+    /// <summary>
     /// Register the family's runtime + decider into DI. The family owns the closed generic
     /// <c>AggregateRuntime&lt;TState&gt;</c> (and its <c>() =&gt; TState.Empty</c> seed and fold
     /// registry) here. Shared, family-agnostic infrastructure — the event store, codec, PII
@@ -53,8 +69,13 @@ public interface IFamilyHostModule
 /// <summary>
 /// The per-deployment ingredients the host hands each <see cref="IFamilyHostModule"/> at
 /// composition time that are NOT registered as DI services: the engine-instance's pinned
-/// regulatory <see cref="VerifiedPack"/> (shared by every family on the instance, ADR-PC-009) and
-/// the configuration root (for per-family settings a module wants to read). Family-agnostic
-/// services are resolved from the <see cref="IServiceCollection"/> the module is configuring.
+/// regulatory <see cref="VerifiedPack"/> (shared by every family on the instance, ADR-PC-009),
+/// the configuration root (for per-family settings a module wants to read), and the host's
+/// already-secret-resolved engine connection string (<see cref="EngineConnectionString"/>) so a
+/// family module can register its OWN family-owned Postgres store without re-crossing the
+/// <c>ISecretProvider</c> boundary — the host resolves the credential once at the composition root
+/// (ADR-PC-004 Amendment A1) and hands the resolved value here. Family-agnostic services are
+/// resolved from the <see cref="IServiceCollection"/> the module is configuring.
 /// </summary>
-public sealed record FamilyHostContext(VerifiedPack Pack, IConfiguration Configuration);
+public sealed record FamilyHostContext(
+    VerifiedPack Pack, IConfiguration Configuration, string EngineConnectionString);
