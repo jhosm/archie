@@ -1,9 +1,13 @@
-# Project skills — model-invoked authoring procedures
+# Plugin skills — model-invoked authoring procedures
 
-Claude Code skills implementing [ADR-PC-020 §P2](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md):
+Claude Code skills implementing [ADR-PC-020 §P2](../../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md):
 repeatable, judgement-bearing authoring procedures (the existing `create_backlog` is the
 template). Each is a directory with a `SKILL.md` (YAML frontmatter `name` + `description`,
 body = the procedure); Claude invokes one when a task matches its `description`.
+
+These are bundled in the **`babelstone-engine`** plugin (this `skills/` directory), so a
+freshly enabled plugin makes every procedure model-invocable — the §P2 layer folded into the
+same plugin as the §P3 agents under `bhq.8` (ADR-PC-020 §P4, as amended).
 
 | Skill | Does | Status |
 |---|---|---|
@@ -21,7 +25,7 @@ were deferred until `/engine` + `/families` had a real .NET 10 layout to scaffol
 building them earlier would have invented a layout the real engine build then contradicted,
 the exact silent drift the `.5` conformance gate exists to prevent. That blocker is now
 **resolved**: the reference family
-[`term_deposit`](../../families/term-deposit/src/Babelstone.Families.TermDeposit/) exists
+[`term_deposit`](../../../families/term-deposit/src/Babelstone.Families.TermDeposit/) exists
 (event records, pure folds, the `IFamilyModule`, the lifecycle table, four projections, the
 governed Avro `.avsc` + AsyncAPI catalogue, replay/fold tests), so both skills now scaffold
 against concrete, verified paths and base types (`DomainEvent`, `IFamilyModule`,
@@ -31,10 +35,10 @@ filed as `babelstone-bhq.13`. The other four skills operate on the ADR corpus
 
 ## How these tie into the explicit-drift gate
 
-`amend-adr` and `supersede-adr` are the §P9 companions the [`adr-conformance` agent](../../plugins/babelstone-engine/agents/adr-conformance.md)
+`amend-adr` and `supersede-adr` are the §P9 companions the [`adr-conformance` agent](../agents/adr-conformance.md)
 recommends: when it finds a genuine contradiction, the remedy is to amend or supersede the
 ADR **in the same change** rather than let the drift land silently. These skills make that
 a one-command step, so the acknowledgment is cheap enough that nobody skips it. See
-[`plugins/babelstone-engine/README.md`](../../plugins/babelstone-engine/README.md) for the full gate.
-The §P3 agents already live in the `babelstone-engine` plugin (`archie-bhq.14`); these
-skills fold into it as the full versioned bundle under `archie-bhq.8`.
+[the plugin README](../README.md) for the full gate.
+The §P3 agents were packaged into the `babelstone-engine` plugin first (`archie-bhq.14`);
+these skills folded into the same plugin as the full versioned bundle under `bhq.8`.

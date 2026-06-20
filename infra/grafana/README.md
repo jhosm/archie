@@ -33,13 +33,14 @@ infra/grafana/
 | **Outbox publish lag** | `outbox_publish_lag_seconds` | `OutboxPublishLagCritical` | > 5 min for 1 m (publisher down / Redpanda unavailable) | ADR-IC-004 §P4 |
 | **Outbox publish latency p99** | `outbox_publish_latency_seconds` (histogram) | `OutboxPublishLatencyP99High` | p99 > 5 s over 5 m | ADR-IC-004 (G.1) |
 | **Inbox poison rate** | `inbox_poison_total` | `InboxPoisonRecordsAppearing` | any in 5 m | ADR-IC-004 (G.2) |
+| **Projection-rebuild drill freshness** | `reconciliation_drill_last_success_timestamp_seconds` (drill-pushed gauge, or `absent`) | `ProjectionRebuildDrillStale` | >35 d or never, for 1 h | ADR-PC-005 §P5 (M.5) |
 
 **Critical SLIs whose metric is not yet emitted** are present in
 `alert-rules.yaml` as **commented, guarded** rules — each carries a
 `TODO(emit-pending)` naming the pending emit and its owner, with the threshold +
 severity already decided so the alert ships *with* the metric. These are the
 remaining [ADR-PC-005 §S2](../../docs/product-management/product_concepts/adrs/ADR-PC-005-dr-rto-rpo.md)
-Critical SLIs:
+Critical SLIs plus the M.5 reconciliation signals:
 
 | SLI | Pending metric | Owner |
 |---|---|---|
@@ -47,6 +48,27 @@ Critical SLIs:
 | Compensation rate | `saga_compensation_total` | Epic E |
 | Postgres replication lag | `pg_replication_lag_seconds` (postgres_exporter / `pg_stat_replication` scrape — not engine code) | M.4 follow-up / observability |
 | Sync-projection apply p99 | `projection_apply_seconds` (histogram) | Epic F (projections) |
+| Reconciliation checksum mismatch (§7.1 a) | `reconciliation_checksum_mismatch_total{consumer,projection_kind}` | Epic F / projection runtime (the reconciler host) |
+| Reconciliation event-count skip (§7.1 b) | `reconciliation_event_count_skip_total{consumer,projection_kind}` | Epic F / projection runtime |
+| Rebuild-drill divergence (§7.2 c) | `reconciliation_rebuild_divergence_total{projection_kind}` | the projection-rebuild-drill job (bd babelstone-j67l) |
+
+### Projection reconciliation (M.5 — bd `babelstone-irfl`)
+
+The `projection-reconciliation` group materialises the alerts for the three
+[event-store §7.1](../../docs/product-management/product_concepts/feature-design-event-store-projections.md)
+reconciliation patterns the
+[`ProjectionReconciler`](../../engine/src/Babelstone.Engine/ProjectionReconciler.cs)
+computes — checksum mismatch (a), event-count **skip** (b — a benign *gap* is
+**not** alerted), and full-rebuild-drill divergence (c). The reconciler returns
+these as *records* today, not yet a Prometheus metric, so the checksum/skip/
+divergence rules are guarded with the same `TODO(emit-pending)` discipline as the
+saga block; the **drill-freshness** rule (`ProjectionRebuildDrillStale`) is live,
+driven by a gauge the monthly rebuild drill
+([`scripts/projection-rebuild-drill.sh`](../../scripts/projection-rebuild-drill.sh),
+bd `babelstone-j67l`) can push on each green run. The operator response —
+thresholds, escalation, and the rebuild-is-the-repair-path procedure — is the
+[reconciliation-alerts](../runbooks/reconciliation-alerts.md) and
+[projection-rebuild-drill](../runbooks/projection-rebuild-drill.md) runbooks.
 
 Keeping them visible-but-guarded (rather than omitted) makes "the SLI is named,
 the metric is the gap" auditable, the
@@ -116,7 +138,18 @@ follow-up can add it to the infra gate).
   — the OTLP-single-entry pipeline these metrics flow through; Grafana's
   alerting engine provides the SLO-based alerts in the same tool as the
   dashboards.
-- [ADR-PC-005 §S2](../../docs/product-management/product_concepts/adrs/ADR-PC-005-dr-rto-rpo.md)
-  — the broader Critical-SLI set (replication lag is a DR-degradation signal).
+- [ADR-PC-005 §Decision / §P5](../../docs/product-management/product_concepts/adrs/ADR-PC-005-dr-rto-rpo.md)
+  — the named RTO/RPO targets the broader Critical-SLI set guards (replication
+  lag is a DR-degradation signal); §P5 — drills as resilience-testing evidence
+  (the drill-freshness alert). (The §S2 "Ecosystem coherence" soft criterion is
+  where ADR-PC-005 notes ADR-IC-007 covers replication-lag observability; the
+  Critical-SLI *targets* themselves live in §Decision and §P5.)
 - [06 — Observability and tracing](../../docs/product-management/integration_concepts/06-observability-and-tracing.md)
   — SLO-based alerting; the "saga in HUMAN_INTERVENTION_REQUIRED" alert.
+- [event-store §7.1 / §7.2](../../docs/product-management/product_concepts/feature-design-event-store-projections.md)
+  — the three reconciliation patterns and the rebuild drill the
+  `projection-reconciliation` rule group alerts on.
+- [reconciliation-alerts](../runbooks/reconciliation-alerts.md) /
+  [projection-rebuild-drill](../runbooks/projection-rebuild-drill.md) runbooks
+  — the M.5 operator response: thresholds, escalation, rebuild-is-repair (bd
+  `babelstone-irfl` / `babelstone-j67l`).

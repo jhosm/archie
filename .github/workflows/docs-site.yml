@@ -15,6 +15,11 @@ name: Docs site
 # workflow. (G.4/PR #110 superseded ADR-IC-008's EventCatalog static-site with
 # ADR-IC-015's Backstage portal, whose host deployment is deferred — bd
 # babelstone-s4ol.1 — and is a separate service, not a static site stitched here.)
+# The standalone demo pages (the pitch deck + principles page) honour that
+# one-slot rule: they are static files copied into the SAME artifact under /demo/
+# after the DocFX build (bd babelstone-q096), not a second deploy. The interactive
+# mission-control/ UI is deliberately excluded — it needs serve.py + a live backend
+# and would not function as a static file.
 
 on:
   pull_request:
@@ -23,6 +28,8 @@ on:
       - 'families/**'
       - 'docfx/**'
       - 'docs/product-docs/README.md' # the DocFX home page is rendered from this file (§P3, bd sfnt.26)
+      - 'docs/demo/index.html'        # the standalone demo pages, staged into /demo/ (bd babelstone-q096)
+      - 'docs/demo/principles.html'
       - '.config/dotnet-tools.json'
       - 'mise.toml'
       - '.github/workflows/docs-site.yml'
@@ -67,6 +74,13 @@ jobs:
         run: |
           dotnet tool restore
           dotnet docfx docfx/docfx.json
+      # Compose the standalone demo pages into the SAME artifact under /demo/
+      # (the one-Pages-slot rule above). Static copy only; no untrusted input.
+      - name: Stage demo pages into the site
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p docfx/_site/demo
+          cp -f docs/demo/index.html docs/demo/principles.html docfx/_site/demo/
       - name: Upload Pages artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v5

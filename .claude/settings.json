@@ -6,26 +6,5 @@
   },
   "enabledPlugins": {
     "babelstone-engine@babelstone-engine": true
-  },
-  "hooks": {
-    "SessionStart": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "bd prime" } ] }
-    ],
-    "PreToolUse": [
-      { "matcher": "Edit|Write|MultiEdit", "hooks": [
-        { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/adr-immutability.sh" }
-      ] }
-    ],
-    "PostToolUse": [
-      { "matcher": "Edit|Write|MultiEdit", "hooks": [
-        { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/surface-engine-analysers.sh" },
-        { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/surface-pii-on-bus.sh" },
-        { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/surface-spec-coverage.sh" },
-        { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/render-plantuml.sh" }
-      ] }
-    ],
-    "Stop": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/session-push-protocol.sh" } ] }
-    ]
   }
 }

@@ -8,8 +8,8 @@
     {
       "name": "babelstone-engine",
       "source": "./plugins/babelstone-engine",
-      "description": "ADR-PC-020 §P3 domain-specialised review subagents (adr-conformance, financial-math-reviewer, contract-reviewer, replay-determinism-auditor, doc-consistency).",
-      "version": "0.1.0"
+      "description": "The babelstone engine dev toolchain (ADR-PC-020 §P1–§P4): §P1 hooks (ADR-immutability, engine-analyser/PII/spec-coverage surfacing, PlantUML re-render, session-push protocol, bd prime), §P2 authoring skills (new-adr, amend-adr, supersede-adr, pack-author, new-family-schema, new-event), and §P3 review subagents (adr-conformance, financial-math-reviewer, contract-reviewer, replay-determinism-auditor, doc-consistency).",
+      "version": "0.2.0"
     }
   ]
 }

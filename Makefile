@@ -18,10 +18,10 @@ OTLP_GRPC_PORT  ?= 4317
 OTLP_HTTP_PORT  ?= 4318
 COLLECTOR_HEALTH_PORT ?= 13133
 REGISTRY_PORT     ?= 5001
-EVENTCATALOG_PORT ?= 8082
+BACKSTAGE_PORT    ?= 7007
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -125,6 +125,13 @@ docs-site-serve: ## Build the DocFX site, then serve it on http://localhost:8080
 	@mise exec -- dotnet docfx docfx/docfx.json --serve
 
 ## ----------------------------------------------------------------------------
+## Resilience drills (event-store §7.2 — projection rebuild; runbooks/)
+## ----------------------------------------------------------------------------
+
+projection-rebuild-drill: ## Run the monthly §7.2 projection-rebuild drill (FullRebuildDrillAsync via Testcontainers; needs Docker, bd babelstone-j67l)
+	@./scripts/projection-rebuild-drill.sh
+
+## ----------------------------------------------------------------------------
 ## Local dev stack (infra/compose.yaml) — PostgreSQL + Redpanda + Console
 ## ----------------------------------------------------------------------------
 
@@ -142,7 +149,7 @@ up: ## Start the local dev stack and wait until healthy
 	@echo "  Grafana           http://localhost:$(GRAFANA_PORT)   (LGTM: logs/traces/metrics; anonymous admin)"
 	@echo "  OTLP endpoint     localhost:$(OTLP_GRPC_PORT) (gRPC) / localhost:$(OTLP_HTTP_PORT) (HTTP)  — export telemetry here"
 	@echo "  OCI registry      localhost:$(REGISTRY_PORT)   (oras push/pull packs; e.g. localhost:$(REGISTRY_PORT)/babelstone-packs/…)"
-	@echo "  EventCatalog      http://localhost:$(EVENTCATALOG_PORT)"
+	@echo "  Backstage portal  http://localhost:$(BACKSTAGE_PORT)   (ADR-IC-015; needs the built app image — see infra/README.md)"
 
 down: ## Stop the stack, keep data volumes
 	$(COMPOSE) down
@@ -174,8 +181,10 @@ verify: ## Smoke-test the stack: Postgres reachable, Redpanda healthy, SR respon
 	@curl -fsS http://localhost:$(COLLECTOR_HEALTH_PORT)/ >/dev/null && echo "Collector OK (health_check)"
 	@echo "→ OCI registry ..."
 	@curl -fsS http://localhost:$(REGISTRY_PORT)/v2/ >/dev/null && echo "Registry OK (GET /v2/)"
-	@echo "→ EventCatalog host ..."
-	@curl -fsS http://localhost:$(EVENTCATALOG_PORT)/ >/dev/null && echo "EventCatalog OK (static host)"
+	@echo "→ Backstage portal (ADR-IC-015; host deferred — non-fatal) ..."
+	@curl -fsS http://localhost:$(BACKSTAGE_PORT)/ >/dev/null 2>&1 \
+		&& echo "Backstage OK (portal up)" \
+		|| echo "Backstage not up — expected until the app image is built+pushed (infra/README.md human-handoff); estate stays Git-native per ADR-IC-015 §9"
 	@echo "✓ Stack verified."
 
 ## ----------------------------------------------------------------------------

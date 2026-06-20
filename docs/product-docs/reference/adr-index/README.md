@@ -35,9 +35,9 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [023](../../../product-management/product_concepts/adrs/ADR-PC-023-temporal-signals-projection-derived.md) | Temporal Signals Are Projection-Derived — The Engine Emits No Clock-Driven Events | Contract-shape | Accepted |
 | [024](../../../product-management/product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md) | Constitution Precondition Contract — Engine Declares, Upstream Evaluates, Decider Refuses | Contract-shape | Accepted |
 | [025](../../../product-management/product_concepts/adrs/ADR-PC-025-customer-notification-emit-contract.md) | Customer-Notification Emit Contract — Event-Driven + Pre-Contractual NotificationDue, No Engine-Side Delivery State | Contract-shape | Accepted |
-| [026](../../../product-management/product_concepts/adrs/ADR-PC-026-csharp-api-reference-docfx.md) | C# API-Reference Surface — DocFX to GitHub Pages | Tool-selection | Proposed |
-| [027](../../../product-management/product_concepts/adrs/ADR-PC-027-deposit-read-surface-canonical-resource.md) | Deposit Read Surface — One Canonical Resource, Read-Model-Backed with Fold-on-Token | Contract-shape | Proposed |
-| [028](../../../product-management/product_concepts/adrs/ADR-PC-028-event-store-payload-format.md) | Event-Store Payload Format — Self-Describing JSON, Decoupled from the Bus's Avro | Tool-selection | Proposed |
+| [026](../../../product-management/product_concepts/adrs/ADR-PC-026-csharp-api-reference-docfx.md) | C# API-Reference Surface — DocFX to GitHub Pages | Tool-selection | Accepted |
+| [027](../../../product-management/product_concepts/adrs/ADR-PC-027-deposit-read-surface-canonical-resource.md) | Deposit Read Surface — One Canonical Resource, Read-Model-Backed with Fold-on-Token | Contract-shape | Accepted |
+| [028](../../../product-management/product_concepts/adrs/ADR-PC-028-event-store-payload-format.md) | Event-Store Payload Format — Self-Describing JSON, Decoupled from the Bus's Avro | Tool-selection | Accepted |
 | [029](../../../product-management/product_concepts/adrs/ADR-PC-029-engine-command-ingress.md) | Engine Command Ingress — Synchronous Idempotent REST | Contract-shape | Accepted |
 
 ## ADR-IC — Integration estate

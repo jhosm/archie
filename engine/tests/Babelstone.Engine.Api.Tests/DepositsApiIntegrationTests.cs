@@ -5,6 +5,7 @@ using Babelstone.Engine;
 using Babelstone.Engine.Api;
 using Babelstone.EventStore.Migrations;
 using Babelstone.Families.TermDeposit;
+using Babelstone.Families.TermDeposit.Application;
 using Babelstone.RateSheets;
 using Babelstone.TestFixtures;
 using Microsoft.AspNetCore.Mvc.Testing;

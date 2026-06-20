@@ -1,0 +1,72 @@
+name: Projection rebuild drill
+
+# Monthly projection-rebuild drill (L.4 / bd babelstone-j67l).
+#
+# In plain English: once a month this job throws away the engine's derived views
+# and rebuilds them from scratch out of the raw event log, then checks the
+# rebuilt views match what was running. A match PROVES — not assumes — that the
+# event log is the single source of truth and that no slow, quiet bug has crept
+# into how the views are computed. A mismatch catches one before it reaches a
+# customer or a regulator. A red run is the "process incident" the runbook
+# describes; a green run is resilience-testing evidence.
+#
+# Formally: this drives the event-store §7.2 full-rebuild drill — the periodic
+# full rebuild that catches the slow-drift bugs the daily checksum (§7.1) misses
+# — by running scripts/projection-rebuild-drill.sh. That script invokes the
+# existing ProjectionReconciler.FullRebuildDrillAsync path (supersede-all +
+# checkpoint reset + cold re-fold from 0, then a byte-for-byte before/after
+# compare) through the reconciler's Testcontainers-backed integration tests in
+# Babelstone.EventStore.Tests. It WRAPS that path — it does not change the
+# reconciler or EventStore signatures (the engine core is owned by another lane).
+# The runbook is infra/runbooks/projection-rebuild-drill.md.
+#
+# Off the per-push critical path (ADR-PC-011): the drill needs a real PostgreSQL
+# (Testcontainers + Docker) and is by design a monthly cadence (event-store §7.2
+# "monthly or quarterly", run off production), so it runs on a schedule and on
+# demand — never on every PR.
+#
+# Security: the only ${{ }} expansions are in `uses:`/`with:` for trusted
+# actions (checkout, mise-action). No untrusted PR-controlled input is referenced
+# in any `run:` shell, per the GitHub Actions injection guidance.
+
+on:
+  schedule:
+    # 07:00 UTC on the 1st of each month — after the weekly Monday scheduled
+    # scans (CodeQL 04:00, SBOM 05:00, fuzz 06:00) so the runner pool is clear.
+    - cron: "0 7 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new scheduled (or dispatched) drill shouldn't pile onto an in-flight one.
+concurrency:
+  group: projection-rebuild-drill-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    name: projection-rebuild-drill
+    runs-on: ubuntu-latest # ships Docker — Testcontainers brings up PostgreSQL, no `make up`
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4 # pins the .NET 10 SDK from mise.toml (ADR-PC-010), as in ci.yml
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('engine/**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Run the §7.2 projection-rebuild drill
+        # The script invokes FullRebuildDrillAsync via the reconciler's
+        # Testcontainers integration tests. mise-action has activated the pinned
+        # SDK for this job, so the script's `mise exec -- dotnet` resolves the
+        # same .NET as ci.yml. A non-zero exit is a §7.2 divergence — the runbook
+        # §4a process incident; the red job IS the alert/record.
+        run: scripts/projection-rebuild-drill.sh

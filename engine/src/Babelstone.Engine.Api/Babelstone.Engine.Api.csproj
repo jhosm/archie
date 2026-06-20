@@ -19,6 +19,12 @@
          name a family (ADR-PC-021 A2), so this reference is legitimate here, not in the spine. -->
     <ProjectReference Include="../Babelstone.Engine.Avro/Babelstone.Engine.Avro.csproj" />
     <ProjectReference Include="../Babelstone.EventStore/Babelstone.EventStore.csproj" />
+    <!-- The shared host-composition contract assembly (ADR-PC-021 §A1, relocated 2026-06-20 /
+         bd babelstone-9w2k.1): IFamilyHostModule + FamilyHostContext + the family-agnostic
+         in-process hosting components (BusEventSerializer marker, ProjectionRelayService/Options).
+         The host composes families over this contract; HostBusEncoding (Avro/SR → BusEventSerializer)
+         stays here and now produces the Hosting-defined marker. -->
+    <ProjectReference Include="../Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
     <ProjectReference Include="../Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <ProjectReference Include="../Babelstone.Packs/Babelstone.Packs.csproj" />
     <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />

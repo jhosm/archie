@@ -186,8 +186,9 @@ create_orchestrator_db "$PG_CONTAINER" "$PG_ORCH_DB"
 # ---------------------------------------------------------------------------
 say "2/7 Standing up the engine (event-store schema → rate sheet → host on Redpanda)"
 
-# (a) event-store schema — shared applier (guards on the LAST migration, command_dedup; fails loud on
-# a partially-migrated volume rather than silently skipping or blindly re-running 0001).
+# (a) event-store schema — shared ledger applier: applies only the migrations a `schema_migrations`
+# ledger hasn't recorded (backfilling the ledger from artifacts on a legacy volume first), so a
+# pre-existing volume gets the genuinely-missing newer migrations rather than a re-run of 0001.
 apply_event_store_schema "$PG_CONTAINER" "$ENGINE_DB" "$MIGRATIONS_DIR"
 
 # build the engine + rate-sheet hosts up front (first run restores NuGet — be patient).

@@ -2,7 +2,7 @@ using Babelstone.Engine;
 using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
 
-namespace Babelstone.Engine.Api;
+namespace Babelstone.Families.TermDeposit.Application;
 
 // The deposits HTTP contract (ADR-PC-021 §D5 boundary). snake_case on the wire (the host's
 // JSON options), money as integer cents — never a nested object or a float (ADR-PC-010 §P1).

@@ -89,35 +89,121 @@ wait_postgres() { # pg_container
 
 # Apply the forward-only event-store schema (0001..NNNN) to a database, idempotently across re-runs.
 #
-# The migrations are NOT individually idempotent (0001 does a bare `CREATE TABLE events`), and there
-# is no migration ledger, so we guard on the last TABLE-creating migration's artifact (`command_dedup`,
-# 0015; the trailing 0016 only adds a column via an idempotent ALTER, so a volume the full loop has
-# migrated always has command_dedup):
-#   • command_dedup present            → schema fully applied, skip (re-running 0001 would error).
-#   • neither events nor command_dedup → clean DB, apply 0001..NNNN in order.
-#   • events present but not command_dedup → a PARTIALLY/older-migrated volume. Re-running 0001 would
-#     fail loudly ("relation events already exists") and silently skipping would 500 at runtime, so
-#     we stop with an actionable message instead of doing either. (This is the unified, honest guard;
-#     demo-mcp used to skip-into-a-500 here, demo-saga used to die confusingly on the re-run.)
+# In plain English: the engine doesn't apply its own event-store migrations on boot, so the demo host
+# has to. The old applier was naive — it skipped EVERY migration the moment `command_dedup` existed,
+# which left newer tables absent on a volume created before a later migration, and the runtime then
+# 500'd on the missing table. This applier instead keeps a ledger (a `schema_migrations` row per
+# applied file) and applies only the migrations the ledger hasn't recorded — exactly the per-file
+# tracking the engine's own MigrationRunner.cs does, so the demo and the engine agree on "applied".
+#
+# The migrations are NOT individually idempotent (0001 does a bare `CREATE TABLE events`), so we MUST
+# never re-run an applied one. The ledger is the source of truth:
+#   • table `schema_migrations` (version BIGINT PK, name TEXT, applied_at TIMESTAMPTZ) — same shape as
+#     MigrationRunner.LedgerDdl. `version` is the file's leading digits (`0015_…` → 15; long.Parse-style
+#     leading-zero strip), so the demo ledger and the engine's runtime ledger are interchangeable.
+#   • each pending file is applied inside ONE transaction together with its ledger insert, so a failure
+#     leaves the DB at the last fully-applied version (no half-applied phantom).
+#
+# Legacy volumes (provisioned by the OLD naive applier, which left NO ledger): if `events` exists but
+# `schema_migrations` does not, we BACKFILL the ledger from the on-disk artifacts before applying any
+# pending file — probing each table/role/column-creating migration's signature. That way an old volume
+# is brought current (only the genuinely-missing newer migrations run) instead of re-running 0001 (which
+# would fail "relation events already exists") or skipping into a runtime 500.
 apply_event_store_schema() { # pg_container db_name migrations_dir
-  local c="$1" db="$2" dir="$3" f
-  if docker exec "$c" psql -U babelstone -d "$db" -tAc \
-       "SELECT to_regclass('public.command_dedup') IS NOT NULL;" 2>/dev/null | grep -q t; then
-    ok "event-store schema already present in '$db' (command_dedup exists) — skipping migrations"
-    return 0
+  local c="$1" db="$2" dir="$3" f base version name applied
+
+  # The ledger — same DDL/shape as MigrationRunner.LedgerDdl. CREATE TABLE IF NOT EXISTS is idempotent.
+  docker exec -i "$c" psql -U babelstone -d "$db" -v ON_ERROR_STOP=1 -q >/dev/null <<'SQL' \
+    || die "could not create the schema_migrations ledger in '$db'"
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version    BIGINT      NOT NULL PRIMARY KEY,
+    name       TEXT        NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+SQL
+
+  # Legacy backfill: a volume from the OLD applier has the tables but no ledger rows. If `events` exists
+  # yet the ledger is empty, record the migrations whose on-disk artifact is present so we don't re-run
+  # them. Probes are the signature each table/role/column-creating migration leaves behind.
+  if _ledger_is_empty "$c" "$db" && _regclass_exists "$c" "$db" public.events; then
+    warn "ledger empty but tables present — backfilling schema_migrations from on-disk artifacts (legacy volume)"
+    _backfill_ledger "$c" "$db"
   fi
-  if docker exec "$c" psql -U babelstone -d "$db" -tAc \
-       "SELECT to_regclass('public.events') IS NOT NULL;" 2>/dev/null | grep -q t; then
-    die "database '$db' is partially migrated (has 'events' but not 'command_dedup'). The forward-only
-   migrations aren't re-runnable, so wipe the volume and let them apply fresh, then re-run this demo:
-       docker compose -f infra/compose.yaml down -v"
-  fi
+
+  # Apply every file the ledger hasn't recorded, in version order, each in its own transaction with its
+  # ledger insert. \i is NOT used — we pipe the file in so the demo works without bind-mounting the repo.
   for f in "$dir"/0*.sql; do
-    info "applying $(basename "$f")"
-    docker exec -i "$c" psql -U babelstone -d "$db" -v ON_ERROR_STOP=1 -q < "$f" \
-      || die "migration $(basename "$f") failed"
+    base="$(basename "$f")"
+    # leading digits → version (strip leading zeros so it matches long.Parse: 0015 → 15)
+    version="$(printf '%s' "$base" | sed -E 's/^0*([0-9]+)_.*/\1/')"
+    name="$(printf '%s' "$base" | sed -E 's/^[0-9]+_(.*)\.sql$/\1/')"
+    if _ledger_has_version "$c" "$db" "$version"; then
+      continue
+    fi
+    info "applying $base (version $version)"
+    {
+      printf 'BEGIN;\n'
+      cat "$f"
+      printf "\nINSERT INTO schema_migrations (version, name) VALUES (%s, '%s');\n" "$version" "$name"
+      printf 'COMMIT;\n'
+    } | docker exec -i "$c" psql -U babelstone -d "$db" -v ON_ERROR_STOP=1 -q \
+      || die "migration $base failed (rolled back; DB left at the last applied version)"
+    applied="${applied:+$applied }$version"
   done
-  ok "applied event-store schema to '$db' (events, outbox, snapshots, rate_sheets, command_dedup, + babelstone_engine role)"
+
+  if [ -n "${applied:-}" ]; then
+    ok "applied event-store migrations to '$db' (versions: $applied)"
+  else
+    ok "event-store schema already current in '$db' (ledger up to date — nothing to apply)"
+  fi
+}
+
+# True (rc 0) when the schema_migrations ledger has no rows.
+_ledger_is_empty() { # pg_container db_name
+  [ "$(docker exec "$1" psql -U babelstone -d "$2" -tAc \
+        'SELECT count(*) FROM schema_migrations;' 2>/dev/null | tr -d '[:space:]')" = "0" ]
+}
+
+# True when the ledger already records this migration version.
+_ledger_has_version() { # pg_container db_name version
+  docker exec "$1" psql -U babelstone -d "$2" -tAc \
+    "SELECT 1 FROM schema_migrations WHERE version = $3;" 2>/dev/null | grep -q 1
+}
+
+# True when a relation (table/index) exists.
+_regclass_exists() { # pg_container db_name qualified_name
+  docker exec "$1" psql -U babelstone -d "$2" -tAc \
+    "SELECT to_regclass('$3') IS NOT NULL;" 2>/dev/null | grep -q t
+}
+
+# Record `version`/`name` in the ledger iff the gate command proves the migration's artifact is present.
+# ON CONFLICT DO NOTHING keeps backfill idempotent across re-runs.
+_backfill_if() { # pg_container db_name version name gate_sql
+  if docker exec "$1" psql -U babelstone -d "$2" -tAc "$5" 2>/dev/null | grep -q t; then
+    docker exec "$1" psql -U babelstone -d "$2" -v ON_ERROR_STOP=1 -q -c \
+      "INSERT INTO schema_migrations (version, name) VALUES ($3, '$4') ON CONFLICT (version) DO NOTHING;" \
+      >/dev/null || die "ledger backfill for version $3 failed"
+    info "backfilled migration $3 ($4) — artifact present"
+  fi
+}
+
+# Backfill the ledger from on-disk artifacts. Each gate is the signature a table/role/column-creating
+# migration leaves; column-only ALTERs (0010, 0016) gate on the added column, the index-only migration
+# (0014) on its index. A migration whose artifact is absent stays unrecorded → the apply loop runs it.
+_backfill_ledger() { # pg_container db_name
+  local c="$1" db="$2"
+  _backfill_if "$c" "$db" 1  events_and_outbox        "SELECT to_regclass('public.events')               IS NOT NULL;"
+  _backfill_if "$c" "$db" 2  append_only_role         "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='babelstone_engine');"
+  _backfill_if "$c" "$db" 3  snapshots                "SELECT to_regclass('public.snapshots')            IS NOT NULL;"
+  _backfill_if "$c" "$db" 4  rate_sheets              "SELECT to_regclass('public.rate_sheets')          IS NOT NULL;"
+  _backfill_if "$c" "$db" 5  projections              "SELECT to_regclass('public.projections')          IS NOT NULL;"
+  _backfill_if "$c" "$db" 6  pack_versions            "SELECT to_regclass('public.pack_versions')        IS NOT NULL;"
+  _backfill_if "$c" "$db" 10 projection_runtime       "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='projections' AND column_name='projection_kind');"
+  _backfill_if "$c" "$db" 11 projection_checkpoints   "SELECT to_regclass('public.projection_checkpoints') IS NOT NULL;"
+  _backfill_if "$c" "$db" 12 inbox                    "SELECT to_regclass('public.inbox')                IS NOT NULL;"
+  _backfill_if "$c" "$db" 14 bitemporal_read_index    "SELECT to_regclass('public.projections_belief_history_idx') IS NOT NULL;"
+  _backfill_if "$c" "$db" 15 command_dedup            "SELECT to_regclass('public.command_dedup')        IS NOT NULL;"
+  _backfill_if "$c" "$db" 16 outbox_integration_headers "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='outbox' AND column_name='integration_headers');"
 }
 
 # ---------------------------------------------------------------------------

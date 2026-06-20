@@ -1,6 +1,10 @@
 using Babelstone.Packs;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace Babelstone.Engine.Api;
+namespace Babelstone.Engine.Hosting;
 
 /// <summary>
 /// A family's contribution to the engine host's composition (ADR-PC-021 §D4 "composition at the
@@ -14,10 +18,14 @@ namespace Babelstone.Engine.Api;
 /// through <c>Program.cs</c>. Because the family owns its own <c>AggregateRuntime&lt;TState&gt;</c>
 /// construction here, the host never names a family aggregate type.
 ///
-/// This interface lives in the HOST (<c>Babelstone.Engine.Api</c>) — the ADR-blessed composition
-/// root — never in the generic engine spine, so the <c>family → engine</c> arrow stays one-way
-/// (§D2/§P2, the <c>ENGINE_FAMILY_AGNOSTIC</c> fitness function). The host referencing a family is
-/// explicitly §D4's job; the spine libraries referencing one is the forbidden edge.
+/// This interface lives in the shared hosting-contract assembly <c>Babelstone.Engine.Hosting</c>
+/// (ADR-PC-021 §A1, relocated 2026-06-20 / bd babelstone-9w2k.1) — NOT in the host
+/// <c>Babelstone.Engine.Api</c> as originally, and never in the generic engine spine. A family's
+/// <c>.Application</c> project can reference this contract assembly to implement its own module
+/// without a <c>family → host</c> cycle, while the <c>family → engine</c> arrow stays one-way
+/// (§D2/§P2, the <c>ENGINE_FAMILY_AGNOSTIC</c> fitness function). The hosting-contract assembly,
+/// like the host, MAY name a family in principle but by design does not — only the spine libraries
+/// referencing a family is the forbidden edge.
 ///
 /// Today the host holds an explicit list of modules (ADR-PC-021 §P4 "Option A"); because every
 /// module implements this same contract with a public parameterless ctor, swapping the explicit

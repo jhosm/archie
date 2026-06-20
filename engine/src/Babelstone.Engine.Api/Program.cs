@@ -2,6 +2,7 @@ using System.Text.Json;
 using Babelstone.Engine;
 using Babelstone.Engine.Api;
 using Babelstone.Engine.Avro;
+using Babelstone.Engine.Hosting;
 using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
 using Babelstone.Families.TermDeposit.Application;
@@ -71,12 +72,12 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.PropertyNameCaseInsensitive = false;
 });
 
-// Application / integration credentials (the DB connection string today, Redpanda SASL
-// later) resolve through the ISecretProvider boundary (ADR-PC-004 Amendment A1) — distinct
-// from the per-subject PII transit keys (IPiiKeyStore). Default to the configuration-backed
-// provider so `make up` keeps working with existing config; opt into OpenBao KV v2 with
-// OpenBao:Enabled=true. The resolved credential stays at this composition root: never on a
-// saga message (ADR-IC-003 §P7) nor the durable bus (ADR-PC-004 §P2).
+// Application / integration credentials (the DB connection string AND the Redpanda SASL/SCRAM
+// password — see the outbox-relay wiring below) resolve through the ISecretProvider boundary
+// (ADR-PC-004 Amendment A1) — distinct from the per-subject PII transit keys (IPiiKeyStore).
+// Default to the configuration-backed provider so `make up` keeps working with existing config;
+// opt into OpenBao KV v2 with OpenBao:Enabled=true. The resolved credential stays at this
+// composition root: never on a saga message (ADR-IC-003 §P7) nor the durable bus (ADR-PC-004 §P2).
 ISecretProvider secretProvider = builder.Configuration.GetValue<bool>("OpenBao:Enabled")
     ? new OpenBaoKvSecretProvider(
         new HttpClient { BaseAddress = new Uri(builder.Configuration["OpenBao:Address"] ?? "http://localhost:8200/") },
@@ -219,20 +220,47 @@ foreach (var module in familyModules)
 // The Kafka bootstrap address is a broker ENDPOINT, not a credential — it is already plaintext in
 // infra/compose.yaml and the k8s manifests — so it resolves straight from IConfiguration
 // (Kafka:BootstrapServers via env/appsettings), distinct from ConnectionStrings:Engine which goes
-// through the ISecretProvider credential boundary (ADR-PC-004 Amendment A1). When SASL credentials
-// land later (the Redpanda secret the Program.cs §54 note anticipates) THOSE will resolve through
-// ISecretProvider. The dev default matches the Redpanda external listener in infra/compose.yaml
-// (localhost:19092), the same convention `make up` exposes.
+// through the ISecretProvider credential boundary (ADR-PC-004 Amendment A1). The dev default matches
+// the Redpanda external listener in infra/compose.yaml (localhost:19092), the same convention
+// `make up` exposes.
 var bootstrapServers = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:19092";
+// The relay producer's SASL/SCRAM identity (ADR-IC-016 plane ii §4–§6 / KAFKA_SASL_TOPIC_ACL). njt2.1
+// added the KafkaSaslOptions applier + the Sasl property; THIS resolves the actual credential at the
+// composition root and puts it on the option. The username (svc-outbox-publisher) is declarative
+// config; the PASSWORD resolves through the SAME ISecretProvider seam as ConnectionStrings:Engine
+// (OpenBaoKvSecretProvider when OpenBao:Enabled, configuration-backed otherwise — §A1). The resolved
+// secret stays here in process memory to open the connection: never logged, never on a span, never on
+// the bus (ADR-PC-004 §P2). With no Kafka:Sasl:OutboxPublisher:Username configured this is the OFF
+// no-op posture (IsConfigured=false ⇒ ApplyTo does nothing), so plaintext loopback Redpanda (`make up`)
+// is unchanged — SASL turns on only when a deployment supplies the identity (SASL_SSL + SCRAM-SHA-256).
+var outboxPublisherSasl = await HostSasl.ResolveOutboxPublisherAsync(builder.Configuration, secretProvider);
 builder.Services.AddSingleton(new OutboxRelayOptions
 {
     ConnectionString = connectionString,
     BootstrapServers = bootstrapServers,
+    Sasl = outboxPublisherSasl,
 });
 builder.Services.AddSingleton(serviceProvider =>
     new OutboxDrainer(serviceProvider.GetRequiredService<OutboxRelayOptions>()));
 builder.Services.AddHostedService<OutboxRelayService>();
 builder.Services.AddSingleton(new OutboxLagObserver(connectionString));
+
+// The dedup-ledger retention sweep (bd babelstone-e6fr.10), co-hosted in this process (the same
+// §5.1 in-process-loop shape as the outbox relay). It bounds the unbounded growth of the two dedup
+// ledgers — command_dedup (migration 0015) and inbox (migration 0012) — by deleting their aged tail
+// on a slow housekeeping cadence. The per-table retention windows are deliberately ASYMMETRIC: the
+// command window is load-bearing (ADR-PC-029 §4 — pruning a receipt before the stream's active
+// lifetime + the dispatcher's retry horizon elapses could replay a command into a DUPLICATE deposit),
+// so it defaults to 3 years; the inbox window is the simpler Kafka-retention × N (Document 04),
+// defaulting to 30 days. All four knobs — the two retention windows AND the operational tuning
+// (BatchSize, SweepInterval) — are overridable via the Engine:DedupRetention config section, so an
+// operator can retune the sweep (e.g. drain a first backlog faster, or ease off the primary) without
+// a recompile; an unset key keeps the conservative default. See DedupRetentionConfiguration.
+builder.Services.AddSingleton(
+    DedupRetentionConfiguration.FromConfiguration(builder.Configuration, connectionString));
+builder.Services.AddSingleton(serviceProvider =>
+    new DedupRetentionSweeper(serviceProvider.GetRequiredService<DedupRetentionOptions>()));
+builder.Services.AddHostedService<DedupRetentionSweepService>();
 
 var app = builder.Build();
 

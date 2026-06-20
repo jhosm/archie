@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-06-07 |
 | Deciders | jhosm |
 | Shape | Tool-selection |
@@ -166,6 +166,24 @@ Markdown-corpus stitching are weak for a modern docs site. **Decisive: second-cl
    §P3 designs out is **contained to that single landing page**, whose job is to route
    readers onward to the version-correct GitHub tree. This is a scoped exception (one
    landing doc), not a return to the rejected corpus-wide stitching.*
+
+   *Revised 2026-06-20 (bd `babelstone-517i`): the landing page's own deeper links
+   no longer 404 on the site. `docfx/index.md` is **generated** from the
+   product-docs README by `scripts/docs-gen/generate.py` (ADR-PC-022's generator,
+   reused) — the README's corpus-relative links are rewritten to absolute
+   `…/blob|tree/main/…` GitHub URLs, and the generated file is byte-drift-gated by
+   `make docs-verify` and the pre-commit hook, exactly like the `reference/` tree.
+   The README on GitHub keeps its version-correct relative links untouched. This
+   does **not** reopen the rejected main-pinned-absolute-URL approach for the
+   *corpus*: the objection there was that one ref is wrong for every other version
+   once docs are multi-version, but this single page is itself built **only** from
+   `main` (the Pages artifact is main-only — same reason the navbar's "Docs on
+   GitHub" entry already pins main), so a main-pin is correct here, not a
+   compromise. The home page now routes readers onward with working links rather
+   than relying on the "Docs on GitHub" navbar entry alone. Two standalone demo
+   pages (the pitch deck, the design principles) were also added to the navbar,
+   pointing at the pages staged into the Pages artifact under `/demo/` (bd
+   `babelstone-q096`).*
 4. **§P4 — Publishing is the artifact-based GitHub Pages flow.**
    `.github/workflows/docs-site.yml` builds on PRs touching its inputs (build-only
    validation — *not* a required check, so the
@@ -183,6 +201,17 @@ Markdown-corpus stitching are weak for a modern docs site. **Decisive: second-cl
    Epic G.4) lands, it composes into the *same* artifact under a subpath (e.g.
    `/events/`) inside this workflow — never a second `deploy-pages` workflow racing for
    the slot.
+
+   *Revised 2026-06-20: G.4 (PR #110) superseded
+   [ADR-IC-008](../../integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md)
+   with [ADR-IC-015](../../integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md)
+   (EventCatalog → Backstage). The catalogue portal is now a separately-deployed runtime
+   service (host deploy deferred — bd `babelstone-s4ol.1`), not a static site stitched
+   into Pages, so the specific EventCatalog-on-Pages composition task (bd
+   `babelstone-ra1u`) is withdrawn. The invariant generalises and still binds: this
+   workflow owns the one Pages slot, and any future catalogue portal published to Pages
+   composes into this same artifact under a subpath — never a second `deploy-pages`
+   workflow.*
 
 Rejected: MkDocs (hand-rolling the XML-doc ingester), Docusaurus (no XML-doc path, MDX
 friction), Doxygen (second-class C#) — details above.
@@ -220,4 +249,4 @@ inline table here rather than in the engine-focused
 |---|---|---|---|---|
 | 1 | The DocFX site builds green from current sources — API metadata over `Babelstone.slnx`; the corpus is not stitched (§P1/§P3). | CI (`docs-site.yml` build lane, path-scoped on its inputs) | `DOCS_SITE_BUILDS` | Live |
 | 2 | XML doc comments cannot rot against the code they annotate: malformed/unresolvable doc references fail the build (§P2). | compiler (`TreatWarningsAsErrors` + `GenerateDocumentationFile`, every `dotnet build` incl. the ci.yml engine lane) | `DOCS_XMLDOC_NO_ROT` | Live (lands with this ADR's PR) |
-| 3 | One Pages deploy workflow: EventCatalog (G.4) composes into this artifact under a subpath, never a second `deploy-pages` (§P5). | review discipline (PR review + this ADR) | `DOCS_PAGES_SINGLE_SLOT` | Gap (no mechanical gate; revisit when G.4 lands) |
+| 3 | One Pages deploy workflow: any future catalogue portal published to Pages composes into this artifact under a subpath, never a second `deploy-pages` (§P5). | review discipline (PR review + this ADR) | `DOCS_PAGES_SINGLE_SLOT` | Gap (no mechanical gate; EventCatalog-on-Pages task withdrawn under ADR-IC-015 — Backstage is a separate runtime portal, not a Pages static site; see §P5 revision 2026-06-20) |

@@ -3,8 +3,9 @@ name: Spec coverage
 # ADR-PC-020 §P6 (ADR <-> catalogue <-> code/test coverage checker — per-push,
 # authoritative) + §P3 (periodic auditor sweep for the backfill backlog and, once
 # engine source lands, decided-but-unbuilt / governed-code-without-test findings).
-# The Claude PostToolUse hook (.claude/hooks/surface-spec-coverage.sh) is the fast
-# mirror; this workflow is the authority the hook mirrors (§P1).
+# The Claude PostToolUse hook (plugins/babelstone-engine/hooks/scripts/surface-spec-coverage.sh,
+# bundled in the babelstone-engine plugin) is the fast mirror; this workflow is the
+# authority the hook mirrors (§P1).
 #
 # Security: the only ${{ }} expansions are github.event_name comparisons in job
 # `if:` conditions (trusted, not interpolated into any run: shell). No untrusted

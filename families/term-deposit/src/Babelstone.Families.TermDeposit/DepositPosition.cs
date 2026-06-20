@@ -154,4 +154,76 @@ public sealed record DepositPosition(
         CorrectionCount: 0,
         CouponsPaid: 0,
         Lifecycle: DepositLifecycle.Pending);
+
+    // The record carries ONE collection field — PrincipalTimeline (bd babelstone-emtr). The
+    // compiler-synthesized record equality would compare it by REFERENCE, which would make two
+    // independently-folded-but-identical positions unequal and break the byte-identical replay
+    // determinism contract the engine relies on (e.g. the clock-advance vs explicit-command parity
+    // test, ADR-PC-010 §P5). So equality is overridden to compare the timeline ELEMENT-WISE; every
+    // other (scalar / Money / enum) field keeps its value comparison. GetHashCode mirrors it so the
+    // equals/hashcode contract holds. A new field added here MUST be added to BOTH members below — the
+    // determinism tests are the backstop that catches an omission.
+    public bool Equals(DepositPosition? other) =>
+        other is not null
+        && DepositId == other.DepositId
+        && Principal == other.Principal
+        && TanBasisPoints == other.TanBasisPoints
+        && RateSheetVersionId == other.RateSheetVersionId
+        && TermDays == other.TermDays
+        && StartDate == other.StartDate
+        && MaturityDate == other.MaturityDate
+        && InterestVariant == other.InterestVariant
+        && AutoRenewalPolicy == other.AutoRenewalPolicy
+        && PaymentPeriodMonths == other.PaymentPeriodMonths
+        && ProductCode == other.ProductCode
+        && Role == other.Role
+        && FundingAccount == other.FundingAccount
+        && MinWithdrawalCents == other.MinWithdrawalCents
+        && MinRemainingBalanceCents == other.MinRemainingBalanceCents
+        && CarenciaDays == other.CarenciaDays
+        && AccruedGrossInterest == other.AccruedGrossInterest
+        && WithholdingToDate == other.WithholdingToDate
+        && NetInterest == other.NetInterest
+        && TotalPayout == other.TotalPayout
+        && RemainingPrincipal == other.RemainingPrincipal
+        && SettlementAmount == other.SettlementAmount
+        && CorrectionCount == other.CorrectionCount
+        && CouponsPaid == other.CouponsPaid
+        && Lifecycle == other.Lifecycle
+        && PrincipalTimeline.SequenceEqual(other.PrincipalTimeline);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(DepositId);
+        hash.Add(Principal);
+        hash.Add(TanBasisPoints);
+        hash.Add(RateSheetVersionId);
+        hash.Add(TermDays);
+        hash.Add(StartDate);
+        hash.Add(MaturityDate);
+        hash.Add(InterestVariant);
+        hash.Add(AutoRenewalPolicy);
+        hash.Add(PaymentPeriodMonths);
+        hash.Add(ProductCode);
+        hash.Add(Role);
+        hash.Add(FundingAccount);
+        hash.Add(MinWithdrawalCents);
+        hash.Add(MinRemainingBalanceCents);
+        hash.Add(CarenciaDays);
+        hash.Add(AccruedGrossInterest);
+        hash.Add(WithholdingToDate);
+        hash.Add(NetInterest);
+        hash.Add(TotalPayout);
+        hash.Add(RemainingPrincipal);
+        hash.Add(SettlementAmount);
+        hash.Add(CorrectionCount);
+        hash.Add(CouponsPaid);
+        hash.Add(Lifecycle);
+        foreach (var segment in PrincipalTimeline)
+        {
+            hash.Add(segment);
+        }
+        return hash.ToHashCode();
+    }
 }
