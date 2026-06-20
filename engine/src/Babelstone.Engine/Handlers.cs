@@ -18,6 +18,18 @@ public abstract record DomainEvent
     /// put PII here — these values ride the durable bus as cleartext headers (ADR-PC-004 §P2).
     /// </summary>
     public virtual IReadOnlyDictionary<string, string>? IntegrationHeaders => null;
+
+    /// <summary>
+    /// Whether this event is a LIFECYCLE BOUNDARY for the snapshot policy (ADR-PC-003 §P2 / event-store
+    /// §8.1): constitution, renewal, partial withdrawal, maturity, termination — the natural points where
+    /// an instance's state is interpretable on its own. The runtime reads this off the just-appended
+    /// events (a pure structural property of the event TYPE, never a clock read — the family marks its own
+    /// lifecycle events, so the engine stays family-agnostic) and ORs it into the per-append
+    /// <see cref="SnapshotContext.IsLifecycleBoundary"/>. Base default <c>false</c>: an ordinary event
+    /// (e.g. an interest accrual) is no boundary. Override and return <c>true</c> on a concrete family
+    /// lifecycle event to make a snapshot fire there regardless of the per-N count.
+    /// </summary>
+    public virtual bool IsLifecycleBoundary => false;
 }
 
 /// <summary>

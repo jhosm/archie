@@ -38,13 +38,18 @@ public sealed class EngineFixture : IAsyncLifetime
     /// lets a test assert the fail-soft sink is invoked rather than the exception propagating.
     /// </summary>
     public AggregateRuntime<CounterState> SnapshottingRuntime(
-        long everyNEvents, Action<Exception>? onSnapshotError = null, ISnapshotStorage? storage = null)
+        long everyNEvents,
+        Action<Exception>? onSnapshotError = null,
+        ISnapshotStorage? storage = null,
+        ICalendarBoundaryPolicy? calendarBoundaryPolicy = null,
+        TimeProvider? clock = null)
         => new(
             Store, new EventStoreSink(Store), Handlers, Serializer, new NullPiiProtector(),
-            new FixedTimeProvider(Clock), () => new CounterState(0),
+            clock ?? new FixedTimeProvider(Clock), () => new CounterState(0),
             new SnapshotStore<CounterState>(storage ?? SnapshotStorage, new JsonStateSerializer<CounterState>()),
             snapshotPolicy: new CountBasedSnapshotPolicy(everyNEvents),
-            onSnapshotError: onSnapshotError);
+            onSnapshotError: onSnapshotError,
+            calendarBoundaryPolicy: calendarBoundaryPolicy);
 
     public SimulationRuntime<CounterState> Simulation()
         => new(Store, Handlers, Serializer, () => new CounterState(0));

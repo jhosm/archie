@@ -13,6 +13,17 @@ public sealed record Incremented(int By) : DomainEvent;
 
 public sealed record Reset : DomainEvent;
 
+/// <summary>
+/// An increment that ALSO marks a lifecycle boundary (ADR-PC-003 §P2) — the family-agnostic stand-in
+/// for a term-deposit DepositConstituted/Matured/… so the engine's lifecycle-boundary snapshot trigger
+/// can be exercised without pulling the term-deposit family in. Folds exactly like
+/// <see cref="Incremented"/>; only its <see cref="DomainEvent.IsLifecycleBoundary"/> override differs.
+/// </summary>
+public sealed record LifecycleIncremented(int By) : DomainEvent
+{
+    public override bool IsLifecycleBoundary => true;
+}
+
 public sealed class IncrementedHandler : IEventHandler<CounterState, Incremented>
 {
     public HandlerResult<CounterState> Apply(CounterState state, Incremented @event)
@@ -25,6 +36,12 @@ public sealed class ResetHandler : IEventHandler<CounterState, Reset>
         => HandlerResult<CounterState>.From(state with { Total = 0 });
 }
 
+public sealed class LifecycleIncrementedHandler : IEventHandler<CounterState, LifecycleIncremented>
+{
+    public HandlerResult<CounterState> Apply(CounterState state, LifecycleIncremented @event)
+        => HandlerResult<CounterState>.From(state with { Total = state.Total + @event.By });
+}
+
 public sealed class CounterFamilyModule : IFamilyModule
 {
     public string FamilyName => "counter";
@@ -35,6 +52,7 @@ public sealed class CounterFamilyModule : IFamilyModule
     [
         new("counter.Incremented", typeof(Incremented), new DispatchableHandler<CounterState, Incremented>(new IncrementedHandler())),
         new("counter.Reset", typeof(Reset), new DispatchableHandler<CounterState, Reset>(new ResetHandler())),
+        new("counter.LifecycleIncremented", typeof(LifecycleIncremented), new DispatchableHandler<CounterState, LifecycleIncremented>(new LifecycleIncrementedHandler())),
     ];
 
     public static HandlerRegistry Registry() => new(new CounterFamilyModule().Handlers);
@@ -61,4 +79,16 @@ public sealed class JsonStateSerializer<TState> : IStateSerializer<TState>
 public sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
 {
     public override DateTimeOffset GetUtcNow() => now;
+}
+
+/// <summary>
+/// A test clock whose "now" can be advanced between appends — so a test can place two appends in
+/// different calendar months/years and exercise the runtime's calendar-boundary snapshot trigger
+/// (the runtime owns the transaction_time clock; this stands in for wall-clock progression).
+/// </summary>
+public sealed class SettableTimeProvider(DateTimeOffset start) : TimeProvider
+{
+    public DateTimeOffset Now { get; set; } = start;
+
+    public override DateTimeOffset GetUtcNow() => Now;
 }

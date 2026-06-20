@@ -101,7 +101,12 @@ public sealed record DepositConstituted(
     // `min_withdrawal_cents` / `min_remaining_balance_cents` clean (no double `_cents` suffix).
     long MinWithdrawalCents = 0,
     long MinRemainingBalanceCents = 0,
-    int CarenciaDays = 0) : DomainEvent;
+    int CarenciaDays = 0) : DomainEvent
+{
+    // Constitution is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1): the instance's
+    // state is interpretable on its own here, so a snapshot is taken regardless of the per-N count.
+    public override bool IsLifecycleBoundary => true;
+}
 
 /// <summary>Interest accrued for the period. For AT_MATURITY this is the single flow at
 /// maturity: <c>GrossInterest = Accrual.SimpleInterest(principal, tan, DayCount.Between(start, maturity, Act360))</c>.</summary>
@@ -139,6 +144,10 @@ public sealed record DepositMatured(
             {
                 ["autorenewalpolicy"] = AutoRenewalPolicy,
             };
+
+    // Maturity is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1) — a closing point
+    // where the instance's terminal state is interpretable on its own.
+    public override bool IsLifecycleBoundary => true;
 }
 
 // The seven remaining term-deposit events (F.2, babelstone-5czr) — the full lifecycle
@@ -188,7 +197,11 @@ public sealed record DepositRenewed(
     int NewTanBasisPoints,
     int NewTermDays,
     DateOnly RenewalDate,
-    DateOnly NewMaturityDate) : DomainEvent;
+    DateOnly NewMaturityDate) : DomainEvent
+{
+    // Renewal is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1).
+    public override bool IsLifecycleBoundary => true;
+}
 
 /// <summary>The deposit is broken before maturity. The depositor's payout is the principal still on
 /// deposit PLUS the net interest accrued over the elapsed period, less the penalty haircut:
@@ -203,7 +216,11 @@ public sealed record DepositTerminatedEarly(
     Money PenaltyAmount,
     Money NetSettlementAmount,
     DateOnly TerminatedOn,
-    string TerminationReason) : DomainEvent;
+    string TerminationReason) : DomainEvent
+{
+    // Early termination is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1).
+    public override bool IsLifecycleBoundary => true;
+}
 
 /// <summary>A partial withdrawal reduces the deposit's principal:
 /// <c>RemainingPrincipal</c> is the principal left after taking <paramref name="WithdrawnAmount"/> out.</summary>
@@ -211,7 +228,11 @@ public sealed record DepositPartiallyWithdrawn(
     Guid DepositId,
     Money WithdrawnAmount,
     Money RemainingPrincipal,
-    DateOnly WithdrawnOn) : DomainEvent;
+    DateOnly WithdrawnOn) : DomainEvent
+{
+    // Partial withdrawal is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1).
+    public override bool IsLifecycleBoundary => true;
+}
 
 /// <summary>A correction to a previously-recorded fact. Carries opaque REFERENCES only
 /// (<paramref name="PreviousValueRef"/> / <paramref name="CorrectedValueRef"/> point at the
@@ -239,7 +260,12 @@ public sealed record DepositTransferredToHeirs(
     Guid DepositId,
     string HeirCaseRef,
     Money TransferredBalance,
-    DateOnly TransferDate) : DomainEvent;
+    DateOnly TransferDate) : DomainEvent
+{
+    // Succession (transfer to heirs) is a closing snapshot lifecycle boundary (ADR-PC-003 §P2 /
+    // event-store §8.1: "termination") — the terminal state is interpretable on its own.
+    public override bool IsLifecycleBoundary => true;
+}
 
 /// <summary>
 /// The data subject's GDPR Article 17 right-to-be-forgotten was exercised on this deposit: the

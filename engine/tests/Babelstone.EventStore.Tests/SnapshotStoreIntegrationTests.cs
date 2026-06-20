@@ -58,6 +58,23 @@ public sealed class SnapshotStoreIntegrationTests(PostgresEventStoreFixture fixt
     }
 
     [Fact]
+    public async Task TryGetAtOrBefore_returns_the_highest_snapshot_not_past_the_point()
+    {
+        // The §P1 readLatestSnapshot(..., atOrBeforeSequence) the as-of replay needs: of the snapshots
+        // at 100/175/250, a read at-or-before 200 returns 175 (the highest NOT past the point), and a
+        // read at-or-before 99 returns null (every snapshot is the future relative to that point).
+        var streamId = Guid.NewGuid();
+        await Store.PutAsync(Record(streamId, atSequence: 100));
+        await Store.PutAsync(Record(streamId, atSequence: 250));
+        await Store.PutAsync(Record(streamId, atSequence: 175));
+
+        Assert.Equal(175, (await Store.TryGetAtOrBeforeAsync(streamId, 200))!.AtSequence);
+        Assert.Equal(175, (await Store.TryGetAtOrBeforeAsync(streamId, 175))!.AtSequence); // inclusive
+        Assert.Equal(100, (await Store.TryGetAtOrBeforeAsync(streamId, 100))!.AtSequence);
+        Assert.Null(await Store.TryGetAtOrBeforeAsync(streamId, 99));                      // all in the future
+    }
+
+    [Fact]
     public async Task Re_putting_a_sequence_promotes_it_to_trusted()
     {
         var streamId = Guid.NewGuid();
