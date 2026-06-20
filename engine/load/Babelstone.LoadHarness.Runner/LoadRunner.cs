@@ -248,26 +248,31 @@ internal sealed class LoadRunner
         _out.WriteLine($"→ warmed up {_options.WarmupEvents} events (unmeasured).");
     }
 
-    // The phase plan per profile (§G4): smoke = one short low-TPS phase; sustained = one phase at the
-    // target rate for the duration; burst = sustained → burst → recovery, sequenced (L.3c).
-    private IReadOnlyList<DrivePhase> PlanPhases() => _options.Profile switch
+    private IReadOnlyList<DrivePhase> PlanPhases() => PlanPhases(_options);
+
+    /// <summary>
+    /// The phase plan per profile (§G4): smoke = one short low-TPS phase; sustained = one phase at the
+    /// target rate for the duration; burst = sustained → burst → recovery, sequenced (L.3c). Pure and
+    /// static so the §8.3 burst sequencing is unit-testable Docker-free.
+    /// </summary>
+    internal static IReadOnlyList<DrivePhase> PlanPhases(RunnerOptions options) => options.Profile switch
     {
         RunProfile.Smoke =>
         [
-            new DrivePhase("smoke", _options.TargetTps, _options.Duration),
+            new DrivePhase("smoke", options.TargetTps, options.Duration),
         ],
         RunProfile.Sustained =>
         [
-            new DrivePhase("sustained", _options.TargetTps, _options.Duration),
+            new DrivePhase("sustained", options.TargetTps, options.Duration),
         ],
         RunProfile.Burst =>
         [
             // §8.3: sustained baseline → 1000 TPS burst for 15 min → recovery back to baseline.
-            new DrivePhase("sustained", _options.TargetTps, _options.Duration),
-            new DrivePhase("burst", _options.BurstTps, _options.BurstDuration),
-            new DrivePhase("recovery", _options.TargetTps, _options.Duration),
+            new DrivePhase("sustained", options.TargetTps, options.Duration),
+            new DrivePhase("burst", options.BurstTps, options.BurstDuration),
+            new DrivePhase("recovery", options.TargetTps, options.Duration),
         ],
-        _ => throw new ArgumentOutOfRangeException(nameof(_options.Profile)),
+        _ => throw new ArgumentOutOfRangeException(nameof(options)),
     };
 
     // Build the live-Redpanda producer (the §G1 path) with the engine's OWN Avro codec + a real Schema
@@ -293,5 +298,5 @@ internal sealed class LoadRunner
         ?? "local-unversioned";
 
     // One drive phase: a target rate held for a wall-clock duration (the peak envelope scales it).
-    private readonly record struct DrivePhase(string Label, double TargetTps, TimeSpan Duration);
+    internal readonly record struct DrivePhase(string Label, double TargetTps, TimeSpan Duration);
 }
