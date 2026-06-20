@@ -1,5 +1,7 @@
+using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using Babelstone.EventStore;
+using Babelstone.Telemetry;
 
 namespace Babelstone.Engine;
 
@@ -326,7 +328,24 @@ public sealed class ProjectionReconciler<TState>(
         var after = await projectionStorage.ReadCurrentBeliefAsync(streamId, runner.Kind, ct);
         var afterHash = after is null ? null : HashBytes(after.StructuralPayload.Span);
 
-        return new RebuildReconciliation(beforeHash, afterHash, refolded);
+        var result = new RebuildReconciliation(beforeHash, afterHash, refolded);
+
+        // Observation boundary (M.5): the §7.2 drill verdict drives two metrics on the shared meter.
+        // A divergence is the slow-drift bug class the drill exists to surface (the in-process companion
+        // to the ProjectionRebuildDrillStale freshness alert: freshness catches a drill that did not
+        // RUN, divergence a drill that RAN and FAILED). A clean drill records its success timestamp on
+        // the freshness gauge — evidence the source-of-truth invariant holds for this kind. The metric
+        // is a side-effect at this impure boundary, not inside the cold re-fold (ADR-PC-010 §P5).
+        if (!result.Identical)
+        {
+            ReconciliationMetrics.RecordRebuildDivergence(runner.Kind);
+        }
+        else
+        {
+            ReconciliationMetrics.RecordDrillSuccess(runner.Kind);
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -363,12 +382,28 @@ public sealed class ProjectionReconciler<TState>(
         if (contract.Patterns.HasFlag(ReconciliationPatterns.Checksum))
         {
             checksum = await ChecksumAsync(streamId, contract.ProjectionKind, ct);
+
+            // Observation boundary (M.5 / ADR-IC-007 Layer 1): a mismatch that ran under a declared
+            // contract is the §7.1 (a) alertable finding — emit it tagged by the consumer reference.
+            // The ChecksumAsync fold itself stays a pure, replayable computation; the metric is a
+            // side-effect here, not inside the fold (ADR-PC-010 §P5).
+            if (!checksum.Match)
+            {
+                ReconciliationMetrics.RecordChecksumMismatch(contract.Consumer, contract.ProjectionKind);
+            }
         }
 
         EventCountReconciliation? eventCount = null;
         if (contract.Patterns.HasFlag(ReconciliationPatterns.EventCount))
         {
             eventCount = await EventCountAsync(streamId, contract.ProjectionKind, consumerFoldedCount, ct);
+
+            // §7.1 (b): only a SKIP (events lost) is alertable — a benign Gap is acceptable async lag
+            // and is deliberately NOT counted, so the series is a clean skip signal.
+            if (eventCount.Status == EventCountStatus.Skip)
+            {
+                ReconciliationMetrics.RecordEventCountDrift(contract.Consumer, contract.ProjectionKind);
+            }
         }
 
         return new ConsumerReconciliationReport(contract, streamId, checksum, eventCount);
@@ -405,4 +440,90 @@ public sealed class ProjectionReconciler<TState>(
         SHA256.HashData(bytes, digest);
         return Convert.ToHexStringLower(digest);
     }
+}
+
+/// <summary>
+/// The reconciliation-result instruments on the shared <see cref="BabelstoneTelemetry.Meter"/>
+/// (ADR-IC-007 Layer 1, M.5 — bd babelstone-k4ny): the three §7.1 alertable findings as monotonic
+/// counters, plus the §7.2 drill-freshness observable gauge. They are the operational SIDE-EFFECT of
+/// the reconciler's verdicts — emitted at the impure observation boundary, never inside a pure fold
+/// (ADR-PC-010 §P5) — so the <c>projection-reconciliation</c> alert rules
+/// (<c>infra/grafana/prometheus/alert-rules.yaml</c>) resolve to live series.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Non-generic on purpose: <see cref="ProjectionReconciler{TState}"/> closes over a family's state
+/// type, but the metrics are family-agnostic dimensions (<c>consumer</c> / <c>projection_kind</c>
+/// REFERENCES, never PII — ADR-PC-004 §P2 / catalogue OBS_NO_PII_ATTRS). Registering them here means
+/// ONE instrument per name on the shared meter regardless of how many closed reconciler types a host
+/// instantiates. A host turns them on with <c>AddMeter(BabelstoneTelemetry.MeterName)</c>; with no
+/// listener attached <see cref="Counter{T}.Add(T, KeyValuePair{string, object?}[])"/> and the gauge
+/// callback are near-zero-cost no-ops.
+/// </para>
+/// <para>
+/// The freshness gauge reports the Unix-epoch seconds of the most recent SUCCESSFUL in-process
+/// rebuild drill per <c>projection_kind</c>, observed each OTel collection cycle from a process-wide
+/// table the drill boundary updates. It carries the SAME name the projection-rebuild-drill script
+/// pushes externally (<c>reconciliation_drill_last_success_timestamp_seconds</c>), so the
+/// <c>ProjectionRebuildDrillStale</c> alert reads either source uniformly. The timestamp is read once,
+/// at the boundary, via <see cref="DateTimeOffset.UtcNow"/> — outside any handler/fold, so handler
+/// purity (BENG analysers) and replay determinism are unaffected.
+/// </para>
+/// </remarks>
+internal static class ReconciliationMetrics
+{
+    private static readonly Counter<long> ChecksumMismatch =
+        BabelstoneTelemetry.Meter.CreateCounter<long>(
+            BabelstoneAttributes.ReconciliationChecksumMismatchMetric,
+            description: "Projection state-checksum mismatches (event-store §7.1 (a) — consumer drift from a cold fold of the log).");
+
+    private static readonly Counter<long> EventCountDrift =
+        BabelstoneTelemetry.Meter.CreateCounter<long>(
+            BabelstoneAttributes.ReconciliationEventCountDriftMetric,
+            description: "Projection event-count SKIPs (event-store §7.1 (b) — consumer advanced past events it never folded; a benign Gap is not counted).");
+
+    private static readonly Counter<long> RebuildDrillDivergence =
+        BabelstoneTelemetry.Meter.CreateCounter<long>(
+            BabelstoneAttributes.ReconciliationRebuildDrillDivergenceMetric,
+            description: "Projection full-rebuild-drill divergences (event-store §7.2 (c) — a cold re-fold did not reproduce the running belief byte-for-byte).");
+
+    // Last successful in-process rebuild drill per projection_kind, as Unix-epoch SECONDS. The
+    // observable freshness gauge reads this table each collection cycle; the drill boundary writes it.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, double> LastDrillSuccessEpochSeconds = new();
+
+    // Register the freshness gauge once, in the static initializer, on the shared meter. Observable
+    // instruments are collected by the OTel cycle (or a test's RecordObservableInstruments()); with no
+    // successful drill recorded yet the gauge emits nothing, and the alert's absent() reads that — the
+    // safe "no recent drill" interpretation — until the first green drill lands.
+    static ReconciliationMetrics() =>
+        BabelstoneTelemetry.Meter.CreateObservableGauge(
+            BabelstoneAttributes.ReconciliationDrillFreshnessMetric,
+            observeValues: ObserveDrillFreshness,
+            unit: "s",
+            description: "Unix-epoch seconds of the most recent SUCCESSFUL projection-rebuild drill, per projection_kind (event-store §7.2 freshness SLI).");
+
+    public static void RecordChecksumMismatch(string consumer, string projectionKind) =>
+        ChecksumMismatch.Add(1, ConsumerTags(consumer, projectionKind));
+
+    public static void RecordEventCountDrift(string consumer, string projectionKind) =>
+        EventCountDrift.Add(1, ConsumerTags(consumer, projectionKind));
+
+    public static void RecordRebuildDivergence(string projectionKind) =>
+        RebuildDrillDivergence.Add(1, KindTag(projectionKind));
+
+    public static void RecordDrillSuccess(string projectionKind) =>
+        LastDrillSuccessEpochSeconds[projectionKind] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+
+    private static IEnumerable<Measurement<double>> ObserveDrillFreshness() =>
+        LastDrillSuccessEpochSeconds.Select(kv =>
+            new Measurement<double>(kv.Value, KindTag(kv.Key)));
+
+    private static KeyValuePair<string, object?>[] ConsumerTags(string consumer, string projectionKind) =>
+    [
+        new(BabelstoneAttributes.ReconciliationConsumer, consumer),
+        new(BabelstoneAttributes.ProjectionKind, projectionKind),
+    ];
+
+    private static KeyValuePair<string, object?>[] KindTag(string projectionKind) =>
+        [new(BabelstoneAttributes.ProjectionKind, projectionKind)];
 }
