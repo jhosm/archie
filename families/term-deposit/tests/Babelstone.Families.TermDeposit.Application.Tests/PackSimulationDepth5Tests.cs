@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using Babelstone.Engine;
 using Babelstone.EventStore;
 using Babelstone.RateSheets;
@@ -199,7 +201,11 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
                 DepositId: depositId,
                 WithdrawnAt: new DateTimeOffset(withdrawnOn, TimeOnly.MinValue, TimeSpan.Zero),
                 WithdrawnAmountCents: withdrawal.WithdrawnCents,
-                Actor: "depth5-sim"));
+                Actor: "depth5-sim",
+                // A deterministic command id (ADR-PC-029 slot 4) derived from the deposit's own id, so the
+                // simulated withdrawal carries a stable Idempotency-Key without a clock/random read — the
+                // partial-withdrawal append now dedupes on it (bd babelstone-9w0g).
+                CommandId: DeterministicCommandId(depositId, "partial-withdrawal")));
             return;
         }
 
@@ -231,6 +237,18 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             MaturedAt: new DateTimeOffset(maturityDate, TimeOnly.MinValue, TimeSpan.Zero),
             PayoutAccount: "PT50-DDA-001",
             Actor: "depth5-sim"));
+    }
+
+    /// <summary>
+    /// A deterministic command id (ADR-PC-029 slot 4 Idempotency-Key) derived from the deposit id and the
+    /// command verb — a stable MD5-hashed Guid, so the simulated command carries a reproducible key with no
+    /// clock/random read (the corpus must be deterministic). MD5 is used as a non-cryptographic hash-to-Guid
+    /// here (a deterministic 16-byte digest), never as a security primitive.
+    /// </summary>
+    private static Guid DeterministicCommandId(Guid depositId, string verb)
+    {
+        var seed = Encoding.UTF8.GetBytes($"{depositId:N}:{verb}");
+        return new Guid(MD5.HashData(seed));
     }
 
     /// <summary>

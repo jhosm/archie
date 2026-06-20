@@ -173,13 +173,14 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         var depositId = (await constitute.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
 
         // Withdraw €5,000 on 2026-06-15 (151 days in, past the 90-day carência): min-withdrawal €500 ✓,
-        // remaining €5,000 ≥ min-remaining €1,000 ✓, carência cleared ✓.
-        var withdrawal = await _client.PostAsJsonAsync(
+        // remaining €5,000 ≥ min-remaining €1,000 ✓, carência cleared ✓. The Idempotency-Key is MANDATORY
+        // on partial withdrawal (ADR-PC-029 slot 4, bd 9w0g) — a fresh key per test.
+        var withdrawal = await PostJsonAsync(
             $"/v1/deposits/{depositId}/partial-withdrawal",
             new PartialWithdrawRequest(
                 WithdrawnAmountCents: 500_000,
                 WithdrawnAt: new DateTimeOffset(2026, 6, 15, 0, 0, 0, TimeSpan.Zero)),
-            SnakeCase);
+            Guid.NewGuid().ToString());
 
         Assert.Equal(HttpStatusCode.OK, withdrawal.StatusCode);
         var withdrawn = await withdrawal.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
@@ -217,15 +218,97 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created, constitute.StatusCode);
         var depositId = (await constitute.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
 
-        // 2026-01-25 is only 10 days in — well inside the 90-day carência.
-        var withdrawal = await _client.PostAsJsonAsync(
+        // 2026-01-25 is only 10 days in — well inside the 90-day carência. A valid Idempotency-Key is
+        // supplied so the request reaches the domain check (the 422 under test), not the mandatory-key 400.
+        var withdrawal = await PostJsonAsync(
             $"/v1/deposits/{depositId}/partial-withdrawal",
             new PartialWithdrawRequest(
                 WithdrawnAmountCents: 500_000,
                 WithdrawnAt: new DateTimeOffset(2026, 1, 25, 0, 0, 0, TimeSpan.Zero)),
-            SnakeCase);
+            Guid.NewGuid().ToString());
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, withdrawal.StatusCode);
+        // No withdrawal landed: the stream still holds only the constitution event.
+        Assert.Equal(["term_deposit.DepositConstituted"], await EventTypesAsync(depositId));
+    }
+
+    [Fact]
+    public async Task ENGINE_COMMAND_IDEMPOTENT_partial_withdrawal_replay_returns_the_original_and_appends_once()
+    {
+        // ADR-PC-029 slot 4 (bd 9w0g): a partial withdrawal is REPEATABLE (it leaves the deposit Active),
+        // so a non-idempotent retry would withdraw twice. Two POSTs with the SAME Idempotency-Key (the
+        // dispatcher's at-least-once retry) reduce the principal ONCE — the second is short-circuited by the
+        // engine's command-dedup pre-check and replays the original outcome, appending exactly one
+        // DepositPartiallyWithdrawn.
+        var constitute = await PostConstituteAsync(new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,                       // €10,000.00
+            ProductId: "dpz_pt_12m_resgate_parcial",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, constitute.StatusCode);
+        var depositId = (await constitute.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
+
+        var key = Guid.NewGuid().ToString();
+        var body = new PartialWithdrawRequest(
+            WithdrawnAmountCents: 500_000,
+            WithdrawnAt: new DateTimeOffset(2026, 6, 15, 0, 0, 0, TimeSpan.Zero));
+
+        var first = await PostJsonAsync($"/v1/deposits/{depositId}/partial-withdrawal", body, key);
+        var second = await PostJsonAsync($"/v1/deposits/{depositId}/partial-withdrawal", body, key);
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var firstBody = await first.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
+        var secondBody = await second.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
+        Assert.NotNull(firstBody);
+        Assert.NotNull(secondBody);
+
+        // The replay returns the ORIGINAL read-your-writes token, verbatim — same head, both Active.
+        Assert.Equal("Active", firstBody.Lifecycle);
+        Assert.Equal("Active", secondBody.Lifecycle);
+        Assert.Equal(firstBody.LastSequence, secondBody.LastSequence);
+
+        // NO second append: exactly one DepositPartiallyWithdrawn on the stream — and the principal is
+        // reduced ONCE (€10,000 − €5,000 = €5,000), not twice (which would leave €0 / a refused termination).
+        Assert.Equal(
+            ["term_deposit.DepositConstituted", "term_deposit.DepositPartiallyWithdrawn"],
+            await EventTypesAsync(depositId));
+        var runtime = _factory.Services.GetRequiredService<AggregateRuntime<DepositPosition>>();
+        var hydrated = await runtime.LoadAsync(depositId);
+        Assert.Equal(500_000, hydrated.State.RemainingPrincipal.Cents);
+    }
+
+    [Theory]
+    [InlineData(null)]          // absent: the Idempotency-Key is MANDATORY (ADR-PC-029 slot 4)
+    [InlineData("not-a-uuid")]  // malformed: the command id must be a deterministic UUID
+    public async Task A_partial_withdrawal_without_a_valid_idempotency_key_is_a_400(string? key)
+    {
+        // bd 9w0g: a partial withdrawal is repeatable, so the engine never accepts a non-idempotent one —
+        // an absent or non-UUID key fails loud (400) BEFORE any append, exactly as the erasure/renewal legs.
+        var constitute = await PostConstituteAsync(new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "dpz_pt_12m_resgate_parcial",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, constitute.StatusCode);
+        var depositId = (await constitute.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
+
+        var response = await PostJsonAsync(
+            $"/v1/deposits/{depositId}/partial-withdrawal",
+            new PartialWithdrawRequest(
+                WithdrawnAmountCents: 500_000,
+                WithdrawnAt: new DateTimeOffset(2026, 6, 15, 0, 0, 0, TimeSpan.Zero)),
+            key);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         // No withdrawal landed: the stream still holds only the constitution event.
         Assert.Equal(["term_deposit.DepositConstituted"], await EventTypesAsync(depositId));
     }

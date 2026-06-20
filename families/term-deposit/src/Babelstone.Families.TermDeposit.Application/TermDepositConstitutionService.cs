@@ -397,9 +397,14 @@ public sealed class TermDepositConstitutionService(
             position, new Money(command.WithdrawnAmountCents), withdrawnOn, policy);
 
         // 4. Append at the current head (optimistic concurrency on the second append). The returned head
-        //    version is the commit_sequence the caller threads for read-your-writes.
+        //    version is the commit_sequence the caller threads for read-your-writes. Thread the CommandId
+        //    so the append's in-transaction command_dedup INSERT fires (ADR-PC-029 slot 4): an at-least-once
+        //    retry of the SAME withdrawal raises DuplicateCommandException and returns the original outcome,
+        //    never a second append — UNLIKE the one-shot lifecycle steps, a partial withdrawal is repeatable
+        //    (it leaves the deposit Active), so a non-idempotent retry would withdraw twice.
         return await runtime.AppendAsync(
-            command.DepositId, hydrated.Version, events, Context(command.Actor, command.WithdrawnAt), ct);
+            command.DepositId, hydrated.Version, events,
+            Context(command.Actor, command.WithdrawnAt, command.CommandId), ct);
     }
 
     /// <summary>

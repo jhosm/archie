@@ -30,10 +30,12 @@ public static class DepositsEndpoints
         app.MapPost("/v1/deposits/{id:guid}/maturity", MatureAsync);
         app.MapPost("/v1/deposits/{id:guid}/interest", PayInterestAsync);
 
-        // Partial early withdrawal (F.12; 02 §2.4.1, bd qze9): reduce the principal, leaving the deposit
-        // Active. A command surface mirroring the maturity/interest pattern — a domain rejection (not
-        // Active, within carência, below the minimum, leaving too little, or the whole balance) surfaces
-        // as a 422, never a phantom withdrawal.
+        // Partial early withdrawal (F.12; 02 §2.4.1, bd qze9/9w0g): reduce the principal, leaving the
+        // deposit Active. A domain rejection (not Active, within carência, below the minimum, leaving too
+        // little, or the whole balance) surfaces as a 422, never a phantom withdrawal. UNLIKE the
+        // maturity/interest siblings it carries a mandatory Idempotency-Key (ADR-PC-029 slot 4): a partial
+        // withdrawal is REPEATABLE (it leaves the deposit Active), so an at-least-once retry must dedupe
+        // rather than withdraw twice — the same idempotency contract the erasure/renewal endpoints carry.
         app.MapPost("/v1/deposits/{id:guid}/partial-withdrawal", WithdrawPartiallyAsync);
 
         // GDPR Article 17 right-to-be-forgotten (bd babelstone-nzw6): crypto-shred the subject's PII
@@ -409,11 +411,39 @@ public static class DepositsEndpoints
     private static async Task<IResult> WithdrawPartiallyAsync(
         Guid id,
         PartialWithdrawRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         TermDepositConstitutionService service,
         AggregateRuntime<DepositPosition> runtime,
+        ICommandLog commandLog,
         TimeProvider clock,
         CancellationToken ct)
     {
+        // ADR-PC-029 slot 4: a deterministic Idempotency-Key is MANDATORY here. UNLIKE the maturity /
+        // interest siblings (one-shot, lifecycle-guarded — re-maturing a Matured deposit is already a 422),
+        // a partial withdrawal is genuinely REPEATABLE: it leaves the deposit Active, so the SAME deposit
+        // could be withdrawn from again. Without a dedup key, the dispatcher's at-least-once retry would
+        // withdraw twice. Fail loud (400) rather than accept a non-idempotent withdrawal, exactly as the
+        // erasure / renewal siblings do.
+        if (idempotencyKey is null || !Guid.TryParse(idempotencyKey, out var commandId))
+        {
+            return Results.Problem(
+                "Idempotency-Key header is required and must be a UUID (ADR-PC-029 slot 4).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // Pre-check BEFORE any side effect (decide / append): a known command id replays the ORIGINAL
+        // outcome with NO second append (ADR-PC-029 slot 4). Returns the same commit_sequence the first
+        // apply did, off the authoritative fold — the idempotent retry the mandatory key requires (NOT the
+        // lifecycle 422, which only guards a NEW withdrawal with a fresh command id). The crash-atomic
+        // guarantee is the in-transaction command_dedup INSERT below; this read keeps the common
+        // sequential retry off the write path.
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(DepositResponse.FromFold(replay));
+        }
+
         // The host shell owns the wall-clock at this boundary: it stamps a missing withdrawn_at, and the
         // service derives the as-of withdrawal date from that instant and passes it to the pure decider as
         // an INPUT (ADR-PC-010 §P5). The withdrawal amount is a per-deposit cents input; the F.12 policy is
@@ -422,11 +452,20 @@ public static class DepositsEndpoints
             DepositId: id,
             WithdrawnAt: request.WithdrawnAt ?? clock.GetUtcNow(),
             WithdrawnAmountCents: request.WithdrawnAmountCents,
-            Actor: request.Actor ?? "mcp:dev");
+            Actor: request.Actor ?? "mcp:dev",
+            CommandId: commandId);
 
         try
         {
             await service.WithdrawPartiallyAsync(command, ct);
+        }
+        catch (DuplicateCommandException)
+        {
+            // A concurrent duplicate slipped past the pre-check: the in-transaction command_dedup INSERT
+            // rolled the append back (no second append) and the dedup guard fired. Return the ORIGINAL
+            // outcome verbatim off the authoritative fold — the idempotent replay slot 4 mandates.
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(DepositResponse.FromFold(replay));
         }
         catch (ConcurrencyException)
         {
