@@ -74,12 +74,14 @@ stop_pidfile() { # pidfile name
 # preflight & infra
 # ---------------------------------------------------------------------------
 
-# The tool checks every launcher shares: docker present + running, mise present, lsof present.
+# The tool checks every launcher shares: docker present + running, mise present, lsof present, and
+# npx (Node) for the YAML→JSON rate-sheet deploy bridge (the same pinned-Node path the CI scripts use).
 require_demo_tools() {
   command -v docker >/dev/null 2>&1 || die "docker not found on PATH"
   docker info >/dev/null 2>&1 || die "docker is not running — start Docker Desktop and retry"
   command -v mise >/dev/null 2>&1 || die "mise not found — run 'make bootstrap' first"
   command -v lsof >/dev/null 2>&1 || die "lsof not found (needed for the port-clash guard)"
+  command -v npx >/dev/null 2>&1 || die "npx (Node.js) not found — needed to serialise the committed rate-sheet YAML to JSON at deploy (brew install node)"
 }
 
 # Block until Postgres accepts connections on the `babelstone` DB inside the compose container.
@@ -235,6 +237,28 @@ ratesheet_post() { # base_url actor bodyfile respfile
     -X POST "$1/v1/rate-sheets" \
     -H 'Content-Type: application/json' -H "X-Deploy-Actor: $2" \
     --data-binary @"$3"
+}
+
+# Serialise a committed rate-sheet YAML source to JSON on stdout. The deploy wire format is JSON
+# (ADR-PC-008 §P2) but the YAML file is the source of truth (§P1: the stored JSONB body is 1:1 with
+# the deployed YAML), so this is the one bridging step. We use js-yaml (pinned via npx) rather than
+# the unpinned `yq` the manual how-to suggests — the same pinned-Node path the CI scripts already
+# take (scripts/asyncapi-catalog-validate.sh), so the demo bring-up adds no new unpinned dependency.
+RATESHEET_JS_YAML="${RATESHEET_JS_YAML:-js-yaml@4.1.0}"
+ratesheet_yaml_to_json() { # yaml_file
+  command -v npx >/dev/null 2>&1 || die "npx (Node.js) is required to serialise the rate-sheet YAML to JSON (brew install node)"
+  npx --yes "$RATESHEET_JS_YAML" "$1" || die "could not serialise rate-sheet YAML '$1' to JSON"
+}
+
+# Serialise a committed rate-sheet YAML source to JSON, then POST it; echo the HTTP status. This is
+# the YAML-native deploy seam (bd babelstone-alfy): the demo deploys the SAME committed file an author
+# edits, so the stored row cannot drift from /rate-sheets. Used inside a deploy_fn exactly like
+# ratesheet_post, but reading a .yaml source instead of a pre-serialised .json body.
+ratesheet_post_yaml() { # base_url actor yaml_file respfile
+  ratesheet_yaml_to_json "$3" | curl -sS -o "$4" -w '%{http_code}' \
+    -X POST "$1/v1/rate-sheets" \
+    -H 'Content-Type: application/json' -H "X-Deploy-Actor: $2" \
+    --data-binary @-
 }
 
 # ---------------------------------------------------------------------------

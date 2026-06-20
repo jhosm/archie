@@ -25,9 +25,23 @@ and a new version is always a new file (forward-only, never an edit in place).
 To author, deploy, and confirm a new version, see
 [how to author and deploy a complete rate-sheet version](../docs/product-docs/how-to/author-and-deploy-a-rate-sheet.md).
 
+## Deploying a sheet
+
+Authoring and deploying are **pure YAML** end to end. Deploy a committed file with
+the YAML-native deploy tool — it serialises the YAML to JSON 1:1 (pinned `js-yaml`)
+and POSTs it with the gateway-attested `X-Deploy-Actor` header:
+
+```sh
+make deploy-rate-sheet SHEET=rate-sheets/term_deposit/pt-deposits-2026.1.yaml
+# or: scripts/deploy-rate-sheet.sh rate-sheets/term_deposit/pt-deposits-2026.1.yaml \
+#       --base-url http://localhost:8080 --actor treasury.analyst@bank.internal
+```
+
+The demo scripts (`make demo-mcp` / `make demo-saga` / `make demo`) deploy straight
+from the committed file above, so the YAML is the single source and cannot drift from
+what the demo runs. Validate a sheet's shape before you deploy (also the CI gate) with
+`make rate-sheet-check`. Full loop: [how to author and deploy a complete rate-sheet
+version](../docs/product-docs/how-to/author-and-deploy-a-rate-sheet.md).
+
 > Extraction-ready subtree per [ADR-PC-019 §P2](../docs/product-management/product_concepts/adrs/ADR-PC-019-repository-strategy-monorepo.md);
 > reserved for the future config-data split once Treasury cadence is observed.
-> **Interim:** the deploy endpoint accepts JSON, so deploying a file today is a
-> manual `yq -o=json | curl` bridge, and the demo scripts still deploy an
-> equivalent inline JSON heredoc rather than reading these files. A YAML-native
-> deploy tool and demo wiring are the follow-up (bd `babelstone-alfy`).
