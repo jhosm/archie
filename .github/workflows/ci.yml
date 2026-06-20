@@ -42,7 +42,7 @@ jobs:
             engine: ['engine/**', '.github/scripts/coverage-floor-cobertura.py']
             pack_validate: ['pack-validate/**']
             families: ['families/**']
-            contracts: ['contracts/**', 'scripts/avro-compat-check.sh', 'scripts/asyncapi-catalog-validate.sh', 'scripts/asyncapi-catalog-reconcile.sh']
+            contracts: ['contracts/**', 'scripts/avro-compat-check.sh', 'scripts/asyncapi-catalog-validate.sh', 'scripts/asyncapi-catalog-reconcile.sh', 'scripts/gen-saga-topics.py', 'scripts/gen-saga-topics-check.sh', 'families/term-deposit/src/Babelstone.Families.TermDeposit.Orchestration/FamilyIntegrationTopics.g.cs']
             orchestrator: ['orchestrator/**']
             acl: ['acl/**']
             mcp_server: ['mcp-server/**']
@@ -336,6 +336,17 @@ jobs:
         # script dev runs via `make asyncapi-catalog-validate`. npx pulls the pinned
         # @asyncapi/cli; the ubuntu-latest runner ships Node.
         run: ./scripts/asyncapi-catalog-validate.sh
+      - name: Saga integration-topic manifest matches the catalogue (ADR-IC-003, bd babelstone-9w2k.4)
+        # The catalogue-derived saga-subscription gate. The orchestrator's sagas subscribe to the
+        # engine's family-integration topic, which == the AsyncAPI catalogue channel (topic ==
+        # aggregate_type, OutboxDrainer). The subscription is derived from the catalogue into a
+        # checked-in generated manifest (FamilyIntegrationTopics.g.cs); this re-derives it from the
+        # working-tree catalogue and FAILS the build if the committed manifest drifts — a missed
+        # channel would be a saga that silently never advances, so it is caught here at build time,
+        # not as a runtime stall (the exhaustive-and-correct-at-startup constraint, ADR-IC-003).
+        # Hermetic + stdlib-only (no broker, no registry, no PyYAML); python3 is on PATH via the
+        # mise-action toolchain above. Same check dev runs via `make gen-saga-topics-check`.
+        run: ./scripts/gen-saga-topics-check.sh
       - name: AsyncAPI catalogue ↔ Schema Registry reconciliation (ADR-IC-015 §8, main only)
         # The LIVE reconciliation, main lane only (never on PRs — keeps the gate above
         # hermetic). Registers the working-tree .avsc set into a throwaway Redpanda

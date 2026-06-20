@@ -22,5 +22,10 @@
     <ProjectReference Include="../../src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <!-- The shared ContainerStartupGate (throttles concurrent Testcontainers startups). -->
     <ProjectReference Include="../Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
+    <!-- HostModuleLoader negative-case fixture assemblies (bd babelstone-9w2k.2): a scan of each trips
+         exactly ONE loader guard — a duplicate-family collision, or a module without a public
+         parameterless ctor — so neither fault is ever in this test assembly's own happy-path scan. -->
+    <ProjectReference Include="../fixtures/Babelstone.HostModuleLoader.DuplicateFixture/Babelstone.HostModuleLoader.DuplicateFixture.csproj" />
+    <ProjectReference Include="../fixtures/Babelstone.HostModuleLoader.NoCtorFixture/Babelstone.HostModuleLoader.NoCtorFixture.csproj" />
   </ItemGroup>
 </Project>

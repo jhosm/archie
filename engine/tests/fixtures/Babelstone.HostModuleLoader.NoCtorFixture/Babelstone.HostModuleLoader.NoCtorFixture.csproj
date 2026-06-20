@@ -1,0 +1,14 @@
+<!-- A negative-case fixture assembly for HostModuleLoaderTests: it contains a single IFamilyHostModule
+     type WITHOUT a public parameterless constructor, so a scan of THIS assembly trips the loader's
+     fail-loud constructor guard (surfacing a diagnosable error at the discovery seam rather than deep
+     inside Activator, mirroring FamilyModuleLoader). Isolated in its own assembly so the missing-ctor
+     case is never in the main test assembly's happy-path scan. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
+  </ItemGroup>
+</Project>
