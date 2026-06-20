@@ -292,6 +292,7 @@ source of truth for each commitment's claim, gate, and status:
 | `OBS_NO_PII_ATTRS` | No PII in any telemetry signal — only the `babelstone.*` operational-tier structural identifiers; money as integer cents (§P4). | Planned |
 | `OBS_TRACEPARENT_PROPAGATION` | W3C `traceparent` propagates across every process boundary, including the durable bus via an envelope header (§P1, Layer 1). | Planned |
 | `OBS_TRACE_ID_SURFACED_HTTP` | At the synchronous HTTP boundary the engine host joins the inbound trace (`AddAspNetCoreInstrumentation`, so the `deposit.*` spans nest under the request span / inbound `traceparent`) and returns the active trace id to the caller on the `X-Trace-Id` response header as an opaque hex id, never PII (§P1 Layer 1 / §P4). A strict subset of `OBS_TRACEPARENT_PROPAGATION`, scoped to in-process HTTP. | Live |
+| `OBS_RECONCILIATION_METRICS` | The projection-reconciliation surface emits live metrics on the `Babelstone.Engine` meter (`reconciliation_checksum_mismatch_total`, `reconciliation_event_count_drift_total`, `reconciliation_rebuild_drill_divergence_total`, and the observable gauge `reconciliation_drill_last_success_timestamp_seconds`), so the M.5 alert rules resolve to real series; tags are operational-tier references (`consumer` / `projection_kind`), never PII (§P2/§P4). | Live |
 
 See [ADR-PC-020 §P5–§P7](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
 for how these commitments are written before (or with) implementation and resolved to running tests.
