@@ -9,12 +9,13 @@ interest fields now folded in (``accrued_gross_interest_cents``, ``withholding_t
 ``net_interest_cents``, ``total_payout_cents``) and ``lifecycle`` = ``Matured``. Money is integer
 cents.
 
-Requires ``deposits:write`` ([ADR-IC-010](../../../product-management/integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). Settlement is irreversible, so under §P8 it carries
-the URL-mode ``elicitation/create`` step-up-SCA TRANSPORT — present but dormant behind
-``ELICITATION_URL_MODE_ENABLED`` (default off). ⚠️ Enabling that flag does NOT enforce SCA:
-settlement still proceeds on the agent-reported navigate-consent, not the bank's own out-of-band
-signal §P8 requires. Real enforcement awaits the SCA-trigger + token-re-entry wiring (the Q1/Q2
-fork below); until then the enabled path is a consent-prompt demo, not a gate.
+Requires ``deposits:write`` ([ADR-IC-010](../../../product-management/integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4). Settlement is irreversible, so under §P8 it is gated by
+real step-up SCA (Q-BE resolved, bd babelstone-ziu3.5): the ENGINE refuses to settle without FRESH
+gateway-attested SCA (the AS-signed ``acr``/``auth_time`` Kong attests) and returns ``422
+SCA_REQUIRED``. This tool then fires the URL-mode step-up elicitation so the human re-authenticates in
+the bank-controlled context, and RETRIES with the refreshed token. The settlement transitions on the
+bank's own signal (the AS signature the engine sees), never the agent's report — the §P8 invariant.
+If the human declines/cancels the step-up, the call is aborted with an ``McpError`` and nothing settles.
 
 ## Signature
 

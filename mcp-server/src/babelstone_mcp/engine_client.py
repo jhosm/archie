@@ -24,6 +24,23 @@ from .sanitize import sanitize_free_text
 # The gateway-attested caller header the MCP server forwards to the engine (ADR-IC-010 §P3).
 CLIENT_ID_HEADER = "X-Client-Id"
 
+# The stable code the engine returns on a money-mover called without FRESH step-up SCA (the §P8 gate,
+# Q-BE Q1 / bd babelstone-ziu3.5). Kept in lock-step with the engine's ScaPrecondition.RequiredCode. The
+# money-mover tools key their step-up-then-retry on this code (Q2).
+SCA_REQUIRED_CODE = "SCA_REQUIRED"
+
+
+class ScaRequiredError(Exception):
+    """Raised when the engine refuses a money-mover with ``422 SCA_REQUIRED`` (ADR-IC-010 §P8).
+
+    The engine settles an irreversible operation only on FRESH gateway-attested step-up SCA — the
+    AS-signed ``acr``/``auth_time`` Kong attests. When that proof is absent, weak, or stale the engine
+    returns ``422`` with a stable ``code`` of :data:`SCA_REQUIRED_CODE`; the client raises THIS typed
+    error so the money-mover tool can distinguish it from any other 4xx and run the step-up-then-retry
+    flow (Q2), rather than surfacing a raw transport error to the agent. Carries no PII — the engine's
+    refusal body is a stable code + generic message only (ADR-PC-004 §P2).
+    """
+
 # Free-text fields in an engine deposit response that a CUSTOMER or an EXTERNAL party can write, and
 # which therefore carry a prompt-injection surface (Document 11 §Trust Model / ADR-IC-010 §P9). Each
 # is run through ``sanitize_free_text`` before it reaches a tool — the bank's second-line defence
@@ -70,6 +87,24 @@ def _with_client_id(headers: dict[str, str] | None, client_id: str | None) -> di
     merged = dict(headers or {})
     merged[CLIENT_ID_HEADER] = client_id
     return merged
+
+
+def _raise_for_sca_required(response: httpx.Response) -> None:
+    """Raise :class:`ScaRequiredError` when ``response`` is the engine's ``422 SCA_REQUIRED`` (§P8).
+
+    A no-op for any other response. Called on a money-mover's response BEFORE ``raise_for_status`` so the
+    step-up gate surfaces as a typed signal the tool acts on (Q2), not a generic ``HTTPStatusError``.
+    Robust to a non-JSON body — a 422 that does not decode to the ``SCA_REQUIRED`` code falls through to
+    the normal ``raise_for_status`` path (it is a different domain rejection).
+    """
+    if response.status_code != 422:
+        return
+    try:
+        body = response.json()
+    except ValueError:
+        return
+    if isinstance(body, dict) and body.get("code") == SCA_REQUIRED_CODE:
+        raise ScaRequiredError()
 
 
 class EngineClient:
@@ -124,14 +159,17 @@ class EngineClient:
     async def mature(self, deposit_id: str, client_id: str | None = None) -> dict[str, Any]:
         """POST /v1/deposits/{id}/maturity — settles the deposit, returns the matured position.
 
-        Same position shape as ``deposit_position`` with ``lifecycle`` = ``Matured``. Raises on a
-        non-2xx engine response (e.g. 422 if the deposit cannot mature).
+        Same position shape as ``deposit_position`` with ``lifecycle`` = ``Matured``. Raises
+        :class:`ScaRequiredError` on the engine's ``422 SCA_REQUIRED`` step-up gate (§P8, Q-BE Q1) so the
+        money-mover tool can step up + retry (Q2); raises ``HTTPStatusError`` on any other non-2xx (e.g. a
+        422 lifecycle rejection if the deposit cannot mature).
         """
         response = await self._client.post(
             f"{self._base_url}/v1/deposits/{deposit_id}/maturity",
             json={},
             headers=_with_client_id(None, client_id),
         )
+        _raise_for_sca_required(response)
         response.raise_for_status()
         # §P9: sanitise any customer-writable free-text before the matured position reaches the agent.
         return sanitize_engine_response(response.json())
@@ -141,14 +179,17 @@ class EngineClient:
 
         Same position shape as ``deposit_position`` with the coupon's gross/withholding/net folded
         in and ``coupons_paid`` incremented. The coupon window is derived by the engine from the
-        deposit's schedule — not supplied here. Raises on a non-2xx engine response (e.g. 422 if the
-        deposit is not Active, not PERIODIC, or has no intermediate coupon left).
+        deposit's schedule — not supplied here. Raises :class:`ScaRequiredError` on the engine's
+        ``422 SCA_REQUIRED`` step-up gate (§P8, Q-BE Q1) so the tool can step up + retry (Q2); raises
+        ``HTTPStatusError`` on any other non-2xx (e.g. a 422 if the deposit is not Active, not PERIODIC,
+        or has no intermediate coupon left).
         """
         response = await self._client.post(
             f"{self._base_url}/v1/deposits/{deposit_id}/interest",
             json={},
             headers=_with_client_id(None, client_id),
         )
+        _raise_for_sca_required(response)
         response.raise_for_status()
         # §P9: sanitise any customer-writable free-text before the coupon position reaches the agent.
         return sanitize_engine_response(response.json())

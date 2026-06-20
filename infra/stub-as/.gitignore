@@ -1,0 +1,15 @@
+# Stub authorization server — POC step-up SCA token issuer.
+#
+# The stub signs with the THROWAWAY POC RSA key committed in infra/kong/kong.yml. That throwaway key
+# is fine to commit (it grants nothing on a real deployment). REAL key material must NEVER land here:
+# block any private key / cert / secret a contributor might drop in while wiring a real AS.
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jwk
+*.jwks
+secrets/
+.env
+.env.*

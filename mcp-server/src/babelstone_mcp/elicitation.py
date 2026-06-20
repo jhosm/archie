@@ -10,20 +10,22 @@ accept, or a single ``ElicitationAborted`` exception the calling tool catches an
 
 Formally: this provides the URL-mode and form-mode elicitation *transport* for ADR-IC-010 §P8
 (URL mode for irreversible operations, form mode for non-irreversible parameter clarifications) and
-Document 11 §Human-in-the-Loop. The form-mode half is fully realised (it confirms a non-irreversible
-choice, which §P8 reserves form mode for). The URL-mode half is the transport only: §P8's
-saga-transition invariant — "the customer's SCA-bound action at the bank-controlled URL is what
-transitions the saga, not anything the agent reports back" — is deliberately left UNWIRED in v1
-(its saga-orchestrator half is owned elsewhere; see ``server.py``'s ``_maybe_stepup_sca`` flag).
-So this module does NOT by itself satisfy §P8 for an irreversible op; it supplies the prompt the
-human navigates from. Two helpers:
+Document 11 §Human-in-the-Loop. The form-mode half confirms a non-irreversible choice (which §P8
+reserves form mode for). The URL-mode half is the human-facing step-up PROMPT in the §P8 gate that is
+now REAL (Q-BE resolved, bd babelstone-ziu3.5): the actual ENFORCEMENT is the engine's ScaPrecondition
+(it settles a money-mover only on the bank-signed ``acr`` the gateway attests), so §P8's invariant —
+"the irreversible action transitions on the bank's own signal, not anything the agent reports back" —
+is satisfied by the engine, not by this prompt. ``server.py``'s ``_settle_with_stepup_sca`` runs the
+engine call, and on a ``422 SCA_REQUIRED`` fires this prompt and retries with the refreshed token. So
+an accept here is NOT itself the settlement signal: it is only the cue to retry, and a fabricated
+accept is refused again by the engine. Two helpers:
 
   * ``elicit_form_clarification`` — form mode (``ctx.elicit``), for confirming a non-irreversible
     choice. Returns the validated schema instance on accept.
-  * ``elicit_url_stepup`` — URL mode (``ctx.elicit_url``), the transport for a step-up-SCA prompt on
-    an irreversible operation. Returns ``True`` on accept — but see the warning below: an accept is
-    only the agent reporting the human consented to NAVIGATE; it is NOT proof SCA completed, so a
-    caller MUST NOT treat it as the §P8 saga-transition signal.
+  * ``elicit_url_stepup`` — URL mode (``ctx.elicit_url``), the step-up-SCA prompt on an irreversible
+    operation. Returns ``True`` on accept — but see the warning below: an accept is only the agent
+    reporting the human consented to NAVIGATE; it is NOT proof SCA completed, so the caller treats it
+    as a cue to RETRY (where the engine re-checks the bank-signed proof), never as the gate itself.
 
 NO-PII INVARIANT (ADR-PC-004 §P2, Document 11 §"prompt injection via bank-returned content"): the
 ``message`` handed to either helper MUST be a static, generic string — never an f-string
@@ -35,13 +37,13 @@ The only dynamic content allowed in a URL is a stable operation code and an ``el
 elicitation channel — identity stays the gateway-attested ``X-Client-Id`` (Document 11), and the
 prompt the agent sees carries only stable codes and generic text.
 
-WHAT THIS MODULE DELIBERATELY DOES NOT DECIDE — the step-up SCA fork (flagged for the maintainer):
-how a money-mover *detects* that fresh SCA is needed, and how the post-SCA fresh token/proof
-*re-enters* the tool call, are genuine security-flow decisions that touch the saga orchestrator
-(ADR-IC-010 §P8's note: "realised by the saga orchestrator") and possibly a Kong-level SCA gate on
-the ``/mcp`` route (ADR-IC-006 §P2 — present on the constitute REST route, ABSENT on ``/mcp``). This
-module ships the elicitation MACHINERY only; it does not invent that gate. See ``server.py``'s
-maintainer-flag comments on the money-mover tools.
+WHERE THE STEP-UP-SCA FORK LANDED (Q-BE resolved, bd babelstone-ziu3.5): how a money-mover *detects*
+that fresh SCA is needed = the ENGINE returns ``422 SCA_REQUIRED`` (Q1), and how the post-SCA proof
+*re-enters* = a refreshed Bearer carrying a fresh ``acr``/``auth_time`` the gateway attests (Q2).
+Neither lives in this module: this module ships the elicitation MACHINERY (the prompt the human
+navigates from); the gate is the engine's ``ScaPrecondition`` and the orchestration is
+``server.py``'s ``_settle_with_stepup_sca``. See ADR-IC-010 §P8 Amendment 2026-06-20 (A7–A10) and the
+money-mover tool docstrings.
 """
 
 from __future__ import annotations
@@ -120,10 +122,11 @@ async def elicit_url_stepup(
     ⚠️ ``True`` here means ONLY that the agent reported the human consented to NAVIGATE to the URL —
     NOT that SCA completed. Per the MCP SDK the actual interaction happens out-of-band, and per
     ADR-IC-010 §P8 / Document 11 the irreversible action must transition "from the bank's own signal,
-    not from anything the agent reports back." So a caller MUST NOT treat this ``True`` as the
-    §P8 saga-transition signal — that out-of-band completion half is not wired in v1 (see
-    ``server.py``'s ``_maybe_stepup_sca`` flag). This helper supplies the prompt; it does not enforce
-    a gate.
+    not from anything the agent reports back." So the caller treats this ``True`` as a cue to RETRY the
+    money-mover with a refreshed token, NOT as the gate itself — the gate is the engine's
+    ``ScaPrecondition``, which re-checks the bank-signed ``acr`` on the retry (Q-BE resolved, bd
+    babelstone-ziu3.5; see ``server.py``'s ``_settle_with_stepup_sca``). This helper supplies the
+    prompt; the engine enforces the gate.
 
     ``message`` must be a static, generic string; ``url`` may contain ONLY a stable operation code
     and the ``elicitation_id`` UUID (never a deposit id, client id, IBAN, or amount).

@@ -298,11 +298,24 @@ public static class DepositsEndpoints
     private static async Task<IResult> MatureAsync(
         Guid id,
         MatureDepositRequest request,
+        HttpContext http,
         TermDepositConstitutionService service,
         AggregateRuntime<DepositPosition> runtime,
         TimeProvider clock,
         CancellationToken ct)
     {
+        // §P8 step-up-SCA precondition (Q-BE Q1, bd babelstone-ziu3.5): maturity is an irreversible
+        // money-mover, so the engine refuses to settle without FRESH gateway-attested SCA proof
+        // (the AS-signed acr Kong copied into X-SCA-Acr/X-SCA-Auth-Time). Absent/weak/stale => 422
+        // SCA_REQUIRED, which the MCP tool catches to fire the step-up elicitation and retry with a
+        // refreshed token. The trust anchor is the AS signature Kong validated, never the agent's
+        // report — the §P8 invariant. Checked BEFORE any side effect.
+        var sca = ScaPrecondition.Check(http.Request.Headers, clock.GetUtcNow());
+        if (sca is not null)
+        {
+            return sca;
+        }
+
         var command = new MatureDepositCommand(
             DepositId: id,
             MaturedAt: request.MaturedAt ?? clock.GetUtcNow(),
@@ -357,11 +370,23 @@ public static class DepositsEndpoints
     private static async Task<IResult> PayInterestAsync(
         Guid id,
         PayInterestRequest request,
+        HttpContext http,
         TermDepositConstitutionService service,
         AggregateRuntime<DepositPosition> runtime,
         TimeProvider clock,
         CancellationToken ct)
     {
+        // §P8 step-up-SCA precondition (Q-BE Q1, bd babelstone-ziu3.5): a PERIODIC coupon is an
+        // irreversible money-mover, the same class as maturity, so it carries the SAME fresh-SCA gate
+        // (the AS-signed acr Kong attested as X-SCA-Acr/X-SCA-Auth-Time). Absent/weak/stale => 422
+        // SCA_REQUIRED, the MCP tool steps up + retries with a refreshed token. Checked BEFORE any
+        // side effect. SCA parity: a money-mover must not be less guarded than its sibling.
+        var sca = ScaPrecondition.Check(http.Request.Headers, clock.GetUtcNow());
+        if (sca is not null)
+        {
+            return sca;
+        }
+
         var command = new PayInterestCommand(
             DepositId: id,
             PaidAt: request.PaidAt ?? clock.GetUtcNow(),

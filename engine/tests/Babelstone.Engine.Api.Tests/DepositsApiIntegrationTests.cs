@@ -115,9 +115,10 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal("pt-deposits-2026.1", active.RateSheetVersionId);
         Assert.Equal("Active", active.Lifecycle);
 
-        // Mature → the canonical AT_MATURITY numbers.
-        var maturityResponse = await _client.PostAsJsonAsync(
-            $"/v1/deposits/{depositId}/maturity", new MatureDepositRequest(), SnakeCase);
+        // Mature → the canonical AT_MATURITY numbers. Maturity is a money-mover, so it carries fresh
+        // gateway-attested step-up SCA (ScaPrecondition, bd babelstone-ziu3.5) — without it the gate 422s.
+        var maturityResponse = await PostMoneyMoverWithFreshScaAsync(
+            $"/v1/deposits/{depositId}/maturity", new MatureDepositRequest());
         Assert.Equal(HttpStatusCode.OK, maturityResponse.StatusCode);
         var matured = await maturityResponse.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
         Assert.NotNull(matured);
@@ -150,6 +151,83 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     {
         var response = await _client.GetAsync($"/v1/deposits/{Guid.NewGuid()}");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    // ── §P8 step-up-SCA gate on the money-movers (Q-BE Q1, bd babelstone-ziu3.5) ──────────────────────
+    // The agent channel's irreversible money-movers (maturity, coupon payout) refuse to settle without
+    // FRESH gateway-attested SCA proof — the AS-signed acr Kong copied into X-SCA-Acr/X-SCA-Auth-Time.
+    // The MCP_SCA_GATE_CANNOT_BYPASS invariant: no money-mover settles on the agent's word; the gate
+    // transitions on the bank's own signal (the AS signature Kong validated), exactly as ADR-IC-010 §P8
+    // requires. These tests are the engine half; the MCP step-up-then-retry half lives in
+    // mcp-server/tests/test_server.py.
+
+    [Fact]
+    public async Task Mature_without_any_SCA_proof_is_422_SCA_REQUIRED_and_does_not_settle()
+    {
+        var depositId = await ConstituteActiveDepositAsync();
+
+        // No X-SCA-Acr / X-SCA-Auth-Time at all — the gateway attested no fresh SCA.
+        var response = await _client.PostAsJsonAsync(
+            $"/v1/deposits/{depositId}/maturity", new MatureDepositRequest(), SnakeCase);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        await AssertScaRequiredAsync(response);
+        // The deposit did NOT settle — the stream still carries only the constitution event.
+        Assert.Equal(["term_deposit.DepositConstituted"], await EventTypesAsync(depositId));
+    }
+
+    [Fact]
+    public async Task Mature_with_a_stale_SCA_auth_time_is_422_SCA_REQUIRED()
+    {
+        var depositId = await ConstituteActiveDepositAsync();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/deposits/{depositId}/maturity")
+        {
+            Content = JsonContent.Create(new MatureDepositRequest(), options: SnakeCase),
+        };
+        request.Headers.TryAddWithoutValidation(ScaPrecondition.AcrHeader, "urn:bank:sca:psd2");
+        // auth_time well beyond the freshness window (MaxAgeSeconds): SCA happened, but too long ago.
+        var stale = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - (ScaPrecondition.MaxAgeSeconds + 60);
+        request.Headers.TryAddWithoutValidation(ScaPrecondition.AuthTimeHeader, stale.ToString());
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        await AssertScaRequiredAsync(response);
+        Assert.Equal(["term_deposit.DepositConstituted"], await EventTypesAsync(depositId));
+    }
+
+    [Fact]
+    public async Task Mature_with_fresh_attested_SCA_settles_normally()
+    {
+        var depositId = await ConstituteActiveDepositAsync();
+
+        var response = await PostMoneyMoverWithFreshScaAsync(
+            $"/v1/deposits/{depositId}/maturity", new MatureDepositRequest());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var matured = await response.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
+        Assert.NotNull(matured);
+        Assert.Equal("Matured", matured.Lifecycle);
+    }
+
+    /// <summary>Constitute a vanilla Active AT_MATURITY deposit and return its id — the precondition for
+    /// the money-mover SCA-gate tests.</summary>
+    private async Task<Guid> ConstituteActiveDepositAsync()
+    {
+        var constitute = await PostConstituteAsync(new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000, ProductId: "dpz_pt_12m_juros_venc", Role: "standard", TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15), InterestVariant: "AT_MATURITY", AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, constitute.StatusCode);
+        return (await constitute.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
+    }
+
+    /// <summary>Assert a 422 response carries the stable <c>SCA_REQUIRED</c> code and no PII.</summary>
+    private static async Task AssertScaRequiredAsync(HttpResponseMessage response)
+    {
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(ScaPrecondition.RequiredCode, problem.GetProperty("code").GetString());
     }
 
     [Fact]
@@ -437,10 +515,11 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         // The constitution event is sequence 0 (the head version the append reached).
         var asOfConstitution = constituted.CommitSequence;
 
-        // Mature it — appends three more events (InterestAccrued, WithholdingApplied, DepositMatured),
-        // advancing the head well past the constitution sequence.
-        var maturityResponse = await _client.PostAsJsonAsync(
-            $"/v1/deposits/{depositId}/maturity", new MatureDepositRequest(), SnakeCase);
+        // Mature it (with fresh attested SCA — the money-mover gate, bd babelstone-ziu3.5) — appends
+        // three more events (InterestAccrued, WithholdingApplied, DepositMatured), advancing the head
+        // well past the constitution sequence.
+        var maturityResponse = await PostMoneyMoverWithFreshScaAsync(
+            $"/v1/deposits/{depositId}/maturity", new MatureDepositRequest());
         Assert.Equal(HttpStatusCode.OK, maturityResponse.StatusCode);
         var maturedHead = (await maturityResponse.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase))!;
         Assert.Equal("Matured", maturedHead.Lifecycle);
@@ -893,9 +972,9 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created, constitute.StatusCode);
         var depositId = (await constitute.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
 
-        var maturity = await _client.PostAsJsonAsync(
+        var maturity = await PostMoneyMoverWithFreshScaAsync(
             $"/v1/deposits/{depositId}/maturity",
-            new MatureDepositRequest(MaturedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero)), SnakeCase);
+            new MatureDepositRequest(MaturedAt: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero)));
         Assert.Equal(HttpStatusCode.OK, maturity.StatusCode);
         return depositId;
     }
@@ -949,5 +1028,28 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         }
 
         return await _client.SendAsync(request);
+    }
+
+    /// <summary>POST a money-mover (maturity / interest) with FRESH gateway-attested step-up-SCA headers
+    /// — the agent channel's success posture after the customer completed SCA and Kong attested the
+    /// AS-signed acr/auth_time (ScaPrecondition, bd babelstone-ziu3.5). Use this on every maturity /
+    /// interest POST that must SUCCEED; the gate now 422s a money-mover with no fresh SCA proof.</summary>
+    private async Task<HttpResponseMessage> PostMoneyMoverWithFreshScaAsync<TBody>(string url, TBody body)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = JsonContent.Create(body, options: SnakeCase),
+        };
+        AddFreshSca(request);
+        return await _client.SendAsync(request);
+    }
+
+    /// <summary>Attest a FRESH, sufficiently-strong SCA proof on the request, exactly as Kong's
+    /// set_header attestation would from an AS-signed token (acr present, auth_time = now).</summary>
+    private static void AddFreshSca(HttpRequestMessage request)
+    {
+        request.Headers.TryAddWithoutValidation(ScaPrecondition.AcrHeader, "urn:bank:sca:psd2");
+        request.Headers.TryAddWithoutValidation(
+            ScaPrecondition.AuthTimeHeader, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString());
     }
 }
