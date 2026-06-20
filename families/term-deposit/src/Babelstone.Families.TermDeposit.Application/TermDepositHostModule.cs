@@ -130,6 +130,16 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             // through this seam at constitution (ADR-PC-009 / ADR-PC-008 §S2).
             productConfigStore: serviceProvider.GetRequiredService<IProductConfigStore>()));
 
+        // The operator pack-migration write-path (ADR-PC-009 §P3, surface §3.6): re-pin a live instance
+        // to a newer pack by appending the engine-declared PackVersionMigrated through this family's
+        // runtime. It reads each instance's current pin off the event store head and appends the
+        // migration pinned to the target pack (the re-pin lives on the envelope). The event is
+        // engine-owned + family-agnostic, but it is appended to a term-deposit stream, so the service
+        // composes the family runtime + the shared event store here.
+        services.AddSingleton(serviceProvider => new PackMigrationService(
+            serviceProvider.GetRequiredService<AggregateRuntime<DepositPosition>>(),
+            serviceProvider.GetRequiredService<IEventStore>()));
+
         // D.2 projection runtime (ADR-PC-002 §P4, two-modes §5.4): the family declares its
         // projections (currently just the deposit position) + their folds; the generic runtime
         // (registry + drainer) lives in the spine. The async relay materialises them into the
@@ -194,7 +204,14 @@ public sealed class TermDepositHostModule : IFamilyHostModule
         services.AddHostedService(_ => new ReadModelMigrationHostedService(migrationConnectionString));
     }
 
-    public void MapEndpoints(IEndpointRouteBuilder app) => DepositsEndpoints.Map(app);
+    public void MapEndpoints(IEndpointRouteBuilder app)
+    {
+        DepositsEndpoints.Map(app);
+        // The operator pack-migration command surface (ADR-PC-009 §P3 / surface §3.6): POST
+        // /v1/pack-migrations. Mapped alongside the deposit endpoints — it is family-scoped (it appends
+        // through the term-deposit runtime) even though the migration event itself is engine-declared.
+        PackMigrationsEndpoints.Map(app);
+    }
 }
 
 /// <summary>
