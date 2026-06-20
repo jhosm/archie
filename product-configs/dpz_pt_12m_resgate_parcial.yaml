@@ -1,0 +1,70 @@
+# dpz_pt_12m_resgate_parcial — 12-month PT term deposit, PARTIAL-WITHDRAWAL policy.
+#
+# F.12 variant. The first launch variant to DECLARE a partial-withdrawal policy
+# (resgate parcial): the three gates a partial early withdrawal must clear — a
+# minimum withdrawal amount, a minimum remaining balance, and a carência (lock-up)
+# window after constitution. The engine resolves these to a PartialWithdrawalPolicy
+# at constitution and the decider takes it as an explicit input (02 §2.4.1;
+# ADR-PC-008; ADR-PC-021 §D3). A partial withdrawal is a PRINCIPAL reduction only —
+# no interest/tax/settlement flow; withdrawing the whole balance is a termination
+# (F.4), not a partial withdrawal.
+#
+# Interest is paid once at maturity (the AT_MATURITY shape, 02 §2.1) — the
+# partial-withdrawal policy is orthogonal to the interest cadence. Flat rate by
+# reference only; the numeric TAN resolves at constitution (surface §2.3;
+# ADR-PC-008). No inline rate; no derived TANB/TANL/TAE.
+#
+# The partial_withdrawal block satisfies the depth-4 coherence invariants the
+# validator enforces (pack-validate depth4Regulatory): carencia_days (90) <
+# term_days (365), and min_remaining_balance_cents (€1,000) <
+# principal_bounds.max_cents (€500,000).
+#
+# Validate (depths 1–4) against the pinned pack with:
+#   make validate-variant VARIANT=product-configs/dpz_pt_12m_resgate_parcial.yaml
+variant_id: dpz_pt_12m_resgate_parcial
+schema: term_deposit@2026.1
+pack: pt.2026.1
+
+# 12 months, Act/360 (02 §2.2). `pt.act_360` is the only day-count depth-4
+# permits for a `pt` term deposit.
+term_days: 365
+day_count: pt.act_360
+currency: EUR
+
+# Interest credited once, at maturity — no intra-term cadence (02 §2.1).
+interest_variant: AT_MATURITY
+
+# Flat rate: one rate-sheet reference, no inline number (surface §2.3).
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+
+# Conventional flat early-termination: an all-or-nothing forfeit of accrued
+# interest before maturity (02 §2.5, the degenerate one-band schedule). Orthogonal
+# to the partial-withdrawal policy below — early termination CLOSES the deposit,
+# a partial withdrawal LEAVES it open and Active.
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000   # lose all accrued interest
+    basis: ACCRUED_INTEREST
+
+# Single fixed term, no roll-over.
+auto_renewal_policy: NONE
+
+# Risk corridor: €1,000 minimum, €500,000 maximum. min_cents equals the partial-
+# withdrawal min-remaining floor, so even the smallest legal deposit can host a
+# withdrawal that leaves the floor on deposit.
+principal_bounds:
+  min_cents: 100000     # €1,000.00
+  max_cents: 50000000   # €500,000.00
+
+# Partial-withdrawal policy (F.12; 02 §2.4.1). Illustrative gates: a €500 minimum
+# per withdrawal, €1,000 must remain on deposit afterward, and a 90-day carência
+# (lock-up) from constitution. Field names mirror the engine's
+# PartialWithdrawalPolicy one-for-one. Omitting this whole block would resolve to
+# PartialWithdrawalPolicy.Unrestricted (no F.12 gate).
+partial_withdrawal:
+  min_withdrawal_cents: 50000          # €500.00
+  min_remaining_balance_cents: 100000  # €1,000.00
+  carencia_days: 90

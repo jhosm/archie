@@ -181,9 +181,26 @@ internal sealed record VariantShape(
     int TermDays,
     int PaymentPeriodMonths,
     SimulatedLifecycle Lifecycle = SimulatedLifecycle.AtMaturity,
-    EarlyTerminationShape? EarlyTermination = null);
+    EarlyTerminationShape? EarlyTermination = null,
+    PartialWithdrawalShape? PartialWithdrawal = null);
 
-/// <summary>Which terminal lifecycle the depth-5 simulation drives a variant to (bd babelstone-3h64).</summary>
+/// <summary>The deterministic partial-withdrawal INPUTS the depth-5 simulation drives a
+/// <see cref="SimulatedLifecycle.PartialWithdrawal"/> variant with (bd k6r8.10): the elapsed day the
+/// withdrawal fires at and the fixed amount withdrawn. Both are INPUTS (start + N days, fixed cents) so
+/// the produced sequence is identical on every run and CI host, mirroring the banded leg's
+/// <see cref="EarlyTerminationShape.BreakAfterDays"/>. The policy itself is NOT carried here — the F.12
+/// policy rides on the product config (k6r8.8) and is resolved from the REAL <c>resgate parcial</c>
+/// variant AT CONSTITUTION through the wired product-config store, then PINNED on the deposit (the
+/// withdrawal reads the pinned policy off the position) — so the leg exercises the whole F.12 chain
+/// end-to-end. The chosen values must clear that variant's pinned gates (past the carência; at least the
+/// minimum withdrawal; leaving at least the minimum remaining balance).</summary>
+/// <param name="WithdrawAfterDays">Elapsed days from constitution to the simulated withdrawal — chosen
+/// strictly on/after the variant's carência so the lock-up gate passes.</param>
+/// <param name="WithdrawnCents">The fixed principal withdrawn, in cents — chosen to clear the minimum
+/// withdrawal and leave at least the minimum remaining balance on deposit.</param>
+internal sealed record PartialWithdrawalShape(int WithdrawAfterDays, long WithdrawnCents);
+
+/// <summary>Which lifecycle the depth-5 simulation drives a variant to (bd babelstone-3h64, k6r8.10).</summary>
 internal enum SimulatedLifecycle
 {
     /// <summary>Constitute → (coupons) → mature: the four maturing interest shapes.</summary>
@@ -193,6 +210,13 @@ internal enum SimulatedLifecycle
     /// <c>resgate escalonado</c> variant, whose distinctive behaviour is the first-match penalty
     /// schedule, never exercised by an at-maturity run.</summary>
     BandedEarlyTermination,
+
+    /// <summary>Constitute → partially withdraw (F.12, bd k6r8.10): the <c>resgate parcial</c> variant.
+    /// A partial withdrawal is STATE-PRESERVING (F.3) — it reduces the principal but does NOT close the
+    /// deposit, so this leg does NOT run to a terminal state: it ends with the deposit still Active and a
+    /// reduced RemainingPrincipal. The load-bearing evidence is the <c>DepositPartiallyWithdrawn</c> event
+    /// replaying and the terminal fold carrying the reduced principal.</summary>
+    PartialWithdrawal,
 }
 
 /// <summary>The resolved banded early-termination schedule the depth-5 simulation drives a
@@ -235,6 +259,16 @@ internal static class TermDepositVariants
             ["dpz_pt_18m_resgate_escalonado"] = new(
                 "AT_MATURITY", TermDays: 545, PaymentPeriodMonths: 0,
                 SimulatedLifecycle.BandedEarlyTermination, BandedResgateEscalonado),
+            // The F.12 `resgate parcial` variant (bd k6r8.10): an underlying AT_MATURITY deposit the
+            // simulation drives through a PARTIAL withdrawal instead of to maturity. Its declared policy
+            // (min €500 withdrawal, min €1,000 remaining, 90-day carência) is resolved from the product
+            // config — not pinned here. The withdrawal fires on day 120 (past the 90-day carência) for
+            // €10,000, leaving €30,000 of a €40,000 principal (clears every gate). The deposit stays
+            // Active afterward (partial withdrawal is state-preserving, F.3).
+            ["dpz_pt_12m_resgate_parcial"] = new(
+                "AT_MATURITY", TermDays: 365, PaymentPeriodMonths: 0,
+                SimulatedLifecycle.PartialWithdrawal,
+                PartialWithdrawal: new PartialWithdrawalShape(WithdrawAfterDays: 120, WithdrawnCents: 1_000_000)),
         };
 
     public static VariantShape For(string variantId) =>

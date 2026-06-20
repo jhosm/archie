@@ -96,6 +96,10 @@ const (
 	KindForbiddenDayCount = "forbidden_day_count" // the pack forbids this day-count for a deposit (PT: Act/360 only)
 
 	KindForbiddenRenewalPolicy = "forbidden_renewal_policy" // the pack forbids this auto-renewal policy for the family (02 §2.4.4: SAME_TERM_SAME_RATE is pack-restricted)
+
+	// F.12 partial-withdrawal cross-field coherence (structural, not pack-declared — like the steps/bands ordering checks)
+	KindCarenciaExceedsTerm        = "carencia_exceeds_term"          // the carência lock-up meets/exceeds the term — the deposit could never be partially withdrawn
+	KindRemainingExceedsMaxCents   = "remaining_exceeds_max_cents"    // min remaining balance meets/exceeds principal_bounds.max_cents — no deposit could ever host a legal partial withdrawal
 )
 
 // Diagnostic is one finding. The shape is ADR-PC-006 §P2 verbatim:

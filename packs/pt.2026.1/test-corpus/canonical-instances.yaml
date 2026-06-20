@@ -57,3 +57,14 @@ tests:
     principal_cents: 4000000        # €40,000.00
     constituted_at: 2026-05-04
     rate_basis_points: 340          # 3.40% TAN (resolved input)
+
+  # PARTIAL withdrawal (resgate parcial) — 12-month, AT_MATURITY interest (F.12). The depth-5 leg
+  # withdraws €10,000 on day 120 (past the variant's 90-day carência), leaving €30,000 on deposit and
+  # the deposit Active. A partial withdrawal is state-preserving (F.3), so this instance does NOT run
+  # to maturity; its evidence is the DepositPartiallyWithdrawn replay + the reduced remaining principal.
+  - test_id: pt_dpz_12m_partial_withdrawal
+    pack: pt.2026.1
+    variant_id: dpz_pt_12m_resgate_parcial
+    principal_cents: 4000000        # €40,000.00
+    constituted_at: 2026-06-01
+    rate_basis_points: 300          # 3.00% TAN (resolved input)

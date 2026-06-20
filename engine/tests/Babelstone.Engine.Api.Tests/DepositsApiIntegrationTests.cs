@@ -1,12 +1,15 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Babelstone.Engine;
 using Babelstone.Engine.Api;
 using Babelstone.EventStore.Migrations;
+using Babelstone.Families.TermDeposit;
 using Babelstone.Families.TermDeposit.Application;
 using Babelstone.RateSheets;
 using Babelstone.TestFixtures;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -55,7 +58,11 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
             ProductFamily: "term_deposit",
             PackVersion: "pt.2026.1",
             EffectiveFrom: new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
-            Body: FlatPriced("dpz_pt_12m_juros_venc", "standard", 300),
+            // Price both the walking-skeleton product and the F.12 resgate-parcial variant (the
+            // partial-withdrawal endpoint constitutes under the latter, bd qze9) at 300 bps / standard.
+            Body: FlatPriced(
+                ("dpz_pt_12m_juros_venc", "standard", 300),
+                ("dpz_pt_12m_resgate_parcial", "standard", 300)),
             ApprovedBy: "alm@bank.pt",
             ApprovalRef: "RC-2026-001",
             PublishedBy: "deploy@bank.pt"));
@@ -143,6 +150,84 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     {
         var response = await _client.GetAsync($"/v1/deposits/{Guid.NewGuid()}");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Partial_withdrawal_over_HTTP_reduces_the_principal_and_keeps_the_deposit_Active()
+    {
+        // bd qze9 end-to-end over the HTTP surface: constitute a resgate-parcial deposit, then POST a
+        // partial withdrawal that clears all three F.12 gates (the policy is resolved engine-side from the
+        // deposit's product config, bd k6r8.8). The deposit stays Active (a partial withdrawal is
+        // state-preserving, F.3) with a reduced RemainingPrincipal, and the durable log carries exactly
+        // [DepositConstituted, DepositPartiallyWithdrawn].
+        var constitute = await PostConstituteAsync(new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,                       // €10,000.00
+            ProductId: "dpz_pt_12m_resgate_parcial",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, constitute.StatusCode);
+        var depositId = (await constitute.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
+
+        // Withdraw €5,000 on 2026-06-15 (151 days in, past the 90-day carência): min-withdrawal €500 ✓,
+        // remaining €5,000 ≥ min-remaining €1,000 ✓, carência cleared ✓.
+        var withdrawal = await _client.PostAsJsonAsync(
+            $"/v1/deposits/{depositId}/partial-withdrawal",
+            new PartialWithdrawRequest(
+                WithdrawnAmountCents: 500_000,
+                WithdrawnAt: new DateTimeOffset(2026, 6, 15, 0, 0, 0, TimeSpan.Zero)),
+            SnakeCase);
+
+        Assert.Equal(HttpStatusCode.OK, withdrawal.StatusCode);
+        var withdrawn = await withdrawal.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
+        Assert.NotNull(withdrawn);
+        Assert.Equal("Active", withdrawn.Lifecycle);          // state-preserving — the deposit stays open
+
+        // The durable log: constitution then the single partial-withdrawal event (no settlement leg).
+        Assert.Equal(
+            ["term_deposit.DepositConstituted", "term_deposit.DepositPartiallyWithdrawn"],
+            await EventTypesAsync(depositId));
+
+        // The folded position carries the reduced remaining principal (€10,000 − €5,000 = €5,000). The
+        // HTTP DepositResponse does not surface remaining principal, so this is asserted off the host's
+        // own runtime fold — the authoritative replay.
+        var runtime = _factory.Services.GetRequiredService<AggregateRuntime<DepositPosition>>();
+        var hydrated = await runtime.LoadAsync(depositId);
+        Assert.Equal(500_000, hydrated.State.RemainingPrincipal.Cents);
+    }
+
+    [Fact]
+    public async Task A_partial_withdrawal_within_the_carencia_is_a_422()
+    {
+        // The F.12 carência (lock-up) gate at the HTTP boundary: a withdrawal dated inside the 90-day
+        // lock-up is a clean 422 (DomainRejectedException), never a phantom withdrawal — and the deposit
+        // is untouched (no DepositPartiallyWithdrawn appended).
+        var constitute = await PostConstituteAsync(new ConstituteDepositRequest(
+            PrincipalCents: 1_000_000,
+            ProductId: "dpz_pt_12m_resgate_parcial",
+            Role: "standard",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            FundingAccount: "PT50-DDA-001"), Guid.NewGuid().ToString());
+        Assert.Equal(HttpStatusCode.Created, constitute.StatusCode);
+        var depositId = (await constitute.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
+
+        // 2026-01-25 is only 10 days in — well inside the 90-day carência.
+        var withdrawal = await _client.PostAsJsonAsync(
+            $"/v1/deposits/{depositId}/partial-withdrawal",
+            new PartialWithdrawRequest(
+                WithdrawnAmountCents: 500_000,
+                WithdrawnAt: new DateTimeOffset(2026, 1, 25, 0, 0, 0, TimeSpan.Zero)),
+            SnakeCase);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, withdrawal.StatusCode);
+        // No withdrawal landed: the stream still holds only the constitution event.
+        Assert.Equal(["term_deposit.DepositConstituted"], await EventTypesAsync(depositId));
     }
 
     [Fact]
@@ -388,19 +473,22 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
-    private static RateSheetBody FlatPriced(string productId, string role, int tanBasisPoints) => new()
+    private static RateSheetBody FlatPriced(params (string productId, string role, int tanBasisPoints)[] entries)
     {
-        Products = new Dictionary<string, Dictionary<string, RoleRates>>
+        var products = new Dictionary<string, Dictionary<string, RoleRates>>();
+        foreach (var (productId, role, tanBasisPoints) in entries)
         {
-            [productId] = new()
+            if (!products.TryGetValue(productId, out var roles))
             {
-                [role] = new RoleRates
-                {
-                    Bands = [new RateBand(0L, null, tanBasisPoints)],
-                },
-            },
-        },
-    };
+                roles = new Dictionary<string, RoleRates>();
+                products[productId] = roles;
+            }
+
+            roles[role] = new RoleRates { Bands = [new RateBand(0L, null, tanBasisPoints)] };
+        }
+
+        return new RateSheetBody { Products = products };
+    }
 
     private async Task<List<string>> EventTypesAsync(Guid streamId)
     {

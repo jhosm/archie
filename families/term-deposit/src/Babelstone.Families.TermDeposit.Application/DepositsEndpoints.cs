@@ -30,6 +30,12 @@ public static class DepositsEndpoints
         app.MapPost("/v1/deposits/{id:guid}/maturity", MatureAsync);
         app.MapPost("/v1/deposits/{id:guid}/interest", PayInterestAsync);
 
+        // Partial early withdrawal (F.12; 02 §2.4.1, bd qze9): reduce the principal, leaving the deposit
+        // Active. A command surface mirroring the maturity/interest pattern — a domain rejection (not
+        // Active, within carência, below the minimum, leaving too little, or the whole balance) surfaces
+        // as a 422, never a phantom withdrawal.
+        app.MapPost("/v1/deposits/{id:guid}/partial-withdrawal", WithdrawPartiallyAsync);
+
         // GDPR Article 17 right-to-be-forgotten (bd babelstone-nzw6): crypto-shred the subject's PII
         // key and record the erasure fact. A command surface, mandatory Idempotency-Key (ADR-PC-029
         // slot 4) — erasure must be safely retryable since key destruction is irreversible.
@@ -397,6 +403,47 @@ public static class DepositsEndpoints
 
         // The post-append fold is authoritative (read-your-writes by construction): its head version is
         // the commit_sequence, carried on the response as last_sequence (DepositResponse.FromFold).
+        return Results.Ok(DepositResponse.FromFold(hydrated));
+    }
+
+    private static async Task<IResult> WithdrawPartiallyAsync(
+        Guid id,
+        PartialWithdrawRequest request,
+        TermDepositConstitutionService service,
+        AggregateRuntime<DepositPosition> runtime,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        // The host shell owns the wall-clock at this boundary: it stamps a missing withdrawn_at, and the
+        // service derives the as-of withdrawal date from that instant and passes it to the pure decider as
+        // an INPUT (ADR-PC-010 §P5). The withdrawal amount is a per-deposit cents input; the F.12 policy is
+        // resolved engine-side from the deposit's product config (bd k6r8.8), never sent on the wire.
+        var command = new PartialWithdrawCommand(
+            DepositId: id,
+            WithdrawnAt: request.WithdrawnAt ?? clock.GetUtcNow(),
+            WithdrawnAmountCents: request.WithdrawnAmountCents,
+            Actor: request.Actor ?? "mcp:dev");
+
+        try
+        {
+            await service.WithdrawPartiallyAsync(command, ct);
+        }
+        catch (ConcurrencyException)
+        {
+            return Results.Problem($"Deposit {id} was modified concurrently.", statusCode: StatusCodes.Status409Conflict);
+        }
+        catch (DomainRejectedException e)
+        {
+            // The lifecycle + F.12 policy gates: not Active, within carência, below the minimum withdrawal,
+            // leaving less than the minimum remaining balance, or the whole balance (which is a termination,
+            // F.4). Surface as a 422 — never a phantom withdrawal. A mis-pinned pack / corrupt row / absent
+            // product-config store throws other types and propagates as a 500, not a masquerading 422.
+            return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
+        // The post-append fold is authoritative (read-your-writes by construction): the deposit stays
+        // Active with a reduced remaining principal; its head version is the commit_sequence on the response.
+        var hydrated = await runtime.LoadAsync(id, ct);
         return Results.Ok(DepositResponse.FromFold(hydrated));
     }
 

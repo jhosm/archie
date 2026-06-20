@@ -1,5 +1,6 @@
 using Babelstone.Engine;
 using Babelstone.FinancialMath;
+using Babelstone.FinancialTypes;
 using Babelstone.Packs;
 using Babelstone.RateSheets;
 
@@ -156,8 +157,20 @@ public sealed class TermDepositConstitutionService(
                 $"Rate sheet '{resolution.RateSheetVersionId}' does not price " +
                 $"({command.ProductId}, {command.Role}) at {command.PrincipalCents}c.");
 
-        // 3. Decide (pure): build the event, stamping the resolved TAN + the version it came from.
-        var constituted = TermDepositDecider.DecideConstitution(command, tan, resolution.RateSheetVersionId);
+        // 3. Resolve the product's F.12 partial-withdrawal policy from its product config and PIN it on
+        //    the constitution event (bd k6r8.8/qze9): like the rate, the policy is fixed at constitution
+        //    so a later config edit can never retroactively change a live deposit's withdrawal rights
+        //    (ADR-PC-009 per-instance pinning). A product the store does not carry — or no store
+        //    configured (direct callers) — pins the Unrestricted policy: no F.12 gates. Pure lookup,
+        //    no clock/I-O in the pinned value.
+        var partialWithdrawalPolicy = _productConfigStore?.Resolve(command.ProductId) is { } productConfig
+            ? PartialWithdrawalPolicy.FromProductConfig(productConfig)
+            : PartialWithdrawalPolicy.Unrestricted;
+
+        // 4. Decide (pure): build the event, stamping the resolved TAN + the version it came from + the
+        //    resolved partial-withdrawal policy.
+        var constituted = TermDepositDecider.DecideConstitution(
+            command, tan, resolution.RateSheetVersionId, partialWithdrawalPolicy);
 
         // 4. DE-SETTLED constitution (bd babelstone-t7o3.4, ADR-PC-016 §68/§127). The engine no longer
         //    debits the funding account on this path: settlement is the constitution SAGA's GATED step
@@ -342,6 +355,51 @@ public sealed class TermDepositConstitutionService(
         await runtime.AppendAsync(
             command.DepositId, hydrated.Version, events,
             Context(command.Actor, command.TerminatedAt), ct);
+    }
+
+    /// <summary>
+    /// Withdraw part of a constituted deposit's principal before maturity (F.12; 02 §2.4.1, bd qze9):
+    /// rehydrate it (must be Active — the F.3 gate decides), rebuild the product's partial-withdrawal
+    /// policy from the gates PINNED on the deposit at constitution (bd k6r8.8/qze9), run the pure
+    /// <see cref="PartialWithdrawalDecider"/>, and append the single <c>DepositPartiallyWithdrawn</c>
+    /// event reducing the principal. UNLIKE early termination, a partial withdrawal CLOSES nothing and
+    /// settles nothing — it is a principal reduction only (02 §2.4.1), so there is NO settlement leg here;
+    /// the deposit stays Active. Withdrawing the whole balance is a termination (F.4), which the decider
+    /// refuses. Triggered MANUALLY, as maturity is.
+    /// </summary>
+    /// <returns>The stream's head version after the withdrawal (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
+    public async Task<long> WithdrawPartiallyAsync(PartialWithdrawCommand command, CancellationToken ct = default)
+    {
+        // 1. Rehydrate the constituted position (load-then-append on the live stream head).
+        var hydrated = await runtime.LoadAsync(command.DepositId, ct);
+        var position = hydrated.State;
+
+        // Transition-legality gate (F.3 state machine): a partial withdrawal is legal only from Active and
+        // is STATE-PRESERVING (the deposit stays Active afterward). The single LifecycleTransitions table
+        // decides, so a withdrawal on a Matured/closed (or not-yet-constituted) deposit is rejected
+        // uniformly with every other illegal transition. (The pure decider re-checks this defensively.)
+        RejectIfIllegal(
+            position.Lifecycle, LifecycleTransitions.Transition.PartiallyWithdraw, command.DepositId, "withdraw partially");
+
+        // 2. Rebuild the F.12 policy from the gates PINNED on the deposit at constitution (bd k6r8.8/qze9),
+        //    NOT from the live product config — so the rules a deposit is subject to are the ones fixed
+        //    when it was opened, immune to a later config edit (ADR-PC-009 per-instance pinning). 0/0/0
+        //    (a pre-F.12 deposit, or a variant that omitted the block) is the Unrestricted policy.
+        var policy = new PartialWithdrawalPolicy(
+            position.MinWithdrawalCents, position.MinRemainingBalanceCents, position.CarenciaDays);
+
+        // 3. Decide (pure): the withdrawal DATE is derived from the command instant and passed as an INPUT
+        //    — no clock in the decider. A partial withdrawal carries NO money leg (02 §2.4.1), so unlike
+        //    TerminateEarlyAsync there is no settlement.SettleAsync here; the decider returns the single
+        //    DepositPartiallyWithdrawn that reduces the principal.
+        var withdrawnOn = DateOnly.FromDateTime(command.WithdrawnAt.UtcDateTime);
+        var events = PartialWithdrawalDecider.Decide(
+            position, new Money(command.WithdrawnAmountCents), withdrawnOn, policy);
+
+        // 4. Append at the current head (optimistic concurrency on the second append). The returned head
+        //    version is the commit_sequence the caller threads for read-your-writes.
+        return await runtime.AppendAsync(
+            command.DepositId, hydrated.Version, events, Context(command.Actor, command.WithdrawnAt), ct);
     }
 
     /// <summary>
@@ -664,7 +722,14 @@ public sealed class TermDepositConstitutionService(
             ProductCode = constituted.ProductCode,
             Role = constituted.Role,
             FundingAccount = constituted.FundingAccount,
+            MinWithdrawalCents = constituted.MinWithdrawalCents,
+            MinRemainingBalanceCents = constituted.MinRemainingBalanceCents,
+            CarenciaDays = constituted.CarenciaDays,
             RemainingPrincipal = constituted.Principal,
+            // Seed the opening principal segment, mirroring DepositConstitutedHandler, so this head
+            // projection stays a faithful stand-in for the real fold (bd babelstone-emtr) — even though
+            // the only current caller (ADVANCE) reads Principal, not the timeline.
+            PrincipalTimeline = [new PrincipalSegment(constituted.StartDate, constituted.Principal)],
             Lifecycle = DepositLifecycle.Active,
         };
 
@@ -690,7 +755,10 @@ public sealed class TermDepositConstitutionService(
             PaymentPeriodMonths: position.PaymentPeriodMonths,
             ProductCode: position.ProductCode,
             Role: position.Role,
-            FundingAccount: position.FundingAccount);
+            FundingAccount: position.FundingAccount,
+            MinWithdrawalCents: position.MinWithdrawalCents,
+            MinRemainingBalanceCents: position.MinRemainingBalanceCents,
+            CarenciaDays: position.CarenciaDays);
 
     // commandId is the OPTIONAL command-ingress idempotency key (ADR-PC-029 slot 4): the
     // constitution paths thread the command's CommandId so the append dedupes on it; the

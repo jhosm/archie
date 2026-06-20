@@ -79,6 +79,24 @@ public enum DepositLifecycle
 /// <c>DepositConstituted.FundingAccount</c>. Persisted so the engine settles the auto-renewal
 /// rollover debit against the SAME funding reference from the closing deposit (bd babelstone-mtto.5).
 /// Empty ("") for deposits constituted before mtto.5 (the Avro default).</param>
+/// <param name="MinWithdrawalCents">The F.12 partial-withdrawal policy PINNED at constitution (bd
+/// k6r8.8/qze9), folded from <c>DepositConstituted</c>: the smallest partial withdrawal the product
+/// allows, in cents (PartialWithdrawalPolicy.MinWithdrawalCents). The partial-withdrawal command path
+/// rebuilds the policy from these three folded fields, so the rules a live deposit is subject to are
+/// the ones fixed at constitution — not whatever the product config says later. 0 ⇒ Unrestricted (the
+/// value pre-F.12 deposits decode from the Avro default). Structural config, NOT PII (ADR-PC-004 §P2).</param>
+/// <param name="MinRemainingBalanceCents">The F.12 minimum remaining balance after a withdrawal, in
+/// cents, PINNED at constitution (PartialWithdrawalPolicy.MinRemainingBalanceCents). 0 ⇒ no floor.</param>
+/// <param name="CarenciaDays">The F.12 lock-up (carência) window in days from constitution, PINNED at
+/// constitution (PartialWithdrawalPolicy.CarenciaDays). A duration, not money. 0 ⇒ no lock-up.</param>
+/// <param name="PrincipalTimeline">The deposit's principal as a STEP FUNCTION of time (F.12, bd
+/// babelstone-emtr): the ordered <see cref="PrincipalSegment"/>s the accrual engine prices interest
+/// over. Seeded with the opening <c>(StartDate, Principal)</c> at constitution and appended
+/// <c>(WithdrawnOn, RemainingPrincipal)</c> by each partial withdrawal — so interest accrued and the
+/// maturity principal-return reflect the principal ACTUALLY held over each sub-period, not the original
+/// constituted amount. A deposit that never partially withdraws has a single-segment timeline, which
+/// accrues byte-for-byte as before. A deterministic fold of the events — no clock, no I/O
+/// (BENG001/002/003); rebuilt identically on cold replay (ADR-PC-010 §P5).</param>
 public sealed record DepositPosition(
     Guid DepositId,
     Money Principal,
@@ -93,6 +111,10 @@ public sealed record DepositPosition(
     string ProductCode,
     string Role,
     string FundingAccount,
+    long MinWithdrawalCents,
+    long MinRemainingBalanceCents,
+    int CarenciaDays,
+    IReadOnlyList<PrincipalSegment> PrincipalTimeline,
     Money AccruedGrossInterest,
     Money WithholdingToDate,
     Money NetInterest,
@@ -118,6 +140,11 @@ public sealed record DepositPosition(
         ProductCode: string.Empty,
         Role: string.Empty,
         FundingAccount: string.Empty,
+        MinWithdrawalCents: 0,
+        MinRemainingBalanceCents: 0,
+        CarenciaDays: 0,
+        // Empty until DepositConstituted seeds the opening (start, principal) segment.
+        PrincipalTimeline: [],
         AccruedGrossInterest: Money.Zero,
         WithholdingToDate: Money.Zero,
         NetInterest: Money.Zero,
@@ -127,4 +154,76 @@ public sealed record DepositPosition(
         CorrectionCount: 0,
         CouponsPaid: 0,
         Lifecycle: DepositLifecycle.Pending);
+
+    // The record carries ONE collection field — PrincipalTimeline (bd babelstone-emtr). The
+    // compiler-synthesized record equality would compare it by REFERENCE, which would make two
+    // independently-folded-but-identical positions unequal and break the byte-identical replay
+    // determinism contract the engine relies on (e.g. the clock-advance vs explicit-command parity
+    // test, ADR-PC-010 §P5). So equality is overridden to compare the timeline ELEMENT-WISE; every
+    // other (scalar / Money / enum) field keeps its value comparison. GetHashCode mirrors it so the
+    // equals/hashcode contract holds. A new field added here MUST be added to BOTH members below — the
+    // determinism tests are the backstop that catches an omission.
+    public bool Equals(DepositPosition? other) =>
+        other is not null
+        && DepositId == other.DepositId
+        && Principal == other.Principal
+        && TanBasisPoints == other.TanBasisPoints
+        && RateSheetVersionId == other.RateSheetVersionId
+        && TermDays == other.TermDays
+        && StartDate == other.StartDate
+        && MaturityDate == other.MaturityDate
+        && InterestVariant == other.InterestVariant
+        && AutoRenewalPolicy == other.AutoRenewalPolicy
+        && PaymentPeriodMonths == other.PaymentPeriodMonths
+        && ProductCode == other.ProductCode
+        && Role == other.Role
+        && FundingAccount == other.FundingAccount
+        && MinWithdrawalCents == other.MinWithdrawalCents
+        && MinRemainingBalanceCents == other.MinRemainingBalanceCents
+        && CarenciaDays == other.CarenciaDays
+        && AccruedGrossInterest == other.AccruedGrossInterest
+        && WithholdingToDate == other.WithholdingToDate
+        && NetInterest == other.NetInterest
+        && TotalPayout == other.TotalPayout
+        && RemainingPrincipal == other.RemainingPrincipal
+        && SettlementAmount == other.SettlementAmount
+        && CorrectionCount == other.CorrectionCount
+        && CouponsPaid == other.CouponsPaid
+        && Lifecycle == other.Lifecycle
+        && PrincipalTimeline.SequenceEqual(other.PrincipalTimeline);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(DepositId);
+        hash.Add(Principal);
+        hash.Add(TanBasisPoints);
+        hash.Add(RateSheetVersionId);
+        hash.Add(TermDays);
+        hash.Add(StartDate);
+        hash.Add(MaturityDate);
+        hash.Add(InterestVariant);
+        hash.Add(AutoRenewalPolicy);
+        hash.Add(PaymentPeriodMonths);
+        hash.Add(ProductCode);
+        hash.Add(Role);
+        hash.Add(FundingAccount);
+        hash.Add(MinWithdrawalCents);
+        hash.Add(MinRemainingBalanceCents);
+        hash.Add(CarenciaDays);
+        hash.Add(AccruedGrossInterest);
+        hash.Add(WithholdingToDate);
+        hash.Add(NetInterest);
+        hash.Add(TotalPayout);
+        hash.Add(RemainingPrincipal);
+        hash.Add(SettlementAmount);
+        hash.Add(CorrectionCount);
+        hash.Add(CouponsPaid);
+        hash.Add(Lifecycle);
+        foreach (var segment in PrincipalTimeline)
+        {
+            hash.Add(segment);
+        }
+        return hash.ToHashCode();
+    }
 }

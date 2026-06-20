@@ -26,7 +26,7 @@ func opts(variant string, depth diag.Depth) Options {
 // TestValidFixturesPassAllDepths — every accept fixture conforms through all
 // four depths, with no diagnostics and no depth over budget.
 func TestValidFixturesPassAllDepths(t *testing.T) {
-	valid := []string{"flat-at-maturity.yaml", "stepped-periodic.yaml", "advance-new-money.yaml"}
+	valid := []string{"flat-at-maturity.yaml", "stepped-periodic.yaml", "advance-new-money.yaml", "partial-withdrawal.yaml"}
 	for _, name := range valid {
 		t.Run(name, func(t *testing.T) {
 			rep, err := Run(opts(filepath.Join(cueValidDir, name), diag.DepthRegulatory))
@@ -78,6 +78,8 @@ func TestInvalidFixturesRejectAtExpectedDepth(t *testing.T) {
 		{cueInvalidDir, "penalty-out-of-range.yaml", diag.DepthSyntactic, diag.KindNoMatchingShape},
 		{cueInvalidDir, "non-eur-currency.yaml", diag.DepthType, diag.KindTypeMismatch},
 		{cueInvalidDir, "principal-max-below-min.yaml", diag.DepthType, diag.KindOutOfRange},
+		{cueInvalidDir, "partial-withdrawal-unknown-field.yaml", diag.DepthSyntactic, diag.KindUnknownField},
+		{cueInvalidDir, "partial-withdrawal-on-advance.yaml", diag.DepthSyntactic, diag.KindNoMatchingShape},
 		// pack-aware fixtures — depths 2–4
 		{packInvalidDir, "depth2-unknown-primitive.yaml", diag.DepthType, diag.KindUnknownPrimitive},
 		{packInvalidDir, "depth3-wrong-pack.yaml", diag.DepthPackCompliance, diag.KindPackBoundViolation},
@@ -85,6 +87,8 @@ func TestInvalidFixturesRejectAtExpectedDepth(t *testing.T) {
 		{packInvalidDir, "depth4-descending-steps.yaml", diag.DepthRegulatory, diag.KindNonAscendingSteps},
 		{packInvalidDir, "depth4-open-tail-not-last.yaml", diag.DepthRegulatory, diag.KindOpenTailNotLast},
 		{packInvalidDir, "depth4-same-term-same-rate.yaml", diag.DepthRegulatory, diag.KindForbiddenRenewalPolicy},
+		{packInvalidDir, "depth4-carencia-exceeds-term.yaml", diag.DepthRegulatory, diag.KindCarenciaExceedsTerm},
+		{packInvalidDir, "depth4-remaining-exceeds-max.yaml", diag.DepthRegulatory, diag.KindRemainingExceedsMaxCents},
 	}
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {

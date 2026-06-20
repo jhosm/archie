@@ -1,0 +1,23 @@
+# INVALID @ depth 1: an unknown field inside the partial_withdrawal block.
+# #PartialWithdrawal is a closed CUE definition (ADR-PC-006, no DSL escape
+# hatch), so a field the schema does not declare is rejected at depth 1 — the
+# same closed-struct guarantee proved for the top-level struct by
+# unknown-field.yaml, here for the new sub-definition.
+variant_id: dpz_pt_12m_pw_unknown_field
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 365
+day_count: pt.act_360
+currency: EUR
+interest_variant: AT_MATURITY
+rate:
+  flat: { rate_ref: { sheet: live, role_selector: deposit_origin } }
+early_termination:
+  flat: { up_to_days: null, penalty_basis_points: 10000, basis: ACCRUED_INTEREST }
+auto_renewal_policy: NONE
+principal_bounds: { min_cents: 100000, max_cents: 50000000 }
+partial_withdrawal:
+  min_withdrawal_cents: 50000
+  min_remaining_balance_cents: 100000
+  carencia_days: 90
+  max_withdrawal_cents: 1000000   # not declared by #PartialWithdrawal — closed-struct rejection

@@ -141,6 +141,38 @@ package family
 	// --- principal bounds (risk corridor, authoring §4 step 4) ----------
 	principal_bounds: #PrincipalBounds
 
+	// --- partial-withdrawal policy (F.12; 02 §2.4.1) --------------------
+	// Optional. Declares the three gates a partial early withdrawal must clear
+	// — a minimum withdrawal amount, a minimum remaining balance, and a lock-up
+	// (carência) window after constitution. The block mirrors the engine's
+	// PartialWithdrawalPolicy (MinWithdrawalCents / MinRemainingBalanceCents /
+	// CarenciaDays); it rides on the config as an explicit decider input
+	// resolved at constitution (ADR-PC-008; ADR-PC-021 §D3), never a command
+	// input. A variant that OMITS the block permits no F.12-gated partial
+	// withdrawals — it resolves to PartialWithdrawalPolicy.Unrestricted (the
+	// zero-gate policy), leaving only the structural rules the decider always
+	// applies (positive amount; cannot withdraw the whole balance — that is a
+	// termination, F.4). Two cross-field coherence invariants
+	// (min_remaining_balance_cents < principal_bounds.max_cents; carencia_days <
+	// term_days) are depth-4 regulatory checks the Go validator enforces — not
+	// expressible element-wise here, the same deferral as #SteppedRate.steps and
+	// #BandedPolicy.banded.
+	partial_withdrawal?: #PartialWithdrawal
+
+	// A partial withdrawal is forbidden on an ADVANCE (juros antecipados) product
+	// (F.12, bd babelstone-emtr): that shape pays the WHOLE term's interest up front
+	// on the full principal, so a later withdrawal would strand pre-paid interest with
+	// no accrual flow to re-base it (unlike AT_MATURITY/PERIODIC, whose remaining
+	// accrual folds over the reduced principal). Unlike the two numeric coherence
+	// invariants above, this is a presence-given-enum constraint the schema CAN express
+	// declaratively — the same shape as payment_period_months — so a config that
+	// declares the block alongside interest_variant: ADVANCE is rejected at the schema
+	// layer. The runtime decider (PartialWithdrawalDecider) refuses such a withdrawal
+	// as the backstop.
+	if interest_variant == "ADVANCE" {
+		partial_withdrawal?: _|_ // explicit error (_|_ literal) in source
+	}
+
 	// --- optional activation date (authoring §4 step 5) -----------------
 	effective_from?: =~"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
 }
@@ -201,6 +233,15 @@ package family
 	penalty_basis_points: #BasisPoints
 	basis:                "ACCRUED_INTEREST" | "PRINCIPAL" | "BOTH"
 }
+#PrincipalBounds: {
+	min_cents:  #Cents
+	max_cents?: int & >0
+	// max, when present, is not below min.
+	if max_cents != _|_ // explicit error (_|_ literal) in source
+	{
+		max_cents: >=min_cents_9
+	}
+}
 
 // #RateRef — a reference into a rate sheet, resolved at constitution to a
 // concrete `tan_basis_points` + `rate_sheet_version_id` (ADR-PC-008;
@@ -216,14 +257,21 @@ package family
 	sheet:         =~"^[a-z][a-z0-9_]*$"
 	role_selector: =~"^[a-z][a-z0-9_]*$"
 }
-#PrincipalBounds: {
-	min_cents:  #Cents
-	max_cents?: int & >0
-	// max, when present, is not below min.
-	if max_cents != _|_ // explicit error (_|_ literal) in source
-	{
-		max_cents: >=min_cents_9
-	}
+
+// #PartialWithdrawal — the F.12 partial-withdrawal policy (02 §2.4.1). A closed
+// definition (ADR-PC-006): an unknown field inside the block fails depth 1, the
+// same no-escape-hatch guarantee as every other #Name here. Field names mirror
+// the engine's PartialWithdrawalPolicy record one-for-one. All amounts are
+// integer cents (#Cents); carencia_days is a non-negative day count — a
+// duration, not money, so it is declared inline as `int & >=0`, not a #Cents.
+// A 0 on any gate means "no minimum / no lock-up" (the degenerate-policy
+// semantics of PartialWithdrawalPolicy with that field zero). The two cross-field
+// coherence invariants that relate this block to term_days and
+// principal_bounds.max_cents are depth-4 Go checks, not expressed here.
+#PartialWithdrawal: {
+	min_withdrawal_cents:        #Cents
+	min_remaining_balance_cents: #Cents
+	carencia_days:               int & >=0
 }
 
 let min_cents_9 = min_cents
@@ -231,4 +279,4 @@ let min_cents_9 = min_cents
 
 ## Governing ADRs
 
-[ADR-PC-006](../../../product-management/product_concepts/adrs/ADR-PC-006-cue-schema-language.md), [ADR-PC-024](../../../product-management/product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md)
+[ADR-PC-006](../../../product-management/product_concepts/adrs/ADR-PC-006-cue-schema-language.md), [ADR-PC-008](../../../product-management/product_concepts/adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md), [ADR-PC-021](../../../product-management/product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md), [ADR-PC-024](../../../product-management/product_concepts/adrs/ADR-PC-024-constitution-precondition-contract.md)

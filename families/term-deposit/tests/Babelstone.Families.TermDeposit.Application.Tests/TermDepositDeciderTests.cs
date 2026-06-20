@@ -29,7 +29,9 @@ public sealed class TermDepositDeciderTests
             ConstitutedAt: new DateTimeOffset(2026, 1, 15, 0, 0, 0, TimeSpan.Zero),
             InterestVariant: "AT_MATURITY", AutoRenewalPolicy: "NONE", FundingAccount: "PT50-DDA-001", Actor: "test");
 
-        var constituted = TermDepositDecider.DecideConstitution(command, tanBasisPoints: TanBps, rateSheetVersionId: "pt-deposits-2026.1");
+        var constituted = TermDepositDecider.DecideConstitution(
+            command, tanBasisPoints: TanBps, rateSheetVersionId: "pt-deposits-2026.1",
+            partialWithdrawalPolicy: PartialWithdrawalPolicy.Unrestricted);
 
         Assert.Equal(new Money(PrincipalCents), constituted.Principal);
         Assert.Equal(TanBps, constituted.TanBasisPoints);
@@ -39,6 +41,31 @@ public sealed class TermDepositDeciderTests
         // bd babelstone-v794: the catalogue product_code is stamped from the already-available
         // command.ProductId (no new command input) so the D.4 read model can denormalize it.
         Assert.Equal("dpz_pt_12m_juros_venc", constituted.ProductCode);
+        // Unrestricted policy ⇒ the three F.12 gates stamp as 0 (bd k6r8.8/qze9).
+        Assert.Equal(0, constituted.MinWithdrawalCents);
+        Assert.Equal(0, constituted.MinRemainingBalanceCents);
+        Assert.Equal(0, constituted.CarenciaDays);
+    }
+
+    [Fact]
+    public void DecideConstitution_pins_the_resolved_partial_withdrawal_policy_on_the_event()
+    {
+        // bd k6r8.8/qze9: the F.12 policy is resolved from the product config and PINNED on
+        // DepositConstituted at constitution (like the rate), so a later config edit cannot change a
+        // live deposit's withdrawal rights (ADR-PC-009). The decider stamps the passed policy verbatim.
+        var command = new ConstituteDepositCommand(
+            DepositId: Guid.NewGuid(), PrincipalCents: PrincipalCents, ProductId: "dpz_pt_12m_resgate_parcial",
+            Role: "standard", TermDays: 365, StartDate: Start,
+            ConstitutedAt: new DateTimeOffset(2026, 1, 15, 0, 0, 0, TimeSpan.Zero),
+            InterestVariant: "AT_MATURITY", AutoRenewalPolicy: "NONE", FundingAccount: "PT50-DDA-001", Actor: "test");
+
+        var constituted = TermDepositDecider.DecideConstitution(
+            command, tanBasisPoints: TanBps, rateSheetVersionId: "pt-deposits-2026.1",
+            partialWithdrawalPolicy: new PartialWithdrawalPolicy(50_000, 100_000, 90));
+
+        Assert.Equal(50_000, constituted.MinWithdrawalCents);
+        Assert.Equal(100_000, constituted.MinRemainingBalanceCents);
+        Assert.Equal(90, constituted.CarenciaDays);
     }
 
     // ---- commercial-eligibility preconditions (ADR-PC-024, F.9 babelstone-k6r8.2) --------------
@@ -179,14 +206,14 @@ public sealed class TermDepositDeciderTests
     [Fact]
     public void DecideMaturity_reproduces_the_canonical_at_maturity_flow()
     {
-        var position = DepositPosition.Empty with
+        var position = (DepositPosition.Empty with
         {
             Principal = new Money(PrincipalCents),
             TanBasisPoints = TanBps,
             StartDate = Start,
             MaturityDate = Maturity,
             Lifecycle = DepositLifecycle.Active,
-        };
+        }).AsFreshlyConstituted();
 
         var events = TermDepositDecider.DecideMaturity(position, DayCountConvention.Act360, IrsBps);
 
@@ -207,14 +234,14 @@ public sealed class TermDepositDeciderTests
     [Fact]
     public void DecideMaturity_is_a_deterministic_pure_function()
     {
-        var position = DepositPosition.Empty with
+        var position = (DepositPosition.Empty with
         {
             Principal = new Money(PrincipalCents),
             TanBasisPoints = TanBps,
             StartDate = Start,
             MaturityDate = Maturity,
             Lifecycle = DepositLifecycle.Active,
-        };
+        }).AsFreshlyConstituted();
 
         var first = TermDepositDecider.DecideMaturity(position, DayCountConvention.Act360, IrsBps);
         var second = TermDepositDecider.DecideMaturity(position, DayCountConvention.Act360, IrsBps);
@@ -232,7 +259,7 @@ public sealed class TermDepositDeciderTests
     private const long KPrincipalCents = 49_900_000;
     private const int KTanBps = 325;
 
-    private static DepositPosition PeriodicPosition(int couponsPaid) => DepositPosition.Empty with
+    private static DepositPosition PeriodicPosition(int couponsPaid) => (DepositPosition.Empty with
     {
         DepositId = Guid.NewGuid(),
         Principal = new Money(KPrincipalCents),
@@ -243,7 +270,7 @@ public sealed class TermDepositDeciderTests
         PaymentPeriodMonths = 1,
         CouponsPaid = couponsPaid,
         Lifecycle = DepositLifecycle.Active,
-    };
+    }).AsFreshlyConstituted();
 
     [Fact]
     public void DecideInterestPayment_accrues_one_coupon_window_and_withholds_that_one_flow()
@@ -371,7 +398,7 @@ public sealed class TermDepositDeciderTests
     [Fact]
     public void DecideAdvance_pays_full_term_interest_up_front_no_present_value_discount()
     {
-        var position = DepositPosition.Empty with
+        var position = (DepositPosition.Empty with
         {
             DepositId = Guid.NewGuid(),
             Principal = new Money(PrincipalCents),
@@ -380,7 +407,7 @@ public sealed class TermDepositDeciderTests
             MaturityDate = Maturity,
             InterestVariant = "ADVANCE",
             Lifecycle = DepositLifecycle.Active,
-        };
+        }).AsFreshlyConstituted();
 
         var events = TermDepositDecider.DecideAdvance(position, DayCountConvention.Act360, IrsBps);
 
@@ -400,7 +427,7 @@ public sealed class TermDepositDeciderTests
     public void DecideMaturity_advance_returns_principal_only_no_re_accrual()
     {
         // ADVANCE paid its interest at t=0; maturity returns the principal alone (CF(n) = +C).
-        var position = DepositPosition.Empty with
+        var position = (DepositPosition.Empty with
         {
             DepositId = Guid.NewGuid(),
             Principal = new Money(PrincipalCents),
@@ -409,7 +436,7 @@ public sealed class TermDepositDeciderTests
             MaturityDate = Maturity,
             InterestVariant = "ADVANCE",
             Lifecycle = DepositLifecycle.Active,
-        };
+        }).AsFreshlyConstituted();
 
         var events = TermDepositDecider.DecideMaturity(position, DayCountConvention.Act360, IrsBps);
 
@@ -419,6 +446,77 @@ public sealed class TermDepositDeciderTests
         Assert.Equal(Money.Zero, matured.NetInterestPaid);
         Assert.Equal(new Money(PrincipalCents), matured.TotalPayout);
         Assert.Equal(Maturity, matured.MaturedOn);
+    }
+
+    // ---- F.12 re-base after a partial withdrawal (bd babelstone-emtr) ----------------------------
+    //
+    // The regression the depth-5 sim could not catch (its withdrawal leg stops at the withdrawal):
+    // a deposit that partially withdraws mid-term and then runs ON to a coupon / to maturity. The fix
+    // is that interest and the maturity principal-return follow the principal ACTUALLY held over time,
+    // priced piecewise via the position's PrincipalTimeline — never the original constituted principal.
+
+    [Fact]
+    public void DecideMaturity_after_a_partial_withdrawal_returns_the_reduced_principal_and_piecewise_interest()
+    {
+        // €10,000 held for 120 days, then €7,000 after a €3,000 withdrawal on day 120 (365-day Act/360,
+        // TAN 3%). Piecewise gross: €10,000×3%×120/360 (=10,000.00c) + €7,000×3%×245/360 (=14,291.67c),
+        // summed un-rounded → 24,292c. Principal returned is the €7,000 still on deposit — the old code
+        // returned the full €10,000, double-paying the withdrawn €3,000.
+        var withdrawalOn = Start.AddDays(120);
+        var position = DepositPosition.Empty with
+        {
+            Principal = new Money(PrincipalCents),
+            TanBasisPoints = TanBps,
+            StartDate = Start,
+            MaturityDate = Maturity,
+            InterestVariant = "AT_MATURITY",
+            RemainingPrincipal = new Money(700_000),
+            PrincipalTimeline =
+            [
+                new PrincipalSegment(Start, new Money(PrincipalCents)),
+                new PrincipalSegment(withdrawalOn, new Money(700_000)),
+            ],
+            Lifecycle = DepositLifecycle.Active,
+        };
+
+        var events = TermDepositDecider.DecideMaturity(position, DayCountConvention.Act360, IrsBps);
+        var accrued = Assert.IsType<InterestAccrued>(events[0]);
+        var matured = Assert.IsType<DepositMatured>(events[2]);
+
+        Assert.Equal(new Money(24_292), accrued.GrossInterest);
+        // The load-bearing fix: maturity returns the principal still ON DEPOSIT, not the original.
+        Assert.Equal(new Money(700_000), matured.PrincipalReturned);
+        Assert.Equal(matured.PrincipalReturned + matured.NetInterestPaid, matured.TotalPayout);
+        // Strictly between the two wrong answers it replaces: whole term on €7,000 (21,292c, the naive
+        // re-base) and whole term on €10,000 (30,417c, the over-accrual this fix removes).
+        Assert.True(accrued.GrossInterest.Cents > 21_292);
+        Assert.True(accrued.GrossInterest.Cents < 30_417);
+    }
+
+    [Fact]
+    public void DecideInterestPayment_after_a_partial_withdrawal_accrues_the_coupon_on_the_reduced_principal()
+    {
+        // A €100,000 withdrawal on day 20 (inside the already-paid first coupon window). The SECOND
+        // coupon window (Feb 1 → Mar 1, 28 days) opens entirely after it, so it accrues on the reduced
+        // €399,000 — not the original €499,000. 39,900,000 × 325 × 28 / (360×10000) = 100,858.33 → 100,858c.
+        var withdrawalOn = KStart.AddDays(20);
+        var position = PeriodicPosition(couponsPaid: 1) with
+        {
+            RemainingPrincipal = new Money(KPrincipalCents - 10_000_000),
+            PrincipalTimeline =
+            [
+                new PrincipalSegment(KStart, new Money(KPrincipalCents)),
+                new PrincipalSegment(withdrawalOn, new Money(KPrincipalCents - 10_000_000)),
+            ],
+        };
+
+        var events = TermDepositDecider.DecideInterestPayment(
+            position, new DateOnly(2026, 2, 1), new DateOnly(2026, 3, 1), DayCountConvention.Act360, IrsBps);
+        var paid = Assert.IsType<InterestPaid>(Assert.Single(events));
+
+        Assert.Equal(new Money(100_858), paid.GrossInterest);
+        // Less than the same coupon on the un-reduced €499,000 (126,136c) — the withdrawal lowered the base.
+        Assert.True(paid.GrossInterest.Cents < 126_136);
     }
 
     // ---- auto-renewal (02 §2.4.4: NONE / SAME_TERM_CURRENT_RATE / SAME_TERM_SAME_RATE) ----------

@@ -21,7 +21,7 @@ public sealed class RateScheduleDeciderTests
     private const int IrsBps = 2800;
     private const string Reason = "CUSTOMER_REQUEST";
 
-    private static DepositPosition AtMaturityPosition(int tanBps, int termDays) => DepositPosition.Empty with
+    private static DepositPosition AtMaturityPosition(int tanBps, int termDays) => (DepositPosition.Empty with
     {
         DepositId = Guid.NewGuid(),
         Principal = new Money(PrincipalCents),
@@ -32,7 +32,7 @@ public sealed class RateScheduleDeciderTests
         InterestVariant = "AT_MATURITY",
         RemainingPrincipal = new Money(PrincipalCents),
         Lifecycle = DepositLifecycle.Active,
-    };
+    }).AsFreshlyConstituted();
 
     // ---- F.10: a flat schedule is byte-identical to no schedule (additive over the flat path) ----
 

@@ -58,10 +58,23 @@ public interface IProductConfigStore
 /// <param name="PaymentPeriodMonths">The PERIODIC coupon cadence in months (0 for AT_MATURITY / ADVANCE).</param>
 /// <param name="DefaultRole">The pricing role the rate-sheet resolve uses when the command supplies
 /// none (v1: <c>standard</c> for every launch product).</param>
+/// <param name="MinWithdrawalCents">F.12 partial-withdrawal gate: the smallest withdrawal the product
+/// allows, in cents (the variant's <c>partial_withdrawal.min_withdrawal_cents</c>). <c>0</c> ⇒ no
+/// minimum. These three F.12 fields default to <c>0</c> so a variant that OMITS the block resolves to
+/// <c>PartialWithdrawalPolicy.Unrestricted</c> (02 §2.4.1) — they are the shape, never a price.</param>
+/// <param name="MinRemainingBalanceCents">F.12 partial-withdrawal gate: the smallest principal that may
+/// remain on deposit after a withdrawal, in cents (<c>partial_withdrawal.min_remaining_balance_cents</c>).
+/// <c>0</c> ⇒ no floor.</param>
+/// <param name="CarenciaDays">F.12 partial-withdrawal gate: the lock-up (<i>carência</i>) window in days
+/// from constitution during which no partial withdrawal is allowed (<c>partial_withdrawal.carencia_days</c>).
+/// <c>0</c> ⇒ no lock-up.</param>
 public sealed record ProductConfig(
     string ProductId,
     int TermDays,
     string InterestVariant,
     string AutoRenewalPolicy,
     int PaymentPeriodMonths,
-    string DefaultRole);
+    string DefaultRole,
+    long MinWithdrawalCents = 0,
+    long MinRemainingBalanceCents = 0,
+    int CarenciaDays = 0);

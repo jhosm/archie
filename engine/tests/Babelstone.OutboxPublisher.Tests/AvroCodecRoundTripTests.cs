@@ -161,6 +161,42 @@ public sealed class AvroCodecRoundTripTests
     }
 
     [Fact]
+    public void DepositConstituted_round_trips_the_partial_withdrawal_policy_additive_fields()
+    {
+        // bd k6r8.8/qze9: the F.12 partial-withdrawal policy is PINNED on DepositConstituted at
+        // constitution (like the rate) so a later config edit cannot change a live deposit's withdrawal
+        // rights (ADR-PC-009). A populated policy must survive the wire — proving the .avsc fields, not
+        // just the C# record, carry it (otherwise the withdrawal path would rebuild an Unrestricted
+        // policy from dropped-to-0 gates). Structural config, not PII (ADR-PC-004 §P2).
+        var serializer = NewSerializer();
+        var original = new DepositConstituted(
+            DepositId: Guid.NewGuid(),
+            Principal: new Money(4_000_000),
+            TanBasisPoints: 300,
+            RateSheetVersionId: "pt-deposits-2026.1",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 1),
+            MaturityDate: new DateOnly(2027, 1, 1),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            PaymentPeriodMonths: 0,
+            ProductCode: "dpz_pt_12m_resgate_parcial",
+            Role: "standard",
+            FundingAccount: "PT50-DDA-001",
+            MinWithdrawalCents: 50_000,
+            MinRemainingBalanceCents: 100_000,
+            CarenciaDays: 90);
+
+        var decoded = (DepositConstituted)serializer.Decode(
+            serializer.Encode(original).Bytes, typeof(DepositConstituted));
+
+        Assert.Equal(original, decoded);
+        Assert.Equal(50_000, decoded.MinWithdrawalCents);
+        Assert.Equal(100_000, decoded.MinRemainingBalanceCents);
+        Assert.Equal(90, decoded.CarenciaDays);
+    }
+
+    [Fact]
     public void DepositConstituted_decodes_a_pre_mtto5_record_as_the_empty_role_and_funding_defaults()
     {
         // bd babelstone-mtto.5 added role + funding_account (additive, default ""). A record written

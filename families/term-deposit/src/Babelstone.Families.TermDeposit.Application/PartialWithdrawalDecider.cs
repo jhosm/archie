@@ -1,5 +1,6 @@
 using Babelstone.Engine;
 using Babelstone.FinancialTypes;
+using Babelstone.RateSheets;
 
 namespace Babelstone.Families.TermDeposit.Application;
 
@@ -41,6 +42,24 @@ public sealed record PartialWithdrawalPolicy(
     /// withdraw the whole balance) still apply. Useful for a product that permits unrestricted partial
     /// withdrawals, and as the test/degenerate baseline.</summary>
     public static PartialWithdrawalPolicy Unrestricted { get; } = new(0L, 0L, 0);
+
+    /// <summary>
+    /// Resolve the policy from a product's resolved <see cref="ProductConfig"/> (bd k6r8.8): map the
+    /// three F.12 primitives the engine carries (<see cref="ProductConfig.MinWithdrawalCents"/> /
+    /// <see cref="ProductConfig.MinRemainingBalanceCents"/> / <see cref="ProductConfig.CarenciaDays"/>)
+    /// onto this policy. A config whose three gates are all zero — the shape of a variant that OMITS the
+    /// <c>partial_withdrawal</c> block — resolves to <see cref="Unrestricted"/> (02 §2.4.1). Pure: a
+    /// total function of the config, no clock and no I/O, so the constitution-boundary resolve stays
+    /// deterministic (ADR-PC-008; ADR-PC-021 §D3 — the decider still takes the policy as an explicit input).
+    /// </summary>
+    public static PartialWithdrawalPolicy FromProductConfig(ProductConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        return config is { MinWithdrawalCents: 0, MinRemainingBalanceCents: 0, CarenciaDays: 0 }
+            ? Unrestricted
+            : new PartialWithdrawalPolicy(
+                config.MinWithdrawalCents, config.MinRemainingBalanceCents, config.CarenciaDays);
+    }
 }
 
 /// <summary>
@@ -104,6 +123,23 @@ public static class PartialWithdrawalDecider
             throw new DomainRejectedException(
                 $"Partial withdrawal on deposit {position.DepositId} is illegal from lifecycle " +
                 $"{position.Lifecycle}: a partial withdrawal is legal only from Active (F.3 / F.12).");
+        }
+
+        // 0.5 Product-shape: a partial withdrawal is forbidden on an ADVANCE (juros antecipados) product
+        //     (F.12, bd babelstone-emtr). ADVANCE pays the WHOLE term's interest up front at constitution
+        //     on the full principal; reducing the principal later would leave the depositor holding
+        //     interest on money no longer on deposit, with NO later accrual flow to re-base it (unlike
+        //     AT_MATURITY/PERIODIC, whose remaining accrual folds over the reduced principal). The product
+        //     shape itself is incompatible with partial withdrawal — refuse it here, the runtime backstop
+        //     to the depth-4 config check that forbids declaring a partial_withdrawal block on an ADVANCE
+        //     variant. Read off the pinned position (the variant resolved at constitution); no clock/I/O.
+        if (position.InterestVariant == TermDepositDecider.Advance)
+        {
+            throw new DomainRejectedException(
+                $"Partial withdrawal on deposit {position.DepositId} is not permitted: the product pays " +
+                "interest in advance (ADVANCE / juros antecipados). Interest is pre-paid on the full " +
+                "principal and cannot be re-based after a withdrawal, so partial withdrawal is not a legal " +
+                "operation for this product shape (F.12).");
         }
 
         var current = position.RemainingPrincipal;

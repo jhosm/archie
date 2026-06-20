@@ -1,0 +1,28 @@
+# INVALID: a partial_withdrawal block on an ADVANCE (juros antecipados) variant —
+# the schema forbids the block when interest_variant is ADVANCE (the same presence-
+# given-enum guard as payment_period_months). ADVANCE pre-pays the whole term's
+# interest on the full principal, so a later partial withdrawal has no accrual flow
+# to re-base (F.12, bd babelstone-emtr).
+variant_id: dpz_pt_6m_advance_partial_withdrawal
+schema: term_deposit@2026.1
+pack: pt.2026.1
+term_days: 180
+day_count: pt.act_360
+currency: EUR
+interest_variant: ADVANCE
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000
+    basis: ACCRUED_INTEREST
+auto_renewal_policy: NONE
+principal_bounds:
+  min_cents: 100000
+  max_cents: 50000000
+partial_withdrawal:
+  min_withdrawal_cents: 50000
+  min_remaining_balance_cents: 100000
+  carencia_days: 60
