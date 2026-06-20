@@ -39,6 +39,10 @@ public sealed class LoadRunnerIntegrationTests
         TargetTps = 20.0,
         Duration = TimeSpan.FromMilliseconds(300),
         WarmupEvents = 2,
+        // Drive the engine append/replay path against the Testcontainers-mapped event store, NOT the
+        // RunnerOptions default (localhost:5432) — in CI nothing listens on 5432, so the default would
+        // fail to connect (the same fixture connection string EngineProjectionRigIntegrationTests uses).
+        PostgresConnectionString = _pg.ConnectionString,
         BootstrapServers = null, // --no-bus: in-process append/projection only
     };
 
