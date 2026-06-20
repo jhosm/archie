@@ -9,11 +9,25 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+    <!-- The Testcontainers PostgreSQL module backs the [Category("Integration")] suite that drives the
+         live-stack EngineProjectionRig + LoadRunner against a real event store (bd babelstone-2e6q.7),
+         the SAME machinery the EventStore/OutboxPublisher integration lanes use. -->
+    <PackageReference Include="Testcontainers.PostgreSql" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- The host under test + the library's verdict/artefact types the component tests assert against. -->
     <ProjectReference Include="../Babelstone.LoadHarness.Runner/Babelstone.LoadHarness.Runner.csproj" />
     <ProjectReference Include="../Babelstone.LoadHarness/Babelstone.LoadHarness.csproj" />
+    <!-- The integration suite applies the engine event-store migration set to the Testcontainers
+         PostgreSQL (the rig drives the engine's append/projection path, which needs the schema) and
+         reuses the shared Redpanda dev-container + ContainerStartupGate for the §G1 bus path. -->
+    <ProjectReference Include="../../src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />
+    <ProjectReference Include="../../tests/Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
+    <!-- The family event the integration suite seeds against the rig (DepositConstituted) and the
+         telemetry surface the latency observer reads (BabelstoneTelemetry.ActivitySource). Both flow
+         transitively via the Runner reference, but are named explicitly so the test code binds them. -->
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
+    <ProjectReference Include="../../src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
   </ItemGroup>
 </Project>
