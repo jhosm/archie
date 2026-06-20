@@ -77,10 +77,13 @@ jobs:
             #   engine-primitives/             <- engine VerifiedPack.cs + DayCount.cs   (the day-count
             #                                     formula_ref set the engine implements — were MISSING; sfnt.27)
             #   glossary.md                    <- scripts/docs-gen/glossary-source.md     (via scripts/docs-gen/**)
-            # Plus docs/product-docs/reference/** itself, so hand-tampering with the generated tree is caught.
+            #   docfx/index.md                 <- docs/product-docs/README.md             (the DocFX home page, ADR-PC-026 §P3)
+            # Plus docs/product-docs/reference/** and docfx/index.md themselves, so hand-tampering with a generated file is caught.
             docs_gen:
               - 'scripts/docs-gen/**'
               - 'docs/product-docs/reference/**'
+              - 'docs/product-docs/README.md'
+              - 'docfx/index.md'
               - 'contracts/**'
               - 'mcp-server/**'
               - 'docs/product-management/**/adrs/ADR-*.md'

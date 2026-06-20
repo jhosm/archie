@@ -5,7 +5,17 @@
 # the API-reference entry plus an outbound link to the product-docs tree on GitHub.
 # The outbound link pins `main` deliberately: this Pages artifact is built and
 # deployed only from `main`, so its chrome reflects main.
+#
+# The two demo entries point at the standalone pages staged into this same Pages
+# artifact under /demo/ (bd babelstone-q096). They use absolute Pages URLs, not a
+# relative `demo/` href: the demo pages are copied in *after* the DocFX build, so
+# DocFX can't resolve them at build time, and a bare relative href would resolve
+# wrong from the nested /api/* pages. Same host the deploy publishes to.
 - name: API Reference
   href: api/
 - name: Docs on GitHub
   href: https://github.com/jhosm/babelstone/tree/main/docs/product-docs
+- name: Overview Deck
+  href: https://jhosm.github.io/babelstone/demo/
+- name: Design Principles
+  href: https://jhosm.github.io/babelstone/demo/principles.html
