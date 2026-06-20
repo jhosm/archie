@@ -48,9 +48,13 @@ product documentation.
 - [Validate a pack locally](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/validate-a-pack-locally.md)
 - [Interpret a validation failure (message decoder)](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/interpret-a-validation-failure.md)
 - [Troubleshoot a variant rejection](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/troubleshoot-a-variant-rejection.md)
+- [Version and release a pack (the pt.YYYY.N lifecycle)](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/version-and-release-a-pack.md)
+- [Sign and publish a pack with cosign and ORAS](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/sign-and-publish-a-pack.md) — **provisional** (publish path partly unbuilt)
+- [Write a sealed test corpus for a pack](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/how-to/write-a-sealed-test-corpus.md)
 
 **Explanation**
 - [Why packs and rate sheets are separate](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/explanation/why-packs-and-rate-sheets-are-separate.md)
 - [Rate-sheet versioning and point-in-time resolution](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/explanation/rate-sheet-versioning-and-resolution.md)
+- [Pack effective-date and per-instance pinning](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/explanation/pack-effective-date-and-per-instance-pinning.md)
 - [Reading a CUE schema](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/explanation/reading-a-cue-schema.md)
 - [How packs and variants relate](https://github.com/jhosm/babelstone/blob/main/docs/product-docs/explanation/how-packs-and-variants-relate.md)
