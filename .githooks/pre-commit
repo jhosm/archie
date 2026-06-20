@@ -3,16 +3,27 @@
 # pre-commit — keep generated artefacts in sync with their sources, so a
 # committed artefact is never stale vs the source it is rendered from.
 #
-# Two concerns, each fired only when this commit stages a relevant source:
+# Three concerns, each fired only when this commit stages a relevant source:
 #
 #   1. C4 SVGs   — re-render any staged *.puml to *.svg (GitHub can't render
 #                  PlantUML, so the committed SVG is what readers see).
 #   2. reference/ — regenerate docs/.../reference/ (ADR-PC-022 §P2) from its
 #                  Avro/CUE/MCP/ADR sources whenever one of those is staged, so
 #                  the docs-verify CI gate never trips on a forgotten `docs-gen`.
+#   3. bd lint   — when this commit stages .beads/issues.jsonl, lint the issues
+#                  it added/changed for their type's required template sections
+#                  (task/feature → Acceptance Criteria; epic → Success Criteria;
+#                  bug → Steps to Reproduce). `bd lint` is advisory on its own;
+#                  this gate makes a *committed* issue carry its sections, while
+#                  still letting you create a stub and fill it before committing.
+#                  Scoped to the changed issues, so a pre-existing advisory gap
+#                  elsewhere never blocks an unrelated commit. Override a
+#                  deliberate gap with ALLOW_LINT_GAPS=1 (like pre-push's
+#                  ALLOW_PUSH_MAIN=1) — a local net, not a hard gate.
 #
 # Requirements: PlantUML + Graphviz (for *.puml), and mise (for docs-gen — it
-# wraps `python3` in the pinned toolchain). See INSTALL.md.
+# wraps `python3` in the pinned toolchain), and bd (for the issue lint — only
+# when .beads/issues.jsonl is staged). See INSTALL.md.
 #
 # Convention (diagrams): each `@startuml <id>` MUST match its .puml filename
 # (without extension), so `foo.puml` renders to `foo.svg` beside it.
@@ -47,8 +58,11 @@ staged_docs_src="$(staged \
   'engine/src/Babelstone.FinancialMath/DayCount.cs' \
   'docs/product-docs/README.md')"
 
+# The beads export: present here means this commit touches the issue tracker.
+staged_beads="$(staged '.beads/issues.jsonl')"
+
 # Fast path: nothing this hook cares about is in the commit.
-[ -n "$staged_puml" ] || [ -n "$staged_docs_src" ] || exit 0
+[ -n "$staged_puml" ] || [ -n "$staged_docs_src" ] || [ -n "$staged_beads" ] || exit 0
 
 status=0
 
@@ -107,6 +121,43 @@ if [ -n "$staged_docs_src" ]; then
   echo "pre-commit: regenerating docs/.../reference/ + docfx/index.md (ADR-PC-022 §P2, ADR-PC-026 §P3)"
   ( cd "$repo_root" && mise exec -- python3 scripts/docs-gen/generate.py )
   git add -- "${repo_root}/docs/product-docs/reference" "${repo_root}/docfx/index.md"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Lint the bd issues this commit added/changed for required sections.
+# ---------------------------------------------------------------------------
+if [ -n "$staged_beads" ]; then
+  if [ "${ALLOW_LINT_GAPS:-}" = "1" ]; then
+    echo "pre-commit: ALLOW_LINT_GAPS=1 set — skipping the bd issue-template lint." >&2
+  elif ! command -v bd >/dev/null 2>&1; then
+    echo "pre-commit: .beads/issues.jsonl is staged but 'bd' is not installed — skipping the issue-template lint." >&2
+  else
+    # IDs whose record changed in this commit = the "id" of each ADDED line in
+    # the staged diff (a modified issue rewrites its one-line record, so it
+    # shows up as an added line too). `|| true` keeps `set -o pipefail` from
+    # aborting the hook when grep finds nothing.
+    changed_ids="$(git -c core.quotepath=false diff --cached -U0 -- "${repo_root}/.beads/issues.jsonl" \
+      | grep '^+' | grep -v '^+++' \
+      | grep -oE '"id":"[^"]+"' | sed 's/"id":"//; s/"$//' | sort -u || true)"
+
+    if [ -n "$changed_ids" ]; then
+      # bd lint exits non-zero when any listed issue is missing a required
+      # section; --status all so a freshly-closed issue is still linted.
+      if ! bd -C "$repo_root" lint --status all $changed_ids; then
+        {
+          echo
+          echo "pre-commit: the bd issue(s) above are missing a required template section."
+          echo "  Fill them before committing (see the bd-lint-fill skill), e.g.:"
+          echo "    bd update <id> --acceptance \"- <verifiable criterion>\"   # task / feature"
+          echo "    bd update <id> --body-file -                              # epic: append ## Success Criteria"
+          echo "  then re-stage .beads/issues.jsonl."
+          echo
+          echo "  Override a deliberate gap with:  ALLOW_LINT_GAPS=1 git commit ..."
+        } >&2
+        status=1
+      fi
+    fi
+  fi
 fi
 
 exit "$status"
