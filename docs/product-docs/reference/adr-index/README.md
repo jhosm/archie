@@ -39,6 +39,7 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [027](../../../product-management/product_concepts/adrs/ADR-PC-027-deposit-read-surface-canonical-resource.md) | Deposit Read Surface — One Canonical Resource, Read-Model-Backed with Fold-on-Token | Contract-shape | Accepted |
 | [028](../../../product-management/product_concepts/adrs/ADR-PC-028-event-store-payload-format.md) | Event-Store Payload Format — Self-Describing JSON, Decoupled from the Bus's Avro | Tool-selection | Accepted |
 | [029](../../../product-management/product_concepts/adrs/ADR-PC-029-engine-command-ingress.md) | Engine Command Ingress — Synchronous Idempotent REST | Contract-shape | Accepted |
+| [030](../../../product-management/product_concepts/adrs/ADR-PC-030-product-scope-and-boundary.md) | babelstone Product Scope & Boundary — a Product/Accrual Kernel | Tool-selection | Proposed |
 
 ## ADR-IC — Integration estate
 
