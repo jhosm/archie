@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Babelstone.Engine;
 using Babelstone.EventStore;
@@ -15,6 +16,10 @@ namespace Babelstone.LoadHarness.Runner;
 /// production producer) still encodes with the engine's OWN Avro serializer in <c>WorkloadDriver</c> —
 /// this codec only fronts the store/replay path the rig drives in-process.
 /// </summary>
+// internal sealed and reachable only via the (excluded) EngineProjectionRig — the test project has no
+// InternalsVisibleTo, so this branchless JSON codec can't be reached from the Docker-free unit lane.
+// Excluded for the same reason as the rig (see its coverage note); Testcontainers coverage in bd babelstone-2e6q.7.
+[ExcludeFromCodeCoverage(Justification = "Branchless store codec used only by the excluded EngineProjectionRig; inaccessible from the unit lane (no InternalsVisibleTo). Testcontainers coverage tracked in bd babelstone-2e6q.7.")]
 internal sealed class SelfDescribingJsonEventSerializer : IEventSerializer
 {
     public EncodedPayload Encode(DomainEvent @event)
@@ -47,6 +52,14 @@ internal sealed class SelfDescribingJsonEventSerializer : IEventSerializer
 /// invariant compares.
 /// </para>
 /// </remarks>
+// Every member here opens a live Npgsql connection to the event store (append, drain, cold-replay,
+// the no-divergence drill), so this rig is reachable only with a running PostgreSQL — never from the
+// Docker-free unit lane (`Category!=Integration`) the coverage floor measures. Its behaviour is proven
+// by the live-stack acceptance runs documented in the PR and re-run by `make load-test`; the same
+// "behaviour verified elsewhere, line/branch numbers absent" trade the kernel exclude makes in
+// engine/coverlet.runsettings (ADR-PC-020 §D3: divergence allowed, silent divergence not). Tracked for
+// later Testcontainers integration coverage in bd babelstone-2e6q.7.
+[ExcludeFromCodeCoverage(Justification = "Integration-only: every method drives a live PostgreSQL event store; unreachable from the Docker-free unit lane. Verified by the live-stack acceptance runs + make load-test; Testcontainers coverage tracked in bd babelstone-2e6q.7.")]
 internal sealed class EngineProjectionRig
 {
     private const string Family = "term_deposit";

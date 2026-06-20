@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Babelstone.Engine.Avro;
 
 namespace Babelstone.LoadHarness.Runner;
@@ -19,9 +20,18 @@ namespace Babelstone.LoadHarness.Runner;
 /// </remarks>
 internal sealed class LoadRunner
 {
+    // Coverage note: every drive/measure member below composes the live-PostgreSQL EngineProjectionRig
+    // (and optionally a live-Redpanda WorkloadDriver), so it is reachable only with a running stack —
+    // never from the Docker-free unit lane the coverage floor measures. Those members carry
+    // [ExcludeFromCodeCoverage] with the same rationale as EngineProjectionRig (ADR-PC-020 §D3: behaviour
+    // verified by the live-stack acceptance runs + `make load-test`, numbers absent; Testcontainers
+    // coverage tracked in bd babelstone-2e6q.7). The PURE, Docker-free-testable surface — the static
+    // PlanPhases(RunnerOptions) phase planner (pinned by BurstProfileTests) and the DrivePhase struct —
+    // is deliberately NOT excluded, so the §8.3 burst sequencing stays a measured, covered branch.
     private readonly RunnerOptions _options;
     private readonly TextWriter _out;
 
+    [ExcludeFromCodeCoverage(Justification = "Composition glue for the live-stack drive path; see the class-level coverage note.")]
     public LoadRunner(RunnerOptions options, TextWriter output)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -29,6 +39,7 @@ internal sealed class LoadRunner
     }
 
     /// <summary>Runs the configured profile/measurement and returns the PASS/FAIL artefact.</summary>
+    [ExcludeFromCodeCoverage(Justification = "Drives the live-PostgreSQL rig; unreachable Docker-free (see class-level coverage note).")]
     public async Task<RunArtefact> RunAsync(CancellationToken ct = default)
     {
         var spec = WorkloadSpec.Default();
@@ -43,6 +54,7 @@ internal sealed class LoadRunner
     }
 
     // The §8.3 sync-latency (+ throughput for non-smoke profiles) path.
+    [ExcludeFromCodeCoverage(Justification = "Drives the live-PostgreSQL rig; unreachable Docker-free (see class-level coverage note).")]
     private async Task<RunArtefact> RunLatencyAsync(
         WorkloadSpec spec, Calibration calibration, string codeRevision, CancellationToken ct)
     {
@@ -103,6 +115,7 @@ internal sealed class LoadRunner
 
     // The L.3d cold-replay budget + no-rebuild-divergence path. First populates the store with a short
     // workload (so there is something to rebuild), then measures.
+    [ExcludeFromCodeCoverage(Justification = "Drives the live-PostgreSQL rig; unreachable Docker-free (see class-level coverage note).")]
     private async Task<RunArtefact> RunReplayAsync(
         WorkloadSpec spec, Calibration calibration, string codeRevision, CancellationToken ct)
     {
@@ -159,6 +172,7 @@ internal sealed class LoadRunner
     // clustering inside the generator; the DRIVE-RATE peak shaping is applied separately by the phase
     // loop against wall-clock. A large count gives every profile (incl. a 24h sustained at the §8.3 rig
     // rate) ample headroom; the loops stop on wall-clock duration, not on exhausting the stream.
+    [ExcludeFromCodeCoverage(Justification = "Run-stream factory for the live drive path; exercised only via the excluded drive loop (see class-level coverage note).")]
     private IEnumerable<SyntheticEvent> NewEventStream(WorkloadSpec spec)
     {
         var generator = new WorkloadGenerator(_options.Seed, spec, Calibration.V4Placeholder());
@@ -173,6 +187,7 @@ internal sealed class LoadRunner
     // in-process (emitting the engine span the observer reads) and, when a bus driver is present, also
     // produced onto live Redpanda (the §G1 production path). The phase pulls from the SHARED run stream
     // so two phases never replay the same seed-derived deposit ids.
+    [ExcludeFromCodeCoverage(Justification = "Wall-clock drive loop over the live rig/bus; unreachable Docker-free (see class-level coverage note).")]
     private async Task<(long Produced, TimeSpan Elapsed)> DrivePhaseAsync(
         DrivePhase phase, WorkloadSpec spec, IEnumerator<SyntheticEvent> events,
         EngineProjectionRig rig, WorkloadDriver? driver, CancellationToken ct)
@@ -230,6 +245,7 @@ internal sealed class LoadRunner
     // Append a handful of events (UNmeasured) to warm the JIT + Npgsql connection pool before the
     // observer starts, so the steady-state percentiles are not skewed by the process's cold start. The
     // warmup generator uses a seed offset so its stream ids differ from the measured workload's.
+    [ExcludeFromCodeCoverage(Justification = "Appends warmup events through the live rig; unreachable Docker-free (see class-level coverage note).")]
     private async Task WarmUpAsync(WorkloadSpec spec, EngineProjectionRig rig, CancellationToken ct)
     {
         if (_options.WarmupEvents <= 0)
@@ -248,6 +264,7 @@ internal sealed class LoadRunner
         _out.WriteLine($"→ warmed up {_options.WarmupEvents} events (unmeasured).");
     }
 
+    [ExcludeFromCodeCoverage(Justification = "Instance shim onto the measured static PlanPhases, called only from the excluded drive path.")]
     private IReadOnlyList<DrivePhase> PlanPhases() => PlanPhases(_options);
 
     /// <summary>
@@ -277,6 +294,7 @@ internal sealed class LoadRunner
 
     // Build the live-Redpanda producer (the §G1 path) with the engine's OWN Avro codec + a real Schema
     // Registry resolver, or null when --no-bus selects the in-process-only path.
+    [ExcludeFromCodeCoverage(Justification = "Constructs the live-Redpanda producer / Schema Registry client; unreachable Docker-free (see class-level coverage note).")]
     private WorkloadDriver? BuildBusDriver()
     {
         if (string.IsNullOrWhiteSpace(_options.BootstrapServers))
@@ -292,6 +310,7 @@ internal sealed class LoadRunner
         return new WorkloadDriver(serializer, catalog, _options.BootstrapServers);
     }
 
+    [ExcludeFromCodeCoverage(Justification = "Reads process/CI environment variables; called only from the excluded RunAsync path.")]
     private static string CodeRevision() =>
         Environment.GetEnvironmentVariable("BABELSTONE_REVISION")
         ?? Environment.GetEnvironmentVariable("GITHUB_SHA")
