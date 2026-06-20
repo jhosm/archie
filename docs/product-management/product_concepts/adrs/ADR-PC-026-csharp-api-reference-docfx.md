@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-06-07 |
 | Deciders | jhosm |
 | Shape | Tool-selection |
