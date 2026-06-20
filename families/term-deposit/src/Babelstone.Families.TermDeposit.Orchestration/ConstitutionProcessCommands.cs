@@ -192,7 +192,7 @@ public sealed record ConfirmDebitCommand : CommandPayload
 /// Deposit aggregate: activate (constitute) the deposit after the debit (Document 05 step 4b).
 /// Reachable ONLY from APPROVED (§P5). Unlike the other saga commands, this one is delivered to the
 /// ENGINE's <c>POST /v1/deposits</c> command surface (the Pact-pinned route, ADR-PC-029 slot 1), so its
-/// wire body is the engine's <c>Babelstone.Engine.Api.ConstituteDepositRequest</c> shape
+/// wire body is the <c>Babelstone.Families.TermDeposit.Application.ConstituteDepositRequest</c> shape
 /// — NOT the polymorphic saga-command envelope. The body carries the MINIMAL per-deposit facts: the
 /// product code, principal cents, and funding account, plus <c>deposit_id = process_id</c>.
 /// </summary>

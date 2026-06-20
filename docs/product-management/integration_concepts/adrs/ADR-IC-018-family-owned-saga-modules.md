@@ -71,7 +71,7 @@ Uniform pass — F1 does not discriminate (no candidate buys anything).
 
 #### F2 · Regulatory fit (GDPR / DORA / PSD2)
 
-Source-tree placement of a saga carries no PII and is not itself a regulated artefact. The regulatory-weight properties a saga *exercises* — the reversibility ordering before the irreversible Core debit ([ADR-IC-003](./ADR-IC-003-saga-orchestrator.md) §P5), compensation-not-rollback (§P6), no-PII-on-the-bus ([ADR-PC-004](../../product_concepts/adrs/ADR-PC-004-pii-handling-and-encryption.md)) — are owned by *those* ADRs and hold identically under all four placements. It is a correctness property of *how the saga behaves*, not a filter a placement passes or fails.
+Source-tree placement of a saga carries no PII and is not itself a regulated artefact. The regulatory-weight properties a saga *exercises* — the reversibility ordering before the irreversible Core debit ([ADR-IC-003](./ADR-IC-003-saga-orchestrator.md) §P5), compensation-not-rollback (§P6), no-PII-on-the-bus ([ADR-PC-004](../../product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)) — are owned by *those* ADRs and hold identically under all four placements. It is a correctness property of *how the saga behaves*, not a filter a placement passes or fails.
 
 | Candidate | GDPR | DORA / PSD2 | Verdict |
 |---|---|---|---|
