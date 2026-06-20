@@ -143,6 +143,14 @@ builder.Services.AddSingleton<ICommandLog>(_ => new PostgresCommandLog(connectio
 // `projections` discriminator columns + the `projection_checkpoints` table they read/write.
 builder.Services.AddSingleton<IProjectionStorage>(_ => new PostgresProjectionStore(connectionString));
 builder.Services.AddSingleton<IProjectionCheckpointStore>(_ => new PostgresProjectionCheckpointStore(connectionString));
+// A.11 snapshot runtime wiring (ADR-PC-003): the byte-oriented snapshot store is a family-agnostic
+// spine component (ADR-PC-021), backed by the same PostgreSQL tier as the event store (ADR-PC-003 §D
+// — snapshots are rows in a `snapshots` table in the SAME database). The family module composes the
+// typed SnapshotStore<TState> + the per-N CountBasedSnapshotPolicy over this, threading them into its
+// AggregateRuntime to flip snapshots ON for v1; registering the storage here keeps the storage-boundary
+// discipline (the only code that touches the snapshots table is PostgresSnapshotStore). Migration 0003
+// owns the `snapshots` table.
+builder.Services.AddSingleton<ISnapshotStorage>(_ => new PostgresSnapshotStore(connectionString));
 // D.4 CQRS read model (ADR-IC-005): the denormalized query surface on the SAME PostgreSQL tier.
 // The read_model schema is FAMILY-OWNED (ADR-PC-021 family-owned ownership): the term-deposit
 // family's own migration set (Babelstone.Families.TermDeposit.Application.Migrations,

@@ -32,6 +32,20 @@ public sealed class EngineFixture : IAsyncLifetime
             new FixedTimeProvider(Clock), () => new CounterState(0), snapshots);
     }
 
+    /// <summary>
+    /// A runtime wired the way the LIVE host wires it (A.11): a real snapshot store PLUS a per-N
+    /// <see cref="ISnapshotPolicy"/>, so the post-commit write side fires. <paramref name="onSnapshotError"/>
+    /// lets a test assert the fail-soft sink is invoked rather than the exception propagating.
+    /// </summary>
+    public AggregateRuntime<CounterState> SnapshottingRuntime(
+        long everyNEvents, Action<Exception>? onSnapshotError = null, ISnapshotStorage? storage = null)
+        => new(
+            Store, new EventStoreSink(Store), Handlers, Serializer, new NullPiiProtector(),
+            new FixedTimeProvider(Clock), () => new CounterState(0),
+            new SnapshotStore<CounterState>(storage ?? SnapshotStorage, new JsonStateSerializer<CounterState>()),
+            snapshotPolicy: new CountBasedSnapshotPolicy(everyNEvents),
+            onSnapshotError: onSnapshotError);
+
     public SimulationRuntime<CounterState> Simulation()
         => new(Store, Handlers, Serializer, () => new CounterState(0));
 

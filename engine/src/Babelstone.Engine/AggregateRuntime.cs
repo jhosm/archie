@@ -60,6 +60,25 @@ public sealed record Hydrated<TState>(
 /// concrete Avro/SR codec is injected by the host (Babelstone.Engine.Avro), so the kernel names neither
 /// Avro nor the Schema Registry (ENGINE_FAMILY_AGNOSTIC + EVENT_STORE_PAYLOAD_SELF_DESCRIBING hold).
 /// </param>
+/// <param name="snapshotPolicy">
+/// The §8.1 trigger that decides, AFTER a commit, whether to write a snapshot of the new head state.
+/// Snapshots are a pure optimisation (loading from a snapshot + folding the tail is observationally
+/// identical to a cold fold from zero — <c>SnapshotEquivalenceProperties</c>), so this gates only WHEN
+/// to cache, never correctness. <c>null</c> means "never snapshot" — the pre-v1 posture, kept so
+/// engine-internal/test wiring that hands no policy is unchanged. The PRODUCTION host injects the per-N
+/// <see cref="CountBasedSnapshotPolicy"/> alongside a non-null <paramref name="snapshots"/> store, which
+/// is what flips snapshots ON for v1 (ADR-PC-003 §P2). Has no effect without a <paramref name="snapshots"/>
+/// store (there is nowhere to write).
+/// </param>
+/// <param name="onSnapshotError">
+/// Fail-soft sink for a post-commit snapshot-write failure. Per ADR-PC-003 §P2 / event-store §8.1 the
+/// snapshot write is EVENTUALLY-CONSISTENT with the log and NOT transactional with the append: "if it
+/// fails the engine continues; the next rebuild is merely slower, never wrong." So a snapshot-write
+/// exception is swallowed (the commit already succeeded and IS the book of record) and handed here for
+/// the host to log. <c>null</c> drops it silently — acceptable because the snapshot is a rebuildable
+/// cache, but the host should wire a logger so snapshotter health is observable (§P6 lag alarm). The
+/// kernel takes a callback rather than an ILogger to stay logging-library-agnostic (ENGINE_FAMILY_AGNOSTIC).
+/// </param>
 public sealed class AggregateRuntime<TState>(
     IEventStore store,
     IEventSink sink,
@@ -71,7 +90,9 @@ public sealed class AggregateRuntime<TState>(
     SnapshotStore<TState>? snapshots = null,
     IPostCommitProjector? postCommitProjector = null,
     IIntegrationEventCatalog? integrationEventCatalog = null,
-    IEventSerializer? busSerializer = null)
+    IEventSerializer? busSerializer = null,
+    ISnapshotPolicy? snapshotPolicy = null,
+    Action<Exception>? onSnapshotError = null)
 {
     // The bus (outbox) encoder. Defaults to the STORE codec so existing single-codec wiring is
     // unchanged; the production host injects the real Avro+SR codec to make the outbox carry real Avro
@@ -299,7 +320,96 @@ public sealed class AggregateRuntime<TState>(
 
         // The new head version (== the last appended event's per-stream sequence_number). The sink
         // rejects an empty batch, so events.Count >= 1 and this is always a real, committed sequence.
-        return expectedVersion + events.Count;
+        var newHead = expectedVersion + events.Count;
+
+        // Snapshot write (ADR-PC-003 §P2 / event-store §8.1): AFTER the commit succeeds, evaluate the
+        // §8.1 trigger and cache the new head state if it fires. This is the write side LoadAsync's
+        // snapshot-then-tail read side was always waiting for. Three invariants the call below upholds:
+        //
+        //  • EVENTUALLY-CONSISTENT, NOT TRANSACTIONAL with the append (§P2). The snapshot is written on
+        //    its OWN connection after the append transaction has committed — never inside it — so a
+        //    snapshot write can never roll back or delay a committed event.
+        //  • FAIL-SOFT. A snapshot-write failure is swallowed and handed to onSnapshotError: "if it
+        //    fails the engine continues; the next rebuild is merely slower, never wrong" (§P2). The
+        //    committed event IS the book of record; the snapshot is a rebuildable cache.
+        //  • PURE OPTIMISATION. The snapshotted state is what LoadAsync folds (snapshot-then-tail),
+        //    which SnapshotEquivalenceProperties proves byte-identical to a cold fold — so writing one
+        //    can never change a read's answer, only its speed.
+        if (snapshots is not null && snapshotPolicy is not null)
+        {
+            await TrySnapshotAsync(streamId, newHead, transactionTime, context, ct);
+        }
+
+        return newHead;
+    }
+
+    /// <summary>
+    /// Post-commit, eventually-consistent snapshot write (ADR-PC-003 §P2 / event-store §8.1). Evaluates
+    /// the §8.1 trigger and, if it fires, caches the new head state. Fail-soft by construction: any
+    /// exception (a transient snapshot-store write failure) is swallowed and surfaced via
+    /// <c>onSnapshotError</c> — the append already committed, and a missing snapshot only makes the next
+    /// rebuild slower, never wrong (the cold fold is the correctness fallback, §8.2).
+    /// </summary>
+    /// <remarks>
+    /// Only the per-N trigger (<see cref="SnapshotContext.EventsSinceSnapshot"/>) is exercised here. The
+    /// lifecycle / calendar boundary flags are passed <c>false</c> because the family does not yet emit
+    /// boundary signals into the append path — composing those into the policy is the follow-up (bd
+    /// e6fr.12); this lane wires the runtime + the per-N cadence ON, the missing write side. The state
+    /// snapshotted is taken from <see cref="LoadAsync"/> (snapshot-then-tail), so the snapshot the policy
+    /// caches is by construction the same state a fold would reconstruct — keeping the cache a pure
+    /// optimisation (<c>SnapshotEquivalenceProperties</c>).
+    /// </remarks>
+    private async Task TrySnapshotAsync(
+        Guid streamId, long newHead, DateTimeOffset transactionTime, AppendContext context, CancellationToken ct)
+    {
+        try
+        {
+            // Events since the last snapshot drive the per-N trigger. A stream with no snapshot yet has
+            // newHead + 1 events folded (sequences are 0-indexed); with a snapshot at sequence s, the
+            // un-snapshotted tail is (newHead - s) events. The store boundary owns the snapshots table,
+            // so the latest-snapshot lookup is the only authority on what is already cached.
+            var existing = await snapshots!.TryGetAsync(streamId, ct);
+            var eventsSinceSnapshot = existing is null ? newHead + 1 : newHead - existing.AtSequence;
+
+            // v1: only the per-N count is live; lifecycle/calendar boundary signals are not yet threaded
+            // into the append path (bd e6fr.12 composes them). The family stays the source of those flags
+            // when they land, so the engine remains family-agnostic (ENGINE_FAMILY_AGNOSTIC).
+            var snapshotContext = new SnapshotContext(
+                EventsSinceSnapshot: eventsSinceSnapshot,
+                IsLifecycleBoundary: false,
+                IsCalendarBoundary: false);
+
+            if (!snapshotPolicy!.ShouldSnapshot(snapshotContext))
+            {
+                return;
+            }
+
+            // Re-load the head via snapshot-then-tail — the SAME pure fold a read serves — so the cached
+            // state is exactly what a cold fold would produce. Deposit streams are short, so this re-read
+            // is cheap; it keeps the write side from re-deriving state by a separate (drift-prone) path.
+            var head = await LoadAsync(streamId, ct);
+
+            // A snapshot needs a covered event to hash against last_event_id (§8.3); the empty-stream case
+            // (Version -1, no LastEventId) is unreachable here because the sink rejects an empty append,
+            // but guard it so the contract is explicit rather than relying on that invariant.
+            if (head.LastEventId is null)
+            {
+                return;
+            }
+
+            // PutAsync writes on its own connection (PostgresSnapshotStore), AFTER the append committed —
+            // never in the append transaction (§P2 eventually-consistent). created_at is the append's
+            // event-derived transaction_time, not a fresh wall-clock read: the runtime owns the clock,
+            // and reusing the committed stamp keeps the snapshot's timeline event-aligned (ADR-PC-010 §P5).
+            await snapshots.PutAsync(streamId, head.Version, head.LastEventId.Value, head.State, transactionTime, ct);
+        }
+        catch (Exception ex)
+        {
+            // Fail-soft (§P2): the committed event is unaffected by a snapshot-write failure. Surface it
+            // (the host wires a logger / §P6 lag alarm) rather than letting it propagate and look like an
+            // append failure to the caller.
+            onSnapshotError?.Invoke(ex);
+        }
     }
 
     private async Task<TState> FoldAsync(TState state, EventEnvelope envelope, bool unprotect, CancellationToken ct)
