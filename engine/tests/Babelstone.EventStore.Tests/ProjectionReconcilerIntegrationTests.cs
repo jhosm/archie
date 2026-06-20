@@ -1,6 +1,8 @@
+using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Babelstone.Engine;
+using Babelstone.Telemetry;
 using Npgsql;
 using Xunit;
 
@@ -290,6 +292,228 @@ public sealed class ProjectionReconcilerIntegrationTests(PostgresEventStoreFixtu
         Assert.True(checksum.Match);                       // post-rebuild the belief agrees with the log
         Assert.Equal(checksum.EngineHash, drill.AfterHash); // and the rebuilt hash is the cold-fold hash
     }
+
+    // --- M.5: reconciliation metrics (bd babelstone-k4ny) ---
+    // The reconciler emits its §7.1/§7.2 verdicts on the shared Babelstone.Engine meter so the
+    // projection-reconciliation alert rules (infra/grafana/prometheus/alert-rules.yaml) resolve to
+    // live series. A MeterListener on that meter is exactly what a host's AddMeter(BabelstoneTelemetry
+    // .MeterName) wires up. The meter is process-global, so each assertion filters by its own unique
+    // consumer/projection_kind tags and asserts >= 1 (a sibling test recording is cross-talk, not a
+    // defect). Tags are operational-tier references (consumer / projection_kind) — never PII.
+
+    [Fact]
+    public async Task Checksum_mismatch_emits_the_reconciliation_counter_tagged_by_consumer()
+    {
+        await ResetAsync();
+        var (drainer, runner, events, reconciler) = Build();
+        var streamId = Guid.NewGuid();
+        events.Seed(Envelope(streamId, 0, by: 10));
+        events.Seed(Envelope(streamId, 1, by: 5));
+        await drainer.DrainOnceAsync(runner);
+        await CorruptCurrentBeliefAsync(streamId, new CounterState(999));
+
+        var consumer = $"acl-{Guid.NewGuid():N}"; // unique tag so the meter's cross-talk does not bleed in.
+        var contract = new ReconciliationContract(
+            consumer, Kind, ReconciliationPatterns.Checksum,
+            ContractRef: "contracts/catalog/reconciliation/acl.reconciliation.yaml");
+
+        var counted = await CaptureCounterAsync(
+            BabelstoneAttributes.ReconciliationChecksumMismatchMetric,
+            tagFilter: tags => Tag(tags, BabelstoneAttributes.ReconciliationConsumer) == consumer,
+            act: () => reconciler.ReconcileAsync(contract, streamId));
+
+        Assert.Equal(1, counted.Count); // exactly one mismatch counted for this consumer
+        Assert.Equal(1L, counted.Sum);
+        Assert.Equal(Kind, Tag(counted.Tags, BabelstoneAttributes.ProjectionKind)); // tagged by projection_kind too
+    }
+
+    [Fact]
+    public async Task Clean_checksum_emits_no_reconciliation_counter()
+    {
+        await ResetAsync();
+        var (drainer, runner, events, reconciler) = Build();
+        var streamId = Guid.NewGuid();
+        events.Seed(Envelope(streamId, 0, by: 10));
+        await drainer.DrainOnceAsync(runner);
+
+        var consumer = $"engine-{Guid.NewGuid():N}";
+        var contract = new ReconciliationContract(
+            consumer, Kind, ReconciliationPatterns.Checksum,
+            ContractRef: "contracts/catalog/reconciliation/engine-projection-runtime.reconciliation.yaml");
+
+        var counted = await CaptureCounterAsync(
+            BabelstoneAttributes.ReconciliationChecksumMismatchMetric,
+            tagFilter: tags => Tag(tags, BabelstoneAttributes.ReconciliationConsumer) == consumer,
+            act: () => reconciler.ReconcileAsync(contract, streamId));
+
+        Assert.Equal(0, counted.Count); // a clean reconciliation must not increment the alert counter
+    }
+
+    [Fact]
+    public async Task EventCount_skip_emits_the_drift_counter_but_a_gap_does_not()
+    {
+        await ResetAsync();
+        var (_, _, events, reconciler) = Build();
+        var streamId = Guid.NewGuid();
+        events.Seed(Envelope(streamId, 0, by: 1));
+        events.Seed(Envelope(streamId, 1, by: 1));
+        events.Seed(Envelope(streamId, 2, by: 1));
+        // Belief claims sequence 2 (three handled events at/below) but only one folded -> a SKIP.
+        await WriteBeliefAtSequenceAsync(streamId, new CounterState(1), sourceSequence: 2);
+
+        var consumer = $"acl-{Guid.NewGuid():N}";
+        var contract = new ReconciliationContract(
+            consumer, Kind, ReconciliationPatterns.EventCount,
+            ContractRef: "contracts/catalog/reconciliation/acl.reconciliation.yaml");
+
+        var counted = await CaptureCounterAsync(
+            BabelstoneAttributes.ReconciliationEventCountDriftMetric,
+            tagFilter: tags => Tag(tags, BabelstoneAttributes.ReconciliationConsumer) == consumer,
+            act: () => reconciler.ReconcileAsync(contract, streamId, consumerFoldedCount: 1));
+
+        Assert.Equal(1, counted.Count); // a Skip increments the drift counter
+        Assert.Equal(consumer, Tag(counted.Tags, BabelstoneAttributes.ReconciliationConsumer));
+        Assert.Equal(Kind, Tag(counted.Tags, BabelstoneAttributes.ProjectionKind));
+    }
+
+    [Fact]
+    public async Task EventCount_gap_emits_no_drift_counter()
+    {
+        await ResetAsync();
+        var (_, runner, events, reconciler) = Build();
+        var streamId = Guid.NewGuid();
+        events.Seed(Envelope(streamId, 0, by: 1));
+        events.Seed(Envelope(streamId, 1, by: 1));
+        events.Seed(Envelope(streamId, 2, by: 1));
+        // A lagging-but-in-order consumer: belief at sequence 1, two folded -> a benign Gap, not a Skip.
+        await runner.ApplyAsync(Envelope(streamId, 0, by: 1));
+        await runner.ApplyAsync(Envelope(streamId, 1, by: 1));
+
+        var consumer = $"analytics-{Guid.NewGuid():N}";
+        var contract = new ReconciliationContract(
+            consumer, Kind, ReconciliationPatterns.EventCount,
+            ContractRef: "contracts/catalog/reconciliation/analytics.reconciliation.yaml");
+
+        var counted = await CaptureCounterAsync(
+            BabelstoneAttributes.ReconciliationEventCountDriftMetric,
+            tagFilter: tags => Tag(tags, BabelstoneAttributes.ReconciliationConsumer) == consumer,
+            act: () => reconciler.ReconcileAsync(contract, streamId, consumerFoldedCount: 2));
+
+        Assert.Equal(0, counted.Count); // a benign Gap is acceptable async lag — it must NOT alert
+    }
+
+    [Fact]
+    public async Task Rebuild_drill_divergence_emits_the_counter_and_a_clean_drill_records_freshness()
+    {
+        await ResetAsync();
+        var (drainer, runner, events, reconciler) = Build();
+
+        // --- A drill that DIVERGES: a corrupted belief whose before-hash differs from the rebuilt
+        //     after-hash increments the divergence counter, tagged by projection_kind. ---
+        var divergentStream = Guid.NewGuid();
+        events.Seed(Envelope(divergentStream, 0, by: 4));
+        events.Seed(Envelope(divergentStream, 1, by: 6));
+        await drainer.DrainOnceAsync(runner);
+        await CorruptCurrentBeliefAsync(divergentStream, new CounterState(123456));
+
+        var diverged = await CaptureCounterAsync(
+            BabelstoneAttributes.ReconciliationRebuildDrillDivergenceMetric,
+            tagFilter: tags => Tag(tags, BabelstoneAttributes.ProjectionKind) == Kind,
+            act: () => reconciler.FullRebuildDrillAsync(drainer, runner, divergentStream));
+
+        Assert.True(diverged.Count >= 1); // >= 1: the meter is process-global; this kind is shared.
+        Assert.True(diverged.Sum >= 1L);
+
+        // --- A CLEAN drill records the freshness gauge for this kind (Unix-epoch seconds of the last
+        //     successful drill). Read it from the observable gauge via RecordObservableInstruments. ---
+        var before = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var cleanStream = Guid.NewGuid();
+        events.Seed(Envelope(cleanStream, 0, by: 7));
+        await drainer.DrainOnceAsync(runner);
+        var drill = await reconciler.FullRebuildDrillAsync(drainer, runner, cleanStream);
+        Assert.True(drill.Identical); // precondition: the drill reproduced the running state
+
+        var freshness = ObserveGauge(
+            BabelstoneAttributes.ReconciliationDrillFreshnessMetric,
+            tagFilter: tags => Tag(tags, BabelstoneAttributes.ProjectionKind) == Kind);
+
+        Assert.NotNull(freshness); // the freshness gauge reports a measurement for this kind
+        var freshnessSeconds = freshness!.Value.Value; // Nullable<Measurement<double>> -> Measurement -> reading
+        // The recorded timestamp is the recent successful drill (a small clock tolerance both ways).
+        Assert.True(
+            freshnessSeconds >= before - 2,
+            $"freshness ({freshnessSeconds}) should be at/after the drill time ({before}).");
+        Assert.True(freshnessSeconds <= DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 2);
+    }
+
+    // --- metric-capture helpers (the host's AddMeter analogue: a MeterListener on the shared meter) ---
+
+    private sealed record CountedMeasurement(int Count, long Sum, KeyValuePair<string, object?>[] Tags);
+
+    private static async Task<CountedMeasurement> CaptureCounterAsync(
+        string instrumentName,
+        Func<KeyValuePair<string, object?>[], bool> tagFilter,
+        Func<Task> act)
+    {
+        var hits = new List<(long Value, KeyValuePair<string, object?>[] Tags)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == BabelstoneTelemetry.MeterName && instrument.Name == instrumentName)
+            {
+                l.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            var copy = tags.ToArray();
+            if (tagFilter(copy))
+            {
+                lock (hits)
+                {
+                    hits.Add((value, copy));
+                }
+            }
+        });
+        listener.Start();
+
+        await act();
+
+        listener.Dispose(); // flush
+        return new CountedMeasurement(
+            hits.Count,
+            hits.Sum(h => h.Value),
+            hits.Count == 0 ? [] : hits[^1].Tags);
+    }
+
+    private static Measurement<double>? ObserveGauge(
+        string instrumentName, Func<KeyValuePair<string, object?>[], bool> tagFilter)
+    {
+        Measurement<double>? match = null;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == BabelstoneTelemetry.MeterName && instrument.Name == instrumentName)
+            {
+                l.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((_, value, tags, _) =>
+        {
+            var copy = tags.ToArray();
+            if (tagFilter(copy))
+            {
+                match = new Measurement<double>(value, copy);
+            }
+        });
+        listener.Start();
+        listener.RecordObservableInstruments();
+        listener.Dispose();
+        return match;
+    }
+
+    private static string? Tag(KeyValuePair<string, object?>[] tags, string key) =>
+        tags.FirstOrDefault(t => t.Key == key).Value as string;
 
     // --- composition ---
 

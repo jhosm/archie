@@ -172,4 +172,69 @@ public static class BabelstoneAttributes
     /// contract gap. Tagged by <see cref="SourceTopic"/>. snake_case metric name, not a span key.
     /// </summary>
     public const string InboxTombstoneMetric = "inbox_tombstone_total";
+
+    /// <summary>
+    /// Projection-reconciliation CHECKSUM MISMATCH (event-store §7.1 pattern (a), M.5 — bd
+    /// babelstone-k4ny): a monotonic counter incremented when a per-instance state checksum finds the
+    /// projection's materialised belief disagreeing byte-for-byte with an independent cold fold of the
+    /// event log (<c>ChecksumReconciliation.Match == false</c>) — consumer drift since the last
+    /// reconciliation. Tagged by <see cref="ReconciliationConsumer"/> and <see cref="ProjectionKind"/>.
+    /// The <c>projection-reconciliation</c> alert rule reads this by exactly this string; snake_case-
+    /// with-unit-suffix (OTLP→Prometheus no-op), the <c>_total</c> the OTLP cumulative convention bakes
+    /// into the emitted name — never a <c>babelstone.*</c> span key.
+    /// </summary>
+    public const string ReconciliationChecksumMismatchMetric = "reconciliation_checksum_mismatch_total";
+
+    /// <summary>
+    /// Projection-reconciliation EVENT-COUNT DRIFT / SKIP (event-store §7.1 pattern (b), M.5): a
+    /// monotonic counter incremented when event-count reconciliation finds a consumer whose belief
+    /// reflects FEWER folded events than truly exist at/below its claimed sequence
+    /// (<c>EventCountStatus.Skip</c>) — it advanced past events it never applied (lost/dropped events).
+    /// A benign <c>Gap</c> (acceptable async lag, §7.1) is deliberately NOT counted, so this series is a
+    /// clean alertable skip signal. Tagged by <see cref="ReconciliationConsumer"/> and
+    /// <see cref="ProjectionKind"/>. snake_case metric name read by the alert rule by this exact string.
+    /// </summary>
+    public const string ReconciliationEventCountDriftMetric = "reconciliation_event_count_drift_total";
+
+    /// <summary>
+    /// Projection-reconciliation REBUILD-DRILL DIVERGENCE (event-store §7.2 pattern (c), M.5): a
+    /// monotonic counter incremented when a full-rebuild drill cold-re-folds the log and does NOT
+    /// reproduce the running projection byte-for-byte (<c>RebuildReconciliation.Identical == false</c>)
+    /// — the slow-drift bug class the cheap daily checksum can miss. The in-process companion to the
+    /// <see cref="ReconciliationDrillFreshnessMetric"/> gauge: freshness catches a drill that did not
+    /// RUN; this catches a drill that RAN and FAILED. Tagged by <see cref="ProjectionKind"/>. snake_case
+    /// metric name read by the alert rule by this exact string.
+    /// </summary>
+    public const string ReconciliationRebuildDrillDivergenceMetric = "reconciliation_rebuild_drill_divergence_total";
+
+    /// <summary>
+    /// Projection-rebuild-drill FRESHNESS gauge (event-store §7.2, M.5): an observable gauge of the
+    /// Unix-epoch SECONDS of the most recent SUCCESSFUL in-process full-rebuild drill
+    /// (<c>RebuildReconciliation.Identical == true</c>) the reconciler has observed this process. The
+    /// <c>ProjectionRebuildDrillStale</c> alert fires when <c>time() − this &gt; 35 days</c> (the §7.2
+    /// monthly cadence + grace), and <c>absent()</c> covers a never-recorded drill — a missed drill is a
+    /// process incident (ADR-PC-005 §P5). It is the in-process companion to the externally-pushed
+    /// drill-freshness metric the projection-rebuild-drill script emits via Pushgateway; both carry the
+    /// SAME name so the rule reads either source uniformly. snake_case-with-unit-suffix, not a span key.
+    /// </summary>
+    public const string ReconciliationDrillFreshnessMetric = "reconciliation_drill_last_success_timestamp_seconds";
+
+    /// <summary>
+    /// The CONSUMER dimension the reconciliation counters are tagged with (the
+    /// <c>ReconciliationContract.Consumer</c> stable name, e.g. <c>engine</c> / <c>acl</c> /
+    /// <c>notification</c>) — the same identity used in the AsyncAPI <c>x-authorized-consumers</c> list.
+    /// A structural REFERENCE, never PII (ADR-PC-004 §P2 / catalogue OBS_NO_PII_ATTRS). The metric label
+    /// key is the bare <c>consumer</c> string the alert rules group by — it is a metric dimension, not a
+    /// <c>babelstone.*</c> span-attribute key, so it does not carry the span-key prefix.
+    /// </summary>
+    public const string ReconciliationConsumer = "consumer";
+
+    /// <summary>
+    /// The PROJECTION-KIND dimension the reconciliation counters/gauge are tagged with (the
+    /// family-prefixed discriminator, e.g. <c>term_deposit.deposit_position</c> — the same
+    /// <c>IProjectionRunner.Kind</c> the runner uses). A structural reference, never PII. The metric
+    /// label key is the bare <c>projection_kind</c> string the alert rules group by — a metric
+    /// dimension, not a <c>babelstone.*</c> span-attribute key.
+    /// </summary>
+    public const string ProjectionKind = "projection_kind";
 }

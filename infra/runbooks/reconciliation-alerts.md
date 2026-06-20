@@ -19,13 +19,15 @@ the M.5 deliverable.
 
 > **Emit status (read this first).** The reconciler returns its verdicts as
 > *records* (`ChecksumReconciliation`, `EventCountReconciliation`,
-> `RebuildReconciliation`), not yet as Prometheus metrics. The checksum / skip /
-> divergence alert rules are therefore present in `alert-rules.yaml` as
-> **guarded, commented** rules — each names the pending emit, owner, threshold
-> and severity, the [ADR-PC-020 §P5](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
-> deliberate-visible-hole discipline. This runbook documents the operator
-> response so it is ready the day the metric lands and the rule is uncommented.
-> The one rule that is **live today** is the drill-freshness alert — see the
+> `RebuildReconciliation`) **and** now emits them as Prometheus metrics on the
+> `Babelstone.Engine` meter (bd `babelstone-k4ny`): a checksum mismatch increments
+> `reconciliation_checksum_mismatch_total`, an event-count `Skip` increments
+> `reconciliation_event_count_drift_total` (a benign `Gap` does not), and a
+> rebuild-drill divergence increments `reconciliation_rebuild_drill_divergence_total`
+> — each tagged by `consumer` and/or `projection_kind`. The checksum / skip /
+> divergence alert rules in `alert-rules.yaml` (`projection-reconciliation` group)
+> are therefore **live**, closing the [ADR-PC-020 §P5](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
+> deliberate-visible-hole. The drill-freshness alert is also live — see the
 > companion [projection-rebuild-drill runbook](./projection-rebuild-drill.md).
 
 ---

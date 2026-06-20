@@ -212,18 +212,19 @@ groups:
   #       monthly §7.2 cold rebuild did not reproduce the running state (the slow-
   #       drift bug class the drill exists to surface).
   #
-  # EMIT STATUS (ADR-PC-020 §P5 deliberate-visible-hole): the reconciler today
-  # returns these as RECORDS (ChecksumReconciliation / EventCountReconciliation /
-  # RebuildReconciliation), NOT yet as a Prometheus metric on the
-  # `Babelstone.Engine` meter — there is no `reconciliation_*` name in
-  # BabelstoneAttributes. So these rules are present-but-GUARDED, the same shape
-  # as the saga/replication block above: each names the pending emit, its owner,
-  # and the threshold + severity, so uncommenting is a one-line change once the
-  # metric lands and the alert ships WITH it. The metric NAMES below are the
-  # contract a future emit MUST honour (snake_case-with-unit-suffix, the OTLP→
-  # Prometheus no-op convention this file already uses), tagged by `consumer`
-  # (the ReconciliationContract.Consumer reference — never PII) and
-  # `projection_kind`.
+  # EMIT STATUS (bd babelstone-k4ny, M.5): the reconciler now EMITS these on the
+  # `Babelstone.Engine` meter (BabelstoneAttributes.Reconciliation*Metric;
+  # engine/src/Babelstone.Engine/ProjectionReconciler.cs → ReconciliationMetrics),
+  # so the rules below are LIVE — the §P5 deliberate-visible-hole is closed. The
+  # reconciler increments reconciliation_checksum_mismatch_total when
+  # ChecksumReconciliation.Match is false, reconciliation_event_count_drift_total
+  # on an EventCountStatus.Skip (a benign Gap is NOT counted), and
+  # reconciliation_rebuild_drill_divergence_total when RebuildReconciliation.Identical
+  # is false — each tagged by `consumer` (the ReconciliationContract.Consumer
+  # reference — never PII) and/or `projection_kind`. The names are snake_case-with-
+  # unit-suffix (the OTLP→Prometheus no-op convention this file already uses); OTLP
+  # exposes the delta counters cumulative with the `_total` suffix already in the
+  # emitted name.
   #
   # The DRILL-FRESHNESS rule (d) is the exception: it does NOT depend on engine
   # code. The monthly projection-rebuild drill
@@ -266,71 +267,72 @@ groups:
             projection-rebuild-drill workflow) and investigate any divergence.
           runbook: ../../runbooks/projection-rebuild-drill.md
 
-    # TODO(emit-pending) — CHECKSUM MISMATCH (§7.1 pattern (a)): a projection
-    # whose materialised belief drifted from a cold fold of the log. Pending
-    # metric: a reconciliation-result counter, e.g.
-    # reconciliation_checksum_mismatch_total{consumer,projection_kind} — the
-    # reconciler increments it when ChecksumReconciliation.Match is false. Owner:
-    # Epic F / the projection runtime that hosts the reconciler. Uncomment when
-    # emitted:
-    #
-    #   - alert: ReconciliationChecksumMismatch
-    #     expr: increase(reconciliation_checksum_mismatch_total[1d]) > 0
-    #     for: 0m
-    #     labels: { severity: critical, sli: reconciliation_checksum, adr: ADR-PC-002 }
-    #     annotations:
-    #       summary: "Projection checksum mismatch (consumer drift, §7.1)"
-    #       description: >-
-    #         A daily per-instance state checksum (event-store §7.1 pattern (a))
-    #         found a projection belief that disagrees byte-for-byte with an
-    #         independent cold fold of the event log — consumer drift since the
-    #         last reconciliation. Run the §7.2 rebuild drill on the affected
-    #         kind to repair, then root-cause the handler drift. Page on-call:
-    #         a regulator/auditor must never see a drifted projection first.
-    #     runbook: ../../runbooks/reconciliation-alerts.md
-    #
-    # TODO(emit-pending) — EVENT-COUNT SKIP (§7.1 pattern (b)): a consumer that
-    # advanced its sequence past events it never folded (lost/dropped events).
-    # Pending metric: a skip counter, e.g.
-    # reconciliation_event_count_skip_total{consumer,projection_kind} — the
-    # reconciler increments it when EventCountStatus is Skip (NOT for a benign
-    # Gap). Owner: Epic F / the projection runtime. Uncomment when emitted:
-    #
-    #   - alert: ReconciliationEventCountSkip
-    #     expr: increase(reconciliation_event_count_skip_total[5m]) > 0
-    #     for: 0m
-    #     labels: { severity: critical, sli: reconciliation_event_count, adr: ADR-PC-002 }
-    #     annotations:
-    #       summary: "Projection event-count SKIP (events lost, §7.1)"
-    #       description: >-
-    #         Event-count reconciliation (event-store §7.1 pattern (b)) found a
-    #         consumer whose belief reflects FEWER folded events than truly exist
-    #         at/below its claimed sequence — it advanced past events it never
-    #         applied. Distinct from a benign Gap (acceptable async lag, not
-    #         alerted). This is a plumbing failure (lost/dropped events); the
-    #         projection is incorrect until rebuilt. Page on-call.
-    #     runbook: ../../runbooks/reconciliation-alerts.md
-    #
-    # TODO(emit-pending) — REBUILD-DRILL DIVERGENCE (§7.2 pattern (c)): the
-    # monthly cold rebuild did not reproduce the running state. Pending metric: a
-    # drill-divergence counter, e.g.
-    # reconciliation_rebuild_divergence_total{projection_kind} — incremented when
-    # RebuildReconciliation.Identical is false. This is the in-process companion
-    # to the ProjectionRebuildDrillStale freshness alert above: freshness catches
-    # a drill that did not RUN; divergence catches a drill that RAN and FAILED.
-    # Owner: the projection-rebuild-drill job (bd babelstone-j67l) once it emits a
-    # result metric rather than only a green/red exit code. Uncomment when emitted:
-    #
-    #   - alert: ReconciliationRebuildDivergence
-    #     expr: increase(reconciliation_rebuild_divergence_total[35d]) > 0
-    #     for: 0m
-    #     labels: { severity: critical, sli: reconciliation_rebuild, adr: ADR-PC-002 }
-    #     annotations:
-    #       summary: "Projection rebuild drill DIVERGED (§7.2)"
-    #       description: >-
-    #         A monthly full-rebuild drill (event-store §7.2) cold-re-folded the
-    #         log and did NOT reproduce the running projection byte-for-byte —
-    #         the slow-drift bug class (accumulated rounding, state-dependent
-    #         conditional logic) the cheap daily checksum misses. Investigate the
-    #         divergent kind before the next settlement cycle. Page on-call.
-    #     runbook: ../../runbooks/reconciliation-alerts.md
+      # CHECKSUM MISMATCH (§7.1 pattern (a), bd babelstone-k4ny): a projection
+      # whose materialised belief drifted from a cold fold of the log. The
+      # reconciler increments reconciliation_checksum_mismatch_total{consumer,
+      # projection_kind} when ChecksumReconciliation.Match is false (emitted from
+      # ProjectionReconciler.ReconcileAsync, the contract-driven boundary).
+      - alert: ReconciliationChecksumMismatch
+        expr: increase(reconciliation_checksum_mismatch_total[1d]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          sli: reconciliation_checksum
+          adr: ADR-PC-002
+        annotations:
+          summary: "Projection checksum mismatch (consumer drift, §7.1)"
+          description: >-
+            A daily per-instance state checksum (event-store §7.1 pattern (a))
+            found a projection belief that disagrees byte-for-byte with an
+            independent cold fold of the event log — consumer drift since the
+            last reconciliation. Run the §7.2 rebuild drill on the affected kind
+            to repair, then root-cause the handler drift. Page on-call: a
+            regulator/auditor must never see a drifted projection first.
+          runbook: ../../runbooks/reconciliation-alerts.md
+
+      # EVENT-COUNT DRIFT / SKIP (§7.1 pattern (b), bd babelstone-k4ny): a
+      # consumer that advanced its sequence past events it never folded
+      # (lost/dropped events). The reconciler increments
+      # reconciliation_event_count_drift_total{consumer,projection_kind} when
+      # EventCountStatus is Skip — NOT for a benign Gap (acceptable async lag).
+      - alert: ReconciliationEventCountSkip
+        expr: increase(reconciliation_event_count_drift_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          sli: reconciliation_event_count
+          adr: ADR-PC-002
+        annotations:
+          summary: "Projection event-count SKIP (events lost, §7.1)"
+          description: >-
+            Event-count reconciliation (event-store §7.1 pattern (b)) found a
+            consumer whose belief reflects FEWER folded events than truly exist
+            at/below its claimed sequence — it advanced past events it never
+            applied. Distinct from a benign Gap (acceptable async lag, not
+            alerted). This is a plumbing failure (lost/dropped events); the
+            projection is incorrect until rebuilt. Page on-call.
+          runbook: ../../runbooks/reconciliation-alerts.md
+
+      # REBUILD-DRILL DIVERGENCE (§7.2 pattern (c), bd babelstone-k4ny): the
+      # cold rebuild did not reproduce the running state. The reconciler
+      # increments reconciliation_rebuild_drill_divergence_total{projection_kind}
+      # when RebuildReconciliation.Identical is false (emitted from
+      # FullRebuildDrillAsync). This is the in-process companion to the
+      # ProjectionRebuildDrillStale freshness alert above: freshness catches a
+      # drill that did not RUN; divergence catches a drill that RAN and FAILED.
+      - alert: ReconciliationRebuildDivergence
+        expr: increase(reconciliation_rebuild_drill_divergence_total[35d]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          sli: reconciliation_rebuild
+          adr: ADR-PC-002
+        annotations:
+          summary: "Projection rebuild drill DIVERGED (§7.2)"
+          description: >-
+            A full-rebuild drill (event-store §7.2) cold-re-folded the log and
+            did NOT reproduce the running projection byte-for-byte — the
+            slow-drift bug class (accumulated rounding, state-dependent
+            conditional logic) the cheap daily checksum misses. Investigate the
+            divergent kind before the next settlement cycle. Page on-call.
+          runbook: ../../runbooks/reconciliation-alerts.md
