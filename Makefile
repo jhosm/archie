@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 BACKSTAGE_PORT    ?= 7007
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile gen-saga-topics gen-saga-topics-check kong-config-check deck-sync-dry-run deck-sync cd-migrate-gate cd-migrate edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify rate-sheet-check deploy-rate-sheet docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile gen-saga-topics gen-saga-topics-check kong-config-check deck-sync-dry-run deck-sync cd-migrate-gate cd-migrate edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify rate-sheet-check deploy-rate-sheet docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test load-gate preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -213,6 +213,20 @@ projection-rebuild-drill: ## Run the monthly §7.2 projection-rebuild drill (Ful
 LOAD_ARGS ?=
 load-test: ## Run the ADR-PC-011 §G4 load-test gate against the live stack (LOAD_ARGS=… to set profile/measure/tps; bd babelstone-2e6q)
 	mise exec -- dotnet run --project engine/load/Babelstone.LoadHarness.Runner -c Release -- $(LOAD_ARGS)
+
+# The COMPOSITE v1 RC gate (L.3f / bd babelstone-2e6q.6; ADR-PC-011 Open Action #4): runs the load-test
+# host over EVERY acceptance dimension — §8.3 latency bands, sustained + burst throughput, the §8.2
+# replay budget + no-divergence, the L.5 snapshot-accelerated-replay parity, the L.6 discard-rebuild
+# drill on populated snapshots, and the ADR-PC-005 §P1 sync-replication append cost — and exits 0 ONLY if
+# every dimension that ran passed. One binary PASS/FAIL; the RC pipeline (.github/workflows/load-gate.yml)
+# blocks the v1 RC on red. Needs the stack up (`make up`); the script applies the event-store migrations.
+# Override any dimension's run shape via env, e.g. the full §8.3 soak:
+#   make load-gate LOAD_GATE_SUSTAINED_ARGS="--profile sustained --tps 250 --duration 24h --no-bus"
+#   make load-gate LOAD_GATE_BURST_ARGS="--profile burst --burst-tps 1000 --burst-duration 15m --no-bus"
+# Against the HA overlay, make the §P1 dimension GATING (it is advisory on the single-node dev stack):
+#   make load-gate LOAD_GATE_REPL_ARGS="--measure repl-latency --standby-confirmed --pg <overlay-write-endpoint>"
+load-gate: ## Composite v1 RC load-acceptance gate — one PASS/FAIL over every dimension (bd babelstone-2e6q.6)
+	@./scripts/load-gate.sh
 
 ## ----------------------------------------------------------------------------
 ## Local dev stack (infra/compose.yaml) — PostgreSQL + Redpanda + Console

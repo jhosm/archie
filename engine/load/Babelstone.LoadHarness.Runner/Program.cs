@@ -71,6 +71,16 @@ if (artefact.NoDivergence is { } d)
     Console.WriteLine($"  [{(d.Passed ? "PASS" : "FAIL")}] {d.Reason}");
 }
 
+if (artefact.SnapshotReplay is { } sr)
+{
+    Console.WriteLine($"  [{(sr.Passed ? "PASS" : "FAIL")}] snapshot-replay: {sr.Reason}");
+}
+
+if (artefact.ReplicationLatency is { } rl)
+{
+    Console.WriteLine($"  [{(rl.Passed ? "PASS" : "FAIL")}] repl-latency: {rl.Reason}");
+}
+
 // Exit code IS the gate (the same binary outcome §8.3 demands): 0 = PASS, 1 = FAIL. A CI cadence step
 // (bd babelstone-2e6q.6) keys off this.
 return artefact.Passed ? 0 : 1;
@@ -84,7 +94,12 @@ static void PrintUsage(TextWriter w)
         Usage: dotnet run --project engine/load/Babelstone.LoadHarness.Runner -- [flags]
 
           --profile smoke|sustained|burst   Run shape (default smoke).
-          --measure latency|replay          What to measure (default latency).
+          --measure <mode>                  What to measure (default latency). One of:
+                                              latency          §8.3 sync bands (+ throughput)
+                                              replay           §8.2 cold-replay budget + no-divergence (L.3d)
+                                              snapshot-replay  snapshot-vs-cold parity + speedup (L.5)
+                                              repl-latency     sync-replication append cost §P1 (L.3e)
+                                              discard-rebuild  discard populated snapshots, rebuild cold (L.6)
           --seed <int>                      RNG seed (default 1234; §8.5 reproduces a run).
           --run-id <guid>                   Stream-id namespace nonce (default fresh; set to reproduce).
           --warmup <int>                    Unmeasured warmup events before measuring (default 5).
@@ -98,6 +113,10 @@ static void PrintUsage(TextWriter w)
           --schema-registry <url>           Schema Registry URL (default http://localhost:18081).
           --no-bus                          Skip the Redpanda producer (in-process only).
           --irregular                       Use the §8.2 irregular (30s) replay budget (else 5s).
+          --depth <int>                     L.5/L.6 deep-stream event depth (default 64; must snapshot).
+          --repl-samples <int>              L.3e appends timed per side, sync on/off (default 50).
+          --standby-confirmed               L.3e: running against a real warm standby (HA overlay) — makes
+                                            the repl-latency verdict GATING; without it it is advisory.
           -h, --help                        Show this help.
 
         Exit code: 0 = PASS, 1 = FAIL, 2 = usage error.

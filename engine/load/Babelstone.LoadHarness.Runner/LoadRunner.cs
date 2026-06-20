@@ -36,6 +36,15 @@ internal sealed class LoadRunner
         _out = output ?? throw new ArgumentNullException(nameof(output));
     }
 
+    // The band-populate phase draws its synthetic stream from _options.Seed directly. The L.5/L.6 deep
+    // stream and the L.3e repl-latency probe must NOT draw from that same seed, or their first synthetic
+    // constitution's partition key (and so its run-namespaced stream id) would collide with a stream the
+    // populate phase already opened (an optimistic-concurrency ConcurrencyException). A distinct generator
+    // seed yields a disjoint partition-key space; XORing the configured seed keeps the offset reproducible
+    // from (seed, run-id, revision) — the §8.5 posture — rather than introducing fresh randomness.
+    private int DeepStreamSeed => _options.Seed ^ unchecked((int)0x0DEE_5EED);
+    private int ReplLatencySeed => _options.Seed ^ unchecked((int)0x12E9_0000);
+
     /// <summary>Runs the configured profile/measurement and returns the PASS/FAIL artefact.</summary>
     public async Task<RunArtefact> RunAsync(CancellationToken ct = default)
     {
@@ -46,6 +55,9 @@ internal sealed class LoadRunner
         return _options.Measure switch
         {
             MeasureMode.Replay => await RunReplayAsync(spec, calibration, codeRevision, ct),
+            MeasureMode.SnapshotReplay => await RunSnapshotReplayAsync(calibration, codeRevision, ct),
+            MeasureMode.ReplLatency => await RunReplicationLatencyAsync(calibration, codeRevision, ct),
+            MeasureMode.DiscardRebuild => await RunDiscardRebuildAsync(calibration, codeRevision, ct),
             _ => await RunLatencyAsync(spec, calibration, codeRevision, ct),
         };
     }
@@ -160,6 +172,137 @@ internal sealed class LoadRunner
         return new RunArtefact(
             _options.Seed, codeRevision, calibration, verdicts, produced,
             Replay: replay, NoDivergence: noDivergence);
+    }
+
+    // The L.5 snapshot-accelerated replay path (bd babelstone-0uau.1 / ADR-PC-003 §P3). Populates a short
+    // span-emitting workload (so the §8.3 bands still evaluate — the artefact is a superset, not narrower),
+    // then builds ONE deep stream WITH snapshots and measures cold vs snapshot-accelerated rebuild over it,
+    // asserting byte-identity + a speedup.
+    private async Task<RunArtefact> RunSnapshotReplayAsync(
+        Calibration calibration, string codeRevision, CancellationToken ct)
+    {
+        var spec = WorkloadSpec.Default();
+        using var observer = new LatencyObserver();
+        var rig = new EngineProjectionRig(_options.PostgresConnectionString, TimeProvider.System, _options.RunId);
+
+        // Populate a few span-emitting appends so the §8.3 sync bands have data (the same anti-empty-bands
+        // posture RunReplayAsync takes); the bus path is irrelevant to a replay measurement, so skip it.
+        var produced = await PopulateForBandsAsync(spec, rig, ct);
+
+        // Build the deep, snapshotted measurement stream and time the two rebuilds over it. The deep stream
+        // uses a seed OFFSET from the band-populate stream space (which drew from _options.Seed directly),
+        // so its run-namespaced stream id never collides with a stream the populate phase already opened.
+        _out.WriteLine($"→ building deep stream: {_options.SnapshotStreamDepth} events (per-N snapshots).");
+        var (streamId, _) = await rig.PopulateDeepStreamAsync(_options.SnapshotStreamDepth, DeepStreamSeed, ct);
+        var (coldMs, snapMs, identical, snapshotsApplied, refolded) =
+            await rig.MeasureSnapshotAcceleratedReplayAsync(streamId, ct);
+
+        var budgetMs = _options.IrregularReplayClass
+            ? ReplayVerdict.IrregularBudgetMs
+            : ReplayVerdict.WithAPlanBudgetMs;
+        var snapshotReplay = new SnapshotReplayVerdict(coldMs, snapMs, budgetMs, identical, snapshotsApplied, refolded);
+        _out.WriteLine($"→ {snapshotReplay.Reason}");
+
+        var verdicts = SyncLatencyBand.Section83Bands().Select(observer.Evaluate).ToList();
+        return new RunArtefact(
+            _options.Seed, codeRevision, calibration, verdicts, produced, SnapshotReplay: snapshotReplay);
+    }
+
+    // The L.3e synchronous-replication append-latency path (bd babelstone-2e6q.5 / ADR-PC-005 §P1).
+    // Populates span-emitting appends for the §8.3 bands, then times appends with synchronous_commit on vs
+    // off and folds the §P1 delta. GATING only when --standby-confirmed names a real warm standby.
+    private async Task<RunArtefact> RunReplicationLatencyAsync(
+        Calibration calibration, string codeRevision, CancellationToken ct)
+    {
+        var spec = WorkloadSpec.Default();
+        using var observer = new LatencyObserver();
+        var rig = new EngineProjectionRig(_options.PostgresConnectionString, TimeProvider.System, _options.RunId);
+
+        var produced = await PopulateForBandsAsync(spec, rig, ct);
+
+        if (!_options.StandbyConfirmed)
+        {
+            _out.WriteLine(
+                "→ repl-latency: ADVISORY — no --standby-confirmed, so synchronous_commit=on does not block "
+                + "on a real standby. The delta is a FLOOR; the production cost needs the HA overlay "
+                + "(infra/k8s/overlays/ha, ADR-PC-005 §P1).");
+        }
+
+        _out.WriteLine($"→ measuring append latency: synchronous_commit off vs on, {_options.ReplLatencySamples} samples/side.");
+        // A seed OFFSET from the band-populate stream space so the probe's fresh streams never collide with
+        // a stream the populate phase already opened (the rig further XORs the on/off batches apart).
+        var (offP50, offP99, onP50, onP99) =
+            await rig.MeasureReplicationLatencyAsync(_options.ReplLatencySamples, ReplLatencySeed, ct);
+        var replLatency = new ReplicationLatencyVerdict(
+            offP50, offP99, onP50, onP99, _options.ReplLatencySamples, _options.StandbyConfirmed);
+        _out.WriteLine($"→ {replLatency.Reason}");
+
+        var verdicts = SyncLatencyBand.Section83Bands().Select(observer.Evaluate).ToList();
+        return new RunArtefact(
+            _options.Seed, codeRevision, calibration, verdicts, produced, ReplicationLatency: replLatency);
+    }
+
+    // The L.6 discard-rebuild drill on POPULATED snapshots (bd babelstone-0uau.2 / ADR-PC-003 §8.3/§P4).
+    // Builds a deep snapshotted stream, confirms snapshots exist, DISCARDS them all, then runs the
+    // no-rebuild-divergence drill (cold re-fold) — proving the snapshots were faithful and a cold rebuild
+    // reproduces the running belief with no snapshot to lean on.
+    private async Task<RunArtefact> RunDiscardRebuildAsync(
+        Calibration calibration, string codeRevision, CancellationToken ct)
+    {
+        var spec = WorkloadSpec.Default();
+        using var observer = new LatencyObserver();
+        var rig = new EngineProjectionRig(_options.PostgresConnectionString, TimeProvider.System, _options.RunId);
+
+        var produced = await PopulateForBandsAsync(spec, rig, ct);
+
+        // A deep snapshotted stream, so the discard actually has populated snapshots to clear (the whole
+        // point of L.6 — the monthly drill previously ran with snapshots OFF, only proving cold-fold).
+        _out.WriteLine($"→ building deep stream: {_options.SnapshotStreamDepth} events (per-N snapshots).");
+        // Seed OFFSET from the band-populate stream space (see RunSnapshotReplayAsync) so the deep stream id
+        // never collides with a stream the populate phase already opened.
+        var (deepStreamId, _) = await rig.PopulateDeepStreamAsync(_options.SnapshotStreamDepth, DeepStreamSeed, ct);
+        await rig.DrainAsync(ct);
+
+        var snapshotsBefore = await rig.CountSnapshotsAsync(ct);
+        _out.WriteLine($"→ {snapshotsBefore} stream(s) carry a snapshot before the discard.");
+        if (snapshotsBefore == 0)
+        {
+            _out.WriteLine(
+                "✗ no populated snapshots to discard — the deep stream did not snapshot, so the drill would "
+                + "only prove cold-fold (explicit FAIL).");
+        }
+
+        var discarded = await rig.DiscardAllSnapshotsAsync(ct);
+        _out.WriteLine($"→ discarded {discarded} snapshot row(s); rebuilding cold from the log alone.");
+
+        // The cold rebuild + byte-identity check: with snapshots gone, a cold re-fold must still reproduce
+        // every running belief (§8.3 no-rebuild-divergence). A clean drill on a stream that DID snapshot is
+        // the real correctness exercise L.6 intends.
+        var (checked_, divergent, drillRefolded) = await rig.RunNoDivergenceDrillAsync(ct);
+        // Treat "no snapshot was populated" as a divergence-equivalent FAIL by reporting zero streams
+        // checked when the precondition was not met, so a drill that proved nothing cannot read green.
+        var noDivergence = snapshotsBefore == 0
+            ? new NoDivergenceVerdict(0, 0, 0)
+            : new NoDivergenceVerdict(checked_, divergent, drillRefolded);
+        _out.WriteLine($"→ {noDivergence.Reason}");
+        _ = deepStreamId;
+
+        var verdicts = SyncLatencyBand.Section83Bands().Select(observer.Evaluate).ToList();
+        return new RunArtefact(
+            _options.Seed, codeRevision, calibration, verdicts, produced, NoDivergence: noDivergence);
+    }
+
+    // Populate a short, span-emitting workload so the §8.3 sync bands have data (every new replay-style
+    // mode keeps the bands a measured superset, never a vacuous empty list). Drives a fixed handful of
+    // appends through the rig's span-emitting path at the configured rate, in-process only.
+    private async Task<long> PopulateForBandsAsync(WorkloadSpec spec, EngineProjectionRig rig, CancellationToken ct)
+    {
+        var populate = new DrivePhase("populate", _options.TargetTps, _options.Duration);
+        _out.WriteLine($"→ populating event store: {populate.TargetTps:F0} TPS for {populate.Duration}.");
+        using var events = NewEventStream(spec).GetEnumerator();
+        var (produced, _) = await DrivePhaseAsync(populate, spec, events, rig, driver: null, ct);
+        await rig.DrainAsync(ct);
+        return produced;
     }
 
     // A single continuous, seeded synthetic-event stream for the whole run (§8.5: the (seed, run-id)
