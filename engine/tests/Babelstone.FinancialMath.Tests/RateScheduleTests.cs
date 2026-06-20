@@ -233,4 +233,180 @@ public class RateScheduleTests
             schedule.AccrueGross(TenThousand, Start, end, DayCountConvention.Act360),
             schedule.AccrueGross(TenThousand, Start, end, DayCountConvention.Act360));
     }
+
+    // --- principal timeline (F.12 partial withdrawal): accrue over a step-function principal --------
+    //
+    // The load-bearing property mirrors the rate-vector one above: a SINGLE-segment timeline accrues
+    // exactly what the single-principal AccrueGrossWindow does (a no-withdrawal deposit is unchanged),
+    // and a multi-segment timeline prices each sub-period on the principal ACTUALLY held — exact, not a
+    // conservative whole-window re-base — while still crossing to Money once.
+
+    private static readonly Money FortyThousand = new(4_000_000L);
+    private static readonly Money ThirtyThousand = new(3_000_000L);
+
+    [Fact]
+    public void Single_segment_principalTimeline_equals_AccrueGross()
+    {
+        var end = Start.AddDays(365);
+        var schedule = RateSchedule.Flat(600);
+        IReadOnlyList<PrincipalSegment> timeline = [new PrincipalSegment(Start, FortyThousand)];
+
+        Assert.Equal(
+            schedule.AccrueGross(FortyThousand, Start, end, DayCountConvention.Act360),
+            schedule.AccrueGrossWindowOverPrincipal(timeline, Start, Start, end, DayCountConvention.Act360));
+    }
+
+    [Theory]
+    [InlineData(600)]   // step-up one-segment and amount-tiered one-segment also reduce to the flat path
+    public void Single_segment_principalTimeline_matches_every_schedule_kind(int bps)
+    {
+        var end = Start.AddDays(200);
+        IReadOnlyList<PrincipalSegment> timeline = [new PrincipalSegment(Start, FortyThousand)];
+
+        foreach (var schedule in new[]
+                 {
+                     RateSchedule.Flat(bps),
+                     RateSchedule.StepUp([new RateSegment(0, bps)]),
+                     RateSchedule.AmountTiered([new RateSegment(0, bps)]),
+                 })
+        {
+            Assert.Equal(
+                schedule.AccrueGross(FortyThousand, Start, end, DayCountConvention.Act360),
+                schedule.AccrueGrossWindowOverPrincipal(timeline, Start, Start, end, DayCountConvention.Act360));
+        }
+    }
+
+    [Fact]
+    public void PrincipalTimeline_prices_each_segment_on_the_principal_actually_held()
+    {
+        // €40,000 held for 120 days, then €30,000 (a €10,000 withdrawal on day 120) for 245 more —
+        // a 365-day Act/360 term at a flat 6%. Exact piecewise:
+        //   leg 1: 4,000,000 × 600 × 120 / (360×10000) =  80,000 cents
+        //   leg 2: 3,000,000 × 600 × 245 / (360×10000) = 122,500 cents  → total 202,500 cents (€2,025.00)
+        var schedule = RateSchedule.Flat(600);
+        var withdrawalDay = Start.AddDays(120);
+        var maturity = Start.AddDays(365);
+        IReadOnlyList<PrincipalSegment> timeline =
+        [
+            new PrincipalSegment(Start, FortyThousand),
+            new PrincipalSegment(withdrawalDay, ThirtyThousand),
+        ];
+
+        var gross = schedule.AccrueGrossWindowOverPrincipal(timeline, Start, Start, maturity, DayCountConvention.Act360);
+
+        Assert.Equal(202_500L, gross.Cents);
+        // It sits strictly between the two wrong answers it replaces: accruing the WHOLE term on the
+        // original €40,000 (243,333, the over-payment this fix removes) and on the reduced €30,000
+        // (182,500, the conservative under-payment a naive whole-window re-base would give).
+        Assert.True(gross.Cents < schedule.AccrueGross(FortyThousand, Start, maturity, DayCountConvention.Act360).Cents);
+        Assert.True(gross.Cents > schedule.AccrueGross(ThirtyThousand, Start, maturity, DayCountConvention.Act360).Cents);
+    }
+
+    [Fact]
+    public void PrincipalTimeline_equals_the_DailyBalanceInterest_primitive()
+    {
+        // The flat principal-timeline path is exactly Accrual.DailyBalanceInterest over the same
+        // (balance, days) step function — ties the new method to the already-tested §8.2 primitive.
+        var schedule = RateSchedule.Flat(600);
+        var withdrawalDay = Start.AddDays(120);
+        var maturity = Start.AddDays(365);
+        IReadOnlyList<PrincipalSegment> timeline =
+        [
+            new PrincipalSegment(Start, FortyThousand),
+            new PrincipalSegment(withdrawalDay, ThirtyThousand),
+        ];
+
+        var viaTimeline = schedule.AccrueGrossWindowOverPrincipal(timeline, Start, Start, maturity, DayCountConvention.Act360);
+        var viaDailyBalance = Accrual.DailyBalanceInterest(
+            [(FortyThousand, 120), (ThirtyThousand, 245)], 600, 360);
+
+        Assert.Equal(viaDailyBalance, viaTimeline);
+    }
+
+    [Fact]
+    public void PrincipalTimeline_rounds_once_across_segments_not_per_segment()
+    {
+        // Principals/days chosen so each leg has a fractional-cent numerator; the once-at-end cross to
+        // Money must equal FromCents(sum of the raw decimals), never the sum of per-leg FromCents.
+        var schedule = RateSchedule.Flat(575);
+        var d1 = Start.AddDays(101);
+        var maturity = Start.AddDays(242);
+        var p1 = new Money(4_000_001L);
+        var p2 = new Money(2_500_003L);
+        IReadOnlyList<PrincipalSegment> timeline = [new PrincipalSegment(Start, p1), new PrincipalSegment(d1, p2)];
+
+        decimal raw1 = (decimal)p1.Cents * 575 * 101 / (360m * 10_000);
+        decimal raw2 = (decimal)p2.Cents * 575 * 141 / (360m * 10_000);
+        Assert.Equal(
+            Money.FromCents(raw1 + raw2),
+            schedule.AccrueGrossWindowOverPrincipal(timeline, Start, Start, maturity, DayCountConvention.Act360));
+    }
+
+    [Fact]
+    public void PrincipalTimeline_skips_a_change_that_lands_after_the_window()
+    {
+        // A coupon window [Start, Start+30) accrues only on the principal in force during it; a
+        // withdrawal on day 120 does not touch an earlier coupon.
+        var schedule = RateSchedule.Flat(600);
+        var couponEnd = Start.AddDays(30);
+        IReadOnlyList<PrincipalSegment> timeline =
+        [
+            new PrincipalSegment(Start, FortyThousand),
+            new PrincipalSegment(Start.AddDays(120), ThirtyThousand),
+        ];
+
+        Assert.Equal(
+            schedule.AccrueGross(FortyThousand, Start, couponEnd, DayCountConvention.Act360),
+            schedule.AccrueGrossWindowOverPrincipal(timeline, Start, Start, couponEnd, DayCountConvention.Act360));
+    }
+
+    [Fact]
+    public void PrincipalTimeline_over_a_coupon_window_uses_the_post_withdrawal_principal()
+    {
+        // A coupon window [Start+150, Start+180) that opens AFTER a day-120 withdrawal accrues on the
+        // reduced €30,000 — the principal in force across that whole window.
+        var schedule = RateSchedule.Flat(600);
+        var winStart = Start.AddDays(150);
+        var winEnd = Start.AddDays(180);
+        IReadOnlyList<PrincipalSegment> timeline =
+        [
+            new PrincipalSegment(Start, FortyThousand),
+            new PrincipalSegment(Start.AddDays(120), ThirtyThousand),
+        ];
+
+        Assert.Equal(
+            schedule.AccrueGross(ThirtyThousand, winStart, winEnd, DayCountConvention.Act360),
+            schedule.AccrueGrossWindowOverPrincipal(timeline, Start, winStart, winEnd, DayCountConvention.Act360));
+    }
+
+    [Fact]
+    public void PrincipalTimeline_composes_a_stepUp_rate_with_a_multi_segment_principal()
+    {
+        // The cross-term: a time-varying RATE (step-up) AND a time-varying PRINCIPAL (a withdrawal).
+        // Step-up 2% for the first 180 days, then 4%. Principal €40,000 for 120 days, then €30,000 (a
+        // day-120 withdrawal) for 120 more. Each principal segment re-anchors at the deposit start, so
+        // the rate in force across its sub-window is attributed correctly:
+        //   €40,000 over [0,120) — all at 2%:               4,000,000×200×120/(360×10000) = 26,666.67c
+        //   €30,000 over [120,180) at 2% + [180,240) at 4%: 3,000,000×200×60/… (10,000) + 3,000,000×400×60/… (20,000) = 30,000.00c
+        //   summed un-rounded → 56,666.67 → 56,667c.
+        var schedule = RateSchedule.StepUp([new RateSegment(0, 200), new RateSegment(180, 400)]);
+        var withdrawalDay = Start.AddDays(120);
+        var windowEnd = Start.AddDays(240);
+        IReadOnlyList<PrincipalSegment> timeline =
+        [
+            new PrincipalSegment(Start, FortyThousand),
+            new PrincipalSegment(withdrawalDay, ThirtyThousand),
+        ];
+
+        var gross = schedule.AccrueGrossWindowOverPrincipal(timeline, Start, Start, windowEnd, DayCountConvention.Act360);
+        Assert.Equal(56_667L, gross.Cents);
+    }
+
+    [Fact]
+    public void PrincipalTimeline_rejects_an_empty_timeline()
+    {
+        var schedule = RateSchedule.Flat(600);
+        Assert.Throws<ArgumentException>(() =>
+            schedule.AccrueGrossWindowOverPrincipal([], Start, Start, Start.AddDays(365), DayCountConvention.Act360));
+    }
 }

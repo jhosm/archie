@@ -147,6 +147,37 @@ public sealed class TermDepositDispatchTests
     }
 
     [Fact]
+    public void Partial_withdrawal_fold_appends_a_principal_timeline_segment()
+    {
+        // F.12 re-base (bd babelstone-emtr): constitution seeds the principal timeline with the opening
+        // (start, principal) segment, and each partial withdrawal appends (withdrawn-on, remaining), so
+        // the accrual engine can price interest on the principal ACTUALLY held over each sub-period.
+        var start = new DateOnly(2026, 1, 15);
+        var active = Dispatch(DepositPosition.Empty, new DepositConstituted(
+            Guid.NewGuid(), new Money(1_000_000), 300, "rs-1", 365,
+            start, new DateOnly(2027, 1, 15), "AT_MATURITY", "NONE"));
+
+        Assert.Equal(
+            new[] { new PrincipalSegment(start, new Money(1_000_000)) },
+            active.PrincipalTimeline);
+
+        var withdrawnOn = start.AddDays(120);
+        var afterWithdrawal = Dispatch(active,
+            new DepositPartiallyWithdrawn(active.DepositId, new Money(300_000), new Money(700_000), withdrawnOn));
+
+        // The withdrawal APPENDS a segment; the opening one is preserved (the days before the withdrawal
+        // still price on the full principal). RemainingPrincipal tracks the latest segment's principal.
+        Assert.Equal(
+            new[]
+            {
+                new PrincipalSegment(start, new Money(1_000_000)),
+                new PrincipalSegment(withdrawnOn, new Money(700_000)),
+            },
+            afterWithdrawal.PrincipalTimeline);
+        Assert.Equal(new Money(700_000), afterWithdrawal.RemainingPrincipal);
+    }
+
+    [Fact]
     public void Erasure_fold_labels_the_deposit_Erased_and_leaves_structural_fields_intact()
     {
         // GDPR Article 17 (bd babelstone-nzw6 / ADR-PC-004 §P3): the impure shell crypto-shreds the

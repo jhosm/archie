@@ -272,8 +272,13 @@ public static class TermDepositDecider
         // boundary is priced segment-by-segment, and a flat schedule reduces exactly to
         // SimpleInterest over the window (the pre-F.10 coupon math, byte-identical).
         var rates = ScheduleOrFlat(position, schedule);
-        var gross = rates.AccrueGrossWindow(
-            position.Principal, position.StartDate, periodStart, periodEnd, dayCount);
+        // Accrue over the PRINCIPAL TIMELINE (F.12, bd babelstone-emtr), not a single principal: a
+        // coupon window that opens after a partial withdrawal accrues on the reduced balance, and one
+        // that straddles a withdrawal is split exactly at the withdrawal date. A deposit that never
+        // withdrew has a single-segment timeline, so this is byte-identical to the prior single-principal
+        // accrual (the no-regression equivalence the flat/timeline paths both guarantee).
+        var gross = rates.AccrueGrossWindowOverPrincipal(
+            position.PrincipalTimeline, position.StartDate, periodStart, periodEnd, dayCount);
         var withheld = Withholding.Withhold(gross, withholdingBasisPoints);
 
         return [new InterestPaid(position.DepositId, withheld.Gross, withheld.Tax, withheld.Net, periodEnd)];
@@ -317,15 +322,21 @@ public static class TermDepositDecider
         DepositPosition position, DateOnly start, DateOnly end,
         DayCountConvention dayCount, int withholdingBasisPoints, RateSchedule schedule)
     {
-        var gross = schedule.AccrueGross(position.Principal, start, end, dayCount);
+        // Accrue over the principal TIMELINE and return the principal still ON DEPOSIT (F.12, bd
+        // babelstone-emtr): a deposit that partially withdrew mid-term accrues each sub-period on the
+        // principal actually held and returns the reduced principal — never the original (which would
+        // double-pay the withdrawn part). With no withdrawal the timeline is one segment and this is
+        // byte-identical to the prior single-principal maturity.
+        var gross = schedule.AccrueGrossWindowOverPrincipal(
+            position.PrincipalTimeline, position.StartDate, start, end, dayCount);
         var withheld = Withholding.Withhold(gross, withholdingBasisPoints);
-        var payout = position.Principal + withheld.Net;
+        var payout = position.RemainingPrincipal + withheld.Net;
 
         return
         [
             new InterestAccrued(gross, end),
             new WithholdingApplied(withheld.Tax, withheld.Net),
-            new DepositMatured(position.Principal, withheld.Net, payout, end,
+            new DepositMatured(position.RemainingPrincipal, withheld.Net, payout, end,
                 AutoRenewalPolicy: position.AutoRenewalPolicy),
         ];
     }
@@ -340,26 +351,32 @@ public static class TermDepositDecider
         DepositPosition position, DayCountConvention dayCount, int withholdingBasisPoints, RateSchedule schedule)
     {
         var lastPaidThrough = CouponBoundary(position, position.CouponsPaid);
-        // Price the final coupon window over the resolved vector, anchored at the deposit start so
-        // the step in force across [lastPaidThrough, maturity] is the one applied (F.10).
-        var gross = schedule.AccrueGrossWindow(
-            position.Principal, position.StartDate, lastPaidThrough, position.MaturityDate, dayCount);
+        // Price the final coupon window over the resolved rate vector AND the principal timeline,
+        // anchored at the deposit start so the rate step in force across [lastPaidThrough, maturity] is
+        // the one applied (F.10) and a withdrawal inside that window splits the principal exactly (F.12,
+        // bd babelstone-emtr). Return the principal still on deposit, not the original.
+        var gross = schedule.AccrueGrossWindowOverPrincipal(
+            position.PrincipalTimeline, position.StartDate, lastPaidThrough, position.MaturityDate, dayCount);
         var withheld = Withholding.Withhold(gross, withholdingBasisPoints);
-        var payout = position.Principal + withheld.Net;
+        var payout = position.RemainingPrincipal + withheld.Net;
 
         return
         [
             new InterestAccrued(gross, position.MaturityDate),
             new WithholdingApplied(withheld.Tax, withheld.Net),
-            new DepositMatured(position.Principal, withheld.Net, payout, position.MaturityDate,
+            new DepositMatured(position.RemainingPrincipal, withheld.Net, payout, position.MaturityDate,
                 AutoRenewalPolicy: position.AutoRenewalPolicy),
         ];
     }
 
-    /// <summary>ADVANCE maturity: principal only — interest was paid at t=0. Zero-interest payout.</summary>
+    /// <summary>ADVANCE maturity: principal only — interest was paid at t=0. Zero-interest payout.
+    /// Returns the principal still on deposit (<see cref="DepositPosition.RemainingPrincipal"/>); a
+    /// partial withdrawal is forbidden on ADVANCE (interest is pre-paid and cannot be re-based — bd
+    /// babelstone-emtr), so this equals the original principal, but the uniform "maturity returns what
+    /// is on deposit" rule leaves no payout path reading the pre-withdrawal principal.</summary>
     private static IReadOnlyList<DomainEvent> MatureAdvance(DepositPosition position) =>
     [
-        new DepositMatured(position.Principal, Money.Zero, position.Principal, position.MaturityDate,
+        new DepositMatured(position.RemainingPrincipal, Money.Zero, position.RemainingPrincipal, position.MaturityDate,
             AutoRenewalPolicy: position.AutoRenewalPolicy),
     ];
 

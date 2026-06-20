@@ -205,4 +205,19 @@ public sealed class PartialWithdrawalDeciderTests
             position, new Money(100_000), Start.AddDays(60), PartialWithdrawalPolicy.Unrestricted));
         Assert.Contains("legal only from Active", ex.Message);
     }
+
+    // ---- product-shape gate: forbidden on ADVANCE (juros antecipados) (bd babelstone-emtr) --------
+
+    [Fact]
+    public void Partial_withdrawal_is_forbidden_on_an_ADVANCE_product()
+    {
+        // ADVANCE pays the whole term's interest up front on the FULL principal, so a later principal
+        // reduction would leave interest paid on money no longer on deposit with no flow to re-base it.
+        // The product shape itself is refused — even with an Unrestricted policy and every other gate clear.
+        var advance = ActivePosition() with { InterestVariant = "ADVANCE" };
+
+        var ex = Assert.Throws<DomainRejectedException>(() => PartialWithdrawalDecider.Decide(
+            advance, new Money(100_000), Start.AddDays(60), PartialWithdrawalPolicy.Unrestricted));
+        Assert.Contains("advance", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }

@@ -1,4 +1,5 @@
 using Babelstone.Engine;
+using Babelstone.FinancialTypes;
 
 namespace Babelstone.Families.TermDeposit;
 
@@ -45,6 +46,11 @@ public sealed class DepositConstitutedHandler : IEventHandler<DepositPosition, D
             // RemainingPrincipal tracks principal still on deposit; it starts at the full
             // principal and is reduced by partial withdrawals (the event carries the result).
             RemainingPrincipal = @event.Principal,
+            // Seed the principal timeline (F.12, bd babelstone-emtr) with the opening segment: the full
+            // principal in force from the deposit's start. Each partial withdrawal appends a segment, so
+            // accrual prices interest on the principal actually held over each sub-period. Pure — a
+            // single new list from the event's own fields, no clock/I/O (BENG001/002/003).
+            PrincipalTimeline = [new PrincipalSegment(@event.StartDate, @event.Principal)],
             Lifecycle = DepositLifecycle.Active,
         });
 }
@@ -137,6 +143,11 @@ public sealed class DepositPartiallyWithdrawnHandler : IEventHandler<DepositPosi
             // The event carries the post-withdrawal principal (computed by the decider);
             // the fold just records it — no arithmetic, no rounding here.
             RemainingPrincipal = @event.RemainingPrincipal,
+            // Append a principal-timeline segment (F.12, bd babelstone-emtr): from this withdrawal's
+            // date onward the deposit holds the reduced principal, so later coupons and the maturity
+            // payout accrue/return on it (and the days before this withdrawal stay priced on the prior
+            // principal). Pure list-spread, no clock/I/O (BENG001/002/003).
+            PrincipalTimeline = [.. state.PrincipalTimeline, new PrincipalSegment(@event.WithdrawnOn, @event.RemainingPrincipal)],
         });
 }
 

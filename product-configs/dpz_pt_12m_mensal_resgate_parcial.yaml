@@ -1,0 +1,87 @@
+# dpz_pt_12m_mensal_resgate_parcial — 12-month PT term deposit,
+# periodic MONTHLY coupons WITH a partial-withdrawal policy.
+#
+# F.12 orthogonality variant. The `partial_withdrawal` block sits at the TOP
+# level of the variant struct, independent of `interest_variant` (term-deposit
+# CUE schema), so a partial-withdrawal policy composes with ANY interest cadence —
+# not just AT_MATURITY. This variant is the deliberate intersection of two
+# siblings: dpz_pt_12m_juros_mensal (the PERIODIC monthly shape) and
+# dpz_pt_12m_resgate_parcial (the first variant to declare a policy). The only
+# moving part versus each sibling is the one dimension being demonstrated, so the
+# orthogonality reads at a glance.
+#
+# Interplay (02 §2.1, §2.4.1): the monthly coupon cadence is UNTOUCHED by the
+# policy — the engine still folds PaymentPeriodMonths and emits one InterestPaid
+# leg per coupon (families/term-deposit InterestVariant=PERIODIC). A partial
+# withdrawal is a PRINCIPAL reduction only — no interest/tax/settlement leg, the
+# deposit stays Active (F.3 state-preserving). What changes after a withdrawal is
+# the base of LATER coupons (coupon = principal × rate × day-count), since accrual
+# runs on the reduced principal; the schedule itself does not move. Withdrawing the
+# whole balance is a termination (F.4), not a partial withdrawal. The policy is
+# resolved to a PartialWithdrawalPolicy at constitution and the decider takes it as
+# an explicit input (ADR-PC-008; ADR-PC-021 §D3) — never a command input.
+#
+# The numeric TAN is NEVER inline: a single flat rate-sheet reference resolves at
+# constitution to a concrete tan_basis_points + rate_sheet_version_id stamped on
+# DepositConstituted (surface §2.3; ADR-PC-008). TANB/TANL/TAE stay engine-computed
+# (financial_concepts §5.4), never variant fields.
+#
+# The partial_withdrawal block satisfies the depth-4 coherence invariants the
+# validator enforces (pack-validate depth4Regulatory): carencia_days (60) <
+# term_days (365), and min_remaining_balance_cents (€1,000) <
+# principal_bounds.max_cents (€500,000).
+#
+# Validate (depths 1–4) against the pinned pack with:
+#   make validate-variant VARIANT=product-configs/dpz_pt_12m_mensal_resgate_parcial.yaml
+variant_id: dpz_pt_12m_mensal_resgate_parcial
+schema: term_deposit@2026.1
+pack: pt.2026.1
+
+# 12 months, Act/360 (02 §2.2). `pt.act_360` is the only day-count depth-4
+# permits for a `pt` term deposit.
+term_days: 365
+day_count: pt.act_360
+currency: EUR
+
+# Interest credited monthly — the periodic cadence (02 §2.1). v1 permits only
+# monthly (1) or quarterly (3). The partial-withdrawal policy below is orthogonal
+# to this choice.
+interest_variant: PERIODIC
+payment_period_months: 1
+
+# Flat rate: one rate-sheet reference, no inline number (surface §2.3).
+rate:
+  flat:
+    rate_ref: { sheet: live, role_selector: deposit_origin }
+
+# Conventional flat early-termination: an all-or-nothing forfeit of accrued
+# (not-yet-paid) interest before maturity (02 §2.5). Orthogonal to the partial-
+# withdrawal policy — early termination CLOSES the deposit, a partial withdrawal
+# LEAVES it open and Active.
+early_termination:
+  flat:
+    up_to_days: null
+    penalty_basis_points: 10000   # lose all accrued interest
+    basis: ACCRUED_INTEREST
+
+# Single fixed term, no roll-over.
+auto_renewal_policy: NONE
+
+# Risk corridor: €1,000 minimum, €500,000 maximum. min_cents equals the partial-
+# withdrawal min-remaining floor, so the corridor floor and the withdrawal floor
+# coincide (mirrors dpz_pt_12m_resgate_parcial).
+principal_bounds:
+  min_cents: 100000     # €1,000.00
+  max_cents: 50000000   # €500,000.00
+
+# Partial-withdrawal policy (F.12; 02 §2.4.1). Illustrative gates: a €250 minimum
+# per withdrawal, €1,000 must remain on deposit afterward, and a 60-day carência
+# (lock-up) from constitution — shorter than the AT_MATURITY sibling's 90 days,
+# since on a monthly-coupon product the lock-up can plausibly lift after the first
+# coupon or two. Field names mirror the engine's PartialWithdrawalPolicy one-for-
+# one. Omitting this whole block would resolve to PartialWithdrawalPolicy.
+# Unrestricted (no F.12 gate).
+partial_withdrawal:
+  min_withdrawal_cents: 25000          # €250.00
+  min_remaining_balance_cents: 100000  # €1,000.00
+  carencia_days: 60

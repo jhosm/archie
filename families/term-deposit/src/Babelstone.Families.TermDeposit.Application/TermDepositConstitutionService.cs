@@ -726,6 +726,10 @@ public sealed class TermDepositConstitutionService(
             MinRemainingBalanceCents = constituted.MinRemainingBalanceCents,
             CarenciaDays = constituted.CarenciaDays,
             RemainingPrincipal = constituted.Principal,
+            // Seed the opening principal segment, mirroring DepositConstitutedHandler, so this head
+            // projection stays a faithful stand-in for the real fold (bd babelstone-emtr) — even though
+            // the only current caller (ADVANCE) reads Principal, not the timeline.
+            PrincipalTimeline = [new PrincipalSegment(constituted.StartDate, constituted.Principal)],
             Lifecycle = DepositLifecycle.Active,
         };
 

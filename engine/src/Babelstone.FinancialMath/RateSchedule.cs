@@ -180,22 +180,107 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
     /// <exception cref="ArgumentOutOfRangeException">If <c>windowEnd &lt; windowStart</c> (reversed window).</exception>
     public Money AccrueGrossWindow(
         Money principal, DateOnly depositStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount) =>
+        Money.FromCents(AccrueGrossWindowRaw(principal, depositStart, windowStart, windowEnd, dayCount));
+
+    /// <summary>
+    /// The gross interest of <see cref="AccrueGrossWindow"/> accumulated in <see cref="decimal"/> at
+    /// full precision and NOT yet crossed to <see cref="Money"/> — the un-rounded numerator. Exposed so
+    /// a caller folding the SAME deposit over MULTIPLE principal segments (a deposit whose principal
+    /// stepped down at a partial withdrawal, F.12) can sum every segment's contribution and cross to
+    /// <see cref="Money"/> EXACTLY ONCE (<see cref="AccrueGrossWindowOverPrincipal"/>), preserving the
+    /// one-rounding-boundary discipline (ADR-PC-010 §P1–§P2). A single call wrapped in
+    /// <see cref="Money.FromCents(decimal)"/> is byte-identical to <see cref="AccrueGrossWindow"/>.
+    /// </summary>
+    internal decimal AccrueGrossWindowRaw(
+        Money principal, DateOnly depositStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount) =>
         Kind switch
         {
             RateScheduleKind.StepUp =>
-                AccrueStepUpWindow(principal, depositStart, windowStart, windowEnd, dayCount),
+                AccrueStepUpWindowRaw(principal, depositStart, windowStart, windowEnd, dayCount),
             RateScheduleKind.AmountTiered =>
-                AccrueAmountTiered(principal, windowStart, windowEnd, dayCount),
-            // Flat (and any degenerate one-segment vector) is the simple-interest path over the window.
-            _ => Accrual.SimpleInterest(
+                AccrueAmountTieredRaw(principal, windowStart, windowEnd, dayCount),
+            // Flat (and any degenerate one-segment vector) is the simple-interest numerator over the window.
+            _ => SimpleInterestRaw(
                 principal, Segments[0].RateBasisPoints, DayCount.Between(windowStart, windowEnd, dayCount)),
         };
 
+    /// <summary>
+    /// Accrue gross interest over <c>[windowStart, windowEnd)</c> for a deposit whose principal is a
+    /// STEP FUNCTION of time — the F.12 partial-withdrawal case (fin-math §8.1). Each
+    /// <see cref="PrincipalSegment"/> is the principal in force from its date until the next segment (or
+    /// the window end); each segment contributes the same windowed accrual as <see cref="AccrueGrossWindow"/>
+    /// restricted to its overlap with the window, accumulated UN-ROUNDED and crossed to <see cref="Money"/>
+    /// exactly once. So a withdrawal mid-term prices the days before it on the full principal and the days
+    /// after it on the reduced principal, EXACTLY — no conservative whole-window re-base, no rounding gap
+    /// a flat single-principal path would not have.
+    /// </summary>
+    /// <remarks>
+    /// A SINGLE-segment timeline reduces byte-for-byte to <see cref="AccrueGrossWindow"/> on that
+    /// principal, so a deposit that never partially withdraws accrues exactly as before. Anchoring each
+    /// segment's sub-window at <paramref name="depositStart"/> keeps a step-up RATE vector correct: the
+    /// rate in force across <c>[lo, hi]</c> is still chosen by elapsed days from the deposit start, so a
+    /// time-varying rate and a time-varying principal compose correctly.
+    /// </remarks>
+    /// <param name="principalTimeline">The ordered <c>(date, principal-in-force)</c> segments, ascending
+    /// by <see cref="PrincipalSegment.From"/>, the first at the deposit start. A deterministic fold of the
+    /// event stream (ADR-PC-010 §P5).</param>
+    /// <param name="depositStart">The deposit's start — the anchor the rate vector's elapsed-day
+    /// boundaries count from.</param>
+    /// <param name="windowStart">The accrual window's inclusive start.</param>
+    /// <param name="windowEnd">The accrual window's exclusive end.</param>
+    /// <param name="dayCount">The pack-resolved day-count convention.</param>
+    /// <exception cref="ArgumentException">If the timeline is empty.</exception>
+    public Money AccrueGrossWindowOverPrincipal(
+        IReadOnlyList<PrincipalSegment> principalTimeline,
+        DateOnly depositStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount)
+    {
+        ArgumentNullException.ThrowIfNull(principalTimeline);
+        if (principalTimeline.Count == 0)
+        {
+            throw new ArgumentException(
+                "A principal timeline needs at least one segment (the deposit's opening principal).",
+                nameof(principalTimeline));
+        }
+
+        decimal accrued = 0m;
+        for (int i = 0; i < principalTimeline.Count; i++)
+        {
+            // The segment is in force from its own date until the NEXT segment's date (or, for the
+            // last, unbounded). Intersect that with the accrual window; skip a segment that does not
+            // overlap (e.g. a withdrawal that lands after this coupon window).
+            DateOnly segFrom = principalTimeline[i].From;
+            DateOnly segTo = i + 1 < principalTimeline.Count ? principalTimeline[i + 1].From : DateOnly.MaxValue;
+            DateOnly lo = segFrom > windowStart ? segFrom : windowStart;
+            DateOnly hi = segTo < windowEnd ? segTo : windowEnd;
+            if (hi <= lo)
+            {
+                continue;
+            }
+            // Same windowed numerator as the single-principal path, anchored at the deposit start so a
+            // step-up RATE vector still attributes the right rate to [lo, hi]; summed un-rounded.
+            accrued += AccrueGrossWindowRaw(principalTimeline[i].Principal, depositStart, lo, hi, dayCount);
+        }
+        return Money.FromCents(accrued);
+    }
+
+    // The (Days/Basis) shape of Accrual.SimpleInterest, returned as the UN-ROUNDED decimal numerator so
+    // the flat branch composes with the un-rounded step-up/tiered branches under one final rounding. The
+    // forward-interval guard mirrors Accrual.SimpleInterest (negative days from a reversed interval).
+    private static decimal SimpleInterestRaw(Money principal, int rateBps, DayCountFactor factor)
+    {
+        if (factor.Days < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(factor), factor.Days, "Day count is negative (reversed interval); accrual requires start <= end.");
+        }
+        return (decimal)principal.Cents * rateBps * factor.Days / ((decimal)factor.Basis * 10_000);
+    }
+
     // Step-up: attribute each segment's days that fall inside the window [windowStart, windowEnd]
     // — both expressed as elapsed days from the deposit anchor — to that segment's rate, summing
-    // the un-rounded amount in decimal and rounding ONCE. A flat one-segment vector reduces to
+    // the un-rounded amount in decimal (the caller rounds ONCE). A flat one-segment vector reduces to
     // SimpleInterest over the window; a coupon window straddling a step boundary is split exactly.
-    private Money AccrueStepUpWindow(
+    private decimal AccrueStepUpWindowRaw(
         Money principal, DateOnly depositStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount)
     {
         // Step-up segment boundaries are ELAPSED DAYS from the deposit anchor, so they are
@@ -245,13 +330,13 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
             accrued += (decimal)principal.Cents * Segments[i].RateBasisPoints * segDays
                      / ((decimal)basis * 10_000);
         }
-        return Money.FromCents(accrued);
+        return accrued;
     }
 
     // Amount-tiered: each principal tranche [trancheFrom, trancheTo) cents accrues over the WHOLE
     // interval at its segment rate (a progressive/marginal tiering). The top tranche is unbounded
-    // (covers the principal above the last boundary). Accumulate in decimal, round once.
-    private Money AccrueAmountTiered(Money principal, DateOnly start, DateOnly end, DayCountConvention dayCount)
+    // (covers the principal above the last boundary). Accumulate in decimal (the caller rounds once).
+    private decimal AccrueAmountTieredRaw(Money principal, DateOnly start, DateOnly end, DayCountConvention dayCount)
     {
         var factor = DayCount.Between(start, end, dayCount);
         if (factor.Days < 0)
@@ -278,6 +363,6 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
             accrued += (decimal)trancheCents * Segments[i].RateBasisPoints * factor.Days
                      / ((decimal)factor.Basis * 10_000);
         }
-        return Money.FromCents(accrued);
+        return accrued;
     }
 }

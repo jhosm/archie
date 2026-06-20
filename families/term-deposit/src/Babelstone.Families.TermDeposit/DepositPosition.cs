@@ -89,6 +89,14 @@ public enum DepositLifecycle
 /// cents, PINNED at constitution (PartialWithdrawalPolicy.MinRemainingBalanceCents). 0 ⇒ no floor.</param>
 /// <param name="CarenciaDays">The F.12 lock-up (carência) window in days from constitution, PINNED at
 /// constitution (PartialWithdrawalPolicy.CarenciaDays). A duration, not money. 0 ⇒ no lock-up.</param>
+/// <param name="PrincipalTimeline">The deposit's principal as a STEP FUNCTION of time (F.12, bd
+/// babelstone-emtr): the ordered <see cref="PrincipalSegment"/>s the accrual engine prices interest
+/// over. Seeded with the opening <c>(StartDate, Principal)</c> at constitution and appended
+/// <c>(WithdrawnOn, RemainingPrincipal)</c> by each partial withdrawal — so interest accrued and the
+/// maturity principal-return reflect the principal ACTUALLY held over each sub-period, not the original
+/// constituted amount. A deposit that never partially withdraws has a single-segment timeline, which
+/// accrues byte-for-byte as before. A deterministic fold of the events — no clock, no I/O
+/// (BENG001/002/003); rebuilt identically on cold replay (ADR-PC-010 §P5).</param>
 public sealed record DepositPosition(
     Guid DepositId,
     Money Principal,
@@ -106,6 +114,7 @@ public sealed record DepositPosition(
     long MinWithdrawalCents,
     long MinRemainingBalanceCents,
     int CarenciaDays,
+    IReadOnlyList<PrincipalSegment> PrincipalTimeline,
     Money AccruedGrossInterest,
     Money WithholdingToDate,
     Money NetInterest,
@@ -134,6 +143,8 @@ public sealed record DepositPosition(
         MinWithdrawalCents: 0,
         MinRemainingBalanceCents: 0,
         CarenciaDays: 0,
+        // Empty until DepositConstituted seeds the opening (start, principal) segment.
+        PrincipalTimeline: [],
         AccruedGrossInterest: Money.Zero,
         WithholdingToDate: Money.Zero,
         NetInterest: Money.Zero,

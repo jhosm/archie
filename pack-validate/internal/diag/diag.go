@@ -100,6 +100,7 @@ const (
 	// F.12 partial-withdrawal cross-field coherence (structural, not pack-declared — like the steps/bands ordering checks)
 	KindCarenciaExceedsTerm        = "carencia_exceeds_term"          // the carência lock-up meets/exceeds the term — the deposit could never be partially withdrawn
 	KindRemainingExceedsMaxCents   = "remaining_exceeds_max_cents"    // min remaining balance meets/exceeds principal_bounds.max_cents — no deposit could ever host a legal partial withdrawal
+	KindPartialWithdrawalOnAdvance = "partial_withdrawal_on_advance"  // a partial_withdrawal block on an ADVANCE (juros antecipados) variant — interest is pre-paid and cannot be re-based, so partial withdrawal is forbidden for the shape (bd babelstone-emtr)
 )
 
 // Diagnostic is one finding. The shape is ADR-PC-006 §P2 verbatim:

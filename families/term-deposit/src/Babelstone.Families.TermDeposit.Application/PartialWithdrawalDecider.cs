@@ -125,6 +125,23 @@ public static class PartialWithdrawalDecider
                 $"{position.Lifecycle}: a partial withdrawal is legal only from Active (F.3 / F.12).");
         }
 
+        // 0.5 Product-shape: a partial withdrawal is forbidden on an ADVANCE (juros antecipados) product
+        //     (F.12, bd babelstone-emtr). ADVANCE pays the WHOLE term's interest up front at constitution
+        //     on the full principal; reducing the principal later would leave the depositor holding
+        //     interest on money no longer on deposit, with NO later accrual flow to re-base it (unlike
+        //     AT_MATURITY/PERIODIC, whose remaining accrual folds over the reduced principal). The product
+        //     shape itself is incompatible with partial withdrawal — refuse it here, the runtime backstop
+        //     to the depth-4 config check that forbids declaring a partial_withdrawal block on an ADVANCE
+        //     variant. Read off the pinned position (the variant resolved at constitution); no clock/I/O.
+        if (position.InterestVariant == TermDepositDecider.Advance)
+        {
+            throw new DomainRejectedException(
+                $"Partial withdrawal on deposit {position.DepositId} is not permitted: the product pays " +
+                "interest in advance (ADVANCE / juros antecipados). Interest is pre-paid on the full " +
+                "principal and cannot be re-based after a withdrawal, so partial withdrawal is not a legal " +
+                "operation for this product shape (F.12).");
+        }
+
         var current = position.RemainingPrincipal;
 
         // 1. Structural: the amount must be strictly positive — a zero/negative "withdrawal" is nonsense.

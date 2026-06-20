@@ -189,6 +189,25 @@ func depth4Regulatory(vd variantData, fam Family, p *pack.Pack) []diag.Diagnosti
 					pw.MinRemainingBalanceCents, *max),
 			})
 		}
+		// (f) a partial_withdrawal block is incoherent on an ADVANCE (juros antecipados)
+		// variant. ADVANCE pays the WHOLE term's interest up front on the full principal; a
+		// later partial withdrawal would strand pre-paid interest on money no longer on
+		// deposit, with no later accrual flow to re-base it (unlike AT_MATURITY/PERIODIC,
+		// whose remaining accrual folds over the reduced principal). The engine refuses the
+		// withdrawal at runtime (PartialWithdrawalDecider); this forbids AUTHORING the dead
+		// combination, the config-time half of the forbiddance (bd babelstone-emtr).
+		//
+		// Unlike (d)/(e), this presence-given-enum constraint IS CUE-expressible (the schema
+		// does exactly that for payment_period_months). It lives here in Go by choice, not
+		// necessity: grouped with its F.12 siblings so the whole partial_withdrawal authoring
+		// contract — and one precise, named diagnostic — sits in one place.
+		if vd.InterestVariant == "ADVANCE" {
+			out = append(out, diag.Diagnostic{
+				Depth: diag.DepthRegulatory, Path: "partial_withdrawal",
+				Kind: diag.KindPartialWithdrawalOnAdvance,
+				Message: "a partial_withdrawal block is not permitted on an ADVANCE (juros antecipados) variant — interest is pre-paid up front on the full principal and cannot be re-based after a withdrawal, so partial withdrawal is forbidden for this interest shape",
+			})
+		}
 	}
 
 	return out
