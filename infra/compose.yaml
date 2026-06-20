@@ -328,11 +328,15 @@ services:
   #
   # HUMAN-HANDOFF TAIL: Backstage ships no turnkey image — an app must be scaffolded
   # (`npx @backstage/create-app`), the AsyncAPI catalog provider plugins added, and an image
-  # built + pushed; then point `image:` below at it. Until that image exists this service will
-  # not become healthy — intentional; the estate stays Git-native (AsyncAPI files + CI gate,
-  # ADR-IC-015 §9) until the host is genuinely stood up. The whole contracts/catalog/ tree is
-  # mounted at /catalog so catalog-info.yaml's relative $text AsyncAPI refs resolve.
+  # built + pushed; then point `image:` below at it. Until that image exists, both services
+  # below are gated behind the `catalog` Compose profile, so the default `make up` SKIPS them —
+  # a placeholder `image:` would otherwise fail to pull and abort the whole bring-up. The estate
+  # stays Git-native (AsyncAPI files + CI gate, ADR-IC-015 §9) until the host is genuinely stood
+  # up; once a real image is pushed, run `docker compose --profile catalog up` to start it. The
+  # whole contracts/catalog/ tree is mounted at /catalog so catalog-info.yaml's relative $text
+  # AsyncAPI refs resolve.
   backstage-db:
+    profiles: ["catalog"]
     image: postgres:16-alpine
     container_name: babelstone-backstage-db
     environment:
@@ -348,7 +352,9 @@ services:
 
   backstage:
     # PLACEHOLDER — replace with the pushed babelstone Backstage app image (see the handoff
-    # note above). There is no turnkey upstream image to pin here.
+    # note above). There is no turnkey upstream image to pin here. Profile-gated (`catalog`)
+    # so the default `make up` skips it until a real image exists.
+    profiles: ["catalog"]
     image: ghcr.io/jhosm/babelstone-backstage:placeholder
     container_name: babelstone-backstage
     depends_on:
