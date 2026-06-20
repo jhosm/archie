@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Babelstone.Families.TermDeposit.Application;
 
@@ -54,7 +55,35 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             // it; with none registered this is null and the outbox reuses the JSON store codec (the
             // pre-split single-encoding). Resolving it here is what triggers the lazy SR registration
             // — only in avro mode, only at first command.
-            busSerializer: serviceProvider.GetService<BusEventSerializer>()?.Inner));
+            busSerializer: serviceProvider.GetService<BusEventSerializer>()?.Inner,
+            // A.11 snapshot wiring (ADR-PC-003 §P2 / bd e6fr.11): flip v1 snapshots ON. The typed
+            // SnapshotStore<DepositPosition> composes the family-agnostic spine snapshot storage
+            // (ISnapshotStorage, registered in Program.cs) with the family's structural JSON state codec
+            // — the SAME JsonStateSerializer the projections use, so a snapshot serialises deposit-position
+            // state exactly as a projection row does (deterministic, no PII — ADR-PC-004 §P2). Threading a
+            // non-null store + policy is what enables the post-commit write side; LoadAsync already did
+            // snapshot-then-tail on the read side.
+            snapshots: new SnapshotStore<DepositPosition>(
+                serviceProvider.GetRequiredService<ISnapshotStorage>(),
+                new JsonStateSerializer<DepositPosition>()),
+            // The v1 cadence: the per-N count trigger (event-store §8.1 / ADR-PC-003 §P2). The threshold
+            // is configurable via Engine:SnapshotEveryNEvents (default 100 — the §8.1 "typically 100-1000"
+            // floor, comfortably above a term deposit's ~24-260-event lifecycle so the cold-replay budget,
+            // event-store §8.2, is met without churn). The lifecycle / calendar boundary triggers compose
+            // in later (bd e6fr.12); this lane wires the runtime + the count cadence, the missing write
+            // side. CountBasedSnapshotPolicy already ORs the boundary flags in, so e6fr.12 only has to
+            // supply them — no rewiring here.
+            snapshotPolicy: new CountBasedSnapshotPolicy(
+                ctx.Configuration.GetValue("Engine:SnapshotEveryNEvents", 100L)),
+            // Fail-soft sink for a post-commit snapshot-write failure (ADR-PC-003 §P2): the append already
+            // committed and IS the book of record, so a snapshot-write blip must not fail the command — it
+            // is logged (so the §P6 snapshot-lag alarm sees it) and the next rebuild is merely slower, never
+            // wrong. The kernel hands the exception out as a callback (logging-library-agnostic spine); the
+            // host binds it to its logger here.
+            onSnapshotError: ex => serviceProvider
+                .GetRequiredService<ILoggerFactory>()
+                .CreateLogger("Babelstone.Families.TermDeposit.Snapshots")
+                .LogWarning(ex, "Post-commit snapshot write failed; the committed event is unaffected, the next rebuild is slower not wrong.")));
 
         // The engine-side product-config store (Fork B rework, bd t7o3.11 / 3k10 / c8d8, ADR-PC-009):
         // the engine resolves product_code → the structural facts (term / variant / renewal policy /
