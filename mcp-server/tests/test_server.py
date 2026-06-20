@@ -167,10 +167,27 @@ class _FakeOrchestrator(OrchestratorClient):
         self, *, status: dict[str, Any] | None = None, raise_status: int | None = None
     ) -> None:  # noqa: D401 — bypass the real httpx client
         self.process_requested: str | None = None
+        self.constitute_request: dict[str, Any] | None = None
         # The gateway-attested caller forwarded to the orchestrator for the ownership check (§P3).
         self.client_id_forwarded: str | None = None
         self._status = status or _STATUS
         self._raise_status = raise_status
+
+    async def constitute(
+        self, request: dict[str, Any], client_id: str | None = None
+    ) -> dict[str, Any]:
+        self.constitute_request = request
+        self.client_id_forwarded = client_id
+        if self._raise_status is not None:
+            req = httpx.Request("POST", "http://orchestrator/api/v1/deposits/constitute")
+            response = httpx.Response(self._raise_status, request=req)
+            raise httpx.HTTPStatusError(f"{self._raise_status}", request=req, response=response)
+        return {
+            "deposit_id": "DEP-2026-00012345",
+            "process_id": "PROC-2026-00098765",
+            "status": "PROCESSING",
+            "stream_url": "/api/v1/processes/PROC-2026-00098765/stream",
+        }
 
     async def process_status(
         self, process_id: str, client_id: str | None = None
@@ -204,6 +221,9 @@ async def test_every_tool_is_registered_with_output_schema() -> None:
     # ADR-IC-010 P6 — every tool (read and write) declares a structured outputSchema.
     assert "constitute_deposit" in by_name
     assert by_name["constitute_deposit"].outputSchema is not None
+    # The orchestrator-routed constitution PRODUCER (Document 11 Pattern 2; bd babelstone-ziu3.6).
+    assert "constitute_deposit_saga" in by_name
+    assert by_name["constitute_deposit_saga"].outputSchema is not None
     # Per the 2026-05-31 amendment the read surface is a tool, not a resource template.
     assert "get_deposit" in by_name
     assert by_name["get_deposit"].outputSchema is not None
@@ -316,6 +336,75 @@ async def test_get_process_status_other_owner_raises_forbidden_mcp_error() -> No
     message = exc.value.error.message
     assert "different client" in message.lower() or "your own" in message.lower()
     assert "CLI-NOT-OWNER" not in message
+
+
+# --- constitute_deposit_saga: the Pattern 2 PRODUCER (Document 11; bd babelstone-ziu3.6) -------------
+
+
+async def test_constitute_deposit_saga_routes_to_the_orchestrator_and_returns_a_process_id() -> None:
+    fake = _FakeOrchestrator()
+    server.set_orchestrator(fake)
+
+    result = await server.constitute_deposit_saga(
+        product_code="TD-TRAD-12M",
+        amount_cents=1_000_000,
+        source_account_ref="acct-ref-1",
+        ctx=_write_ctx(client_id="CLI-SAGA-1"),
+        interest_account_ref="acct-ref-2",
+    )
+
+    # The body the saga edge pins — a product CODE + integer cents + opaque account refs (no product
+    # shape, no raw IBAN; ADR-PC-004 §P2 / ADR-PC-009).
+    assert fake.constitute_request == {
+        "product_code": "TD-TRAD-12M",
+        "amount": 1_000_000,
+        "source_account_ref": "acct-ref-1",
+        "interest_account_ref": "acct-ref-2",
+    }
+    # The gateway-attested caller (X-Client-Id, OAuth sub) is forwarded so the orchestrator binds saga
+    # OWNERSHIP to it (§P3 / ADR-IC-006 §P4) — never a tool argument.
+    assert fake.client_id_forwarded == "CLI-SAGA-1"
+    # The PRODUCER returns the saga process_id (NOT a bare deposit_id) the agent polls (Document 11 Pattern 2).
+    assert result.process_id == "PROC-2026-00098765"
+    assert result.deposit_id == "DEP-2026-00012345"
+    assert result.status == "PROCESSING"
+    # The typed follow_up hint points the agent at the polling tool with the minted process_id.
+    assert result.follow_up.kind == "poll_tool"
+    assert result.follow_up.tool == "get_process_status"
+    assert result.follow_up.arguments == {"process_id": "PROC-2026-00098765"}
+
+
+async def test_constitute_deposit_saga_omits_interest_account_ref_when_not_given() -> None:
+    # interest_account_ref is optional; when omitted it is left off the body rather than sent as null.
+    fake = _FakeOrchestrator()
+    server.set_orchestrator(fake)
+
+    await server.constitute_deposit_saga(
+        product_code="TD-TRAD-12M",
+        amount_cents=500_000,
+        source_account_ref="acct-ref-1",
+        ctx=_write_ctx(),
+    )
+
+    assert fake.constitute_request is not None
+    assert "interest_account_ref" not in fake.constitute_request
+
+
+async def test_constitute_deposit_saga_requires_the_write_scope() -> None:
+    # The producer STARTS a saga — a write (deposits:write). A read-only token cannot reach it, and the
+    # rejection happens BEFORE the orchestrator is touched (ADR-IC-010 §P4).
+    fake = _FakeOrchestrator()
+    server.set_orchestrator(fake)
+
+    with pytest.raises(McpError):
+        await server.constitute_deposit_saga(
+            product_code="TD-TRAD-12M",
+            amount_cents=1_000_000,
+            source_account_ref="acct-ref-1",
+            ctx=_read_ctx(),
+        )
+
+    assert fake.constitute_request is None
 
 
 async def test_mature_deposit_tool_maps_id_and_folds_interest() -> None:

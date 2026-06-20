@@ -15,11 +15,11 @@ poll status but cannot reach the write tools. The actor is the gateway-attested 
 ``sub``), never a tool argument (Document 11); the orchestrator enforces that you OWN the process —
 polling another client's ``process_id`` returns a not-authorized error, never their status.
 
-NOTE (bd babelstone-vjoi): this is the READ half of the loop. The current ``constitute_deposit`` tool
-calls the engine DIRECTLY and returns a ``deposit_id``, not a saga ``process_id``, so an agent cannot
-yet obtain a ``process_id`` purely over MCP — an orchestrator-routed constitution tool (bd
-babelstone-ziu3.6) closes that producer gap. Until then this polls a ``process_id`` obtained out of
-band (the browser/saga edge).
+NOTE (bd babelstone-vjoi / ziu3.6): this is the READ half of the loop; its PRODUCER is
+``constitute_deposit_saga`` (bd babelstone-ziu3.6), the orchestrator-routed constitution tool that STARTS
+a saga and returns the ``process_id`` to poll here — closing the producer gap so the Pattern 2 loop can be
+exercised end-to-end purely over MCP. (The engine-direct ``constitute_deposit`` tool returns a
+``deposit_id``, not a saga ``process_id``, so it is NOT this loop's producer.)
 
 ## Signature
 

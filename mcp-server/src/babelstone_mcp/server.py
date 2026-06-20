@@ -353,11 +353,11 @@ async def get_process_status(process_id: str, ctx: Context) -> ProcessStatus:
     ``sub``), never a tool argument (Document 11); the orchestrator enforces that you OWN the process —
     polling another client's ``process_id`` returns a not-authorized error, never their status.
 
-    NOTE (bd babelstone-vjoi): this is the READ half of the loop. The current ``constitute_deposit`` tool
-    calls the engine DIRECTLY and returns a ``deposit_id``, not a saga ``process_id``, so an agent cannot
-    yet obtain a ``process_id`` purely over MCP — an orchestrator-routed constitution tool (bd
-    babelstone-ziu3.6) closes that producer gap. Until then this polls a ``process_id`` obtained out of
-    band (the browser/saga edge).
+    NOTE (bd babelstone-vjoi / ziu3.6): this is the READ half of the loop; its PRODUCER is
+    ``constitute_deposit_saga`` (bd babelstone-ziu3.6), the orchestrator-routed constitution tool that STARTS
+    a saga and returns the ``process_id`` to poll here — closing the producer gap so the Pattern 2 loop can be
+    exercised end-to-end purely over MCP. (The engine-direct ``constitute_deposit`` tool returns a
+    ``deposit_id``, not a saga ``process_id``, so it is NOT this loop's producer.)
     """
     auth = _authorize(ctx, "get_process_status")
     try:
@@ -386,6 +386,97 @@ async def get_process_status(process_id: str, ctx: Context) -> ProcessStatus:
             ) from None
         raise
     return ProcessStatus(**result)
+
+
+class ConstituteDepositSagaFollowUp(BaseModel):
+    """The agent-directed next step (Document 11 §Tool result ``follow_up``): poll ``get_process_status``.
+
+    A structural, typed hint — NOT free text (ADR-IC-010 §P6) — telling the agent exactly which tool to
+    call next, and with which argument, to follow the async-completion loop (Document 11 Pattern 2) to a
+    terminal state. The agent reasons over this rather than guessing the next call.
+    """
+
+    kind: str = Field(description="The follow-up kind — 'poll_tool' for the Pattern 2 polling loop.")
+    tool: str = Field(description="The tool to call next — 'get_process_status'.")
+    arguments: dict[str, str] = Field(
+        description="The arguments to pass — {'process_id': <the minted PROC-… reference>}."
+    )
+
+
+class ConstituteDepositSagaResult(BaseModel):
+    """Structured tool output (ADR-IC-010 §P6) — the saga PRODUCER result (Document 11 Pattern 2).
+
+    Every field is a structural, PII-free reference (ADR-PC-004 §P2): the client-facing deposit and process
+    references, the coarse acceptance status, and a typed ``follow_up`` hint. The ``process_id`` is the public
+    ``PROC-…`` reference the agent threads into ``get_process_status`` to poll the saga to completion — the
+    producer the engine-direct ``constitute_deposit`` tool cannot supply (it returns a ``deposit_id``, not a
+    saga ``process_id``)."""
+
+    deposit_id: str = Field(description="The client-facing DEP-… deposit reference the saga pinned.")
+    process_id: str = Field(
+        description="The public PROC-… saga process reference — pass it to get_process_status to poll "
+        "async completion (Document 11 Pattern 2)."
+    )
+    status: str = Field(
+        description="The coarse synchronous acceptance status — PROCESSING while the saga runs."
+    )
+    follow_up: ConstituteDepositSagaFollowUp = Field(
+        description="The typed next-step hint pointing the agent at get_process_status(process_id)."
+    )
+
+
+@mcp.tool()
+async def constitute_deposit_saga(
+    product_code: str,
+    amount_cents: int,
+    source_account_ref: str,
+    ctx: Context,
+    interest_account_ref: str | None = None,
+) -> ConstituteDepositSagaResult:
+    """Constitute a term deposit through the saga edge — the async, orchestrator-routed path that returns a
+    saga ``process_id`` (Document 11 Pattern 2 PRODUCER). Use this when the agent must follow the request to
+    completion (parallel validations, an approval wait, core clearance); it is the producer that lets a later
+    ``get_process_status`` call exist.
+
+    Unlike ``constitute_deposit`` — which calls the engine DIRECTLY and returns a ``deposit_id`` (the engine
+    walking-skeleton path) — this POSTs to the orchestrator edge (``POST /api/v1/deposits/constitute``), which
+    STARTS the constitution saga and mints a public ``PROC-…`` ``process_id`` (ADR-IC-006 §P4 / Document 05
+    §Step 0). The result carries that ``process_id`` plus a typed ``follow_up`` hint directing the agent to
+    ``get_process_status(process_id)`` to poll the saga to a terminal state. The two tools sit ALONGSIDE each
+    other: engine-direct for the DIRECT skeleton, saga-routed for the production async path.
+
+    ``product_code`` is the catalogue reference (e.g. ``TD-TRAD-12M``); the deposit's SHAPE (term, interest
+    variant, renewal policy, coupon cadence, pricing role) and the rate are resolved by the engine from the
+    product code at constitution — never supplied here (the engine is the single home of product config,
+    ADR-PC-009 / ADR-PC-008 §S2). ``amount_cents`` is the principal in integer cents (never a float).
+    ``source_account_ref`` / ``interest_account_ref`` are OPAQUE account REFERENCES — tokens the PII boundary
+    already issued — NOT raw IBANs (ADR-PC-004 §P2 / no-PII-on-the-durable-bus).
+
+    Requires ``deposits:write`` (ADR-IC-010 §P4). The owning client is the gateway-attested ``X-Client-Id``
+    (OAuth ``sub``), forwarded to the orchestrator so it binds saga ownership to that identity — NEVER a tool
+    argument (Document 11); a later ``get_process_status`` poll of this ``process_id`` enforces that same
+    ownership (another client's poll is 403).
+    """
+    auth = _authorize(ctx, "constitute_deposit_saga")
+    request: dict[str, object] = {
+        "product_code": product_code,
+        "amount": amount_cents,
+        "source_account_ref": source_account_ref,
+    }
+    if interest_account_ref is not None:
+        request["interest_account_ref"] = interest_account_ref
+    result = await orchestrator().constitute(request, client_id=auth.client_id)
+    process_id = result["process_id"]
+    return ConstituteDepositSagaResult(
+        deposit_id=result["deposit_id"],
+        process_id=process_id,
+        status=result["status"],
+        follow_up=ConstituteDepositSagaFollowUp(
+            kind="poll_tool",
+            tool="get_process_status",
+            arguments={"process_id": process_id},
+        ),
+    )
 
 
 @mcp.tool()

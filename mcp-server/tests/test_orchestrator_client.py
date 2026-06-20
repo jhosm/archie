@@ -1,9 +1,10 @@
-"""Contract tests for the orchestrator process-status HTTP client — mocked transport, no live host.
+"""Contract tests for the orchestrator HTTP client — mocked transport, no live host.
 
-The orchestrator client (bd babelstone-vjoi / Document 11 Pattern 2) is the mcp→orchestrator boundary the
-process-status polling tool reads through — a separate boundary from mcp→engine because the orchestrator
-owns saga state. These tests pin the request shape (URL, the forwarded gateway-attested X-Client-Id) and the
-fail-loud contract (a non-2xx raises, so the tool can translate the expected 404/403 into a clean error).
+The orchestrator client (bd babelstone-vjoi / ziu3.6 / Document 11 Pattern 2) is the mcp→orchestrator boundary
+the saga channel reads/writes through — a separate boundary from mcp→engine because the orchestrator owns saga
+state. These tests pin the request shape (URL, body, the forwarded gateway-attested X-Client-Id) for BOTH the
+process-status READ and the constitute PRODUCER, and the fail-loud contract (a non-2xx raises, so the tool can
+translate the expected 404/403/400 into a clean error).
 """
 
 from __future__ import annotations
@@ -80,3 +81,65 @@ async def test_non_2xx_raises_fail_loud(status_code: int) -> None:
 
     with pytest.raises(httpx.HTTPStatusError):
         await _client(handler).process_status("PROC-NOPE")
+
+
+# --- constitute: the Pattern 2 PRODUCER (bd babelstone-ziu3.6) -----------------------------------------
+
+
+async def test_constitute_posts_to_the_saga_edge_and_returns_the_process_id() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["url"] = str(request.url)
+        captured["body"] = request.read().decode()
+        return httpx.Response(
+            202,
+            json={
+                "deposit_id": "DEP-2026-00012345",
+                "process_id": "PROC-2026-00098765",
+                "status": "PROCESSING",
+                "stream_url": "/api/v1/processes/PROC-2026-00098765/stream",
+            },
+        )
+
+    result = await _client(handler).constitute(
+        {"product_code": "TD-TRAD-12M", "amount": 1_000_000, "source_account_ref": "acct-ref-1"}
+    )
+
+    assert captured["method"] == "POST"
+    assert captured["url"] == "http://orchestrator/api/v1/deposits/constitute"
+    # The PII-free structural body the saga pins — a product CODE + integer cents + an opaque account ref.
+    assert '"product_code":"TD-TRAD-12M"' in captured["body"]
+    assert '"amount":1000000' in captured["body"]
+    assert result["process_id"] == "PROC-2026-00098765"
+    assert result["status"] == "PROCESSING"
+
+
+async def test_constitute_forwards_the_attested_caller_as_x_client_id() -> None:
+    # The owning client is the gateway-attested X-Client-Id (OAuth sub) Kong overwrote — forwarded so the
+    # orchestrator binds saga OWNERSHIP to it (ADR-IC-006 §P4), NEVER a body field (Document 11).
+    captured: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["x_client_id"] = request.headers.get("X-Client-Id")
+        return httpx.Response(202, json={"deposit_id": "DEP-1", "process_id": "PROC-1",
+                                         "status": "PROCESSING", "stream_url": "/s"})
+
+    await _client(handler).constitute(
+        {"product_code": "TD-TRAD-12M", "amount": 1, "source_account_ref": "a"}, client_id="CLI-OWNER"
+    )
+    assert captured["x_client_id"] == "CLI-OWNER"
+
+
+@pytest.mark.parametrize("status_code", [400, 403, 500])
+async def test_constitute_non_2xx_raises_fail_loud(status_code: int) -> None:
+    # Fail-loud: a structurally-malformed request (400) or a missing attested caller (403) raises, so the
+    # tool layer surfaces it rather than returning a partial result.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status_code, json={"title": "nope"})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await _client(handler).constitute(
+            {"product_code": "TD-TRAD-12M", "amount": 1, "source_account_ref": "a"}
+        )
