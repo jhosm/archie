@@ -484,11 +484,16 @@ public sealed class TermDepositConstitutionService(
     {
         // 1. Rehydrate the CLOSING deposit. It MUST already be Matured — the autonomous maturity leg
         //    (MatureAsync) precedes the saga, so by the time ConstituteRenewal fires the closing stream
-        //    head is Matured. The F.3 table has no Renew-from-Matured row (Renew is legal only from
-        //    Active, see LifecycleTransitions), so we assert the Matured precondition DIRECTLY rather
-        //    than through RejectIfIllegal — the same documented exception the monolith carried for its
-        //    DepositRenewed link append. This rejects a NOT-yet-matured (Active) or already-Renewed
-        //    closing deposit before any sheet resolve or settlement.
+        //    head is Matured. F.3 MODELLING DECISION (bd babelstone-mtto.3, RESOLVED): renewal is modelled
+        //    as the single Active→Renewed business transition; the spec-mandated closing sequence
+        //    (02 §2.4.4: DepositMatured THEN DepositRenewed, traversing Active→Matured→Renewed) is a
+        //    deliberate saga SEQUENCING detail, NOT a second table transition — so the F.3 table keeps
+        //    Renew Active-only and Matured stays a closed business-terminal state (the alternative —
+        //    a Renew-from-Matured row — was rejected because it would breach the table's "every
+        //    business-terminal state is closed to every business transition" invariant). This leg
+        //    therefore asserts the Matured precondition DIRECTLY rather than through RejectIfIllegal,
+        //    which also yields the richer, actionable domain message. Rejects a NOT-yet-matured (Active)
+        //    or already-Renewed closing deposit before any sheet resolve or settlement.
         var hydrated = await runtime.LoadAsync(command.DepositId, ct);
         var closing = hydrated.State;
         if (closing.Lifecycle != DepositLifecycle.Matured)
@@ -496,7 +501,7 @@ public sealed class TermDepositConstitutionService(
             throw new DomainRejectedException(
                 $"Deposit {command.DepositId} is {closing.Lifecycle}; cannot constitute a renewal " +
                 "(the closing deposit must already be Matured — the autonomous maturity leg precedes the " +
-                "renewal saga, and the F.3 table has no Renew-from-Matured row, so this is asserted directly).");
+                "renewal saga; renewal is the single Active→Renewed transition, asserted directly, bd babelstone-mtto.3).");
         }
 
         // 2. The closing DepositMatured is the closing stream's head; its event id is the causation root
@@ -511,6 +516,30 @@ public sealed class TermDepositConstitutionService(
         {
             throw new DomainRejectedException(
                 $"Deposit {command.DepositId} has auto_renewal_policy NONE; it terminates at maturity, never renews.");
+        }
+
+        // 3a. PRE-MATURITY OPT-OUT WINDOW (the SAGA-START GATE, bd babelstone-mtto.3; 02 §2.4.4 /
+        //     ADR-PC-023 §P). The depositor's final auto_renewal_optout_window_days before maturity is when
+        //     a customer-initiated termination still blocks the renewal without penalty, so auto-renewal
+        //     must NOT fire before that right has closed — i.e. not before the maturity date. This is the
+        //     monolith's window-timing protection (removed in the mtto.2 decomposition, re-established here
+        //     as the saga-start gate it now belongs at): a renewal triggered before maturity is rejected,
+        //     the message distinguishing "within the N-day opt-out window" from "before maturity". The
+        //     window length is the pack parameter, read FAIL-LOUD from PackParameters (ADR-PC-009 pinning).
+        //     There is NO auto-firing maturity scheduler yet (DEF-2); when it lands it triggers the saga at/
+        //     after maturity, so this gate is the standing protection in the meantime AND the belt-and-braces
+        //     check once the scheduler exists. Pure: renewalDate / maturityDate are folded/command inputs,
+        //     no clock read in this comparison (the instant was host-stamped at the boundary).
+        var renewalDate = DateOnly.FromDateTime(command.RenewedAt.UtcDateTime);
+        if (renewalDate < closing.MaturityDate)
+        {
+            var optOutWindowOpens = closing.MaturityDate.AddDays(-pack.Parameters.AutoRenewalOptoutWindowDays);
+            var reason = renewalDate >= optOutWindowOpens
+                ? $"within the {pack.Parameters.AutoRenewalOptoutWindowDays}-day pre-maturity opt-out window"
+                : "before maturity";
+            throw new DomainRejectedException(
+                $"Deposit {command.DepositId} cannot auto-renew on {renewalDate:O} ({reason}); the opt-out " +
+                $"window closes at maturity {closing.MaturityDate:O} and renewal fires no earlier.");
         }
 
         // 4. Resolve EVERY renewal fact from the CLOSING deposit, NOT the command (bd babelstone-mtto.5).
@@ -543,7 +572,7 @@ public sealed class TermDepositConstitutionService(
         //    fail-loud, exactly as constitution. The same renewalRole feeds the re-resolution AND the
         //    renewed event's stamped role, so the new instance is priced and recorded against one role.
         var (dayCount, withholdingBps) = ResolvePrimitives();
-        var renewalDate = DateOnly.FromDateTime(command.RenewedAt.UtcDateTime);
+        // renewalDate was derived above for the opt-out-window gate (step 3a); reused here for the rate resolve.
         int renewalTan;
         string renewalRateSheetVersionId;
         if (closing.AutoRenewalPolicy == TermDepositDecider.RenewalSameTermCurrentRate)
@@ -616,17 +645,17 @@ public sealed class TermDepositConstitutionService(
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>No F.3 re-gate</b> (mirroring the monolith's documented exception, the rationale at the now-
-    /// retired L488–499): the closing stream head is Matured, and the F.3 table models Matured as
-    /// terminal — Renew is legal only from Active (terminality is expressed as absence from every source
-    /// set). The spec-mandated closing sequence (02 §2.4.4: DepositMatured THEN DepositRenewed) thus
-    /// legally traverses Active→Matured→Renewed, which the table cannot currently express (no
-    /// Renew-from-Matured row). Renew legality is established at the saga-start precondition (only
-    /// non-NONE-policy deposits ever start a renewal saga) and the Matured-precondition assertion in
-    /// <see cref="ConstituteRenewalAsync"/>. Making the table express this compound sequence is an F.3
-    /// modelling decision tracked on bd babelstone-mtto.3 (babelstone-29v8 BUILT the F.3 table and is
-    /// closed; the Renew-from-Matured modelling + the pre-maturity opt-out-window enforcement this
-    /// decomposition deferred live on mtto.3); until then this leg stays as the spec dictates.
+    /// <b>No F.3 re-gate</b> (mirroring the monolith's documented exception): the closing stream head is
+    /// Matured, and the F.3 table models Matured as a closed business-terminal state — Renew is legal only
+    /// from Active (terminality is expressed as absence from every business-transition source set). The
+    /// spec-mandated closing sequence (02 §2.4.4: DepositMatured THEN DepositRenewed) thus legally traverses
+    /// Active→Matured→Renewed. <b>F.3 MODELLING DECISION (bd babelstone-mtto.3, RESOLVED):</b> renewal is
+    /// modelled as the single Active→Renewed business transition; the Matured→Renewed step is a deliberate
+    /// saga SEQUENCING detail, NOT a second table transition — so we do NOT add a Renew-from-Matured row
+    /// (which would breach the table's "every business-terminal state is closed to every business
+    /// transition" invariant — see <c>LifecycleTransitionsTests</c>). Renew legality is established at the
+    /// saga-start precondition (only non-NONE-policy deposits ever start a renewal saga, and not before the
+    /// opt-out window closes) and the Matured-precondition assertion in <see cref="ConstituteRenewalAsync"/>.
     /// </para>
     /// <para>
     /// <b>Idempotent per ADR-PC-029 slot 4</b> — the <c>renewal-link</c> endpoint threads the mandatory

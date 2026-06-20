@@ -54,7 +54,13 @@ public static class LifecycleTransitions
         /// <summary>Mature and pay out — <see cref="DepositMatured"/> (Active → Matured).</summary>
         Mature,
 
-        /// <summary>Auto-renew into a new term — <see cref="DepositRenewed"/> (Active → Renewed). Command logic: F.5.</summary>
+        /// <summary>Auto-renew into a new term — <see cref="DepositRenewed"/> (Active → Renewed). Command logic: F.5.
+        /// F.3 modelling decision (bd babelstone-mtto.3, RESOLVED): renewal is modelled as this single
+        /// Active→Renewed transition. The engine-native renewal saga's spec-mandated closing sequence
+        /// (02 §2.4.4: DepositMatured THEN DepositRenewed, traversing Active→Matured→Renewed) is a deliberate
+        /// saga SEQUENCING detail, NOT a second transition — so there is NO Renew-from-Matured row here (it
+        /// would breach the "Matured is closed to every business transition" terminality invariant). The
+        /// saga asserts the Matured precondition directly in <c>ConstituteRenewalAsync</c>/<c>LinkRenewalAsync</c>.</summary>
         Renew,
 
         /// <summary>Break before maturity — <see cref="DepositTerminatedEarly"/> (Active → TerminatedEarly). Command logic: F.4.</summary>
