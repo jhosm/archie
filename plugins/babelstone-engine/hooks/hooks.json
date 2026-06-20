@@ -1,37 +1,40 @@
 {
-  "SessionStart": [
-    {
-      "matcher": "",
-      "hooks": [
-        { "type": "command", "command": "bd prime" }
-      ]
-    }
-  ],
-  "PreToolUse": [
-    {
-      "matcher": "Edit|Write|MultiEdit",
-      "hooks": [
-        { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/adr-immutability.sh" }
-      ]
-    }
-  ],
-  "PostToolUse": [
-    {
-      "matcher": "Edit|Write|MultiEdit",
-      "hooks": [
-        { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/surface-engine-analysers.sh" },
-        { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/surface-pii-on-bus.sh" },
-        { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/surface-spec-coverage.sh" },
-        { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/render-plantuml.sh" }
-      ]
-    }
-  ],
-  "Stop": [
-    {
-      "matcher": "",
-      "hooks": [
-        { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-push-protocol.sh" }
-      ]
-    }
-  ]
+  "description": "babelstone-engine §P1 deterministic hooks (ADR-PC-020 §P1): bd prime on session start, the ADR-immutability PreToolUse warning, PostToolUse surfacing of the engine analysers / PII-on-bus / spec-coverage and PlantUML re-render, and the Stop session-push protocol.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "bd prime" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/adr-immutability.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/surface-engine-analysers.sh" },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/surface-pii-on-bus.sh" },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/surface-spec-coverage.sh" },
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/render-plantuml.sh" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-push-protocol.sh" }
+        ]
+      }
+    ]
+  }
 }
