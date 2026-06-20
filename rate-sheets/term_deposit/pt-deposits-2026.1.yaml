@@ -15,12 +15,11 @@
 # same id → 409). Owner: Treasury / ALM (see CODEOWNERS). Cadence: daily–weekly.
 # The numbers below are illustrative demo values, not a real PT rate card.
 #
-# How to deploy this file: see
-#   docs/product-docs/how-to/author-and-deploy-a-rate-sheet.md
-# Interim: the deploy endpoint accepts JSON, so the bridge is a `yq -o=json`
-# serialisation step. A YAML-native deploy tool — and wiring the demo scripts to
-# deploy FROM this file instead of an inline JSON heredoc — is the follow-up
-# (bd babelstone-alfy).
+# How to deploy this file: `make deploy-rate-sheet SHEET=rate-sheets/term_deposit/pt-deposits-2026.1.yaml`
+# (or scripts/deploy-rate-sheet.sh) — the YAML-native deploy tool serialises this
+# file to JSON 1:1 and POSTs it. The demo scripts (make demo-mcp / demo-saga / demo)
+# deploy straight from THIS file, so it is the single source and cannot drift from the
+# demo. Full loop: docs/product-docs/how-to/author-and-deploy-a-rate-sheet.md (bd babelstone-alfy).
 
 # --- Envelope: these fields become columns on the immutable stored row. ---
 rate_sheet_version_id: pt-deposits-2026.1     # PRIMARY KEY. A new version = a new file.

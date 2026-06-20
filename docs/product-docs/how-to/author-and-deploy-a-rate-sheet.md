@@ -168,28 +168,40 @@ endpoint hosted by `Babelstone.RateSheets.Api`. Locally the demo scripts bring i
 up as a transient host; if you are running it yourself it listens on the
 `ASPNETCORE_URLS` you gave it.
 
-**The deploy wire format is JSON**, so the one interim step is to serialise your
-YAML source to JSON on the way in. `yq` does it in one line — install it with
-`brew install yq` (it is an external tool, deliberately **not** in the pinned
-`mise` toolchain; the repo's CI scripts avoid it and use `cue export` / `js-yaml`
-to stay pinned). Pipe the result straight to `curl` with the **required**
-`X-Deploy-Actor` header (the gateway-authenticated identity; omitting it is a
-`401`):
+**The deploy wire format is JSON**, but you deploy straight from the YAML source —
+the **YAML-native deploy tool** does the serialisation for you. Point it at the
+file you authored and give it the **required** `X-Deploy-Actor` header (the
+gateway-authenticated identity; omitting it is a `401`):
 
 ```sh
-yq -o=json rate-sheets/term_deposit/pt-deposits-2026.2.yaml \
-  | curl -sS -o response.json -w '%{http_code}\n' \
-      -X POST http://localhost:8080/v1/rate-sheets \
-      -H 'Content-Type: application/json' \
-      -H 'X-Deploy-Actor: treasury.analyst@bank.internal' \
-      --data-binary @-
+make deploy-rate-sheet SHEET=rate-sheets/term_deposit/pt-deposits-2026.2.yaml \
+  BASE_URL=http://localhost:8080 ACTOR=treasury.analyst@bank.internal
+# or call the script directly:
+scripts/deploy-rate-sheet.sh rate-sheets/term_deposit/pt-deposits-2026.2.yaml \
+  --base-url http://localhost:8080 --actor treasury.analyst@bank.internal
 ```
 
+The tool reads the YAML, serialises it to JSON 1:1 (with pinned `js-yaml` via
+`npx` — the same pinned-Node path the CI scripts take, **not** the unpinned `yq`),
+POSTs it, and reports the status code below. The committed YAML is the single
+source: there is no hand-written JSON to drift from it.
+
+> **Under the hood / no-tool fallback.** If you want to see (or do) the bridge by
+> hand, it is one pipe: serialise the YAML to JSON and `curl` it. `yq -o=json`
+> works (`brew install yq` — an external tool, deliberately **not** in the pinned
+> `mise` toolchain), or the pinned `npx js-yaml@4.1.0 <file>` the tool itself uses:
+>
+> ```sh
+> npx --yes js-yaml@4.1.0 rate-sheets/term_deposit/pt-deposits-2026.2.yaml \
+>   | curl -sS -o response.json -w '%{http_code}\n' \
+>       -X POST http://localhost:8080/v1/rate-sheets \
+>       -H 'Content-Type: application/json' \
+>       -H 'X-Deploy-Actor: treasury.analyst@bank.internal' \
+>       --data-binary @-
+> ```
+>
 > The YAML → JSON step is a *bridge*, not the design intent: the YAML is the
-> source, JSON is only the wire shape the endpoint accepts. A YAML-native deploy
-> tool — and wiring the demo scripts to deploy straight from the committed file —
-> is the follow-up (bd `babelstone-alfy`), tracked in
-> [Honest local gaps](#honest-local-gaps).
+> source, JSON is only the wire shape the endpoint accepts.
 
 What the status code tells you ([ADR-PC-008 §P2](../../product-management/product_concepts/adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md)):
 
@@ -255,12 +267,18 @@ created today.
 
 These are real limitations of the current local setup, not steady-state design:
 
-- **The deploy wire format is JSON; the YAML → JSON bridge is manual.** You author
-  YAML (the source of truth) but serialise it with `yq` to POST it (step 4). A
-  YAML-native deploy tool, and wiring `make demo-*` to deploy from
+- **The deploy wire format is JSON, but authoring is now pure YAML.** The deploy
+  endpoint still accepts JSON, so a YAML → JSON serialisation happens on the way in —
+  but you no longer do it by hand. The YAML-native deploy tool
+  ([`scripts/deploy-rate-sheet.sh`](../../../scripts/deploy-rate-sheet.sh) /
+  `make deploy-rate-sheet`) reads the committed YAML and serialises it 1:1 with
+  pinned `js-yaml`, and the demo scripts (`make demo-mcp` / `make demo-saga` /
+  `make demo`) now deploy straight from
   [`rate-sheets/term_deposit/pt-deposits-2026.1.yaml`](../../../rate-sheets/term_deposit/pt-deposits-2026.1.yaml)
-  instead of an inline JSON heredoc, is the follow-up (bd `babelstone-alfy`). Until
-  then the committed YAML and the demo's inline JSON are kept in sync by hand.
+  rather than an inline JSON heredoc — so the committed YAML is the single source and
+  cannot drift from what the demo deploys (bd `babelstone-alfy`). The only residue is
+  that a `GET` read still goes through `psql` (next bullet); the *author → deploy*
+  loop is pure YAML end to end.
 - **No GET endpoint.** Reading the deployed body means querying the table (step 5,
   a verification aid). A read API is not part of this slice.
 - **The bound is read from the pack now** (`max_consumer_rate_bps`), but the

@@ -84,6 +84,10 @@ RATESHEET_URL="http://localhost:${RATESHEET_PORT}"
 MIGRATIONS_DIR="engine/src/Babelstone.EventStore.Migrations/Sql"
 PRODUCT="${PRODUCT:-dpz_pt_12m_juros_venc}"           # the product the saga constitutes (1:1 with demo-mcp.sh)
 RATE_SHEET_VERSION="${RATE_SHEET_VERSION:-pt-deposits-2026.1}"
+# The committed rate-sheet YAML is the SINGLE SOURCE we deploy (bd babelstone-alfy): the same file a
+# treasury author edits, serialised 1:1 to JSON at deploy time (ADR-PC-008 §P1), not an inline JSON
+# heredoc that could drift. It prices dpz_pt_12m_juros_venc at 300 bps — what the in-tx resolve needs.
+RATE_SHEET_YAML="${RATE_SHEET_YAML:-rate-sheets/term_deposit/${RATE_SHEET_VERSION}.yaml}"
 
 RUNDIR="$ROOT/.demo-saga"                              # logs + pidfiles (gitignored)
 
@@ -203,13 +207,12 @@ ok "engine + rate-sheet hosts built"
 
 # (b) seed the rate sheet through the C.6 deploy API (the validated seam, not a raw INSERT). The
 # transient deploy host is reaped immediately after — the engine reads the rate_sheets table directly.
-info "deploying rate sheet ${RATE_SHEET_VERSION} (prices ${PRODUCT} at 300 bps; the in-tx resolve needs it)"
-cat > "$RUNDIR/rate-sheet.json" <<JSON
-{"rate_sheet_version_id":"${RATE_SHEET_VERSION}","product_family":"term_deposit","pack_version":"pt.2026.1","effective_from":"2026-01-01T00:00:00+00:00","approved_by":"treasury.alm@bank.internal","approval_ref":"ALM-2026-019","products":{"${PRODUCT}":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":300}]}}}}
-JSON
+# We deploy FROM the committed YAML source (bd babelstone-alfy), serialised 1:1 to JSON (ADR-PC-008 §P1).
+info "deploying rate sheet ${RATE_SHEET_VERSION} from ${RATE_SHEET_YAML} (prices ${PRODUCT} at 300 bps; the in-tx resolve needs it)"
+[ -f "$RATE_SHEET_YAML" ] || die "rate-sheet YAML source not found: $RATE_SHEET_YAML"
 saga_deploy() { # base_url
   local url="$1" code
-  code="$(ratesheet_post "$url" demo-saga "$RUNDIR/rate-sheet.json" "$RUNDIR/deploy-resp.json")"
+  code="$(ratesheet_post_yaml "$url" demo-saga "$RATE_SHEET_YAML" "$RUNDIR/deploy-resp.json")"
   case "$code" in
     201) ok "rate sheet ${RATE_SHEET_VERSION} deployed (201 Created)" ;;
     200) ok "rate sheet ${RATE_SHEET_VERSION} already present, identical (200 OK)" ;;

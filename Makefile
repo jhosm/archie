@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 BACKSTAGE_PORT    ?= 7007
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify rate-sheet-check deploy-rate-sheet docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -99,6 +99,17 @@ pack-build: ## Build a pack into an OCI layout, print its digest (PACK=pt.2026.1
 
 pack-verify: ## Build then pull-by-digest + re-validate a pack (PACK=pt.2026.1)
 	@DIGEST="$$(./packs/pack.sh build packs/$(PACK))" && ./packs/pack.sh verify packs/$(PACK) --digest "$$DIGEST"
+
+## ----------------------------------------------------------------------------
+## Rate sheets (the treasury-owned config-as-code; ADR-PC-008)
+## ----------------------------------------------------------------------------
+
+rate-sheet-check: ## Validate committed rate-sheet YAML shape (ADR-PC-008 §P1/§P2; what the `rate-sheets` CI job runs)
+	@./scripts/rate-sheet-check.sh
+
+deploy-rate-sheet: ## YAML-native deploy: serialise a rate-sheet YAML 1:1 and POST it (SHEET=path [BASE_URL=… ACTOR=…], ADR-PC-008 §P1/§P2)
+	@test -n "$(SHEET)" || { echo "usage: make deploy-rate-sheet SHEET=rate-sheets/term_deposit/pt-deposits-2026.1.yaml [BASE_URL=http://localhost:8080] [ACTOR=treasury.analyst@bank.internal]"; exit 2; }
+	@./scripts/deploy-rate-sheet.sh "$(SHEET)" $(if $(BASE_URL),--base-url "$(BASE_URL)",) $(if $(ACTOR),--actor "$(ACTOR)",)
 
 ## ----------------------------------------------------------------------------
 ## Local pre-flight + CI triage (run — and diagnose — what CI runs, before pushing)

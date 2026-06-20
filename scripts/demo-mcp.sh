@@ -48,6 +48,10 @@ MIGRATIONS_DIR="engine/src/Babelstone.EventStore.Migrations/Sql"
 # --- canonical scenario (1:1 with DepositsApiIntegrationTests) ---
 PRODUCT="dpz_pt_12m_juros_venc"
 RATE_SHEET_VERSION="pt-deposits-2026.1"
+# The committed rate-sheet YAML is the SINGLE SOURCE we deploy (bd babelstone-alfy): the same file a
+# treasury author edits, serialised 1:1 to JSON at deploy time (ADR-PC-008 §P1). No inline JSON heredoc
+# to drift from it. The filename is the version id, so this path implies RATE_SHEET_VERSION above.
+RATE_SHEET_YAML="rate-sheets/term_deposit/${RATE_SHEET_VERSION}.yaml"
 
 teardown() {
   say "Stopping the demo's engine + MCP (Postgres is left running — use 'make down' for the stack)"
@@ -119,10 +123,11 @@ ok "built"
 # 3. deploy the rate sheet via the C.6 API — assert 201 / 200 / 409
 # ---------------------------------------------------------------------------
 say "3/6 Deploying the rate sheet via the C.6 deploy API (validated seam, not a raw INSERT)"
-cat > "$RUNDIR/rate-sheet.json" <<JSON
-{"rate_sheet_version_id":"${RATE_SHEET_VERSION}","product_family":"term_deposit","pack_version":"pt.2026.1","effective_from":"2026-01-01T00:00:00+00:00","approved_by":"treasury.alm@bank.internal","approval_ref":"ALM-2026-019","products":{"dpz_pt_12m_juros_venc":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":300}]}},"dpz_pt_12m_juros_mensal":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":325}]}},"dpz_pt_12m_juros_antecip":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":300}]}}}}
-JSON
-# Same version id, a DIFFERENT rate — must be refused (forward-only immutability, §P5).
+info "deploying FROM the committed YAML source ${RATE_SHEET_YAML} (serialised 1:1 to JSON — ADR-PC-008 §P1)"
+[ -f "$RATE_SHEET_YAML" ] || die "rate-sheet YAML source not found: $RATE_SHEET_YAML"
+# Same version id, a DIFFERENT rate — must be refused (forward-only immutability, §P5). The committed
+# YAML is the source for the happy path; the conflict probe is a deliberately-divergent inline body
+# (same id, 350 bps) we keep here precisely BECAUSE it must NOT match the source.
 cat > "$RUNDIR/rate-sheet-conflict.json" <<JSON
 {"rate_sheet_version_id":"${RATE_SHEET_VERSION}","product_family":"term_deposit","pack_version":"pt.2026.1","effective_from":"2026-01-01T00:00:00+00:00","approved_by":"treasury.alm@bank.internal","approval_ref":"ALM-2026-019","products":{"${PRODUCT}":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":350}]}}}}
 JSON
@@ -130,13 +135,13 @@ JSON
 # Runs inside with_ratesheet_host: asserts the deploy / idempotent-replay / forward-only-conflict trio.
 mcp_deploy() { # base_url
   local url="$1" code
-  code="$(ratesheet_post "$url" demo-mcp "$RUNDIR/rate-sheet.json" "$RUNDIR/deploy-resp.json")"
+  code="$(ratesheet_post_yaml "$url" demo-mcp "$RATE_SHEET_YAML" "$RUNDIR/deploy-resp.json")"
   case "$code" in
-    201) ok "deploy → 201 Created (new rate sheet ${RATE_SHEET_VERSION})" ;;
+    201) ok "deploy → 201 Created (new rate sheet ${RATE_SHEET_VERSION} from ${RATE_SHEET_YAML})" ;;
     200) ok "deploy → 200 OK (rate sheet ${RATE_SHEET_VERSION} already present, identical)" ;;
     *)   die "deploy expected 201 or 200, got $code  ($(cat "$RUNDIR/deploy-resp.json"))" ;;
   esac
-  code="$(ratesheet_post "$url" demo-mcp "$RUNDIR/rate-sheet.json" "$RUNDIR/deploy-resp.json")"
+  code="$(ratesheet_post_yaml "$url" demo-mcp "$RATE_SHEET_YAML" "$RUNDIR/deploy-resp.json")"
   [ "$code" = 200 ] || die "idempotent re-POST expected 200, got $code  ($(cat "$RUNDIR/deploy-resp.json"))"
   ok "idempotent re-POST → 200 OK (replayed, no second write — ADR-PC-008 §P2)"
   code="$(ratesheet_post "$url" demo-mcp "$RUNDIR/rate-sheet-conflict.json" "$RUNDIR/deploy-resp.json")"

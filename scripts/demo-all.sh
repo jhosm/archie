@@ -70,6 +70,10 @@ VENV_PY="$ROOT/mcp-server/.venv/bin/python"
 
 PRODUCT="dpz_pt_12m_juros_venc"
 RATE_SHEET_VERSION="pt-deposits-2026.1"
+# The committed rate-sheet YAML is the SINGLE SOURCE we deploy (bd babelstone-alfy): the same file a
+# treasury author edits, serialised 1:1 to JSON at deploy time (ADR-PC-008 §P1). It already carries all
+# three LIVE·engine products (venc 300 / mensal 325 / antecip 300 bps), so there is no inline JSON to drift.
+RATE_SHEET_YAML="rate-sheets/term_deposit/${RATE_SHEET_VERSION}.yaml"
 DEMO_CLIENT_ID="${DEMO_CLIENT_ID:-CLI-DEMO-0001}"
 
 teardown() {
@@ -156,12 +160,11 @@ ok "built"
 # 4. deploy the 3-product rate sheet (so every LIVE·engine variant prices)
 # ---------------------------------------------------------------------------
 say "4/8 Deploying the rate sheet via the C.6 deploy API (all 3 products, validated seam)"
-cat > "$RUNDIR/rate-sheet.json" <<JSON
-{"rate_sheet_version_id":"${RATE_SHEET_VERSION}","product_family":"term_deposit","pack_version":"pt.2026.1","effective_from":"2026-01-01T00:00:00+00:00","approved_by":"treasury.alm@bank.internal","approval_ref":"ALM-2026-019","products":{"dpz_pt_12m_juros_venc":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":300}]}},"dpz_pt_12m_juros_mensal":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":325}]}},"dpz_pt_12m_juros_antecip":{"standard":{"bands":[{"principal_cents":[0,null],"tan_basis_points":300}]}}}}
-JSON
+info "deploying FROM the committed YAML source ${RATE_SHEET_YAML} (serialised 1:1 to JSON — ADR-PC-008 §P1)"
+[ -f "$RATE_SHEET_YAML" ] || die "rate-sheet YAML source not found: $RATE_SHEET_YAML"
 all_deploy() { # base_url
   local url="$1" code
-  code="$(ratesheet_post "$url" demo-all "$RUNDIR/rate-sheet.json" "$RUNDIR/deploy-resp.json")"
+  code="$(ratesheet_post_yaml "$url" demo-all "$RATE_SHEET_YAML" "$RUNDIR/deploy-resp.json")"
   case "$code" in
     201) ok "rate sheet ${RATE_SHEET_VERSION} deployed (201 Created)" ;;
     200) ok "rate sheet ${RATE_SHEET_VERSION} already present, identical (200 OK)" ;;
