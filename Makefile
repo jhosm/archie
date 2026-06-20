@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 BACKSTAGE_PORT    ?= 7007
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -99,6 +99,40 @@ pack-build: ## Build a pack into an OCI layout, print its digest (PACK=pt.2026.1
 
 pack-verify: ## Build then pull-by-digest + re-validate a pack (PACK=pt.2026.1)
 	@DIGEST="$$(./packs/pack.sh build packs/$(PACK))" && ./packs/pack.sh verify packs/$(PACK) --digest "$$DIGEST"
+
+## ----------------------------------------------------------------------------
+## Local pre-flight + CI triage (run — and diagnose — what CI runs, before pushing)
+## ----------------------------------------------------------------------------
+
+# `preflight` is a dumb aggregate of the SAME commands the path-scoped ci.yml jobs run, so
+# it cannot drift into a different reality (it deliberately does NOT try to guess which jobs a
+# diff would trigger — that's CI's job). Fast hermetic tiers run by default; the Docker-bound
+# integration tier is opt-in via PREFLIGHT_INTEGRATION=1. Mirrors: engine, orchestrator,
+# pack-validate, contracts, asyncapi-catalogue, docs-verify, mcp-server.
+preflight: ## Run CI's fast hermetic gates locally before pushing (PREFLIGHT_INTEGRATION=1 adds the Docker tier)
+	@echo "==> engine — unit tier (ci.yml: engine)"
+	mise exec -- dotnet test engine/Babelstone.slnx --configuration Release --nologo --filter "Category!=Integration"
+	@echo "==> orchestrator — unit tier (ci.yml: orchestrator)"
+	mise exec -- dotnet test orchestrator/tests/Babelstone.Orchestrator.Tests/Babelstone.Orchestrator.Tests.csproj --configuration Release --nologo --filter "Category!=Integration"
+	@echo "==> pack-validate — go build + test (ci.yml: pack-validate)"
+	@$(MAKE) --no-print-directory pack-validate-test
+	@echo "==> contracts (CUE) + AsyncAPI catalogue (ci.yml: contracts)"
+	@$(MAKE) --no-print-directory contracts-check asyncapi-catalog-validate
+	@echo "==> generated reference freshness (ci.yml: docs-verify)"
+	@$(MAKE) --no-print-directory docs-verify
+	@echo "==> mcp-server — pytest (ci.yml: mcp-server)"
+	cd mcp-server && { [ -d .venv ] || mise exec -- python -m venv .venv; } && .venv/bin/python -m pip install -q -e ".[dev]" && .venv/bin/python -m pytest -q
+	@if [ -n "$(PREFLIGHT_INTEGRATION)" ]; then \
+		echo "==> integration tier (needs Docker) — engine + orchestrator"; \
+		mise exec -- dotnet test engine/Babelstone.slnx --configuration Release --nologo --filter "Category=Integration" && \
+		mise exec -- dotnet test orchestrator/tests/Babelstone.Orchestrator.Tests/Babelstone.Orchestrator.Tests.csproj --configuration Release --nologo --filter "Category=Integration"; \
+	else \
+		echo "==> integration tier SKIPPED — set PREFLIGHT_INTEGRATION=1 to include it (needs Docker)"; \
+	fi
+	@echo "✓ preflight passed — what CI runs is green locally"
+
+ci-triage: ## Map a failed CI run's jobs to the local command that reproduces each (RUN=<run-id|pr#>, needs gh)
+	@./scripts/ci-triage.sh $(RUN)
 
 ## ----------------------------------------------------------------------------
 ## Generated reference docs (ADR-PC-022 §P2 — the un-driftable reference quadrant)
