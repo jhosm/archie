@@ -45,6 +45,14 @@ public sealed class TermDepositFamilyModule : IFamilyModule
             new DispatchableHandler<DepositPosition, DepositTransferredToHeirs>(new DepositTransferredToHeirsHandler())),
         new("term_deposit.PersonalDataErasureRequested", typeof(PersonalDataErasureRequested),
             new DispatchableHandler<DepositPosition, PersonalDataErasureRequested>(new PersonalDataErasureRequestedHandler())),
+        // The engine-declared cross-cutting operational events (event-store §4.1), bound against this
+        // family's DepositPosition. The engine owns the event records + generic handlers (they name no
+        // family — ADR-PC-021 §P2); the family supplies only its TState here, splicing in every
+        // cross-cutting binding in one call so it cannot forget one as the set grows. Currently
+        // operations.PackVersionMigrated (ADR-PC-009 §P3): an operator pack re-pin. STORE-ONLY — these
+        // fold deterministically (the pin lives on the envelope, so the fold is a no-op) but carry no
+        // .avsc, so the fail-closed catalog gate keeps them off the bus (ADR-IC-017 §P1).
+        .. CrossCuttingEventRegistrations.For<DepositPosition>(),
     ];
 
     /// <summary>Convenience for tests and the durable runtime: the registry for this family alone.</summary>

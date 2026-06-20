@@ -22,9 +22,16 @@ folds a verdict into the shared `RunArtefact`; the run passes only if **every** 
 | **L.3b** sustained throughput | `babelstone-2e6q.2` | A wall-clock-paced loop holds a target TPS (the §8.3 rig figure is **250 TPS**) for a duration, and the *achieved* rate lands within tolerance — so a producer that silently collapses to 40 TPS can't pass the latency bands vacuously. |
 | **L.3c** burst | `babelstone-2e6q.3` | Sequences `sustained → burst (1000 TPS / 15 min) → recovery`, in that order. |
 | **L.3d** cold replay + no-divergence | `babelstone-2e6q.4` | A cold projection rebuild over the populated store finishes inside the §8.2 budget (**5 s** with-a-plan / **30 s** irregular), **and** the rebuilt belief is byte-identical to the running belief (the no-rebuild-divergence invariant). |
+| **L.3e** sync-replication append cost | `babelstone-2e6q.5` | Append p50/p99 with PostgreSQL `synchronous_commit` **on vs off** and the §P1 delta — the write-path latency cost the RPO≈0 guarantee imposes (ADR-PC-005 §P1). **GATING** only against a real warm standby (`--standby-confirmed`, the HA overlay); **advisory** on the single-node dev stack (the delta is then a floor, not the production cost). |
+| **L.5** snapshot-accelerated replay | `babelstone-0uau.1` | Over one deep stream, a snapshot-then-tail rebuild is **byte-identical** to the cold fold (the §P3 invariant) **and** demonstrably **faster**, within budget. A fast-but-divergent snapshot FAILS outright — correctness gates, speed only qualifies (ADR-PC-003 §P3/§P4). |
+| **L.6** discard-rebuild on populated snapshots | `babelstone-0uau.2` | Builds a deep stream WITH snapshots, confirms they exist, **discards** them all, rebuilds cold, and asserts zero divergence — the real §8.3/§P4 correctness exercise (the old drill ran snapshots-off, proving only cold-fold). |
 
-> The composite RC gate that aggregates these verdicts and wires the every-RC cadence is tracked
-> separately in bd `babelstone-2e6q.6` (`make load-gate`). This harness is what that gate runs.
+> **The composite RC gate** (bd `babelstone-2e6q.6`, `make load-gate`) aggregates **all** of the
+> above into one binary PASS/FAIL and wires the every-RC cadence
+> ([`.github/workflows/load-gate.yml`](../../.github/workflows/load-gate.yml)). This harness is what
+> that gate runs; see the [snapshot-operations runbook](../../infra/runbooks/snapshot-operations.md)
+> for the §P6 operational surface (snapshot-lag alarm, hash-mismatch recovery, advisory→trusted
+> promotion) the L.5/L.6 dimensions back.
 
 ---
 
@@ -57,6 +64,21 @@ make load-test                                                       # low-TPS l
 make load-test LOAD_ARGS="--profile sustained --tps 250 --duration 60s"   # L.3b sustained
 make load-test LOAD_ARGS="--profile burst"                           # L.3c burst (1000 TPS / 15 min)
 make load-test LOAD_ARGS="--measure replay"                          # L.3d replay budget + no-divergence
+make load-test LOAD_ARGS="--measure snapshot-replay --depth 64"      # L.5 snapshot-vs-cold parity + speedup
+make load-test LOAD_ARGS="--measure discard-rebuild --depth 64"      # L.6 discard populated snapshots, rebuild cold
+make load-test LOAD_ARGS="--measure repl-latency"                    # L.3e sync-replication append cost (§P1, advisory)
+make load-gate                                                       # the composite RC gate — one PASS/FAIL over ALL dimensions
+```
+
+The **composite gate** runs every dimension in sequence and exits `0` only if all pass:
+
+```bash
+make load-gate                                                       # per-RC fast pass (a smoke of each dimension)
+# the full §8.3 soak (24h sustained, 15m burst) substitutes bigger numbers without code change:
+make load-gate LOAD_GATE_SUSTAINED_ARGS="--profile sustained --tps 250 --duration 24h --no-bus" \
+               LOAD_GATE_BURST_ARGS="--profile burst --burst-tps 1000 --burst-duration 15m --no-bus"
+# against the HA overlay, make the §P1 dimension GATING (it is advisory on the single-node stack):
+make load-gate LOAD_GATE_REPL_ARGS="--measure repl-latency --standby-confirmed --pg <overlay-write-endpoint>"
 ```
 
 `make load-test` is a thin wrapper over `dotnet run`; the equivalent direct invocation is:
@@ -76,7 +98,7 @@ mise exec -- dotnet run --project engine/load/Babelstone.LoadHarness.Runner -c R
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--profile smoke\|sustained\|burst` | `smoke` | Run shape. `smoke` = one short low-TPS phase; `sustained` = hold a rate for a duration; `burst` = sustained → burst → recovery. |
-| `--measure latency\|replay` | `latency` | What to fold into the verdict: the §8.3 sync bands, or the §8.2 cold-replay budget + no-divergence drill. |
+| `--measure <mode>` | `latency` | What to fold into the verdict. `latency` = the §8.3 sync bands; `replay` = the §8.2 cold-replay budget + no-divergence drill (L.3d); `snapshot-replay` = snapshot-vs-cold parity + speedup (L.5); `repl-latency` = sync-replication append cost §P1 (L.3e); `discard-rebuild` = discard populated snapshots, rebuild cold (L.6). |
 | `--seed <int>` | `1234` | RNG seed. A failure reproduces from `(seed, run-id, revision)` (§8.5). |
 | `--run-id <guid>` | fresh GUID | Stream-id namespace nonce. Defaults fresh so repeated runs over a populated store don't collide on the optimistic-concurrency head; set it to reproduce a prior run's exact stream ids. |
 | `--warmup <int>` | `5` | Unmeasured warmup events appended before the observer starts, so the p99 reflects steady state, not process cold-start. `0` disables. |
@@ -90,6 +112,9 @@ mise exec -- dotnet run --project engine/load/Babelstone.LoadHarness.Runner -c R
 | `--schema-registry <url>` | `http://localhost:18081` | Schema Registry the producer's Avro codec registers/resolves against. |
 | `--no-bus` | (bus on) | Skip the Redpanda producer — in-process append/projection only (PostgreSQL is then the only dependency). |
 | `--irregular` | (with-a-plan) | Use the §8.2 irregular replay budget (30 s) instead of the with-a-plan budget (5 s). |
+| `--depth <int>` | `64` | L.5/L.6 deep-stream event depth (1 constitution + depth-1 accruals). Must exceed the rig's per-N snapshot threshold so a snapshot lands before the head and the accelerated fold has a tail to skip. |
+| `--repl-samples <int>` | `50` | L.3e: appends timed per side (sync on / off) — the p99 sample depth. |
+| `--standby-confirmed` | (advisory) | L.3e: the run targets a real warm standby (the HA overlay), so `synchronous_commit=on` genuinely blocks on a second node — makes the repl-latency verdict **GATING**. Without it the verdict is advisory (the single-node delta is a floor, not the production cost; ADR-PC-005 §P1). |
 | `-h`, `--help` | — | Print usage and exit. |
 
 ---

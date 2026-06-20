@@ -94,4 +94,53 @@ public sealed class LoadRunnerIntegrationTests
         Assert.True(artefact.Replay!.ObservedMs < artefact.Replay.BudgetMs,
             $"a small cold rebuild ({artefact.Replay.ObservedMs}ms) should clear the {artefact.Replay.BudgetMs}ms budget");
     }
+
+    [Fact]
+    public async Task Snapshot_replay_run_proves_byte_identity_and_a_speedup()
+    {
+        // bd babelstone-0uau.1: --measure snapshot-replay over a deep stream — cold vs snapshot-accelerated
+        // rebuild, asserting byte-identity (the §P3 invariant) and folding the speedup verdict.
+        var options = FastInProcess(RunProfile.Smoke, MeasureMode.SnapshotReplay) with { SnapshotStreamDepth = 64 };
+        var runner = new LoadRunner(options, TextWriter.Null);
+
+        var artefact = await runner.RunAsync();
+
+        Assert.NotNull(artefact.SnapshotReplay);
+        Assert.True(artefact.SnapshotReplay!.StateIdentical, "snapshot-accelerated state must match the cold fold (§P3)");
+        Assert.True(artefact.SnapshotReplay.SnapshotsApplied >= 1, "the accelerated path must read a snapshot");
+        Assert.True(artefact.SnapshotReplay.SnapshotMs <= artefact.SnapshotReplay.BudgetMs, "snapshot path clears the budget");
+    }
+
+    [Fact]
+    public async Task Discard_rebuild_run_clears_populated_snapshots_and_finds_no_divergence()
+    {
+        // bd babelstone-0uau.2: --measure discard-rebuild on POPULATED snapshots — the real L.6 exercise.
+        var options = FastInProcess(RunProfile.Smoke, MeasureMode.DiscardRebuild) with { SnapshotStreamDepth = 64 };
+        var runner = new LoadRunner(options, TextWriter.Null);
+
+        var artefact = await runner.RunAsync();
+
+        // The deep stream snapshotted, the snapshots were discarded, and the cold rebuild reproduced every
+        // running belief — a clean drill over a stream that DID snapshot (not the old snapshots-off drill).
+        Assert.NotNull(artefact.NoDivergence);
+        Assert.True(artefact.NoDivergence!.StreamsChecked >= 1, "the drill must cover the populated streams");
+        Assert.Equal(0, artefact.NoDivergence.DivergentStreams);
+    }
+
+    [Fact]
+    public async Task Repl_latency_run_folds_an_advisory_verdict_on_the_single_node_stack()
+    {
+        // bd babelstone-2e6q.5: --measure repl-latency without --standby-confirmed — the single-node CI
+        // lane folds an ADVISORY (non-gating) §P1 verdict with finite on/off p50/p99 (the production cost
+        // needs the HA overlay; here the path is exercised and the verdict is advisory).
+        var options = FastInProcess(RunProfile.Smoke, MeasureMode.ReplLatency) with { ReplLatencySamples = 8 };
+        var runner = new LoadRunner(options, TextWriter.Null);
+
+        var artefact = await runner.RunAsync();
+
+        Assert.NotNull(artefact.ReplicationLatency);
+        Assert.False(artefact.ReplicationLatency!.StandbyConfirmed, "the dev stack has no named standby");
+        Assert.True(artefact.ReplicationLatency.Passed, "without a confirmed standby the verdict is advisory");
+        Assert.Equal(8, artefact.ReplicationLatency.Samples);
+    }
 }

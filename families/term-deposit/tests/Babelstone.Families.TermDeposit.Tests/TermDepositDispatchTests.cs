@@ -15,10 +15,44 @@ public sealed class TermDepositDispatchTests
     private static readonly HandlerRegistry Registry = TermDepositFamilyModule.Registry();
 
     [Fact]
-    public void Module_registers_all_twelve_event_types()
+    public void Module_registers_the_twelve_family_events_plus_the_cross_cutting_set()
     {
         var module = new TermDepositFamilyModule();
-        Assert.Equal(12, module.Handlers.Count);
+
+        // Twelve term-deposit family events plus the engine-declared cross-cutting operational events
+        // the family splices in (CrossCuttingEventRegistrations.For<DepositPosition>(), event-store §4.1).
+        var crossCutting = CrossCuttingEventRegistrations.For<DepositPosition>();
+        Assert.Equal(12 + crossCutting.Count, module.Handlers.Count);
+
+        // The cross-cutting events register under the synthetic `operations` prefix, NOT a family one
+        // (they are family-agnostic — event-store §4.3). PackVersionMigrated (ADR-PC-009 §P3) is one.
+        Assert.Contains(module.Handlers, h => h.EventType == "operations.PackVersionMigrated");
+        Assert.All(crossCutting, r => Assert.Contains(module.Handlers, h => h.EventType == r.EventType));
+    }
+
+    [Fact]
+    public void PackVersionMigrated_folds_as_a_no_op_against_the_deposit_position()
+    {
+        // ADR-PC-009 §P3: the operator pack re-pin lives on the event ENVELOPE, not the projection, so
+        // the fold leaves the deposit position UNCHANGED — only the envelope pin moves (proved durably in
+        // the engine's PackVersionMigratedReplayIntegrationTests). Here we prove the FAMILY binding folds
+        // it (the engine-owned generic handler, bound against DepositPosition) without perturbing state.
+        var active = Dispatch(DepositPosition.Empty, new DepositConstituted(
+            DepositId: Guid.NewGuid(), Principal: new Money(1_000_000), TanBasisPoints: 300,
+            RateSheetVersionId: "rs-1", TermDays: 365, StartDate: new DateOnly(2026, 1, 15),
+            MaturityDate: new DateOnly(2027, 1, 15), InterestVariant: "AT_MATURITY", AutoRenewalPolicy: "NONE"));
+
+        Assert.True(Registry.TryResolve("operations.PackVersionMigrated", out var handler));
+        var migrated = (DepositPosition)handler.ApplyBoxed(active, new PackVersionMigrated(
+            InstanceId: active.DepositId,
+            FromPackVersion: "pt.2026.1",
+            ToPackVersion: "pt.2027.1",
+            MigrationId: "mig-001",
+            OperatorActor: "operator:regulatory-ops")).NewState;
+
+        // The position is byte-for-byte the pre-migration state — the migration contributes nothing to
+        // the projection (the rejected projection-column pin, ADR-PC-009 §B, is exactly what this avoids).
+        Assert.Equal(active, migrated);
     }
 
     [Fact]
