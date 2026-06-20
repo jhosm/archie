@@ -17,6 +17,8 @@ same plugin as the §P3 agents under `bhq.8` (ADR-PC-020 §P4, as amended).
 | [`pack-author`](./pack-author/SKILL.md) | Scaffold + publish a pt.YYYY.N regulatory pack (YAML+CUE, depths 1–4, cosign, oras) | **built (`archie-bhq.6`)** |
 | [`new-family-schema`](./new-family-schema/SKILL.md) | Scaffold a family's event records + folds + module + lifecycle table + projections + replay tests, modelled on `term_deposit` and wired into the host | **built (`babelstone-bhq.13`)** |
 | [`new-event`](./new-event/SKILL.md) | `<Entity><PastParticipleVerb>` naming + C# record/handler + governed Avro + AsyncAPI EventCatalog + headers envelope + BACKWARD registry compat | **built (`babelstone-bhq.13`)** |
+| [`new-store-migration`](./new-store-migration/SKILL.md) | Author a forward-only Postgres migration in the right series (engine event-store / saga / family read-model) with the series-specific invariants, numbering (gaps OK, no duplicates), and append-only role grants for new engine tables | **built (`babelstone-6gvs`)** |
+| [`bd-lint-fill`](./bd-lint-fill/SKILL.md) | Back-fill the template sections `bd lint` flags — Acceptance Criteria (the structured field) on tasks/features, and a Success-Criteria *decision* on epics — drafting grounded, verifiable criteria; fills only, never re-ranks | **built (`babelstone-6gvs`)** |
 
 ## The two engine-coupled skills (formerly deferred)
 

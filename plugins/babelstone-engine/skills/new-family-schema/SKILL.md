@@ -39,7 +39,7 @@ family name, e.g. `savings_account`), `<domain>` (the bus domain, e.g. `deposits
 | `IFamilyModule` + `HandlerRegistration` | [`engine/src/Babelstone.Engine/FamilyModule.cs`](engine/src/Babelstone.Engine/FamilyModule.cs) | exports `FamilyName` / `SchemaVersion` / `Handlers` |
 | `IProjectionModule` / `ProjectionRunner<TState>` / `ProjectionMode` | [`engine/src/Babelstone.Engine/Projections.cs`](engine/src/Babelstone.Engine/Projections.cs), [`ProjectionRunner.cs`](engine/src/Babelstone.Engine/ProjectionRunner.cs) | declares the family's projections |
 | `Money` (integer cents) | [`engine/src/Babelstone.FinancialTypes/Money.cs`](engine/src/Babelstone.FinancialTypes/Money.cs) | all monetary state |
-| `IFamilyHostModule` / `FamilyHostContext` | [`engine/src/Babelstone.Engine.Api/IFamilyHostModule.cs`](engine/src/Babelstone.Engine.Api/IFamilyHostModule.cs) | the family's host composition seam |
+| `IFamilyHostModule` / `FamilyHostContext` | [`engine/src/Babelstone.Engine.Hosting/IFamilyHostModule.cs`](engine/src/Babelstone.Engine.Hosting/IFamilyHostModule.cs) | the family's host composition seam (a shared hosting assembly) |
 
 The two namespaces a family code-lives in: `Babelstone.Families.<Family>` (the pure folds)
 and `Babelstone.Families.<Family>.Application` (the impure decider/command side).
@@ -51,6 +51,7 @@ families/<family-kebab>/
   src/
     Babelstone.Families.<Family>/                 # PURE: events, folds, module, projections, lifecycle, state
     Babelstone.Families.<Family>.Application/      # IMPURE: commands + decider (the command side)
+      Migrations/Sql/0001_read_model.sql          # family-owned read-model DDL (Step 7; new-store-migration)
   tests/
     Babelstone.Families.<Family>.Tests/            # pure unit tests (no Docker)
     Babelstone.Families.<Family>.Application.Tests/ # integration tests (Testcontainers)
@@ -163,6 +164,13 @@ projection's registry lists only the event types it records. The store shape is 
 ([ADR-PC-002 §P1](docs/product-management/product_concepts/adrs/ADR-PC-002-application-level-bitemporality.md)) — a schedule/ledger is a state record holding a
 collection, not new rows/columns. If the family exposes a denormalized CQRS read model, add a
 `CreateReadModelRunner` + a pure `state→row` mapper, exactly as the twin does (D.4, ADR-IC-005).
+That read model needs a **table**, and it is a *family-owned* migration — the runner has nothing
+to write to without it. Author `Migrations/Sql/0001_read_model.sql` (family-named tables in the
+`read_model` schema, under its own `schema_migrations_<family>` ledger, applied after the engine
+set) with the **`new-store-migration`** skill, modelled on the twin's
+[`0001_read_model.sql`](families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Migrations/Sql/0001_read_model.sql).
+Confirm the Application `.csproj` globs `<EmbeddedResource Include="Migrations/Sql/*.sql" />` (the
+twin does) so the file is compiled in.
 
 ## Step 8 — The CUE family schema and the pack binding
 
@@ -210,7 +218,8 @@ mise exec -- dotnet test  families/<family-kebab>/tests/Babelstone.Families.<Fam
 
 The engine spine stays family-count-invariant; you register the new family at the **host
 edge** ([ADR-PC-021 §D4](docs/product-management/product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)). Model on
-[`TermDepositHostModule.cs`](engine/src/Babelstone.Engine.Api/TermDepositHostModule.cs):
+[`TermDepositHostModule.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit.Application/TermDepositHostModule.cs)
+(the host module lives in the family's **Application** project — the family owns its host wiring):
 
 - Add a `sealed class <Family>HostModule : IFamilyHostModule` that registers the family's
   closed-generic `AggregateRuntime<<State>>` (seeded `() => <State>.Empty`, fed
