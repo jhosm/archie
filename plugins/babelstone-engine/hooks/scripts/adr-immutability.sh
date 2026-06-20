@@ -19,7 +19,9 @@ esac
 
 status="$(grep -m1 '^| *Status *|' "$file_path" 2>/dev/null \
   | awk -F'|' '{gsub(/^[[:space:]]+|[[:space:]]+$/,"",$3); print $3}')"
-case "$status" in Accepted) ;; *) exit 0 ;; esac
+# `Accepted*` glob (not exact `Accepted`): also covers `Accepted (gated by …)` /
+# `Accepted (production-blocking …)` (ADR-PC-002/004/005), whose Decisions are equally immutable.
+case "$status" in Accepted*) ;; *) exit 0 ;; esac
 
 decision_start="$(grep -n '^## Decision' "$file_path" 2>/dev/null | head -1 | cut -d: -f1)"
 [ -n "$decision_start" ] || exit 0

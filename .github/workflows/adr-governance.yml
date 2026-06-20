@@ -45,6 +45,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
+      - name: Self-test the immutability gate (status classification + hook mirror)
+        # Guards the gate's own logic — notably that `Accepted (gated …)` Decisions are
+        # treated as immutable (ADR-PC-002/004/005), not just the canonical `Accepted`.
+        run: bash .github/scripts/adr-immutability-check.test.sh
       - name: Block in-place edits to an Accepted ADR's Decision (unless amended)
         env:
           BASE_REF: ${{ github.base_ref }}
