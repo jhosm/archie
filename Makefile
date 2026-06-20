@@ -246,7 +246,7 @@ up: ## Start the local dev stack and wait until healthy
 	@echo "  Grafana           http://localhost:$(GRAFANA_PORT)   (LGTM: logs/traces/metrics; anonymous admin)"
 	@echo "  OTLP endpoint     localhost:$(OTLP_GRPC_PORT) (gRPC) / localhost:$(OTLP_HTTP_PORT) (HTTP)  — export telemetry here"
 	@echo "  OCI registry      localhost:$(REGISTRY_PORT)   (oras push/pull packs; e.g. localhost:$(REGISTRY_PORT)/babelstone-packs/…)"
-	@echo "  Backstage portal  http://localhost:$(BACKSTAGE_PORT)   (ADR-IC-015; needs the built app image — see infra/README.md)"
+	@echo "  Backstage portal  http://localhost:$(BACKSTAGE_PORT)   (ADR-IC-015; profile-gated 'catalog', needs the built app image — see infra/README.md)"
 
 down: ## Stop the stack, keep data volumes
 	$(COMPOSE) down
