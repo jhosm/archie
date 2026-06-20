@@ -42,10 +42,12 @@ _format_version: "3.0"
 # Kong presents this client certificate to the internal services; each service trusts
 # the internal CA and rejects any connection without it at the transport layer. This
 # enforces Boundary 2 (API Gateway → Internal Services) mechanically, not by network
-# policy alone. The PEM material is injected at deploy time (a mounted secret / a
-# `deck sync` from a secret store) — the literals here are POC placeholders so the
-# declarative config parses and the gate can assert the mTLS boundary is wired. The
-# referenced certificates are attached to BOTH upstream services below.
+# policy alone. The PEM material is injected at deploy time by scripts/deck-sync.sh
+# (Q.6 / bd babelstone-4c81.1): it pulls the real internal-CA-signed material from the
+# OpenBao secret boundary (M.2) at `deck sync` time and renders it over these entities
+# by id — the literals here are POC placeholders so the declarative config parses and
+# the gate can assert the mTLS boundary is wired. The referenced certificates are
+# attached to BOTH upstream services below.
 certificates:
   - id: 7e9b6f1a-2c4d-4e8a-9b1f-0a2c4d6e8f10
     # POC THROWAWAY self-signed keypair (CN=babelstone-edge-poc) — present so the
@@ -239,7 +241,10 @@ services:
     # mTLS to the orchestrator (ADR-IC-006 §P5): Kong presents the client cert above.
     client_certificate: 7e9b6f1a-2c4d-4e8a-9b1f-0a2c4d6e8f10
     # Trust the internal CA for the upstream TLS handshake (POC: skip verify until the
-    # internal CA bundle is mounted; flip to true with the CA at deploy time).
+    # internal CA bundle is mounted). scripts/deck-sync.sh flips this to true at deploy
+    # time once it mounts the real internal CA bundle from OpenBao (§P5 reverse half,
+    # bd babelstone-4c81.1) — so Kong VERIFIES the upstream server cert, not just presents
+    # its own.
     tls_verify: false
     routes:
       # POST /api/v1/deposits/constitute — STARTS the saga, returns 202 + stream_url.

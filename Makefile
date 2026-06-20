@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 BACKSTAGE_PORT    ?= 7007
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile gen-saga-topics gen-saga-topics-check kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify rate-sheet-check deploy-rate-sheet docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile gen-saga-topics gen-saga-topics-check kong-config-check deck-sync-dry-run deck-sync cd-migrate-gate cd-migrate edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify rate-sheet-check deploy-rate-sheet docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -83,6 +83,19 @@ gen-saga-topics-check: ## Gate: the generated saga-topic manifest matches the ca
 
 kong-config-check: ## Validate the Kong edge config: deck + kong config parse + edge-contract assertions (ADR-IC-006 §P1, needs deck + Docker)
 	@./scripts/kong-config-check.sh
+
+deck-sync-dry-run: ## Prove the OpenBao-backed deck-sync render path with throwaway PEM (no secrets, no live Kong; Q.6/4c81.1)
+	@./scripts/deck-sync.sh --dry-run
+
+deck-sync: ## deck sync the edge config with REAL OpenBao mTLS+IAM material (needs BAO_ADDR/BAO_TOKEN + KONG=admin-addr; Q.6/4c81.1)
+	@test -n "$(KONG)" || { echo "usage: make deck-sync KONG=http://kong:8001  (with BAO_ADDR + BAO_TOKEN set)"; exit 2; }
+	@./scripts/deck-sync.sh --kong-addr "$(KONG)"
+
+cd-migrate-gate: ## Forward-only DB-migration promotion gate (monotonic + no rewritten migration vs origin/main; Q.6)
+	@./scripts/cd-migrate.sh --gate-only
+
+cd-migrate: ## Apply the three forward-only migration series to a target (libpq PG* env or PSQL='conn'; Q.6)
+	@./scripts/cd-migrate.sh $(if $(PSQL),--psql "$(PSQL)",)
 
 edge-contract-test: ## Live-Kong RUNTIME contract test: PSD2 SCA + X-Client-Id IDOR + SoR fail-closed (bd abig + 1z0r, needs Docker)
 	@./scripts/edge-contract-test.sh

@@ -175,10 +175,10 @@ nothing against a site/AZ loss).
 - `postgres-standby` — a role-scoped headless Service for read-only / failover
   traffic to the standby.
 
-**CI validates only.** The infra job kustomize-builds + kubeconforms *both*
-overlays and asserts the HA commitments mechanically (3-node Redpanda; primary
+**The infra CI job validates only.** The infra job kustomize-builds + kubeconforms
+*both* overlays and asserts the HA commitments mechanically (3-node Redpanda; primary
 `synchronous_commit`/`synchronous_standby_names`; standby slot + zone
-anti-affinity). It does **not** spin up a real cluster. Three downstream lanes
+anti-affinity). It does **not** spin up a real cluster. Two downstream lanes
 ride on this wiring but are out of scope here:
 
 - **Sync-replication append-latency benchmark — L.3** (the Q-AK load test named
@@ -186,7 +186,14 @@ ride on this wiring but are out of scope here:
   assumed — but that is a load test, not this topology.
 - **DR drill / PITR — M.4**: failover rehearsal, WAL archiving, and
   point-in-time recovery (ADR-PC-005 §P2, §P5).
-- **CD / promotion pipeline — Q.6**: how either overlay actually gets applied.
+
+*Applying* either overlay is the **CD / promotion pipeline — Q.6**
+([`.github/workflows/cd.yml`](../../.github/workflows/cd.yml)): a human-dispatched,
+environment-gated `promote` job kubectl-applies the chosen overlay, applies the
+forward-only DB migrations ([`scripts/cd-migrate.sh`](../../scripts/cd-migrate.sh)),
+and `deck sync`s the edge with real OpenBao material
+([`scripts/deck-sync.sh`](../../scripts/deck-sync.sh)). This README's CI job stays
+validate-only; the deploy lives in `cd.yml`.
 
 The `ha-secrets.example.yaml` replication credential is a **DEV-ONLY
 placeholder**, same seam contract as `base/secrets.example.yaml` — never commit
@@ -195,12 +202,17 @@ real credentials; M.2 replaces it with OpenBao-backed provisioning.
 ## Out of scope (downstream)
 
 The `dev` overlay is a single, non-HA, dev/staging-shaped environment; the `ha`
-overlay (above) adds the production-shaped topology. Still explicitly deferred:
+overlay (above) adds the production-shaped topology. The remaining scope split:
 
-- **CD / promotion pipeline — Q.6** (babelstone-4c81): how rendered manifests
-  get applied and promoted across environments. CI here only *validates*
-  (`kustomize build` + `kubeconform`); it does not deploy.
+- **CD / promotion pipeline — Q.6** (babelstone-4c81): **implemented** in
+  [`.github/workflows/cd.yml`](../../.github/workflows/cd.yml) — it cosign-verifies
+  the promoted images by digest, gates the forward-only migrations, renders the
+  overlay, and `deck sync`s the edge with real OpenBao mTLS + IAM key material
+  (babelstone-4c81.1). The infra CI job *here* still only validates
+  (`kustomize build` + `kubeconform`); the apply lives in `cd.yml`.
 - **Real OpenBao provisioning — M.2** (babelstone-puu3): see the secret seam
-  above.
+  above. The CD pipeline *consumes* this boundary (it reads the edge mTLS + IAM
+  key material from OpenBao at `deck sync` time); standing up real OpenBao
+  storage/auth/HA is still M.2.
 - **Application / engine service images**: out of scope here, exactly as in the
   Compose stack (backing infra only).
