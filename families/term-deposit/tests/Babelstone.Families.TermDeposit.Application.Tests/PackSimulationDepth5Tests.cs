@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Text;
 using Babelstone.Engine;
 using Babelstone.EventStore;
+using Babelstone.FinancialMath;
+using Babelstone.FinancialTypes;
 using Babelstone.RateSheets;
 using Xunit;
 using Xunit.Abstractions;
@@ -116,9 +118,10 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             // escalonado` is driven to a BANDED early termination (its load-bearing behaviour, bd
             // babelstone-3h64), so its end state is TerminatedEarly; the `resgate parcial` variant is
             // driven through a PARTIAL withdrawal (F.12, bd k6r8.10) and STAYS Active — a partial
-            // withdrawal is state-preserving (F.3), so it does not reach a terminal state. The pinned TAN
+            // withdrawal is state-preserving (F.3), so it does not reach a terminal state. The
+            // withdraw→mature re-base leg (bd babelstone-aviw) DOES run on to maturity. The pinned TAN
             // survives every fold.
-            var variant = TermDepositVariants.For(instance.VariantId);
+            var variant = TermDepositVariants.For(instance.TestId, instance.VariantId);
             var expectedTerminal = variant.Lifecycle switch
             {
                 SimulatedLifecycle.BandedEarlyTermination => DepositLifecycle.TerminatedEarly,
@@ -131,13 +134,36 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
 
             // The load-bearing F.12 evidence (bd k6r8.10): the terminal fold carries the REDUCED
             // remaining principal (original − withdrawn) — proving DepositPartiallyWithdrawn replayed and
-            // the fold applied it, not just that the event was appended.
-            if (variant.Lifecycle == SimulatedLifecycle.PartialWithdrawal)
+            // the fold applied it, not just that the event was appended. Holds for BOTH the state-preserving
+            // leg (still Active) and the withdraw→mature leg (the matured RemainingPrincipal is the reduced
+            // principal the payout returns, bd babelstone-aviw).
+            if (variant.Lifecycle is SimulatedLifecycle.PartialWithdrawal
+                or SimulatedLifecycle.PartialWithdrawalThenMature)
             {
                 var withdrawal = variant.PartialWithdrawal!;
                 Assert.Equal(
                     instance.PrincipalCents - withdrawal.WithdrawnCents,
                     hydrated.State.RemainingPrincipal.Cents);
+            }
+
+            // The re-base proof at the simulation level (bd babelstone-aviw): after withdraw→mature, the
+            // matured payout returns the REDUCED principal PLUS the piecewise net interest — and that net
+            // is STRICTLY LESS than the net a never-withdrawn deposit of the SAME original principal would
+            // pay (interest re-based onto the smaller held principal for the post-withdrawal segment), so
+            // the engine did not accrue on the withdrawn money. The exact figures are sealed in
+            // expected-events.yaml; this is the direction-of-effect guard the corpus numbers must honour.
+            if (variant.Lifecycle == SimulatedLifecycle.PartialWithdrawalThenMature)
+            {
+                Assert.Equal(DepositLifecycle.Matured, hydrated.State.Lifecycle);
+                Assert.Equal(
+                    hydrated.State.RemainingPrincipal + hydrated.State.NetInterest,
+                    hydrated.State.TotalPayout);
+                var fullTermNet = NeverWithdrawnNetInterestCents(instance, variant);
+                Assert.True(
+                    hydrated.State.NetInterest.Cents < fullTermNet,
+                    $"{instance.TestId}: withdraw→mature net interest {hydrated.State.NetInterest.Cents}c must be " +
+                    $"strictly less than the never-withdrawn full-principal net {fullTermNet}c (the re-base must " +
+                    "have priced the post-withdrawal segment on the reduced principal, bd babelstone-aviw).");
             }
         }
 
@@ -242,7 +268,7 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
     private static async Task DriveLifecycleAsync(
         TermDepositConstitutionService service, Guid depositId, CanonicalInstance instance)
     {
-        var variant = TermDepositVariants.For(instance.VariantId);
+        var variant = TermDepositVariants.For(instance.TestId, instance.VariantId);
         var startDate = DateOnly.FromDateTime(instance.ConstitutedAt.UtcDateTime);
         var maturityDate = startDate.AddDays(variant.TermDays);
 
@@ -303,6 +329,26 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             return;
         }
 
+        // The withdraw→MATURE re-base leg (bd babelstone-aviw): withdraw part of the principal, then run
+        // ON to maturity. This locks the F.12 re-base (bd emtr) at the simulation level — maturity must
+        // accrue PIECEWISE on the principal actually held in each segment (full up to the withdrawal, the
+        // reduced principal after), and the matured payout returns the reduced principal plus that
+        // piecewise net. Same deterministic withdrawal inputs as the state-preserving leg, then maturity.
+        if (variant.Lifecycle == SimulatedLifecycle.PartialWithdrawalThenMature)
+        {
+            var withdrawal = variant.PartialWithdrawal
+                ?? throw new InvalidOperationException(
+                    $"{instance.TestId} is a withdraw→mature variant but carries no resolved withdrawal inputs.");
+            var withdrawnOn = startDate.AddDays(withdrawal.WithdrawAfterDays);
+            await service.WithdrawPartiallyAsync(new PartialWithdrawCommand(
+                DepositId: depositId,
+                WithdrawnAt: new DateTimeOffset(withdrawnOn, TimeOnly.MinValue, TimeSpan.Zero),
+                WithdrawnAmountCents: withdrawal.WithdrawnCents,
+                Actor: "depth5-sim",
+                CommandId: DeterministicCommandId(depositId, "partial-withdrawal")));
+            // Fall through to the maturity append below (no early return) so the deposit runs to maturity.
+        }
+
         if (variant.InterestVariant == "PERIODIC")
         {
             // Pay each intermediate coupon. The final coupon is paid WITH the principal at
@@ -346,6 +392,24 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
     }
 
     /// <summary>
+    /// The net interest a NEVER-WITHDRAWN AT_MATURITY deposit of the instance's ORIGINAL principal would
+    /// pay over the full term — the counterfactual the withdraw→mature re-base must beat (bd babelstone-aviw).
+    /// A single full-term flow on the whole principal (the same Act/360 + 2800-bp withholding the engine
+    /// uses), so this is the comparison ceiling: the actual withdraw→mature net must be STRICTLY LESS,
+    /// proving interest was re-based onto the reduced principal rather than accrued on the withdrawn money.
+    /// This is a DIRECTION-of-effect guard only; the exact figures live in the sealed corpus.
+    /// </summary>
+    private static long NeverWithdrawnNetInterestCents(CanonicalInstance instance, VariantShape variant)
+    {
+        var start = DateOnly.FromDateTime(instance.ConstitutedAt.UtcDateTime);
+        var maturity = start.AddDays(variant.TermDays);
+        var gross = Accrual.SimpleInterest(
+            new Money(instance.PrincipalCents), instance.RateBasisPoints,
+            DayCount.Between(start, maturity, DayCountConvention.Act360));
+        return Withholding.Withhold(gross, 2800).Net.Cents;
+    }
+
+    /// <summary>
     /// The event-type sequence each interest shape is expected to emit, in commit order. These are
     /// the engine's documented per-variant lifecycle shapes (Events.cs / the E.3 happy-path
     /// assertions), expressed as the durable <c>family.EventType</c> strings the log carries.
@@ -360,7 +424,7 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
         const string terminatedEarly = "term_deposit.DepositTerminatedEarly";
         const string partiallyWithdrawn = "term_deposit.DepositPartiallyWithdrawn";
 
-        var variant = TermDepositVariants.For(instance.VariantId);
+        var variant = TermDepositVariants.For(instance.TestId, instance.VariantId);
 
         // The banded `resgate escalonado` variant breaks early rather than maturing: the elapsed
         // flow accrues+withholds, then the deposit settles net of the first-match band penalty and
@@ -369,6 +433,15 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
         if (variant.Lifecycle == SimulatedLifecycle.BandedEarlyTermination)
         {
             return [c, accrued, withheld, terminatedEarly];
+        }
+
+        // The withdraw→MATURE re-base leg (bd babelstone-aviw): constitution, the principal-reducing
+        // DepositPartiallyWithdrawn, then the AT_MATURITY close (accrue+withhold+mature) — but accrued
+        // PIECEWISE on the reduced principal. The event SHAPE is the same as an at-maturity deposit with a
+        // withdrawal spliced in; the re-based FIGURES are what the sealed corpus pins.
+        if (variant.Lifecycle == SimulatedLifecycle.PartialWithdrawalThenMature)
+        {
+            return [c, partiallyWithdrawn, accrued, withheld, matured];
         }
 
         // The `resgate parcial` variant withdraws part of its principal and STAYS Active (F.12, bd
