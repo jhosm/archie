@@ -212,3 +212,27 @@ tests:
         fields:
           withdrawn_amount_cents: 1000000
           remaining_principal_cents: 3000000
+  - test_id: pt_dpz_12m_partial_withdrawal_then_mature
+    variant_id: dpz_pt_12m_resgate_parcial
+    events:
+      - type: term_deposit.DepositConstituted
+        fields:
+          principal_cents: 4000000
+          tan_basis_points: 300
+          term_days: 365
+      - type: term_deposit.DepositPartiallyWithdrawn
+        fields:
+          withdrawn_amount_cents: 1000000
+          remaining_principal_cents: 3000000
+      - type: term_deposit.InterestAccrued
+        fields:
+          gross_interest_cents: 101250
+      - type: term_deposit.WithholdingApplied
+        fields:
+          tax_cents: 28350
+          net_cents: 72900
+      - type: term_deposit.DepositMatured
+        fields:
+          principal_returned_cents: 3000000
+          net_interest_paid_cents: 72900
+          total_payout_cents: 3072900

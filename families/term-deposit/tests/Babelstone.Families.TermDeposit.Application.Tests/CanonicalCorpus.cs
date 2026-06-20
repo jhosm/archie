@@ -217,6 +217,15 @@ internal enum SimulatedLifecycle
     /// reduced RemainingPrincipal. The load-bearing evidence is the <c>DepositPartiallyWithdrawn</c> event
     /// replaying and the terminal fold carrying the reduced principal.</summary>
     PartialWithdrawal,
+
+    /// <summary>Constitute → partially withdraw → MATURE (F.12 re-base, bd babelstone-aviw / emtr): the
+    /// same <c>resgate parcial</c> variant, but driven ALL THE WAY to maturity after the withdrawal. This
+    /// locks the re-base at the simulation level: maturity must accrue PIECEWISE on the principal actually
+    /// held in each segment of the timeline (full principal up to the withdrawal, the reduced principal
+    /// after), and the matured payout returns the REDUCED principal plus that piecewise net interest — NOT
+    /// interest on the original principal. The state-preserving <see cref="PartialWithdrawal"/> leg stays
+    /// as-is (it proves F.3 state-preservation); this is the defence-in-depth maturity leg on top.</summary>
+    PartialWithdrawalThenMature,
 }
 
 /// <summary>The resolved banded early-termination schedule the depth-5 simulation drives a
@@ -270,6 +279,32 @@ internal static class TermDepositVariants
                 SimulatedLifecycle.PartialWithdrawal,
                 PartialWithdrawal: new PartialWithdrawalShape(WithdrawAfterDays: 120, WithdrawnCents: 1_000_000)),
         };
+
+    // Per-TEST-ID shape overrides (bd babelstone-aviw): when one real launch variant must be driven to a
+    // SECOND simulated lifecycle in the corpus, the override is keyed by test_id rather than minting a new
+    // product variant (which would need its own /product-configs file + a depths-1–4 validation pass). The
+    // `withdraw → mature` re-base leg REUSES the real, validated `dpz_pt_12m_resgate_parcial` variant id —
+    // so the F.12 product-config + rate-sheet resolve are the genuine ones — but runs the
+    // PartialWithdrawalThenMature lifecycle instead of the state-preserving PartialWithdrawal one. The
+    // existing PartialWithdrawal instance is untouched (it still proves F.3 state-preservation).
+    private static readonly IReadOnlyDictionary<string, VariantShape> ShapeByTestId =
+        new Dictionary<string, VariantShape>(StringComparer.Ordinal)
+        {
+            // €40,000 @ 300 bps / 365d resgate-parcial: withdraw €10,000 on day 120 (clears the 90-day
+            // carência / min-withdrawal / min-remaining gates, exactly as the state-preserving leg), then
+            // MATURE — the matured payout must return the REDUCED €30,000 principal plus the PIECEWISE net
+            // interest (full €40,000 up to day 120, €30,000 thereafter), the emtr re-base (bd babelstone-aviw).
+            ["pt_dpz_12m_partial_withdrawal_then_mature"] = new(
+                "AT_MATURITY", TermDays: 365, PaymentPeriodMonths: 0,
+                SimulatedLifecycle.PartialWithdrawalThenMature,
+                PartialWithdrawal: new PartialWithdrawalShape(WithdrawAfterDays: 120, WithdrawnCents: 1_000_000)),
+        };
+
+    /// <summary>Resolve the shape for a corpus instance — a per-test-id override (bd babelstone-aviw) if
+    /// one is registered, else the per-variant-id default. Lets one validated launch variant drive more
+    /// than one simulated lifecycle without minting a throwaway product config.</summary>
+    public static VariantShape For(string testId, string variantId) =>
+        ShapeByTestId.TryGetValue(testId, out var overrideShape) ? overrideShape : For(variantId);
 
     public static VariantShape For(string variantId) =>
         Shapes.TryGetValue(variantId, out var shape)
