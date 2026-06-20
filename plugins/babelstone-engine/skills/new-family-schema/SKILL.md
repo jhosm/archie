@@ -214,22 +214,70 @@ mise exec -- dotnet build families/<family-kebab>/src/Babelstone.Families.<Famil
 mise exec -- dotnet test  families/<family-kebab>/tests/Babelstone.Families.<Family>.Tests/ --nologo -v q
 ```
 
-## Step 10 — Wire the family into the host
+## Step 10 — Wire the family into the host (assembly-scanned — no host code edit)
 
-The engine spine stays family-count-invariant; you register the new family at the **host
-edge** ([ADR-PC-021 §D4](docs/product-management/product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)). Model on
+The engine spine stays family-count-invariant; the family registers **itself** at the **host
+edge** ([ADR-PC-021 §D4](docs/product-management/product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)).
+The host **discovers** family host modules by ASSEMBLY-SCAN
+([`HostModuleLoader.FamilyHostAssemblies()`](engine/src/Babelstone.Engine.Api/HostModuleLoader.cs) → `LoadAll`,
+[ADR-PC-021 §A13–§A18](docs/product-management/product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)):
+there is **no hand-maintained module list to edit**, and `Program.cs` must name no family in
+code (`ENGINE_API_HOST_FAMILY_AGNOSTIC`,
+[`EngineApiHostFamilyAgnosticTests`](engine/tests/Babelstone.Engine.Api.Tests/EngineApiHostFamilyAgnosticTests.cs)).
+Model on
 [`TermDepositHostModule.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit.Application/TermDepositHostModule.cs)
 (the host module lives in the family's **Application** project — the family owns its host wiring):
 
-- Add a `sealed class <Family>HostModule : IFamilyHostModule` that registers the family's
-  closed-generic `AggregateRuntime<<State>>` (seeded `() => <State>.Empty`, fed
-  `<Family>FamilyModule.Registry()`), its decider, its `IProjectionModule`, and maps its
-  endpoints. The family owns the closed generic here, so the host never names `<State>`.
-- Add the entry to the host's module list in
-  [`Program.cs`](engine/src/Babelstone.Engine.Api/Program.cs)
-  (`IReadOnlyList<IFamilyHostModule> familyModules = [ … ]`) and add the two
-  `ProjectReference`s (pure + Application) to
-  [`Babelstone.Engine.Api.csproj`](engine/src/Babelstone.Engine.Api/Babelstone.Engine.Api.csproj).
+- Add a `sealed class <Family>HostModule : IFamilyHostModule` that:
+  - exposes `FamilyName`, `SchemaVersion`, and `AggregateType` — all delegating to the fold
+    module (`AggregateType => FoldModule.FamilyName`, the `aggregate_type == family_name`
+    convention, [ADR-IC-004 §Consequences](docs/product-management/integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)).
+    The host cross-checks this `(FamilyName, AggregateType, SchemaVersion)` tuple against the
+    pinned pack at load (Step 11), so `SchemaVersion` must be the SAME value the module stamps
+    on every `EventEnvelope`.
+  - registers the family's closed-generic `AggregateRuntime<<State>>` (seeded
+    `() => <State>.Empty`, fed `<Family>FamilyModule.Registry()`), its decider, its
+    `IProjectionModule`, and maps its endpoints — the family owns the closed generic, so the
+    host never names `<State>`.
+  - registers its OWN family-owned read-model store, if it has one, from the host's
+    already-secret-resolved engine connection string `ctx.EngineConnectionString` — never
+    re-crossing the `ISecretProvider` boundary, which stays at the host composition root
+    ([ADR-PC-004 §A1](docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)).
+    Do **not** register a family store back in `Program.cs`.
+- The ONLY host-project edit is adding the two `ProjectReference`s (pure + Application) to
+  [`Babelstone.Engine.Api.csproj`](engine/src/Babelstone.Engine.Api/Babelstone.Engine.Api.csproj):
+  they are the assembly-scan discovery anchor and copy each `Babelstone.Families.*.dll` next to
+  the host so the loader's output-dir probe finds it
+  ([ADR-PC-021 §A14/§A18](docs/product-management/product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)).
+  This is family-agnostic (a directory `ProjectReference`, not a family named in code), so the
+  host stays family-count-invariant.
+
+## Step 11 — Pin the family in the deployment's regulatory pack (`families.yaml`)
+
+The pinned pack is the **authoritative per-deployment family set**: a discovered family the pack
+does not declare makes the host **fail closed at load** — the family-manifest cross-check
+([ADR-PC-009 §A1](docs/product-management/product_concepts/adrs/ADR-PC-009-per-instance-version-pinning.md),
+[ADR-PC-007 §A1](docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md))
+refuses to serve on an unpinned family, a schema-version / aggregate-type skew, or a pinned
+family with no loadable module. So a new family MUST be added to the pinned pack's
+`families.yaml`, modelled on
+[`packs/pt.2026.1/families.yaml`](packs/pt.2026.1/families.yaml):
+
+```yaml
+families:
+  - family_name: <family>            # snake_case; == IFamilyHostModule.FamilyName
+    aggregate_type: <family>         # == family_name (ADR-IC-004 convention)
+    schema_version: <family>@YYYY.N  # == module SchemaVersion AND the pack.yaml schema_pins entry
+    plugin_assembly: Babelstone.Families.<Family>.Application
+```
+
+The `schema_version` here must agree with BOTH the module's `SchemaVersion` (Steps 5/10) and the
+SAME family's `schema_pins` entry in the pack manifest — one pin, named for two readers (the
+schema registry vs the host's module roster). The file is `#FamilyManifest`-validated
+([`contracts/cue/pack/pack.cue`](contracts/cue/pack/pack.cue)) and parsed fail-loud into
+`VerifiedPack.Families`. Authoring a NEW regulatory pack (primitives, parameters, sealed corpus)
+is the **`pack-author`** skill's job; this step is just the family-roster row a new family adds
+to the pack that will run it.
 
 ## Per-event work hands off to `new-event`
 
@@ -251,4 +299,10 @@ owns that four-artefacts-in-lock-step procedure.
   source set; the decider rejects, the folds never guard.
 - **Module needs a public parameterless ctor** — the `FamilyModuleLoader` throws a
   diagnosable error otherwise.
-- **`SchemaVersion` == the CUE `schema` pin** (`<family>@YYYY.N`) — they must agree.
+- **`SchemaVersion` == the CUE `schema` pin == the `families.yaml` / `schema_pins` pin**
+  (`<family>@YYYY.N`) — all must agree, or the host fails closed at load.
+- **Host is assembly-scan + fail-closed** — no `Program.cs` module list to edit; the host
+  discovers families by assembly-scan and `ENGINE_API_HOST_FAMILY_AGNOSTIC` keeps `Program.cs`
+  naming no family. The pinned pack's `families.yaml` is the authoritative family set, and the
+  host refuses to boot on an unpinned/skewed family or a pinned family with no module
+  ([ADR-PC-009 §A1](docs/product-management/product_concepts/adrs/ADR-PC-009-per-instance-version-pinning.md)).
