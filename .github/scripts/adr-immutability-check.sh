@@ -31,7 +31,12 @@ check_decision() {
   [ -n "$base_content" ] || { echo "skip (no base): $wf"; return 0; }
   base_status="$(printf '%s\n' "$base_content" | grep -m1 '^| *Status *|' \
     | awk -F'|' '{gsub(/^[[:space:]]+|[[:space:]]+$/,"",$3); print $3}' || true)"
-  case "$base_status" in Accepted) ;; *) echo "skip (base status='$base_status'): $wf"; return 0 ;; esac
+  # `Accepted*` (glob, not exact): catches the canonical `Accepted` AND the free-form
+  # `Accepted (gated by …)` / `Accepted (production-blocking …)` statuses that ADR-PC-002/004/005
+  # carry — those Decisions are immutable too. An exact `Accepted)` here silently skipped them,
+  # leaving the corpus's highest-stakes Decisions (PII shredding, DR, bitemporality) editable in
+  # place. (Matches spec-coverage-check.sh, which substring-matches the same Status field.)
+  case "$base_status" in Accepted*) ;; *) echo "skip (base status='$base_status'): $wf"; return 0 ;; esac
   if [ "$(printf '%s\n' "$base_content" | extract_decision | strip_links)" = "$(extract_decision < "$wf" | strip_links)" ]; then
     echo "ok (Decision prose unchanged; link hrefs normalised): $wf"; return 0
   fi
