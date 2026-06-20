@@ -1,0 +1,15 @@
+<!-- A negative-case fixture assembly for HostModuleLoaderTests: it contains TWO IFamilyHostModule
+     types claiming the SAME family, so a scan of THIS assembly trips the loader's duplicate-family
+     collision guard (the host-module analogue of HandlerRegistry's duplicate-event_type throw,
+     ADR-PC-021 §A3). Isolated in its own assembly so the colliding pair is never in the main test
+     assembly's happy-path scan. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- A plain fixture library, not a test project: no test runner, not collected. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
+  </ItemGroup>
+</Project>

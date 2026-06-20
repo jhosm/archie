@@ -205,12 +205,17 @@ builder.Services.AddSingleton<IIntegrationEventCatalog>(_ => new AvroSchemaCatal
 // Composition at the edge (ADR-PC-021 §D4/§P4): the host enumerates the families it runs as
 // IFamilyHostModule contributions and lets each register its own runtime + decider and map its
 // own endpoints. This compose block stays family-count-invariant — adding a family is a new
-// module + a ProjectReference + one entry in the list below, never a surgical edit threading a
-// new aggregate type through here. Today this is the explicit list (§P4 "Option A"); because
-// every module shares the IFamilyHostModule contract, swapping it for FamilyModuleLoader-style
-// assembly-scan discovery later is a localized change here, with zero change to families.
+// module + a ProjectReference, never an edit here. The explicit Option-A list
+// (§A3, `[new TermDepositHostModule()]`) is now ASSEMBLY-SCAN discovery (§A3 Option B / §P4,
+// realized 2026-06-20 / bd babelstone-9w2k.2): HostModuleLoader scans the host's compile-referenced
+// Babelstone.Families.* assemblies for public-parameterless-ctor IFamilyHostModule types, fail-loud on
+// a duplicate-family collision (the host-module analogue of HandlerRegistry's duplicate-event_type
+// throw), and returns them STABLY ordered so the engine-before-family read-model migration ordering
+// (§A6) stays reproducible across boots. Reflection is confined to this composition root (ADR-PC-010
+// §P5), never the dispatch spine. The ConfigureServices / MapEndpoints loops below are unchanged.
 var familyHostContext = new FamilyHostContext(pack, builder.Configuration);
-IReadOnlyList<IFamilyHostModule> familyModules = [new TermDepositHostModule()];
+IReadOnlyList<IFamilyHostModule> familyModules =
+    new HostModuleLoader().LoadAll(HostModuleLoader.FamilyHostAssemblies());
 foreach (var module in familyModules)
 {
     module.ConfigureServices(builder.Services, familyHostContext);

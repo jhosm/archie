@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 BACKSTAGE_PORT    ?= 7007
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify rate-sheet-check deploy-rate-sheet docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile gen-saga-topics gen-saga-topics-check kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify rate-sheet-check deploy-rate-sheet docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -74,6 +74,12 @@ asyncapi-catalog-validate: ## AsyncAPI catalogue §P1–§P6 gate (fast, hermeti
 
 asyncapi-catalog-reconcile: ## Live check: catalogue subjects exist in a throwaway SR (ADR-IC-015 §8, needs Docker)
 	@./scripts/asyncapi-catalog-reconcile.sh
+
+gen-saga-topics: ## Regenerate the saga family-integration-topic manifest from the AsyncAPI catalogue (bd 9w2k.4)
+	@mise exec -- python3 scripts/gen-saga-topics.py
+
+gen-saga-topics-check: ## Gate: the generated saga-topic manifest matches the catalogue channels (CI failure on drift, ADR-IC-003)
+	@mise exec -- python3 scripts/gen-saga-topics.py --check
 
 kong-config-check: ## Validate the Kong edge config: deck + kong config parse + edge-contract assertions (ADR-IC-006 §P1, needs deck + Docker)
 	@./scripts/kong-config-check.sh
