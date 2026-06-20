@@ -159,6 +159,20 @@ package family
 	// #BandedPolicy.banded.
 	partial_withdrawal?: #PartialWithdrawal
 
+	// A partial withdrawal is forbidden on an ADVANCE (juros antecipados) product
+	// (F.12, bd babelstone-emtr): that shape pays the WHOLE term's interest up front
+	// on the full principal, so a later withdrawal would strand pre-paid interest with
+	// no accrual flow to re-base it (unlike AT_MATURITY/PERIODIC, whose remaining
+	// accrual folds over the reduced principal). Unlike the two numeric coherence
+	// invariants above, this is a presence-given-enum constraint the schema CAN express
+	// declaratively — the same shape as payment_period_months — so a config that
+	// declares the block alongside interest_variant: ADVANCE is rejected at the schema
+	// layer. The runtime decider (PartialWithdrawalDecider) refuses such a withdrawal
+	// as the backstop.
+	if interest_variant == "ADVANCE" {
+		partial_withdrawal?: _|_ // explicit error (_|_ literal) in source
+	}
+
 	// --- optional activation date (authoring §4 step 5) -----------------
 	effective_from?: =~"^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
 }

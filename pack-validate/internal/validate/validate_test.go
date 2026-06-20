@@ -79,6 +79,7 @@ func TestInvalidFixturesRejectAtExpectedDepth(t *testing.T) {
 		{cueInvalidDir, "non-eur-currency.yaml", diag.DepthType, diag.KindTypeMismatch},
 		{cueInvalidDir, "principal-max-below-min.yaml", diag.DepthType, diag.KindOutOfRange},
 		{cueInvalidDir, "partial-withdrawal-unknown-field.yaml", diag.DepthSyntactic, diag.KindUnknownField},
+		{cueInvalidDir, "partial-withdrawal-on-advance.yaml", diag.DepthSyntactic, diag.KindNoMatchingShape},
 		// pack-aware fixtures — depths 2–4
 		{packInvalidDir, "depth2-unknown-primitive.yaml", diag.DepthType, diag.KindUnknownPrimitive},
 		{packInvalidDir, "depth3-wrong-pack.yaml", diag.DepthPackCompliance, diag.KindPackBoundViolation},
@@ -88,7 +89,6 @@ func TestInvalidFixturesRejectAtExpectedDepth(t *testing.T) {
 		{packInvalidDir, "depth4-same-term-same-rate.yaml", diag.DepthRegulatory, diag.KindForbiddenRenewalPolicy},
 		{packInvalidDir, "depth4-carencia-exceeds-term.yaml", diag.DepthRegulatory, diag.KindCarenciaExceedsTerm},
 		{packInvalidDir, "depth4-remaining-exceeds-max.yaml", diag.DepthRegulatory, diag.KindRemainingExceedsMaxCents},
-		{packInvalidDir, "depth4-partial-withdrawal-on-advance.yaml", diag.DepthRegulatory, diag.KindPartialWithdrawalOnAdvance},
 	}
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {
