@@ -1,10 +1,11 @@
-"""HTTP client for the orchestrator's process-status read surface (ADR-IC-006 §P4 / Document 11 Pattern 2).
+"""HTTP client for the orchestrator's saga edge (ADR-IC-006 §P4 / Document 11 Pattern 2).
 
-A thin async wrapper over the ONE read the MCP async-completion tool needs: poll a saga process's coarse
-status (GET ``/api/v1/processes/{process_id}/status``). It is the mcp→orchestrator boundary the maintainer's
-vjoi decision (2026-06-17) introduced, mirroring the existing mcp→engine one (``engine_client``): a separate
-boundary because the ORCHESTRATOR — not the engine — owns saga state, so it is the honest source of in-flight
-/ awaiting-approval / failed status (Document 11 Pattern 2).
+A thin async wrapper over the two saga-edge surfaces the MCP channel needs: START a constitution saga
+(POST ``/api/v1/deposits/constitute``, the Pattern 2 PRODUCER) and poll a process's coarse status
+(GET ``/api/v1/processes/{process_id}/status``, the Pattern 2 READ). It is the mcp→orchestrator boundary the
+maintainer's vjoi decision (2026-06-17) introduced, mirroring the existing mcp→engine one (``engine_client``):
+a separate boundary because the ORCHESTRATOR — not the engine — owns saga state, so it is the honest source
+of the minted ``process_id`` and of in-flight / awaiting-approval / failed status (Document 11 Pattern 2).
 
 Like ``engine_client`` it is fail-loud: a non-2xx response raises (``raise_for_status``) rather than
 returning a partial result. The polling tool (``server.get_process_status``) translates the EXPECTED 404
@@ -51,6 +52,31 @@ class OrchestratorClient:
     def __init__(self, base_url: str, client: httpx.AsyncClient | None = None) -> None:
         self._base_url = base_url.rstrip("/")
         self._client = client or httpx.AsyncClient(timeout=30.0)
+
+    async def constitute(
+        self, request: dict[str, Any], client_id: str | None = None
+    ) -> dict[str, Any]:
+        """POST /api/v1/deposits/constitute — STARTS a constitution saga (Document 11 Pattern 2 producer).
+
+        Returns the edge's 202 body ``{deposit_id, process_id, status, stream_url}`` (snake_case) — the
+        saga ``process_id`` is the public ``PROC-…`` reference the agent threads into ``get_process_status``
+        to poll async completion. Unlike the engine command surface this is NOT a direct engine append: the
+        orchestrator starts the saga, mints the ``process_id``, and owns its state (ADR-IC-006 §P4 / Document 05
+        §Step 0). Raises ``httpx.HTTPStatusError`` on a non-2xx response (e.g. 400 on a structurally-malformed
+        request, 403 on a missing gateway-attested caller).
+
+        The ``request`` body carries ONLY PII-free structural references (ADR-PC-004 §P2): a ``product_code``,
+        an integer-cents ``amount``, and OPAQUE ``source_account_ref`` / ``interest_account_ref`` tokens — never
+        a raw IBAN. The owning client is NOT a body field: it is the gateway-attested ``X-Client-Id`` this client
+        forwards (see below), the same header the edge binds per-process ownership to.
+        """
+        response = await self._client.post(
+            f"{self._base_url}/api/v1/deposits/constitute",
+            json=request,
+            headers=_with_client_id(None, client_id),
+        )
+        response.raise_for_status()
+        return response.json()
 
     async def process_status(
         self, process_id: str, client_id: str | None = None

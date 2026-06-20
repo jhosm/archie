@@ -37,6 +37,10 @@ DEPOSITS_WRITE = "deposits:write"
 
 TOOL_SCOPES: dict[str, str] = {
     "constitute_deposit": DEPOSITS_WRITE,
+    # The orchestrator-routed constitution producer (Document 11 Pattern 2; bd babelstone-ziu3.6) STARTS
+    # a saga and returns a process_id — a write, so it carries the same deposits:write scope as the
+    # engine-direct constitute tool (§P4 — one tool maps to exactly one scope).
+    "constitute_deposit_saga": DEPOSITS_WRITE,
     "mature_deposit": DEPOSITS_WRITE,
     "pay_interest": DEPOSITS_WRITE,
     "get_deposit": DEPOSITS_READ,
