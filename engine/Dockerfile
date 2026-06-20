@@ -24,7 +24,7 @@ RUN dotnet publish engine/src/Babelstone.Engine.Api/Babelstone.Engine.Api.csproj
 # Both tools are pinned by VERSION and verified by SHA256 (ADR-PC-007 leans on cosign/oras for the
 # pack pull+verify provenance contract — a tampered toolchain would undermine the very signature
 # check it performs, so the toolchain itself is fetched fail-loud-on-mismatch). Versions match the
-# dev/CI toolchain pinned in mise.toml (oras 1.3.2, cosign 3.0.6) so the in-container tools are the
+# dev/CI toolchain pinned in mise.toml (oras 1.3.2, cosign 3.1.1) so the in-container tools are the
 # same the host integration tests + CI exercise. Bump in lockstep with mise.toml.
 #
 # TARGETARCH is set automatically by buildx (amd64 / arm64); the image-build.yml matrix builds a
@@ -33,12 +33,12 @@ RUN dotnet publish engine/src/Babelstone.Engine.Api/Babelstone.Engine.Api.csproj
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS oci-tools
 ARG TARGETARCH
 ARG ORAS_VERSION=1.3.2
-ARG COSIGN_VERSION=3.0.6
+ARG COSIGN_VERSION=3.1.1
 # Per-arch SHA256s of the upstream release assets (oras_<v>_linux_<arch>.tar.gz; cosign-linux-<arch>).
 ARG ORAS_SHA256_amd64=9229ccc6d17bb282039ad4a69abb16dcb887a5bce567c075d731d9b3c7ad8eaf
 ARG ORAS_SHA256_arm64=8db4a223bd6034deff198e791ea7cb3af0840df25b7e9f370e2f1f3fd20d389b
-ARG COSIGN_SHA256_amd64=c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74
-ARG COSIGN_SHA256_arm64=bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8
+ARG COSIGN_SHA256_amd64=ae1ecd212663f3693ad9edf8b1a183900c9a52d3155ba6e354237f9a0f6463fc
+ARG COSIGN_SHA256_arm64=2ec865872e331c32fd12b08dae15332d3f92c0aa029219589684a4903ca85d11
 WORKDIR /tools
 RUN set -eux; \
     arch="${TARGETARCH:-amd64}"; \
