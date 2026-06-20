@@ -88,7 +88,10 @@ public sealed class HostModuleLoaderTests
         Assert.Contains("public parameterless constructor", ex.Message);
     }
 
-    // ── Fail-closed family-manifest cross-check (bd babelstone-9w2k.3 / ADR-PC-007 §P1 / ADR-PC-009 §P1) ──
+    // ── Fail-closed family-manifest cross-check (bd babelstone-9w2k.3 / ADR-PC-007 §A1 / ADR-PC-009 §A1) ──
+    // HOST_PACK_FAMILY_MANIFEST_CROSS_CHECK (commitment catalogue row 12c): the happy path + all four
+    // fail-closed directions below ARE this commitment's test resolution — this anchor is what the
+    // spec-coverage gate (ADR-PC-020 §P6) greps for to bind the Live catalogue row to its test.
 
     [Fact]
     public void Cross_check_passes_when_every_module_matches_a_pinned_family()
