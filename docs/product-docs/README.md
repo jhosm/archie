@@ -17,6 +17,14 @@ Three are hand-authored (tutorials, how-to, explanation); the fourth — **refer
 | [explanation/](./explanation/why-packs-and-rate-sheets-are-separate.md) | understanding | The *why* behind the model — why packs and rate sheets live apart, how to read a CUE schema. |
 | [reference/](./reference/README.md) | looking up | The drift-proof, field-level truth — **generated, never hand-written**. |
 
+Alongside the four quadrants sits one companion slot:
+
+| Slot | For | When you reach for it |
+|---|---|---|
+| [catalogue/](./catalogue/README.md) | choosing | *What can I offer?* The menu of business decisions a product family lets you make — before you author a pack or variant. |
+
+The catalogue is not a Diátaxis quadrant (it is none of learn/do/understand/look-up cleanly — it is a product menu); it is hand-written, readable-first, and links to the generated reference for the exact contract. See [its README](./catalogue/README.md) for why it earns a slot.
+
 ## The reference quadrant is generated, not hand-written
 
 The `reference/` quadrant here is **generated from the source of truth and diffed in CI**, so it cannot drift. Do not hand-edit it: `make docs-gen` regenerates it and `make docs-verify` gates it in CI (ADR-PC-022). It lives alongside the other three quadrants:
@@ -52,3 +60,6 @@ product documentation.
 - [Rate-sheet versioning and point-in-time resolution](./explanation/rate-sheet-versioning-and-resolution.md)
 - [Reading a CUE schema](./explanation/reading-a-cue-schema.md)
 - [How packs and variants relate](./explanation/how-packs-and-variants-relate.md)
+
+**Catalogue**
+- [Term deposit — the product menu](./catalogue/term-deposit.md)
