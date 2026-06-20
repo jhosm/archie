@@ -46,6 +46,9 @@ public sealed class LoadRunnerBusIntegrationTests : IClassFixture<RedpandaFixtur
             TargetTps = 15.0,
             Duration = TimeSpan.FromMilliseconds(300),
             WarmupEvents = 1,
+            // The §G2 measured path drives the engine append against the Testcontainers-mapped event
+            // store, NOT the RunnerOptions default (localhost:5432) which has nothing listening in CI.
+            PostgresConnectionString = _pg.ConnectionString,
             // The §G1 bus path: a real broker + Schema Registry, so BuildBusDriver builds the live
             // WorkloadDriver and ConfluentSchemaIdResolver and each event is produced onto Redpanda.
             BootstrapServers = _redpanda.BootstrapServers,
