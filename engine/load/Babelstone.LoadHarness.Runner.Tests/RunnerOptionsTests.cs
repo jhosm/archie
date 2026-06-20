@@ -92,6 +92,9 @@ public sealed class RunnerOptionsTests
     [Fact]
     public void Validation_rejects_a_non_positive_tps()
     {
+        // A non-positive --tps is caught in the PARSE layer (ParsePositiveDouble throws a plain
+        // ArgumentException) before Validate() runs — hence ArgumentException here, whereas the
+        // analogous zero-duration case below is caught by Validate() and throws ArgumentOutOfRangeException.
         Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--tps", "0"]));
     }
 
@@ -99,5 +102,103 @@ public sealed class RunnerOptionsTests
     public void Validation_rejects_a_tolerance_outside_the_unit_interval()
     {
         Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--tolerance", "1.0"]));
+    }
+
+    [Fact]
+    public void A_tolerance_inside_the_unit_interval_is_accepted()
+    {
+        // The complement of the rejection above: the ParseFraction happy path + the Validate tolerance
+        // guard's pass branch (0.25 ∈ [0, 1)).
+        var o = RunnerOptions.Parse(["--tolerance", "0.25"]);
+        Assert.Equal(0.25, o.Tolerance);
+    }
+
+    [Fact]
+    public void Explicit_latency_measure_parses()
+    {
+        // The default is latency, but parsing "--measure latency" must still hit the ParseMeasure arm.
+        var o = RunnerOptions.Parse(["--measure", "latency"]);
+        Assert.Equal(MeasureMode.Latency, o.Measure);
+    }
+
+    [Fact]
+    public void Explicit_smoke_profile_parses()
+    {
+        var o = RunnerOptions.Parse(["--profile", "smoke"]);
+        Assert.Equal(RunProfile.Smoke, o.Profile);
+    }
+
+    [Fact]
+    public void An_unknown_profile_fails_loud()
+    {
+        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--profile", "banana"]));
+    }
+
+    [Fact]
+    public void An_unknown_measure_fails_loud()
+    {
+        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--measure", "telepathy"]));
+    }
+
+    [Fact]
+    public void Seed_run_id_and_warmup_round_trip()
+    {
+        // §8.5 reproducibility: (seed, run-id) are the reproduction key, and warmup tunes the steady-state
+        // measurement window — all three must parse off the command line.
+        var runId = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        var o = RunnerOptions.Parse(["--seed", "42", "--run-id", runId.ToString(), "--warmup", "3"]);
+
+        Assert.Equal(42, o.Seed);
+        Assert.Equal(runId, o.RunId);
+        Assert.Equal(3, o.WarmupEvents);
+    }
+
+    [Fact]
+    public void Warmup_zero_disables_the_warmup()
+    {
+        var o = RunnerOptions.Parse(["--warmup", "0"]);
+        Assert.Equal(0, o.WarmupEvents);
+    }
+
+    [Fact]
+    public void Endpoint_flags_override_the_defaults()
+    {
+        var o = RunnerOptions.Parse(
+        [
+            "--pg", "Host=db;Database=load",
+            "--bootstrap", "redpanda:9092",
+            "--schema-registry", "http://sr:8081",
+        ]);
+
+        Assert.Equal("Host=db;Database=load", o.PostgresConnectionString);
+        Assert.Equal("redpanda:9092", o.BootstrapServers);
+        Assert.Equal("http://sr:8081", o.SchemaRegistryUrl);
+    }
+
+    [Fact]
+    public void A_non_positive_burst_tps_fails_loud()
+    {
+        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--burst-tps", "0"]));
+    }
+
+    [Fact]
+    public void Validation_rejects_a_zero_duration()
+    {
+        // A bare "0" parses to TimeSpan.Zero (ParseDuration accepts it — it is not negative), so the
+        // non-positive-duration guard lives in Validate, not the duration parser. ArgumentOutOfRangeException
+        // is the exact type Validate throws.
+        Assert.Throws<ArgumentOutOfRangeException>(() => RunnerOptions.Parse(["--duration", "0"]));
+    }
+
+    [Fact]
+    public void Duration_rejects_a_negative_value()
+    {
+        Assert.Throws<ArgumentException>(() => RunnerOptions.ParseDuration("-5s"));
+    }
+
+    [Fact]
+    public void Duration_rejects_blank_input()
+    {
+        Assert.Throws<ArgumentException>(() => RunnerOptions.ParseDuration("   "));
     }
 }
