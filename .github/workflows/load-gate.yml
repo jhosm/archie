@@ -1,0 +1,84 @@
+name: Load acceptance gate
+
+# Composite v1 RC load-acceptance gate (L.3f / bd babelstone-2e6q.6; ADR-PC-011
+# Open Action #4).
+#
+# In plain English: this is the single green-or-red verdict that a release
+# candidate has to clear before it can ship. It exercises every load-acceptance
+# dimension the in-house harness measures — the §8.3 sync-latency bands,
+# sustained and burst throughput, the §8.2 cold-replay budget plus the
+# no-rebuild-divergence invariant, the L.5 snapshot-accelerated-replay parity
+# (the snapshot rebuild lands on the exact same state as the cold rebuild, only
+# faster), the L.6 discard-rebuild drill on POPULATED snapshots, and the
+# ADR-PC-005 §P1 synchronous-replication append cost — and goes red if any of
+# them fails. A red run blocks the RC.
+#
+# How it runs in CI: the per-RC gate drives the load-harness Testcontainers
+# integration lane (Babelstone.LoadHarness.Runner.Tests, Category=Integration),
+# which folds EVERY dimension's RunArtefact verdict against a real PostgreSQL
+# brought up by Testcontainers — so the gate is hermetic and needs no `make up`
+# (the same posture the projection-rebuild drill takes). The runnable composite
+# `make load-gate` (scripts/load-gate.sh) is the SAME verdicts against the full
+# live dev/HA stack, reserved for the periodic full §8.3 soak (250 TPS / 24h
+# sustained, 1000 TPS / 15 min burst) and the §P1 measurement against the real
+# HA warm standby — not the per-RC fast pass (ADR-PC-011 §8.4 cadence).
+#
+# Cadence (ADR-PC-011 §8.4 / Open Action #4): every release candidate (a push of
+# a v*-rc* tag) and on demand. NOT every PR — the gate needs Docker + a real
+# PostgreSQL and is by design an RC-cadence acceptance gate, not a per-push check.
+#
+# NOTE (handoff to the j72w / Q.7 owner): wiring this gate as a REQUIRED status
+# check on the protected branch is owned by the ci.yml / required-checks lane
+# (bd babelstone-j72w). This file deliberately does NOT touch ci.yml; the
+# required-check integration is a follow-up for that lane.
+#
+# Security: the only ${{ }} expansions are in `uses:`/`with:` for trusted actions
+# (checkout, mise-action). No untrusted, PR-controlled input is referenced in any
+# `run:` shell, per the GitHub Actions injection guidance.
+
+on:
+  push:
+    tags:
+      # Release-candidate tags — the every-RC cadence Open Action #4 asks for.
+      - "v*-rc*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new RC gate shouldn't pile onto an in-flight one for the same ref.
+concurrency:
+  group: load-gate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  load-gate:
+    name: load-acceptance-gate
+    runs-on: ubuntu-latest # ships Docker — Testcontainers brings up PostgreSQL, no `make up`
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v4 # pins the .NET 10 SDK from mise.toml (ADR-PC-010), as in ci.yml
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (the mise CLI itself; mise.toml cannot pin it).
+          version: "2026.6.6"
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('engine/**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Run the composite load-acceptance gate (Testcontainers dimensions)
+        # The load-harness integration lane folds every acceptance dimension's
+        # RunArtefact verdict (latency, sustained/burst throughput, replay budget,
+        # no-divergence, snapshot-replay parity, discard-rebuild, §P1 repl-latency)
+        # against a real PostgreSQL via Testcontainers. mise-action has activated
+        # the pinned SDK, so `mise exec -- dotnet` resolves the same .NET as ci.yml.
+        # A non-zero exit is a red dimension — the RC is blocked (bd babelstone-2e6q).
+        run: >-
+          mise exec -- dotnet test
+          engine/load/Babelstone.LoadHarness.Runner.Tests/Babelstone.LoadHarness.Runner.Tests.csproj
+          --configuration Release
+          --nologo
+          --filter "Category=Integration"

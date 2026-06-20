@@ -65,6 +65,156 @@ public sealed record ReplayVerdict(string ReplayClass, int EventsRefolded, doubl
 }
 
 /// <summary>
+/// The L.5 snapshot-accelerated replay outcome (bd babelstone-0uau.1): after a load run populated the
+/// store AND snapshots were generated for it, this measures the snapshot-then-tail rebuild over the SAME
+/// deep stream the cold <see cref="ReplayVerdict"/> measured, and folds two facts — (1) the
+/// snapshot-accelerated state is BYTE-IDENTICAL to the cold-fold state (no divergence, the §P3
+/// correctness invariant), and (2) the snapshot path stayed within the §8.2 budget AND was demonstrably
+/// faster than cold. Honours ADR-PC-003 §P3 (snapshots accelerate, never gate correctness).
+/// </summary>
+/// <remarks>
+/// In plain English: snapshots are a cache that lets the engine rebuild a long account's view by starting
+/// from a saved checkpoint instead of replaying every event from the beginning. Once snapshots are real,
+/// we must prove they actually help AND never lie. This verdict times the cold rebuild and the
+/// snapshot-accelerated rebuild over the same stream, confirms the two produce the EXACT same state, and
+/// reports the speedup. A faster-but-wrong snapshot is the worst failure mode — so identity is the
+/// PASS-gating fact; the speedup is reported and must clear the budget, but a snapshot that diverges from
+/// cold fails the run outright, no matter how fast it was.
+/// </remarks>
+/// <param name="ColdMs">The cold (snapshot-free, from-sequence-0) rebuild wall-clock, in milliseconds.</param>
+/// <param name="SnapshotMs">The snapshot-accelerated (snapshot-then-tail) rebuild wall-clock, in milliseconds.</param>
+/// <param name="BudgetMs">The §8.2 budget the snapshot path must also clear (5000 with-a-plan / 30000 irregular).</param>
+/// <param name="StateIdentical">
+/// Whether the snapshot-accelerated state's hash equals the cold-fold state's hash (the §P3 invariant).
+/// </param>
+/// <param name="SnapshotsApplied">
+/// How many snapshots the accelerated path actually read for the measured stream. ZERO means the
+/// acceleration did not engage (no snapshot was generated deep enough to skip events) — an explicit FAIL,
+/// because a "speedup" claim over a path that read no snapshot is vacuous (the same anti-vacuous-pass
+/// posture the latency observer and no-divergence verdict take).
+/// </param>
+/// <param name="EventsRefolded">Events the COLD path re-folded (the work the speedup is measured against).</param>
+public sealed record SnapshotReplayVerdict(
+    double ColdMs,
+    double SnapshotMs,
+    double BudgetMs,
+    bool StateIdentical,
+    int SnapshotsApplied,
+    int EventsRefolded)
+{
+    /// <summary>
+    /// The minimum speedup the accelerated path must demonstrate over cold on a deep stream. A snapshot
+    /// that saved nothing measurable (≤ 1.0×) did not earn its keep; ADR-PC-003 §8.2 frames snapshots as
+    /// the mechanism that keeps a deep irregular replay inside budget, so on a stream deep enough to have
+    /// a snapshot the accelerated fold must be genuinely faster, not merely not-slower.
+    /// </summary>
+    public const double MinSpeedup = 1.0;
+
+    /// <summary>The observed speedup factor (cold / snapshot); ≥ 1 when the snapshot path is faster.</summary>
+    public double Speedup => SnapshotMs > 0 ? ColdMs / SnapshotMs : double.PositiveInfinity;
+
+    /// <summary>
+    /// Passes iff (1) at least one snapshot was applied (the acceleration engaged), (2) the
+    /// snapshot-accelerated state is byte-identical to the cold fold (§P3: accelerate, never lie),
+    /// (3) the snapshot path cleared the §8.2 budget, AND (4) it was demonstrably faster than cold. A
+    /// divergence FAILS regardless of speed — a fast-but-wrong snapshot is the worst event-sourcing
+    /// failure mode (§P4), so correctness gates, performance only qualifies.
+    /// </summary>
+    public bool Passed =>
+        SnapshotsApplied > 0
+        && StateIdentical
+        && SnapshotMs <= BudgetMs
+        && Speedup > MinSpeedup;
+
+    /// <summary>A one-line human reason leading with the identity verdict, then the speedup.</summary>
+    public string Reason => SnapshotsApplied == 0
+        ? "no snapshot applied — the accelerated path read no snapshot, so a speedup claim is vacuous (FAIL)"
+        : !StateIdentical
+            ? "DIVERGENCE: snapshot-accelerated state did NOT match the cold fold byte-for-byte (a fast-but-wrong snapshot — §P3/§P4)"
+            : Passed
+                ? $"identical + {Speedup:F1}× faster: snapshot {SnapshotMs:F0} ms vs cold {ColdMs:F0} ms (budget {BudgetMs:F0} ms, {EventsRefolded} events, {SnapshotsApplied} snapshot(s))"
+                : $"identical but not faster enough: snapshot {SnapshotMs:F0} ms vs cold {ColdMs:F0} ms ({Speedup:F1}×, budget {BudgetMs:F0} ms)";
+}
+
+/// <summary>
+/// The L.3e synchronous-replication append-latency outcome (bd babelstone-2e6q.5 / ADR-PC-005 §P1): the
+/// extra write-path latency the RPO≈0 safety guarantee costs, measured as append p50/p99 with
+/// synchronous replication ON vs OFF, plus the delta. Closes ADR-PC-005's "known gap, no Test ID yet
+/// wired" by giving the §P1 claim a falsifiable measurement; folded into <see cref="RunArtefact"/> by the
+/// L.3e repl-latency measurement.
+/// </summary>
+/// <remarks>
+/// <para>
+/// In plain English: to never lose a committed event, the database is configured so every write must be
+/// confirmed by a standby copy BEFORE it returns — that safety costs time on every write. This measures
+/// how much, by timing appends with that "wait for the standby" guarantee on versus off, and reporting
+/// the difference. The delta is the price of the RPO≈0 promise ADR-PC-005 §P1 makes — a real trade-off
+/// the ADR requires the harness to validate, not assume.
+/// </para>
+/// <para>
+/// LIVE-VERIFICATION GAP (carried deliberately, ADR-PC-005 §P1 Residual Risk 2): the full guarantee needs
+/// a real warm standby that must confirm each commit — the HA k8s overlay (<c>infra/k8s/overlays/ha</c>),
+/// NOT the single-node dev stack. Against a single node the measurement still runs (toggling
+/// <c>synchronous_commit</c> on the session), but with no named standby the "on" side does not actually
+/// block on a second node, so the delta is a FLOOR, not the production cost. The verdict records whether
+/// it ran against a real standby (<see cref="StandbyConfirmed"/>); without one it is an advisory,
+/// non-gating measurement (the same posture <c>KeyCardinalityProbe</c> takes on the Raft-vs-dev-mode
+/// OpenBao gap).
+/// </para>
+/// </remarks>
+/// <param name="SyncOffP50Ms">Append p50 with synchronous replication OFF (synchronous_commit relaxed).</param>
+/// <param name="SyncOffP99Ms">Append p99 with synchronous replication OFF.</param>
+/// <param name="SyncOnP50Ms">Append p50 with synchronous replication ON (commit waits for the standby).</param>
+/// <param name="SyncOnP99Ms">Append p99 with synchronous replication ON.</param>
+/// <param name="Samples">How many appends were timed per side (the p99 sample depth).</param>
+/// <param name="StandbyConfirmed">
+/// True only when the measurement ran against a real named warm standby (the HA overlay), so the "on"
+/// side genuinely blocked on a second node. False against the single-node dev stack: the delta is then a
+/// floor and the verdict is advisory (non-gating), with the live-cluster sizing flagged as a residual.
+/// </param>
+public sealed record ReplicationLatencyVerdict(
+    double SyncOffP50Ms,
+    double SyncOffP99Ms,
+    double SyncOnP50Ms,
+    double SyncOnP99Ms,
+    int Samples,
+    bool StandbyConfirmed)
+{
+    /// <summary>The §P1 cost: extra p50 append latency the RPO≈0 guarantee imposes (on − off), in ms.</summary>
+    public double DeltaP50Ms => SyncOnP50Ms - SyncOffP50Ms;
+
+    /// <summary>The §P1 cost: extra p99 append latency the RPO≈0 guarantee imposes (on − off), in ms.</summary>
+    public double DeltaP99Ms => SyncOnP99Ms - SyncOffP99Ms;
+
+    /// <summary>
+    /// The measurement is GATING only when it ran against a real standby (the HA overlay): then the §8.3
+    /// p99 sync-band budget (200 ms) bounds the sync-ON append p99 — a synchronous-replication cost that
+    /// pushes commit p99 past the band is a real budget breach. Against the single-node dev stack the
+    /// "on" side did not block on a second node, so the delta is a floor and the verdict is ADVISORY
+    /// (always passes, carrying the floor) — gating on a non-representative number would be a false
+    /// signal. <see cref="RunArtefact"/> still surfaces the numbers either way.
+    /// </summary>
+    public bool Passed => !StandbyConfirmed || SyncOnP99Ms <= GatingP99BudgetMs;
+
+    /// <summary>The §8.3 current_balance p99 sync band the sync-ON append p99 is gated against on a real standby.</summary>
+    public const double GatingP99BudgetMs = 200;
+
+    /// <summary>A one-line human reason leading with the §P1 delta, then the gating context.</summary>
+    public string Reason
+    {
+        get
+        {
+            var head = $"sync-repl p99 cost +{DeltaP99Ms:F1} ms (on {SyncOnP99Ms:F1} vs off {SyncOffP99Ms:F1}), p50 cost +{DeltaP50Ms:F1} ms, n={Samples}/side";
+            return StandbyConfirmed
+                ? Passed
+                    ? $"{head}; warm standby confirmed, sync-ON p99 within the {GatingP99BudgetMs:F0} ms §8.3 band"
+                    : $"{head}; warm standby confirmed, sync-ON p99 {SyncOnP99Ms:F1} ms BREACHED the {GatingP99BudgetMs:F0} ms §8.3 band"
+                : $"{head}; ADVISORY (single-node, no named standby — the delta is a FLOOR; the production cost needs the HA overlay, ADR-PC-005 §P1).";
+        }
+    }
+}
+
+/// <summary>
 /// The §8.3 no-rebuild-divergence reliability invariant: a cold rebuild of a projection from the event
 /// log reproduces the running projection's belief byte-for-byte (the [event-store §7.2](../feature-design-event-store-projections.md)
 /// drill, run as the load test's final step). Folded into <see cref="RunArtefact"/> by L.3d

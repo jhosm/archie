@@ -29,6 +29,26 @@ public enum MeasureMode
 
     /// <summary>The §8.2 cold-replay budget + the §8.3 no-rebuild-divergence invariant (L.3d).</summary>
     Replay,
+
+    /// <summary>
+    /// L.5 (bd babelstone-0uau.1): the snapshot-accelerated replay budget — measures cold vs
+    /// snapshot-then-tail rebuild over the same deep stream and asserts byte-identity + a speedup
+    /// (ADR-PC-003 §P3). The replay path runs first (so there is a populated, snapshotted store).
+    /// </summary>
+    SnapshotReplay,
+
+    /// <summary>
+    /// L.3e (bd babelstone-2e6q.5): the synchronous-replication append-latency cost — append p50/p99 with
+    /// synchronous_commit on vs off and the §P1 delta (ADR-PC-005 §P1). GATING only against a real warm
+    /// standby (the HA overlay, <c>--standby-confirmed</c>); advisory against the single-node dev stack.
+    /// </summary>
+    ReplLatency,
+
+    /// <summary>
+    /// L.6 (bd babelstone-0uau.2): the discard-rebuild drill on POPULATED snapshots — build a deep stream
+    /// with snapshots, discard every snapshot, rebuild cold, and assert byte-identity (ADR-PC-003 §8.3/§P4).
+    /// </summary>
+    DiscardRebuild,
 }
 
 /// <summary>
@@ -87,8 +107,29 @@ public sealed record RunnerOptions
     /// <summary>The Schema Registry URL the §G1 producer's Avro codec registers/resolves schema ids against.</summary>
     public string SchemaRegistryUrl { get; init; } = "http://localhost:18081";
 
-    /// <summary>The §8.2 replay budget class for the L.3d measurement: with-a-plan (5s) or irregular (30s).</summary>
+    /// <summary>The §8.2 replay budget class for the L.3d/L.5 measurement: with-a-plan (5s) or irregular (30s).</summary>
     public bool IrregularReplayClass { get; init; }
+
+    /// <summary>
+    /// The L.5/L.6 deep-stream depth: how many events the measured stream carries (1 constitution +
+    /// depth-1 accruals). Must exceed the rig's per-N snapshot threshold so a snapshot lands before the
+    /// head and the accelerated fold has a tail to skip (default 64).
+    /// </summary>
+    public int SnapshotStreamDepth { get; init; } = 64;
+
+    /// <summary>
+    /// The L.3e repl-latency sample depth: how many appends to time per side (sync on / off). A deeper
+    /// sample gives a steadier p99 (default 50).
+    /// </summary>
+    public int ReplLatencySamples { get; init; } = 50;
+
+    /// <summary>
+    /// L.3e: set ONLY when the run targets a real warm standby (the HA overlay) so synchronous_commit=on
+    /// genuinely blocks on a second node. Without it the repl-latency verdict is ADVISORY (non-gating): the
+    /// single-node delta is a FLOOR, not the production cost (ADR-PC-005 §P1; the live-cluster sizing is the
+    /// residual the harness flags rather than asserts).
+    /// </summary>
+    public bool StandbyConfirmed { get; init; }
 
     /// <summary>
     /// How many unmeasured events to append before the observer starts, to warm the JIT + connection
@@ -152,6 +193,15 @@ public sealed record RunnerOptions
                 case "--irregular":
                     o = o with { IrregularReplayClass = true };
                     break;
+                case "--depth":
+                    o = o with { SnapshotStreamDepth = ParsePositiveInt(Next(args, ref i, flag), flag) };
+                    break;
+                case "--repl-samples":
+                    o = o with { ReplLatencySamples = ParsePositiveInt(Next(args, ref i, flag), flag) };
+                    break;
+                case "--standby-confirmed":
+                    o = o with { StandbyConfirmed = true };
+                    break;
                 case "--warmup":
                     o = o with { WarmupEvents = int.Parse(Next(args, ref i, flag), CultureInfo.InvariantCulture) };
                     break;
@@ -180,6 +230,21 @@ public sealed record RunnerOptions
             throw new ArgumentOutOfRangeException(nameof(Tolerance), Tolerance, "Tolerance must be in [0, 1).");
         }
 
+        // The L.5/L.6 deep stream needs a constitution + at least one accrual to be a stream at all; the
+        // rig enforces the stricter "deeper than the per-N snapshot threshold" guard at run time so the
+        // accelerated fold actually skips a tail.
+        if (SnapshotStreamDepth < 2)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(SnapshotStreamDepth), SnapshotStreamDepth, "Snapshot stream depth must be >= 2.");
+        }
+
+        if (ReplLatencySamples <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(ReplLatencySamples), ReplLatencySamples, "Repl-latency samples must be positive.");
+        }
+
         return this;
     }
 
@@ -205,13 +270,23 @@ public sealed record RunnerOptions
     {
         "latency" => MeasureMode.Latency,
         "replay" => MeasureMode.Replay,
-        _ => throw new ArgumentException($"Unknown --measure '{value}' (latency|replay)."),
+        "snapshot-replay" => MeasureMode.SnapshotReplay,
+        "repl-latency" => MeasureMode.ReplLatency,
+        "discard-rebuild" => MeasureMode.DiscardRebuild,
+        _ => throw new ArgumentException(
+            $"Unknown --measure '{value}' (latency|replay|snapshot-replay|repl-latency|discard-rebuild)."),
     };
 
     private static double ParsePositiveDouble(string value, string flag)
     {
         var d = double.Parse(value, CultureInfo.InvariantCulture);
         return d > 0 ? d : throw new ArgumentException($"Flag '{flag}' must be positive (got {value}).");
+    }
+
+    private static int ParsePositiveInt(string value, string flag)
+    {
+        var n = int.Parse(value, CultureInfo.InvariantCulture);
+        return n > 0 ? n : throw new ArgumentException($"Flag '{flag}' must be positive (got {value}).");
     }
 
     private static double ParseFraction(string value, string flag)

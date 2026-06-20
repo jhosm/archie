@@ -201,4 +201,70 @@ public sealed class RunnerOptionsTests
     {
         Assert.Throws<ArgumentException>(() => RunnerOptions.ParseDuration("   "));
     }
+
+    // --- L.5 / L.3e / L.6 measure modes and their flags (bd 0uau.1, 2e6q.5, 0uau.2) ---
+
+    [Fact]
+    public void Parses_the_snapshot_replay_measure_and_depth()
+    {
+        // bd babelstone-0uau.1 acceptance: --measure snapshot-replay over a deep stream.
+        var o = RunnerOptions.Parse(["--measure", "snapshot-replay", "--depth", "128", "--irregular"]);
+
+        Assert.Equal(MeasureMode.SnapshotReplay, o.Measure);
+        Assert.Equal(128, o.SnapshotStreamDepth);
+        Assert.True(o.IrregularReplayClass);
+    }
+
+    [Fact]
+    public void Parses_the_repl_latency_measure_samples_and_standby_flag()
+    {
+        // bd babelstone-2e6q.5 acceptance: --measure repl-latency, GATING only with --standby-confirmed.
+        var o = RunnerOptions.Parse(["--measure", "repl-latency", "--repl-samples", "100", "--standby-confirmed"]);
+
+        Assert.Equal(MeasureMode.ReplLatency, o.Measure);
+        Assert.Equal(100, o.ReplLatencySamples);
+        Assert.True(o.StandbyConfirmed);
+    }
+
+    [Fact]
+    public void Repl_latency_is_advisory_by_default_without_the_standby_flag()
+    {
+        var o = RunnerOptions.Parse(["--measure", "repl-latency"]);
+        Assert.False(o.StandbyConfirmed);
+    }
+
+    [Fact]
+    public void Parses_the_discard_rebuild_measure()
+    {
+        // bd babelstone-0uau.2 acceptance: --measure discard-rebuild on populated snapshots.
+        var o = RunnerOptions.Parse(["--measure", "discard-rebuild"]);
+        Assert.Equal(MeasureMode.DiscardRebuild, o.Measure);
+    }
+
+    [Fact]
+    public void Default_depth_and_repl_samples_are_sane()
+    {
+        var o = RunnerOptions.Parse([]);
+        Assert.Equal(64, o.SnapshotStreamDepth);
+        Assert.Equal(50, o.ReplLatencySamples);
+        Assert.False(o.StandbyConfirmed);
+    }
+
+    [Fact]
+    public void Validation_rejects_a_depth_below_two()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => RunnerOptions.Parse(["--depth", "1"]));
+    }
+
+    [Fact]
+    public void A_non_positive_depth_fails_loud_in_the_parser()
+    {
+        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--depth", "0"]));
+    }
+
+    [Fact]
+    public void A_non_positive_repl_samples_fails_loud()
+    {
+        Assert.Throws<ArgumentException>(() => RunnerOptions.Parse(["--repl-samples", "0"]));
+    }
 }

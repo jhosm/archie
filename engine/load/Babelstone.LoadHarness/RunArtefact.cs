@@ -32,6 +32,14 @@ namespace Babelstone.LoadHarness;
 /// The §8.3 no-rebuild-divergence reliability invariant (a cold rebuild reproduces the running belief
 /// byte-for-byte), or <see langword="null"/> when the run did not measure it. Added by L.3d.
 /// </param>
+/// <param name="SnapshotReplay">
+/// The L.5 snapshot-accelerated replay outcome (snapshot-vs-cold parity + speedup, ADR-PC-003 §P3), or
+/// <see langword="null"/> when the run did not measure it. Added by L.5 (bd babelstone-0uau.1).
+/// </param>
+/// <param name="ReplicationLatency">
+/// The L.3e synchronous-replication append-latency cost (ADR-PC-005 §P1), or <see langword="null"/> when
+/// the run did not measure it. Added by L.3e (bd babelstone-2e6q.5).
+/// </param>
 public sealed record RunArtefact(
     int Seed,
     string CodeRevision,
@@ -40,7 +48,9 @@ public sealed record RunArtefact(
     long EventsProduced,
     ThroughputVerdict? Throughput = null,
     ReplayVerdict? Replay = null,
-    NoDivergenceVerdict? NoDivergence = null)
+    NoDivergenceVerdict? NoDivergence = null,
+    SnapshotReplayVerdict? SnapshotReplay = null,
+    ReplicationLatencyVerdict? ReplicationLatency = null)
 {
     /// <summary>
     /// The run PASSES iff every evaluated §8.3 band passed AND every OTHER verdict that ran also passed.
@@ -52,7 +62,9 @@ public sealed record RunArtefact(
         && Verdicts.All(v => v.Passed)
         && (Throughput is null || Throughput.Passed)
         && (Replay is null || Replay.Passed)
-        && (NoDivergence is null || NoDivergence.Passed);
+        && (NoDivergence is null || NoDivergence.Passed)
+        && (SnapshotReplay is null || SnapshotReplay.Passed)
+        && (ReplicationLatency is null || ReplicationLatency.Passed);
 
     /// <summary>A one-line human summary leading with the verdict, then the seed/revision to reproduce.</summary>
     public string Summary()
@@ -71,6 +83,16 @@ public sealed record RunArtefact(
         if (NoDivergence is not null)
         {
             extras.Add($"no-divergence {(NoDivergence.Passed ? "PASS" : "FAIL")}");
+        }
+
+        if (SnapshotReplay is not null)
+        {
+            extras.Add($"snapshot-replay {(SnapshotReplay.Passed ? "PASS" : "FAIL")} ({SnapshotReplay.Speedup:F1}× vs cold)");
+        }
+
+        if (ReplicationLatency is not null)
+        {
+            extras.Add($"repl-latency {(ReplicationLatency.Passed ? "PASS" : "FAIL")} (+{ReplicationLatency.DeltaP99Ms:F1} ms p99)");
         }
 
         var extraText = extras.Count == 0 ? string.Empty : "; " + string.Join(", ", extras);
