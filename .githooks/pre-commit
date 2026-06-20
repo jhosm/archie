@@ -36,6 +36,7 @@ staged_puml="$(staged '*.puml')"
 #   mcp-tools/     <- mcp-server/src/babelstone_mcp/server.py
 #   adr-index/     <- docs/**/adrs/ADR-*.md
 #   glossary/      <- engine/.../VerifiedPack.cs + engine/.../DayCount.cs
+#   docfx/index.md <- docs/product-docs/README.md  (the DocFX home page, ADR-PC-026 §P3)
 staged_docs_src="$(staged \
   'contracts/avro/**/*.avsc' \
   'contracts/cue/**/*.cue' \
@@ -43,7 +44,8 @@ staged_docs_src="$(staged \
   'docs/product-management/*/adrs/ADR-*.md' \
   'docs/product-management/*/adrs/retired/ADR-*.md' \
   'engine/src/Babelstone.Packs/VerifiedPack.cs' \
-  'engine/src/Babelstone.FinancialMath/DayCount.cs')"
+  'engine/src/Babelstone.FinancialMath/DayCount.cs' \
+  'docs/product-docs/README.md')"
 
 # Fast path: nothing this hook cares about is in the commit.
 [ -n "$staged_puml" ] || [ -n "$staged_docs_src" ] || exit 0
@@ -102,9 +104,9 @@ if [ -n "$staged_docs_src" ]; then
     exit 1
   fi
 
-  echo "pre-commit: regenerating docs/.../reference/ (ADR-PC-022 §P2)"
+  echo "pre-commit: regenerating docs/.../reference/ + docfx/index.md (ADR-PC-022 §P2, ADR-PC-026 §P3)"
   ( cd "$repo_root" && mise exec -- python3 scripts/docs-gen/generate.py )
-  git add -- "${repo_root}/docs/product-docs/reference"
+  git add -- "${repo_root}/docs/product-docs/reference" "${repo_root}/docfx/index.md"
 fi
 
 exit "$status"
