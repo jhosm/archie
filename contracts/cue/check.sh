@@ -79,18 +79,37 @@ done
 
 # Pack-manifest reject fixtures. The ACCEPT case is the real packs/pt.2026.1
 # pack.yaml, validated end-to-end by packs/pack.sh; here we pin that #Manifest
-# (pack/pack.cue) rejects malformed manifests — one rule per file.
+# (pack/pack.cue) rejects malformed manifests — one rule per file. A fixture
+# named `family-manifest-*` is routed to #FamilyManifest (the bd babelstone-9w2k.3
+# family-manifest), every other fixture to #Manifest — so each reject fixture is
+# vetted against the definition whose closed rule it violates, not a blanket
+# "fails #Manifest because it's the wrong shape".
 if [ -d testdata/pack/invalid ]; then
-	echo "== pack manifest (#Manifest) =="
+	echo "== pack manifest (#Manifest / #FamilyManifest) =="
 	for f in testdata/pack/invalid/*.yaml; do
 		[ -e "$f" ] || continue
-		if cue vet -d '#Manifest' "$f" pack/pack.cue 2>/dev/null; then
-			echo "  LEAK (should reject)  $(basename "$f")"
+		case "$(basename "$f")" in
+		family-manifest-*) def='#FamilyManifest' ;;
+		*) def='#Manifest' ;;
+		esac
+		if cue vet -d "$def" "$f" pack/pack.cue 2>/dev/null; then
+			echo "  LEAK (should reject by $def)  $(basename "$f")"
 			fail=1
 		else
-			echo "  ok (rejected)  $(basename "$f")"
+			echo "  ok (rejected by $def)  $(basename "$f")"
 		fi
 	done
+
+	# The ACCEPT case for #FamilyManifest: the real committed families.yaml must
+	# vet clean (the reject fixtures above pin the closed rules; this pins the
+	# happy path, mirroring the families/ valid-fixture sweep).
+	if cue vet -d '#FamilyManifest' ../../packs/pt.2026.1/families.yaml pack/pack.cue 2>/tmp/cue-err; then
+		echo "  ok (accepted by #FamilyManifest)  packs/pt.2026.1/families.yaml"
+	else
+		echo "  FAIL (should accept)  packs/pt.2026.1/families.yaml:"
+		sed 's/^/    /' /tmp/cue-err
+		fail=1
+	fi
 fi
 
 if [ "$fail" -ne 0 ]; then

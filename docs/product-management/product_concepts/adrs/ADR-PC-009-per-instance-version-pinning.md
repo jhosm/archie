@@ -163,11 +163,24 @@ The pack manifest carries `pack_effective_from` ([surface §3.4](../feature-desi
 
 ---
 
+## Amendments
+
+### A1 · The pinned pack is the authoritative per-deployment family set; the host fails closed on version skew (2026-06-20, bd `babelstone-9w2k.3`)
+
+**In plain English:** §P1 already says every event is stamped with the family's schema version at constitution and the engine resolves that pin on replay (§P2). This amendment names the consequence for the new assembly-scan host (bd `babelstone-9w2k.2`): the pinned pack's family-manifest (`families.yaml`, [ADR-PC-007 §A1](./ADR-PC-007-signed-yaml-oci-pack.md)) is the *authoritative* statement of which families — at which schema versions — a deployment may run, and the host refuses to boot if the family code it discovered doesn't match. Without this, a family assembly whose `SchemaVersion` drifted ahead of the pinned pack would stamp a schema version the instance's pack does not recognise, corrupting the audit/replay trail (§P1/§P2).
+
+Concretely, at host load `HostModuleLoader.CrossCheckAgainstPackManifest` cross-checks each discovered `IFamilyHostModule`'s `(FamilyName, AggregateType, SchemaVersion)` tuple against the pinned `VerifiedPack.Families`, and **fails closed** (throws a `PackLoadException`; the host logs at `Critical` and exits non-zero before serving — the same fatal-on-load discipline [ADR-PC-007 §P4](./ADR-PC-007-signed-yaml-oci-pack.md) gives an unverifiable pack) on any of four skews: a schema-version skew, an aggregate-type skew, a discovered family the pack does not pin, or a pinned family with no loadable module (the last because a missed family means a saga keyed on its topic would silently never advance, no replay-safe recovery). The adversarial design review judged this cross-check **mandatory, not optional**, for the discovery design to be safe.
+
+This is **additive**: §P1–§P5 stay binding as written. It reverses no decision — the pin is still per-event, stamped at constitution, resolved off the event on replay, and moved only by an explicit migration event (§P1/§P3). It names the load-time *enforcement* that the new host needs so the family code and the pinned pack cannot silently diverge. Gated by `HOST_PACK_FAMILY_MANIFEST_CROSS_CHECK` (catalogue row 12c).
+
+---
+
 ## Verifiable commitments
 
 This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
 
 - `REPLAY_PIN_PER_EVENT` — replay reads the per-event pin, not the clock; the migration boundary is intrinsic to the stream (§P1–§P2).
+- `HOST_PACK_FAMILY_MANIFEST_CROSS_CHECK` (catalogue row 12c) — the host fails closed at load on a family/schema-version skew between the pinned pack's `families.yaml` and the discovered family modules (§A1). `Live` as `HostModuleLoaderTests` + `PackParserTests`.
 
 ---
 

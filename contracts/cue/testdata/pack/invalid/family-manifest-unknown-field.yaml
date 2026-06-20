@@ -1,0 +1,9 @@
+# INVALID: an undeclared family entry field. #FamilyManifest's per-family struct
+# is closed — a smuggled/misspelled field (here `aggregate_typo`) must fail in the
+# governed, signed pack artefact, the same closedness #Manifest enforces.
+families:
+  - family_name: term_deposit
+    aggregate_type: term_deposit
+    schema_version: term_deposit@2026.1
+    plugin_assembly: Babelstone.Families.TermDeposit.Application
+    aggregate_typo: term_deposit

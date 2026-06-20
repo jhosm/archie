@@ -174,11 +174,24 @@ At startup the engine pulls, signature-verifies, structurally re-parses, and cac
 
 ---
 
+## Amendments
+
+### A1 · The pack gains a family-manifest (`families.yaml`) — the pinned family set (2026-06-20, bd `babelstone-9w2k.3`)
+
+**In plain English:** a pack already pins each family's *schema version* (`schema_pins`); this adds a sibling file that pins *which families* a deployment is allowed to run at all. The engine host cross-checks the code it discovered against this list at startup and refuses to boot on a mismatch — so a family whose code drifted ahead of the pinned pack can't quietly corrupt the audit trail.
+
+The §P1 pack layout is **extended** with one more format-fixed data file, `families.yaml`, carrying a `families:` list of `{family_name, aggregate_type, schema_version, plugin_assembly}` entries. It is constrained by the new `#FamilyManifest` definition in `contracts/cue/pack/pack.cue` (closed struct; `schema_version` reuses `#SchemaRef`, the same `<family>@YYYY.N` shape `schema_pins` uses), validated by `cue vet` in the publish pipeline exactly like every other pack data file, and parsed into `VerifiedPack.Families` by the same fail-loud structural parser (`PackParser`). The `schema_version` of a family **must agree** with that family's `schema_pins` entry — one pin, named for two readers (the schema registry vs the host's module roster).
+
+This is **additive**: it reverses no part of the Decision — the pack stays auditor-readable YAML data + bundled `.cue` schemas, distributed as a cosign-signed OCI artefact pulled by digest (§P1–P4). The fail-loud structural parse and the verified-signature-attests-CUE posture (§P2/§P4) extend to the new file unchanged. The load-time consumer of this manifest — the host's MANDATORY fail-closed family/schema-version cross-check — is owned by [ADR-PC-009 §A1](./ADR-PC-009-per-instance-version-pinning.md) (the pinned pack is the authoritative per-deployment family set); this ADR owns only the pack-format addition. Gated by `HOST_PACK_FAMILY_MANIFEST_CROSS_CHECK` in the [commitment catalogue](./commitment-catalogue.md) (recorded in Verifiable commitments below).
+
+---
+
 ## Verifiable commitments
 
 This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
 
 - The sealed test-corpus regression — `expected-events.yaml` is *generated* by running the engine against `canonical-instances.yaml` and reproduced at every pack-publish and engine-release (§P5) — is exercised through the separately-owned `PACK_SIM_DEPTH5_BUDGET` depth-5 simulation gate, governed by [ADR-PC-006 §P4](./ADR-PC-006-cue-schema-language.md). This ADR composes with that gate; it does not own it.
+- **The pack family-manifest cross-check** (§A1 / [ADR-PC-009 §A1](./ADR-PC-009-per-instance-version-pinning.md)) — the host fails closed at load on a family/schema-version skew between the pinned pack's `families.yaml` and the discovered family modules — is gated by `HOST_PACK_FAMILY_MANIFEST_CROSS_CHECK` (catalogue row 12c). `Live` as `HostModuleLoaderTests` + `PackParserTests`.
 
 Two falsifiable invariants this decision introduces are not yet wired to a Test ID (a deliberate, visible gap per [ADR-PC-020 §P5](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)), to be catalogued under the catalogue's growth provision when the engine load path is implemented:
 

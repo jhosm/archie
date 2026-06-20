@@ -55,6 +55,7 @@ public static class HostPack
         "primitives/fgd.yaml",
         "primitives/reporting.yaml",
         "parameters/constants.yaml",
+        "families.yaml",
         "rate-sheet-refs/deposits-pt.yaml",
     ];
 

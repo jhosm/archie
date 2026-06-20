@@ -1,5 +1,6 @@
 using System.Reflection;
 using Babelstone.Engine.Hosting;
+using Babelstone.Packs;
 
 namespace Babelstone.Engine.Api;
 
@@ -110,14 +111,103 @@ public sealed class HostModuleLoader
     }
 
     /// <summary>
-    /// The candidate assemblies to scan: the family-host assemblies the host COMPILE-references. Derived from
-    /// the HOST assembly's direct references named <c>Babelstone.Families.*</c> (the host's csproj
-    /// <c>ProjectReference</c>s into <c>families/**</c>) plus the host assembly itself, each force-loaded so a
-    /// lazily-bound reference is materialised before the scan. This keeps discovery anchored to the COMPILE
-    /// graph — a referenced assembly must be loadable to be scanned, the accepted cost of an in-tree host
-    /// (ADR-PC-021 §A3) — and out of an <c>Assembly.LoadFrom</c> plugin glob (§A3 "out of scope here").
-    /// Adding a family is its module + the host <c>ProjectReference</c>; THIS enumeration picks it up with no
-    /// edit.
+    /// Cross-checks the discovered family host modules against the pinned pack's family-manifest
+    /// (<see cref="VerifiedPack.Families"/>) and FAILS CLOSED on any skew (bd babelstone-9w2k.3 /
+    /// ADR-PC-007 §P1 / ADR-PC-009 §P1). The pinned pack is the authoritative per-deployment family set;
+    /// every module stamps its <see cref="IFamilyHostModule.SchemaVersion"/> onto every <c>EventEnvelope</c>
+    /// (ADR-PC-009 §P1) and the registry resolves the pin through it on replay (§P2), so a family/schema
+    /// skew between the code that loaded and the pack the instance is pinned to is an audit/replay hazard —
+    /// NOT a tolerable degradation. Mirrors <see cref="HostPackLoading"/>'s fatal-on-load discipline: a
+    /// mismatch throws here, at the composition seam, so the host exits non-zero before serving its first
+    /// command rather than appending an event under a schema version its pinned pack does not recognise.
+    /// </summary>
+    /// <remarks>
+    /// Two fail-closed directions, each naming the offending box:
+    /// <list type="bullet">
+    ///   <item>A discovered module whose <c>(FamilyName, AggregateType, SchemaVersion)</c> tuple is not
+    ///   present — exactly — in the family-manifest (an unpinned family, or a pinned family at a different
+    ///   schema version: the version-skew case).</item>
+    ///   <item>A family the manifest pins for which no module loaded (a deployment that shipped the pin but
+    ///   not the assembly — a saga that would silently never advance).</item>
+    /// </list>
+    /// The caller (<c>Program.cs</c>) logs the thrown message at <c>Critical</c> before the host exits.
+    /// </remarks>
+    public static void CrossCheckAgainstPackManifest(
+        IReadOnlyList<IFamilyHostModule> modules, VerifiedPack pack)
+    {
+        ArgumentNullException.ThrowIfNull(modules);
+        ArgumentNullException.ThrowIfNull(pack);
+
+        var manifest = pack.Families;
+        var manifestByFamily = manifest.ToDictionary(f => f.FamilyName, StringComparer.Ordinal);
+
+        // Direction 1: every discovered module must be pinned, at the SAME schema version + aggregate_type.
+        foreach (var module in modules)
+        {
+            if (!manifestByFamily.TryGetValue(module.FamilyName, out var pinned))
+            {
+                throw new PackLoadException(pack.VersionKey, null,
+                    $"family host module '{module.FamilyName}' (assembly "
+                    + $"'{module.GetType().Assembly.GetName().Name}') is not declared in the pinned pack's "
+                    + $"family-manifest (families.yaml) for '{pack.VersionKey}'. The pinned pack is the "
+                    + "authoritative per-deployment family set (ADR-PC-009 §P1); refusing to serve a family "
+                    + "the pack does not pin.");
+            }
+
+            if (!string.Equals(pinned.SchemaVersion, module.SchemaVersion, StringComparison.Ordinal))
+            {
+                throw new PackLoadException(pack.VersionKey, null,
+                    $"schema-version skew for family '{module.FamilyName}' (assembly "
+                    + $"'{module.GetType().Assembly.GetName().Name}'): the loaded module composes "
+                    + $"'{module.SchemaVersion}' but the pinned pack '{pack.VersionKey}' declares "
+                    + $"'{pinned.SchemaVersion}'. Every module stamps SchemaVersion onto every EventEnvelope "
+                    + "(ADR-PC-009 §P1); a skew would corrupt the audit/replay trail — refusing to serve.");
+            }
+
+            if (!string.Equals(pinned.AggregateType, module.AggregateType, StringComparison.Ordinal))
+            {
+                throw new PackLoadException(pack.VersionKey, null,
+                    $"aggregate_type skew for family '{module.FamilyName}' (assembly "
+                    + $"'{module.GetType().Assembly.GetName().Name}'): the loaded module writes under "
+                    + $"'{module.AggregateType}' but the pinned pack '{pack.VersionKey}' declares "
+                    + $"'{pinned.AggregateType}' — refusing to serve.");
+            }
+        }
+
+        // Direction 2: every pinned family must have a loaded module — a pinned family with no module is a
+        // deployment that shipped the pin but not the assembly. The saga keyed on its topic would silently
+        // never advance (no replay-safe recovery), so this is fatal, not a warning.
+        var loadedFamilies = new HashSet<string>(modules.Select(m => m.FamilyName), StringComparer.Ordinal);
+        foreach (var pinned in manifest)
+        {
+            if (!loadedFamilies.Contains(pinned.FamilyName))
+            {
+                throw new PackLoadException(pack.VersionKey, null,
+                    $"the pinned pack '{pack.VersionKey}' declares family '{pinned.FamilyName}' "
+                    + $"(plugin_assembly '{pinned.PluginAssembly}', schema_version '{pinned.SchemaVersion}') "
+                    + "in its family-manifest but no matching IFamilyHostModule was discovered — the "
+                    + "deployment is missing the family assembly. Refusing to serve a pinned family with no "
+                    + "loadable module (ADR-PC-009 §P1).");
+            }
+        }
+    }
+
+    /// <summary>
+    /// The candidate assemblies to scan: the family-host assemblies shipped alongside the in-tree host. Two
+    /// complementary anchors, both keyed off the <c>Babelstone.Families.</c> name prefix (the family-agnostic
+    /// membership predicate — no family is named): (1) the host assembly's compile-reference graph
+    /// (<c>host.GetReferencedAssemblies()</c>), the §A14 anchor — valid when the host still names a family
+    /// type; and (2) the OUTPUT-directory probe (<c>Babelstone.Families.*.dll</c> in
+    /// <see cref="AppContext.BaseDirectory"/>), the robust primary anchor. The probe matters because the C#
+    /// compiler ELIDES a <c>ProjectReference</c> from the IL metadata reference list when no type in it is used
+    /// in code, and the host's composition now names NO family type (bd babelstone-9w2k.5 relocated the last
+    /// family wiring into the family module) — so the compile-graph anchor alone would discover ZERO families.
+    /// The family <c>ProjectReference</c>s (kept per §A14) copy each <c>Babelstone.Families.*.dll</c> next to
+    /// the host in the output dir, so the probe finds them by file. Both stay anchored to the in-tree COMPILE
+    /// graph (a referenced assembly must be loadable to be scanned, ADR-PC-021 §A3) and out of an
+    /// <c>Assembly.LoadFrom</c> plugin glob over an external directory (§A3 "out of scope here") — the probe
+    /// reads only the host's OWN output dir, where its compile-referenced families land. Adding a family is its
+    /// module + the host <c>ProjectReference</c>; THIS enumeration picks it up with no edit.
     /// </summary>
     /// <remarks>
     /// The anchor is <c>typeof(HostModuleLoader).Assembly</c> — the <c>Babelstone.Engine.Api</c> host assembly
@@ -138,6 +228,13 @@ public sealed class HostModuleLoader
             [host.GetName().Name!] = host,
         };
 
+        // The host's compile-reference graph: the `Babelstone.Families.*` assemblies named in
+        // host.GetReferencedAssemblies(). This is the §A14 compile-graph anchor — BUT the C# compiler
+        // elides a `ProjectReference` from the IL metadata reference list when no type in it is used in
+        // code, and the host's composition now names NO family type (bd babelstone-9w2k.5 relocated the
+        // last family wiring into the family module). So this pass alone would discover ZERO families
+        // post-relocation. We keep it (it is correct when the host DOES still reference a family type) and
+        // add the base-directory probe below as the robust primary anchor.
         foreach (var reference in host.GetReferencedAssemblies())
         {
             var name = reference.Name;
@@ -148,10 +245,36 @@ public sealed class HostModuleLoader
                 continue;
             }
 
-            // Force-load the referenced family assembly so its IFamilyHostModule types are present for the
-            // scan (a compile reference is otherwise resolved lazily on first use). A genuinely missing
-            // assembly is a deployment fault — let it surface rather than silently dropping a family.
             assemblies[name] = Assembly.Load(reference);
+        }
+
+        // The base-directory probe: the family `ProjectReference`s (§A14, kept as the load anchor) copy
+        // their `Babelstone.Families.*.dll` next to the host in the OUTPUT directory — identically under
+        // `dotnet run` (the host's own process) and `WebApplicationFactory<Program>` (the in-process test
+        // boot). Discovering them HERE, by file, keeps assembly-scan working even though the host names no
+        // family type in code (so the compiler emits no IL metadata reference to elide). The
+        // `Babelstone.Families.` name prefix is the family-agnostic membership predicate — no family is
+        // named. A DLL that fails to load is skipped (a satellite/native sidecar), never fatal here; a
+        // genuinely missing family then surfaces at the pack family-manifest cross-check, fail-closed.
+        foreach (var dll in Directory.EnumerateFiles(
+            AppContext.BaseDirectory, "Babelstone.Families.*.dll", SearchOption.TopDirectoryOnly))
+        {
+            var name = Path.GetFileNameWithoutExtension(dll);
+            if (assemblies.ContainsKey(name))
+            {
+                continue;
+            }
+
+            try
+            {
+                assemblies[name] = Assembly.Load(new AssemblyName(name));
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or BadImageFormatException or FileLoadException)
+            {
+                // Not a loadable managed family assembly by simple name (e.g. a native/satellite sidecar
+                // matching the glob) — skip it. A real family with a loadable module is still discovered;
+                // a pack-pinned family whose assembly is genuinely absent fails the manifest cross-check.
+            }
         }
 
         return [.. assemblies.Values];

@@ -29,6 +29,7 @@ public sealed class HostPackStore : IPackStore
         "primitives/fgd.yaml",
         "primitives/reporting.yaml",
         "parameters/constants.yaml",
+        "families.yaml",
         "rate-sheet-refs/deposits-pt.yaml",
     ];
 

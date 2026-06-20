@@ -8,6 +8,8 @@ namespace Babelstone.HostModuleLoader.DuplicateFixture;
 public sealed class DuplicateFamilyA : IFamilyHostModule
 {
     public string FamilyName => "collision";
+    public string SchemaVersion => "collision@2026.1";
+    public string AggregateType => "collision";
     public void ConfigureServices(IServiceCollection services, FamilyHostContext ctx) { }
     public void MapEndpoints(IEndpointRouteBuilder app) { }
 }
@@ -16,6 +18,8 @@ public sealed class DuplicateFamilyA : IFamilyHostModule
 public sealed class DuplicateFamilyB : IFamilyHostModule
 {
     public string FamilyName => "collision";
+    public string SchemaVersion => "collision@2026.1";
+    public string AggregateType => "collision";
     public void ConfigureServices(IServiceCollection services, FamilyHostContext ctx) { }
     public void MapEndpoints(IEndpointRouteBuilder app) { }
 }

@@ -75,6 +75,7 @@ public sealed class PackDeclarationsResolveTests
             "primitives/fgd.yaml",
             "primitives/reporting.yaml",
             "parameters/constants.yaml",
+            "families.yaml",
         ];
 
         var files = new Dictionary<string, byte[]>(StringComparer.Ordinal);

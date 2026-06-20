@@ -1,0 +1,9 @@
+# INVALID: a malformed family schema_version. It must match #SchemaRef
+# (<family>@YYYY.N) — the SAME pinned shape pack.yaml schema_pins uses — so a
+# bare/unversioned value here (a skew-prone "term_deposit" with no @YYYY.N) must
+# fail, exactly as schema_pins rejects an unversioned pin.
+families:
+  - family_name: term_deposit
+    aggregate_type: term_deposit
+    schema_version: term_deposit
+    plugin_assembly: Babelstone.Families.TermDeposit.Application
