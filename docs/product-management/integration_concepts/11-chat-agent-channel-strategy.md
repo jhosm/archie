@@ -143,6 +143,24 @@ The fallback is an explicit, session-independent tool: `get_process_status(proce
 
 The cost is that *the user must remember to ask*. The agent does not know to check unless prompted. For an agent-mediated flow this is awkward; for a saga that waits days on a human approver it may be the best the bank can do without an out-of-band channel.
 
+**As built (bd babelstone-vjoi).** Pattern 2 is the pattern v1 implements; Pattern 1 (MCP tasks) is deliberately not wired in v1. The `get_process_status(process_id)` MCP tool (scope `deposits:read`, [ADR-IC-010](./adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) §P4) reads a new orchestrator edge route — `GET /api/v1/processes/{process_id}/status`, a pure read projection over the `saga_state` table (no new table), the poll-once sibling of the SSE `…/stream` route — with the *same* per-process ownership check: the gateway-attested `X-Client-Id` must equal the process's owning `client_id`, an unknown reference is `404`, another client's is `403` ([ADR-IC-006](./adrs/ADR-IC-006-edge-api-gateway.md) §P4 — `process_id` is not a capability token). The MCP server reaches it over a dedicated mcp→orchestrator boundary (`OrchestratorClient`), mirroring the existing mcp→engine one — the orchestrator, not the engine, owns saga state, so it is the honest source of in-flight / awaiting-approval / failed status.
+
+The response is structural and PII-free ([ADR-PC-004](../product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) §P2):
+
+```json
+{
+  "process_id": "PROC-2026-00098765",
+  "state": "AWAIT_WORKFLOW_APPROVAL",
+  "status": "AWAITING_APPROVAL",
+  "version": 7,
+  "terminal": false
+}
+```
+
+`state` is the verbatim, operator-grade saga label — the family's own vocabulary ([ADR-IC-018](./adrs/ADR-IC-018-family-owned-saga-modules.md) §D3); `status` is the **coarse, agent-facing** projection — one of `PROCESSING`, `AWAITING_APPROVAL`, `ACTION_REQUIRED`, `COMPLETED`, `FAILED`, `CANCELLED` — that each family supplies (an `ISagaAgentStatusMap`) and the edge resolves by `saga_type`, exactly as it resolves the state machine for the `terminal` flag. The agent stops polling once `terminal` is true.
+
+**Producer-gap caveat.** `get_process_status` ships as a standalone *read* tool ahead of its MCP producer: today's `constitute_deposit` tool calls the engine directly and returns a `deposit_id`, not a saga `process_id`, so an agent cannot yet obtain a `process_id` purely over the MCP surface. An orchestrator-routed constitution tool (bd babelstone-ziu3.6) closes that gap; until then a `process_id` is obtained out of band (the browser/saga edge).
+
 ### Pattern 3 — Out-of-band callback to a channel the user will see later
 
 Some sagas need active notification: the user is not currently talking to an agent, and waiting for them to ask is not acceptable. A push notification, an SMS, an email, or a chat-platform message must reach them.

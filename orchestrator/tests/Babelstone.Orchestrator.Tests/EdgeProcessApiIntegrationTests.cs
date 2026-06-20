@@ -154,7 +154,86 @@ public sealed class EdgeProcessApiIntegrationTests(OrchestratorPostgresFixture f
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    // --- GET /status — the agent-channel poll-once sibling of the stream (Document 11 Pattern 2; vjoi) ---
+
+    [Fact]
+    public async Task Status_for_a_started_process_is_processing_and_not_terminal()
+    {
+        await using var edge = NewEdge();
+        using var client = edge.Client();
+
+        var processId = await StartProcessAsync(client);
+
+        using var response = await GetStatusAsync(client, processId, attestedClientId: OwningClient);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(processId, body.GetProperty("process_id").GetString());
+        // The verbatim family state AND the coarse agent status — the edge returns both (ADR-IC-018 §D3).
+        Assert.Equal(ConstitutionProcess.States.ParallelValidation, body.GetProperty("state").GetString());
+        Assert.Equal(AgentStatus.Processing, body.GetProperty("status").GetString());
+        Assert.False(body.GetProperty("terminal").GetBoolean());
+        // No PII crosses the snapshot — only structural state (ADR-PC-004 §P2).
+        Assert.DoesNotContain(OwningClient, body.GetRawText());
+    }
+
+    [Fact]
+    public async Task Status_reflects_a_terminal_state_as_failed_and_terminal()
+    {
+        await using var edge = NewEdge();
+        using var client = edge.Client();
+
+        var processId = await StartProcessAsync(client);
+        var saga = (await LoadByPublicIdAsync(processId))!;
+
+        // Drive the saga to a terminal failure out of band (mirrors the consume loop's advance), then poll.
+        await DriveToTerminalAsync(saga.ProcessId);
+
+        using var response = await GetStatusAsync(client, processId, attestedClientId: OwningClient);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(ConstitutionProcess.States.DepositConstitutionFailed, body.GetProperty("state").GetString());
+        Assert.Equal(AgentStatus.Failed, body.GetProperty("status").GetString());
+        Assert.True(body.GetProperty("terminal").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Status_for_an_unknown_process_id_is_404()
+    {
+        await using var edge = NewEdge();
+        using var client = edge.Client();
+
+        using var response = await GetStatusAsync(client, "PROC-2026-NOPE", attestedClientId: OwningClient);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Status_rejects_a_requester_whose_client_id_is_not_the_owner()
+    {
+        // Same per-process ownership as the stream: process_id is not a capability token (ADR-IC-006 §P4).
+        await using var edge = NewEdge();
+        using var client = edge.Client();
+
+        var processId = await StartProcessAsync(client);
+
+        using var response = await GetStatusAsync(client, processId, attestedClientId: "CLI-2026-999999");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
     // --- helpers -----------------------------------------------------------------------
+
+    private static Task<HttpResponseMessage> GetStatusAsync(
+        HttpClient client, string processId, string? attestedClientId)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/processes/{processId}/status");
+        if (attestedClientId is not null)
+        {
+            request.Headers.Add(EdgeAuth.ClientIdHeader, attestedClientId);
+        }
+
+        return client.SendAsync(request);
+    }
 
     private EdgeHost NewEdge() => new(fixture.ConnectionString);
 
@@ -290,6 +369,11 @@ public sealed class EdgeProcessApiIntegrationTests(OrchestratorPostgresFixture f
             builder.Services.AddSingleton(module.CommandRouter);
             builder.Services.AddSingleton<IReadOnlyDictionary<string, ISagaStateMachine>>(sp =>
                 sp.GetServices<ISagaStateMachine>().ToDictionary(m => m.SagaType, StringComparer.Ordinal));
+            // The saga_type → agent-status-map registry the process-status endpoint resolves (bd
+            // babelstone-vjoi) — module.ConfigureServices above registered the ISagaAgentStatusMap, exactly
+            // as the production host does.
+            builder.Services.AddSingleton<IReadOnlyDictionary<string, ISagaAgentStatusMap>>(sp =>
+                sp.GetServices<ISagaAgentStatusMap>().ToDictionary(m => m.SagaType, StringComparer.Ordinal));
 
             EdgeServices.Register(builder.Services, connectionString);
             _app = builder.Build();
