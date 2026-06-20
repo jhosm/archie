@@ -74,11 +74,19 @@
     <Project Path="../orchestrator/tests/Babelstone.Orchestrator.Tests/Babelstone.Orchestrator.Tests.csproj" />
     <!-- L.1 load harness smoke/self-test (ADR-PC-011): Docker-free determinism + envelope + observer tests. -->
     <Project Path="load/Babelstone.LoadHarness.Tests/Babelstone.LoadHarness.Tests.csproj" />
+    <!-- L.3a–d runner component tests (ADR-PC-011, bd babelstone-2e6q.1..4): Docker-free arg-parsing,
+         profile sequencing, and verdict-folding tests for the runnable host. -->
+    <Project Path="load/Babelstone.LoadHarness.Runner.Tests/Babelstone.LoadHarness.Runner.Tests.csproj" />
   </Folder>
   <Folder Name="/load/">
     <!-- The in-house .NET v4-scale load harness (ADR-PC-011, Epic L.1): a generator/driver/observer
          that drives Redpanda with the engine's OWN Avro envelope code + seeded RNG + injected clock,
          and reads boundary-to-commit latency from the engine's OpenTelemetry spans. -->
     <Project Path="load/Babelstone.LoadHarness/Babelstone.LoadHarness.csproj" />
+    <!-- The runnable acceptance-gate host (ADR-PC-011 §G4, Epic L.3 / bd babelstone-2e6q.1..4): wires
+         generator → driver → in-process engine append/projection rig → observer against the LIVE dev
+         stack and folds the §8.3 sync bands + sustained/burst throughput + §8.2 replay budget +
+         no-rebuild-divergence into a PASS/FAIL RunArtefact (the `make load-test` entry point). -->
+    <Project Path="load/Babelstone.LoadHarness.Runner/Babelstone.LoadHarness.Runner.csproj" />
   </Folder>
 </Solution>
