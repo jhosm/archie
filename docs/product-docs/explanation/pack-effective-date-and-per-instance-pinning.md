@@ -64,13 +64,18 @@ version on the event *is* the answer.
 
 ## Retroactive change is possible — but only as an explicit, audited migration
 
-> **Planned, not yet built in v1.** The `PackVersionMigrated` event and the operator
-> `POST /v1/pack-migrations` command described below are the *designed* migration
-> mechanism (Accepted in [ADR-PC-009 §P3](../../product-management/product_concepts/adrs/ADR-PC-009-per-instance-version-pinning.md)),
-> not yet implemented — there is no migration event or endpoint to issue today. v1
-> ships pin-at-constitution plus per-event pins only; the migration write-path is
-> tracked in `babelstone-fk7m.10`. Read this section as the intended shape, not a
-> path you can run yet.
+> **Built in v1 (`babelstone-fk7m.10`), with one narrowing.** The `PackVersionMigrated`
+> event, its pure (no-op) fold, and the operator `POST /v1/pack-migrations` command
+> described below are implemented: you can preview a migration's matched set and re-pin
+> a live instance to a newer pack today (the re-pin rides the event envelope, exactly as
+> [ADR-PC-009 §P3](../../product-management/product_concepts/adrs/ADR-PC-009-per-instance-version-pinning.md)
+> specifies). The migration event is **store-only** — it is appended, folded, and
+> replayable, but carries no Avro schema and never reaches the durable bus, because no
+> downstream consumer reacts to it ([ADR-IC-017 §P1](../../product-management/integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md);
+> the only downstream reaction is engine-internal projection rebuild). The one narrowing:
+> the instance set is an **explicit id list** for now — the predicate `instance_filter`
+> (e.g. `{ product_family, currently_active }`) resolved over the read model is a tracked
+> follow-up (it needs a cross-stream query the family read model owns).
 
 "Pinned for life" does not mean a deposit can *never* move to a new pack. It means
 it never moves **silently**. The only way to re-pin an existing instance is an

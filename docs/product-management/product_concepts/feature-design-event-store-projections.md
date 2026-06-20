@@ -122,6 +122,8 @@ payload: { ... event-type-specific fields ... }
 
 The envelope is engine-declared; the payload schema is event-type-declared (and therefore family-schema-declared for family events, engine-declared for cross-cutting events). The engine reads the envelope to route, to pin, to order, to project; it never reads the payload.
 
+**`event_type` shape.** A family event's `event_type` is `<aggregate_type>.<EventName>` (the example above, `term_deposit.DepositConstituted`). The five engine-declared cross-cutting events ([§4.1](#41-cross-cutting-generic-events-engine-declared)) are **family-agnostic** — they belong to no family aggregate — so they take a reserved synthetic aggregate_type **`operations`**, giving the stored `event_type` `operations.<EventName>` (e.g. `operations.PackVersionMigrated`, `operations.AccountFrozen`). The synthetic prefix keeps these events inside the `<aggregate_type>.<EventName>` parsing shape the engine relies on (the relay's reverse-DNS transform and prefix-strip, the handler-registry keying) rather than leaving them bare and unprefixed. These events are **store-only** in v1 (they have no governed `.avsc` and never reach the durable bus — [ADR-IC-017 §P1](../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md): no named external consumer reacts; the only downstream reaction is engine-internal projection rebuild, [ADR-PC-009 §P3](./adrs/ADR-PC-009-per-instance-version-pinning.md)), so this `event_type` is their permanent **stored** contract, not a bus/registry one.
+
 ---
 
 ## 5. Handler Discipline
@@ -304,7 +306,7 @@ Snapshots are a performance optimisation, not a part of the architecture. The en
 Three trigger conditions, applied independently per instance:
 
 - **Per N events.** A configurable threshold (typically 100-1000 events) per family. Triggered when the un-snapshotted event count crosses the threshold.
-- **At lifecycle boundaries.** Constitution, renewal, partial withdrawal, maturity, termination. These are natural boundaries where the instance's state is interpretable on its own.
+- **At lifecycle boundaries.** Constitution, renewal, partial withdrawal, maturity, termination, and pack migration (the [§4.1](#41-cross-cutting-generic-events-engine-declared) operator re-pin). These are natural boundaries where the instance's state is interpretable on its own.
 - **At calendar boundaries.** Month-end and year-end alignment with reporting periods, regardless of event count. Required so as-of queries at period boundaries return without long replay.
 
 The triggers compose: a snapshot is taken if any condition fires. Snapshots are never *required* — if they fail to write, the engine continues; the next rebuild will be slower but correct. Snapshot writes are eventually-consistent with the event log, not transactional with it.

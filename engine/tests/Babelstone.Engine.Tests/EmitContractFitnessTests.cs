@@ -86,6 +86,10 @@ public sealed class EmitContractFitnessTests
     /// absent: such an outcome must ride the post-commit outbox, never an injected synchronous call.
     /// <list type="bullet">
     /// <item><c>AggregateRuntime</c> — the engine append spine; emission rides its post-commit outbox.</item>
+    /// <item><c>IEventStore</c> — the event-store READ seam the operator pack-migration service
+    ///   (<c>PackMigrationService</c>, ADR-PC-009 §P3) consults to read each instance's CURRENT pin off
+    ///   its head envelope before re-pinning. A read-only consult of the source of truth — no gate, not
+    ///   a GL/notify signal port; the re-pin emits through the same <c>AggregateRuntime</c> outbox spine.</item>
     /// <item><c>IRateSheetStore</c> — rate/config resolution, READ before the pure decide (no gate).</item>
     /// <item><c>IProductConfigStore</c> — product-config resolution (Fork B rework, bd t7o3.11 / 3k10 /
     ///   c8d8): the engine resolves <c>product_code → structural facts</c> (term / variant / renewal /
@@ -105,8 +109,8 @@ public sealed class EmitContractFitnessTests
     /// </summary>
     private static readonly string[] AllowedDecideAppendDependencies =
     [
-        "AggregateRuntime", "IRateSheetStore", "IProductConfigStore", "ISettlementPort", "VerifiedPack",
-        "EarlyTerminationPolicy", "string", "IReadOnlyCollection",
+        "AggregateRuntime", "IEventStore", "IRateSheetStore", "IProductConfigStore", "ISettlementPort",
+        "VerifiedPack", "EarlyTerminationPolicy", "string", "IReadOnlyCollection",
     ];
 
     /// <summary>
