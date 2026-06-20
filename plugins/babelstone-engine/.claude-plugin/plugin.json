@@ -7,6 +7,5 @@
     "url": "https://github.com/jhosm"
   },
   "repository": "https://github.com/jhosm/babelstone",
-  "license": "MIT",
-  "hooks": "./hooks/hooks.json"
+  "license": "MIT"
 }
