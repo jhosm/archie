@@ -1,4 +1,4 @@
-# ADR-PC-030: babelstone Product Scope & Boundary — a Product/Accrual Kernel
+# ADR-PC-030: babelstone Product Scope & Boundary — a Core Product & Account Ledger
 
 | Field | Value |
 |---|---|
@@ -7,35 +7,54 @@
 | Deciders | jhosm |
 | Shape | Tool-selection |
 | Common criteria | [ADR-IC-000](../../integration_concepts/adrs/ADR-IC-000-common-evaluation-criteria.md) (reused per [ADR-PC-000](./ADR-PC-000-namespace-and-contract-shape-framework.md) D2; this is the [ADR-PC-000 §D3](./ADR-PC-000-namespace-and-contract-shape-framework.md) "operational discipline" residual category — a scope/posture decision, declared tool-selection per the [§D4](./ADR-PC-000-namespace-and-contract-shape-framework.md) default) |
-| Depends on | [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) (the hand-rolled product kernel whose nature this bounds), [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) (the one-engine-many-families spine the roadmap rides on), [ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md) (engine declares preconditions, upstream evaluates them — the mechanism that keeps origination out of the kernel) |
+| Depends on | [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) (the hand-rolled deterministic kernel whose nature this bounds), [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) (the one-engine-many-families spine the roadmap rides on), [ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md) (engine declares preconditions, upstream evaluates — keeps origination out of the kernel), [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) (the synchronous idempotent command path this extends to the authorization regime), [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) (the conta à ordem coexistence/settlement contract whose v4 migration this names the destination of) |
 | Resolves | bd `babelstone-nyan` (ADR-PC-030: babelstone product scope & boundary) |
 
 ---
 
 ## Context
 
-The engine has, until now, been **scoped by accretion**: [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) fixed *what kind of thing* it is (a hand-rolled, event-sourced product kernel), [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) fixed *how it grows* (one engine, many families, each family owning its deciders/handlers/projections), and a single reference family — `term_deposit` — proved both. No ADR has yet stated, in one place, **what babelstone is *for* and where its responsibility *stops*.** That gap is now load-bearing: market research into two candidate products ([crédito pessoal](../research/credito-pessoal/00-research-plan.md) and [credit cards](../research/credit-cards/00-research-plan.md)) forces the question, because the two products sit on opposite sides of the engine's natural boundary and answering "should we build them" is impossible without first fixing the boundary itself.
+The engine has, until now, been **scoped by accretion**: [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) fixed *what kind of thing* it is (a hand-rolled, event-sourced kernel), [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) fixed *how it grows* (one engine, many families), and a single reference family — `term_deposit` — proved both. No ADR has yet stated, in one place, **what babelstone is *for* and where its responsibility *stops*.** That gap is now load-bearing: market research into candidate products ([crédito pessoal](../research/credito-pessoal/00-research-plan.md), [credit cards](../research/credit-cards/00-research-plan.md)) and the question of the **conta à ordem** (the demand/current account) force it, because answering "should we build them" is impossible without first fixing the boundary itself.
 
-This entry is the [ADR-PC-000 §D3](./ADR-PC-000-namespace-and-contract-shape-framework.md) **residual category** ("operational discipline … fits neither template cleanly … default to tool-selection"), the same class as [ADR-PC-019](./ADR-PC-019-repository-strategy-monorepo.md) (repository strategy): it selects a **posture**, not a tool. The honest consequence, surfaced up front: **F1 and F2 do not discriminate** — a scope statement buys nothing and ships no regulated runtime artefact. The load-bearing question is which posture keeps the kernel's architecture coherent while letting the engine illustrate the products a reference banking engine should illustrate — settled on S1–S4 plus a decisive reference-architecture reason, not on the hard filters.
+This entry is the [ADR-PC-000 §D3](./ADR-PC-000-namespace-and-contract-shape-framework.md) **residual category** ("operational discipline … fits neither template cleanly … default to tool-selection"), the same class as [ADR-PC-019](./ADR-PC-019-repository-strategy-monorepo.md): it selects a **posture**, not a tool. The honest consequence, surfaced up front: **F1 and F2 do not discriminate** — a scope statement buys nothing and (see F2) does not itself make the engine a regulated payment-services provider. The load-bearing question is which posture keeps the kernel coherent while letting it model the products a reference banking engine should — settled on S1–S4 plus a decisive reference-architecture reason.
 
 ### What the engine *is*, restated, so the boundary has a referent
 
-babelstone's kernel is a **deterministic product/accrual ledger**: append-only events, pure folds, rebuildable projections, regulatory configuration delivered as signed packs ([ADR-PC-007](./ADR-PC-007-signed-yaml-oci-pack.md)), boundary signals emitted as contracts ([ADR-PC-012](./ADR-PC-012-gl-posting-signal-contract.md), [ADR-PC-025](./ADR-PC-025-customer-notification-emit-contract.md)), and no PII on the durable bus. That architecture is naturally a **product ledger and lifecycle engine** — it owns the *product math* and the *account lifecycle* and leans on the integration estate / external systems for everything else. The purpose this ADR also fixes — babelstone is a **reference architecture / portfolio piece**, not a product to operate commercially — means scope should optimise for *illustrating distinct product shapes correctly*, not for commercial completeness in any one of them.
+babelstone's kernel is a **deterministic ledger**: append-only events, pure folds, rebuildable projections, regulatory configuration as signed packs ([ADR-PC-007](./ADR-PC-007-signed-yaml-oci-pack.md)), boundary signals as contracts ([ADR-PC-012](./ADR-PC-012-gl-posting-signal-contract.md), [ADR-PC-025](./ADR-PC-025-customer-notification-emit-contract.md)), no PII on the durable bus, and a synchronous idempotent command surface ([ADR-PC-029](./ADR-PC-029-engine-command-ingress.md)). Folding a stream of movements into a balance is the *most native thing it does*. The purpose this ADR also fixes — babelstone is a **reference architecture / portfolio piece** — means scope should optimise for *illustrating distinct product shapes correctly*, and the most fundamental shape of all is the **transactional balance account**.
 
-### The two research products land on opposite sides of the boundary
+### The boundary runs *through* authorization, not around the products
 
-- **Crédito pessoal** ([research](../research/credito-pessoal/01-fundamentals.md)) is **closed-end**: money moves out once (disbursement) and back many times on a deterministic amortization schedule. It is the *mirror* of the term deposit — one event stream, a pure schedule fold, no per-transaction machinery. It fits the kernel almost exactly.
-- **A credit card** ([research](../research/credit-cards/01-fundamentals.md)) has its *essence* in the part the kernel does **not** model: a revolving line driven by a **four-party scheme** (issuer, acquirer, scheme, merchant) — real-time authorization, clearing, settlement, chargebacks, interchange. That is a payments switch/processor's concern. Only the *account slice* of a card (the credit line, revolving interest, the statement cycle, the minimum payment) has the kernel's shape.
+The earlier instinct to call a conta à ordem "out of scope because it is a payment account" conflated two different exclusions, and getting them apart is the whole decision:
 
-So the real decision is not "cards vs. loans"; it is **how wide is the engine's nature, and how far past the product-math boundary does it reach**.
+- **Physically moving money** — the rails/scheme, clearing, settlement, payment initiation, plus strong customer authentication (SCA) and fraud screening — is genuinely external. The engine never touches the wire.
+- **Owning the authoritative balance and the account's own rules** — the balance, the posting history, the lifecycle, fees, statements, limits/overdraft, *and the funds-and-rules core of the authorization decision* — is squarely the kernel's competence.
+
+A card/payment **authorization is a pipeline**, and the boundary cuts through it:
+
+| # | Stage | PT term | Owner |
+|---|---|---|---|
+| 1 | Instrument valid? not blocked/expired? | *cartão válido* | External |
+| 2 | Customer authenticated (PIN / 3DS / SCA) | *autenticação forte (PSD2)* | External (regulated) |
+| 3 | **Funds available?** | *saldo disponível suficiente?* | **Engine** |
+| 4 | **Within product rules / limits / overdraft?** | *dentro do descoberto autorizado, limites do pack* | **Engine** |
+| 5 | **Earmark the funds (place the hold)** | *cativar o montante* | **Engine** |
+| 6 | Fraud screen | *análise de fraude* | External |
+| 7 | Effect on the rails | *liquidação na rede* | External |
+
+Stages 3–5 are pure, deterministic *read-state-and-append* deciders — the same pattern a term deposit already uses to refuse an early withdrawal. The excluded stages are exactly the ones that need a clock, an external call, or a model. So the engine does not "do authorization" or "not do it": it owns **the ledger-and-rules core of the decision** and answers `autorizado` (+ a hold) or `recusado`, **in real time**.
+
+### The hold (*cativo*) — why a transactional account fits the kernel natively
+
+A transactional account carries two balances: the **saldo contabilístico** (accounting balance — what has posted) and the **saldo disponível** (what is spendable now). Their gap is the **montante cativo** — funds earmarked by approved-but-unsettled authorizations (the hotel *pré-autorização* is the canonical case). `saldo disponível` is therefore **not a stored number but a fold**: `saldo contabilístico − Σ(active cativos)`. The hold has an event lifecycle — `MontanteCativado` (authorize) → `CativoCapturado` (on *captura*/settlement) → `CativoExpirado` (on timeout) — each step a pure event. Holds are also what make concurrent authorization safe without locking: the first debit appends a `MontanteCativado` that lowers `saldo disponível` before the second is evaluated. Transactional accounts fit babelstone *natively*; they are not a concession.
 
 **Candidates evaluated (scope postures):**
 
 | # | Candidate | Notes |
 |---|---|---|
-| A | **Pure product/accrual kernel** — own product math + account lifecycle + regulatory-pack config; delegate payment rails, card schemes, origination/underwriting, and collections *enforcement* to the integration estate / external systems. | Keeps the deterministic-fold architecture intact. Crédito pessoal fits whole; a credit card fits only as its account/revolving slice (scheme/auth/clearing/dispute stay outside the ACL). |
-| B | **Kernel + servicing** — A, plus absorb servicing concerns adjacent to the product: disbursement *orchestration*, direct-debit collection *scheduling*, and running the PARI/PERSI default procedure as engine state. | Widens the engine into workflow/orchestration the saga estate ([ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md)) already owns; blurs "the engine computes the product" with "the engine drives the operation." |
-| C | **Expand toward transaction processing** — grow the engine to own per-transaction authorization / clearing / dispute machinery, so a *full* credit card (scheme side included) becomes feasible. | Largest architectural change; turns a product kernel into (part of) a card processor; contradicts the deterministic-fold, no-real-time-rails nature of [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md). |
+| A | **Pure product/accrual kernel** — own only product math + accrual lifecycle; push transactional balance accounts and any authorization role entirely external. | The original narrow reading. Exiles the most fundamental product shape and contradicts the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) intent to bring the conta à ordem onto the engine at v4. |
+| B | **Core product & account ledger** — own product math + account lifecycle + **transactional balance accounts** + the **ledger-and-rules core of authorization** (the saldo-disponível funds check, pack rules incl. *descoberto autorizado*, the *cativo*) as a **real-time dependency**; exclude the rails/scheme/clearing/settlement, instrument validation, SCA, fraud, payment initiation, origination, and collections enforcement. | The engine is the authoritative balance and answers debit attempts in real time; it never moves money on the wire. "Decide and record" is in; "physically move" is out. |
+| C | **Ledger + servicing orchestration** — B plus disbursement/direct-debit *orchestration* and running PARI/PERSI as engine state. | Widens into workflow the saga estate ([ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md)) already owns. |
+| D | **Full transaction processing incl. rails** — own authorization *end to end including the wire* (scheme, clearing, settlement). | A card-switch / payment-services-provider build; contradicts the no-wire boundary and the 1–2-person reference scope. |
 
 ---
 
@@ -47,64 +66,75 @@ So the real decision is not "cards vs. loans"; it is **how wide is the engine's 
 
 | Candidate | Licence / cost | Verdict |
 |---|---|---|
-| A · kernel | Buys nothing; a scope statement has no licence. | **Pass** |
-| B · kernel+servicing | Same — but more engine to build/maintain for a 1–2-person team. | **Pass** |
-| C · transaction processing | Same licence cost (zero), but a scheme/processor build is a different order of effort. | **Pass** |
+| A · accrual kernel | Buys nothing. | **Pass** |
+| B · core ledger | Buys nothing; more engine to build, but no licence. | **Pass** |
+| C · +servicing | Same; duplicates saga work. | **Pass** |
+| D · +rails | Same licence (zero), but a processor/PSP build is a different order of effort and certification. | **Pass** |
 
 Uniform pass — F1 does not discriminate (scope buys nothing).
 
 #### F2 · Regulatory fit (GDPR / DORA / PSD2)
 
-A scope posture is not itself a regulated runtime artefact, so F2 cannot *fail* a candidate. It does, however, carry a directional signal worth recording: the **narrower** the kernel, the **smaller** its regulatory surface. Keeping origination/underwriting (KYC/AML, solvency, scoring) and the card scheme (PSD2-regulated payment-services activity) **outside** the boundary means the engine never holds the data or performs the activity those regimes bite hardest on — consistent with the no-PII-on-the-bus posture ([ADR-PC-004](./ADR-PC-004-pii-crypto-shredding.md)) and the GL/notification *contract* boundaries already chosen.
+A scope posture is not itself a regulated runtime artefact, so F2 cannot *fail* a candidate; it carries a directional signal. The key clarification for the chosen posture B: **owning the balance and answering the funds-and-rules stage of authorization does not make the engine a PSD2 payment-services provider** — it never *executes* a payment on the rails, never performs SCA, and holds no card/scheme credentials; those (stages 1–2, 6–7) stay external. The engine is a **ledger and a decision component**, not a PSP. It keeps the no-PII-on-the-bus posture ([ADR-PC-004](./ADR-PC-004-pii-crypto-shredding.md)) and the contract-emit boundaries. D, by contrast, *would* pull PSD2 payment-execution and a far larger cardholder-data surface into the engine.
 
 | Candidate | GDPR | DORA / PSD2 | Verdict |
 |---|---|---|---|
-| A · kernel | Smallest PII/data surface; no payment-services activity in-engine. | Engine is not a payment-services provider; rails/scheme are external. | **Pass** |
-| B · kernel+servicing | As A. | As A (servicing scheduling is not itself a payment service). | **Pass** |
-| C · transaction processing | Larger — handling authorizations pulls in cardholder/transaction data at volume. | Engine would perform PSD2-regulated payment processing. | **Pass** (with the largest surface) |
+| A · accrual kernel | Smallest surface. | No payment activity in-engine. | **Pass** |
+| B · core ledger | Balance + transactional data, no card/scheme PII on the bus. | Not a PSP — no rails, no SCA, no payment execution; a ledger/decision component only. | **Pass** |
+| C · +servicing | As B. | As B. | **Pass** |
+| D · +rails | Largest — cardholder/transaction data at volume. | Engine performs PSD2-regulated payment execution. | **Pass** (largest surface) |
 
-All clear the hard filters; the decision is entirely in S1–S4 and the reference-architecture reason below — the expected shape for the [§D3](./ADR-PC-000-namespace-and-contract-shape-framework.md) residual category.
+All clear the hard filters; the decision is in S1–S4 and the reference-architecture reason — the expected shape for the [§D3](./ADR-PC-000-namespace-and-contract-shape-framework.md) residual category.
 
 ### Soft criteria
 
-#### A · Pure product/accrual kernel — **CHOSEN**
+#### B · Core product & account ledger — **CHOSEN**
 
-**S1 · Operational complexity for 1–2 people.** Lowest. A pulls in only product math and account lifecycle — the work the existing fold/family/projection machinery already does. B adds orchestration that duplicates the saga estate; C adds a real-time processing tier (authorization latency, scheme certification, dispute workflows) no 1–2-person team should own. For a reference engine, A is the only posture whose *whole* surface a small team can build correctly.
+**S1 · Operational complexity for 1–2 people.** Moderate, and the right amount. B adds the transactional-account shape and a real-time authorization path, but stages 3–5 are pure deciders the engine already knows how to express, and the synchronous answer regime is the [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) command surface under a heavier load profile — an extension, not a new kind of component. C duplicates the saga estate; D adds a rails/scheme tier (latency SLAs, scheme certification, settlement) no 1–2-person team should own. B is the widest posture whose whole surface a small team can still build correctly.
 
-**S2 · Ecosystem coherence — decisive.** The kernel's value is its **deterministic-fold purity** ([ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md), [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md)): every state is a pure replay of events, gated by `ENGINE_FAMILY_AGNOSTIC` and the replay-determinism discipline. A *preserves* that — crédito pessoal and the card account-slice are both expressible as pure folds over an event stream the engine controls. C *breaks* it: real-time authorization is clock- and I/O-bound, the antithesis of a pure fold, and would force a non-deterministic tier into the kernel. B sits between, dragging workflow state that belongs to the orchestrator into the engine. A is the posture that keeps the engine *one coherent kind of thing*.
+**S2 · Ecosystem coherence — decisive.** The kernel's value is **deterministic-fold purity** ([ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md), [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md)). B *preserves* it: a balance is a fold over postings, `saldo disponível` is a fold net of holds, and the authorization decision (stages 3–5) is a pure read-state-and-append — all replayable. The real-time requirement is a **non-functional** property (latency/availability), not an architectural impurity; the impure stages (SCA, fraud, rails) are precisely the ones held *outside*. D *breaks* purity by pulling clock/I/O-bound rails into the kernel; C drags orchestration state in. B keeps the engine one coherent kind of thing while owning the foundational shape.
 
-**S3 · Exit cost.** A is the most reversible. Choosing the narrow boundary now keeps B and C as *future widenings* (add a servicing concern, or a processing tier, if a real need appears) at near-zero cost today. Choosing B or C now bakes orchestration/processing assumptions into the kernel that are expensive to unwind — the asymmetry favours starting narrow.
+**S3 · Exit cost.** B is well-placed. It keeps C (servicing) and D (rails) as *future widenings* if a real need appears, while not under-committing the way A does (A would have to be reopened the moment the conta à ordem migration of [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) lands). Starting at B avoids both an immediate reopen (A's fate) and a baked-in processor assumption (D's cost).
 
-**S4 · Longevity.** Neutral — all three postures outlive any single family; the question is which the architecture can carry, and A is the one the existing architecture already supports.
+**S4 · Longevity.** Neutral — the posture outlives any single family; B is the one the existing architecture can carry without becoming a different kind of system.
 
-**Decisive project-specific reason — reference-architecture topology.** Because babelstone is a *reference* piece (the purpose fixed above), its scope should **span the product topology**, not maximise depth in one product. A delivers exactly that: term deposit is a **liability** (accrues to maturity), crédito pessoal is a **closed-end asset** (deterministic amortization), and the credit-card account-slice is an **open-end revolving asset** (statement cycle). Liability / closed-end / revolving is the whole map of retail product shapes — three families that *prove the family abstraction generalises*, which is the strongest thing a reference engine can demonstrate. B and C add operational machinery that illustrates *workflow*, not *product shape*, and so add cost without advancing the reference story.
+**Decisive project-specific reason — reference-architecture topology.** As a *reference* piece, babelstone's scope should **span the product topology**. B delivers the full map of retail shapes: a **liability** (term deposit, accrues to maturity), a **closed-end asset** (crédito pessoal, deterministic amortization), an **open-end revolving asset** (credit-card account slice, statement cycle), and the **transactional/demand account** (conta à ordem) — the most fundamental shape and *the hub the other three settle against*. A omits the hub; C and D add operational machinery that illustrates *workflow/rails*, not *product shape*. Owning the transactional account as a **general capability** (instances: conta à ordem, the card account) is the strongest thing the reference engine can demonstrate — that one deterministic-ledger kernel expresses every retail product shape.
 
-#### B · Kernel + servicing — **rejected (reserved as a future widening)**
+#### A · Pure product/accrual kernel — **rejected (too narrow)**
 
-B is not wrong, only premature and mis-placed. Disbursement orchestration and direct-debit scheduling are **saga** concerns the orchestrator estate ([ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md)) already owns; running PARI/PERSI as engine state confuses *recording* a regulated procedure's transitions (which the engine can do as events) with *executing* it (which it should not). Rejected on S1 + S2 with no offsetting gain; the legitimate slice of B — the engine *recording* servicing/default state as events — is preserved inside A's boundary (see §P1).
+A draws the boundary so that the engine's most native competence — folding movements into an authoritative balance — is exiled. It mistakes "a conta à ordem rides payment rails" for "a conta à ordem *is* payment rails," and so pushes the balance, the rules, and the funds-check decision out with the wire. It also contradicts [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md)'s stated v4 destination (the conta à ordem moving onto the engine). Rejected: it under-scopes the kernel and would be reopened on first contact with the current account.
 
-#### C · Expand toward transaction processing — **rejected**
+#### C · Ledger + servicing orchestration — **rejected (reserved as a future widening)**
 
-C is the posture that would make a *full* credit card feasible, and it is rejected precisely because the price is the kernel's nature. Per-transaction authorization is real-time, I/O- and clock-bound, and scheme-certified — it cannot be a pure, replayable fold, so it contradicts [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) and the replay-determinism discipline at the root of the engine's value. It also turns a 1–2-person reference project into a payments-processor build. Rejected on S1 + S2 + S3; the *product* aspects of a card it would unlock are captured instead by A's account-slice (see §P3).
+Disbursement and direct-debit *orchestration* are saga concerns the orchestrator estate ([ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md)) already owns; running PARI/PERSI confuses *recording* a regulated procedure's transitions (which B already permits as events) with *executing* it. Rejected on S1 + S2; the legitimate slice (recording servicing/default state) lives inside B.
 
-**Decisive reason for A over B and C:** the engine's worth is its deterministic-fold purity and the reference value of spanning product *shapes*; A preserves both, B dilutes the first, C destroys it.
+#### D · Full transaction processing incl. rails — **rejected**
+
+D is what a *full* card switch or PSP needs, and it is rejected precisely because the price is the kernel's nature: rails/clearing/settlement are real-time, I/O-bound, scheme-certified, and PSD2-regulated payment *execution* — not a pure replayable fold. It turns a 1–2-person reference project into a payments processor. Rejected on S1 + S2 + S3 + the F2 surface; the *product* aspects it would unlock are captured by B's account slices, and B explicitly stops at the wire.
+
+**Decisive reason for B:** it owns the foundational transactional-account shape and the ledger-and-rules core of authorization while keeping deterministic-fold purity and stopping at the wire — the most a coherent, small-team reference kernel can be without becoming a payments processor.
 
 ---
 
 ## Decision
 
-### babelstone is a pure product/accrual kernel, scoped to three product shapes, with origination upstream.
+### babelstone is a core product & account ledger — it owns balances, rules, and the funds-and-rules core of real-time authorization; it never touches the wire.
 
-**Posture (A).** babelstone owns **product math**, the **account lifecycle**, and **regulatory-pack configuration**. It **delegates** payment rails, card schemes, origination/underwriting, and collections *enforcement* to the integration estate and external systems, reached across the ACL. It stays a deterministic event-sourced ledger; it does not become an orchestrator (rejected B) or a transaction processor (rejected C).
+**Posture (B).** babelstone owns **product math**, the **account lifecycle**, **transactional balance accounts**, and the **ledger-and-rules core of authorization** — the `saldo disponível` funds check, the pack rules (limits, *descoberto autorizado*), and the *cativo* (hold) — answered as a **real-time dependency** of the authorization path. It is the authoritative balance. It **delegates** everything that physically moves money or authenticates/screens a payer: the rails/scheme, clearing, settlement, payment initiation, instrument validation, **SCA**, **fraud**, plus **origination/underwriting** and **collections enforcement**. The dividing line is **"decide and record" (in) vs "physically move / authenticate / screen" (out)**. The engine is not a payments processor (rejected D), an orchestrator (rejected C), or a narrow accrual kernel (rejected A).
 
-**Family roadmap (the product topology).** Three families, one per retail product shape:
+> **Real-time, technique deferred.** This ADR fixes the *commitment* — the engine answers authorization in real time and is the authoritative balance — not the *mechanism*. Whether that is a synchronous call ([ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) shape) or an asynchronous/reactive design with a fast round-trip is a runtime question deferred to a future ADR.
+
+**Transactional balance account is a general capability.** The 4th product shape is first-class, not a one-off; the conta à ordem and the credit-card account are *instances* of it.
+
+**Family roadmap (the product topology).**
 1. **term_deposit** — a **liability** that accrues to maturity. *Built* (the reference family).
-2. **credito_pessoal** — a **closed-end asset** with a deterministic amortization schedule. *Next* — lowest architectural risk (mirror of the term deposit); validates that the family abstraction generalises from liability to asset.
-3. **credit_card (account/revolving slice)** — an **open-end revolving asset** with a statement cycle. *After* — the genuinely new shape; the scheme/authorization/clearing/dispute machinery stays **outside** the ACL (rejected C).
+2. **credito_pessoal** — a **closed-end asset** with a deterministic amortization schedule. *Next* — lowest architectural risk (mirror of the term deposit).
+3. **credit_card (account/revolving slice)** — an **open-end revolving asset** with a statement cycle. *After* — the scheme/auth/clearing/dispute machinery stays outside.
+4. **conta à ordem (transactional balance account)** — the **demand account**; the hub the others settle against. Introduces the saldo-disponível/contabilístico split, the *cativo* lifecycle, and real-time authorization (stages 3–5). It is the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) **v4 destination**: through v1–v3 the legacy core owns the conta à ordem balance and the engine holds **no shadow balance** (PC-016 unchanged); at v4 the account migrates onto the engine *as an instance of this capability*. The "no shadow balance" rule is a **coexistence-topology** rule, not a permanent prohibition: its source ([02 §3 commitment 1](../02-v1-scope-term-deposits.md)) defines it as *not mirroring* a balance the legacy core authoritatively owns — *"the engine does not maintain a shadow balance — that would be the double-counting failure mode."* The engine *being* the authoritative owner at v4 is the opposite of a shadow, so no contradiction arises.
 
-**Origination is upstream.** The engine receives an **already-approved, already-priced** product instruction; solvency assessment, CRC consultation, KYC/AML, and scoring live in external/ACL systems. This is the [ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md) shape — *the engine declares the preconditions it requires; upstream evaluates them; the family decider refuses an instruction whose declared preconditions are unmet* — applied to credit origination. The engine may **record** the approval/pricing decision as events for audit and replay, but it never **makes** it.
+**Origination is upstream.** The engine receives an **already-approved, already-priced** instruction; solvency assessment, CRC, KYC/AML, and scoring live in external/ACL systems ([ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md) shape). The engine may **record** the decision for audit/replay; it never **makes** it.
 
-**Rejected: kernel + servicing (B)** — disbursement orchestration and direct-debit scheduling are saga concerns the orchestrator already owns; the engine records servicing/default *state* as events but does not drive the operation. **Rejected: transaction processing (C)** — real-time authorization cannot be a pure replayable fold; owning it would destroy the determinism that is the engine's value and turn a reference project into a card processor.
+**Rejected: A** (under-scopes — exiles the foundational shape; reopened on first contact with the conta à ordem). **C** (servicing orchestration — saga-estate concern; the engine records state, does not drive workflow). **D** (rails/scheme — real-time payment execution cannot be a pure fold; would make a reference project a processor).
 
 ---
 
@@ -114,32 +144,36 @@ C is the posture that would make a *full* credit card feasible, and it is reject
 
 The kernel **IS** responsible for, across every family:
 
-| Concern | term_deposit | credito_pessoal | credit_card (slice) |
-|---|---|---|---|
-| Product math | interest accrual, withholding | amortization schedule, level installment | revolving interest, grace period |
-| Account lifecycle | constitute → accrue → mature | disburse → amortize → early-repay → close | open → revolve → statement → repay |
-| Regulatory-pack config | rate sheets, withholding | per-*finalidade* TAEG caps, imposto do selo, early-repay cap | TAEG cap, stamp duty, min-payment rule |
-| Audit / replay | ✓ | ✓ | ✓ |
+| Concern | term_deposit | credito_pessoal | credit_card (slice) | conta à ordem |
+|---|---|---|---|---|
+| Product math | interest accrual, withholding | amortization schedule | revolving interest, grace period | fee/interest accrual (if any) |
+| Account lifecycle | constitute → accrue → mature | disburse → amortize → close | open → revolve → statement | open → active → dormant → close |
+| Authoritative balance | principal + accrued | outstanding capital | revolving balance | saldo contabilístico / disponível |
+| Real-time authorization (stages 3–5) | n/a | n/a | (limit check) | **funds + pack rules + *cativo*** |
+| Regulatory-pack config | rate sheets, withholding | per-*finalidade* caps, selo, early-repay | TAEG cap, selo, min-payment | fees, **descoberto autorizado**, limits |
+| Audit / replay | ✓ | ✓ | ✓ | ✓ |
 
 The kernel **IS NOT** responsible for (delegated across the ACL / to external systems) — the more valuable half of the boundary:
 
-1. **No payment rails / card scheme.** No authorization, clearing, settlement, chargeback, or interchange. The scheme produces *cleared postings*; the engine consumes them (§P3).
-2. **No origination / underwriting.** No solvency assessment, CRC, KYC/AML, scoring, or affordability decision. The engine receives an already-approved, already-priced instruction ([ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md)).
-3. **No collections *enforcement*.** The engine may *record* PARI/PERSI state transitions as events; it does not *run* the legal procedure.
-4. **No servicing-decision authority.** Limit increases, repricing, and consolidation decisions arrive as instructions; the engine applies them, it does not decide them.
+1. **No physical money movement.** No rails/scheme, no clearing, no settlement, no payment initiation. The engine emits a verdict (`autorizado` + *cativo*, or `recusado`) and consumes *captura*/settlement as postings; it never moves money on the wire.
+2. **No authentication or fraud.** No SCA/3DS (stage 2 — regulated, external) and no fraud screening (stage 6 — model/I/O-bound, external).
+3. **No origination / underwriting.** No solvency, CRC, KYC/AML, scoring, affordability — the engine receives an already-approved, already-priced instruction ([ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md)).
+4. **No collections *enforcement*.** The engine may *record* PARI/PERSI transitions as events; it does not *run* the legal procedure.
+5. **No servicing-decision authority.** Limit increases, repricing, consolidation arrive as instructions; the engine applies, it does not decide.
 
-The recorded-not-executed pattern (items 2–4) is how the legitimate slice of rejected posture B lives *inside* A: state is captured as events for audit/replay without the engine owning the workflow that produces it.
+The recorded-not-executed pattern (items 3–5) is how the legitimate slice of rejected posture C lives *inside* B: state is captured as events for audit/replay without the engine owning the workflow that produces it.
 
 ### P2 — The family roadmap rides the existing one-engine-many-families spine
 
-Each new family is added the [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) way — its own event records, pure fold handlers, lifecycle legality table, and projections, bound through an `IFamilyModule`, with **no `ProjectReference` from the generic spine into `families/**`** (gated by `ENGINE_FAMILY_AGNOSTIC`). The roadmap order — `credito_pessoal` before `credit_card` — is deliberate: the closed-end loan reuses the term-deposit shape and so de-risks the family abstraction *before* the revolving card introduces a genuinely new lifecycle.
+Each family is added the [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) way — own event records, pure fold handlers, lifecycle legality table, projections, bound through an `IFamilyModule`, with **no `ProjectReference` from the generic spine into `families/**`** (gated by `ENGINE_FAMILY_AGNOSTIC`). Order is deliberate: `credito_pessoal` (reuses the term-deposit shape) before `credit_card` (new revolving lifecycle) before `conta à ordem` (introduces holds + real-time authorization, and aligns with the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) v4 migration). The closed-end loan de-risks the family abstraction before the heavier shapes land.
 
-### P3 — The credit-card slice consumes a cleared-posting feed; statement issuance is a sealed event
+### P3 — Authorization and holds: the engine owns stages 3–5 in real time
 
-Two design constraints follow from keeping the card *slice* in and the scheme *out*:
-
-- **Posting-feed contract.** The engine consumes a feed of **already-cleared transaction postings** as events across the ACL — never authorization requests. The four-party scheme (authorization → clearing → settlement → chargeback) runs entirely outside the boundary; its *output* (a settled posting) is the engine's *input*. The shape, ordering, and idempotency of that feed is a future **contract-shape ADR**, not settled here.
-- **Statement issuance is a sealed event, not a replayable projection.** A statement is legally **immutable once issued**, so it cannot be a projection that re-derives on replay (a late-arriving correction would silently change an issued statement). At cycle close the engine emits a `StatementIssued`-style event that freezes the closing balance, minimum payment, and due date; corrections become *new* events on the next cycle, never edits to the issued one. Grace-period determinism (grace depends on prior-cycle full payment) is carried in the fold across statement boundaries. These are flagged as the open design questions the card family must resolve, owned by its future family + contract ADRs — **not decided here.**
+- **The authorization decider.** On a debit attempt the engine answers an `autorizar`-style command: compute `saldo disponível` (= `saldo contabilístico − Σ active cativos`, a fold), apply pack rules (limits, *descoberto autorizado*), and append `MontanteCativado` (with the verdict) or a refusal. Pure, deterministic, replayable.
+- **The hold lifecycle.** `MontanteCativado` → `CativoCapturado` (on *captura*/settlement) → `CativoExpirado` (on timeout). `saldo disponível` is always a projection, never a stored mutable number.
+- **Real-time dependency.** The engine is a live dependency of the authorization path; its latency and availability become payment-path concerns. The *technique* (synchronous vs asynchronous/reactive) is a deferred runtime ADR; the *commitment* (real-time answer, engine authoritative) is fixed here.
+- **Overdraft and limits are pack rules.** *Descoberto autorizado* and transaction/velocity limits are expressed in the regulatory/product pack and evaluated at stage 4 — so the same rule surface that prices a deposit also governs "can this debit go through." The pack grammar must therefore carry limit/overdraft constructs, not only rates.
+- **The settlement/posting feed.** *Captura* and other already-cleared movements arrive as events across the ACL; their shape, ordering, and idempotency are a future **contract-shape ADR**. Statement issuance (for the card and the conta à ordem) is a **sealed event**, not a replayable projection — an issued statement is legally immutable; corrections are new events on the next cycle. These are flagged as open questions owned by the relevant family + contract ADRs — **not decided here.**
 
 ---
 
@@ -147,27 +181,33 @@ Two design constraints follow from keeping the card *slice* in and the scheme *o
 
 **What this choice makes easier:**
 
-1. **A fixed boundary every future family ADR honours.** "Is this the engine's job?" has a written answer (§P1), so scope drift is visible, not silent — exactly what the explicit-drift gate ([ADR-PC-020 §D3](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)) wants for scope decisions.
-2. **A de-risked roadmap.** `credito_pessoal` reuses the proven term-deposit shape; the card slice is taken only after the family abstraction is shown to generalise (§P2).
-3. **A small, coherent regulatory surface.** Origination, scheme, and collections-enforcement stay outside, so the engine never holds the data or performs the activity those regimes bite hardest on (F2).
+1. **A fixed boundary every future family ADR honours.** "Is this the engine's job?" resolves to "decide and record" (in) vs "physically move / authenticate / screen" (out), so scope drift is visible — what the explicit-drift gate ([ADR-PC-020 §D3](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)) wants.
+2. **One authoritative balance, no double-spend.** Because the engine owns the balance and the hold, concurrent authorizations are serialised by the append-only log without distributed locking.
+3. **A unified pack rule surface.** The same pack that prices a product also expresses its limits/overdraft, evaluated at authorization.
+4. **The full reference topology.** Four product shapes on one kernel — liability, closed-end asset, revolving asset, transactional account — the strongest demonstration that the family abstraction generalises.
+5. **Alignment with the conta à ordem migration.** [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md)'s v4 "moves onto the engine" now has a named destination: the transactional-balance-account family.
 
 **What this choice makes harder or impossible:**
 
-1. **A *full* credit card is out of scope by construction.** Anyone wanting scheme-side behaviour must either integrate an external processor or reopen this ADR to adopt posture C (a supersession, not a quiet extension).
-2. **Servicing *orchestration* is not the engine's to own.** Disbursement and direct-debit *workflows* live in the saga estate; the engine only records their resulting state. A future need to co-locate them would be a supersession toward posture B.
+1. **The engine becomes a real-time dependency of payments.** Its latency and uptime are now payment-path SLOs — [ADR-PC-001](./ADR-PC-001-event-store-technology.md) (store throughput) and [ADR-PC-011](./ADR-PC-011-in-house-load-test-harness.md) (load harness) become load-bearing, not background. The async-vs-sync technique is an unresolved runtime question.
+2. **A *full* payment processor / PSP is out of scope by construction.** Anyone wanting rails/scheme/clearing must integrate an external processor or reopen this ADR to adopt posture D (a supersession).
+3. **Servicing *orchestration* is not the engine's to own** (posture C) — the engine records resulting state only.
 
 **Residual risks:**
 
-- **The card-slice boundary is the easiest to erode.** The pressure to "just handle one authorization in-engine" is real; the posting-feed contract (§P3) is the wall, and `ENGINE_FAMILY_AGNOSTIC` plus the replay-determinism gate are the backstops. If a future change needs real-time processing, it must come back through posture C explicitly.
-- **"Recorded not executed" can blur.** Items 2–4 of §P1 let the engine hold origination/servicing/default *state*; the risk is that recording quietly becomes deciding. Mitigation: those events carry an upstream decision reference ([ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md)), making "who decided" auditable.
+- **Real-time event-sourcing under load.** Answering authorization on the hot path with an append-only store is the central engineering risk; the technique ADR and the load harness ([ADR-PC-011](./ADR-PC-011-in-house-load-test-harness.md)) must prove it.
+- **Hold reconciliation.** *Cativo* expiry vs late *captura*, partial captures, and reversals are correctness-sensitive; owned by the conta à ordem / card family ADRs.
+- **Pack-grammar expansion.** Expressing limits/overdraft as pack rules widens the [ADR-PC-006](./ADR-PC-006-cue-schema-language.md)/[ADR-PC-007](./ADR-PC-007-signed-yaml-oci-pack.md) surface; must stay declarative.
+- **"Recorded not executed" can blur** (items 3–5 of §P1). Mitigation: those events carry an upstream decision reference ([ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md)).
 
 ---
 
 ## Open Actions
 
-1. **Promote the supporting research** into the corpus under [`product_concepts/research/`](../research/) (done in the same change as this ADR).
-2. **Author the `credito_pessoal` family** ([ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) shape) — its own family + (where new) contract ADRs, modelling the amortization schedule, disbursement, and capped early repayment.
-3. **Scope the `credit_card` account-slice** — a future family ADR plus the §P3 **posting-feed contract-shape ADR** and the statement-issuance event design, taken only after `credito_pessoal` lands.
+1. **Promote the supporting research** into [`product_concepts/research/`](../research/) (done in the same change as this ADR).
+2. **Author the `credito_pessoal` family** ([ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) shape) — amortization schedule, disbursement, capped early repayment.
+3. **Scope the `credit_card` account-slice** — a future family ADR plus the §P3 settlement/posting-feed contract-shape ADR and the statement-issuance event design.
+4. **Scope the `conta à ordem` transactional-account family** — the *cativo*/hold model, `saldo disponível` as a fold, overdraft-as-pack-rule, and (separately) the **real-time authorization technique ADR** (sync vs async). Aligns with the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) v4 migration.
 
 ---
 
@@ -175,20 +215,23 @@ Two design constraints follow from keeping the card *slice* in and the scheme *o
 
 This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
 
-No *new* executable commitments — this is a scope/posture decision realised by the *downstream* family and contract ADRs it governs, not by buildable engine behaviour an implementation can drift from on its own. Two existing gates already enforce the boundary it draws: the `family → engine` one-way dependency (no `ProjectReference` from the generic spine into `families/**`) is gated by **`ENGINE_FAMILY_AGNOSTIC`**, owned by [ADR-PC-021 §P2](./ADR-PC-021-application-layer-family-owned-deciders.md); and handler purity (no clock/I/O/randomness — the property that makes posture C incompatible with the kernel) is gated by the replay-determinism discipline. New commitments will be catalogued when the `credito_pessoal` and `credit_card` family ADRs are authored.
+No *new* executable commitments are added by this scope/posture decision itself — it is realised by the *downstream* family and contract ADRs it governs. Two existing gates already enforce the boundary it draws: the `family → engine` one-way dependency is gated by **`ENGINE_FAMILY_AGNOSTIC`** ([ADR-PC-021 §P2](./ADR-PC-021-application-layer-family-owned-deciders.md)); and handler purity (no clock/I/O/randomness — the property that keeps stages 3–5 a pure fold and rejects posture D) is gated by the replay-determinism discipline. New commitments **will** be catalogued when the families land — in particular, when `conta à ordem` is authored, the *cativo* lifecycle determinism, `saldo disponível = saldo contabilístico − Σ cativos` as a rebuildable fold, and the authorization decider's purity are expected gates.
 
 ---
 
 ## Cross-references
 
-- [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — the hand-rolled, deterministic-fold kernel whose *nature* this ADR bounds.
-- [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) — the one-engine-many-families spine the roadmap rides on; the `ENGINE_FAMILY_AGNOSTIC` gate that backstops the boundary.
-- [ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md) — engine declares preconditions, upstream evaluates them; the mechanism that keeps origination/underwriting out of the kernel.
-- [ADR-PC-019](./ADR-PC-019-repository-strategy-monorepo.md) — the sibling [§D3](./ADR-PC-000-namespace-and-contract-shape-framework.md) residual-category posture ADR whose shape this one follows.
-- [ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md) — the saga orchestrator that owns the servicing *orchestration* rejected posture B would have pulled into the engine.
+- [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — the deterministic-fold kernel whose *nature* this bounds; stages 3–5 stay pure folds, which is why posture D is excluded.
+- [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) — the one-engine-many-families spine; `ENGINE_FAMILY_AGNOSTIC` backstops the boundary.
+- [ADR-PC-024](./ADR-PC-024-constitution-precondition-contract.md) — engine declares preconditions, upstream evaluates; keeps origination out of the kernel.
+- [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) — the synchronous idempotent command surface the real-time authorization regime extends.
+- [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) — the conta à ordem coexistence/settlement contract; this ADR names its v4 "moves onto the engine" the transactional-balance-account family (and leaves v1–v3 "no shadow balance" unchanged).
+- [ADR-PC-019](./ADR-PC-019-repository-strategy-monorepo.md) — the sibling [§D3](./ADR-PC-000-namespace-and-contract-shape-framework.md) residual-category posture ADR whose shape this follows.
+- [ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md) — the orchestrator that owns the servicing orchestration rejected posture C would have pulled in.
 - [crédito pessoal research](../research/credito-pessoal/00-research-plan.md) / [credit-card research](../research/credit-cards/00-research-plan.md) — the promoted market research that motivated, and is bounded by, this decision.
 - [01 §1](../01-product-architecture.md) — the one-engine-many-families thesis this scopes.
 
 ---
 
 *Decided 2026-06-20 by jhosm.*
+*Revised 2026-06-20 (pre-acceptance): widened from a narrow product/accrual kernel (former posture A) to a **core product & account ledger** (posture B) — the engine owns transactional balance accounts as a general 4th product shape and the funds-and-rules core of authorization (stages 3–5: saldo disponível, pack rules/descoberto, the cativo) as a real-time dependency, while still stopping at the wire (no rails/scheme/SCA/fraud). Adds the conta à ordem to the roadmap as the ADR-PC-016 v4 destination. The candidate set was corrected: the original framing omitted this posture between the narrow kernel and full transaction processing.*
