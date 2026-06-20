@@ -134,10 +134,40 @@ public sealed class EngineApiHostFamilyAgnosticTests
     }
 
     /// <summary>
+    /// Locks the <see cref="StripCommentsAndStrings"/> verbatim-string handling: a verbatim literal ending
+    /// in a backslash (<c>@"C:\dir\"</c>) must close at its real quote so the code AFTER it survives the
+    /// strip. The regression this guards: treating <c>\"</c> as an escaped quote inside a verbatim string
+    /// runs the scan past the true close and swallows following code — which would HIDE a family token
+    /// the gate must catch (a silent false-negative). Also pins doubled-quote (<c>""</c>) escaping and the
+    /// ordinary <c>\</c>-escaped non-verbatim case.
+    /// </summary>
+    [Fact]
+    public void StripCommentsAndStrings_closes_verbatim_strings_at_the_right_quote()
+    {
+        // @"…\" is a complete verbatim string (the trailing \ is literal); the code after it must survive.
+        var verbatim = StripCommentsAndStrings("""var p = @"BODY1\";var x = DepositPosition;""");
+        Assert.DoesNotContain("BODY1", verbatim);         // the string body is stripped
+        Assert.Contains("DepositPosition", verbatim);     // the code after the string is NOT swallowed
+
+        // Doubled "" is an escaped quote INSIDE the verbatim string — not a close.
+        var doubled = StripCommentsAndStrings("""x = @"BODY2""more";SURVIVED2;""");
+        Assert.DoesNotContain("BODY2", doubled);
+        Assert.Contains("SURVIVED2", doubled);
+
+        // Non-verbatim: \" is an escaped quote; the literal ends at the next UNescaped quote.
+        var escaped = StripCommentsAndStrings("""var s = "BODY3\"still";SURVIVED3;""");
+        Assert.DoesNotContain("BODY3", escaped);
+        Assert.Contains("SURVIVED3", escaped);
+    }
+
+    /// <summary>
     /// Removes <c>// line</c> + <c>/* block */</c> comments and the contents of string/char literals
-    /// (including verbatim <c>@"…"</c> and interpolated <c>$"…"</c> strings) so a family named only in
-    /// prose, a log message, or a configuration-key string never trips the code scan. A single linear
-    /// pass over the source — sufficient for the host's plain C# (no raw <c>"""</c> string literals).
+    /// (regular, char, AND verbatim <c>@"…"</c> / interpolated <c>$"…"</c> / <c>$@"…"</c> strings) so a
+    /// family named only in prose, a log message, or a configuration-key string never trips the code scan.
+    /// A non-verbatim literal escapes with <c>\</c>; a verbatim literal treats <c>\</c> as literal and
+    /// escapes a quote by doubling it (<c>""</c>) — so a verbatim path like <c>@"C:\dir\"</c> is closed at
+    /// the right quote and the code after it is not swallowed. A single linear pass over the source —
+    /// sufficient for the host's plain C# (no raw <c>"""</c> string literals).
     /// </summary>
     private static string StripCommentsAndStrings(string source)
     {
@@ -177,10 +207,38 @@ public sealed class EngineApiHostFamilyAgnosticTests
             if (c is '"' or '\'')
             {
                 var quote = c;
+
+                // A verbatim string (@"…", and the $@"…" / @$"…" interpolated-verbatim forms) escapes a
+                // quote by DOUBLING it ("") and treats backslash as a LITERAL character — so a verbatim
+                // path literal like @"C:\dir\" must not be read as a `\"`-escaped quote. Detect it by the
+                // `@` sigil immediately before the opening quote (possibly behind a `$`). A non-verbatim
+                // string uses `\` to escape the next char; a char literal is never verbatim.
+                var prev = i > 0 ? source[i - 1] : '\0';
+                var prevPrev = i > 1 ? source[i - 2] : '\0';
+                var verbatim = quote == '"' && (prev == '@' || (prev == '$' && prevPrev == '@'));
+
                 i++; // past the opening quote
                 while (i < source.Length)
                 {
-                    if (source[i] == '\\') // an escape — skip the escaped char
+                    if (verbatim)
+                    {
+                        if (source[i] == '"')
+                        {
+                            if (i + 1 < source.Length && source[i + 1] == '"')
+                            {
+                                i += 2; // a doubled "" — an escaped quote inside the verbatim string
+                                continue;
+                            }
+
+                            i++; // past the closing quote
+                            break;
+                        }
+
+                        i++; // backslash and everything else is literal in a verbatim string
+                        continue;
+                    }
+
+                    if (source[i] == '\\') // a non-verbatim escape — skip the escaped char
                     {
                         i += 2;
                         continue;
