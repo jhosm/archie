@@ -97,6 +97,35 @@ public sealed class RenewalRejectionTests
         Assert.Contains("Matured", ex.Message);
     }
 
+    [Theory]
+    // Inside the 14-day pre-maturity opt-out window (7 days before maturity): the message names the window.
+    [InlineData("2027-01-08", "opt-out window")]
+    // Well before maturity (outside the window too): the message says "before maturity".
+    [InlineData("2026-06-01", "before maturity")]
+    public async Task ConstituteRenewalAsync_rejects_a_renewal_fired_before_the_opt_out_window_closes(
+        string renewedOn, string expectedReason)
+    {
+        // The PRE-MATURITY OPT-OUT-WINDOW saga-start gate (bd babelstone-mtto.3; 02 §2.4.4 / ADR-PC-023 §P).
+        // The opt-out right closes at the maturity date, so auto-renewal must NOT fire before maturity —
+        // a renewal whose RenewedAt is before the closing deposit's maturity date is rejected, the message
+        // distinguishing "within the N-day opt-out window" from "before maturity". The closing deposit is
+        // Matured + non-NONE, so the NONE and Matured-precondition guards pass and THIS gate is what fires —
+        // BEFORE the funding/rate resolve (the throwing ports prove neither is touched). The window length
+        // (14 days) is read from the pinned pack's PackParameters (the dead AutoRenewalOptoutWindowDays
+        // param is now wired). MaturedStream's maturity date is 2027-01-15.
+        var depositId = Guid.NewGuid();
+        var service = ServiceOverStream(depositId, MaturedStream(depositId, "SAME_TERM_CURRENT_RATE"));
+        var renewedAt = new DateTimeOffset(DateOnly.Parse(renewedOn), TimeOnly.MinValue, TimeSpan.Zero);
+
+        var ex = await Assert.ThrowsAsync<DomainRejectedException>(() =>
+            service.ConstituteRenewalAsync(new ConstituteRenewalCommand(
+                DepositId: depositId, NewDepositId: Guid.NewGuid(), RenewedAt: renewedAt, Actor: "test")));
+
+        Assert.Contains(expectedReason, ex.Message);
+        // The rejection fires on the window gate, not the empty-funding guard further down.
+        Assert.DoesNotContain("funding_account", ex.Message);
+    }
+
     [Fact]
     public async Task ConstituteRenewalAsync_rejects_a_closing_deposit_with_no_funding_account()
     {
