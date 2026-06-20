@@ -172,11 +172,17 @@ public sealed record TerminateEarlyCommand(
 /// event records and the carência lock-up is measured against. Passed as an INPUT so the decision stays
 /// pure and replayable (no clock in the decider).</param>
 /// <param name="WithdrawnAmountCents">The principal to take out, in integer cents.</param>
+/// <param name="CommandId">The ingress idempotency key (ADR-PC-029 slot 4): the append dedupes on it
+/// in-transaction (the <c>command_dedup</c> INSERT), so an at-least-once retry of the SAME withdrawal
+/// returns the original outcome rather than double-appending. Mandatory — UNLIKE maturity / coupon
+/// (lifecycle-guarded, one-shot), a partial withdrawal is REPEATABLE (it leaves the deposit Active), so
+/// a non-idempotent retry would withdraw twice; the idempotency key is the only safe contract for it.</param>
 public sealed record PartialWithdrawCommand(
     Guid DepositId,
     DateTimeOffset WithdrawnAt,
     long WithdrawnAmountCents,
-    string Actor);
+    string Actor,
+    Guid CommandId);
 
 /// <summary>
 /// Record the GDPR Article 17 erasure fact on a deposit (bd babelstone-nzw6): append
