@@ -54,10 +54,14 @@ product documentation.
 - [Validate a pack locally](./how-to/validate-a-pack-locally.md)
 - [Interpret a validation failure (message decoder)](./how-to/interpret-a-validation-failure.md)
 - [Troubleshoot a variant rejection](./how-to/troubleshoot-a-variant-rejection.md)
+- [Version and release a pack (the pt.YYYY.N lifecycle)](./how-to/version-and-release-a-pack.md)
+- [Sign and publish a pack with cosign and ORAS](./how-to/sign-and-publish-a-pack.md) — **provisional** (publish path partly unbuilt)
+- [Write a sealed test corpus for a pack](./how-to/write-a-sealed-test-corpus.md)
 
 **Explanation**
 - [Why packs and rate sheets are separate](./explanation/why-packs-and-rate-sheets-are-separate.md)
 - [Rate-sheet versioning and point-in-time resolution](./explanation/rate-sheet-versioning-and-resolution.md)
+- [Pack effective-date and per-instance pinning](./explanation/pack-effective-date-and-per-instance-pinning.md)
 - [Reading a CUE schema](./explanation/reading-a-cue-schema.md)
 - [How packs and variants relate](./explanation/how-packs-and-variants-relate.md)
 
