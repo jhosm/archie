@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 BACKSTAGE_PORT    ?= 7007
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile kong-config-check edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -164,6 +164,25 @@ docs-site-serve: ## Build the DocFX site, then serve it on http://localhost:8080
 
 projection-rebuild-drill: ## Run the monthly §7.2 projection-rebuild drill (FullRebuildDrillAsync via Testcontainers; needs Docker, bd babelstone-j67l)
 	@./scripts/projection-rebuild-drill.sh
+
+## ----------------------------------------------------------------------------
+## Load-test acceptance gate (ADR-PC-011 §G4 — the v1 RC gate; bd babelstone-2e6q)
+## ----------------------------------------------------------------------------
+
+# The runnable v1 acceptance-gate host: drives synthetic deposit traffic against the LIVE dev stack
+# (engine append/projection path in-process + the §G1 producer onto Redpanda), reads boundary-to-commit
+# latency from the engine's OWN OpenTelemetry spans, and folds the §8.3 sync bands (200ms p99) +
+# sustained/burst throughput + the §8.2 replay budget + the no-rebuild-divergence invariant into a
+# PASS/FAIL artefact. Exit code IS the gate (0 = PASS). Needs the stack up (`make up`) AND the event-
+# store migrations applied to the `babelstone` DB (the demo scripts do this — see CLAUDE.md gotcha).
+# Override the run shape with LOAD_ARGS, e.g.:
+#   make load-test                                            # low-TPS latency smoke (L.3a)
+#   make load-test LOAD_ARGS="--profile sustained --tps 250 --duration 60s"   # L.3b
+#   make load-test LOAD_ARGS="--profile burst"                # L.3c (1000 TPS / 15 min)
+#   make load-test LOAD_ARGS="--measure replay"               # L.3d replay budget + no-divergence
+LOAD_ARGS ?=
+load-test: ## Run the ADR-PC-011 §G4 load-test gate against the live stack (LOAD_ARGS=… to set profile/measure/tps; bd babelstone-2e6q)
+	mise exec -- dotnet run --project engine/load/Babelstone.LoadHarness.Runner -c Release -- $(LOAD_ARGS)
 
 ## ----------------------------------------------------------------------------
 ## Local dev stack (infra/compose.yaml) — PostgreSQL + Redpanda + Console

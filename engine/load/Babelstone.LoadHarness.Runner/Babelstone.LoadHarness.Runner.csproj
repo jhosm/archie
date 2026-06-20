@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- The RUNNABLE host (ADR-PC-011 §G4 / bd babelstone-2e6q.1): the entry point that wires the
+         LoadHarness library's generator -> driver -> observer against a LIVE engine + Redpanda +
+         Postgres dev stack and folds the §8.3 verdicts into a PASS/FAIL RunArtefact. The library
+         (Babelstone.LoadHarness) stays a Docker-free, composable set of primitives; this project is
+         the thin composition root that turns them into `make load-test`. -->
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Babelstone.LoadHarness.Runner</RootNamespace>
+    <AssemblyName>Babelstone.LoadHarness.Runner</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The harness library this host composes (generator/driver/observer/artefact). -->
+    <ProjectReference Include="../Babelstone.LoadHarness/Babelstone.LoadHarness.csproj" />
+    <!-- The engine surfaces the host drives IN-PROCESS so the engine emits its OWN OpenTelemetry
+         spans the observer reads (ADR-PC-011 §S2: "the projection-rebuild drill and per-partition
+         ordering assertions are engine-internal checks the harness coordinates in-process"):
+
+         Babelstone.Engine        — AggregateRuntime<TState>, EventStoreSink, NullPiiProtector,
+                                     ProjectionRunner/Drainer/Reconciler (the append + replay path).
+         Babelstone.EventStore    — PostgresEventStore + the Postgres projection/checkpoint stores
+                                     (the live topology under test, ADR-PC-001).
+         Babelstone.Telemetry     — BabelstoneTelemetry.ActivitySource + BabelstoneAttributes: the
+                                     span surface the §8.3 sync bands are measured from (§P2/§G2).
+         Babelstone.FinancialTypes — Money (the integer-cents substrate the events carry).
+         Babelstone.Families.TermDeposit — the catalogued family: TermDepositFamilyModule.Registry(),
+                                     DepositPosition state, the deposit_position projection kind. -->
+    <ProjectReference Include="../../src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <!-- The §G1 production producer's codec: the engine's OWN Avro serializer + a real Schema-Registry
+         resolver, so the bytes the harness puts on live Redpanda are production bytes (no parallel
+         encoder). Only the BUS path uses this; the in-process store/replay path stays JSON + SR-free. -->
+    <ProjectReference Include="../../src/Babelstone.Engine.Avro/Babelstone.Engine.Avro.csproj" />
+    <ProjectReference Include="../../src/Babelstone.EventStore/Babelstone.EventStore.csproj" />
+    <ProjectReference Include="../../src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+    <ProjectReference Include="../../src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The component tests drive the host's pure pieces (arg parsing, profile sequencing, verdict
+         folding) Docker-free, the same posture the library's smoke test takes. -->
+    <InternalsVisibleTo Include="Babelstone.LoadHarness.Runner.Tests" />
+  </ItemGroup>
+</Project>
