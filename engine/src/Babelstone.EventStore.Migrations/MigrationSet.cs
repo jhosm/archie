@@ -40,8 +40,9 @@ public static partial class MigrationSet
 
         migrations.Sort((a, b) => a.Version.CompareTo(b.Version));
 
-        // Forward-only discipline (§P5) starts here: a duplicate or out-of-order
-        // version is a packaging error, caught before any DDL touches a database.
+        // Forward-only discipline starts here: a duplicate or out-of-order version is a
+        // packaging error, caught before any DDL touches a database. (ADR-PC-001 keeps the
+        // event store append-only/forward-only; this is its migration-set enforcement.)
         for (var i = 1; i < migrations.Count; i++)
         {
             if (migrations[i].Version == migrations[i - 1].Version)
