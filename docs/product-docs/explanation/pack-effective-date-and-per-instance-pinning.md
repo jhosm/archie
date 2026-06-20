@@ -64,6 +64,14 @@ version on the event *is* the answer.
 
 ## Retroactive change is possible — but only as an explicit, audited migration
 
+> **Planned, not yet built in v1.** The `PackVersionMigrated` event and the operator
+> `POST /v1/pack-migrations` command described below are the *designed* migration
+> mechanism (Accepted in [ADR-PC-009 §P3](../../product-management/product_concepts/adrs/ADR-PC-009-per-instance-version-pinning.md)),
+> not yet implemented — there is no migration event or endpoint to issue today. v1
+> ships pin-at-constitution plus per-event pins only; the migration write-path is
+> tracked in `babelstone-fk7m.10`. Read this section as the intended shape, not a
+> path you can run yet.
+
 "Pinned for life" does not mean a deposit can *never* move to a new pack. It means
 it never moves **silently**. The only way to re-pin an existing instance is an
 explicit, operator-initiated **pack migration**: an operator issues a migration
@@ -106,7 +114,8 @@ instrument-defining primitives (cash-flow shape, day-count, the contracted TAN)
 would stay pinned, while regulation-tracking primitives (the withholding rate, the
 FGD ceiling, disclosure templates) would *float* by accrual date so a regulatory
 rate change reaches in-flight deposits without a per-instance migration. That is a
-v2+ deliverable; v1 ships none of it and still pins everything. Keeping the field
+v2+ deliverable (tracked in `babelstone-fk7m.11`); v1 ships none of it and still
+pins everything. Keeping the field
 present now means the v2 design space stays open without a v1 manifest shape it
 cannot later honour. Treat `pack_effective_from` today as documentation of *when the
 pack's rules took regulatory effect*, not as a runtime switch.
