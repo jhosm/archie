@@ -96,7 +96,7 @@ A consequence worth internalising: a sheet with an `effective_from` in the
 dated next month and constitute a deposit today, today's deposit resolves to the
 sheet active *today*, not your future one. (This is the most common "why did it
 stamp the old version?" surprise — see the troubleshooting note in
-[author and deploy a rate sheet §6](../how-to/author-and-deploy-a-rate-sheet.md#step-6--confirm-resolution-at-constitution).)
+[author and deploy a rate sheet §5](../how-to/author-and-deploy-a-rate-sheet.md#step-5--confirm-resolution-at-constitution).)
 
 ## Stamping: the rate is decidable from the event alone
 

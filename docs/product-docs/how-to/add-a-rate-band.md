@@ -7,10 +7,13 @@ from packs, read [Why packs and rate sheets are separate](../explanation/why-pac
 first.
 
 A rate sheet is **not** a committed pack file. The pack carries only a *ref*
-(`rate-sheet-refs/<name>.yaml`); the actual numbers live as an immutable row in the
-`rate_sheets` table and ship through a separate, treasury-gated deploy endpoint. So
-"add a band" means **author a new rate-sheet version body and deploy it** — you never
-edit a published sheet in place.
+(`rate-sheet-refs/<name>.yaml`); the sheet itself is a **committed YAML file** under
+[`/rate-sheets/`](../../../rate-sheets/) (treasury / ALM-owned), which deploy
+serialises 1:1 into an immutable row in the `rate_sheets` table through a separate,
+treasury-gated endpoint. So "add a band" means **edit the sheet's YAML into a new
+version and deploy it** — you never edit a published sheet in place. For the full
+author → deploy → confirm loop, see
+[how to author and deploy a complete rate-sheet version](./author-and-deploy-a-rate-sheet.md).
 
 ## Before you start
 
@@ -18,9 +21,9 @@ edit a published sheet in place.
   `new_money`) you are changing.
 - Have the new band's principal range in **cents** and its rate in **basis points**.
 - Confirm the new rate is within the pack-declared bound. For `pt.2026.1` that is
-  `0 ≤ tan_basis_points ≤ max_consumer_rate_bps`. Locally this bound is an interim
-  static `max = 2000` (see [Local gaps](#local-gaps-read-before-you-rely-on-this)),
-  not yet read from the pack.
+  `0 ≤ tan_basis_points ≤ max_consumer_rate_bps`, read from the verified pack's
+  [`parameters/constants.yaml`](../../../packs/pt.2026.1/parameters/constants.yaml)
+  (`max_consumer_rate_bps: 2000`, an illustrative ceiling).
 
 ## The body shape, in one paragraph
 
@@ -41,11 +44,12 @@ Don't restate those tables — link to them.
 
 ### 1. Start from the current body
 
-Take the body of the rate sheet you are revising. Note there is no rate-sheet body
-committed on disk to copy — the numbers live as a row in the `rate_sheets` table,
-not in the pack (which carries only a *ref*). So we work from an **illustrative**
+Copy the YAML of the rate sheet you are revising — the committed source file under
+[`/rate-sheets/`](../../../rate-sheets/) (e.g.
+[`term_deposit/pt-deposits-2026.1.yaml`](../../../rate-sheets/term_deposit/pt-deposits-2026.1.yaml)),
+never a `SELECT` against the table. The example below is an **illustrative**
 `standard` ladder for `dpz_pt_12m_juros_venc` (the canonical shape is the link
-above):
+above); the `products:` block is the body you edit:
 
 ```yaml
 products:
@@ -106,12 +110,18 @@ the new version becomes the active sheet for that family from its `effective_fro
 
 ### 4. Deploy via `POST /v1/rate-sheets`
 
-Deploy the new body to the treasury-gated endpoint:
+Deploy the new version to the treasury-gated endpoint. Serialise your edited YAML
+to the JSON the endpoint accepts and POST it with the **required** `X-Deploy-Actor`
+header (omitting it is a `401`); the full author → deploy → confirm loop, including
+the `yq` bridge, is in
+[how to author and deploy a complete rate-sheet version](./author-and-deploy-a-rate-sheet.md#step-4--deploy-the-new-version):
 
 ```bash
-curl -sS -X POST http://localhost:8080/v1/rate-sheets \
-  -H 'Content-Type: application/json' \
-  -d @new-sheet.json
+yq -o=json rate-sheets/term_deposit/<your-new-version>.yaml \
+  | curl -sS -X POST http://localhost:8080/v1/rate-sheets \
+      -H 'Content-Type: application/json' \
+      -H 'X-Deploy-Actor: treasury.analyst@bank.internal' \
+      --data-binary @-
 ```
 
 The deploy contract — request shape, idempotency, status codes — is defined in
@@ -150,9 +160,6 @@ These are honest limitations of the current local setup, not steady-state behavi
   up with `make up` before `POST /v1/rate-sheets`. The endpoint is hosted by
   `Babelstone.RateSheets.Api`
   ([ADR-PC-008 Amendment §A1](../../product-management/product_concepts/adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md)).
-- **The pack bound is an interim static `max = 2000` bps**, not yet derived from the
-  pack's `max_consumer_rate_bps`. A rate over `2000` is rejected locally even if the
-  pack would allow more.
 - **Cross-artefact coverage checks are not enforced yet.** The deploy validator checks
   the *self-contained* invariants (band shape, contiguity, exhaustiveness, the bound).
   It does **not** yet check that every `product_id` exists in an active config or that
