@@ -293,16 +293,18 @@ public sealed class ProjectionReconcilerIntegrationTests(PostgresEventStoreFixtu
         Assert.Equal(checksum.EngineHash, drill.AfterHash); // and the rebuilt hash is the cold-fold hash
     }
 
-    // --- M.5: reconciliation metrics (bd babelstone-k4ny) ---
+    // --- M.5: reconciliation metrics (bd babelstone-k4ny) — catalogue Test ID OBS_RECONCILIATION_METRICS ---
     // The reconciler emits its §7.1/§7.2 verdicts on the shared Babelstone.Engine meter so the
     // projection-reconciliation alert rules (infra/grafana/prometheus/alert-rules.yaml) resolve to
     // live series. A MeterListener on that meter is exactly what a host's AddMeter(BabelstoneTelemetry
     // .MeterName) wires up. The meter is process-global, so each assertion filters by its own unique
     // consumer/projection_kind tags and asserts >= 1 (a sibling test recording is cross-talk, not a
-    // defect). Tags are operational-tier references (consumer / projection_kind) — never PII.
+    // defect). Tags are operational-tier references (consumer / projection_kind) — never PII. The four
+    // [Fact]s below carry the OBS_RECONCILIATION_METRICS Test ID literally so the ADR-PC-020 §P6
+    // spec-coverage checker resolves the Live catalogue row to a running test.
 
     [Fact]
-    public async Task Checksum_mismatch_emits_the_reconciliation_counter_tagged_by_consumer()
+    public async Task OBS_RECONCILIATION_METRICS_checksum_mismatch_emits_the_counter_tagged_by_consumer()
     {
         await ResetAsync();
         var (drainer, runner, events, reconciler) = Build();
@@ -328,7 +330,7 @@ public sealed class ProjectionReconcilerIntegrationTests(PostgresEventStoreFixtu
     }
 
     [Fact]
-    public async Task Clean_checksum_emits_no_reconciliation_counter()
+    public async Task OBS_RECONCILIATION_METRICS_clean_checksum_emits_no_counter()
     {
         await ResetAsync();
         var (drainer, runner, events, reconciler) = Build();
@@ -350,7 +352,7 @@ public sealed class ProjectionReconcilerIntegrationTests(PostgresEventStoreFixtu
     }
 
     [Fact]
-    public async Task EventCount_skip_emits_the_drift_counter_but_a_gap_does_not()
+    public async Task OBS_RECONCILIATION_METRICS_event_count_skip_emits_the_drift_counter_but_a_gap_does_not()
     {
         await ResetAsync();
         var (_, _, events, reconciler) = Build();
@@ -377,7 +379,7 @@ public sealed class ProjectionReconcilerIntegrationTests(PostgresEventStoreFixtu
     }
 
     [Fact]
-    public async Task EventCount_gap_emits_no_drift_counter()
+    public async Task OBS_RECONCILIATION_METRICS_event_count_gap_emits_no_drift_counter()
     {
         await ResetAsync();
         var (_, runner, events, reconciler) = Build();
@@ -403,7 +405,7 @@ public sealed class ProjectionReconcilerIntegrationTests(PostgresEventStoreFixtu
     }
 
     [Fact]
-    public async Task Rebuild_drill_divergence_emits_the_counter_and_a_clean_drill_records_freshness()
+    public async Task OBS_RECONCILIATION_METRICS_rebuild_drill_divergence_emits_the_counter_and_a_clean_drill_records_freshness()
     {
         await ResetAsync();
         var (drainer, runner, events, reconciler) = Build();
