@@ -1047,6 +1047,33 @@ services:
                   else
                     kong.service.request.set_header("X-OAuth-Scope", "")
                   end
+                  -- ── (d) step-up SCA claim attestation (ADR-IC-010 §P8 / Q-BE Q1, bd babelstone-ziu3.5) ──
+                  -- The engine money-movers (mature_deposit / pay_interest) gate on FRESH SCA — the §P8
+                  -- recommended path is the ENGINE returning 422 SCA_REQUIRED, NOT a Kong 403 here (a 403
+                  -- would kill the tool call before it could elicit the step-up). So this route does NOT
+                  -- deny on missing/stale SCA; it merely ATTESTS the AS-signed acr/auth_time claims to the
+                  -- engine as X-SCA-Acr / X-SCA-Auth-Time, the SAME set_header overwrite-from-the-token
+                  -- anti-spoof pattern as X-Client-Id above. The engine's ScaPrecondition decides freshness
+                  -- and 422s when the proof is absent/weak/stale; the MCP tool then steps the human up and
+                  -- retries with a refreshed token (which re-attests fresh claims here). The trust anchor is
+                  -- the AS signature jwt validated (see the ORDERING note), never the agent's report.
+                  --
+                  -- OVERWRITE both headers unconditionally so a client-supplied X-SCA-* can never forge a
+                  -- fresh-SCA proof: when the token carries no/blank acr we set the header to empty (the
+                  -- engine reads empty as "no SCA" and 422s), and likewise for a non-numeric auth_time. A
+                  -- client cannot smuggle a spoofed claim past this overwrite.
+                  local acr = claims.acr
+                  if type(acr) == "string" and acr ~= "" then
+                    kong.service.request.set_header("X-SCA-Acr", acr)
+                  else
+                    kong.service.request.set_header("X-SCA-Acr", "")
+                  end
+                  local auth_time = claims.auth_time
+                  if type(auth_time) == "number" and auth_time % 1 == 0 then
+                    kong.service.request.set_header("X-SCA-Auth-Time", string.format("%d", auth_time))
+                  else
+                    kong.service.request.set_header("X-SCA-Auth-Time", "")
+                  end
 
       # ── RFC 9728 Protected Resource Metadata — public discovery (ADR-IC-010 §P2) ──
       # GET /.well-known/oauth-protected-resource returns the metadata pointing at the

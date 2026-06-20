@@ -93,6 +93,67 @@ async def test_non_2xx_raises_fail_loud() -> None:
         await _client(handler).constitute({"principal_cents": 1})
 
 
+# ---------------------------------------------------------------------------------------------
+# §P8 step-up-SCA gate signal (Q-BE Q1/Q2, bd babelstone-ziu3.5)
+#
+# The engine 422s a money-mover (maturity / coupon) without fresh gateway-attested SCA, with a stable
+# `code` of SCA_REQUIRED. The client surfaces THAT as a typed ScaRequiredError so the tool can step up
+# + retry — distinguished from any other 422 (a lifecycle rejection), which stays an HTTPStatusError.
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_mature_422_sca_required_raises_typed_sca_error() -> None:
+    from babelstone_mcp.engine_client import ScaRequiredError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            422, json={"code": "SCA_REQUIRED", "detail": "Strong Customer Authentication is required."}
+        )
+
+    with pytest.raises(ScaRequiredError):
+        await _client(handler).mature("d-1")
+
+
+async def test_pay_interest_422_sca_required_raises_typed_sca_error() -> None:
+    from babelstone_mcp.engine_client import ScaRequiredError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"code": "SCA_REQUIRED"})
+
+    with pytest.raises(ScaRequiredError):
+        await _client(handler).pay_interest("d-1")
+
+
+async def test_mature_other_422_stays_http_status_error_not_sca() -> None:
+    # A NON-SCA 422 (a lifecycle rejection — e.g. already matured) must NOT masquerade as SCA_REQUIRED:
+    # it stays an HTTPStatusError so the tool surfaces it as the domain rejection it is, never a step-up.
+    from babelstone_mcp.engine_client import ScaRequiredError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"detail": "Deposit already matured."})
+
+    client = _client(handler)
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.mature("d-1")
+    # And specifically NOT the SCA type.
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.mature("d-1")
+    try:
+        await client.mature("d-1")
+    except ScaRequiredError:  # pragma: no cover - must not happen
+        pytest.fail("a non-SCA 422 must not raise ScaRequiredError")
+    except httpx.HTTPStatusError:
+        pass
+
+
+async def test_mature_with_fresh_sca_returns_position_normally() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"deposit_id": "d-1", "lifecycle": "Matured"})
+
+    result = await _client(handler).mature("d-1")
+    assert result["lifecycle"] == "Matured"
+
+
 async def test_client_id_is_forwarded_as_x_client_id_on_every_surface() -> None:
     # The gateway-attested caller (the OAuth sub Kong overwrote into X-Client-Id, ADR-IC-010 §P3)
     # is forwarded to the engine on each surface so the engine sees who acted, for audit/ownership.

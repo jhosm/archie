@@ -22,7 +22,7 @@ from starlette.requests import Request
 
 from babelstone_mcp import server
 from babelstone_mcp.elicitation import PeriodicInterestConfirmation
-from babelstone_mcp.engine_client import EngineClient
+from babelstone_mcp.engine_client import EngineClient, ScaRequiredError
 from babelstone_mcp.orchestrator_client import OrchestratorClient
 
 
@@ -104,9 +104,16 @@ _POSITION = {
 
 
 class _FakeEngine(EngineClient):
-    """An engine client that records the constitute request and returns fixed results."""
+    """An engine client that records the constitute request and returns fixed results.
 
-    def __init__(self) -> None:  # noqa: D401 — bypass the real httpx client
+    ``sca_required_calls`` makes the money-movers (``mature`` / ``pay_interest``) raise
+    :class:`ScaRequiredError` that many times before they settle — modelling the engine's §P8 step-up
+    gate (Q-BE Q1). 0 = the caller already holds fresh SCA (settles first try, no prompt); 1 = the
+    common step-up-then-retry path (422, then the refreshed retry settles); 2 = the step-up never
+    delivered a fresh token (both tries 422). ``mature_attempts`` / ``interest_attempts`` count the
+    engine calls so a test can assert the retry actually happened."""
+
+    def __init__(self, sca_required_calls: int = 0) -> None:  # noqa: D401 — bypass the real httpx client
         self.constitute_request: dict[str, Any] | None = None
         self.position_requested: str | None = None
         self.min_sequence_requested: int | None = None
@@ -114,6 +121,10 @@ class _FakeEngine(EngineClient):
         self.interest_paid: str | None = None
         # The gateway-attested caller each call forwarded to the engine (ADR-IC-010 §P3).
         self.client_id_forwarded: str | None = None
+        # §P8 step-up-SCA gate simulation (bd babelstone-ziu3.5).
+        self._sca_required_remaining = sca_required_calls
+        self.mature_attempts = 0
+        self.interest_attempts = 0
 
     async def constitute(
         self, request: dict[str, Any], client_id: str | None = None
@@ -130,7 +141,15 @@ class _FakeEngine(EngineClient):
         self.client_id_forwarded = client_id
         return {**_POSITION, "deposit_id": deposit_id}
 
+    def _maybe_require_sca(self) -> None:
+        """Raise ScaRequiredError while the simulated gate has not been satisfied (bd babelstone-ziu3.5)."""
+        if self._sca_required_remaining > 0:
+            self._sca_required_remaining -= 1
+            raise ScaRequiredError()
+
     async def mature(self, deposit_id: str, client_id: str | None = None) -> dict[str, Any]:
+        self.mature_attempts += 1
+        self._maybe_require_sca()
         self.matured = deposit_id
         self.client_id_forwarded = client_id
         return {
@@ -144,6 +163,8 @@ class _FakeEngine(EngineClient):
         }
 
     async def pay_interest(self, deposit_id: str, client_id: str | None = None) -> dict[str, Any]:
+        self.interest_attempts += 1
+        self._maybe_require_sca()
         self.interest_paid = deposit_id
         self.client_id_forwarded = client_id
         return {
@@ -477,13 +498,13 @@ async def test_constitute_tool_maps_args_to_the_engine_request() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# §P8 human-in-the-loop elicitation (Epic J.4, bd babelstone-ar1y)
+# §P8 human-in-the-loop elicitation (Epic J.4 ar1y + Q-BE resolution ziu3.5)
 #
-# Form mode is the SHIPPABLE v1 path on the one non-irreversible clarification we have today:
-# constituting a PERIODIC deposit asks the human to confirm the periodic-coupon choice. URL mode is
-# the v1 MACHINERY for step-up SCA on the irreversible money-movers (mature / pay_interest), gated
-# behind ELICITATION_URL_MODE_ENABLED (default off) until the maintainer resolves the SCA-trigger +
-# token-re-entry fork. Both modes carry only generic text (no PII) in the prompt.
+# Form mode is the SHIPPABLE path on the one non-irreversible clarification we have today: constituting
+# a PERIODIC deposit asks the human to confirm the periodic-coupon choice. URL mode is now a REAL
+# step-up-SCA gate on the irreversible money-movers (mature / pay_interest): the ENGINE 422s without
+# fresh gateway-attested SCA, the tool fires the step-up elicitation and retries with the refreshed
+# token. Both modes carry only generic text (no PII) in the prompt.
 # ---------------------------------------------------------------------------------------------
 
 
@@ -598,55 +619,18 @@ async def test_constitute_deposit_at_maturity_skips_elicitation() -> None:
     assert result.deposit_id == "d-1"
 
 
-# --- URL-mode step-up: mature_deposit --------------------------------------------------------
+# --- Step-up SCA gate: mature_deposit (Q-BE resolved, bd babelstone-ziu3.5) ------------------
+#
+# The gate is the ENGINE: it 422s a money-mover without fresh gateway-attested SCA (ScaRequiredError).
+# The tool then fires the URL-mode step-up elicitation and RETRIES with the refreshed token. So the
+# elicitation fires IFF the engine demanded it — never proactively (no over-prompting a caller who
+# already holds fresh SCA). An accept the agent fabricates is still 422'd on the retry — the gate
+# cannot be bypassed from the client side.
 
 
-async def test_mature_deposit_url_mode_enabled_accept_proceeds_to_engine(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(server, "ELICITATION_URL_MODE_ENABLED", True)
-    fake = _FakeEngine()
-    server.set_engine(fake)
-    ctx = _FakeContext(
-        client_id="CLI-MATURE-1",
-        scope="deposits:write",
-        elicit_url_result=AcceptedUrlElicitation(),
-    )
-
-    result = await server.mature_deposit(deposit_id="d-42", ctx=ctx)
-
-    assert ctx.elicit_url_called is True
-    assert fake.matured == "d-42"
-    assert result.lifecycle == "Matured"
-    # The URL carries only a stable op code + the elicitation UUID — never the deposit id.
-    _msg, url, _eid = ctx.elicit_url_args  # type: ignore[misc]
-    assert "operation=MATURE_DEPOSIT" in url
-    assert "d-42" not in url
-
-
-async def test_mature_deposit_url_mode_enabled_decline_raises_mcp_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(server, "ELICITATION_URL_MODE_ENABLED", True)
-    fake = _FakeEngine()
-    server.set_engine(fake)
-    ctx = _FakeContext(
-        client_id="CLI-MATURE-1",
-        scope="deposits:write",
-        elicit_url_result=DeclinedElicitation(),
-    )
-
-    with pytest.raises(McpError) as exc:
-        await server.mature_deposit(deposit_id="d-42", ctx=ctx)
-
-    # Declining the step-up aborts before settlement; the error is static (no PII).
-    assert fake.matured is None
-    assert "d-42" not in exc.value.error.message
-
-
-async def test_mature_deposit_url_mode_disabled_skips_elicitation() -> None:
-    # Default deployment: URL mode off → the affordance is dormant, the tool behaves as before.
-    fake = _FakeEngine()
+async def test_mature_deposit_with_fresh_sca_settles_without_prompting() -> None:
+    # The caller already holds fresh SCA → the engine settles first try → no step-up prompt fires.
+    fake = _FakeEngine(sca_required_calls=0)
     server.set_engine(fake)
     ctx = _FakeContext(
         client_id="CLI-MATURE-1",
@@ -657,18 +641,109 @@ async def test_mature_deposit_url_mode_disabled_skips_elicitation() -> None:
     result = await server.mature_deposit(deposit_id="d-42", ctx=ctx)
 
     assert ctx.elicit_url_called is False
+    assert fake.mature_attempts == 1
     assert fake.matured == "d-42"
     assert result.lifecycle == "Matured"
 
 
-# --- URL-mode step-up: pay_interest ----------------------------------------------------------
+async def test_mature_deposit_422_steps_up_then_retries_and_settles() -> None:
+    # The engine demands SCA (422), the human completes the step-up (accept), the retry settles.
+    fake = _FakeEngine(sca_required_calls=1)
+    server.set_engine(fake)
+    ctx = _FakeContext(
+        client_id="CLI-MATURE-1",
+        scope="deposits:write",
+        elicit_url_result=AcceptedUrlElicitation(),
+    )
+
+    result = await server.mature_deposit(deposit_id="d-42", ctx=ctx)
+
+    assert ctx.elicit_url_called is True
+    assert fake.mature_attempts == 2  # initial 422 + the post-step-up retry
+    assert fake.matured == "d-42"
+    assert result.lifecycle == "Matured"
+    # The URL carries only a stable op code + the elicitation UUID — never the deposit id.
+    _msg, url, _eid = ctx.elicit_url_args  # type: ignore[misc]
+    assert "operation=MATURE_DEPOSIT" in url
+    assert "d-42" not in url
 
 
-async def test_pay_interest_url_mode_enabled_accept_proceeds_to_engine(
+async def test_mature_deposit_step_up_declined_raises_mcp_error_without_settling() -> None:
+    fake = _FakeEngine(sca_required_calls=1)
+    server.set_engine(fake)
+    ctx = _FakeContext(
+        client_id="CLI-MATURE-1",
+        scope="deposits:write",
+        elicit_url_result=DeclinedElicitation(),
+    )
+
+    with pytest.raises(McpError) as exc:
+        await server.mature_deposit(deposit_id="d-42", ctx=ctx)
+
+    # Declining the step-up aborts before any retry; nothing settled, error is static (no PII).
+    assert fake.matured is None
+    assert fake.mature_attempts == 1  # only the initial 422; no retry after a decline
+    assert "d-42" not in exc.value.error.message
+
+
+async def test_mature_deposit_retry_still_422_raises_mcp_error_never_settles() -> None:
+    # The agent "accepted" but never obtained a genuinely refreshed token → the retry is STILL 422.
+    # The tool surfaces an McpError; it never settles on the agent's word (the bypass-resistance test).
+    fake = _FakeEngine(sca_required_calls=2)
+    server.set_engine(fake)
+    ctx = _FakeContext(
+        client_id="CLI-MATURE-1",
+        scope="deposits:write",
+        elicit_url_result=AcceptedUrlElicitation(),
+    )
+
+    with pytest.raises(McpError) as exc:
+        await server.mature_deposit(deposit_id="d-42", ctx=ctx)
+
+    assert fake.matured is None
+    assert fake.mature_attempts == 2  # initial 422 + one retry, both refused
+    assert "d-42" not in exc.value.error.message
+
+
+async def test_mature_deposit_url_mode_disabled_still_gated_by_engine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(server, "ELICITATION_URL_MODE_ENABLED", True)
-    fake = _FakeEngine()
+    # With the prompt off, a 422 is surfaced directly as an McpError — the engine STILL gates; the tool
+    # just cannot run the step-up prompt. The operation is NOT bypassed.
+    monkeypatch.setattr(server, "ELICITATION_URL_MODE_ENABLED", False)
+    fake = _FakeEngine(sca_required_calls=1)
+    server.set_engine(fake)
+    ctx = _FakeContext(client_id="CLI-MATURE-1", scope="deposits:write")
+
+    with pytest.raises(McpError):
+        await server.mature_deposit(deposit_id="d-42", ctx=ctx)
+
+    assert ctx.elicit_url_called is False
+    assert fake.matured is None
+
+
+# --- Step-up SCA gate: pay_interest ----------------------------------------------------------
+
+
+async def test_pay_interest_with_fresh_sca_settles_without_prompting() -> None:
+    fake = _FakeEngine(sca_required_calls=0)
+    server.set_engine(fake)
+    ctx = _FakeContext(
+        client_id="CLI-COUPON-2",
+        scope="deposits:write",
+        elicit_url_result=AcceptedUrlElicitation(),
+    )
+
+    result = await server.pay_interest(deposit_id="d-42", ctx=ctx)
+
+    assert ctx.elicit_url_called is False
+    assert fake.interest_attempts == 1
+    assert fake.interest_paid == "d-42"
+    assert result.coupons_paid == 1
+
+
+async def test_pay_interest_422_steps_up_then_retries_and_settles() -> None:
+    fake = _FakeEngine(sca_required_calls=1)
     server.set_engine(fake)
     ctx = _FakeContext(
         client_id="CLI-COUPON-2",
@@ -679,6 +754,7 @@ async def test_pay_interest_url_mode_enabled_accept_proceeds_to_engine(
     result = await server.pay_interest(deposit_id="d-42", ctx=ctx)
 
     assert ctx.elicit_url_called is True
+    assert fake.interest_attempts == 2
     assert fake.interest_paid == "d-42"
     assert result.coupons_paid == 1
     _msg, url, _eid = ctx.elicit_url_args  # type: ignore[misc]
@@ -686,11 +762,8 @@ async def test_pay_interest_url_mode_enabled_accept_proceeds_to_engine(
     assert "d-42" not in url
 
 
-async def test_pay_interest_url_mode_enabled_decline_raises_mcp_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(server, "ELICITATION_URL_MODE_ENABLED", True)
-    fake = _FakeEngine()
+async def test_pay_interest_step_up_declined_raises_mcp_error_without_settling() -> None:
+    fake = _FakeEngine(sca_required_calls=1)
     server.set_engine(fake)
     ctx = _FakeContext(
         client_id="CLI-COUPON-2",
@@ -702,11 +775,12 @@ async def test_pay_interest_url_mode_enabled_decline_raises_mcp_error(
         await server.pay_interest(deposit_id="d-42", ctx=ctx)
 
     assert fake.interest_paid is None
+    assert fake.interest_attempts == 1
     assert "d-42" not in exc.value.error.message
 
 
-async def test_pay_interest_url_mode_disabled_skips_elicitation() -> None:
-    fake = _FakeEngine()
+async def test_pay_interest_retry_still_422_raises_mcp_error_never_settles() -> None:
+    fake = _FakeEngine(sca_required_calls=2)
     server.set_engine(fake)
     ctx = _FakeContext(
         client_id="CLI-COUPON-2",
@@ -714,8 +788,9 @@ async def test_pay_interest_url_mode_disabled_skips_elicitation() -> None:
         elicit_url_result=AcceptedUrlElicitation(),
     )
 
-    result = await server.pay_interest(deposit_id="d-42", ctx=ctx)
+    with pytest.raises(McpError) as exc:
+        await server.pay_interest(deposit_id="d-42", ctx=ctx)
 
-    assert ctx.elicit_url_called is False
-    assert fake.interest_paid == "d-42"
-    assert result.coupons_paid == 1
+    assert fake.interest_paid is None
+    assert fake.interest_attempts == 2
+    assert "d-42" not in exc.value.error.message

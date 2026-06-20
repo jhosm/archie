@@ -30,20 +30,25 @@ Document 11 §Trust Model commits the bank to.
 
 §P8 human-in-the-loop elicitation (Epic J.4, bd babelstone-ar1y) is wired here via ``elicitation.py``:
 ``constitute_deposit`` uses FORM mode to confirm a PERIODIC interest selection (a non-irreversible
-parameter clarification — live and §P8-conformant), and ``mature_deposit`` / ``pay_interest`` carry
-the URL-mode step-up-SCA TRANSPORT for irreversible settlement, dormant behind
-``ELICITATION_URL_MODE_ENABLED`` (default off). ⚠️ Enabling that flag does NOT enforce SCA: §P8's
-load-bearing rule is that the irreversible action transitions on the BANK's own out-of-band signal,
-not on anything the agent reports back, and that completion half (the SCA-trigger + token-re-entry
-fork) is deliberately UNWIRED in v1 (see ``_maybe_stepup_sca``). So the enabled path surfaces the
-consent prompt only; it is not a real gate and must not be mistaken for one. The elicitation messages
-ride the same Streamable-HTTP ``/mcp`` route — no kong.yml change is needed.
+parameter clarification — live and §P8-conformant), and ``mature_deposit`` / ``pay_interest`` carry the
+URL-mode step-up-SCA gate for irreversible settlement (Q-BE resolved, bd babelstone-ziu3.5). That gate is
+now REAL: the load-bearing rule that "the irreversible action transitions on the BANK's own out-of-band
+signal, not anything the agent reports back" is satisfied by the ENGINE — its ``ScaPrecondition`` (Q1)
+refuses to settle without FRESH gateway-attested SCA (the AS-signed ``acr``/``auth_time`` Kong attests) and
+returns ``422 SCA_REQUIRED``. The money-mover tool catches that, fires the URL-mode step-up elicitation, and
+RETRIES with the refreshed token (Q2, ``_settle_with_stepup_sca``). The trust anchor is the AS signature the
+engine sees, never the agent's navigate-consent — so an agent that fabricates an accept is still 422'd on the
+retry. ``ELICITATION_URL_MODE_ENABLED`` (default ON) governs only whether the tool runs the elicitation
+prompt on a 422; with it off the engine STILL gates (the tool surfaces the McpError directly). The elicitation
+messages ride the same Streamable-HTTP ``/mcp`` route — no kong.yml change is needed for the prompt itself;
+the SCA-claim attestation Kong forwards to the engine is the kong.yml addition this lane makes.
 """
 
 from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Awaitable, Callable
 
 import httpx
 from mcp.server.fastmcp import Context, FastMCP
@@ -62,23 +67,21 @@ from .elicitation import (
     elicit_form_clarification,
     elicit_url_stepup,
 )
-from .engine_client import EngineClient
+from .engine_client import EngineClient, ScaRequiredError
 from .orchestrator_client import OrchestratorClient
 
-# §P8 URL-mode step-up SCA is the v1 TRANSPORT (built + tested), kept DORMANT by default behind this
-# flag until the maintainer resolves the SCA-trigger + token-re-entry fork (see the money-mover tools
-# below). With it off, mature_deposit / pay_interest behave exactly as before. Tests flip it on to
-# exercise the affordance. Read as a bool from the environment ("true"/"1"/"yes" enable it).
-#
-# ⚠️ ENABLING THIS DOES NOT ENFORCE SCA. With the flag on, settlement proceeds on the agent-reported
-# *navigate-consent* (an AcceptedUrlElicitation) — which is NOT proof SCA completed. ADR-IC-010 §P8 /
-# Document 11 require the irreversible action to transition from the BANK's own out-of-band signal,
-# not from anything the agent reports back; that out-of-band-completion half (Q1/Q2 in
-# _maybe_stepup_sca) is deliberately UNWIRED in v1. So this flag surfaces the consent prompt as a
-# transport demo only — it is NOT a real gate, and an operator must not mistake it for one. Real
-# enforcement awaits the Q1/Q2 wiring the maintainer owns.
+# §P8 URL-mode step-up SCA is now a REAL enforced gate (Q-BE resolved, bd babelstone-ziu3.5), default ON.
+# The enforcement does NOT rest on this elicitation: the load-bearing gate is the ENGINE's ScaPrecondition
+# (Q1), which 422s a money-mover called without FRESH gateway-attested SCA (the AS-signed acr/auth_time
+# Kong attests). This flag governs whether the money-mover tools wrap settlement in the step-up-then-retry
+# flow (Q2): on a 422 SCA_REQUIRED, fire the URL-mode step-up elicitation so the human re-authenticates at
+# the bank, then RETRY with the refreshed token. The trust anchor is the AS signature the engine sees, never
+# the agent's navigate-consent — exactly what §P8 requires. Flipping it OFF reverts the tools to a single
+# unguarded engine call (which the engine STILL 422s — the gate cannot be bypassed from the client side);
+# OFF is only for environments that front the engine with a different step-up transport. Read as a bool
+# from the environment ("true"/"1"/"yes" enable it).
 ELICITATION_URL_MODE_ENABLED = os.environ.get(
-    "ELICITATION_URL_MODE_ENABLED", "false"
+    "ELICITATION_URL_MODE_ENABLED", "true"
 ).strip().lower() in ("true", "1", "yes")
 
 # Base for the bank-controlled step-up SCA URL the agent navigates the human to (URL mode). The only
@@ -488,16 +491,21 @@ async def mature_deposit(deposit_id: str, ctx: Context) -> DepositPosition:
     ``net_interest_cents``, ``total_payout_cents``) and ``lifecycle`` = ``Matured``. Money is integer
     cents.
 
-    Requires ``deposits:write`` (ADR-IC-010 §P4). Settlement is irreversible, so under §P8 it carries
-    the URL-mode ``elicitation/create`` step-up-SCA TRANSPORT — present but dormant behind
-    ``ELICITATION_URL_MODE_ENABLED`` (default off). ⚠️ Enabling that flag does NOT enforce SCA:
-    settlement still proceeds on the agent-reported navigate-consent, not the bank's own out-of-band
-    signal §P8 requires. Real enforcement awaits the SCA-trigger + token-re-entry wiring (the Q1/Q2
-    fork below); until then the enabled path is a consent-prompt demo, not a gate.
+    Requires ``deposits:write`` (ADR-IC-010 §P4). Settlement is irreversible, so under §P8 it is gated by
+    real step-up SCA (Q-BE resolved, bd babelstone-ziu3.5): the ENGINE refuses to settle without FRESH
+    gateway-attested SCA (the AS-signed ``acr``/``auth_time`` Kong attests) and returns ``422
+    SCA_REQUIRED``. This tool then fires the URL-mode step-up elicitation so the human re-authenticates in
+    the bank-controlled context, and RETRIES with the refreshed token. The settlement transitions on the
+    bank's own signal (the AS signature the engine sees), never the agent's report — the §P8 invariant.
+    If the human declines/cancels the step-up, the call is aborted with an ``McpError`` and nothing settles.
     """
     auth = _authorize(ctx, "mature_deposit")
-    await _maybe_stepup_sca(ctx, "MATURE_DEPOSIT")
-    return DepositPosition(**await engine().mature(deposit_id, client_id=auth.client_id))
+    position = await _settle_with_stepup_sca(
+        ctx,
+        "MATURE_DEPOSIT",
+        lambda: engine().mature(deposit_id, client_id=auth.client_id),
+    )
+    return DepositPosition(**position)
 
 
 @mcp.tool()
@@ -513,68 +521,68 @@ async def pay_interest(deposit_id: str, ctx: Context) -> DepositPosition:
     rejected. Money is integer cents.
 
     Requires ``deposits:write`` (ADR-IC-010 §P4). Like ``mature_deposit``, the coupon settlement is
-    irreversible; under §P8 it carries the URL-mode step-up-SCA TRANSPORT — present but dormant behind
-    ``ELICITATION_URL_MODE_ENABLED`` (default off). ⚠️ Enabling that flag does NOT enforce SCA: the
-    coupon still settles on the agent-reported navigate-consent, not the bank's own out-of-band signal
-    §P8 requires. Real enforcement awaits the SCA-trigger + token-re-entry wiring (the Q1/Q2 fork
-    below); until then the enabled path is a consent-prompt demo, not a gate.
+    irreversible, so under §P8 it is gated by real step-up SCA (Q-BE resolved, bd babelstone-ziu3.5): the
+    ENGINE 422s the coupon without FRESH gateway-attested SCA (the AS-signed ``acr``/``auth_time`` Kong
+    attests), this tool fires the URL-mode step-up elicitation, and RETRIES with the refreshed token. The
+    coupon settles on the bank's own signal (the AS signature the engine sees), never the agent's report —
+    the §P8 invariant. A declined/cancelled step-up aborts the call with an ``McpError`` and pays nothing.
     """
     auth = _authorize(ctx, "pay_interest")
-    await _maybe_stepup_sca(ctx, "PAY_INTEREST")
-    return DepositPosition(**await engine().pay_interest(deposit_id, client_id=auth.client_id))
+    position = await _settle_with_stepup_sca(
+        ctx,
+        "PAY_INTEREST",
+        lambda: engine().pay_interest(deposit_id, client_id=auth.client_id),
+    )
+    return DepositPosition(**position)
 
 
-async def _maybe_stepup_sca(ctx: Context, operation_code: str) -> None:
-    """§P8 URL-mode step-up SCA affordance on an irreversible money-mover (Epic J.4, ar1y).
+async def _settle_with_stepup_sca(
+    ctx: Context,
+    operation_code: str,
+    settle: Callable[[], Awaitable[dict[str, object]]],
+) -> dict[str, object]:
+    """Run an irreversible money-mover behind the §P8 step-up-SCA gate (Q-BE resolved, bd babelstone-ziu3.5).
 
-    When ``ELICITATION_URL_MODE_ENABLED`` is on, mint a fresh elicitation_id (a UUID — NOT the
-    deposit id), build the bank-controlled step-up URL for ``operation_code``, and ask the human (via
-    URL-mode ``elicitation/create``) to navigate to it. On accept we proceed to the engine; on
-    decline/cancel we abort with a static, PII-free ``McpError``. When the flag is off (the default),
-    this is a no-op — the tool behaves exactly as before.
+    ``settle`` is the engine call (``engine().mature(...)`` / ``engine().pay_interest(...)``). The flow:
 
-    ⚠️ THIS IS A TRANSPORT, NOT A GATE. The accept this proceeds on is the agent reporting the human
-    consented to NAVIGATE — it is NOT proof SCA completed. ADR-IC-010 §P8 / Document 11 require the
-    irreversible action to transition from the bank's OWN out-of-band signal, not from the agent's
-    report; that completion half is the Q1/Q2 fork below and is deliberately UNWIRED in v1. So with
-    the flag on, settlement still proceeds on the agent-reported accept — which is exactly the shape
-    §P8 forbids for a real gate. The flag is therefore default-OFF and the enabled path is a
-    consent-prompt demo only. This deferral is recorded in the durable register at
-    docs/.../product_concepts/04-open-questions.md (Q-BE), per ADR-PC-020 §D3/§P9.
+      1. Call ``settle()``. If the engine settles (the caller already holds fresh gateway-attested SCA),
+         return the position — no prompt, no over-prompting (this is why Q1 is engine-detected, not a
+         proactive prompt-always).
+      2. If the engine refuses with ``422 SCA_REQUIRED`` (``ScaRequiredError``), fire the URL-mode step-up
+         elicitation: mint a fresh ``elicitation_id`` (a UUID, NEVER the deposit id — no business identity
+         leaks), build the bank-controlled step-up URL for ``operation_code``, and ask the human to
+         navigate. On decline/cancel, abort with a static PII-free ``McpError`` and DO NOT settle.
+      3. On accept (the human re-authenticated at the bank and the agent now holds a REFRESHED token
+         carrying a fresh ``acr``/``auth_time``), retry ``settle()`` ONCE. The retry's request carries the
+         refreshed token → Kong re-attests fresh ``X-SCA-Acr``/``X-SCA-Auth-Time`` → the engine settles.
 
-    ─────────────────────────────────────────────────────────────────────────────────────────────
-    MAINTAINER FLAG — the step-up SCA fork (do NOT resolve speculatively; bd babelstone-ar1y ships
-    the elicitation TRANSPORT + this affordance, NOT a security gate):
+    THE GATE IS THE ENGINE, NOT THIS ELICITATION. The load-bearing §P8 invariant — "the irreversible action
+    transitions on the bank's own out-of-band signal, not anything the agent reports back" — is satisfied
+    because the engine's ``ScaPrecondition`` only settles on the AS-signed ``acr`` Kong validated. The
+    elicitation here is just the human-facing step-up PROMPT; an agent that fabricated an accept without a
+    genuinely refreshed token would still be 422'd on the retry (the second ``ScaRequiredError`` surfaces as
+    an ``McpError``, never an unguarded settlement). So the gate cannot be bypassed from the client side.
 
-    Q1 — SCA-TRIGGER DETECTION: how does this tool know fresh SCA is actually needed?
-       (a) the engine returns a structured ``SCA_REQUIRED`` on a money-mover called without a
-           fresh-enough SCA claim; this tool catches it, fires the step-up, then retries. Cleanest
-           signal; needs a bounded engine-side addition. RECOMMENDED.
-       (b) a Kong ``pre-function`` SCA gate on the ``/mcp`` route (mirroring the constitute REST
-           route, ADR-IC-006 §P2) returns 403 before this server is even reached — which KILLS the
-           tool call before elicitation can start. Structurally incompatible with firing elicitation
-           on the tool call; the agent would have to handle the 403 itself. The ``/mcp`` route has NO
-           such gate today — adding it is a maintainer decision, not this PR.
-       (c) proactive: always fire the step-up at the top of every money-mover (this stub's current
-           shape). Simplest; over-prompts users who already hold fresh SCA.
-
-    Q2 — TOKEN RE-ENTRY: after the human completes SCA at the bank URL, how does the fresh proof
-       flow back into the tool call?
-       (a) agent re-call with a new Bearer (PKCE/refresh) — simplest, needs an agent that can refresh.
-       (b) out-of-band: the bank's SCA completion signals the engine (a short-lived nonce tied to the
-           elicitation_id); the engine accepts the next call within a TTL. No agent token refresh,
-           but introduces session state in the engine.
-       (c) ``session.send_elicit_complete(elicitation_id)`` from the bank's SCA callback + agent
-           retry (still needs a fresh token if a Kong SCA gate exists).
-
-    Both questions touch the saga orchestrator (ADR-IC-010 §P8: "realised by the saga orchestrator")
-    and/or a new Kong gate — out of this lane's scope. v1 therefore: machinery present, flag default
-    OFF, and we deliberately do NOT call ``send_elicit_complete`` (no out-of-band completion wired
-    yet). Flip the default + wire Q1/Q2 once the maintainer decides.
-    ─────────────────────────────────────────────────────────────────────────────────────────────
+    With ``ELICITATION_URL_MODE_ENABLED`` off, step 2 raises the ``McpError`` directly instead of
+    eliciting — the engine still 422s, so the operation is still gated; the off posture is only for an
+    environment that fronts the engine with a different step-up transport.
     """
+    try:
+        return await settle()
+    except ScaRequiredError:
+        pass
+
+    # The engine demanded fresh SCA. With the step-up transport OFF there is no way to obtain a refreshed
+    # token, so retrying would be pointless — surface the gate immediately rather than re-hit the 422. The
+    # operation is still GATED (the engine refused); the off posture is only for an environment that fronts
+    # the engine with a different step-up transport.
     if not ELICITATION_URL_MODE_ENABLED:
-        return
+        raise aborted_error(
+            "Step-up authentication is required and no step-up transport is enabled; the operation was "
+            "not performed (ADR-IC-010 §P8 — the engine settles only on the bank's signed SCA claim)."
+        )
+
+    # Run the step-up prompt, then retry once with the refreshed token.
     elicitation_id = str(uuid.uuid4())  # a UUID, never the deposit id (no business identity leaks)
     try:
         await elicit_url_stepup(
@@ -584,6 +592,16 @@ async def _maybe_stepup_sca(ctx: Context, operation_code: str) -> None:
         raise aborted_error(
             "User did not complete step-up authentication; the operation was not performed "
             "(ADR-IC-010 §P8 URL-mode step-up SCA)."
+        ) from None
+
+    try:
+        return await settle()
+    except ScaRequiredError:
+        # The retry STILL lacks fresh SCA — the refreshed token never arrived. Surface a clean, PII-free
+        # McpError; never settle on the agent's word (the bypass-resistance invariant).
+        raise aborted_error(
+            "Step-up authentication did not complete; the operation was not performed "
+            "(ADR-IC-010 §P8 — the engine settles only on the bank's signed SCA claim)."
         ) from None
 
 

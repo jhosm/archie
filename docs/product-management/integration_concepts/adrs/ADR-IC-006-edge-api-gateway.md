@@ -238,3 +238,27 @@ Kong CE's `jwt` plugin validates token signatures against keys registered in Kon
 3. The old key is removed from the key store in a subsequent `deck sync`.
 
 This three-step rotation prevents token rejection during the overlap window. The rotation procedure must be documented and tested before any production hardening. If automatic JWKS rotation becomes operationally burdensome (multiple IAM key rotations per year, or multiple JWT issuers), Apache APISIX's `openid-connect` plugin with automatic JWKS polling is the documented upgrade path.
+
+---
+
+## Amendment — 2026-06-20: §P2's gateway-403 SCA model is scoped to non-agent routes; the MCP money-movers enforce SCA in the engine (attest-not-deny)
+
+In plain English: §P2 says the gateway (Kong) should be the one place that checks whether a customer recently passed strong authentication (SCA) for a money-moving request — it returns `403 SCA_REQUIRED` at the edge, and the application behind it does not re-check. That model is right for the routes a human or a saga drives. It does **not** work for the AI-agent channel's irreversible money-movers (maturing a deposit, paying a coupon), because there the bank wants to *prompt* the human to do a fresh step-up challenge mid-call — and a `403` at the gateway would kill the call *before* the agent could ever show that prompt. So for those two endpoints the SCA check moves one step inward: the gateway still validates the token and **attests** the SCA claims to the engine, but it does **not** deny; the **engine** is the one that refuses (with `422 SCA_REQUIRED`) when the proof is missing or stale, which lets the agent run the step-up and retry. This amendment records that scoping so the divergence from §P2 is explicit, not silent (the [ADR-PC-020 §D3](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md) drift gate). It is additive: §P2 holds unchanged for every route it already governs.
+
+This is the gateway-side companion to [ADR-IC-010 §P8 Amendment 2026-06-20 (A7–A10)](./ADR-IC-010-mcp-server-runtime-and-sdk.md) (Q-BE resolved, [bd babelstone-ziu3.5](../../product_concepts/04-open-questions.md)).
+
+### A1 · §P2's gateway-enforced-403 model governs the non-agent financial routes — unchanged
+
+§P2 is **binding as written** for the routes it names and their class: the constitute front door (`POST /api/v1/deposits/constitute`) and the existing-instance SoR money-movers (`POST /api/v1/sor/instances/{id}/operations`) keep the `pre-function` gateway `403 SCA_REQUIRED` gate, the application-trusts-the-gateway posture, and the gateway-level contract test ([bd babelstone-6imx / babelstone-abig](../../product_concepts/04-open-questions.md)). Nothing about those routes changes.
+
+### A2 · The MCP agent-channel money-movers enforce SCA in the engine; the gateway attests, it does not deny
+
+For the irreversible **agent-channel** money-movers — the MCP tools `mature_deposit` / `pay_interest`, which map to the engine commands `POST /v1/deposits/{id}/maturity` and `POST /v1/deposits/{id}/interest` — the SCA-completion *decision* lives in the **engine** (`ScaPrecondition`, returning `422 SCA_REQUIRED`), and the `/mcp` Kong route **attests** the AS-signed `acr`/`auth_time` to the engine as `X-SCA-Acr` / `X-SCA-Auth-Time` (the same `set_header` overwrite-from-the-token anti-spoof attestation §P4 / the route already does for `X-Client-Id`) **without denying**. The reason is structural and is the §P8-recommended path (ADR-IC-010 §P8 A7): a gateway `403` on `/mcp` would terminate the agent's `tools/call` *before* the MCP server could issue the URL-mode step-up elicitation, making the human-in-the-loop step-up impossible. Moving the refusal to the engine lets the tool catch the `422`, run the step-up, and retry with a refreshed token. The trust anchor is still the AS signature the gateway's `jwt` plugin validated — the engine reads only gateway-attested headers, never the raw token — so Boundary 2 (the application trusts the gateway's attestation, Document 10) is preserved; only the *deny point* moves from the gateway to the engine for these two endpoints.
+
+### A3 · The freshness contract test for the agent path is at the engine, by construction
+
+§P2 requires the SCA contract test to assert *at the gateway level*. For the agent-channel money-movers the assertion is necessarily at the **engine** level — the gateway no longer denies, so there is no gateway `403` to assert; the enforceable behaviour is the engine's `422 SCA_REQUIRED` (absent/stale SCA → 422; fresh attested SCA → settle), tested in `engine/tests/Babelstone.Engine.Api.Tests/DepositsApiIntegrationTests.cs`. The gateway-level §P2 contract test stays the authoritative gate for the constitute / SoR routes (A1).
+
+### A4 · This amends §P2's scope; it does not supersede this ADR
+
+The Decision (Kong CE, DB-less declarative, behind one shared edge) and §P1, §P3–§P7 remain binding as written. §P2 is **unchanged** for its existing routes; this amendment only *scopes* it — naming the agent-channel money-movers as the one class where SCA enforcement is engine-side (`422`) with the gateway attesting-not-denying, and recording why (the elicitation flow). The mTLS attestation trust model (§P5 / Boundary 2) is unaffected.

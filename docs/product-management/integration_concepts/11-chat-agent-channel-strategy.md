@@ -205,6 +205,8 @@ For deposit constitution above the auto-approval threshold — or for any irreve
 
 This pattern is *more* important with LLM agents than with owned UIs, not less. An owned mobile app can be trusted to render a confirmation button correctly. A third-party agent cannot. The structural defence is to remove the agent from the confirmation path entirely.
 
+**Realised on the engine-direct money-mover path (Q-BE resolved, bd `babelstone-ziu3.5`).** The principle above — "the irreversible action transitions from the bank's own signal, not from anything the agent reports back" — is enforced concretely for the irreversible money-movers (`mature_deposit`, `pay_interest`) by making the **bank's engine** the gate, not the elicitation. The engine refuses to settle without a *fresh* bank-signed strong-authentication proof — the OIDC `acr`/`auth_time` the gateway attests from the access token — and returns `422 SCA_REQUIRED` when it is absent, weak, or stale. The agent's tool catches that, runs the URL-mode step-up so the customer re-authenticates in the bank-controlled context, and retries with a *refreshed* token carrying the new proof. Because the engine settles only on the signature the gateway validated — never on the agent's "accept" — an agent that fabricates a confirmation is simply refused again on the retry. The trigger (an engine `422`) and the re-entry (a refreshed Bearer) are recorded in [ADR-IC-010 §P8 Amendment 2026-06-20](./adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md); the step-up flow itself is the lifecycle in [Document 10 §"Step-Up Authentication Mid-Session"](./10-security-and-threat-model.md).
+
 ---
 
 ## Trust Model — The Agent Is Untrusted

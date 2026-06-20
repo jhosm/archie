@@ -183,6 +183,8 @@ Two structural points:
 
 This is the same control as Boundary 1's SCA enforcement for owned mobile apps, with one structural addition: the agent's absence from the confirmation context.
 
+**Realisation on the MCP money-movers (Q-BE resolved, bd `babelstone-ziu3.5`).** For the irreversible engine-direct money-movers (`mature_deposit`, `pay_interest`) the step-up is realised as: the **engine** detects that fresh SCA is missing — its `acr`/`auth_time` precondition is unmet — and returns `422 SCA_REQUIRED`; the MCP tool fires the URL-mode step-up above; the customer re-authenticates and the agent retries with a **refreshed** access token carrying the new `acr`/`auth_time` (the second structural point above — the existing token stays valid for reads, but the next irreversible op demands its own fresh proof). The gateway validates that token's signature and attests the claims to the engine (`X-SCA-Acr` / `X-SCA-Auth-Time`), and the engine settles only on them — never on the agent's report. Recorded in [ADR-IC-010 §P8 Amendment 2026-06-20 (A7–A10)](./adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md).
+
 ### Refresh and Rotating Refresh Tokens
 
 Access tokens are short-lived. The bank picks a lifetime reflecting both the latency tolerance for revocation (below) and the regulatory reuse window for AIS scopes — 30 minutes is a reasonable default for write scopes, up to 60 minutes for read-only. When an access token expires, the agent presents the refresh token to obtain a new access token. The MCP server is unaffected by refresh; it sees only the new access token.
