@@ -184,6 +184,17 @@ Markdown-corpus stitching are weak for a modern docs site. **Decisive: second-cl
    `/events/`) inside this workflow — never a second `deploy-pages` workflow racing for
    the slot.
 
+   *Revised 2026-06-20: G.4 (PR #110) superseded
+   [ADR-IC-008](../../integration_concepts/adrs/retired/ADR-IC-008-event-catalog-governance-tooling.md)
+   with [ADR-IC-015](../../integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md)
+   (EventCatalog → Backstage). The catalogue portal is now a separately-deployed runtime
+   service (host deploy deferred — bd `babelstone-s4ol.1`), not a static site stitched
+   into Pages, so the specific EventCatalog-on-Pages composition task (bd
+   `babelstone-ra1u`) is withdrawn. The invariant generalises and still binds: this
+   workflow owns the one Pages slot, and any future catalogue portal published to Pages
+   composes into this same artifact under a subpath — never a second `deploy-pages`
+   workflow.*
+
 Rejected: MkDocs (hand-rolling the XML-doc ingester), Docusaurus (no XML-doc path, MDX
 friction), Doxygen (second-class C#) — details above.
 
@@ -220,4 +231,4 @@ inline table here rather than in the engine-focused
 |---|---|---|---|---|
 | 1 | The DocFX site builds green from current sources — API metadata over `Babelstone.slnx`; the corpus is not stitched (§P1/§P3). | CI (`docs-site.yml` build lane, path-scoped on its inputs) | `DOCS_SITE_BUILDS` | Live |
 | 2 | XML doc comments cannot rot against the code they annotate: malformed/unresolvable doc references fail the build (§P2). | compiler (`TreatWarningsAsErrors` + `GenerateDocumentationFile`, every `dotnet build` incl. the ci.yml engine lane) | `DOCS_XMLDOC_NO_ROT` | Live (lands with this ADR's PR) |
-| 3 | One Pages deploy workflow: EventCatalog (G.4) composes into this artifact under a subpath, never a second `deploy-pages` (§P5). | review discipline (PR review + this ADR) | `DOCS_PAGES_SINGLE_SLOT` | Gap (no mechanical gate; revisit when G.4 lands) |
+| 3 | One Pages deploy workflow: any future catalogue portal published to Pages composes into this artifact under a subpath, never a second `deploy-pages` (§P5). | review discipline (PR review + this ADR) | `DOCS_PAGES_SINGLE_SLOT` | Gap (no mechanical gate; EventCatalog-on-Pages task withdrawn under ADR-IC-015 — Backstage is a separate runtime portal, not a Pages static site; see §P5 revision 2026-06-20) |
