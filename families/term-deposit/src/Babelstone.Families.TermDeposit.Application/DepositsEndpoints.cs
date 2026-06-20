@@ -27,8 +27,18 @@ public static class DepositsEndpoints
     public static void Map(IEndpointRouteBuilder app)
     {
         app.MapPost("/v1/deposits", ConstituteAsync);
-        app.MapPost("/v1/deposits/{id:guid}/maturity", MatureAsync);
-        app.MapPost("/v1/deposits/{id:guid}/interest", PayInterestAsync);
+
+        // Irreversible money-movers (maturity, PERIODIC coupon) carry the step-up-SCA gate as a
+        // ROUTE-GROUP property, not per-handler boilerplate: the ScaPreconditionFilter runs in the impure
+        // host shell BEFORE the handler (so before any side effect), reads the gateway-attested
+        // X-SCA-Acr/X-SCA-Auth-Time, and short-circuits 422 SCA_REQUIRED on absent/stale proof (ADR-IC-010
+        // §P8 Q-BE Q1 / ADR-PC-010 §P5 — the pure decider never sees the check). Anything mapped on this
+        // group is gated by construction, so the two money-movers can't drift out of SCA parity; the
+        // ungated siblings below stay on `app`.
+        var moneyMovers = app.MapGroup("/v1/deposits/{id:guid}")
+            .AddEndpointFilter<ScaPreconditionFilter>();
+        moneyMovers.MapPost("/maturity", MatureAsync);
+        moneyMovers.MapPost("/interest", PayInterestAsync);
 
         // Partial early withdrawal (F.12; 02 §2.4.1, bd qze9/9w0g): reduce the principal, leaving the
         // deposit Active. A domain rejection (not Active, within carência, below the minimum, leaving too
@@ -298,24 +308,15 @@ public static class DepositsEndpoints
     private static async Task<IResult> MatureAsync(
         Guid id,
         MatureDepositRequest request,
-        HttpContext http,
         TermDepositConstitutionService service,
         AggregateRuntime<DepositPosition> runtime,
         TimeProvider clock,
         CancellationToken ct)
     {
-        // §P8 step-up-SCA precondition (Q-BE Q1, bd babelstone-ziu3.5): maturity is an irreversible
-        // money-mover, so the engine refuses to settle without FRESH gateway-attested SCA proof
-        // (the AS-signed acr Kong copied into X-SCA-Acr/X-SCA-Auth-Time). Absent/weak/stale => 422
-        // SCA_REQUIRED, which the MCP tool catches to fire the step-up elicitation and retry with a
-        // refreshed token. The trust anchor is the AS signature Kong validated, never the agent's
-        // report — the §P8 invariant. Checked BEFORE any side effect.
-        var sca = ScaPrecondition.Check(http.Request.Headers, clock.GetUtcNow());
-        if (sca is not null)
-        {
-            return sca;
-        }
-
+        // The irreversible-money-mover step-up-SCA gate (ADR-IC-010 §P8 Q-BE Q1) runs as the
+        // ScaPreconditionFilter on this route's group in Map() — in the impure shell, BEFORE any side
+        // effect, off the gateway-attested X-SCA-Acr/X-SCA-Auth-Time. The handler is reached only once
+        // fresh SCA is present, so it stays pure domain orchestration (ADR-PC-010 §P5).
         var command = new MatureDepositCommand(
             DepositId: id,
             MaturedAt: request.MaturedAt ?? clock.GetUtcNow(),
@@ -370,23 +371,15 @@ public static class DepositsEndpoints
     private static async Task<IResult> PayInterestAsync(
         Guid id,
         PayInterestRequest request,
-        HttpContext http,
         TermDepositConstitutionService service,
         AggregateRuntime<DepositPosition> runtime,
         TimeProvider clock,
         CancellationToken ct)
     {
-        // §P8 step-up-SCA precondition (Q-BE Q1, bd babelstone-ziu3.5): a PERIODIC coupon is an
-        // irreversible money-mover, the same class as maturity, so it carries the SAME fresh-SCA gate
-        // (the AS-signed acr Kong attested as X-SCA-Acr/X-SCA-Auth-Time). Absent/weak/stale => 422
-        // SCA_REQUIRED, the MCP tool steps up + retries with a refreshed token. Checked BEFORE any
-        // side effect. SCA parity: a money-mover must not be less guarded than its sibling.
-        var sca = ScaPrecondition.Check(http.Request.Headers, clock.GetUtcNow());
-        if (sca is not null)
-        {
-            return sca;
-        }
-
+        // A PERIODIC coupon is the same irreversible-money-mover class as maturity, so it sits in the
+        // same SCA-gated route group in Map(): the ScaPreconditionFilter enforces fresh gateway-attested
+        // SCA BEFORE any side effect (ADR-IC-010 §P8 / ADR-PC-010 §P5). SCA parity by construction —
+        // both money-movers share one filter, so neither can be less guarded than the other.
         var command = new PayInterestCommand(
             DepositId: id,
             PaidAt: request.PaidAt ?? clock.GetUtcNow(),
