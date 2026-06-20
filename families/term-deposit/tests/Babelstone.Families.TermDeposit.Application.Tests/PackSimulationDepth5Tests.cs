@@ -42,16 +42,21 @@ namespace Babelstone.Families.TermDeposit.Application.Tests;
 /// the budget comfortable.
 /// </para>
 /// <para>
-/// SCOPE NOTE on <c>expected-events.yaml</c>: ADR-PC-007 §P5 names the sealed
-/// <c>expected-events.yaml</c> as the generated artefact this gate would regenerate and
-/// compare against. The bus-published Avro codec enforces strict C#↔.avsc parity and has no
-/// array-of-record support (see <see cref="DepositConstituted"/> remarks), so serialising a
-/// full per-event payload corpus is bus-contract-widening work tracked separately (bd babelstone-vcxq). This gate
-/// therefore asserts the structural EVENT-TYPE sequence each interest shape emits — the
-/// regression-meaningful "did the engine produce the right lifecycle shape from the pack" —
-/// rather than a byte corpus; <c>expected-events.yaml</c> stays the logged-skip placeholder
-/// (pack.sh "generation pending") until that codec work lands. The budget half of the
-/// commitment (&lt; 30 s, the named <c>PACK_SIM_DEPTH5_BUDGET</c> number) is fully exercised.
+/// SEALED CORPUS (<c>expected-events.yaml</c>, F.8 / bd up7t): ADR-PC-007 §P5 names the sealed
+/// <c>expected-events.yaml</c> as the GENERATED artefact this gate regenerates and compares against.
+/// It is now GENERATED and a HARD gate (no longer the logged-skip placeholder): the depth-5 run
+/// replays each canonical instance through the engine substrate, captures every decided event's
+/// financial facts off the durable log (gross / withholding / net per FLOW, principal returned, total
+/// payout, remaining principal — all integer cents), and asserts them field-for-field against the
+/// committed <c>expected-events.yaml</c> via <see cref="AssertOrGenerateExpectedEvents"/>. A single
+/// drifted cent fails CI. The figures are the engine's OWN flow-by-flow math (each coupon withholds
+/// 2800 bp on its own gross, rounded once per cash-flow boundary, then summed — never a rate-scaled
+/// total, financial_concepts §5.4), read back from the store rather than recomputed in the test, so the
+/// corpus cannot be hand-fudged. Regenerate intentionally with <c>BABELSTONE_DEPTH5_GENERATE=1</c>. The
+/// structural event-TYPE sequence is still asserted alongside (<see cref="ExpectedSequenceFor"/>), and
+/// the budget half of the commitment (&lt; 30 s, the named <c>PACK_SIM_DEPTH5_BUDGET</c>) is exercised.
+/// (The bus-published Avro codec's array-of-record limitation, bd babelstone-vcxq, only constrains the
+/// BUS payload; this corpus seals the STORE-side decided figures, which carry no such limit.)
 /// </para>
 /// </remarks>
 [Trait("Category", "Integration")]
@@ -77,6 +82,13 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
 
         var (runtime, service) = Compose(fixture.ConnectionString, EarlyTerminationPolicyFor(corpus));
 
+        // F.8 (bd up7t): the generated sealed corpus of expected event sequences, captured flow-by-flow
+        // from the engine substrate. Each instance's decided events (types + financial cents) are
+        // accumulated here, then either WRITTEN to expected-events.yaml (the explicit regeneration run,
+        // BABELSTONE_DEPTH5_GENERATE=1) or ASSERTED field-for-field against the committed file (the CI
+        // gate — a HARD failure on drift, no logged skip).
+        var captured = new List<(string TestId, string VariantId, IReadOnlyList<CapturedEvent> Events)>();
+
         var sw = Stopwatch.StartNew();
         foreach (var instance in corpus.Instances)
         {
@@ -93,6 +105,12 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
                 $"{instance.TestId} ({instance.VariantId}): expected event sequence " +
                 $"[{string.Join(", ", expectedSequence)}] but the corpus replay produced " +
                 $"[{string.Join(", ", actualSequence)}].");
+
+            // Capture the FULL decided events (types + financial cents, flow-by-flow) for the sealed
+            // expected-events corpus. Read straight off the durable log + deserialized through the family
+            // registry, so the captured figures are exactly what the engine wrote — never recomputed here.
+            captured.Add((instance.TestId, instance.VariantId,
+                await ReadDecidedEventsAsync(fixture.ConnectionString, depositId)));
 
             // The fold rebuilds the expected end position. Most variants mature; the 18-month `resgate
             // escalonado` is driven to a BANDED early termination (its load-bearing behaviour, bd
@@ -132,6 +150,82 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             sw.Elapsed < Depth5Budget,
             $"depth-5 simulation of {corpus.Instances.Count} instances took {sw.Elapsed.TotalMilliseconds:F0} ms, " +
             $"over the §P4 budget of {Depth5Budget.TotalMilliseconds:F0} ms.");
+
+        // F.8 (bd up7t): seal or assert the GENERATED expected-events corpus. The numbers were just
+        // produced by the engine substrate flow-by-flow (the captured InterestPaid/WithholdingApplied
+        // figures are each coupon's own 2800-bp withholding rounded once, never a rate-scaled total —
+        // financial_concepts §5.4), so this leg is now a HARD assertion, not the old logged skip.
+        AssertOrGenerateExpectedEvents(captured);
+    }
+
+    /// <summary>
+    /// The F.8 sealed-corpus gate (bd up7t): compare the freshly-replayed event sequences against the
+    /// committed <c>expected-events.yaml</c>, field-for-field, and FAIL CI on any drift — OR regenerate
+    /// the file when <c>BABELSTONE_DEPTH5_GENERATE=1</c>. The committed corpus is the GENERATED artefact
+    /// (ADR-PC-007 §P5); a single drifted cent (an interest-math regression, a withholding bug, a fold
+    /// change) trips this gate. The empty <c>expected: []</c> placeholder is now rejected loud — the
+    /// depth-5 leg no longer passes as a logged skip.
+    /// </summary>
+    private void AssertOrGenerateExpectedEvents(
+        IReadOnlyList<(string TestId, string VariantId, IReadOnlyList<CapturedEvent> Events)> captured)
+    {
+        var repoRoot = RepoRoot();
+        var path = ExpectedEventsCorpus.Path(repoRoot);
+
+        if (Environment.GetEnvironmentVariable("BABELSTONE_DEPTH5_GENERATE") == "1")
+        {
+            File.WriteAllText(path, ExpectedEventsCorpus.Render(captured));
+            output.WriteLine($"F.8: regenerated sealed corpus at {path} ({captured.Count} instances).");
+            return;
+        }
+
+        var yaml = File.ReadAllText(path);
+        Assert.False(
+            ExpectedEventsCorpus.IsPlaceholder(yaml),
+            $"expected-events.yaml at {path} is still the empty placeholder; regenerate it with " +
+            "BABELSTONE_DEPTH5_GENERATE=1 (F.8, bd up7t — the depth-5 leg is a hard gate, not a logged skip).");
+
+        var expected = ExpectedEventsCorpus.Parse(yaml);
+
+        // Every canonical instance must have a sealed expected sequence (no silently-unsealed instance).
+        foreach (var (testId, variantId, actualEvents) in captured)
+        {
+            Assert.True(
+                expected.TryGetValue(testId, out var expectedEvents),
+                $"{testId} ({variantId}) has no entry in the sealed expected-events.yaml; regenerate with " +
+                "BABELSTONE_DEPTH5_GENERATE=1 (F.8, bd up7t).");
+
+            Assert.True(
+                expectedEvents!.Count == actualEvents.Count
+                && expectedEvents.Zip(actualEvents).All(p => p.First.Matches(p.Second)),
+                $"{testId} ({variantId}): the replayed event sequence drifted from the sealed corpus.\n" +
+                $"  sealed:   [{string.Join("; ", expectedEvents.Select(e => e.Describe()))}]\n" +
+                $"  replayed: [{string.Join("; ", actualEvents.Select(e => e.Describe()))}]");
+        }
+
+        // And the corpus must not seal an instance the run no longer produces (a deleted canonical input).
+        var ran = captured.Select(c => c.TestId).ToHashSet(StringComparer.Ordinal);
+        foreach (var sealedId in expected.Keys)
+        {
+            Assert.True(
+                ran.Contains(sealedId),
+                $"expected-events.yaml seals '{sealedId}', which the depth-5 run did not produce; " +
+                "regenerate with BABELSTONE_DEPTH5_GENERATE=1 (F.8, bd up7t).");
+        }
+    }
+
+    /// <summary>The repo root (carrying packs/pt.2026.1/pack.yaml) — the sealed corpus lives under it.</summary>
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "packs", "pt.2026.1", "pack.yaml")))
+        {
+            dir = dir.Parent;
+        }
+
+        return dir?.FullName
+            ?? throw new InvalidOperationException(
+                $"repo root (containing packs/pt.2026.1/pack.yaml) not found from {AppContext.BaseDirectory}");
     }
 
     /// <summary>
@@ -341,6 +435,33 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
         }
 
         return types;
+    }
+
+    /// <summary>
+    /// Read the committed events off the append-only log, in sequence order, DESERIALIZE each through the
+    /// family registry + the same JSON codec the runtime writes with, and capture its sealed financial
+    /// facts (F.8, bd up7t). The figures are exactly what the engine wrote — read back from the durable
+    /// store, never recomputed in the test — so the sealed corpus reflects the engine's flow-by-flow math.
+    /// </summary>
+    private static async Task<IReadOnlyList<CapturedEvent>> ReadDecidedEventsAsync(string connectionString, Guid depositId)
+    {
+        var store = new PostgresEventStore(connectionString);
+        var registry = TermDepositFamilyModule.Registry();
+        var serializer = new JsonEventSerializer();
+        var events = new List<CapturedEvent>();
+        await foreach (var envelope in store.LoadAsync(depositId))
+        {
+            if (!registry.TryResolveByEventType(envelope.EventType, out var registration))
+            {
+                throw new InvalidOperationException(
+                    $"no handler registration for stored event type '{envelope.EventType}' on stream {depositId}.");
+            }
+
+            var decided = serializer.Decode(envelope.Payload, registration.PayloadType);
+            events.Add(ExpectedEventsCorpus.Capture(decided));
+        }
+
+        return events;
     }
 
     /// <summary>One sheet pricing every corpus product at the rate that instance pins — the
