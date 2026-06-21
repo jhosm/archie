@@ -1,0 +1,87 @@
+asyncapi: '3.0.0'
+info:
+  title: LoanSettled
+  version: '1'
+  description: |
+    The loan is fully amortized and settled (terminal): the outstanding balance has reached
+    zero, either through the final scheduled installment or a full early repayment. Carries
+    the total capital repaid (= the original principal) and the total interest paid over the
+    loan's life. The closed-end-asset analogue of term_deposit.DepositMatured — but a loan
+    settles when its capital is fully returned, not at a fixed maturity date.
+
+    Emitted: exactly once, when the engine processes the installment or early repayment that
+    drives the outstanding balance to zero and the aggregate transitions to a terminal Settled
+    state.
+
+    NOT emitted: on a write-off (a distinct terminal transition, the store-internal
+    LoanWrittenOff — no .avsc), nor while any capital is still outstanding.
+
+    No PII (ADR-PC-004 §P2): the payload carries only computed cents totals and the settlement
+    date.
+  x-owner: credito-pessoal
+  x-owner-contact: loans-team@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: CONTRACT_PERFORMANCE
+  x-authorized-consumers:
+    - acl                 # downstream core-banking loan-closure projection (ADR-IC-012)
+    - notification        # borrower-facing settlement/closure confirmation (ADR-IC-011)
+channels:
+  credito_pessoal:
+    description: |
+      Event-carried-state-transfer stream for the credito_pessoal aggregate. Topic name ==
+      `aggregate_type` (the relay's documented convention, OutboxDrainer). One Avro schema
+      per event type (Option A, doc 08): each event is its own message on this channel.
+    x-compacted: false
+    messages:
+      LoanSettled:
+        $ref: '#/components/messages/LoanSettled'
+operations:
+  publishLoanSettled:
+    action: send
+    channel:
+      $ref: '#/channels/credito_pessoal'
+    messages:
+      - $ref: '#/channels/credito_pessoal/messages/LoanSettled'
+components:
+  messages:
+    LoanSettled:
+      name: LoanSettled
+      title: Loan Settled
+      summary: The loan is fully amortized and settled (terminal).
+      contentType: application/avro
+      bindings:
+        kafka:
+          # CloudEvents 1.0 Binary Content Mode — attributes ride as Kafka headers
+          # (OutboxDrainer.BuildHeaders); the value is the Avro business payload. No PII
+          # (ADR-PC-004 §P2).
+          key:
+            type: string
+            description: 'aggregate_id (LoanId) — the Kafka record key.'
+          bindingVersion: '0.5.0'
+      headers:
+        type: object
+        required:
+          - ce_specversion
+          - ce_id
+          - ce_source
+          - ce_type
+          - ce_time
+          - ce_subject
+          - ce_aggregatetype
+          - ce_datacontenttype
+        properties:
+          ce_specversion:      { type: string, const: '1.0' }
+          ce_id:               { type: string, format: uuid, description: 'Unique event ID (outbox event_id).' }
+          ce_source:           { type: string, description: 'URI of the producing service, e.g. urn:babelstone:engine.' }
+          ce_type:             { type: string, description: 'Reverse-DNS event type, e.g. com.bank.loans.LoanSettled.' }
+          ce_time:             { type: string, format: date-time }
+          ce_datacontenttype:  { type: string, const: 'application/avro' }
+          ce_subject:          { type: string, description: 'aggregate_id — the specific loan this event is about.' }
+          ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. credito_pessoal.' }
+      # §P6: payload is the governed Avro schema, referenced (not restated). The PR gate
+      # resolves the .avsc on disk hermetically; the main lane reconciles the subject below.
+      x-schema-registry-subject: loans.credito_pessoal.LoanSettled-value
+      payload:
+        schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
+        schema:
+          $ref: '../../avro/loans/credito_pessoal/LoanSettled.avsc'

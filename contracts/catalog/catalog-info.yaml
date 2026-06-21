@@ -40,6 +40,20 @@ spec:
 apiVersion: backstage.io/v1alpha1
 kind: Location
 metadata:
+  name: babelstone-credito-pessoal-events
+  description: The governed AsyncAPI catalogue of the credito_pessoal (personal-loan) integration events.
+spec:
+  type: url
+  targets:
+    - ./events/LoanDisbursed.asyncapi.yaml
+    - ./events/LoanInstallmentPaid.asyncapi.yaml
+    - ./events/LoanRepaidEarly.asyncapi.yaml
+    - ./events/LoanSettled.asyncapi.yaml
+    - ./events/credito_pessoal.PersonalDataErasureRequested.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
   name: babelstone-reconciliation-contracts
   description: The per-consumer reconciliation contracts (event-store §7.3).
 spec:
@@ -100,6 +114,75 @@ spec:
   owner: term-deposit
   definition:
     $text: ./events/PersonalDataErasureRequested.asyncapi.yaml
+---
+# The credito_pessoal (personal-loan) integration events (ADR-PC-031). The closed-end-asset
+# family's published events: disburse -> amortize (installments / early repayment) -> settle,
+# plus the cross-cutting GDPR erasure. LoanDisbursementFailed and LoanWrittenOff are
+# store-internal only (no .avsc, no catalogue entry — they never ride the durable bus).
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: loan-disbursed
+  title: LoanDisbursed
+  description: The personal loan is disbursed — lump-sum principal out, the amortization schedule fixed.
+spec:
+  type: asyncapi
+  lifecycle: production
+  owner: credito-pessoal
+  definition:
+    $text: ./events/LoanDisbursed.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: loan-installment-paid
+  title: LoanInstallmentPaid
+  description: One scheduled installment is paid — the interest/capital split and the amortizing balance.
+spec:
+  type: asyncapi
+  lifecycle: production
+  owner: credito-pessoal
+  definition:
+    $text: ./events/LoanInstallmentPaid.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: loan-repaid-early
+  title: LoanRepaidEarly
+  description: Early repayment (reembolso antecipado) of outstanding capital plus the legally-capped commission.
+spec:
+  type: asyncapi
+  lifecycle: production
+  owner: credito-pessoal
+  definition:
+    $text: ./events/LoanRepaidEarly.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: loan-settled
+  title: LoanSettled
+  description: The loan is fully amortized and settled (terminal) — total capital and interest paid.
+spec:
+  type: asyncapi
+  lifecycle: production
+  owner: credito-pessoal
+  definition:
+    $text: ./events/LoanSettled.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: credito-pessoal-personal-data-erasure-requested
+  title: PersonalDataErasureRequested (credito_pessoal)
+  description: GDPR right-to-be-forgotten on a loan — the subject's PII key was crypto-shredded (ADR-PC-004 §P3).
+spec:
+  type: asyncapi
+  lifecycle: production
+  owner: credito-pessoal
+  definition:
+    $text: ./events/credito_pessoal.PersonalDataErasureRequested.asyncapi.yaml
 ---
 # The per-consumer reconciliation contracts (event-store §7.3, bd babelstone-y1t7). Each is
 # a consumer's declared statement of what it reconciles against the engine's emitted events;
