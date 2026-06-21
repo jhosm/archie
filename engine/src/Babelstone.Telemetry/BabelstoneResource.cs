@@ -32,6 +32,13 @@ public static class BabelstoneResource
     /// under one estate namespace.</summary>
     public const string OrchestratorServiceName = "babelstone-orchestrator";
 
+    /// <summary>The notification worker host's <c>service.name</c> (ADR-IC-011 / ADR-IC-013 in-house
+    /// estate). The per-service outbox worker that reads the engine's term-deposit projections over
+    /// the ADR-IC-005 read surface; its spans (opened on the SHARED <c>Babelstone.Engine</c> source)
+    /// carry this identity, so the notification service shows up as a distinct service under the one
+    /// estate namespace alongside the engine and orchestrator.</summary>
+    public const string NotificationServiceName = "babelstone-notification";
+
     /// <summary>
     /// Resolves <c>deployment.environment</c> from <c>DOTNET_ENVIRONMENT</c>, then
     /// <c>ASPNETCORE_ENVIRONMENT</c>. <b>Fails fast</b>: when neither variable is set (or both are

@@ -1,0 +1,88 @@
+<!-- The /notification worker host (ADR-IC-011 runtime — .NET, stack-coherent with the engine;
+     ADR-IC-013 in-house estate placement). A per-service OUTBOX worker (ADR-IC-004): a
+     BackgroundService poll-loop host shell, NOT an HTTP API — so Microsoft.NET.Sdk.Worker
+     (the IHostedService host, the same hosted-BackgroundService shape the engine's outbox relay
+     and the orchestrator's consume loop use), NOT Microsoft.NET.Sdk.Web.
+
+     This skeleton stands up the host + the ADR-IC-005 projection READ access only. There is NO
+     scheduler timing and NO event emission yet — those are the downstream children
+     (babelstone-60n8.2 / .3). The host carries no Confluent/outbox-publish surface yet; it will
+     gain the emission leg with its own build task.
+
+     Extraction-ready subtree (ADR-PC-019 §P2): the host carries its OWN copy of the shared engine
+     build settings (it does not inherit engine/Directory.Build.props), exactly as the orchestrator
+     subtree does. The project references below are the small, leaf engine surfaces it needs to read
+     the projections — never the heavy outbox/Avro/Confluent surface. -->
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Babelstone.Notification</RootNamespace>
+    <AssemblyName>Babelstone.Notification</AssemblyName>
+
+    <!-- Shared engine build settings (mirrors the orchestrator host csproj; the notification
+         subtree is extraction-ready per ADR-PC-019 §P2, so it carries its own copy rather than
+         inheriting the engine's). Runtime pinned by ADR-IC-011 — .NET, the same language as the
+         engine (ADR-PC-010 §.NET 10 LTS). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Doc COVERAGE is a docs concern, not a build gate (same stance as the engine/orchestrator):
+         CS1591/CS1573 suppressed, doc ROT (malformed XML, broken refs) still fails. -->
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- BackgroundService/IHostedService + Host.CreateApplicationBuilder (the §5.1 worker host
+         shell). The Microsoft.NET.Sdk.Worker normally adds this implicitly, but the repo-wide
+         central package management (Directory.Packages.props, ManagePackageVersionsCentrally) means
+         the implicit, version-less reference is pruned — so it is named explicitly here (version
+         pinned centrally), the same way the orchestrator/OutboxPublisher hosts name their Hosting
+         dependency. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The CQRS read surface (ADR-IC-005): the engine materialises its read models into
+         PostgreSQL — the SOLE read-model storage technology — so the notification service reads
+         the projections straight from that store. The byte-oriented projection boundary
+         (IProjectionStorage / PostgresProjectionStore) lives in Babelstone.EventStore (Npgsql-only,
+         no Confluent/engine-kernel surface), so referencing it keeps the subtree extraction-ready. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.EventStore/Babelstone.EventStore.csproj" />
+    <!-- The TYPED bitemporal query helper (ADR-PC-002 §P3) + the deterministic JSON state
+         serializer the projections were written with: BitemporalProjectionQuery<TState> and
+         JsonStateSerializer<TState> live in Babelstone.Engine. This is the read-side query layer
+         over the byte store above — the notification host reads the current-belief projection row
+         and deserializes it into the family's state type, identical to how the engine reads its own
+         projections. The reference also pulls Babelstone.Telemetry transitively (the shared
+         ActivitySource). -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <!-- The term-deposit family's projection STATE types + their family-prefixed projection-kind
+         discriminators (MaturityCalendar / AccrualSchedule / WithholdingLedger and the
+         *Kind constants on TermDepositProjectionModule). A worker host that READS a family's
+         projections must name that family's state type to deserialize it — the same standing,
+         intended exemption the orchestrator host takes as the ADR-IC-018 §D4 composition root
+         (ADR-PC-021 §A2 pattern): a HOST may reference a family/** project; the engine SPINE may
+         not. The notification subtree stays extraction-ready (it sheds no engine-kernel reference
+         the family does not already carry). -->
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
+
+    <!-- The host-side OTel-SDK seam (ADR-IC-007 Layer 1): this composition root registers the
+         TracerProvider + OTLP exporter so spans the host opens on the shared Babelstone.Engine
+         ActivitySource (above, via the Telemetry transitive reference) are actually created and
+         exported to the Collector (§P1 — never direct-to-backend). Mirrors the engine API /
+         orchestrator host wiring; kept out of the SDK-free Babelstone.Telemetry leaf
+         (ADR-PC-019 §P2). -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <!-- Npgsql's BUILT-IN OTel query instrumentation (ADR-IC-007 Layer 1, K.5): the host-only seam
+         (Babelstone.Telemetry.Hosting) that registers the Npgsql ActivitySource so each projection
+         read becomes a CLIENT span + feeds db.client.operation.duration. Confined to host projects
+         so the engine spine never gains the Npgsql.OpenTelemetry dependency. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
+  </ItemGroup>
+</Project>

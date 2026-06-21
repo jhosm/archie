@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The notification host under test. The reader's projection-read access is asserted
+         Docker-free over an in-memory IProjectionStorage fake — the SAME pattern the engine's
+         BitemporalProjectionQueryTests use — so this runs in the default no-container lane. The
+         end-to-end read against a real PostgreSQL projections table is the engine's
+         BitemporalProjectionQueryIntegrationTests' job; here we assert the notification reader keys
+         each read on the right family-prefixed projection kind and maps the typed state. -->
+    <ProjectReference Include="../../src/Babelstone.Notification/Babelstone.Notification.csproj" />
+  </ItemGroup>
+</Project>

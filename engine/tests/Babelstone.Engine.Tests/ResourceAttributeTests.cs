@@ -28,6 +28,8 @@ public sealed class ResourceAttributeTests
     [Theory]
     [InlineData("babelstone-engine-api")]
     [InlineData("babelstone-rate-sheets-api")]
+    [InlineData("babelstone-orchestrator")]
+    [InlineData("babelstone-notification")]
     public void Host_resource_carries_service_name_namespace_and_environment(string serviceName)
     {
         var attributes = WithEnvironment("Staging", () =>

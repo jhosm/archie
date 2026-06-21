@@ -44,6 +44,11 @@
     <!-- The family-AGNOSTIC saga substrate (ADR-IC-018 §P1/§P2): the runtime + stores + ports +
          ISagaModule plug-in, carrying no families/** or engine-kernel reference. -->
     <Project Path="../orchestrator/src/Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
+    <!-- The in-house notification worker (ADR-IC-011, DEF-2 / bd babelstone-60n8.1): a per-service
+         outbox-worker host (ADR-IC-004) that reads the engine's term-deposit projections over the
+         ADR-IC-005 read surface. An extraction-ready subtree (ADR-PC-019 §P2) that builds with the
+         engine pipeline; no scheduler timing or emission yet (those are downstream children). -->
+    <Project Path="../notification/src/Babelstone.Notification/Babelstone.Notification.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <!-- Shared test-support library (ic10): the single Redpanda Testcontainers fixture both the
@@ -72,6 +77,10 @@
          integration tests (the latter [Trait("Category","Integration")], filtered out of the
          default lane). -->
     <Project Path="../orchestrator/tests/Babelstone.Orchestrator.Tests/Babelstone.Orchestrator.Tests.csproj" />
+    <!-- DEF-2 notification (bd babelstone-60n8.1): Docker-free reader tests over an in-memory
+         IProjectionStorage fake — the reader keys each of the three projection reads on the right
+         family-prefixed kind and maps the typed state (ADR-IC-005 read surface). -->
+    <Project Path="../notification/tests/Babelstone.Notification.Tests/Babelstone.Notification.Tests.csproj" />
     <!-- L.1 load harness smoke/self-test (ADR-PC-011): Docker-free determinism + envelope + observer tests. -->
     <Project Path="load/Babelstone.LoadHarness.Tests/Babelstone.LoadHarness.Tests.csproj" />
     <!-- L.3a–d runner component tests (ADR-PC-011, bd babelstone-2e6q.1..4): Docker-free arg-parsing,
