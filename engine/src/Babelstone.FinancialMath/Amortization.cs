@@ -3,8 +3,8 @@ using Babelstone.FinancialTypes;
 namespace Babelstone.FinancialMath;
 
 /// <summary>
-/// One row of a French-system (constant-installment / <i>sistema francês</i>) amortization
-/// schedule — the <i>quadro de amortização</i> a closed-end loan repays against (fin-math §3, §4.1).
+/// One row of a French-system (constant-installment) amortization
+/// schedule — the amortization table a closed-end loan repays against (fin-math §3, §4.1).
 /// Every monetary leg is integer cents (<see cref="Money"/>, ADR-PC-010 §P1): the period interest
 /// <see cref="Interest"/>, the capital amortized <see cref="Capital"/>, the level installment
 /// <see cref="Installment"/> (Interest + Capital), and the <see cref="ClosingBalance"/> left after it.
@@ -41,7 +41,7 @@ public sealed record AmortizationRow(
 /// integer capital. This conserves cents period-to-period — a schedule never drifts, and the sum of the
 /// capital legs equals the principal to the cent. The <b>final</b> installment is adjusted to whatever
 /// clears the remaining balance exactly (<c>capital = openingBalance</c>, <c>installment = interest +
-/// openingBalance</c>), absorbing the accumulated penny rounding — the standard <i>quadro</i> convention.
+/// openingBalance</c>), absorbing the accumulated penny rounding — the standard amortization-table convention.
 /// </para>
 /// <para>
 /// <b>Periodic rate, not annual.</b> Callers pass the PERIODIC rate in basis points
@@ -97,7 +97,7 @@ public static class Amortization
     }
 
     /// <summary>
-    /// The full French-system amortization schedule (the <i>quadro de amortização</i>, fin-math §4.1):
+    /// The full French-system amortization schedule (fin-math §4.1):
     /// <c>n</c> rows, each carrying the opening balance, the period interest <c>J(t) = S(t-1) × r</c>,
     /// the capital amortized <c>A(t) = P − J(t)</c>, the installment, and the closing balance
     /// <c>S(t) = S(t-1) − A(t)</c>. The headline installment is <see cref="LevelInstallment"/>; the
@@ -108,7 +108,7 @@ public static class Amortization
     /// The FINAL row is the balancing row: rather than re-apply the level installment (which would
     /// leave a few stray cents from accumulated rounding), it amortizes whatever capital remains
     /// (<c>capital = openingBalance</c>) and its installment is <c>interest + openingBalance</c>. This
-    /// is the universal <i>quadro</i> convention and the reason the schedule conserves to zero.
+    /// is the universal amortization-table convention and the reason the schedule conserves to zero.
     /// </remarks>
     /// <param name="principal">The disbursed capital <c>C</c>.</param>
     /// <param name="periodicRateBps">The PERIODIC rate <c>r</c> in basis points (<c>TAN_bps / m</c>).</param>
@@ -216,7 +216,7 @@ public static class Amortization
     }
 
     /// <summary>
-    /// The legally-capped early-repayment commission (<i>comissão de reembolso antecipado</i>, fin-math
+    /// The legally-capped early-repayment commission (fin-math
     /// §7.5; PT Decreto-Lei n.º 133/2009 art. 19, consumer credit): a percentage of the capital repaid,
     /// CAPPED at the statutory ceiling, and additionally never exceeding the interest the borrower would
     /// otherwise have paid over the remaining term (the §7.5 ceiling). The borrower pays back the capital

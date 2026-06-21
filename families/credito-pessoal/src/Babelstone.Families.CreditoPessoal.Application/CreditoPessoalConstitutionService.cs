@@ -167,7 +167,7 @@ public sealed class CreditoPessoalConstitutionService(
     }
 
     /// <summary>
-    /// Repay a loan early (<i>reembolso antecipado</i>, fin-math §7.5): rehydrate it (must be Active),
+    /// Repay a loan early (fin-math §7.5): rehydrate it (must be Active),
     /// resolve the capped commission by the remaining-term band, COLLECT the repaid capital + commission, and
     /// append the <see cref="LoanRepaidEarly"/> — paired with a closing <see cref="LoanSettled"/> for a FULL
     /// repayment (the balance reaches zero). The capped-commission math lives in the pure decider; the cap is

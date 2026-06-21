@@ -4,8 +4,8 @@
 //
 // One coarse `credito_pessoal` schema covers the v1 shape of a PT personal loan: a fixed
 // principal disbursed as a lump sum and amortized over `term_months` equal monthly installments
-// on the French (constant-installment / sistema francês) schedule (fin-math §4.1), with a
-// legally-capped early repayment (reembolso antecipado, fin-math §7.5). Splitting into focused
+// on the French (constant-installment) schedule (fin-math §4.1), with a
+// legally-capped early repayment (fin-math §7.5). Splitting into focused
 // per-shape schemas is a later, quarterly-cadence move triggered by union accumulation
 // (authoring §3.1) — not done on day one.
 //
@@ -36,13 +36,13 @@ package family
 	// monthly installments only; other cadences are a fine-drift extension.
 	term_months: int & >0
 
-	// --- finalidade / purpose (research/credito-pessoal/02 §2) ----------
+	// --- purpose (research/credito-pessoal/02 §2) ----------------------
 	// The loan PURPOSE selects the legal TAEG ceiling bucket: lower-cap purposes
 	// (education / health / renewables / equipment) price under a lower legal
-	// ceiling than a general-purpose (sem finalidade específica) loan. A closed
+	// ceiling than a general-purpose loan (no stated purpose). A closed
 	// enum — the engine owns the taxonomy; the pack restricts which a jurisdiction
 	// permits (a depth-4 pack-bound check, not expressible here without the pack).
-	finalidade: #Finalidade
+	purpose: #Purpose
 
 	// --- rate (resolved at disbursement, never inline) ------------------
 	// The numeric TAN is never inline: the variant carries a rate-sheet reference
@@ -51,7 +51,7 @@ package family
 	// not a stepped vector. Variable-rate reset is a later extension.
 	rate: #FixedRate
 
-	// --- early repayment: the capped reembolso antecipado (fin-math §7.5) -
+	// --- early repayment: the capped early-repayment commission (fin-math §7.5) -
 	// The commission the product charges on an early repayment, in basis points.
 	// The PT consumer-credit STATUTORY ceiling (0.50% with >1y remaining, 0.25%
 	// with ≤1y) is enforced engine-side by the decider (it caps `min(charged,
@@ -76,11 +76,11 @@ package family
 	effective_from?: =~"^[0-9]{4}-[0-9]{2}-[0-9]{2}$" // ISO-8601 date
 }
 
-// #Finalidade — the engine-owned CLOSED taxonomy of loan-purpose categories
+// #Purpose — the engine-owned CLOSED taxonomy of loan-purpose categories
 // (research/credito-pessoal/02 §2). `general` is the higher-cap, no-stated-purpose
 // bucket; the rest are the lower-cap eligible purposes (DL 133/2009 art. 28). A value
 // the schema does not declare fails depth 1.
-#Finalidade: "general" | "education" | "health" | "renewables" | "equipment"
+#Purpose: "general" | "education" | "health" | "renewables" | "equipment"
 
 // #FixedRate — a single rate-sheet reference resolved at disbursement (v1 loans are
 // fixed-rate). Closed: a variant adding a stepped vector here fails depth 1.
@@ -90,7 +90,7 @@ package family
 	}
 }
 
-// #EarlyRepayment — the reembolso antecipado commission the product charges. The
+// #EarlyRepayment — the early-repayment commission the product charges. The
 // CHARGED rate is bounded to the >1y statutory ceiling (≤50 bps); the runtime decider
 // applies the tighter remaining-term cap (0.25% ≤1y) and the lost-interest ceiling
 // (fin-math §7.5). 0 ⇒ the product charges no early-repayment commission.
@@ -113,8 +113,8 @@ package family
 
 // #LoanPreconditionKey — the engine-owned CLOSED taxonomy of loan commercial-eligibility
 // verdict keys a product may require (ADR-PC-024 §1, §6). For a loan these are
-// ORIGINATION-shaped: the upstream solvency assessment and CRC (Central de Responsabilidades
-// de Crédito) consultation that ADR-PC-030 / ADR-PC-024 keep UPSTREAM, resolved into the
+// ORIGINATION-shaped: the upstream solvency assessment and CRC (Central Credit Register)
+// consultation that ADR-PC-030 / ADR-PC-024 keep UPSTREAM, resolved into the
 // disbursement command as opaque { satisfied, evidence_ref, evaluated_at } verdicts the engine
 // never re-evaluates. The engine RECORDS the decision for audit; it never MAKES it
 // (ADR-PC-030 §P1: origination is upstream).

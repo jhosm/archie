@@ -150,7 +150,7 @@ kind: API
 metadata:
   name: loan-repaid-early
   title: LoanRepaidEarly
-  description: Early repayment (reembolso antecipado) of outstanding capital plus the legally-capped commission.
+  description: Early repayment of outstanding capital plus the legally-capped commission.
 spec:
   type: asyncapi
   lifecycle: production

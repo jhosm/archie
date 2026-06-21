@@ -32,7 +32,7 @@ public sealed record PreconditionVerdict(
 /// <param name="TermMonths">The number of monthly installments the loan amortizes over.</param>
 /// <param name="StartDate">The disbursement date — the schedule anchor.</param>
 /// <param name="DisbursedAt">The instant the sheet is resolved as-of and the event's valid time.</param>
-/// <param name="Finalidade">The loan purpose/<i>finalidade</i> category (e.g. <c>general</c>,
+/// <param name="Purpose">The loan purpose category (e.g. <c>general</c>,
 /// <c>education</c>) — selects the legal TAEG ceiling bucket (research/credito-pessoal/02 §2). Not PII.</param>
 /// <param name="DisbursementAccount">The opaque account token the lump sum is credited to (a reference,
 /// NOT an IBAN — ADR-PC-004 §P2).</param>
@@ -53,7 +53,7 @@ public sealed record DisburseLoanCommand(
     int TermMonths,
     DateOnly StartDate,
     DateTimeOffset DisbursedAt,
-    string Finalidade,
+    string Purpose,
     string DisbursementAccount,
     string Actor,
     int EarlyRepaymentCommissionBps = 50,
@@ -78,7 +78,7 @@ public sealed record PayInstallmentCommand(
     string Actor,
     Guid CommandId);
 
-/// <summary>Repay a loan early (<i>reembolso antecipado</i>, fin-math §7.5): a partial or full prepayment
+/// <summary>Repay a loan early (fin-math §7.5): a partial or full prepayment
 /// of the outstanding capital, plus the LEGALLY-CAPPED early-repayment commission. The commission rate is
 /// resolved by the service from the gates PINNED on the loan at constitution and the statutory cap for the
 /// remaining-term band (0.50% &gt;1y, 0.25% ≤1y); the pure decider takes the resolved figures as inputs.

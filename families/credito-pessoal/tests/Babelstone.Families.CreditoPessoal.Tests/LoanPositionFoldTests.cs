@@ -144,7 +144,7 @@ public sealed class LoanPositionFoldTests
         InstallmentAmount: new Money(86_066),
         StartDate: new DateOnly(2026, 1, 1),
         FirstInstallmentDate: new DateOnly(2026, 2, 1),
-        Finalidade: "general",
+        Purpose: "general",
         ProductCode: "cp_pt_general_12m",
         DisbursementAccount: "acct-token-1",
         EarlyRepaymentCommissionBps: 50);

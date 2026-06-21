@@ -78,7 +78,7 @@ public static class CreditoPessoalDecider
             InstallmentAmount: installment,
             StartDate: command.StartDate,
             FirstInstallmentDate: command.StartDate.AddMonths(1),
-            Finalidade: command.Finalidade,
+            Purpose: command.Purpose,
             ProductCode: command.ProductId,
             DisbursementAccount: command.DisbursementAccount,
             EarlyRepaymentCommissionBps: command.EarlyRepaymentCommissionBps);
@@ -160,7 +160,7 @@ public static class CreditoPessoalDecider
     }
 
     /// <summary>
-    /// Decide an early repayment (<i>reembolso antecipado</i>, fin-math §7.5): repay
+    /// Decide an early repayment (fin-math §7.5): repay
     /// <paramref name="repaymentAmount"/> of the outstanding capital plus the LEGALLY-CAPPED commission.
     /// The commission is <c>min(charged_bps, statutory_cap_bps) × capitalRepaid</c>, further capped at the
     /// interest the borrower would still have paid (the §7.5 ceiling), via

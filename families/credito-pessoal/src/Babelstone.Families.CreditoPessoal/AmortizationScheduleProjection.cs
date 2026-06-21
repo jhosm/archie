@@ -4,7 +4,7 @@ using Babelstone.FinancialTypes;
 namespace Babelstone.Families.CreditoPessoal;
 
 /// <summary>One installment as it was RECORDED on the stream — a single <c>LoanInstallmentPaid</c>
-/// (one row of the <i>quadro de amortização</i> as actually paid) or an early-repayment leg.</summary>
+/// (one row of the amortization schedule as actually paid) or an early-repayment leg.</summary>
 /// <remarks>
 /// The schedule projection is descriptive, never prescriptive: it records the interest/capital split
 /// the command-side amortization kernel already computed and stamped on the event (ADR-PC-010 §P1).
@@ -28,7 +28,7 @@ public sealed record AmortizationEntry(
     string Source);
 
 /// <summary>
-/// The amortization-schedule projection (the <i>quadro de amortização</i> as actually paid): the
+/// The amortization-schedule projection (the schedule as actually paid): the
 /// per-stream timeline of installment + early-repayment flows for a loan, folded from the family's
 /// balance-changing events. Kind <c>credito_pessoal.amortization_schedule</c>;
 /// <see cref="ProjectionMode.Async"/> like every v1 projection. Modelled as a state record holding a

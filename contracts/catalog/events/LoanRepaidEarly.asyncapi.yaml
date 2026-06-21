@@ -3,7 +3,7 @@ info:
   title: LoanRepaidEarly
   version: '1'
   description: |
-    The borrower repays the loan early (reembolso antecipado): a partial or full prepayment
+    The borrower repays the loan early: a partial or full prepayment
     of the outstanding capital plus the LEGALLY-CAPPED early-repayment commission. The
     commission is computed command-side as min(charged, statutory_cap) × capital_repaid,
     capped further at the interest the borrower would still have paid (the lost-interest

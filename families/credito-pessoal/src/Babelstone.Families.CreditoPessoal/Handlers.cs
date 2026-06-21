@@ -24,7 +24,7 @@ public sealed class LoanDisbursedHandler : IEventHandler<LoanPosition, LoanDisbu
             InstallmentAmount = @event.InstallmentAmount,
             StartDate = @event.StartDate,
             FirstInstallmentDate = @event.FirstInstallmentDate,
-            Finalidade = @event.Finalidade,
+            Purpose = @event.Purpose,
             ProductCode = @event.ProductCode,
             DisbursementAccount = @event.DisbursementAccount,
             EarlyRepaymentCommissionBps = @event.EarlyRepaymentCommissionBps,
