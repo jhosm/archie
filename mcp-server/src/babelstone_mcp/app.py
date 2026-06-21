@@ -46,6 +46,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from .server import mcp
+from .telemetry import instrument_asgi_app
 
 # RFC 9728 well-known path. Public (unauthenticated) so clients can discover the authorization
 # server before they have a token — the matching Kong route disables the jwt plugin on it.
@@ -173,8 +174,12 @@ def build_app() -> ASGIApp:
 
     ``mcp.streamable_http_app()`` yields the Starlette app carrying the ``/mcp`` route and the
     well-known route registered above via ``@mcp.custom_route``; we add the audience middleware in
-    front of it (ADR-IC-010 §P3/§P5).
+    front of it (ADR-IC-010 §P3/§P5), then wrap the whole stack in the OpenTelemetry ASGI middleware
+    (ADR-IC-007 Layer 1, bd babelstone-scd2.1) so every inbound MCP request becomes a SERVER span on
+    the ``service.namespace=babelstone`` resource — the root of the MCP→engine distributed trace. The
+    OTel wrap is OUTERMOST so the span also covers the audience check; it is a best-effort no-op when
+    the OTel SDK is not installed (``telemetry.instrument_asgi_app``).
     """
     app: Starlette = mcp.streamable_http_app()
     app.add_middleware(AudienceMiddleware)
-    return app
+    return instrument_asgi_app(app)
