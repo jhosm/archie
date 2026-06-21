@@ -1,82 +1,114 @@
-# babelstone — Banking Ecosystem Reference Library
+# babelstone
 
-A collection of documentation series covering different dimensions of a banking ecosystem. Each series is self-contained and addresses a distinct concern; they share a common example domain — a Portuguese retail banking environment — but can be read independently.
+**A reference for building a modern core banking product engine — the architecture written down, and the working code that proves it.**
 
-The three series answer three distinct questions:
+babelstone is two things in one repository. It is a **documentation library** that explains, from first principles, how to build a configurable banking product engine and integrate it into a real bank's estate. And it is a **working implementation** of that engine — an event-sourced .NET kernel, its boundary services, the contracts that hold them together, and a dev stack you can run end-to-end. The docs are the reasoning; the code is the proof the reasoning holds.
 
-- [financial_concepts/](./docs/product-management/financial_concepts/banking_products_financial_mathematics.md) — **what math is correct**
-- [product_concepts/](./docs/product-management/product_concepts/README.md) — **what configurable product implements that math**
-- [integration_concepts/](./docs/product-management/integration_concepts/00-introduction-and-decisions.md) — **how that product integrates with the bank**
+Everything is grounded in one concrete example: a **Portuguese term deposit** (*depósito a prazo*). The patterns are general — they apply to loans, mortgages, current accounts, and cards just as well — but the running example is specific enough to make every decision real and exercise the whole system end to end.
 
-> **Looking something up?** Beyond the concern-axis series above, the [**generated reference**](./docs/product-docs/reference/README.md) collects machine-derived lookup material — event payloads, family schemas, the MCP tool surface, a cross-namespace ADR index, and the glossary — rendered from the contracts and regenerated-and-diffed in CI so it cannot drift (`make docs-gen` / `make docs-verify`). The documentation architecture is [ADR-PC-022](./docs/product-management/product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md).
+> **New here?** Skim [Documentation](#documentation) for the *why*, then jump to [Quickstart](#quickstart) to run the engine. If you're contributing, start with [CLAUDE.md](./CLAUDE.md) (also mirrored as [AGENTS.md](./AGENTS.md) for non-Claude agents).
 
 ---
 
-## Series
+## What's in here
 
-### financial_concepts/ — Financial Mathematics of Banking Products
+This is a **hybrid docs + code monorepo**. The two halves are deliberately co-located so the architecture and its implementation can never drift apart silently.
 
-A conceptual reference for the financial mathematics underlying retail banking products. It establishes a unifying framework — sequences of cash flows, present value, IRR — and develops it across the main product families: term deposits, loan amortization (French, German, and constant-amortization systems), current accounts, and credit cards.
+- **The docs** (`docs/`) answer three questions about a banking ecosystem: what math is correct, what configurable product implements that math, and how that product integrates with the bank. They are backed by a set of **Architectural Decision Records (ADRs)** that pick concrete tools and lock in contracts.
+- **The code** (repo root) is the product engine and the services around its boundary: an event-sourced kernel, domain family handlers, an orchestrator, an anti-corruption layer, a notification service, an MCP server for LLM-agent access, the schema contracts, a pack validator, and a Docker Compose dev stack.
 
-The document is aimed at engineers and architects who need to reason about the financial behaviour of the products their systems manage, without requiring an accounting or finance background. It is not a regulatory or accounting source; real implementations must respect Banco de Portugal conventions and IFRS 9.
+---
 
-| Document | What It Covers |
+## Quickstart
+
+The toolchain (.NET 10, Go, Python) is pinned in [`mise.toml`](./mise.toml). Full setup is in [INSTALL.md](./INSTALL.md).
+
+```bash
+make bootstrap   # one-time: brew prerequisites + mise install
+make doctor      # verify the pinned toolchain versions are active
+```
+
+Run the local dev stack (Redpanda, Postgres, Schema Registry, Kong, OpenBao, Grafana):
+
+```bash
+make up          # start the stack, wait until healthy
+make verify      # smoke-test: Postgres + Redpanda + Schema Registry reachable
+make down        # stop, keep data volumes
+```
+
+See the whole system run. The **Mission Control** demos bring up the backend and a UI you can drive:
+
+```bash
+make demo        # the whole backend in one bring-up — flip between DEMO / LIVE·engine /
+                 # LIVE·saga modes and an Operator YOU/CLAUDE toggle (real agent if
+                 # ANTHROPIC_API_KEY is set), then open http://localhost:9000
+make demo-down   # stop the demo hosts (run `make down` to stop the infra too)
+```
+
+Single-slice variants: `make demo-mcp` (engine→MCP walking skeleton), `make demo-saga` (the full edge→saga→settlement→engine path), `make demo-agent` (a real Claude model operating the bank through the MCP edge). Run `make help` for the complete target list.
+
+> **Always prefix builds and tests with `mise exec --`** so `dotnet`/`go`/`python` resolve to the pinned versions (e.g. `mise exec -- dotnet test engine/tests/Babelstone.Engine.Tests/`). See [CLAUDE.md → Dev Stack & Toolchain](./CLAUDE.md#dev-stack--toolchain) for why.
+
+---
+
+## Repository layout
+
+### Code components
+
+| Path | What it is |
 |---|---|
-| [Financial Mathematics of Banking Products](./docs/product-management/financial_concepts/banking_products_financial_mathematics.md) | Cash flow framework, present value, the three amortization systems, term deposits, IRR/TAEG, composite and irregular cases, cross-family synthesis, glossary |
+| [`engine/`](./engine/) | C# (.NET 10) event-sourced product kernel — the event store, outbox worker, handler dispatch, and PostgreSQL migrations |
+| [`families/`](./families/) | Domain family handlers — event types, pure fold handlers, projections, and lifecycle state machines (`term-deposit` is the v1 family) |
+| [`orchestrator/`](./orchestrator/) · [`acl/`](./acl/) · [`notification/`](./notification/) | .NET boundary services — the saga orchestrator, anti-corruption layer, and notifications |
+| [`mcp-server/`](./mcp-server/) | Python MCP server exposing the bank as tools to LLM agents (ADR-IC-010) |
+| [`contracts/`](./contracts/) | The governed contract surface — Avro payloads, CUE family schemas, and the AsyncAPI event catalogue |
+| [`pack-validate/`](./pack-validate/) | Go binary that validates regulatory packs (ADR-PC-006) |
+| [`packs/`](./packs/) · [`product-configs/`](./product-configs/) · [`rate-sheets/`](./rate-sheets/) | Regulatory packs, product variant configs, and rate sheets — the data the engine is configured with |
+| [`infra/`](./infra/) | Docker Compose dev stack, Kong/OpenBao/Grafana config, and runbooks |
+| [`scripts/`](./scripts/) | The shell entry points behind the `make` targets (demos, CI gates, deploys) |
 
----
+### Documentation
 
-### product_concepts/ — Core Banking Product Engine
-
-A documentation series defining a configurable core banking product engine: a product brief, not a system design. The engine takes the cash-flow primitive from [financial_concepts §9.2](./docs/product-management/financial_concepts/banking_products_financial_mathematics.md) as its single architectural insight and uses it to collapse every retail product family — deposits, credits, mortgages, current accounts, cards — into one engine with a swappable configuration surface and a swappable regulatory pack. The integration backbone is inherited from `docs/product-management/integration_concepts/`, not redefined.
-
-The customer is an incumbent Portuguese bank modernising on a strangler-fig adoption path; geography expands PT → ES → EU; deployment is SaaS multi-tenant and self-hosted from a single codebase. The v1 slice is *depósito a prazo* (Portuguese term deposit) — the smallest surface that exercises both the engine and the PT regulatory pack end-to-end.
-
-| Document | What It Covers |
+| Path | What it is |
 |---|---|
-| [README](./docs/product-management/product_concepts/README.md) | Series intro, positioning relative to the other two series, document map |
-| [00 — Product Vision](./docs/product-management/product_concepts/00-product-vision.md) | The one-pager: customer, problem, wedge, in/out of scope, strategic frame |
-| [01 — Product Architecture](./docs/product-management/product_concepts/01-product-architecture.md) | Architectural thesis: cash-flow primitive, configuration surface, two families, regulatory pack, integration seam |
-| [02 — v1 Scope: Term Deposits](./docs/product-management/product_concepts/02-v1-scope-term-deposits.md) | Why term deposits first, in-scope features, PT regulatory features, subledger outputs, event contract, coexistence with legacy DDA |
-| [03 — Roadmap](./docs/product-management/product_concepts/03-roadmap.md) | Sequenced expansion (PT term deposits → PT credit → PT mortgage → PT current accounts/cards → ES → EU) plus continuous pack maintenance |
-| [04 — Open Questions](./docs/product-management/product_concepts/04-open-questions.md) | Deferred decisions register: competitive positioning, pricing, licensing, coexistence targets, multi-tenancy, IFRS 9 signal boundary, time-travel, configurability depth, primary economic buyer, founding team credibility, split-brain reconciliation |
-| [v1 Build Backlog](./docs/product-management/product_concepts/v1-build-backlog.md) | Execution spec: the v1 build as bd epics + child issues (platform, engine core, financial-math kernel, pack toolchain, projections, walking skeleton, term-deposit content, integration estate, observability, load, security/DR, CI/CD), with deferred ACL/notification/IFRS9 reserved |
+| [`docs/product-management/`](./docs/product-management/) | The three concern-axis documentation series (below) and their ADRs |
+| [`docs/product-docs/reference/`](./docs/product-docs/reference/README.md) | **Generated reference** — event payloads, family schemas, the MCP tool surface, the ADR index, and the glossary, rendered from the contracts and diff-gated in CI so it cannot drift |
+| [`CLAUDE.md`](./CLAUDE.md) / [`AGENTS.md`](./AGENTS.md) | Contributor and AI-agent instructions: workflow, conventions, ADR governance |
 
 ---
 
-### integration_concepts/ — Integration Architecture
+## Documentation
 
-A documentation series covering integration architecture patterns for complex banking ecosystems. The series captures the full design reasoning — from the initial constraints that shaped the architecture, through the conceptual primitives it rests on, down to the concrete patterns, flows, testing strategy, and long-term governance.
+The three series are self-contained — each addresses a distinct concern, and they share the Portuguese term-deposit example but can be read independently.
 
-A Portuguese term deposit management system serves as the running example throughout: specific enough to make every pattern concrete, complex enough to exercise all of them. The architecture itself is not tied to term deposits — it is the integration backbone for a banking ecosystem, equally applicable to loans, savings accounts, investment products, or any other application that integrates with the same Core Banking, CRM, Compliance, and Workflow infrastructure.
-
-The documents are ordered to follow the logic of the design. They should be read in sequence.
-
-#### The Three Constraints That Shaped Everything
-
-Before any patterns were chosen, three constraints were fixed. Every architectural decision in the series is traceable to one or more of these.
-
-**Sub-500ms edge response.** When a client initiates a high-value operation — in the example, constituting a term deposit — they see confirmation within 500ms. Coordinating Core + Compliance + CRM + Workflow synchronously within that budget is physically impossible, so the system uses an optimistic acceptance model: validate what fits, persist the request, return `202 Accepted`, run the saga asynchronously.
-
-**Hybrid saga — orchestration + choreography.** Multi-step flows with complex compensation use a stateful orchestrator. Fan-out of side-effects without coordination requirements uses choreography.
-
-**Compensation, not transactionality.** Classical 2PC/XA distributed transactions kill flexibility and are often unavailable in Core Banking systems. Compensation is the right trade-off — but how it is implemented determines whether the system is actually robust under failure.
-
-The full reasoning is in [Document 00](./docs/product-management/integration_concepts/00-introduction-and-decisions.md).
-
-#### Document Map
-
-| # | Title | What It Covers |
+| Series | The question it answers | Start here |
 |---|---|---|
-| [00](./docs/product-management/integration_concepts/00-introduction-and-decisions.md) | Introduction and Foundational Decisions | Context, the three driving constraints, high-level architectural shape |
-| [01](./docs/product-management/integration_concepts/01-the-six-primitives.md) | The Six Primitives | Command vs Event, Domain vs Integration Event, Bounded Context + Aggregate, Identity Trio, Idempotency Key, Compensating Action |
-| [02](./docs/product-management/integration_concepts/02-anti-corruption-layer.md) | Anti-Corruption Layer | Eight ACL responsibilities, internal structure, the indeterminate-state problem, antipatterns |
-| [03](./docs/product-management/integration_concepts/03-cqrs-and-read-models.md) | CQRS and Read Models | Read/write model separation, projectors, eventual consistency management, the greenfield-pragmatic starting point |
-| [04](./docs/product-management/integration_concepts/04-plumbing-patterns.md) | Plumbing Patterns | Outbox, Inbox, Schema Registry, delivery guarantees — the mechanics that make events reliable |
-| [05](./docs/product-management/integration_concepts/05-constitution-saga-walkthrough.md) | Constitution Saga Walkthrough | All primitives and patterns materialized in a real constitution flow, with concrete IDs, timings, and compensation paths |
-| [06](./docs/product-management/integration_concepts/06-observability-and-tracing.md) | Observability and Distributed Tracing | Three pillars (logs/metrics/traces), OpenTelemetry, the concrete trace of a constitution, what to instrument and alert on |
-| [07](./docs/product-management/integration_concepts/07-testing-strategy.md) | Testing Strategy | Adapted test pyramid for event-driven systems: aggregate unit tests, integration with testcontainers, contract tests (Pact), saga tests, selective E2E |
-| [08](./docs/product-management/integration_concepts/08-event-catalog-governance.md) | Event Catalog Governance | Four governance pillars, ownership model, naming conventions, review process, the living catalogue |
-| [09](./docs/product-management/integration_concepts/09-long-term-schema-evolution.md) | Long-term Schema Evolution | Taxonomy of compatible/incompatible changes, concrete techniques for each, antipatterns, real scenarios |
-| [10](./docs/product-management/integration_concepts/10-security-and-threat-model.md) | Security and Threat Model | Trust boundaries, assets worth protecting, six security principles, regulatory obligations (PSD2, GDPR, BdP, DORA) |
-| [11](./docs/product-management/integration_concepts/11-chat-agent-channel-strategy.md) | Chat Agent Channel Strategy | Bank as MCP server; LLM-agent channel; tool/resource/prompt mapping onto commands and CQRS; async completion patterns (tasks, polling, out-of-band callback); trust model for untrusted agents |
+| [**financial_concepts/**](./docs/product-management/financial_concepts/banking_products_financial_mathematics.md) | What math is correct | The cash-flow framework, present value, IRR/TAEG, and the amortization systems across term deposits, loans, current accounts, and cards |
+| [**product_concepts/**](./docs/product-management/product_concepts/README.md) | What configurable product implements that math | The product brief: one engine that collapses every retail family into a swappable configuration surface + swappable regulatory pack |
+| [**integration_concepts/**](./docs/product-management/integration_concepts/00-introduction-and-decisions.md) | How that product integrates with the bank | The integration backbone — read in sequence (docs 00–11), from the three driving constraints down to security and the chat-agent channel |
+
+> **Looking something up?** The [**generated reference**](./docs/product-docs/reference/README.md) collects the machine-derived lookup material — event payloads, family schemas, the MCP tool surface, a cross-namespace ADR index, and the glossary. It is rendered from the contracts and regenerated-and-diffed in CI so it cannot drift (`make docs-gen` / `make docs-verify`). The documentation architecture is [ADR-PC-022](./docs/product-management/product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md).
+
+### The three constraints behind the architecture
+
+Before any patterns were chosen, three constraints were fixed — every integration decision is traceable to one or more of them ([Document 00](./docs/product-management/integration_concepts/00-introduction-and-decisions.md)):
+
+- **Sub-500ms edge response.** Coordinating Core + Compliance + CRM + Workflow synchronously within that budget is impossible, so the system validates what fits, persists the request, returns `202 Accepted`, and runs the saga asynchronously.
+- **Hybrid saga.** Multi-step flows with complex compensation use a stateful orchestrator; uncoordinated fan-out uses choreography.
+- **Compensation, not transactionality.** Classical 2PC/XA is unavailable in most Core Banking systems; compensation is the right trade-off — and the integration docs are largely about implementing it robustly.
+
+---
+
+## Contributing
+
+- **All changes reach `main` only via pull request** — never commit or push directly to `main`. Branch off the latest `main`, commit there, and open a PR. (See [CLAUDE.md → Branching & PR Policy](./CLAUDE.md#branching--pr-policy).)
+- **ADR governance.** No change may silently contradict an Accepted ADR — every PR body names the ADRs it touches or honours, and CI enforces it. Divergence is allowed; *silent* divergence is not.
+- **Issue tracking** uses [beads](https://github.com/gastownhall/beads) (`bd`) — run `bd ready` to find work and `bd prime` for the full workflow.
+
+The full conventions — toolchain, diagrams, document layout, communication style — live in [CLAUDE.md](./CLAUDE.md).
+
+---
+
+## License
+
+babelstone is licensed under the **Business Source License 1.1**. See [LICENSE.md](./LICENSE.md) for terms.
