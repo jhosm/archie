@@ -1,7 +1,5 @@
-using Babelstone.EventStore;
 using Babelstone.Notification;
 using Babelstone.Telemetry;
-using Babelstone.Telemetry.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -13,24 +11,28 @@ using OpenTelemetry.Trace;
 // OUTBOX worker (ADR-IC-004): a long-running BackgroundService host, NOT an HTTP API — so
 // Host.CreateApplicationBuilder (the worker host), the same shape the engine's outbox relay and the
 // orchestrator's consume loop run as hosted services. This skeleton stands up the host + the
-// ADR-IC-005 projection READ access only — NO scheduler timing, NO event emission (those are the
+// ADR-PC-027 read-contract access only — NO scheduler timing, NO event emission (those are the
 // downstream children bd babelstone-60n8.2 / .3).
+//
+// FAMILY-AGNOSTIC by construction (ADR-IC-019 §D2/§D3): the host references neither the engine kernel
+// nor any product family — it reads deposit facts over the storage-opaque ADR-PC-027 HTTP contract,
+// gated by NOTIFICATION_FAMILY_AGNOSTIC. The earlier skeleton bound the engine kernel +
+// the term-deposit family directly; bd babelstone-60n8.5 relocated that read onto the contract.
 var builder = Host.CreateApplicationBuilder(args);
 
 // OpenTelemetry tracing (ADR-IC-007 Layer 1): turn ON the tracer for this host and export over OTLP
 // to the Collector (§P1 — never direct-to-backend). The host opens spans on the SHARED
-// Babelstone.Engine ActivitySource (BabelstoneTelemetry.ActivitySourceName) — one instrumentation
-// scope across the estate, never a competing source — so the notification service's work shows up in
-// the same trace surface as the engine and orchestrator. Npgsql's built-in query instrumentation
-// (AddNpgsqlQueryTelemetry, K.5) makes each projection READ a CLIENT span on this same provider, so
-// a slow read-surface query is visible in Tempo/Grafana with no per-call wiring. The resource stamps
-// service.name=babelstone-notification + service.namespace=babelstone + deployment.environment so
-// every span is attributable (OBS-1); ResolveEnvironment fails fast on an unset environment.
+// Babelstone.Engine ActivitySource (BabelstoneTelemetry.ActivitySourceName, from the SDK-free
+// Babelstone.Telemetry leaf — NOT the engine kernel) — one instrumentation scope across the estate,
+// never a competing source — so the notification service's work shows up in the same trace surface as
+// the engine and orchestrator. The resource stamps service.name=babelstone-notification +
+// service.namespace=babelstone + deployment.environment so every span is attributable (OBS-1);
+// ResolveEnvironment fails fast on an unset environment.
 //
-// NB: NO AspNetCore instrumentation (this host has no inbound HTTP surface) and NO HttpClient
-// instrumentation yet (no outbound calls until the emission child). Tracing only — the skeleton adds
-// no MeterProvider; the metrics leg lands with the emission/scheduler children that produce
-// instruments.
+// NB: NO AspNetCore instrumentation (this host has no inbound HTTP surface). The OUTBOUND read calls
+// become CLIENT spans once the scheduler/emission children (bd babelstone-60n8.2 / .3) issue them on
+// a clock and the HttpClient instrumentation lands with them; this skeleton issues no calls (the
+// worker idles), so tracing here is resource + exporter wiring only — no MeterProvider yet either.
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
         .AddService(BabelstoneResource.NotificationServiceName)
@@ -41,36 +43,26 @@ builder.Services.AddOpenTelemetry()
         ]))
     .WithTracing(tracing => tracing
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
-        // Npgsql per-command CLIENT spans for the projection reads (K.5), on THIS same provider so
-        // they share the host's resource + exporter.
-        .AddNpgsqlQueryTelemetry()
         .AddOtlpExporter());
 
-// The RUNTIME-role connection the notification service READS the engine's projections through
-// (ADR-IC-005). The credential resolves from configuration at the composition root — the same
-// ADR-PC-004 Amendment A1 boundary the engine and orchestrator hosts use — and carries a SELECT-only
-// grant on the read-model store (a reader never writes a projection). It NEVER rides a message nor
-// the durable bus (ADR-PC-004 §P2). The read surface is PostgreSQL because ADR-IC-005 makes it the
-// sole read-model storage technology.
-var readModelConnectionString =
-    builder.Configuration.GetConnectionString("Notification")
-    ?? builder.Configuration["Notification:ConnectionString"]
-    ?? Environment.GetEnvironmentVariable("NOTIFICATION_CONNECTION_STRING")
+// The engine API ENDPOINT the notification service READS deposit facts from (ADR-PC-027 canonical
+// read resource; ADR-IC-019 §D3). This is a service ENDPOINT, not a credential, so — like the
+// orchestrator's Engine:BaseUrl — it resolves straight from configuration (no ISecretProvider). The
+// read is over the storage-opaque HTTP contract, so the notification core never touches the engine's
+// read-model store, its byte-oriented projection boundary, or any family type (ADR-IC-019 §D2/§P2).
+var engineBaseUrl =
+    builder.Configuration["Engine:BaseUrl"]
+    ?? builder.Configuration.GetConnectionString("Engine")
+    ?? Environment.GetEnvironmentVariable("BABELSTONE_ENGINE_BASE_URL")
     ?? throw new InvalidOperationException(
-        "No notification read-model connection string configured. Set " +
-        "ConnectionStrings:Notification, Notification:ConnectionString, or " +
-        "NOTIFICATION_CONNECTION_STRING (the ADR-IC-005 read surface — PostgreSQL).");
+        "No engine API base URL configured. Set Engine:BaseUrl, ConnectionStrings:Engine, or " +
+        "BABELSTONE_ENGINE_BASE_URL (the ADR-PC-027 deposit read surface — GET /v1/deposits/{id}).");
 
-// The byte-oriented projection boundary onto the engine's read-model store (ADR-IC-005 / ADR-PC-002
-// §P1). Hand-rolled, Npgsql-only — the same store the engine writes its projections through, read
-// here over the runtime-role credential.
-builder.Services.AddSingleton<IProjectionStorage>(
-    _ => new PostgresProjectionStore(readModelConnectionString));
-
-// The typed read window onto the three term-deposit projections the notification service needs
-// (maturity_calendar / accrual_schedule / withholding_ledger — all registered today in
-// TermDepositProjectionModule). Read-only; no timing, no emission (bd babelstone-60n8.1).
-builder.Services.AddSingleton<TermDepositProjectionReader>();
+// The typed read client over the deposit resource. IHttpClientFactory owns connection pooling and
+// lifetime (the same pattern the orchestrator's dispatcher uses for its engine POSTs). BaseAddress is
+// normalised to a trailing "/" so the client's relative "v1/deposits/{id}" resolves correctly.
+builder.Services.AddHttpClient<DepositReadClient>(client =>
+    client.BaseAddress = new Uri(engineBaseUrl.EndsWith('/') ? engineBaseUrl : engineBaseUrl + "/"));
 
 // The host shell — the standing BackgroundService the maturity scheduler (bd babelstone-60n8.2) and
 // the NotificationDue emission (bd babelstone-60n8.3) will later run inside. Skeleton: it idles, it

@@ -18,12 +18,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The notification host under test. The reader's projection-read access is asserted
-         Docker-free over an in-memory IProjectionStorage fake — the SAME pattern the engine's
-         BitemporalProjectionQueryTests use — so this runs in the default no-container lane. The
-         end-to-end read against a real PostgreSQL projections table is the engine's
-         BitemporalProjectionQueryIntegrationTests' job; here we assert the notification reader keys
-         each read on the right family-prefixed projection kind and maps the typed state. -->
+    <!-- The notification host under test. DepositReadClientTests drives the typed HTTP read client
+         over a fake HttpMessageHandler (no engine, no Docker) — the GET /v1/deposits/{id} path, the
+         snake_case JSON mapping, and the 404→null / 5xx→throw behaviour (ADR-PC-027 contract). The
+         NotificationFamilyAgnosticTests gate parses the core .csproj for a families/** or engine-spine
+         reference (ADR-IC-019 §D2/§P2). The end-to-end read against a real engine is the engine API's
+         own integration tests' job. -->
     <ProjectReference Include="../../src/Babelstone.Notification/Babelstone.Notification.csproj" />
   </ItemGroup>
 </Project>

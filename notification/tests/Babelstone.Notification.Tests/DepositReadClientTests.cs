@@ -1,0 +1,115 @@
+using System.Net;
+using System.Text;
+using Babelstone.Notification;
+using Xunit;
+
+namespace Babelstone.Notification.Tests;
+
+/// <summary>
+/// Pure unit tests for <see cref="DepositReadClient"/> — the notification service's read window onto
+/// a deposit over the family-agnostic, storage-opaque read contract (ADR-PC-027 / ADR-IC-019 §D3).
+/// Docker-free and engine-free: they drive the client over a fake <see cref="HttpMessageHandler"/>
+/// (no real engine, no network), asserting that the client (1) calls <c>GET /v1/deposits/{id}</c>,
+/// (2) maps the host's snake_case wire JSON into the core-local <see cref="DepositView"/> (money as
+/// integer cents — never the family's <c>DepositResponse</c> CLR type, which the core does not
+/// reference), and (3) returns <see langword="null"/> on a 404 (no deposit resource yet). The
+/// end-to-end read against a real engine is the engine API's own integration tests' job.
+/// </summary>
+public sealed class DepositReadClientTests
+{
+    private const string WireJson = """
+        {
+          "deposit_id": "11111111-1111-1111-1111-111111111111",
+          "sor": "engine",
+          "principal_cents": 1000000,
+          "tan_basis_points": 320,
+          "rate_sheet_version_id": "rs-2026-1",
+          "product_code": "TD-STD",
+          "term_days": 365,
+          "start_date": "2026-03-15",
+          "maturity_date": "2027-03-15",
+          "interest_variant": "AT_MATURITY",
+          "auto_renewal_policy": "NONE",
+          "payment_period_months": 0,
+          "accrued_gross_interest_cents": 1234,
+          "withholding_to_date_cents": 345,
+          "net_interest_cents": 889,
+          "total_payout_cents": 1000889,
+          "coupons_paid": 0,
+          "lifecycle": "Active",
+          "last_sequence": 7,
+          "last_updated": "2026-06-15T14:23:00+00:00"
+        }
+        """;
+
+    [Fact]
+    public async Task GetDeposit_calls_the_canonical_resource_and_maps_the_snake_case_wire_shape()
+    {
+        var depositId = new Guid("11111111-1111-1111-1111-111111111111");
+        var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, WireJson));
+        var client = NewClient(handler);
+
+        var view = await client.GetDepositAsync(depositId);
+
+        // The client reads the ONE canonical resource, relative to the configured base address.
+        Assert.Equal(HttpMethod.Get, handler.LastRequest!.Method);
+        Assert.Equal($"http://engine.test/v1/deposits/{depositId}", handler.LastRequest.RequestUri!.ToString());
+
+        // snake_case → the core-local DepositView (money as integer cents, dates as DateOnly).
+        Assert.NotNull(view);
+        Assert.Equal(depositId, view.DepositId);
+        Assert.Equal("Active", view.Lifecycle);
+        Assert.Equal(new DateOnly(2027, 3, 15), view.MaturityDate);
+        Assert.Equal(1234, view.AccruedGrossInterestCents);
+        Assert.Equal(345, view.WithholdingToDateCents);
+        Assert.Equal(889, view.NetInterestCents);
+        Assert.Equal(1_000_889, view.TotalPayoutCents);
+        Assert.Equal(0, view.CouponsPaid);
+        Assert.Equal(7, view.LastSequence);
+        Assert.Equal(new DateTimeOffset(2026, 6, 15, 14, 23, 0, TimeSpan.Zero), view.LastUpdated);
+    }
+
+    [Fact]
+    public async Task GetDeposit_returns_null_when_the_deposit_resource_does_not_exist()
+    {
+        var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
+        var client = NewClient(handler);
+
+        var view = await client.GetDepositAsync(Guid.NewGuid());
+
+        Assert.Null(view);
+    }
+
+    [Fact]
+    public async Task GetDeposit_throws_on_a_server_error_rather_than_silently_swallowing_it()
+    {
+        var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError));
+        var client = NewClient(handler);
+
+        // A 5xx is not a "no deposit" answer — surfacing it (not returning null) keeps a broken read
+        // surface from being mistaken for "nothing to notify on".
+        await Assert.ThrowsAsync<HttpRequestException>(() => client.GetDepositAsync(Guid.NewGuid()));
+    }
+
+    // --- helpers ---
+
+    private static DepositReadClient NewClient(FakeHandler handler) =>
+        new(new HttpClient(handler) { BaseAddress = new Uri("http://engine.test/") });
+
+    private static HttpResponseMessage Json(HttpStatusCode status, string body) =>
+        new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+
+    /// <summary>A canned <see cref="HttpMessageHandler"/> that records the last request and returns
+    /// whatever the supplied responder produces — enough to assert the client's path + JSON mapping
+    /// with no network.</summary>
+    private sealed class FakeHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
+    {
+        public HttpRequestMessage? LastRequest { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            return Task.FromResult(responder(request));
+        }
+    }
+}
