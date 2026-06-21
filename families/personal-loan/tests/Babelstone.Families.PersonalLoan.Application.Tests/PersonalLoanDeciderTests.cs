@@ -201,7 +201,7 @@ public sealed class PersonalLoanDeciderTests
         StartDate: new DateOnly(2026, 1, 1),
         DisbursedAt: new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero),
         Purpose: "general",
-        DisbursementAccount: "acct-token-1",
+        DisbursementAccountRef: "acct-token-1",
         Actor: "test",
         EarlyRepaymentCommissionBps: 50);
 

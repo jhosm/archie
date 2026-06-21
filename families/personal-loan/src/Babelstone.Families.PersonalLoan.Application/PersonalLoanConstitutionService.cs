@@ -117,7 +117,7 @@ public sealed class PersonalLoanConstitutionService(
         await settlement.SettleAsync(
             new SettlementInstruction(
                 command.LoanId, SettlementDirection.Debit, disbursed.Principal,
-                command.DisbursementAccount, "disbursement"),
+                command.DisbursementAccountRef, "disbursement"),
             ct);
 
         // 5. Append the new stream (expectedVersion -1) — events + outbox in one transaction. The command id
@@ -157,7 +157,7 @@ public sealed class PersonalLoanConstitutionService(
         await settlement.SettleAsync(
             new SettlementInstruction(
                 command.LoanId, SettlementDirection.Credit, installmentTotal,
-                command.CollectionAccount, "installment"),
+                command.CollectionAccountRef, "installment"),
             ct);
 
         // 4. Append at the current head (optimistic concurrency). The command id makes the append idempotent.
@@ -197,7 +197,7 @@ public sealed class PersonalLoanConstitutionService(
         await settlement.SettleAsync(
             new SettlementInstruction(
                 command.LoanId, SettlementDirection.Credit, collected,
-                command.RepaymentAccount, "early_repayment"),
+                command.RepaymentAccountRef, "early_repayment"),
             ct);
 
         // 4. Append at the current head (optimistic concurrency). The command id makes the append idempotent.

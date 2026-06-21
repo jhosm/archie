@@ -58,7 +58,7 @@ public sealed record RecordedPreconditionVerdict(
 /// <c>education</c>, <c>health</c>) — a STRUCTURAL pricing/regulatory dimension that selects the legal
 /// TAEG ceiling bucket (research/personal-loan/02 §2). NOT PII (ADR-PC-004 §P2).</param>
 /// <param name="ProductCode">The catalogue product code the rate sheet priced — STRUCTURAL, NOT PII.</param>
-/// <param name="DisbursementAccount">An OPAQUE disbursement-account TOKEN — a REFERENCE the engine
+/// <param name="DisbursementAccountRef">An OPAQUE disbursement-account TOKEN — a REFERENCE the engine
 /// resolves internally, NEVER an IBAN/cleartext identifier (ADR-PC-004 §P2). The account the lump sum
 /// was credited to.</param>
 /// <param name="EarlyRepaymentCommissionBps">The early-repayment commission the product charges, in
@@ -77,7 +77,7 @@ public sealed record LoanDisbursed(
     DateOnly FirstInstallmentDate,
     string Purpose,
     string ProductCode,
-    string DisbursementAccount,
+    string DisbursementAccountRef,
     int EarlyRepaymentCommissionBps = 0) : DomainEvent
 {
     // Disbursement is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1): the instance's
