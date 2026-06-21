@@ -3,24 +3,39 @@ using System.Text;
 using Babelstone.Engine;
 using Babelstone.EventStore;
 
-namespace Babelstone.Families.TermDeposit.Application;
+namespace Babelstone.Engine.Hosting;
 
 /// <summary>
-/// The operator pack-migration write-path (ADR-PC-009 §P3, surface §3.6). In plain English: a live
-/// deposit is locked for life to the regulatory pack it was opened under, and the ONLY sanctioned way
-/// to move it to a newer pack — when a regulator forces a retroactive change — is this explicit, audited
-/// operator migration. The operator names a target instance set, a <c>from</c>→<c>to</c> pack pair, and
-/// a migration id; this service re-pins each matched instance by appending one engine-declared
-/// <see cref="PackVersionMigrated"/> event, pinned (on the envelope) to the new pack version.
+/// The operator pack-migration write-path (ADR-PC-009 §P3, surface §3.6), generic over ANY family
+/// projection <typeparamref name="TState"/> so it stays FAMILY-AGNOSTIC (ADR-PC-021 §A9/§A11). In plain
+/// English: a live instance is locked for life to the regulatory pack it was opened under, and the ONLY
+/// sanctioned way to move it to a newer pack — when a regulator forces a retroactive change — is this
+/// explicit, audited operator migration. The operator names a target instance set, a <c>from</c>→<c>to</c>
+/// pack pair, and a migration id; this service re-pins each matched instance by appending one
+/// engine-declared <see cref="PackVersionMigrated"/> event, pinned (on the envelope) to the new pack.
 /// </summary>
 /// <remarks>
+/// <para>
+/// <b>Hosting library, not the engine kernel and not a family decider.</b> The mechanics here run NO
+/// family domain logic — no money math, no rate/pack resolution, no product rules. They are pure
+/// structural plumbing for an engine-declared event: read the head pin, append a no-op
+/// <see cref="PackVersionMigrated"/> pinned to the target pack. It names no family, so it is NOT the
+/// family-owned command-side decider ADR-PC-021 §D1 keeps in the family Application layer; but it IS a
+/// command-side write-path that <em>consumes</em> the engine's append spine (a port consumer, not a
+/// port), so it does NOT belong in the family-agnostic engine kernel either (ADR-PC-021 §D1/§C rejected
+/// the decider-in-the-generic-engine placement). Its home is <c>Babelstone.Engine.Hosting</c> — the
+/// non-spine assembly ADR-PC-021 §A9/§A11 created for exactly this family-agnostic host/command-side
+/// plumbing, beside the <see cref="PackMigrationsEndpoints"/> operator surface. A family closes the
+/// generic by resolving <c>PackMigrationService&lt;ItsState&gt;</c> in its host module and exposing the
+/// operator surface through <c>PackMigrationsEndpoints.Map&lt;ItsState&gt;</c>.
+/// </para>
 /// <para>
 /// <b>Re-pin lives on the ENVELOPE.</b> The migration event is appended with
 /// <c>AppendContext.PackVersion = to_pack_version</c>, so the event itself and every event after it
 /// carry the new pin while prior history stays pinned to <c>from_pack_version</c> (ADR-PC-009 §P1/§P3 —
 /// the pin is a per-event fact; the migration boundary is intrinsic to the stream). The projection fold
 /// is a no-op (the engine-owned <see cref="PackVersionMigratedHandler{TState}"/>); nothing about the
-/// deposit's money/lifecycle changes here.
+/// instance's money/lifecycle changes here.
 /// </para>
 /// <para>
 /// <b>Previewable before emission</b> (ADR-PC-009 Residual-risks: a wrong filter could re-pin the wrong
@@ -36,15 +51,16 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// original per-instance outcome rather than appending a second <see cref="PackVersionMigrated"/>.
 /// </para>
 /// <para>
-/// <b>Family-scoped, engine-declared event.</b> The event is engine-owned and family-agnostic, but it is
-/// appended to a term-deposit stream through the term-deposit family's runtime (which knows the family +
-/// schema_version pins). The instance set is an EXPLICIT id list — the sound minimal filter. A
-/// predicate <c>instance_filter</c> (e.g. <c>{ product_family, currently_active }</c>, surface §3.6)
-/// resolved over the read model is a follow-up: it needs a cross-stream query the family read model
-/// owns, out of this write-path's scope.
+/// <b>Per-family runtime, engine-declared event.</b> The event is engine-owned and family-agnostic, but
+/// it is appended to a concrete family stream through that family's <see cref="AggregateRuntime{TState}"/>
+/// (which knows the family + schema_version pins). The instance set is an EXPLICIT id list — the sound
+/// minimal filter. A predicate <c>instance_filter</c> (e.g. <c>{ product_family, currently_active }</c>,
+/// surface §3.6) resolved over the read model is a follow-up: it needs a cross-stream query the family
+/// read model owns, out of this write-path's scope.
 /// </para>
 /// </remarks>
-public sealed class PackMigrationService(AggregateRuntime<DepositPosition> runtime, IEventStore store)
+/// <typeparam name="TState">The family's folded projection state the migration's no-op fold runs over.</typeparam>
+public sealed class PackMigrationService<TState>(AggregateRuntime<TState> runtime, IEventStore store)
 {
     /// <summary>
     /// The matched set for a migration WITHOUT emitting anything: the instances (of those supplied)

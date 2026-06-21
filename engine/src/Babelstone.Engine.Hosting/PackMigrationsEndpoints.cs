@@ -2,11 +2,12 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 
-namespace Babelstone.Families.TermDeposit.Application;
+namespace Babelstone.Engine.Hosting;
 
 // The operator pack-migration HTTP contract (ADR-PC-009 §P3, surface §3.6). snake_case on the wire
 // (the host's JSON options). No PII (ADR-PC-004 §P2): version strings, a migration id, an operator
-// actor reference, and structural instance ids only.
+// actor reference, and structural instance ids only. Family-agnostic by construction — the contract
+// names no family; a family closes the generic Map<TState> in its host module (ADR-PC-021 §P2).
 
 /// <summary>
 /// An operator pack migration: re-pin a named instance set from one pack version to a newer one
@@ -43,20 +44,34 @@ public sealed record PackMigrationResponse(
 
 /// <summary>
 /// The operator pack-migration command surface (ADR-PC-009 §P3 / surface §3.6): <c>POST
-/// /v1/pack-migrations</c>. In plain English — the only sanctioned way to move a live deposit to a
+/// /v1/pack-migrations</c>. In plain English — the only sanctioned way to move a live instance to a
 /// newer regulatory pack is this explicit, audited operator migration; this endpoint is how an operator
 /// previews the affected instance set and then re-pins it. Distinct from adoption (which sets the pack
 /// NEW constitutions pin — ADR-PC-009 §P4): there are no silent upgrades, and this endpoint never
 /// touches the currently-active version for new constitutions.
 /// </summary>
+/// <remarks>
+/// Family-agnostic (it lives in the hosting spine, ADR-PC-021 §P2): both the HTTP contract and the
+/// validation name no family. A family wires it by calling <see cref="Map{TState}"/> with its own
+/// projection state, which resolves the closed <see cref="PackMigrationService{TState}"/> from DI. The
+/// <c>family → Babelstone.Engine.Hosting → Babelstone.Engine</c> arrow stays one-way — the spine never
+/// references a family back.
+/// </remarks>
 public static class PackMigrationsEndpoints
 {
-    public static void Map(IEndpointRouteBuilder app)
-        => app.MapPost("/v1/pack-migrations", MigrateAsync);
+    /// <summary>
+    /// Map <c>POST /v1/pack-migrations</c> for the family whose projection state is
+    /// <typeparamref name="TState"/>. The family calls this from its host module's
+    /// <c>MapEndpoints</c> (e.g. <c>PackMigrationsEndpoints.Map&lt;DepositPosition&gt;(app)</c>); the
+    /// handler resolves <see cref="PackMigrationService{TState}"/> from the request container.
+    /// </summary>
+    /// <typeparam name="TState">The family's folded projection state the migration service runs over.</typeparam>
+    public static void Map<TState>(IEndpointRouteBuilder app)
+        => app.MapPost("/v1/pack-migrations", MigrateAsync<TState>);
 
-    private static async Task<IResult> MigrateAsync(
+    private static async Task<IResult> MigrateAsync<TState>(
         PackMigrationRequest request,
-        PackMigrationService service,
+        PackMigrationService<TState> service,
         TimeProvider clock,
         CancellationToken ct)
     {

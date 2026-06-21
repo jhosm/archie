@@ -237,4 +237,35 @@ public static class BabelstoneAttributes
     /// dimension, not a <c>babelstone.*</c> span-attribute key.
     /// </summary>
     public const string ProjectionKind = "projection_kind";
+
+    /// <summary>
+    /// SNAPSHOT LAG (ADR-PC-003 §P6 (1) / event-store §8.1, bd babelstone-sk7e): an <i>observable
+    /// gauge</i> of the largest un-snapshotted event count observed across streams since process start —
+    /// the depth of events appended past a stream's latest snapshot. The post-commit snapshot path
+    /// (<c>AggregateRuntime.TrySnapshotAsync</c>) updates the high-water mark each time it evaluates the
+    /// per-N trigger; the gauge reports it each collection cycle. Gauge-shaped (a current depth, not a
+    /// cumulative total) because the <c>SnapshotLagHigh</c> alert reads it instantaneously
+    /// (<c>snapshot_lag_events &gt; 500</c>) — a counter, which only ever climbs, would never describe
+    /// "how far behind is the snapshotter RIGHT NOW". It keeps reporting even when nothing snapshots, so
+    /// the §P6 WARNING fires during a snapshotter outage — the exact failure mode it exists to catch.
+    /// Snapshots are a rebuildable cache, so this is a WARNING (a deep un-snapshotted stream makes the
+    /// next cold replay slower, never wrong). The metric name is the alert-rule contract string — a
+    /// Prometheus/Grafana query reads it by this exact name — so it is snake_case, never a
+    /// <c>babelstone.*</c> span key.
+    /// </summary>
+    public const string SnapshotLagEventsMetric = "snapshot_lag_events";
+
+    /// <summary>
+    /// SNAPSHOT HASH-MISMATCH ON READ (ADR-PC-003 §P6 (2) / event-store §8.3, bd babelstone-sk7e): a
+    /// monotonic counter incremented where <c>SnapshotStore.Verify</c> finds a snapshot's stored
+    /// <c>(state ‖ last_event_id)</c> hash disagreeing with a recompute on read — the worst
+    /// event-sourcing failure mode (a silently-wrong snapshot trusted as truth), caught by the §8.3
+    /// guard. The read still throws and falls back to a cold fold (the §P3 correctness fallback), so a
+    /// single mismatch is recoverable (discard-and-rebuild); a RECURRING one is a snapshot-infrastructure
+    /// bug to page on, which is why the <c>SnapshotHashMismatch</c> alert reads
+    /// <c>increase(snapshot_hash_mismatch_total[1h]) &gt; 0</c> at <c>severity: critical</c>. snake_case-
+    /// with-unit-suffix (the <c>_total</c> the OTLP cumulative convention bakes into the emitted name),
+    /// read by the alert rule by this exact string — never a <c>babelstone.*</c> span key.
+    /// </summary>
+    public const string SnapshotHashMismatchMetric = "snapshot_hash_mismatch_total";
 }

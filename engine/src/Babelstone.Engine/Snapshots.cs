@@ -3,8 +3,16 @@ using Babelstone.EventStore;
 namespace Babelstone.Engine;
 
 /// <summary>A typed snapshot of projection state (feature-design event-store §8).</summary>
+/// <param name="CreatedAt">When the snapshot row was physically written (a wall-clock DB stamp).</param>
+/// <param name="TransactionTime">
+/// The event-derived transaction_time of the head event the snapshot covers (ADR-PC-010 §P5) — the
+/// append-stamped instant, distinct from <paramref name="CreatedAt"/> (when the row was written). Lets
+/// rehydrate seed last_updated from the snapshot for a stream fully covered with no tail (ADR-PC-003
+/// §P3). Null for a pre-0017 snapshot row, which then falls back to the prior null-on-no-tail behaviour.
+/// </param>
 public sealed record Snapshot<TState>(
-    long AtSequence, Guid LastEventId, string StateHash, TState State, bool Trusted, DateTimeOffset CreatedAt);
+    long AtSequence, Guid LastEventId, string StateHash, TState State, bool Trusted,
+    DateTimeOffset CreatedAt, DateTimeOffset? TransactionTime = null);
 
 /// <summary>Serializes projection state to/from bytes for snapshot persistence. Tests supply one (e.g. JSON).</summary>
 public interface IStateSerializer<TState>
@@ -47,6 +55,12 @@ public sealed class SnapshotStore<TState>(ISnapshotStorage storage, IStateSerial
         var expected = SnapshotHash.Compute(record.State.Span, record.LastEventId);
         if (!string.Equals(expected, record.StateHash, StringComparison.Ordinal))
         {
+            // §P6 (2) operational signal (bd babelstone-sk7e): a snapshot whose stored hash did not
+            // verify is the §8.3 worst case (a wrong snapshot trusted as truth). Count it BEFORE throwing
+            // so the SnapshotHashMismatch alert sees every rejection — the caller then falls back to a
+            // cold fold (the §P3 correctness fallback). A pure store-side emission: it neither folds an
+            // event nor changes rebuilt state (ADR-PC-010 §P5).
+            Telemetry.SnapshotMetrics.RecordHashMismatch();
             throw new InvalidOperationException(
                 $"Snapshot for stream {streamId} at sequence {record.AtSequence} failed hash verification.");
         }
@@ -57,15 +71,28 @@ public sealed class SnapshotStore<TState>(ISnapshotStorage storage, IStateSerial
             record.StateHash,
             serializer.Deserialize(record.State),
             record.Trusted,
-            record.CreatedAt);
+            record.CreatedAt,
+            record.TransactionTime);
     }
 
-    public Task PutAsync(Guid streamId, long atSequence, Guid lastEventId, TState state, DateTimeOffset createdAt, CancellationToken ct = default)
+    /// <summary>
+    /// Writes a snapshot at <paramref name="atSequence"/>. <paramref name="transactionTime"/> is the
+    /// event-derived transaction_time of the head event the snapshot covers (the append's stamp,
+    /// ADR-PC-010 §P5) — carried so rehydrate can seed last_updated for a fully-covered stream. Defaults
+    /// to <paramref name="createdAt"/> so a caller that has only one timestamp (e.g. test wiring that
+    /// passes a fixed instant) keeps the pre-0017 single-stamp behaviour; the runtime passes the real
+    /// append transaction_time explicitly.
+    /// </summary>
+    public Task PutAsync(
+        Guid streamId, long atSequence, Guid lastEventId, TState state, DateTimeOffset createdAt,
+        DateTimeOffset? transactionTime = null, CancellationToken ct = default)
     {
         var bytes = serializer.Serialize(state);
         var hash = SnapshotHash.Compute(bytes, lastEventId);
         // Trusted defaults false — advisory until six months of passing drills (§8.3).
-        var record = new SnapshotRecord(streamId, atSequence, lastEventId, hash, bytes, Trusted: false, createdAt);
+        var record = new SnapshotRecord(
+            streamId, atSequence, lastEventId, hash, bytes, Trusted: false, createdAt,
+            TransactionTime: transactionTime ?? createdAt);
         return storage.PutAsync(record, ct);
     }
 }

@@ -12,7 +12,7 @@ public sealed class PostgresSnapshotStore(string connectionString) : ISnapshotSt
     public async Task<SnapshotRecord?> TryGetLatestAsync(Guid streamId, CancellationToken ct = default)
     {
         const string sql = """
-            SELECT stream_id, at_sequence, last_event_id, state_hash, state, trusted, created_at
+            SELECT stream_id, at_sequence, last_event_id, state_hash, state, trusted, created_at, transaction_time
             FROM snapshots
             WHERE stream_id = @stream_id
             ORDER BY at_sequence DESC
@@ -30,14 +30,7 @@ public sealed class PostgresSnapshotStore(string connectionString) : ISnapshotSt
             return null;
         }
 
-        return new SnapshotRecord(
-            StreamId: reader.GetGuid(0),
-            AtSequence: reader.GetInt64(1),
-            LastEventId: reader.GetGuid(2),
-            StateHash: reader.GetString(3),
-            State: reader.GetFieldValue<byte[]>(4),
-            Trusted: reader.GetBoolean(5),
-            CreatedAt: reader.GetFieldValue<DateTimeOffset>(6));
+        return ReadRecord(reader);
     }
 
     public async Task<SnapshotRecord?> TryGetAtOrBeforeAsync(
@@ -48,7 +41,7 @@ public sealed class PostgresSnapshotStore(string connectionString) : ISnapshotSt
         // and is excluded by the WHERE bound, so an as-of fold never seeds from a snapshot ahead of
         // its target.
         const string sql = """
-            SELECT stream_id, at_sequence, last_event_id, state_hash, state, trusted, created_at
+            SELECT stream_id, at_sequence, last_event_id, state_hash, state, trusted, created_at, transaction_time
             FROM snapshots
             WHERE stream_id = @stream_id AND at_sequence <= @at_or_before
             ORDER BY at_sequence DESC
@@ -67,14 +60,7 @@ public sealed class PostgresSnapshotStore(string connectionString) : ISnapshotSt
             return null;
         }
 
-        return new SnapshotRecord(
-            StreamId: reader.GetGuid(0),
-            AtSequence: reader.GetInt64(1),
-            LastEventId: reader.GetGuid(2),
-            StateHash: reader.GetString(3),
-            State: reader.GetFieldValue<byte[]>(4),
-            Trusted: reader.GetBoolean(5),
-            CreatedAt: reader.GetFieldValue<DateTimeOffset>(6));
+        return ReadRecord(reader);
     }
 
     public async Task PutAsync(SnapshotRecord snapshot, CancellationToken ct = default)
@@ -82,14 +68,17 @@ public sealed class PostgresSnapshotStore(string connectionString) : ISnapshotSt
         // Re-putting the same (stream, sequence) overwrites — promotes to trusted or
         // refreshes a recomputed snapshot — without a separate update path.
         const string sql = """
-            INSERT INTO snapshots (stream_id, at_sequence, last_event_id, state_hash, state, trusted, created_at)
-            VALUES (@stream_id, @at_sequence, @last_event_id, @state_hash, @state, @trusted, @created_at)
+            INSERT INTO snapshots
+                (stream_id, at_sequence, last_event_id, state_hash, state, trusted, created_at, transaction_time)
+            VALUES
+                (@stream_id, @at_sequence, @last_event_id, @state_hash, @state, @trusted, @created_at, @transaction_time)
             ON CONFLICT (stream_id, at_sequence) DO UPDATE SET
-                last_event_id = EXCLUDED.last_event_id,
-                state_hash    = EXCLUDED.state_hash,
-                state         = EXCLUDED.state,
-                trusted       = EXCLUDED.trusted,
-                created_at    = EXCLUDED.created_at;
+                last_event_id    = EXCLUDED.last_event_id,
+                state_hash       = EXCLUDED.state_hash,
+                state            = EXCLUDED.state,
+                trusted          = EXCLUDED.trusted,
+                created_at       = EXCLUDED.created_at,
+                transaction_time = EXCLUDED.transaction_time;
             """;
 
         await using var connection = new NpgsqlConnection(connectionString);
@@ -102,8 +91,26 @@ public sealed class PostgresSnapshotStore(string connectionString) : ISnapshotSt
         command.Parameters.AddWithValue("state", snapshot.State.ToArray());
         command.Parameters.AddWithValue("trusted", snapshot.Trusted);
         command.Parameters.AddWithValue("created_at", snapshot.CreatedAt);
+        command.Parameters.AddWithValue(
+            "transaction_time", (object?)snapshot.TransactionTime ?? DBNull.Value);
         await command.ExecuteNonQueryAsync(ct);
     }
+
+    /// <summary>
+    /// Maps a positioned reader row to a <see cref="SnapshotRecord"/>. Both SELECTs project the same
+    /// column list (… created_at, transaction_time), so the ordinals are shared. transaction_time is
+    /// nullable — pre-0017 rows carry SQL NULL, surfaced as a null <see cref="SnapshotRecord.TransactionTime"/>.
+    /// </summary>
+    private static SnapshotRecord ReadRecord(NpgsqlDataReader reader)
+        => new(
+            StreamId: reader.GetGuid(0),
+            AtSequence: reader.GetInt64(1),
+            LastEventId: reader.GetGuid(2),
+            StateHash: reader.GetString(3),
+            State: reader.GetFieldValue<byte[]>(4),
+            Trusted: reader.GetBoolean(5),
+            CreatedAt: reader.GetFieldValue<DateTimeOffset>(6),
+            TransactionTime: reader.IsDBNull(7) ? null : reader.GetFieldValue<DateTimeOffset>(7));
 
     public async Task<int> DiscardAsync(Guid streamId, CancellationToken ct = default)
     {

@@ -12,6 +12,12 @@ public sealed class EngineFixture : IAsyncLifetime
 {
     private static readonly DateTimeOffset Clock = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
+    /// <summary>
+    /// The fixed instant the fixture's <see cref="FixedTimeProvider"/> stamps as each append's
+    /// transaction_time. Exposed so a test can assert a fold-backed read reports it as last_updated.
+    /// </summary>
+    public static DateTimeOffset AppendTime => Clock;
+
     private readonly PostgreSqlContainer _pg = new PostgreSqlBuilder("postgres:18-alpine")
         .Build();
 
