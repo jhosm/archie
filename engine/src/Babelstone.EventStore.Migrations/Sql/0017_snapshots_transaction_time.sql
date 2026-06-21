@@ -1,0 +1,27 @@
+-- 0017_snapshots_transaction_time.sql
+--
+-- Carry the event-derived transaction_time on each snapshot row (feature-design event-store §8 /
+-- ADR-PC-003 §P3, ADR-PC-010 §P5). A snapshot already records WHEN its row was physically written
+-- (created_at, a wall-clock DB stamp). What it could NOT record was the transaction_time of the
+-- head event it covers — the append-stamped instant the runtime owns the clock for. Without it, a
+-- stream FULLY covered by a snapshot (no un-snapshotted tail) rehydrates with a null last_updated
+-- even though its version is >= 0, because last_updated was only ever derived from a tail event.
+--
+-- This column lets rehydrate SEED last_updated from the snapshot when there is no tail, so a
+-- fold-backed read of a fully-snapshotted stream reports the same last_updated a read-model row
+-- would (ADR-IC-005 §P3). The value is the append's already-stamped, event-derived transaction_time
+-- (never a fresh wall-clock read), so it stays a deterministic function of the log — the engine
+-- remains FAMILY-AGNOSTIC and the clock stays in the runtime, never a handler.
+--
+-- BACKWARD-compatible by construction: ADD COLUMN ... NULL leaves every existing snapshot row with
+-- transaction_time = NULL, for which rehydrate falls back to the prior behaviour (a null last_updated
+-- on a no-tail stream — the cold fold remains correct, just as before this column). New snapshots
+-- written after this migration carry a real transaction_time. The snapshots table is a rebuildable
+-- cache, so the next discard-rebuild drill (§8.3) backfills the column for any stream that matters.
+-- IF NOT EXISTS makes re-application idempotent. The column inherits the table-level
+-- SELECT/INSERT/UPDATE grants babelstone_engine already holds on snapshots (0003) — the runtime
+-- writes it on the post-commit snapshot write and reads it on rehydrate — so no new GRANT is owed.
+--
+-- Forward-only: once applied this migration is never edited (ADR-PC-001 §P5); shape changes land as
+-- new, higher-numbered migrations.
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS transaction_time TIMESTAMPTZ NULL;
