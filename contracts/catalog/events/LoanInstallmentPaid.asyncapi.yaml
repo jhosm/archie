@@ -15,7 +15,7 @@ info:
 
     No PII (ADR-PC-004 §P2): the payload carries only computed cents amounts, the installment
     index, and the paid date.
-  x-owner: credito-pessoal
+  x-owner: personal-loan
   x-owner-contact: loans-team@babelstone.example
   x-status: active
   x-gdpr-legal-basis: CONTRACT_PERFORMANCE
@@ -23,9 +23,9 @@ info:
     - acl                 # downstream core-banking installment-collection projection (ADR-IC-012)
     - notification        # borrower-facing installment receipt (ADR-IC-011)
 channels:
-  credito_pessoal:
+  personal_loan:
     description: |
-      Event-carried-state-transfer stream for the credito_pessoal aggregate. Topic name ==
+      Event-carried-state-transfer stream for the personal_loan aggregate. Topic name ==
       `aggregate_type` (the relay's documented convention, OutboxDrainer). One Avro schema
       per event type (Option A, doc 08): each event is its own message on this channel.
     x-compacted: false
@@ -36,9 +36,9 @@ operations:
   publishLoanInstallmentPaid:
     action: send
     channel:
-      $ref: '#/channels/credito_pessoal'
+      $ref: '#/channels/personal_loan'
     messages:
-      - $ref: '#/channels/credito_pessoal/messages/LoanInstallmentPaid'
+      - $ref: '#/channels/personal_loan/messages/LoanInstallmentPaid'
 components:
   messages:
     LoanInstallmentPaid:
@@ -74,11 +74,11 @@ components:
           ce_time:             { type: string, format: date-time }
           ce_datacontenttype:  { type: string, const: 'application/avro' }
           ce_subject:          { type: string, description: 'aggregate_id — the specific loan this event is about.' }
-          ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. credito_pessoal.' }
+          ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. personal_loan.' }
       # §P6: payload is the governed Avro schema, referenced (not restated). The PR gate
       # resolves the .avsc on disk hermetically; the main lane reconciles the subject below.
-      x-schema-registry-subject: loans.credito_pessoal.LoanInstallmentPaid-value
+      x-schema-registry-subject: loans.personal_loan.LoanInstallmentPaid-value
       payload:
         schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
         schema:
-          $ref: '../../avro/loans/credito_pessoal/LoanInstallmentPaid.avsc'
+          $ref: '../../avro/loans/personal_loan/LoanInstallmentPaid.avsc'

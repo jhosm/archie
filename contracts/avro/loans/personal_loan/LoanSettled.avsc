@@ -1,0 +1,11 @@
+{
+  "type": "record",
+  "namespace": "loans.personal_loan",
+  "name": "LoanSettled",
+  "doc": "The loan is fully amortized and settled (terminal): the outstanding balance reached zero through the final scheduled installment or a full early repayment. The closed-end-asset analogue of term_deposit.DepositMatured. Business payload only (ADR-IC-002 §P5); CloudEvents envelope rides in Kafka headers. No PII (ADR-PC-004 §P2).",
+  "fields": [
+    { "name": "total_capital_repaid_cents", "type": "long", "doc": "Total capital returned over the loan's life (= the original principal) as integer EUR cents." },
+    { "name": "total_interest_paid_cents", "type": "long", "doc": "Total interest paid over the loan's life as integer EUR cents." },
+    { "name": "settled_on", "type": { "type": "int", "logicalType": "date" }, "doc": "The settlement date as days since epoch." }
+  ]
+}

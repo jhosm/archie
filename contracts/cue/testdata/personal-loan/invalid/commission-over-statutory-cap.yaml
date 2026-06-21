@@ -1,0 +1,16 @@
+# REJECT: the early-repayment commission exceeds the >1y statutory ceiling (50 bps
+# = 0.50%, PT DL 133/2009 art. 19). The schema bounds the CHARGED rate to the legal
+# maximum, so 75 bps fails depth 1 — a config cannot charge above the statute.
+variant_id: cp_pt_general_36m_overcap
+schema: personal_loan@2026.1
+pack: pt.2026.1
+currency: EUR
+term_months: 36
+purpose: general
+rate:
+  fixed:
+    rate_ref: { sheet: live, role_selector: standard }
+early_repayment:
+  commission_basis_points: 75
+principal_bounds:
+  min_cents: 100000

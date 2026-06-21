@@ -26,7 +26,7 @@ public sealed record AmortizationRow(
 
 /// <summary>
 /// Pure constant-installment (French / Price) amortization primitives (fin-math §3–§4, §7.4–§7.5).
-/// A closed-end personal loan (<c>credito_pessoal</c>) repays a fixed principal in <c>n</c> equal
+/// A closed-end personal loan (<c>personal_loan</c>) repays a fixed principal in <c>n</c> equal
 /// installments at a periodic rate <c>r = TAN / m</c> (the PT proportional-rate convention,
 /// fin-math §2.2): the headline installment is constant, each one splitting into a shrinking
 /// interest leg and a growing capital leg until the balance reaches zero (fin-math §4.1).
@@ -225,7 +225,7 @@ public static class Amortization
     /// <remarks>
     /// The PT consumer-credit statutory ceiling is rate-by-remaining-term: <b>0.50%</b> of the capital
     /// repaid when more than one year of term remains, <b>0.25%</b> when one year or less remains
-    /// (research/credito-pessoal/02 §2). Both the headline percentage the product charges and the
+    /// (research/personal-loan/02 §2). Both the headline percentage the product charges and the
     /// statutory ceiling are passed in basis points so the policy/pack owns the numbers and this kernel
     /// stays declarative: the commission is <c>min(charged_bps, ceiling_bps) × capitalRepaid</c>, then
     /// floored to the lost-interest ceiling. Computed in <see cref="decimal"/>, rounded ONCE at the

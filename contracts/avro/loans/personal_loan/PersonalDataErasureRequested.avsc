@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "namespace": "loans.personal_loan",
+  "name": "PersonalDataErasureRequested",
+  "doc": "The data subject's GDPR Article 17 right-to-be-forgotten was exercised on this loan: the subject's encryption key was crypto-shredded (ADR-PC-004 §P3), so every PII ciphertext under it is now permanently unrecoverable. The erasure FACT is structural-only (no field was, or could resolve to, the erased personal data), so it may itself ride the durable bus as a cascade signal. Business payload only (ADR-IC-002 §P5); CloudEvents envelope rides in Kafka headers. No PII (ADR-PC-004 §P2).",
+  "fields": [
+    { "name": "loan_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "The loan whose subject's PII was erased — a structural id, not PII." },
+    { "name": "subject_pseudonym", "type": "string", "doc": "A SALTED, ONE-WAY hash of the data-subject id (ADR-IC-016 §8 / ADR-PC-004 §P2) — an opaque correlation reference a consumer can cascade its own deletion on, NEVER the raw subject id." },
+    { "name": "erased_on", "type": { "type": "int", "logicalType": "date" }, "doc": "The date the erasure took effect (audit lineage) as days since epoch." },
+    { "name": "erasure_reason", "type": "string", "doc": "Stable machine code for why erasure happened (e.g. GDPR_ARTICLE_17) — never PII." }
+  ]
+}
