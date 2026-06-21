@@ -13,11 +13,45 @@ namespace Babelstone.Families.CreditoPessoal.Application;
 /// — the dependency arrow is family→engine, never the reverse (ADR-PC-021 §D2).
 /// </summary>
 /// <remarks>
-/// The shared resolve→stamp→settle→append choreography is kept as separable steps so it can lift into a
-/// generic ConstitutionPipeline on the second decider (ADR-PC-021 §P5, bd babelstone-osv6) — this IS that
-/// second decider, so the disbursement path is written to mirror the term-deposit constitution path's
-/// shape. ORIGINATION stays UPSTREAM (ADR-PC-030 / ADR-PC-024): this service disburses an already-approved,
+/// <para>
+/// The resolve→stamp→decide→append choreography is kept as separable steps mirroring the term-deposit
+/// constitution path, so a future generic ConstitutionPipeline lift (ADR-PC-021 §P5, bd babelstone-osv6)
+/// is a refactor, not a rewrite.
+/// </para>
+/// <para>
+/// <b>Why the full ConstitutionPipeline is DEFERRED, not extracted here (bd babelstone-osv6, the
+/// rule-of-three judgement).</b> osv6 anticipated extracting the shared choreography "resolve rate sheet →
+/// stamp tan+version_id → read pack primitives → call settlement port → append" on this, the SECOND
+/// decider. On inspection the rule-of-three is NOT cleanly met for that <i>full</i> shape — the two
+/// constitution paths diverge on exactly the steps a one-example pipeline would freeze (ADR-PC-021 §P5 /
+/// §Residual-risks: "generalising from one example could freeze assumptions that other lifecycles break"):
+/// <list type="bullet">
+///   <item><b>Settlement.</b> Term-deposit constitution is DE-SETTLED — it appends only; settlement is the
+///   constitution saga's gated step (bd babelstone-t7o3.4, ADR-PC-029 slot 2). This disbursement, by
+///   contrast, settles EAGERLY with a lump-sum DEBIT at t=0 (a loan pays out). A pipeline that baked in
+///   "call settlement port" would not fit the de-settled deposit; one that baked in "never settle" would
+///   not fit this disbursement. The osv6-stated "call settlement port" step is no longer even present in
+///   the reference (deposit) constitution.</item>
+///   <item><b>Pack-primitive reads.</b> Term-deposit constitution reads a partial-withdrawal policy from
+///   the product config; this disbursement reads no pack primitive at constitution.</item>
+///   <item><b>Post-decide tails.</b> Term-deposit has the ADVANCE upfront-interest branch; this has none.</item>
+/// </list>
+/// The ONE genuinely-shared, stable, rule-of-three-met piece is the rate-resolution-and-fail-loud two-step
+/// (resolve active sheet → resolve TAN for (product, role, principal), both throwing DomainRejectedException),
+/// duplicated across term-deposit constitution, term-deposit renewal, AND this disbursement. But it cannot be
+/// extracted cleanly: its only sound homes are (a) the generic <c>Babelstone.RateSheets</c> spine project,
+/// which would have to take a new reference on <c>Babelstone.Engine</c> just to throw DomainRejectedException
+/// (widening spine coupling for a six-line helper), or (b) a shared cross-family application project — exactly
+/// the candidate ADR-PC-021 §D1 REJECTS ("there is no shared cross-family application project"). Forcing
+/// either would trade a small, honest duplication for a leaky abstraction or an ADR violation. So osv6 is a
+/// DOCUMENTED DEFER: the deciders stay written for-lift, and the pipeline is taken when a path appears whose
+/// settle/primitive/tail shape genuinely matches one of the existing two (a real rule-of-three on the FULL
+/// choreography, not just its rate-resolution prefix). A documented defer is sounder than a leaky pipeline.
+/// </para>
+/// <para>
+/// ORIGINATION stays UPSTREAM (ADR-PC-030 / ADR-PC-024): this service disburses an already-approved,
 /// already-priced loan; it never models solvency/CRC/scoring.
+/// </para>
 /// </remarks>
 public sealed class CreditoPessoalConstitutionService(
     AggregateRuntime<LoanPosition> runtime,
