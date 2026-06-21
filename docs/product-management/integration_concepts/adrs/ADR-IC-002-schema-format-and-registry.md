@@ -282,3 +282,23 @@ The engine picks up all schemas via a recursive glob (`**/*.avsc`); no code chan
 ### A2 · This amends the decision; it does not supersede this ADR
 
 §P1 (one file per event type, naming mirrors the registry subject, Option A/Option B shape) and §P2–§P5 remain binding as written. This amendment replaces only the filename pattern text and example in §P1 with the directory-tree layout above. The format choice (Apache Avro), registry API (Confluent SR), and all compatibility/registration/envelope-scope rules are unchanged.
+
+---
+
+## Amendment — 2026-06-21: §P1 — the reserved single-segment `operations` namespace for engine-declared cross-cutting events
+
+In plain English: §P1 assumed every published event belongs to a product family, so it required a two-part `{domain}.{aggregate_type}` namespace. But the engine also declares a handful of **cross-cutting** events that belong to NO family — facts that apply to any instance regardless of product (the `operations.*` set, event-store §4.1/§4.3, e.g. `PackVersionMigrated`). Until now those were store-only (no `.avsc`, no registry subject), so they never reached §P1's scope. [ADR-PC-004 Amendment A4](../../product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) promotes the first one — `operations.PersonalDataErasureRequested` (GDPR Article 17 erasure, which has named downstream consumers) — to the bus, so it now needs a governed schema, a registry subject, and an on-disk path. This amendment records that a cross-cutting event takes a reserved **single-segment** synthetic namespace, converting what would otherwise be a silent divergence from §P1's two-segment rule into a recorded decision.
+
+### A3 · Cross-cutting events use the reserved single-segment namespace `operations` (refines §P1 / A1)
+
+An engine-declared cross-cutting event (one that names no product family — [ADR-PC-021 §P2](../../product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)) declares its Avro `namespace` as the bare reserved segment **`operations`** — the synthetic `aggregate_type` for the cross-cutting set (event-store §4.3) — rather than a `{domain}.{aggregate_type}` pair. Everything else in §P1/A1 holds verbatim against that namespace: the registry subject is the FQN + `-value`, and the on-disk path mirrors the namespace.
+
+```
+contracts/avro/operations/{EventName}.avsc      namespace operations   subject operations.{EventName}-value
+```
+
+Example: `contracts/avro/operations/PersonalDataErasureRequested.avsc` — namespace `operations`, record name `PersonalDataErasureRequested`, subject `operations.PersonalDataErasureRequested-value`. `operations` is **reserved**: no product `{domain}` may be named `operations`, so the single-segment form never collides with a two-segment family namespace. The recursive `**/*.avsc` glob and the "namespace+name is the sole source of the subject; the path is organisational" rule (A1) are unchanged.
+
+### A4 · This amends §P1's scope; it does not supersede this ADR
+
+§P1's two-segment `{domain}.{aggregate_type}` rule remains the form for **family** events; §P2–§P5 and A1's path-mirrors-namespace discipline are unchanged. This amendment only carves out the reserved single-segment `operations` namespace for the engine-declared cross-cutting set now that one of its events is bus-promoted. The format choice (Apache Avro), registry API (Confluent SR), and all compatibility/registration/envelope-scope rules are unchanged.
