@@ -157,11 +157,13 @@ public sealed class TermDepositHostModule : IFamilyHostModule
 
         // The operator pack-migration write-path (ADR-PC-009 §P3, surface §3.6): re-pin a live instance
         // to a newer pack by appending the engine-declared PackVersionMigrated through this family's
-        // runtime. It reads each instance's current pin off the event store head and appends the
-        // migration pinned to the target pack (the re-pin lives on the envelope). The event is
-        // engine-owned + family-agnostic, but it is appended to a term-deposit stream, so the service
-        // composes the family runtime + the shared event store here.
-        services.AddSingleton(serviceProvider => new PackMigrationService(
+        // runtime. The mechanics are family-AGNOSTIC and live in the engine HOSTING library
+        // (Babelstone.Engine.Hosting.PackMigrationService<TState>, the non-spine host/command-side
+        // assembly — ADR-PC-021 §A9/§A11) — they run no term-deposit domain logic, only read each
+        // instance's current pin off the event store head and append the migration pinned to the target
+        // pack (the re-pin lives on the envelope). The family closes the generic over its own
+        // DepositPosition here, composing the family runtime + the shared event store.
+        services.AddSingleton(serviceProvider => new PackMigrationService<DepositPosition>(
             serviceProvider.GetRequiredService<AggregateRuntime<DepositPosition>>(),
             serviceProvider.GetRequiredService<IEventStore>()));
 
@@ -233,9 +235,10 @@ public sealed class TermDepositHostModule : IFamilyHostModule
     {
         DepositsEndpoints.Map(app);
         // The operator pack-migration command surface (ADR-PC-009 §P3 / surface §3.6): POST
-        // /v1/pack-migrations. Mapped alongside the deposit endpoints — it is family-scoped (it appends
-        // through the term-deposit runtime) even though the migration event itself is engine-declared.
-        PackMigrationsEndpoints.Map(app);
+        // /v1/pack-migrations. The endpoint + HTTP contract are family-AGNOSTIC and live in the hosting
+        // spine (Babelstone.Engine.Hosting.PackMigrationsEndpoints); the family only closes the generic
+        // over its DepositPosition, which resolves PackMigrationService<DepositPosition> from DI.
+        PackMigrationsEndpoints.Map<DepositPosition>(app);
     }
 }
 
