@@ -118,7 +118,7 @@ public sealed record WriteOffLoanCommand(
 
 /// <summary>
 /// Record the GDPR Article 17 erasure fact on a loan (ADR-PC-004 §P3): append
-/// <see cref="PersonalDataErasureRequested"/> so the loan folds to <c>Erased</c>. The actual
+/// <see cref="Babelstone.Engine.PersonalDataErasureRequested"/> so the loan folds to <c>Erased</c>. The actual
 /// crypto-shredding of the subject's key runs in the impure HOST shell BEFORE this command is issued, so
 /// this command carries ONLY structural facts: the loan id, a salted one-way subject pseudonym (never the
 /// raw subject id), the erasure date, and a reason code. Mirrors the term-deposit erasure command.

@@ -195,23 +195,3 @@ public sealed record LoanWrittenOff(
     // Write-off is a closing snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1).
     public override bool IsLifecycleBoundary => true;
 }
-
-/// <summary>
-/// The data subject's GDPR Article 17 right-to-be-forgotten was exercised on this loan: the subject's
-/// encryption key has been crypto-shredded (<c>IPiiKeyStore.DestroyKeyAsync</c>, ADR-PC-004 §P3), so every
-/// PII ciphertext under that key is now permanently unrecoverable. After this past fact, only the loan's
-/// NON-personal structural fields (id, amounts, dates, lifecycle, opaque references) remain queryable.
-/// Cross-cutting / structural only, never PII (ADR-PC-004 §P2) — modelled identically to the term-deposit
-/// family's erasure event. The key destruction is performed by the impure command shell BEFORE this event
-/// is appended (the fold stays pure — it only LABELS the loan Erased, BENG001/002/003).
-/// </summary>
-/// <param name="LoanId">The loan whose subject's PII was erased — a structural id, not PII.</param>
-/// <param name="SubjectPseudonym">A salted one-way hash of the data-subject id (ADR-IC-016 §8 /
-/// ADR-PC-004 §P2) — an opaque correlation reference, NEVER the raw subject id.</param>
-/// <param name="ErasedOn">The date the erasure took effect (audit lineage).</param>
-/// <param name="ErasureReason">Stable machine code for why erasure happened (e.g. <c>GDPR_ARTICLE_17</c>) — never PII.</param>
-public sealed record PersonalDataErasureRequested(
-    Guid LoanId,
-    string SubjectPseudonym,
-    DateOnly ErasedOn,
-    string ErasureReason) : DomainEvent;

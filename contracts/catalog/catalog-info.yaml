@@ -35,7 +35,6 @@ spec:
     - ./events/DepositConstituted.asyncapi.yaml
     - ./events/InterestPaid.asyncapi.yaml
     - ./events/DepositMatured.asyncapi.yaml
-    - ./events/PersonalDataErasureRequested.asyncapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: Location
@@ -49,7 +48,16 @@ spec:
     - ./events/LoanInstallmentPaid.asyncapi.yaml
     - ./events/LoanRepaidEarly.asyncapi.yaml
     - ./events/LoanSettled.asyncapi.yaml
-    - ./events/personal_loan.PersonalDataErasureRequested.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: babelstone-operations-events
+  description: The governed AsyncAPI catalogue of the engine-declared cross-cutting (operations) integration events.
+spec:
+  type: url
+  targets:
+    - ./events/operations.PersonalDataErasureRequested.asyncapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: Location
@@ -101,19 +109,6 @@ spec:
   owner: term-deposit
   definition:
     $text: ./events/DepositMatured.asyncapi.yaml
----
-apiVersion: backstage.io/v1alpha1
-kind: API
-metadata:
-  name: personal-data-erasure-requested
-  title: PersonalDataErasureRequested
-  description: GDPR right-to-be-forgotten — the subject's PII key was crypto-shredded (ADR-PC-004 §P3).
-spec:
-  type: asyncapi
-  lifecycle: production
-  owner: term-deposit
-  definition:
-    $text: ./events/PersonalDataErasureRequested.asyncapi.yaml
 ---
 # The personal_loan (personal-loan) integration events (ADR-PC-031). The closed-end-asset
 # family's published events: disburse -> amortize (installments / early repayment) -> settle,
@@ -171,18 +166,22 @@ spec:
   definition:
     $text: ./events/LoanSettled.asyncapi.yaml
 ---
+# The engine-declared cross-cutting (operations) integration events (ADR-PC-004 Amendment A4,
+# event-store §4.1/§4.3). Facts that apply to ANY instance regardless of family — declared once in
+# the spine and folded per family. GDPR Article 17 erasure is the first bus-promoted member; it
+# supersedes the previously family-scoped term_deposit / personal_loan erasure events.
 apiVersion: backstage.io/v1alpha1
 kind: API
 metadata:
-  name: personal-loan-personal-data-erasure-requested
-  title: PersonalDataErasureRequested (personal_loan)
-  description: GDPR right-to-be-forgotten on a loan — the subject's PII key was crypto-shredded (ADR-PC-004 §P3).
+  name: operations-personal-data-erasure-requested
+  title: PersonalDataErasureRequested (operations)
+  description: GDPR right-to-be-forgotten — the subject's PII key was crypto-shredded (ADR-PC-004 §P3/A4). Cross-cutting, engine-declared.
 spec:
   type: asyncapi
   lifecycle: production
-  owner: personal-loan
+  owner: platform
   definition:
-    $text: ./events/personal_loan.PersonalDataErasureRequested.asyncapi.yaml
+    $text: ./events/operations.PersonalDataErasureRequested.asyncapi.yaml
 ---
 # The per-consumer reconciliation contracts (event-store §7.3, bd babelstone-y1t7). Each is
 # a consumer's declared statement of what it reconciles against the engine's emitted events;

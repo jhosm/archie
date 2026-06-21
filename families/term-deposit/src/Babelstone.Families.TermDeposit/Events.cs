@@ -266,37 +266,3 @@ public sealed record DepositTransferredToHeirs(
     // event-store §8.1: "termination") — the terminal state is interpretable on its own.
     public override bool IsLifecycleBoundary => true;
 }
-
-/// <summary>
-/// The data subject's GDPR Article 17 right-to-be-forgotten was exercised on this deposit: the
-/// subject's encryption key has been crypto-shredded (<c>IPiiKeyStore.DestroyKeyAsync</c>, ADR-PC-004
-/// §P3), so every PII ciphertext under that key is now permanently unrecoverable. After this past
-/// fact, only the deposit's NON-personal structural fields (id, amounts, dates, lifecycle, opaque
-/// references) remain queryable — the personal data is gone, the audit/structural skeleton stays.
-/// </summary>
-/// <remarks>
-/// STRUCTURAL only, never PII (ADR-PC-004 §P2), so the erasure fact may itself ride the durable bus
-/// as a cascade signal for downstream consumers WITHOUT re-leaking what was erased:
-/// <list type="bullet">
-///   <item><paramref name="SubjectPseudonym"/> is a SALTED, ONE-WAY hash of the data-subject id
-///   (the same non-reversible pseudonym discipline as the telemetry plane, ADR-IC-016 §8), NOT the
-///   raw subject id. It lets a consumer correlate "which subject was erased" within its own salted
-///   view and cascade its own deletion, while the bus never carries the recoverable identity. The
-///   raw subject id stays engine-internal at the OpenBao boundary (ADR-PC-004 §P2).</item>
-///   <item><paramref name="ErasureReason"/> is a machine code (e.g. <c>GDPR_ARTICLE_17</c>,
-///   <c>RETENTION_EXPIRED</c>) — structural, never anything about the person.</item>
-/// </list>
-/// The event is the AUDIT record of the erasure; it carries no field that was, or could resolve to,
-/// the erased personal data. The key destruction is performed by the impure command shell BEFORE this
-/// event is appended (the fold stays pure — it only LABELS the deposit Erased, BENG001/002/003).
-/// </remarks>
-/// <param name="DepositId">The deposit whose subject's PII was erased — a structural id, not PII.</param>
-/// <param name="SubjectPseudonym">A salted one-way hash of the data-subject id (ADR-IC-016 §8 /
-/// ADR-PC-004 §P2) — an opaque correlation reference, NEVER the raw subject id.</param>
-/// <param name="ErasedOn">The date the erasure took effect (audit lineage).</param>
-/// <param name="ErasureReason">Stable machine code for why erasure happened (e.g. <c>GDPR_ARTICLE_17</c>) — never PII.</param>
-public sealed record PersonalDataErasureRequested(
-    Guid DepositId,
-    string SubjectPseudonym,
-    DateOnly ErasedOn,
-    string ErasureReason) : DomainEvent;

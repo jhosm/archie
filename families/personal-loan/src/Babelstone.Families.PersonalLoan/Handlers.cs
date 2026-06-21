@@ -93,16 +93,3 @@ public sealed class LoanWrittenOffHandler : IEventHandler<LoanPosition, LoanWrit
             OutstandingBalance = Money.Zero,
         });
 }
-
-public sealed class PersonalDataErasureRequestedHandler : IEventHandler<LoanPosition, PersonalDataErasureRequested>
-{
-    // GDPR Article 17 (ADR-PC-004 §P3): the impure command shell already crypto-shredded the subject's
-    // key BEFORE this event was appended; the fold only LABELS the loan Erased. It does NOT touch the
-    // structural fields — id, amounts, dates, lifecycle stay queryable post-erasure (the personal data
-    // lived behind the OpenBao key, never in this projection). Pure label-only write (BENG001/002/003).
-    public HandlerResult<LoanPosition> Apply(LoanPosition state, PersonalDataErasureRequested @event)
-        => HandlerResult<LoanPosition>.From(state with
-        {
-            Lifecycle = LoanLifecycle.Erased,
-        });
-}

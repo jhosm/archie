@@ -151,7 +151,13 @@ public sealed class LoanPositionFoldTests
 
     private static LoanPosition Fold(LoanPosition state, DomainEvent @event)
     {
-        var eventType = $"personal_loan.{@event.GetType().Name}";
+        // event_type mirrors the engine's binding: a family event is `personal_loan.<Name>`, while an
+        // engine-declared cross-cutting event (Babelstone.Engine namespace, e.g. PackVersionMigrated /
+        // PersonalDataErasureRequested) is `operations.<Name>` (event-store §4.3).
+        var name = @event.GetType().Name;
+        var eventType = @event.GetType().Namespace == "Babelstone.Engine"
+            ? $"operations.{name}"
+            : $"personal_loan.{name}";
         Assert.True(Registry.TryResolve(eventType, out var handler), $"no handler for {eventType}");
         return (LoanPosition)handler.ApplyBoxed(state, @event).NewState;
     }

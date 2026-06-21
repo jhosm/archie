@@ -186,7 +186,7 @@ public sealed record PartialWithdrawCommand(
 
 /// <summary>
 /// Record the GDPR Article 17 erasure fact on a deposit (bd babelstone-nzw6): append
-/// <see cref="PersonalDataErasureRequested"/> so the deposit folds to <c>Erased</c>. The actual
+/// <see cref="Babelstone.Engine.PersonalDataErasureRequested"/> so the deposit folds to <c>Erased</c>. The actual
 /// crypto-shredding of the subject's key (<c>IPiiKeyStore.DestroyKeyAsync</c>, ADR-PC-004 §P3) is the
 /// caller's responsibility — it runs in the impure HOST shell (the OpenBao boundary lives in the
 /// engine host, not this PII-free Application layer) BEFORE this command is issued. So this command

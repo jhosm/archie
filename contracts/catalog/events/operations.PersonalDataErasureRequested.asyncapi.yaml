@@ -1,0 +1,95 @@
+asyncapi: '3.0.0'
+info:
+  title: PersonalDataErasureRequested
+  version: '1'
+  description: |
+    The data subject's GDPR Article 17 right-to-be-forgotten was exercised on an instance: the
+    subject's encryption key has been crypto-shredded (IPiiKeyStore.DestroyKeyAsync, ADR-PC-004 §P3),
+    so every PII ciphertext under that key is now permanently unrecoverable. After this fact, only the
+    instance's non-personal structural fields (id, amounts, dates, lifecycle, opaque references) remain
+    queryable.
+
+    Emitted: exactly once per affected instance, when the engine processes a verified erasure request,
+    destroys the subject's key, and appends the audit fact that transitions the aggregate to Erased. A
+    subject holding several instances (across one or more families) gets one such fact per instance; the
+    single key destruction shreds all of that subject's PII at once.
+
+    This is a CROSS-CUTTING, engine-declared event (ADR-PC-004 Amendment A4): erasure is the same
+    structural fact for any product family, so the engine owns it ONCE in the spine
+    (Babelstone.Engine.PersonalDataErasureRequested, names no family — ADR-PC-021 §P2) under the
+    synthetic `operations` aggregate_type (event-store §4.3), and each family folds it against its own
+    projection via the IErasable seam. It supersedes the previously family-scoped
+    deposits.term_deposit.* / loans.personal_loan.* erasure events.
+
+    No PII rides this event (ADR-PC-004 §P2): subject_pseudonym is a salted one-way hash of the
+    data-subject id (ADR-IC-016 §8), an opaque correlation reference a downstream consumer can cascade
+    its own deletion on — never the raw subject id. The bus carries the erasure SIGNAL, never the
+    recoverable identity, so the fact can be published without re-leaking what was erased.
+  x-owner: platform
+  x-owner-contact: platform-team@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: LEGAL_OBLIGATION
+  x-authorized-consumers:
+    - acl                 # downstream core-banking erasure cascade (delete related records)
+    - notification        # suppress further subject-facing messaging once erased (ADR-IC-011)
+channels:
+  operations:
+    description: |
+      The engine-declared cross-cutting operational stream (event-store §4.1/§4.3). Topic name ==
+      `aggregate_type` (the relay's documented convention, OutboxDrainer) — the synthetic `operations`
+      aggregate_type for facts that apply to ANY instance regardless of product family. One Avro schema
+      per event type (Option A, doc 08): each event is its own message on this channel.
+    x-compacted: false
+    messages:
+      PersonalDataErasureRequested:
+        $ref: '#/components/messages/PersonalDataErasureRequested'
+operations:
+  publishPersonalDataErasureRequested:
+    action: send
+    channel:
+      $ref: '#/channels/operations'
+    messages:
+      - $ref: '#/channels/operations/messages/PersonalDataErasureRequested'
+components:
+  messages:
+    PersonalDataErasureRequested:
+      name: PersonalDataErasureRequested
+      title: Personal Data Erasure Requested
+      summary: GDPR right-to-be-forgotten — the subject's PII key was crypto-shredded.
+      contentType: application/avro
+      bindings:
+        kafka:
+          # CloudEvents 1.0 Binary Content Mode — attributes ride as Kafka headers
+          # (OutboxDrainer.BuildHeaders); the value is the Avro business payload. No PII
+          # (ADR-PC-004 §P2): the payload carries only structural fields + a salted pseudonym.
+          key:
+            type: string
+            description: 'aggregate_id (InstanceId) — the Kafka record key.'
+          bindingVersion: '0.5.0'
+      headers:
+        type: object
+        required:
+          - ce_specversion
+          - ce_id
+          - ce_source
+          - ce_type
+          - ce_time
+          - ce_subject
+          - ce_aggregatetype
+          - ce_datacontenttype
+        properties:
+          ce_specversion:      { type: string, const: '1.0' }
+          ce_id:               { type: string, format: uuid, description: 'Unique event ID (outbox event_id).' }
+          ce_source:           { type: string, description: 'URI of the producing service, e.g. urn:babelstone:engine.' }
+          ce_type:             { type: string, description: 'Reverse-DNS event type, e.g. com.bank.operations.PersonalDataErasureRequested.' }
+          ce_time:             { type: string, format: date-time }
+          ce_datacontenttype:  { type: string, const: 'application/avro' }
+          ce_subject:          { type: string, description: 'aggregate_id — the specific instance this erasure is about.' }
+          ce_aggregatetype:    { type: string, description: 'Aggregate type — operations (the synthetic cross-cutting aggregate_type).' }
+      # §P6: payload is the governed Avro schema, referenced (not restated). The PR gate
+      # resolves the .avsc on disk hermetically; the main lane reconciles the subject below.
+      x-schema-registry-subject: operations.PersonalDataErasureRequested-value
+      payload:
+        schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
+        schema:
+          $ref: '../../avro/operations/PersonalDataErasureRequested.avsc'

@@ -33,12 +33,13 @@ public sealed class PersonalLoanFamilyModule : IFamilyModule
             new DispatchableHandler<LoanPosition, LoanSettled>(new LoanSettledHandler())),
         new("personal_loan.LoanWrittenOff", typeof(LoanWrittenOff),
             new DispatchableHandler<LoanPosition, LoanWrittenOff>(new LoanWrittenOffHandler())),
-        new("personal_loan.PersonalDataErasureRequested", typeof(PersonalDataErasureRequested),
-            new DispatchableHandler<LoanPosition, PersonalDataErasureRequested>(new PersonalDataErasureRequestedHandler())),
         // The engine-declared cross-cutting operational events (event-store §4.1), bound against this
         // family's LoanPosition. The engine owns the event records + generic handlers (they name no
         // family — ADR-PC-021 §P2); the family supplies only its TState here, splicing in every
-        // cross-cutting binding in one call so it cannot forget one as the set grows. STORE-ONLY.
+        // cross-cutting binding in one call so it cannot forget one as the set grows:
+        // operations.PackVersionMigrated (STORE-ONLY) and operations.PersonalDataErasureRequested
+        // (ADR-PC-004 §P3/A4, the GDPR Article 17 erasure — a PROMOTED cross-cutting event folded here
+        // to LoanPosition.WithErased via IErasable).
         .. CrossCuttingEventRegistrations.For<LoanPosition>(),
     ];
 

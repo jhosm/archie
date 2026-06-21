@@ -5,28 +5,31 @@ using Xunit;
 namespace Babelstone.Families.TermDeposit.Tests;
 
 /// <summary>
-/// E.1 dispatch tests: the family module registers all twelve event types, and the engine
-/// folds each through its handler into the deposit position. The canonical AT_MATURITY numbers
-/// match the decider + financial-math kernel (the §5.4 withholding split). The twelfth event is
-/// the GDPR-erasure fact (bd babelstone-nzw6), which the fold LABELS Erased.
+/// E.1 dispatch tests: the family module registers all eleven term-deposit family event types plus
+/// the engine-declared cross-cutting set, and the engine folds each through its handler into the
+/// deposit position. The canonical AT_MATURITY numbers match the decider + financial-math kernel (the
+/// §5.4 withholding split). GDPR erasure is no longer a family event — it is the cross-cutting
+/// operations.PersonalDataErasureRequested (ADR-PC-004 A4), bound via IErasable, which the fold LABELS Erased.
 /// </summary>
 public sealed class TermDepositDispatchTests
 {
     private static readonly HandlerRegistry Registry = TermDepositFamilyModule.Registry();
 
     [Fact]
-    public void Module_registers_the_twelve_family_events_plus_the_cross_cutting_set()
+    public void Module_registers_the_eleven_family_events_plus_the_cross_cutting_set()
     {
         var module = new TermDepositFamilyModule();
 
-        // Twelve term-deposit family events plus the engine-declared cross-cutting operational events
+        // Eleven term-deposit family events plus the engine-declared cross-cutting operational events
         // the family splices in (CrossCuttingEventRegistrations.For<DepositPosition>(), event-store §4.1).
         var crossCutting = CrossCuttingEventRegistrations.For<DepositPosition>();
-        Assert.Equal(12 + crossCutting.Count, module.Handlers.Count);
+        Assert.Equal(11 + crossCutting.Count, module.Handlers.Count);
 
         // The cross-cutting events register under the synthetic `operations` prefix, NOT a family one
-        // (they are family-agnostic — event-store §4.3). PackVersionMigrated (ADR-PC-009 §P3) is one.
+        // (they are family-agnostic — event-store §4.3): PackVersionMigrated (ADR-PC-009 §P3) and the
+        // bus-promoted PersonalDataErasureRequested (ADR-PC-004 A4).
         Assert.Contains(module.Handlers, h => h.EventType == "operations.PackVersionMigrated");
+        Assert.Contains(module.Handlers, h => h.EventType == "operations.PersonalDataErasureRequested");
         Assert.All(crossCutting, r => Assert.Contains(module.Handlers, h => h.EventType == r.EventType));
     }
 
@@ -225,7 +228,7 @@ public sealed class TermDepositDispatchTests
             MaturityDate: new DateOnly(2027, 1, 15), InterestVariant: "AT_MATURITY", AutoRenewalPolicy: "NONE"));
 
         var erased = Dispatch(active, new PersonalDataErasureRequested(
-            DepositId: depositId,
+            InstanceId: depositId,
             SubjectPseudonym: "a1b2c3d4e5f60718",
             ErasedOn: new DateOnly(2026, 6, 15),
             ErasureReason: "GDPR_ARTICLE_17"));
@@ -239,7 +242,13 @@ public sealed class TermDepositDispatchTests
 
     private static DepositPosition Dispatch(DepositPosition state, DomainEvent @event)
     {
-        var eventType = $"term_deposit.{@event.GetType().Name}";
+        // event_type mirrors the engine's binding: a family event is `term_deposit.<Name>`, while an
+        // engine-declared cross-cutting event (Babelstone.Engine namespace, e.g. PackVersionMigrated /
+        // PersonalDataErasureRequested) is `operations.<Name>` (event-store §4.3).
+        var name = @event.GetType().Name;
+        var eventType = @event.GetType().Namespace == "Babelstone.Engine"
+            ? $"operations.{name}"
+            : $"term_deposit.{name}";
         Assert.True(Registry.TryResolve(eventType, out var handler), $"no handler for {eventType}");
         return (DepositPosition)handler.ApplyBoxed(state, @event).NewState;
     }

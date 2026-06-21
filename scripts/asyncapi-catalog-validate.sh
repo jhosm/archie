@@ -244,43 +244,56 @@ note ""
 # promotion). The complementary "schemaless event is correctly store-only" direction is the
 # DESIRED state (ADR-IC-017 §P4) and is reported informationally, never failed.
 #
-# Hermetic: it scans families/**/Events.cs for `record <Name>(...) : ... DomainEvent`
+# Hermetic: it scans families/**/Events.cs AND the engine spine's cross-cutting events
+# (engine/src/Babelstone.Engine/CrossCuttingEvents.cs) for `record <Name>(...) : ... DomainEvent`
 # declarations — the SAME on-disk regex idiom the .NET fitness test
-# (CatalogGatedRelayReverseOrphanTests) uses — so the gate needs no .NET build. The .NET
-# test is the authoritative biconditional proof (it has the real catalog + handler
-# registry); this is the contracts-job mirror that fails the PR at the schema layer.
+# (CatalogGatedRelayReverseOrphanTests) uses — so the gate needs no .NET build. The spine source
+# matters because an engine-declared cross-cutting event can be PROMOTED to the bus (e.g.
+# operations.PersonalDataErasureRequested, ADR-PC-004 A4): it is a real, relay-capable DomainEvent
+# (folded per family via CrossCuttingEventRegistrations.For) even though it lives in the spine, not a
+# family. The .NET test is the authoritative biconditional proof (it has the real catalog + handler
+# registry, which already includes the spliced cross-cutting registrations); this is the contracts-job
+# mirror that fails the PR at the schema layer.
 # ---------------------------------------------------------------------------
 note "-- §P3 (ADR-IC-017) reverse orphan: every catalogued .avsc is a real DomainEvent (NO_UNCATALOGUED_EVENT_ON_BUS) --"
 FAMILIES_DIR="${ASYNCAPI_CATALOG_FAMILIES_DIR:-families}"
+# The engine spine's cross-cutting event declarations (engine-owned, family-agnostic — event-store
+# §4.1/§4.3). A promoted cross-cutting event (a catalogued .avsc) resolves to a DomainEvent HERE, not
+# under families/. Overridable for a future spine split.
+SPINE_CROSSCUTTING="${ASYNCAPI_CATALOG_SPINE_CROSSCUTTING:-engine/src/Babelstone.Engine/CrossCuttingEvents.cs}"
 if [ -d "$AVRO_DIR" ] && [ -d "$FAMILIES_DIR" ]; then
 	command -v perl >/dev/null 2>&1 || { echo "FATAL: perl is required for the §P3 reverse-orphan scan"; exit 2; }
-	# The family DomainEvent record names, off disk (skip bin/obj build output). A single
-	# multiline-aware pass (perl -0777) over each Events.cs: `record [class] <Name> ... : ...
+	# The DomainEvent record names, off disk (skip bin/obj build output). A single multiline-aware pass
+	# (perl -0777) over each Events.cs AND the spine cross-cutting source: `record [class] <Name> ... : ...
 	# DomainEvent`, with [^{;] stopping the base scan at the first { or ; so it never bleeds past
 	# the declaration into the next record. Mirrors the .NET fitness test's regex
 	# (CatalogGatedRelayReverseOrphanTests / EmitContractFitnessTests) — perl handles the
 	# multi-line positional-ctor records grep -z could not match portably on macOS/Linux.
 	domain_event_names="$(
-		find "$FAMILIES_DIR" -name 'Events.cs' \
-			-not -path '*/bin/*' -not -path '*/obj/*' -print0 \
+		{
+			find "$FAMILIES_DIR" -name 'Events.cs' \
+				-not -path '*/bin/*' -not -path '*/obj/*' -print0
+			[ -f "$SPINE_CROSSCUTTING" ] && printf '%s\0' "$SPINE_CROSSCUTTING"
+		} \
 		| xargs -0 perl -0777 -ne \
 			'while (/record\s+(?:class\s+)?([A-Z]\w*)\b[^{;]*?:\s*[^{;]*?\bDomainEvent\b/sg) { print "$1\n"; }' \
 		| sort -u
 	)"
 
 	if [ -z "${domain_event_names//[$'\n']/}" ]; then
-		err "no family DomainEvent records found under $FAMILIES_DIR/**/Events.cs — the reverse-orphan scan is vacuous (ADR-IC-017 §P3)"
+		err "no DomainEvent records found under $FAMILIES_DIR/**/Events.cs or $SPINE_CROSSCUTTING — the reverse-orphan scan is vacuous (ADR-IC-017 §P3)"
 	fi
 
-	# Every catalogued .avsc record name MUST be a real DomainEvent. A catalogued schema with no
-	# CLR event is a phantom promotion — drift the forward .avsc->catalog check cannot see.
+	# Every catalogued .avsc record name MUST be a real DomainEvent (family OR engine-declared
+	# cross-cutting). A catalogued schema with no CLR event is a phantom promotion — drift the forward
+	# .avsc->catalog check cannot see.
 	while IFS= read -r -d '' avsc; do
 		record_name="$(jq -r '.name // empty' "$avsc")"
 		[ -n "$record_name" ] || { err "$avsc has no Avro record .name (ADR-IC-002 §P1)"; continue; }
 		if printf '%s\n' "$domain_event_names" | grep -qxF "$record_name"; then
 			note "  ok  $record_name is a DomainEvent (catalogued ⇔ relay-capable)"
 		else
-			err "catalogued schema '$avsc' (record '$record_name') has no family DomainEvent record — a catalog entry must promote a real, relay-capable event (ADR-IC-017 §P3, NO_UNCATALOGUED_EVENT_ON_BUS)"
+			err "catalogued schema '$avsc' (record '$record_name') has no family or spine DomainEvent record — a catalog entry must promote a real, relay-capable event (ADR-IC-017 §P3, NO_UNCATALOGUED_EVENT_ON_BUS)"
 		fi
 	done < <(find "$AVRO_DIR" -name '*.avsc' -print0 | sort -z)
 
