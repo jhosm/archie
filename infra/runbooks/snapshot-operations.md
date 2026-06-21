@@ -51,12 +51,15 @@ and the next rebuild is merely slower, never wrong." A deep un-snapshotted strea
 makes the next cold replay slower; it never makes it *wrong*. So lag is a health
 warning, not a correctness page.
 
-**Alert.** `SnapshotLagHigh` in the `snapshot-operations-pending-emit` group of
-[`alert-rules.yaml`](../grafana/prometheus/alert-rules.yaml). It is shipped
-**guarded** (commented, with the threshold + severity decided) because the engine
-does not yet emit a `snapshot_lag_events` gauge — the emit is owned by the
-snapshotter/runtime lane, not the load harness. Uncommenting is the one-line
-change when the metric lands.
+**Alert.** `SnapshotLagHigh` in the `snapshot-operations` group of
+[`alert-rules.yaml`](../grafana/prometheus/alert-rules.yaml). It is **live** (bd
+`babelstone-sk7e`): the engine emits `snapshot_lag_events`, an observable gauge of
+the largest un-snapshotted event count observed across streams, raised in the
+runtime's post-commit snapshot path (`AggregateRuntime.TrySnapshotAsync` →
+`SnapshotMetrics.RecordLag`) and reported each collection cycle. It is gauge-shaped
+because the alert reads it instantaneously (`snapshot_lag_events > 500`); the per-N
+default is 100, so >500 means the snapshotter is ~5 thresholds behind. A host turns
+it on with `AddMeter(BabelstoneTelemetry.MeterName)`.
 
 **Operator response.**
 
@@ -73,6 +76,17 @@ change when the metric lands.
    lifecycle boundary or waiting for the next per-N trigger. No data action is
    required.
 
+> **Gauge semantics — the lag is a per-process PEAK.** `snapshot_lag_events` is the
+> *largest* un-snapshotted depth observed since the host process started, not a
+> live current depth. It rises but does not decay within a process, so once a
+> stream has been seen deeply behind, `SnapshotLagHigh` stays latched until the
+> host restarts (which re-establishes the baseline from live appends). That is
+> intentional — the operator signal is "the snapshotter WAS this far behind",
+> which warrants the investigation above even if a later append has since
+> snapshotted. After you have confirmed the post-commit path is healthy (steps 1–2),
+> a rolling restart clears a latched-but-resolved warning. A finer per-stream,
+> decaying gauge is a possible future refinement (bd `babelstone-sk7e` follow-up).
+
 ---
 
 ## 3 · Signal (2): hash-mismatch on read — a snapshot failed verification
@@ -84,9 +98,12 @@ truth, so the engine verifies every read and **rejects** a mismatch
 (`SnapshotStore.Verify` throws `InvalidOperationException`) rather than trusting
 it.
 
-**Alert.** `SnapshotHashMismatch` (guarded, in the same group) — a counter
-incremented where verification throws. Critical because a recurring mismatch is a
-snapshot-infrastructure bug, not transient noise.
+**Alert.** `SnapshotHashMismatch` (live, in the same group) — the counter
+`snapshot_hash_mismatch_total`, incremented where verification throws
+(`SnapshotStore.Verify` → `SnapshotMetrics.RecordHashMismatch`, bd
+`babelstone-sk7e`). The alert reads `increase(snapshot_hash_mismatch_total[1h]) > 0`
+at `severity: critical` because a recurring mismatch is a snapshot-infrastructure
+bug, not transient noise.
 
 **Operator response — the discard-and-rebuild recovery (ADR-PC-003 §P6 (2)).**
 
@@ -207,8 +224,9 @@ evidence.
 - [projection-rebuild drill runbook](./projection-rebuild-drill.md) — the monthly
   §7.2 drill this runbook's §3/§4 drives against populated snapshots.
 - [`alert-rules.yaml`](../grafana/prometheus/alert-rules.yaml) — the
-  `snapshot-operations-pending-emit` group (snapshot-lag + hash-mismatch alerts,
-  shipped guarded until the engine emits the metrics).
+  `snapshot-operations` group (snapshot-lag + hash-mismatch alerts, now LIVE — the
+  engine emits `snapshot_lag_events` and `snapshot_hash_mismatch_total`, bd
+  `babelstone-sk7e`).
 - [ADR-PC-004](../../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)
   — PII materialised in a snapshot must be discardable so a post-erasure rebuild
   shows null PII (the §3 discard-and-rebuild path).

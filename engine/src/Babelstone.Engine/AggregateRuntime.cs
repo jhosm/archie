@@ -423,6 +423,14 @@ public sealed class AggregateRuntime<TState>(
             var existing = await snapshots!.TryGetAsync(streamId, ct);
             var eventsSinceSnapshot = existing is null ? newHead + 1 : newHead - existing.AtSequence;
 
+            // Snapshot-lag SLI (ADR-PC-003 §P6 (1), bd babelstone-sk7e): report how far behind the
+            // snapshotter is for THIS stream right now — the un-snapshotted depth we just computed — as a
+            // process high-water mark the SnapshotLagHigh gauge reads. Recorded BEFORE the policy decision
+            // so a stream that has fallen behind is visible even on an append the policy then snapshots
+            // (which resets its OWN depth, not the observed peak). A pure runtime emission: it cannot
+            // change replayed/folded state (ADR-PC-010 §P5).
+            Telemetry.SnapshotMetrics.RecordLag(eventsSinceSnapshot);
+
             // CALENDAR boundary (§P2): did this append land in a later reporting period than the previous
             // head? The runtime owns the transaction-time clock (ADR-PC-010 §P5), so it compares the
             // PREVIOUS head's event-derived transaction_time against this append's — a deterministic

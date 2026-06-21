@@ -55,6 +55,12 @@ public sealed class SnapshotStore<TState>(ISnapshotStorage storage, IStateSerial
         var expected = SnapshotHash.Compute(record.State.Span, record.LastEventId);
         if (!string.Equals(expected, record.StateHash, StringComparison.Ordinal))
         {
+            // §P6 (2) operational signal (bd babelstone-sk7e): a snapshot whose stored hash did not
+            // verify is the §8.3 worst case (a wrong snapshot trusted as truth). Count it BEFORE throwing
+            // so the SnapshotHashMismatch alert sees every rejection — the caller then falls back to a
+            // cold fold (the §P3 correctness fallback). A pure store-side emission: it neither folds an
+            // event nor changes rebuilt state (ADR-PC-010 §P5).
+            Telemetry.SnapshotMetrics.RecordHashMismatch();
             throw new InvalidOperationException(
                 $"Snapshot for stream {streamId} at sequence {record.AtSequence} failed hash verification.");
         }
