@@ -31,4 +31,16 @@ python -m babelstone_mcp               # run the server (Streamable HTTP)
 | `mature_deposit` | tool (declares `outputSchema`, P6) | `deposits:write` | `POST /v1/deposits/{deposit_id}/maturity` |
 | `pay_interest` | tool (declares `outputSchema`, P6) | `deposits:write` | `POST /v1/deposits/{deposit_id}/interest` |
 
+## Observability (OTel)
+
+The server emits OpenTelemetry traces against the SAME contract the .NET estate uses
+([ADR-IC-007](../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) Layer 1,
+bd `babelstone-scd2.1`): a `service.namespace=babelstone` resource with `service.name=babelstone-mcp-server`
+and a fail-fast `deployment.environment`, exported OTLP/HTTP to the **OTel Collector** (never a backend
+directly, §P1). The ASGI middleware makes each MCP request a SERVER span; httpx instrumentation makes each
+engine/orchestrator call a CLIENT span that propagates the W3C `traceparent` — so an MCP-driven deposit is
+one connected trace (MCP → engine `deposit.*` → Npgsql query spans). Wiring lives in
+`src/babelstone_mcp/telemetry.py`. Env: `OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://localhost:4318`, the
+dev Collector); `DEPLOYMENT_ENVIRONMENT` (or `DOTNET_ENVIRONMENT` / `ASPNETCORE_ENVIRONMENT`).
+
 Extraction-ready subtree per [ADR-PC-019 §P2](../docs/product-management/product_concepts/adrs/ADR-PC-019-repository-strategy-monorepo.md); placement per [ADR-IC-013](../docs/product-management/integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md).

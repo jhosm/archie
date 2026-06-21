@@ -39,6 +39,7 @@ from typing import Any, Mapping
 import uvicorn
 
 from .app import build_app
+from .telemetry import configure_tracing, instrument_httpx
 
 
 def build_tls_kwargs(env: Mapping[str, str]) -> dict[str, Any]:
@@ -95,6 +96,15 @@ def _parse_cert_reqs(raw: str) -> ssl.VerifyMode:
 
 
 def main() -> None:
+    # Stand up tracing FIRST (ADR-IC-007 Layer 1, bd babelstone-scd2.1): register the
+    # service.namespace=babelstone TracerProvider + OTLP/HTTP exporter to the Collector (§P1), and
+    # instrument httpx so every engine/orchestrator call the tools make is a CLIENT span that
+    # propagates the W3C traceparent. The ASGI SERVER span is added when build_app() wraps the app
+    # below. Both are best-effort no-ops if the OTel SDK is absent, but configure_tracing fails fast
+    # on an unresolved deployment.environment (§P1) — a deliberate refusal to mis-attribute traces.
+    configure_tracing()
+    instrument_httpx()
+
     tls = build_tls_kwargs(os.environ)
     uvicorn.run(
         build_app(),

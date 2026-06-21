@@ -14,6 +14,17 @@ dependencies = [
     # SIGNATURE upstream, so the middleware decodes with verify_signature=False and asserts the
     # audience itself — defense-in-depth alongside the Kong pre-function aud check.
     "pyjwt>=2.8,<3",
+    # OpenTelemetry (ADR-IC-007 Layer 1, bd babelstone-scd2.1 — the mcp-server leg of the estate
+    # OTel work). The SDK + the OTLP/HTTP span exporter export to the OTel Collector (§P1 — never
+    # direct-to-backend); the ASGI + httpx instrumentations make every MCP request a SERVER span and
+    # every engine/orchestrator call a CLIENT span, on the SAME service.namespace=babelstone resource
+    # and the SAME babelstone.* attribute contract the .NET hosts use — so an MCP-driven deposit is one
+    # connected trace through the engine. OTLP/HTTP (not gRPC) keeps the dependency surface small (no
+    # grpcio). Bounded <2 in the spirit of the project's deliberate-upgrade discipline.
+    "opentelemetry-sdk>=1.27,<2",
+    "opentelemetry-exporter-otlp-proto-http>=1.27,<2",
+    "opentelemetry-instrumentation-asgi>=0.48b0,<1",
+    "opentelemetry-instrumentation-httpx>=0.48b0,<1",
 ]
 
 [project.optional-dependencies]
