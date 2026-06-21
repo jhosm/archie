@@ -70,7 +70,7 @@ jobs:
       fail-fast: false       # one service's Dockerfile breaking shouldn't mask the others
       matrix:
         # Build context differs by service stack — it is NOT uniformly the repo root:
-        #  - .NET legs (engine, orchestrator) build with the REPO ROOT as context: they restore
+        #  - .NET legs (engine, orchestrator, notification) build with the REPO ROOT as context: they restore
         #    against the central Directory.Packages.props at the root
         #    (ManagePackageVersionsCentrally=true), so a service-dir context can't resolve package
         #    versions. Each names its project explicitly in its Dockerfile (orchestrator/Dockerfile
@@ -79,15 +79,21 @@ jobs:
         #    as context: their pyproject.toml / go.mod live there, so a repo-root `COPY . .` would
         #    leave no installable package/module at the build WORKDIR (pip install . / go build .
         #    would fail). Their dir is the context; the Dockerfile path stays repo-root-relative.
-        # acl and notification are intentionally NOT in the matrix yet: they are Dockerfile+README
-        # stubs with no source (ADR-IC-012/013 reserve-don't-pre-build) and cannot produce an image.
-        # They join the matrix when their .NET source lands (the acl/notification build tasks).
+        # notification JOINED the matrix when its .NET source landed (bd babelstone-60n8.1): it is a
+        # .NET worker, so it builds with the REPO ROOT as context and names its project explicitly in
+        # its Dockerfile, exactly like engine/orchestrator. acl is STILL excluded — it remains a
+        # Dockerfile+README stub with no source (ADR-IC-012/013 reserve-don't-pre-build) and cannot
+        # produce an image; it joins the matrix when its own .NET source lands (the acl build task,
+        # DEF-1 / bd ub9s).
         include:
           - service: engine
             dockerfile: engine/Dockerfile
             context: .
           - service: orchestrator
             dockerfile: orchestrator/Dockerfile
+            context: .
+          - service: notification
+            dockerfile: notification/Dockerfile
             context: .
           - service: mcp-server
             dockerfile: mcp-server/Dockerfile
