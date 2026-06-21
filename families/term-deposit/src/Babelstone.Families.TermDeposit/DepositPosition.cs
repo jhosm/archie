@@ -1,3 +1,4 @@
+using Babelstone.Engine;
 using Babelstone.FinancialTypes;
 
 namespace Babelstone.Families.TermDeposit;
@@ -123,8 +124,18 @@ public sealed record DepositPosition(
     Money SettlementAmount,
     int CorrectionCount,
     int CouponsPaid,
-    DepositLifecycle Lifecycle)
+    DepositLifecycle Lifecycle) : IErasable<DepositPosition>
 {
+    /// <summary>
+    /// GDPR Article 17 terminal transition (ADR-PC-004 §P3 / Amendment A4): label the deposit
+    /// <see cref="DepositLifecycle.Erased"/>. The engine's generic cross-cutting erasure fold
+    /// (<c>PersonalDataErasureRequestedHandler&lt;DepositPosition&gt;</c>) calls this; the family owns
+    /// only what "erased" means on its own lifecycle. Structural fields stay intact and queryable
+    /// post-erasure (the PII lived behind the OpenBao key, never in this projection). Pure — no clock,
+    /// no I/O (BENG001/002/003).
+    /// </summary>
+    public DepositPosition WithErased() => this with { Lifecycle = DepositLifecycle.Erased };
+
     /// <summary>The seed state a fold starts from (before <c>DepositConstituted</c>).</summary>
     public static DepositPosition Empty { get; } = new(
         DepositId: Guid.Empty,

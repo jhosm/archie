@@ -43,15 +43,14 @@ public sealed class TermDepositFamilyModule : IFamilyModule
             new DispatchableHandler<DepositPosition, DepositCorrected>(new DepositCorrectedHandler())),
         new("term_deposit.DepositTransferredToHeirs", typeof(DepositTransferredToHeirs),
             new DispatchableHandler<DepositPosition, DepositTransferredToHeirs>(new DepositTransferredToHeirsHandler())),
-        new("term_deposit.PersonalDataErasureRequested", typeof(PersonalDataErasureRequested),
-            new DispatchableHandler<DepositPosition, PersonalDataErasureRequested>(new PersonalDataErasureRequestedHandler())),
         // The engine-declared cross-cutting operational events (event-store §4.1), bound against this
         // family's DepositPosition. The engine owns the event records + generic handlers (they name no
         // family — ADR-PC-021 §P2); the family supplies only its TState here, splicing in every
-        // cross-cutting binding in one call so it cannot forget one as the set grows. Currently
-        // operations.PackVersionMigrated (ADR-PC-009 §P3): an operator pack re-pin. STORE-ONLY — these
-        // fold deterministically (the pin lives on the envelope, so the fold is a no-op) but carry no
-        // .avsc, so the fail-closed catalog gate keeps them off the bus (ADR-IC-017 §P1).
+        // cross-cutting binding in one call so it cannot forget one as the set grows:
+        // operations.PackVersionMigrated (ADR-PC-009 §P3, an operator pack re-pin; STORE-ONLY — the pin
+        // lives on the envelope so the fold is a no-op, no .avsc, kept off the bus) and
+        // operations.PersonalDataErasureRequested (ADR-PC-004 §P3/A4, the GDPR Article 17 erasure — a
+        // PROMOTED cross-cutting event folded here to DepositPosition.WithErased via IErasable).
         .. CrossCuttingEventRegistrations.For<DepositPosition>(),
     ];
 

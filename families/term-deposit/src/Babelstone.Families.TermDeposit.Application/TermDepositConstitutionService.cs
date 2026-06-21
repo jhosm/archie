@@ -437,7 +437,7 @@ public sealed class TermDepositConstitutionService(
         //    the erasure DATE is derived from the command instant and passed as an input (no clock here).
         var erasedOn = DateOnly.FromDateTime(command.ErasedAt.UtcDateTime);
         var erased = new PersonalDataErasureRequested(
-            DepositId: command.DepositId,
+            InstanceId: command.DepositId,
             SubjectPseudonym: command.SubjectPseudonym,
             ErasedOn: erasedOn,
             ErasureReason: command.ErasureReason);

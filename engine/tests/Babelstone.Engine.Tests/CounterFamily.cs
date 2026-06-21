@@ -7,7 +7,13 @@ namespace Babelstone.Engine.Tests;
 // counter whose state folds two event types. Exercises the engine spine without
 // pulling in CUE schemas or real domain math.
 
-public sealed record CounterState(int Total);
+public sealed record CounterState(int Total) : IErasable<CounterState>
+{
+    // The counter stand-in has no lifecycle field, so erasure is a no-op on its state. The impl exists
+    // only to satisfy the IErasable<TState> constraint that CrossCuttingEventRegistrations.For<TState>
+    // carries (the same generic seam every real family state implements, e.g. DepositPosition).
+    public CounterState WithErased() => this;
+}
 
 public sealed record Incremented(int By) : DomainEvent;
 

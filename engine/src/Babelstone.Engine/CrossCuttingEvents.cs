@@ -18,13 +18,17 @@ namespace Babelstone.Engine;
 /// family-agnostic). The convention is recorded set-level in event-store §4.3.
 /// </para>
 /// <para>
-/// STORE-ONLY by construction (ADR-IC-017 §P1/§P4): they are appended, folded, and replayable, but
-/// carry NO governed <c>.avsc</c> and so never reach the durable bus — there is no NAMED external
+/// Most are STORE-ONLY by construction (ADR-IC-017 §P1/§P4): appended, folded, and replayable, but
+/// carrying NO governed <c>.avsc</c> and so never reaching the durable bus — there is no NAMED external
 /// consumer that must react (ADR-PC-009 §P3's only downstream reaction is engine-internal projection
 /// rebuild). The fail-closed catalog gate (<c>AvroSchemaCatalog.IsCataloguedIntegrationEvent</c>) keeps
 /// an uncatalogued event store-only; the store payload is the self-describing JSON book of record
-/// (ADR-PC-028). If a downstream consumer ever states a need, promotion is authoring the <c>.avsc</c> +
-/// AsyncAPI entry and recording the consumer — not done here.
+/// (ADR-PC-028). Promotion to the bus is authoring the <c>.avsc</c> + AsyncAPI entry and recording the
+/// consumer — exactly what <see cref="PersonalDataErasureRequested"/> does (ADR-PC-004 Amendment A4): a
+/// cross-cutting event with NAMED downstream consumers (acl cascades the deletion, notification
+/// suppresses further messaging), so it carries a governed <c>operations.PersonalDataErasureRequested</c>
+/// schema and rides the bus, while still being engine-declared and folded per family through the same
+/// <see cref="CrossCuttingEventRegistrations.For{TState}"/> seam.
 /// </para>
 /// </remarks>
 
@@ -95,6 +99,81 @@ public sealed class PackVersionMigratedHandler<TState> : IEventHandler<TState, P
 }
 
 /// <summary>
+/// A family projection state that knows how to label itself ERASED. In plain English: GDPR erasure is
+/// the same cross-cutting fact for every product — "this subject's PII key was crypto-shredded" — but
+/// each family records the terminal state on its OWN lifecycle enum (a deposit becomes
+/// <c>DepositLifecycle.Erased</c>, a loan <c>LoanLifecycle.Erased</c>). This is the seam that lets the
+/// engine own ONE generic erasure fold while each family supplies only its own terminal transition: the
+/// engine names no family (ADR-PC-021 §P2), the family implements <see cref="WithErased"/> on its
+/// projection record.
+/// </summary>
+/// <typeparam name="TState">The family's folded projection state (self-referential, F-bounded).</typeparam>
+public interface IErasable<out TState>
+{
+    /// <summary>Return this state relabelled to its family's terminal <c>Erased</c> lifecycle. A PURE
+    /// transformation — no clock, no I/O (BENG001/002/003); it touches only the lifecycle label, never
+    /// the structural fields (which stay queryable post-erasure; the PII lived behind the OpenBao key,
+    /// ADR-PC-004 §P3).</summary>
+    TState WithErased();
+}
+
+/// <summary>
+/// The GDPR Article 17 right-to-be-forgotten was exercised on an instance (ADR-PC-004 §P3 / Amendment
+/// A4). In plain English: a data subject asked to be forgotten, the engine destroyed their per-subject
+/// encryption key, and this fact records the act on every instance that held their PII so the audit
+/// trail survives while the data does not. It is a CROSS-CUTTING event — the same structural fact for
+/// any product family — so the engine declares it ONCE in the spine (it names no family, ADR-PC-021 §P2)
+/// rather than each family re-deriving it. Each family BINDS the generic fold against its own projection
+/// state via <see cref="CrossCuttingEventRegistrations.For{TState}"/>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Cross-cutting, but NOT store-only: unlike <see cref="PackVersionMigrated"/>, erasure has NAMED
+/// external consumers (acl cascades downstream deletion, notification suppresses further messaging), so
+/// it is a promoted integration event (ADR-IC-017 §P4) carrying the governed
+/// <c>contracts/avro/operations/PersonalDataErasureRequested.avsc</c> (subject
+/// <c>operations.PersonalDataErasureRequested-value</c>) and the matching AsyncAPI catalogue entry. The
+/// synthetic <c>operations</c> aggregate_type keeps the stored <c>event_type</c>
+/// <c>operations.PersonalDataErasureRequested</c> family-agnostic (event-store §4.3).
+/// </para>
+/// <para>
+/// NO PII rides this event (ADR-PC-004 §P2): <paramref name="SubjectPseudonym"/> is a SALTED one-way
+/// hash of the subject id (ADR-IC-016 §8), an opaque correlation reference a consumer can cascade its
+/// own deletion on — never the raw subject id. The crypto-shred itself (<c>IPiiKeyStore.DestroyKeyAsync</c>)
+/// is performed by the impure command shell BEFORE this event is appended; the fold only LABELS the
+/// instance erased.
+/// </para>
+/// </remarks>
+/// <param name="InstanceId">The instance (stream) whose subject's PII was erased — a structural id (the
+/// aggregate id, e.g. a DepositId or LoanId), not PII.</param>
+/// <param name="SubjectPseudonym">A salted one-way hash of the data-subject id (ADR-IC-016 §8 / ADR-PC-004
+/// §P2) — an opaque correlation reference, NEVER the raw subject id.</param>
+/// <param name="ErasedOn">The date the erasure took effect (audit lineage) — supplied by the command, not
+/// read from a clock in the fold.</param>
+/// <param name="ErasureReason">Stable machine code for why erasure happened (e.g. <c>GDPR_ARTICLE_17</c>) — never PII.</param>
+public sealed record PersonalDataErasureRequested(
+    Guid InstanceId,
+    string SubjectPseudonym,
+    DateOnly ErasedOn,
+    string ErasureReason) : DomainEvent;
+
+/// <summary>
+/// The pure fold for <see cref="PersonalDataErasureRequested"/>, generic over ANY family projection
+/// <typeparamref name="TState"/> that is <see cref="IErasable{TState}"/> so it stays FAMILY-AGNOSTIC
+/// (ADR-PC-021 §P2): the engine owns this handler; a family BINDS it against its own state in its module
+/// (via <see cref="CrossCuttingEventRegistrations.For{TState}"/>). The fold delegates the terminal
+/// transition to <see cref="IErasable{TState}.WithErased"/> — the engine knows "mark it erased", the
+/// family knows what "erased" means on its own lifecycle. Pure (no clock, no I/O, no randomness,
+/// BENG001/002/003) — replay is deterministic.
+/// </summary>
+public sealed class PersonalDataErasureRequestedHandler<TState> : IEventHandler<TState, PersonalDataErasureRequested>
+    where TState : IErasable<TState>
+{
+    public HandlerResult<TState> Apply(TState state, PersonalDataErasureRequested @event)
+        => HandlerResult<TState>.From(state.WithErased());
+}
+
+/// <summary>
 /// The engine-declared cross-cutting event bindings, yielded for a given family projection state. In
 /// plain English: the engine owns these family-agnostic operational events (§4.1), but the handler
 /// registry needs each one bound to a concrete projection state — so a family calls
@@ -115,10 +194,13 @@ public static class CrossCuttingEventRegistrations
     /// The cross-cutting <see cref="HandlerRegistration"/>s for a family whose projection state is
     /// <typeparamref name="TState"/>. Splice into the family module's <c>Handlers</c> list.
     /// </summary>
-    /// <typeparam name="TState">The family's folded projection state the generic folds run over.</typeparam>
-    public static IReadOnlyList<HandlerRegistration> For<TState>() =>
+    /// <typeparam name="TState">The family's folded projection state the generic folds run over; it must
+    /// be <see cref="IErasable{TState}"/> so the generic erasure fold can mark it erased.</typeparam>
+    public static IReadOnlyList<HandlerRegistration> For<TState>() where TState : IErasable<TState> =>
     [
         new("operations.PackVersionMigrated", typeof(PackVersionMigrated),
             new DispatchableHandler<TState, PackVersionMigrated>(new PackVersionMigratedHandler<TState>())),
+        new("operations.PersonalDataErasureRequested", typeof(PersonalDataErasureRequested),
+            new DispatchableHandler<TState, PersonalDataErasureRequested>(new PersonalDataErasureRequestedHandler<TState>())),
     ];
 }

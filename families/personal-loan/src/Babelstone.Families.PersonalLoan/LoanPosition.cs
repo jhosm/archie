@@ -1,3 +1,4 @@
+using Babelstone.Engine;
 using Babelstone.FinancialTypes;
 
 namespace Babelstone.Families.PersonalLoan;
@@ -90,8 +91,18 @@ public sealed record LoanPosition(
     Money TotalInterestPaid,
     Money TotalCapitalRepaid,
     Money TotalCommissionCharged,
-    LoanLifecycle Lifecycle)
+    LoanLifecycle Lifecycle) : IErasable<LoanPosition>
 {
+    /// <summary>
+    /// GDPR Article 17 terminal transition (ADR-PC-004 §P3 / Amendment A4): label the loan
+    /// <see cref="LoanLifecycle.Erased"/>. The engine's generic cross-cutting erasure fold
+    /// (<c>PersonalDataErasureRequestedHandler&lt;LoanPosition&gt;</c>) calls this; the family owns only
+    /// what "erased" means on its own lifecycle. Structural fields stay intact and queryable
+    /// post-erasure (the PII lived behind the OpenBao key, never in this projection). Pure — no clock,
+    /// no I/O (BENG001/002/003).
+    /// </summary>
+    public LoanPosition WithErased() => this with { Lifecycle = LoanLifecycle.Erased };
+
     /// <summary>The seed state a fold starts from (before <c>LoanDisbursed</c>).</summary>
     public static LoanPosition Empty { get; } = new(
         LoanId: Guid.Empty,

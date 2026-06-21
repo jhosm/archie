@@ -20,7 +20,7 @@ contracts/catalog/
     DepositConstituted.asyncapi.yaml
     InterestPaid.asyncapi.yaml
     DepositMatured.asyncapi.yaml
-    PersonalDataErasureRequested.asyncapi.yaml
+    operations.PersonalDataErasureRequested.asyncapi.yaml   # cross-cutting, engine-declared (ADR-PC-004 A4)
   reconciliation/                 # one contract per consumer (event-store §7.3) — see its README
     engine-projection-runtime.reconciliation.yaml
     acl.reconciliation.yaml
@@ -34,9 +34,11 @@ coordinated — event-store §7.3). Its executable companion is `ReconciliationC
 [`ProjectionReconciler.cs`](../../engine/src/Babelstone.Engine/ProjectionReconciler.cs). See
 [`reconciliation/README.md`](./reconciliation/README.md).
 
-Each file documents one event on the `term_deposit` channel (topic name == `aggregate_type`,
-the relay's documented convention). The events are **Option A** (doc 08): one Avro schema per
-event type, each its own message on the channel — not a discriminated single schema.
+Each file documents one event on its `aggregate_type` channel (topic name == `aggregate_type`,
+the relay's documented convention) — `term_deposit` / `personal_loan` for the family events, and
+the synthetic `operations` channel for the engine-declared cross-cutting set (event-store §4.3).
+The events are **Option A** (doc 08): one Avro schema per event type, each its own message on the
+channel — not a discriminated single schema.
 
 ## The promoted set — the ADR-IC-017 §P4 classification
 
@@ -46,17 +48,17 @@ record ([ADR-IC-017 §P1/§P2](../../docs/product-management/integration_concept
 The `x-authorized-consumers` field on each file is the recorded **consumer map** (§P4): the
 named bounded contexts that react to that fact.
 
-The current set — `DepositConstituted`, `InterestPaid`, `DepositMatured`,
-`PersonalDataErasureRequested` — is the result of the §P4 per-event classification pass (the ADR
-delegates the verdicts to the implementing issue, not the schema set the estate happened to start
-with):
+The current set — `DepositConstituted`, `InterestPaid`, `DepositMatured` (family events) plus the
+cross-cutting `operations.PersonalDataErasureRequested` — is the result of the §P4 per-event
+classification pass (the ADR delegates the verdicts to the implementing issue, not the schema set
+the estate happened to start with):
 
 | Event | Classification | Why |
 |---|---|---|
 | `DepositConstituted` | **integration** | Coarse "deposit opened" fact; notification + core-banking react. |
 | `InterestPaid` | **integration** | Coarse coupon/advance payout fact; GL/accounting, notifications, reporting react. Carries the withholding **amount** (`withholding_tax_cents`), so a separate `WithholdingApplied` event is redundant. |
 | `DepositMatured` | **integration** | Coarse maturity-payout fact; carries the AT_MATURITY net interest. |
-| `PersonalDataErasureRequested` | **integration** | Coarse GDPR Article 17 erasure-signal fact (bd `babelstone-nzw6`); the ACL cascades downstream deletion and notification suppresses further messaging. Carries only structural fields + a salted one-way subject pseudonym — no PII on the bus (ADR-PC-004 §P2 / ADR-IC-016 §8). |
+| `operations.PersonalDataErasureRequested` | **integration (cross-cutting)** | Coarse GDPR Article 17 erasure-signal fact (bd `babelstone-nzw6`; ADR-PC-004 §P3/A4). Engine-declared on the synthetic `operations` aggregate_type, folded per family via `IErasable` — not owned by any one family (it supersedes the previously family-scoped `term_deposit` / `personal_loan` erasure events). The ACL cascades downstream deletion and notification suppresses further messaging. Carries only structural fields + a salted one-way subject pseudonym — no PII on the bus (ADR-PC-004 §P2 / ADR-IC-016 §8). |
 | `InterestAccrued` | **internal / store-only** | Fine-grained periodic accrual *mechanics*; no downstream context reacts to each accrual tick (fails §P4 tests 1 + 2). De-promoted. |
 | `WithholdingApplied` | **internal / store-only** | Tax-withholding *mechanics* at interest payment; the integration-relevant withholding amount already rides the coarse `InterestPaid`. De-promoted (redundant). |
 | `DepositConstitutionFailed` and the other F.2 lifecycle events | **internal / store-only** | Not yet a promoted coarse fact; a constitution refusal reaches the ecosystem via the saga's terminal event, not by promoting the engine's internal one (ADR-IC-017 §P4 Decision). |

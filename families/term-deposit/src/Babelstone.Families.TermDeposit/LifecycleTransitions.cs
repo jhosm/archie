@@ -75,9 +75,10 @@ public static class LifecycleTransitions
         /// <summary>Correct a recorded fact — <see cref="DepositCorrected"/> (state-preserving; the real bitemporal supersession is D.1/D.2).</summary>
         Correct,
 
-        /// <summary>Erase the subject's personal data — <see cref="PersonalDataErasureRequested"/>
-        /// (→ Erased). GDPR Article 17 (ADR-PC-004 §P3): legal from ANY state that still holds the
-        /// subject's PII (live OR already-closed), never from Pending (no deposit) or Erased (idempotent).</summary>
+        /// <summary>Erase the subject's personal data — the engine-declared cross-cutting
+        /// <see cref="Babelstone.Engine.PersonalDataErasureRequested"/> (→ Erased). GDPR Article 17
+        /// (ADR-PC-004 §P3/A4): legal from ANY state that still holds the subject's PII (live OR
+        /// already-closed), never from Pending (no deposit) or Erased (idempotent).</summary>
         Erase,
     }
 

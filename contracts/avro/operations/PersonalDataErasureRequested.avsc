@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "namespace": "operations",
+  "name": "PersonalDataErasureRequested",
+  "doc": "GDPR Article 17 right-to-be-forgotten was exercised on an instance: the subject's encryption key was crypto-shredded (IPiiKeyStore.DestroyKeyAsync, ADR-PC-004 §P3), so all PII ciphertext under it is permanently unrecoverable; only non-personal structural fields remain queryable. A CROSS-CUTTING engine-declared event (ADR-PC-004 Amendment A4): the same structural fact for any product family, declared once in the spine under the synthetic `operations` aggregate_type (event-store §4.3) and folded per family. Business payload only (ADR-IC-002 §P5); CloudEvents envelope rides in Kafka headers, NOT here. No PII (ADR-PC-004 §P2): subject_pseudonym is a salted one-way hash, NEVER the raw subject id.",
+  "fields": [
+    { "name": "instance_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "InstanceId (Guid) — the instance (stream) whose subject's PII was erased (e.g. a DepositId or LoanId). Structural, not PII." },
+    { "name": "subject_pseudonym", "type": "string", "doc": "A SALTED, ONE-WAY hash of the data-subject id (ADR-IC-016 §8 / ADR-PC-004 §P2) — an opaque correlation reference a consumer can cascade its own deletion on, NEVER the raw subject id. The bus never carries the recoverable identity." },
+    { "name": "erased_on", "type": { "type": "int", "logicalType": "date" }, "doc": "ErasedOn (DateOnly) as days since epoch — the date the erasure took effect (audit lineage)." },
+    { "name": "erasure_reason", "type": "string", "doc": "Stable machine code for why erasure happened (e.g. GDPR_ARTICLE_17, RETENTION_EXPIRED). Structural, never PII." }
+  ]
+}
