@@ -10,9 +10,14 @@
      gain the emission leg with its own build task.
 
      Extraction-ready subtree (ADR-PC-019 §P2): the host carries its OWN copy of the shared engine
-     build settings (it does not inherit engine/Directory.Build.props), exactly as the orchestrator
-     subtree does. The project references below are the small, leaf engine surfaces it needs to read
-     the projections — never the heavy outbox/Avro/Confluent surface. -->
+     build settings (it does not inherit engine/Directory.Build.props), as the orchestrator subtree
+     does. NB the dependency depth differs from the orchestrator: the orchestrator carries NO
+     engine-kernel reference (only the SDK-free Telemetry leaf + a substrate-only family module,
+     ADR-IC-018 §S3), whereas this host DOES depend on the engine read-side libraries
+     (Babelstone.EventStore / Babelstone.Engine) + the family pure-fold project it needs to read and
+     deserialize the projections. That is still §P2-conformant — the subtree is a cleanly-bounded
+     path that lifts mechanically WITH its declared dependency paths; it carries only the small,
+     leaf read surfaces, never the heavy outbox/Avro/Confluent surface. -->
 <Project Sdk="Microsoft.NET.Sdk.Worker">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
