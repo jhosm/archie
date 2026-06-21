@@ -270,10 +270,17 @@ public static class CreditoPessoalDecider
 
         // The interest one remaining period accrues on the repaid capital, times the periods remaining —
         // an upper bound (the real schedule's balance shrinks each period, so this over-states, never
-        // under-states). Period interest is the same primitive the schedule uses.
-        var onePeriodInterest = Amortization.PeriodInterest(
-            repaymentAmount, position.PeriodicRateBasisPoints);
-        return Money.FromCents((decimal)onePeriodInterest.Cents * remainingInstallments);
+        // under-states). Computed in ONE full-precision decimal expression and crossed to Money exactly
+        // once (ADR-PC-010 §P1–§P2): the per-period interest (cents × periodic_bps / 10000) is NOT rounded
+        // before being multiplied by remainingInstallments — rounding the per-period leg first and then
+        // combining is the "round each step then combine" shape §P2 forbids. The same `cents × bps / 10000`
+        // form Amortization.PeriodInterest uses internally, lifted here so the single rounding lands after
+        // the multiply by the period count.
+        const int basisPointsPerUnit = 10_000;
+        decimal ceiling = (decimal)repaymentAmount.Cents
+            * position.PeriodicRateBasisPoints / basisPointsPerUnit
+            * remainingInstallments;
+        return Money.FromCents(ceiling);
     }
 
     /// <summary>

@@ -571,7 +571,7 @@ Portuguese law gives borrowers the right to repay early. The lender may charge a
 
 - **Mortgages, variable rate:** 0.5% of the capital repaid (Decreto-Lei n.º 74-A/2017)
 - **Mortgages, fixed rate:** 2.0% of the capital repaid
-- **Consumer credit:** up to 1.0%, or 0.5% if remaining term ≤ 1 year (Decreto-Lei n.º 133/2009)
+- **Consumer credit (*crédito pessoal*):** 0.5% of the capital repaid when more than one year of the term remains, 0.25% when one year or less remains (Decreto-Lei n.º 133/2009, art. 19º)
 
 **Mechanics.** At month `m` the borrower pays the regular installment plus `S(m) + fee`, where `S(m)` is the formula from §7.4 and the fee is the capped percentage of `S(m)`. The contract terminates and the CF vector is truncated:
 

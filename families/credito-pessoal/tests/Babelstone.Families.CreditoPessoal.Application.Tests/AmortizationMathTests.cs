@@ -64,6 +64,43 @@ public sealed class AmortizationMathTests
         }
     }
 
+    [Theory]
+    // Golden conservation fixtures with AWKWARD inputs where the per-period capital does NOT divide
+    // evenly, so the balancing final row carries a NON-trivial residual (unlike the tidy €10,000/50bps/12m
+    // case whose drift is a benign +4c). These lock the balancing-final-row invariant
+    // (CREDITO_PESSOAL_AMORTIZATION_MATH, ADR-PC-031 §D3 / commitment-catalogue CP-1) against a rounding
+    // regression: whatever the inputs, the capital legs sum EXACTLY to the principal and S(n) == 0 exactly.
+    [InlineData(1_000_001L, 50, 12)]   // odd principal (€10,000.01) — the cent that doesn't split cleanly
+    [InlineData(1_000_001L, 71, 60)]   // odd principal + 60m term + an odd 0.71% periodic rate
+    [InlineData(2_345_679L, 83, 72)]   // awkward principal/rate/term (€23,456.79 / 0.83% / 72m)
+    [InlineData(999_999L, 29, 36)]     // just-under-round principal, low rate, 36m
+    [InlineData(5_000_000L, 0, 60)]    // 0% promo over 60m (5,000,000 / 60 has a non-integer-cent quotient)
+    public void Schedule_conserves_to_the_cent_for_awkward_inputs(long principalCents, int periodicRateBps, int periods)
+    {
+        var principal = new Money(principalCents);
+        var schedule = Amortization.Schedule(principal, periodicRateBps, periods);
+
+        Assert.Equal(periods, schedule.Count);
+
+        // Capital legs sum EXACTLY to the principal — no cent created or lost across the whole schedule.
+        var totalCapital = schedule.Aggregate(Money.Zero, (acc, row) => acc + row.Capital);
+        Assert.Equal(principal, totalCapital);
+
+        // The balance reaches EXACTLY zero — the balancing final row absorbs the accumulated penny
+        // rounding regardless of how awkward the inputs are.
+        Assert.Equal(Money.Zero, schedule[^1].ClosingBalance);
+
+        // And the §3 recurrence + the installment identity hold on every row, including the balancing one.
+        for (var i = 0; i < schedule.Count; i++)
+        {
+            Assert.Equal(schedule[i].OpeningBalance - schedule[i].Capital, schedule[i].ClosingBalance);
+            Assert.Equal(schedule[i].Interest + schedule[i].Capital, schedule[i].Installment);
+            // Capital never goes negative and never exceeds the opening balance (a row cannot over-amortize).
+            Assert.True(schedule[i].Capital.Cents >= 0, $"row {i + 1} capital is negative");
+            Assert.True(schedule[i].Capital.Cents <= schedule[i].OpeningBalance.Cents, $"row {i + 1} over-amortizes");
+        }
+    }
+
     [Fact]
     public void Schedule_interest_decreases_and_capital_increases_over_the_term()
     {
