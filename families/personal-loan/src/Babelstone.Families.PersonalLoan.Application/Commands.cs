@@ -34,7 +34,7 @@ public sealed record PreconditionVerdict(
 /// <param name="DisbursedAt">The instant the sheet is resolved as-of and the event's valid time.</param>
 /// <param name="Purpose">The loan purpose category (e.g. <c>general</c>,
 /// <c>education</c>) — selects the legal TAEG ceiling bucket (research/personal-loan/02 §2). Not PII.</param>
-/// <param name="DisbursementAccount">The opaque account token the lump sum is credited to (a reference,
+/// <param name="DisbursementAccountRef">The opaque account token the lump sum is credited to (a reference,
 /// NOT an IBAN — ADR-PC-004 §P2).</param>
 /// <param name="Actor">The acting principal recorded on the append.</param>
 /// <param name="EarlyRepaymentCommissionBps">The early-repayment commission the product charges, in basis
@@ -54,7 +54,7 @@ public sealed record DisburseLoanCommand(
     DateOnly StartDate,
     DateTimeOffset DisbursedAt,
     string Purpose,
-    string DisbursementAccount,
+    string DisbursementAccountRef,
     string Actor,
     int EarlyRepaymentCommissionBps = 50,
     IReadOnlyDictionary<string, PreconditionVerdict>? Preconditions = null,
@@ -66,7 +66,7 @@ public sealed record DisburseLoanCommand(
 /// (the engine owns the schedule). Triggered MANUALLY here, exactly as a deposit coupon is.</summary>
 /// <param name="LoanId">The loan stream id.</param>
 /// <param name="PaidAt">The instant the installment is paid; its DATE is recorded on the event.</param>
-/// <param name="CollectionAccount">The opaque account token the installment is collected from (a
+/// <param name="CollectionAccountRef">The opaque account token the installment is collected from (a
 /// reference, NOT an IBAN — ADR-PC-004 §P2). Settled via the débito-direto leg.</param>
 /// <param name="Actor">The acting principal recorded on the append.</param>
 /// <param name="CommandId">The ingress idempotency key (ADR-PC-029 slot 4): the append dedupes on it, so
@@ -74,7 +74,7 @@ public sealed record DisburseLoanCommand(
 public sealed record PayInstallmentCommand(
     Guid LoanId,
     DateTimeOffset PaidAt,
-    string CollectionAccount,
+    string CollectionAccountRef,
     string Actor,
     Guid CommandId);
 
@@ -88,7 +88,7 @@ public sealed record PayInstallmentCommand(
 /// outstanding balance ⇒ a full repayment (the loan settles); less ⇒ a partial repayment (stays Active).</param>
 /// <param name="RepaidAt">The instant the repayment fires; its DATE is recorded and the remaining-term
 /// cap band is selected against it. Passed as an INPUT so the decision stays pure (no clock in the decider).</param>
-/// <param name="RepaymentAccount">The opaque account token the repayment + commission is collected from
+/// <param name="RepaymentAccountRef">The opaque account token the repayment + commission is collected from
 /// (a reference, NOT an IBAN — ADR-PC-004 §P2).</param>
 /// <param name="Actor">The acting principal recorded on the append.</param>
 /// <param name="CommandId">The ingress idempotency key (ADR-PC-029 slot 4): MANDATORY — a partial
@@ -97,7 +97,7 @@ public sealed record RepayEarlyCommand(
     Guid LoanId,
     long RepaymentAmountCents,
     DateTimeOffset RepaidAt,
-    string RepaymentAccount,
+    string RepaymentAccountRef,
     string Actor,
     Guid CommandId);
 

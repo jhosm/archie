@@ -80,7 +80,7 @@ public static class PersonalLoanDecider
             FirstInstallmentDate: command.StartDate.AddMonths(1),
             Purpose: command.Purpose,
             ProductCode: command.ProductId,
-            DisbursementAccount: command.DisbursementAccount,
+            DisbursementAccountRef: command.DisbursementAccountRef,
             EarlyRepaymentCommissionBps: command.EarlyRepaymentCommissionBps);
     }
 

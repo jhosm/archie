@@ -146,7 +146,7 @@ public sealed class LoanPositionFoldTests
         FirstInstallmentDate: new DateOnly(2026, 2, 1),
         Purpose: "general",
         ProductCode: "cp_pt_general_12m",
-        DisbursementAccount: "acct-token-1",
+        DisbursementAccountRef: "acct-token-1",
         EarlyRepaymentCommissionBps: 50);
 
     private static LoanPosition Fold(LoanPosition state, DomainEvent @event)

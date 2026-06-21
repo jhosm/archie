@@ -26,7 +26,7 @@ public sealed class LoanDisbursedHandler : IEventHandler<LoanPosition, LoanDisbu
             FirstInstallmentDate = @event.FirstInstallmentDate,
             Purpose = @event.Purpose,
             ProductCode = @event.ProductCode,
-            DisbursementAccount = @event.DisbursementAccount,
+            DisbursementAccountRef = @event.DisbursementAccountRef,
             EarlyRepaymentCommissionBps = @event.EarlyRepaymentCommissionBps,
             // The loan opens owing the full disbursed capital; the balance amortizes from here.
             OutstandingBalance = @event.Principal,

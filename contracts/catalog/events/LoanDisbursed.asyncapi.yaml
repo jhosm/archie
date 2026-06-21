@@ -17,7 +17,7 @@ info:
     store-internal LoanDisbursementFailed (no .avsc, never on the bus).
 
     No PII (ADR-PC-004 §P2): the payload carries only computed facts + opaque references
-    (disbursement_account is a token, never an IBAN). Origination stays upstream
+    (disbursement_account_ref is a token, never an IBAN). Origination stays upstream
     (ADR-PC-024 / ADR-PC-030 §P1): the engine disburses an already-approved, already-priced
     loan; it never models solvency / CRC / KYC / scoring.
   x-owner: personal-loan

@@ -165,11 +165,12 @@ public sealed class EmitContractFitnessTests
         Assert.NotEmpty(eventTypes);
 
         // Non-vacuity guard: the regex must extract ALL current family DomainEvent types, not a
-        // subset — 8 of these 12 have no .avsc (store-only after the ADR-IC-017 §P4 promotion pass),
-        // so a regex that silently dropped one would leave a schemaless event unguarded. If a family
-        // adds/removes an event, update this count knowingly. The 12th is PersonalDataErasureRequested
-        // (bd babelstone-nzw6, GDPR Article 17), which IS catalogued (on the bus as an erasure signal).
-        Assert.Equal(12, eventTypes.Count);
+        // subset (many are store-only with no .avsc, so a regex that silently dropped one would leave
+        // a schemaless event unguarded). If a family adds/removes an event, update this count knowingly.
+        // Current total = 19: 12 from term_deposit + 7 from personal_loan (LoanDisbursed,
+        // LoanDisbursementFailed, LoanInstallmentPaid, LoanRepaidEarly, LoanSettled, LoanWrittenOff,
+        // PersonalDataErasureRequested — the GDPR Article 17 erasure signal is the catalogued one).
+        Assert.Equal(19, eventTypes.Count);
 
         var violations = eventTypes
             .Select(name => (name, suffix: MatchedClockDrivenSuffix(name)))

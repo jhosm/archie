@@ -61,7 +61,7 @@ public enum LoanLifecycle
 /// <param name="FirstInstallmentDate">The first installment's due date, folded from disbursement.</param>
 /// <param name="Purpose">The loan purpose category (structural, not PII).</param>
 /// <param name="ProductCode">The catalogue product code (structural, not PII).</param>
-/// <param name="DisbursementAccount">The opaque disbursement-account token (a reference, not an IBAN).</param>
+/// <param name="DisbursementAccountRef">The opaque disbursement-account token (a reference, not an IBAN).</param>
 /// <param name="EarlyRepaymentCommissionBps">The pinned early-repayment commission rate in basis points.</param>
 /// <param name="OutstandingBalance">The capital still owed — starts at the principal and amortizes toward
 /// zero as installments are paid and early repayments land (folded from each balance-changing event).</param>
@@ -83,7 +83,7 @@ public sealed record LoanPosition(
     DateOnly FirstInstallmentDate,
     string Purpose,
     string ProductCode,
-    string DisbursementAccount,
+    string DisbursementAccountRef,
     int EarlyRepaymentCommissionBps,
     Money OutstandingBalance,
     int InstallmentsPaid,
@@ -105,7 +105,7 @@ public sealed record LoanPosition(
         FirstInstallmentDate: default,
         Purpose: string.Empty,
         ProductCode: string.Empty,
-        DisbursementAccount: string.Empty,
+        DisbursementAccountRef: string.Empty,
         EarlyRepaymentCommissionBps: 0,
         OutstandingBalance: Money.Zero,
         InstallmentsPaid: 0,
