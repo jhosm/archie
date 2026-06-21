@@ -14,7 +14,7 @@
 
 ## Context
 
-The engine has, until now, been **scoped by accretion**: [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) fixed *what kind of thing* it is (a hand-rolled, event-sourced kernel), [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) fixed *how it grows* (one engine, many families), and a single reference family — `term_deposit` — proved both. No ADR has yet stated, in one place, **what babelstone is *for* and where its responsibility *stops*.** That gap is now load-bearing: market research into candidate products ([crédito pessoal](../research/credito-pessoal/00-research-plan.md), [credit cards](../research/credit-cards/00-research-plan.md)) and the question of the **conta à ordem** (the demand/current account) force it, because answering "should we build them" is impossible without first fixing the boundary itself.
+The engine has, until now, been **scoped by accretion**: [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) fixed *what kind of thing* it is (a hand-rolled, event-sourced kernel), [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) fixed *how it grows* (one engine, many families), and a single reference family — `term_deposit` — proved both. No ADR has yet stated, in one place, **what babelstone is *for* and where its responsibility *stops*.** That gap is now load-bearing: market research into candidate products ([crédito pessoal](../research/personal-loan/00-research-plan.md), [credit cards](../research/credit-cards/00-research-plan.md)) and the question of the **conta à ordem** (the demand/current account) force it, because answering "should we build them" is impossible without first fixing the boundary itself.
 
 This entry is the [ADR-PC-000 §D3](./ADR-PC-000-namespace-and-contract-shape-framework.md) **residual category** ("operational discipline … fits neither template cleanly … default to tool-selection"), the same class as [ADR-PC-019](./ADR-PC-019-repository-strategy-monorepo.md): it selects a **posture**, not a tool. The honest consequence, surfaced up front: **F1 and F2 do not discriminate** — a scope statement buys nothing and (see F2) does not itself make the engine a regulated payment-services provider. The load-bearing question is which posture keeps the kernel coherent while letting it model the products a reference banking engine should — settled on S1–S4 plus a decisive reference-architecture reason.
 
@@ -128,7 +128,7 @@ D is what a *full* card switch or PSP needs, and it is rejected precisely becaus
 
 **Family roadmap (the product topology).**
 1. **term_deposit** — a **liability** that accrues to maturity. *Built* (the reference family).
-2. **credito_pessoal** — a **closed-end asset** with a deterministic amortization schedule. *Next* — lowest architectural risk (mirror of the term deposit).
+2. **personal_loan** — a **closed-end asset** with a deterministic amortization schedule. *Next* — lowest architectural risk (mirror of the term deposit).
 3. **credit_card (account/revolving slice)** — an **open-end revolving asset** with a statement cycle. *After* — the scheme/auth/clearing/dispute machinery stays outside.
 4. **conta à ordem (transactional balance account)** — the **demand account**; the hub the others settle against. Introduces the available/accounting balance split, the hold lifecycle, and real-time authorization (stages 3–5). It is the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) **v4 destination**: through v1–v3 the legacy core owns the conta à ordem balance and the engine holds **no shadow balance** (PC-016 unchanged); at v4 the account migrates onto the engine *as an instance of this capability*. The "no shadow balance" rule is a **coexistence-topology** rule, not a permanent prohibition: its source ([02 §3 commitment 1](../02-v1-scope-term-deposits.md)) defines it as *not mirroring* a balance the legacy core authoritatively owns — *"the engine does not maintain a shadow balance — that would be the double-counting failure mode."* The engine *being* the authoritative owner at v4 is the opposite of a shadow, so no contradiction arises.
 
@@ -144,7 +144,7 @@ D is what a *full* card switch or PSP needs, and it is rejected precisely becaus
 
 The kernel **IS** responsible for, across every family:
 
-| Concern | term_deposit | credito_pessoal | credit_card (slice) | conta à ordem |
+| Concern | term_deposit | personal_loan | credit_card (slice) | conta à ordem |
 |---|---|---|---|---|
 | Product math | interest accrual, withholding | amortization schedule | revolving interest, grace period | fee/interest accrual (if any) |
 | Account lifecycle | constitute → accrue → mature | disburse → amortize → close | open → revolve → statement | open → active → dormant → close |
@@ -165,7 +165,7 @@ The recorded-not-executed pattern (items 3–5) is how the legitimate slice of r
 
 ### P2 — The family roadmap rides the existing one-engine-many-families spine
 
-Each family is added the [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) way — own event records, pure fold handlers, lifecycle legality table, projections, bound through an `IFamilyModule`, with **no `ProjectReference` from the generic spine into `families/**`** (gated by `ENGINE_FAMILY_AGNOSTIC`). Order is deliberate: `credito_pessoal` (reuses the term-deposit shape) before `credit_card` (new revolving lifecycle) before `conta à ordem` (introduces holds + real-time authorization, and aligns with the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) v4 migration). The closed-end loan de-risks the family abstraction before the heavier shapes land.
+Each family is added the [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) way — own event records, pure fold handlers, lifecycle legality table, projections, bound through an `IFamilyModule`, with **no `ProjectReference` from the generic spine into `families/**`** (gated by `ENGINE_FAMILY_AGNOSTIC`). Order is deliberate: `personal_loan` (reuses the term-deposit shape) before `credit_card` (new revolving lifecycle) before `conta à ordem` (introduces holds + real-time authorization, and aligns with the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) v4 migration). The closed-end loan de-risks the family abstraction before the heavier shapes land.
 
 ### P3 — Authorization and holds: the engine owns stages 3–5 in real time
 
@@ -205,7 +205,7 @@ Each family is added the [ADR-PC-021](./ADR-PC-021-application-layer-family-owne
 ## Open Actions
 
 1. **Promote the supporting research** into [`product_concepts/research/`](../research/) (done in the same change as this ADR).
-2. **Author the `credito_pessoal` family** ([ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) shape) — amortization schedule, disbursement, capped early repayment.
+2. **Author the `personal_loan` family** ([ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md) shape) — amortization schedule, disbursement, capped early repayment.
 3. **Scope the `credit_card` account-slice** — a future family ADR plus the §P3 settlement/posting-feed contract-shape ADR and the statement-issuance event design.
 4. **Scope the `conta à ordem` transactional-account family** — the hold model, `available balance` as a fold, overdraft-as-pack-rule, and (separately) the **real-time authorization technique ADR** (sync vs async). Aligns with the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) v4 migration.
 
@@ -228,7 +228,7 @@ No *new* executable commitments are added by this scope/posture decision itself 
 - [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) — the conta à ordem coexistence/settlement contract; this ADR names its v4 "moves onto the engine" the transactional-balance-account family (and leaves v1–v3 "no shadow balance" unchanged).
 - [ADR-PC-019](./ADR-PC-019-repository-strategy-monorepo.md) — the sibling [§D3](./ADR-PC-000-namespace-and-contract-shape-framework.md) residual-category posture ADR whose shape this follows.
 - [ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md) — the orchestrator that owns the servicing orchestration rejected posture C would have pulled in.
-- [crédito pessoal research](../research/credito-pessoal/00-research-plan.md) / [credit-card research](../research/credit-cards/00-research-plan.md) — the promoted market research that motivated, and is bounded by, this decision.
+- [crédito pessoal research](../research/personal-loan/00-research-plan.md) / [credit-card research](../research/credit-cards/00-research-plan.md) — the promoted market research that motivated, and is bounded by, this decision.
 - [01 §1](../01-product-architecture.md) — the one-engine-many-families thesis this scopes.
 
 ---

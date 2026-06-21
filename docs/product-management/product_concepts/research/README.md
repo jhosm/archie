@@ -18,7 +18,7 @@ which fixes what babelstone will and won't model.
 
 | Folder | Product | Engine relevance |
 |---|---|---|
-| [`credito-pessoal/`](./credito-pessoal/00-research-plan.md) | Crédito pessoal — a fixed-amount, fixed-term, fully amortizing unsecured personal loan | **Next family** on the roadmap (a closed-end asset; the mirror of the term deposit). Origination/underwriting stays upstream. |
+| [`personal-loan/`](./personal-loan/00-research-plan.md) | Crédito pessoal — a fixed-amount, fixed-term, fully amortizing unsecured personal loan | **Next family** on the roadmap (a closed-end asset; the mirror of the term deposit). Origination/underwriting stays upstream. |
 | [`credit-cards/`](./credit-cards/00-research-plan.md) | Credit cards in Portugal | The **account/revolving slice** is in scope (open-end revolving asset); the four-party scheme — authorization, clearing, settlement, chargeback, interchange — is **out of boundary**. |
 
 Each folder is a three-brief funnel: **01** (jurisdiction-agnostic fundamentals) → **02**

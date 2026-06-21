@@ -6,5 +6,5 @@ The CUE constraint contracts a product-family variant must satisfy (ADR-PC-006).
 
 | Family |
 |---|
-| [`credito-pessoal`](./credito-pessoal.md) |
+| [`personal-loan`](./personal-loan.md) |
 | [`term-deposit`](./term-deposit.md) |

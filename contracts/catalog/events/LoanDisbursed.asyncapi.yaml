@@ -9,7 +9,7 @@ info:
     of term_deposit.DepositConstituted — but where a deposit takes the principal IN, a loan
     pays it OUT and amortizes it over term_months installments.
 
-    Emitted: exactly once, as the credito_pessoal stream's first event, when the engine
+    Emitted: exactly once, as the personal_loan stream's first event, when the engine
     resolves the rate sheet, computes the amortization schedule, settles the disbursement
     debit, and appends the disbursement that transitions the aggregate to Active.
 
@@ -20,7 +20,7 @@ info:
     (disbursement_account is a token, never an IBAN). Origination stays upstream
     (ADR-PC-024 / ADR-PC-030 §P1): the engine disburses an already-approved, already-priced
     loan; it never models solvency / CRC / KYC / scoring.
-  x-owner: credito-pessoal
+  x-owner: personal-loan
   x-owner-contact: loans-team@babelstone.example
   x-status: active
   x-gdpr-legal-basis: CONTRACT_PERFORMANCE
@@ -28,9 +28,9 @@ info:
     - acl                 # downstream core-banking disbursement settlement projection (ADR-IC-012)
     - notification        # borrower-facing disbursement confirmation (ADR-IC-011)
 channels:
-  credito_pessoal:
+  personal_loan:
     description: |
-      Event-carried-state-transfer stream for the credito_pessoal aggregate. Topic name ==
+      Event-carried-state-transfer stream for the personal_loan aggregate. Topic name ==
       `aggregate_type` (the relay's documented convention, OutboxDrainer). One Avro schema
       per event type (Option A, doc 08): each event is its own message on this channel.
     x-compacted: false
@@ -41,9 +41,9 @@ operations:
   publishLoanDisbursed:
     action: send
     channel:
-      $ref: '#/channels/credito_pessoal'
+      $ref: '#/channels/personal_loan'
     messages:
-      - $ref: '#/channels/credito_pessoal/messages/LoanDisbursed'
+      - $ref: '#/channels/personal_loan/messages/LoanDisbursed'
 components:
   messages:
     LoanDisbursed:
@@ -79,11 +79,11 @@ components:
           ce_time:             { type: string, format: date-time }
           ce_datacontenttype:  { type: string, const: 'application/avro' }
           ce_subject:          { type: string, description: 'aggregate_id — the specific loan this event is about.' }
-          ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. credito_pessoal.' }
+          ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. personal_loan.' }
       # §P6: payload is the governed Avro schema, referenced (not restated). The PR gate
       # resolves the .avsc on disk hermetically; the main lane reconciles the subject below.
-      x-schema-registry-subject: loans.credito_pessoal.LoanDisbursed-value
+      x-schema-registry-subject: loans.personal_loan.LoanDisbursed-value
       payload:
         schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
         schema:
-          $ref: '../../avro/loans/credito_pessoal/LoanDisbursed.avsc'
+          $ref: '../../avro/loans/personal_loan/LoanDisbursed.avsc'

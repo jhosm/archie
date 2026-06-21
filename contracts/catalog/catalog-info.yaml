@@ -40,8 +40,8 @@ spec:
 apiVersion: backstage.io/v1alpha1
 kind: Location
 metadata:
-  name: babelstone-credito-pessoal-events
-  description: The governed AsyncAPI catalogue of the credito_pessoal (personal-loan) integration events.
+  name: babelstone-personal-loan-events
+  description: The governed AsyncAPI catalogue of the personal_loan (personal-loan) integration events.
 spec:
   type: url
   targets:
@@ -49,7 +49,7 @@ spec:
     - ./events/LoanInstallmentPaid.asyncapi.yaml
     - ./events/LoanRepaidEarly.asyncapi.yaml
     - ./events/LoanSettled.asyncapi.yaml
-    - ./events/credito_pessoal.PersonalDataErasureRequested.asyncapi.yaml
+    - ./events/personal_loan.PersonalDataErasureRequested.asyncapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: Location
@@ -115,7 +115,7 @@ spec:
   definition:
     $text: ./events/PersonalDataErasureRequested.asyncapi.yaml
 ---
-# The credito_pessoal (personal-loan) integration events (ADR-PC-031). The closed-end-asset
+# The personal_loan (personal-loan) integration events (ADR-PC-031). The closed-end-asset
 # family's published events: disburse -> amortize (installments / early repayment) -> settle,
 # plus the cross-cutting GDPR erasure. LoanDisbursementFailed and LoanWrittenOff are
 # store-internal only (no .avsc, no catalogue entry — they never ride the durable bus).
@@ -128,7 +128,7 @@ metadata:
 spec:
   type: asyncapi
   lifecycle: production
-  owner: credito-pessoal
+  owner: personal-loan
   definition:
     $text: ./events/LoanDisbursed.asyncapi.yaml
 ---
@@ -141,7 +141,7 @@ metadata:
 spec:
   type: asyncapi
   lifecycle: production
-  owner: credito-pessoal
+  owner: personal-loan
   definition:
     $text: ./events/LoanInstallmentPaid.asyncapi.yaml
 ---
@@ -154,7 +154,7 @@ metadata:
 spec:
   type: asyncapi
   lifecycle: production
-  owner: credito-pessoal
+  owner: personal-loan
   definition:
     $text: ./events/LoanRepaidEarly.asyncapi.yaml
 ---
@@ -167,22 +167,22 @@ metadata:
 spec:
   type: asyncapi
   lifecycle: production
-  owner: credito-pessoal
+  owner: personal-loan
   definition:
     $text: ./events/LoanSettled.asyncapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API
 metadata:
-  name: credito-pessoal-personal-data-erasure-requested
-  title: PersonalDataErasureRequested (credito_pessoal)
+  name: personal-loan-personal-data-erasure-requested
+  title: PersonalDataErasureRequested (personal_loan)
   description: GDPR right-to-be-forgotten on a loan — the subject's PII key was crypto-shredded (ADR-PC-004 §P3).
 spec:
   type: asyncapi
   lifecycle: production
-  owner: credito-pessoal
+  owner: personal-loan
   definition:
-    $text: ./events/credito_pessoal.PersonalDataErasureRequested.asyncapi.yaml
+    $text: ./events/personal_loan.PersonalDataErasureRequested.asyncapi.yaml
 ---
 # The per-consumer reconciliation contracts (event-store §7.3, bd babelstone-y1t7). Each is
 # a consumer's declared statement of what it reconciles against the engine's emitted events;
