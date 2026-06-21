@@ -23,6 +23,11 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <!-- The non-spine host/command-side assembly (ADR-PC-021 §A9/§A11): home of the family-agnostic
+         PackMigrationService<TState> + PackMigrationsEndpoints, exercised by PackMigrationServiceTests
+         against the CounterState stand-in. Pulls in the ASP.NET FrameworkReference for a test assembly,
+         the same dependency Babelstone.Engine.Api.Tests already carries for host-wiring tests. -->
+    <ProjectReference Include="../../src/Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
     <ProjectReference Include="../../src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />
     <!-- The shared ActivitySource + babelstone.* attribute keys + resource helper under test. -->
     <ProjectReference Include="../../src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />

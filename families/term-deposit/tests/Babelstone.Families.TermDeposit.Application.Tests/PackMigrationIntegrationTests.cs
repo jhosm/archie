@@ -1,4 +1,5 @@
 using Babelstone.Engine;
+using Babelstone.Engine.Hosting;
 using Babelstone.EventStore;
 using Babelstone.RateSheets;
 using Npgsql;
@@ -160,7 +161,7 @@ public sealed class PackMigrationIntegrationTests(ConstitutionFixture fixture)
     /// service over the term-deposit family. The runtime registry includes the engine-declared
     /// cross-cutting handlers (TermDepositFamilyModule.Registry() splices them in), so it folds the
     /// PackVersionMigrated the migration appends.</summary>
-    private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service, PackMigrationService Migration)
+    private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service, PackMigrationService<DepositPosition> Migration)
         Compose(string connectionString)
     {
         var store = new PostgresEventStore(connectionString);
@@ -171,7 +172,7 @@ public sealed class PackMigrationIntegrationTests(ConstitutionFixture fixture)
         var service = new TermDepositConstitutionService(
             runtime, new PostgresRateSheetStore(connectionString), new RecordingSettlementPort(),
             SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros");
-        var migration = new PackMigrationService(runtime, store);
+        var migration = new PackMigrationService<DepositPosition>(runtime, store);
         return (runtime, service, migration);
     }
 }
