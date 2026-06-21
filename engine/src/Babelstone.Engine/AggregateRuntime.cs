@@ -129,11 +129,14 @@ public sealed class AggregateRuntime<TState>(
         var version = snapshot?.AtSequence ?? -1;
         var lastEventId = snapshot?.LastEventId;
         // Event-derived, never the wall clock (ADR-PC-010 §P5): the transaction_time of the last folded
-        // event, so a fold-backed read reports the same last_updated the read-model row would.
-        // KNOWN GAP (no v1 snapshots, snapshots is null here): a stream fully covered by a snapshot with
-        // no tail events would leave this null though Version >= 0 — when snapshotting lands, the snapshot
-        // must carry the transaction_time it was taken at and seed this. Not reachable in v1.
-        DateTimeOffset? lastTransactionTime = null;
+        // event, so a fold-backed read reports the same last_updated the read-model row would. SEED it
+        // from the snapshot's carried transaction_time (the append-stamped instant of its head event, the
+        // 0017 column): a stream FULLY covered by a snapshot has no tail to derive it from, so without
+        // this seed it would report null though Version >= 0. The tail loop below overwrites it with each
+        // folded event's transaction_time, so a snapshot-plus-tail load still reports the LAST event's
+        // time — the seed only stands when the tail is empty. Null for a pre-0017 snapshot (the carried
+        // column is null), which preserves the prior null-on-no-tail behaviour for those rows.
+        DateTimeOffset? lastTransactionTime = snapshot?.TransactionTime;
         var fromSequence = version + 1;
 
         await foreach (var envelope in store.LoadAsync(streamId, fromSequence, ct))
@@ -193,9 +196,10 @@ public sealed class AggregateRuntime<TState>(
         var version = snapshot?.AtSequence ?? -1L;
         Guid? lastEventId = snapshot?.LastEventId;
         // Event-derived transaction_time of the last folded event (ADR-PC-010 §P5). A snapshot seed
-        // carries its CreatedAt — the append-stamped transaction_time it was taken at — so a stream
-        // fully covered by the snapshot (no tail before the point) still reports a real last_updated.
-        DateTimeOffset? lastTransactionTime = snapshot is null ? null : snapshot.CreatedAt;
+        // carries its TransactionTime — the append-stamped instant of its head event (the 0017 column) —
+        // so a stream fully covered by the snapshot (no tail before the point) still reports a real
+        // last_updated. Null for a pre-0017 snapshot row (the carried column is null).
+        DateTimeOffset? lastTransactionTime = snapshot?.TransactionTime;
         // Read only the un-snapshotted tail (snapshot.AtSequence + 1 ..), the same tail LoadAsync reads;
         // a cold read (no snapshot) starts at sequence 0.
         var fromSequence = version + 1;
@@ -460,10 +464,14 @@ public sealed class AggregateRuntime<TState>(
             }
 
             // PutAsync writes on its own connection (PostgresSnapshotStore), AFTER the append committed —
-            // never in the append transaction (§P2 eventually-consistent). created_at is the append's
-            // event-derived transaction_time, not a fresh wall-clock read: the runtime owns the clock,
-            // and reusing the committed stamp keeps the snapshot's timeline event-aligned (ADR-PC-010 §P5).
-            await snapshots.PutAsync(streamId, head.Version, head.LastEventId.Value, head.State, transactionTime, ct);
+            // never in the append transaction (§P2 eventually-consistent). Both timestamps are the
+            // append's event-derived transaction_time, not a fresh wall-clock read: the runtime owns the
+            // clock, and reusing the committed stamp keeps the snapshot's timeline event-aligned
+            // (ADR-PC-010 §P5). transactionTime is also carried as the snapshot's transaction_time (the
+            // 0017 column) so a fully-covered rehydrate can seed last_updated from it.
+            await snapshots.PutAsync(
+                streamId, head.Version, head.LastEventId.Value, head.State, transactionTime,
+                transactionTime, ct);
         }
         catch (Exception ex)
         {

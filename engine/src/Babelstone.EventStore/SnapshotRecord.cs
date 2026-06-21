@@ -12,7 +12,14 @@ namespace Babelstone.EventStore;
 /// <param name="StateHash">SHA-256 over (state || last_event_id), hex. Verified on rebuild.</param>
 /// <param name="State">Serialized projection state.</param>
 /// <param name="Trusted">Advisory-until-trusted (§8.3): false until six months of passing drills.</param>
-/// <param name="CreatedAt">When the snapshot was written.</param>
+/// <param name="CreatedAt">When the snapshot row was physically written (a wall-clock DB stamp).</param>
+/// <param name="TransactionTime">
+/// The event-derived transaction_time of the head event the snapshot covers (the append-stamped
+/// instant, ADR-PC-010 §P5) — distinct from <paramref name="CreatedAt"/>, which is when the ROW was
+/// written. Lets rehydrate seed last_updated from the snapshot when a stream is fully covered with no
+/// tail (ADR-PC-003 §P3). Nullable: pre-0017 snapshot rows carry null, for which rehydrate falls back
+/// to the prior null-on-no-tail behaviour (the cold fold stays correct).
+/// </param>
 public sealed record SnapshotRecord(
     Guid                 StreamId,
     long                 AtSequence,
@@ -20,4 +27,5 @@ public sealed record SnapshotRecord(
     string               StateHash,
     ReadOnlyMemory<byte> State,
     bool                 Trusted,
-    DateTimeOffset       CreatedAt);
+    DateTimeOffset       CreatedAt,
+    DateTimeOffset?      TransactionTime = null);

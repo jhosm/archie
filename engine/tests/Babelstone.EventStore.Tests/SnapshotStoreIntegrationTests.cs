@@ -13,6 +13,9 @@ public sealed class SnapshotStoreIntegrationTests(PostgresEventStoreFixture fixt
 {
     private PostgresSnapshotStore Store => new(fixture.ConnectionString);
 
+    private static readonly DateTimeOffset CreatedAt = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset TransactionTime = new(2025, 12, 31, 23, 0, 0, TimeSpan.Zero);
+
     private static SnapshotRecord Record(Guid streamId, long atSequence, bool trusted = false)
     {
         var lastEventId = Guid.NewGuid();
@@ -24,7 +27,11 @@ public sealed class SnapshotStoreIntegrationTests(PostgresEventStoreFixture fixt
             StateHash: SnapshotHash.Compute(state, lastEventId),
             State: state,
             Trusted: trusted,
-            CreatedAt: new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+            CreatedAt: CreatedAt,
+            // Deliberately DISTINCT from CreatedAt: the event-derived head transaction_time (0017) is a
+            // different instant from when the row was written, so the round-trip proves they are stored
+            // and read back as separate columns, not conflated.
+            TransactionTime: TransactionTime);
     }
 
     [Fact]
@@ -42,6 +49,8 @@ public sealed class SnapshotStoreIntegrationTests(PostgresEventStoreFixture fixt
         Assert.Equal(snapshot.StateHash, loaded.StateHash);
         Assert.Equal(snapshot.State.ToArray(), loaded.State.ToArray());
         Assert.False(loaded.Trusted); // advisory by default
+        Assert.Equal(snapshot.CreatedAt, loaded.CreatedAt);
+        Assert.Equal(snapshot.TransactionTime, loaded.TransactionTime); // the 0017 column round-trips distinctly
     }
 
     [Fact]

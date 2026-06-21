@@ -34,6 +34,38 @@ public sealed class SnapshotWriteSideTests(EngineFixture fixture) : IClassFixtur
     }
 
     [Fact]
+    public async Task Fully_covered_stream_with_no_tail_reports_the_snapshot_transaction_time()
+    {
+        // bd babelstone-e6fr.14 — the no-tail regression. A snapshot taken at the head covers EVERY
+        // event, so a follow-up LoadAsync seeds from the snapshot and folds an EMPTY tail. The runtime
+        // must STILL report a real last_updated (LastTransactionTime), seeded from the snapshot's carried
+        // transaction_time (the 0017 column) — not null, which is what the closed KNOWN GAP produced when
+        // last_updated was only ever derived from a tail event.
+        var runtime = fixture.SnapshottingRuntime(everyNEvents: 2);
+        var streamId = Guid.NewGuid();
+
+        // Two events cross the every-2 threshold → a snapshot is written at the head (sequence 1), so the
+        // stream is FULLY covered: a later load has no tail to fold.
+        await runtime.AppendAsync(streamId, -1, [new Incremented(3), new Incremented(4)], fixture.Context());
+
+        // The snapshot covers the head; LoadAsync folds zero tail events.
+        var loaded = await runtime.LoadAsync(streamId);
+        Assert.Equal(1, loaded.Version);          // head is covered by the snapshot
+        Assert.Equal(7, loaded.State.Total);
+
+        // The closed gap: last_updated is NOT null even though no tail event supplied it — it is seeded
+        // from the snapshot's transaction_time, which is the append's event-derived stamp (the fixture
+        // clock), so a fold-backed read of a fully-snapshotted stream reports a real last_updated.
+        Assert.NotNull(loaded.LastTransactionTime);
+        Assert.Equal(EngineFixture.AppendTime, loaded.LastTransactionTime);
+
+        // And it equals what a cold fold (no snapshot, derives the time from the tail) reports for the
+        // same head event — the snapshot path is event-time-identical, not merely non-null.
+        var coldFold = await fixture.DurableRuntime().LoadAsync(streamId);
+        Assert.Equal(coldFold.LastTransactionTime, loaded.LastTransactionTime);
+    }
+
+    [Fact]
     public async Task Below_threshold_no_snapshot_is_written()
     {
         // every-100 policy: a single 1-event stream is well under the threshold, so NO snapshot is taken
