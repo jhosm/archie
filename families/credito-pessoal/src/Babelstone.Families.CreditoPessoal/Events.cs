@@ -35,7 +35,7 @@ public sealed record RecordedPreconditionVerdict(
 
 /// <summary>
 /// The loan is disbursed: the lump-sum principal is paid out to the borrower and the closed-end
-/// French-system amortization schedule (<i>quadro de amortização</i>) is fixed at constitution
+/// French-system amortization schedule is fixed at constitution
 /// (fin-math §4.1). This is the loan's first event — the closed-end-asset analogue of the term
 /// deposit's <c>DepositConstituted</c>, but where a deposit accrues to a single maturity, a loan
 /// pays out at t=0 (a lump-sum DISBURSEMENT) and amortizes over <see cref="TermMonths"/> installments.
@@ -54,7 +54,7 @@ public sealed record RecordedPreconditionVerdict(
 /// (<c>P = C × r / (1 − (1 + r)^−n)</c>, fin-math §4.1), computed command-side and stamped here.</param>
 /// <param name="StartDate">The disbursement date — the schedule's anchor.</param>
 /// <param name="FirstInstallmentDate">The due date of the first installment (StartDate + one cadence).</param>
-/// <param name="Finalidade">The loan PURPOSE / <i>finalidade</i> category (e.g. <c>general</c>,
+/// <param name="Purpose">The loan PURPOSE category (e.g. <c>general</c>,
 /// <c>education</c>, <c>health</c>) — a STRUCTURAL pricing/regulatory dimension that selects the legal
 /// TAEG ceiling bucket (research/credito-pessoal/02 §2). NOT PII (ADR-PC-004 §P2).</param>
 /// <param name="ProductCode">The catalogue product code the rate sheet priced — STRUCTURAL, NOT PII.</param>
@@ -63,7 +63,7 @@ public sealed record RecordedPreconditionVerdict(
 /// was credited to.</param>
 /// <param name="EarlyRepaymentCommissionBps">The early-repayment commission the product charges, in
 /// basis points (PINNED at constitution like the rate — ADR-PC-009; the gates a live loan is subject
-/// to are fixed for its life). The capped <i>comissão de reembolso antecipado</i> a later early
+/// to are fixed for its life). The capped early-repayment commission a later early
 /// repayment charges resolves from this pinned value (fin-math §7.5). 0 ⇒ no commission.</param>
 public sealed record LoanDisbursed(
     Guid LoanId,
@@ -75,7 +75,7 @@ public sealed record LoanDisbursed(
     Money InstallmentAmount,
     DateOnly StartDate,
     DateOnly FirstInstallmentDate,
-    string Finalidade,
+    string Purpose,
     string ProductCode,
     string DisbursementAccount,
     int EarlyRepaymentCommissionBps = 0) : DomainEvent
@@ -127,7 +127,7 @@ public sealed record LoanInstallmentPaid(
     DateOnly PaidOn) : DomainEvent;
 
 /// <summary>
-/// The borrower repays the loan early (<i>reembolso antecipado</i>, fin-math §7.5): a partial or full
+/// The borrower repays the loan early (fin-math §7.5): a partial or full
 /// prepayment of the outstanding capital, plus the LEGALLY-CAPPED early-repayment commission. The
 /// commission is computed command-side as <c>min(charged, statutory_cap) × capitalRepaid</c>, further
 /// capped at the interest the borrower would still have paid (the §7.5 ceiling) — the PT consumer-credit

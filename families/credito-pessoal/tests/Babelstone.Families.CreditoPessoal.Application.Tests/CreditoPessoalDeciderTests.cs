@@ -29,7 +29,7 @@ public sealed class CreditoPessoalDeciderTests
         Assert.Equal(new Money(86_066), disbursed.InstallmentAmount); // €860.66 (fin-math §4.1)
         Assert.Equal(new DateOnly(2026, 2, 1), disbursed.FirstInstallmentDate); // start + 1 cadence
         Assert.Equal("rs-1", disbursed.RateSheetVersionId);
-        Assert.Equal("general", disbursed.Finalidade);
+        Assert.Equal("general", disbursed.Purpose);
     }
 
     [Fact]
@@ -200,7 +200,7 @@ public sealed class CreditoPessoalDeciderTests
         TermMonths: termMonths,
         StartDate: new DateOnly(2026, 1, 1),
         DisbursedAt: new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero),
-        Finalidade: "general",
+        Purpose: "general",
         DisbursementAccount: "acct-token-1",
         Actor: "test",
         EarlyRepaymentCommissionBps: 50);

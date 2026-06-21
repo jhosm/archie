@@ -2,7 +2,7 @@
 
 # `loans.credito_pessoal.LoanRepaidEarly`
 
-The borrower repays the loan early (reembolso antecipado, fin-math §7.5): a partial or full prepayment of the outstanding capital plus the LEGALLY-CAPPED early-repayment commission (PT consumer-credit caps: 0.50% >1y remaining / 0.25% ≤1y, capped further at the lost interest). A full repayment drives the balance to zero (the loan then settles). Business payload only ([ADR-IC-002](../../../product-management/integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md) §P5); CloudEvents envelope rides in Kafka headers. No PII ([ADR-PC-004](../../../product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) §P2).
+The borrower repays the loan early (fin-math §7.5): a partial or full prepayment of the outstanding capital plus the LEGALLY-CAPPED early-repayment commission (PT consumer-credit caps: 0.50% >1y remaining / 0.25% ≤1y, capped further at the lost interest). A full repayment drives the balance to zero (the loan then settles). Business payload only ([ADR-IC-002](../../../product-management/integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md) §P5); CloudEvents envelope rides in Kafka headers. No PII ([ADR-PC-004](../../../product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md) §P2).
 
 ## Payload fields
 

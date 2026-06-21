@@ -6,7 +6,7 @@ schema: credito_pessoal@2026.1
 pack: pt.2026.1
 currency: EUR
 term_months: 36
-finalidade: general
+purpose: general
 rate:
   fixed:
     rate_ref: { sheet: live, role_selector: standard }

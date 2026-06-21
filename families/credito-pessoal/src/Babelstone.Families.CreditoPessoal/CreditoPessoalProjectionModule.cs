@@ -6,7 +6,7 @@ namespace Babelstone.Families.CreditoPessoal;
 /// <summary>
 /// The credito_pessoal family's projection declarations (two-modes §5.4: declared in the family, not
 /// hardcoded in the engine). Two projections: the loan POSITION (folded over the family's own handlers,
-/// the live amortizing state) and the AMORTIZATION SCHEDULE (the <i>quadro de amortização</i> as paid).
+/// the live amortizing state) and the AMORTIZATION SCHEDULE (as actually paid).
 /// Every v1 projection is <see cref="ProjectionMode.Async"/>. The engine spine never names this family;
 /// the host composes infra + this declaration (ADR-PC-021 §D4).
 /// </summary>

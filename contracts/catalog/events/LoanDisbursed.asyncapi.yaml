@@ -5,7 +5,7 @@ info:
   description: |
     The loan is disbursed: the lump-sum principal is paid out to the borrower (a settlement
     DEBIT against the lender's funding at t=0) and the closed-end French-system amortization
-    schedule (quadro de amortização) is fixed at constitution. The closed-end-asset analogue
+    schedule is fixed at constitution. The closed-end-asset analogue
     of term_deposit.DepositConstituted — but where a deposit takes the principal IN, a loan
     pays it OUT and amortizes it over term_months installments.
 

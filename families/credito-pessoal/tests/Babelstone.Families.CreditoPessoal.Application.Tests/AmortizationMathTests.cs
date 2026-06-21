@@ -5,7 +5,7 @@ using Xunit;
 namespace Babelstone.Families.CreditoPessoal.Application.Tests;
 
 /// <summary>
-/// The French-system (constant-installment / sistema francês) amortization kernel — the financial-math
+/// The French-system (constant-installment) amortization kernel — the financial-math
 /// heart of the credito_pessoal family (fin-math §3–§4, §7.4–§7.5). These pin the worked example from the
 /// financial-concepts doc to the cent, the conservation invariants (capital legs sum to principal; balance
 /// reaches zero), the integer-cent rounding discipline (ADR-PC-010 §P1–§P2), and the capped early-repayment
@@ -24,7 +24,7 @@ public sealed class AmortizationMathTests
     [Fact]
     public void Schedule_matches_the_worked_example_first_rows_to_the_cent()
     {
-        // fin-math §4.1 quadro de amortização: month 1 interest €50.00 / capital €810.66; month 2 opening
+        // fin-math §4.1 amortization schedule: month 1 interest €50.00 / capital €810.66; month 2 opening
         // €9,189.34, interest €45.95 / capital €814.71; month 3 opening €8,374.63, interest €41.87.
         var schedule = Amortization.Schedule(new Money(1_000_000), periodicRateBps: 50, periods: 12);
 
