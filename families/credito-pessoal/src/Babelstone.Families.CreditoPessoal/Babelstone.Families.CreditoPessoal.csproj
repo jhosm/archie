@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Families.CreditoPessoal</RootNamespace>
+    <AssemblyName>Babelstone.Families.CreditoPessoal</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- A family references ONLY Babelstone.Engine (the dispatch/fold abstractions) plus
+         Babelstone.FinancialTypes (Money) — never EventStore or Pii. A handler therefore
+         structurally cannot reach the database or the OpenBao seam (FamilyModule.cs). The
+         family → engine arrow is one-way (ADR-PC-021 §P2). -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+
+    <!-- The handler-purity analysers (BENG001/002/003) guard every IEventHandler.Apply body in
+         this family — the same checker the engine attaches to its own handlers. A clock/IO/rng
+         call in a fold fails the build (warnings are errors via Directory.Build.props). -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

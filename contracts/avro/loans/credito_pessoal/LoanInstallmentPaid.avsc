@@ -1,0 +1,14 @@
+{
+  "type": "record",
+  "namespace": "loans.credito_pessoal",
+  "name": "LoanInstallmentPaid",
+  "doc": "One scheduled installment is paid: the period's interest + capital split (P(t) = J(t) + A(t), fin-math §3) and the outstanding balance after it. The amortization kernel computed the split command-side; the event records the already-computed facts. Business payload only (ADR-IC-002 §P5); CloudEvents envelope rides in Kafka headers. No PII (ADR-PC-004 §P2).",
+  "fields": [
+    { "name": "loan_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "LoanId (Guid)." },
+    { "name": "installment_number", "type": "int", "doc": "The 1-based installment index (1 … n)." },
+    { "name": "interest_cents", "type": "long", "doc": "The period's interest leg as integer EUR cents (J(t) = S(t-1) × r)." },
+    { "name": "capital_cents", "type": "long", "doc": "The period's capital-amortized leg as integer EUR cents (A(t) = P − J(t))." },
+    { "name": "outstanding_balance_cents", "type": "long", "doc": "The capital still owed AFTER this installment as integer EUR cents (S(t) = S(t-1) − A(t))." },
+    { "name": "paid_on", "type": { "type": "int", "logicalType": "date" }, "doc": "The installment's paid date as days since epoch." }
+  ]
+}

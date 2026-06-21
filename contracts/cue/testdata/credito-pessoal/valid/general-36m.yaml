@@ -1,0 +1,18 @@
+# A general-purpose (higher legal cap) 36-month personal loan on the standard
+# pricing role. The canonical credito_pessoal shape: a fixed principal disbursed
+# as a lump sum and amortized over 36 monthly installments (French/sistema
+# francês), with the early-repayment commission at the >1y statutory cap (0.50%).
+variant_id: cp_pt_general_36m
+schema: credito_pessoal@2026.1
+pack: pt.2026.1
+currency: EUR
+term_months: 36
+finalidade: general
+rate:
+  fixed:
+    rate_ref: { sheet: live, role_selector: standard }
+early_repayment:
+  commission_basis_points: 50
+principal_bounds:
+  min_cents: 100000
+  max_cents: 7500000

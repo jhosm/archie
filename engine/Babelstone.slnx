@@ -37,6 +37,11 @@
     <!-- The family's SAGA module (ADR-IC-018 §D1): the concrete ConstitutionProcess + bridge/router/
          commands/state-vocabulary + the ISagaModule, depending only on the substrate (family → substrate). -->
     <Project Path="../families/term-deposit/src/Babelstone.Families.TermDeposit.Orchestration/Babelstone.Families.TermDeposit.Orchestration.csproj" />
+    <!-- The credito_pessoal family (ADR-PC-031 / ADR-PC-030 roadmap item 2): the closed-end personal-loan
+         ASSET family — the 2nd family on the engine, mirroring the term-deposit liability. The pure-fold
+         schema + the impure decider/application layer; same family → engine plugin arrow (ADR-PC-021). -->
+    <Project Path="../families/credito-pessoal/src/Babelstone.Families.CreditoPessoal/Babelstone.Families.CreditoPessoal.csproj" />
+    <Project Path="../families/credito-pessoal/src/Babelstone.Families.CreditoPessoal.Application/Babelstone.Families.CreditoPessoal.Application.csproj" />
     <!-- The in-house saga orchestrator (ADR-IC-003, Epic H.1): the hand-rolled ConstitutionProcess
          state machine + saga-state/transition persistence + idempotent inbox-driven advance. An
          extraction-ready subtree (ADR-PC-019 §P2) that builds with the engine pipeline. -->
@@ -68,6 +73,11 @@
     <Project Path="tests/Babelstone.InboxConsumer.Tests/Babelstone.InboxConsumer.Tests.csproj" />
     <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/Babelstone.Families.TermDeposit.Tests.csproj" />
     <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Application.Tests/Babelstone.Families.TermDeposit.Application.Tests.csproj" />
+    <!-- The credito_pessoal family tests (ADR-PC-031): replay/fold tests over the loan position,
+         lifecycle legality, the amortization-schedule projection, and the pure decider's
+         French-system amortization + capped early-repayment math. -->
+    <Project Path="../families/credito-pessoal/tests/Babelstone.Families.CreditoPessoal.Tests/Babelstone.Families.CreditoPessoal.Tests.csproj" />
+    <Project Path="../families/credito-pessoal/tests/Babelstone.Families.CreditoPessoal.Application.Tests/Babelstone.Families.CreditoPessoal.Application.Tests.csproj" />
     <!-- H.1 saga substrate: pure state-machine tests + saga-persistence/advance/role-envelope
          integration tests (the latter [Trait("Category","Integration")], filtered out of the
          default lane). -->

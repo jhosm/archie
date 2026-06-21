@@ -1,0 +1,14 @@
+# REJECT: v1 is EUR-only; a non-EUR currency fails the closed `currency: "EUR"` field.
+variant_id: cp_pt_general_36m_usd
+schema: credito_pessoal@2026.1
+pack: pt.2026.1
+currency: USD
+term_months: 36
+finalidade: general
+rate:
+  fixed:
+    rate_ref: { sheet: live, role_selector: standard }
+early_repayment:
+  commission_basis_points: 50
+principal_bounds:
+  min_cents: 100000
