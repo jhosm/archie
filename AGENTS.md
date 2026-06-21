@@ -116,6 +116,12 @@ bd close <id>         # Complete work
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
 
+## Backlog / bd Workflow
+
+A small rule that keeps parent/child issue links from silently pointing at the wrong thing when you scaffold work.
+
+- When creating a bd issue with `--parent`, always pass the **full `babelstone-` prefix** on the parent ID (e.g. `--parent babelstone-45c4`, never `--parent 45c4`). A bare short ID can resolve to the wrong issue — or none — so the new issue ends up orphaned or mis-parented.
+
 ## Branching & PR Policy
 
 **All changes — especially LLM-authored ones — reach `main` only by merging a pull request. Never commit or push directly to `main`.**
@@ -136,6 +142,12 @@ At the **start** of any work that will change files:
 4. **Merging the PR is the maintainer's call**, not the agent's — do not self-merge unless explicitly told to.
 
 A local `.githooks/pre-push` hook blocks pushes to `main` as a backstop (override a deliberate maintainer push with `ALLOW_PUSH_MAIN=1`). It is a *local* guard, not a hard gate: `--no-verify` bypasses it, and true enforcement needs GitHub branch protection (a Pro plan or a public repo).
+
+## Cleanup / Post-Merge
+
+What to tidy once a PR actually lands — and the one thing not to delete by reflex.
+
+After a PR merges, run post-merge cleanup: close the corresponding bd issue(s), delete the merged branch (local and remote), and remove its worktree. **Preserve any worktree still tied to an open PR** — only retire the worktree whose PR has merged, so in-flight work in a sibling lane isn't destroyed.
 
 ## Communication Style
 
@@ -211,6 +223,12 @@ make pack-validate     # validate a regulatory pack (PACK=pt.2026.1)
 - **After editing a `.puml`, re-render it** so you can check the result: `plantuml -tsvg <file>.puml`. Requires `brew install graphviz plantuml` (full setup in `INSTALL.md`).
 - The `.githooks/pre-commit` hook re-renders any staged `.puml` and stages the SVG at commit time (the safety net); it likewise regenerates `docs/.../reference/` (via `make docs-gen`, run through `mise`) and stages it whenever the commit touches a generated-reference source (`contracts/avro/**/*.avsc`, `contracts/cue/**/*.cue`, the MCP `server.py`, an `ADR-*.md`, or the glossary's `VerifiedPack.cs`/`DayCount.cs`), so the `docs-verify` CI gate never trips on a forgotten regen. Activate with `git config core.hooksPath .githooks` (a shim in `.git/hooks/` may already delegate to it).
 - Convention: `@startuml <id>` MUST match the `.puml` filename, so output lands at `<filename>.svg` (the hook relies on this).
+
+## Frontend / Docs Verification
+
+How to check visual changes before committing them, since the diff alone won't tell you they render correctly.
+
+- When a change touches UI, slides, or diagrams, open the rendered output in a browser and confirm layout, font sizing, and diagram semantics **before** committing. A clean diff is not proof the page renders right — re-render (`.puml` → `.svg`, see Diagrams above) and look at the result.
 
 ## ADR governance & conformance
 
