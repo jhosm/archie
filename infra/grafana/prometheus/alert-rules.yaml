@@ -200,71 +200,64 @@ groups:
   # ---------------------------------------------------------------------------
   # SNAPSHOT OPERATIONS (L.6 — bd babelstone-0uau.2; ADR-PC-003 §P6). The two
   # snapshotter operational signals §P6 calls for. The snapshot store
-  # (PostgresSnapshotStore) is wired into the live runtime (bd e6fr.11/12), but
-  # the engine does NOT yet EMIT these gauges/counters, so — exactly the posture
-  # the saga-and-replication group above takes — the rules ship GUARDED with a
-  # TODO naming the pending emit and its owner. Uncommenting is the one-line
-  # change once the metric lands; the threshold + severity are decided here so the
-  # alert ships WITH the metric. The runbook
-  # (infra/runbooks/snapshot-operations.md) documents the operator response today,
-  # independent of the metric being live.
+  # (PostgresSnapshotStore) is wired into the live runtime (bd e6fr.11/12), and as
+  # of bd babelstone-sk7e the engine now EMITS both signals, so this group is LIVE
+  # (the guarded TODO posture it shipped with is retired). The thresholds +
+  # severities decided when the rules shipped guarded are preserved verbatim. The
+  # runbook (infra/runbooks/snapshot-operations.md) documents the operator response.
   #
   #   (1) SNAPSHOT LAG — the count of un-snapshotted events on a stream exceeding
-  #       a threshold ⇒ the snapshotter is unhealthy (§P6 (1)). Snapshots are a
-  #       rebuildable cache, so this is a WARNING (a deep un-snapshotted stream
-  #       makes the next cold replay slower, never wrong), not a critical.
+  #       a threshold ⇒ the snapshotter is unhealthy (§P6 (1)). Emitted as the
+  #       observable gauge snapshot_lag_events (the largest un-snapshotted depth
+  #       observed across streams, raised in AggregateRuntime's post-commit
+  #       snapshot path). Snapshots are a rebuildable cache, so this is a WARNING (a
+  #       deep un-snapshotted stream makes the next cold replay slower, never
+  #       wrong), not a critical.
   #   (2) HASH-MISMATCH ON READ — a snapshot whose stored hash did not verify on
-  #       read (SnapshotStore.Verify throws). The recovery is automatic-able
-  #       (discard the snapshot, cold-rebuild the stream); a RECURRING mismatch is
-  #       a snapshot-infrastructure bug to page on (§P6 (2)).
+  #       read (SnapshotStore.Verify throws). Emitted as the counter
+  #       snapshot_hash_mismatch_total, incremented in that verify guard. The
+  #       recovery is automatic-able (discard the snapshot, cold-rebuild the
+  #       stream); a RECURRING mismatch is a snapshot-infrastructure bug to page on
+  #       (§P6 (2)).
   # ---------------------------------------------------------------------------
-  - name: snapshot-operations-pending-emit
-    rules: []
-    # TODO(emit-pending) — SNAPSHOT LAG: events appended since a stream's latest
-    # snapshot exceeding the snapshotter-health threshold. Pending metric: a gauge
-    # e.g. snapshot_lag_events (max un-snapshotted event count across streams, or a
-    # per-stream gauge). Owner: the snapshotter/runtime lane (bd e6fr.11/12
-    # follow-up) — it is an engine emit, NOT load-harness code. Uncomment when
-    # emitted (the §8.1 per-N trigger default is 100, so >500 un-snapshotted events
-    # means the snapshotter is ~5 thresholds behind — clearly unhealthy):
-    #
-    #   - alert: SnapshotLagHigh
-    #     expr: snapshot_lag_events > 500
-    #     for: 5m
-    #     labels: { severity: warning, sli: snapshot_lag, adr: ADR-PC-003 }
-    #     annotations:
-    #       summary: "Snapshot lag >500 un-snapshotted events"
-    #       description: >-
-    #         A stream has accumulated >500 events since its last snapshot — the
-    #         snapshotter is unhealthy (ADR-PC-003 §P6). Snapshots accelerate
-    #         replay but never gate correctness, so this is a WARNING: the next
-    #         cold rebuild is slower, not wrong. Investigate the post-commit
-    #         snapshot-write path (the fail-soft onSnapshotError log) and the
-    #         per-N policy config. Runbook: snapshot-operations.md.
-    #       runbook: ../../runbooks/snapshot-operations.md
-    #
-    # TODO(emit-pending) — SNAPSHOT HASH-MISMATCH ON READ: a snapshot that failed
-    # its (state ‖ last_event_id) hash verification on read (the §8.3 worst-case
-    # guard — a silently-wrong snapshot read as truth). Pending metric: a counter
-    # e.g. snapshot_hash_mismatch_total{projection_kind}, incremented where
-    # SnapshotStore.Verify throws. Owner: the snapshotter/runtime lane. Uncomment
-    # when emitted (ANY mismatch warrants the discard-and-rebuild recovery; a
-    # RECURRING one is a snapshot-infrastructure bug to page on):
-    #
-    #   - alert: SnapshotHashMismatch
-    #     expr: increase(snapshot_hash_mismatch_total[1h]) > 0
-    #     for: 0m
-    #     labels: { severity: critical, sli: snapshot_hash, adr: ADR-PC-003 }
-    #     annotations:
-    #       summary: "Snapshot hash-mismatch on read (ADR-PC-003 §8.3)"
-    #       description: >-
-    #         A snapshot failed (state ‖ last_event_id) hash verification on read —
-    #         the worst event-sourcing failure mode (a wrong snapshot trusted as
-    #         truth) caught by the §8.3 guard. Recovery: discard the snapshot and
-    #         cold-rebuild the stream (the read already fell back to a cold fold).
-    #         A recurring mismatch is a snapshot-infrastructure bug — page on-call.
-    #         Runbook: snapshot-operations.md.
-    #       runbook: ../../runbooks/snapshot-operations.md
+  - name: snapshot-operations
+    rules:
+      # SNAPSHOT LAG (§P6 (1)): the §8.1 per-N trigger default is 100, so >500
+      # un-snapshotted events means the snapshotter is ~5 thresholds behind —
+      # clearly unhealthy. A WARNING: snapshots accelerate replay but never gate
+      # correctness, so the worst outcome is a slower cold rebuild, never a wrong one.
+      - alert: SnapshotLagHigh
+        expr: snapshot_lag_events > 500
+        for: 5m
+        labels: { severity: warning, sli: snapshot_lag, adr: ADR-PC-003 }
+        annotations:
+          summary: "Snapshot lag >500 un-snapshotted events"
+          description: >-
+            A stream has accumulated >500 events since its last snapshot — the
+            snapshotter is unhealthy (ADR-PC-003 §P6). Snapshots accelerate
+            replay but never gate correctness, so this is a WARNING: the next
+            cold rebuild is slower, not wrong. Investigate the post-commit
+            snapshot-write path (the fail-soft onSnapshotError log) and the
+            per-N policy config. Runbook: snapshot-operations.md.
+          runbook: ../../runbooks/snapshot-operations.md
+
+      # SNAPSHOT HASH-MISMATCH ON READ (§P6 (2) / §8.3): ANY mismatch warrants the
+      # discard-and-rebuild recovery; a RECURRING one is a snapshot-infrastructure
+      # bug to page on — hence critical, firing on a single occurrence in the window.
+      - alert: SnapshotHashMismatch
+        expr: increase(snapshot_hash_mismatch_total[1h]) > 0
+        for: 0m
+        labels: { severity: critical, sli: snapshot_hash, adr: ADR-PC-003 }
+        annotations:
+          summary: "Snapshot hash-mismatch on read (ADR-PC-003 §8.3)"
+          description: >-
+            A snapshot failed (state ‖ last_event_id) hash verification on read —
+            the worst event-sourcing failure mode (a wrong snapshot trusted as
+            truth) caught by the §8.3 guard. Recovery: discard the snapshot and
+            cold-rebuild the stream (the read already fell back to a cold fold).
+            A recurring mismatch is a snapshot-infrastructure bug — page on-call.
+            Runbook: snapshot-operations.md.
+          runbook: ../../runbooks/snapshot-operations.md
 
   # ---------------------------------------------------------------------------
   # PROJECTION RECONCILIATION (M.5 — bd babelstone-irfl). The three event-store
