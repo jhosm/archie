@@ -45,9 +45,11 @@
          ISagaModule plug-in, carrying no families/** or engine-kernel reference. -->
     <Project Path="../orchestrator/src/Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
     <!-- The in-house notification worker (ADR-IC-011, DEF-2 / bd babelstone-60n8.1): a per-service
-         outbox-worker host (ADR-IC-004) that reads the engine's term-deposit projections over the
-         ADR-IC-005 read surface. An extraction-ready subtree (ADR-PC-019 §P2) that builds with the
-         engine pipeline; no scheduler timing or emission yet (those are downstream children). -->
+         outbox-worker host (ADR-IC-004) that reads deposit facts over the storage-opaque ADR-PC-027
+         HTTP read contract — family-agnostic, with NO engine-kernel or family reference (ADR-IC-019
+         §D2/§D3, bd babelstone-60n8.5; gated by NOTIFICATION_FAMILY_AGNOSTIC). An extraction-ready
+         subtree (ADR-PC-019 §P2) that builds with the engine pipeline; no scheduler timing or
+         emission yet (those are downstream children). -->
     <Project Path="../notification/src/Babelstone.Notification/Babelstone.Notification.csproj" />
   </Folder>
   <Folder Name="/tests/">
@@ -77,9 +79,10 @@
          integration tests (the latter [Trait("Category","Integration")], filtered out of the
          default lane). -->
     <Project Path="../orchestrator/tests/Babelstone.Orchestrator.Tests/Babelstone.Orchestrator.Tests.csproj" />
-    <!-- DEF-2 notification (bd babelstone-60n8.1): Docker-free reader tests over an in-memory
-         IProjectionStorage fake — the reader keys each of the three projection reads on the right
-         family-prefixed kind and maps the typed state (ADR-IC-005 read surface). -->
+    <!-- DEF-2 notification (bd babelstone-60n8.1 / .5): Docker-free + engine-free tests — the deposit
+         read client over a fake HttpMessageHandler (it calls GET /v1/deposits/{id} and maps the
+         snake_case wire shape, ADR-PC-027) + the NOTIFICATION_FAMILY_AGNOSTIC fitness gate that
+         parses the core .csproj for a families/** or engine-spine reference (ADR-IC-019 §D2/§P2). -->
     <Project Path="../notification/tests/Babelstone.Notification.Tests/Babelstone.Notification.Tests.csproj" />
     <!-- L.1 load harness smoke/self-test (ADR-PC-011): Docker-free determinism + envelope + observer tests. -->
     <Project Path="load/Babelstone.LoadHarness.Tests/Babelstone.LoadHarness.Tests.csproj" />

@@ -178,7 +178,7 @@ Relocating the family read off the engine kernel (bd `babelstone-60n8`) must not
 
 **Residual risks:**
 
-- **The core→family / core→kernel no-edge rule is a convention until gated.** A stray `ProjectReference` from the core to a family or the engine kernel would silently erode family-agnosticism. Mitigation: the `NOTIFICATION_FAMILY_AGNOSTIC` fitness function below makes it a mechanical check (it lands `Live` with the bd `babelstone-60n8` relocation; until then it is a deliberate, listed `Planned` gap).
+- **The core→family / core→kernel no-edge rule is a convention until gated.** A stray `ProjectReference` from the core to a family or the engine kernel would silently erode family-agnosticism. Mitigation: the `NOTIFICATION_FAMILY_AGNOSTIC` fitness function below makes it a mechanical check (`Live` as of bd `babelstone-60n8.5`, which relocated the read onto the contract and added the gate).
 - **The read contract may lag a scheduler need.** A family-specific datum the scheduler needs may not be on the canonical resource yet. Mitigation: §P3's additive-extension rule ([ADR-PC-027 slot 6](../../product_concepts/adrs/ADR-PC-027-deposit-read-surface-canonical-resource.md)) — extend the published contract, never reach past it into engine internals.
 
 ---
@@ -187,7 +187,7 @@ Relocating the family read off the engine kernel (bd `babelstone-60n8`) must not
 
 This ADR's load-bearing commitment lives in the [commitment catalogue](../../product_concepts/adrs/commitment-catalogue.md) — the single source of truth for its claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status (the one-way ADR→catalogue reference rule, [ADR-PC-020 §P5–§P7](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
 
-- `NOTIFICATION_FAMILY_AGNOSTIC` (§D2/§P2) — the notification **core** carries no `ProjectReference` to any `families/**` project nor to an engine-spine project; the host composition root is the standing [ADR-PC-021 §A2](../../product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md) exemption. The notification-estate cousin of `ENGINE_FAMILY_AGNOSTIC` (row 12) and `ORCHESTRATOR_FAMILY_AGNOSTIC` (ORCH-1). Catalogue row **NOTIF-1**, **`Planned`** — a deliberate, visible gap: the gate lands `Live` with the bd `babelstone-60n8` read-path relocation (today's skeleton would fail it by construction, which is the point).
+- `NOTIFICATION_FAMILY_AGNOSTIC` (§D2/§P2) — the notification **core** carries no `ProjectReference` to any `families/**` project nor to an engine-spine project; the host composition root is the standing [ADR-PC-021 §A2](../../product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md) exemption. The notification-estate cousin of `ENGINE_FAMILY_AGNOSTIC` (row 12) and `ORCHESTRATOR_FAMILY_AGNOSTIC` (ORCH-1). Catalogue row **NOTIF-1** — the catalogue is the single source of truth for its status (**`Live`** as of bd `babelstone-60n8.5`, which relocated the skeleton's read onto the ADR-PC-027 contract and added `NotificationFamilyAgnosticTests`).
 
 ---
 
