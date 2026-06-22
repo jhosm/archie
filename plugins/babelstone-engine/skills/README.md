@@ -1,9 +1,11 @@
-# Plugin skills — model-invoked authoring procedures
+# Plugin skills — model-invoked procedures
 
 Claude Code skills implementing [ADR-PC-020 §P2](../../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md):
-repeatable, judgement-bearing authoring procedures (the existing `create_backlog` is the
-template). Each is a directory with a `SKILL.md` (YAML frontmatter `name` + `description`,
-body = the procedure); Claude invokes one when a task matches its `description`.
+repeatable, judgement-bearing procedures (the existing `create_backlog` is the template). Most
+are **authoring** procedures (scaffold an ADR, an event, a migration, a pack); `post-merge-cleanup`
+is a repo-**hygiene** workflow in the same shape. Each is a directory with a `SKILL.md` (YAML
+frontmatter `name` + `description`, body = the procedure); Claude invokes one when a task matches
+its `description`.
 
 These are bundled in the **`babelstone-engine`** plugin (this `skills/` directory), so a
 freshly enabled plugin makes every procedure model-invocable — the §P2 layer folded into the
@@ -19,6 +21,7 @@ same plugin as the §P3 agents under `bhq.8` (ADR-PC-020 §P4, as amended).
 | [`new-event`](./new-event/SKILL.md) | `<Entity><PastParticipleVerb>` naming + C# record/handler + governed Avro + AsyncAPI EventCatalog + headers envelope + BACKWARD registry compat | **built (`babelstone-bhq.13`)** |
 | [`new-store-migration`](./new-store-migration/SKILL.md) | Author a forward-only Postgres migration in the right series (engine event-store / saga / family read-model) with the series-specific invariants, numbering (gaps OK, no duplicates), and append-only role grants for new engine tables | **built (`babelstone-6gvs`)** |
 | [`bd-lint-fill`](./bd-lint-fill/SKILL.md) | Back-fill the template sections `bd lint` flags — Acceptance Criteria (the structured field) on tasks/features, and a Success-Criteria *decision* on epics — drafting grounded, verifiable criteria; fills only, never re-ranks | **built (`babelstone-6gvs`)** |
+| [`post-merge-cleanup`](./post-merge-cleanup/SKILL.md) | After PRs land, sweep every local branch + worktree and retire the merged ones (delete branch local+remote, remove worktree, close the linked bd issue) while **preserving** any lane whose PR is still open; merged/open decided by `gh` PR state, never `git branch --merged`; never force-removes a dirty worktree — the executable half of the `## Cleanup / Post-Merge` convention in `CLAUDE.md` | **built (`babelstone-ppa4`)** |
 
 ## The two engine-coupled skills (formerly deferred)
 
