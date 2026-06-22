@@ -3,6 +3,12 @@ using Babelstone.EventStore;
 
 namespace Babelstone.Families.TermDeposit;
 
+// Stryker disable all : Pure projection-runner registration glue — declares which folds run as which
+// projection kind (DI wiring), not the folds themselves. Disabled inline rather than via the family
+// config's `mutate` list because this family project lives out-of-tree (../families/…) relative to
+// the engine/ working dir, so Stryker's file-glob cannot reach it; the inline directive is
+// path-independent. The fold registries it composes are tested through the projection/replay suites.
+
 /// <summary>
 /// The term-deposit family's projection declarations (two-modes §5.4: declared in the family,
 /// not hardcoded in the engine). D.2 declared ONE projection — the deposit position; F.6

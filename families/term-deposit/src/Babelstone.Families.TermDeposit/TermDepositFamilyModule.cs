@@ -2,6 +2,13 @@ using Babelstone.Engine;
 
 namespace Babelstone.Families.TermDeposit;
 
+// Stryker disable all : Pure DI/registration glue — the event-type→handler binding table the engine
+// dispatches, not the folds/cent-math it wires up (mutation-testing.md "Mutation scope"). Disabled
+// inline rather than via the family config's `mutate` list because this family project lives
+// out-of-tree (../families/…) relative to the engine/ working dir, so Stryker's file-glob cannot
+// reach it; the inline directive is path-independent. The behaviour files (folds, accrual,
+// withholding, lifecycle) stay fully mutated.
+
 /// <summary>
 /// The term-deposit family module (E.1, archie-uqlm): the first loaded family schema.
 /// Exports the event-type → handler bindings the engine dispatches and folds. Discovered by
