@@ -84,12 +84,11 @@ Several scopes share the one periodic lane, each with its own config and score f
   at the carved-out site instead. The carve-outs:
   - **Term-deposit family** (inline `// Stryker disable all`, NOT config — the family project is
     out-of-tree): `TermDepositFamilyModule.cs` and `TermDepositProjectionModule.cs` whole (the
-    event-type→handler and projection-runner *registration* tables — DI wiring), plus
-    `DepositPosition`'s hand-written `Equals`/`GetHashCode` (determinism boilerplate whose real
-    backstop is the ADR-PC-010 §P5 replay-determinism gate, not the mutation lane — every per-field
-    mutant would need a differ-by-one fixture). The folds/cent-math — `AccrualSchedule`,
-    `WithholdingLedger`, `LifecycleTransitions`, `MaturityCalendar`, `Handlers`, and
-    `DepositPosition.WithErased` — stay fully mutated.
+    event-type→handler and projection-runner *registration* tables — DI wiring). The folds/cent-math —
+    `AccrualSchedule`, `WithholdingLedger`, `LifecycleTransitions`, `MaturityCalendar`, `Handlers`,
+    `DepositPosition` (including its `Equals`/`GetHashCode` and `WithErased`) — stay fully mutated; the
+    `HandlerFoldTests` suite pins every position fold so the lifecycle handlers are covered, not just
+    the AT_MATURITY happy path.
   - **Outbox publisher** (`stryker-config.outbox.json`): `OutboxRelayService.cs` +
     `DedupRetentionSweepService.cs` (the `BackgroundService` poll/backoff loops),
     `OutboxLagObserver.cs` (the §P4 OTel gauge), `OutboxRelayOptions.cs` (an options record).
