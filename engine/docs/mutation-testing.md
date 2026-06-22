@@ -49,20 +49,54 @@ Several scopes share the one periodic lane, each with its own config and score f
 - **Tool.** `dotnet-stryker` is pinned in `engine/.config/dotnet-tools.json`
   (`dotnet tool restore`). The pin must support the `mise.toml` .NET SDK — Stryker ≥ 4.14
   for .NET 10; older builds fail analysis with `Commandline could not be parsed`.
-- **Config per scope.** Each matrix leg passes `--config-file`: the spine, integration-seam,
-  and boundary codec/data legs use `stryker-config.json`; the kernel legs use
-  `stryker-config.kernel.json`; the term-deposit family legs use `stryker-config.family.json`.
-  All carry reporters and thresholds; the kernel and family configs additionally
-  `ignore-mutations: [string]` (the kernel's only behavioural string is `Money.ToString`'s
-  `"0.00"` format, separately pinned by a value assertion — every other string is an exception
-  *message*, whose text is not a behavioural contract; the family's strings are likewise
-  exception messages) and `ignore-methods: [ArgumentNullException.ThrowIfNull]` (null guards are
-  not mutation-tested). They differ only in score floor — the kernel is fully pinned (`break`
-  90), the family starts modestly (`break` 70). Each leg also passes `--project` and
-  `--test-project`; `--project` is resolved by name against the test project's references, so the
-  family legs name the bare csproj (`Babelstone.Families.TermDeposit.csproj`) while pointing
-  `--test-project` at the `../families/...` path (the family projects are members of
-  `engine/Babelstone.slnx`).
+- **Config per scope.** Each matrix leg passes `--config-file`: the spine and the `Engine.Avro`
+  boundary-codec leg use `stryker-config.json`; the kernel legs use `stryker-config.kernel.json`;
+  the term-deposit family legs use `stryker-config.family.json`; and the three integration-seam /
+  boundary-data legs whose mutation scope is narrowed (below) each carry their own thin config —
+  `stryker-config.outbox.json`, `stryker-config.inbox.json`, `stryker-config.packs.json`. All carry
+  reporters and thresholds; the kernel, family, **and the three seam/boundary configs**
+  `ignore-mutations: [string]` and `ignore-methods: [ArgumentNullException.ThrowIfNull]` (null
+  guards are not mutation-tested). The string ignore is the same call the kernel makes — an ignored
+  string mutation is a *whole-literal* swap (Stryker replaces the entire literal with `""` or a
+  marker, never a subtly-edited variant), so the only strings it would have flagged are exception
+  *messages*, whose text is not a behavioural contract. A behavioural string (the drain-batch
+  `ORDER BY` SQL, the dedupe predicate, a `"yyyy-MM-dd"` date format, a pack file path) is killed
+  *anyway* by any test that exercises it, because a whole-literal swap breaks the query/parse
+  outright — so ignoring the class does not create a blind spot for the seams' "dropped `ORDER BY`"
+  or the packs' "relaxed strict-parse" mutants of interest. The configs differ in score floor — the
+  kernel is fully pinned (`break` 90), the family + seam/boundary legs start modestly (`break` 70 /
+  60). Each leg also passes `--project` and `--test-project`; `--project` is resolved by name
+  against the test project's references, so the family legs name the bare csproj
+  (`Babelstone.Families.TermDeposit.csproj`) while pointing `--test-project` at the `../families/...`
+  path (the family projects are members of `engine/Babelstone.slnx`). The whole solution is built
+  and its full test set runs against each leg's mutants (more killing tests ⇒ higher score), which
+  is why a leg is *not* run in Stryker "project mode" — that would drop the cross-project tests and
+  collapse the score.
+- **Mutation scope — what each leg does NOT mutate.** A leg's `mutate` list carves pure
+  hosting / configuration / observability / shell-adapter glue out of the mutated set, leaving the
+  behaviour the leg exists to guard. This is the [triage](#surviving-mutant-triage) "unproductive
+  code" verdict applied declaratively: a `BackgroundService` poll loop, an options record, a
+  DI/registration module, an OTel gauge, or a `Process.Start` adapter has no cent/sequence/ordering
+  contract a unit test can pin, so its mutants are noise that masks the real signal (and, against the
+  Docker tiers, dead weight on the runtime). The carve-outs:
+  - **Term-deposit family** (`stryker-config.family.json`): `TermDepositFamilyModule.cs` and
+    `TermDepositProjectionModule.cs` — the event-type→handler and projection-runner *registration*
+    tables (DI wiring), not the folds/cent-math they wire up. Every `AccrualSchedule`,
+    `DepositPosition`, `WithholdingLedger`, `LifecycleTransitions`, `MaturityCalendar`, `Events`,
+    and `Handlers` file stays mutated.
+  - **Outbox publisher** (`stryker-config.outbox.json`): `OutboxRelayService.cs` +
+    `DedupRetentionSweepService.cs` (the `BackgroundService` poll/backoff loops),
+    `OutboxLagObserver.cs` (the §P4 OTel gauge), `OutboxRelayOptions.cs` (an options record).
+    `OutboxDrainer.cs` — the drain-batch `ORDER BY` / `FOR UPDATE SKIP LOCKED` / produce-then-mark
+    logic, the leg's reason to exist — stays mutated, as does `KafkaSaslOptions.cs`.
+  - **Inbox consumer** (`stryker-config.inbox.json`): `InboxConsumerService.cs` (the
+    `BackgroundService` loop), `InboxConsumerOptions.cs` + `InboxMessage.cs` (records). `InboxPump.cs`
+    — the `message_id` dedupe + poison-sink core — and `KafkaSaslOptions.cs` stay mutated.
+  - **Packs** (`stryker-config.packs.json`): `ProcessRunner.cs` (the `Process.Start` shell-out),
+    `CosignPackVerifier.cs`, `OrasPackSource.cs`, `OciPackStore.cs` (the oras/cosign OCI adapters,
+    exercised only by the Docker `OciPackStoreIntegrationTests`). `PackParser.cs` — the fail-loud
+    structural strict-parse, the boundary-data mutant of interest — stays mutated, as do
+    `VerifiedPack.cs` and `OciToolchainGuard.cs`.
 - **Locally:** from `engine/`, `dotnet tool restore` then e.g. the kernel (no Docker):
   `dotnet tool run dotnet-stryker --project Babelstone.FinancialMath.csproj --test-project tests/Babelstone.FinancialMath.Tests/Babelstone.FinancialMath.Tests.csproj --config-file stryker-config.kernel.json`.
   The pure term-deposit leg runs the same way against the family config:
@@ -81,8 +115,10 @@ pure kernel is fully pinnable, the Docker-backed spine is held to a more modest 
 | Engine spine (A.10) | `stryker-config.json` | 60 | 70 | 85 |
 | Financial-math kernel (B.10) | `stryker-config.kernel.json` | 90 | 95 | 100 |
 | Term-deposit family | `stryker-config.family.json` | 70 | 80 | 90 |
-| Integration seams | `stryker-config.json` | 60 | 70 | 85 |
-| Boundary codec/data | `stryker-config.json` | 60 | 70 | 85 |
+| Integration seam — outbox | `stryker-config.outbox.json` | 60 | 70 | 85 |
+| Integration seam — inbox | `stryker-config.inbox.json` | 60 | 70 | 85 |
+| Boundary data — packs | `stryker-config.packs.json` | 60 | 70 | 85 |
+| Boundary codec — Engine.Avro | `stryker-config.json` | 60 | 70 | 85 |
 
 `break` is the hard gate — a run below it **fails** the lane. The kernel floor sits at 90
 against an achieved 100 %: the headroom absorbs normal evolution (a new primitive landing a

@@ -80,11 +80,11 @@ jobs:
           - name: OutboxPublisher
             project: Babelstone.OutboxPublisher.csproj
             test: tests/Babelstone.OutboxPublisher.Tests/Babelstone.OutboxPublisher.Tests.csproj
-            config: stryker-config.json
+            config: stryker-config.outbox.json
           - name: InboxConsumer
             project: Babelstone.InboxConsumer.csproj
             test: tests/Babelstone.InboxConsumer.Tests/Babelstone.InboxConsumer.Tests.csproj
-            config: stryker-config.json
+            config: stryker-config.inbox.json
           # Boundary codec/data (bd babelstone-2t16.19) — TAN resolution, strict pack parse,
           # Avro codec field-binding. RateSheets/Packs carry Postgres/OCI Testcontainers tiers →
           # Docker-backed config, break 60. Engine.Avro's round-trip codec tests live in
@@ -96,7 +96,7 @@ jobs:
           - name: Packs
             project: Babelstone.Packs.csproj
             test: tests/Babelstone.Packs.Tests/Babelstone.Packs.Tests.csproj
-            config: stryker-config.json
+            config: stryker-config.packs.json
           - name: EngineAvro
             project: Babelstone.Engine.Avro.csproj
             test: tests/Babelstone.OutboxPublisher.Tests/Babelstone.OutboxPublisher.Tests.csproj

@@ -170,4 +170,41 @@ public sealed class PackParserTests
         files.Remove("primitives/day-count.yaml");
         Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
     }
+
+    [Fact]
+    public void A_non_iso_pack_effective_from_fails_loud()
+    {
+        // ParseDate is strict YYYY-MM-DD (DateTimeStyles.None, invariant culture): a date that does not
+        // match the exact format must throw, not coerce or default to a wrong effective date. Pins the
+        // TryParseExact failure branch (a relaxed parse would let a wrong effective date into the engine).
+        var files = PackTestData.LoadPt2026();
+        var manifest = Encoding.UTF8.GetString(files["pack.yaml"])
+            .Replace("pack_effective_from: 2026-01-01", "pack_effective_from: 01/01/2026", StringComparison.Ordinal);
+        files["pack.yaml"] = Encoding.UTF8.GetBytes(manifest);
+        var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
+        Assert.Contains("pack_effective_from", ex.Message);
+    }
+
+    [Fact]
+    public void An_empty_rate_sheet_ref_entry_fails_loud()
+    {
+        // A null/empty list entry in a rate-sheet-ref file must fail loud (naming the file), not be
+        // silently skipped — pins the `r is null` guard so a hole in the refs list cannot pass unnoticed.
+        var files = PackTestData.LoadPt2026();
+        files["rate-sheet-refs/deposits-pt.yaml"] = Encoding.UTF8.GetBytes("refs:\n  - \n");
+        var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
+        Assert.Contains("rate-sheet-refs/deposits-pt.yaml", ex.Message);
+    }
+
+    [Fact]
+    public void A_rate_sheet_ref_missing_a_required_field_fails_loud()
+    {
+        // A ref entry present but missing rate_sheet_version_id fails loud on the required-field check,
+        // rather than constructing a ref with an empty version id that would later resolve to nothing.
+        var files = PackTestData.LoadPt2026();
+        files["rate-sheet-refs/deposits-pt.yaml"] = Encoding.UTF8.GetBytes(
+            "refs:\n  - product_family: term_deposit\n");
+        var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
+        Assert.Contains("rate_sheet_version_id", ex.Message);
+    }
 }
