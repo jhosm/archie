@@ -79,7 +79,7 @@ jobs:
       packages: read     # read image manifests/signatures from GHCR
       id-token: write     # cosign verify resolves the Fulcio/Rekor identity (keyless)
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
       # On a real promotion the deployer pins each image by DIGEST (the exact bytes Q.5 signed)
@@ -123,7 +123,7 @@ jobs:
     name: forward-only migration gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }   # the immutability diff compares against origin/main
       - name: Gate the three forward-only migration series (engine / orchestrator / family)
         # No DB here — this is the static promotion gate: monotonic numbering + no already-committed
@@ -138,7 +138,7 @@ jobs:
     needs: [verify-images, migration-gate]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4   # pins kustomize + kubeconform + deck from mise.toml
         with:
           version: "2026.6.6"      # same TEMP pin as ci.yml's infra job (broken mise latest release)
@@ -175,7 +175,7 @@ jobs:
       packages: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - uses: jdx/mise-action@v4
         with:

@@ -34,7 +34,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       docs_gen: ${{ steps.filter.outputs.docs_gen }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -102,7 +102,7 @@ jobs:
     if: ${{ needs.changes.outputs.engine == 'true' || needs.changes.outputs.families == 'true' || needs.changes.outputs.packs == 'true' || needs.changes.outputs.contracts == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Pin the toolchain from mise.toml (the single source of truth, ADR-PC-010
       # .NET 10 LTS) so CI builds against the same SDK as every dev machine — no
       # second version pin in this YAML to drift from it.
@@ -218,7 +218,7 @@ jobs:
     if: ${{ needs.changes.outputs.pack_validate == 'true' || needs.changes.outputs.contracts == 'true' || needs.changes.outputs.packs == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4 # pins Go + cue from mise.toml (ADR-PC-006)
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
@@ -288,7 +288,7 @@ jobs:
     if: ${{ needs.changes.outputs.contracts == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Pin CUE (and the rest) from mise.toml — same single source of truth as
       # every dev machine (CUE 0.16.1, ADR-PC-006), no second pin to drift from.
       - uses: jdx/mise-action@v4
@@ -304,7 +304,7 @@ jobs:
         # via `make contracts-check`.
         run: ./contracts/cue/check.sh
       - name: Fetch origin/main (the Avro compat baseline)
-        # actions/checkout@v6 leaves only the PR ref; the §P3 gate compares each
+        # actions/checkout@v7 leaves only the PR ref; the §P3 gate compares each
         # .avsc against its previously-published version (origin/main), so make
         # that ref resolvable. --depth=1 is enough — the gate reads files at a
         # single ref (git show origin/main:<path>), not history.
@@ -362,7 +362,7 @@ jobs:
     if: ${{ needs.changes.outputs.orchestrator == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Pin the toolchain from mise.toml (the single source of truth, ADR-PC-010
       # .NET 10 LTS; the orchestrator runtime is ADR-IC-003 §S2 ".NET, same as the
       # engine") so CI builds against the same SDK as every dev machine — no second
@@ -408,7 +408,7 @@ jobs:
     if: ${{ needs.changes.outputs.acl == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Build + contract tests (ADR-IC-012, ADR-IC-013)
         run: echo "TODO - dotnet build plus contract tests; lands with the ACL build task"
 
@@ -417,7 +417,7 @@ jobs:
     if: ${{ needs.changes.outputs.mcp_server == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4 # pins Python from mise.toml (3.14, ADR-IC-010)
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
@@ -456,7 +456,7 @@ jobs:
     if: ${{ needs.changes.outputs.notification == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Build + contract tests (ADR-IC-011, ADR-IC-013)
         run: echo "TODO - dotnet build plus contract tests; lands with the notification build task"
 
@@ -467,7 +467,7 @@ jobs:
     if: ${{ needs.changes.outputs.product_configs == 'true' || needs.changes.outputs.pack_validate == 'true' || needs.changes.outputs.contracts == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4 # pins Go + cue from mise.toml
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
@@ -508,7 +508,7 @@ jobs:
         ports:
           - 5000:5000
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4 # pins cue + oras + cosign + go from mise.toml
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
@@ -616,7 +616,7 @@ jobs:
     if: ${{ needs.changes.outputs.rate_sheets == 'true' || needs.changes.outputs.packs == 'true' || needs.changes.outputs.contracts == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4 # pins cue from mise.toml
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
@@ -661,7 +661,7 @@ jobs:
     if: ${{ needs.changes.outputs.infra == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Pin kustomize + kubeconform + deck from mise.toml — the same single source of
       # truth as every dev machine (no second pin in this YAML to drift from).
       - uses: jdx/mise-action@v4
@@ -759,7 +759,7 @@ jobs:
     if: ${{ needs.changes.outputs.docs == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # Relative/anchor cross-link integrity (the dominant link type per CLAUDE.md's
       # link conventions). --offline skips http(s) so the per-PR gate never flakes on
       # a slow external host; external-URL checking is left for a future nightly.
@@ -800,7 +800,7 @@ jobs:
     if: ${{ needs.changes.outputs.docs_gen == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4 # pins Python + CUE from mise.toml (ADR-PC-006/022)
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
