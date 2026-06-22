@@ -40,9 +40,11 @@ hook entry needed.
 
 ### §P2 — Skills (model-invoked authoring procedures) — [`skills/`](./skills/)
 
-Repeatable, judgement-bearing authoring procedures Claude invokes when a task matches the
-skill `description`. See [`skills/README.md`](./skills/README.md) for the full table:
-`new-adr`, `amend-adr`, `supersede-adr`, `pack-author`, `new-family-schema`, `new-event`.
+Repeatable, judgement-bearing procedures Claude invokes when a task matches the skill
+`description` — mostly authoring, plus the `post-merge-cleanup` repo-hygiene workflow. See
+[`skills/README.md`](./skills/README.md) for the full table: `new-adr`, `amend-adr`,
+`supersede-adr`, `pack-author`, `new-family-schema`, `new-event`, `new-store-migration`,
+`bd-lint-fill`, `post-merge-cleanup`.
 
 ### §P3 — Subagents (domain-specialised review) — [`agents/`](./agents/)
 
