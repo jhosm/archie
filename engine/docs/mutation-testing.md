@@ -72,18 +72,37 @@ Several scopes share the one periodic lane, each with its own config and score f
   and its full test set runs against each leg's mutants (more killing tests ⇒ higher score), which
   is why a leg is *not* run in Stryker "project mode" — that would drop the cross-project tests and
   collapse the score.
-- **Mutation scope — what each leg does NOT mutate.** A leg's `mutate` list carves pure
-  hosting / configuration / observability / shell-adapter glue out of the mutated set, leaving the
-  behaviour the leg exists to guard. This is the [triage](#surviving-mutant-triage) "unproductive
-  code" verdict applied declaratively: a `BackgroundService` poll loop, an options record, a
-  DI/registration module, an OTel gauge, or a `Process.Start` adapter has no cent/sequence/ordering
-  contract a unit test can pin, so its mutants are noise that masks the real signal (and, against the
-  Docker tiers, dead weight on the runtime). The carve-outs:
-  - **Term-deposit family** (`stryker-config.family.json`): `TermDepositFamilyModule.cs` and
-    `TermDepositProjectionModule.cs` — the event-type→handler and projection-runner *registration*
-    tables (DI wiring), not the folds/cent-math they wire up. Every `AccrualSchedule`,
-    `DepositPosition`, `WithholdingLedger`, `LifecycleTransitions`, `MaturityCalendar`, `Events`,
-    and `Handlers` file stays mutated.
+- **Mutation scope — what each leg does NOT mutate.** Pure hosting / configuration / observability /
+  shell-adapter glue is carved out of the mutated set, leaving the behaviour the leg exists to guard.
+  This is the [triage](#surviving-mutant-triage) "unproductive code" verdict applied declaratively: a
+  `BackgroundService` poll loop, an options record, a DI/registration module, an OTel gauge, or a
+  `Process.Start` adapter has no cent/sequence/ordering contract a unit test can pin, so its mutants
+  are noise that masks the real signal (and, against the Docker tiers, dead weight on the runtime).
+  In-tree legs express the carve-out as a config `mutate` exclude list; the **out-of-tree family
+  legs** (their source lives under `../families/…`, which Stryker's file-glob — rooted at the
+  `engine/` working dir — cannot reach) express it as an **inline `// Stryker disable all`** directive
+  at the carved-out site instead. The carve-outs:
+  - **Term-deposit family** (inline `// Stryker disable all`, NOT config — the family project is
+    out-of-tree): `TermDepositFamilyModule.cs` and `TermDepositProjectionModule.cs` whole (the
+    event-type→handler and projection-runner *registration* tables — DI wiring), plus
+    `DepositPosition`'s hand-written `Equals`/`GetHashCode` (determinism boilerplate whose real
+    backstop is the ADR-PC-010 §P5 replay-determinism gate, not the mutation lane — every per-field
+    mutant would need a differ-by-one fixture). The folds/cent-math — `AccrualSchedule`,
+    `WithholdingLedger`, `LifecycleTransitions`, `MaturityCalendar`, `Handlers`, and
+    `DepositPosition.WithErased` — stay fully mutated.
+  - **Outbox publisher** (`stryker-config.outbox.json`): `OutboxRelayService.cs` +
+    `DedupRetentionSweepService.cs` (the `BackgroundService` poll/backoff loops),
+    `OutboxLagObserver.cs` (the §P4 OTel gauge), `OutboxRelayOptions.cs` (an options record).
+    `OutboxDrainer.cs` — the drain-batch `ORDER BY` / `FOR UPDATE SKIP LOCKED` / produce-then-mark
+    logic, the leg's reason to exist — stays mutated, as does `KafkaSaslOptions.cs`.
+  - **Inbox consumer** (`stryker-config.inbox.json`): `InboxConsumerService.cs` (the
+    `BackgroundService` loop), `InboxConsumerOptions.cs` + `InboxMessage.cs` (records). `InboxPump.cs`
+    — the `message_id` dedupe + poison-sink core — and `KafkaSaslOptions.cs` stay mutated.
+  - **Packs** (`stryker-config.packs.json`): `ProcessRunner.cs` (the `Process.Start` shell-out),
+    `CosignPackVerifier.cs`, `OrasPackSource.cs`, `OciPackStore.cs` (the oras/cosign OCI adapters,
+    exercised only by the Docker `OciPackStoreIntegrationTests`). `PackParser.cs` — the fail-loud
+    structural strict-parse, the boundary-data mutant of interest — stays mutated, as do
+    `VerifiedPack.cs` and `OciToolchainGuard.cs`.
   - **Outbox publisher** (`stryker-config.outbox.json`): `OutboxRelayService.cs` +
     `DedupRetentionSweepService.cs` (the `BackgroundService` poll/backoff loops),
     `OutboxLagObserver.cs` (the §P4 OTel gauge), `OutboxRelayOptions.cs` (an options record).

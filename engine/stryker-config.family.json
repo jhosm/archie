@@ -7,10 +7,6 @@
       "cleartext"
     ],
     "mutation-level": "Standard",
-    "mutate": [
-      "!**/TermDepositFamilyModule.cs",
-      "!**/TermDepositProjectionModule.cs"
-    ],
     "ignore-mutations": [
       "string"
     ],

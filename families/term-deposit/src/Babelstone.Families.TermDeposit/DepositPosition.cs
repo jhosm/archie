@@ -174,6 +174,13 @@ public sealed record DepositPosition(
     // other (scalar / Money / enum) field keeps its value comparison. GetHashCode mirrors it so the
     // equals/hashcode contract holds. A new field added here MUST be added to BOTH members below — the
     // determinism tests are the backstop that catches an omission.
+    //
+    // Stryker disable all : Equality is determinism BOILERPLATE, not the family's cent/sequence/
+    // lifecycle behaviour (mutation-testing.md "mutants of interest"). It is hand-written only to swap
+    // the record's reference comparison of PrincipalTimeline for an element-wise one; every per-field
+    // mutant would need a differ-by-one fixture to kill, and the real backstop is the CI replay-
+    // determinism gate (ADR-PC-010 §P5) the comment above names — not the mutation lane. Restored
+    // immediately after GetHashCode so the folds/math below stay fully mutated.
     public bool Equals(DepositPosition? other) =>
         other is not null
         && DepositId == other.DepositId
@@ -237,4 +244,5 @@ public sealed record DepositPosition(
         }
         return hash.ToHashCode();
     }
+    // Stryker restore all
 }
