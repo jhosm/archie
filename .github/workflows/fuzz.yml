@@ -58,7 +58,7 @@ jobs:
           - target: FuzzRun    # internal/validate — full depths 1→4 pipeline over a fuzzed variant
             dir: internal/validate
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4 # pins Go from mise.toml (ADR-PC-006)
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
@@ -117,7 +117,7 @@ jobs:
     name: fuzz Avro decode (.NET)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4 # pins the .NET 10 SDK from mise.toml (ADR-PC-010), as in ci.yml
         with:
           # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),

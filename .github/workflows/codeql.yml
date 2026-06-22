@@ -47,7 +47,7 @@ jobs:
       scan: ${{ steps.filter.outputs.scan }}
       failon: ${{ steps.filter.outputs.failon }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
         id: filter
         # Only meaningful on PRs (it diffs against the PR base). On push/schedule there is
@@ -100,7 +100,7 @@ jobs:
           # - language: python
           #   build-mode: none
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -141,7 +141,7 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.failon == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Run codeql-failon.sh unit tests (crafted SARIF fixtures)
         run: bash .github/scripts/codeql-failon.test.sh
 

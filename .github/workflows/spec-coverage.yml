@@ -28,7 +28,7 @@ jobs:
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: ADR <-> catalogue <-> code/test coverage (ADR-PC-020 §P6)
         run: bash .github/scripts/spec-coverage-check.sh
 
@@ -37,6 +37,6 @@ jobs:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Decided-but-unbuilt / no-commitment-ADR sweep (ADR-PC-020 §P3)
         run: bash .github/scripts/spec-coverage-audit.sh
