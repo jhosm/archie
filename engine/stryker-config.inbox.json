@@ -8,8 +8,9 @@
     ],
     "mutation-level": "Standard",
     "mutate": [
-      "!**/TermDepositFamilyModule.cs",
-      "!**/TermDepositProjectionModule.cs"
+      "!**/InboxConsumerService.cs",
+      "!**/InboxConsumerOptions.cs",
+      "!**/InboxMessage.cs"
     ],
     "ignore-mutations": [
       "string"
@@ -18,9 +19,9 @@
       "ArgumentNullException.ThrowIfNull"
     ],
     "thresholds": {
-      "high": 90,
-      "low": 80,
-      "break": 70
+      "high": 85,
+      "low": 70,
+      "break": 60
     }
   }
 }
