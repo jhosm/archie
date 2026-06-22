@@ -53,6 +53,11 @@ Protects the default branch (`~DEFAULT_BRANCH`). Wired by **Q.7** (bd `archie-j7
     evidence + defense-in-depth, not a gate.
   - **`pr-body-adrs`** + **`adr-immutability`** — the [`adr-governance.yml`](../workflows/adr-governance.yml)
     explicit-drift gate (ADR-PC-020 §D3).
+  - **`pr-body-bd-issues`** — the sibling PR-body gate in [`adr-governance.yml`](../workflows/adr-governance.yml):
+    every PR body must carry a `## bd issues closed on merge` section naming the bd issues the
+    merge resolves (or stating `None`). A bd issue is not a GitHub issue, so nothing closes it
+    automatically — this section is the authoritative hand-off the CLAUDE.md "Cleanup /
+    Post-Merge" step reads to run `bd close`.
   - **`spec-coverage`** — the [`spec-coverage.yml`](../workflows/spec-coverage.yml) ADR↔catalogue↔test
     coverage checker (ADR-PC-020 §P6).
 

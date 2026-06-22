@@ -137,7 +137,7 @@ At the **start** of any work that will change files:
 3. At session end, push the **branch** (not `main`) and open a PR — this is the "PUSH TO REMOTE" step of the Session Completion workflow above, where `git push` means *push your working branch*:
    ```bash
    git push -u origin <branch>
-   gh pr create --fill   # body MUST carry the "ADRs touched/honoured" section (CI-enforced)
+   gh pr create --fill   # body MUST carry the "ADRs touched/honoured" AND "bd issues closed on merge" sections (both CI-enforced)
    ```
 4. **Merging the PR is the maintainer's call**, not the agent's — do not self-merge unless explicitly told to.
 
@@ -147,7 +147,7 @@ A local `.githooks/pre-push` hook blocks pushes to `main` as a backstop (overrid
 
 What to tidy once a PR actually lands — and the one thing not to delete by reflex.
 
-After a PR merges, run post-merge cleanup: close the corresponding bd issue(s), delete the merged branch (local and remote), and remove its worktree. **Preserve any worktree still tied to an open PR** — only retire the worktree whose PR has merged, so in-flight work in a sibling lane isn't destroyed.
+After a PR merges, run post-merge cleanup: close the corresponding bd issue(s) — exactly the ones named in the PR's `## bd issues closed on merge` section — delete the merged branch (local and remote), and remove its worktree. **Preserve any worktree still tied to an open PR** — only retire the worktree whose PR has merged, so in-flight work in a sibling lane isn't destroyed.
 
 ## Communication Style
 
@@ -155,7 +155,7 @@ Everything a **human** reads — chat replies, PR descriptions, commit bodies, `
 
 Concretely:
 
-- **PR descriptions** open with an `## In plain English` section (2–4 jargon-free sentences on what changed and why), then the usual `## Summary` / `## Testing` / CI-required `## ADRs touched/honoured` sections unchanged.
+- **PR descriptions** open with an `## In plain English` section (2–4 jargon-free sentences on what changed and why), then the usual `## Summary` / `## Testing` / CI-required `## ADRs touched/honoured` sections, plus a CI-required `## bd issues closed on merge` section. That last section lists the bd issues the merge should resolve — one `- Closes babelstone-<id>` line per issue — or, when the change closes nothing, a single `- None — no bd issue is resolved by this PR.` line. It is the authoritative hand-off the **Cleanup / Post-Merge** step reads to know which `bd close <id>` to run, because a bd issue is not a GitHub issue and nothing closes it automatically on merge.
 - **Commit bodies** open with a plain-English lead paragraph (the *what* and *why* in ordinary words) before any bullet detail. The subject line keeps the Conventional-Commits form (`feat(inbox): …`).
 - **`bd` issues** open the description with a plain-English sentence or two on the goal before the technical specifics.
 - **Chat explanations** of code or a decision lead with the plain-English picture and expand jargon on first use, keeping the formal detail available for depth.

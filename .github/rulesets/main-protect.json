@@ -32,6 +32,7 @@
           { "context": "CodeQL gate" },
           { "context": "dependency-review" },
           { "context": "pr-body-adrs" },
+          { "context": "pr-body-bd-issues" },
           { "context": "adr-immutability" },
           { "context": "spec-coverage" }
         ]

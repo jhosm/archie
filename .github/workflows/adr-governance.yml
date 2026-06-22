@@ -40,6 +40,38 @@ jobs:
           echo "  - Implements ADR-PC-020 §P1 (enforcement hooks); honours ADR-PC-000 §D5"
           exit 1
 
+  pr-body-bd-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a "bd issues closed on merge" section in the PR body
+        # Sibling of pr-body-adrs: a bd issue is NOT a GitHub issue, so a merge
+        # closes nothing automatically. This section is the authoritative list the
+        # CLAUDE.md "Cleanup / Post-Merge" step reads to know which `bd close <id>`
+        # to run. The gate checks the SECTION is present — listing IDs or stating
+        # "None" is the author's content, not this check's concern.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          # Dependabot PRs are auto-generated dependency bumps that close no bd
+          # issue and whose bodies can't carry the section — exempt them with the
+          # same login scoping as pr-body-adrs (widen deliberately if another
+          # machine author appears).
+          case "$PR_AUTHOR" in
+            'dependabot[bot]'|'dependabot-preview[bot]')
+              echo "Dependabot PR ($PR_AUTHOR) — bd-issues-section gate not applicable."; exit 0 ;;
+          esac
+          if printf '%s' "$PR_BODY" | grep -qiE '(^#{1,6}[[:space:]].*|^[-*][[:space:]].*|^)(bd|beads)[[:space:]]+issues?[[:space:]].*clos(e|ed)'; then
+            echo "PR-body bd-issues section present."; exit 0
+          fi
+          echo "::error::PR body must carry a 'bd issues closed on merge' section naming the bd issues the merge resolves (or stating none)."
+          echo "Add e.g.:  ## bd issues closed on merge"
+          echo "  - Closes babelstone-1a2b.3"
+          echo "or, when the change closes nothing:"
+          echo "  ## bd issues closed on merge"
+          echo "  - None — no bd issue is resolved by this PR."
+          exit 1
+
   adr-immutability:
     runs-on: ubuntu-latest
     steps:
