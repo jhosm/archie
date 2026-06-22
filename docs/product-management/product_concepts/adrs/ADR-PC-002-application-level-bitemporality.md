@@ -95,6 +95,8 @@ This ADR is **Accepted**. Q-Y — the compliance/audit confirmation that PT regu
 
 Q-Y runs before the §6.3 spike committee meets; given PC-010, that "spike" is now a correctness/performance validation of Path A rather than a three-way bake-off.
 
+*Amendment 2026-06-22 — Q-Y gate cleared (additive, does not change the Decision — bd `babelstone-nktv` / Epic `babelstone-pqwc`): the operating bank's compliance and internal-audit functions confirmed Q-Y — **bitemporality is required for v1** ([04 §7, Q-Y](../04-open-questions.md)). The "bitemporal required" branch above is the realised outcome: full §6.3 correctness scoring stands and Path A is built as specified. The same meeting cleared the [ADR-PC-004](./ADR-PC-004-pii-crypto-shredding.md) DPO gate.*
+
 ---
 
 ## Implementation Principles
