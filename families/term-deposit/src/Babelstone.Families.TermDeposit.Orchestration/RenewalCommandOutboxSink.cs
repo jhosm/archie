@@ -49,7 +49,9 @@ public sealed class RenewalCommandOutboxSink(SagaOutboxWriter? outbox = null) : 
         Guid causationMessageId,
         Guid? correlationId,
         CancellationToken ct = default,
-        string? traceParent = null)
+        string? traceParent = null,
+        string? scaAcr = null,
+        long? scaAuthTime = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(commandType);
 
@@ -63,8 +65,12 @@ public sealed class RenewalCommandOutboxSink(SagaOutboxWriter? outbox = null) : 
 
         // The substrate's saga_outbox store owns the row write + the operational message_id mint
         // (ADR-IC-018 §D2; the row commits atomically on this saga transaction, ADR-IC-003 §P1). This
-        // sink owns ONLY the family-specific payload assembly above.
+        // sink owns ONLY the family-specific payload assembly above. The gateway-attested SCA claims
+        // (bd babelstone-ls44) ride the row as operational columns the dispatcher re-emits to the
+        // engine's step-up-SCA gate — null for the renewal legs, which are not the SCA-gated
+        // money-movers (ADR-IC-010 §P8 A10).
         await _outbox.AppendAsync(
-            connection, transaction, processId, commandType, causationMessageId, correlationId, payload, traceParent, ct);
+            connection, transaction, processId, commandType, causationMessageId, correlationId, payload, traceParent, ct,
+            scaAcr, scaAuthTime);
     }
 }

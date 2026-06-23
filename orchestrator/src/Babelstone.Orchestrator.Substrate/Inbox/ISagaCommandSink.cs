@@ -30,6 +30,16 @@ public interface ISagaCommandSink
     /// trace (ADR-IC-007 Layer 1). Operational, not PII; null when no tracer was listening
     /// (no span to propagate). The implementer persists it on the outbox row for the drain to
     /// re-emit as the outbound Kafka header.</param>
+    /// <param name="scaAcr">The gateway-attested OIDC <c>acr</c> claim (bd babelstone-ls44;
+    /// ADR-IC-010 §P8 A10) for a money-mover command (maturity / interest). The dispatcher
+    /// re-emits it as the outbound <c>X-SCA-Acr</c> header the engine's step-up-SCA gate reads,
+    /// threading the SAME gateway-attested claims through the saga lane that the engine-direct
+    /// path already enforces. Operational, not PII; null for every command that carries no SCA
+    /// attestation (the common case — then the engine gate 422s if the command is a money-mover).</param>
+    /// <param name="scaAuthTime">The gateway-attested OIDC <c>auth_time</c> claim (seconds since the
+    /// Unix epoch) for a money-mover command. The dispatcher re-emits it as the outbound
+    /// <c>X-SCA-Auth-Time</c> header; the engine re-checks freshness at dispatch time, so a stale
+    /// value is fail-closed 422'd there. Operational, not PII; null when no SCA was attested.</param>
     Task EmitAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -38,7 +48,9 @@ public interface ISagaCommandSink
         Guid causationMessageId,
         Guid? correlationId,
         CancellationToken ct = default,
-        string? traceParent = null);
+        string? traceParent = null,
+        string? scaAcr = null,
+        long? scaAuthTime = null);
 }
 
 /// <summary>
@@ -113,7 +125,9 @@ public sealed class CompositeSagaCommandSink : ISagaCommandSink
         Guid causationMessageId,
         Guid? correlationId,
         CancellationToken ct = default,
-        string? traceParent = null)
+        string? traceParent = null,
+        string? scaAcr = null,
+        long? scaAuthTime = null)
         => throw new NotSupportedException(
             "CompositeSagaCommandSink routes by saga_type — call For(sagaType).EmitAsync(...). The advance "
             + "handler selects the typed sub-sink; a bare emit carries no saga type to route on.");
@@ -141,9 +155,12 @@ public sealed class RecordingCommandSink : ISagaCommandSink
         Guid causationMessageId,
         Guid? correlationId,
         CancellationToken ct = default,
-        string? traceParent = null)
+        string? traceParent = null,
+        string? scaAcr = null,
+        long? scaAuthTime = null)
     {
-        _emitted.Add(new EmittedCommand(processId, commandType, causationMessageId, correlationId, traceParent));
+        _emitted.Add(new EmittedCommand(
+            processId, commandType, causationMessageId, correlationId, traceParent, scaAcr, scaAuthTime));
         return Task.CompletedTask;
     }
 }
@@ -156,9 +173,15 @@ public sealed class RecordingCommandSink : ISagaCommandSink
 /// <param name="CorrelationId">The trace correlation reference carried through.</param>
 /// <param name="TraceParent">The outbound W3C <c>traceparent</c> the emission propagates (H.5),
 /// or null when no tracer was listening. Operational, not PII.</param>
+/// <param name="ScaAcr">The gateway-attested OIDC <c>acr</c> claim a money-mover emission propagates
+/// (bd babelstone-ls44), or null when no SCA was attested. Operational, not PII.</param>
+/// <param name="ScaAuthTime">The gateway-attested OIDC <c>auth_time</c> claim (Unix seconds) a
+/// money-mover emission propagates, or null when no SCA was attested. Operational, not PII.</param>
 public sealed record EmittedCommand(
     Guid ProcessId,
     string CommandType,
     Guid CausationMessageId,
     Guid? CorrelationId,
-    string? TraceParent = null);
+    string? TraceParent = null,
+    string? ScaAcr = null,
+    long? ScaAuthTime = null);

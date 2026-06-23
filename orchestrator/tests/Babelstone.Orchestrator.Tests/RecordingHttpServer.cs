@@ -7,7 +7,8 @@ namespace Babelstone.Orchestrator.Tests;
 /// <summary>
 /// A minimal in-process HTTP server (the lane's sanctioned stand-in for the engine / the settlement
 /// ACL stub) the dispatcher tests POST against. It records every request — path, method, body, the
-/// <c>Idempotency-Key</c> and <c>traceparent</c> headers — and returns whatever (status, body) the
+/// <c>Idempotency-Key</c>, <c>traceparent</c>, and gateway-attested SCA (<c>X-SCA-Acr</c> /
+/// <c>X-SCA-Auth-Time</c>, bd babelstone-ls44) headers — and returns whatever (status, body) the
 /// supplied responder chooses, so a test can assert the dispatcher's delivery and error-model
 /// behaviour without standing up the real engine. Deliberately NOT a reference to the engine's
 /// <c>WebApplicationFactory&lt;Program&gt;</c>: the orchestrator subtree (incl. its tests' build
@@ -63,7 +64,9 @@ public sealed class RecordingHttpServer : IAsyncDisposable
                     Method: new HttpMethod(context.Request.HttpMethod),
                     Body: body,
                     IdempotencyKey: context.Request.Headers["Idempotency-Key"],
-                    TraceParent: context.Request.Headers["traceparent"]);
+                    TraceParent: context.Request.Headers["traceparent"],
+                    ScaAcr: context.Request.Headers["X-SCA-Acr"],
+                    ScaAuthTime: context.Request.Headers["X-SCA-Auth-Time"]);
                 _requests.Enqueue(recorded);
 
                 var (status, responseBody) = _responder(recorded);
@@ -111,7 +114,11 @@ public sealed class RecordingHttpServer : IAsyncDisposable
         _cts.Dispose();
     }
 
-    /// <summary>One recorded inbound request — the load-bearing fields the dispatcher contract sets.</summary>
+    /// <summary>One recorded inbound request — the load-bearing fields the dispatcher contract sets.
+    /// <paramref name="ScaAcr"/> / <paramref name="ScaAuthTime"/> are the gateway-attested step-up-SCA
+    /// claims the dispatcher forwards for a money-mover (bd babelstone-ls44); null when the row carried
+    /// no SCA attestation (the common case).</summary>
     public sealed record RecordedRequest(
-        string Path, HttpMethod Method, string Body, string? IdempotencyKey, string? TraceParent);
+        string Path, HttpMethod Method, string Body, string? IdempotencyKey, string? TraceParent,
+        string? ScaAcr = null, string? ScaAuthTime = null);
 }

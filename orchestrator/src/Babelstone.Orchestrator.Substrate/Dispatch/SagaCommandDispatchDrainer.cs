@@ -349,6 +349,31 @@ public sealed class SagaCommandDispatchDrainer
             request.Headers.TryAddWithoutValidation("traceparent", row.TraceParent);
         }
 
+        // Thread the SAME gateway-attested step-up-SCA claims the engine-DIRECT money-movers enforce
+        // (bd babelstone-ls44; ADR-IC-010 §P8 A10, ADR-IC-006 §P2 A2) through the saga lane to the
+        // SAME engine gate. When a money-mover (maturity / interest) rode the saga carrying fresh SCA,
+        // the advance pinned the attested acr/auth_time on the row; we re-emit them here as the
+        // X-SCA-Acr / X-SCA-Auth-Time headers the engine's ScaPrecondition gate reads — exactly as Kong
+        // attests them on the engine-direct path (the same set_header overwrite-from-the-token pattern,
+        // §P3). When NULL (the common case — every non-money-mover command, or a money-mover with no
+        // fresh SCA) we send neither header, so the engine gate sees an absent proof and 422s the
+        // money-mover BEFORE any side effect — fail-closed, matching the engine-direct behaviour. The
+        // engine remains the single freshness authority: it re-checks auth_time against SCA_MAX_AGE at
+        // THIS dispatch instant, so a claim that has gone stale (a delayed drain, a crash-recovery
+        // re-dispatch) is 422'd at the engine, never settled stale by this row. The header names match
+        // the engine's ScaPrecondition (AcrHeader/AuthTimeHeader); the orchestrator stays
+        // extraction-ready (ADR-PC-019 §P2) so it cannot reference that engine-side constant directly.
+        if (!string.IsNullOrEmpty(row.ScaAcr))
+        {
+            request.Headers.TryAddWithoutValidation(ScaAcrHeader, row.ScaAcr);
+        }
+
+        if (row.ScaAuthTime is { } authTime)
+        {
+            request.Headers.TryAddWithoutValidation(
+                ScaAuthTimeHeader, authTime.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
         using var response = await client.SendAsync(request, ct);
         var status = (int)response.StatusCode;
 
@@ -484,7 +509,7 @@ public sealed class SagaCommandDispatchDrainer
         // locks FOR UPDATE on its own).
         const string sql = """
             SELECT o.message_id, o.command_type, o.payload, o.traceparent, o.process_id, o.correlation_id,
-                   s.saga_type
+                   s.saga_type, o.sca_acr, o.sca_auth_time
             FROM saga_outbox o
             JOIN saga_state s ON s.process_id = o.process_id
             WHERE o.seq = @seq AND o.status = 'PENDING'
@@ -508,7 +533,9 @@ public sealed class SagaCommandDispatchDrainer
             TraceParent: reader.IsDBNull(3) ? null : reader.GetString(3),
             ProcessId: reader.GetGuid(4),
             CorrelationId: reader.IsDBNull(5) ? null : reader.GetGuid(5),
-            SagaType: reader.GetString(6));
+            SagaType: reader.GetString(6),
+            ScaAcr: reader.IsDBNull(7) ? null : reader.GetString(7),
+            ScaAuthTime: reader.IsDBNull(8) ? null : reader.GetInt64(8));
     }
 
     private static async Task MarkPublishedAsync(
@@ -564,6 +591,18 @@ public sealed class SagaCommandDispatchDrainer
     /// its <see cref="CommandRoute.Path"/>; the substrate fills it from the outbox row.</summary>
     private const string ProcessIdToken = "{process_id}";
 
+    /// <summary>The gateway-attested SCA-completion class header the dispatcher re-emits for a
+    /// money-mover command (bd babelstone-ls44; ADR-IC-010 §P8 A10). MUST match the engine's
+    /// <c>ScaPrecondition.AcrHeader</c> — the orchestrator stays extraction-ready (ADR-PC-019 §P2), so it
+    /// pins the literal here rather than referencing the engine-side constant; the saga SCA integration
+    /// test asserts the header the engine gate reads.</summary>
+    private const string ScaAcrHeader = "X-SCA-Acr";
+
+    /// <summary>The gateway-attested SCA freshness header (the OIDC <c>auth_time</c>, Unix seconds) the
+    /// dispatcher re-emits for a money-mover command (bd babelstone-ls44). MUST match the engine's
+    /// <c>ScaPrecondition.AuthTimeHeader</c>.</summary>
+    private const string ScaAuthTimeHeader = "X-SCA-Auth-Time";
+
     /// <summary>
     /// The namespace SEED of the per-aggregate FIFO advisory lock (bd babelstone-t7o3.7, ADR-PC-029
     /// slot 3). Passed as <c>hashtextextended(process_id::text, FifoLockSalt)</c>, it derives a single
@@ -580,7 +619,8 @@ public sealed class SagaCommandDispatchDrainer
 
     private sealed record OutboxRow(
         Guid MessageId, string CommandType, byte[] Payload, string? TraceParent,
-        Guid ProcessId, Guid? CorrelationId, string SagaType);
+        Guid ProcessId, Guid? CorrelationId, string SagaType,
+        string? ScaAcr = null, long? ScaAuthTime = null);
 
     private enum DeliveryKind { Applied, Refused, Transient, Indeterminate }
 
