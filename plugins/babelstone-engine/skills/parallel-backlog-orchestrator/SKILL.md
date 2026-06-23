@@ -79,8 +79,8 @@ DEFERRED (collide with an in-flight lane, refill when it frees):
 
 ## Step 4 — Dispatch one isolated agent per lane
 
-For each lane, the **orchestrator claims the issue centrally** (the only bd write a dispatch makes),
-then launches an agent scoped to a fresh worktree:
+In a **default (non-ultracode) run**, for each lane the **orchestrator claims the issue centrally**
+(the only bd write a dispatch makes), then provisions a fresh worktree off `origin/main`:
 
 ```bash
 bd -C <primary> update <id> --claim                    # orchestrator-only; marks the lane in-flight
@@ -88,10 +88,41 @@ git -C <primary> worktree add <abs-path> -b <type>/<short-name> origin/main
 ( cd <abs-path> && mise trust --yes )                  # new worktrees need this before `mise exec`
 ```
 
-Then dispatch the agent (the established mechanism is the **Agent tool with `run_in_background: true`
-and `isolation: "worktree"`**, or — when the user has opted into orchestration — a **Workflow** whose
-stages fan out with `isolation: 'worktree'` and a loop-until-dry control flow). Give every lane agent
-the same standing brief:
+(**Under ultracode, skip this block's per-lane form**: the Workflow's `isolation: 'worktree'`
+provisions the tree, and the `--claim`s are batched up front rather than run per lane — see the
+ultracode bullet below.)
+
+**Then launch the lanes — the mechanism depends on the session mode:**
+
+- **Default (no ultracode) — hand-driven Agent tool.** Launch each lane with the **Agent tool**
+  (`run_in_background: true`, `isolation: "worktree"`) and supervise the in-flight set yourself:
+  Steps 5–6 (self-heal, saturation refill) are moves *you* make turn by turn as lanes report back.
+  The claim + worktree + `mise trust` above run per lane, as each is dispatched.
+
+- **Ultracode session — a dynamic Workflow owns the whole lane lifecycle.** When a system-reminder
+  confirms the session is running at **ultracode** effort, or the user launched this run with the
+  `ultracode` keyword, do **not** hand-drive lanes. Encode the lane lifecycle as a single **dynamic
+  Workflow** (the `Workflow` tool) and let its control flow run the wheel:
+    - Fan lanes out with one `agent(..., { isolation: 'worktree' })` call per lane, capped at the
+      concurrency N from Step 2. `isolation: 'worktree'` provisions each lane's worktree, so the
+      per-lane `git worktree add` above is unnecessary — but the lane still runs `mise trust --yes`
+      as its first act in the fresh tree (a new worktree needs it before `mise exec`).
+    - **Steps 5 and 6 become the script's *dynamic* control flow, not your turn-by-turn supervision:**
+      a loop-until-dry that refills a freed slot from the DEFERRED set, retries a crashed lane once or
+      twice, nudges a stale mergeability cache, and rebases on a real conflict — all decided at runtime
+      inside the script. "Dynamic" = the lane count and refill order emerge as the run unfolds, not a
+      fixed up-front fan-out.
+    - **The one-writer-to-bd rule survives the move.** A Workflow script has no shell or bd access, and
+      its `agent()` lanes *are* lane agents — so neither writes bd. The orchestrator (you, the main
+      loop) claims every issue this run will touch — the planned lanes *and* the DEFERRED refill set,
+      against the frozen Step 1 snapshot — **centrally up front**, *before* launching the Workflow; the
+      Workflow ships code + PRs only; and you reconcile bd **centrally after** it returns (the single
+      `bd dolt push`, plus un-claiming anything that never shipped — Step 7). Lane `agent()`s still
+      never push `main` and never merge.
+    - Still **propose-then-apply** (Step 3): show the lane plan and launch the Workflow only on the
+      user's go-ahead.
+
+Either way, give every lane agent the same standing brief:
 
 - Work **only** inside your assigned worktree path; use `git -C <abs-path>` and absolute paths so
   edits can't leak into the primary checkout. Leave the primary checkout untouched.
@@ -110,7 +141,11 @@ the same standing brief:
 ## Step 5 — Self-heal while the lanes run
 
 Supervise the in-flight set and recover the known, transient failures automatically rather than
-aborting the batch:
+aborting the batch. (In an **ultracode** run the script *decides* these recoveries at runtime — which
+lane to retry, when to nudge, when to rebase — but it has no shell of its own: every `git`/`gh`
+command below, and the read that detects the conflict, runs inside an `agent()` subagent the script
+spawns into the lane's worktree. Only re-dispatching a crashed lane is pure script control flow. The
+rules below are what that decide-then-delegate logic implements.)
 
 - **Agent crashed** (API error, `PATH` glitch, git failure) → re-dispatch the same lane once or
   twice; a fresh agent on the same worktree usually proceeds. Surface a lane that crashes repeatedly
@@ -121,13 +156,21 @@ aborting the batch:
   `git -C <abs-path> fetch origin && git -C <abs-path> rebase origin/main`, re-run gates, force-push
   the branch (never `main`).
 
+The `git -C <abs-path>` forms above are the **default path** (the orchestrator created the worktree at
+a known `<abs-path>`). Under a dynamic Workflow the same recovery runs inside an `agent()` in its own
+`isolation: 'worktree'` cwd — so it's plain `git commit --allow-empty … && git push` /
+`git fetch && git rebase origin/main`, with no external `<abs-path>` for the script to pass to `-C`.
+
 ## Step 6 — Keep the queue saturated
 
 As each lane reaches "PR open" or dies, free its slot and refill it from the **DEFERRED** set — the
 ready issues that were held back only because their files collided with a now-finished lane (Step 2).
 Re-claim, worktree, dispatch (Steps 4–5). Keep N agents busy until the ready, collision-free,
-not-yet-dispatched set is empty. (Dependency-blocked issues won't appear here — they unblock only
-when a blocker *merges*, which is a later run's input, not this one's.)
+not-yet-dispatched set is empty. Under a dynamic Workflow this saturation *is* the loop-until-dry: the
+script keeps N lane `agent()`s busy, refilling each freed slot from DEFERRED until the set is empty —
+you don't drive it slot by slot, and because the orchestrator already claimed DEFERRED up front
+(Step 4), a refill needs no fresh bd write. (Dependency-blocked issues won't appear here — they
+unblock only when a blocker *merges*, a later run's input, not this one's.)
 
 ## Step 7 — Land, record centrally, hand off
 
@@ -136,6 +179,12 @@ When the queue is drained, the **orchestrator** (never the lanes) reconciles bd 
 - Leave each shipped issue **claimed / in-progress** while its PR is open — do **not** close it here.
   Closing happens at merge, and that's `post-merge-cleanup`'s job; closing on PR-open would orphan
   the issue from its still-unmerged branch.
+- **In ultracode mode, reconcile strictly from the Workflow's returned per-lane report.** Because the
+  script never wrote bd, the orchestrator only learns each lane's fate when the Workflow returns. For
+  any issue claimed up front that the report shows as **never dispatched** (a DEFERRED slot the
+  loop-until-dry never refilled before going dry) or **permanently crashed with no open PR**, un-claim
+  it (`bd -C <primary> update <id> --status open`) before the push — so nothing is left claimed
+  without a live branch/PR, the same invariant the first bullet states.
 - Run the single `bd dolt push` for all the claims this run made, then the normal session-close
   `git push` of your own (orchestrator) working branch if any.
 - Verify the **primary checkout is still clean** (`git -C <primary> status`) — a lane that leaked
@@ -149,7 +198,10 @@ When the queue is drained, the **orchestrator** (never the lanes) reconciles bd 
 
 - **One writer to bd.** Only the orchestrator runs `bd` writes (`--claim`, `close`, `dolt push`).
   Lane agents are read-only on bd, via `-C <primary>`. This is the single property that keeps the
-  Dolt DB from corrupting under parallelism — never relax it.
+  Dolt DB from corrupting under parallelism — never relax it. A **dynamic Workflow does not change
+  this**: the script itself has no shell/bd access, and its `agent()` lanes are lane agents (read-only
+  on bd), so every bd write stays with the orchestrator — claimed centrally up front, the single
+  `bd dolt push` after the Workflow returns.
 - **Collision-free is non-negotiable.** Two concurrent lanes must never touch the same files. When
   unsure whether footprints overlap, serialise them in one lane or defer one — correctness over
   concurrency.
