@@ -11,12 +11,15 @@ it is shared infrastructure, referenced *by* family deciders, never the reverse.
 ## Cohesion policy / family-agnosticism
 
 **In plain English.** The kernel is meant to be a shared toolbox that names no single product.
-But its doc-comments and method names do talk about *deposits*, *crescente* / *escalonada* rate
-shapes (`RateSchedule`), and *loans* / *borrowers* (`Amortization`). That is **allowed and
-deliberate**, and this note records the rule so the next family author knows what is and is not a
-violation: a math primitive may *name* the product it prices in its prose and identifiers, but the
-kernel project must never *depend on* (reference) a family. The boundary that keeps the engine
-family-agnostic is the dependency arrow, not the vocabulary.
+Its doc-comments freely talk about *deposits*, *crescente* / *escalonada* rate shapes
+(`RateSchedule`), and *loans* / *borrowers* (`Amortization`) — and that is **allowed and deliberate**,
+exactly as the financial-math reference names *Term Deposit*, *Credit*, and the *Price* system
+throughout its prose. This note records two rules so the next family author knows what is and is not
+a violation: (1) the kernel project must never *depend on* (reference) a family; and (2) the
+**executable surface** — type, method, parameter, and enum names, plus thrown-exception messages —
+stays *math-first*, because that surface is what a second family's code reads and compiles against.
+Product names belong in the prose, not on the contract. The boundary that keeps the engine
+family-agnostic is the dependency arrow; the naming-altitude rule keeps the shared surface honest.
 
 ### The decision
 
@@ -35,15 +38,20 @@ already settled it when it added the `Amortization` kernel, rejecting its option
 kernel in the family project") precisely because "a future family … would re-implement it." This
 note interprets and applies that decision.
 
-**The vocabulary permission is a *consequence* of that, not a standalone licence.** Because the
-kernel is shared parameterized math, a product noun in it is a *descriptive label on that shared
-math*, not a coupling to a family. So **product vocabulary IS permitted in `Babelstone.FinancialMath`
-— in doc-comments, summaries, XML remarks, parameter names, and method/type names that describe what
-a primitive computes.** A primitive that prices a *term deposit* may say so (`RateSchedule` —
-`crescente`/`escalonada`, "one deposit's rate", coupon windows); a primitive that amortizes a
-*personal loan* may say so (`Amortization` — "closed-end personal loan", "borrower", "installment").
-The next family author adds their product's math here and names it for what it does, **subject to the
-two hard limits below.**
+**The vocabulary permission is a *consequence* of that — but it is scoped to the prose.** Because the
+kernel is shared parameterized math, a product noun *in a comment* is a *descriptive label on that
+shared math*, not a coupling to a family. So **product vocabulary IS permitted in
+`Babelstone.FinancialMath` doc-comments, summaries, and XML remarks** that describe what a primitive
+computes: a primitive that prices a *term deposit* may say so (`RateSchedule` — "one deposit's rate",
+coupon windows); a primitive that amortizes a *personal loan* may say so (`Amortization` — "closed-end
+personal loan", "borrower"). **The executable surface, however, stays math-first** — types, methods,
+parameters, enum members, and thrown-exception messages name the *operation* (`Amortization`,
+`LevelInstallment`, `Schedule`, `RateSchedule`, `StepUp`/`AmountTiered`, `anchorStart`, `capBps`), not
+a family, because a second family's caller reads and compiles against exactly that surface. A rate
+*shape*'s traditional name is part of the math, not a family tag — so `StepUp` glossed as *crescente*
+and `AmountTiered` as *escalonada* are fine, exactly as the fin-math reference names the level-installment
+system "Price (French)". The next family author adds their product's math here and names it for what it
+does, **subject to the limits below.**
 
 What family-agnosticism actually forbids — and what this kernel must keep honouring — is the
 **dependency edge**, gated mechanically by `ENGINE_FAMILY_AGNOSTIC`
@@ -61,19 +69,28 @@ Verifiable commitment 1):
    families' `.Application` deciders and by the spine `Babelstone.Packs` — a family-typed parameter
    would either couple it to one family or fail to compile against the other.)
 
-So the rule the next family author follows is: **name your math for the product it prices, keep
-your inputs generic, and add no `families/**` reference.** Vocabulary describes; references couple.
-Only the latter erodes the boundary.
+So the rule the next family author follows is: **name your types, methods, parameters, and error
+messages for the *math*; name the product freely in doc-comments and examples; keep your inputs
+generic; and add no `families/**` reference.** Prose describes; the executable surface and references
+are the contract. References couple hardest (and are the only dimension a gate can catch); a family
+noun on the executable surface mis-signals ownership the moment a second family calls in — which is
+why the kernel's thrown messages say "Principal" not "Loan principal", and the rate-schedule window
+anchors on `anchorStart`, not `depositStart`.
 
 **On the phrase "names no family."** [ADR-PC-031](../../../docs/product-management/product_concepts/adrs/ADR-PC-031-personal-loan-family.md)
 describes this kernel as "generic, naming no family," and [ADR-PC-021 §P2](../../../docs/product-management/product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)
-likewise says a spine library "names no family" — which can read as a ban on product *words*. It is not:
-the ADR estate scopes "names no family" to *code* — no `families/**` reference, no family-typed
-table (ADR-PC-021 amendment 2026-06-13), no concrete family type — and ADR-PC-021 states the limit
-outright for its host gate: **"a family named only in a COMMENT is fine"** (Verifiable commitment 3).
-`RateSchedule` saying *deposit* in a doc-comment is exactly that — a comment-level label on generic
-math, not a family dependency — so the prose here is consistent with "names no family," which is a
-property of the dependency graph, not of the words.
+likewise says a spine library "names no family." Read naively that sounds like a ban on product
+*words* — but the ADR estate scopes it to *code*: no `families/**` reference, no family-typed table
+(ADR-PC-021 amendment 2026-06-13), no concrete family type. This note keeps faith with that wording
+at the strictest reading available: the kernel's **identifiers name no family** (they name the math —
+`Amortization`, `RateSchedule`, `StepUp`, `anchorStart`, `capBps`), and so do its thrown messages.
+Product names live only in the prose. (The host-layer analogue, ADR-PC-021 Verifiable commitment 3 —
+*"a family named only in a COMMENT is fine"* — points the same way: it tolerates a family name in a
+comment precisely because its gate `ENGINE_API_HOST_FAMILY_AGNOSTIC` forbids a `Babelstone.Families.*`
+*identifier* in host code. That gate governs the host, not this kernel, so it is a corroborating
+analogy, not the authority here; the authority is the dependency edge plus this naming-altitude
+convention.) So "names no family" holds in two senses at once — the dependency graph *and* the
+identifier/message surface — and only the comment prose names products.
 
 ### Why this and not literal agnosticism (relocate the deposit math into the family)
 
@@ -110,14 +127,17 @@ in the kernel.
 `ENGINE_FAMILY_AGNOSTIC` (`EngineFamilyAgnosticTests` in `Babelstone.Engine.Tests`) parses each
 spine project's `.csproj` and fails only if a `<ProjectReference>` resolves under `families/**`. It
 is a **dependency-graph** assertion and is, by construction, **blind to in-file content** — it never
-reads a `.cs` file, so it cannot see (and is not meant to police) product nouns in a doc-comment or
-a method name. That blindness is *correct under this policy*: the gate guards exactly the edge that
-matters (the reference arrow) and stays silent on the vocabulary this note explicitly permits. The
-consequence is that the "name your math, keep inputs generic, add no `families/**` reference" rule
-above is a **review-time convention** for the type-dependency and vocabulary dimensions — upheld by
-the financial-math / replay-determinism review lenses and this README — while only the project-
-reference dimension is mechanically gated. There is deliberately no fitness function banning
-product words in the kernel, because product words in the kernel are allowed.
+reads a `.cs` file, so it cannot see (and does not police) product nouns in a comment, an identifier,
+or a thrown message. That blindness is *correct for the edge it guards* (the reference arrow), but it
+means the naming-altitude rule above (math-first identifiers and messages; products only in prose) and
+the type-dependency rule are **review-time conventions** — upheld by the financial-math /
+replay-determinism review lenses and this README — while only the project-reference dimension is
+mechanically gated. There is deliberately no fitness function scanning for product *words*, because
+product words in *comments* are allowed and a denylist could not tell a comment gloss from an
+identifier without re-implementing a parser; the lighter, durable guard is this convention plus
+review. (If that ever proves too weak, a test asserting no family noun appears in a public identifier
+or a thrown-message string under `Babelstone.FinancialMath` would codify it — but that is a new
+decision an ADR would record, not something this note assumes.)
 
 ## ADRs honoured
 

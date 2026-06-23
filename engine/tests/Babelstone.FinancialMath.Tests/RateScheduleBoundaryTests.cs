@@ -116,7 +116,7 @@ public class RateScheduleBoundaryTests
         };
 
         var accrued = schedule.AccrueGrossWindowOverPrincipal(
-            timeline, depositStart: Start, windowStart: Start, windowEnd: Start.AddDays(200), Act360);
+            timeline, anchorStart: Start, windowStart: Start, windowEnd: Start.AddDays(200), Act360);
 
         Assert.Equal(new Money(2_500L), accrued);
     }

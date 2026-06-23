@@ -21,11 +21,16 @@ namespace Babelstone.FinancialMath;
 /// v3. Every segment's <see cref="RateBasisPoints"/> is a FIXED rate known at constitution; the
 /// vector is purely a deterministic function of the (resolved) sheet and the deposit's term/
 /// principal, so a cold replay reproduces it byte-for-byte (ADR-PC-010 §P5).
-/// <para>The deposit/<i>crescente</i>/<i>escalonada</i> vocabulary below is deliberate and policy-
-/// conformant: a shared-kernel primitive MAY name the product it prices, because family-agnosticism
-/// is a dependency boundary (no <c>families/**</c> reference, generic inputs only — gated by
-/// <c>ENGINE_FAMILY_AGNOSTIC</c>), not a vocabulary ban. See this project's <c>README.md</c>
-/// (Cohesion policy / family-agnosticism) for the rule the next family author follows.</para>
+/// <para>The deposit/<i>crescente</i>/<i>escalonada</i> vocabulary in the COMMENTS below is deliberate
+/// and policy-conformant: a shared-kernel primitive's prose may name the product it prices and the rate
+/// SHAPES it folds (<i>crescente</i> = <see cref="RateScheduleKind.StepUp"/>, <i>escalonada</i> =
+/// <see cref="RateScheduleKind.AmountTiered"/>) — exactly as the fin-math reference names the level-
+/// installment system "Price (French)". The EXECUTABLE surface stays math-first, though: types,
+/// methods, parameters, enum members, and thrown messages name the math (segments, windows,
+/// <c>anchorStart</c>, <c>StepUp</c>/<c>AmountTiered</c>), never a family. Family-agnosticism is enforced
+/// as a dependency boundary (no <c>families/**</c> reference, generic inputs only — gated by
+/// <c>ENGINE_FAMILY_AGNOSTIC</c>) and reinforced by this naming-altitude convention. See this project's
+/// <c>README.md</c> (Cohesion policy / family-agnosticism) for the rule the next family author follows.</para>
 /// </remarks>
 /// <param name="From">The segment's inclusive lower boundary — an elapsed-day for a step-up
 /// schedule, a principal-cents threshold for an amount-tiered schedule. The first segment is
@@ -159,16 +164,16 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
 
     /// <summary>
     /// The gross interest this schedule accrues over a SUB-WINDOW <c>[windowStart, windowEnd]</c> of
-    /// a deposit anchored at <paramref name="depositStart"/> (fin-math §5.1; F.10 coupon support).
-    /// The schedule's elapsed-day boundaries are measured from <paramref name="depositStart"/>, so a
+    /// a deposit anchored at <paramref name="anchorStart"/> (fin-math §5.1; F.10 coupon support).
+    /// The schedule's elapsed-day boundaries are measured from <paramref name="anchorStart"/>, so a
     /// PERIODIC coupon window that opens partway through a <i>crescente</i> term is priced
     /// segment-by-segment against the rates in force across exactly that window — a later coupon
     /// earns the higher step. For a flat schedule this reduces to <see cref="Accrual.SimpleInterest"/>
     /// over <c>[windowStart, windowEnd]</c> to the cent. Amount-tiered schedules ignore
-    /// <paramref name="depositStart"/> (their boundaries are principal, not time) and price the
+    /// <paramref name="anchorStart"/> (their boundaries are principal, not time) and price the
     /// window's day count directly. Rounds ONCE at the boundary.
     /// <para><b>Step-up scope (v1).</b> A step-up vector's segment boundaries are ELAPSED DAYS from
-    /// <paramref name="depositStart"/>, so they are well-defined only for ACTUAL-day conventions
+    /// <paramref name="anchorStart"/>, so they are well-defined only for ACTUAL-day conventions
     /// (<see cref="DayCountConvention.Act360"/>, <see cref="DayCountConvention.Act365"/>) — the only
     /// conventions PT term deposits use (the pt.2026.1 pack resolves <c>pt.act_360</c>). On a 30/360
     /// convention <see cref="DayCount.Between"/> returns the 30/360-ADJUSTED day count, not actual
@@ -178,14 +183,14 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
     /// boundaries are principal cents, not days — so this restriction does not apply to them.)</para>
     /// </summary>
     /// <param name="principal">The principal the interest accrues on.</param>
-    /// <param name="depositStart">The deposit's start — the anchor the elapsed-day boundaries count from.</param>
-    /// <param name="windowStart">The accrual window's inclusive start (>= <paramref name="depositStart"/>).</param>
+    /// <param name="anchorStart">The deposit's start — the anchor the elapsed-day boundaries count from.</param>
+    /// <param name="windowStart">The accrual window's inclusive start (>= <paramref name="anchorStart"/>).</param>
     /// <param name="windowEnd">The accrual window's exclusive end.</param>
     /// <param name="dayCount">The pack-resolved day-count convention.</param>
     /// <exception cref="ArgumentOutOfRangeException">If <c>windowEnd &lt; windowStart</c> (reversed window).</exception>
     public Money AccrueGrossWindow(
-        Money principal, DateOnly depositStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount) =>
-        Money.FromCents(AccrueGrossWindowRaw(principal, depositStart, windowStart, windowEnd, dayCount));
+        Money principal, DateOnly anchorStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount) =>
+        Money.FromCents(AccrueGrossWindowRaw(principal, anchorStart, windowStart, windowEnd, dayCount));
 
     /// <summary>
     /// The gross interest of <see cref="AccrueGrossWindow"/> accumulated in <see cref="decimal"/> at
@@ -197,11 +202,11 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
     /// <see cref="Money.FromCents(decimal)"/> is byte-identical to <see cref="AccrueGrossWindow"/>.
     /// </summary>
     internal decimal AccrueGrossWindowRaw(
-        Money principal, DateOnly depositStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount) =>
+        Money principal, DateOnly anchorStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount) =>
         Kind switch
         {
             RateScheduleKind.StepUp =>
-                AccrueStepUpWindowRaw(principal, depositStart, windowStart, windowEnd, dayCount),
+                AccrueStepUpWindowRaw(principal, anchorStart, windowStart, windowEnd, dayCount),
             RateScheduleKind.AmountTiered =>
                 AccrueAmountTieredRaw(principal, windowStart, windowEnd, dayCount),
             // Flat (and any degenerate one-segment vector) is the simple-interest numerator over the window.
@@ -222,14 +227,14 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
     /// <remarks>
     /// A SINGLE-segment timeline reduces byte-for-byte to <see cref="AccrueGrossWindow"/> on that
     /// principal, so a deposit that never partially withdraws accrues exactly as before. Anchoring each
-    /// segment's sub-window at <paramref name="depositStart"/> keeps a step-up RATE vector correct: the
+    /// segment's sub-window at <paramref name="anchorStart"/> keeps a step-up RATE vector correct: the
     /// rate in force across <c>[lo, hi]</c> is still chosen by elapsed days from the deposit start, so a
     /// time-varying rate and a time-varying principal compose correctly.
     /// </remarks>
     /// <param name="principalTimeline">The ordered <c>(date, principal-in-force)</c> segments, ascending
     /// by <see cref="PrincipalSegment.From"/>, the first at the deposit start. A deterministic fold of the
     /// event stream (ADR-PC-010 §P5).</param>
-    /// <param name="depositStart">The deposit's start — the anchor the rate vector's elapsed-day
+    /// <param name="anchorStart">The deposit's start — the anchor the rate vector's elapsed-day
     /// boundaries count from.</param>
     /// <param name="windowStart">The accrual window's inclusive start.</param>
     /// <param name="windowEnd">The accrual window's exclusive end.</param>
@@ -237,13 +242,13 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
     /// <exception cref="ArgumentException">If the timeline is empty.</exception>
     public Money AccrueGrossWindowOverPrincipal(
         IReadOnlyList<PrincipalSegment> principalTimeline,
-        DateOnly depositStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount)
+        DateOnly anchorStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount)
     {
         ArgumentNullException.ThrowIfNull(principalTimeline);
         if (principalTimeline.Count == 0)
         {
             throw new ArgumentException(
-                "A principal timeline needs at least one segment (the deposit's opening principal).",
+                "A principal timeline needs at least one segment (the opening principal).",
                 nameof(principalTimeline));
         }
 
@@ -263,7 +268,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
             }
             // Same windowed numerator as the single-principal path, anchored at the deposit start so a
             // step-up RATE vector still attributes the right rate to [lo, hi]; summed un-rounded.
-            accrued += AccrueGrossWindowRaw(principalTimeline[i].Principal, depositStart, lo, hi, dayCount);
+            accrued += AccrueGrossWindowRaw(principalTimeline[i].Principal, anchorStart, lo, hi, dayCount);
         }
         return Money.FromCents(accrued);
     }
@@ -286,7 +291,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
     // the un-rounded amount in decimal (the caller rounds ONCE). A flat one-segment vector reduces to
     // SimpleInterest over the window; a coupon window straddling a step boundary is split exactly.
     private decimal AccrueStepUpWindowRaw(
-        Money principal, DateOnly depositStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount)
+        Money principal, DateOnly anchorStart, DateOnly windowStart, DateOnly windowEnd, DayCountConvention dayCount)
     {
         // Step-up segment boundaries are ELAPSED DAYS from the deposit anchor, so they are
         // well-defined only for actual-day conventions. On 30/360 DayCount.Between returns the
@@ -311,8 +316,8 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
 
         // Elapsed-day positions of the window edges, measured from the deposit anchor on the same
         // convention the segments are indexed by (actual elapsed days for Act/360 and Act/365).
-        int winFromDay = DayCount.Between(depositStart, windowStart, dayCount).Days;
-        int winToDay = DayCount.Between(depositStart, windowEnd, dayCount).Days;
+        int winFromDay = DayCount.Between(anchorStart, windowStart, dayCount).Days;
+        int winToDay = DayCount.Between(anchorStart, windowEnd, dayCount).Days;
         int basis = windowFactor.Basis;
 
         decimal accrued = 0m;

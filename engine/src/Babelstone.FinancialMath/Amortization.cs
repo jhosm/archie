@@ -234,15 +234,16 @@ public static class Amortization
     /// <param name="capitalRepaid">The capital being repaid early (the outstanding balance for a full
     /// settlement, or the partial amount for a partial repayment).</param>
     /// <param name="commissionBps">The commission the product charges, in basis points (e.g. 50 = 0.50%).</param>
-    /// <param name="statutoryCapBps">The statutory legal ceiling in basis points for this remaining-term
-    /// band (e.g. 50 = 0.50% for &gt;1y, 25 = 0.25% for ≤1y) — the cap the commission may never exceed.</param>
+    /// <param name="capBps">The ceiling in basis points the commission may never exceed — a policy/regulatory
+    /// cap the caller supplies (e.g. the PT consumer-credit statutory ceiling: 50 = 0.50% when &gt;1y of term
+    /// remains, 25 = 0.25% when ≤1y), so any family or jurisdiction passes its own cap.</param>
     /// <param name="lostInterestCeiling">The interest the borrower would still have paid over the remaining
     /// term — the §7.5 absolute ceiling: the commission may never exceed it. Pass the remaining-schedule
     /// interest sum; <see cref="Money.Zero"/> would force a zero commission (use a large value to disable).</param>
     /// <exception cref="ArgumentOutOfRangeException">If any rate is negative, or <paramref name="capitalRepaid"/>
     /// is negative.</exception>
     public static Money EarlyRepaymentCommission(
-        Money capitalRepaid, int commissionBps, int statutoryCapBps, Money lostInterestCeiling)
+        Money capitalRepaid, int commissionBps, int capBps, Money lostInterestCeiling)
     {
         if (capitalRepaid.Cents < 0)
             throw new ArgumentOutOfRangeException(
@@ -250,12 +251,12 @@ public static class Amortization
         if (commissionBps < 0)
             throw new ArgumentOutOfRangeException(
                 nameof(commissionBps), commissionBps, "Commission rate must be non-negative.");
-        if (statutoryCapBps < 0)
+        if (capBps < 0)
             throw new ArgumentOutOfRangeException(
-                nameof(statutoryCapBps), statutoryCapBps, "Statutory cap must be non-negative.");
+                nameof(capBps), capBps, "Rate cap must be non-negative.");
 
-        // 1. Cap the charged rate at the statutory ceiling — the bank may charge LESS, never more.
-        var effectiveBps = Math.Min(commissionBps, statutoryCapBps);
+        // 1. Cap the charged rate at the supplied ceiling — the product may charge LESS, never more.
+        var effectiveBps = Math.Min(commissionBps, capBps);
 
         // 2. commission = capitalRepaid × effectiveBps / 10000, rounded once at the Money boundary.
         decimal commissionRaw = (decimal)capitalRepaid.Cents * effectiveBps / Rate.BasisPointsPerUnit;
@@ -270,12 +271,12 @@ public static class Amortization
     {
         if (principal.Cents < 0)
             throw new ArgumentOutOfRangeException(
-                nameof(principal), principal.Cents, "Loan principal must be non-negative.");
+                nameof(principal), principal.Cents, "Principal must be non-negative.");
         if (periodicRateBps < 0)
             throw new ArgumentOutOfRangeException(
-                nameof(periodicRateBps), periodicRateBps, "Periodic rate must be non-negative (a loan is never priced negative).");
+                nameof(periodicRateBps), periodicRateBps, "Periodic rate must be non-negative.");
         if (periods < 1)
             throw new ArgumentOutOfRangeException(
-                nameof(periods), periods, "A loan must have at least one installment.");
+                nameof(periods), periods, "A schedule must have at least one installment.");
     }
 }

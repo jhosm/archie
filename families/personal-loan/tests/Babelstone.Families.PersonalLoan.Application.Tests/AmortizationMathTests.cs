@@ -154,7 +154,7 @@ public sealed class AmortizationMathTests
         // The bank charges 0.50% (50 bps); the statutory cap for >1y remaining is also 50 bps ⇒ the
         // commission is 0.50% of the repaid capital. €5,000 repaid ⇒ €25.00 commission.
         var commission = Amortization.EarlyRepaymentCommission(
-            capitalRepaid: new Money(500_000), commissionBps: 50, statutoryCapBps: 50,
+            capitalRepaid: new Money(500_000), commissionBps: 50, capBps: 50,
             lostInterestCeiling: new Money(1_000_000));
         Assert.Equal(new Money(2_500), commission); // €25.00
     }
@@ -165,7 +165,7 @@ public sealed class AmortizationMathTests
         // A misconfigured product charging 1.00% (100 bps) is CLAMPED to the ≤1y statutory cap of 0.25%
         // (25 bps): €500,000 repaid × 0.25% = €1,250, NOT €5,000.
         var commission = Amortization.EarlyRepaymentCommission(
-            capitalRepaid: new Money(50_000_000), commissionBps: 100, statutoryCapBps: 25,
+            capitalRepaid: new Money(50_000_000), commissionBps: 100, capBps: 25,
             lostInterestCeiling: new Money(100_000_000));
         Assert.Equal(new Money(125_000), commission); // €1,250.00 = 0.25% of €500,000
     }
@@ -176,7 +176,7 @@ public sealed class AmortizationMathTests
         // The §7.5 ceiling: the commission may never exceed the interest the borrower would still have
         // paid. A 0.50% commission on €500,000 (= €2,500) is clamped DOWN to a €1,000 lost-interest ceiling.
         var commission = Amortization.EarlyRepaymentCommission(
-            capitalRepaid: new Money(50_000_000), commissionBps: 50, statutoryCapBps: 50,
+            capitalRepaid: new Money(50_000_000), commissionBps: 50, capBps: 50,
             lostInterestCeiling: new Money(100_000)); // €1,000 ceiling
         Assert.Equal(new Money(100_000), commission); // clamped to the €1,000 ceiling
     }

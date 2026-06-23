@@ -232,23 +232,23 @@ public class AmortizationTests
     [Theory]
     [InlineData(-1, 50, 25)]   // negative capital repaid
     [InlineData(50_000, -1, 25)] // negative commission rate
-    [InlineData(50_000, 50, -1)] // negative statutory cap
-    public void EarlyRepaymentCommission_rejects_negative_inputs(long capitalRepaidCents, int commissionBps, int statutoryCapBps)
+    [InlineData(50_000, 50, -1)] // negative rate cap
+    public void EarlyRepaymentCommission_rejects_negative_inputs(long capitalRepaidCents, int commissionBps, int capBps)
     {
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => Amortization.EarlyRepaymentCommission(new Money(capitalRepaidCents), commissionBps, statutoryCapBps, NoCeiling));
+            () => Amortization.EarlyRepaymentCommission(new Money(capitalRepaidCents), commissionBps, capBps, NoCeiling));
     }
 
     [Theory]
     [InlineData(0, 50, 25)]      // capitalRepaid == 0 is valid → zero commission
     [InlineData(50_000, 0, 25)]  // commissionBps == 0 is valid → zero commission
-    [InlineData(50_000, 50, 0)]  // statutoryCapBps == 0 is valid → caps the commission to zero
-    public void EarlyRepaymentCommission_accepts_zero_inputs_as_a_zero_commission(long capitalRepaidCents, int commissionBps, int statutoryCapBps)
+    [InlineData(50_000, 50, 0)]  // capBps == 0 is valid → caps the commission to zero
+    public void EarlyRepaymentCommission_accepts_zero_inputs_as_a_zero_commission(long capitalRepaidCents, int commissionBps, int capBps)
     {
         // The guards reject NEGATIVE inputs, not non-positive: zero capital, a zero charged rate, or a
-        // zero statutory cap are all legal and each yields a zero commission — never an exception. (Pins
+        // zero rate cap are all legal and each yields a zero commission — never an exception. (Pins
         // the < 0 boundary so a < 0 → <= 0 mutant, which would wrongly throw on a valid 0, is killed.)
         Assert.Equal(Money.Zero,
-            Amortization.EarlyRepaymentCommission(new Money(capitalRepaidCents), commissionBps, statutoryCapBps, NoCeiling));
+            Amortization.EarlyRepaymentCommission(new Money(capitalRepaidCents), commissionBps, capBps, NoCeiling));
     }
 }
