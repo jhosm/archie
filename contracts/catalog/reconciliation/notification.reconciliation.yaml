@@ -48,3 +48,16 @@ spec:
       description: >-
         The lifecycle calendar whose constitution / maturity entries are the confirmation
         triggers — the event-count anchor (not a checksummed belief the consumer holds).
+    # personal_loan (ADR-PC-031): the notification service is an authorized consumer of the
+    # loan stream (LoanDisbursed/LoanInstallmentPaid/LoanRepaidEarly/LoanSettled all carry
+    # x-authorized-consumers: notification) for borrower-facing disbursement / installment /
+    # settlement confirmations. As with term_deposit, it derives NO checksummable loan
+    # projection — its loan coverage is the same light event-count-only anchor, so the
+    # checksum / fullRebuild flags above stay false for the loan family too. The loan family
+    # exposes no maturity_calendar; loan_position is the lifecycle kind whose disbursement /
+    # settlement transitions are the confirmation triggers. A reference, never PII.
+    - kind: personal_loan.loan_position
+      description: >-
+        The loan lifecycle position whose disbursement / installment / settlement transitions
+        are the confirmation triggers — the event-count anchor only (not a checksummed belief
+        the notification consumer holds).

@@ -48,3 +48,17 @@ spec:
       description: Position state — the ledger-posting source for principal + accrued interest.
     - kind: term_deposit.withholding_ledger
       description: The withholding-tax ledger — the tax-reporting and GL withholding source.
+    # personal_loan (ADR-PC-031): the ACL is an authorized consumer of the loan stream
+    # (LoanDisbursed/LoanInstallmentPaid/LoanRepaidEarly/LoanSettled all carry
+    # x-authorized-consumers: acl), so it projects the loan family into the same GL /
+    # settlement ledger and reconciles those postings kind-for-kind against the engine.
+    # References only — never PII.
+    - kind: personal_loan.loan_position
+      description: >-
+        Loan position — outstanding capital and the interest/capital split of each
+        installment; the ledger-posting source for the disbursement debit and the amortizing
+        balance.
+    - kind: personal_loan.amortization_schedule
+      description: >-
+        The fixed French-system amortization schedule — the GL's expected-flow reference the
+        per-installment postings reconcile against.

@@ -423,6 +423,26 @@ note ""
 #     least one true (a contract that reconciles nothing is a misconfiguration — mirrors
 #     ReconciliationContract.EnsureValid()'s Patterns != None check);
 #   * carry the governance fields metadata.x-owner / x-owner-contact / x-status.
+#
+# DECISION — consumer-to-reconciliation coverage is NOT hard-gated (bd babelstone-5r9n.13).
+# Tempting rule: "every consumer named in an AsyncAPI x-authorized-consumers list MUST appear
+# as spec.consumer in some reconciliation contract, with a projectionKind for that family."
+# We deliberately DO NOT enforce it mechanically, for two reasons:
+#   1. Coverage is per-consumer-PER-PATTERN, not set membership. A consumer can legitimately
+#      hold NO rebuildable projection for a family (notification event-counts loan triggers but
+#      derives no checksummable loan ledger — checksum/fullRebuild stay false). A naive
+#      "has-a-projectionKind-for-the-family" check would either false-pass that or wrongly
+#      demand a checksum it cannot publish. Encoding the real relation (which pattern each
+#      consumer owes per family) is a richer contract than this hermetic YAML gate should host.
+#   2. The reconciliation contracts are DECLARATIVE catalogue artefacts and the executable
+#      reconciler (ProjectionReconciler.cs) is family-agnostic; symmetry is kept by authoring
+#      discipline + review (the contract-reviewer / adr-conformance subagents), not a tripwire
+#      that would fire on every new family before its contracts are written.
+# Symmetry stays a REVIEW obligation: when a family adds an x-authorized-consumers entry,
+# the same change extends that consumer's reconciliation contract (this PR did so for
+# personal_loan). If a future family makes drift likely, the enforcement seam is here — assert
+# each x-authorized-consumers name resolves to a spec.consumer carrying a projectionKind whose
+# family prefix matches the event's family. Until then: documented, not gated.
 # ---------------------------------------------------------------------------
 note "-- §7.3 per-consumer reconciliation contracts ($RECON_DIR) --"
 if [ -d "$RECON_DIR" ]; then
