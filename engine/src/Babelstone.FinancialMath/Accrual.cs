@@ -18,9 +18,9 @@ namespace Babelstone.FinancialMath;
 /// </remarks>
 public static class Accrual
 {
-    // 100% = 10,000 bps. Kept as int (not a decimal field — BMNY002 bans stored decimal
-    // state per ADR-PC-010 §P1); it promotes to decimal inside each boundary expression.
-    private const int BasisPointsPerUnit = 10_000;
+    // The per-unit basis-point scale (100% = 10,000 bps) is the shared kernel constant
+    // Rate.Rate.BasisPointsPerUnit (bd babelstone-5r9n.6); it promotes to decimal inside each
+    // boundary expression. Kept as int (not a stored decimal field — BMNY002, ADR-PC-010 §P1).
 
     /// <summary>
     /// Simple interest (fin-math §5.1; the PT term-deposit default). Implements the
@@ -38,7 +38,7 @@ public static class Accrual
         RequireForwardInterval(factor);
 
         decimal interest = (decimal)principal.Cents * rateBps * factor.Days
-                         / ((decimal)factor.Basis * BasisPointsPerUnit);
+                         / ((decimal)factor.Basis * Rate.BasisPointsPerUnit);
         return Money.FromCents(interest);
     }
 
@@ -61,9 +61,9 @@ public static class Accrual
         if (totalPeriods < 0)
             throw new ArgumentOutOfRangeException(nameof(totalPeriods), totalPeriods, "Period count must be non-negative.");
 
-        // (decimal) cast is load-bearing: without it periodsPerYear * BasisPointsPerUnit is
+        // (decimal) cast is load-bearing: without it periodsPerYear * Rate.BasisPointsPerUnit is
         // an int and rateBps / int would be integer division (600 / 120000 = 0).
-        decimal periodicRate = rateBps / (periodsPerYear * (decimal)BasisPointsPerUnit);
+        decimal periodicRate = rateBps / (periodsPerYear * (decimal)Rate.BasisPointsPerUnit);
         decimal growth = DecimalMath.Pow(1m + periodicRate, totalPeriods);
         return Money.FromCents((decimal)principal.Cents * growth);
     }
@@ -101,7 +101,7 @@ public static class Accrual
             numberOfCapitals += (decimal)balance.Cents * days;
         }
 
-        decimal interest = rateBps * numberOfCapitals / (basis * BasisPointsPerUnit);
+        decimal interest = rateBps * numberOfCapitals / (basis * Rate.BasisPointsPerUnit);
         return Money.FromCents(interest);
     }
 
