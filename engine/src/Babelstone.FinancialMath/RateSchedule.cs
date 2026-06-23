@@ -8,10 +8,10 @@ namespace Babelstone.FinancialMath;
 /// constitution, then folds that vector over the simple-interest accrual engine. Two shapes share
 /// this segment type, distinguished by what <see cref="From"/> measures:
 /// <list type="bullet">
-/// <item><b>Step-up (<i>crescente</i>)</b> — the rate RISES across sub-periods of the term. Here
+/// <item><b>Step-up</b> — the rate RISES across sub-periods of the term. Here
 /// <see cref="From"/> is an ELAPSED-DAY boundary: the segment applies from day <see cref="From"/>
 /// (inclusive) of the term until the next segment's boundary (or maturity for the last).</item>
-/// <item><b>Amount-tiered (<i>escalonada</i>)</b> — the rate depends on the PRINCIPAL band. Here
+/// <item><b>Amount-tiered</b> — the rate depends on the PRINCIPAL band. Here
 /// <see cref="From"/> is a CENTS boundary: the segment prices the principal tranche from
 /// <see cref="From"/> cents (inclusive) up to the next segment's boundary.</item>
 /// </list>
@@ -21,16 +21,14 @@ namespace Babelstone.FinancialMath;
 /// v3. Every segment's <see cref="RateBasisPoints"/> is a FIXED rate known at constitution; the
 /// vector is purely a deterministic function of the (resolved) sheet and the deposit's term/
 /// principal, so a cold replay reproduces it byte-for-byte (ADR-PC-010 §P5).
-/// <para>The deposit/<i>crescente</i>/<i>escalonada</i> vocabulary in the COMMENTS below is deliberate
-/// and policy-conformant: a shared-kernel primitive's prose may name the product it prices and the rate
-/// SHAPES it folds (<i>crescente</i> = <see cref="RateScheduleKind.StepUp"/>, <i>escalonada</i> =
-/// <see cref="RateScheduleKind.AmountTiered"/>) — exactly as the fin-math reference names the level-
-/// installment system "Price (French)". The EXECUTABLE surface stays math-first, though: types,
-/// methods, parameters, enum members, and thrown messages name the math (segments, windows,
-/// <c>anchorStart</c>, <c>StepUp</c>/<c>AmountTiered</c>), never a family. Family-agnosticism is enforced
-/// as a dependency boundary (no <c>families/**</c> reference, generic inputs only — gated by
-/// <c>ENGINE_FAMILY_AGNOSTIC</c>) and reinforced by this naming-altitude convention. See this project's
-/// <c>README.md</c> (Cohesion policy / family-agnosticism) for the rule the next family author follows.</para>
+/// <para>The product vocabulary in the COMMENTS below (e.g. "deposit") is deliberate and policy-
+/// conformant: a shared-kernel primitive's prose may name the product it prices. The EXECUTABLE surface
+/// stays math-first AND in plain English: types, methods, parameters, enum members, and thrown messages
+/// name the math in English (segments, windows, <c>anchorStart</c>, <c>StepUp</c>/<c>AmountTiered</c>),
+/// never a family and never a non-English term. Family-agnosticism is enforced as a dependency boundary
+/// (no <c>families/**</c> reference, generic inputs only — gated by <c>ENGINE_FAMILY_AGNOSTIC</c>) and
+/// reinforced by this naming-altitude convention. See this project's <c>README.md</c> (Cohesion policy /
+/// family-agnosticism) for the rule the next family author follows.</para>
 /// </remarks>
 /// <param name="From">The segment's inclusive lower boundary — an elapsed-day for a step-up
 /// schedule, a principal-cents threshold for an amount-tiered schedule. The first segment is
@@ -49,11 +47,11 @@ public enum RateScheduleKind
     /// one-segment schedule, accrual-equivalent to <see cref="Accrual.SimpleInterest"/>.</summary>
     Flat,
 
-    /// <summary>Step-up (<i>crescente</i>): segments are ELAPSED-DAY sub-periods of the term; the
+    /// <summary>Step-up: segments are ELAPSED-DAY sub-periods of the term; the
     /// rate rises across them. Folded sub-period by sub-period over the term.</summary>
     StepUp,
 
-    /// <summary>Amount-tiered (<i>escalonada</i>): segments are PRINCIPAL tranches; each tranche of
+    /// <summary>Amount-tiered: segments are PRINCIPAL tranches; each tranche of
     /// the principal accrues at its own rate (a marginal/progressive tiering, like a tax bracket).</summary>
     AmountTiered,
 }
@@ -93,7 +91,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
         new(RateScheduleKind.Flat, [new RateSegment(0, rateBasisPoints)]);
 
     /// <summary>
-    /// Build a step-up (<i>crescente</i>) schedule from ascending elapsed-day boundaries. The first
+    /// Build a step-up schedule from ascending elapsed-day boundaries. The first
     /// boundary MUST be 0 (the term opens at some rate); boundaries must strictly ascend (the
     /// depth-4 obligation the family schema's <c>#SteppedRate.steps</c> defers — re-asserted here so
     /// a malformed vector fails loud rather than mis-accruing).
@@ -102,7 +100,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
         Validated(RateScheduleKind.StepUp, daySegments);
 
     /// <summary>
-    /// Build an amount-tiered (<i>escalonada</i>) schedule from ascending principal-cents tranche
+    /// Build an amount-tiered schedule from ascending principal-cents tranche
     /// boundaries. The first boundary MUST be 0; boundaries must strictly ascend.
     /// </summary>
     public static RateSchedule AmountTiered(IReadOnlyList<RateSegment> trancheSegments) =>
@@ -166,7 +164,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
     /// The gross interest this schedule accrues over a SUB-WINDOW <c>[windowStart, windowEnd]</c> of
     /// a deposit anchored at <paramref name="anchorStart"/> (fin-math §5.1; F.10 coupon support).
     /// The schedule's elapsed-day boundaries are measured from <paramref name="anchorStart"/>, so a
-    /// PERIODIC coupon window that opens partway through a <i>crescente</i> term is priced
+    /// PERIODIC coupon window that opens partway through a step-up term is priced
     /// segment-by-segment against the rates in force across exactly that window — a later coupon
     /// earns the higher step. For a flat schedule this reduces to <see cref="Accrual.SimpleInterest"/>
     /// over <c>[windowStart, windowEnd]</c> to the cent. Amount-tiered schedules ignore
@@ -301,7 +299,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
         if (dayCount == DayCountConvention.Thirty360European)
         {
             throw new ArgumentException(
-                "Step-up (crescente) rate schedules index their segment boundaries by elapsed days, " +
+                "Step-up rate schedules index their segment boundaries by elapsed days, " +
                 "which are only well-defined under actual-day conventions (Act/360, Act/365). The " +
                 $"30/360 convention ({dayCount}) returns adjusted, not actual, days and is not " +
                 "supported for step-up schedules in v1.", nameof(dayCount));

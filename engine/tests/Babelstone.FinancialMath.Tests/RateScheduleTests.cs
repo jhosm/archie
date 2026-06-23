@@ -5,8 +5,8 @@ using Xunit;
 namespace Babelstone.FinancialMath.Tests;
 
 /// <summary>
-/// The resolved rate-VECTOR primitive (F.10): step-up (<i>crescente</i>) and amount-tiered
-/// (<i>escalonada</i>) rate schedules folded over the simple-interest engine. Pure, Docker-free.
+/// The resolved rate-VECTOR primitive (F.10): step-up and amount-tiered
+/// rate schedules folded over the simple-interest engine. Pure, Docker-free.
 /// The load-bearing property is the EQUIVALENCE guarantee — a one-segment vector of any kind
 /// accrues exactly what <see cref="Accrual.SimpleInterest"/> does, so the schedule is a faithful
 /// generalisation of the flat path (no rounding gap introduced by the vector machinery).
@@ -53,12 +53,12 @@ public class RateScheduleTests
             schedule.AccrueGross(TenThousand, Start, end, DayCountConvention.Act360));
     }
 
-    // --- step-up (crescente): rate rises across sub-periods of the term ------------------------
+    // --- step-up: rate rises across sub-periods of the term -----------------------------------
 
     [Fact]
     public void StepUp_sums_each_sub_period_at_its_own_rate()
     {
-        // Two-step crescente over a 360-day term: first 180 days at 2%, next 180 days at 4%.
+        // Two-step step-up over a 360-day term: first 180 days at 2%, next 180 days at 4%.
         // First leg : 1,000,000 × 200 × 180 / (360×10000) = 10,000.00
         // Second leg: 1,000,000 × 400 × 180 / (360×10000) = 20,000.00
         // Total gross = 30,000 cents (€300.00).
@@ -94,7 +94,7 @@ public class RateScheduleTests
     [Fact]
     public void StepUp_clips_the_last_segment_when_the_deposit_ends_mid_vector()
     {
-        // A deposit broken at day 200 of a [0→2%, 180→4%] crescente accrues 180 days @ 2% + only
+        // A deposit broken at day 200 of a [0→2%, 180→4%] step-up accrues 180 days @ 2% + only
         // 20 days @ 4%, not the full second leg.
         var schedule = RateSchedule.StepUp([new RateSegment(0, 200), new RateSegment(180, 400)]);
 
@@ -119,7 +119,7 @@ public class RateScheduleTests
         Assert.Equal(flat, schedule.AccrueGross(TenThousand, Start, Start.AddDays(90), DayCountConvention.Act360));
     }
 
-    // --- amount-tiered (escalonada): rate depends on the principal band ------------------------
+    // --- amount-tiered: rate depends on the principal band ------------------------------------
 
     [Fact]
     public void AmountTiered_prices_each_principal_tranche_at_its_rate()
@@ -150,7 +150,7 @@ public class RateScheduleTests
     [Fact]
     public void AmountTiered_prices_a_coupon_WINDOW_on_the_windows_day_count_not_the_full_term()
     {
-        // escalonada is principal-indexed, so a PERIODIC coupon window must tier the principal over
+        // Amount-tiered is principal-indexed, so a PERIODIC coupon window must tier the principal over
         // exactly the WINDOW's day count — not the whole term. This pins the AccrueGrossWindow
         // AmountTiered branch, which every full-term AccrueGross test would miss: a mutation that
         // fed the full term instead of the window would inflate the coupon and go uncaught.
