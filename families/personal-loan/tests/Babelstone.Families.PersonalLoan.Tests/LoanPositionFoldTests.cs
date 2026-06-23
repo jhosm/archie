@@ -81,6 +81,39 @@ public sealed class LoanPositionFoldTests
 
         Assert.Equal(LoanLifecycle.WrittenOff, position.Lifecycle);
         Assert.Equal(Money.Zero, position.OutstandingBalance);
+        // The unrecovered capital is recorded on the position as a loss — NOT folded into the repaid
+        // tally (it was not repaid) and NOT dropped (bd babelstone-5r9n.8).
+        Assert.Equal(new Money(918_934), position.WrittenOffAmount);
+        Assert.Equal(new Money(81_066), position.TotalCapitalRepaid);
+        // Principal reconciles from the position ALONE: capital repaid + loss == the original principal,
+        // no event-log replay needed.
+        Assert.Equal(position.Principal, position.TotalCapitalRepaid + position.WrittenOffAmount);
+    }
+
+    [Fact]
+    public void A_written_off_loan_is_distinguishable_from_a_settled_one_without_reading_the_log()
+    {
+        // Both terminals end with a zero OutstandingBalance, so the balance alone cannot tell them apart.
+        // The WrittenOffAmount field is the discriminator: zero on a settled loan, the loss on a written
+        // off one (bd babelstone-5r9n.8).
+        var settledId = Guid.NewGuid();
+        var settled = Fold(LoanPosition.Empty, Disbursed(settledId, principalCents: 1_000_000, termMonths: 12));
+        settled = Fold(settled, new LoanRepaidEarly(
+            settledId, new Money(1_000_000), new Money(5_000), Money.Zero, new DateOnly(2026, 6, 1)));
+        settled = Fold(settled, new LoanSettled(new Money(1_000_000), Money.Zero, new DateOnly(2026, 6, 1)));
+
+        var writtenOffId = Guid.NewGuid();
+        var writtenOff = Fold(LoanPosition.Empty, Disbursed(writtenOffId, principalCents: 1_000_000, termMonths: 12));
+        writtenOff = Fold(writtenOff, new LoanWrittenOff(
+            writtenOffId, new Money(1_000_000), new DateOnly(2026, 9, 1), "DEFAULT_UNRECOVERABLE"));
+
+        // Same zero outstanding balance on both terminals…
+        Assert.Equal(Money.Zero, settled.OutstandingBalance);
+        Assert.Equal(Money.Zero, writtenOff.OutstandingBalance);
+        // …but the loss field separates them with no log read.
+        Assert.Equal(Money.Zero, settled.WrittenOffAmount);
+        Assert.Equal(new Money(1_000_000), writtenOff.WrittenOffAmount);
+        Assert.NotEqual(settled.Lifecycle, writtenOff.Lifecycle);
     }
 
     [Fact]

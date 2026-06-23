@@ -71,6 +71,13 @@ public enum LoanLifecycle
 /// <param name="TotalCapitalRepaid">Running sum of capital returned to date — installments + early
 /// repayments (Money cents).</param>
 /// <param name="TotalCommissionCharged">Running sum of early-repayment commission charged (Money cents).</param>
+/// <param name="WrittenOffAmount">The capital recognised as an UNRECOVERABLE LOSS when the loan was written
+/// off (Money cents); <see cref="Money.Zero"/> for every loan that was not written off. This is what lets a
+/// written-off loan be told apart from a fully-repaid one from the position ALONE: both carry a zero
+/// <see cref="OutstandingBalance"/>, but only a written-off loan carries a non-zero loss here, so principal
+/// reconciles (<c>TotalCapitalRepaid + WrittenOffAmount</c> closes the books) without reading the event log
+/// (bd babelstone-5r9n.8). Folded from <c>LoanWrittenOff.OutstandingBalanceWrittenOff</c>; the engine RECORDS
+/// the loss, it does not run collections (ADR-PC-030 §P1).</param>
 /// <param name="Lifecycle">The current lifecycle state.</param>
 public sealed record LoanPosition(
     Guid LoanId,
@@ -91,6 +98,7 @@ public sealed record LoanPosition(
     Money TotalInterestPaid,
     Money TotalCapitalRepaid,
     Money TotalCommissionCharged,
+    Money WrittenOffAmount,
     LoanLifecycle Lifecycle) : IErasable<LoanPosition>
 {
     /// <summary>
@@ -123,5 +131,6 @@ public sealed record LoanPosition(
         TotalInterestPaid: Money.Zero,
         TotalCapitalRepaid: Money.Zero,
         TotalCommissionCharged: Money.Zero,
+        WrittenOffAmount: Money.Zero,
         Lifecycle: LoanLifecycle.Pending);
 }

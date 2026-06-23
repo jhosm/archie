@@ -87,9 +87,15 @@ public sealed class LoanWrittenOffHandler : IEventHandler<LoanPosition, LoanWrit
         => HandlerResult<LoanPosition>.From(state with
         {
             Lifecycle = LoanLifecycle.WrittenOff,
-            // The written-off capital leaves the books; the outstanding balance is zeroed (it is now
-            // a recorded loss, carried as TotalCapitalRepaid? No — it was NOT repaid). The balance
-            // reaching zero here means "no further amortization", not "fully repaid".
+            // The written-off capital leaves the books: the outstanding balance is zeroed (no further
+            // amortization), but the lost capital is RECORDED on the position as WrittenOffAmount rather
+            // than dropped — it was NOT repaid, so it must not fold into TotalCapitalRepaid. Recording it
+            // here is what disambiguates the write-off terminal from a fully-repaid one: both end with a
+            // zero OutstandingBalance, so without this a written-off loan would be indistinguishable from
+            // a settled one, and the lost principal would only be recoverable by replaying the event log
+            // (bd babelstone-5r9n.8). With it, principal reconciles from the position alone:
+            // TotalCapitalRepaid + WrittenOffAmount accounts for the original principal.
             OutstandingBalance = Money.Zero,
+            WrittenOffAmount = state.WrittenOffAmount + @event.OutstandingBalanceWrittenOff,
         });
 }
