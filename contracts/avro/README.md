@@ -41,6 +41,30 @@ Field-type mapping (matches the C# events in
 All v1 fields are **required** — none is a nullable union (ADR-IC-002 §P2 governs the
 `["null", T]`-with-null-first convention if/when an optional field is introduced).
 
+## The `Movement` carrier (ADR-PC-032)
+
+A money-moving event carries the money legs it caused — a list of **`Movement`** records
+(one recorded change of value against one engine-owned account, [ADR-PC-032](../../docs/product-management/product_concepts/adrs/ADR-PC-032-money-movement-primitive.md)) —
+**inside its own payload**, as a required Avro `array` field whose `items` is the nested
+`Movement` record. No new `events`-table column, no envelope change: the `Movement`s ride
+the event the family already writes and are therefore written **append-first** in the
+event's outbox transaction.
+
+The canonical, governed carrier shape is [`_shared/Movement.avsc.json`](./_shared/Movement.avsc.json).
+It is deliberately **not** a `.avsc`: a `Movement` is **not an event** — it is never
+catalogued, never registered under a Schema-Registry subject, and never published on its
+own. The `.avsc.json` extension keeps it out of the `*.avsc` glob the engine embeds, the
+catalog discovers, and the compat gate scans. A carrying event's `.avsc` **inlines** this
+record verbatim as its array `items`; the engine's family-agnostic codec
+(`MovementCarrier` in `Babelstone.Engine.Avro`) binds the carrying event's
+`IReadOnlyList<Movement>` parameter to that array. An event with no movements carries an
+**empty** array, never null.
+
+`account_ref` is an **opaque reference** the engine resolves internally — never an
+IBAN/cleartext or ciphertext account identifier ([ADR-PC-004 §P2](../../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)).
+The first family to emit movements authors the carrying event's `.avsc` (the
+`Movement`-array field) and is the **contract-reviewer**'s lane.
+
 ## No PII — ever
 
 These events are **structural** ([ADR-PC-004 §P2](../../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)):

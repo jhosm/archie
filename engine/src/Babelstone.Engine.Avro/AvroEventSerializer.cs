@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Reflection;
 using System.Text;
 using Avro;
@@ -72,6 +73,17 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
             var fieldName = FieldName(parameter.Name!, parameter.ParameterType);
             RequireField(schema, fieldName, type);
             var value = type.GetProperty(parameter.Name!)!.GetValue(@event);
+
+            // The Movement CARRIER (ADR-PC-032): a parameter typed IReadOnlyList<Movement> maps to the
+            // .avsc field's Avro array-of-Movement-record. The nested Movement record schema is the
+            // array's `items`, read off the carrying event's own schema — the codec stays family-agnostic
+            // (it binds whatever the .avsc declares, it never derives the shape from the family).
+            if (MovementCarrier.IsCarrierParameter(parameter.ParameterType))
+            {
+                record.Add(fieldName, MovementCarrier.ToAvroArray(value, SchemaFieldType(schema, fieldName), parameter.Name!));
+                continue;
+            }
+
             if (value is null && !IsNullableUnion(schema, fieldName))
             {
                 // A null on a REQUIRED (non-[null,T]) field. ToAvro(null) returns Avro null for the
@@ -103,7 +115,11 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
                     $"Avro record for '{payloadType.Name}' has no field '{fieldName}' for parameter '{parameter.Name}'.");
             }
 
-            arguments[i] = FromAvro(avroValue, parameter.ParameterType);
+            // The Movement CARRIER (ADR-PC-032): the Avro array-of-Movement-record field decodes back to
+            // the IReadOnlyList<Movement> the carrying event declares.
+            arguments[i] = MovementCarrier.IsCarrierParameter(parameter.ParameterType)
+                ? MovementCarrier.FromAvroArray(avroValue, parameter.Name!)
+                : FromAvro(avroValue, parameter.ParameterType);
         }
 
         return (DomainEvent)constructor.Invoke(arguments);
@@ -164,6 +180,14 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
     internal static bool IsNullableUnion(RecordSchema schema, string fieldName)
         => schema.Fields.FirstOrDefault(field => field.Name == fieldName)?.Schema is UnionSchema union
             && union.Schemas.Any(branch => branch.Tag == Schema.Type.Null);
+
+    // The named field's declared Avro type off the carrying event's own schema — the authority the
+    // Movement carrier reads the nested array `items` (the Movement record) from, so the codec binds
+    // whatever the .avsc declares and never derives the shape from the family type.
+    internal static Schema SchemaFieldType(RecordSchema schema, string fieldName)
+        => schema.Fields.FirstOrDefault(field => field.Name == fieldName)?.Schema
+            ?? throw new InvalidOperationException(
+                $"Avro schema {schema.Fullname} has no field '{fieldName}'.");
 
     // Unwrap Nullable<T> (a nullable value type, e.g. an optional Money? / DateOnly? field) to its
     // underlying T so the same Money/DateOnly conversions apply whether or not the field is optional.
@@ -234,4 +258,112 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
         var decoder = new BinaryDecoder(stream);
         return reader.Read(null!, decoder);
     }
+}
+
+/// <summary>
+/// The Movement CARRIER mapping (ADR-PC-032): binds a carrying event's <c>IReadOnlyList&lt;Movement&gt;</c>
+/// parameter to its <c>.avsc</c> field — an Avro <b>array</b> whose <c>items</c> is the nested
+/// <c>Movement</c> record. In plain English: a money-moving event states a fact AND carries the money
+/// legs it caused, as a list of movements inside the event's own opaque payload — no new events-table
+/// column, no envelope change. This is the bus-codec half of that carry; the JSON store codec
+/// (ADR-PC-028) carries the same list natively via System.Text.Json.
+/// </summary>
+/// <remarks>
+/// FAMILY-AGNOSTIC (ADR-PC-021 §D2): the carrier reads the nested Movement record schema off the carrying
+/// event's <c>.avsc</c> array <c>items</c> — it binds whatever the schema declares and never names a
+/// family. The Movement field convention mirrors the flat codec's: <c>Money Amount</c> → <c>amount_cents</c>
+/// (integer cents, ADR-PC-010 §P1), <c>Guid CommandId</c> → <c>command_id</c> (uuid), <c>DateOnly ValueDate</c>
+/// → <c>value_date</c> (date), the two closed enums (<see cref="MovementOperation"/> /
+/// <see cref="MovementOrigin"/>) → their member name as an Avro <c>string</c> (an enum, NOT a free string,
+/// ADR-PC-032 slot 1; the closed set is enforced by the C# type, the wire carries the stable name), and
+/// the opaque <c>AccountRef</c> → <c>account_ref</c> (a reference, NEVER PII, ADR-PC-004 §P2).
+/// </remarks>
+internal static class MovementCarrier
+{
+    /// <summary>A carrier parameter is exactly <c>IReadOnlyList&lt;Movement&gt;</c> — the one declared
+    /// shape for a carrying event's movement legs (ADR-PC-032 / feature-design §2).</summary>
+    public static bool IsCarrierParameter(Type parameterType)
+        => parameterType.IsGenericType
+           && parameterType.GetGenericTypeDefinition() == typeof(IReadOnlyList<>)
+           && parameterType.GetGenericArguments()[0] == typeof(Movement);
+
+    /// <summary>Build the Avro array of nested Movement records for the carrier field. Fail loud (with
+    /// the parameter name) on a null list — the carrier is a REQUIRED array field, never an optional
+    /// union; an event with no movements carries an EMPTY array, never null.</summary>
+    public static object ToAvroArray(object? value, Schema fieldSchema, string parameterName)
+    {
+        if (value is null)
+        {
+            throw new InvalidOperationException(
+                $"Movement carrier '{parameterName}' is null; it is a required array field (an event with no movements carries an empty array, not null).");
+        }
+
+        if (fieldSchema is not ArraySchema arraySchema || arraySchema.ItemSchema is not RecordSchema itemSchema)
+        {
+            throw new InvalidOperationException(
+                $"Movement carrier '{parameterName}' maps to an Avro array-of-record, but its .avsc field is '{fieldSchema.Tag}'.");
+        }
+
+        var movements = ((IEnumerable)value).Cast<Movement>();
+        return movements.Select(movement => ToMovementRecord(movement, itemSchema)).ToArray();
+    }
+
+    /// <summary>Decode the Avro array of nested Movement records back to the carrying event's
+    /// <c>IReadOnlyList&lt;Movement&gt;</c>.</summary>
+    public static IReadOnlyList<Movement> FromAvroArray(object? avroValue, string parameterName)
+    {
+        if (avroValue is not object[] array)
+        {
+            throw new InvalidOperationException(
+                $"Movement carrier '{parameterName}' expected an Avro array; got '{avroValue?.GetType().Name ?? "null"}'.");
+        }
+
+        return array.Cast<GenericRecord>().Select(FromMovementRecord).ToList();
+    }
+
+    private static GenericRecord ToMovementRecord(Movement movement, RecordSchema itemSchema)
+    {
+        var record = new GenericRecord(itemSchema);
+        record.Add("account_ref", movement.AccountRef);
+        // The three closed sets are Avro `enum` fields: Apache.Avro requires a GenericEnum wrapper (a
+        // bare string is rejected), and the member NAME is the wire symbol (ADR-PC-032 slot 1's closed
+        // type — the C# enum enforces the closed set; the symbol carries the stable name).
+        record.Add("direction", Enum_(itemSchema, "direction", movement.Direction.ToString()));
+        record.Add("amount_cents", movement.Amount.Cents);
+        record.Add("value_date", movement.ValueDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+        record.Add("operation", Enum_(itemSchema, "operation", movement.Operation.ToString()));
+        record.Add("origin", Enum_(itemSchema, "origin", movement.Origin.ToString()));
+        record.Add("command_id", movement.CommandId);
+        return record;
+    }
+
+    private static Movement FromMovementRecord(GenericRecord record) => new(
+        AccountRef: (string)Field(record, "account_ref"),
+        Direction: Enum.Parse<SettlementDirection>(EnumValue(Field(record, "direction"))),
+        Amount: new Money((long)Field(record, "amount_cents")),
+        ValueDate: DateOnly.FromDateTime((DateTime)Field(record, "value_date")),
+        Operation: Enum.Parse<MovementOperation>(EnumValue(Field(record, "operation"))),
+        Origin: Enum.Parse<MovementOrigin>(EnumValue(Field(record, "origin"))),
+        CommandId: (Guid)Field(record, "command_id"));
+
+    // Wrap a closed-set member name as the Avro GenericEnum the named enum field declares.
+    private static GenericEnum Enum_(RecordSchema itemSchema, string fieldName, string symbol)
+    {
+        var enumSchema = itemSchema.Fields.FirstOrDefault(field => field.Name == fieldName)?.Schema as EnumSchema
+            ?? throw new InvalidOperationException($"Movement field '{fieldName}' is not an Avro enum.");
+        return new GenericEnum(enumSchema, symbol);
+    }
+
+    // An Avro enum decodes as a GenericEnum (its .Value is the symbol); tolerate a bare string too.
+    private static string EnumValue(object value) => value switch
+    {
+        GenericEnum genericEnum => genericEnum.Value,
+        string symbol => symbol,
+        _ => throw new InvalidOperationException($"Expected an Avro enum value, got '{value.GetType().Name}'."),
+    };
+
+    private static object Field(GenericRecord record, string name)
+        => record.TryGetValue(name, out var value) && value is not null
+            ? value
+            : throw new InvalidOperationException($"Movement record has no field '{name}'.");
 }
