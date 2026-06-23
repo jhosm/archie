@@ -86,22 +86,13 @@ Several scopes share the one periodic lane, each with its own config and score f
     out-of-tree): `TermDepositFamilyModule.cs` and `TermDepositProjectionModule.cs` whole (the
     event-type→handler and projection-runner *registration* tables — DI wiring). The folds/cent-math —
     `AccrualSchedule`, `WithholdingLedger`, `LifecycleTransitions`, `MaturityCalendar`, `Handlers`,
-    `DepositPosition` (including its `Equals`/`GetHashCode` and `WithErased`) — stay fully mutated; the
-    `HandlerFoldTests` suite pins every position fold so the lifecycle handlers are covered, not just
-    the AT_MATURITY happy path.
-  - **Outbox publisher** (`stryker-config.outbox.json`): `OutboxRelayService.cs` +
-    `DedupRetentionSweepService.cs` (the `BackgroundService` poll/backoff loops),
-    `OutboxLagObserver.cs` (the §P4 OTel gauge), `OutboxRelayOptions.cs` (an options record).
-    `OutboxDrainer.cs` — the drain-batch `ORDER BY` / `FOR UPDATE SKIP LOCKED` / produce-then-mark
-    logic, the leg's reason to exist — stays mutated, as does `KafkaSaslOptions.cs`.
-  - **Inbox consumer** (`stryker-config.inbox.json`): `InboxConsumerService.cs` (the
-    `BackgroundService` loop), `InboxConsumerOptions.cs` + `InboxMessage.cs` (records). `InboxPump.cs`
-    — the `message_id` dedupe + poison-sink core — and `KafkaSaslOptions.cs` stay mutated.
-  - **Packs** (`stryker-config.packs.json`): `ProcessRunner.cs` (the `Process.Start` shell-out),
-    `CosignPackVerifier.cs`, `OrasPackSource.cs`, `OciPackStore.cs` (the oras/cosign OCI adapters,
-    exercised only by the Docker `OciPackStoreIntegrationTests`). `PackParser.cs` — the fail-loud
-    structural strict-parse, the boundary-data mutant of interest — stays mutated, as do
-    `VerifiedPack.cs` and `OciToolchainGuard.cs`.
+    `DepositPosition` (including its hand-rolled `Equals`/`GetHashCode` and `WithErased`) — stay fully
+    mutated. They are pinned by three family-leg suites: `HandlerFoldTests` (every position fold, so the
+    lifecycle handlers are covered, not just the AT_MATURITY happy path); `DepositPositionEqualityTests`
+    (the per-field value-equality + element-wise-timeline contract that backstops replay determinism,
+    ADR-PC-010 §P5 — equality is hand-rolled, so it must be *tested* here, not carved out, because the
+    determinism/parity suites that exercise it live in the SEPARATE `.Application` leg); and
+    `EventMetadataTests` (each event's `IsLifecycleBoundary` snapshot-cut flag).
   - **Outbox publisher** (`stryker-config.outbox.json`): `OutboxRelayService.cs` +
     `DedupRetentionSweepService.cs` (the `BackgroundService` poll/backoff loops),
     `OutboxLagObserver.cs` (the §P4 OTel gauge), `OutboxRelayOptions.cs` (an options record).
