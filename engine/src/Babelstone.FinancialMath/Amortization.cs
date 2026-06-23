@@ -59,9 +59,9 @@ public sealed record AmortizationRow(
 /// </remarks>
 public static class Amortization
 {
-    // 100% = 10,000 bps — the same convention Accrual uses; kept as int (BMNY002 bans stored decimal
-    // state per ADR-PC-010 §P1) and promoted to decimal inside each boundary expression.
-    private const int BasisPointsPerUnit = 10_000;
+    // The per-unit basis-point scale (100% = 10,000 bps) is the shared kernel constant
+    // Rate.Rate.BasisPointsPerUnit (bd babelstone-5r9n.6) — the same scale Accrual uses; promoted to
+    // decimal inside each boundary expression. Kept as int (BMNY002 bans stored decimal state, §P1).
 
     /// <summary>
     /// The level (constant) installment of a French-system loan (fin-math §4.1):
@@ -87,7 +87,7 @@ public static class Amortization
             return Money.FromCents((decimal)principal.Cents / periods);
         }
 
-        decimal r = periodicRateBps / (decimal)BasisPointsPerUnit;
+        decimal r = periodicRateBps / (decimal)Rate.BasisPointsPerUnit;
         // discount = 1 − (1 + r)^−n = 1 − 1 / (1 + r)^n. Integer-power decimal (DecimalMath.Pow),
         // never Math.Pow — money math stays out of binary double (ADR-PC-010 §P1).
         decimal growth = DecimalMath.Pow(1m + r, periods);
@@ -168,7 +168,7 @@ public static class Amortization
             throw new ArgumentOutOfRangeException(
                 nameof(periodicRateBps), periodicRateBps, "Periodic rate must be non-negative.");
 
-        decimal interest = (decimal)outstandingBalance.Cents * periodicRateBps / BasisPointsPerUnit;
+        decimal interest = (decimal)outstandingBalance.Cents * periodicRateBps / Rate.BasisPointsPerUnit;
         return Money.FromCents(interest);
     }
 
@@ -204,7 +204,7 @@ public static class Amortization
             return Money.FromCents((decimal)principal.Cents - (paid * perPeriodCapital));
         }
 
-        decimal r = periodicRateBps / (decimal)BasisPointsPerUnit;
+        decimal r = periodicRateBps / (decimal)Rate.BasisPointsPerUnit;
         // Use the UN-rounded level installment here so the closed form is internally consistent in
         // full precision; the single rounding is at the final Money boundary (ADR-PC-010 §P2).
         decimal growthN = DecimalMath.Pow(1m + r, periods);
@@ -258,7 +258,7 @@ public static class Amortization
         var effectiveBps = Math.Min(commissionBps, statutoryCapBps);
 
         // 2. commission = capitalRepaid × effectiveBps / 10000, rounded once at the Money boundary.
-        decimal commissionRaw = (decimal)capitalRepaid.Cents * effectiveBps / BasisPointsPerUnit;
+        decimal commissionRaw = (decimal)capitalRepaid.Cents * effectiveBps / Rate.BasisPointsPerUnit;
         var commission = Money.FromCents(commissionRaw);
 
         // 3. The lost-interest ceiling (§7.5): the commission may never exceed the interest the borrower

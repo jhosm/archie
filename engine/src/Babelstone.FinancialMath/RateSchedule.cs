@@ -273,7 +273,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
             throw new ArgumentOutOfRangeException(
                 nameof(factor), factor.Days, "Day count is negative (reversed interval); accrual requires start <= end.");
         }
-        return (decimal)principal.Cents * rateBps * factor.Days / ((decimal)factor.Basis * 10_000);
+        return (decimal)principal.Cents * rateBps * factor.Days / ((decimal)factor.Basis * Rate.BasisPointsPerUnit);
     }
 
     // Step-up: attribute each segment's days that fall inside the window [windowStart, windowEnd]
@@ -328,7 +328,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
             // Same (Days/Basis) shape as SimpleInterest — accumulate un-rounded so the final
             // cross-to-Money is the single rounding boundary (ADR-PC-010 §P1–§P2).
             accrued += (decimal)principal.Cents * Segments[i].RateBasisPoints * segDays
-                     / ((decimal)basis * 10_000);
+                     / ((decimal)basis * Rate.BasisPointsPerUnit);
         }
         return accrued;
     }
@@ -361,7 +361,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
 
             long trancheCents = trancheTo - trancheFrom;
             accrued += (decimal)trancheCents * Segments[i].RateBasisPoints * factor.Days
-                     / ((decimal)factor.Basis * 10_000);
+                     / ((decimal)factor.Basis * Rate.BasisPointsPerUnit);
         }
         return accrued;
     }

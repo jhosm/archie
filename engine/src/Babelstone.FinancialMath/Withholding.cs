@@ -21,8 +21,9 @@ public readonly record struct WithholdingResult(Money Gross, Money Tax, Money Ne
 /// </summary>
 public static class Withholding
 {
-    // Int, not a decimal field (BMNY002 / ADR-PC-010 §P1); promotes to decimal at the boundary.
-    private const int BasisPointsPerUnit = 10_000;
+    // The per-unit basis-point scale (100% = 10,000 bps) is the shared kernel constant
+    // Rate.BasisPointsPerUnit (bd babelstone-5r9n.6) — int, not a decimal field (BMNY002 /
+    // ADR-PC-010 §P1); it promotes to decimal at the boundary.
 
     /// <summary>
     /// Withhold tax from one gross interest flow. Tax is rounded once at the boundary
@@ -33,11 +34,11 @@ public static class Withholding
     /// <exception cref="ArgumentOutOfRangeException">If the rate is outside [0, 10000].</exception>
     public static WithholdingResult Withhold(Money grossInterest, int withholdingRateBps)
     {
-        if (withholdingRateBps is < 0 or > 10_000)
+        if (withholdingRateBps < 0 || withholdingRateBps > Rate.BasisPointsPerUnit)
             throw new ArgumentOutOfRangeException(
                 nameof(withholdingRateBps), withholdingRateBps, "Withholding rate must be within [0, 10000] bps.");
 
-        Money tax = Money.FromCents((decimal)grossInterest.Cents * withholdingRateBps / BasisPointsPerUnit);
+        Money tax = Money.FromCents((decimal)grossInterest.Cents * withholdingRateBps / Rate.BasisPointsPerUnit);
         Money net = grossInterest - tax;
         return new WithholdingResult(grossInterest, tax, net);
     }

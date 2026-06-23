@@ -20,7 +20,8 @@ namespace Babelstone.FinancialMath;
 /// </remarks>
 public static class Rates
 {
-    private const int BasisPointsPerUnit = 10_000;
+    // The per-unit basis-point scale (100% = 10,000 bps) is the shared kernel constant
+    // Rate.Rate.BasisPointsPerUnit (bd babelstone-5r9n.6); it promotes to decimal at each boundary.
 
     /// <summary>
     /// Annual effective rate of a periodic rate compounded <paramref name="periodsPerYear"/>
@@ -58,9 +59,9 @@ public static class Rates
             throw new ArgumentOutOfRangeException(
                 nameof(periodsPerYear), periodsPerYear, "Compounding frequency must be positive.");
 
-        // (decimal) cast is load-bearing: periodsPerYear * BasisPointsPerUnit is an int, so
+        // (decimal) cast is load-bearing: periodsPerYear * Rate.BasisPointsPerUnit is an int, so
         // tanBps / that would be integer division (600 / 120000 = 0) without it.
-        decimal periodicRate = tanBps / (periodsPerYear * (decimal)BasisPointsPerUnit);
+        decimal periodicRate = tanBps / (periodsPerYear * (decimal)Rate.BasisPointsPerUnit);
         return Annualize(periodicRate, periodsPerYear);
     }
 

@@ -273,12 +273,11 @@ public static class PersonalLoanDecider
         // under-states). Computed in ONE full-precision decimal expression and crossed to Money exactly
         // once (ADR-PC-010 §P1–§P2): the per-period interest (cents × periodic_bps / 10000) is NOT rounded
         // before being multiplied by remainingInstallments — rounding the per-period leg first and then
-        // combining is the "round each step then combine" shape §P2 forbids. The same `cents × bps / 10000`
-        // form Amortization.PeriodInterest uses internally, lifted here so the single rounding lands after
-        // the multiply by the period count.
-        const int basisPointsPerUnit = 10_000;
-        decimal ceiling = (decimal)repaymentAmount.Cents
-            * position.PeriodicRateBasisPoints / basisPointsPerUnit
+        // combining is the "round each step then combine" shape §P2 forbids. The per-period numerator is
+        // the shared, UN-ROUNDED kernel helper Rate.ScaledByBasisPoints (bd babelstone-5r9n.6) — the same
+        // `cents × bps / 10000` form the kernel uses internally — so the single rounding lands here, after
+        // the multiply by the period count, and the 10,000 scale is no longer re-declared in this family.
+        decimal ceiling = Rate.ScaledByBasisPoints(repaymentAmount.Cents, position.PeriodicRateBasisPoints)
             * remainingInstallments;
         return Money.FromCents(ceiling);
     }
