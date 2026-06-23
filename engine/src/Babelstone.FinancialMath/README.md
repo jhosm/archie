@@ -11,13 +11,13 @@ it is shared infrastructure, referenced *by* family deciders, never the reverse.
 ## Cohesion policy / family-agnosticism
 
 **In plain English.** The kernel is meant to be a shared toolbox that names no single product.
-Its doc-comments freely talk about *deposits*, *crescente* / *escalonada* rate shapes
-(`RateSchedule`), and *loans* / *borrowers* (`Amortization`) — and that is **allowed and deliberate**,
-exactly as the financial-math reference names *Term Deposit*, *Credit*, and the *Price* system
-throughout its prose. This note records two rules so the next family author knows what is and is not
-a violation: (1) the kernel project must never *depend on* (reference) a family; and (2) the
-**executable surface** — type, method, parameter, and enum names, plus thrown-exception messages —
-stays *math-first*, because that surface is what a second family's code reads and compiles against.
+Its doc-comments freely talk about *deposits* (`RateSchedule`) and *loans* / *borrowers*
+(`Amortization`) — and that is **allowed and deliberate**, exactly as the financial-math reference
+names *Term Deposit*, *Credit*, and the *Price* system throughout its prose. This note records two
+rules so the next family author knows what is and is not a violation: (1) the kernel project must
+never *depend on* (reference) a family; and (2) the **executable surface** — type, method, parameter,
+and enum names, plus thrown-exception messages — stays *math-first and in plain English*, because that
+surface is what a second family's code reads and compiles against.
 Product names belong in the prose, not on the contract. The boundary that keeps the engine
 family-agnostic is the dependency arrow; the naming-altitude rule keeps the shared surface honest.
 
@@ -47,11 +47,11 @@ coupon windows); a primitive that amortizes a *personal loan* may say so (`Amort
 personal loan", "borrower"). **The executable surface, however, stays math-first** — types, methods,
 parameters, enum members, and thrown-exception messages name the *operation* (`Amortization`,
 `LevelInstallment`, `Schedule`, `RateSchedule`, `StepUp`/`AmountTiered`, `anchorStart`, `capBps`), not
-a family, because a second family's caller reads and compiles against exactly that surface. A rate
-*shape*'s traditional name is part of the math, not a family tag — so `StepUp` glossed as *crescente*
-and `AmountTiered` as *escalonada* are fine, exactly as the fin-math reference names the level-installment
-system "Price (French)". The next family author adds their product's math here and names it for what it
-does, **subject to the limits below.**
+a family, because a second family's caller reads and compiles against exactly that surface. That
+surface is also kept in **plain English**: the rate shapes are `StepUp` and `AmountTiered` (plain
+English), not the non-English terms the fin-math spec uses for these shapes — non-English domain terms
+stay in the spec's prose, never in code. The next family author adds their product's math here and names it
+for what it does, **subject to the limits below.**
 
 What family-agnosticism actually forbids — and what this kernel must keep honouring — is the
 **dependency edge**, gated mechanically by `ENGINE_FAMILY_AGNOSTIC`
@@ -70,7 +70,7 @@ Verifiable commitment 1):
    would either couple it to one family or fail to compile against the other.)
 
 So the rule the next family author follows is: **name your types, methods, parameters, and error
-messages for the *math*; name the product freely in doc-comments and examples; keep your inputs
+messages for the *math*, in plain English; name the product freely in doc-comments and examples; keep your inputs
 generic; and add no `families/**` reference.** Prose describes; the executable surface and references
 are the contract. References couple hardest (and are the only dimension a gate can catch); a family
 noun on the executable surface mis-signals ownership the moment a second family calls in — which is
