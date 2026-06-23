@@ -409,8 +409,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # BLOCKED — leave stubbed: /acl is still a Dockerfile + README stub with 0 .cs
+      # (no buildable source). Per bd babelstone-1oia, do NOT fabricate build/test steps
+      # for a service that has no source — a `dotnet build` here would have nothing to
+      # compile. Fill this leg (dotnet build + contract tests, mirroring the orchestrator
+      # + notification unit tiers) when the ACL service gains source via its own build task.
       - name: Build + contract tests (ADR-IC-012, ADR-IC-013)
-        run: echo "TODO - dotnet build plus contract tests; lands with the ACL build task"
+        run: echo "TODO - dotnet build plus contract tests; awaits the ACL service gaining source (its build task)"
 
   mcp-server:
     needs: changes
@@ -457,8 +462,44 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Build + contract tests (ADR-IC-011, ADR-IC-013)
-        run: echo "TODO - dotnet build plus contract tests; lands with the notification build task"
+      # Pin the toolchain from mise.toml (the single source of truth, ADR-PC-010
+      # .NET 10 LTS; the notification runtime is ADR-IC-011 ".NET, stack-coherent
+      # with the engine") so CI builds against the same SDK as every dev machine —
+      # no second version pin in this YAML to drift from it.
+      - uses: jdx/mise-action@v4
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('notification/**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Build + unit/analyser tests (ADR-IC-011, ADR-IC-009 unit tier)
+        # restore + build (warnings-as-errors via the csproj's own TreatWarningsAsErrors —
+        # the notification host carries its build settings inline, not via the engine's
+        # Directory.Build.props, since it is extraction-ready per ADR-PC-019 §P2) + the
+        # Docker-free test lane. The NOTIFICATION_FAMILY_AGNOSTIC fitness test
+        # (NotificationFamilyAgnosticTests — the core references no families/** and no
+        # engine-spine project, ADR-IC-019 §D2/§P2) and the ADR-PC-027 read-client tests
+        # (DepositReadClientTests — the GET /v1/deposits/{id} contract over a fake handler)
+        # run here; both need no infrastructure, so the Category!=Integration convention
+        # the engine + orchestrator jobs use excludes any future Testcontainers tier.
+        # `dotnet test` takes ONE path — the single test project.
+        #
+        # NB: there is NO notification contract-test project (ADR-IC-013 boundary
+        # contracts) and NO Testcontainers Integration tier yet — the host is a
+        # skeleton (read access only; bd babelstone-60n8.1/.5). Add a contract-test leg
+        # and a `--filter "Category=Integration"` lane here when those land (the
+        # scheduler/emission children, bd babelstone-60n8.2/.3), mirroring the
+        # orchestrator job's two-tier shape.
+        run: |
+          dotnet build notification/src/Babelstone.Notification/Babelstone.Notification.csproj --configuration Release --nologo
+          dotnet test notification/tests/Babelstone.Notification.Tests/Babelstone.Notification.Tests.csproj --configuration Release --nologo --filter "Category!=Integration"
 
   product-configs:
     needs: changes
