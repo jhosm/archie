@@ -165,7 +165,24 @@ public sealed class TermDepositHostModule : IFamilyHostModule
         // DepositPosition here, composing the family runtime + the shared event store.
         services.AddSingleton(serviceProvider => new PackMigrationService<DepositPosition>(
             serviceProvider.GetRequiredService<AggregateRuntime<DepositPosition>>(),
-            serviceProvider.GetRequiredService<IEventStore>()));
+            serviceProvider.GetRequiredService<IEventStore>(),
+            FoldModule.FamilyName));
+
+        // Expose the closed write-path through the family-AGNOSTIC IPackMigrationService facade so the
+        // single dispatching /v1/pack-migrations route (registered once at host level) can select it by
+        // product_family without naming DepositPosition (ADR-PC-021 §P2). The same singleton instance is
+        // returned — the facade is just the non-generic view the endpoint dispatches over.
+        services.AddSingleton<IPackMigrationService>(
+            serviceProvider => serviceProvider.GetRequiredService<PackMigrationService<DepositPosition>>());
+
+        // The family side of the surface §3.6 instance_filter seam (bd babelstone-7giq): resolve the
+        // { product_family, currently_active } predicate to the live deposit population over the
+        // FAMILY-OWNED read model. The family owns what "active" MEANS (the single DepositLifecycle.Active);
+        // the spine hands over a family-agnostic predicate and gets back a flat id list it feeds, unchanged,
+        // into the existing PackMigrationService preview/migrate loop.
+        services.AddSingleton<IPackMigrationInstanceResolver>(
+            serviceProvider => new DepositInstanceFilterResolver(
+                serviceProvider.GetRequiredService<IDepositReadModelStore>(), FoldModule.FamilyName));
 
         // D.2 projection runtime (ADR-PC-002 §P4, two-modes §5.4): the family declares its
         // projections (currently just the deposit position) + their folds; the generic runtime
@@ -234,11 +251,11 @@ public sealed class TermDepositHostModule : IFamilyHostModule
     public void MapEndpoints(IEndpointRouteBuilder app)
     {
         DepositsEndpoints.Map(app);
-        // The operator pack-migration command surface (ADR-PC-009 §P3 / surface §3.6): POST
-        // /v1/pack-migrations. The endpoint + HTTP contract are family-AGNOSTIC and live in the hosting
-        // spine (Babelstone.Engine.Hosting.PackMigrationsEndpoints); the family only closes the generic
-        // over its DepositPosition, which resolves PackMigrationService<DepositPosition> from DI.
-        PackMigrationsEndpoints.Map<DepositPosition>(app);
+        // The operator pack-migration command surface (POST /v1/pack-migrations, ADR-PC-009 §P3 / surface
+        // §3.6) is NO LONGER mapped per family: it is registered ONCE at host level (Program.cs) because
+        // the route is identical across families — a per-family Map would collide (AmbiguousMatchException)
+        // the moment a second family is hosted. The single route dispatches on product_family to this
+        // family's registered IPackMigrationService / IPackMigrationInstanceResolver (wired above).
     }
 }
 

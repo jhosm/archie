@@ -36,7 +36,7 @@ public sealed class PackMigrationServiceTests(EngineFixture fixture)
         new NullPiiProtector(), new FixedTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)),
         () => new CounterState(0));
 
-    private PackMigrationService<CounterState> Service() => new(Runtime(), fixture.Store);
+    private PackMigrationService<CounterState> Service() => new(Runtime(), fixture.Store, "counter");
 
     private static AppendContext ContextPinned(string packVersion) => new(
         Family: "counter",

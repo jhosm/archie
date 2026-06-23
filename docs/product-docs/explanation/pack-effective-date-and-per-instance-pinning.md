@@ -64,7 +64,7 @@ version on the event *is* the answer.
 
 ## Retroactive change is possible — but only as an explicit, audited migration
 
-> **Built in v1 (`babelstone-fk7m.10`), with one narrowing.** The `PackVersionMigrated`
+> **Built in v1 (`babelstone-fk7m.10`, `babelstone-7giq`).** The `PackVersionMigrated`
 > event, its pure (no-op) fold, and the operator `POST /v1/pack-migrations` command
 > described below are implemented: you can preview a migration's matched set and re-pin
 > a live instance to a newer pack today (the re-pin rides the event envelope, exactly as
@@ -72,10 +72,13 @@ version on the event *is* the answer.
 > specifies). The migration event is **store-only** — it is appended, folded, and
 > replayable, but carries no Avro schema and never reaches the durable bus, because no
 > downstream consumer reacts to it ([ADR-IC-017 §P1](../../product-management/integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md);
-> the only downstream reaction is engine-internal projection rebuild). The one narrowing:
-> the instance set is an **explicit id list** for now — the predicate `instance_filter`
-> (e.g. `{ product_family, currently_active }`) resolved over the read model is a tracked
-> follow-up (it needs a cross-stream query the family read model owns).
+> the only downstream reaction is engine-internal projection rebuild). The target set is
+> named either way: an **explicit id list**, or the predicate `instance_filter`
+> (e.g. `{ product_family, currently_active }`) resolved over the family read model
+> (`babelstone-7giq`) — the predicate widens to the live population and the per-instance
+> `from_pack_version` check narrows it, so only the still-on-`from` instances are re-pinned.
+> v1 supports `currently_active: true` (the live population); re-pinning a terminal instance
+> accrues no further events, so the complement is a deliberate future decision, not a default.
 
 "Pinned for life" does not mean a deposit can *never* move to a new pack. It means
 it never moves **silently**. The only way to re-pin an existing instance is an

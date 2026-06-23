@@ -113,6 +113,139 @@ public sealed class PackMigrationIntegrationTests(ConstitutionFixture fixture)
         Assert.Equal(beforeMigration.Version + 1, afterMigration.Version);
     }
 
+    // ---- Predicate instance_filter over the read model (bd babelstone-7giq, surface §3.6) ----
+
+    [Fact]
+    public async Task ListActiveStreamIds_returns_only_the_live_lifecycle_rows_in_a_stable_order()
+    {
+        var readModel = new PostgresDepositReadModelStore(fixture.ConnectionString);
+        await readModel.TruncateAsync();
+
+        var active1 = await UpsertRowAsync(readModel, nameof(DepositLifecycle.Active));
+        var active2 = await UpsertRowAsync(readModel, nameof(DepositLifecycle.Active));
+        var matured = await UpsertRowAsync(readModel, nameof(DepositLifecycle.Matured));
+        var failed = await UpsertRowAsync(readModel, nameof(DepositLifecycle.Failed));
+        // Lower-case "active" must NOT match — currently_active binds the case-sensitive enum literal.
+        var miscased = await UpsertRowAsync(readModel, "active");
+
+        var ids = await readModel.ListActiveStreamIdsAsync();
+
+        Assert.Contains(active1, ids);
+        Assert.Contains(active2, ids);
+        Assert.DoesNotContain(matured, ids);
+        Assert.DoesNotContain(failed, ids);
+        Assert.DoesNotContain(miscased, ids);
+        // Stable order (ORDER BY stream_id) — a second read yields the identical sequence. We assert
+        // STABILITY rather than a specific order, since Postgres uuid ordering and .NET Guid ordering
+        // differ and the contract is determinism, not a particular permutation.
+        Assert.Equal(ids, await readModel.ListActiveStreamIdsAsync());
+    }
+
+    [Fact]
+    public async Task Resolver_resolves_the_active_population_and_rejects_unsupported_predicates()
+    {
+        var readModel = new PostgresDepositReadModelStore(fixture.ConnectionString);
+        await readModel.TruncateAsync();
+        var active = await UpsertRowAsync(readModel, nameof(DepositLifecycle.Active));
+        var matured = await UpsertRowAsync(readModel, nameof(DepositLifecycle.Matured));
+
+        var resolver = new DepositInstanceFilterResolver(readModel, "term_deposit");
+
+        var resolved = await resolver.ResolveAsync(new InstanceFilter("term_deposit", true));
+        Assert.Contains(active, resolved);
+        Assert.DoesNotContain(matured, resolved);
+
+        // Internal invariants: a wrong family or currently_active=false is a wiring bug, not operator input
+        // (the endpoint screens both first), so the resolver fails loud rather than mis-resolving.
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => resolver.ResolveAsync(new InstanceFilter("personal_loan", true)));
+        await Assert.ThrowsAsync<NotSupportedException>(
+            () => resolver.ResolveAsync(new InstanceFilter("term_deposit", false)));
+    }
+
+    [Fact]
+    public async Task Predicate_migrates_the_active_on_from_population_excluding_terminal_and_already_migrated()
+    {
+        await fixture.EnsureRateSheetAsync(SharedSheet);
+        var (_, service, migration) = Compose(fixture.ConnectionString);
+        var readModel = new PostgresDepositReadModelStore(fixture.ConnectionString);
+        await readModel.TruncateAsync();
+
+        // A mixed population, all constituted on pt.2026.1 (real event streams the migration reads heads of):
+        //   active1, active2  — live, on FROM            → the predicate selects AND the head-pin keeps them
+        //   terminal          — read model says Matured  → the predicate EXCLUDES it (not live)
+        //   alreadyMigrated   — live in the read model, but its events are pre-migrated to TO
+        //                       → the predicate selects it, the head-pin guard NARROWS it out
+        var active1 = await ConstituteAsync(service);
+        var active2 = await ConstituteAsync(service);
+        var terminal = await ConstituteAsync(service);
+        var alreadyMigrated = await ConstituteAsync(service);
+
+        await UpsertRowForStreamAsync(readModel, active1, nameof(DepositLifecycle.Active));
+        await UpsertRowForStreamAsync(readModel, active2, nameof(DepositLifecycle.Active));
+        await UpsertRowForStreamAsync(readModel, terminal, nameof(DepositLifecycle.Matured));
+        await UpsertRowForStreamAsync(readModel, alreadyMigrated, nameof(DepositLifecycle.Active));
+
+        // Pre-migrate alreadyMigrated so its head is on TO before the predicate run; its read-model row
+        // stays Active, so the predicate still SELECTS it — only the head-pin guard removes it.
+        await migration.MigrateAsync(
+            FromPack, ToPack, [alreadyMigrated], "mig-pre", "operator:regulatory-ops",
+            new DateTimeOffset(2026, 12, 1, 0, 0, 0, TimeSpan.Zero));
+        var alreadyMigratedEvents = await fixture.CountAsync("events", "stream_id", alreadyMigrated);
+
+        // Resolve the predicate { product_family: term_deposit, currently_active: true } over the read model.
+        var resolver = new DepositInstanceFilterResolver(readModel, "term_deposit");
+        var candidates = await resolver.ResolveAsync(new InstanceFilter("term_deposit", true));
+
+        // The predicate WIDENS to the live population: the three Active rows, NOT the Matured one.
+        Assert.Contains(active1, candidates);
+        Assert.Contains(active2, candidates);
+        Assert.Contains(alreadyMigrated, candidates);
+        Assert.DoesNotContain(terminal, candidates);
+
+        // Preview NARROWS to those still on FROM (alreadyMigrated is on TO) and emits nothing.
+        var eventsBeforePreview = await fixture.CountAsync("events", "stream_id", active1);
+        var preview = await migration.PreviewAsync(FromPack, candidates);
+        Assert.Equal(new[] { active1, active2 }, preview.OrderBy(SortKey(active1, active2)).ToArray());
+        Assert.Equal(eventsBeforePreview, await fixture.CountAsync("events", "stream_id", active1)); // side-effect-free
+
+        // Emit: exactly the Active-and-on-FROM subset is re-pinned.
+        var migrated = await migration.MigrateAsync(
+            FromPack, ToPack, candidates, "mig-predicate", "operator:regulatory-ops",
+            new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        Assert.Equal(new[] { active1, active2 }, migrated.OrderBy(SortKey(active1, active2)).ToArray());
+
+        // active1/active2 now head on TO; terminal was never selected (still on FROM); alreadyMigrated
+        // gained NO second migration event (the head-pin guard skipped it in the predicate run).
+        Assert.Equal(ToPack, (await PackVersionsBySequenceAsync(active1))[^1]);
+        Assert.Equal(ToPack, (await PackVersionsBySequenceAsync(active2))[^1]);
+        Assert.Equal(FromPack, (await PackVersionsBySequenceAsync(terminal))[^1]);
+        Assert.Equal(alreadyMigratedEvents, await fixture.CountAsync("events", "stream_id", alreadyMigrated));
+    }
+
+    // A stable comparer so the order-insensitive assertions above read clearly: sort the matched set by
+    // its position among the two known active ids (avoids depending on Postgres-vs-.NET uuid ordering).
+    private static Func<Guid, int> SortKey(Guid first, Guid second)
+        => id => id == first ? 0 : id == second ? 1 : 2;
+
+    private static async Task<Guid> UpsertRowAsync(PostgresDepositReadModelStore store, string lifecycle)
+    {
+        var streamId = Guid.NewGuid();
+        await UpsertRowForStreamAsync(store, streamId, lifecycle);
+        return streamId;
+    }
+
+    private static Task UpsertRowForStreamAsync(
+        PostgresDepositReadModelStore store, Guid streamId, string lifecycle)
+        => store.UpsertAsync(new DepositReadModelRow(
+            StreamId: streamId, Sor: "engine", PrincipalCents: 1_000_000, TanBasisPoints: 300,
+            RateSheetVersionId: "pt-deposits-2026.1", ProductCode: "dpz_pt_12m_juros_venc", TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 15), MaturityDate: new DateOnly(2027, 1, 15),
+            InterestVariant: "AT_MATURITY", AutoRenewalPolicy: "NONE", PaymentPeriodMonths: 0,
+            Lifecycle: lifecycle, AccruedGrossInterestCents: 0, WithholdingToDateCents: 0,
+            NetInterestCents: 0, TotalPayoutCents: 0, CouponsPaid: 0, Detail: Array.Empty<byte>(),
+            LastSequence: 0, LastUpdated: new DateTimeOffset(2026, 1, 15, 0, 0, 0, TimeSpan.Zero)));
+
     private static async Task<Guid> ConstituteAsync(TermDepositConstitutionService service)
     {
         var depositId = Guid.NewGuid();
@@ -172,7 +305,7 @@ public sealed class PackMigrationIntegrationTests(ConstitutionFixture fixture)
         var service = new TermDepositConstitutionService(
             runtime, new PostgresRateSheetStore(connectionString), new RecordingSettlementPort(),
             SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros");
-        var migration = new PackMigrationService<DepositPosition>(runtime, store);
+        var migration = new PackMigrationService<DepositPosition>(runtime, store, "term_deposit");
         return (runtime, service, migration);
     }
 }

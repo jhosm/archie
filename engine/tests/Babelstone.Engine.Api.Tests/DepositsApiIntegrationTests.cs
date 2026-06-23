@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Babelstone.Engine;
 using Babelstone.Engine.Api;
+using Babelstone.Engine.Hosting;
 using Babelstone.EventStore.Migrations;
 using Babelstone.Families.TermDeposit;
 using Babelstone.Families.TermDeposit.Application;
@@ -595,6 +596,49 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         // as_of axis does not change the unknown-stream verdict.
         var response = await _client.GetAsync($"/v1/deposits/{Guid.NewGuid()}?as_of_sequence=0");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Pack_migration_predicate_preview_over_HTTP_resolves_the_active_population()
+    {
+        // bd babelstone-7giq end-to-end over the real host: the single /v1/pack-migrations route
+        // (registered once at host level) dispatches on product_family to the term-deposit family's
+        // DI-wired IPackMigrationInstanceResolver + IPackMigrationService, resolves the predicate over
+        // the read model, and previews the matched population — proving the wire path, not just the unit.
+        var depositId = await ConstituteActiveDepositAsync();
+
+        // The predicate resolves over the read model, populated by the async relay — wait for the row.
+        var row = await EventuallyAsync(
+            () => new PostgresDepositReadModelStore(_pg.GetConnectionString()).GetAsync(depositId));
+        Assert.NotNull(row);
+        Assert.Equal("Active", row!.Lifecycle);
+
+        var request = new PackMigrationRequest(
+            FromPackVersion: "pt.2026.1", ToPackVersion: "pt.2027.1",
+            MigrationId: "mig-http-predicate", OperatorActor: "operator:regulatory-ops",
+            InstanceFilter: new InstanceFilter("term_deposit", true), Preview: true);
+
+        var response = await _client.PostAsJsonAsync("/v1/pack-migrations", request, SnakeCase);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<PackMigrationResponse>(SnakeCase);
+        Assert.NotNull(body);
+        Assert.False(body!.Migrated);                 // preview emits nothing
+        Assert.Contains(depositId, body.InstanceIds); // the live deposit, selected by the predicate
+    }
+
+    [Fact]
+    public async Task Pack_migration_with_both_selectors_is_422_over_HTTP()
+    {
+        // The XOR guard reached through the real handler — proves the endpoint is invoked and the
+        // injected service/resolver collections bind (the Plan runs over them).
+        var request = new PackMigrationRequest(
+            FromPackVersion: "pt.2026.1", ToPackVersion: "pt.2027.1",
+            MigrationId: "mig-http-xor", OperatorActor: "operator:ops",
+            InstanceIds: [Guid.NewGuid()], InstanceFilter: new InstanceFilter("term_deposit", true));
+
+        var response = await _client.PostAsJsonAsync("/v1/pack-migrations", request, SnakeCase);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
     }
 
     private static async Task<T?> EventuallyAsync<T>(Func<Task<T?>> probe) where T : class

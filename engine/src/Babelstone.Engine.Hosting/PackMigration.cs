@@ -6,6 +6,35 @@ using Babelstone.EventStore;
 namespace Babelstone.Engine.Hosting;
 
 /// <summary>
+/// The family-AGNOSTIC, non-generic facade over <see cref="PackMigrationService{TState}"/>. In plain
+/// English: the single <c>POST /v1/pack-migrations</c> route must pick the right family's migration
+/// write-path at request time, keyed on the request's <c>product_family</c> — but the generic service is
+/// closed over a family's <c>TState</c> the spine must not name. This facade exposes the same
+/// preview/migrate operations (all already family-agnostic — Guids and version strings, no <c>TState</c>)
+/// plus the <see cref="ProductFamily"/> selection key, so the endpoint dispatches over
+/// <c>IEnumerable&lt;IPackMigrationService&gt;</c> without ever naming a family (ADR-PC-021 §P2).
+/// </summary>
+public interface IPackMigrationService
+{
+    /// <summary>The product family this write-path migrates (e.g. <c>term_deposit</c>) — the dispatch key the endpoint selects on.</summary>
+    string ProductFamily { get; }
+
+    /// <summary>Preview the matched set (those of <paramref name="instanceIds"/> currently on <paramref name="fromPackVersion"/>) WITHOUT emitting anything.</summary>
+    Task<IReadOnlyList<Guid>> PreviewAsync(
+        string fromPackVersion, IReadOnlyList<Guid> instanceIds, CancellationToken ct = default);
+
+    /// <summary>Re-pin each matched instance from <paramref name="fromPackVersion"/> to <paramref name="toPackVersion"/>, returning the instances actually re-pinned.</summary>
+    Task<IReadOnlyList<Guid>> MigrateAsync(
+        string fromPackVersion,
+        string toPackVersion,
+        IReadOnlyList<Guid> instanceIds,
+        string migrationId,
+        string operatorActor,
+        DateTimeOffset migratedAt,
+        CancellationToken ct = default);
+}
+
+/// <summary>
 /// The operator pack-migration write-path (ADR-PC-009 §P3, surface §3.6), generic over ANY family
 /// projection <typeparamref name="TState"/> so it stays FAMILY-AGNOSTIC (ADR-PC-021 §A9/§A11). In plain
 /// English: a live instance is locked for life to the regulatory pack it was opened under, and the ONLY
@@ -26,8 +55,10 @@ namespace Babelstone.Engine.Hosting;
 /// the decider-in-the-generic-engine placement). Its home is <c>Babelstone.Engine.Hosting</c> — the
 /// non-spine assembly ADR-PC-021 §A9/§A11 created for exactly this family-agnostic host/command-side
 /// plumbing, beside the <see cref="PackMigrationsEndpoints"/> operator surface. A family closes the
-/// generic by resolving <c>PackMigrationService&lt;ItsState&gt;</c> in its host module and exposing the
-/// operator surface through <c>PackMigrationsEndpoints.Map&lt;ItsState&gt;</c>.
+/// generic by resolving <c>PackMigrationService&lt;ItsState&gt;</c> in its host module and registering it
+/// behind the <see cref="IPackMigrationService"/> facade; the operator surface
+/// (<c>PackMigrationsEndpoints.Map</c>) is registered ONCE at host level and dispatches to that facade by
+/// <c>product_family</c>.
 /// </para>
 /// <para>
 /// <b>Re-pin lives on the ENVELOPE.</b> The migration event is appended with
@@ -53,15 +84,27 @@ namespace Babelstone.Engine.Hosting;
 /// <para>
 /// <b>Per-family runtime, engine-declared event.</b> The event is engine-owned and family-agnostic, but
 /// it is appended to a concrete family stream through that family's <see cref="AggregateRuntime{TState}"/>
-/// (which knows the family + schema_version pins). The instance set is an EXPLICIT id list — the sound
-/// minimal filter. A predicate <c>instance_filter</c> (e.g. <c>{ product_family, currently_active }</c>,
-/// surface §3.6) resolved over the read model is a follow-up: it needs a cross-stream query the family
-/// read model owns, out of this write-path's scope.
+/// (which knows the family + schema_version pins). This service always consumes an EXPLICIT id list — the
+/// sound minimal filter. A predicate <c>instance_filter</c> (e.g. <c>{ product_family, currently_active }</c>,
+/// surface §3.6) is resolved to that id list UPSTREAM, at the endpoint, by a family-supplied
+/// <see cref="IPackMigrationInstanceResolver"/> over the family read model (bd babelstone-7giq) — so the
+/// predicate widens to a candidate set and this service's per-head <c>from_pack_version</c> check narrows
+/// it, with preview/idempotency unchanged. The cross-stream query stays family-owned; this write-path
+/// never grows a read-model dependency.
 /// </para>
 /// </remarks>
 /// <typeparam name="TState">The family's folded projection state the migration's no-op fold runs over.</typeparam>
-public sealed class PackMigrationService<TState>(AggregateRuntime<TState> runtime, IEventStore store)
+public sealed class PackMigrationService<TState>(
+    AggregateRuntime<TState> runtime, IEventStore store, string productFamily) : IPackMigrationService
 {
+    /// <summary>
+    /// The product family this write-path migrates (the family supplies it from its own
+    /// <c>FamilyName</c> when it closes the generic), so the single dispatching endpoint can select this
+    /// service by <c>product_family</c> through the <see cref="IPackMigrationService"/> facade. The spine
+    /// never names the family — the family hands its own name across the seam (ADR-PC-021 §P2).
+    /// </summary>
+    public string ProductFamily => productFamily;
+
     /// <summary>
     /// The matched set for a migration WITHOUT emitting anything: the instances (of those supplied)
     /// whose current pin equals <paramref name="fromPackVersion"/>. An instance with no events, or

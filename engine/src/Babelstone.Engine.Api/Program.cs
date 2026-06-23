@@ -329,6 +329,12 @@ foreach (var module in familyModules)
     module.MapEndpoints(app);
 }
 
+// The operator pack-migration command surface (ADR-PC-009 §P3 / surface §3.6): POST /v1/pack-migrations,
+// registered ONCE at host level (family-agnostic). It dispatches on the request's product_family to the
+// right family's registered IPackMigrationService / IPackMigrationInstanceResolver — so a multi-family
+// host has ONE route, not the per-family collision a Map<TState>-per-module loop would create.
+PackMigrationsEndpoints.Map(app);
+
 app.Run();
 
 // Exposed for WebApplicationFactory<Program> in the integration tests.
