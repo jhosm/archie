@@ -114,6 +114,36 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
         return rows;
     }
 
+    public async Task<IReadOnlyList<Guid>> ListActiveStreamIdsAsync(CancellationToken ct = default)
+    {
+        // currently_active ⇔ the SINGLE live lifecycle (DepositLifecycle.Active); every other label is
+        // terminal (Matured/Failed/Renewed/TerminatedEarly/TransferredToHeirs/Erased) or never persists a
+        // row (Pending). nameof keeps the literal in lock-step with the enum — a rename breaks the build,
+        // not the query silently. ORDER BY stream_id is a deterministic, stable order (cf.
+        // ListByMaturityAsync); the deposits_lifecycle_idx B-tree (migration 0002) answers the predicate
+        // with an index scan. Ids only — the migration write-path consumes a Guid list, not rows.
+        const string sql = """
+            SELECT stream_id
+            FROM read_model.deposits
+            WHERE lifecycle = @lifecycle
+            ORDER BY stream_id ASC;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("lifecycle", nameof(DepositLifecycle.Active));
+
+        var ids = new List<Guid>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            ids.Add(reader.GetGuid(0));
+        }
+
+        return ids;
+    }
+
     public async Task TruncateAsync(CancellationToken ct = default)
     {
         // ADR-IC-005 §P5 rebuild. ASSUMPTION: exactly one read-model runner owns
