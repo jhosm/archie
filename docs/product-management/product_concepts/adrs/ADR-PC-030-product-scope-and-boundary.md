@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-06-20 |
 | Deciders | jhosm |
 | Shape | Tool-selection |
@@ -236,6 +236,6 @@ No *new* executable commitments are added by this scope/posture decision itself 
 
 ---
 
-*Decided 2026-06-20 by jhosm.*
+*Decided 2026-06-20 by jhosm. Accepted 2026-06-23.*
 *Revised 2026-06-20 (pre-acceptance): widened from a narrow product/accrual kernel (former posture A) to a **core product & account ledger** (posture B) — the engine owns transactional balance accounts as a general 4th product shape and the funds-and-rules core of authorization (stages 3–5: available balance, pack rules/descoberto autorizado, the hold) as a real-time dependency, while still stopping at the wire (no rails/scheme/SCA/fraud). Adds the conta à ordem to the roadmap as the ADR-PC-016 v4 destination. The candidate set was corrected: the original framing omitted this posture between the narrow kernel and full transaction processing.*
 *Revised 2026-06-23 (pre-acceptance): named **succession** explicitly as a recorded-not-executed instance (§Decision "Succession is upstream-decided" + §P1 item 6 + the §Residual-risks blur mitigation) — the engine records `DepositTransferredToHeirs` but does not adjudicate the succession or pay the heir; the heir payout stays upstream/legacy through v1–v3, with a named conta à ordem v4 re-opening trigger. Resolves the heir-credit-vs-settlement-command question (bd `babelstone-k6r8.12`): the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) five-command table is unchanged, and the companion [ADR-PC-012](./ADR-PC-012-gl-posting-signal-contract.md) amendment of the same date drops transfer-to-heirs from the engine-emitted GL subset.*
