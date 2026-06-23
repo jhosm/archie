@@ -1,0 +1,23 @@
+# A general-purpose (higher legal cap) 36-month personal loan on the standard
+# pricing role — the canonical personal_loan accept shape. It conforms through
+# ALL FOUR depths when validated against a pack that declares the personal_loan
+# family (schema pin + rate-sheet ref): depths 1–2 are the closed-schema unify,
+# depth 3 the pack-compliance (pack/schema pins match, the pack can price the
+# family), and depth 4 a no-op (a loan carries no day-count/renewal/stepped/
+# banded/partial-withdrawal sub-block, so every depth-4 rule is presence-guarded
+# off). The fixture-driven test is what proves the loan family is recognised at
+# all rather than rejected unknown-family.
+variant_id: cp_pt_general_36m
+schema: personal_loan@2026.1
+pack: pt.2026.1
+currency: EUR
+term_months: 36
+purpose: general
+rate:
+  fixed:
+    rate_ref: { sheet: live, role_selector: standard }
+early_repayment:
+  commission_basis_points: 50
+principal_bounds:
+  min_cents: 100000
+  max_cents: 7500000

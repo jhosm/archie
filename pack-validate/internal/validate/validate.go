@@ -53,16 +53,25 @@ func Run(opts Options) (*diag.Report, error) {
 		return rep, nil
 	}
 
+	// Discover the families this schema dir carries (families/*.cue). A schema dir
+	// that cannot be read for families is a TOOLCHAIN misconfiguration, not a
+	// variant fault, so it is returned as an error.
+	fams, err := DiscoverFamilies(opts.SchemaDir)
+	if err != nil {
+		return nil, err
+	}
+
 	// A schema pin that does not resolve to a known family schema is itself a
 	// depth-1 syntactic failure of the variant (malformed #SchemaRef, or a
-	// family v1 does not carry) — not a toolchain error: we cannot pick a schema
-	// to run the structural check against, so this is as far as depth 1 gets.
-	fam, err := LookupFamily(FamilyFromSchemaPin(meta.Schema))
-	if err != nil {
+	// family this schema dir does not carry) — not a toolchain error: we cannot
+	// pick a schema to run the structural check against, so this is as far as
+	// depth 1 gets.
+	fam, ok := fams[FamilyFromSchemaPin(meta.Schema)]
+	if !ok {
 		start := time.Now()
 		rep.RecordDepth(diag.DepthSyntactic, time.Since(start), []diag.Diagnostic{{
 			Depth: diag.DepthSyntactic, Path: "schema", Kind: diag.KindShapeMismatch,
-			Message: fmt.Sprintf("schema pin %q does not resolve to a known family schema: %v", meta.Schema, err),
+			Message: fmt.Sprintf("schema pin %q does not resolve to a known family schema (schema dir carries: %s)", meta.Schema, knownNames(fams)),
 		}})
 		return rep, nil
 	}

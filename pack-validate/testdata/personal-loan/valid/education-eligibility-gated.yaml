@@ -1,0 +1,23 @@
+# An education-purpose (lower legal cap) 24-month loan that DECLARES the upstream
+# origination verdicts it requires (ADR-PC-024): solvency assessment + CRC
+# consultation. The optional required_preconditions block is a closed list of
+# engine-owned verdict keys; carrying it conforms at depth 1 and the variant runs
+# clean through depths 2–4 against a loan-declaring pack. Origination stays
+# UPSTREAM (ADR-PC-030 §P1) — this config only names which verdicts gate
+# disbursement, never evaluates them.
+variant_id: cp_pt_education_24m_gated
+schema: personal_loan@2026.1
+pack: pt.2026.1
+currency: EUR
+term_months: 24
+purpose: education
+rate:
+  fixed:
+    rate_ref: { sheet: live, role_selector: standard }
+early_repayment:
+  commission_basis_points: 25
+required_preconditions:
+  - solvency_assessed
+  - crc_consulted
+principal_bounds:
+  min_cents: 50000
