@@ -40,16 +40,26 @@ namespace Babelstone.Orchestrator.Inbox;
 public sealed class SagaOutboxWriter
 {
     private const string InsertSql = """
-        INSERT INTO saga_outbox (message_id, process_id, command_type, causation_id, correlation_id, payload, traceparent)
-        VALUES (@message_id, @process_id, @command_type, @causation_id, @correlation_id, @payload, @traceparent);
+        INSERT INTO saga_outbox (message_id, process_id, command_type, causation_id, correlation_id, payload, traceparent, sca_acr, sca_auth_time)
+        VALUES (@message_id, @process_id, @command_type, @causation_id, @correlation_id, @payload, @traceparent, @sca_acr, @sca_auth_time);
         """;
 
     /// <summary>
     /// Append one command-outbox row on the supplied saga transaction and return the freshly minted
     /// delivery <c>message_id</c>. <paramref name="payload"/> is the family's already-assembled,
     /// byte-stable, PII-free command body; the writer adds only the operational columns
-    /// (<c>message_id</c>, the DB-default <c>created_at</c>, and the <paramref name="traceParent"/>).
+    /// (<c>message_id</c>, the DB-default <c>created_at</c>, the <paramref name="traceParent"/>, and the
+    /// gateway-attested SCA claims).
     /// </summary>
+    /// <param name="scaAcr">The gateway-attested OIDC <c>acr</c> claim (bd babelstone-ls44; ADR-IC-010
+    /// §P8 A10) for a money-mover command — re-emitted by the dispatcher as the outbound
+    /// <c>X-SCA-Acr</c> header the engine's <c>ScaPrecondition</c> gate reads. Operational, NOT PII; null
+    /// for every command that carries no SCA attestation (then the engine gate 422s if it is a
+    /// money-mover).</param>
+    /// <param name="scaAuthTime">The gateway-attested OIDC <c>auth_time</c> claim (seconds since the
+    /// Unix epoch) for a money-mover command — re-emitted as the outbound <c>X-SCA-Auth-Time</c> header.
+    /// The engine re-checks freshness against its own window at dispatch time, so a stale value is
+    /// fail-closed 422'd there. Operational, NOT PII; null when no SCA was attested.</param>
     public async Task<Guid> AppendAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -59,7 +69,9 @@ public sealed class SagaOutboxWriter
         Guid? correlationId,
         byte[] payload,
         string? traceParent = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? scaAcr = null,
+        long? scaAuthTime = null)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(transaction);
@@ -78,6 +90,8 @@ public sealed class SagaOutboxWriter
         command.Parameters.AddWithValue("correlation_id", (object?)correlationId ?? DBNull.Value);
         command.Parameters.AddWithValue("payload", payload);
         command.Parameters.AddWithValue("traceparent", (object?)traceParent ?? DBNull.Value);
+        command.Parameters.AddWithValue("sca_acr", (object?)scaAcr ?? DBNull.Value);
+        command.Parameters.AddWithValue("sca_auth_time", (object?)scaAuthTime ?? DBNull.Value);
         await command.ExecuteNonQueryAsync(ct);
         return messageId;
     }
