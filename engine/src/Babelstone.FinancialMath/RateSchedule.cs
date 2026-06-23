@@ -21,6 +21,11 @@ namespace Babelstone.FinancialMath;
 /// v3. Every segment's <see cref="RateBasisPoints"/> is a FIXED rate known at constitution; the
 /// vector is purely a deterministic function of the (resolved) sheet and the deposit's term/
 /// principal, so a cold replay reproduces it byte-for-byte (ADR-PC-010 §P5).
+/// <para>The deposit/<i>crescente</i>/<i>escalonada</i> vocabulary below is deliberate and policy-
+/// conformant: a shared-kernel primitive MAY name the product it prices, because family-agnosticism
+/// is a dependency boundary (no <c>families/**</c> reference, generic inputs only — gated by
+/// <c>ENGINE_FAMILY_AGNOSTIC</c>), not a vocabulary ban. See this project's <c>README.md</c>
+/// (Cohesion policy / family-agnosticism) for the rule the next family author follows.</para>
 /// </remarks>
 /// <param name="From">The segment's inclusive lower boundary — an elapsed-day for a step-up
 /// schedule, a principal-cents threshold for an amount-tiered schedule. The first segment is
