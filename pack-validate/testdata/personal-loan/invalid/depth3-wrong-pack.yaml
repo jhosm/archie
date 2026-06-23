@@ -1,0 +1,18 @@
+# REJECT at depth 3 (pack_bound_violation): the variant PINS pack pt.2025.9 but is
+# being validated against a different pack. Depths 1–2 pass (the shape is sound);
+# depth-3 pack-compliance catches the mismatch between the pinned pack key and the
+# pack the run resolves against. This is the loan mirror of the term-deposit
+# depth3-wrong-pack fixture, proving depth-3 runs for the discovered loan family.
+variant_id: cp_pt_general_36m_wrongpack
+schema: personal_loan@2026.1
+pack: pt.2025.9
+currency: EUR
+term_months: 36
+purpose: general
+rate:
+  fixed:
+    rate_ref: { sheet: live, role_selector: standard }
+early_repayment:
+  commission_basis_points: 50
+principal_bounds:
+  min_cents: 100000
