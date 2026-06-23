@@ -68,3 +68,20 @@ package family
 	sheet:         =~"^[a-z][a-z0-9_]*$"
 	role_selector: =~"^[a-z][a-z0-9_]*$"
 }
+
+// #PrincipalBounds — a product's principal risk corridor (authoring §4 step 4):
+// the minimum principal a variant prices and an optional maximum. Cross-family
+// vocabulary: a term deposit's principal and a personal loan's disbursed
+// principal share the same bounds shape, so it lives here as a single
+// definition rather than being copied per family — a bounds-semantics change is
+// one edit, not N (bd babelstone-5r9n.11). The closed-struct guarantee
+// (ADR-PC-006 Decision) still holds: an unknown field inside the block fails
+// depth 1.
+#PrincipalBounds: {
+	min_cents:  #Cents
+	max_cents?: int & >0
+	// max, when present, is not below min.
+	if max_cents != _|_ {
+		max_cents: >=min_cents
+	}
+}

@@ -98,18 +98,12 @@ package family
 	commission_basis_points: int & >=0 & <=50
 }
 
-// #PrincipalBounds — the loan's risk corridor (authoring §4 step 4): the minimum and
-// optional maximum principal a variant prices. Defined here (not shared) so the
-// personal_loan schema is self-contained — the check-script vets each family schema
-// against common.cue alone. Shape mirrors the term-deposit family's #PrincipalBounds.
-#PrincipalBounds: {
-	min_cents:  #Cents
-	max_cents?: int & >0
-	// max, when present, is not below min.
-	if max_cents != _|_ {
-		max_cents: >=min_cents
-	}
-}
+// #PrincipalBounds (the loan's risk corridor, authoring §4 step 4: the minimum and
+// optional maximum principal a variant prices) is shared cross-family vocabulary defined
+// once in common.cue (bd babelstone-5r9n.11). A term deposit's principal and a personal
+// loan's disbursed principal carry the same bounds shape, so it lives in the shared
+// vocabulary the check-script always unifies each family schema against — a bounds-semantics
+// change is one edit, not one per family. `principal_bounds` above references it.
 
 // #LoanPreconditionKey — the engine-owned CLOSED taxonomy of loan commercial-eligibility
 // verdict keys a product may require (ADR-PC-024 §1, §6). For a loan these are
