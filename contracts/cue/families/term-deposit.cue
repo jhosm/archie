@@ -182,14 +182,10 @@ package family
 	basis:                "ACCRUED_INTEREST" | "PRINCIPAL" | "BOTH"
 }
 
-#PrincipalBounds: {
-	min_cents:  #Cents
-	max_cents?: int & >0
-	// max, when present, is not below min.
-	if max_cents != _|_ {
-		max_cents: >=min_cents
-	}
-}
+// #PrincipalBounds (the principal risk corridor, authoring §4 step 4) is shared
+// cross-family vocabulary defined once in common.cue (bd babelstone-5r9n.11),
+// which every family schema already unifies against — so a bounds-semantics
+// change is one edit, not one per family. `principal_bounds` above references it.
 
 // #PartialWithdrawal — the F.12 partial-withdrawal policy (02 §2.4.1). A closed
 // definition (ADR-PC-006): an unknown field inside the block fails depth 1, the

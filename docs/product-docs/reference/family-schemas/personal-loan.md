@@ -80,6 +80,21 @@ package family
 // jurisdiction-namespaced reference, never a free string and never an inline
 // formula (no DSL escape hatch).
 #PackBoundPrimitive: =~"^[a-z]{2}\\.[a-z0-9_]+(\\.[a-z0-9_]+)*$"
+
+// #RateRef — a reference into a rate sheet, resolved at constitution to a
+// concrete `tan_basis_points` + `rate_sheet_version_id` (ADR-PC-008;
+// surface §2.3). The variant never carries the numeric rate — that lives on
+// its own fast cadence in /rate-sheets. `sheet` selects which sheet binding
+// (`live` is the conventional active sheet); `role_selector` names the pricing
+// role the rate sheet keys on (the worked example uses `deposit_origin`,
+// authoring §3.2; it carries the standard-vs-new_money split of surface §2.2).
+// Both resolve against the rate sheet at deploy/constitution time (depth 2–3).
+#RateRef: {
+	// A lower-snake binding name; `live` is the conventional active sheet (it
+	// is one value of this pattern, not a privileged literal).
+	sheet:         =~"^[a-z][a-z0-9_]*$"
+	role_selector: =~"^[a-z][a-z0-9_]*$"
+}
 #PersonalLoan: {
 	// --- version envelope (authoring §6; surface §3.5) -------------------
 	// Every variant pins the family-schema version and the pack version it was
@@ -156,10 +171,14 @@ package family
 	commission_basis_points: uint & <=50
 }
 
-// #PrincipalBounds — the loan's risk corridor (authoring §4 step 4): the minimum and
-// optional maximum principal a variant prices. Defined here (not shared) so the
-// personal_loan schema is self-contained — the check-script vets each family schema
-// against common.cue alone. Shape mirrors the term-deposit family's #PrincipalBounds.
+// #PrincipalBounds — a product's principal risk corridor (authoring §4 step 4):
+// the minimum principal a variant prices and an optional maximum. Cross-family
+// vocabulary: a term deposit's principal and a personal loan's disbursed
+// principal share the same bounds shape, so it lives here as a single
+// definition rather than being copied per family — a bounds-semantics change is
+// one edit, not N (bd babelstone-5r9n.11). The closed-struct guarantee
+// (ADR-PC-006 Decision) still holds: an unknown field inside the block fails
+// depth 1.
 #PrincipalBounds: {
 	min_cents:  #Cents
 	max_cents?: int & >0
@@ -168,21 +187,6 @@ package family
 	{
 		max_cents: >=min_cents_9
 	}
-}
-
-// #RateRef — a reference into a rate sheet, resolved at constitution to a
-// concrete `tan_basis_points` + `rate_sheet_version_id` (ADR-PC-008;
-// surface §2.3). The variant never carries the numeric rate — that lives on
-// its own fast cadence in /rate-sheets. `sheet` selects which sheet binding
-// (`live` is the conventional active sheet); `role_selector` names the pricing
-// role the rate sheet keys on (the worked example uses `deposit_origin`,
-// authoring §3.2; it carries the standard-vs-new_money split of surface §2.2).
-// Both resolve against the rate sheet at deploy/constitution time (depth 2–3).
-#RateRef: {
-	// A lower-snake binding name; `live` is the conventional active sheet (it
-	// is one value of this pattern, not a privileged literal).
-	sheet:         =~"^[a-z][a-z0-9_]*$"
-	role_selector: =~"^[a-z][a-z0-9_]*$"
 }
 
 // #LoanPreconditionKey — the engine-owned CLOSED taxonomy of loan commercial-eligibility
