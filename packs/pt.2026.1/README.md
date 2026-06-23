@@ -13,6 +13,8 @@ for life (surface §3.5). **Declarative data, not code.**
 | `primitives/withholding.yaml` | 28% IRS on deposit interest (`irs_juros`) |
 | `primitives/fgd.yaml` | Deposit-guarantee-fund coverage (€100k) |
 | `primitives/reporting.yaml` | Regulatory reporting hooks (BdP retail-rate stats + FGD coverage active) |
+| `primitives/renewal-policies.yaml` | Auto-renewal-policy restrictions (SAME_TERM_SAME_RATE is pack-restricted) |
+| `families.yaml` | Family-set roster the deployment may run (ADR-PC-007 §P1) |
 | `parameters/constants.yaml` | Pack-level scalar constants |
 | `rate-sheet-refs/deposits-pt.yaml` | Version-pinned rate-sheet refs (ADR-PC-008) |
 | `test-corpus/` | Sealed regression evidence (§3.9) |
@@ -81,10 +83,12 @@ rate-sheet data.
   (financial_concepts §5.4 for TANB/TANL/TAE, §6.2 for TAEG), never pack
   primitives or inline rate fields. The
   pack carries the rate-sheet **ref** plus the withholding rate only.
-- **`expected-events.yaml`** — stays the **GENERATED** empty placeholder
-  (ADR-PC-007 §P5). It is produced by running the engine substrate over the
-  canonical instances (C.3/C.5); the engine does not exist yet, so depth-5
-  simulation logs a skip and never hand-authored figures become a wrong baseline.
+- **`expected-events.yaml`** — the **GENERATED** sealed corpus
+  (ADR-PC-007 §P5), now populated. It is produced by replaying the engine's
+  hand-rolled substrate over the canonical instances and committed; the depth-5
+  simulation gate (`PackSimulationDepth5Tests`) asserts the replayed event
+  sequences field-for-field against it and fails CI on any drift. Regenerate
+  with `BABELSTONE_DEPTH5_GENERATE=1 dotnet test` on `PackSimulationDepth5Tests`.
 - **FIN data-field reconciliation** — aligning 02 §2.4.1's `WithholdingApplied` /
   `InterestAccrued` / `InterestPaid` payload sketches with the canonical (minimal)
   `.avsc` shapes is an engine/contract concern tracked separately in bd

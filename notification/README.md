@@ -19,7 +19,7 @@ run as):
 - `Program.cs` — the composition root: resolves the engine API endpoint (`Engine:BaseUrl`, a service
   endpoint not a credential), registers the typed read client + worker, and wires OpenTelemetry
   ([ADR-IC-007](../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md)) on the
-  shared `Babelstone` ActivitySource (`service.name=babelstone-notification`), from the SDK-free
+  shared `Babelstone.Engine` ActivitySource (`service.name=babelstone-notification`), from the SDK-free
   `Babelstone.Telemetry` leaf — not the engine kernel.
 - `DepositReadClient.cs` — **family-agnostic**, read-only access to deposit facts over the
   storage-opaque [ADR-PC-027](../docs/product-management/product_concepts/adrs/ADR-PC-027-deposit-read-surface-canonical-resource.md)

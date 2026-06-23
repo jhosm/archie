@@ -72,7 +72,7 @@ being caught.
 `Cmd-P` → *Save as PDF*. Print CSS lays it out one clean slide per page (animations frozen,
 chrome hidden). Set the paper to landscape if your browser doesn't pick up the page size.
 
-## The narrative (11 slides)
+## The narrative (12 slides)
 
 1. **Title** — "Banking software that's correct by construction."
 2. **Problem** — core banking is a haunted house.
@@ -89,6 +89,10 @@ chrome hidden). Set the paper to landscape if your browser doesn't pick up the p
     (Observability, Security/PII, Contracts/Governance). Honest status dots: ●live (incl. the
     orchestrator — saga consume loop host-wired), ◐partial (Security/PII), ○planned (ACL +
     notification still skeletons).
+12. **Appendix · two ways to grow** — the same board re-lit to show what a change touches: a
+    NEW FAMILY lights four boxes (Product Families, Engine API host module, Contracts/Governance,
+    plus one-line additive wiring — ADR-PC-021 §D4 family-count-invariant composition), while a
+    NEW VARIANT touches no box (product-config YAML + rate-sheet row + pack pin — pure data).
 
 ## Editing
 

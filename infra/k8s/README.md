@@ -59,7 +59,10 @@ infra/k8s/
         ├── postgres-write-svc-ha.yaml# narrows the `postgres` write Service to the primary
         ├── postgres-standby-ha.yaml  # off-site warm standby (RPO ~ 0)
         ├── ha-secrets.example.yaml   # DEV-ONLY replication credential
-        └── files/                    # primary init SQL + pg_hba.conf
+        ├── postgres-pitr-resources.yaml  # M.4 PITR base-backup CronJob + cipher Secret
+        ├── postgres-pitr-pgbackrest.yaml # M.4 patch: WAL archiving + pgBackRest sidecar on the primary
+        ├── openbao-dr-ha.yaml        # M.4 OpenBao key-store DR snapshot seam
+        └── files/                    # primary replication-setup shell hook + pg_hba.conf
 ```
 
 Render the manifests (swap `dev` for `ha` to render the HA topology):
