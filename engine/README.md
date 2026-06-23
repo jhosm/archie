@@ -11,11 +11,13 @@ event-sourcing core, plus its PostgreSQL migrations.
 
 Hosts a per-service **outbox** worker ([ADR-IC-004](../docs/product-management/integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)) — the outbox is not its own top-level path.
 
-> Status: financial-math kernel in progress; Epic A event store underway —
-> `Babelstone.EventStore.Migrations` (A.1) ships the `events` + `outbox` DDL and a
-> hand-rolled migration runner. `Babelstone.slnx` builds and its unit + Roslyn-analyser
-> tests run in path-scoped CI (the engine job in `.github/workflows/ci.yml`, now
-> `--filter "Category!=Integration"`); the Testcontainers integration tier — including
-> the A.1 schema/role suite tagged `Category=Integration` — runs in the lane that lands
-> with E.6. Layout governed by
+> Status: financial-math kernel landed — `Babelstone.FinancialMath` ships the accrual,
+> amortization, day-count, withholding and rate-schedule kernel. Epic A event store landed —
+> `Babelstone.EventStore` ships the `PostgresEventStore` (append + outbox + snapshots +
+> projections + dedup) and `Babelstone.EventStore.Migrations` ships the DDL (0001–0017) with a
+> hand-rolled migration runner. `Babelstone.slnx` builds and its unit + Roslyn-analyser tests
+> run in path-scoped CI (the engine job in `.github/workflows/ci.yml`, with a
+> `--filter "Category!=Integration"` unit step); the Testcontainers integration tier —
+> including the A.1 schema/role suite tagged `Category=Integration` — now runs in a sibling
+> `--filter "Category=Integration"` step in the same engine job (E.6 landed). Layout governed by
 > [ADR-PC-019 §P1](../docs/product-management/product_concepts/adrs/ADR-PC-019-repository-strategy-monorepo.md).

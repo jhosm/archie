@@ -30,7 +30,7 @@ rules under [`../prometheus/`](../prometheus/).
 | `babelstone-developer` (`developer.json`) | **Developer** (`engineer`) | Full deep-dive: `correlation_id` TraceQL trace search, all-tier logs, DB query-latency histogram, outbox/inbox internals. | Full metric → trace → log: exemplars, traces-to-logs, all signals (ADR-IC-007 §P6 engineer). |
 
 The role → dashboard-folder access mapping itself (the RBAC roles named above) is
-owned by a **separate** lane, [`infra/grafana/rbac/`](../) (bd `njt2.4`, PR #229),
+owned by a **separate** lane, [`infra/grafana/rbac/`](../rbac/) (bd `njt2.4`, PR #229),
 and is intentionally kept file-disjoint from this subtree to avoid a merge
 conflict. This lane only *names* the `Babelstone` Grafana folder its provider
 provisions into; the RBAC lane scopes who may open it.

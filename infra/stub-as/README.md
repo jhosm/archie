@@ -42,7 +42,7 @@ not a secret** — it is committed precisely so the local edge runs byte-for-byt
 ## Usage
 
 ```bash
-# Mint a FRESH step-up token bound to the MCP server (acr present, auth_time = now), write/read scopes:
+# Mint a FRESH step-up token bound to the MCP server (acr present, auth_time = now), deposits:write scope:
 infra/stub-as/mint-stepup-token.sh
 
 # Bind to a different audience / scopes / acr level:

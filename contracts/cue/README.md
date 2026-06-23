@@ -11,9 +11,13 @@ and the language is **CUE 0.16.1** validated by a purpose-built Go binary
 ```
 common.cue                       cross-family vocabulary: version-key shapes,
                                  bounded scalars, pack-binding + rate-sheet refs
-families/term-deposit.cue        the v1 family schema (02 §2)
+families/term-deposit.cue        the v1 term_deposit family schema (02 §2)
+families/personal-loan.cue       the v1 personal_loan family schema (ADR-PC-030)
+pack/pack.cue                    the pack-manifest schema (#Manifest / #FamilyManifest)
 testdata/term-deposit/valid/     variants the schema must accept
 testdata/term-deposit/invalid/   variants the schema must reject (one rule each)
+testdata/personal-loan/{valid,invalid}/  personal_loan accept/reject fixtures
+testdata/pack/invalid/           pack-manifest reject fixtures (one rule each)
 check.sh                         fmt + compile + accept/reject gate
 ```
 

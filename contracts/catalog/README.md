@@ -20,6 +20,10 @@ contracts/catalog/
     DepositConstituted.asyncapi.yaml
     InterestPaid.asyncapi.yaml
     DepositMatured.asyncapi.yaml
+    LoanDisbursed.asyncapi.yaml
+    LoanInstallmentPaid.asyncapi.yaml
+    LoanRepaidEarly.asyncapi.yaml
+    LoanSettled.asyncapi.yaml
     operations.PersonalDataErasureRequested.asyncapi.yaml   # cross-cutting, engine-declared (ADR-PC-004 A4)
   reconciliation/                 # one contract per consumer (event-store §7.3) — see its README
     engine-projection-runtime.reconciliation.yaml
@@ -48,8 +52,9 @@ record ([ADR-IC-017 §P1/§P2](../../docs/product-management/integration_concept
 The `x-authorized-consumers` field on each file is the recorded **consumer map** (§P4): the
 named bounded contexts that react to that fact.
 
-The current set — `DepositConstituted`, `InterestPaid`, `DepositMatured` (family events) plus the
-cross-cutting `operations.PersonalDataErasureRequested` — is the result of the §P4 per-event
+The current set — `DepositConstituted`, `InterestPaid`, `DepositMatured` (term_deposit) and
+`LoanDisbursed`, `LoanInstallmentPaid`, `LoanRepaidEarly`, `LoanSettled` (personal_loan) family events,
+plus the cross-cutting `operations.PersonalDataErasureRequested` — is the result of the §P4 per-event
 classification pass (the ADR delegates the verdicts to the implementing issue, not the schema set
 the estate happened to start with):
 
@@ -72,7 +77,7 @@ non-breaking change.
 ## The payload is referenced, never restated (Decision §1–§2)
 
 Each message's `payload.schema.$ref` points at the **governed Avro `.avsc`** in
-[`../avro/deposits/term_deposit/`](../avro/deposits/term_deposit/) — the real source of truth.
+[`../avro/`](../avro/) (e.g. `deposits/term_deposit/`, `loans/personal_loan/`) — the real source of truth.
 The catalogue never re-types the fields (a restatement would drift from `contracts/avro/`). The
 registry **subject** each message reconciles against is recorded as
 `x-schema-registry-subject` and is asserted to reconstruct from the `.avsc`
