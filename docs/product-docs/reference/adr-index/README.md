@@ -41,6 +41,7 @@ Every Architectural Decision Record across **both** namespaces, in one place —
 | [029](../../../product-management/product_concepts/adrs/ADR-PC-029-engine-command-ingress.md) | Engine Command Ingress — Synchronous Idempotent REST | Contract-shape | Accepted |
 | [030](../../../product-management/product_concepts/adrs/ADR-PC-030-product-scope-and-boundary.md) | babelstone Product Scope & Boundary — a Core Product & Account Ledger | Tool-selection | Proposed |
 | [031](../../../product-management/product_concepts/adrs/ADR-PC-031-personal-loan-family.md) | personal_loan Family — a Closed-End Amortizing Personal Loan on the One-Engine-Many-Families Spine | Tool-selection (ADR-PC-000 §D3 residual category — a family-scoping / structural decision, declared tool-selection per the §D4 default; F1/F2 do not discriminate, the same class as ADR-PC-021 and ADR-PC-030) | Proposed |
+| [032](../../../product-management/product_concepts/adrs/ADR-PC-032-money-movement-primitive.md) | The `Movement` Primitive — One Append-First Atom for Every Cash Leg | Contract-shape | Proposed |
 
 ## ADR-IC — Integration estate
 
