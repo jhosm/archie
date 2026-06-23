@@ -20,13 +20,30 @@ family-agnostic is the dependency arrow, not the vocabulary.
 
 ### The decision
 
-**Product vocabulary IS permitted in `Babelstone.FinancialMath` — in doc-comments, summaries, XML
-remarks, parameter names, and method/type names that describe what a primitive computes.** A
-primitive that prices a *term deposit* may say so (`RateSchedule` — `crescente`/`escalonada`,
-"one deposit's rate", coupon windows); a primitive that amortizes a *personal loan* may say so
-(`Amortization` — "closed-end personal loan", "borrower", "installment"). The next family author
-adds their product's math here and names it for what it does, **subject to the two hard limits
-below.**
+**Start from what the kernel is *for*.** The financial-math reference shows the mathematics is
+*unified*: the same balance-evolution identity prices every banking product, the product being only
+a parameterization — "the base algorithm is always the same … what differs … are only three
+dimensions" ([fin-math §2.2](../../../docs/product-management/financial_concepts/banking_products_financial_mathematics.md)),
+and the accrual `J = Σ S·r·Δt` is, in the doc's words, "universal to both" families (fin-math §9.2).
+The product architecture makes that a structural mandate: **"One engine, one runtime, one
+balance-evolution function — invoked with different parameters for different products"** — explicitly
+*not* **"a shared library that each product module reuses"** ([01-product-architecture §1](../../../docs/product-management/product_concepts/01-product-architecture.md)).
+`Babelstone.FinancialMath` *is* that one generic, parameterized math — kept as a single shared
+kernel because the math itself is reusable across families. That placement is not re-decided here:
+[ADR-PC-031](../../../docs/product-management/product_concepts/adrs/ADR-PC-031-personal-loan-family.md)
+already settled it when it added the `Amortization` kernel, rejecting its option D ("amortization
+kernel in the family project") precisely because "a future family … would re-implement it." This
+note interprets and applies that decision.
+
+**The vocabulary permission is a *consequence* of that, not a standalone licence.** Because the
+kernel is shared parameterized math, a product noun in it is a *descriptive label on that shared
+math*, not a coupling to a family. So **product vocabulary IS permitted in `Babelstone.FinancialMath`
+— in doc-comments, summaries, XML remarks, parameter names, and method/type names that describe what
+a primitive computes.** A primitive that prices a *term deposit* may say so (`RateSchedule` —
+`crescente`/`escalonada`, "one deposit's rate", coupon windows); a primitive that amortizes a
+*personal loan* may say so (`Amortization` — "closed-end personal loan", "borrower", "installment").
+The next family author adds their product's math here and names it for what it does, **subject to the
+two hard limits below.**
 
 What family-agnosticism actually forbids — and what this kernel must keep honouring — is the
 **dependency edge**, gated mechanically by `ENGINE_FAMILY_AGNOSTIC`
@@ -47,6 +64,16 @@ Verifiable commitment 1):
 So the rule the next family author follows is: **name your math for the product it prices, keep
 your inputs generic, and add no `families/**` reference.** Vocabulary describes; references couple.
 Only the latter erodes the boundary.
+
+**On the phrase "names no family."** [ADR-PC-031](../../../docs/product-management/product_concepts/adrs/ADR-PC-031-personal-loan-family.md)
+describes this kernel as "generic, naming no family," and [ADR-PC-021 §P2](../../../docs/product-management/product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)
+likewise says a spine library "names no family" — which can read as a ban on product *words*. It is not:
+the ADR estate scopes "names no family" to *code* — no `families/**` reference, no family-typed
+table (ADR-PC-021 amendment 2026-06-13), no concrete family type — and ADR-PC-021 states the limit
+outright for its host gate: **"a family named only in a COMMENT is fine"** (Verifiable commitment 3).
+`RateSchedule` saying *deposit* in a doc-comment is exactly that — a comment-level label on generic
+math, not a family dependency — so the prose here is consistent with "names no family," which is a
+property of the dependency graph, not of the words.
 
 ### Why this and not literal agnosticism (relocate the deposit math into the family)
 
@@ -94,6 +121,11 @@ product words in the kernel, because product words in the kernel are allowed.
 
 ## ADRs honoured
 
+- [ADR-PC-031](../../../docs/product-management/product_concepts/adrs/ADR-PC-031-personal-loan-family.md)
+  §D1/§P2 — the Accepted decision that placed the `Amortization` kernel in `Babelstone.FinancialMath`
+  ("generic, naming no family") and rejected putting it in the family project (option D) on the
+  reuse rationale. This note interprets and applies that placement to the kernel as a whole; it
+  re-decides nothing.
 - [ADR-PC-021](../../../docs/product-management/product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)
   §P2/§D2 — the family-agnostic engine spine and the one-way `family → engine` arrow this kernel sits
   on the spine side of; `ENGINE_FAMILY_AGNOSTIC` (Verifiable commitment 1) is the gate this policy
