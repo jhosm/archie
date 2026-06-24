@@ -561,44 +561,45 @@ h2 {
     </div>
   </section>
 
-  <!-- 9 — STATUS (placeholder) -->
-  <section class="slide" data-notes="PLACEHOLDER — revisit with real numbers. Be honest and specific: the core happy path runs end-to-end today with real financial math, real events, real traces — no stubs on the hot path. Frame what's next (Core-Banking settlement via the ACL, notification signals) as roadmap, not gap. Replace these bullets with current, verifiable status before presenting.">
+  <!-- 9 — STATUS (real figures, derived from the repo) -->
+  <section class="slide" data-notes="Honest, verifiable status — every number below is counted from the repo, not invented. Working today: the term_deposit hot path runs end-to-end (constitute → accrue → mature) with real financial math, real Avro events on Redpanda, real OpenTelemetry traces — no stubs on the hot path. Two product families exist in code (term_deposit, the reference; personal_loan, the second). 21 .NET test projects back the kernel and families. The commitment catalogue tracks 44 verifiable claims, 27 already Live (gate exists, passes, runs in CI). 51 accepted ADRs (19 ADR-IC + 32 ADR-PC) govern the design. The notification boundary service now has real C# (worker + deposit read client); the ACL (core-banking translation) is still a skeleton — Dockerfile + README only — so it is honestly 'Next', not done. Frame Next as roadmap, not gap.">
     <div class="slide-inner">
-      <div class="kicker r" style="--i:0">Where we are · draft</div>
+      <div class="kicker r" style="--i:0">Where we are</div>
       <h2 class="r" style="--i:1">The hot path has <span class="em-verify">no stubs.</span></h2>
       <div class="road">
         <div class="col now r" style="--i:2">
           <h4>Working today</h4>
           <ul>
-            <li>Constitute → accrue → mature, end-to-end</li>
-            <li>Real financial math, property-tested</li>
-            <li>Idempotent commands, read-your-writes</li>
-            <li>AI-operable via MCP tools — a real model drives it</li>
-            <li>Signed regulatory packs</li>
+            <li>term_deposit: constitute → accrue → mature, end-to-end</li>
+            <li><b>2</b> product families in code — term_deposit + personal_loan</li>
+            <li>Real financial math · <b>21</b> .NET test projects</li>
+            <li><b>27</b> of <b>44</b> commitment-catalogue claims <span class="em-verify">Live</span> (gated in CI)</li>
+            <li><b>51</b> accepted ADRs govern the design (19 IC + 32 PC)</li>
+            <li>AI-operable via MCP tools · signed regulatory packs</li>
           </ul>
         </div>
         <div class="col next r" style="--i:3">
           <h4>Next</h4>
           <ul>
-            <li>Core-Banking settlement (ACL)</li>
-            <li>Notification / completion signals</li>
-            <li>Additional product families</li>
-            <li>Mission Control UI (live + demo modes)</li>
+            <li>Notification signals — real C# landed, wiring in progress</li>
+            <li>Core-Banking settlement (ACL) — still a skeleton</li>
+            <li>Remaining <b>17</b> catalogue claims → Live</li>
+            <li>More product families on the same kernel</li>
           </ul>
         </div>
       </div>
-      <p class="r" style="--i:4;font-family:var(--mono);font-size:0.72rem;color:var(--faint);margin-top:1.6rem;letter-spacing:0.08em">// placeholder — replace with current, verifiable figures before presenting</p>
+      <p class="r" style="--i:4;font-family:var(--mono);font-size:0.72rem;color:var(--faint);margin-top:1.6rem;letter-spacing:0.08em">// every figure counted from the repo — ADRs, families, test projects, Live catalogue rows</p>
     </div>
   </section>
 
-  <!-- 10 — ASK / VISION (placeholder) -->
-  <section class="slide" data-notes="PLACEHOLDER — your real ask goes here. Land the vision line, then state plainly what you're raising, for what, and the milestone it buys. Keep it to one breath. Replace the placeholder ask before presenting.">
+  <!-- 10 — ASK / VISION -->
+  <section class="slide" data-notes="The vision, then the ask. The story in one breath: AI-native is the hook, correctness is the proof, engineering rigor is the moat — banking software that is correct by construction. The concrete ask (raise / use of funds / contact) is the maintainer's to fill: those numbers are real money and must not be invented by an agent. The clearly-marked placeholder below is where the maintainer drops the figures before presenting.">
     <div class="slide-inner">
-      <div class="kicker r" style="--i:0">The vision · draft</div>
+      <div class="kicker r" style="--i:0">The vision</div>
       <h1 class="r" style="--i:1; font-size:clamp(2.2rem,5.2vw,4.4rem)">Correct by construction.<br /><span class="em-gold em-serif-i">Operable by anything.</span></h1>
-      <p class="lead r" style="--i:2;max-width:50ch">A banking core where every number is provable and every operation is safe — the substrate for the next generation of financial products.</p>
-      <div class="title-meta r" style="--i:3; margin-top:2.6rem">
-        <span>[ The ask goes here ]</span><span>[ Use of funds ]</span><span>[ Contact ]</span>
+      <p class="lead r" style="--i:2;max-width:52ch">AI-native is the <b style="color:var(--paper)">hook</b>, correctness is the <span class="em-verify">proof</span>, engineering rigor is the <span class="em-gold">moat</span> — banking software that is <b style="color:var(--paper)">correct by construction.</b></p>
+      <div class="r" style="--i:3; margin-top:2.6rem; font-family:var(--mono); font-size:0.82rem; color:var(--faint); border:1px dashed var(--faint); border-radius:8px; padding:1rem 1.2rem; max-width:60ch; line-height:1.7">
+        [PLACEHOLDER — maintainer to fill: raise / use of funds / contact]
       </div>
     </div>
   </section>
