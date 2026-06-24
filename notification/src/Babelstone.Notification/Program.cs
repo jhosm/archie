@@ -64,9 +64,37 @@ var engineBaseUrl =
 builder.Services.AddHttpClient<DepositReadClient>(client =>
     client.BaseAddress = new Uri(engineBaseUrl.EndsWith('/') ? engineBaseUrl : engineBaseUrl + "/"));
 
-// The host shell — the standing BackgroundService the maturity scheduler (bd babelstone-60n8.2) and
-// the NotificationDue emission (bd babelstone-60n8.3) will later run inside. Skeleton: it idles, it
-// does not schedule or emit.
+// The wall-clock the worker loop OWNS (ADR-PC-023 §6 — the engine emits no clock-driven signal, so
+// the downstream scheduler owns the clock). TimeProvider.System in production; a test substitutes a
+// FakeTimeProvider so the loop can be driven with no real wall-clock wait. Only the worker LOOP reads
+// it — the MaturityScheduler pass stays a deterministic function of the as-of date.
+builder.Services.AddSingleton(TimeProvider.System);
+
+// The maturity scheduler's cadence/retry/backoff knobs (ADR-PC-023 §6). Bound from the "Notification"
+// configuration section so an operator can tune the poll interval; the generous one-hour default sits
+// well inside the 14-day opt-out window's latency tolerance.
+var schedulerOptions = new NotificationSchedulerOptions();
+var pollSeconds = builder.Configuration.GetValue<double?>("Notification:PollIntervalSeconds");
+if (pollSeconds is > 0)
+{
+    schedulerOptions = new NotificationSchedulerOptions { PollInterval = TimeSpan.FromSeconds(pollSeconds.Value) };
+}
+
+builder.Services.AddSingleton(schedulerOptions);
+
+// The slot-4 idempotency ledger (ADR-PC-025): the "already raised this notification_id" memory the
+// scheduler dedupes against. In-memory for v1 (it proves the "re-runs don't re-notify" invariant); a
+// durable, crash-surviving ledger is the emission child's concern (bd babelstone-60n8.3).
+builder.Services.AddSingleton<INotificationDedupeLedger, InMemoryNotificationDedupeLedger>();
+
+// The downstream maturity scheduler (ADR-PC-023 §6 / ADR-PC-025): reads the maturity calendar over the
+// ADR-PC-027 contract, selects the 14-day pre-maturity opt-out window (02 §2.4.4), and produces
+// idempotent "reminder due" decisions keyed on the composite notification_id (ADR-PC-025 slot 4).
+builder.Services.AddSingleton<MaturityScheduler>();
+
+// The host shell — the standing BackgroundService the maturity scheduler (bd babelstone-60n8.2) runs
+// inside. It OWNS the clock, cadence, retry and backoff (ADR-PC-023 §6); the NotificationDue emission
+// over the outbox is the sibling child bd babelstone-60n8.3.
 builder.Services.AddHostedService<NotificationWorker>();
 
 var app = builder.Build();

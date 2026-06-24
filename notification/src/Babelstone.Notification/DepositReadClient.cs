@@ -76,6 +76,43 @@ public sealed class DepositReadClient
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<DepositView>(WireJson, ct);
     }
+
+    /// <summary>
+    /// The maturity calendar slice — every deposit whose <c>maturity_date</c> falls in the half-open
+    /// <c>[from, to)</c> window, ordered by maturity date — over the family-agnostic range-scan
+    /// resource <c>GET /v1/deposits/maturities?from=&amp;to=</c> (the ADR-IC-005 <c>upcoming_maturities</c>
+    /// projection; the maturity-calendar projection ADR-PC-023 §2 makes the temporal SIGNAL). This is
+    /// the read the downstream maturity scheduler (ADR-PC-023 §6 — the engine owns no clock-driven
+    /// emission) folds over to decide which deposits are entering their pre-maturity opt-out window.
+    /// </summary>
+    /// <remarks>
+    /// Like <see cref="GetDepositAsync"/> this binds the host's snake_case wire JSON (money as integer
+    /// cents) into the notification core's OWN <see cref="DepositMaturityView"/> — it does NOT reference
+    /// the family's <c>DepositMaturitiesResponse</c>/<c>DepositResponse</c> CLR types (that would
+    /// re-introduce the families/** reference ADR-IC-019 §P2 forbids and the
+    /// <c>NOTIFICATION_FAMILY_AGNOSTIC</c> gate catches). The dates are passed in ISO-8601
+    /// (<c>yyyy-MM-dd</c>), the same shape the host's <c>DateOnly</c> binder accepts. An empty or
+    /// <c>from &gt;= to</c> window is a well-formed empty result, not an error (the engine returns
+    /// <c>200 []</c>); a 5xx surfaces (it is not "nothing matures"), so the scheduler treats it as
+    /// backpressure rather than silently skipping a cycle.
+    /// </remarks>
+    public async Task<IReadOnlyList<DepositMaturityView>> ListMaturitiesAsync(
+        DateOnly from, DateOnly to, CancellationToken ct = default)
+    {
+        var fromIso = from.ToString("yyyy-MM-dd");
+        var toIso = to.ToString("yyyy-MM-dd");
+
+        using var response = await _http.GetAsync($"v1/deposits/maturities?from={fromIso}&to={toIso}", ct);
+        response.EnsureSuccessStatusCode();
+
+        var page = await response.Content.ReadFromJsonAsync<MaturitiesPage>(WireJson, ct);
+        return page?.Deposits ?? [];
+    }
+
+    /// <summary>The notification core's local read model of the maturities collection
+    /// (<c>{ "deposits": [ … ] }</c>) — mirrors the wire JSON, not the family's
+    /// <c>DepositMaturitiesResponse</c> CLR type.</summary>
+    private sealed record MaturitiesPage(IReadOnlyList<DepositMaturityView> Deposits);
 }
 
 /// <summary>
@@ -107,3 +144,25 @@ public sealed record DepositView(
     int CouponsPaid,
     long LastSequence,
     DateTimeOffset LastUpdated);
+
+/// <summary>
+/// The notification core's local read model of ONE row in the maturity calendar
+/// (<c>GET /v1/deposits/maturities</c>) — the subset of the deposit resource the maturity scheduler
+/// needs to decide a reminder is due and to render it: which deposit, when it matures, and the payout
+/// rollups a maturity notice interpolates. Like <see cref="DepositView"/> it binds the snake_case wire
+/// JSON (money as integer cents — ADR-PC-010 §P1), NOT the family's <c>DepositResponse</c> CLR type, so
+/// the notification core names no family type and the <c>NOTIFICATION_FAMILY_AGNOSTIC</c> gate stays
+/// green (ADR-IC-019 §D2/§D3).
+/// </summary>
+/// <param name="DepositId">The deposit's stream id — the <c>instance_id</c> in the ADR-PC-025
+/// composite notification key.</param>
+/// <param name="Lifecycle">The deposit's lifecycle state (e.g. <c>Active</c>, <c>Matured</c>).</param>
+/// <param name="MaturityDate">The scheduled maturity date — the driver of the 14-day pre-maturity window.</param>
+/// <param name="TotalPayoutCents">Total payout (principal + net interest) at maturity, in cents.</param>
+/// <param name="NetInterestCents">Net interest to date (gross − withholding), in cents.</param>
+public sealed record DepositMaturityView(
+    Guid DepositId,
+    string Lifecycle,
+    DateOnly MaturityDate,
+    long TotalPayoutCents,
+    long NetInterestCents);
