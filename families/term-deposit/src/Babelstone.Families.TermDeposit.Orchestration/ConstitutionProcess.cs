@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Saga;
+using Babelstone.Orchestrator.Saga.Settlement;
 using Npgsql;
 
 namespace Babelstone.Families.TermDeposit.Orchestration;
@@ -138,30 +139,48 @@ public sealed partial class ConstitutionProcess : TableStateMachine, IEventSubst
     // emits"). Names are the contract the outbox seam dispatches; the concrete payloads are
     // the H.2 command DTOs (Commands/ConstitutionProcessCommands.cs) keyed on these names.
     // Public so the payload DTOs and the structural fitness tests reference the SAME constant,
-    // never a re-typed literal that could drift from the transition table. ----
-    /// <summary>Core ACL: place the reversible balance hold (Document 05 step 2a).</summary>
-    public const string ReserveAccountBalance = "ReserveAccountBalance";
-    /// <summary>Deposit aggregate: check product limits (Document 05 step 2b).</summary>
+    // never a re-typed literal that could drift from the transition table.
+    //
+    // ONE HOME FOR THE SETTLEMENT COMMAND VOCABULARY (bd babelstone-t7o3.15, feature-design
+    // money-movement-settlement §8). The account-generic settlement commands the substrate-owned
+    // SettlementProcess saga also emits — ReserveAccountBalance, ConfirmDebit, QueryCoreDebitStatus —
+    // now ALIAS the substrate SettlementProcess constants, so the settlement command vocabulary has a
+    // single source of truth. The constitution saga's LIFECYCLE is unchanged: its transition table,
+    // its approval fork, its engine ActivateDeposit leg, and its compensation commands
+    // (ReleaseBalanceReservation / ReverseCoreDebit — the settlement saga uses NO compensation,
+    // ADR-IC-003 §P6, so those stay constitution-owned) are untouched. The string VALUES are identical,
+    // so this is a behaviour-preserving consolidation, not a wire change. ----
+    /// <summary>Core ACL: place the reversible balance hold (Document 05 step 2a). Aliases the
+    /// substrate <see cref="SettlementProcess.ReserveAccountBalance"/> (one settlement-command home).</summary>
+    public const string ReserveAccountBalance = SettlementProcess.ReserveAccountBalance;
+    /// <summary>Deposit aggregate: check product limits (Document 05 step 2b). Constitution-owned (not a
+    /// settlement command — an in-aggregate validation).</summary>
     public const string ValidateProductLimits = "ValidateProductLimits";
     /// <summary>Core ACL: convert the hold into a real debit — the irreversible step
-    /// (Document 05 step 4a). Reachable ONLY from APPROVED (§P5).</summary>
-    public const string ConfirmDebit = "ConfirmDebit";
+    /// (Document 05 step 4a). Reachable ONLY from APPROVED (§P5). Aliases the substrate
+    /// <see cref="SettlementProcess.ConfirmDebit"/> (one settlement-command home).</summary>
+    public const string ConfirmDebit = SettlementProcess.ConfirmDebit;
     /// <summary>Deposit aggregate: activate the deposit after the debit (Document 05 step 4b).
-    /// Reachable ONLY from APPROVED (§P5).</summary>
+    /// Reachable ONLY from APPROVED (§P5). The ENGINE leg — constitution-owned (not a settlement
+    /// command).</summary>
     public const string ActivateDeposit = "ActivateDeposit";
     /// <summary>Core ACL: release the reversible hold — early compensation (Document 05
-    /// Scenario A). A DOMAIN reversal command, never a rollback (§P6).</summary>
+    /// Scenario A). A DOMAIN reversal command, never a rollback (§P6). Constitution-owned: the
+    /// settlement saga uses NO compensation (ADR-IC-003 §P6 — park, never compensate), so this is not
+    /// in the shared settlement vocabulary.</summary>
     public const string ReleaseBalanceReservation = "ReleaseBalanceReservation";
     /// <summary>Core ACL: reverse the committed debit with a compensating credit — late
-    /// compensation (Document 05 Scenario B). A DOMAIN reversal command (§P6).</summary>
+    /// compensation (Document 05 Scenario B). A DOMAIN reversal command (§P6). Constitution-owned (the
+    /// settlement saga has no compensation leg).</summary>
     public const string ReverseCoreDebit = "ReverseCoreDebit";
     /// <summary>Core ACL: query the Core for the actual outcome of an INDETERMINATE debit — the v1
     /// clearance-job mechanism (Document 05 Scenario C; bd babelstone-t7o3.10). Emitted on entering
     /// <c>States.AwaitCoreClearance</c>. A SINGLE event-driven query routed to the Settlement
     /// ACL (POST /v1/debits/clearance), NOT a poll loop — the wait is a first-class state, not a busy
     /// retry (ADR-IC-003 §P4). Its delivery outcome bridges back to the clearance result: executed (2xx)
-    /// → a late <see cref="DebitConfirmed"/>; not-executed (4xx) → <see cref="DebitNotExecuted"/>.</summary>
-    public const string QueryCoreDebitStatus = "QueryCoreDebitStatus";
+    /// → a late <see cref="DebitConfirmed"/>; not-executed (4xx) → <see cref="DebitNotExecuted"/>. Aliases
+    /// the substrate <see cref="SettlementProcess.QueryCoreDebitStatus"/> (one settlement-command home).</summary>
+    public const string QueryCoreDebitStatus = SettlementProcess.QueryCoreDebitStatus;
 
     public ConstitutionProcess()
         : base(Type, States.Started, BuildTable())
