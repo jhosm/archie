@@ -462,6 +462,43 @@ else
 fi
 note ""
 
+# ---------------------------------------------------------------------------
+# §7.3 (DECISION) — consumer → reconciliation coverage gate: RECORDED, NOT
+# enforced (bd babelstone-5r9n.13).
+#
+# In plain English: every event lists which downstream systems are ALLOWED to
+# consume it (its x-authorized-consumers). A coverage gate would additionally
+# require that each such consumer, for each family it is authorized on, actually
+# declares reconciliation coverage for THAT family's projection kinds — so a
+# family cannot quietly grow a consumer with no way to prove it consumed the
+# stream correctly (the gap 5r9n.13 found: the loan events listed acl/notification
+# as consumers while the reconciliation contracts covered only term_deposit).
+#
+# DECISION: keep the symmetry an AUTHORED invariant, NOT a mechanical gate, for now.
+#   * WHY NOT YET a check: a faithful gate must map an x-authorized-consumer to the
+#     SET of projection kinds that consumer is expected to reconcile for that family
+#     — but "expected coverage" is a judgement (the notification consumer reconciles
+#     event-count against TRIGGER projections, not every family projection; a future
+#     read-only consumer may legitimately reconcile NONE). Encoding that mapping here
+#     would bake a policy the reconciliation contracts themselves already express more
+#     precisely, and risks false RED on a deliberate no-coverage consumer.
+#   * WHAT HOLDS THE INVARIANT MEANWHILE: this lane added the personal_loan projection
+#     kinds (personal_loan.loan_position, personal_loan.amortization_schedule) to BOTH
+#     the acl and notification reconciliation contracts, restoring family symmetry by
+#     hand; the contract-reviewer agent (plugins/babelstone-engine/agents) reviews new
+#     events for it; and the family-prefixed-kind check above already fails a malformed
+#     kind. A consumer that genuinely reconciles nothing records that as a deliberate
+#     note in its contract (mirrors notification's checksum:false / fullRebuild:false
+#     opt-outs), which a future gate would have to whitelist anyway.
+#   * REVISIT TRIGGER (osv6): promote to a real check when a THIRD family or a third
+#     reconciling consumer lands — at three the by-hand symmetry stops being reliably
+#     auditable and the per-consumer expected-coverage mapping is worth encoding (the
+#     x-authorized-consumers ⨯ family → projectionKinds cross-product, with an explicit
+#     `x-no-reconciliation-coverage: <reason>` opt-out for deliberate read-only consumers).
+# ---------------------------------------------------------------------------
+note "-- §7.3 consumer→reconciliation coverage gate: RECORDED as an authored invariant, not enforced (bd babelstone-5r9n.13; revisit at a 3rd family/consumer) --"
+note ""
+
 if [ "$fail" -eq 0 ]; then
 	note "ASYNCAPI CATALOGUE GATE OK"
 	exit 0

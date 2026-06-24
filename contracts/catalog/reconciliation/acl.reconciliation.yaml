@@ -48,3 +48,16 @@ spec:
       description: Position state — the ledger-posting source for principal + accrued interest.
     - kind: term_deposit.withholding_ledger
       description: The withholding-tax ledger — the tax-reporting and GL withholding source.
+    # The personal_loan (closed-end-asset) family the ACL is also an authorized consumer of
+    # (LoanDisbursed / LoanInstallmentPaid / LoanRepaidEarly / LoanSettled all list `acl` in
+    # x-authorized-consumers; ADR-PC-031). Both projection kinds are declared in
+    # PersonalLoanProjectionModule — the ledger-posting sources the ACL's GL / IFRS 9 / tax
+    # postings are derived from. References only — never PII.
+    - kind: personal_loan.loan_position
+      description: >-
+        Live amortizing loan state — the ledger-posting source for outstanding capital and the
+        interest/capital split the GL and IFRS 9 (ECL staging) postings are derived from.
+    - kind: personal_loan.amortization_schedule
+      description: >-
+        The amortization schedule as actually paid — the tax-reporting and GL interest-recognition
+        source for each installment's interest portion.
