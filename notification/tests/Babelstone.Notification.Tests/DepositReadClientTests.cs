@@ -91,6 +91,108 @@ public sealed class DepositReadClientTests
         await Assert.ThrowsAsync<HttpRequestException>(() => client.GetDepositAsync(Guid.NewGuid()));
     }
 
+    // --- the maturity-calendar range scan (bd babelstone-60n8.2) ---
+
+    private const string MaturitiesWireJson = """
+        {
+          "deposits": [
+            {
+              "deposit_id": "22222222-2222-2222-2222-222222222222",
+              "sor": "engine",
+              "principal_cents": 500000,
+              "tan_basis_points": 280,
+              "rate_sheet_version_id": "rs-2026-1",
+              "product_code": "TD-STD",
+              "term_days": 365,
+              "start_date": "2025-07-01",
+              "maturity_date": "2026-07-01",
+              "interest_variant": "AT_MATURITY",
+              "auto_renewal_policy": "AUTO",
+              "payment_period_months": 0,
+              "accrued_gross_interest_cents": 5000,
+              "withholding_to_date_cents": 1400,
+              "net_interest_cents": 3600,
+              "total_payout_cents": 503600,
+              "coupons_paid": 0,
+              "lifecycle": "Active",
+              "last_sequence": 3,
+              "last_updated": "2026-06-20T09:00:00+00:00"
+            },
+            {
+              "deposit_id": "33333333-3333-3333-3333-333333333333",
+              "sor": "engine",
+              "principal_cents": 1000000,
+              "tan_basis_points": 320,
+              "rate_sheet_version_id": "rs-2026-1",
+              "product_code": "TD-STD",
+              "term_days": 365,
+              "start_date": "2025-07-05",
+              "maturity_date": "2026-07-05",
+              "interest_variant": "AT_MATURITY",
+              "auto_renewal_policy": "NONE",
+              "payment_period_months": 0,
+              "accrued_gross_interest_cents": 9000,
+              "withholding_to_date_cents": 2520,
+              "net_interest_cents": 6480,
+              "total_payout_cents": 1006480,
+              "coupons_paid": 0,
+              "lifecycle": "Active",
+              "last_sequence": 4,
+              "last_updated": "2026-06-21T09:00:00+00:00"
+            }
+          ]
+        }
+        """;
+
+    [Fact]
+    public async Task ListMaturities_calls_the_range_scan_with_iso_dates_and_maps_each_row()
+    {
+        var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, MaturitiesWireJson));
+        var client = NewClient(handler);
+
+        var rows = await client.ListMaturitiesAsync(new DateOnly(2026, 6, 24), new DateOnly(2026, 7, 8));
+
+        // The half-open [from, to) window is passed as ISO-8601 yyyy-MM-dd query params on the
+        // family-agnostic range-scan resource (ADR-IC-005 upcoming_maturities / ADR-PC-027).
+        Assert.Equal(HttpMethod.Get, handler.LastRequest!.Method);
+        Assert.Equal(
+            "http://engine.test/v1/deposits/maturities?from=2026-06-24&to=2026-07-08",
+            handler.LastRequest.RequestUri!.ToString());
+
+        // snake_case → the core-local DepositMaturityView (money as integer cents, dates as DateOnly).
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(new Guid("22222222-2222-2222-2222-222222222222"), rows[0].DepositId);
+        Assert.Equal("Active", rows[0].Lifecycle);
+        Assert.Equal(new DateOnly(2026, 7, 1), rows[0].MaturityDate);
+        Assert.Equal(503_600, rows[0].TotalPayoutCents);
+        Assert.Equal(3_600, rows[0].NetInterestCents);
+        Assert.Equal(new Guid("33333333-3333-3333-3333-333333333333"), rows[1].DepositId);
+        Assert.Equal(new DateOnly(2026, 7, 5), rows[1].MaturityDate);
+    }
+
+    [Fact]
+    public async Task ListMaturities_returns_empty_when_nothing_matures_in_the_window()
+    {
+        var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, """{ "deposits": [] }"""));
+        var client = NewClient(handler);
+
+        var rows = await client.ListMaturitiesAsync(new DateOnly(2026, 6, 24), new DateOnly(2026, 7, 8));
+
+        Assert.Empty(rows);
+    }
+
+    [Fact]
+    public async Task ListMaturities_throws_on_a_server_error_so_a_broken_read_is_not_mistaken_for_empty()
+    {
+        var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError));
+        var client = NewClient(handler);
+
+        // A 5xx is NOT "nothing matures" — surfacing it lets the scheduler treat it as backpressure
+        // (back off + retry) rather than silently skipping a cycle (and missing a reminder).
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            client.ListMaturitiesAsync(new DateOnly(2026, 6, 24), new DateOnly(2026, 7, 8)));
+    }
+
     // --- helpers ---
 
     private static DepositReadClient NewClient(FakeHandler handler) =>
