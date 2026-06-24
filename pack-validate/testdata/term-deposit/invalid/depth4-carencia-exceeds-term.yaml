@@ -1,6 +1,6 @@
 # INVALID @ depth 4: the lock-up (400 days) meets/exceeds the term
 # (365 days), so no day exists on which a partial withdrawal would ever be
-# legal. CUE cannot relate carencia_days to term_days element-wise across the
+# legal. CUE cannot relate lockup_period_days to term_days element-wise across the
 # optional block — a depth-4 Go coherence check (#PartialWithdrawal comment).
 variant_id: dpz_pt_12m_carencia_exceeds_term
 schema: term_deposit@2026.1
@@ -18,4 +18,4 @@ principal_bounds: { min_cents: 100000, max_cents: 50000000 }
 partial_withdrawal:
   min_withdrawal_cents: 50000
   min_remaining_balance_cents: 100000
-  carencia_days: 400   # >= term_days (365) — the lock-up outlasts the term
+  lockup_period_days: 400   # >= term_days (365) — the lock-up outlasts the term

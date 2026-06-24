@@ -86,14 +86,14 @@ package family
 	// — a minimum withdrawal amount, a minimum remaining balance, and a lock-up
 	// window after constitution. The block mirrors the engine's
 	// PartialWithdrawalPolicy (MinWithdrawalCents / MinRemainingBalanceCents /
-	// CarenciaDays); it rides on the config as an explicit decider input
+	// LockupPeriodDays); it rides on the config as an explicit decider input
 	// resolved at constitution (ADR-PC-008; ADR-PC-021 §D3), never a command
 	// input. A variant that OMITS the block permits no F.12-gated partial
 	// withdrawals — it resolves to PartialWithdrawalPolicy.Unrestricted (the
 	// zero-gate policy), leaving only the structural rules the decider always
 	// applies (positive amount; cannot withdraw the whole balance — that is a
 	// termination, F.4). Two cross-field coherence invariants
-	// (min_remaining_balance_cents < principal_bounds.max_cents; carencia_days <
+	// (min_remaining_balance_cents < principal_bounds.max_cents; lockup_period_days <
 	// term_days) are depth-4 regulatory checks the Go validator enforces — not
 	// expressible element-wise here, the same deferral as #SteppedRate.steps and
 	// #BandedPolicy.banded.
@@ -191,7 +191,7 @@ package family
 // definition (ADR-PC-006): an unknown field inside the block fails depth 1, the
 // same no-escape-hatch guarantee as every other #Name here. Field names mirror
 // the engine's PartialWithdrawalPolicy record one-for-one. All amounts are
-// integer cents (#Cents); carencia_days is a non-negative day count — a
+// integer cents (#Cents); lockup_period_days is a non-negative day count — a
 // duration, not money, so it is declared inline as `int & >=0`, not a #Cents.
 // A 0 on any gate means "no minimum / no lock-up" (the degenerate-policy
 // semantics of PartialWithdrawalPolicy with that field zero). The two cross-field
@@ -200,5 +200,5 @@ package family
 #PartialWithdrawal: {
 	min_withdrawal_cents:        #Cents
 	min_remaining_balance_cents: #Cents
-	carencia_days:               int & >=0
+	lockup_period_days:          int & >=0
 }

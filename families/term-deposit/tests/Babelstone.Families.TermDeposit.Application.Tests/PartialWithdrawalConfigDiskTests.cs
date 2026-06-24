@@ -23,7 +23,7 @@ public sealed class PartialWithdrawalConfigDiskTests
         Assert.NotNull(config);
         Assert.Equal(50_000, config!.MinWithdrawalCents);
         Assert.Equal(100_000, config.MinRemainingBalanceCents);
-        Assert.Equal(90, config.CarenciaDays);
+        Assert.Equal(90, config.LockupPeriodDays);
 
         Assert.Equal(
             new PartialWithdrawalPolicy(50_000, 100_000, 90),
@@ -37,7 +37,7 @@ public sealed class PartialWithdrawalConfigDiskTests
         Assert.NotNull(config);
         Assert.Equal(0, config!.MinWithdrawalCents);
         Assert.Equal(0, config.MinRemainingBalanceCents);
-        Assert.Equal(0, config.CarenciaDays);
+        Assert.Equal(0, config.LockupPeriodDays);
 
         Assert.Same(PartialWithdrawalPolicy.Unrestricted, PartialWithdrawalPolicy.FromProductConfig(config));
     }

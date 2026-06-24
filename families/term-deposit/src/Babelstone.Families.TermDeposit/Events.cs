@@ -101,7 +101,7 @@ public sealed record DepositConstituted(
     // `min_withdrawal_cents` / `min_remaining_balance_cents` clean (no double `_cents` suffix).
     long MinWithdrawalCents = 0,
     long MinRemainingBalanceCents = 0,
-    int CarenciaDays = 0) : DomainEvent
+    int LockupPeriodDays = 0) : DomainEvent
 {
     // Constitution is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1): the instance's
     // state is interpretable on its own here, so a snapshot is taken regardless of the per-N count.

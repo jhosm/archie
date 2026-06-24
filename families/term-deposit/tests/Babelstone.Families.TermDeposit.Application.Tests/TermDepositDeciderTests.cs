@@ -44,7 +44,7 @@ public sealed class TermDepositDeciderTests
         // Unrestricted policy ⇒ the three F.12 gates stamp as 0 (bd k6r8.8/qze9).
         Assert.Equal(0, constituted.MinWithdrawalCents);
         Assert.Equal(0, constituted.MinRemainingBalanceCents);
-        Assert.Equal(0, constituted.CarenciaDays);
+        Assert.Equal(0, constituted.LockupPeriodDays);
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public sealed class TermDepositDeciderTests
 
         Assert.Equal(50_000, constituted.MinWithdrawalCents);
         Assert.Equal(100_000, constituted.MinRemainingBalanceCents);
-        Assert.Equal(90, constituted.CarenciaDays);
+        Assert.Equal(90, constituted.LockupPeriodDays);
     }
 
     // ---- commercial-eligibility preconditions (ADR-PC-024, F.9 babelstone-k6r8.2) --------------

@@ -25,4 +25,4 @@ principal_bounds:
 partial_withdrawal:
   min_withdrawal_cents: 50000
   min_remaining_balance_cents: 100000
-  carencia_days: 60
+  lockup_period_days: 60

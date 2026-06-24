@@ -1,7 +1,7 @@
 # Variant exercising the optional F.12 partial_withdrawal block (02 §2.4.1):
 # a 12-month AT_MATURITY deposit declaring all three gates plus a principal
 # corridor with a ceiling. Accept fixture — the block + its two depth-4
-# coherence invariants (carencia_days < term_days; min_remaining_balance_cents
+# coherence invariants (lockup_period_days < term_days; min_remaining_balance_cents
 # < principal_bounds.max_cents) all hold, so it passes depths 1–4.
 variant_id: dpz_pt_12m_partial_withdrawal
 schema: term_deposit@2026.1
@@ -25,4 +25,4 @@ principal_bounds:
 partial_withdrawal:
   min_withdrawal_cents: 50000         # €500.00
   min_remaining_balance_cents: 100000 # €1,000.00
-  carencia_days: 90                   # 90-day lock-up (< 365-day term)
+  lockup_period_days: 90              # 90-day lock-up (< 365-day term)

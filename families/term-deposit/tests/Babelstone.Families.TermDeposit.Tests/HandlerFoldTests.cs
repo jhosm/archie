@@ -37,7 +37,7 @@ public sealed class HandlerFoldTests
             MaturityDate: new DateOnly(2027, 1, 1), InterestVariant: "AT_MATURITY",
             AutoRenewalPolicy: "NONE", PaymentPeriodMonths: 3, ProductCode: "dpz_pt_12m",
             Role: "standard", FundingAccount: "acct-ref-1",
-            MinWithdrawalCents: 10_000, MinRemainingBalanceCents: 50_000, CarenciaDays: 30));
+            MinWithdrawalCents: 10_000, MinRemainingBalanceCents: 50_000, LockupPeriodDays: 30));
 
         Assert.Equal(DepositLifecycle.Active, position.Lifecycle);
         Assert.Equal(depositId, position.DepositId);
@@ -56,7 +56,7 @@ public sealed class HandlerFoldTests
         Assert.Equal("acct-ref-1", position.FundingAccount);
         Assert.Equal(10_000, position.MinWithdrawalCents);
         Assert.Equal(50_000, position.MinRemainingBalanceCents);
-        Assert.Equal(30, position.CarenciaDays);
+        Assert.Equal(30, position.LockupPeriodDays);
         // The opening segment is (start, full principal) — the single-segment timeline a deposit that
         // never partially withdraws keeps.
         var segment = Assert.Single(position.PrincipalTimeline);

@@ -44,7 +44,7 @@ public sealed class PartialWithdrawalDeciderTests
     {
         // min 1,000.00 withdrawal, min 2,000.00 remaining, 30-day lock-up. Withdraw 3,000.00 at day 60.
         var policy = new PartialWithdrawalPolicy(
-            MinWithdrawalCents: 100_000, MinRemainingBalanceCents: 200_000, CarenciaDays: 30);
+            MinWithdrawalCents: 100_000, MinRemainingBalanceCents: 200_000, LockupPeriodDays: 30);
 
         var events = PartialWithdrawalDecider.Decide(
             ActivePosition(), new Money(300_000), Start.AddDays(60), policy);
@@ -74,7 +74,7 @@ public sealed class PartialWithdrawalDeciderTests
     public void Withdrawal_below_the_minimum_amount_is_refused()
     {
         var policy = new PartialWithdrawalPolicy(
-            MinWithdrawalCents: 100_000, MinRemainingBalanceCents: 0, CarenciaDays: 0);
+            MinWithdrawalCents: 100_000, MinRemainingBalanceCents: 0, LockupPeriodDays: 0);
 
         var ex = Assert.Throws<DomainRejectedException>(() => PartialWithdrawalDecider.Decide(
             ActivePosition(), new Money(99_999), Start, policy));
@@ -85,7 +85,7 @@ public sealed class PartialWithdrawalDeciderTests
     public void Withdrawal_exactly_at_the_minimum_amount_passes()
     {
         var policy = new PartialWithdrawalPolicy(
-            MinWithdrawalCents: 100_000, MinRemainingBalanceCents: 0, CarenciaDays: 0);
+            MinWithdrawalCents: 100_000, MinRemainingBalanceCents: 0, LockupPeriodDays: 0);
 
         // Boundary value passes (inclusive "at least").
         var events = PartialWithdrawalDecider.Decide(
@@ -100,7 +100,7 @@ public sealed class PartialWithdrawalDeciderTests
     {
         // min remaining 500,000; withdrawing 600,000 would leave 400,000 — refused.
         var policy = new PartialWithdrawalPolicy(
-            MinWithdrawalCents: 0, MinRemainingBalanceCents: 500_000, CarenciaDays: 0);
+            MinWithdrawalCents: 0, MinRemainingBalanceCents: 500_000, LockupPeriodDays: 0);
 
         var ex = Assert.Throws<DomainRejectedException>(() => PartialWithdrawalDecider.Decide(
             ActivePosition(), new Money(600_000), Start, policy));
@@ -112,7 +112,7 @@ public sealed class PartialWithdrawalDeciderTests
     {
         // min remaining 500,000; withdrawing 500,000 leaves exactly 500,000 — the boundary passes.
         var policy = new PartialWithdrawalPolicy(
-            MinWithdrawalCents: 0, MinRemainingBalanceCents: 500_000, CarenciaDays: 0);
+            MinWithdrawalCents: 0, MinRemainingBalanceCents: 500_000, LockupPeriodDays: 0);
 
         var events = PartialWithdrawalDecider.Decide(
             ActivePosition(), new Money(500_000), Start, policy);
@@ -122,11 +122,11 @@ public sealed class PartialWithdrawalDeciderTests
     // ---- F.12 lock-up period ---------------------------------------------------------------------
 
     [Fact]
-    public void Withdrawal_inside_the_carencia_lockup_is_refused()
+    public void Withdrawal_inside_the_lockup_is_refused()
     {
         // 90-day lock-up; a withdrawal on day 89 (one day before the window closes) is refused.
         var policy = new PartialWithdrawalPolicy(
-            MinWithdrawalCents: 0, MinRemainingBalanceCents: 0, CarenciaDays: 90);
+            MinWithdrawalCents: 0, MinRemainingBalanceCents: 0, LockupPeriodDays: 90);
 
         var ex = Assert.Throws<DomainRejectedException>(() => PartialWithdrawalDecider.Decide(
             ActivePosition(), new Money(100_000), Start.AddDays(89), policy));
@@ -134,11 +134,11 @@ public sealed class PartialWithdrawalDeciderTests
     }
 
     [Fact]
-    public void Withdrawal_on_the_first_day_after_the_carencia_passes()
+    public void Withdrawal_on_the_first_day_after_the_lockup_passes()
     {
         // 90-day lock-up; the earliest permitted date is Start + 90 days, and that boundary day passes.
         var policy = new PartialWithdrawalPolicy(
-            MinWithdrawalCents: 0, MinRemainingBalanceCents: 0, CarenciaDays: 90);
+            MinWithdrawalCents: 0, MinRemainingBalanceCents: 0, LockupPeriodDays: 90);
 
         var events = PartialWithdrawalDecider.Decide(
             ActivePosition(), new Money(100_000), Start.AddDays(90), policy);
@@ -180,7 +180,7 @@ public sealed class PartialWithdrawalDeciderTests
         // After a first withdrawal the position carries the REDUCED remaining principal; the minimum
         // remaining gate is measured against that, not the original principal.
         var policy = new PartialWithdrawalPolicy(
-            MinWithdrawalCents: 0, MinRemainingBalanceCents: 500_000, CarenciaDays: 0);
+            MinWithdrawalCents: 0, MinRemainingBalanceCents: 500_000, LockupPeriodDays: 0);
 
         // Remaining is already 700,000. Withdrawing 250,000 leaves 450,000 — below the 500,000 floor.
         var ex = Assert.Throws<DomainRejectedException>(() => PartialWithdrawalDecider.Decide(

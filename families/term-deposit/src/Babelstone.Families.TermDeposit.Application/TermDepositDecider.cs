@@ -109,7 +109,7 @@ public static class TermDepositDecider
             // the policy from the product config and passes it in; the decider stays pure.
             MinWithdrawalCents: partialWithdrawalPolicy.MinWithdrawalCents,
             MinRemainingBalanceCents: partialWithdrawalPolicy.MinRemainingBalanceCents,
-            CarenciaDays: partialWithdrawalPolicy.CarenciaDays);
+            LockupPeriodDays: partialWithdrawalPolicy.LockupPeriodDays);
 
     /// <summary>
     /// Decide commercial eligibility (ADR-PC-024 §5): refuse the constitution when a precondition the
@@ -656,7 +656,7 @@ public static class TermDepositDecider
             // gates — chain preservation across renewal generations, exactly like product/role/funding.
             MinWithdrawalCents: closing.MinWithdrawalCents,
             MinRemainingBalanceCents: closing.MinRemainingBalanceCents,
-            CarenciaDays: closing.CarenciaDays);
+            LockupPeriodDays: closing.LockupPeriodDays);
 
     /// <summary>
     /// Build the <see cref="DepositRenewed"/> link (02 §2.4.4 step 3) carrying the closing↔new deposit ids

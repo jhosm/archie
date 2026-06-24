@@ -42,7 +42,7 @@ public sealed class DepositConstitutedHandler : IEventHandler<DepositPosition, D
             // 0/0/0 (the Avro default a pre-F.12 record decodes) ⇒ the Unrestricted policy.
             MinWithdrawalCents = @event.MinWithdrawalCents,
             MinRemainingBalanceCents = @event.MinRemainingBalanceCents,
-            CarenciaDays = @event.CarenciaDays,
+            LockupPeriodDays = @event.LockupPeriodDays,
             // RemainingPrincipal tracks principal still on deposit; it starts at the full
             // principal and is reduced by partial withdrawals (the event carries the result).
             RemainingPrincipal = @event.Principal,

@@ -19,5 +19,5 @@ principal_bounds: { min_cents: 100000, max_cents: 50000000 }
 partial_withdrawal:
   min_withdrawal_cents: 50000
   min_remaining_balance_cents: 100000
-  carencia_days: 90
+  lockup_period_days: 90
   max_withdrawal_cents: 1000000   # not declared by #PartialWithdrawal — closed-struct rejection
