@@ -47,17 +47,30 @@ public sealed class KeyCardinalityProbe(IPiiKeyStore keyStore)
     /// <param name="totalSubjects">The target resident key population to grow to (the v4-scale knob).</param>
     /// <param name="checkpointEvery">Sample op latency every this many seeded keys (must divide cleanly enough to yield ≥1 checkpoint).</param>
     /// <param name="seed">Seed for the deterministic subject-id stream (reproducibility).</param>
-    /// <param name="sampleSize">How many op repetitions to time per checkpoint (the p99 sample depth).</param>
+    /// <param name="sampleSize">
+    /// How many op repetitions to time per checkpoint. The slope verdict is judged on the MEDIAN of this
+    /// sample (a robust central statistic), so it need not be huge; but keep it ≥100 if the reported p99
+    /// tail is to be a genuine percentile rather than the single slowest request — nearest-rank p99 only
+    /// stops being the max once the sample reaches 100 (<c>ceil(0.99·100)=99</c> ⇒ the 2nd-slowest).
+    /// </param>
+    /// <param name="warmupIterations">
+    /// Op cycles run and DISCARDED before the measured sample at each checkpoint. The first ops against a
+    /// freshly-started container pay cold-start, JIT and HTTP connection-pool establishment costs that are
+    /// not the per-key op cost; discarding them keeps every checkpoint comparable so a cold first
+    /// checkpoint cannot manufacture (or mask) a cardinality slope.
+    /// </param>
     public async Task<KeyCardinalityReport> SeedAndMeasureAsync(
         int totalSubjects,
         int checkpointEvery,
         int seed,
-        int sampleSize = 20,
+        int sampleSize = 50,
+        int warmupIterations = 5,
         CancellationToken ct = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(totalSubjects);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(checkpointEvery);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sampleSize);
+        ArgumentOutOfRangeException.ThrowIfNegative(warmupIterations);
 
         var checkpoints = new List<KeyCardinalityCheckpoint>();
         var prefix = $"card-{seed:x8}";
@@ -70,19 +83,27 @@ public sealed class KeyCardinalityProbe(IPiiKeyStore keyStore)
 
             if (seeded % checkpointEvery == 0 || seeded == totalSubjects)
             {
-                checkpoints.Add(await SampleAsync(prefix, residentKeys: seeded, sampleSize, ct));
+                checkpoints.Add(await SampleAsync(prefix, residentKeys: seeded, sampleSize, warmupIterations, ct));
             }
         }
 
         return new KeyCardinalityReport(seed, totalSubjects, checkpoints);
     }
 
-    // One latency checkpoint: encrypt/decrypt/destroy a transient probe subject sampleSize times against
-    // the current resident key population, and record each op's p99. The probe subject is destroyed each
-    // iteration so it does not itself inflate the population being measured.
+    // One latency checkpoint: encrypt/decrypt/destroy a transient probe subject against the current
+    // resident key population, recording each op's median and p99. A handful of warm-up cycles run first
+    // and are discarded (see warmupIterations) so cold-start/connection-pool spikes never pollute the
+    // baseline. The probe subject is destroyed each iteration so it does not itself inflate the population
+    // being measured.
     private async Task<KeyCardinalityCheckpoint> SampleAsync(
-        string prefix, int residentKeys, int sampleSize, CancellationToken ct)
+        string prefix, int residentKeys, int sampleSize, int warmupIterations, CancellationToken ct)
     {
+        for (var w = 0; w < warmupIterations; w++)
+        {
+            ct.ThrowIfCancellationRequested();
+            _ = await RunOpCycleAsync($"{prefix}-warmup-{residentKeys}-{w}", ct); // timings discarded
+        }
+
         var encrypt = new double[sampleSize];
         var decrypt = new double[sampleSize];
         var destroy = new double[sampleSize];
@@ -90,26 +111,34 @@ public sealed class KeyCardinalityProbe(IPiiKeyStore keyStore)
         for (var i = 0; i < sampleSize; i++)
         {
             ct.ThrowIfCancellationRequested();
-            var subject = $"{prefix}-probe-{residentKeys}-{i}";
-
-            var sw = Stopwatch.StartNew();
-            var ciphertext = await keyStore.EncryptAsync(subject, Probe, ct);
-            encrypt[i] = sw.Elapsed.TotalMilliseconds;
-
-            sw.Restart();
-            _ = await keyStore.DecryptAsync(subject, ciphertext, ct);
-            decrypt[i] = sw.Elapsed.TotalMilliseconds;
-
-            sw.Restart();
-            await keyStore.DestroyKeyAsync(subject, ct);
-            destroy[i] = sw.Elapsed.TotalMilliseconds;
+            (encrypt[i], decrypt[i], destroy[i]) = await RunOpCycleAsync($"{prefix}-probe-{residentKeys}-{i}", ct);
         }
 
         return new KeyCardinalityCheckpoint(
             ResidentKeys: residentKeys,
-            EncryptP99Ms: P99(encrypt),
-            DecryptP99Ms: P99(decrypt),
-            DestroyP99Ms: P99(destroy));
+            Encrypt: OpLatency.From(encrypt),
+            Decrypt: OpLatency.From(decrypt),
+            Destroy: OpLatency.From(destroy));
+    }
+
+    // One encrypt → decrypt → destroy cycle over a transient probe subject, returning each op's elapsed
+    // milliseconds. Destroying the subject each cycle keeps it from inflating the resident population.
+    private async Task<(double Encrypt, double Decrypt, double Destroy)> RunOpCycleAsync(
+        string subject, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        var ciphertext = await keyStore.EncryptAsync(subject, Probe, ct);
+        var encrypt = sw.Elapsed.TotalMilliseconds;
+
+        sw.Restart();
+        _ = await keyStore.DecryptAsync(subject, ciphertext, ct);
+        var decrypt = sw.Elapsed.TotalMilliseconds;
+
+        sw.Restart();
+        await keyStore.DestroyKeyAsync(subject, ct);
+        var destroy = sw.Elapsed.TotalMilliseconds;
+
+        return (encrypt, decrypt, destroy);
     }
 
     // Nearest-rank p99 over an unsorted sample (reuses the observer's deterministic, no-interpolation
@@ -122,12 +151,30 @@ public sealed class KeyCardinalityProbe(IPiiKeyStore keyStore)
 }
 
 /// <summary>
-/// One cardinality checkpoint: the encrypt / decrypt / destroy p99 (ms) measured when
+/// One operation's latency at a checkpoint, reduced to two nearest-rank statistics: the MEDIAN — the
+/// robust central statistic the cardinality-slope verdict is judged on — and the P99 tail, reported as
+/// context (see <see cref="KeyCardinalityReport.LatencyIsFlat"/> for why the tail is reported but not the
+/// CI gate). Both use the no-interpolation convention of <see cref="LatencyObserver.Percentile"/>.
+/// </summary>
+public sealed record OpLatency(double MedianMs, double P99Ms)
+{
+    /// <summary>Reduces a raw latency sample to its median + p99 (both nearest-rank, sorted once).</summary>
+    public static OpLatency From(double[] samples)
+    {
+        var ascending = samples.OrderBy(d => d).ToArray();
+        return new OpLatency(
+            MedianMs: LatencyObserver.Percentile(ascending, 0.50),
+            P99Ms: LatencyObserver.Percentile(ascending, 0.99));
+    }
+}
+
+/// <summary>
+/// One cardinality checkpoint: the encrypt / decrypt / destroy latency (median + p99, ms) measured when
 /// <see cref="ResidentKeys"/> per-subject keys were resident in OpenBao. A SET of these across a growing
 /// population is what reveals the cardinality slope.
 /// </summary>
 public sealed record KeyCardinalityCheckpoint(
-    int ResidentKeys, double EncryptP99Ms, double DecryptP99Ms, double DestroyP99Ms);
+    int ResidentKeys, OpLatency Encrypt, OpLatency Decrypt, OpLatency Destroy);
 
 /// <summary>
 /// The §M.6 key-cardinality measurement artefact (bd c14p.2): the per-checkpoint op-latency series as
@@ -148,14 +195,29 @@ public sealed record KeyCardinalityReport(
 {
     /// <summary>
     /// True iff op latency did NOT degrade materially with cardinality. The verdict compares the
-    /// HIGHEST-cardinality checkpoint against the FIRST: a real cardinality slope (the v4-scale risk) is
-    /// worst at the largest resident population, so degradation shows up as the last/biggest checkpoint
-    /// climbing past <paramref name="toleranceFactor"/>× the baseline. Judging the slope by the
-    /// max-cardinality point (not "every intermediate checkpoint") makes a single transient mid-run spike
-    /// on a shared/contended container non-fatal while still catching a genuine sustained climb. With a
-    /// single checkpoint there is no slope to judge, so it is vacuously flat (the caller seeds enough to
-    /// get ≥2 for a real verdict).
+    /// HIGHEST-cardinality checkpoint against the FIRST — a real cardinality slope (the v4-scale risk) is
+    /// worst at the largest resident population — and judges the slope on each op's MEDIAN.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Why the median, not the p99: a genuine cardinality slope shifts the WHOLE distribution (every op
+    /// gets slower as the resident keyspace grows — GC/page pressure on a memory-resident Raft keyspace),
+    /// so it moves the median. A single slow HTTP round-trip to a dev-mode, single-node OpenBao container
+    /// moves only the tail and leaves the median put. Judging on the median therefore keeps the falsifiable
+    /// ADR-PC-004 §P2/§P3 signal while NOT flaking on single-sample jitter. The previous verdict compared
+    /// p99s computed over a sample of 15, where nearest-rank p99 (<c>ceil(0.99·15)=15</c>) IS the single
+    /// slowest request — so one contended round-trip flipped FLAT→DEGRADING (observed on PR #316, whose
+    /// diff was disjoint from the crypto path).
+    /// </para>
+    /// <para>
+    /// The p99 tail is still recorded on every checkpoint and surfaced in <see cref="Summary"/>, so the
+    /// human reading CI logs and the production v4-cardinality sizing pass (which reuses this code against a
+    /// Raft-backed cluster, where the tail is meaningful) keep the tail as DATA. It is deliberately NOT a
+    /// CI gate: on the single-node dev-mode container the tail is dominated by container/HTTP jitter, and
+    /// slope detection does not need it. With a single checkpoint there is no slope to judge, so the report
+    /// is vacuously flat (the caller seeds enough to get ≥2 for a real verdict).
+    /// </para>
+    /// </remarks>
     public bool LatencyIsFlat(double toleranceFactor = 4.0)
     {
         if (Checkpoints.Count < 2)
@@ -168,9 +230,9 @@ public sealed record KeyCardinalityReport(
         // cardinality slope is by definition worst. A transient spike at a smaller-cardinality checkpoint
         // is noise, not a slope, and does not flip the verdict.
         var peak = Checkpoints.MaxBy(c => c.ResidentKeys)!;
-        return WithinTolerance(peak.EncryptP99Ms, first.EncryptP99Ms, toleranceFactor) &&
-            WithinTolerance(peak.DecryptP99Ms, first.DecryptP99Ms, toleranceFactor) &&
-            WithinTolerance(peak.DestroyP99Ms, first.DestroyP99Ms, toleranceFactor);
+        return WithinTolerance(peak.Encrypt.MedianMs, first.Encrypt.MedianMs, toleranceFactor) &&
+            WithinTolerance(peak.Decrypt.MedianMs, first.Decrypt.MedianMs, toleranceFactor) &&
+            WithinTolerance(peak.Destroy.MedianMs, first.Destroy.MedianMs, toleranceFactor);
     }
 
     // A near-zero baseline (sub-ms in-memory dev op) would make any ratio explode on trivial jitter, so
@@ -188,7 +250,9 @@ public sealed record KeyCardinalityReport(
         var verdict = LatencyIsFlat() ? "FLAT" : "DEGRADING";
         var tail = last is null
             ? "no checkpoints"
-            : $"at {last.ResidentKeys} keys: encrypt p99={last.EncryptP99Ms:F1}ms, decrypt p99={last.DecryptP99Ms:F1}ms, destroy p99={last.DestroyP99Ms:F1}ms";
+            : $"at {last.ResidentKeys} keys: encrypt median={last.Encrypt.MedianMs:F1}ms (p99 {last.Encrypt.P99Ms:F1}), " +
+              $"decrypt median={last.Decrypt.MedianMs:F1}ms (p99 {last.Decrypt.P99Ms:F1}), " +
+              $"destroy median={last.Destroy.MedianMs:F1}ms (p99 {last.Destroy.P99Ms:F1})";
         return $"{verdict} — seeded {TotalSubjects} per-subject keys (seed={Seed}); {tail}.";
     }
 }
