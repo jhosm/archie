@@ -282,6 +282,50 @@ The §A14 position — the host KEEPS its `families/**` `ProjectReference` as th
 
 ---
 
+## Amendment — 2026-06-24: A countable exit condition for the `ConstitutionPipeline` deferral (bd `babelstone-osv6`), and the narrow rate-resolution-prefix extraction judged on its own
+
+**In plain English:** §D5/§P5 deferred the generic `ConstitutionPipeline` to the "second decider" on a rule-of-three judgement. The second decider (personal_loan, [ADR-PC-031](./ADR-PC-031-personal-loan-family.md)) has now landed, and the rule-of-three was found NOT cleanly met for the *full* choreography — so osv6 was deferred a second time. But "deferred until the shape matches" is a *qualitative* trigger: it has no number, so the one genuinely-repeated fragment — the resolve-sheet-then-resolve-TAN-or-throw two-step — could keep being copied silently with no rule for when to stop. This amendment does three things, all bookkeeping: it **counts** that duplication exactly (3 call sites today, named with file + line), it evaluates the *narrow* fix some reviewers reach for first — a throwing `RateSheetResolution.RequireTan` helper — **on its own** and explicitly defers it with a verified reason, and it gives osv6 a **countable** revisit trigger (the 4th matching call site) on top of the existing qualitative full-shape one. It is pure documentation: no code, no schema, no event, no gate changes. It is **additive** — it sharpens §D5/§P5's deferral with a number and reverses nothing; §D1–§D5 and every prior amendment stay binding.
+
+### A20 · The rate-resolution two-step is duplicated across exactly 3 decider call sites (the counted baseline)
+
+The single fragment genuinely repeated across deciders — the only one §P5's "written as separable steps" leaves copy-shaped rather than shared-through-a-generic-port — is the **rate-resolution-and-fail-loud two-step**: resolve the active rate sheet for the family at the operative instant (`IRateSheetStore.ResolveAsync(...)`), `?? throw new DomainRejectedException(...)`; then resolve the TAN for `(product, role, principal)` (`resolution.ResolveTanBasisPoints(...)`), `?? throw new DomainRejectedException(...)`. The kernel math and event shapes around it are irreducibly per-family (so they are not duplication), and the engine ports (`AggregateRuntime` / `IRateSheetStore` / `ISettlementPort`) are already generic and *reused*, not copy-pasted (so they are not duplication either). As of this amendment the two-step appears at **exactly three** call sites, all in family `.Application` deciders:
+
+| # | Site | File | Lines (approx.) | Operative instant |
+|---|---|---|---|---|
+| 1 | term-deposit **constitution** | `families/term-deposit/src/Babelstone.Families.TermDeposit.Application/TermDepositConstitutionService.cs` | ~148–158 | `command.ConstitutedAt` |
+| 2 | term-deposit **renewal** (`SAME_TERM_CURRENT_RATE` branch) | `families/term-deposit/src/Babelstone.Families.TermDeposit.Application/TermDepositConstitutionService.cs` | ~580–588 | `command.RenewedAt` |
+| 3 | personal_loan **disbursement** | `families/personal-loan/src/Babelstone.Families.PersonalLoan.Application/PersonalLoanConstitutionService.cs` | ~97–107 | `command.DisbursedAt` |
+
+This count is the **baseline** the osv6 trigger below is measured against. Recording it here makes the duplication a tracked, bounded quantity rather than one that can grow unnoticed: the next reviewer who adds a 4th site knows the threshold it crosses (§A22), and the next reviewer who reads osv6 knows it is at 3-of-4, not "some unknown amount".
+
+### A21 · The narrow `RateSheetResolution.RequireTan` extraction is evaluated on its own — and DEFERRED, separately from the full-pipeline question
+
+The full-choreography `ConstitutionPipeline` (osv6) is the *broad* extraction. There is a **narrower** one that PR #283's review did not separately weigh: lift only the §A20 two-step — NOT the whole settle/primitive/tail choreography — into a small throwing helper, e.g. a `RateSheetResolution.RequireTan(family, instant, product, role, principal)` that returns the TAN + `rate_sheet_version_id` or throws `DomainRejectedException`, or equivalently relocating just the `?? throw` onto the resolution type. It is judged here on its own merits, decoupled from the full-pipeline rule-of-three:
+
+- **It does meet rule-of-three on its own.** Unlike the full choreography (which §A20's three sites diverge on — de-settled deposit vs eager-debit disbursement, pack-primitive reads, post-decide tails), the two-step itself is *byte-identical in shape* across all three sites. So the usual "wait for the shape to stabilise" objection does NOT apply to this fragment.
+- **But it cannot be placed without a cost the fragment does not justify.** Its only two sound homes are both blocked:
+  - **(a) The generic `Babelstone.RateSheets` spine project.** `ResolveTanBasisPoints` already lives on `RateSheetResolution` there, so this is the natural home — *except* the helper must throw `DomainRejectedException`, which lives in `Babelstone.Engine` (the spine's command-result type). `Babelstone.RateSheets` today references only Npgsql + YamlDotNet — it has **no** reference to `Babelstone.Engine`. Adding the helper would force a brand-new `Babelstone.RateSheets → Babelstone.Engine` `ProjectReference`, widening spine-internal coupling for a six-line helper. (Verified at this amendment's date: `engine/src/Babelstone.RateSheets/Babelstone.RateSheets.csproj` carries no engine reference; `DomainRejectedException` is `engine/src/Babelstone.Engine/DomainRejectedException.cs`.)
+  - **(b) A shared cross-family application project.** This is precisely the candidate **§D1 REJECTS** ("There is **no** shared cross-family application project"). Putting the helper there to be shared by both families would re-introduce the open/closed-violating composition project the whole ADR exists to forbid.
+- **A non-throwing variant does not help.** A helper that *returns* a nullable instead of throwing pushes the `?? throw` back to all three call sites — leaving the duplication exactly where it is while adding an indirection. The throw is the part that wants `Babelstone.Engine`; removing it removes the value.
+
+**Verdict: DEFERRED, same trigger as osv6.** Forcing either home would trade a small, honest, 3-site, six-line duplication for either a leaky abstraction (a spine library taking an engine reference to throw an engine exception) or an outright §D1 violation. A documented defer is sounder than either. The deciders stay written for-lift (§P5); the narrow extraction is taken — if at all — *with* the osv6 lift, not before it, because whichever home the full pipeline lands in is the home this fragment would share. **The optional code change is therefore NOT made in this amendment** (it is documentation only).
+
+### A22 · osv6 gains a COUNTABLE revisit trigger on top of the qualitative full-shape one
+
+§D5/§P5 and the osv6 issue already carry a *qualitative* exit condition: extract when a path appears whose settle/primitive/tail shape genuinely matches one of the existing two (a real rule-of-three on the **full** choreography). That condition stands. This amendment **adds** a second, *countable* trigger so the deferral cannot drift unbounded:
+
+> **osv6 revisit trigger (countable).** Revisit the osv6 `ConstitutionPipeline` (and, with it, the §A21 narrow `RequireTan` extraction) when EITHER holds:
+> 1. **Full-shape match (qualitative, pre-existing).** A constitution/disbursement path appears whose settle + pack-primitive + post-decide-tail shape genuinely matches one of the two existing full shapes — a real rule-of-three on the FULL choreography, not just its rate-resolution prefix.
+> 2. **Count threshold (quantitative, new).** The §A20 rate-resolution two-step reaches a **4th** decider call site (i.e. one more than the 3 counted in §A20). At the 4th site, the narrow extraction (§A21) MUST be re-evaluated explicitly in that change's review — either taken (accepting whichever placement cost the then-current project graph imposes) or re-deferred with the count updated in this ADR. A 4th copy without that explicit re-evaluation is the silent-growth this amendment exists to prevent.
+
+Whichever trigger fires first reopens osv6. Until then osv6 stays `DEFERRED` with the duplication bounded at the §A20 count.
+
+### A23 · This amends the decision; it does not supersede this ADR
+
+§D1–§D5 remain binding as written, and the 2026-05-31 §A1–§A4, 2026-06-13 §A5–§A8, and 2026-06-20 §A9–§A19 amendments stay in force. This **sharpens** §D5/§P5's `ConstitutionPipeline` deferral — adding a counted baseline (§A20), an on-its-own evaluation of the narrow extraction §P5 did not separately weigh (§A21), and a countable revisit trigger (§A22) — and reverses nothing: the pipeline is still deferred, deciders still written for-lift, §D1's "no shared cross-family application project" is reaffirmed (it is exactly why §A21 (b) is blocked), and the `family → engine` arrow is untouched (the narrow helper is declined precisely because its throwing form would add a `RateSheets → Engine` edge inside the spine). It adds **no** new gated fitness function and changes **no** commitment-catalogue row (the duplication count is a documented baseline, not a CI gate), so the [commitment catalogue](./commitment-catalogue.md) is unchanged.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — the hand-rolled, single-deployable engine spine this application layer sits above.
