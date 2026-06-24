@@ -41,7 +41,7 @@ public static class DepositsEndpoints
         moneyMovers.MapPost("/interest", PayInterestAsync);
 
         // Partial early withdrawal (F.12; 02 §2.4.1, bd qze9/9w0g): reduce the principal, leaving the
-        // deposit Active. A domain rejection (not Active, within carência, below the minimum, leaving too
+        // deposit Active. A domain rejection (not Active, within the lock-up, below the minimum, leaving too
         // little, or the whole balance) surfaces as a 422, never a phantom withdrawal. UNLIKE the
         // maturity/interest siblings it carries a mandatory Idempotency-Key (ADR-PC-029 slot 4): a partial
         // withdrawal is REPEATABLE (it leaves the deposit Active), so an at-least-once retry must dedupe
@@ -491,7 +491,7 @@ public static class DepositsEndpoints
         }
         catch (DomainRejectedException e)
         {
-            // The lifecycle + F.12 policy gates: not Active, within carência, below the minimum withdrawal,
+            // The lifecycle + F.12 policy gates: not Active, within the lock-up, below the minimum withdrawal,
             // leaving less than the minimum remaining balance, or the whole balance (which is a termination,
             // F.4). Surface as a 422 — never a phantom withdrawal. A mis-pinned pack / corrupt row / absent
             // product-config store throws other types and propagates as a 500, not a masquerading 422.

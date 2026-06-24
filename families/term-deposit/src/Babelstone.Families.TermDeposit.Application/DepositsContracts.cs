@@ -70,9 +70,9 @@ public sealed record PayInterestRequest(
 
 /// <summary>Withdraw part of a deposit's principal before maturity (F.12; 02 §2.4.1): a principal
 /// reduction that leaves the deposit Active. The product's policy (minimum withdrawal / minimum
-/// remaining balance / carência lock-up) is resolved ENGINE-side from the deposit's product config —
+/// remaining balance / lock-up) is resolved ENGINE-side from the deposit's product config —
 /// not supplied here. The instant is host-stamped if omitted; its DATE is the as-of withdrawal date the
-/// carência is measured against. No payout account: a partial withdrawal carries no settlement leg.</summary>
+/// lock-up is measured against. No payout account: a partial withdrawal carries no settlement leg.</summary>
 /// <param name="WithdrawnAmountCents">The principal to take out, in integer cents.</param>
 public sealed record PartialWithdrawRequest(
     long WithdrawnAmountCents,

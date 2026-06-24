@@ -88,7 +88,7 @@ public enum DepositLifecycle
 /// value pre-F.12 deposits decode from the Avro default). Structural config, NOT PII (ADR-PC-004 §P2).</param>
 /// <param name="MinRemainingBalanceCents">The F.12 minimum remaining balance after a withdrawal, in
 /// cents, PINNED at constitution (PartialWithdrawalPolicy.MinRemainingBalanceCents). 0 ⇒ no floor.</param>
-/// <param name="CarenciaDays">The F.12 lock-up (carência) window in days from constitution, PINNED at
+/// <param name="CarenciaDays">The F.12 lock-up window in days from constitution, PINNED at
 /// constitution (PartialWithdrawalPolicy.CarenciaDays). A duration, not money. 0 ⇒ no lock-up.</param>
 /// <param name="PrincipalTimeline">The deposit's principal as a STEP FUNCTION of time (F.12, bd
 /// babelstone-emtr): the ordered <see cref="PrincipalSegment"/>s the accrual engine prices interest

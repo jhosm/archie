@@ -3,7 +3,7 @@ namespace Babelstone.FinancialTypes;
 /// <summary>
 /// One segment of a deposit's PRINCIPAL over time (fin-math §8.1 step-function balance; F.12 partial
 /// withdrawal). The principal of a term deposit is normally constant, but a partial early withdrawal
-/// (<c>resgate parcial</c>) reduces it mid-term, making the balance a step function. This segment is
+/// reduces it mid-term, making the balance a step function. This segment is
 /// the principal in force from <see cref="From"/> (inclusive) until the next segment's date (or the
 /// accrual window's end for the last).
 /// </summary>

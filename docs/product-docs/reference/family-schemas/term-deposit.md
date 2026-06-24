@@ -159,7 +159,7 @@ package family
 	// --- partial-withdrawal policy (F.12; 02 §2.4.1) --------------------
 	// Optional. Declares the three gates a partial early withdrawal must clear
 	// — a minimum withdrawal amount, a minimum remaining balance, and a lock-up
-	// (carência) window after constitution. The block mirrors the engine's
+	// window after constitution. The block mirrors the engine's
 	// PartialWithdrawalPolicy (MinWithdrawalCents / MinRemainingBalanceCents /
 	// CarenciaDays); it rides on the config as an explicit decider input
 	// resolved at constitution (ADR-PC-008; ADR-PC-021 §D3), never a command
@@ -174,7 +174,7 @@ package family
 	// #BandedPolicy.banded.
 	partial_withdrawal?: #PartialWithdrawal
 
-	// A partial withdrawal is forbidden on an ADVANCE (juros antecipados) product
+	// A partial withdrawal is forbidden on an ADVANCE (interest in advance) product
 	// (F.12, bd babelstone-emtr): that shape pays the WHOLE term's interest up front
 	// on the full principal, so a later withdrawal would strand pre-paid interest with
 	// no accrual flow to re-base it (unlike AT_MATURITY/PERIODIC, whose remaining

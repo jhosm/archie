@@ -75,8 +75,8 @@ principal_bounds:
   max_cents: 50000000   # €500,000.00
 
 # Partial-withdrawal policy (F.12; 02 §2.4.1). Illustrative gates: a €250 minimum
-# per withdrawal, €1,000 must remain on deposit afterward, and a 60-day carência
-# (lock-up) from constitution — shorter than the AT_MATURITY sibling's 90 days,
+# per withdrawal, €1,000 must remain on deposit afterward, and a 60-day lock-up
+# from constitution — shorter than the AT_MATURITY sibling's 90 days,
 # since on a monthly-coupon product the lock-up can plausibly lift after the first
 # coupon or two. Field names mirror the engine's PartialWithdrawalPolicy one-for-
 # one. Omitting this whole block would resolve to PartialWithdrawalPolicy.

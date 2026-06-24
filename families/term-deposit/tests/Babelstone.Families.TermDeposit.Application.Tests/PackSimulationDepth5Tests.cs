@@ -114,9 +114,9 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             captured.Add((instance.TestId, instance.VariantId,
                 await ReadDecidedEventsAsync(fixture.ConnectionString, depositId)));
 
-            // The fold rebuilds the expected end position. Most variants mature; the 18-month `resgate
-            // escalonado` is driven to a BANDED early termination (its load-bearing behaviour, bd
-            // babelstone-3h64), so its end state is TerminatedEarly; the `resgate parcial` variant is
+            // The fold rebuilds the expected end position. Most variants mature; the 18-month tiered
+            // early redemption is driven to a BANDED early termination (its load-bearing behaviour, bd
+            // babelstone-3h64), so its end state is TerminatedEarly; the partial withdrawal variant is
             // driven through a PARTIAL withdrawal (F.12, bd k6r8.10) and STAYS Active — a partial
             // withdrawal is state-preserving (F.3), so it does not reach a terminal state. The
             // withdraw→mature re-base leg (bd babelstone-aviw) DOES run on to maturity. The pinned TAN
@@ -259,7 +259,7 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
     /// manual triggering the E.3 happy-path test uses (no clock-advance, A.8b out of scope).
     /// AT_MATURITY: constitute → mature. ADVANCE: constitute (pays interest up front) → mature.
     /// PERIODIC: constitute → pay every intermediate coupon → mature (the final coupon rides with
-    /// the principal). BANDED early termination (the 18-month <c>resgate escalonado</c> variant,
+    /// the principal). BANDED early termination (the 18-month tiered early redemption variant,
     /// bd babelstone-3h64): constitute → break early on the resolved band schedule, so the
     /// first-match banded penalty path is actually replayed rather than mapped to a plain
     /// at-maturity shape. The interest shape, cadence, and (banded) break schedule are read off the
@@ -286,7 +286,7 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             Actor: "depth5-sim",
             PaymentPeriodMonths: variant.PaymentPeriodMonths));
 
-        // The banded `resgate escalonado` variant breaks early on the resolved schedule instead of
+        // The banded tiered early redemption variant breaks early on the resolved schedule instead of
         // maturing — its distinctive behaviour (bd babelstone-3h64). The break date is an INPUT
         // (start + the band-selecting BreakAfterDays), so the band first-match is deterministic and
         // the produced sequence is identical on every run.
@@ -305,9 +305,9 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             return;
         }
 
-        // The `resgate parcial` variant withdraws part of its principal instead of maturing (F.12, bd
+        // The partial withdrawal variant withdraws part of its principal instead of maturing (F.12, bd
         // k6r8.10). The withdrawal date (start + WithdrawAfterDays) and amount are INPUTS, so the band/
-        // carência evaluation is deterministic and the produced sequence is identical on every run. The
+        // lock-up evaluation is deterministic and the produced sequence is identical on every run. The
         // F.12 policy is resolved engine-side from the deposit's product config (k6r8.8). A partial
         // withdrawal is STATE-PRESERVING (F.3): the deposit stays Active afterward, so this leg does NOT
         // run on to maturity — it ends at the withdrawal, the load-bearing event this corpus guards.
@@ -426,7 +426,7 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
 
         var variant = TermDepositVariants.For(instance.TestId, instance.VariantId);
 
-        // The banded `resgate escalonado` variant breaks early rather than maturing: the elapsed
+        // The banded tiered early redemption variant breaks early rather than maturing: the elapsed
         // flow accrues+withholds, then the deposit settles net of the first-match band penalty and
         // closes with DepositTerminatedEarly (bd babelstone-3h64). Its terminal shape differs from
         // the maturing variants' DepositMatured, so the corpus replay asserts the break sequence.
@@ -444,7 +444,7 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             return [c, partiallyWithdrawn, accrued, withheld, matured];
         }
 
-        // The `resgate parcial` variant withdraws part of its principal and STAYS Active (F.12, bd
+        // The partial withdrawal variant withdraws part of its principal and STAYS Active (F.12, bd
         // k6r8.10): a partial withdrawal is a principal reduction only — no accrual, withholding, or
         // settlement leg (02 §2.4.1) — so the sequence is exactly the constitution followed by the single
         // DepositPartiallyWithdrawn. It does NOT run on to maturity (the deposit is still open).
@@ -555,7 +555,7 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
     /// <summary>Compose the durable runtime + constitution service over the term-deposit family,
     /// loading the SAME committed pt.2026.1 pack the corpus pins (the depth-5 pack-load path,
     /// ADR-PC-006 §P4) — the identical composition root the E.3 happy-path test uses. The banded
-    /// early-termination policy is the engine-instance config the `resgate escalonado` break resolves
+    /// early-termination policy is the engine-instance config the tiered early redemption break resolves
     /// (ADR-PC-009 stand-in); the maturing variants never touch it (bd babelstone-3h64).</summary>
     private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service)
         Compose(string connectionString, EarlyTerminationPolicy? earlyTerminationPolicy)
@@ -570,7 +570,7 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros",
             earlyTerminationPolicy: earlyTerminationPolicy,
             // The F.12 partial-withdrawal policy rides on the product config (k6r8.8). ConstituteAsync
-            // resolves it from the REAL resgate-parcial variant on disk through this store AT CONSTITUTION
+            // resolves it from the REAL partial-withdrawal variant on disk through this store AT CONSTITUTION
             // and PINS it on the deposit; the withdrawal leg then reads the pinned policy off the position
             // — exercising the whole F.12 chain (schema → config → variant → wiring → corpus) end-to-end.
             // Harmless for the maturing/banded variants, which never withdraw.
@@ -579,7 +579,7 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
     }
 
     /// <summary>The single banded early-termination policy the corpus's break-early variant resolves
-    /// to (the 18-month `resgate escalonado`), or <c>null</c> if the corpus names no banded variant.
+    /// to (the 18-month tiered early redemption), or <c>null</c> if the corpus names no banded variant.
     /// One policy per engine instance is the walking-skeleton stand-in (ADR-PC-009); the corpus only
     /// breaks the one banded variant, so a single resolved schedule serves the whole run.</summary>
     private static EarlyTerminationPolicy? EarlyTerminationPolicyFor(CanonicalCorpus corpus)

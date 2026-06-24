@@ -7,7 +7,7 @@ namespace Babelstone.Families.TermDeposit.Application.Tests;
 /// <summary>
 /// The pure partial-withdrawal decision core (F.12, bd babelstone-k6r8.5; ADR-PC-021 §P3) — no I/O, no
 /// clock, default CI lane. Pins the three F.12 policy gates (minimum withdrawal amount, minimum
-/// remaining balance, carência lock-up) plus the structural rules the decider always applies (positive
+/// remaining balance, lock-up) plus the structural rules the decider always applies (positive
 /// amount; cannot withdraw the whole balance — that is a termination, F.4) and the F.3 lifecycle gate.
 /// A partial withdrawal is a PRINCIPAL reduction only: there is no interest/withholding/settlement flow
 /// to assert, only the exact integer-cent <c>remaining = current − withdrawn</c> (ADR-PC-010 §P1).
@@ -42,7 +42,7 @@ public sealed class PartialWithdrawalDeciderTests
     [Fact]
     public void Permitted_withdrawal_emits_one_event_reducing_the_principal_exactly()
     {
-        // min 1,000.00 withdrawal, min 2,000.00 remaining, 30-day carência. Withdraw 3,000.00 at day 60.
+        // min 1,000.00 withdrawal, min 2,000.00 remaining, 30-day lock-up. Withdraw 3,000.00 at day 60.
         var policy = new PartialWithdrawalPolicy(
             MinWithdrawalCents: 100_000, MinRemainingBalanceCents: 200_000, CarenciaDays: 30);
 
@@ -119,7 +119,7 @@ public sealed class PartialWithdrawalDeciderTests
         Assert.Equal(new Money(500_000), DecodeSingle(events).RemainingPrincipal);
     }
 
-    // ---- F.12 carência (lock-up) period ----------------------------------------------------------
+    // ---- F.12 lock-up period ---------------------------------------------------------------------
 
     [Fact]
     public void Withdrawal_inside_the_carencia_lockup_is_refused()
@@ -130,7 +130,7 @@ public sealed class PartialWithdrawalDeciderTests
 
         var ex = Assert.Throws<DomainRejectedException>(() => PartialWithdrawalDecider.Decide(
             ActivePosition(), new Money(100_000), Start.AddDays(89), policy));
-        Assert.Contains("carência", ex.Message);
+        Assert.Contains("lock-up", ex.Message);
     }
 
     [Fact]
@@ -206,7 +206,7 @@ public sealed class PartialWithdrawalDeciderTests
         Assert.Contains("legal only from Active", ex.Message);
     }
 
-    // ---- product-shape gate: forbidden on ADVANCE (juros antecipados) (bd babelstone-emtr) --------
+    // ---- product-shape gate: forbidden on ADVANCE (interest in advance) (bd babelstone-emtr) ------
 
     [Fact]
     public void Partial_withdrawal_is_forbidden_on_an_ADVANCE_product()

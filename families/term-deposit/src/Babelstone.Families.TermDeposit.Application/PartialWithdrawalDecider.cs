@@ -7,7 +7,7 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// <summary>
 /// The product's partial-withdrawal rules (F.12; 02 §2.4.1 / §B v1.x): the three policy gates a
 /// partial early withdrawal must clear — a MINIMUM withdrawal amount, a MINIMUM remaining balance,
-/// and a lock-up (<i>carência</i>) period after constitution during which no withdrawal is allowed.
+/// and a lock-up period after constitution during which no withdrawal is allowed.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -20,7 +20,7 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// All three gates are inclusive-boundary "at least" / "on or after" rules (the boundary value
 /// PASSES): a withdrawal exactly at the minimum amount, a remaining balance exactly at the minimum,
 /// and a withdrawal exactly on the first day after the lock-up are all permitted. A degenerate policy
-/// (zero minimums, zero <i>carência</i>) imposes no gate beyond the structural ones the decider always
+/// (zero minimums, zero lock-up) imposes no gate beyond the structural ones the decider always
 /// applies (positive amount; cannot withdraw the whole balance — that is a termination, F.4).
 /// </para>
 /// </remarks>
@@ -30,7 +30,7 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// withdrawal, in cents. A withdrawal that would leave strictly less than this is refused. <c>0</c>
 /// imposes no minimum-remaining floor (the decider still forbids withdrawing the whole balance —
 /// reducing to exactly zero is a termination, not a partial withdrawal).</param>
-/// <param name="CarenciaDays">The lock-up (<i>carência</i>) window in days from the constitution start
+/// <param name="CarenciaDays">The lock-up window in days from the constitution start
 /// date during which no partial withdrawal is allowed. A withdrawal whose date is strictly before
 /// <c>StartDate + CarenciaDays</c> is refused. <c>0</c> imposes no lock-up.</param>
 public sealed record PartialWithdrawalPolicy(
@@ -97,14 +97,14 @@ public static class PartialWithdrawalDecider
     /// Decide a partial withdrawal (F.12). Returns the single <see cref="DepositPartiallyWithdrawn"/>
     /// event reducing the principal, or throws <see cref="DomainRejectedException"/> naming the broken
     /// rule. Evaluation order is: lifecycle legality → positive amount → cannot withdraw the whole
-    /// balance → <i>carência</i> lock-up → minimum withdrawal amount → minimum remaining balance.
+    /// balance → lock-up → minimum withdrawal amount → minimum remaining balance.
     /// </summary>
     /// <param name="position">The rehydrated deposit position (its <see cref="DepositPosition.Lifecycle"/>,
     /// <see cref="DepositPosition.RemainingPrincipal"/>, and <see cref="DepositPosition.StartDate"/> drive
     /// the decision).</param>
     /// <param name="withdrawnAmount">The principal the depositor asks to take out.</param>
     /// <param name="withdrawnOn">The as-of withdrawal date — an INPUT (no clock in the decider), the
-    /// date both the event records and the <i>carência</i> gate is measured against.</param>
+    /// date both the event records and the lock-up gate is measured against.</param>
     /// <param name="policy">The product's partial-withdrawal policy (the three F.12 gates).</param>
     /// <exception cref="DomainRejectedException">If any lifecycle, structural, or F.12 rule is broken.</exception>
     public static IReadOnlyList<DomainEvent> Decide(
@@ -125,7 +125,7 @@ public static class PartialWithdrawalDecider
                 $"{position.Lifecycle}: a partial withdrawal is legal only from Active (F.3 / F.12).");
         }
 
-        // 0.5 Product-shape: a partial withdrawal is forbidden on an ADVANCE (juros antecipados) product
+        // 0.5 Product-shape: a partial withdrawal is forbidden on an ADVANCE (interest in advance) product
         //     (F.12, bd babelstone-emtr). ADVANCE pays the WHOLE term's interest up front at constitution
         //     on the full principal; reducing the principal later would leave the depositor holding
         //     interest on money no longer on deposit, with NO later accrual flow to re-base it (unlike
@@ -137,7 +137,7 @@ public static class PartialWithdrawalDecider
         {
             throw new DomainRejectedException(
                 $"Partial withdrawal on deposit {position.DepositId} is not permitted: the product pays " +
-                "interest in advance (ADVANCE / juros antecipados). Interest is pre-paid on the full " +
+                "interest in advance (ADVANCE). Interest is pre-paid on the full " +
                 "principal and cannot be re-based after a withdrawal, so partial withdrawal is not a legal " +
                 "operation for this product shape (F.12).");
         }
@@ -163,7 +163,7 @@ public static class PartialWithdrawalDecider
                 "(F.4), not a partial withdrawal (F.12).");
         }
 
-        // 3. F.12 carência (lock-up): no withdrawal strictly before StartDate + CarenciaDays. The
+        // 3. F.12 lock-up: no withdrawal strictly before StartDate + CarenciaDays. The
         //    earliest permitted date is the first day on/after the lock-up window closes; the boundary
         //    day itself passes (inclusive). Date arithmetic on the INPUT date — no clock.
         var unlockDate = position.StartDate.AddDays(policy.CarenciaDays);
@@ -171,7 +171,7 @@ public static class PartialWithdrawalDecider
         {
             throw new DomainRejectedException(
                 $"Partial withdrawal on deposit {position.DepositId} on {withdrawnOn:yyyy-MM-dd} falls inside the " +
-                $"{policy.CarenciaDays}-day carência (lock-up) period; the earliest permitted date is " +
+                $"{policy.CarenciaDays}-day lock-up period; the earliest permitted date is " +
                 $"{unlockDate:yyyy-MM-dd} (F.12).");
         }
 

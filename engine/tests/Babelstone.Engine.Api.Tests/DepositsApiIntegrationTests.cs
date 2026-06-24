@@ -59,7 +59,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
             ProductFamily: "term_deposit",
             PackVersion: "pt.2026.1",
             EffectiveFrom: new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
-            // Price both the walking-skeleton product and the F.12 resgate-parcial variant (the
+            // Price both the walking-skeleton product and the F.12 partial-withdrawal variant (the
             // partial-withdrawal endpoint constitutes under the latter, bd qze9) at 300 bps / standard.
             Body: FlatPriced(
                 ("dpz_pt_12m_juros_venc", "standard", 300),
@@ -234,7 +234,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task Partial_withdrawal_over_HTTP_reduces_the_principal_and_keeps_the_deposit_Active()
     {
-        // bd qze9 end-to-end over the HTTP surface: constitute a resgate-parcial deposit, then POST a
+        // bd qze9 end-to-end over the HTTP surface: constitute a partial-withdrawal deposit, then POST a
         // partial withdrawal that clears all three F.12 gates (the policy is resolved engine-side from the
         // deposit's product config, bd k6r8.8). The deposit stays Active (a partial withdrawal is
         // state-preserving, F.3) with a reduced RemainingPrincipal, and the durable log carries exactly
@@ -251,8 +251,8 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created, constitute.StatusCode);
         var depositId = (await constitute.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
 
-        // Withdraw €5,000 on 2026-06-15 (151 days in, past the 90-day carência): min-withdrawal €500 ✓,
-        // remaining €5,000 ≥ min-remaining €1,000 ✓, carência cleared ✓. The Idempotency-Key is MANDATORY
+        // Withdraw €5,000 on 2026-06-15 (151 days in, past the 90-day lock-up): min-withdrawal €500 ✓,
+        // remaining €5,000 ≥ min-remaining €1,000 ✓, lock-up cleared ✓. The Idempotency-Key is MANDATORY
         // on partial withdrawal (ADR-PC-029 slot 4, bd 9w0g) — a fresh key per test.
         var withdrawal = await PostJsonAsync(
             $"/v1/deposits/{depositId}/partial-withdrawal",
@@ -282,7 +282,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     [Fact]
     public async Task A_partial_withdrawal_within_the_carencia_is_a_422()
     {
-        // The F.12 carência (lock-up) gate at the HTTP boundary: a withdrawal dated inside the 90-day
+        // The F.12 lock-up gate at the HTTP boundary: a withdrawal dated inside the 90-day
         // lock-up is a clean 422 (DomainRejectedException), never a phantom withdrawal — and the deposit
         // is untouched (no DepositPartiallyWithdrawn appended).
         var constitute = await PostConstituteAsync(new ConstituteDepositRequest(
@@ -297,7 +297,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created, constitute.StatusCode);
         var depositId = (await constitute.Content.ReadFromJsonAsync<ConstituteDepositResponse>(SnakeCase))!.DepositId;
 
-        // 2026-01-25 is only 10 days in — well inside the 90-day carência. A valid Idempotency-Key is
+        // 2026-01-25 is only 10 days in — well inside the 90-day lock-up. A valid Idempotency-Key is
         // supplied so the request reaches the domain check (the 422 under test), not the mandatory-key 400.
         var withdrawal = await PostJsonAsync(
             $"/v1/deposits/{depositId}/partial-withdrawal",

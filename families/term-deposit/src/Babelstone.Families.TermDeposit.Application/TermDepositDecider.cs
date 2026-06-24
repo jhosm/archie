@@ -190,8 +190,8 @@ public static class TermDepositDecider
                 .ToArray();
 
     /// <summary>
-    /// The resolved rate VECTOR a deposit accrues against (F.10): a step-up (<i>crescente</i>) or
-    /// amount-tiered (<i>escalonada</i>) <see cref="RateSchedule"/> when the caller resolved one at
+    /// The resolved rate VECTOR a deposit accrues against (F.10): a step-up or
+    /// amount-tiered <see cref="RateSchedule"/> when the caller resolved one at
     /// constitution, or the degenerate FLAT schedule built from <paramref name="position"/>'s single
     /// <see cref="DepositPosition.TanBasisPoints"/> otherwise. Centralising the "schedule-or-flat"
     /// choice here keeps every accrual path (maturity, coupon, advance, early termination) folding
@@ -258,7 +258,7 @@ public static class TermDepositDecider
     /// no InterestPaid); the coupon flow uses InterestPaid. One accumulation path per flow.
     /// </remarks>
     /// <param name="schedule">The resolved rate VECTOR (F.10) this coupon window accrues over — a
-    /// step-up <see cref="RateSchedule"/> (a quarterly coupon on a <i>crescente</i> deposit accrues
+    /// step-up <see cref="RateSchedule"/> (a quarterly coupon on a step-up deposit accrues
     /// at the rate in force over ITS window, so a later coupon earns more) or <c>null</c> for the
     /// flat product. AccrueGross over [periodStart, periodEnd] folds only the segments overlapping
     /// the window, so the coupon prices the elapsed-day band it falls in.</param>
@@ -428,7 +428,7 @@ public static class TermDepositDecider
     /// <param name="terminationReason">A stable, non-PII reason code recorded on the event (e.g. <c>CUSTOMER_REQUEST</c>).</param>
     /// <param name="schedule">The resolved rate VECTOR (F.10) the elapsed-period interest folds over
     /// — a step-up/amount-tiered <see cref="RateSchedule"/>, or <c>null</c> for the flat product.
-    /// A deposit broken mid-<i>crescente</i> accrues only the steps it actually reached (the vector
+    /// A deposit broken mid-step-up accrues only the steps it actually reached (the vector
     /// is clipped to the elapsed window). The RATE-REDUCTION penalty basis (F.11) reuses this same
     /// vector to recompute the elapsed accrual at the band's reduced rate.</param>
     public static IReadOnlyList<DomainEvent> DecideEarlyTermination(

@@ -8,7 +8,7 @@ namespace Babelstone.Families.TermDeposit.Application.Tests;
 /// <see cref="YamlProductConfigStore"/> reads the optional <c>partial_withdrawal</c> block off a
 /// product-config YAML into the engine's <see cref="ProductConfig"/> primitives, and
 /// <see cref="PartialWithdrawalPolicy.FromProductConfig"/> resolves the policy the F.12 decider takes.
-/// The resgate-parcial variant DECLARES the block; the walking-skeleton variant OMITS it (⇒ Unrestricted).
+/// The partial-withdrawal variant DECLARES the block; the walking-skeleton variant OMITS it (⇒ Unrestricted).
 /// Pure disk read — no Postgres, so this is a plain unit test, not the Integration-tagged runtime path.
 /// </summary>
 public sealed class PartialWithdrawalConfigDiskTests

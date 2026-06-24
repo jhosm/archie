@@ -169,7 +169,7 @@ internal sealed class CanonicalCorpus
 /// <param name="Lifecycle">Which terminal lifecycle the depth-5 simulation drives this variant to:
 /// <c>AtMaturity</c> (constitute → … → mature) for the four maturing shapes, or
 /// <c>BandedEarlyTermination</c> (constitute → break early on the resolved band schedule) for the
-/// 18-month <c>resgate escalonado</c> variant whose load-bearing behaviour is the banded penalty,
+/// 18-month tiered early redemption variant whose load-bearing behaviour is the banded penalty,
 /// not at-maturity payout (bd babelstone-3h64).</param>
 /// <param name="EarlyTermination">The resolved early-termination policy + the elapsed day the break
 /// fires at, ONLY for a <see cref="SimulatedLifecycle.BandedEarlyTermination"/> variant; <c>null</c>
@@ -189,13 +189,13 @@ internal sealed record VariantShape(
 /// withdrawal fires at and the fixed amount withdrawn. Both are INPUTS (start + N days, fixed cents) so
 /// the produced sequence is identical on every run and CI host, mirroring the banded leg's
 /// <see cref="EarlyTerminationShape.BreakAfterDays"/>. The policy itself is NOT carried here — the F.12
-/// policy rides on the product config (k6r8.8) and is resolved from the REAL <c>resgate parcial</c>
+/// policy rides on the product config (k6r8.8) and is resolved from the REAL partial withdrawal
 /// variant AT CONSTITUTION through the wired product-config store, then PINNED on the deposit (the
 /// withdrawal reads the pinned policy off the position) — so the leg exercises the whole F.12 chain
-/// end-to-end. The chosen values must clear that variant's pinned gates (past the carência; at least the
+/// end-to-end. The chosen values must clear that variant's pinned gates (past the lock-up; at least the
 /// minimum withdrawal; leaving at least the minimum remaining balance).</summary>
 /// <param name="WithdrawAfterDays">Elapsed days from constitution to the simulated withdrawal — chosen
-/// strictly on/after the variant's carência so the lock-up gate passes.</param>
+/// strictly on/after the variant's lock-up so the lock-up gate passes.</param>
 /// <param name="WithdrawnCents">The fixed principal withdrawn, in cents — chosen to clear the minimum
 /// withdrawal and leave at least the minimum remaining balance on deposit.</param>
 internal sealed record PartialWithdrawalShape(int WithdrawAfterDays, long WithdrawnCents);
@@ -207,11 +207,11 @@ internal enum SimulatedLifecycle
     AtMaturity,
 
     /// <summary>Constitute → break early on the resolved band schedule: the 18-month banded
-    /// <c>resgate escalonado</c> variant, whose distinctive behaviour is the first-match penalty
+    /// tiered early redemption variant, whose distinctive behaviour is the first-match penalty
     /// schedule, never exercised by an at-maturity run.</summary>
     BandedEarlyTermination,
 
-    /// <summary>Constitute → partially withdraw (F.12, bd k6r8.10): the <c>resgate parcial</c> variant.
+    /// <summary>Constitute → partially withdraw (F.12, bd k6r8.10): the partial withdrawal variant.
     /// A partial withdrawal is STATE-PRESERVING (F.3) — it reduces the principal but does NOT close the
     /// deposit, so this leg does NOT run to a terminal state: it ends with the deposit still Active and a
     /// reduced RemainingPrincipal. The load-bearing evidence is the <c>DepositPartiallyWithdrawn</c> event
@@ -219,7 +219,7 @@ internal enum SimulatedLifecycle
     PartialWithdrawal,
 
     /// <summary>Constitute → partially withdraw → MATURE (F.12 re-base, bd babelstone-aviw / emtr): the
-    /// same <c>resgate parcial</c> variant, but driven ALL THE WAY to maturity after the withdrawal. This
+    /// same partial withdrawal variant, but driven ALL THE WAY to maturity after the withdrawal. This
     /// locks the re-base at the simulation level: maturity must accrue PIECEWISE on the principal actually
     /// held in each segment of the timeline (full principal up to the withdrawal, the reduced principal
     /// after), and the matured payout returns the REDUCED principal plus that piecewise net interest — NOT
@@ -240,7 +240,7 @@ internal sealed record EarlyTerminationShape(EarlyTerminationPolicy Policy, int 
 
 internal static class TermDepositVariants
 {
-    // The §2.5-shaped banded schedule the 18-month `resgate escalonado` variant resolves to (the
+    // The §2.5-shaped banded schedule the 18-month tiered early redemption variant resolves to (the
     // engine-instance early-termination config, ADR-PC-009 stand-in): a staggered penalty on the
     // accrued interest — 100% inside the first band, 50% in the second, 25% on the open tail — no
     // floor. This IS the variant's load-bearing behaviour; the depth-5 sim breaks at day 200 (the
@@ -256,7 +256,7 @@ internal static class TermDepositVariants
         BreakAfterDays: 200);
 
     // The five v1 launch variants (product-configs/*.yaml), one per interest shape (F.7). The
-    // 18-month `resgate escalonado` constitutes as an underlying AT_MATURITY deposit but the
+    // 18-month tiered early redemption constitutes as an underlying AT_MATURITY deposit but the
     // simulation drives it to a BANDED early termination — its distinctive behaviour (bd babelstone-3h64).
     private static readonly IReadOnlyDictionary<string, VariantShape> Shapes =
         new Dictionary<string, VariantShape>(StringComparer.Ordinal)
@@ -268,10 +268,10 @@ internal static class TermDepositVariants
             ["dpz_pt_18m_resgate_escalonado"] = new(
                 "AT_MATURITY", TermDays: 545, PaymentPeriodMonths: 0,
                 SimulatedLifecycle.BandedEarlyTermination, BandedResgateEscalonado),
-            // The F.12 `resgate parcial` variant (bd k6r8.10): an underlying AT_MATURITY deposit the
+            // The F.12 partial withdrawal variant (bd k6r8.10): an underlying AT_MATURITY deposit the
             // simulation drives through a PARTIAL withdrawal instead of to maturity. Its declared policy
-            // (min €500 withdrawal, min €1,000 remaining, 90-day carência) is resolved from the product
-            // config — not pinned here. The withdrawal fires on day 120 (past the 90-day carência) for
+            // (min €500 withdrawal, min €1,000 remaining, 90-day lock-up) is resolved from the product
+            // config — not pinned here. The withdrawal fires on day 120 (past the 90-day lock-up) for
             // €10,000, leaving €30,000 of a €40,000 principal (clears every gate). The deposit stays
             // Active afterward (partial withdrawal is state-preserving, F.3).
             ["dpz_pt_12m_resgate_parcial"] = new(
@@ -290,8 +290,8 @@ internal static class TermDepositVariants
     private static readonly IReadOnlyDictionary<string, VariantShape> ShapeByTestId =
         new Dictionary<string, VariantShape>(StringComparer.Ordinal)
         {
-            // €40,000 @ 300 bps / 365d resgate-parcial: withdraw €10,000 on day 120 (clears the 90-day
-            // carência / min-withdrawal / min-remaining gates, exactly as the state-preserving leg), then
+            // €40,000 @ 300 bps / 365d partial-withdrawal: withdraw €10,000 on day 120 (clears the 90-day
+            // lock-up / min-withdrawal / min-remaining gates, exactly as the state-preserving leg), then
             // MATURE — the matured payout must return the REDUCED €30,000 principal plus the PIECEWISE net
             // interest (full €40,000 up to day 120, €30,000 thereafter), the emtr re-base (bd babelstone-aviw).
             ["pt_dpz_12m_partial_withdrawal_then_mature"] = new(

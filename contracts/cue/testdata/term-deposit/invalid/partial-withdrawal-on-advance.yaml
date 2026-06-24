@@ -1,4 +1,4 @@
-# INVALID: a partial_withdrawal block on an ADVANCE (juros antecipados) variant —
+# INVALID: a partial_withdrawal block on an ADVANCE (interest in advance) variant —
 # the schema forbids the block when interest_variant is ADVANCE (the same presence-
 # given-enum guard as payment_period_months). ADVANCE pre-pays the whole term's
 # interest on the full principal, so a later partial withdrawal has no accrual flow
