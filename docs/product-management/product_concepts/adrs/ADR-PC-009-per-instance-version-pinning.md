@@ -195,8 +195,7 @@ This decision's load-bearing commitments are fitness functions in the [commitmen
 
 - `REPLAY_PIN_PER_EVENT` — replay reads the per-event pin, not the clock; the migration boundary is intrinsic to the stream (§P1–§P2).
 - `HOST_PACK_FAMILY_MANIFEST_CROSS_CHECK` (catalogue row 12c) — the host fails closed at load on a family/schema-version skew between the pinned pack's `families.yaml` and the discovered family modules (§A1). `Live` as `HostModuleLoaderTests` + `PackParserTests`.
-
-§A2's bound is gated by the catalogue commitment **PACK_MIGRATION_POPULATION_CAPPED** (catalogue row 9a, governing source this ADR): a pack migration rejects a selected population larger than the configured cap (in preview AND emit, before any head read) and surfaces the matched count on every response, and the predicate resolver bounds its read at `cap + 1`. Planned, covered by `PackMigrationServiceTests` (the cap reject + at-the-cap pass), `PackMigrationIntegrationTests` (the `LIMIT`-bounded read + the resolver `cap+1` sentinel + the predicate over-cap reject), and `DepositsApiIntegrationTests` (`matched_count` surfaced over HTTP). *(The catalogue row is added centrally with this change — see the PR's catalogue-flip note; once landed this prose becomes the canonical `- \`PACK_MIGRATION_POPULATION_CAPPED\` — …` bullet.)*
+- `PACK_MIGRATION_POPULATION_CAPPED` (catalogue row 9a, governing source this ADR) — §A2's bound: a pack migration rejects a selected population larger than the configured cap (in preview AND emit, before any head read) and surfaces the matched count on every response, and the predicate resolver bounds its read at `cap + 1`. `Planned`, covered by `PackMigrationServiceTests` (the cap reject + at-the-cap pass), `PackMigrationIntegrationTests` (the `LIMIT`-bounded read + the resolver `cap+1` sentinel + the predicate over-cap reject), and `DepositsApiIntegrationTests` (`matched_count` surfaced over HTTP).
 
 ---
 
