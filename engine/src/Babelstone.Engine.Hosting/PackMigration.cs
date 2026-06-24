@@ -19,11 +19,19 @@ public interface IPackMigrationService
     /// <summary>The product family this write-path migrates (e.g. <c>term_deposit</c>) — the dispatch key the endpoint selects on.</summary>
     string ProductFamily { get; }
 
-    /// <summary>Preview the matched set (those of <paramref name="instanceIds"/> currently on <paramref name="fromPackVersion"/>) WITHOUT emitting anything.</summary>
+    /// <summary>
+    /// The hard cap on the SELECTED population (the candidate <c>instance_ids</c>) one preview/migrate
+    /// call may name (ADR-PC-009 §A2). A request whose selection exceeds this is rejected up front rather
+    /// than fanning out an unbounded run of per-instance event-store head reads. The endpoint surfaces
+    /// both the cap and the selected count so the operator sees how far over they are.
+    /// </summary>
+    int MigrationCap { get; }
+
+    /// <summary>Preview the matched set (those of <paramref name="instanceIds"/> currently on <paramref name="fromPackVersion"/>) WITHOUT emitting anything. Throws <see cref="PackMigrationCapExceededException"/> if the selected population exceeds <see cref="MigrationCap"/>.</summary>
     Task<IReadOnlyList<Guid>> PreviewAsync(
         string fromPackVersion, IReadOnlyList<Guid> instanceIds, CancellationToken ct = default);
 
-    /// <summary>Re-pin each matched instance from <paramref name="fromPackVersion"/> to <paramref name="toPackVersion"/>, returning the instances actually re-pinned.</summary>
+    /// <summary>Re-pin each matched instance from <paramref name="fromPackVersion"/> to <paramref name="toPackVersion"/>, returning the instances actually re-pinned. Throws <see cref="PackMigrationCapExceededException"/> if the selected population exceeds <see cref="MigrationCap"/>.</summary>
     Task<IReadOnlyList<Guid>> MigrateAsync(
         string fromPackVersion,
         string toPackVersion,
@@ -32,6 +40,29 @@ public interface IPackMigrationService
         string operatorActor,
         DateTimeOffset migratedAt,
         CancellationToken ct = default);
+}
+
+/// <summary>
+/// The selected pack-migration population exceeded the configured hard cap (ADR-PC-009 §A2). In plain
+/// English: an operator named more live instances than one migration call is allowed to touch, so the
+/// write-path refuses BEFORE it does a single event-store head read — a wrong-and-huge filter cannot fan
+/// out into an unbounded run. Carries the <see cref="SelectedCount"/> the request resolved to and the
+/// <see cref="Cap"/> it breached, so the endpoint reports both (the matched count the operator asked for)
+/// in a 422 rather than a bare failure.
+/// </summary>
+public sealed class PackMigrationCapExceededException(string productFamily, int selectedCount, int cap)
+    : Exception(
+        $"pack-migration for product_family '{productFamily}' selected {selectedCount} instances, "
+        + $"which exceeds the configured cap of {cap}. Narrow the selection or raise the cap.")
+{
+    /// <summary>The product family whose selection breached the cap.</summary>
+    public string ProductFamily { get; } = productFamily;
+
+    /// <summary>The number of instances the request selected (the matched count, at least <see cref="Cap"/>+1).</summary>
+    public int SelectedCount { get; } = selectedCount;
+
+    /// <summary>The configured hard cap the selection exceeded.</summary>
+    public int Cap { get; } = cap;
 }
 
 /// <summary>
@@ -95,8 +126,17 @@ public interface IPackMigrationService
 /// </remarks>
 /// <typeparam name="TState">The family's folded projection state the migration's no-op fold runs over.</typeparam>
 public sealed class PackMigrationService<TState>(
-    AggregateRuntime<TState> runtime, IEventStore store, string productFamily) : IPackMigrationService
+    AggregateRuntime<TState> runtime, IEventStore store, string productFamily, int migrationCap = PackMigrationService<TState>.DefaultMigrationCap)
+    : IPackMigrationService
 {
+    /// <summary>
+    /// The default hard cap on a single preview/migrate call's SELECTED population (ADR-PC-009 §A2) when a
+    /// host does not configure one. Sized to cover a realistic v1 live population comfortably while still
+    /// bounding the per-instance head-read fan-out at a known ceiling; a deployment with a larger population
+    /// raises it explicitly (the cap is a deliberate operations knob, not a silent default to outgrow).
+    /// </summary>
+    public const int DefaultMigrationCap = 10_000;
+
     /// <summary>
     /// The product family this write-path migrates (the family supplies it from its own
     /// <c>FamilyName</c> when it closes the generic), so the single dispatching endpoint can select this
@@ -104,6 +144,13 @@ public sealed class PackMigrationService<TState>(
     /// never names the family — the family hands its own name across the seam (ADR-PC-021 §P2).
     /// </summary>
     public string ProductFamily => productFamily;
+
+    /// <summary>
+    /// The hard cap on the selected population a single preview/migrate call may name (ADR-PC-009 §A2).
+    /// Enforced in BOTH <see cref="PreviewAsync"/> and <see cref="MigrateAsync"/> before any head read, so a
+    /// preview reports the same cap breach the emit would hit (no "preview passes, emit explodes" gap).
+    /// </summary>
+    public int MigrationCap => migrationCap;
 
     /// <summary>
     /// The matched set for a migration WITHOUT emitting anything: the instances (of those supplied)
@@ -116,6 +163,7 @@ public sealed class PackMigrationService<TState>(
     {
         ArgumentException.ThrowIfNullOrEmpty(fromPackVersion);
         ArgumentNullException.ThrowIfNull(instanceIds);
+        ThrowIfOverCap(instanceIds.Count);
 
         var matched = new List<Guid>();
         foreach (var instanceId in instanceIds)
@@ -154,6 +202,7 @@ public sealed class PackMigrationService<TState>(
         ArgumentException.ThrowIfNullOrEmpty(migrationId);
         ArgumentException.ThrowIfNullOrEmpty(operatorActor);
         ArgumentNullException.ThrowIfNull(instanceIds);
+        ThrowIfOverCap(instanceIds.Count);
 
         var migrated = new List<Guid>();
         foreach (var instanceId in instanceIds)
@@ -203,6 +252,21 @@ public sealed class PackMigrationService<TState>(
         }
 
         return migrated;
+    }
+
+    /// <summary>
+    /// Reject a selected population larger than the configured cap (ADR-PC-009 §A2) BEFORE any head read.
+    /// The check is on the SELECTED candidate count — the explicit ids the operator listed, or the resolved
+    /// predicate population (the resolver already bounds its own read at <c>cap+1</c>, so an over-cap
+    /// predicate arrives here as exactly <c>cap+1</c> and trips this guard). Surfacing the count lets the
+    /// endpoint tell the operator how many instances they selected and by how much they overshot.
+    /// </summary>
+    private void ThrowIfOverCap(int selectedCount)
+    {
+        if (selectedCount > migrationCap)
+        {
+            throw new PackMigrationCapExceededException(productFamily, selectedCount, migrationCap);
+        }
     }
 
     /// <summary>The head (latest) envelope of a stream, or null when the stream has no events.</summary>

@@ -491,7 +491,7 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
             DateOnly fromInclusive, DateOnly toExclusive, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<DepositReadModelRow>>([]);
 
-        public Task<IReadOnlyList<Guid>> ListActiveStreamIdsAsync(CancellationToken ct = default) =>
+        public Task<IReadOnlyList<Guid>> ListActiveStreamIdsAsync(int limit, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<Guid>>([]);
     }
 

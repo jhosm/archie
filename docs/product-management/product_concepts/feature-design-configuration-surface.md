@@ -239,6 +239,13 @@ Sometimes the regulator *requires* retroactive change ("from 2027-01-01, the new
 
 The migration is auditable (a regulator can ask exactly which instances were re-pinned, when, by whom), reversible-in-principle (replay an instance under the old pack to compute "what would have happened"), and explicit (no silent global rewrite).
 
+**Bounded population — hard cap, not pagination.** A predicate (or a very long explicit list) can in principle select a large population, and the preview/migrate loop does one event-store head read per selected instance — so an unbounded selection means an unbounded run. The wire contract bounds this with a **configured hard cap** (`PackMigration:Cap`, per deployment) plus a **matched count on every response**, rather than cursor pagination. The migration is a rare, one-shot operator action over a known live population, not a browsing read, so a cap that fails the operator loud ("you selected N, the cap is M — narrow the filter or raise the cap deliberately") is the right shape: pagination would let an operator silently re-pin a population in pieces with no single auditable matched-set, which is exactly the audit-completeness §3.6 is built to give. Concretely:
+
+- The response carries `matched_count` — how many instances the request **selected** (the candidate population, before the per-head `from_pack_version` narrowing) — so an operator sees the size of the set they targeted at a glance, alongside the `instance_ids` actually re-pinned.
+- A selection larger than the cap is rejected with `422` whose message carries the selected count and the cap. The reject lands **before any head read** (in preview *and* emit, so there is no "preview passes, emit explodes" gap), and the predicate resolver bounds its own read at `cap + 1` so an over-cap population never streams an unbounded id list out of the read model just to be thrown away.
+
+This bound is recorded as [ADR-PC-009 §A2](./adrs/ADR-PC-009-per-instance-version-pinning.md).
+
 ### 3.7 Distribution and signing
 
 - Packs ship as OCI artefacts: `oci://engine/pt-pack:2026.1`, signed (cosign).

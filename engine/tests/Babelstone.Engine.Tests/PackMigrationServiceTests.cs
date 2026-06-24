@@ -38,6 +38,9 @@ public sealed class PackMigrationServiceTests(EngineFixture fixture)
 
     private PackMigrationService<CounterState> Service() => new(Runtime(), fixture.Store, "counter");
 
+    private PackMigrationService<CounterState> CappedService(int cap) =>
+        new(Runtime(), fixture.Store, "counter", cap);
+
     private static AppendContext ContextPinned(string packVersion) => new(
         Family: "counter",
         PackVersion: packVersion,
@@ -114,6 +117,52 @@ public sealed class PackMigrationServiceTests(EngineFixture fixture)
 
         Assert.Empty(migrated);
         Assert.Single(await LoadEnvelopesAsync(onTarget)); // untouched
+    }
+
+    [Fact]
+    public async Task Preview_rejects_a_selection_over_the_cap_before_reading_a_single_head()
+    {
+        // Two ids, cap of 1: the cap guard trips on the SELECTED count BEFORE any head read — the ids need
+        // not even exist (no events seeded), proving the check is pre-read structural plumbing.
+        var capped = CappedService(cap: 1);
+        var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
+
+        var ex = await Assert.ThrowsAsync<PackMigrationCapExceededException>(
+            () => capped.PreviewAsync(FromPack, ids));
+
+        Assert.Equal("counter", ex.ProductFamily);
+        Assert.Equal(2, ex.SelectedCount);
+        Assert.Equal(1, ex.Cap);
+    }
+
+    [Fact]
+    public async Task Migrate_rejects_a_selection_over_the_cap_and_appends_nothing()
+    {
+        var capped = CappedService(cap: 1);
+        var onFrom = await SeedInstanceAsync(FromPack);
+        var second = await SeedInstanceAsync(FromPack);
+        var before = (await LoadEnvelopesAsync(onFrom)).Count;
+
+        await Assert.ThrowsAsync<PackMigrationCapExceededException>(
+            () => capped.MigrateAsync(
+                FromPack, ToPack, [onFrom, second], "mig-over-cap", "operator:regulatory-ops",
+                new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero)));
+
+        // No PackVersionMigrated appended — the cap refuses BEFORE the per-instance loop.
+        Assert.Equal(before, (await LoadEnvelopesAsync(onFrom)).Count);
+    }
+
+    [Fact]
+    public async Task A_selection_exactly_at_the_cap_is_allowed()
+    {
+        // The cap is a ceiling, not a strict-less-than: exactly cap instances proceed.
+        var capped = CappedService(cap: 2);
+        var onFrom = await SeedInstanceAsync(FromPack);
+        var alsoFrom = await SeedInstanceAsync(FromPack);
+
+        var matched = await capped.PreviewAsync(FromPack, [onFrom, alsoFrom]);
+
+        Assert.Equal(2, matched.Count);
     }
 
     private async Task<List<EventEnvelope>> LoadEnvelopesAsync(Guid streamId)

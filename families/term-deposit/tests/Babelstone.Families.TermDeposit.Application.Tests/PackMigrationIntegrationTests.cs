@@ -21,6 +21,10 @@ public sealed class PackMigrationIntegrationTests(ConstitutionFixture fixture)
     private const string FromPack = "pt.2026.1";
     private const string ToPack = "pt.2027.1";
 
+    // A generous test cap — large enough that the existing small populations never trip it, so the
+    // cap-unrelated tests stay unaffected. The cap-specific tests set a tiny cap explicitly.
+    private const int TestCap = 10_000;
+
     [Fact]
     public async Task Preview_reports_the_matched_set_without_emitting_any_event()
     {
@@ -128,7 +132,7 @@ public sealed class PackMigrationIntegrationTests(ConstitutionFixture fixture)
         // Lower-case "active" must NOT match — currently_active binds the case-sensitive enum literal.
         var miscased = await UpsertRowAsync(readModel, "active");
 
-        var ids = await readModel.ListActiveStreamIdsAsync();
+        var ids = await readModel.ListActiveStreamIdsAsync(TestCap);
 
         Assert.Contains(active1, ids);
         Assert.Contains(active2, ids);
@@ -138,7 +142,7 @@ public sealed class PackMigrationIntegrationTests(ConstitutionFixture fixture)
         // Stable order (ORDER BY stream_id) — a second read yields the identical sequence. We assert
         // STABILITY rather than a specific order, since Postgres uuid ordering and .NET Guid ordering
         // differ and the contract is determinism, not a particular permutation.
-        Assert.Equal(ids, await readModel.ListActiveStreamIdsAsync());
+        Assert.Equal(ids, await readModel.ListActiveStreamIdsAsync(TestCap));
     }
 
     [Fact]
@@ -149,7 +153,7 @@ public sealed class PackMigrationIntegrationTests(ConstitutionFixture fixture)
         var active = await UpsertRowAsync(readModel, nameof(DepositLifecycle.Active));
         var matured = await UpsertRowAsync(readModel, nameof(DepositLifecycle.Matured));
 
-        var resolver = new DepositInstanceFilterResolver(readModel, "term_deposit");
+        var resolver = new DepositInstanceFilterResolver(readModel, "term_deposit", TestCap);
 
         var resolved = await resolver.ResolveAsync(new InstanceFilter("term_deposit", true));
         Assert.Contains(active, resolved);
@@ -194,7 +198,7 @@ public sealed class PackMigrationIntegrationTests(ConstitutionFixture fixture)
         var alreadyMigratedEvents = await fixture.CountAsync("events", "stream_id", alreadyMigrated);
 
         // Resolve the predicate { product_family: term_deposit, currently_active: true } over the read model.
-        var resolver = new DepositInstanceFilterResolver(readModel, "term_deposit");
+        var resolver = new DepositInstanceFilterResolver(readModel, "term_deposit", TestCap);
         var candidates = await resolver.ResolveAsync(new InstanceFilter("term_deposit", true));
 
         // The predicate WIDENS to the live population: the three Active rows, NOT the Matured one.
@@ -221,6 +225,82 @@ public sealed class PackMigrationIntegrationTests(ConstitutionFixture fixture)
         Assert.Equal(ToPack, (await PackVersionsBySequenceAsync(active2))[^1]);
         Assert.Equal(FromPack, (await PackVersionsBySequenceAsync(terminal))[^1]);
         Assert.Equal(alreadyMigratedEvents, await fixture.CountAsync("events", "stream_id", alreadyMigrated));
+    }
+
+    // ---- Hard cap on the selected population (bd babelstone-fk7m.12, ADR-PC-009 §A2) ----
+
+    [Fact]
+    public async Task ListActiveStreamIds_caps_the_read_at_the_requested_limit()
+    {
+        var readModel = new PostgresDepositReadModelStore(fixture.ConnectionString);
+        await readModel.TruncateAsync();
+
+        // Five live rows, read with a LIMIT of 3 — the read returns at most the limit, never the whole
+        // population (the access-path bound that stops Postgres streaming an unbounded id list back).
+        for (var i = 0; i < 5; i++)
+        {
+            await UpsertRowAsync(readModel, nameof(DepositLifecycle.Active));
+        }
+
+        var capped = await readModel.ListActiveStreamIdsAsync(limit: 3);
+
+        Assert.Equal(3, capped.Count);
+    }
+
+    [Fact]
+    public async Task Resolver_returns_cap_plus_one_as_the_overflow_sentinel_when_the_population_exceeds_the_cap()
+    {
+        var readModel = new PostgresDepositReadModelStore(fixture.ConnectionString);
+        await readModel.TruncateAsync();
+
+        // Cap = 2, but four live rows: the resolver asks the store for cap+1 (= 3), so an over-cap
+        // population comes back as exactly cap+1 — enough for the write-path's cap guard to detect the
+        // overflow without dragging the whole population out of the read model.
+        for (var i = 0; i < 4; i++)
+        {
+            await UpsertRowAsync(readModel, nameof(DepositLifecycle.Active));
+        }
+
+        var resolver = new DepositInstanceFilterResolver(readModel, "term_deposit", migrationCap: 2);
+        var resolved = await resolver.ResolveAsync(new InstanceFilter("term_deposit", true));
+
+        Assert.Equal(3, resolved.Count); // cap (2) + 1
+    }
+
+    [Fact]
+    public async Task Predicate_over_the_cap_is_rejected_by_the_write_path_before_any_event_is_emitted()
+    {
+        await fixture.EnsureRateSheetAsync(SharedSheet);
+        // Cap = 1, but two live deposits constituted on FROM: the predicate selects both, the write-path
+        // refuses the over-cap selection in BOTH preview and emit — no PackVersionMigrated is appended.
+        var (_, service, migration) = Compose(fixture.ConnectionString, migrationCap: 1);
+        var readModel = new PostgresDepositReadModelStore(fixture.ConnectionString);
+        await readModel.TruncateAsync();
+
+        var active1 = await ConstituteAsync(service);
+        var active2 = await ConstituteAsync(service);
+        await UpsertRowForStreamAsync(readModel, active1, nameof(DepositLifecycle.Active));
+        await UpsertRowForStreamAsync(readModel, active2, nameof(DepositLifecycle.Active));
+
+        var resolver = new DepositInstanceFilterResolver(readModel, "term_deposit", migrationCap: 1);
+        var candidates = await resolver.ResolveAsync(new InstanceFilter("term_deposit", true));
+        Assert.Equal(2, candidates.Count); // cap (1) + 1 — the overflow sentinel
+
+        var eventsBefore = await fixture.CountAsync("events", "stream_id", active1);
+
+        // Preview rejects the over-cap selection (no "preview passes, emit explodes" gap)...
+        var previewEx = await Assert.ThrowsAsync<PackMigrationCapExceededException>(
+            () => migration.PreviewAsync(FromPack, candidates));
+        Assert.Equal(2, previewEx.SelectedCount);
+        Assert.Equal(1, previewEx.Cap);
+
+        // ...and so does emit, appending nothing.
+        await Assert.ThrowsAsync<PackMigrationCapExceededException>(
+            () => migration.MigrateAsync(
+                FromPack, ToPack, candidates, "mig-over-cap", "operator:regulatory-ops",
+                new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero)));
+
+        Assert.Equal(eventsBefore, await fixture.CountAsync("events", "stream_id", active1));
     }
 
     // A stable comparer so the order-insensitive assertions above read clearly: sort the matched set by
@@ -295,7 +375,7 @@ public sealed class PackMigrationIntegrationTests(ConstitutionFixture fixture)
     /// cross-cutting handlers (TermDepositFamilyModule.Registry() splices them in), so it folds the
     /// PackVersionMigrated the migration appends.</summary>
     private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service, PackMigrationService<DepositPosition> Migration)
-        Compose(string connectionString)
+        Compose(string connectionString, int migrationCap = TestCap)
     {
         var store = new PostgresEventStore(connectionString);
         var runtime = new AggregateRuntime<DepositPosition>(
@@ -305,7 +385,7 @@ public sealed class PackMigrationIntegrationTests(ConstitutionFixture fixture)
         var service = new TermDepositConstitutionService(
             runtime, new PostgresRateSheetStore(connectionString), new RecordingSettlementPort(),
             SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros");
-        var migration = new PackMigrationService<DepositPosition>(runtime, store, "term_deposit");
+        var migration = new PackMigrationService<DepositPosition>(runtime, store, "term_deposit", migrationCap);
         return (runtime, service, migration);
     }
 }

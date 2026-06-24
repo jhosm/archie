@@ -173,6 +173,20 @@ Concretely, at host load `HostModuleLoader.CrossCheckAgainstPackManifest` cross-
 
 This is **additive**: §P1–§P5 stay binding as written. It reverses no decision — the pin is still per-event, stamped at constitution, resolved off the event on replay, and moved only by an explicit migration event (§P1/§P3). It names the load-time *enforcement* that the new host needs so the family code and the pinned pack cannot silently diverge. Gated by `HOST_PACK_FAMILY_MANIFEST_CROSS_CHECK` (catalogue row 12c).
 
+### A2 · A pack migration bounds its selected population with a configured hard cap and surfaces the matched count (2026-06-24, bd `babelstone-fk7m.12`)
+
+**In plain English:** §P3 makes the migration previewable so an operator can confirm the affected set before re-pinning it (the "Migration-set correctness" residual risk above). This amendment adds the operational bound that residual risk implies once the set can be named by a *predicate* (`instance_filter`, surface §3.6, bd `babelstone-7giq`) rather than an explicit list: the predicate can resolve to a large live population, and the preview/migrate loop does one event-store head read per selected instance — so an unbounded selection is an unbounded run. The migration write-path now **rejects a selection larger than a configured cap** and **reports the matched count** on every response, so an over-broad filter fails the operator loud instead of fanning out.
+
+Concretely:
+
+- The wire response (`PackMigrationResponse`) carries `matched_count` — the number of instances the request **selected** (the candidate population, before the per-head `from_pack_version` narrowing). For an explicit-ids request this equals the listed count; for a predicate it is the resolved live population. The operator sees the size of the set they targeted alongside the `instance_ids` actually re-pinned.
+- A selection whose size exceeds the configured cap (`PackMigration:Cap`, per deployment; default `10_000`) is rejected with `422` (a `PackMigrationCapExceededException` carrying the selected count + the cap, translated to the HTTP problem at the endpoint). The reject is enforced inside the family-agnostic write-path (`PackMigrationService<TState>`) in **both** `PreviewAsync` and `MigrateAsync`, **before any head read** — so a preview reports the same breach the emit would hit (no "preview passes, emit explodes" gap), and emit appends nothing.
+- The predicate resolver bounds its own read at **`cap + 1`** (the term-deposit `IDepositReadModelStore.ListActiveStreamIdsAsync(limit, …)` runs `… ORDER BY stream_id LIMIT cap+1`), so an over-cap live population comes back as exactly `cap + 1` ids — enough for the write-path's cap guard to detect the overflow without streaming an unbounded id list out of the read model.
+
+The chosen shape is a **hard cap + matched count, not cursor pagination** (surface §3.6). The migration is a rare, one-shot operator action over a known live population, not a browsing read; pagination would let an operator silently re-pin a population in pieces with no single auditable matched-set, defeating the audit-completeness §P3/§3.6 exist to give. A cap that fails loud ("you selected N, the cap is M — narrow the filter or raise the cap deliberately") is the bound that keeps the operation auditable and the per-instance fan-out bounded.
+
+This is **additive**: §P1–§P5 stay binding as written, and it reverses no decision — the migration is still explicit, previewable, idempotent on `(migration_id, instance_id)`, and audited (§P3). It bounds the *selection size* and surfaces the *matched count*; it changes neither the pin's per-event nature nor the re-pin mechanics. Gated by `PACK_MIGRATION_POPULATION_CAPPED` (catalogue row 9a).
+
 ---
 
 ## Verifiable commitments
@@ -181,6 +195,8 @@ This decision's load-bearing commitments are fitness functions in the [commitmen
 
 - `REPLAY_PIN_PER_EVENT` — replay reads the per-event pin, not the clock; the migration boundary is intrinsic to the stream (§P1–§P2).
 - `HOST_PACK_FAMILY_MANIFEST_CROSS_CHECK` (catalogue row 12c) — the host fails closed at load on a family/schema-version skew between the pinned pack's `families.yaml` and the discovered family modules (§A1). `Live` as `HostModuleLoaderTests` + `PackParserTests`.
+
+§A2's bound is gated by the catalogue commitment **PACK_MIGRATION_POPULATION_CAPPED** (catalogue row 9a, governing source this ADR): a pack migration rejects a selected population larger than the configured cap (in preview AND emit, before any head read) and surfaces the matched count on every response, and the predicate resolver bounds its read at `cap + 1`. Planned, covered by `PackMigrationServiceTests` (the cap reject + at-the-cap pass), `PackMigrationIntegrationTests` (the `LIMIT`-bounded read + the resolver `cap+1` sentinel + the predicate over-cap reject), and `DepositsApiIntegrationTests` (`matched_count` surfaced over HTTP). *(The catalogue row is added centrally with this change — see the PR's catalogue-flip note; once landed this prose becomes the canonical `- \`PACK_MIGRATION_POPULATION_CAPPED\` — …` bullet.)*
 
 ---
 

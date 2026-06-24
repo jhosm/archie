@@ -21,6 +21,8 @@ public sealed class PackMigrationEndpointPlanTests
     {
         public string ProductFamily => family;
 
+        public int MigrationCap => int.MaxValue;
+
         public Task<IReadOnlyList<Guid>> PreviewAsync(
             string fromPackVersion, IReadOnlyList<Guid> instanceIds, CancellationToken ct = default)
             => Task.FromResult(instanceIds);

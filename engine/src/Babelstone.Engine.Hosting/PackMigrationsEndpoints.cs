@@ -46,10 +46,18 @@ public sealed record PackMigrationRequest(
 /// <param name="MigrationId">Echoes the request's migration id (the audit handle).</param>
 /// <param name="Migrated">True iff events were emitted (false for a preview).</param>
 /// <param name="InstanceIds">The matched instances — re-pinned (when <paramref name="Migrated"/>) or previewed.</param>
+/// <param name="MatchedCount">
+/// How many instances the request SELECTED (the candidate population before the head-pin narrowing — the
+/// explicit ids, or the resolved predicate set), so an operator sees the size of the set they targeted at
+/// a glance, not only the (possibly smaller) on-<c>from</c> subset in <paramref name="InstanceIds"/>
+/// (ADR-PC-009 §A2). For an explicit-ids request this equals the listed count; for a predicate it is the
+/// resolved live population.
+/// </param>
 public sealed record PackMigrationResponse(
     string MigrationId,
     bool Migrated,
-    IReadOnlyList<Guid> InstanceIds);
+    IReadOnlyList<Guid> InstanceIds,
+    int MatchedCount);
 
 /// <summary>
 /// The resolved plan for a migration request: either a validation ERROR (an HTTP status + message) or a
@@ -239,31 +247,51 @@ public static class PackMigrationsEndpoints
         // The predicate WIDENS to the live population (resolved over the read model); the explicit arm
         // supplies the ids directly. Either way the SAME id list flows into the unchanged preview/migrate
         // loop, so the head-pin guard + (migration_id, instance_id) idempotency are preserved verbatim.
+        // The resolver bounds its own read at cap+1 (it knows the service's cap), so an over-cap predicate
+        // population arrives here already truncated — the service's cap guard then rejects it loud.
         var instanceIds = plan.ExplicitInstanceIds ?? await plan.Resolver!.ResolveAsync(plan.Filter!, ct);
 
-        // Preview path (ADR-PC-009 Residual-risks: previewable before emission): the matched set, no side
-        // effect. The predicate widens, the per-head from_pack_version check narrows — so the operator
-        // sees exactly which concrete instances would be re-pinned.
-        if (request.Preview)
+        // matched_count is the SELECTED population (candidates before the head-pin narrowing) — the size
+        // the operator targeted, surfaced on every response (ADR-PC-009 §A2). A cap breach is reported as a
+        // 422 carrying that same count, so "how many did I select?" is answered whether the call proceeds
+        // or is rejected. The cap is enforced inside the service (both arms), translated to HTTP here.
+        var matchedCount = instanceIds.Count;
+        try
         {
-            var matched = await service.PreviewAsync(request.FromPackVersion, instanceIds, ct);
-            return Results.Ok(new PackMigrationResponse(request.MigrationId, Migrated: false, matched));
+            // Preview path (ADR-PC-009 Residual-risks: previewable before emission): the matched set, no
+            // side effect. The predicate widens, the per-head from_pack_version check narrows — so the
+            // operator sees exactly which concrete instances would be re-pinned.
+            if (request.Preview)
+            {
+                var matched = await service.PreviewAsync(request.FromPackVersion, instanceIds, ct);
+                return Results.Ok(new PackMigrationResponse(
+                    request.MigrationId, Migrated: false, matched, matchedCount));
+            }
+
+            // Emit path: one PackVersionMigrated per matched instance, pinned to to_pack_version. The host
+            // owns the wall clock at this boundary (ADR-PC-010 §P5) — it stamps a missing migrated_at; the
+            // service threads it as the event valid-time. Idempotent on (migration_id, instance_id).
+            var migratedAt = request.MigratedAt ?? clock.GetUtcNow();
+            var migrated = await service.MigrateAsync(
+                request.FromPackVersion,
+                request.ToPackVersion,
+                instanceIds,
+                request.MigrationId,
+                request.OperatorActor,
+                migratedAt,
+                ct);
+
+            return Results.Ok(new PackMigrationResponse(
+                request.MigrationId, Migrated: true, migrated, matchedCount));
         }
-
-        // Emit path: one PackVersionMigrated per matched instance, pinned to to_pack_version. The host
-        // owns the wall clock at this boundary (ADR-PC-010 §P5) — it stamps a missing migrated_at; the
-        // service threads it as the event valid-time. Idempotent on (migration_id, instance_id).
-        var migratedAt = request.MigratedAt ?? clock.GetUtcNow();
-        var migrated = await service.MigrateAsync(
-            request.FromPackVersion,
-            request.ToPackVersion,
-            instanceIds,
-            request.MigrationId,
-            request.OperatorActor,
-            migratedAt,
-            ct);
-
-        return Results.Ok(new PackMigrationResponse(request.MigrationId, Migrated: true, migrated));
+        catch (PackMigrationCapExceededException capExceeded)
+        {
+            // The selected population overran the configured cap — refuse rather than fan out an unbounded
+            // run of per-instance head reads (ADR-PC-009 §A2). 422 (the request is well-formed but its
+            // selection is unprocessable at this scale); the message carries the selected count + the cap
+            // so the operator narrows the filter or the deployment raises the cap deliberately.
+            return Results.Problem(capExceeded.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
     }
 
     private static IReadOnlyCollection<T> AsCollection<T>(IEnumerable<T> source)

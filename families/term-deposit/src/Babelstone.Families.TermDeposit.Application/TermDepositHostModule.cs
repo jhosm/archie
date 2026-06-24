@@ -163,10 +163,19 @@ public sealed class TermDepositHostModule : IFamilyHostModule
         // instance's current pin off the event store head and append the migration pinned to the target
         // pack (the re-pin lives on the envelope). The family closes the generic over its own
         // DepositPosition here, composing the family runtime + the shared event store.
+        // The hard cap on the population a single pack-migration call may select (ADR-PC-009 §A2),
+        // configurable per deployment (PackMigration:Cap) so a bank with a larger live population raises
+        // it deliberately rather than outgrowing a silent default. Read once here and threaded to BOTH the
+        // write-path service (it rejects an over-cap selection in preview AND emit) and the predicate
+        // resolver (it bounds its read at cap+1, the overflow sentinel) so the two never drift.
+        var migrationCap = ctx.Configuration.GetValue(
+            "PackMigration:Cap", PackMigrationService<DepositPosition>.DefaultMigrationCap);
+
         services.AddSingleton(serviceProvider => new PackMigrationService<DepositPosition>(
             serviceProvider.GetRequiredService<AggregateRuntime<DepositPosition>>(),
             serviceProvider.GetRequiredService<IEventStore>(),
-            FoldModule.FamilyName));
+            FoldModule.FamilyName,
+            migrationCap));
 
         // Expose the closed write-path through the family-AGNOSTIC IPackMigrationService facade so the
         // single dispatching /v1/pack-migrations route (registered once at host level) can select it by
@@ -182,7 +191,7 @@ public sealed class TermDepositHostModule : IFamilyHostModule
         // into the existing PackMigrationService preview/migrate loop.
         services.AddSingleton<IPackMigrationInstanceResolver>(
             serviceProvider => new DepositInstanceFilterResolver(
-                serviceProvider.GetRequiredService<IDepositReadModelStore>(), FoldModule.FamilyName));
+                serviceProvider.GetRequiredService<IDepositReadModelStore>(), FoldModule.FamilyName, migrationCap));
 
         // D.2 projection runtime (ADR-PC-002 §P4, two-modes §5.4): the family declares its
         // projections (currently just the deposit position) + their folds; the generic runtime

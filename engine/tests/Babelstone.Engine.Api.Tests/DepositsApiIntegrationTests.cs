@@ -625,6 +625,10 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.NotNull(body);
         Assert.False(body!.Migrated);                 // preview emits nothing
         Assert.Contains(depositId, body.InstanceIds); // the live deposit, selected by the predicate
+        // matched_count surfaces the SELECTED population the predicate resolved (ADR-PC-009 §A2), so the
+        // operator sees how many instances they targeted — at least the live deposit just constituted.
+        Assert.True(body.MatchedCount >= 1);
+        Assert.Equal(body.InstanceIds.Count, body.MatchedCount); // all selected are still on FROM here
     }
 
     [Fact]
