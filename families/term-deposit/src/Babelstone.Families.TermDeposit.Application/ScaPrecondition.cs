@@ -37,6 +37,16 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// the engine never reads the raw token (it trusts the gateway attestation, the Boundary-2 model
 /// Document 10 / ADR-IC-006 §P5 commit to).
 /// </para>
+/// <para>
+/// SENDER-CONSTRAINT (RFC 8705 mTLS-bound, ADR-IC-010 §A8, bd babelstone-26rb). The refreshed step-up
+/// token is now sender-constrained: it carries a <c>cnf.x5t#S256</c> thumbprint Kong validated against
+/// the presented client cert and attests as <see cref="CnfX5tHeader"/>. A token replayed from a
+/// different sender was already 401'd at the gateway (its <c>cnf</c> did not match the presented cert),
+/// so the binding is the gateway's to ENFORCE and the engine's to ACCEPT, not re-derive — the same
+/// attest-not-deny Boundary-2 split that governs <c>acr</c>/<c>auth_time</c>. The freshness gate below
+/// is therefore unchanged by the binding: a fresh, gateway-attested SCA proof passes whether the token
+/// was sender-constrained (a non-empty <see cref="CnfX5tHeader"/>) or a plain Bearer (empty/absent).
+/// </para>
 /// </remarks>
 public static class ScaPrecondition
 {
@@ -47,6 +57,14 @@ public static class ScaPrecondition
     /// <summary>The gateway-attested SCA freshness header (the OIDC <c>auth_time</c> claim, seconds since
     /// the Unix epoch — when SCA happened).</summary>
     public const string AuthTimeHeader = "X-SCA-Auth-Time";
+
+    /// <summary>The gateway-attested RFC 8705 mTLS-bound sender-constraint thumbprint (the step-up
+    /// token's <c>cnf.x5t#S256</c> Kong validated against the presented client cert and attested,
+    /// ADR-IC-010 §A8). A non-empty value means the refreshed step-up token was sender-constrained —
+    /// a stolen token replayed from a different sender was already rejected at the gateway (its
+    /// <c>cnf</c> did not match the presented cert), so the engine ACCEPTS this attested binding as
+    /// additive context and never re-derives it. Empty/absent means a plain (POC-legacy) Bearer.</summary>
+    public const string CnfX5tHeader = "X-SCA-Cnf-X5t";
 
     /// <summary>The stable refusal code the engine returns and the MCP money-mover tool keys its
     /// step-up-then-retry on. Kept in lock-step with the Kong REST-route SCA gate's code.</summary>

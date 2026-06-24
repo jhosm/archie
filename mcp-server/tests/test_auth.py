@@ -7,6 +7,9 @@ What these prove:
   ``resource_metadata``; a correct ``aud`` passes the middleware. ``aud`` string AND list both work.
 - §P4 — scope-per-tool: ``deposits:read`` calling ``constitute_deposit`` raises ``McpError``; the
   matching scope passes. A missing gateway-attested ``X-Client-Id`` is rejected.
+- §A8 — the RFC 8705 mTLS-bound sender-constraint (``cnf.x5t#S256``) Kong validates and attests as
+  ``X-SCA-Cnf-X5t`` surfaces on the ``AuthContext`` (``sender_bound`` / ``is_sender_constrained``);
+  its absence is an unbound plain Bearer (not a fail-closed rejection).
 
 The middleware and well-known route are exercised over a real ASGI round-trip via ``httpx``'s
 ``ASGITransport`` (no live socket); the scope checks are exercised on the ``auth`` module directly.
@@ -210,6 +213,40 @@ def test_client_id_is_read_from_gateway_header() -> None:
     )
     assert auth.client_id == "CLI-2026-007842"
     assert auth.scopes == frozenset({"deposits:read", "deposits:write"})
+
+
+# ── §A8 — RFC 8705 mTLS-bound sender constraint attestation (bd babelstone-26rb) ───
+
+
+def test_sender_binding_thumbprint_is_read_from_gateway_header() -> None:
+    # A sender-constrained step-up token's cnf.x5t#S256, validated by Kong against the presented
+    # client cert and attested as X-SCA-Cnf-X5t (§A8), surfaces on the AuthContext for the chain.
+    from starlette.datastructures import Headers
+
+    auth = AuthContext.from_headers(
+        Headers(
+            {
+                "X-Client-Id": "CLI-2026-007842",
+                "X-OAuth-Scope": "deposits:write",
+                "X-SCA-Cnf-X5t": "oOwf84uA98xfl7q9U2t6ZEUtJF3FkNKxhWCXGhsrtP4",
+            }
+        )
+    )
+    assert auth.sender_bound == "oOwf84uA98xfl7q9U2t6ZEUtJF3FkNKxhWCXGhsrtP4"
+    assert auth.is_sender_constrained is True
+
+
+def test_absent_sender_binding_is_unbound_plain_bearer() -> None:
+    # No X-SCA-Cnf-X5t (a plain, POC-legacy Bearer) => an empty, non-sender-constrained binding.
+    # The header is NOT required: §A8 sender-constraining is production hardening, not a fail-closed
+    # identity check, so its absence does not reject the request (only X-Client-Id is fail-closed).
+    from starlette.datastructures import Headers
+
+    auth = AuthContext.from_headers(
+        Headers({"X-Client-Id": "CLI-2026-007842", "X-OAuth-Scope": "deposits:write"})
+    )
+    assert auth.sender_bound == ""
+    assert auth.is_sender_constrained is False
 
 
 def test_unknown_tool_has_no_scope_grant() -> None:

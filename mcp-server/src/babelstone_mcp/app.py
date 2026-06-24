@@ -17,9 +17,20 @@ Formally (ADR-IC-010):
 - §P5 — the route is Streamable HTTP (single ``/mcp`` endpoint, POST + GET).
 
 The ``aud`` claim may be a STRING or a LIST of strings per RFC 7519 §4.1.3 — both are handled. On
-success the gateway-attested ``X-Client-Id`` and ``X-OAuth-Scope`` headers are passed through to the
-tools unchanged (the tools read them via ``auth.AuthContext``); the middleware never derives identity
-from the token itself (Document 11 — identity comes from the gateway-attested ``sub``).
+success the gateway-attested ``X-Client-Id`` and ``X-OAuth-Scope`` headers — and, for a
+sender-constrained step-up token, the ``X-SCA-Cnf-X5t`` mTLS-binding confirmation (ADR-IC-010 §A8) —
+are passed through to the tools unchanged (the tools read them via ``auth.AuthContext``); the
+middleware never derives identity from the token itself (Document 11 — identity comes from the
+gateway-attested ``sub``).
+
+**Sender-constrained step-up tokens (ADR-IC-010 §A8, bd babelstone-26rb).** The refreshed step-up
+token an agent presents on a money-mover retry is no longer a plain Bearer: it is RFC 8705
+mTLS-bound, carrying a ``cnf.x5t#S256`` thumbprint of the client cert the holder presents on the
+mutually-authenticated connection. Kong validates that thumbprint against the presented cert and 401s
+a token replayed from a different sender BEFORE the request reaches this app; on a match it attests
+the confirmed binding as ``X-SCA-Cnf-X5t`` (the same overwrite-from-the-token anti-spoof pattern as
+``X-Client-Id``). The attestation chain therefore arrives here pre-validated — ``AuthContext`` reads
+the confirmed binding off that header for observability/audit, never re-deriving it from the token.
 
 **Trust precondition (enforced).** The app trusts those gateway-attested headers because Kong is
 the sole ingress (this service exposes no host port), Kong OVERWRITES ``X-Client-Id``/
