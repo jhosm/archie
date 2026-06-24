@@ -1,4 +1,4 @@
-# INVALID @ depth 4: the carência lock-up (400 days) meets/exceeds the term
+# INVALID @ depth 4: the lock-up (400 days) meets/exceeds the term
 # (365 days), so no day exists on which a partial withdrawal would ever be
 # legal. CUE cannot relate carencia_days to term_days element-wise across the
 # optional block — a depth-4 Go coherence check (#PartialWithdrawal comment).

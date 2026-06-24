@@ -166,7 +166,7 @@ func depth4Regulatory(vd variantData, fam Family, p *pack.Pack) []diag.Diagnosti
 	// element-wise across the two optional blocks, so the schema defers them
 	// here (term-deposit.cue #PartialWithdrawal comment; ADR-PC-006 depth-4).
 	if pw := vd.PartialWithdrawal; pw != nil {
-		// (d) the carência lock-up must be strictly shorter than the term — a
+		// (d) the lock-up must be strictly shorter than the term — a
 		// lock-up that meets or outlasts the term leaves no day on which a
 		// partial withdrawal is ever legal.
 		if pw.CarenciaDays >= vd.TermDays {
@@ -189,7 +189,7 @@ func depth4Regulatory(vd variantData, fam Family, p *pack.Pack) []diag.Diagnosti
 					pw.MinRemainingBalanceCents, *max),
 			})
 		}
-		// NOTE: forbidding a partial_withdrawal block on an ADVANCE (juros antecipados)
+		// NOTE: forbidding a partial_withdrawal block on an ADVANCE (interest in advance)
 		// variant is a presence-given-enum constraint the SCHEMA expresses declaratively
 		// (term-deposit.cue: `if interest_variant == "ADVANCE" { partial_withdrawal?: _|_ }`,
 		// the same shape as payment_period_months), so it is rejected at depth-1, not here —

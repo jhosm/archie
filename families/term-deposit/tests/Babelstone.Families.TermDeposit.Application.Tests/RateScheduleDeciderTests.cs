@@ -6,8 +6,8 @@ using Xunit;
 namespace Babelstone.Families.TermDeposit.Application.Tests;
 
 /// <summary>
-/// The rate-VECTOR fold through the term-deposit decider (F.10, bd k6r8.3): step-up (<i>crescente</i>)
-/// and amount-tiered (<i>escalonada</i>) schedules resolved at constitution and folded over the B.3
+/// The rate-VECTOR fold through the term-deposit decider (F.10, bd k6r8.3): step-up
+/// and amount-tiered schedules resolved at constitution and folded over the B.3
 /// accrual engine, plus the rate-reduction early-termination penalty (F.11, bd k6r8.4). Pure,
 /// Docker-free. Two load-bearing properties: (1) passing a flat (one-segment) schedule is
 /// byte-identical to passing none — so the vector is purely additive over the existing flat path;
@@ -48,12 +48,12 @@ public sealed class RateScheduleDeciderTests
         Assert.Equal(withoutSchedule, withFlat); // record-equal events — the vector is purely additive
     }
 
-    // ---- F.10: step-up (crescente) folds into the single AT_MATURITY flow (no new event) ----------
+    // ---- F.10: step-up folds into the single AT_MATURITY flow (no new event) ----------------------
 
     [Fact]
     public void DecideMaturity_stepUp_folds_the_vector_into_the_single_maturity_flow()
     {
-        // 360-day term, crescente: first 180 days @ 2%, next 180 days @ 4% on €10,000, Act/360.
+        // 360-day term, step-up: first 180 days @ 2%, next 180 days @ 4% on €10,000, Act/360.
         // gross = 10,000.00 + 20,000.00 = 30,000c (€300.00). Withhold ONE flow: tax = 30,000×28% =
         // 8,400; net = 21,600. Payout = principal + net.
         var position = AtMaturityPosition(tanBps: 0, termDays: 360); // TAN unused; the vector drives it
@@ -76,7 +76,7 @@ public sealed class RateScheduleDeciderTests
     [Fact]
     public void StepUp_earns_strictly_more_than_the_opening_rate_held_flat()
     {
-        // A crescente that rises 2%→4% earns more than a flat 2% for the whole term (the point of
+        // A step-up that rises 2%→4% earns more than a flat 2% for the whole term (the point of
         // a step-up product) and less than a flat 4% — the vector is bracketed by its endpoints.
         var position = AtMaturityPosition(tanBps: 0, termDays: 360);
         var stepUp = RateSchedule.StepUp([new RateSegment(0, 200), new RateSegment(180, 400)]);
@@ -94,12 +94,12 @@ public sealed class RateScheduleDeciderTests
         Assert.True(stepped.Cents < high.Cents);
     }
 
-    // ---- F.10: amount-tiered (escalonada) on the principal band ---------------------------------
+    // ---- F.10: amount-tiered on the principal band ----------------------------------------------
 
     [Fact]
     public void DecideMaturity_amountTiered_prices_each_principal_tranche()
     {
-        // Escalonada: first €5,000 @ 2%, the rest @ 4%, 360-day term, Act/360.
+        // Amount-tiered: first €5,000 @ 2%, the rest @ 4%, 360-day term, Act/360.
         // gross = 500,000×200×360/(360×10000) + 500,000×400×360/(360×10000) = 10,000 + 20,000 = 30,000c.
         var position = AtMaturityPosition(tanBps: 0, termDays: 360);
         var schedule = RateSchedule.AmountTiered([new RateSegment(0, 200), new RateSegment(500_000, 400)]);
@@ -115,7 +115,7 @@ public sealed class RateScheduleDeciderTests
     [Fact]
     public void DecideInterestPayment_stepUp_prices_the_coupon_window_at_the_rate_in_force()
     {
-        // crescente: [0→3%, 180→6%]. A monthly coupon early in the term (days 0–31) accrues at 3%;
+        // step-up: [0→3%, 180→6%]. A monthly coupon early in the term (days 0–31) accrues at 3%;
         // a coupon after the step (days 210–241) accrues at 6%. The later coupon earns strictly more.
         var position = AtMaturityPosition(tanBps: 0, termDays: 360) with
         {
@@ -151,7 +151,7 @@ public sealed class RateScheduleDeciderTests
     {
         // The subtlest cash-flow in F.10: a coupon window that crosses a step boundary. The schedule
         // is anchored at the deposit start (day 0), so a window over days 170–201 of a [0→3%, 180→6%]
-        // crescente must accrue 10 days @ 3% (170–180) + 21 days @ 6% (180–201) — the split happens
+        // step-up must accrue 10 days @ 3% (170–180) + 21 days @ 6% (180–201) — the split happens
         // at the elapsed-day boundary, NOT at the window's edges. Asserted against an INDEPENDENTLY
         // computed two-segment decimal rounded ONCE, so a re-anchoring or per-leg-rounding regression
         // through the decider path is caught here (not only at the RateSchedule unit level).
@@ -204,12 +204,12 @@ public sealed class RateScheduleDeciderTests
         Assert.Equal(withoutSchedule, withFlat);
     }
 
-    // ---- F.10: a crescente broken mid-vector accrues only the steps it reached --------------------
+    // ---- F.10: a step-up broken mid-vector accrues only the steps it reached ----------------------
 
     [Fact]
     public void DecideEarlyTermination_stepUp_accrues_only_the_elapsed_steps()
     {
-        // crescente [0→2%, 180→4%], broken at day 200: 180 days @ 2% + 20 days @ 4% — not the full
+        // step-up [0→2%, 180→4%], broken at day 200: 180 days @ 2% + 20 days @ 4% — not the full
         // second leg. Penalty 100% of accrued (flat policy). The accrued flow folds the clipped vector.
         var position = AtMaturityPosition(tanBps: 0, termDays: 360);
         var schedule = RateSchedule.StepUp([new RateSegment(0, 200), new RateSegment(180, 400)]);

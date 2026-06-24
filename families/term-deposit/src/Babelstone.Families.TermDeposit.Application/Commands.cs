@@ -165,11 +165,11 @@ public sealed record TerminateEarlyCommand(
 /// reduce the principal by a fixed amount, leaving the deposit OPEN and Active. A PRINCIPAL reduction
 /// ONLY — no interest, withholding, or settlement flow (unlike early termination, which CLOSES the
 /// deposit and settles). The product's <see cref="PartialWithdrawalPolicy"/> (minimum withdrawal /
-/// minimum remaining balance / carência lock-up) is per-PRODUCT config the service resolves from the
+/// minimum remaining balance / lock-up) is per-PRODUCT config the service resolves from the
 /// deposit's product config — not a command input — and the pure decider takes it as an explicit input
 /// (ADR-PC-021 §D3). Withdrawing the whole balance is a termination (F.4), which the decider refuses.</summary>
 /// <param name="WithdrawnAt">The instant the withdrawal fires: its DATE is the as-of withdrawal date the
-/// event records and the carência lock-up is measured against. Passed as an INPUT so the decision stays
+/// event records and the lock-up is measured against. Passed as an INPUT so the decision stays
 /// pure and replayable (no clock in the decider).</param>
 /// <param name="WithdrawnAmountCents">The principal to take out, in integer cents.</param>
 /// <param name="CommandId">The ingress idempotency key (ADR-PC-029 slot 4): the append dedupes on it
