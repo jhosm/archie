@@ -9,3 +9,4 @@ BENG001 | Babelstone.Engine | Warning  | HandlerPurityAnalyzer — ADR-PC-010 §
 BENG002 | Babelstone.Engine | Warning  | HandlerPurityAnalyzer — ADR-PC-010 §P5 no I/O in handler bodies
 BENG003 | Babelstone.Engine | Warning  | HandlerPurityAnalyzer — ADR-PC-010 §P5 no randomness in handler bodies
 BENG004 | Babelstone.Engine | Warning  | NoClockDrivenEngineSignalAnalyzer — ADR-PC-023 §D1 no clock-driven engine signal/event emission
+BENG005 | Babelstone.Engine | Warning  | NoPiiTelemetryAttributeAnalyzer — ADR-IC-007 §P4 no PII in telemetry span/log attributes (OBS_NO_PII_ATTRS)

@@ -16,6 +16,7 @@ internal static class EngineDiagnostics
     public const string IoId = "BENG002";
     public const string RandomnessId = "BENG003";
     public const string ClockDrivenSignalId = "BENG004";
+    public const string PiiTelemetryAttributeId = "BENG005";
 
     public static readonly DiagnosticDescriptor ClockInHandler = new(
         id: ClockId,
@@ -55,5 +56,15 @@ internal static class EngineDiagnostics
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true,
         description: "ADR-PC-023 §D1 (NO_CLOCK_DRIVEN_ENGINE_SIGNAL): a signal whose only cause is a date arriving — a clock tick / scheduler firing — is not a fact about the aggregate and cannot be reproduced deterministically on replay (it depends on when the rebuild runs). This is the STRUCTURAL half the lexical name-scan cannot give: it does not care what the emitted DomainEvent/ScheduledEffect is named (an off-list DepositMaturityForecast is caught), only that a clock/scheduler/timer read (DateTime/DateTimeOffset.Now/UtcNow/Today, TimeProvider.GetUtcNow, Stopwatch, Environment.TickCount) flows into its construction. Emits caused by a command or domain event (time carried as an event field or input value) are clean. The temporal signal is a projection read, owned downstream.")
+    ;
+
+    public static readonly DiagnosticDescriptor PiiTelemetryAttribute = new(
+        id: PiiTelemetryAttributeId,
+        title: "Telemetry attributes must not carry PII",
+        messageFormat: "telemetry attribute '{0}' carries PII (NIF, IBAN, account number, customer name, or e-mail) — spans/logs admit only the structural babelstone.* operational tier; carry a salted babelstone.subject_pseudonym, and money as integer cents (ADR-IC-007 §P4)",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true,
+        description: "ADR-IC-007 §P4 / ADR-PC-004 §P2 (OBS_NO_PII_ATTRS): the distributed tracing backend aggregates span/log attributes into one searchable, regulated store, so a single attribute key like deposit.client_nif / core.account / client_email — or a constant IBAN/NIF/e-mail VALUE stamped onto a tag — turns the trace store into a GDPR incident with an Article-17 erasure obligation. This is the build-time mechanical half of §P4's classification rule: a telemetry attribute setter (Activity.SetTag/AddTag/SetBaggage, ActivityTagsCollection/TagList.Add) whose constant key carries a PII fragment (nif, iban, account, name, email, client, phone, address, tax_id) outside the admitted babelstone.* operational tier, or whose constant value is IBAN/NIF/e-mail-shaped, fails the build. Where a span must reference a customer it carries a salted one-way babelstone.subject_pseudonym (ADR-IC-016 plane (iii) §8), never the raw id; money rides as integer cents under babelstone.*_cents.")
     ;
 }
