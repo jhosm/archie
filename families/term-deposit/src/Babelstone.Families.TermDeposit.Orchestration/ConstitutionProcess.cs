@@ -379,8 +379,14 @@ public sealed partial class ConstitutionProcess : TableStateMachine, IEventSubst
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Guid processId,
+        IReadOnlyDictionary<string, string>? extensionHeaders,
         CancellationToken ct)
     {
+        // The constitution reissue-budget substitution is header-independent (it reads the transition log,
+        // not a CloudEvents header), so extensionHeaders is unused here — the parameter is part of the
+        // generic substrate hook contract (the settlement saga uses it to resolve direction).
+        _ = extensionHeaders;
+
         if (currentState == States.AwaitCoreClearance && incomingEventType == DebitNotExecuted)
         {
             var priorClearanceEntries = await transitionLog.CountEntriesIntoStateAsync(

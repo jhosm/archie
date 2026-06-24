@@ -354,7 +354,7 @@ public sealed class SagaAdvanceHandler
         {
             effectiveEventType = await substitutor.SubstituteAsync(
                 saga.State, message.EventType, _transitionLog,
-                connection, transaction, saga.ProcessId, ct);
+                connection, transaction, saga.ProcessId, message.ExtensionHeaders, ct);
         }
 
         // (3) The state machine is the specification (ADR-IC-003 §P2): a (state, event) pair
