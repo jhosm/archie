@@ -77,19 +77,21 @@ for schema in families/*.cue; do
 	done
 done
 
-# Pack-manifest reject fixtures. The ACCEPT case is the real packs/pt.2026.1
-# pack.yaml, validated end-to-end by packs/pack.sh; here we pin that #Manifest
-# (pack/pack.cue) rejects malformed manifests — one rule per file. A fixture
-# named `family-manifest-*` is routed to #FamilyManifest (the bd babelstone-9w2k.3
-# family-manifest), every other fixture to #Manifest — so each reject fixture is
-# vetted against the definition whose closed rule it violates, not a blanket
-# "fails #Manifest because it's the wrong shape".
+# Pack-data reject fixtures. The ACCEPT case for each definition is the real
+# committed pack file, validated end-to-end by packs/pack.sh; here we pin that the
+# closed pack definitions (pack/pack.cue) reject malformed data — one rule per
+# file. Fixtures are routed by basename prefix to the definition whose closed rule
+# they violate (not a blanket "fails #Manifest because it's the wrong shape"):
+#   family-manifest-*  -> #FamilyManifest (bd babelstone-9w2k.3 family-manifest)
+#   templates-*        -> #Templates      (ADR-PC-025 disclosure templates, bd babelstone-oyts)
+#   everything else    -> #Manifest
 if [ -d testdata/pack/invalid ]; then
-	echo "== pack manifest (#Manifest / #FamilyManifest) =="
+	echo "== pack data (#Manifest / #FamilyManifest / #Templates) =="
 	for f in testdata/pack/invalid/*.yaml; do
 		[ -e "$f" ] || continue
 		case "$(basename "$f")" in
 		family-manifest-*) def='#FamilyManifest' ;;
+		templates-*) def='#Templates' ;;
 		*) def='#Manifest' ;;
 		esac
 		if cue vet -d "$def" "$f" pack/pack.cue 2>/dev/null; then
@@ -107,6 +109,17 @@ if [ -d testdata/pack/invalid ]; then
 		echo "  ok (accepted by #FamilyManifest)  packs/pt.2026.1/families.yaml"
 	else
 		echo "  FAIL (should accept)  packs/pt.2026.1/families.yaml:"
+		sed 's/^/    /' /tmp/cue-err
+		fail=1
+	fi
+
+	# The ACCEPT case for #Templates: the real committed templates/notices.yaml
+	# (the pt.notice.maturity 14-day pre-maturity reminder, ADR-PC-025) must vet
+	# clean — pins the happy path the reject fixtures bracket.
+	if cue vet -d '#Templates' ../../packs/pt.2026.1/templates/notices.yaml pack/pack.cue 2>/tmp/cue-err; then
+		echo "  ok (accepted by #Templates)  packs/pt.2026.1/templates/notices.yaml"
+	else
+		echo "  FAIL (should accept)  packs/pt.2026.1/templates/notices.yaml:"
 		sed 's/^/    /' /tmp/cue-err
 		fail=1
 	fi

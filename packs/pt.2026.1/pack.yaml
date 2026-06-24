@@ -60,6 +60,13 @@ schema_pins:
 rate_sheet_refs:
   - deposits-pt
 
+# Pack-shipped disclosure-template files (ADR-PC-025). templates/notices.yaml
+# carries the pt.notice.maturity 14-day pre-maturity opt-out reminder, version-
+# pinned per instance like every other pack primitive. DECLARATIVE half only (bd
+# babelstone-oyts) — see templates/notices.yaml header.
+template_refs:
+  - notices
+
 test_corpus_ref: oci://babelstone-packs/pt-deposit-tests@2026.1
 
 # Q-P reserve (surface §3.11) — multi-pack composition; no-op in v1.

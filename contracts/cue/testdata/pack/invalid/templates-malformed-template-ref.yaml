@@ -1,0 +1,11 @@
+# INVALID: template_ref is not a pack-namespaced <ns>.<category>.<id> (the
+# category "reminder" is not in {disclosure,notice}). The NotificationDue event
+# carries this ref (ADR-PC-025 §1); a malformed ref must fail in the pack, not
+# surface as a bad event field at runtime. Routed to #Templates.
+templates:
+  - template_ref: pt.reminder.maturity
+    trigger_kind: SCHEDULED
+    title: Aviso de vencimento
+    description: 14-day pre-maturity opt-out reminder.
+    interpolates:
+      - maturity_date

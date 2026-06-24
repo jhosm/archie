@@ -1,0 +1,11 @@
+# INVALID: an undeclared field on a #Disclosure entry. #Disclosure is closed —
+# a smuggled/misspelled template field must fail in the signed pack (ADR-PC-025,
+# ADR-PC-006 no-DSL-escape-hatch). Routed to #Templates by the templates- prefix.
+templates:
+  - template_ref: pt.notice.maturity
+    trigger_kind: SCHEDULED
+    title: Aviso de vencimento
+    description: 14-day pre-maturity opt-out reminder.
+    interpolates:
+      - maturity_date
+    rogue_field: true

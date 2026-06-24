@@ -65,6 +65,18 @@ package pack
 	// Names of the rate-sheet-refs/<name>.yaml files this pack ships.
 	rate_sheet_refs: [...=~"^[a-z][a-z0-9-]*$"]
 
+	// Names of the templates/<name>.yaml disclosure-template files this pack
+	// ships (ADR-PC-025: pack-shipped, version-pinned-per-instance disclosure
+	// templates — FIN, maturity notices, withholding statements). The SAME
+	// per-pack-set shape as rate_sheet_refs: the manifest enumerates the files,
+	// so the build-time coverage sweep derives the templates set from this list
+	// and no template file ships unvetted (packs/pack.sh manifest_data_files).
+	// Default [] for a pack shipping no templates. (DECLARATIVE half only — bd
+	// babelstone-oyts: the template-body render-from-render-time-resolved-PII
+	// half is an engine/comms deliverable ADR-PC-025 §PII marks not-fully-
+	// specified, tracked as a separate follow-up.)
+	template_refs: [...=~"^[a-z][a-z0-9-]*$"] | *[]
+
 	// OCI ref of the sealed test-corpus artefact (surface §3.9).
 	test_corpus_ref: =~"^oci://"
 
@@ -161,6 +173,44 @@ package pack
 		rate_sheet_version_id: =~"^[a-z][a-z0-9._-]*$"
 	}]
 }
+#TemplateRef: =~"^[a-z]{2}\\.(disclosure|notice)\\.[a-z][a-z0-9_]*$"
+
+// The trigger taxonomy the ENGINE + downstream producers tag a NotificationDue
+// with (ADR-PC-025 §1 trigger_kind). The engine emits only EVENT_DRIVEN and
+// PRE_CONTRACTUAL; SCHEDULED is a valid value a DOWNSTREAM producer carries (a
+// scheduler reading projections — ADR-PC-023), never the engine. A template
+// DECLARES which trigger fires it so the pack states the binding auditor-
+// visibly. The 14-day pre-maturity reminder is SCHEDULED (a date arriving fires
+// it, not a domain event — ADR-PC-025 Context / ADR-PC-023).
+#TriggerKind: "EVENT_DRIVEN" | "SCHEDULED" | "PRE_CONTRACTUAL"
+
+// #Disclosure is one pack-shipped template's DECLARATIVE shape. It fixes the
+// template's identity (template_ref), what fires it (trigger_kind), and the
+// STRUCTURAL interpolation contract (interpolates) — the field names the body
+// uses, all non-PII (amounts, dates, rates, TAE, the opt-out-window day count).
+// Closed: an unknown/misspelled key fails here, in the signed pack, the same
+// no-DSL-escape-hatch discipline as #Manifest / the family schema (ADR-PC-006).
+#Disclosure: {
+	template_ref: #TemplateRef
+	trigger_kind: #TriggerKind
+	title:        !=""
+	description:  !=""
+
+	// The STRUCTURAL fields the rendered body interpolates — NAMES only, never
+	// values, and never PII. Each is a stable identifier the NotificationDue
+	// `data` payload carries (ADR-PC-025 §1 data: "structural interpolation
+	// values only — amounts, dates, rates, TAE; NO PII"). PII the body also
+	// needs (name, NIF, address) is resolved at render time by reference and is
+	// deliberately ABSENT from this list (ADR-PC-025 §PII).
+	interpolates: [...=~"^[a-z][a-z0-9_]*$"]
+}
+
+// #Templates is the shape of a templates/<name>.yaml file: a non-empty list of
+// disclosure templates. Mirrors #RateSheetRefs.refs — a per-pack set the
+// manifest enumerates in template_refs.
+#Templates: {
+	templates: [...#Disclosure] & [_, ...]
+}
 
 // ---------------------------------------------------------------------------
 // families.yaml — the family-manifest (ADR-PC-007 §P1; bd babelstone-9w2k.3).
@@ -202,4 +252,4 @@ package pack
 
 ## Governing ADRs
 
-[ADR-IC-004](../../../product-management/integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md), [ADR-PC-006](../../../product-management/product_concepts/adrs/ADR-PC-006-cue-schema-language.md), [ADR-PC-007](../../../product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md), [ADR-PC-008](../../../product-management/product_concepts/adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md), [ADR-PC-009](../../../product-management/product_concepts/adrs/ADR-PC-009-per-instance-version-pinning.md)
+[ADR-IC-004](../../../product-management/integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md), [ADR-PC-004](../../../product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md), [ADR-PC-006](../../../product-management/product_concepts/adrs/ADR-PC-006-cue-schema-language.md), [ADR-PC-007](../../../product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md), [ADR-PC-008](../../../product-management/product_concepts/adrs/ADR-PC-008-rate-sheet-storage-and-deploy-api.md), [ADR-PC-009](../../../product-management/product_concepts/adrs/ADR-PC-009-per-instance-version-pinning.md), [ADR-PC-023](../../../product-management/product_concepts/adrs/ADR-PC-023-temporal-signals-projection-derived.md), [ADR-PC-025](../../../product-management/product_concepts/adrs/ADR-PC-025-customer-notification-emit-contract.md)

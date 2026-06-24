@@ -1,0 +1,10 @@
+# INVALID: trigger_kind is not in the engine's taxonomy {EVENT_DRIVEN,
+# SCHEDULED, PRE_CONTRACTUAL} (ADR-PC-025 §1). A template that declares an
+# unknown trigger must fail in the pack. Routed to #Templates.
+templates:
+  - template_ref: pt.notice.maturity
+    trigger_kind: TIMER_TICK
+    title: Aviso de vencimento
+    description: 14-day pre-maturity opt-out reminder.
+    interpolates:
+      - maturity_date
