@@ -41,11 +41,12 @@ readonly CONTRACTS_CUE="$ROOT/contracts/cue"
 readonly PACK_SCHEMA="$CONTRACTS_CUE/pack/pack.cue"
 
 # Relative-path → root-definition map for the FORMAT-FIXED data files every pack
-# carries at a known name (ADR-PC-007 §P1). The rate-sheet-ref files are NOT
-# listed here: they are a per-pack set the manifest enumerates, so we DERIVE them
-# from pack.yaml at validate time (see manifest_data_files) — a pack that declares
-# an extra rate-sheet-ref then gets covered automatically, never silently skipped.
-# Plain string list for bash 3.2 portability.
+# carries at a known name (ADR-PC-007 §P1). The rate-sheet-ref AND template files
+# are NOT listed here: they are per-pack sets the manifest enumerates (in
+# `rate_sheet_refs` / `template_refs`), so we DERIVE them from pack.yaml at
+# validate time (see manifest_data_files) — a pack that declares an extra
+# rate-sheet-ref or disclosure-template file then gets covered automatically,
+# never silently skipped. Plain string list for bash 3.2 portability.
 #
 # NOTE on primitives/renewal-policies.yaml (the F.5 follow-up, bd k6r8.6): this
 # BUILD path treats it as REQUIRED (the `[ -f ... ] || die` below) — every pack we
@@ -78,10 +79,11 @@ test-corpus/expected-events.yaml
 
 # Build the full relative-path → root-def map for a staged pack: the format-fixed
 # files PLUS one rate-sheet-ref file per name the MANIFEST declares in its
-# `rate_sheet_refs` array. Emitted on stdout as `rel|#Def` lines so every declared
-# file is enumerated from the pack's own manifest, not a hardcoded list.
+# `rate_sheet_refs` array AND one template file per name in `template_refs`.
+# Emitted on stdout as `rel|#Def` lines so every declared file is enumerated from
+# the pack's own manifest, not a hardcoded list.
 manifest_data_files() {
-	local staging="$1" name refs
+	local staging="$1" name refs tmpls
 	printf '%s' "$FIXED_DATA_FILES"
 	# Derive the per-pack rate-sheet-ref files from the manifest. `cue export`
 	# (not yq) keeps us on the pinned toolchain; --out text + strings.Join emits
@@ -97,6 +99,24 @@ manifest_data_files() {
 		echo "rate-sheet-refs/$name.yaml|#RateSheetRefs"
 	done <<-EOF
 		$refs
+	EOF
+
+	# Derive the per-pack disclosure-template files from the manifest's
+	# `template_refs` (ADR-PC-025). Same shape as rate_sheet_refs: each name maps
+	# to templates/<name>.yaml validated against #Templates. `template_refs`
+	# defaults to [] in #Manifest, so a pack that ships no templates yields no
+	# extra lines (strings.Join over an empty list is the empty string).
+	if ! tmpls="$(cue export "$staging/pack.yaml" \
+		-e 'strings.Join(template_refs, "\n")' --out text 2>/tmp/pack-cue-err)"; then
+		echo "pack.sh: cannot read template_refs from manifest:" >&2
+		sed 's/^/    /' /tmp/pack-cue-err >&2
+		exit 1
+	fi
+	while IFS= read -r name; do
+		[ -n "$name" ] || continue
+		echo "templates/$name.yaml|#Templates"
+	done <<-EOF
+		$tmpls
 	EOF
 }
 

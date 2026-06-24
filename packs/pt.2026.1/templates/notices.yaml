@@ -1,0 +1,49 @@
+# Pack-shipped customer-notice templates (ADR-PC-025; surface §3.3 `notice.*`).
+#
+# In plain English: this is the actual maturity reminder the bank sends a
+# depositor 14 days before their term deposit matures, telling them their
+# auto-renewal opt-out window is open. It lives in the regulatory pack, so a
+# deposit constituted under pt.2026.1 keeps disclosing under THIS template even
+# after a later pack ships (ADR-PC-025 §2 pinning invariant). The engine emits a
+# NotificationDue carrying the template_ref + the structural data below; a
+# downstream scheduler fires it (it is SCHEDULED — a date arriving triggers it,
+# not a domain event — ADR-PC-023), and the communications system renders +
+# delivers it.
+#
+# DECLARATIVE half ONLY (bd babelstone-oyts). `interpolates` lists the STRUCTURAL
+# field names the body fills in — amounts, dates, rates, the opt-out-window day
+# count — all non-PII. The customer's name / NIF / address the rendered letter
+# also shows is NOT here and never rides the bus: the communications system
+# resolves it at render time from a reference, via the engine-owned authorised
+# PII-resolve surface (ADR-PC-025 §PII; ADR-PC-004). That render-from-render-
+# time-resolved-PII machinery is an engine/comms deliverable ADR-PC-025 §PII
+# marks as not-fully-specified — a documented follow-up, not built here.
+#
+# No PII ever goes in a pack (ADR-PC-007 / pack-author guardrails): templates are
+# regulatory/market vocabulary, the values are resolved per instance.
+templates:
+  - template_ref: pt.notice.maturity
+    trigger_kind: SCHEDULED
+    title: Aviso de vencimento — janela de oposição à renovação (14 dias)
+    description: >-
+      Pre-maturity reminder sent during the depositor's auto-renewal opt-out
+      window (the final auto_renewal_optout_window_days before maturity — 14 in
+      PT v1, parameters/constants.yaml). Tells the depositor the deposit is about
+      to mature, what happens under its auto_renewal_policy, and that they may
+      terminate without penalty during the window (02 §2.4.4). SCHEDULED: a date
+      arriving fires it, so a downstream scheduler — not the engine — produces
+      the NotificationDue off the maturity-calendar projection (ADR-PC-023,
+      ADR-PC-025 Context).
+    # Structural interpolation fields only — names, never values, never PII
+    # (ADR-PC-025 §1 data). The rendered notice fills these in from the
+    # NotificationDue `data` payload; the depositor's name/NIF/address come from
+    # the render-time PII-resolve surface, not from here.
+    interpolates:
+      - deposit_id
+      - maturity_date
+      - principal_cents
+      - tan_basis_points
+      - term_days
+      - auto_renewal_policy
+      - optout_window_days
+      - optout_deadline_date
