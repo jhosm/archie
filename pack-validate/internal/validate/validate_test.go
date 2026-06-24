@@ -87,7 +87,7 @@ func TestInvalidFixturesRejectAtExpectedDepth(t *testing.T) {
 		{packInvalidDir, "depth4-descending-steps.yaml", diag.DepthRegulatory, diag.KindNonAscendingSteps},
 		{packInvalidDir, "depth4-open-tail-not-last.yaml", diag.DepthRegulatory, diag.KindOpenTailNotLast},
 		{packInvalidDir, "depth4-same-term-same-rate.yaml", diag.DepthRegulatory, diag.KindForbiddenRenewalPolicy},
-		{packInvalidDir, "depth4-carencia-exceeds-term.yaml", diag.DepthRegulatory, diag.KindCarenciaExceedsTerm},
+		{packInvalidDir, "depth4-carencia-exceeds-term.yaml", diag.DepthRegulatory, diag.KindLockupExceedsTerm},
 		{packInvalidDir, "depth4-remaining-exceeds-max.yaml", diag.DepthRegulatory, diag.KindRemainingExceedsMaxCents},
 	}
 	for _, tc := range cases {

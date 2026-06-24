@@ -13,7 +13,7 @@ namespace Babelstone.Families.TermDeposit.Application.Tests;
 /// </summary>
 public sealed class PartialWithdrawalPolicyResolutionTests
 {
-    private static ProductConfig ConfigWith(long minWithdrawal, long minRemaining, int carenciaDays) =>
+    private static ProductConfig ConfigWith(long minWithdrawal, long minRemaining, int lockupPeriodDays) =>
         new(
             ProductId: "dpz_pt_12m_resgate_parcial",
             TermDays: 365,
@@ -23,7 +23,7 @@ public sealed class PartialWithdrawalPolicyResolutionTests
             DefaultRole: "standard",
             MinWithdrawalCents: minWithdrawal,
             MinRemainingBalanceCents: minRemaining,
-            CarenciaDays: carenciaDays);
+            LockupPeriodDays: lockupPeriodDays);
 
     [Fact]
     public void A_config_declaring_the_gates_resolves_a_matching_policy()
@@ -47,12 +47,12 @@ public sealed class PartialWithdrawalPolicyResolutionTests
     [InlineData(0, 100_000, 0)]
     [InlineData(0, 0, 90)]
     public void Any_single_non_zero_gate_resolves_a_real_policy_not_Unrestricted(
-        long minWithdrawal, long minRemaining, int carenciaDays)
+        long minWithdrawal, long minRemaining, int lockupPeriodDays)
     {
         var policy = PartialWithdrawalPolicy.FromProductConfig(
-            ConfigWith(minWithdrawal, minRemaining, carenciaDays));
+            ConfigWith(minWithdrawal, minRemaining, lockupPeriodDays));
 
         Assert.NotSame(PartialWithdrawalPolicy.Unrestricted, policy);
-        Assert.Equal(new PartialWithdrawalPolicy(minWithdrawal, minRemaining, carenciaDays), policy);
+        Assert.Equal(new PartialWithdrawalPolicy(minWithdrawal, minRemaining, lockupPeriodDays), policy);
     }
 }

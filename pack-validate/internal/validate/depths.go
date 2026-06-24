@@ -169,12 +169,12 @@ func depth4Regulatory(vd variantData, fam Family, p *pack.Pack) []diag.Diagnosti
 		// (d) the lock-up must be strictly shorter than the term — a
 		// lock-up that meets or outlasts the term leaves no day on which a
 		// partial withdrawal is ever legal.
-		if pw.CarenciaDays >= vd.TermDays {
+		if pw.LockupPeriodDays >= vd.TermDays {
 			out = append(out, diag.Diagnostic{
-				Depth: diag.DepthRegulatory, Path: "partial_withdrawal.carencia_days",
-				Kind: diag.KindCarenciaExceedsTerm,
-				Message: fmt.Sprintf("carencia_days %d is not strictly less than term_days %d — the lock-up outlasts the term, so no partial withdrawal could ever be legal",
-					pw.CarenciaDays, vd.TermDays),
+				Depth: diag.DepthRegulatory, Path: "partial_withdrawal.lockup_period_days",
+				Kind: diag.KindLockupExceedsTerm,
+				Message: fmt.Sprintf("lockup_period_days %d is not strictly less than term_days %d — the lock-up outlasts the term, so no partial withdrawal could ever be legal",
+					pw.LockupPeriodDays, vd.TermDays),
 			})
 		}
 		// (e) the minimum remaining balance must be strictly below the corridor

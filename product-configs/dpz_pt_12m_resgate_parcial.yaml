@@ -15,7 +15,7 @@
 # ADR-PC-008). No inline rate; no derived TANB/TANL/TAE.
 #
 # The partial_withdrawal block satisfies the depth-4 coherence invariants the
-# validator enforces (pack-validate depth4Regulatory): carencia_days (90) <
+# validator enforces (pack-validate depth4Regulatory): lockup_period_days (90) <
 # term_days (365), and min_remaining_balance_cents (€1,000) <
 # principal_bounds.max_cents (€500,000).
 #
@@ -67,4 +67,4 @@ principal_bounds:
 partial_withdrawal:
   min_withdrawal_cents: 50000          # €500.00
   min_remaining_balance_cents: 100000  # €1,000.00
-  carencia_days: 90
+  lockup_period_days: 90

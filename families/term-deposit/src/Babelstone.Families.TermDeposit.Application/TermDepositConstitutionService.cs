@@ -386,7 +386,7 @@ public sealed class TermDepositConstitutionService(
         //    when it was opened, immune to a later config edit (ADR-PC-009 per-instance pinning). 0/0/0
         //    (a pre-F.12 deposit, or a variant that omitted the block) is the Unrestricted policy.
         var policy = new PartialWithdrawalPolicy(
-            position.MinWithdrawalCents, position.MinRemainingBalanceCents, position.CarenciaDays);
+            position.MinWithdrawalCents, position.MinRemainingBalanceCents, position.LockupPeriodDays);
 
         // 3. Decide (pure): the withdrawal DATE is derived from the command instant and passed as an INPUT
         //    — no clock in the decider. A partial withdrawal carries NO money leg (02 §2.4.1), so unlike
@@ -758,7 +758,7 @@ public sealed class TermDepositConstitutionService(
             FundingAccount = constituted.FundingAccount,
             MinWithdrawalCents = constituted.MinWithdrawalCents,
             MinRemainingBalanceCents = constituted.MinRemainingBalanceCents,
-            CarenciaDays = constituted.CarenciaDays,
+            LockupPeriodDays = constituted.LockupPeriodDays,
             RemainingPrincipal = constituted.Principal,
             // Seed the opening principal segment, mirroring DepositConstitutedHandler, so this head
             // projection stays a faithful stand-in for the real fold (bd babelstone-emtr) — even though
@@ -792,7 +792,7 @@ public sealed class TermDepositConstitutionService(
             FundingAccount: position.FundingAccount,
             MinWithdrawalCents: position.MinWithdrawalCents,
             MinRemainingBalanceCents: position.MinRemainingBalanceCents,
-            CarenciaDays: position.CarenciaDays);
+            LockupPeriodDays: position.LockupPeriodDays);
 
     // commandId is the OPTIONAL command-ingress idempotency key (ADR-PC-029 slot 4): the
     // constitution paths thread the command's CommandId so the append dedupes on it; the

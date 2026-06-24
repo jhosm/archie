@@ -88,8 +88,8 @@ public enum DepositLifecycle
 /// value pre-F.12 deposits decode from the Avro default). Structural config, NOT PII (ADR-PC-004 §P2).</param>
 /// <param name="MinRemainingBalanceCents">The F.12 minimum remaining balance after a withdrawal, in
 /// cents, PINNED at constitution (PartialWithdrawalPolicy.MinRemainingBalanceCents). 0 ⇒ no floor.</param>
-/// <param name="CarenciaDays">The F.12 lock-up window in days from constitution, PINNED at
-/// constitution (PartialWithdrawalPolicy.CarenciaDays). A duration, not money. 0 ⇒ no lock-up.</param>
+/// <param name="LockupPeriodDays">The F.12 lock-up window in days from constitution, PINNED at
+/// constitution (PartialWithdrawalPolicy.LockupPeriodDays). A duration, not money. 0 ⇒ no lock-up.</param>
 /// <param name="PrincipalTimeline">The deposit's principal as a STEP FUNCTION of time (F.12, bd
 /// babelstone-emtr): the ordered <see cref="PrincipalSegment"/>s the accrual engine prices interest
 /// over. Seeded with the opening <c>(StartDate, Principal)</c> at constitution and appended
@@ -114,7 +114,7 @@ public sealed record DepositPosition(
     string FundingAccount,
     long MinWithdrawalCents,
     long MinRemainingBalanceCents,
-    int CarenciaDays,
+    int LockupPeriodDays,
     IReadOnlyList<PrincipalSegment> PrincipalTimeline,
     Money AccruedGrossInterest,
     Money WithholdingToDate,
@@ -153,7 +153,7 @@ public sealed record DepositPosition(
         FundingAccount: string.Empty,
         MinWithdrawalCents: 0,
         MinRemainingBalanceCents: 0,
-        CarenciaDays: 0,
+        LockupPeriodDays: 0,
         // Empty until DepositConstituted seeds the opening (start, principal) segment.
         PrincipalTimeline: [],
         AccruedGrossInterest: Money.Zero,
@@ -191,7 +191,7 @@ public sealed record DepositPosition(
         && FundingAccount == other.FundingAccount
         && MinWithdrawalCents == other.MinWithdrawalCents
         && MinRemainingBalanceCents == other.MinRemainingBalanceCents
-        && CarenciaDays == other.CarenciaDays
+        && LockupPeriodDays == other.LockupPeriodDays
         && AccruedGrossInterest == other.AccruedGrossInterest
         && WithholdingToDate == other.WithholdingToDate
         && NetInterest == other.NetInterest
@@ -221,7 +221,7 @@ public sealed record DepositPosition(
         hash.Add(FundingAccount);
         hash.Add(MinWithdrawalCents);
         hash.Add(MinRemainingBalanceCents);
-        hash.Add(CarenciaDays);
+        hash.Add(LockupPeriodDays);
         hash.Add(AccruedGrossInterest);
         hash.Add(WithholdingToDate);
         hash.Add(NetInterest);

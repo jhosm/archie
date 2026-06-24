@@ -280,7 +280,7 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_partial_withdrawal_within_the_carencia_is_a_422()
+    public async Task A_partial_withdrawal_within_the_lockup_is_a_422()
     {
         // The F.12 lock-up gate at the HTTP boundary: a withdrawal dated inside the 90-day
         // lock-up is a clean 422 (DomainRejectedException), never a phantom withdrawal — and the deposit

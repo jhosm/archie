@@ -65,8 +65,8 @@ public interface IProductConfigStore
 /// <param name="MinRemainingBalanceCents">F.12 partial-withdrawal gate: the smallest principal that may
 /// remain on deposit after a withdrawal, in cents (<c>partial_withdrawal.min_remaining_balance_cents</c>).
 /// <c>0</c> ⇒ no floor.</param>
-/// <param name="CarenciaDays">F.12 partial-withdrawal gate: the lock-up window in days
-/// from constitution during which no partial withdrawal is allowed (<c>partial_withdrawal.carencia_days</c>).
+/// <param name="LockupPeriodDays">F.12 partial-withdrawal gate: the lock-up window in days
+/// from constitution during which no partial withdrawal is allowed (<c>partial_withdrawal.lockup_period_days</c>).
 /// <c>0</c> ⇒ no lock-up.</param>
 public sealed record ProductConfig(
     string ProductId,
@@ -77,4 +77,4 @@ public sealed record ProductConfig(
     string DefaultRole,
     long MinWithdrawalCents = 0,
     long MinRemainingBalanceCents = 0,
-    int CarenciaDays = 0);
+    int LockupPeriodDays = 0);

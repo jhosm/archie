@@ -87,7 +87,7 @@ type variantData struct {
 	DayCount          string `json:"day_count"`
 	InterestVariant   string `json:"interest_variant"`
 	AutoRenewalPolicy string `json:"auto_renewal_policy"`
-	TermDays          int64  `json:"term_days"` // for the F.12 carencia_days < term_days depth-4 check
+	TermDays          int64  `json:"term_days"` // for the F.12 lockup_period_days < term_days depth-4 check
 
 	Rate struct {
 		Stepped *struct {
@@ -113,7 +113,7 @@ type variantData struct {
 	PartialWithdrawal *struct {
 		MinWithdrawalCents       int64 `json:"min_withdrawal_cents"`
 		MinRemainingBalanceCents int64 `json:"min_remaining_balance_cents"`
-		CarenciaDays             int64 `json:"carencia_days"`
+		LockupPeriodDays         int64 `json:"lockup_period_days"`
 	} `json:"partial_withdrawal"`
 }
 

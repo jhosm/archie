@@ -185,7 +185,7 @@ public sealed class AvroCodecRoundTripTests
             FundingAccount: "PT50-DDA-001",
             MinWithdrawalCents: 50_000,
             MinRemainingBalanceCents: 100_000,
-            CarenciaDays: 90);
+            LockupPeriodDays: 90);
 
         var decoded = (DepositConstituted)serializer.Decode(
             serializer.Encode(original).Bytes, typeof(DepositConstituted));
@@ -193,7 +193,7 @@ public sealed class AvroCodecRoundTripTests
         Assert.Equal(original, decoded);
         Assert.Equal(50_000, decoded.MinWithdrawalCents);
         Assert.Equal(100_000, decoded.MinRemainingBalanceCents);
-        Assert.Equal(90, decoded.CarenciaDays);
+        Assert.Equal(90, decoded.LockupPeriodDays);
     }
 
     [Fact]

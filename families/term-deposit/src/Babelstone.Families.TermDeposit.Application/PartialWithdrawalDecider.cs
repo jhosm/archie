@@ -30,13 +30,13 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// withdrawal, in cents. A withdrawal that would leave strictly less than this is refused. <c>0</c>
 /// imposes no minimum-remaining floor (the decider still forbids withdrawing the whole balance —
 /// reducing to exactly zero is a termination, not a partial withdrawal).</param>
-/// <param name="CarenciaDays">The lock-up window in days from the constitution start
+/// <param name="LockupPeriodDays">The lock-up window in days from the constitution start
 /// date during which no partial withdrawal is allowed. A withdrawal whose date is strictly before
-/// <c>StartDate + CarenciaDays</c> is refused. <c>0</c> imposes no lock-up.</param>
+/// <c>StartDate + LockupPeriodDays</c> is refused. <c>0</c> imposes no lock-up.</param>
 public sealed record PartialWithdrawalPolicy(
     long MinWithdrawalCents,
     long MinRemainingBalanceCents,
-    int CarenciaDays)
+    int LockupPeriodDays)
 {
     /// <summary>A policy that imposes no F.12 gate — the structural rules (positive amount, cannot
     /// withdraw the whole balance) still apply. Useful for a product that permits unrestricted partial
@@ -46,7 +46,7 @@ public sealed record PartialWithdrawalPolicy(
     /// <summary>
     /// Resolve the policy from a product's resolved <see cref="ProductConfig"/> (bd k6r8.8): map the
     /// three F.12 primitives the engine carries (<see cref="ProductConfig.MinWithdrawalCents"/> /
-    /// <see cref="ProductConfig.MinRemainingBalanceCents"/> / <see cref="ProductConfig.CarenciaDays"/>)
+    /// <see cref="ProductConfig.MinRemainingBalanceCents"/> / <see cref="ProductConfig.LockupPeriodDays"/>)
     /// onto this policy. A config whose three gates are all zero — the shape of a variant that OMITS the
     /// <c>partial_withdrawal</c> block — resolves to <see cref="Unrestricted"/> (02 §2.4.1). Pure: a
     /// total function of the config, no clock and no I/O, so the constitution-boundary resolve stays
@@ -55,10 +55,10 @@ public sealed record PartialWithdrawalPolicy(
     public static PartialWithdrawalPolicy FromProductConfig(ProductConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        return config is { MinWithdrawalCents: 0, MinRemainingBalanceCents: 0, CarenciaDays: 0 }
+        return config is { MinWithdrawalCents: 0, MinRemainingBalanceCents: 0, LockupPeriodDays: 0 }
             ? Unrestricted
             : new PartialWithdrawalPolicy(
-                config.MinWithdrawalCents, config.MinRemainingBalanceCents, config.CarenciaDays);
+                config.MinWithdrawalCents, config.MinRemainingBalanceCents, config.LockupPeriodDays);
     }
 }
 
@@ -163,15 +163,15 @@ public static class PartialWithdrawalDecider
                 "(F.4), not a partial withdrawal (F.12).");
         }
 
-        // 3. F.12 lock-up: no withdrawal strictly before StartDate + CarenciaDays. The
+        // 3. F.12 lock-up: no withdrawal strictly before StartDate + LockupPeriodDays. The
         //    earliest permitted date is the first day on/after the lock-up window closes; the boundary
         //    day itself passes (inclusive). Date arithmetic on the INPUT date — no clock.
-        var unlockDate = position.StartDate.AddDays(policy.CarenciaDays);
+        var unlockDate = position.StartDate.AddDays(policy.LockupPeriodDays);
         if (withdrawnOn < unlockDate)
         {
             throw new DomainRejectedException(
                 $"Partial withdrawal on deposit {position.DepositId} on {withdrawnOn:yyyy-MM-dd} falls inside the " +
-                $"{policy.CarenciaDays}-day lock-up period; the earliest permitted date is " +
+                $"{policy.LockupPeriodDays}-day lock-up period; the earliest permitted date is " +
                 $"{unlockDate:yyyy-MM-dd} (F.12).");
         }
 

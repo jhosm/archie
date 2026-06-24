@@ -27,7 +27,7 @@
 # (financial_concepts §5.4), never variant fields.
 #
 # The partial_withdrawal block satisfies the depth-4 coherence invariants the
-# validator enforces (pack-validate depth4Regulatory): carencia_days (60) <
+# validator enforces (pack-validate depth4Regulatory): lockup_period_days (60) <
 # term_days (365), and min_remaining_balance_cents (€1,000) <
 # principal_bounds.max_cents (€500,000).
 #
@@ -84,4 +84,4 @@ principal_bounds:
 partial_withdrawal:
   min_withdrawal_cents: 25000          # €250.00
   min_remaining_balance_cents: 100000  # €1,000.00
-  carencia_days: 60
+  lockup_period_days: 60
