@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "comment": "QueryCoreCreditStatus -> the indeterminate credit did NOT execute (ADR-PC-032 / feature-design money-movement-settlement §10; ADR-IC-012 §P5). The clearance query asked Core 'was this credit actually executed?' and the answer is no -- no money moved. Higher-priority mapping; fires when the request body contains the marker 'not-executed', driving the settlement saga to REISSUE the credit (AWAIT_CREDIT_CLEARANCE -> (CONFIRMING_CREDIT, ConfirmCredit)) -- the RETRY_PERMITTED disposition (ADR-IC-012 §D5 step 5 / §P5). The reissue cannot double-credit: the not-executed clearance is Core ground truth that nothing was committed (§P5/§332); the same-idempotency-key guard is the ACL's machinery (DEF-1). The 4xx=not-executed encoding is a v1 STUB CONVENTION -- the dispatcher's slot-5 model reads a 422 as a terminal Refused and the clearance stub reuses that to mean 'credit not found / not executed'; DEF-1's real ACL emits a typed CreditNotExecuted event instead. Mirrors debits-clearance-not-executed.json on the credit surface."
+  },
+  "priority": 4,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/credits/clearance",
+    "bodyPatterns": [
+      { "contains": "not-executed" }
+    ]
+  },
+  "response": {
+    "status": 422,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "status": "NOT_EXECUTED", "detail": "the queried credit was not executed in Core" }
+  }
+}

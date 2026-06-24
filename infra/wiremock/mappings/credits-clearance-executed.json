@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "comment": "QueryCoreCreditStatus -> the indeterminate credit DID execute (ADR-PC-032 / feature-design money-movement-settlement §10; ADR-IC-012 §P5). The clearance query asked Core 'was this credit actually executed?' and the answer is yes -- so a LATE CreditConfirmed resumes the happy path (the settlement saga walks AWAIT_CREDIT_CLEARANCE -> SETTLEMENT_COMPLETED). Default clearance answer (priority 5); the not-executed mapping (credits-clearance-not-executed) overrides it on a marker. The 2xx=executed encoding is a v1 STUB CONVENTION -- DEF-1's real ACL emits typed clearance events instead. Mirrors debits-clearance-executed.json on the credit surface."
+  },
+  "priority": 5,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/credits/clearance"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "status": "EXECUTED", "core_txn_id": "CT-CREDIT-CLEARED" }
+  }
+}
