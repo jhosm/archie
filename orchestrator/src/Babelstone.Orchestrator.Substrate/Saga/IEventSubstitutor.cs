@@ -20,11 +20,17 @@ namespace Babelstone.Orchestrator.Saga;
 public interface IEventSubstitutor
 {
     /// <summary>
-    /// Given the saga's current state, the incoming event type, and async access to the transition log,
-    /// return the EFFECTIVE event type to apply — usually <paramref name="incomingEventType"/> itself,
-    /// or a substituted event when a budget/rule triggers. Runs on the caller's
-    /// connection/transaction (under the advance's <c>FOR UPDATE</c> row lock).
+    /// Given the saga's current state, the incoming event type, the incoming record's CloudEvents extension
+    /// HEADERS, and async access to the transition log, return the EFFECTIVE event type to apply — usually
+    /// <paramref name="incomingEventType"/> itself, or a substituted event when a budget/rule/direction
+    /// triggers. Runs on the caller's connection/transaction (under the advance's <c>FOR UPDATE</c> row lock).
     /// </summary>
+    /// <param name="extensionHeaders">The incoming record's NON-standard CloudEvents extension attributes
+    /// (ce_-stripped, lowercased — ADR-IC-018 §P5/§D5), the SAME header map the auto-start predicate sees.
+    /// Null when the record carried no extension attributes. Lets a header-keyed substitution (e.g. the
+    /// settlement saga resolving a generic start event to its debit/credit branch from <c>movementdirection</c>)
+    /// read the headers WITHOUT decoding the payload — preserving the extraction-ready boundary (ADR-IC-018
+    /// §D5). A substitutor that needs no header (the constitution reissue-budget) simply ignores it.</param>
     Task<string> SubstituteAsync(
         string currentState,
         string incomingEventType,
@@ -32,5 +38,6 @@ public interface IEventSubstitutor
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Guid processId,
+        IReadOnlyDictionary<string, string>? extensionHeaders,
         CancellationToken ct);
 }

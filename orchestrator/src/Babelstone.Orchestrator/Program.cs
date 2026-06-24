@@ -5,6 +5,7 @@ using Babelstone.Orchestrator.Edge;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Migrations;
 using Babelstone.Orchestrator.Saga;
+using Babelstone.Orchestrator.Saga.Settlement;
 using Babelstone.Telemetry;
 using Babelstone.Telemetry.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -127,6 +128,17 @@ var sagaModules = new ISagaModule[]
     // (ADR-IC-003 §A7): the engine resolves every renewal fact from the Matured closing deposit it loads
     // (ADR-PC-009; bd babelstone-mtto.5), so the command body is the minimal { new_deposit_id }.
     new RenewalSagaModule(sagaModuleContext),
+    // The SUBSTRATE-OWNED settlement saga (bd babelstone-t7o3.15, ADR-PC-032; ADR-IC-018 Amendment
+    // 2026-06-24). UNLIKE the two term-deposit modules it lives in the SUBSTRATE — it names no family,
+    // keying only on the Movement atom's generic direction + opaque account_ref — so it is the one shared
+    // home that effects any family's cash leg. EventAutoStarted on a Movement-bearing event (a
+    // ce_movementorigin == Originated header); the direction branch (debit funds-gated Reserve->Confirm vs
+    // credit confirmation-gated Confirm) is resolved by the machine's IEventSubstitutor from the promoted
+    // ce_movementdirection header. The HOST (the §D4 composition root, which MAY name a family) supplies the
+    // family integration topics where Movement-bearing events arrive — the substrate module names none of
+    // them (ORCH-3). At v1 the only loaded family is term-deposit, so it subscribes that family's
+    // integration topic(s); a new family's integration topics are added here, zero substrate diff.
+    new SettlementSagaModule(sagaModuleContext, [.. FamilyIntegrationTopics.All]),
 };
 
 foreach (var module in sagaModules)

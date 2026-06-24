@@ -124,20 +124,39 @@ public sealed class OrchestratorFamilyAgnosticTests
     }
 
     /// <summary>
-    /// ORCHESTRATOR_SUBSTRATE_NO_CONCRETE_SAGA (ADR-IC-018 §D1/§D3/§P3/§P6). The substrate assembly
-    /// defines NO concrete (non-abstract, non-interface) type that implements
-    /// <see cref="ISagaStateMachine"/>, <see cref="IResultEventBridge"/>, or
-    /// <see cref="ISagaCommandRouter"/> — every concrete saga lives in a family <c>.Orchestration</c>
-    /// module. This catches a concrete <c>TableStateMachine</c> subclass typed directly in the substrate
-    /// even with no <c>.csproj</c> reference (the §Residual risk the ADR names). An in-process reflection
-    /// check — no disk walk.
+    /// The family-AGNOSTIC concrete sagas the substrate is explicitly allowed to own (ADR-IC-018 Amendment
+    /// 2026-06-24 A1/A2). The narrowed ORCH-2 gate permits a concrete saga IN the substrate iff it names no
+    /// family — the saga-level analog of a substrate store. The <c>settlement</c> saga
+    /// (<see cref="Settlement.SettlementProcess"/>, ADR-PC-032) is the first and only entry: it keys solely on
+    /// the <c>Movement</c> atom's generic direction / opaque account_ref. Any concrete saga OUTSIDE this
+    /// allow-list typed into the substrate is the regression the gate catches (a family saga that leaked in).
+    /// </summary>
+    private static readonly string[] FamilyAgnosticSubstrateSagas =
+    [
+        "Babelstone.Orchestrator.Saga.Settlement.SettlementProcess",
+        "Babelstone.Orchestrator.Saga.Settlement.SettlementResultEvents+Bridge",
+        "Babelstone.Orchestrator.Saga.Settlement.SettlementCommandRouter",
+    ];
+
+    /// <summary>
+    /// ORCHESTRATOR_SUBSTRATE_NO_CONCRETE_SAGA, NARROWED (ADR-IC-018 §D1/§D3/§P3/§P6 + Amendment A1/A2; bd
+    /// babelstone-t7o3.15). The substrate assembly defines no <b>family-named</b> concrete
+    /// <see cref="ISagaStateMachine"/> / <see cref="IResultEventBridge"/> / <see cref="ISagaCommandRouter"/> —
+    /// every concrete saga it owns is on the explicit <see cref="FamilyAgnosticSubstrateSagas"/> allow-list
+    /// (the genuinely family-agnostic <c>settlement</c> saga). A concrete saga typed into the substrate that
+    /// is NOT allow-listed is a leak the gate fails — that is how a family saga (which would name a family)
+    /// stays out, even when no <c>.csproj</c> reference does (the §Residual risk the ADR names). The original
+    /// blanket "no concrete saga" was narrowed because the settlement saga is the first family-AGNOSTIC saga
+    /// the platform legitimately owns. An in-process reflection check — no disk walk.
     /// </summary>
     [Fact]
-    public void Substrate_assembly_defines_no_concrete_saga_implementation()
+    public void Substrate_defines_no_family_named_concrete_saga()
     {
         // ISagaStateMachine is defined in the substrate, so its assembly IS the substrate assembly.
         var substrateAssembly = typeof(ISagaStateMachine).Assembly;
         Assert.Equal("Babelstone.Orchestrator.Substrate", substrateAssembly.GetName().Name);
+
+        var allowed = new HashSet<string>(FamilyAgnosticSubstrateSagas, StringComparer.Ordinal);
 
         var violations = substrateAssembly.GetTypes()
             .Where(t => !t.IsAbstract && !t.IsInterface)
@@ -145,14 +164,18 @@ public sealed class OrchestratorFamilyAgnosticTests
                      || typeof(IResultEventBridge).IsAssignableFrom(t)
                      || typeof(ISagaCommandRouter).IsAssignableFrom(t))
             .Select(t => t.FullName!)
+            .Where(name => !allowed.Contains(name))
             .ToList();
 
         Assert.True(
             violations.Count == 0,
-            "ADR-IC-018 §D2/§P3: the substrate assembly defines no concrete saga implementation "
-            + "(ISagaStateMachine / IResultEventBridge / ISagaCommandRouter). Every concrete saga lives "
-            + "in a family .Orchestration module. Offending types:\n  "
-            + string.Join("\n  ", violations));
+            "ADR-IC-018 §D2/§P3 (narrowed by Amendment A1/A2): the substrate assembly may define ONLY "
+            + "family-agnostic concrete sagas on the explicit allow-list (the settlement saga). A concrete "
+            + "saga outside it is a family saga that leaked into the substrate — it belongs in a family "
+            + ".Orchestration module. Offending types:\n  "
+            + string.Join("\n  ", violations)
+            + "\n(If you added a genuinely family-agnostic substrate saga, add it to "
+            + "FamilyAgnosticSubstrateSagas AND the ADR-IC-018 allow-list in the same change — §D5 drift.)");
     }
 
     /// <summary>
