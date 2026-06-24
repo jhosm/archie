@@ -34,6 +34,48 @@ assert_json() { # file field expected
 }
 
 # ---------------------------------------------------------------------------
+# step-up SCA headers — the Kong-less dev bypass for the engine money-mover gate
+# ---------------------------------------------------------------------------
+# In plain English: maturing/paying-interest on a deposit is irreversible, so the engine refuses it
+# (422 SCA_REQUIRED) unless it sees a FRESH, bank-signed strong-authentication proof — the gateway-
+# attested X-SCA-Acr / X-SCA-Auth-Time headers (ADR-IC-010 §A8 / bd babelstone-ziu3.5). In production
+# Kong mints those from the customer's refreshed step-up token. These minimal Postgres-only demos run
+# WITHOUT Kong, so — exactly mirroring the documented supply-your-own-X-Client-Id dev bypass — we mint
+# a fresh step-up token with the stub authorization server (infra/stub-as/mint-stepup-token.sh) and
+# inject its acr/auth_time as the X-SCA-* headers DIRECTLY onto the curl. The token is now also RFC 8705
+# sender-constrained (a cnf.x5t#S256 binding, bd babelstone-26rb); the binding is enforced at Kong, so
+# this Kong-less bypass simply sources the same minted proof and presents the freshness claims the
+# engine reads. POC-only — the same throwaway-key caveat as every mint-edge-token.sh path.
+#
+# Echoes the two header arguments (each as a separate token) ready to splice into a curl invocation:
+#   eval set -- "$(stepup_sca_headers)"  # not needed; use the array form below
+# Prefer the array form in the caller (bash-3.2 safe):
+#   STEPUP=(); while IFS= read -r line; do STEPUP+=("$line"); done < <(stepup_sca_headers)
+# then pass  "${STEPUP[@]}"  to curl. Each printed line is one curl arg (-H then the header value).
+stepup_sca_headers() {
+  local token acr auth_time
+  token="$(bash "$ROOT/infra/stub-as/mint-stepup-token.sh")" \
+    || die "could not mint a step-up SCA token (infra/stub-as/mint-stepup-token.sh)"
+  # Decode the token payload and read the AS-signed acr / auth_time — exactly the claims Kong would
+  # attest as X-SCA-Acr / X-SCA-Auth-Time. py() resolves the mise-pinned Python.
+  acr="$(printf '%s' "$token" | py -c '
+import sys, json, base64
+seg = sys.stdin.read().strip().split(".")[1]
+seg += "=" * (-len(seg) % 4)
+print(json.loads(base64.urlsafe_b64decode(seg))["acr"])
+')" || die "could not read acr from the minted step-up token"
+  auth_time="$(printf '%s' "$token" | py -c '
+import sys, json, base64
+seg = sys.stdin.read().strip().split(".")[1]
+seg += "=" * (-len(seg) % 4)
+print(json.loads(base64.urlsafe_b64decode(seg))["auth_time"])
+')" || die "could not read auth_time from the minted step-up token"
+  # One curl arg per line: -H, header, -H, header (newline-delimited so the caller reads them into an
+  # array without word-splitting on the header values).
+  printf '%s\n' "-H" "X-SCA-Acr: $acr" "-H" "X-SCA-Auth-Time: $auth_time"
+}
+
+# ---------------------------------------------------------------------------
 # probes & process lifecycle
 # ---------------------------------------------------------------------------
 

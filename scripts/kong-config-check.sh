@@ -364,5 +364,15 @@ have 'resource_metadata' "missing the WWW-Authenticate resource_metadata pointer
 # pre-function ordering-safety property on the authenticated routes). The runtime end-to-end lock is
 # scripts/mcp-contract-test.sh A5 (well-known no-token -> 200; POST /mcp no-token -> 401).
 
+# (v) RFC 8705 mTLS-bound sender constraint (ADR-IC-010 §A8, bd babelstone-26rb): the /mcp route's
+# pre-function MUST validate the step-up token's cnf.x5t#S256 against the presented client cert and
+# attest the confirmed binding as X-SCA-Cnf-X5t (overwrite-from-the-token, anti-spoof). Asserting BOTH
+# the bound-cert thumbprint literal (the §P5 MCP client cert) and the attestation header are present
+# means a future edit cannot silently drop the sender-constraint check — the token-replay defence §A8
+# names. The thumbprint literal MUST stay in lock-step with infra/stub-as/mint-stepup-token.sh, which
+# computes the SAME value LIVE from this file's a1b2c3d4-… cert.
+have 'MCP_CLIENT_X5T_S256' "missing the RFC 8705 mTLS-bound sender-constraint thumbprint on the /mcp route (ADR-IC-010 §A8)"
+have 'set_header\("X-SCA-Cnf-X5t"' "missing the X-SCA-Cnf-X5t binding attestation on the /mcp route (ADR-IC-010 §A8)"
+
 note "edge-contract assertions: OK"
 note "kong-config-check: all checks passed"
