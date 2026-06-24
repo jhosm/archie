@@ -173,6 +173,8 @@ This decision's load-bearing commitments are fitness functions ([ADR-PC-020 §P5
 
 A `Planned` status is a deliberate, listed hole: the tests land with the implementing issues, and the rows are registered as the §P6 coverage checker's target when this ADR is Accepted (the same posture [ADR-PC-031](./ADR-PC-031-personal-loan-family.md) row 3 took).
 
+*Status update 2026-06-24 (bd `babelstone-t7o3.15`):* commitment 2 (`MOVEMENT_CASH_LEG_IDEMPOTENT`) has **flipped `Planned → Live`** — the substrate-owned settlement saga + its WireMock-Core integration test landed (registered as catalogue row **MOVEMENT-2**, the single source of truth for status). Commitment 1 (`MOVEMENT_APPEND_FIRST`) stays `Planned` until the decider call-site assertion lands with the first family's `Movement` migration (bd `babelstone-t7o3.13` / `babelstone-t7o3.16`, which this saga unblocks). The status column here is informational; the [commitment catalogue](./commitment-catalogue.md) is authoritative.
+
 ---
 
 ## Cross-references
