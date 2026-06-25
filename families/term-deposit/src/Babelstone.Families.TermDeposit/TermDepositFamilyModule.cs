@@ -17,8 +17,10 @@ namespace Babelstone.Families.TermDeposit;
 /// <remarks>
 /// <see cref="FamilyName"/> and <see cref="SchemaVersion"/> match the CUE family schema
 /// (contracts/cue/families/term-deposit.cue) and ride on the EventEnvelope via AppendContext.
-/// The FamilyModuleLoader CUE cross-check (declared event types == the CUE-declared taxonomy,
-/// ADR-PC-006) is deferred (archie-e6fr.6); the loader registers these bindings as-is.
+/// The loader registers these bindings as-is; the originally-filed full CUE cross-check (declared event
+/// types == a CUE-declared event taxonomy, ADR-PC-006) was DROPPED (bd babelstone-e6fr.6) — no CUE event
+/// taxonomy exists and the fold is already fail-closed (see <see cref="FamilyModuleLoader"/>). The
+/// catalogue→handler completeness half ships as FamilyHandlerCatalogueCompletenessTests.
 /// </remarks>
 public sealed class TermDepositFamilyModule : IFamilyModule
 {

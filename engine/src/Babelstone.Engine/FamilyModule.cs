@@ -76,10 +76,17 @@ public sealed class HandlerRegistry : IHandlerRegistry
 /// the <see cref="HandlerRegistry"/>.
 /// </summary>
 /// <remarks>
-/// The CUE cross-check (skeleton §5.2 / ADR-PC-006) — proving the module's declared
-/// event types are exactly the family's CUE-declared taxonomy — is deferred until the
-/// CUE schema language (Epic C) and a family module (Epic E) exist. Tracked as a
-/// follow-up; until then the loader registers the module's declared bindings as-is.
+/// The loader registers a module's declared (event_type→handler) bindings as-is. The originally-filed
+/// full bidirectional CUE cross-check (skeleton §5.2 / ADR-PC-006 — proving the declared event types are
+/// EXACTLY a CUE-declared event taxonomy) was DROPPED, not deferred (bd babelstone-e6fr.6): no CUE
+/// event-type taxonomy exists to check against (the CUE schemas are variant-config, not an event taxonomy),
+/// and the aggregate fold is already FAIL-CLOSED — <see cref="AggregateRuntime{TState}"/>'s fold throws on
+/// any unhandled event type at append AND replay, and <see cref="HandlerRegistry"/> throws on a duplicate
+/// registration, so a missing/typo'd handler can never silently mis-fold an event. The genuinely-valuable,
+/// genuinely-independent half ships instead as a catalogue-driven completeness fitness test
+/// (FamilyHandlerCatalogueCompletenessTests): every event type with an integration CONTRACT (an embedded
+/// .avsc / EventCatalog entry) must have a registered handler — catching "shipped a wire contract but forgot
+/// the handler" at test time.
 /// </remarks>
 public sealed class FamilyModuleLoader
 {
