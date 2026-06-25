@@ -33,6 +33,17 @@ namespace Babelstone.Telemetry.Hosting;
 /// convention attributes (db.system, db.namespace, …) — structural, never PII (ADR-IC-007 P4 /
 /// ADR-PC-004 §P2): the instrumentation tags the operation, not parameter values.
 /// </para>
+///
+/// <para>
+/// <b>Packaging note (bd njt2.9):</b> this project keeps <c>Npgsql.OpenTelemetry</c> as a
+/// <c>PrivateAssets="all"</c> dependency, so it is NOT carried transitively to projects that merely
+/// reference this seam for the SDK-free <c>AddBabelstonePiiGuard</c> guard (the DB-free notification
+/// host, ADR-IC-019, must not gain a Postgres driver). Therefore any host that actually CALLS
+/// <see cref="AddNpgsqlQueryTelemetry(TracerProviderBuilder)"/> must declare
+/// <c>&lt;PackageReference Include="Npgsql.OpenTelemetry" /&gt;</c> in its own <c>.csproj</c> — otherwise
+/// the assembly is absent at runtime and the call throws <see cref="System.IO.FileNotFoundException"/>
+/// at host startup. The engine API and rate-sheets API hosts (and this project's test) do so.
+/// </para>
 /// </summary>
 public static class BabelstoneNpgsqlInstrumentation
 {
