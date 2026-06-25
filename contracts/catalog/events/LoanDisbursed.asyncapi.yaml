@@ -3,23 +3,29 @@ info:
   title: LoanDisbursed
   version: '1'
   description: |
-    The loan is disbursed: the lump-sum principal is paid out to the borrower (a settlement
-    DEBIT against the lender's funding at t=0) and the closed-end French-system amortization
-    schedule is fixed at constitution. The closed-end-asset analogue
+    The loan is disbursed: the lump-sum principal is paid out to the borrower and the closed-end
+    French-system amortization schedule is fixed at constitution. The closed-end-asset analogue
     of term_deposit.DepositConstituted — but where a deposit takes the principal IN, a loan
     pays it OUT and amortizes it over term_months installments.
 
+    The disbursement's money leg is recorded APPEND-FIRST as the event's Movement (ADR-PC-032):
+    one Originated CREDIT against the borrower's disbursement_account_ref (the lump sum ENTERS
+    that account — correcting the prior eager Debit-on-the-borrower wrinkle). The engine no longer
+    settles eagerly; the substrate-owned settlement saga auto-starts off the promoted
+    ce_movementorigin / ce_movementdirection headers and effects the cash leg, gated.
+
     Emitted: exactly once, as the personal_loan stream's first event, when the engine
-    resolves the rate sheet, computes the amortization schedule, settles the disbursement
-    debit, and appends the disbursement that transitions the aggregate to Active.
+    resolves the rate sheet, computes the amortization schedule, and appends the disbursement
+    (carrying its Movement) that transitions the aggregate to Active. NO eager settlement on
+    this path (ADR-PC-032 slot 5 — record-and-append-first; the cash leg is downstream).
 
     NOT emitted: when disbursement is refused by a config/rule check — that is the
     store-internal LoanDisbursementFailed (no .avsc, never on the bus).
 
     No PII (ADR-PC-004 §P2): the payload carries only computed facts + opaque references
-    (disbursement_account_ref is a token, never an IBAN). Origination stays upstream
-    (ADR-PC-024 / ADR-PC-030 §P1): the engine disburses an already-approved, already-priced
-    loan; it never models solvency / CRC / KYC / scoring.
+    (disbursement_account_ref and the Movement's account_ref are tokens, never identity data).
+    Origination stays upstream (ADR-PC-024 / ADR-PC-030 §P1): the engine disburses an
+    already-approved, already-priced loan; it never models solvency / CRC / KYC / scoring.
   x-owner: personal-loan
   x-owner-contact: loans-team@babelstone.example
   x-status: active
@@ -27,6 +33,7 @@ info:
   x-authorized-consumers:
     - acl                 # downstream core-banking disbursement settlement projection (ADR-IC-012)
     - notification        # borrower-facing disbursement confirmation (ADR-IC-011)
+    - orchestrator        # the substrate-owned settlement saga auto-starts off the Movement headers (ADR-PC-032 / ADR-IC-018 §P5)
 channels:
   personal_loan:
     description: |
@@ -80,6 +87,13 @@ components:
           ce_datacontenttype:  { type: string, const: 'application/avro' }
           ce_subject:          { type: string, description: 'aggregate_id — the specific loan this event is about.' }
           ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. personal_loan.' }
+          # Movement-routing extension attributes (ADR-PC-032 / ADR-IC-018 §P5) — promoted from the
+          # event's Originated Movement by the engine-spine MovementHeaders seam. Closed-enum strings,
+          # never PII (ADR-PC-004 §P2). Present whenever the event carries an Originated Movement (a
+          # disbursement always does), absent otherwise. The substrate settlement saga auto-starts on
+          # ce_movementorigin == Originated and branches on ce_movementdirection.
+          ce_movementorigin:    { type: string, enum: ['Originated', 'Observed'], description: 'The Movement origin — Originated for a disbursement (a cash leg to drive).' }
+          ce_movementdirection: { type: string, enum: ['Debit', 'Credit'], description: 'The Movement direction relative to account_ref — Credit for a disbursement (value enters the borrower account).' }
       # §P6: payload is the governed Avro schema, referenced (not restated). The PR gate
       # resolves the .avsc on disk hermetically; the main lane reconciles the subject below.
       x-schema-registry-subject: loans.personal_loan.LoanDisbursed-value

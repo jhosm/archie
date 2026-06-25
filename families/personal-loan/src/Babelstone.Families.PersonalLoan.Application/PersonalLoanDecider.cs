@@ -58,8 +58,12 @@ public static class PersonalLoanDecider
     /// Build <see cref="LoanDisbursed"/> from the command, stamping the resolved TAN + the rate-sheet
     /// version it came from (ADR-PC-008 §P3), the derived periodic rate, and the LEVEL installment the
     /// French schedule yields (<see cref="Amortization.LevelInstallment"/>, fin-math §4.1). The first
-    /// installment falls one cadence after disbursement. Pure: every input is explicit; the amortization
-    /// math runs here, never in a fold.
+    /// installment falls one cadence after disbursement. The disbursement's money leg is recorded
+    /// APPEND-FIRST as the event's <see cref="Movement"/> (ADR-PC-032 slot 5): one
+    /// <see cref="MovementOrigin.Originated"/> <see cref="SettlementDirection.Credit"/> against the
+    /// borrower's disbursement account — the substrate-owned settlement saga effects the cash leg, gated,
+    /// off the promoted headers; the decider never settles eagerly. Pure: every input is explicit; the
+    /// amortization math runs here, never in a fold.
     /// </summary>
     public static LoanDisbursed DecideDisbursement(
         DisburseLoanCommand command, int tanBasisPoints, string rateSheetVersionId)
@@ -81,8 +85,31 @@ public static class PersonalLoanDecider
             Purpose: command.Purpose,
             ProductCode: command.ProductId,
             DisbursementAccountRef: command.DisbursementAccountRef,
-            EarlyRepaymentCommissionBps: command.EarlyRepaymentCommissionBps);
+            EarlyRepaymentCommissionBps: command.EarlyRepaymentCommissionBps,
+            Movements: [DisbursementMovement(command, principal)]);
     }
+
+    /// <summary>
+    /// The disbursement's single money <see cref="Movement"/> (ADR-PC-032), recorded append-first on
+    /// <see cref="LoanDisbursed"/>. A loan PAYS OUT at t=0, so the lump sum ENTERS the borrower's
+    /// disbursement account: a <see cref="SettlementDirection.Credit"/> against
+    /// <see cref="DisburseLoanCommand.DisbursementAccountRef"/> — direction pinned to the named account
+    /// (feature-design §2), which CORRECTS the prior eager <c>Debit</c>-on-the-borrower wrinkle
+    /// (feature-design §134). <see cref="MovementOrigin.Originated"/> (the decider decided it, so its cash
+    /// leg is the settlement saga's gated step, ADR-PC-032 slot 2), operation
+    /// <see cref="MovementOperation.Disburse"/>, value-dated to the disbursement date (the economic instant,
+    /// never a clock — ADR-PC-032 slot 1). The <see cref="DisburseLoanCommand.CommandId"/> threads onto the
+    /// movement for append idempotency + correlation (slot 4); a direct caller with no id uses
+    /// <see cref="Guid.Empty"/> (the append is then not idempotency-keyed). Pure — no clock, no I/O.
+    /// </summary>
+    private static Movement DisbursementMovement(DisburseLoanCommand command, Money principal) => new(
+        AccountRef: command.DisbursementAccountRef,
+        Direction: SettlementDirection.Credit,
+        Amount: principal,
+        ValueDate: command.StartDate,
+        Operation: MovementOperation.Disburse,
+        Origin: MovementOrigin.Originated,
+        CommandId: command.CommandId ?? Guid.Empty);
 
     /// <summary>
     /// Decide commercial eligibility (ADR-PC-024 §5): refuse the disbursement when a precondition the

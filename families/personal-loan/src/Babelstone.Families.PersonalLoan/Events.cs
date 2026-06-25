@@ -65,6 +65,17 @@ public sealed record RecordedPreconditionVerdict(
 /// basis points (PINNED at constitution like the rate — ADR-PC-009; the gates a live loan is subject
 /// to are fixed for its life). The capped early-repayment commission a later early
 /// repayment charges resolves from this pinned value (fin-math §7.5). 0 ⇒ no commission.</param>
+/// <param name="Movements">The disbursement's money movement(s) recorded APPEND-FIRST on this event
+/// (ADR-PC-032 slot 5 / feature-design money-movement-settlement §7). A disbursement records ONE
+/// <see cref="MovementOrigin.Originated"/> <see cref="Movement"/>: a <see cref="SettlementDirection.Credit"/>
+/// against the borrower's <see cref="DisbursementAccountRef"/> (the lump sum ENTERS that account — correcting
+/// the prior eager <c>Debit</c>-on-the-borrower wrinkle, feature-design §134), operation
+/// <see cref="MovementOperation.Disburse"/>. The engine no longer settles eagerly on the append path; this
+/// recorded movement is what the substrate-owned settlement saga auto-starts off (its
+/// <c>ce_movementorigin</c> / <c>ce_movementdirection</c> headers promoted by the generic engine-spine seam,
+/// bd babelstone-t7o3.20) to effect the cash leg, gated. Optional/additive (defaulted empty) so pre-Movement
+/// streams still replay (forward-only schema evolution, ADR-IC-002): an empty carrier declares no settlement
+/// headers and starts no saga.</param>
 public sealed record LoanDisbursed(
     Guid LoanId,
     Money Principal,
@@ -78,11 +89,23 @@ public sealed record LoanDisbursed(
     string Purpose,
     string ProductCode,
     string DisbursementAccountRef,
-    int EarlyRepaymentCommissionBps = 0) : DomainEvent
+    int EarlyRepaymentCommissionBps = 0,
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent
 {
     // Disbursement is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1): the instance's
     // state is interpretable on its own here, so a snapshot is taken regardless of the per-N count.
     public override bool IsLifecycleBoundary => true;
+
+    /// <summary>
+    /// Promote the disbursement Movement's origin/direction to the <c>ce_movementorigin</c> /
+    /// <c>ce_movementdirection</c> CloudEvents extension headers the substrate-owned settlement saga
+    /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5). Routed through the GENERIC engine-spine seam
+    /// (<see cref="MovementHeaders.ForOriginatedMovements"/>, bd babelstone-t7o3.20) — it names no family, so
+    /// every Movement-bearing event gets the headers the same way. Null/empty movements (pre-Movement
+    /// streams) declare no settlement header (the base-default behaviour), starting no saga.
+    /// </summary>
+    public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
+        MovementHeaders.ForOriginatedMovements(Movements ?? []);
 }
 
 /// <summary>

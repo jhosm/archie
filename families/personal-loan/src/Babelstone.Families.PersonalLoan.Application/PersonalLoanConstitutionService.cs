@@ -26,12 +26,14 @@ namespace Babelstone.Families.PersonalLoan.Application;
 /// constitution paths diverge on exactly the steps a one-example pipeline would freeze (ADR-PC-021 §P5 /
 /// §Residual-risks: "generalising from one example could freeze assumptions that other lifecycles break"):
 /// <list type="bullet">
-///   <item><b>Settlement.</b> Term-deposit constitution is DE-SETTLED — it appends only; settlement is the
-///   constitution saga's gated step (bd babelstone-t7o3.4, ADR-PC-029 slot 2). This disbursement, by
-///   contrast, settles EAGERLY with a lump-sum DEBIT at t=0 (a loan pays out). A pipeline that baked in
-///   "call settlement port" would not fit the de-settled deposit; one that baked in "never settle" would
-///   not fit this disbursement. The osv6-stated "call settlement port" step is no longer even present in
-///   the reference (deposit) constitution.</item>
+///   <item><b>Settlement.</b> BOTH constitution paths are now DE-SETTLED — they append only; the cash leg
+///   is a gated, downstream consequence, never an eager pre-append call. Term-deposit constitution's leg is
+///   the constitution saga's gated step (bd babelstone-t7o3.4, ADR-PC-029 slot 2); this disbursement records
+///   an Originated Credit <see cref="Movement"/> append-first and the substrate-owned settlement saga effects
+///   the cash leg (ADR-PC-032 §Decision slot 5 — eager settle is ILLEGAL; record-and-append-first). The
+///   osv6-stated "call settlement port" step is no longer present in EITHER constitution, so a pipeline that
+///   baked it in would fit neither — the divergence that remains is the Movement's direction/operation and
+///   the de-settled tails, not whether to settle at all.</item>
 ///   <item><b>Pack-primitive reads.</b> Term-deposit constitution reads a partial-withdrawal policy from
 ///   the product config; this disbursement reads no pack primitive at constitution.</item>
 ///   <item><b>Post-decide tails.</b> Term-deposit has the ADVANCE upfront-interest branch; this has none.</item>
@@ -70,10 +72,12 @@ public sealed class PersonalLoanConstitutionService(
 
     /// <summary>
     /// Disburse a loan from the full command: resolve the active rate sheet, stamp the TAN + version id,
-    /// compute the amortization schedule, DEBIT the lump sum to the borrower's account, and append
-    /// <see cref="LoanDisbursed"/> as the stream's first event. The closed-end-asset analogue of the term
-    /// deposit's constitution — but a loan pays OUT at t=0 (a disbursement DEBIT against the lender), where a
-    /// deposit takes the principal IN.
+    /// compute the amortization schedule, and append <see cref="LoanDisbursed"/> — carrying its money leg
+    /// APPEND-FIRST as an Originated Credit <see cref="Movement"/> — as the stream's first event. The
+    /// closed-end-asset analogue of the term deposit's constitution: a loan pays OUT at t=0, so the lump sum
+    /// is a CREDIT that ENTERS the borrower's disbursement account (ADR-PC-032 §A8 / feature-design §134),
+    /// where a deposit takes the principal IN. NO eager settlement on this path (ADR-PC-032 slot 5): the cash
+    /// leg is the substrate-owned settlement saga's gated, downstream step.
     /// </summary>
     /// <returns>The new stream's head version (the read-your-writes token / commit_sequence).</returns>
     public async Task<long> DisburseAsync(DisburseLoanCommand command, CancellationToken ct = default)
@@ -108,20 +112,19 @@ public sealed class PersonalLoanConstitutionService(
 
         // 3. Decide (pure): build the disbursement event, computing the French amortization schedule and
         //    stamping the resolved TAN + the version it came from + the periodic rate + the level installment.
+        //    The event carries its money leg APPEND-FIRST as an Originated Credit Movement against the
+        //    borrower's disbursement account (the lump sum ENTERS that account — ADR-PC-032 §A8 /
+        //    feature-design §134, correcting the old Debit-on-the-borrower wrinkle).
         var disbursed = PersonalLoanDecider.DecideDisbursement(command, tan, resolution.RateSheetVersionId);
 
-        // 4. Settle (ADR-PC-016): DEBIT the lump sum out to the borrower's disbursement account. A loan pays
-        //    out at constitution (the closed-end-asset's t=0 cash flow CF(0) = +C to the borrower / −C to the
-        //    lender's funding), where a deposit takes the principal IN. The settlement port throws on a
-        //    refused debit, so a disbursement never proceeds without its money leg.
-        await settlement.SettleAsync(
-            new SettlementInstruction(
-                command.LoanId, SettlementDirection.Debit, disbursed.Principal,
-                command.DisbursementAccountRef, "disbursement"),
-            ct);
-
-        // 5. Append the new stream (expectedVersion -1) — events + outbox in one transaction. The command id
-        //    (when supplied) makes this append idempotent (ADR-PC-029 slot 4).
+        // 4. Append the new stream (expectedVersion -1) — events + outbox in one transaction. NO eager
+        //    settlement on this path (ADR-PC-032 §Decision slot 5: eager settle is illegal; record the
+        //    Movement and append FIRST). The cash leg is the substrate-owned settlement saga's GATED,
+        //    downstream step: it auto-starts off the Movement's promoted ce_movementorigin /
+        //    ce_movementdirection headers (bd babelstone-t7o3.20) and effects the credit against the Core ACL.
+        //    Append-first closes the orphan window by construction — the FACT is durable first, the cash is a
+        //    retryable consequence (ADR-PC-031 §D3); there is no settle-then-append window to leave a debit
+        //    orphaned. The command id (when supplied) makes this append idempotent (ADR-PC-029 slot 4).
         return await runtime.AppendAsync(
             command.LoanId, expectedVersion: -1, [disbursed],
             Context(command.Actor, command.DisbursedAt, command.CommandId), ct);
