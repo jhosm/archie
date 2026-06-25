@@ -16,8 +16,9 @@
      fitness gate parses this .csproj and fails the build on a families/** or engine-spine reference.
      Extraction-ready subtree (ADR-PC-019 §P2): the host carries its OWN copy of the shared engine
      build settings (it does not inherit engine/Directory.Build.props), as the orchestrator subtree
-     does, and now lifts cleanly because it depends only on the SDK-free Telemetry leaf + framework
-     packages — no engine-kernel or family path to drag along. -->
+     does, and lifts cleanly because it depends only on the SDK-free Telemetry leaf + the host-side
+     Telemetry.Hosting OTel seam (itself carrying no engine-kernel, family, or Postgres-driver path —
+     Npgsql.OpenTelemetry is PrivateAssets="all" on the seam) + framework packages. -->
 <Project Sdk="Microsoft.NET.Sdk.Worker">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -62,6 +63,13 @@
          kernel, which this host no longer references), exactly as the orchestrator host does — it is
          NOT one of the ADR-PC-021 §P2 spine projects, so NOTIFICATION_FAMILY_AGNOSTIC permits it. -->
     <ProjectReference Include="../../../engine/src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+
+    <!-- The shared host-side OTel-SDK seam (ADR-IC-007 Layer 1): the AddBabelstonePiiGuard runtime
+         no-PII guard this host registers on its trace + log providers (njt2.9–2.10). A telemetry leaf
+         with no engine-kernel, family, or Postgres-driver dependency (the seam keeps Npgsql.OpenTelemetry
+         PrivateAssets="all"), so referencing it keeps the notification subtree DB-free and family-agnostic
+         (ADR-IC-019 §D2/§P2) — NOT one of the NotificationFamilyAgnosticTests spine projects. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
 
     <!-- The host-side OTel-SDK seam (ADR-IC-007 Layer 1): this composition root registers the
          TracerProvider + OTLP exporter so spans the host opens on the shared Babelstone ActivitySource

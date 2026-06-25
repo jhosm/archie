@@ -31,9 +31,16 @@ public sealed class LoggingSettlementPort(ILogger<LoggingSettlementPort> logger)
 {
     public Task SettleAsync(SettlementInstruction instruction, CancellationToken ct = default)
     {
+        // The funding account number (instruction.Account) is personal-restricted PII — the §P4 'account'
+        // fragment / a full IBAN — and may never ride a telemetry signal (OBS_NO_PII_ATTRS / ADR-IC-007 §P4,
+        // ADR-PC-004 §P2), so it is NOT logged. The structural deposit AggregateId is the sufficient
+        // correlation reference (§P5: deposit_id/process_id/correlation_id reconstruct the event from the
+        // authoritative store). The runtime log no-PII guard (AddBabelstonePiiGuard) would strip an {Account}
+        // STRUCTURED field at emit, but the rendered message BODY would still carry the value — so the leak
+        // is closed here at the call site too (defence in depth, the one fix the processor cannot make).
         logger.LogInformation(
-            "settlement {Direction} {AmountCents}c on {Account} ({Reason}) for deposit {AggregateId}",
-            instruction.Direction, instruction.Amount.Cents, instruction.Account, instruction.Reason,
+            "settlement {Direction} {AmountCents}c ({Reason}) for deposit {AggregateId}",
+            instruction.Direction, instruction.Amount.Cents, instruction.Reason,
             instruction.AggregateId);
         return Task.CompletedTask;
     }

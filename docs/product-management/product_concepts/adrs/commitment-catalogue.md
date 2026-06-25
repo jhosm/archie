@@ -89,7 +89,7 @@ tracked separately — and is **not** the job of this seed.
 | MCP-2 | **The step-up-SCA gate on the agent money-movers cannot be bypassed client-side** — an irreversible money-mover (`POST /v1/deposits/{id}/maturity`, `…/interest`) refuses to settle on the agent's word: it transitions only on the bank's own signal, the AS-signed `acr`/`auth_time` Kong attests as `X-SCA-Acr`/`X-SCA-Auth-Time` (§A7/§A8), which a courier (the agent) cannot forge. A money-mover with **no** SCA proof or a **stale** `auth_time` is `422 SCA_REQUIRED` **before any side effect** and **does not settle** — the stream still carries only its constitution event; a fabricated elicitation "accept" without a genuinely refreshed token is `422`'d again on the retry (§A9, the §P8 invariant). | [ADR-IC-010 §P8 (§A7–§A9)](../../integration_concepts/adrs/ADR-IC-010-mcp-server-runtime-and-sdk.md) | integration (Testcontainers) | `MCP_SCA_GATE_CANNOT_BYPASS` | Live |
 | OBS-1 | Every Babelstone .NET host stamps its tracer's **resource** with `service.name`, `service.namespace == "babelstone"`, and a non-blank `deployment.environment` — so every trace is attributable to a service, the estate, and an environment. | [ADR-IC-007 §P1](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_RESOURCE_ATTRS` | Live |
 | OBS-2 | The product-semantic spans (`accrual.computed`, `withholding.applied`) are emitted in the **impure runtime shell** (`AggregateRuntime.AppendAsync`'s span hook / the host endpoint), **never** in the pure decider/fold, and carry the structural `babelstone.partition_key` + `babelstone.product_code`. | [ADR-IC-007 §P2–§P3](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit | `OBS_SPAN_PRODUCT_SEMANTICS` | Live |
-| OBS-3 | **No PII in any telemetry signal** — span/log attributes carry only structural identifiers (the `babelstone.*` operational tier), never NIF/IBAN/account/name/email; money rides as integer cents. | [ADR-IC-007 §P4](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit / analyser | `OBS_NO_PII_ATTRS` | Live |
+| OBS-3 | **No PII in any telemetry signal** — span tags, structured-log fields, and metric dimensions carry only the admitted `babelstone.*`/semantic-convention operational tier, never NIF/IBAN/account/name/email; money rides as integer cents. Enforced **at emit** by the runtime guard (`AddBabelstonePiiGuard` / `BabelstoneAttributeTierProcessor` + `BabelstoneLogRecordTierProcessor` + the metric-View allowlist, `Babelstone.Telemetry.Hosting`) across all three signals — **the load-bearing leg** (bd njt2.9–2.11), since every real attribute is runtime-valued. Backed by the `TelemetrySpanTests` structural assertion (unit) and, as a **secondary build-time tripwire** for a literal call-site leak only, the BENG005 `NoPiiTelemetryAttributeAnalyzer` (which fires on none of the real sites, so it can never earn `Live` alone, bd njt2.12). | [ADR-IC-007 §P4](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | unit / analyser / runtime | `OBS_NO_PII_ATTRS` | Live |
 | OBS-4 | **W3C `traceparent` propagates across every process boundary**, including the durable bus (carried as an envelope/outbox header), so a `correlation_id` resolves a complete cross-process trace. | [ADR-IC-007 §P1 (Layer 1)](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | integration | `OBS_TRACEPARENT_PROPAGATION` | Planned |
 | OBS-5 | At the **synchronous HTTP boundary** the engine host joins the inbound trace and hands the trace id back to the caller: `AddAspNetCoreInstrumentation()` makes the request a SERVER span that adopts an inbound `traceparent` (so the `deposit.*` spans nest under it, not as roots), and **every** response carries the active trace id on the `X-Trace-Id` header as an opaque 32-hex id (never PII). A strict subset of OBS-4, scoped to in-process HTTP — bus/orchestrator propagation stays OBS-4·Planned. | [ADR-IC-007 §P1 (Layer 1)](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | integration | `OBS_TRACE_ID_SURFACED_HTTP` | Live |
 | OBS-6 | The **projection-reconciliation surface emits live metrics** on the `Babelstone.Engine` meter, so the M.5 alert rules resolve to real series: `reconciliation_checksum_mismatch_total{consumer,projection_kind}` increments on a checksum mismatch, `reconciliation_event_count_drift_total{consumer,projection_kind}` on an event-count **Skip** (a benign Gap is **not** counted — acceptable async lag), `reconciliation_rebuild_drill_divergence_total{projection_kind}` on a diverged §7.2 rebuild drill, and the observable gauge `reconciliation_drill_last_success_timestamp_seconds{projection_kind}` records each clean drill's freshness. Tags are operational-tier references (`consumer` / `projection_kind`) — never PII (ADR-IC-007 §P4). The governing operational contract is the M.5 alert rules; the telemetry-naming and no-PII contract is [ADR-IC-007 §P2/§P4](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md). | [alert-rules.yaml `projection-reconciliation`](../../../../infra/grafana/prometheus/alert-rules.yaml) + [ADR-IC-007 §P2/§P4](../../integration_concepts/adrs/ADR-IC-007-observability-stack.md) | integration (Testcontainers) | `OBS_RECONCILIATION_METRICS` | Live |
@@ -187,19 +187,25 @@ the OTLP + resource wiring on both .NET hosts. `OBS_RESOURCE_ATTRS` (OBS-1) and
 `OBS_SPAN_PRODUCT_SEMANTICS` (OBS-2) are `Live`: their Docker-free fitness tests
 (`ResourceAttributeTests`, `TelemetrySpanTests` in `Babelstone.Engine.Tests`) exist,
 pass, and run in CI's `engine` job (the non-Integration tier). `OBS_NO_PII_ATTRS`
-(OBS-3) is now `Live`: the runtime structural no-PII assertion rides inside
-`TelemetrySpanTests` (retained as the runtime companion), and — flipping the row — its
-dedicated build-time analyser gate (the cultural→mechanical control of ADR-IC-007 §P4)
-has now LANDED. `NoPiiTelemetryAttributeAnalyzer` (BENG005) in `Babelstone.Engine.Analyzers`
-flags a PII-named telemetry attribute (NIF/IBAN/account/name/email) at *compile* time, the
-semantic proof the runtime test alone could not give; it is exercised by
-`NoPiiTelemetryAttributeAnalyzerTests`, so the row resolves to its own gate.
+(OBS-3) is `Live` on its **runtime emit-time guard** (bd njt2.9–2.11), the load-bearing leg:
+`AddBabelstonePiiGuard` (`Babelstone.Telemetry.Hosting`) registers a `BaseProcessor<Activity>`
++ `BaseProcessor<LogRecord>` + a metric-View TagKeys allowlist on every host's trace / log /
+metric provider, so a span tag, structured-log field, or metric dimension whose key is outside
+the admitted `babelstone.*`/semantic-convention tier is stripped AS IT IS EMITTED, before export
+(proven by `BabelstonePiiGuardTests`, the `engine` lane). This is the control that earns the row
+`Live`, because every real telemetry attribute is RUNTIME-valued — a compile-time check sees none
+of them. The runtime structural no-PII assertion in `TelemetrySpanTests` is retained as the unit
+companion. The `NoPiiTelemetryAttributeAnalyzer` (BENG005, `Babelstone.Engine.Analyzers`) is a
+**secondary build-time tripwire** only: it flags a *literal* PII key/value hard-coded at a span
+call site (exercised by `NoPiiTelemetryAttributeAnalyzerTests`), a shape that fires on none of the
+real sites — so the analyser can never honestly flip the row on its own (bd njt2.12); it is the
+cheap backstop, not the gate. The gate column reads `unit / analyser / runtime` accordingly.
 The **span-attribute pseudonymization** half of OBS-3 (ADR-IC-016 plane iii §8 — where a span
 must reference a customer, it carries a salted one-way hash under `babelstone.subject_pseudonym`,
 never the raw `client_id`) lands with `babelstone-njt2.2`: the `ClientPseudonym.Of(clientId, salt)`
 HMAC-SHA-256 derivation in `Babelstone.Telemetry` plus its `ClientPseudonymTests` pins
 (deterministic, salt-dependent, one-way, fail-loud on a missing salt). It extends the same
-OBS-3 commitment the now-landed analyser flips to `Live`.
+OBS-3 commitment the runtime guard holds `Live`.
 `OBS_TRACEPARENT_PROPAGATION` (OBS-4) stays `Planned`: cross-process `traceparent`
 propagation over the durable bus is documented here but deferred (the K.1 SCOPE-OUT) to
 the bus-relay work, and its lane is the deferred Testcontainers Integration tier.
@@ -287,16 +293,16 @@ realised on the emit surface:
 
 The no-PII-on-the-bus assertion lands in the same file (`No_event_schema_field_carries_pii`),
 reusing the `TelemetrySpanTests` `OBS_NO_PII_ATTRS` structural key-fragment detection over the
-emitted-event schema surface — it did **not** itself flip a row: at this 2026-06-10
-reconciliation `OBS-3` (`OBS_NO_PII_ATTRS`) stayed `Planned` because its `Live` bar is the
-dedicated build-time *analyser* gate (ADR-IC-007 §P4), then unwritten. This is the bus-surface
-companion to that telemetry-surface check, not the analyser the row reserves; it honours
+emitted-event schema surface — it did **not** itself flip a row: at that 2026-06-10
+reconciliation `OBS-3` (`OBS_NO_PII_ATTRS`) stayed `Planned` (its mechanical enforcement was then
+unwritten). This is the bus-surface companion to that telemetry-surface check; it honours
 [ADR-PC-012](./ADR-PC-012-gl-posting-signal-contract.md) /
 [ADR-PC-025](./ADR-PC-025-customer-notification-emit-contract.md) Decision 1 (the envelope carries
-no PII; references are resolved internally). That reserved analyser gate has since landed —
-`NoPiiTelemetryAttributeAnalyzer` (BENG005), tested by `NoPiiTelemetryAttributeAnalyzerTests` —
-flipping OBS-3 to `Live` (see the Epic K reconciliation above), with `TelemetrySpanTests`
-retained as the runtime companion.
+no PII; references are resolved internally). OBS-3 has since flipped to `Live` on its **runtime
+emit-time guard** (`AddBabelstonePiiGuard`, bd njt2.9–2.11 — the load-bearing leg across
+traces/logs/metrics; see the Epic K reconciliation above), with `TelemetrySpanTests` retained as
+the unit companion and the BENG005 `NoPiiTelemetryAttributeAnalyzer` as a secondary build-time
+tripwire (it could never flip the row alone — it fires on no real, runtime-valued site, bd njt2.12).
 
 **AML withdrawal (2026-06-03).** Row 6 (`AML_EDGE_PRECONDITION`, governed by
 ADR-PC-013) was **removed**: AML/KYC is out of scope for the product engine
@@ -399,7 +405,8 @@ spawns a parallel suite:
 | Level / mechanism | Test IDs |
 |---|---|
 | Unit | `OBS_RESOURCE_ATTRS`, `OBS_SPAN_PRODUCT_SEMANTICS` |
-| Unit + analyser | `MONEY_BOUNDARY_FIXTURES`, `OBS_NO_PII_ATTRS` |
+| Unit + analyser | `MONEY_BOUNDARY_FIXTURES` |
+| Unit + analyser + runtime guard | `OBS_NO_PII_ATTRS` (runtime emit-time guard is the load-bearing leg; analyser is a secondary tripwire) |
 | Analyser / CI gate | `DETERMINISM_GATE`, `NO_CLOCK_DRIVEN_ENGINE_SIGNAL` (analyser + contract) |
 | Architecture / dependency + type assertion (CI) | `ENGINE_FAMILY_AGNOSTIC`, `EVENT_STORE_SCHEMA_FAMILY_AGNOSTIC`, `ORCHESTRATOR_FAMILY_AGNOSTIC`, `ORCHESTRATOR_SUBSTRATE_NO_CONCRETE_SAGA` |
 | Integration (Testcontainers) | `ES_ATOMIC_APPEND_OUTBOX`, `REPLAY_PIN_PER_EVENT`, `BATCH_INGEST_IDEMPOTENT`, `OBS_TRACEPARENT_PROPAGATION`, `OBS_TRACE_ID_SURFACED_HTTP`, `READ_YOUR_WRITES_FOLD_ON_TOKEN`, `MCP_SCA_GATE_CANNOT_BYPASS` |

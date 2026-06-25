@@ -7,36 +7,42 @@ using Microsoft.CodeAnalysis.Operations;
 namespace Babelstone.Engine.Analyzers;
 
 /// <summary>
-/// BENG005 — the BUILD-TIME mechanical half of <c>OBS_NO_PII_ATTRS</c> (commitment-catalogue
+/// BENG005 — the BUILD-TIME, SECONDARY tripwire leg of <c>OBS_NO_PII_ATTRS</c> (commitment-catalogue
 /// row OBS-3; ADR-IC-007 §P4; ADR-PC-004 §P2; ADR-IC-016 plane (iii)). It fails the build when a
-/// telemetry span/log attribute carries personal data — a NIF, IBAN, account number, customer
-/// name, or e-mail — either in the attribute <b>key</b> (e.g. <c>client_nif</c>, <c>core.account</c>)
-/// or in a constant attribute <b>value</b> (e.g. an IBAN/NIF/e-mail literal stamped onto a tag).
-/// Only the structural <c>babelstone.*</c> operational tier is admitted; money rides as integer
-/// cents under the <c>babelstone.*_cents</c> keys, never a formatted decimal.
+/// <b>span</b> attribute setter is written with a <b>literal</b> PII key or value at the call site — a
+/// NIF, IBAN, account number, customer name, or e-mail — either in the attribute <b>key</b> (e.g.
+/// <c>client_nif</c>, <c>core.account</c>) or in a constant attribute <b>value</b> (e.g. an IBAN/NIF/
+/// e-mail literal stamped onto a tag). Only the structural <c>babelstone.*</c> operational tier is
+/// admitted; money rides as integer cents under the <c>babelstone.*_cents</c> keys, never a formatted
+/// decimal.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The cultural control ADR-IC-007 §P4 names ("code review that treats span attributes with the
-/// same PII discipline as log messages") is turned into a mechanical gate here: a single engineer
-/// who adds <c>client_name</c> or <c>client_email</c> as a span attribute no longer creates a GDPR
-/// incident inside the trace backend that only a forgotten runtime test (<c>TelemetrySpanTests</c>)
-/// might catch — the build breaks the moment the attribute is written. This is the dedicated
-/// analyser leg the catalogue reserved under the <c>unit / analyser</c> gate column.
+/// <b>It is NOT the load-bearing control — the runtime guard is.</b> Every REAL span attribute in
+/// babelstone carries a value computed at runtime (an id's <c>.ToString()</c>, a money-cents
+/// <c>long</c>, an interpolated string), and every real KEY is an admitted <c>babelstone.*</c>
+/// constant, so this constant-folding analyser fires on none of the real call sites. The control that
+/// actually keeps personal data out of the regulated trace/log/metric store is the RUNTIME emit-time
+/// guard — <c>BabelstoneAttributeTierProcessor</c> and the <c>AddBabelstonePiiGuard</c> seam in
+/// <c>Babelstone.Telemetry.Hosting</c> (bd njt2.9–2.11) — which inspects each attribute AS IT IS
+/// EMITTED. This analyser is the cheap build-time backstop for the one shape that guard cannot pre-empt
+/// at review time: a future engineer hard-coding a literal PII key/value at a call site. It must never
+/// be read as the gate that earns OBS-3 its <c>Live</c> status; the runtime leg is.
 /// </para>
 /// <para>
-/// Mechanism (extended-analyser-safe — no <c>GetSemanticModel</c>, RS1030): for every invocation of
-/// a telemetry attribute setter — <c>System.Diagnostics.Activity.SetTag</c>/<c>AddTag</c>/
-/// <c>SetBaggage</c>, the <c>ActivityTagsCollection</c>/<c>TagList.Add</c> collection setters, and the
-/// <c>Microsoft.Extensions.Logging</c> structured-state path is covered by its message-template
-/// scanning below — we read the first argument as the KEY and the second as the VALUE. A constant
+/// Mechanism (extended-analyser-safe — no <c>GetSemanticModel</c>, RS1030): for every invocation of a
+/// SPAN-attribute setter — <c>System.Diagnostics.Activity.SetTag</c>/<c>AddTag</c>/<c>SetBaggage</c> and
+/// the <c>ActivityTagsCollection</c>/<c>TagList.Add</c> collection setters (see <see cref="IsAttributeSetter"/>)
+/// — we read the first argument as the KEY and the second as the VALUE. It does NOT inspect
+/// <c>Microsoft.Extensions.Logging</c> calls, metric dimensions, or any runtime-valued attribute: those
+/// non-literal vectors are the runtime guard's domain, not a constant-folding analyser's. A constant
 /// string key is checked against the admitted <c>babelstone.*</c> structural tier and the PII
-/// key-fragment set (the same fragments the <c>TelemetrySpanTests</c> structural assertion scans:
-/// nif, iban, account, name, email, client, phone, address, tax_id); a non-admitted key that carries
-/// a PII fragment is flagged. A constant string value is checked against PII-shaped literals
-/// (IBAN / Portuguese NIF / e-mail). The <c>babelstone.subject_pseudonym</c> key — a salted one-way
-/// hash, ADR-IC-016 plane (iii) §8 — is admitted: it starts with <c>babelstone.</c> and deliberately
-/// avoids every PII fragment, so it passes the same scan a real call site would.
+/// key-fragment set (the same fragments the <c>TelemetrySpanTests</c> structural assertion and the
+/// runtime guard scan: nif, iban, account, name, email, client, phone, address, tax_id); a non-admitted
+/// key that carries a PII fragment is flagged. A constant string value is checked against PII-shaped
+/// literals (IBAN / Portuguese NIF / e-mail). The <c>babelstone.subject_pseudonym</c> key — a salted
+/// one-way hash, ADR-IC-016 plane (iii) §8 — is admitted: it starts with <c>babelstone.</c> and
+/// deliberately avoids every PII fragment, so it passes the same scan a real call site would.
 /// </para>
 /// <para>
 /// A residual gap, narrow by design and mirroring the BENG004 within-method limit: a PII key or
