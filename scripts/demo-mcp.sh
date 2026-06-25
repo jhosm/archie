@@ -180,8 +180,17 @@ assert_json "$RUNDIR/active.json" tan_basis_points 300
 assert_json "$RUNDIR/active.json" rate_sheet_version_id "$RATE_SHEET_VERSION"
 assert_json "$RUNDIR/active.json" lifecycle Active
 
+# Maturity is an irreversible money-mover, so the engine now gates it behind FRESH step-up SCA
+# (422 SCA_REQUIRED, ADR-IC-010 §A8 / bd babelstone-ziu3.5). This is the Kong-less dev path, so mint a
+# fresh, sender-constrained step-up token (infra/stub-as/mint-stepup-token.sh, bd babelstone-26rb) and
+# inject its acr/auth_time as the gateway-attested X-SCA-* headers DIRECTLY — the same documented
+# supply-your-own-header bypass as X-Client-Id (bd babelstone-p943). Read into an array (bash-3.2 safe).
+info "minting a fresh step-up SCA token (stub AS) and injecting X-SCA-* — the Kong-less dev bypass"
+STEPUP_HDRS=()
+while IFS= read -r _hdr; do STEPUP_HDRS+=("$_hdr"); done < <(stepup_sca_headers)
 code="$(curl -sS -o "$RUNDIR/matured.json" -w '%{http_code}' \
-  -X POST "${ENGINE_URL}/v1/deposits/${DID}/maturity" -H 'Content-Type: application/json' -d '{}')"
+  -X POST "${ENGINE_URL}/v1/deposits/${DID}/maturity" -H 'Content-Type: application/json' \
+  "${STEPUP_HDRS[@]}" -d '{}')"
 [ "$code" = 200 ] || die "maturity expected 200, got $code  ($(cat "$RUNDIR/matured.json"))"
 info "matured position:"
 assert_json "$RUNDIR/matured.json" accrued_gross_interest_cents 30417

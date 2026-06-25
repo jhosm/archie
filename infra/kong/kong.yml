@@ -1079,6 +1079,51 @@ services:
                   else
                     kong.service.request.set_header("X-SCA-Auth-Time", "")
                   end
+                  -- ── (e) RFC 8705 mTLS-bound sender constraint (ADR-IC-010 §A8, bd babelstone-26rb) ──
+                  -- The refreshed step-up token is SENDER-CONSTRAINED, not a plain Bearer: it carries an
+                  -- RFC 7800 `cnf` confirmation claim with the `x5t#S256` thumbprint of the client cert
+                  -- the holder presents on the mutually-authenticated connection (RFC 8705 mTLS-bound).
+                  -- This builds on the §P5 CERT_REQUIRED posture already in place on this service: Kong
+                  -- presents the MCP client cert (CN=babelstone-mcp-client-poc, the a1b2c3d4-… cert) to
+                  -- the mcp-server upstream, which requires it. The binding ties the TOKEN to THAT cert,
+                  -- so a token stolen and replayed from a different sender (a different cert thumbprint)
+                  -- does NOT match and is rejected — the production hardening §A8 names.
+                  --
+                  -- MCP_CLIENT_X5T_S256 is the base64url SHA-256 thumbprint of that committed client cert
+                  -- (infra/stub-as/mint-stepup-token.sh computes the SAME value LIVE from this file when
+                  -- it mints the cnf; the two MUST stay in lock-step — both derive from the a1b2c3d4-…
+                  -- cert, so swapping the cert at deploy time tracks both). When the deploy-time deck sync
+                  -- replaces the POC cert this literal is replaced alongside it (the cert-swap note above).
+                  local MCP_CLIENT_X5T_S256 = "oOwf84uA98xfl7q9U2t6ZEUtJF3FkNKxhWCXGhsrtP4"
+                  -- This chunk is a SEPARATE Lua scope from the aud chunk (a) above, so re-declare the
+                  -- RFC 9728 metadata URL locally for the WWW-Authenticate pointer (kept in sync with (a)).
+                  local CNF_RESOURCE_METADATA = "http://localhost:8000/.well-known/oauth-protected-resource"
+                  local function deny_cnf()
+                    return kong.response.exit(401, {
+                      code = "AUDIENCE_MISMATCH",
+                      message = "The bearer token is bound to a different sender (RFC 8705 mTLS-bound; ADR-IC-010 §A8).",
+                    }, {
+                      ["WWW-Authenticate"] = 'Bearer error="invalid_token", error_description="sender constraint mismatch", resource_metadata="' .. CNF_RESOURCE_METADATA .. '"',
+                    })
+                  end
+                  -- Pull cnf.x5t#S256 defensively: cnf may be absent (a POC-legacy plain Bearer — still
+                  -- accepted, but attested as UNBOUND), or a table with the thumbprint. A cnf that IS
+                  -- present but binds to a DIFFERENT cert is a replayed/stolen token => fail-closed 401.
+                  local cnf = claims.cnf
+                  local bound_x5t = nil
+                  if type(cnf) == "table" then bound_x5t = cnf["x5t#S256"] end
+                  if bound_x5t ~= nil then
+                    if type(bound_x5t) ~= "string" or bound_x5t ~= MCP_CLIENT_X5T_S256 then
+                      return deny_cnf()
+                    end
+                    -- Binding confirmed: attest the confirmed thumbprint to the engine (overwrite any
+                    -- client-supplied X-SCA-Cnf-X5t — anti-spoof, same set_header pattern as X-Client-Id).
+                    kong.service.request.set_header("X-SCA-Cnf-X5t", bound_x5t)
+                  else
+                    -- No cnf: a plain (POC-legacy) Bearer. Attest the absence as empty so a client cannot
+                    -- forge a binding-confirmed header; the engine treats empty as "not sender-constrained".
+                    kong.service.request.set_header("X-SCA-Cnf-X5t", "")
+                  end
 
       # ── RFC 9728 Protected Resource Metadata — public discovery (ADR-IC-010 §P2) ──
       # GET /.well-known/oauth-protected-resource returns the metadata pointing at the

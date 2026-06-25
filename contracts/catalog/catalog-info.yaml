@@ -1,5 +1,7 @@
-# Backstage catalogue descriptor for the term-deposit integration events (ADR-IC-015)
-# and the per-consumer reconciliation contracts (event-store §7.3, bd babelstone-y1t7).
+# Backstage catalogue descriptor for the engine's integration events — across ALL product
+# families (term_deposit and personal_loan today; ADR-IC-015, ADR-PC-031) plus the engine-declared
+# cross-cutting (operations) events — and the per-consumer reconciliation contracts (event-store
+# §7.3, bd babelstone-y1t7).
 #
 # This file makes the SAME source-of-truth artefacts discoverable in a Backstage instance:
 #   * the AsyncAPI events under ./events/*.asyncapi.yaml — one `kind: API` entity per event,

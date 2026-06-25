@@ -6,9 +6,10 @@ namespace Babelstone.LoadHarness.Tests;
 /// <summary>
 /// The §M.6 key-cardinality seed+measure pass against a REAL (dev-mode) OpenBao (bd c14p.2). Seeds a
 /// bounded population of per-subject transit keys through the engine's OWN
-/// <see cref="OpenBaoTransitClient"/> and asserts the encrypt/decrypt/destroy p99 stays FLAT as the
-/// resident key count grows — the falsifiable signal that per-subject named keys (ADR-PC-004 §P2/§P3)
-/// scale without per-key op degradation.
+/// <see cref="OpenBaoTransitClient"/> and asserts the encrypt/decrypt/destroy latency stays FLAT — judged
+/// on the median, see <see cref="KeyCardinalityReport.LatencyIsFlat"/> — as the resident key count grows:
+/// the falsifiable signal that per-subject named keys (ADR-PC-004 §P2/§P3) scale without per-key op
+/// degradation.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -35,8 +36,15 @@ public sealed class KeyCardinalityProbeIntegrationTests(OpenBaoCardinalityFixtur
         // A bounded CI population: 400 resident per-subject keys, a latency checkpoint every 100 — four
         // checkpoints, enough to expose a per-key slope without a multi-minute run. The production sizing
         // pass dials totalSubjects up to v4 cardinality on a Raft-backed cluster.
+        //
+        // sampleSize 100 + a 10-cycle warm-up per checkpoint hardens the probe against CI-runner noise
+        // (bd babelstone-tihv): the slope verdict is judged on the MEDIAN, which a single slow round-trip
+        // to the dev-mode container cannot move, and the warm-up discards cold-start/connection-pool spikes
+        // so the first checkpoint is a fair baseline. 100 samples also make the REPORTED p99 a genuine
+        // percentile (the 2nd-slowest), not the single slowest request a 15-sample p99 degenerated to —
+        // which is what flipped this test FLAT→DEGRADING on jitter (e.g. PR #316).
         var report = await probe.SeedAndMeasureAsync(
-            totalSubjects: 400, checkpointEvery: 100, seed: 4242, sampleSize: 15);
+            totalSubjects: 400, checkpointEvery: 100, seed: 4242, sampleSize: 100, warmupIterations: 10);
 
         Assert.Equal(4, report.Checkpoints.Count);
         // Op latency must not degrade materially with cardinality — the per-subject-named-key invariant.

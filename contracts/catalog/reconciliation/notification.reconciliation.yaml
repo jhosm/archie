@@ -48,3 +48,18 @@ spec:
       description: >-
         The lifecycle calendar whose constitution / maturity entries are the confirmation
         triggers — the event-count anchor (not a checksummed belief the consumer holds).
+    # The personal_loan (closed-end-asset) family the notification consumer is also an authorized
+    # consumer of (LoanDisbursed / LoanInstallmentPaid / LoanRepaidEarly / LoanSettled all list
+    # `notification` in x-authorized-consumers; ADR-PC-031). The family declares no maturity-calendar
+    # projection; its two projection kinds (PersonalLoanProjectionModule) are the event-count anchors
+    # whose disburse / installment / early-repayment / settlement folds are the borrower-facing
+    # confirmation triggers. References only, never PII — the borrower's identity is resolved INSIDE
+    # the notification service at render time (ADR-PC-025 PII-by-reference), never reconciled here.
+    - kind: personal_loan.loan_position
+      description: >-
+        Live amortizing loan state — its disbursement / settlement folds are the disbursement and
+        closure confirmation triggers (the event-count anchor, not a checksummed belief).
+    - kind: personal_loan.amortization_schedule
+      description: >-
+        The amortization schedule as actually paid — its installment / early-repayment folds are the
+        installment-receipt and early-repayment confirmation triggers (the event-count anchor).

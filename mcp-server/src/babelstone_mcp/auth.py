@@ -28,6 +28,15 @@ from mcp.types import INVALID_PARAMS, ErrorData
 CLIENT_ID_HEADER = "X-Client-Id"
 OAUTH_SCOPE_HEADER = "X-OAuth-Scope"
 
+# The gateway-attested RFC 8705 mTLS-bound sender-constraint thumbprint (ADR-IC-010 §A8, bd
+# babelstone-26rb). Kong validates the step-up token's `cnf.x5t#S256` against the presented client
+# cert and, on a match, OVERWRITES this header with the confirmed thumbprint (and on a mismatch 401s
+# before the request ever reaches here — a token replayed from a different sender never arrives). The
+# value is the confirmed binding for THIS request; an empty/absent header means the token was a plain
+# (POC-legacy) Bearer, not sender-constrained. Read here so the attestation chain carries the binding
+# the gateway confirmed; like every other identity header it is NEVER taken from a tool argument.
+SCA_CNF_X5T_HEADER = "X-SCA-Cnf-X5t"
+
 
 # Scope-per-tool (ADR-IC-010 §P4): one tool family maps to exactly one scope; reads carry the
 # reserved read scope, writes the write scope. No tool maps to a "god scope". The read/write tiering
@@ -56,12 +65,21 @@ class AuthContext:
     """The gateway-attested caller, as the MCP app sees it for a single request.
 
     ``client_id`` is the OAuth ``sub`` Kong attested via ``X-Client-Id`` (ADR-IC-010 §P3); ``scopes``
-    is the set of OAuth scopes from ``X-OAuth-Scope``. Both are read from request headers the gateway
-    set — never from a tool argument.
+    is the set of OAuth scopes from ``X-OAuth-Scope``. ``sender_bound`` is the RFC 8705 mTLS-bound
+    sender-constraint confirmation: the ``cnf.x5t#S256`` thumbprint Kong validated against the
+    presented client cert and attested via ``X-SCA-Cnf-X5t`` (ADR-IC-010 §A8) — non-empty when the
+    request arrived on a sender-constrained step-up token, empty for a plain Bearer. All are read from
+    request headers the gateway set — never from a tool argument.
     """
 
     client_id: str
     scopes: frozenset[str]
+    sender_bound: str = ""
+
+    @property
+    def is_sender_constrained(self) -> bool:
+        """True iff the gateway confirmed an RFC 8705 mTLS-binding for this request (§A8)."""
+        return bool(self.sender_bound)
 
     @classmethod
     def from_headers(cls, headers: object) -> "AuthContext":
@@ -70,6 +88,10 @@ class AuthContext:
         Fail-closed: a missing/empty ``X-Client-Id`` raises — a request with no gateway-attested
         identity has no business reaching a tool. ``X-OAuth-Scope`` is a space-delimited list per the
         OAuth convention; an absent header is an empty scope set (which fails every tool's check).
+        ``X-SCA-Cnf-X5t`` is the gateway-confirmed mTLS-binding thumbprint (§A8); absent => an
+        unbound (plain-Bearer) request. The gateway has already 401'd a token replayed from a
+        different sender (its ``cnf`` did not match the presented cert), so a non-empty value here is
+        a binding the gateway confirmed, not one to re-verify at the app layer.
         """
         get = headers.get  # Starlette Headers / dict both expose .get
         client_id = (get(CLIENT_ID_HEADER) or "").strip()
@@ -86,7 +108,8 @@ class AuthContext:
             )
         raw_scope = get(OAUTH_SCOPE_HEADER) or ""
         scopes = frozenset(s for s in raw_scope.split() if s)
-        return cls(client_id=client_id, scopes=scopes)
+        sender_bound = (get(SCA_CNF_X5T_HEADER) or "").strip()
+        return cls(client_id=client_id, scopes=scopes, sender_bound=sender_bound)
 
 
 # Prompts carry NO scope guard: they are pure templates (no engine call, no PII), so they are
