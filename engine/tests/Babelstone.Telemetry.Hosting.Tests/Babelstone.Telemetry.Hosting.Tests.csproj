@@ -18,6 +18,11 @@
     <PackageReference Include="OpenTelemetry" />
     <!-- In-memory metric exporter: lets the histogram assertion run with no OTLP collector / Docker. -->
     <PackageReference Include="OpenTelemetry.Exporter.InMemory" />
+    <!-- Npgsql's built-in OTel instrumentation: declared DIRECTLY here because the seam under test keeps
+         Npgsql.OpenTelemetry PrivateAssets="all" (so it never leaks into the DB-free notification host).
+         The NpgsqlInstrumentationTests exercise AddNpgsqlQueryTelemetry() at runtime, so the test project
+         — like the engine API host — needs the runtime assembly present. -->
+    <PackageReference Include="Npgsql.OpenTelemetry" />
   </ItemGroup>
 
   <ItemGroup>

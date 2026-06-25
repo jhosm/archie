@@ -38,8 +38,11 @@
          which references only Engine + FinancialTypes so a fold cannot reach a DB), the
          decider orchestrates I/O — it runs the financial-math kernel, resolves the rate
          sheet + pack primitives, and appends through the runtime. The dependency arrow is
-         family→engine only; the engine never references back (ADR-PC-021 §D2/§P2). No
-         handler-purity analyser here by design (ADR-PC-021 §P3): this is the impure layer. -->
+         family→engine only; the engine never references back (ADR-PC-021 §D2/§P2). The
+         handler-purity legs (BENG001–003) impose no constraint here by design (ADR-PC-021 §P3):
+         this is the impure layer and implements no IEventHandler.Apply fold, so they are vacuous —
+         see the BENG005 analyser wiring below (bd njt2.12), which attaches the suite for the no-PII
+         telemetry tripwire. -->
     <ProjectReference Include="../Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
     <!-- The shared host-composition contract assembly (ADR-PC-021 §A1, relocated 2026-06-20):
@@ -52,5 +55,17 @@
     <ProjectReference Include="../../../../engine/src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.Packs/Babelstone.Packs.csproj" />
+
+    <!-- BENG005 no-PII telemetry tripwire (bd njt2.12): attach the Babelstone.Engine.Analyzers suite as
+         a BUILD-TIME checker (OutputItemType=Analyzer, ReferenceOutputAssembly=false — passed, never
+         linked). Analyzer ProjectReferences are non-transitive, so without this line BENG005 ran on NONE
+         of this impure shell's Activity.SetTag sites. It is a SECONDARY backstop to the load-bearing
+         runtime guard (AddBabelstonePiiGuard, Babelstone.Telemetry.Hosting), future-proofing the one
+         shape that guard cannot pre-empt at review time: a literal PII key/value hard-coded at a call
+         site. Vacuous on today's sites (every key a babelstone.* const, every value a runtime expression).
+         The handler-purity (BENG001–003) and no-clock-emission (BENG004) legs ride along inert: this
+         layer has no IEventHandler.Apply fold, and its event creations take INJECTED time, never a clock. -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

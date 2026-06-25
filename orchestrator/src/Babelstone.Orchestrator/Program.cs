@@ -5,10 +5,14 @@ using Babelstone.Orchestrator.Edge;
 using Babelstone.Orchestrator.Inbox;
 using Babelstone.Orchestrator.Migrations;
 using Babelstone.Orchestrator.Saga;
+using Babelstone.Orchestrator.Saga.Settlement;
 using Babelstone.Telemetry;
+using Babelstone.Telemetry.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -37,7 +41,13 @@ var builder = WebApplication.CreateBuilder(args);
 // NB: AspNetCore instrumentation only (the edge SERVER span + inbound-traceparent join) + the shared
 // Babelstone.Engine source. Deliberately NO HttpClient instrumentation: the dispatcher injects the
 // traceparent MANUALLY off the durable outbox row (SagaCommandDispatchDrainer), so auto-injection
-// would emit a competing header. Tracing only — the orchestrator adds no MeterProvider here.
+// would emit a competing header.
+//
+// Metrics + logs are wired here too (njt2.10/2.11): a MeterProvider so the substrate's saga inbox +
+// dispatch counters (SagaConsumeLoop / SagaCommandDispatchDrainer, on the shared Babelstone.Engine
+// meter) are exported, and a LoggerProvider so structured logs ship over OTLP — both carrying the
+// runtime no-PII guard (AddBabelstonePiiGuard) so no personal data rides any telemetry signal
+// (OBS_NO_PII_ATTRS / ADR-IC-007 §P4).
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
         .AddService(BabelstoneResource.OrchestratorServiceName)
@@ -49,6 +59,20 @@ builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
         .AddAspNetCoreInstrumentation()
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
+        // The runtime no-PII guard (njt2.9): strips any non-admitted span tag at OnEnd before export.
+        .AddBabelstonePiiGuard()
+        .AddOtlpExporter())
+    // Metrics (njt2.11): wire the MeterProvider the substrate's saga inbox/dispatch counters need (none
+    // existed before — every Counter.Add was a no-op). The View-based no-PII guard keeps only the admitted
+    // operational dimensions (source_topic / command_type / …), dropping any PII-shaped label at emit.
+    .WithMetrics(metrics => metrics
+        .AddMeter(BabelstoneTelemetry.MeterName)
+        .AddBabelstonePiiGuard()
+        .AddOtlpExporter())
+    // Logs (njt2.10): net-new LoggerProvider so structured logs export over OTLP, with the log no-PII
+    // guard stripping any un-namespaced PII-fragment field before export.
+    .WithLogging(logging => logging
+        .AddBabelstonePiiGuard()
         .AddOtlpExporter());
 
 // The application-database connection string resolves from configuration at the composition
@@ -104,6 +128,17 @@ var sagaModules = new ISagaModule[]
     // (ADR-IC-003 §A7): the engine resolves every renewal fact from the Matured closing deposit it loads
     // (ADR-PC-009; bd babelstone-mtto.5), so the command body is the minimal { new_deposit_id }.
     new RenewalSagaModule(sagaModuleContext),
+    // The SUBSTRATE-OWNED settlement saga (bd babelstone-t7o3.15, ADR-PC-032; ADR-IC-018 Amendment
+    // 2026-06-24). UNLIKE the two term-deposit modules it lives in the SUBSTRATE — it names no family,
+    // keying only on the Movement atom's generic direction + opaque account_ref — so it is the one shared
+    // home that effects any family's cash leg. EventAutoStarted on a Movement-bearing event (a
+    // ce_movementorigin == Originated header); the direction branch (debit funds-gated Reserve->Confirm vs
+    // credit confirmation-gated Confirm) is resolved by the machine's IEventSubstitutor from the promoted
+    // ce_movementdirection header. The HOST (the §D4 composition root, which MAY name a family) supplies the
+    // family integration topics where Movement-bearing events arrive — the substrate module names none of
+    // them (ORCH-3). At v1 the only loaded family is term-deposit, so it subscribes that family's
+    // integration topic(s); a new family's integration topics are added here, zero substrate diff.
+    new SettlementSagaModule(sagaModuleContext, [.. FamilyIntegrationTopics.All]),
 };
 
 foreach (var module in sagaModules)

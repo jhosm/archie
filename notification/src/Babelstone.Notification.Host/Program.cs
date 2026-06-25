@@ -1,9 +1,11 @@
 using Babelstone.Families.TermDeposit.Notification;
 using Babelstone.Notification;
 using Babelstone.Telemetry;
+using Babelstone.Telemetry.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -36,6 +38,15 @@ builder.Services.AddOpenTelemetry()
         ]))
     .WithTracing(tracing => tracing
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
+        // The runtime no-PII guard (OBS_NO_PII_ATTRS / ADR-IC-007 §P4, bd njt2.9): strips any non-admitted
+        // span tag at OnEnd before export — the load-bearing emit-time control, the same guard the log
+        // provider below runs. Registered before the exporter so nothing un-admitted reaches the Collector.
+        .AddBabelstonePiiGuard()
+        .AddOtlpExporter())
+    // Logs (bd njt2.10): a LoggerProvider so structured logs export over OTLP, carrying the log no-PII guard
+    // that strips any un-namespaced PII-fragment field before export (§P5's correlation_id/deposit_id survive).
+    .WithLogging(logging => logging
+        .AddBabelstonePiiGuard()
         .AddOtlpExporter());
 
 // The engine API ENDPOINT the notification service READS deposit facts from (ADR-PC-027 canonical read

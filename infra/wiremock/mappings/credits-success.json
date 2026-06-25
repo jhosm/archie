@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "comment": "ConfirmCredit -> the confirmation-gated Core credit confirmed (ADR-PC-032 / feature-design money-movement-settlement §8; ADR-PC-016 slot 5 -- a credit is always accepted by the legacy Core, but it must confirm for reconciliation flow 1). The NEW generic credit leg the substrate-owned settlement saga (bd babelstone-t7o3.15) emits when an Originated Credit movement's cash leg is effected; today only the debit legs (/v1/reservations, /v1/debits) existed. The v1 Core-ACL settlement stub (real ACL is DEF-1, bd babelstone-ub9s). The dispatcher classifies the 2xx as Applied and the bridge synthesizes CreditConfirmed -> SETTLEMENT_COMPLETED."
+  },
+  "priority": 5,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/credits"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "credit": "confirmed" }
+  }
+}

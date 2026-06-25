@@ -1,0 +1,5 @@
+# INVALID: an empty templates list. A templates/<name>.yaml the manifest declares
+# in template_refs must carry at least one #Disclosure — an empty file means the
+# pack declared a template file that vets nothing (#Templates.templates: [_, ...]).
+# Routed to #Templates.
+templates: []

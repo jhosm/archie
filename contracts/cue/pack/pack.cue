@@ -61,6 +61,18 @@ package pack
 	// Names of the rate-sheet-refs/<name>.yaml files this pack ships.
 	rate_sheet_refs: [...(=~"^[a-z][a-z0-9-]*$")]
 
+	// Names of the templates/<name>.yaml disclosure-template files this pack
+	// ships (ADR-PC-025: pack-shipped, version-pinned-per-instance disclosure
+	// templates — FIN, maturity notices, withholding statements). The SAME
+	// per-pack-set shape as rate_sheet_refs: the manifest enumerates the files,
+	// so the build-time coverage sweep derives the templates set from this list
+	// and no template file ships unvetted (packs/pack.sh manifest_data_files).
+	// Default [] for a pack shipping no templates. (DECLARATIVE half only — bd
+	// babelstone-oyts: the template-body render-from-render-time-resolved-PII
+	// half is an engine/comms deliverable ADR-PC-025 §PII marks not-fully-
+	// specified, tracked as a separate follow-up.)
+	template_refs: [...(=~"^[a-z][a-z0-9-]*$")] | *[]
+
 	// OCI ref of the sealed test-corpus artefact (surface §3.9).
 	test_corpus_ref: =~"^oci://"
 
@@ -166,6 +178,73 @@ package pack
 		product_family:        =~"^[a-z][a-z0-9_]*$"
 		rate_sheet_version_id: =~"^[a-z][a-z0-9._-]*$"
 	}]
+}
+
+// ---------------------------------------------------------------------------
+// templates/<name>.yaml — pack-shipped disclosure templates (ADR-PC-025).
+//
+// In plain English: these are the customer-facing notices the bank must send —
+// the 14-day pre-maturity opt-out reminder, the FIN information sheet, the
+// annual IRS-withholding statement. The pack DECLARES each template (its
+// stable `template_ref`, what trigger fires it, and which STRUCTURAL fields it
+// interpolates); a deposit pins the pack version for life, so it keeps
+// disclosing under the templates it was constituted under (ADR-PC-025 §2,
+// the pinning invariant). The engine emits a `NotificationDue` carrying the
+// `template_ref` + structural `data`; the communications system renders +
+// delivers it.
+//
+// DECLARATIVE half ONLY (bd babelstone-oyts). The template carries the
+// structural interpolation contract — the field NAMES the body uses, never the
+// values. Customer PII (name, NIF, address) is NOT a pack field and never rides
+// the bus: the communications system resolves it at render time from a
+// reference, via the engine-owned authorised PII-resolve surface (ADR-PC-025
+// §PII; ADR-PC-004). That render-from-render-time-resolved-PII machinery is an
+// engine/comms deliverable ADR-PC-025 §PII marks as not-fully-specified — out
+// of scope here, tracked as a documented follow-up.
+//
+// #TemplateRef is the pack-namespaced id the NotificationDue event carries
+// (ADR-PC-025 §1 payload: e.g. `pt.disclosure.fin`, `pt.notice.maturity`):
+// <namespace>.<category>.<id>. The category is the surface §3.3 vocabulary —
+// `disclosure` (FIN) and `notice` (event/temporal customer notices).
+// ---------------------------------------------------------------------------
+
+#TemplateRef: =~"^[a-z]{2}\\.(disclosure|notice)\\.[a-z][a-z0-9_]*$"
+
+// The trigger taxonomy the ENGINE + downstream producers tag a NotificationDue
+// with (ADR-PC-025 §1 trigger_kind). The engine emits only EVENT_DRIVEN and
+// PRE_CONTRACTUAL; SCHEDULED is a valid value a DOWNSTREAM producer carries (a
+// scheduler reading projections — ADR-PC-023), never the engine. A template
+// DECLARES which trigger fires it so the pack states the binding auditor-
+// visibly. The 14-day pre-maturity reminder is SCHEDULED (a date arriving fires
+// it, not a domain event — ADR-PC-025 Context / ADR-PC-023).
+#TriggerKind: "EVENT_DRIVEN" | "SCHEDULED" | "PRE_CONTRACTUAL"
+
+// #Disclosure is one pack-shipped template's DECLARATIVE shape. It fixes the
+// template's identity (template_ref), what fires it (trigger_kind), and the
+// STRUCTURAL interpolation contract (interpolates) — the field names the body
+// uses, all non-PII (amounts, dates, rates, TAE, the opt-out-window day count).
+// Closed: an unknown/misspelled key fails here, in the signed pack, the same
+// no-DSL-escape-hatch discipline as #Manifest / the family schema (ADR-PC-006).
+#Disclosure: {
+	template_ref: #TemplateRef
+	trigger_kind: #TriggerKind
+	title:        string & !="" // human-readable name, for the auditor `cat`
+	description:  string & !="" // what this notice is and when it is sent
+
+	// The STRUCTURAL fields the rendered body interpolates — NAMES only, never
+	// values, and never PII. Each is a stable identifier the NotificationDue
+	// `data` payload carries (ADR-PC-025 §1 data: "structural interpolation
+	// values only — amounts, dates, rates, TAE; NO PII"). PII the body also
+	// needs (name, NIF, address) is resolved at render time by reference and is
+	// deliberately ABSENT from this list (ADR-PC-025 §PII).
+	interpolates: [...(=~"^[a-z][a-z0-9_]*$")]
+}
+
+// #Templates is the shape of a templates/<name>.yaml file: a non-empty list of
+// disclosure templates. Mirrors #RateSheetRefs.refs — a per-pack set the
+// manifest enumerates in template_refs.
+#Templates: {
+	templates: [...#Disclosure] & [_, ...]
 }
 
 // ---------------------------------------------------------------------------

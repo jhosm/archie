@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "comment": "ConfirmCredit -> INDETERMINATE (ADR-PC-032 / feature-design money-movement-settlement §10; ADR-IC-012 §P5). The network dropped after the credit was sent, so the ACL cannot yet confirm whether the Core executed it. Higher-priority mapping; fires when the request body contains the marker 'indeterminate', letting a dev/demo drive the settlement saga into AWAIT_CREDIT_CLEARANCE without a second stub. The signal is HTTP 202 Accepted -- an EXPLICIT indeterminate, distinct from a 2xx-success confirm (credits-success), a 4xx refusal, or a 5xx/timeout transient. The dispatcher classifies 202 on a ConfirmCredit as Indeterminate and the bridge synthesizes CreditIndeterminate (ADR-IC-003 §P4: a first-class wait, never a blind retry; the credit non-confirm enters clearance, NEVER silent). Mirrors debits-indeterminate.json on the credit surface."
+  },
+  "priority": 4,
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/credits",
+    "bodyPatterns": [
+      { "contains": "indeterminate" }
+    ]
+  },
+  "response": {
+    "status": 202,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "status": "INDETERMINATE", "detail": "credit accepted; Core execution unconfirmed" }
+  }
+}

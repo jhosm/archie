@@ -8,13 +8,22 @@
     <!-- The HOST-side OTel-SDK seam (ADR-IC-007 Layer 1). Deliberately separate from
          Babelstone.Telemetry: that project is referenced by the engine SPINE and so must stay
          SDK-free (OpenTelemetry.Api only). Anything that touches the SDK builder types
-         (TracerProviderBuilder / MeterProviderBuilder) or a concrete instrumentation package lives
-         HERE, referenced only by the two HTTP hosts — never by the spine. -->
+         (TracerProviderBuilder / MeterProviderBuilder / LoggerProviderBuilder) or a concrete
+         instrumentation package lives HERE — the shared host seam every .NET host references
+         (engine, orchestrator, notification), never the spine. -->
     <PackageReference Include="OpenTelemetry" />
+    <!-- The SDK-free leaf: BabelstoneAttributes (the admitted babelstone.* key contract + metric
+         dimension keys the AddBabelstonePiiGuard allowlists reference) and BabelstoneTelemetry.Meter
+         (the shared meter the runtime guard's corrective strip-counter is created on). The arrow is
+         Hosting → Telemetry leaf only; the leaf gains no SDK or hosting dependency. -->
+    <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
     <!-- Npgsql's built-in OTel instrumentation (bd scd2.3 / K.5): AddNpgsql() (query CLIENT spans)
-         + AddNpgsqlInstrumentation() (db.client.operation.duration). Pinned to the Npgsql driver
-         line so the instrumentation tracks the driver. Confined to this host-only project so the
-         engine spine never gains a transitive Npgsql.OpenTelemetry dependency. -->
-    <PackageReference Include="Npgsql.OpenTelemetry" />
+         + AddNpgsqlInstrumentation() (db.client.operation.duration). PrivateAssets="all" so this
+         Postgres-driver dependency is NOT leaked transitively to consumers of this seam: the
+         notification host is deliberately DB-free (ADR-IC-019) and must reference the shared
+         AddBabelstonePiiGuard seam WITHOUT gaining Npgsql. The two consumers that actually exercise
+         AddNpgsqlQueryTelemetry — the engine API host and this project's test — declare
+         Npgsql.OpenTelemetry directly so the runtime assembly is present where it is used. -->
+    <PackageReference Include="Npgsql.OpenTelemetry" PrivateAssets="all" />
   </ItemGroup>
 </Project>

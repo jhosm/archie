@@ -54,5 +54,13 @@
          contract) + BabelstoneTelemetry (the shared ActivitySource). Referenced directly, not via the engine
          kernel (this host references no kernel), exactly as the orchestrator host does. -->
     <ProjectReference Include="../../../engine/src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+
+    <!-- The shared host-side OTel-SDK seam (ADR-IC-007 §P4, bd njt2.9–2.10): the AddBabelstonePiiGuard
+         runtime no-PII guard this host registers on its trace + log providers. A telemetry leaf with no
+         engine-kernel, family, or Postgres-driver path (the seam keeps Npgsql.OpenTelemetry
+         PrivateAssets="all"), so it keeps the notification subtree DB-free and family-agnostic
+         (ADR-IC-019 §D2/§P2) — NOT a NotificationFamilyAgnosticTests spine project, and the host (not the
+         core) is the §A2 holder of OTel-SDK wiring. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
   </ItemGroup>
 </Project>

@@ -226,7 +226,10 @@ Anchors: ADR-PC-006/007/008/009; [surface](./feature-design-configuration-surfac
 - **C.6** Rate-sheet storage + deploy API (PC-008): separated from configs,
   `rate_sheet_version_id` resolution.
 - **C.7** Per-instance pinning (PC-009): pin pack+schema at constitution; PackVersionMigrated /
-  SchemaVersionMigrated path; pin-per-event on replay. → `REPLAY_PIN_PER_EVENT`.
+  SchemaVersionMigrated path; pin-per-event on replay. → `REPLAY_PIN_PER_EVENT`. *(C.7 is the
+  constitution-time pin + pin-per-event replay only; the operator migration **write-path** —
+  re-pinning a population at scale — moved to the Bulk cross-cutting operations runner epic, bd
+  `babelstone-qpiw`.)*
 
 #### Epic D — Projection & bitemporal read runtime  *(builds the Accepted ADR-PC-002 Path A)*
 
@@ -414,6 +417,40 @@ Anchors: [integration_concepts §10](../integration_concepts/10-security-and-thr
   sign-off.
 - **M.5** Reconciliation alerting + ops runbooks (Q-AG): mismatch thresholds, escalation.
 
+#### Epic — Bulk cross-cutting operations runner  *(production readiness; OFF the POC critical path)*
+
+Anchors: [ADR-PC-009 §A3 (to author)](./adrs/ADR-PC-009-per-instance-version-pinning.md),
+[ADR-IC-004](../integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md),
+[ADR-PC-021 §P2](./adrs/ADR-PC-021-application-layer-family-owned-deciders.md),
+[ADR-IC-017 §P1](../integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md).
+bd epic `babelstone-qpiw`.
+
+Some operator actions apply to a whole *population* of instances at once — a regulator forcing a
+pack change, the engine evolving its own schemas, a court freezing funds, a compliance team
+freezing a set of accounts. The synchronous capped path (the POC default) cannot execute or resume
+a low-millions re-pin, so this epic builds a generic, family-agnostic **bulk-operations runner**:
+freeze the target universe into a work-table, drain it in bounded batches with a background service
+(the Outbox-drainer shape — `FOR UPDATE SKIP LOCKED`, transactional status flips), append the right
+store-only `operations.*` event per instance (idempotent on the deterministic `(action_id,
+instance_id)` command id), isolate per-item failures, and expose progress / retry / cancel. Generic
+over the operation, so PackVersionMigrated, SchemaVersionMigrated, FundsHeld, and AccountFrozen (the
+bd `babelstone-5w90` / #316 set) all ride it as adapters. **Supersedes** the synchronous
+pack-migration cap (PR #324 / bd `babelstone-fk7m.12`, closed) — the cap becomes the runner's batch
+size, the single-auditable-matched-set principle preserved by one job owning the whole frozen set —
+and **absorbs** the schema-migration operator write-path (former C.7 path / bd `babelstone-fk7m.13`,
+closed).
+
+- **qpiw.1** Governance: new ADR-PC for the bulk-ops pattern + ADR-PC-009 §A3 (cap → batch size).
+- **qpiw.2** Store migration: `bulk_operation_jobs` + `bulk_operation_targets` work-tables +
+  job/target state machines (family-agnostic; targets carry optional per-item params).
+- **qpiw.3** Generic `BulkOperationService` + `BulkOperationDrainer` (BackgroundService, SKIP-LOCKED
+  batches, idempotent append, per-item failure isolation; salvages #324's `matched_count` +
+  `LIMIT`-bounded read).
+- **qpiw.4** Command/query surface: register, `GET /v1/bulk-operations/{id}` progress, retry-failed,
+  cancel; store-only milestones (ADR-IC-017 §P1), progress by query.
+- **qpiw.5** Operation adapters for the four cross-cutting events; folds in #324 + the schema
+  write-path (fk7m.13).
+
 #### Epic Q — CI/CD pipeline hardening & delivery  *(spans Tier 1→4; replaces `echo TODO` stubs)*
 
 Anchors: [ADR-PC-019 §P1](./adrs/ADR-PC-019-repository-strategy-monorepo.md),
@@ -469,9 +506,9 @@ flowchart LR
   D --> F
   E --> F["F full term-deposit + PT pack"]
   F --> G --> H --> I --> J["J MCP hardened"]
-  F --> K & L & M
+  F --> K & L & M & BULK["bulk-ops runner"]
   I --> K & L & M
-  K & L & M --> V1((v1))
+  K & L & M & BULK --> V1((v1))
 
   subgraph par["parallel — does NOT block the build"]
     E0["Epic 0: production gates + open pack-inputs"]
@@ -487,7 +524,7 @@ flowchart LR
 
 Critical path: **P.1/P.2 → A/B/C → E → F**, with D a parallel branch (`A/C → D → F`).
 Foundation A/B/C parallelisable; estate
-G/H/I/J after the skeleton proves the seams; K/L/M close v1. Epic 0 and Epic Q run alongside —
+G/H/I/J after the skeleton proves the seams; K/L/M + the bulk-ops runner close v1. Epic 0 and Epic Q run alongside —
 Epic 0's items feed pack content (0.3/0.4 → F), load calibration (0.5 → L), and cutover
 (0.1/0.2 → v1), but **none of them block A/D**. Later P.x epics unblock I/K/M/L respectively.
 
