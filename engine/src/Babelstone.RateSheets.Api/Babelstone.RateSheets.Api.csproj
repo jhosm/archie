@@ -25,5 +25,10 @@
     <ProjectReference Include="../Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <!-- Npgsql's built-in OTel instrumentation (K.5, bd scd2.3): declared DIRECTLY here because the
+         Babelstone.Telemetry.Hosting seam keeps Npgsql.OpenTelemetry PrivateAssets="all" (so it does not
+         leak into the DB-free notification host, bd njt2.9). This host calls AddNpgsqlQueryTelemetry()
+         on its rate-sheet store's Postgres calls, so it needs the runtime assembly present. -->
+    <PackageReference Include="Npgsql.OpenTelemetry" />
   </ItemGroup>
 </Project>
