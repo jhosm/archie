@@ -571,7 +571,7 @@ Portuguese law gives borrowers the right to repay early. The lender may charge a
 
 - **Mortgages, variable rate:** 0.5% of the capital repaid (Decreto-Lei n.º 74-A/2017)
 - **Mortgages, fixed rate:** 2.0% of the capital repaid
-- **Consumer credit (*crédito pessoal*):** 0.5% of the capital repaid when more than one year of the term remains, 0.25% when one year or less remains (Decreto-Lei n.º 133/2009, art. 19º)
+- **Consumer credit (*crédito pessoal*):** the statutory cap on the early-repayment commission depends on the remaining term (Decreto-Lei n.º 133/2009, art. 19º). The **authoritative values** live as the kernel constants `PersonalLoanDecider.StatutoryCapBpsOverOneYear` (when more than one year of the term remains) and `PersonalLoanDecider.StatutoryCapBpsUnderOneYear` (when one year or less remains) — gated Live by the `CREDITO_PESSOAL_AMORTIZATION_MATH` commitment test and recorded in [ADR-PC-031 §D5](../product_concepts/adrs/ADR-PC-031-personal-loan-family.md). At v1 those are **0.5%** (>1 year remaining) and **0.25%** (≤1 year remaining); this doc cites the constants rather than restating them as the source of truth, so a future change to the statute updates one place.
 
 **Mechanics.** At month `m` the borrower pays the regular installment plus `S(m) + fee`, where `S(m)` is the formula from §7.4 and the fee is the capped percentage of `S(m)`. The contract terminates and the CF vector is truncated:
 
