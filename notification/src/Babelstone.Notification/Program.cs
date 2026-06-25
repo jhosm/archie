@@ -1,8 +1,10 @@
 using Babelstone.Notification;
 using Babelstone.Telemetry;
+using Babelstone.Telemetry.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -32,7 +34,9 @@ var builder = Host.CreateApplicationBuilder(args);
 // NB: NO AspNetCore instrumentation (this host has no inbound HTTP surface). The OUTBOUND read calls
 // become CLIENT spans once the scheduler/emission children (bd babelstone-60n8.2 / .3) issue them on
 // a clock and the HttpClient instrumentation lands with them; this skeleton issues no calls (the
-// worker idles), so tracing here is resource + exporter wiring only — no MeterProvider yet either.
+// worker idles), so tracing here is resource + exporter wiring only — no MeterProvider yet (this host
+// emits no metrics). A LoggerProvider IS wired (njt2.10) so structured logs export over OTLP, carrying
+// the runtime no-PII guard, the same guard the trace provider runs (OBS_NO_PII_ATTRS / ADR-IC-007 §P4).
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
         .AddService(BabelstoneResource.NotificationServiceName)
@@ -43,6 +47,13 @@ builder.Services.AddOpenTelemetry()
         ]))
     .WithTracing(tracing => tracing
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
+        // The runtime no-PII guard (njt2.9): strips any non-admitted span tag at OnEnd before export.
+        .AddBabelstonePiiGuard()
+        .AddOtlpExporter())
+    // Logs (njt2.10): net-new LoggerProvider so structured logs export over OTLP, with the log no-PII
+    // guard stripping any un-namespaced PII-fragment field before export.
+    .WithLogging(logging => logging
+        .AddBabelstonePiiGuard()
         .AddOtlpExporter());
 
 // The engine API ENDPOINT the notification service READS deposit facts from (ADR-PC-027 canonical

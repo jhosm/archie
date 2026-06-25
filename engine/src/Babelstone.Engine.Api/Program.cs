@@ -10,6 +10,7 @@ using Babelstone.Pii;
 using Babelstone.RateSheets;
 using Babelstone.Telemetry;
 using Babelstone.Telemetry.Hosting;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -48,6 +49,11 @@ builder.Services.AddOpenTelemetry()
         // projection/checkpoint stores), registered on THIS same provider so they nest under the
         // request's server span and the manual deposit.* spans — never a second, parallel provider.
         .AddNpgsqlQueryTelemetry()
+        // The runtime no-PII guard (njt2.9, OBS_NO_PII_ATTRS / ADR-IC-007 §P4): strips any span tag
+        // whose key is outside the admitted babelstone.*/semantic-convention tier at OnEnd, BEFORE the
+        // exporter runs — the load-bearing emit-time control over the regulated trace store. Registered
+        // LAST so it sees the tags the manual spans + Npgsql/AspNetCore auto-instrumentation produced.
+        .AddBabelstonePiiGuard()
         .AddOtlpExporter())
     // Metrics (ADR-IC-007 Layer 1 / ADR-IC-004 §P4): listen to the engine's meter and export over
     // OTLP to the Collector → Prometheus, where the §P4 warning/critical thresholds alert. The
@@ -61,6 +67,19 @@ builder.Services.AddOpenTelemetry()
         // per database command, emitted on THIS same meter provider so it is exported through the
         // one OTLP pipe alongside the engine's own instruments (the outbox-lag SLI et al.).
         .AddNpgsqlQueryTelemetry()
+        // The runtime no-PII guard for METRICS (njt2.11): a View with an explicit TagKeys allowlist over
+        // the Babelstone.Engine meter instruments, so a metric dimension whose key is outside the admitted
+        // babelstone.*/operational tier is dropped at emit. Scoped to the Babelstone meter, so Npgsql's
+        // db.* dimensions are untouched. A View — not a processor — is the only emit-time metric filter.
+        .AddBabelstonePiiGuard()
+        .AddOtlpExporter())
+    // Logs (njt2.10, ADR-IC-007 Layer 1 §P5 / OBS_NO_PII_ATTRS): wire an OTel LoggerProvider so the
+    // estate's structured logs flow over the same OTLP pipe, and run the runtime no-PII guard over them —
+    // a BaseProcessor<LogRecord> that strips any un-namespaced PII-fragment field (e.g. a {Account}
+    // message-template hole) before export, while keeping the §P5 operational references. Registered
+    // before the exporter so the strip lands first.
+    .WithLogging(logging => logging
+        .AddBabelstonePiiGuard()
         .AddOtlpExporter());
 
 // snake_case on the wire (principal_cents, tan_basis_points, rate_sheet_version_id), money as

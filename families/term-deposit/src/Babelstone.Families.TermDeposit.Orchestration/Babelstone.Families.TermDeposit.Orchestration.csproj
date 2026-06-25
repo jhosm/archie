@@ -21,8 +21,22 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The family → substrate arrow (ADR-IC-018 §D2/§P2): the only project reference, never the
+    <!-- The family → substrate arrow (ADR-IC-018 §D2/§P2): the only RUNTIME project reference, never the
          reverse, never the engine kernel. -->
     <ProjectReference Include="../../../../orchestrator/src/Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- BENG005 no-PII telemetry tripwire (bd njt2.12): the Babelstone.Engine.Analyzers suite attached as
+         a BUILD-TIME checker only (OutputItemType=Analyzer, ReferenceOutputAssembly=false — passed to the
+         compiler, NEVER linked). It is not a runtime/code dependency on the engine kernel, so it does not
+         re-arm the family → substrate arrow or erode extraction-readiness (ADR-PC-019 §P2) — it is dev
+         tooling, shed on extraction like any shared analyser. A SECONDARY backstop to the load-bearing
+         runtime guard (AddBabelstonePiiGuard), future-proofing a literal PII key/value at the saga module's
+         span sites; vacuous today (babelstone.saga.* consts, runtime values). The handler-purity (BENG001–003)
+         and no-clock-emission (BENG004) legs self-gate to inert here — they look up engine-kernel types this
+         project does not reference. -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

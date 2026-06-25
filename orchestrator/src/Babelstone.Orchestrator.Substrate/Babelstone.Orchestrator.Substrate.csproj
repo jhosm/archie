@@ -50,8 +50,19 @@
     <!-- The SHARED Babelstone telemetry surface (ADR-IC-007 Layer 1): the substrate opens its
          saga-advance spans on the SAME Babelstone.Engine ActivitySource the engine uses. A small
          leaf library with no DB or Confluent surface, so referencing it keeps the substrate
-         extraction-ready (ADR-PC-019 §P2). This is the ONLY non-NuGet reference, and it carries
-         no family or engine-kernel dependency. -->
+         extraction-ready (ADR-PC-019 §P2). The only non-NuGet RUNTIME reference, carrying no family
+         or engine-kernel dependency. -->
     <ProjectReference Include="../../../engine/src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+
+    <!-- BENG005 no-PII telemetry tripwire (bd njt2.12): the Babelstone.Engine.Analyzers suite attached as
+         a BUILD-TIME checker only (OutputItemType=Analyzer, ReferenceOutputAssembly=false — passed, never
+         linked). It is NOT a runtime/code dependency on the engine kernel, so it does not erode the
+         substrate's extraction-readiness (ADR-PC-019 §P2) — it is dev tooling, shed on extraction like any
+         shared analyser. It actively scans this project's real saga-advance Activity.SetTag sites (the
+         babelstone.saga.* keys, vacuous today) as a SECONDARY backstop to the load-bearing runtime guard
+         (AddBabelstonePiiGuard). The handler-purity (BENG001–003) and no-clock-emission (BENG004) legs
+         self-gate to inert — they look up engine-kernel types the substrate does not reference. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

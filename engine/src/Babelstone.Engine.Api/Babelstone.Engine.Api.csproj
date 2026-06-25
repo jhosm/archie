@@ -54,6 +54,11 @@
     <ProjectReference Include="../Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <!-- Npgsql's built-in OTel instrumentation (K.5, bd scd2.3): declared DIRECTLY here because the
+         Babelstone.Telemetry.Hosting seam keeps Npgsql.OpenTelemetry PrivateAssets="all" (so it does
+         not leak into the DB-free notification host). This host is where AddNpgsqlQueryTelemetry()
+         actually runs — over every engine Postgres call — so it needs the runtime assembly present. -->
+    <PackageReference Include="Npgsql.OpenTelemetry" />
     <!-- Inbound-request instrumentation (bd babelstone-2dex): the inbound HTTP request becomes a
          SERVER span that adopts the caller's W3C traceparent, so the deposit.* custom spans nest
          under it (parented to the inbound trace) rather than starting as disconnected roots. -->
