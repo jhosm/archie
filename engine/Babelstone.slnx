@@ -37,6 +37,10 @@
     <!-- The family's SAGA module (ADR-IC-018 §D1): the concrete ConstitutionProcess + bridge/router/
          commands/state-vocabulary + the ISagaModule, depending only on the substrate (family → substrate). -->
     <Project Path="../families/term-deposit/src/Babelstone.Families.TermDeposit.Orchestration/Babelstone.Families.TermDeposit.Orchestration.csproj" />
+    <!-- The family's NOTIFICATION contribution (ADR-IC-019 §D1/§D4 + Amendment 2026-06-24, bd babelstone-9u70):
+         the term-deposit maturity-reminder rule + template (the 14-day window, pt.notice.maturity) and the
+         IFamilyNotificationModule, depending only on the notification core (family → core), never the kernel. -->
+    <Project Path="../families/term-deposit/src/Babelstone.Families.TermDeposit.Notification/Babelstone.Families.TermDeposit.Notification.csproj" />
     <!-- The personal_loan family (ADR-PC-031 / ADR-PC-030 roadmap item 2): the closed-end personal-loan
          ASSET family — the 2nd family on the engine, mirroring the term-deposit liability. The pure-fold
          schema + the impure decider/application layer; same family → engine plugin arrow (ADR-PC-021). -->
@@ -49,13 +53,17 @@
     <!-- The family-AGNOSTIC saga substrate (ADR-IC-018 §P1/§P2): the runtime + stores + ports +
          ISagaModule plug-in, carrying no families/** or engine-kernel reference. -->
     <Project Path="../orchestrator/src/Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
-    <!-- The in-house notification worker (ADR-IC-011, DEF-2 / bd babelstone-60n8.1): a per-service
-         outbox-worker host (ADR-IC-004) that reads deposit facts over the storage-opaque ADR-PC-027
-         HTTP read contract — family-agnostic, with NO engine-kernel or family reference (ADR-IC-019
-         §D2/§D3, bd babelstone-60n8.5; gated by NOTIFICATION_FAMILY_AGNOSTIC). An extraction-ready
-         subtree (ADR-PC-019 §P2) that builds with the engine pipeline; no scheduler timing or
-         emission yet (those are downstream children). -->
+    <!-- The in-house notification family-AGNOSTIC core LIBRARY (ADR-IC-011, DEF-2 / bd babelstone-60n8.1/.2;
+         §D4 split by bd babelstone-9u70): the poll loop, the per-tick schedule pass, the composite-id +
+         dedupe, the storage-opaque ADR-PC-027 read client, and the IFamilyNotificationModule contribution
+         port — with NO engine-kernel or family reference (ADR-IC-019 §D2/§P2; gated by
+         NOTIFICATION_FAMILY_AGNOSTIC). Extraction-ready subtree (ADR-PC-019 §P2). -->
     <Project Path="../notification/src/Babelstone.Notification/Babelstone.Notification.csproj" />
+    <!-- The notification worker HOST (ADR-IC-019 §D4/§A2 composition root, bd babelstone-9u70): the runnable
+         Worker exe that holds the explicit list of family notification contributions, composes each, and runs
+         the core loop. It is the ONE place that names a family (the §A2 exemption), so it is NOT a §P1 core
+         project and NOTIFICATION_FAMILY_AGNOSTIC does not gate it. -->
+    <Project Path="../notification/src/Babelstone.Notification.Host/Babelstone.Notification.Host.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <!-- Shared test-support library (ic10): the single Redpanda Testcontainers fixture both the
@@ -80,6 +88,9 @@
     <Project Path="tests/Babelstone.InboxConsumer.Tests/Babelstone.InboxConsumer.Tests.csproj" />
     <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/Babelstone.Families.TermDeposit.Tests.csproj" />
     <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Application.Tests/Babelstone.Families.TermDeposit.Application.Tests.csproj" />
+    <!-- The family NOTIFICATION contribution tests (bd babelstone-9u70): the maturity-reminder rule's window
+         selection + template + Active-only filter, over a fake HttpMessageHandler (no engine, no Docker). -->
+    <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Notification.Tests/Babelstone.Families.TermDeposit.Notification.Tests.csproj" />
     <!-- The personal_loan family tests (ADR-PC-031): replay/fold tests over the loan position,
          lifecycle legality, the amortization-schedule projection, and the pure decider's
          French-system amortization + capped early-repayment math. -->

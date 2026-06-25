@@ -1,0 +1,28 @@
+<!-- The term-deposit family's NOTIFICATION contribution (ADR-IC-019 §D1/§D4 + Amendment 2026-06-24):
+     the family-owned scheduling rule + template selection that plug into the family-agnostic notification
+     core. It holds exactly the term-deposit knowledge ADR-IC-019 §D1 keeps OUT of the core — the 14-day
+     pre-maturity opt-out window, the pt.notice.maturity template ref, and the "this deposit is entering its
+     window → a renewal reminder is due" decision (relocated here from the core by bd babelstone-9u70,
+     resolving PR #317's §D1 violation). It depends ONLY on the notification core's contribution port — the
+     family → core arrow (ADR-IC-019 §P2), never the engine kernel (extraction-ready, ADR-PC-019 §P2) —
+     mirroring the family's saga contribution (Babelstone.Families.TermDeposit.Orchestration → the
+     orchestrator substrate). Build settings inherit from families/Directory.Build.props →
+     engine/Directory.Build.props (net10.0, nullable, warnings-as-errors). -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Families.TermDeposit.Notification</RootNamespace>
+    <AssemblyName>Babelstone.Families.TermDeposit.Notification</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- IServiceCollection + AddSingleton for TermDepositNotificationModule.ConfigureServices. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The family → core arrow (ADR-IC-019 §D4): the only project reference, never the reverse, never the
+         engine kernel. Brings the contribution port (IFamilyNotificationModule / INotificationScheduleRule /
+         ReminderDecision / NotificationModuleContext) and the family-agnostic read client (DepositReadClient). -->
+    <ProjectReference Include="../../../../notification/src/Babelstone.Notification/Babelstone.Notification.csproj" />
+  </ItemGroup>
+</Project>
