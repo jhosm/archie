@@ -480,25 +480,26 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('notification/**/*.csproj') }}
           restore-keys: nuget-${{ runner.os }}-
       - name: Build + unit/analyser tests (ADR-IC-011, ADR-IC-009 unit tier)
-        # restore + build (warnings-as-errors via the csproj's own TreatWarningsAsErrors —
-        # the notification host carries its build settings inline, not via the engine's
+        # restore + build (warnings-as-errors via each csproj's own TreatWarningsAsErrors —
+        # the notification subtree carries its build settings inline, not via the engine's
         # Directory.Build.props, since it is extraction-ready per ADR-PC-019 §P2) + the
-        # Docker-free test lane. The NOTIFICATION_FAMILY_AGNOSTIC fitness test
-        # (NotificationFamilyAgnosticTests — the core references no families/** and no
-        # engine-spine project, ADR-IC-019 §D2/§P2) and the ADR-PC-027 read-client tests
-        # (DepositReadClientTests — the GET /v1/deposits/{id} contract over a fake handler)
-        # run here; both need no infrastructure, so the Category!=Integration convention
-        # the engine + orchestrator jobs use excludes any future Testcontainers tier.
-        # `dotnet test` takes ONE path — the single test project.
+        # Docker-free test lane. Building the HOST (bd babelstone-9u70 §D4 split) transitively
+        # builds the family-agnostic core LIBRARY and the family notification contribution it
+        # composes. The NOTIFICATION_FAMILY_AGNOSTIC fitness tests (NotificationFamilyAgnosticTests
+        # — the core references no families/** or engine-spine project AND embeds no family
+        # literal, ADR-IC-019 §D2/§P2 + Amendment 2026-06-24) and the ADR-PC-027 read-client tests
+        # (DepositReadClientTests) run here; both need no infrastructure, so the Category!=Integration
+        # convention the engine + orchestrator jobs use excludes any future Testcontainers tier.
+        # `dotnet test` takes ONE path — the core test project here; the family notification
+        # contribution's MaturityReminderRuleTests run in the engine job via engine/Babelstone.slnx.
         #
         # NB: there is NO notification contract-test project (ADR-IC-013 boundary
-        # contracts) and NO Testcontainers Integration tier yet — the host is a
-        # skeleton (read access only; bd babelstone-60n8.1/.5). Add a contract-test leg
+        # contracts) and NO Testcontainers Integration tier yet. Add a contract-test leg
         # and a `--filter "Category=Integration"` lane here when those land (the
-        # scheduler/emission children, bd babelstone-60n8.2/.3), mirroring the
+        # NotificationDue emission child, bd babelstone-60n8.3), mirroring the
         # orchestrator job's two-tier shape.
         run: |
-          dotnet build notification/src/Babelstone.Notification/Babelstone.Notification.csproj --configuration Release --nologo
+          dotnet build notification/src/Babelstone.Notification.Host/Babelstone.Notification.Host.csproj --configuration Release --nologo
           dotnet test notification/tests/Babelstone.Notification.Tests/Babelstone.Notification.Tests.csproj --configuration Release --nologo --filter "Category!=Integration"
 
   product-configs:

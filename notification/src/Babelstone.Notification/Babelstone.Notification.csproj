@@ -1,27 +1,23 @@
-<!-- The /notification worker host (ADR-IC-011 runtime — .NET, stack-coherent with the engine;
-     ADR-IC-013 in-house estate placement). A per-service OUTBOX worker (ADR-IC-004): a
-     BackgroundService poll-loop host shell, NOT an HTTP API — so Microsoft.NET.Sdk.Worker
-     (the IHostedService host, the same hosted-BackgroundService shape the engine's outbox relay
-     and the orchestrator's consume loop use), NOT Microsoft.NET.Sdk.Web.
+<!-- The /notification family-AGNOSTIC core LIBRARY (ADR-IC-019 §D2/§P1 + Amendment 2026-06-24). In
+     plain terms: this is the part of the notification service that must never know what a term deposit
+     is. It owns the generic poll-loop worker (NotificationWorker), the per-tick engine
+     (NotificationSchedulePass), the composite-id primitive (NotificationId), the dedupe ledger, the
+     storage-opaque read client (DepositReadClient, ADR-PC-027), and the family-contribution port
+     (IFamilyNotificationModule / INotificationScheduleRule). It is a LIBRARY, not the runnable host: the
+     composition root that names families and wires OpenTelemetry/HTTP lives in the sibling
+     Babelstone.Notification.Host exe (the §A2/§D4 exemption holder).
 
-     This skeleton stands up the host + the ADR-PC-027 read-contract access only. There is NO
-     scheduler timing and NO event emission yet — those are the downstream children
-     (babelstone-60n8.2 / .3). The host carries no Confluent/outbox-publish surface yet; it will
-     gain the emission leg with its own build task.
-
-     FAMILY-AGNOSTIC (ADR-IC-019 §D2/§P2, bd babelstone-60n8.5): the notification core references
-     neither the engine kernel (Babelstone.Engine / Babelstone.EventStore) nor any family — it reads
-     deposit facts over the storage-opaque ADR-PC-027 HTTP contract (GET /v1/deposits/{id}), exactly
-     as the orchestrator carries no engine kernel (ADR-IC-018 §S3). The NOTIFICATION_FAMILY_AGNOSTIC
-     fitness gate parses this .csproj and fails the build on a families/** or engine-spine reference.
-     Extraction-ready subtree (ADR-PC-019 §P2): the host carries its OWN copy of the shared engine
-     build settings (it does not inherit engine/Directory.Build.props), as the orchestrator subtree
-     does, and lifts cleanly because it depends only on the SDK-free Telemetry leaf + the host-side
-     Telemetry.Hosting OTel seam (itself carrying no engine-kernel, family, or Postgres-driver path —
-     Npgsql.OpenTelemetry is PrivateAssets="all" on the seam) + framework packages. -->
-<Project Sdk="Microsoft.NET.Sdk.Worker">
+     FAMILY-AGNOSTIC (ADR-IC-019 §D2/§P2, gated by NOTIFICATION_FAMILY_AGNOSTIC): this core references
+     neither the engine kernel (Babelstone.Engine / Babelstone.EventStore) nor any product family — family
+     scheduling rules + templates plug in through the port at the host edge, and deposit facts are read over
+     the storage-opaque ADR-PC-027 HTTP contract, never the byte store. The NotificationFamilyAgnosticTests
+     gate parses this .csproj for a families/** or engine-spine reference AND scans this project's source for
+     an embedded family literal (ADR-IC-019 §D2/§P2 + Amendment-A1). Extraction-ready subtree
+     (ADR-PC-019 §P2): it carries its own copy of the shared engine build settings rather than inheriting
+     engine/Directory.Build.props, and depends only on framework packages — no engine-kernel or family path
+     to drag along. -->
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <RootNamespace>Babelstone.Notification</RootNamespace>
     <AssemblyName>Babelstone.Notification</AssemblyName>
 
@@ -43,41 +39,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- BackgroundService/IHostedService + Host.CreateApplicationBuilder (the §5.1 worker host
-         shell). The Microsoft.NET.Sdk.Worker normally adds this implicitly, but the repo-wide
-         central package management (Directory.Packages.props, ManagePackageVersionsCentrally) means
-         the implicit, version-less reference is pruned — so it is named explicitly here (version
-         pinned centrally), the same way the orchestrator/OutboxPublisher hosts name their Hosting
-         dependency. -->
+    <!-- BackgroundService/IHostedService (NotificationWorker), IServiceCollection (the contribution
+         port's ConfigureServices), IConfiguration (NotificationModuleContext), and ILogger — all surfaced
+         through Microsoft.Extensions.Hosting (version pinned centrally via Directory.Packages.props). The
+         runnable Host.CreateApplicationBuilder + OTLP exporter + typed HttpClient registration live in the
+         Host exe, not here. -->
     <PackageReference Include="Microsoft.Extensions.Hosting" />
-    <!-- IHttpClientFactory + the typed-client registration (AddHttpClient<DepositReadClient>): the
-         notification core reads deposit facts over the ADR-PC-027 HTTP contract (GET /v1/deposits/{id}),
-         the same IHttpClientFactory pattern the orchestrator's dispatcher uses for its engine POSTs. -->
-    <PackageReference Include="Microsoft.Extensions.Http" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- The SDK-free shared telemetry LEAF (ADR-PC-019 §P2): BabelstoneResource (the OBS-1 resource
-         contract — service.name/namespace/environment) + BabelstoneTelemetry (the shared
-         ActivitySource the estate's spans share). Referenced DIRECTLY (not transitively via the engine
-         kernel, which this host no longer references), exactly as the orchestrator host does — it is
-         NOT one of the ADR-PC-021 §P2 spine projects, so NOTIFICATION_FAMILY_AGNOSTIC permits it. -->
-    <ProjectReference Include="../../../engine/src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
-
-    <!-- The shared host-side OTel-SDK seam (ADR-IC-007 Layer 1): the AddBabelstonePiiGuard runtime
-         no-PII guard this host registers on its trace + log providers (njt2.9–2.10). A telemetry leaf
-         with no engine-kernel, family, or Postgres-driver dependency (the seam keeps Npgsql.OpenTelemetry
-         PrivateAssets="all"), so referencing it keeps the notification subtree DB-free and family-agnostic
-         (ADR-IC-019 §D2/§P2) — NOT one of the NotificationFamilyAgnosticTests spine projects. -->
-    <ProjectReference Include="../../../engine/src/Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
-
-    <!-- The host-side OTel-SDK seam (ADR-IC-007 Layer 1): this composition root registers the
-         TracerProvider + OTLP exporter so spans the host opens on the shared Babelstone ActivitySource
-         (via the Telemetry leaf above) are created and exported to the Collector (§P1 — never
-         direct-to-backend). Mirrors the engine API / orchestrator host wiring. Outbound HTTP-client
-         CLIENT-span instrumentation lands with the scheduler/emission children that actually issue
-         read calls on a clock (bd babelstone-60n8.2 / .3); this skeleton issues none. -->
-    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
-    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
   </ItemGroup>
 </Project>

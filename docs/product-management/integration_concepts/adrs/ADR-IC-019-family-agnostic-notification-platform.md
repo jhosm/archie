@@ -191,6 +191,41 @@ This ADR's load-bearing commitment lives in the [commitment catalogue](../../pro
 
 ---
 
+## Amendment — 2026-06-24: the `IFamilyNotificationModule` contribution port (names the §P1-deferred detail)
+
+Building the maturity scheduler (bd `babelstone-60n8.2`, PR #317) surfaced that §D1's family-owned scheduling rule had no concrete seam to live in: §D4/§P4 name the *mirror* (`IFamilyHostModule` / `ISagaModule`) but §P1 deliberately left the concrete notification-side contribution port "an implementation detail of bd `babelstone-60n8`." With a real family rule now in hand — and a confirmed second family on disk (`families/personal-loan`, already emitting catalogued events) — that detail is worth fixing on the record. This amendment **names** the port. It is **additive**: every §D clause stands verbatim, and the port is the *realisation* of §D4/§P4, not a change to them. It records **no divergence** — §P1 deferred the shape, so naming it now clears no drift (the gap that let PR #317 through the green `NOTIF-1` gate is the gate's literal-blindness, addressed separately as a test + [commitment-catalogue](../../product_concepts/adrs/commitment-catalogue.md) change under the one-way ADR→catalogue pointer rule, **not** restated here).
+
+### A1 · The contribution port and its components
+
+The notification-side mirror of `IFamilyHostModule` / `ISagaModule` (§D4) is `IFamilyNotificationModule`, owned by the core-side contract surface (the core library `Babelstone.Notification`) and composed by the host — the `family → core` arrow of §P2. Following the established module shape, it carries an identity and a `ConfigureServices` hook through which the family registers its own schedule rule, exactly as `ISagaModule.ConfigureServices` registers its family-owned sink/router/status-map:
+
+```csharp
+public interface IFamilyNotificationModule
+{
+    string FamilyName { get; }    // identity — duplicate-detection at composition (cf. ISagaModule.SagaType)
+    void ConfigureServices(IServiceCollection services, NotificationModuleContext ctx);
+}
+
+// the family-owned component the core's loop enumerates each tick (registered via ConfigureServices)
+public interface INotificationScheduleRule
+{
+    string FamilyName { get; }
+    Task<IReadOnlyList<ReminderDecision>> EvaluateAsync(DateOnly asOf, CancellationToken ct);
+}
+```
+
+The core owns the generic loop (cadence, retry/backoff, the dedupe ledger, the composite `notification_id` primitive, the storage-opaque read client, the per-service outbox) and resolves the registered `INotificationScheduleRule`s; each family rule owns only the two genuinely family-shaped decisions — *which instances are due* and *which `template_ref` + structural `data` the due notice carries* (a `ReminderDecision`, PII-free per [ADR-PC-025](../../product_concepts/adrs/ADR-PC-025-customer-notification-emit-contract.md)). `NotificationModuleContext` hands the module its per-deployment ingredients (the pinned pack/configuration, the engine read endpoint — the notification-side `FamilyHostContext`), so a family value such as the term-deposit `AutoRenewalOptoutWindowDays` (the 14-day pre-maturity opt-out window) is sourced **family-side from the pinned pack/configuration** ([ADR-PC-007](../../product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md)), never hard-coded — in the core *or* as a literal in the contribution. The `ReminderDecision` shape is the v1 contract and is validated against a second family's reminder (e.g. a `personal-loan` instalment-due notice) before the assembly-scan loader (A2) is frozen, so the port is not over-fit to maturity semantics.
+
+### A2 · Composition is the explicit-list-now posture of §P4
+
+The host composes the modules per §D4/§P4: an **explicit list** at the current family count, swappable for assembly-scan (`FamilyModuleLoader`-style) later with zero family change ([ADR-PC-021 §A3](../../product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)). The composition root may carry a `families/**` `ProjectReference` (the §A2/§D4 exemption); the core may not. A family fully served by data over the read contract contributes **nothing** — the §P4 default. The expensive-to-reverse decision (the port shape, A1) is fixed now; the cheap, host-local decision (explicit list → assembly scan) is deferred until the second family pays for it — the same risk split the orchestrator→engine-host progression already demonstrates.
+
+### A3 · This amends §D4/§P1; it does not supersede this ADR — and does not relax §D1
+
+§D1–§D5 remain binding **exactly as written**. This amendment fills the §P1-deferred "implementation detail" by naming the port; it is appended to §D4/§P4, not a revision of them. In particular it does **not** weaken §D1: a family-specific scheduling rule (a window width, a `template_ref`, a "due now" decision) embedded in the generic core — as literals or otherwise — remains the explicitly-Rejected candidate **C**, a **violation to fix**, not a divergence an amendment can bless. PR #317's term-deposit literals therefore relocate into `families/term-deposit/src/Babelstone.Families.TermDeposit.Notification` (the §D5 first-realisation), and that relocation rides in the **same change** as this amendment — the "fix the code to conform" branch of the explicit-drift gate ([ADR-PC-020 §D3/§P9](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)), not the "record the divergence" branch.
+
+---
+
 ## Cross-references
 
 - **Structures:** [ADR-IC-011](./ADR-IC-011-async-saga-completion-notification.md) (the notification service — its choreography-consumer character and read-model enrichment; this ADR adds the internal family-agnostic discipline IC-011 never named, honouring it, contradicting no clause).
