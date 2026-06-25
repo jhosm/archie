@@ -35,6 +35,10 @@ public sealed class DepositConstitutedHandler : IEventHandler<DepositPosition, D
             // (the fold stays pure/deterministic, BENG001/002/003).
             Role = @event.Role,
             FundingAccount = @event.FundingAccount,
+            // The product-config generation pin (ADR-PC-009 §A2); "" for pre-pin deposits / no store
+            // wired (the Avro default). Copied verbatim — no clock, no I/O, no derivation — so a cold
+            // replay re-derives the identical pin (REPLAY_PIN_PER_EVENT, BENG001/002/003).
+            ProductConfigVersion = @event.ProductConfigVersion,
             // The F.12 partial-withdrawal policy PINNED at constitution (bd k6r8.8/qze9), copied
             // verbatim onto the position — no clock, no I/O, no derivation (BENG001/002/003). The
             // partial-withdrawal command path rebuilds the policy from these three folded fields, so

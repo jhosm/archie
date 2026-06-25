@@ -36,6 +36,7 @@ public class DepositPositionEqualityTests
         ProductCode = "dpz_pt_12m",
         Role = "standard",
         FundingAccount = "acct-1",
+        ProductConfigVersion = "sha256:1111111111111111111111111111111111111111111111111111111111111111",
         MinWithdrawalCents = 10_000L,
         MinRemainingBalanceCents = 50_000L,
         LockupPeriodDays = 30,
@@ -76,6 +77,7 @@ public class DepositPositionEqualityTests
             [nameof(b.ProductCode)] = b with { ProductCode = "dpz_pt_24m" },
             [nameof(b.Role)] = b with { Role = "premium" },
             [nameof(b.FundingAccount)] = b with { FundingAccount = "acct-2" },
+            [nameof(b.ProductConfigVersion)] = b with { ProductConfigVersion = "sha256:2222222222222222222222222222222222222222222222222222222222222222" },
             [nameof(b.MinWithdrawalCents)] = b with { MinWithdrawalCents = 20_000L },
             [nameof(b.MinRemainingBalanceCents)] = b with { MinRemainingBalanceCents = 60_000L },
             [nameof(b.LockupPeriodDays)] = b with { LockupPeriodDays = 31 },
@@ -114,7 +116,7 @@ public class DepositPositionEqualityTests
         // survivor in the next weekly run.
         var recordFieldCount = typeof(DepositPosition)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance).Length;
-        Assert.Equal(26, recordFieldCount); // the 26 positional record parameters
+        Assert.Equal(27, recordFieldCount); // the 27 positional record parameters
         Assert.Equal(recordFieldCount, SingleFieldVariants(Baseline()).Count);
     }
 

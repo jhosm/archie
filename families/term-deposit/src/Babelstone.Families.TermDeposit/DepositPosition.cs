@@ -80,6 +80,12 @@ public enum DepositLifecycle
 /// <c>DepositConstituted.FundingAccount</c>. Persisted so the engine settles the auto-renewal
 /// rollover debit against the SAME funding reference from the closing deposit (bd babelstone-mtto.5).
 /// Empty ("") for deposits constituted before mtto.5 (the Avro default).</param>
+/// <param name="ProductConfigVersion">The product-config generation pin (content hash
+/// <c>sha256:&lt;hex&gt;</c>) folded from <c>DepositConstituted.ProductConfigVersion</c> (ADR-PC-009 §A2):
+/// proves which product-config generation governed the deposit. Copied verbatim — no clock, no I/O, no
+/// derivation (BENG001/002/003) — so a cold replay re-derives the identical pin (REPLAY_PIN_PER_EVENT).
+/// Empty ("") for deposits constituted before the pin / with no product-config store wired (the Avro
+/// default). A structural version string, NOT PII (ADR-PC-004 §P2).</param>
 /// <param name="MinWithdrawalCents">The F.12 partial-withdrawal policy PINNED at constitution (bd
 /// k6r8.8/qze9), folded from <c>DepositConstituted</c>: the smallest partial withdrawal the product
 /// allows, in cents (PartialWithdrawalPolicy.MinWithdrawalCents). The partial-withdrawal command path
@@ -112,6 +118,7 @@ public sealed record DepositPosition(
     string ProductCode,
     string Role,
     string FundingAccount,
+    string ProductConfigVersion,
     long MinWithdrawalCents,
     long MinRemainingBalanceCents,
     int LockupPeriodDays,
@@ -151,6 +158,7 @@ public sealed record DepositPosition(
         ProductCode: string.Empty,
         Role: string.Empty,
         FundingAccount: string.Empty,
+        ProductConfigVersion: string.Empty,
         MinWithdrawalCents: 0,
         MinRemainingBalanceCents: 0,
         LockupPeriodDays: 0,
@@ -189,6 +197,7 @@ public sealed record DepositPosition(
         && ProductCode == other.ProductCode
         && Role == other.Role
         && FundingAccount == other.FundingAccount
+        && ProductConfigVersion == other.ProductConfigVersion
         && MinWithdrawalCents == other.MinWithdrawalCents
         && MinRemainingBalanceCents == other.MinRemainingBalanceCents
         && LockupPeriodDays == other.LockupPeriodDays
@@ -219,6 +228,7 @@ public sealed record DepositPosition(
         hash.Add(ProductCode);
         hash.Add(Role);
         hash.Add(FundingAccount);
+        hash.Add(ProductConfigVersion);
         hash.Add(MinWithdrawalCents);
         hash.Add(MinRemainingBalanceCents);
         hash.Add(LockupPeriodDays);

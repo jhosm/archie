@@ -173,13 +173,27 @@ Concretely, at host load `HostModuleLoader.CrossCheckAgainstPackManifest` cross-
 
 This is **additive**: §P1–§P5 stay binding as written. It reverses no decision — the pin is still per-event, stamped at constitution, resolved off the event on replay, and moved only by an explicit migration event (§P1/§P3). It names the load-time *enforcement* that the new host needs so the family code and the pinned pack cannot silently diverge. Gated by `HOST_PACK_FAMILY_MANIFEST_CROSS_CHECK` (catalogue row 12c).
 
+### A2 · `product_config_version` joins the per-event pinning family as a *payload-shaped* pin (2026-06-25, bd `babelstone-fk7m.9`)
+
+**In plain English:** the engine already records which pack, schema, and rate-sheet a deposit was opened under, so a replay can prove its terms. The one input it did *not* version-pin was the product-config — the YAML that says term length, interest style, the partial-withdrawal gates — because product-configs are static deploy-time files with no version number to stamp. This amendment gives each loaded product-config a content-hash version (`sha256:<hex>` over the YAML bytes) and stamps it on `DepositConstituted`, so a replay can also prove which product-config generation governed the deposit. Any edit to the YAML changes its hash, which is exactly the "which generation" signal we want until a versioned deploy registry exists.
+
+**Concretely**, this amendment makes two additions and corrects one framing detail:
+
+- **A fourth member of the per-event pinning family.** Alongside `pack_version`, `schema_version`, and `rate_sheet_version_id` (§S2, §P1), `DepositConstituted` now carries `product_config_version` — a `sha256:<hex>` content hash of the product-config YAML, computed at load (`YamlProductConfigStore`) and surfaced on `ProductConfig.ConfigVersion`. The decider resolves it from the product config **in the same constitution transaction** as the rate-sheet resolve ([ADR-PC-008 §S2](./ADR-PC-008-rate-sheet-storage-and-deploy-api.md)) and stamps it; it is `""` when no product-config store is wired (direct callers) or the config carried no version.
+
+- **Envelope vs. payload — the precise shape.** The family is two pins of two kinds. `pack_version` and `schema_version` are **envelope columns** (the `events` table, set via `AppendContext`, [ADR-PC-001 §P1](./ADR-PC-001-event-store-technology.md)): they describe the *append*. `rate_sheet_version_id` and now `product_config_version` are **payload fields on `DepositConstituted`**: they describe *what the decider resolved in-transaction*. A per-instance config version is a resolution fact, so it is correctly a payload-shaped pin like `rate_sheet_version_id`, **not** an envelope/`AppendContext` column. (This sharpens — does not change — §S2's "one coherent per-event pinning family": all four are per-event and replay reads each off the event, but they live in two physical places by kind.)
+
+- **The hash is the version until a registry lands.** Product-configs remain static, deploy-time artefacts: there is still no versioned `POST /v1/product-configs` deploy timeline. The content hash is therefore the version — any YAML edit yields a new `ConfigVersion`. A full versioned product-config deploy registry (mirroring the rate-sheet deploy API of [ADR-PC-008](./ADR-PC-008-rate-sheet-storage-and-deploy-api.md)) is **later work**, tracked as the v2 follow-up to bd `babelstone-fk7m.9`. The earlier "full product-config version pinning is later work" note ([IProductConfigStore](../../../../engine/src/Babelstone.RateSheets/IProductConfigStore.cs) docs) is superseded by this amendment for the *content-hash* pin; only the registry remains deferred.
+
+This is **additive**: §P1–§P5 and A1 stay binding as written. It reverses no decision — the pin is still per-event, stamped at constitution, resolved off the event on replay (§P1/§P2), additive with an Avro default so pre-pin streams decode unchanged ([ADR-IC-002 §P3](../../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)). Gated by `REPLAY_PIN_PER_EVENT` (catalogue row 4), whose claim now also covers `product_config_version`.
+
 ---
 
 ## Verifiable commitments
 
 This decision's load-bearing commitments are fitness functions in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each commitment's exact claim, gate (pyramid level), and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
 
-- `REPLAY_PIN_PER_EVENT` — replay reads the per-event pin, not the clock; the migration boundary is intrinsic to the stream (§P1–§P2).
+- `REPLAY_PIN_PER_EVENT` — replay reads the per-event pin, not the clock; the migration boundary is intrinsic to the stream (§P1–§P2). The pin family is `pack_version` + `schema_version` (envelope) and `rate_sheet_version_id` + `product_config_version` (payload on `DepositConstituted`, resolved in-transaction §S2/§A2); a cold replay re-derives the identical `product_config_version` it was constituted under.
 - `HOST_PACK_FAMILY_MANIFEST_CROSS_CHECK` (catalogue row 12c) — the host fails closed at load on a family/schema-version skew between the pinned pack's `families.yaml` and the discovered family modules (§A1). `Live` as `HostModuleLoaderTests` + `PackParserTests`.
 
 ---

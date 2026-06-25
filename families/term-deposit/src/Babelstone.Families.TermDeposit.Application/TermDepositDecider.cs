@@ -78,7 +78,7 @@ public static class TermDepositDecider
     /// </summary>
     public static DepositConstituted DecideConstitution(
         ConstituteDepositCommand command, int tanBasisPoints, string rateSheetVersionId,
-        PartialWithdrawalPolicy partialWithdrawalPolicy) =>
+        PartialWithdrawalPolicy partialWithdrawalPolicy, string productConfigVersion = "") =>
         new(
             DepositId: command.DepositId,
             Principal: new Money(command.PrincipalCents),
@@ -109,7 +109,11 @@ public static class TermDepositDecider
             // the policy from the product config and passes it in; the decider stays pure.
             MinWithdrawalCents: partialWithdrawalPolicy.MinWithdrawalCents,
             MinRemainingBalanceCents: partialWithdrawalPolicy.MinRemainingBalanceCents,
-            LockupPeriodDays: partialWithdrawalPolicy.LockupPeriodDays);
+            LockupPeriodDays: partialWithdrawalPolicy.LockupPeriodDays,
+            // The product-config generation pin (ADR-PC-009 §A2): the impure service resolves the
+            // ConfigVersion from the product config in-transaction and passes it in; the decider stays
+            // pure. "" when no store is wired / the config carried no version (direct callers).
+            ProductConfigVersion: productConfigVersion);
 
     /// <summary>
     /// Decide commercial eligibility (ADR-PC-024 §5): refuse the constitution when a precondition the
