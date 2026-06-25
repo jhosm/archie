@@ -212,6 +212,12 @@ public static class PackParser
         public DependenciesDto? Dependencies { get; set; }
         public Dictionary<string, string>? SchemaPins { get; set; }
         public List<string>? RateSheetRefs { get; set; }
+        // The pack-set's disclosure/notice template_refs (bd babelstone-oyts, PR #322) — the same
+        // per-pack-set shape as rate_sheet_refs. The DECLARATIVE half: the parser TOLERATES the manifest
+        // field so the pack remains loadable, while the engine-side consumption (rendering, the
+        // template-pack-version pinned per instance — ADR-PC-025) is a deferred follow-up. Without this
+        // property the strict deserializer rejects pt.2026.1's pack.yaml ("template_refs not found").
+        public List<string>? TemplateRefs { get; set; }
         public string? TestCorpusRef { get; set; }
         public List<object>? PrimitiveOverlays { get; set; }
     }
