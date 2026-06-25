@@ -46,10 +46,34 @@ public sealed class AvroCatalogSweepTests
         var serializer = new AvroEventSerializer(new AvroSchemaCatalog(), new StubSchemaIdResolver());
         var decoded = serializer.Decode(serializer.Encode(original).Bytes, eventType);
 
-        // Distinct-valued synthesis (below) makes record value-equality a drop-AND-swap detector: a
-        // silently dropped field decodes to its default and breaks equality, and two same-typed fields
-        // swapped would too.
-        Assert.Equal(original, decoded);
+        AssertRoundTripped(eventType, original, decoded);
+    }
+
+    // Distinct-valued synthesis (below) makes per-field equality a drop-AND-swap detector: a silently
+    // dropped field decodes to its default and breaks equality, and two same-typed fields swapped would too.
+    // Compared per CONSTRUCTOR PARAMETER (not whole-record Assert.Equal) because the Movement CARRIER member
+    // is an IReadOnlyList<Movement>: record equality compares a list member by REFERENCE (List/array do not
+    // override Equals), so a faithfully round-tripped carrier — same Movement VALUES, a fresh List instance —
+    // would fail whole-record equality on the container identity alone. The carrier is compared element-wise
+    // (xUnit collection equality on the value-equal Movement records); every other field by value.
+    private static void AssertRoundTripped(Type eventType, DomainEvent original, DomainEvent decoded)
+    {
+        foreach (var parameter in eventType.GetConstructors()
+                     .OrderByDescending(c => c.GetParameters().Length).First().GetParameters())
+        {
+            var property = eventType.GetProperty(parameter.Name!)!;
+            var originalValue = property.GetValue(original);
+            var decodedValue = property.GetValue(decoded);
+
+            if (MovementCarrier.IsCarrierParameter(parameter.ParameterType))
+            {
+                Assert.Equal((IReadOnlyList<Movement>)originalValue!, (IReadOnlyList<Movement>)decodedValue!);
+            }
+            else
+            {
+                Assert.Equal(originalValue, decodedValue);
+            }
+        }
     }
 
     // Resolve the catalogued record name to its concrete DomainEvent record across the loaded
@@ -130,9 +154,26 @@ public sealed class AvroCatalogSweepTests
         _ when type == typeof(int) => 100 + seed,
         _ when type == typeof(long) => 10_000L + seed,
         _ when type == typeof(string) => $"v{seed}",
+        // The Movement CARRIER (ADR-PC-032): a parameter typed IReadOnlyList<Movement> is the codec's
+        // MovementCarrier array field. Sample a ONE-element list of a distinct Movement so a Movement-bearing
+        // catalogued event (e.g. LoanDisbursed) round-trips its carrier through the sweep — the carrier is a
+        // REQUIRED array, never null, so an empty-list sample would not exercise the array path. The carrier
+        // is compared element-wise by AssertRoundTripped, so the synthesized container shape is irrelevant.
+        _ when MovementCarrier.IsCarrierParameter(type) => new[] { SampleMovement(seed) },
         _ => throw new InvalidOperationException(
             $"AvroCatalogSweep has no sample value for parameter type '{type}'. Add one here AND a codec mapping in AvroEventSerializer if it is a new wire-type."),
     };
+
+    // A distinct-valued Movement for the carrier sample (the same distinctness discipline as the scalar
+    // factory): every field a non-default value of its type so a dropped Movement field breaks equality.
+    private static Movement SampleMovement(int seed) => new(
+        AccountRef: $"acct-{seed}",
+        Direction: SettlementDirection.Credit,
+        Amount: new Money(5_000 + seed),
+        ValueDate: new DateOnly(2026, 1, 1).AddDays(seed),
+        Operation: MovementOperation.Disburse,
+        Origin: MovementOrigin.Originated,
+        CommandId: DeterministicGuid(seed + 1000));
 
     // Guid.NewGuid() would make a failure non-reproducible; derive a stable Guid from the seed.
     private static Guid DeterministicGuid(int seed)

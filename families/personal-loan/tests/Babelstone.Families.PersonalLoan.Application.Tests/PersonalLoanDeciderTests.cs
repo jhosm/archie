@@ -33,6 +33,43 @@ public sealed class PersonalLoanDeciderTests
     }
 
     [Fact]
+    public void DecideDisbursement_records_an_originated_credit_movement_append_first_against_the_borrower_account()
+    {
+        // ADR-PC-032 slot 5 / §A8 / feature-design §134: the disbursement records its money leg APPEND-FIRST
+        // as ONE Originated Credit Movement against the borrower's disbursement account — the lump sum ENTERS
+        // that account (Credit), correcting the old eager Debit-on-the-borrower wrinkle. The substrate-owned
+        // settlement saga effects the cash leg, gated, off this recorded Movement; the decider settles nothing.
+        var loanId = Guid.NewGuid();
+        var commandId = Guid.NewGuid();
+        var command = DisburseCommand(loanId, principalCents: 1_000_000, termMonths: 12) with { CommandId = commandId };
+
+        var disbursed = PersonalLoanDecider.DecideDisbursement(command, tanBasisPoints: 600, rateSheetVersionId: "rs-1");
+
+        var movement = Assert.Single(disbursed.Movements!);
+        Assert.Equal(SettlementDirection.Credit, movement.Direction);        // value ENTERS the borrower's account
+        Assert.Equal("acct-token-1", movement.AccountRef);                   // pinned to the disbursement account
+        Assert.Equal(new Money(1_000_000), movement.Amount);                 // the disbursed principal
+        Assert.Equal(MovementOperation.Disburse, movement.Operation);        // the closed operation code
+        Assert.Equal(MovementOrigin.Originated, movement.Origin);            // the decider decided it → gated cash leg
+        Assert.Equal(new DateOnly(2026, 1, 1), movement.ValueDate);          // the disbursement date, not a clock
+        Assert.Equal(commandId, movement.CommandId);                        // threaded for append idempotency (slot 4)
+    }
+
+    [Fact]
+    public void DecideDisbursement_movement_promotes_originated_credit_headers_for_the_settlement_saga()
+    {
+        // The producer hop (bd babelstone-t7o3.20): the recorded Movement promotes ce_movementorigin=Originated
+        // and ce_movementdirection=Credit, the headers the substrate-owned settlement saga auto-starts on.
+        var command = DisburseCommand(Guid.NewGuid(), principalCents: 500_000, termMonths: 24);
+        var disbursed = PersonalLoanDecider.DecideDisbursement(command, tanBasisPoints: 600, rateSheetVersionId: "rs-1");
+
+        var headers = disbursed.IntegrationHeaders;
+        Assert.NotNull(headers);
+        Assert.Equal("Originated", headers![MovementHeaders.OriginKey]);
+        Assert.Equal("Credit", headers[MovementHeaders.DirectionKey]);
+    }
+
+    [Fact]
     public void DecideInstallment_emits_the_next_schedule_rows_split()
     {
         // The first installment of the worked example: interest €50.00, capital €810.66, balance €9,189.34.
