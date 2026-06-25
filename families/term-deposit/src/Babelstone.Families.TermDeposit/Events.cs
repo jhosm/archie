@@ -108,8 +108,8 @@ public sealed record DepositConstituted(
     // RateSheetVersionId, NOT an envelope/AppendContext column like pack_version. So a replay can prove
     // exactly which product-config generation governed the deposit (REPLAY_PIN_PER_EVENT). A structural
     // version string, NOT PII (ADR-PC-004 §P2). Additive with an Avro default "" so pre-pin records still
-    // decode (forward-only evolution, ADR-IC-002 §P3); "" when no product-config store is wired (direct
-    // callers) or the config carried no version. Prospective only (bd babelstone-fk7m.9).
+    // decode (forward-only evolution, ADR-IC-002 §P3) — empty when no product-config store is wired
+    // (direct callers) or the config carried no version. Prospective only (bd babelstone-fk7m.9).
     string ProductConfigVersion = "") : DomainEvent
 {
     // Constitution is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1): the instance's
