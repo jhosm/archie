@@ -25,12 +25,15 @@ namespace Babelstone.RateSheets;
 /// function stays green.
 /// </para>
 /// <para>
-/// <b>Version pinning is a follow-up (ADR-PC-009 §P1, flagged for the maintainer).</b> v1 resolves
-/// <c>product_code → structural facts</c> only; it does NOT yet stamp a per-instance product-config
-/// VERSION on the constitution event (the way the rate sheet stamps <c>rate_sheet_version_id</c>).
-/// The product-config YAMLs are static, deploy-time artefacts (there is no versioned
-/// <c>POST /v1/product-configs</c> deploy timeline), so the event's <c>pack_version</c> already
-/// encodes the operative configuration generation. Full product-config version pinning is later work.
+/// <b>Version pinning (ADR-PC-009 §A2).</b> Each resolved config now carries a content-hash
+/// <see cref="ProductConfig.ConfigVersion"/> (SHA-256 over the config YAML bytes) that the decider
+/// stamps onto <c>DepositConstituted</c> as a per-instance pin — a PAYLOAD-shaped pin, exactly like
+/// <c>rate_sheet_version_id</c> (NOT an envelope/AppendContext column like <c>pack_version</c>) — so a
+/// replay can prove which product-config generation a deposit was constituted under (ADR-PC-009 §A2,
+/// REPLAY_PIN_PER_EVENT; ADR-PC-008 §S2 resolution-in-transaction). The product-config YAMLs are still
+/// static, deploy-time artefacts: a full versioned <c>POST /v1/product-configs</c> deploy registry
+/// (mirroring the rate-sheet deploy API) remains later work (bd `babelstone-fk7m.9` follow-up). Until
+/// that lands the content hash is the version: any edit to the YAML yields a new <c>ConfigVersion</c>.
 /// </para>
 /// </remarks>
 public interface IProductConfigStore
@@ -68,6 +71,13 @@ public interface IProductConfigStore
 /// <param name="LockupPeriodDays">F.12 partial-withdrawal gate: the lock-up window in days
 /// from constitution during which no partial withdrawal is allowed (<c>partial_withdrawal.lockup_period_days</c>).
 /// <c>0</c> ⇒ no lock-up.</param>
+/// <param name="ConfigVersion">The per-generation content version of the product-config this resolved
+/// from — a SHA-256 content hash (<c>sha256:&lt;hex&gt;</c>) over the config YAML bytes, computed at
+/// load (the disk loader sets it; <c>FromConfigs</c> callers default it to <c>""</c>). The decider
+/// stamps it onto <c>DepositConstituted</c> as a per-instance pin so a replay can prove which
+/// product-config generation a deposit was constituted under (ADR-PC-009 §A2, REPLAY_PIN_PER_EVENT).
+/// A structural version string, never PII (ADR-PC-004 §P2). Defaults to <c>""</c> so the test seam and
+/// pre-pin callers construct unchanged.</param>
 public sealed record ProductConfig(
     string ProductId,
     int TermDays,
@@ -77,4 +87,5 @@ public sealed record ProductConfig(
     string DefaultRole,
     long MinWithdrawalCents = 0,
     long MinRemainingBalanceCents = 0,
-    int LockupPeriodDays = 0);
+    int LockupPeriodDays = 0,
+    string ConfigVersion = "");

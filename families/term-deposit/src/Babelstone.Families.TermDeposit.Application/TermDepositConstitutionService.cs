@@ -163,14 +163,20 @@ public sealed class TermDepositConstitutionService(
         //    (ADR-PC-009 per-instance pinning). A product the store does not carry — or no store
         //    configured (direct callers) — pins the Unrestricted policy: no F.12 gates. Pure lookup,
         //    no clock/I-O in the pinned value.
-        var partialWithdrawalPolicy = _productConfigStore?.Resolve(command.ProductId) is { } productConfig
+        //    Resolve the product config ONCE here: it yields both the F.12 policy AND the content-hash
+        //    ConfigVersion the decider pins per-event (ADR-PC-009 §A2). A product the store does not
+        //    carry — or no store configured (direct callers) — pins the Unrestricted policy and an empty
+        //    version.
+        var productConfig = _productConfigStore?.Resolve(command.ProductId);
+        var partialWithdrawalPolicy = productConfig is not null
             ? PartialWithdrawalPolicy.FromProductConfig(productConfig)
             : PartialWithdrawalPolicy.Unrestricted;
+        var productConfigVersion = productConfig?.ConfigVersion ?? string.Empty;
 
         // 4. Decide (pure): build the event, stamping the resolved TAN + the version it came from + the
-        //    resolved partial-withdrawal policy.
+        //    resolved partial-withdrawal policy + the product-config generation pin.
         var constituted = TermDepositDecider.DecideConstitution(
-            command, tan, resolution.RateSheetVersionId, partialWithdrawalPolicy);
+            command, tan, resolution.RateSheetVersionId, partialWithdrawalPolicy, productConfigVersion);
 
         // 4. DE-SETTLED constitution (bd babelstone-t7o3.4, ADR-PC-016 §68/§127). The engine no longer
         //    debits the funding account on this path: settlement is the constitution SAGA's GATED step

@@ -89,6 +89,48 @@ public sealed class ProductConfigResolutionTests(ConstitutionFixture fixture)
                     CommandId: Guid.NewGuid())));
     }
 
+    /// <summary>
+    /// bd babelstone-fk7m.9 / ADR-PC-009 §A2 (REPLAY_PIN_PER_EVENT): a constitution PINS the
+    /// product-config generation it resolved — the content-hash <c>ConfigVersion</c> — onto
+    /// <c>DepositConstituted</c>, and a COLD fold from the persisted event log (a fresh runtime over the
+    /// same store) re-derives the identical pin. This proves the pin is a per-event fact on the stream,
+    /// not in-memory state, so a replay can prove which product-config generation governed the deposit.
+    /// </summary>
+    [Fact]
+    public async Task Constitution_pins_the_product_config_version_and_a_cold_replay_reproduces_it()
+    {
+        await fixture.EnsureRateSheetAsync(SharedSheet);
+
+        var (_, service) = Compose(fixture.ConnectionString);
+        var depositId = Guid.NewGuid();
+
+        await service.ConstituteFromProductConfigAsync(
+            new MinimalConstituteDepositRequest(
+                DepositId: depositId,
+                ProductId: "dpz_pt_12m_juros_venc",
+                PrincipalCents: 1_000_000,
+                FundingAccount: "PT50-DDA-001",
+                ConstitutedAt: new DateTimeOffset(2026, 1, 15, 0, 0, 0, TimeSpan.Zero),
+                Actor: "mcp:dev",
+                CommandId: Guid.NewGuid()));
+
+        // The pin the disk loader computed for this product config — a sha256:<hex> content hash.
+        var expected = new YamlProductConfigStore(productConfigsDir: null)
+            .Resolve("dpz_pt_12m_juros_venc")!.ConfigVersion;
+        Assert.Matches("^sha256:[0-9a-f]{64}$", expected);
+
+        // A FRESH runtime over the SAME store folds the stream cold from the event log — the pin must
+        // come off the persisted DepositConstituted event, not any in-memory state (REPLAY_PIN_PER_EVENT).
+        var coldStore = new PostgresEventStore(fixture.ConnectionString);
+        var coldRuntime = new AggregateRuntime<DepositPosition>(
+            coldStore, new EventStoreSink(coldStore), TermDepositFamilyModule.Registry(),
+            new JsonEventSerializer(), new NullPiiProtector(), TimeProvider.System,
+            () => DepositPosition.Empty);
+        var replayed = (await coldRuntime.LoadAsync(depositId)).State;
+
+        Assert.Equal(expected, replayed.ProductConfigVersion);
+    }
+
     private static RateSheet SharedSheet => TestRateSheets.MultiPriced(
         versionId: "pt-deposits-2026.1",
         effectiveFrom: new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero),

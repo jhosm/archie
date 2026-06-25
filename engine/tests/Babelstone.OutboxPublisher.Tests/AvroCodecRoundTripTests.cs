@@ -197,6 +197,62 @@ public sealed class AvroCodecRoundTripTests
     }
 
     [Fact]
+    public void DepositConstituted_round_trips_the_product_config_version_additive_field()
+    {
+        // bd babelstone-fk7m.9: product_config_version is PINNED on DepositConstituted at constitution
+        // (ADR-PC-009 §A2) — a payload-shaped pin like rate_sheet_version_id, a sha256:<hex> content hash
+        // of the product-config the deposit resolved from. A populated version must survive the wire,
+        // proving the .avsc field (not just the C# record) carries it so a replay can prove which config
+        // generation governed the deposit (REPLAY_PIN_PER_EVENT). Structural version string, not PII.
+        var serializer = NewSerializer();
+        var original = new DepositConstituted(
+            DepositId: Guid.NewGuid(),
+            Principal: new Money(2_000_000),
+            TanBasisPoints: 300,
+            RateSheetVersionId: "pt-deposits-2026.1",
+            TermDays: 365,
+            StartDate: new DateOnly(2026, 1, 1),
+            MaturityDate: new DateOnly(2027, 1, 1),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE",
+            ProductConfigVersion: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+
+        var decoded = (DepositConstituted)serializer.Decode(
+            serializer.Encode(original).Bytes, typeof(DepositConstituted));
+
+        Assert.Equal(original, decoded);
+        Assert.Equal(
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            decoded.ProductConfigVersion);
+    }
+
+    [Fact]
+    public void DepositConstituted_decodes_a_pre_pin_record_as_the_empty_product_config_version_default()
+    {
+        // bd babelstone-fk7m.9 added product_config_version (additive, default ""). A record written
+        // before the pin never carried it; constructing the C# record WITHOUT it (the "" default) and
+        // round-tripping proves the .avsc default decodes — pre-pin records still replay as "" rather than
+        // failing to decode (forward-only evolution, ADR-IC-002 §P3, same precedent as product_code).
+        var serializer = NewSerializer();
+        var prePin = new DepositConstituted(
+            DepositId: Guid.NewGuid(),
+            Principal: new Money(1_000_000),
+            TanBasisPoints: 300,
+            RateSheetVersionId: "pt-deposits-2026.1",
+            TermDays: 364,
+            StartDate: new DateOnly(2026, 1, 1),
+            MaturityDate: new DateOnly(2026, 12, 31),
+            InterestVariant: "AT_MATURITY",
+            AutoRenewalPolicy: "NONE");
+
+        var decoded = (DepositConstituted)serializer.Decode(
+            serializer.Encode(prePin).Bytes, typeof(DepositConstituted));
+
+        Assert.Equal(prePin, decoded);
+        Assert.Equal("", decoded.ProductConfigVersion);
+    }
+
+    [Fact]
     public void DepositConstituted_decodes_a_pre_mtto5_record_as_the_empty_role_and_funding_defaults()
     {
         // bd babelstone-mtto.5 added role + funding_account (additive, default ""). A record written

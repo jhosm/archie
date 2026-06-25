@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -16,7 +17,10 @@ namespace Babelstone.RateSheets;
 /// rate-sheet cross-artefact checks already consume; there is no versioned deploy endpoint for them,
 /// so they are loaded structurally at the engine host's startup and cached immutably. A missing
 /// directory or an unparseable file fails the load loud rather than constituting on a silent default
-/// (the same discipline the pack loader takes, ADR-PC-007 §P4).
+/// (the same discipline the pack loader takes, ADR-PC-007 §P4). Each loaded config is stamped with a
+/// content-hash <see cref="ProductConfig.ConfigVersion"/> (SHA-256 of the YAML bytes) so the decider can
+/// pin which config generation a deposit was constituted under (ADR-PC-009 §A2); since there is no
+/// versioned deploy timeline yet, the content hash IS the version.
 /// </para>
 /// <para>
 /// <b>Structural facts only, never price (ADR-PC-008 §S2).</b> This store reads <c>term_days</c>,
@@ -112,10 +116,25 @@ public sealed class YamlProductConfigStore : IProductConfigStore
 
     private static ProductConfig Parse(string path)
     {
+        // Read the raw bytes ONCE: deserialise the shape from them AND derive the content version from
+        // the same bytes, so the pinned ConfigVersion is exactly the on-disk artefact's hash (the thing
+        // an auditor sees in git). Any edit to the YAML — even a comment — yields a new version, which is
+        // the intended "which generation" semantics until a versioned deploy registry lands (fk7m.9).
+        byte[] raw;
+        try
+        {
+            raw = File.ReadAllBytes(path);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"product config '{path}' could not be read.", ex);
+        }
+
         ProductConfigYaml? yaml;
         try
         {
-            yaml = Deserializer.Deserialize<ProductConfigYaml>(File.ReadAllText(path));
+            yaml = Deserializer.Deserialize<ProductConfigYaml>(System.Text.Encoding.UTF8.GetString(raw));
         }
         catch (Exception ex)
         {
@@ -160,8 +179,16 @@ public sealed class YamlProductConfigStore : IProductConfigStore
             // max corridor) was already enforced by pack-validate at deploy time (ADR-PC-006), not here.
             MinWithdrawalCents: yaml.PartialWithdrawal?.MinWithdrawalCents ?? 0,
             MinRemainingBalanceCents: yaml.PartialWithdrawal?.MinRemainingBalanceCents ?? 0,
-            LockupPeriodDays: yaml.PartialWithdrawal?.LockupPeriodDays ?? 0);
+            LockupPeriodDays: yaml.PartialWithdrawal?.LockupPeriodDays ?? 0,
+            // The per-generation content version the decider pins on DepositConstituted (ADR-PC-009 §A2).
+            ConfigVersion: ComputeConfigVersion(raw));
     }
+
+    // SHA-256 over the raw config bytes, rendered as `sha256:<lowercase-hex>`. Deterministic (same bytes
+    // ⇒ same version on any host/replay) and order-free; no clock, no randomness. The `sha256:` prefix
+    // names the algorithm so a future registry-issued version (fk7m.9) is distinguishable from a hash.
+    private static string ComputeConfigVersion(byte[] raw) =>
+        "sha256:" + Convert.ToHexStringLower(SHA256.HashData(raw));
 
     // Walk up from the running binary to the repo's product-configs/ tree — the same find-by-walking
     // discipline HostPackStore.FindPacksDir and the test fixtures use, so dev/test boots with no
