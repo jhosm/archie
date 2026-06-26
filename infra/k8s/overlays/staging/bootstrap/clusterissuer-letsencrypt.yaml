@@ -1,0 +1,37 @@
+# Let's Encrypt ClusterIssuer for the staging box — cluster-scoped, applied ONCE
+# at cluster bootstrap (Phase 2, bd babelstone-zla1.3), NOT part of the kustomize
+# overlay.
+#
+# Why it lives here and not in the overlay: it is a cert-manager CRD, and the CI
+# gate runs `kubeconform -strict` with no CRD schemas — a ClusterIssuer inside the
+# kustomize build would hard-fail it. The overlay's Ingress (../ingress.yaml)
+# references this issuer by name (cert-manager.io/cluster-issuer:
+# letsencrypt-babelstone); cert-manager's ingress-shim does the rest.
+#
+# Bootstrap apply order (account-gated — needs the live cluster + DNS):
+#   1. helm install cert-manager (with its CRDs)
+#   2. kubectl apply -f infra/k8s/overlays/staging/bootstrap/   # this issuer
+#   3. kubectl apply -k infra/k8s/overlays/staging              # the overlay
+#
+# Prereqs: the node exists, DNS A records (api.babelstone.dev, backstage.babelstone.dev)
+# point at the node IP, and Traefik is reachable on :80 (the HTTP-01 ACME challenge).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-babelstone
+spec:
+  acme:
+    # Production Let's Encrypt. For a dry-run that won't burn the prod rate limit,
+    # swap to the staging endpoint
+    # (https://acme-staging-v02.api.letsencrypt.org/directory) — but note .dev is
+    # HSTS-preloaded, so a browser rejects staging's untrusted cert; use it only to
+    # prove the issuance wiring, then switch back.
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # Role mailbox on the owned domain (swap for the real ops contact). Not PII.
+    email: admin@babelstone.dev
+    privateKeySecretRef:
+      name: letsencrypt-babelstone-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: traefik

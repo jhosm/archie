@@ -1,0 +1,7 @@
+# JSON6902 — pin durable Hetzner CSI block storage on the stateful volume claim.
+# Shared by the postgres / redpanda / registry StatefulSet targets (each has a
+# single volumeClaimTemplate at index 0). See overlays/staging/kustomization.yaml
+# for why this is JSON6902 (add-only) rather than a strategic-merge patch.
+- op: add
+  path: /spec/volumeClaimTemplates/0/spec/storageClassName
+  value: hcloud-volumes

@@ -35,8 +35,19 @@ application/engine service images (they connect to this stack).
 | backstage (catalogue portal) + backstage-db | Deployment ×2 | 7007, 5432 | [ADR-IC-015](../../docs/product-management/integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) (supersedes the retired ADR-IC-008) — renders `catalog-info.yaml`; app image is human-handoff (bd babelstone-s4ol.1) |
 | core-acl-stub (v1 Core-ACL settlement stub) | Deployment | 8080 | [ADR-PC-016](../../docs/product-management/product_concepts/adrs/ADR-PC-016-legacy-current-account-adapter.md) / [ADR-PC-029](../../docs/product-management/product_concepts/adrs/ADR-PC-029-engine-command-ingress.md) — WireMock; real ACL is DEF-1 (bd babelstone-ub9s) |
 
-All Services are `ClusterIP` (dev: reach them via `kubectl port-forward`).
-Ingress/gateway exposure beyond Kong is out of scope.
+All Services are `ClusterIP` — in the `base`, `dev`, and `ha` overlays they are
+reached via `kubectl port-forward`. **The `staging` overlay is the one exception**
+([see below](#staging-overlay--the-always-on-public-demo-box-bd-babelstone-zla1)):
+it adds a public Traefik `Ingress` + cert-manager/Let's Encrypt TLS fronting the
+Kong edge and the Backstage portal — the always-on demo box. That is a deliberate,
+recorded extension of the previous "no ingress/gateway exposure beyond Kong"
+posture: an
+[ADR-PC-020 §D3](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
+explicit-drift event, acknowledged here and in the introducing PR body. Kong stays
+the [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
+authz edge — now *behind* Traefik — and no OTLP port (4317/4318) is ever exposed
+([ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md)
+§P1).
 
 ## Layout
 
@@ -50,19 +61,28 @@ infra/k8s/
 └── overlays/
     ├── dev/                    # single env; replicas=1 (no HA)
     │   └── kustomization.yaml
-    └── ha/                     # production-shaped HA topology (P.7 — see below)
-        ├── kustomization.yaml
-        ├── redpanda-ha.yaml          # 1->3 node seed-discovered cluster
-        ├── redpanda-headless-svc.yaml# per-pod DNS for the quorum
-        ├── postgres-primary-ha.yaml  # synchronous-replication primary
-        ├── postgres-headless-svc.yaml# per-pod DNS for the primary (replication host)
-        ├── postgres-write-svc-ha.yaml# narrows the `postgres` write Service to the primary
-        ├── postgres-standby-ha.yaml  # off-site warm standby (RPO ~ 0)
-        ├── ha-secrets.example.yaml   # DEV-ONLY replication credential
-        ├── postgres-pitr-resources.yaml  # M.4 PITR base-backup CronJob + cipher Secret
-        ├── postgres-pitr-pgbackrest.yaml # M.4 patch: WAL archiving + pgBackRest sidecar on the primary
-        ├── openbao-dr-ha.yaml        # M.4 OpenBao key-store DR snapshot seam
-        └── files/                    # primary replication-setup shell hook + pg_hba.conf
+    ├── ha/                     # production-shaped HA topology (P.7 — see below)
+    │   ├── kustomization.yaml
+    │   ├── redpanda-ha.yaml          # 1->3 node seed-discovered cluster
+    │   ├── redpanda-headless-svc.yaml# per-pod DNS for the quorum
+    │   ├── postgres-primary-ha.yaml  # synchronous-replication primary
+    │   ├── postgres-headless-svc.yaml# per-pod DNS for the primary (replication host)
+    │   ├── postgres-write-svc-ha.yaml# narrows the `postgres` write Service to the primary
+    │   ├── postgres-standby-ha.yaml  # off-site warm standby (RPO ~ 0)
+    │   ├── ha-secrets.example.yaml   # DEV-ONLY replication credential
+    │   ├── postgres-pitr-resources.yaml  # M.4 PITR base-backup CronJob + cipher Secret
+    │   ├── postgres-pitr-pgbackrest.yaml # M.4 patch: WAL archiving + pgBackRest sidecar on the primary
+    │   ├── openbao-dr-ha.yaml        # M.4 OpenBao key-store DR snapshot seam
+    │   └── files/                    # primary replication-setup shell hook + pg_hba.conf
+    └── staging/                # always-on public demo box (single-node; see below)
+        ├── kustomization.yaml        # ns babelstone-staging; replicas=1; storage + edge patches
+        ├── ingress.yaml              # public Traefik Ingress (Kong edge + Backstage), cert-manager TLS
+        ├── storageclass.patch.yaml   # JSON6902: pin hcloud-volumes on the stateful VCTs
+        ├── backstage-db-pvc.yaml     # durable PVC for the Backstage DB (base ships it PVC-less)
+        ├── backstage-db-storage.patch.yaml # mount that PVC + PGDATA subdir
+        └── bootstrap/                # cluster-scoped, account-gated, applied ONCE (NOT kustomized)
+            ├── clusterissuer-letsencrypt.yaml # Let's Encrypt ClusterIssuer (cert-manager CRD)
+            └── README.md             # bootstrap apply order + prereqs
 ```
 
 Render the manifests (swap `dev` for `ha` to render the HA topology):
@@ -202,10 +222,91 @@ The `ha-secrets.example.yaml` replication credential is a **DEV-ONLY
 placeholder**, same seam contract as `base/secrets.example.yaml` — never commit
 real credentials; M.2 replaces it with OpenBao-backed provisioning.
 
+## staging overlay — the always-on public demo box (bd babelstone-zla1)
+
+The **`overlays/staging`** overlay is the single, always-on, **public** demo /
+staging environment: one CAX41 ARM node running single-node k3s in Hetzner
+Helsinki, on the domain `babelstone.dev`. It diverges from the *same* `base`/`dev`
+seam the `ha` overlay does — but in the **staging** direction, not the HA one. It
+runs one copy of everything (HA would not fit a single node — do **not** promote
+`overlays/ha` here), but adds two things the `dev` overlay deliberately omits:
+**durable storage** and a **public TLS edge**.
+
+| Concern | dev overlay | staging overlay |
+|---|---|---|
+| Namespace | `babelstone-dev` | `babelstone-staging` |
+| Storage | unset → k3s `local-path` (node-local, ephemeral) | `hcloud-volumes` (Hetzner CSI block — survives node rebuild, **snapshot-able**) |
+| backstage-db | ephemeral (base ships it PVC-less) | a durable `PersistentVolumeClaim` |
+| Public access | `ClusterIP` + `kubectl port-forward` | a Traefik `Ingress` + cert-manager/Let's Encrypt TLS |
+
+**Storage — durable by choice.** The base `volumeClaimTemplates` carry no
+`storageClassName`, so on stock k3s they bind to the ephemeral `local-path`
+provisioner. The staging overlay pins **`hcloud-volumes`** (the Hetzner CSI block
+class) on the Postgres / Redpanda / registry claims and gives the Backstage DB its
+own PVC, so the always-on box's data survives a node rebuild and is snapshot-able
+for the Phase-6 backups (bd babelstone-zla1.7). This honours the locked
+staging-env decision. The pin is a JSON6902 add-op (`storageclass.patch.yaml`) —
+`volumeClaimTemplates` has no strategic-merge key, so a merge patch would *replace*
+the whole VCT list and drop the base storage request. At `kustomize build` /
+`kubeconform` time `storageClassName` is just a string; it binds to a real driver
+only at apply, once Phase-1 `hetzner-k3s` installs the Hetzner CCM + CSI.
+
+**Public edge — the recorded drift.** `ingress.yaml` adds a public Traefik
+`Ingress` (k3s bundles Traefik as the `IngressClass`) for two hosts:
+`api.babelstone.dev` → the **Kong** proxy (8000) and `backstage.babelstone.dev` →
+**Backstage** (7007). Adding any public ingress extends the previous
+"no ingress/gateway exposure beyond Kong" posture, so this is an
+[ADR-PC-020 §D3](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
+**explicit-drift event**, acknowledged in the same change (this section, the scope
+note above, and the introducing PR body — no silent divergence). The load-bearing
+invariants are preserved:
+
+- **Kong stays the [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
+  authz edge, now *behind* Traefik.** Traefik terminates TLS and forwards to the
+  Kong proxy, which still applies every declarative route + edge policy; nothing
+  routes around Kong for the product API. Backstage (the catalogue portal — not
+  part of the ADR-IC-006 product surface) is fronted directly.
+- **No OTLP exposure** ([ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md)
+  §P1): Grafana is intentionally *not* ingressed, and the collector's 4317/4318
+  never reach a public route.
+- **No POC cert/key literals committed** — TLS is issued at runtime by
+  cert-manager, exactly as the edge mTLS material is sourced at `deck sync` time.
+
+**TLS issuance is a cluster CRD, kept out of the kustomize build.** cert-manager's
+`ClusterIssuer` (and `Certificate`) are CRDs, and the CI gate runs
+`kubeconform -strict` with no CRD schemas — a CRD inside `kustomize build` would
+hard-fail it. So only the built-in `Ingress` lives in the overlay (with a
+`cert-manager.io/cluster-issuer` annotation; cert-manager's ingress-shim
+auto-creates the per-host `Certificate`). The issuer itself lives in
+[`staging/bootstrap/`](./overlays/staging/bootstrap/), **deliberately not
+referenced** by the kustomization, and is applied once at cluster bootstrap
+(Phase 2) alongside the cert-manager install.
+
+**ACL — the WireMock stub, unchanged.** Staging inherits the base
+`core-acl-stub` (WireMock) as-is; the real Core-ACL adapter is DEF-1
+(bd babelstone-ub9s), out of scope here.
+
+Validate (the same CI gate as `dev`/`ha` — CI now loops all three overlays):
+
+```bash
+mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging \
+  | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
+```
+
+**Account-gated / deferred (not in this overlay yet):** provisioning the node,
+installing the CSI driver + cert-manager + the issuer, pointing DNS at the node IP,
+and the end-to-end cert verification all need the Hetzner account + DNS (Phases
+0–2). Per-service CPU/memory **requests/limits** sized for the 32 GB node, the
+**app/engine service** manifests (engine, orchestrator, acl, notification,
+mcp-server) and the **Mission Control** UI ingress are the later phases
+(bd babelstone-zla1.4 sizing residual, zla1.5); the real Backstage **image** is
+zla1.6 (the base still pins `:placeholder`).
+
 ## Out of scope (downstream)
 
 The `dev` overlay is a single, non-HA, dev/staging-shaped environment; the `ha`
-overlay (above) adds the production-shaped topology. The remaining scope split:
+overlay adds the production-shaped topology; the `staging` overlay (both above)
+adds the always-on public demo box. The remaining scope split:
 
 - **CD / promotion pipeline — Q.6** (babelstone-4c81): **implemented** in
   [`.github/workflows/cd.yml`](../../.github/workflows/cd.yml) — it cosign-verifies

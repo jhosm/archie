@@ -19,10 +19,14 @@ name: CD — promote to P.6 (Kubernetes)
 #     §P7 — JWT key registration/rotation as the deliberate 3-step `deck sync`.
 #   • ADR-PC-018 — the SoR-routing edge config rides the same one git-tracked kong.yml this syncs.
 #
-# Promotion targets (P.6): the two Kustomize overlays under infra/k8s/overlays — `dev`
-# (single-replica) and `ha` (the P.7 production-shaped topology). The TARGET is chosen by the
-# manual dispatch input; a push-to-main run does the hermetic gates only (no cluster credentials
-# on the default runner — applying to a real cluster is an environment-gated, human-dispatched step).
+# Promotion targets (P.6): the Kustomize overlays under infra/k8s/overlays — `dev`
+# (single-replica), `ha` (the P.7 production-shaped topology), and `staging` (the always-on
+# demo box — single-replica + durable hcloud storage + the public TLS edge; bd babelstone-zla1).
+# The TARGET is chosen by the manual dispatch input; a push-to-main run does the hermetic gates
+# only (no cluster credentials on the default runner — applying to a real cluster is an
+# environment-gated, human-dispatched step). NOTE: promoting `staging` additionally needs its
+# cluster-scoped bootstrap (cert-manager + the Let's Encrypt ClusterIssuer) applied once first —
+# see infra/k8s/overlays/staging/bootstrap/.
 #
 # Security: NO real cert/key material is committed. The deck-sync step pulls the real material from
 # OpenBao at run time (a deploy-scoped token in an environment secret, never root, never the browser).
@@ -53,7 +57,7 @@ on:
       overlay:
         description: 'Kustomize overlay to promote (infra/k8s/overlays/<overlay>)'
         type: choice
-        options: [dev, ha]
+        options: [dev, ha, staging]
         default: dev
       apply:
         description: 'Actually apply to the cluster + deck sync (needs the environment secrets); false = gates + render only'

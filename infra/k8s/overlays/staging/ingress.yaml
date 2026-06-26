@@ -1,0 +1,70 @@
+# Public HTTPS edge for the staging box — the ADR-PC-020 §D3 drift acknowledged in
+# infra/k8s/README.md (this is the one place the deployed estate exposes anything
+# publicly). k3s bundles Traefik as the IngressClass; cert-manager (installed at
+# bootstrap/) issues Let's Encrypt certs via the HTTP-01 solver, triggered by the
+# cert-manager.io/cluster-issuer annotation. cert-manager's ingress-shim
+# auto-creates the Certificate from the `tls:` block — none is authored here, which
+# also keeps the strict kubeconform gate green (no cert-manager CRD enters the
+# kustomize build).
+#
+# Kong stays the ADR-IC-006 authz edge: Traefik terminates TLS and forwards to the
+# Kong PROXY (8000), which still applies every declarative route + edge policy.
+# Traefik does NOT bypass Kong for the product API. Backstage (the catalogue
+# portal — not part of the ADR-IC-006 product surface) gets its own subdomain
+# straight through Traefik. Grafana is intentionally NOT exposed (no public
+# unauthenticated dashboard); OTLP 4317/4318 stays unexposed per ADR-IC-007 §P1.
+#
+# Hosts are babelstone.dev subdomains (the locked domain). DNS → node IP is the
+# account-gated Phase-0/2 step; at build time these are inert strings.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kong-edge
+  labels:
+    app.kubernetes.io/name: kong
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-babelstone
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - api.babelstone.dev
+      secretName: kong-edge-tls
+  rules:
+    - host: api.babelstone.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kong
+                port:
+                  number: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backstage
+  labels:
+    app.kubernetes.io/name: backstage
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-babelstone
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - backstage.babelstone.dev
+      secretName: backstage-tls
+  rules:
+    - host: backstage.babelstone.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: backstage
+                port:
+                  number: 7007
