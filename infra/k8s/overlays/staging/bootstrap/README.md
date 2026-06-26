@@ -22,6 +22,14 @@ This directory is **deliberately not referenced** by
   by the mcp-server Deployment) **and** Kong's **client** cert (`mcp-kong-client-tls`),
   both chaining to the one CA. Distinct from the public Let's Encrypt edge above —
   this is internal east-west mTLS, never public.
+- [`volume-snapshot-class.yaml`](./volume-snapshot-class.yaml) — the
+  `VolumeSnapshotClass` (`hcloud-volumes`, driver `csi.hetzner.cloud`) the
+  volume-snapshot CronJob references (bd babelstone-zla1.7). Needs the **external CSI
+  snapshot controller + CRDs** installed (NOT bundled with k3s).
+- [`k3s-upgrade-plan.yaml`](./k3s-upgrade-plan.yaml) — the system-upgrade-controller
+  `Plan` tracking the k3s `stable` channel (bd babelstone-zla1.7). Needs Rancher's
+  **system-upgrade-controller** installed (it creates the `system-upgrade` namespace +
+  ServiceAccount the Plan uses).
 
 ## Apply order (Phase 2 — needs the live cluster + DNS)
 
@@ -31,7 +39,13 @@ helm repo add jetstack https://charts.jetstack.io && helm repo update
 helm install cert-manager jetstack/cert-manager \
   --namespace cert-manager --create-namespace --set crds.enabled=true
 
-# 2. Apply the cluster-scoped issuer (this directory).
+# 1b. Install the controllers the zla1.7 ops bootstrap depends on:
+#   - the external CSI snapshot controller + its CRDs (VolumeSnapshot/Class/Content) —
+#     NOT bundled with k3s; install the upstream kubernetes-csi/external-snapshotter manifests.
+#   - Rancher's system-upgrade-controller (creates the `system-upgrade` ns + SA the Plan uses).
+kubectl apply -f https://github.com/rancher/system-upgrade-controller/releases/latest/download/system-upgrade-controller.yaml
+
+# 2. Apply the cluster-scoped bootstrap (this directory): issuers, VolumeSnapshotClass, k3s Plan.
 kubectl apply -f infra/k8s/overlays/staging/bootstrap/
 
 # 3. Apply the overlay itself (cd.yml does this on promote).

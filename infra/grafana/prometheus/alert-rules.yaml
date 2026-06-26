@@ -398,3 +398,29 @@ groups:
             conditional logic) the cheap daily checksum misses. Investigate the
             divergent kind before the next settlement cycle. Page on-call.
           runbook: ../../runbooks/reconciliation-alerts.md
+
+  # ---------------------------------------------------------------------------
+  # STAGING LIVENESS (bd babelstone-zla1.7). The cheapest IN-CLUSTER "is the app
+  # up" signal: the engine continuously emits outbox_publish_lag_seconds, so its
+  # ABSENCE means the engine isn't reporting (down, crash-looping, or telemetry
+  # broken). Complements the EXTERNAL ingress pinger — the end-to-end uptime check
+  # documented in infra/runbooks/staging-ops.md. NOTE: these rules load via a
+  # standalone Prometheus / the appliance `rule_files:`; wiring rule_files into the
+  # k8s grafana-lgtm appliance is a follow-up (today this file is compose/standalone).
+  # ---------------------------------------------------------------------------
+  - name: staging-liveness
+    rules:
+      - alert: EngineMetricsAbsent
+        expr: absent(outbox_publish_lag_seconds)
+        for: 5m
+        labels:
+          severity: critical
+          sli: liveness
+        annotations:
+          summary: "Engine is not reporting metrics (staging may be down)"
+          description: >-
+            The engine's first-class SLI metric (outbox_publish_lag_seconds) has
+            been ABSENT for 5m — the engine is down, crash-looping, or telemetry
+            has stopped reaching the collector. Pair with the external ingress
+            pinger on https://app.babelstone.dev/ for end-to-end uptime.
+          runbook: ../../runbooks/staging-ops.md

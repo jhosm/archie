@@ -1,0 +1,29 @@
+# k3s automated-upgrade Plan (bd babelstone-zla1.7) — cluster bootstrap, applied ONCE, NOT part
+# of the kustomize overlay (it's a system-upgrade-controller CRD, upgrade.cattle.io/v1; the CI
+# gate runs kubeconform -strict with no CRD schemas).
+#
+# Prereq (account/cluster-gated): install Rancher's system-upgrade-controller first (it creates
+# the `system-upgrade` namespace + the `system-upgrade` ServiceAccount this Plan uses) — see
+# bootstrap/README.md. On a SINGLE-node box, an upgrade cordons+drains the one node, so there is a
+# brief downtime window per upgrade — acceptable for a demo box; schedule it off-hours.
+apiVersion: upgrade.cattle.io/v1
+kind: Plan
+metadata:
+  name: k3s-server
+  namespace: system-upgrade
+  labels:
+    app.kubernetes.io/name: k3s-upgrade
+spec:
+  # Follow the k3s `stable` channel; the controller resolves the latest stable release from it.
+  channel: https://update.k3s.io/v1-release/channels/stable
+  # One node at a time; drain it for the in-place k3s binary swap (single-node = brief downtime).
+  concurrency: 1
+  cordon: true
+  serviceAccountName: system-upgrade
+  # Target the control-plane node (a single-node k3s box is both server and agent).
+  nodeSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+  upgrade:
+    image: rancher/k3s-upgrade
