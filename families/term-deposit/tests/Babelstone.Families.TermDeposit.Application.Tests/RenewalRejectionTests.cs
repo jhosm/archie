@@ -196,7 +196,7 @@ public sealed class RenewalRejectionTests
             () => DepositPosition.Empty);
 
         return new TermDepositConstitutionService(
-            runtime, new ThrowingRateSheetStore(), new ThrowingSettlementPort(failOnSettle: true),
+            runtime, new ThrowingRateSheetStore(),
             SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros");
     }
 }

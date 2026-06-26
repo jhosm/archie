@@ -60,7 +60,7 @@ public sealed class MovementCarrierTests
     // A test-only carrying event: a money-moving fact that carries the movement legs it caused. Never
     // catalogued — it stands in for a future family event (e.g. LoanDisbursed) so the carrier can be
     // proven without modifying a family decider (t7o3.14 is the spine primitive + carrier mechanism only).
-    private sealed record MoneyMoved(Guid LoanId, IReadOnlyList<Movement> Movements) : DomainEvent;
+    private sealed record MoneyMoved(Guid LoanId, IReadOnlyList<Movement>? Movements) : DomainEvent;
 
     private static readonly Guid CommandId = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
@@ -93,6 +93,7 @@ public sealed class MovementCarrierTests
         var decoded = WireRoundTrip(original);
 
         Assert.Equal(original.LoanId, decoded.LoanId);
+        Assert.NotNull(decoded.Movements);
         Assert.Single(decoded.Movements);
         Assert.Equal(movement, decoded.Movements[0]);            // every Movement field, incl. Money cents
         Assert.Equal("acct-ref-opaque-001", decoded.Movements[0].AccountRef);
@@ -116,6 +117,7 @@ public sealed class MovementCarrierTests
         var decoded = WireRoundTrip(original);
 
         Assert.Equal(original.LoanId, decoded.LoanId);
+        Assert.NotNull(decoded.Movements);
         Assert.Equal(new[] { debit, credit }, decoded.Movements);    // order + every field preserved
         Assert.Equal(MovementOperation.Disburse, decoded.Movements[0].Operation);
         Assert.Equal(MovementOperation.PayCoupon, decoded.Movements[1].Operation);
@@ -123,27 +125,32 @@ public sealed class MovementCarrierTests
     }
 
     [Fact]
-    public void An_empty_movement_list_round_trips_as_empty_not_null()
+    public void A_no_movements_carrier_round_trips_as_the_canonical_empty_wire_array()
     {
-        // An event with no money legs carries an EMPTY array, never null (the carrier is a required array
-        // field, not an optional union) — so a non-money-moving carrying event is well-formed.
-        var original = new MoneyMoved(Guid.NewGuid(), []);
+        // An event with no money legs carries the EMPTY array on the WIRE (never null on the wire — a decoder
+        // always reads an array). The two C# "no movements" representations — an empty list [] and the
+        // record-default null — both encode to that same empty wire array, and the codec decodes the empty
+        // wire array back to the CANONICAL C# "no movements" value, null (the record default), so a
+        // movement-free event round-trips to identity. (bd t7o3.13: encode null|[] → [] wire → decode null.)
+        var fromEmpty = WireRoundTrip(new MoneyMoved(Guid.NewGuid(), []));
+        Assert.Null(fromEmpty.Movements);
 
-        var decoded = WireRoundTrip(original);
-
-        Assert.Equal(original.LoanId, decoded.LoanId);
-        Assert.NotNull(decoded.Movements);
-        Assert.Empty(decoded.Movements);
+        var fromNull = WireRoundTrip(new MoneyMoved(Guid.NewGuid(), null));
+        Assert.Null(fromNull.Movements);
     }
 
     [Fact]
-    public void A_null_carrier_fails_loud_with_the_parameter_name()
+    public void A_null_carrier_normalizes_to_the_empty_wire_array()
     {
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => MovementCarrier.ToAvroArray(null, AvroEventSerializer.SchemaFieldType(CarrierSchema, "movements"), "Movements"));
+        // A null C# carrier is the idiomatic "no movements" value the IReadOnlyList<Movement>? = null record
+        // default constructs with (a movement-free or pre-Movement event). The codec NORMALIZES it to the
+        // empty wire array — the wire stays "[] never null" (a decoder always reads an array, never null)
+        // without forcing every direct construction to spell out Movements: []. (bd t7o3.13.)
+        var encoded = MovementCarrier.ToAvroArray(
+            null, AvroEventSerializer.SchemaFieldType(CarrierSchema, "movements"), "Movements");
 
-        Assert.Contains("Movements", ex.Message);
-        Assert.Contains("required array field", ex.Message);
+        var array = Assert.IsAssignableFrom<System.Collections.IEnumerable>(encoded);
+        Assert.Empty(array.Cast<object>());
     }
 
     [Fact]

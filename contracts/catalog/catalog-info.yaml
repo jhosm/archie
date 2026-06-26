@@ -37,6 +37,7 @@ spec:
     - ./events/DepositConstituted.asyncapi.yaml
     - ./events/InterestPaid.asyncapi.yaml
     - ./events/DepositMatured.asyncapi.yaml
+    - ./events/DepositTerminatedEarly.asyncapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: Location
@@ -111,6 +112,19 @@ spec:
   owner: term-deposit
   definition:
     $text: ./events/DepositMatured.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: deposit-terminated-early
+  title: DepositTerminatedEarly
+  description: The term deposit is broken before maturity and settled net of the penalty — the coarse payout fact the gated settlement saga effects the credit off (ADR-PC-032 / ADR-IC-017 §P4).
+spec:
+  type: asyncapi
+  lifecycle: production
+  owner: term-deposit
+  definition:
+    $text: ./events/DepositTerminatedEarly.asyncapi.yaml
 ---
 # The personal_loan (personal-loan) integration events (ADR-PC-031). The closed-end-asset
 # family's published events: disburse -> amortize (installments / early repayment) -> settle,

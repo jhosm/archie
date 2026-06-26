@@ -115,7 +115,7 @@ public sealed class ConstitutionPreconditionTests(ConstitutionFixture fixture)
             () => DepositPosition.Empty);
         var settlement = new RecordingSettlementPort();
         var service = new TermDepositConstitutionService(
-            runtime, new PostgresRateSheetStore(connectionString), settlement, SkeletonPack.LoadPt2026(),
+            runtime, new PostgresRateSheetStore(connectionString), SkeletonPack.LoadPt2026(),
             dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros",
             requiredPreconditions: requiredPreconditions);
         return (runtime, service, settlement);

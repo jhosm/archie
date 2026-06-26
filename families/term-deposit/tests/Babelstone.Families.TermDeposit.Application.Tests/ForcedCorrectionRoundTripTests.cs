@@ -44,7 +44,7 @@ public sealed class ForcedCorrectionRoundTripTests(ConstitutionFixture fixture)
             store, new EventStoreSink(store), TermDepositFamilyModule.Registry(),
             new JsonEventSerializer(), new NullPiiProtector(), clock, () => DepositPosition.Empty);
         var service = new TermDepositConstitutionService(
-            runtime, new PostgresRateSheetStore(fixture.ConnectionString), new RecordingSettlementPort(),
+            runtime, new PostgresRateSheetStore(fixture.ConnectionString),
             SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros");
 
         var depositId = Guid.NewGuid();

@@ -20,6 +20,7 @@ info:
   x-authorized-consumers:
     - notification        # depositor-facing constitution confirmation (ADR-IC-011)
     - acl                 # downstream core-banking projection (ADR-IC-012)
+    - orchestrator        # a RENEWAL constitution's rollover-debit Movement auto-starts the substrate settlement saga (ADR-PC-032 / ADR-IC-018 §P5); a fresh constitution carries no Movement header
 channels:
   term_deposit:
     description: |
@@ -74,6 +75,14 @@ components:
           ce_datacontenttype:  { type: string, const: 'application/avro' }
           ce_subject:          { type: string, description: 'aggregate_id — the specific deposit this event is about.' }
           ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. term_deposit.' }
+          # Movement-routing extension attributes (ADR-PC-032 / ADR-IC-018 §P5) — promoted from the
+          # event's Originated Movement(s) by the engine-spine MovementHeaders seam (bd t7o3.13). Present ONLY
+          # on a RENEWAL constitution (its rollover-debit Movement); a FRESH constitution carries no Movement,
+          # so these headers are absent and its principal debit stays the constitution saga's gated step (bd
+          # t7o3.4). Closed-enum strings, never PII (ADR-PC-004 §P2). The substrate settlement saga auto-starts
+          # on ce_movementorigin == Originated. NOT in `required` — additive, BACKWARD-compatible, conditional.
+          ce_movementorigin:     { type: string, enum: ['Originated', 'Observed'], description: 'The Movement origin — Originated for a renewal rollover debit; absent on a fresh constitution.' }
+          ce_movementdirections: { type: string, pattern: '^(Debit|Credit)(,(Debit|Credit))*$', description: 'The ordered, comma-separated list of every Originated Movement direction relative to account_ref — Debit for a renewal rollover (the matured principal leaves the funding account into the renewed deposit); absent on a fresh constitution.' }
       # §P6: the canonical payload is the registered Avro schema — referenced, never
       # hand-restated here (a restatement would drift from contracts/avro/). The $ref
       # below points at the governed .avsc on disk so the fast PR gate (P2) resolves it

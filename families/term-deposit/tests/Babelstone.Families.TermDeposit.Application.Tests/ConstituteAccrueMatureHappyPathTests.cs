@@ -55,16 +55,21 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         Assert.Equal(4, await fixture.CountAsync("events", "stream_id", depositId));
         Assert.Equal(4, await fixture.CountAsync("outbox", "aggregate_id", depositId));
 
-        // The legacy-settlement legs (bd babelstone-t7o3.4): the CONSTITUTION path is now de-settled —
-        // it appends DepositConstituted only, with NO in-engine money leg (the principal debit is the
-        // saga's gated ReserveAccountBalance→ConfirmDebit step, ADR-PC-016 §68/§127). The maturity credit
-        // is still eager (its own saga has not landed yet), so the only settlement leg here is maturity.
-        var credit = Assert.Single(settlement.Instructions);
-        Assert.Equal(SettlementDirection.Credit, credit.Direction);
-        Assert.Equal(new Money(1_021_900), credit.Amount);
-        Assert.Equal("maturity", credit.Reason);
-        // No "constitution" debit leg rode the engine's constitution append.
-        Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "constitution");
+        // De-settled, gated-saga relocation (bd babelstone-t7o3.4 constitution + bd babelstone-t7o3.13
+        // maturity): NO eager settlement at all — the recording port saw nothing. The constitution path
+        // appends DepositConstituted only (its principal debit is the constitution saga's gated step); the
+        // maturity payout records its money leg APPEND-FIRST as an Originated Credit Movement on
+        // DepositMatured (the substrate-owned settlement saga effects the cash leg, gated — ADR-PC-032 slot 5).
+        Assert.Empty(settlement.Instructions);
+
+        // The DepositMatured carries the Originated Credit maturity-payout Movement append-first.
+        var matured = Assert.Single(await EventsOfAsync<DepositMatured>(fixture.ConnectionString, depositId));
+        var movement = Assert.Single(matured.Movements!);
+        Assert.Equal(SettlementDirection.Credit, movement.Direction);   // the payout ENTERS the payout account
+        Assert.Equal(new Money(1_021_900), movement.Amount);
+        Assert.Equal(MovementOperation.PayMaturity, movement.Operation);
+        Assert.Equal(MovementOrigin.Originated, movement.Origin);
+        Assert.Equal("PT50-DDA-001", movement.AccountRef);
     }
 
     [Fact]
@@ -128,23 +133,30 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         Assert.Equal(15, await fixture.CountAsync("events", "stream_id", depositId));
         Assert.Equal(15, await fixture.CountAsync("outbox", "aggregate_id", depositId));
 
-        // Settlement legs (bd babelstone-t7o3.4): the constitution path is now de-settled (NO principal
-        // debit on the engine append — that is the saga's gated step, ADR-PC-016 §68/§127). The coupon
-        // and maturity credits are still eager (their own sagas have not landed), so the legs are the
-        // 11 coupon credits then the maturity credit — 12, not 13.
-        Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "constitution");
-        Assert.Equal(12, settlement.Instructions.Count); // 11 coupon credits + 1 maturity credit
-        Assert.All(settlement.Instructions.Take(11), c =>
-        {
-            Assert.Equal(SettlementDirection.Credit, c.Direction);
-            Assert.Equal("coupon", c.Reason);
-        });
-        Assert.Equal("maturity", settlement.Instructions[^1].Reason);
-        Assert.Equal(new Money(49_900_000 + 100_549), settlement.Instructions[^1].Amount);
+        // De-settled, gated-saga relocation (bd babelstone-t7o3.13): NO eager settlement — the coupon and
+        // maturity credits each record an Originated Credit Movement APPEND-FIRST on their event for the
+        // substrate-owned settlement saga to effect, gated (ADR-PC-032 slot 5). The recording port saw nothing.
+        Assert.Empty(settlement.Instructions);
 
-        // The 11 paid-out coupon nets sum to the running net minus the final-at-maturity coupon (100,549).
-        var couponCreditTotal = settlement.Instructions.Take(11).Sum(c => c.Amount.Cents);
+        // The 11 intermediate coupons each carry an Originated Credit PayCoupon Movement; their nets sum to
+        // the running net minus the final-at-maturity coupon (100,549).
+        var coupons = await EventsOfAsync<InterestPaid>(fixture.ConnectionString, depositId);
+        Assert.Equal(11, coupons.Count);
+        Assert.All(coupons, c =>
+        {
+            var m = Assert.Single(c.Movements!);
+            Assert.Equal(SettlementDirection.Credit, m.Direction);
+            Assert.Equal(MovementOperation.PayCoupon, m.Operation);
+            Assert.Equal(MovementOrigin.Originated, m.Origin);
+        });
+        var couponCreditTotal = coupons.Sum(c => c.Movements!.Single().Amount.Cents);
         Assert.Equal(1_183_881L - 100_549L, couponCreditTotal);
+
+        // The maturity payout carries the Originated Credit PayMaturity Movement (principal + final coupon net).
+        var matured = Assert.Single(await EventsOfAsync<DepositMatured>(fixture.ConnectionString, depositId));
+        var maturityMovement = Assert.Single(matured.Movements!);
+        Assert.Equal(MovementOperation.PayMaturity, maturityMovement.Operation);
+        Assert.Equal(new Money(49_900_000 + 100_549), maturityMovement.Amount);
     }
 
     [Fact]
@@ -188,17 +200,22 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         Assert.Equal(3, await fixture.CountAsync("events", "stream_id", depositId));
         Assert.Equal(3, await fixture.CountAsync("outbox", "aggregate_id", depositId));
 
-        // Settlement (bd babelstone-t7o3.4): the constitution path is de-settled — NEITHER the principal
-        // debit NOR the ADVANCE upfront-interest credit rides the engine's constitution append; both are
-        // the saga's gated money legs (ADR-PC-016 §68/§127). The upfront InterestPaid EVENT still appends
-        // (interest IS recognised at t=0, asserted above), only its money leg is relocated. The maturity
-        // credit is still eager, so it is the only settlement leg here.
-        Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "constitution");
-        Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "advance_interest");
-        var maturity = Assert.Single(settlement.Instructions);
-        Assert.Equal(SettlementDirection.Credit, maturity.Direction);
-        Assert.Equal(new Money(1_000_000), maturity.Amount);
-        Assert.Equal("maturity", maturity.Reason);
+        // De-settled (bd babelstone-t7o3.4 constitution + bd babelstone-t7o3.13 maturity): NO eager
+        // settlement at all. The fresh ADVANCE constitution's upfront-interest credit is the constitution
+        // saga's gated leg (the fresh InterestPaid carries NO Movement — its money leg rides that saga); the
+        // maturity payout records its Originated Credit Movement APPEND-FIRST on DepositMatured.
+        Assert.Empty(settlement.Instructions);
+
+        // The fresh ADVANCE upfront InterestPaid carries no Movement (its credit is the constitution saga's).
+        var advanceInterest = Assert.Single(await EventsOfAsync<InterestPaid>(fixture.ConnectionString, depositId));
+        Assert.Null(advanceInterest.Movements);
+
+        // The maturity payout (principal only — interest was pre-paid) carries the Originated Credit Movement.
+        var matured = Assert.Single(await EventsOfAsync<DepositMatured>(fixture.ConnectionString, depositId));
+        var maturityMovement = Assert.Single(matured.Movements!);
+        Assert.Equal(SettlementDirection.Credit, maturityMovement.Direction);
+        Assert.Equal(new Money(1_000_000), maturityMovement.Amount);
+        Assert.Equal(MovementOperation.PayMaturity, maturityMovement.Operation);
     }
 
     /// <summary>
@@ -228,8 +245,30 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
             () => DepositPosition.Empty);
         var settlement = new RecordingSettlementPort();
         var service = new TermDepositConstitutionService(
-            runtime, new PostgresRateSheetStore(connectionString), settlement, SkeletonPack.LoadPt2026(),
+            runtime, new PostgresRateSheetStore(connectionString), SkeletonPack.LoadPt2026(),
             dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros");
         return (runtime, service, settlement);
+    }
+
+    /// <summary>Load the appended events of type <typeparamref name="TEvent"/> off the durable stream, in
+    /// sequence order, decoding the store JSON the same way the runtime fold does. Used to assert the
+    /// Movement a money-moving event records APPEND-FIRST (bd babelstone-t7o3.13) — the substrate-owned
+    /// settlement saga effects the cash leg off it, so the engine no longer settles eagerly.</summary>
+    private static async Task<IReadOnlyList<TEvent>> EventsOfAsync<TEvent>(string connectionString, Guid streamId)
+        where TEvent : DomainEvent
+    {
+        var store = new PostgresEventStore(connectionString);
+        var serializer = new JsonEventSerializer();
+        var events = new List<TEvent>();
+        await foreach (var envelope in store.LoadAsync(streamId))
+        {
+            // Filter by event_type BEFORE decoding — decoding a different event's JSON into TEvent would throw.
+            if (envelope.EventType.EndsWith(typeof(TEvent).Name, StringComparison.Ordinal))
+            {
+                events.Add((TEvent)serializer.Decode(envelope.Payload, typeof(TEvent)));
+            }
+        }
+
+        return events;
     }
 }

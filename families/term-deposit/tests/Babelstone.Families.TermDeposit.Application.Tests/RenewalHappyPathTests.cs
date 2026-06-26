@@ -108,25 +108,26 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         var newConstitutionCausation = await fixture.FirstEventCausationIdAsync(newDepositId);
         Assert.Equal(maturedEventId, newConstitutionCausation);
 
-        // Settlement legs now SPLIT across the two calls (the behavioural change). MatureAsync produces
-        // the closing maturity credit (principal + net out); ConstituteRenewalAsync produces the rollover
-        // debit (the rolled-over principal back into the new instance). The standalone CONSTITUTION path
-        // is de-settled (bd babelstone-t7o3.4), so there is no "constitution" leg.
-        Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "constitution");
-        Assert.Collection(
-            settlement.Instructions,
-            maturity =>
-            {
-                Assert.Equal(SettlementDirection.Credit, maturity.Direction);
-                Assert.Equal(new Money(1_021_900), maturity.Amount);
-                Assert.Equal("maturity", maturity.Reason);
-            },
-            rollover =>
-            {
-                Assert.Equal(SettlementDirection.Debit, rollover.Direction);
-                Assert.Equal(new Money(1_000_000), rollover.Amount);
-                Assert.Equal("renewal_rollover", rollover.Reason);
-            });
+        // De-settled, gated-saga relocation (bd babelstone-t7o3.13): NO eager settlement — both renewal money
+        // legs are recorded APPEND-FIRST as Originated Movements for the substrate-owned settlement saga to
+        // effect, gated (ADR-PC-032 slot 5). MatureAsync's DepositMatured carries the closing maturity CREDIT
+        // (principal + net out); ConstituteRenewalAsync's renewed DepositConstituted carries the rollover DEBIT
+        // (the rolled-over principal into the new instance). The recording port saw nothing.
+        Assert.Empty(settlement.Instructions);
+
+        // The closing maturity payout's Originated Credit Movement (PayMaturity) on the closing stream.
+        var matured = Assert.Single(await EventsOfAsync<DepositMatured>(fixture.ConnectionString, depositId));
+        var maturityMovement = Assert.Single(matured.Movements!);
+        Assert.Equal(SettlementDirection.Credit, maturityMovement.Direction);
+        Assert.Equal(new Money(1_021_900), maturityMovement.Amount);
+        Assert.Equal(MovementOperation.PayMaturity, maturityMovement.Operation);
+
+        // The renewal rollover's Originated Debit Movement (RolloverDebit) on the NEW stream's DepositConstituted.
+        var renewedConstitution = Assert.Single(await EventsOfAsync<DepositConstituted>(fixture.ConnectionString, newDepositId));
+        var rolloverMovement = Assert.Single(renewedConstitution.Movements!);
+        Assert.Equal(SettlementDirection.Debit, rolloverMovement.Direction);
+        Assert.Equal(new Money(1_000_000), rolloverMovement.Amount);
+        Assert.Equal(MovementOperation.RolloverDebit, rolloverMovement.Operation);
     }
 
     [Fact]
@@ -213,10 +214,22 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         Assert.Equal(DepositLifecycle.Renewed, (await runtime.LoadAsync(depositId)).State.Lifecycle);
         Assert.True(renewed.NetInterest.Cents > 0); // upfront interest recognised on the new stream
 
-        // The advance-interest credit settles on the new stream (monolith step 8b), alongside the
-        // closing maturity credit and the rollover debit.
-        Assert.Contains(settlement.Instructions, i => i.Reason == "advance_interest" && i.Direction == SettlementDirection.Credit);
-        Assert.Contains(settlement.Instructions, i => i.Reason == "renewal_rollover" && i.Direction == SettlementDirection.Debit);
+        // De-settled, gated-saga relocation (bd babelstone-t7o3.13): NO eager settlement — both renewal legs
+        // on the new stream record Originated Movements APPEND-FIRST for the substrate-owned settlement saga.
+        // The renewed DepositConstituted carries the rollover DEBIT; the ADVANCE upfront InterestPaid carries
+        // the advance-interest CREDIT (operation PayCoupon). The recording port saw nothing.
+        Assert.Empty(settlement.Instructions);
+
+        var renewedConstitution = Assert.Single(await EventsOfAsync<DepositConstituted>(fixture.ConnectionString, newDepositId));
+        var rolloverMovement = Assert.Single(renewedConstitution.Movements!);
+        Assert.Equal(SettlementDirection.Debit, rolloverMovement.Direction);
+        Assert.Equal(MovementOperation.RolloverDebit, rolloverMovement.Operation);
+
+        var advanceInterest = Assert.Single(await EventsOfAsync<InterestPaid>(fixture.ConnectionString, newDepositId));
+        var advanceMovement = Assert.Single(advanceInterest.Movements!);
+        Assert.Equal(SettlementDirection.Credit, advanceMovement.Direction);
+        Assert.Equal(MovementOperation.PayCoupon, advanceMovement.Operation);
+        Assert.Equal(MovementOrigin.Originated, advanceMovement.Origin);
     }
 
     // NOTE: command-id idempotency (ADR-PC-029 slot 4) is exercised at the ENDPOINT level, where the
@@ -256,8 +269,28 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
             () => DepositPosition.Empty);
         var settlement = new RecordingSettlementPort();
         var service = new TermDepositConstitutionService(
-            runtime, new PostgresRateSheetStore(connectionString), settlement, SkeletonPack.LoadPt2026(),
+            runtime, new PostgresRateSheetStore(connectionString), SkeletonPack.LoadPt2026(),
             dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros");
         return (runtime, service, settlement);
+    }
+
+    /// <summary>Load the appended events of type <typeparamref name="TEvent"/> off the durable stream, decoding
+    /// the store JSON the runtime fold uses — to assert the Movement a money-moving renewal leg records
+    /// APPEND-FIRST (bd babelstone-t7o3.13), the leg the substrate-owned settlement saga effects, gated.</summary>
+    private static async Task<IReadOnlyList<TEvent>> EventsOfAsync<TEvent>(string connectionString, Guid streamId)
+        where TEvent : DomainEvent
+    {
+        var store = new PostgresEventStore(connectionString);
+        var serializer = new JsonEventSerializer();
+        var events = new List<TEvent>();
+        await foreach (var envelope in store.LoadAsync(streamId))
+        {
+            if (envelope.EventType.EndsWith(typeof(TEvent).Name, StringComparison.Ordinal))
+            {
+                events.Add((TEvent)serializer.Decode(envelope.Payload, typeof(TEvent)));
+            }
+        }
+
+        return events;
     }
 }

@@ -18,6 +18,7 @@ info:
   x-authorized-consumers:
     - notification        # depositor-facing maturity/payout confirmation (ADR-IC-011)
     - acl                 # downstream core-banking settlement projection (ADR-IC-012)
+    - orchestrator        # the substrate-owned settlement saga auto-starts off the Movement headers (ADR-PC-032 / ADR-IC-018 §P5)
 channels:
   term_deposit:
     description: |
@@ -78,6 +79,15 @@ components:
           # absent for pre-seam streams. A structural enum token, not PII (ADR-PC-004 §P2). NOT in
           # `required` — an additive, BACKWARD-compatible header.
           ce_autorenewalpolicy: { type: string, enum: ['NONE', 'SAME_TERM_CURRENT_RATE', 'SAME_TERM_SAME_RATE'], description: 'Renewal policy extension attribute (ADR-IC-018 §P5).' }
+          # Movement-routing extension attributes (ADR-PC-032 / ADR-IC-018 §P5) — promoted from the
+          # event's Originated Movement(s) by the engine-spine MovementHeaders seam (bd t7o3.13). Closed-enum
+          # strings, never PII (ADR-PC-004 §P2). Present whenever the event carries an Originated Movement (a
+          # maturity always does), absent otherwise. The substrate settlement saga auto-starts on
+          # ce_movementorigin == Originated and branches on the ordered ce_movementdirections list (one
+          # settlement instance per Movement — ADR-PC-032 §A9/§A10). Co-carried with ce_autorenewalpolicy on the
+          # same hop (distinct keys, no double-populate). NOT in `required` — additive, BACKWARD-compatible.
+          ce_movementorigin:     { type: string, enum: ['Originated', 'Observed'], description: 'The Movement origin — Originated for a maturity payout (a cash leg to drive).' }
+          ce_movementdirections: { type: string, pattern: '^(Debit|Credit)(,(Debit|Credit))*$', description: 'The ordered, comma-separated list of every Originated Movement direction relative to account_ref, in carrier order — a single entry for a standalone leg (Credit for a maturity payout, value enters the payout account), N for a multi-direction event. The substrate fans out one settlement instance per entry.' }
       # §P6: payload is the governed Avro schema, referenced (not restated). The PR gate
       # resolves the .avsc on disk hermetically; the main lane reconciles the subject below.
       x-schema-registry-subject: deposits.term_deposit.DepositMatured-value

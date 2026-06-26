@@ -111,7 +111,7 @@ public sealed class CorrectionCommandTests
                 new JsonEventSerializer(), new NullPiiProtector(), TimeProvider.System,
                 () => DepositPosition.Empty);
             var service = new TermDepositConstitutionService(
-                runtime, new PostgresRateSheetStore(fixture.ConnectionString), new RecordingSettlementPort(),
+                runtime, new PostgresRateSheetStore(fixture.ConnectionString),
                 SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros");
 
             var depositId = Guid.NewGuid();
@@ -220,7 +220,7 @@ public sealed class CorrectionCommandTests
             () => DepositPosition.Empty);
 
         return new TermDepositConstitutionService(
-            runtime, new ThrowingRateSheetStore(), new ThrowingSettlementPort(failOnSettle: true),
+            runtime, new ThrowingRateSheetStore(),
             SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros");
     }
 }

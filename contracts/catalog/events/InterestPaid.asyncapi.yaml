@@ -32,6 +32,7 @@ info:
     - notification        # depositor-facing coupon/advance interest-paid confirmation (ADR-IC-011)
     - acl                 # downstream core-banking GL/accounting settlement projection (ADR-IC-012)
     - reporting           # regulatory + management interest-paid reporting (ADR-IC-005 read-model fan-out)
+    - orchestrator        # the substrate-owned settlement saga auto-starts off the Movement headers (ADR-PC-032 / ADR-IC-018 §P5)
 channels:
   term_deposit:
     description: |
@@ -85,6 +86,15 @@ components:
           ce_datacontenttype:  { type: string, const: 'application/avro' }
           ce_subject:          { type: string, description: 'aggregate_id — the specific deposit this event is about.' }
           ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. term_deposit.' }
+          # Movement-routing extension attributes (ADR-PC-032 / ADR-IC-018 §P5) — promoted from the
+          # event's Originated Movement(s) by the engine-spine MovementHeaders seam (bd t7o3.13). Closed-enum
+          # strings, never PII (ADR-PC-004 §P2). Present whenever the event carries an Originated Movement (a
+          # coupon / ADVANCE-interest payout always does), absent otherwise. The substrate settlement saga
+          # auto-starts on ce_movementorigin == Originated and branches on the ordered ce_movementdirections
+          # list (one settlement instance per Movement — ADR-PC-032 §A9/§A10). NOT in `required` — additive,
+          # BACKWARD-compatible.
+          ce_movementorigin:     { type: string, enum: ['Originated', 'Observed'], description: 'The Movement origin — Originated for a coupon payout (a cash leg to drive).' }
+          ce_movementdirections: { type: string, pattern: '^(Debit|Credit)(,(Debit|Credit))*$', description: 'The ordered, comma-separated list of every Originated Movement direction relative to account_ref, in carrier order — a single entry for a standalone leg (Credit for a coupon payout, value enters the payout account), N for a multi-direction event. The substrate fans out one settlement instance per entry.' }
       # §P6: payload is the governed Avro schema, referenced (not restated). The PR gate
       # resolves the .avsc on disk hermetically; the main lane reconciles the subject below.
       x-schema-registry-subject: deposits.term_deposit.InterestPaid-value

@@ -8,27 +8,33 @@
     },
     {
       "has_default": false,
-      "name": "gross_interest_cents",
+      "name": "principal_returned_cents",
       "optional": false,
       "type": "long"
     },
     {
       "has_default": false,
-      "name": "withholding_tax_cents",
+      "name": "penalty_amount_cents",
       "optional": false,
       "type": "long"
     },
     {
       "has_default": false,
-      "name": "net_interest_cents",
+      "name": "net_settlement_amount_cents",
       "optional": false,
       "type": "long"
     },
     {
       "has_default": false,
-      "name": "paid_on",
+      "name": "terminated_on",
       "optional": false,
       "type": "int@date"
+    },
+    {
+      "has_default": false,
+      "name": "termination_reason",
+      "optional": false,
+      "type": "string"
     },
     {
       "has_default": true,
@@ -37,7 +43,7 @@
       "type": "array<items:record<rec:Movement:account_ref:string,direction:enum,amount_cents:long,value_date:int@date,operation:enum,origin:enum,command_id:string@uuid>>"
     }
   ],
-  "name": "InterestPaid",
+  "name": "DepositTerminatedEarly",
   "namespace": "deposits.term_deposit",
-  "subject": "deposits.term_deposit.InterestPaid-value"
+  "subject": "deposits.term_deposit.DepositTerminatedEarly-value"
 }
