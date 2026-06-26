@@ -43,13 +43,14 @@ namespace Babelstone.Orchestrator.Saga.Settlement;
 public static class SettlementMovementFanout
 {
     // A fixed namespace GUID for derived per-Movement settlement SUBJECTS — an arbitrary, stable constant,
-    // DISTINCT from the result-event and self-emit namespaces so a derived subject can never collide with
-    // another derived id by construction.
-    private static readonly Guid SettlementSubjectNamespace = Guid.Parse("b1be1570-0000-5e1f-e317-000000000003");
+    // DISTINCT from every other derived-id namespace in the repo (self-emit …001, settlement-result …002,
+    // renewal-deposit …003, pack …009) so a derived subject can never collide with another derived id by
+    // construction.
+    private static readonly Guid SettlementSubjectNamespace = Guid.Parse("b1be1570-0000-5e1f-e317-00000000000a");
 
     // A fixed namespace GUID for derived per-Movement settlement DEDUP MESSAGE IDs — distinct again, so the
     // secondary legs' inbox dedup keys cannot collide with the subject ids or any external ce_id.
-    private static readonly Guid SettlementMessageNamespace = Guid.Parse("b1be1570-0000-5e1f-e317-000000000004");
+    private static readonly Guid SettlementMessageNamespace = Guid.Parse("b1be1570-0000-5e1f-e317-00000000000b");
 
     /// <summary>
     /// Parse the ordered Originated directions a Movement-bearing event's extension headers declare, or an

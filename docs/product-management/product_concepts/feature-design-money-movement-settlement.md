@@ -72,7 +72,7 @@ The saga is **parameterised by `direction`** (the gating asymmetry of [ADR-PC-01
 
 An event carrying multiple `Movement`s (renewal) effects each, gated by its own `direction`, under per-account ordering (§6).
 
-The **embedded** leg (constitution) keeps its rich saga; in a later pass it **composes** the same leg machinery as a sub-step (rule-of-three cleanup). It is **not** refactored in the first pass — it already works gated, and its reserve/confirm is interleaved with the approval fork. *Leave working code working; prove the new saga on the 7 standalone legs first.*
+The **embedded** leg (constitution) keeps its rich saga; in a later pass it **composes** the same leg machinery as a sub-step (rule-of-three cleanup). It was **not** refactored in the first pass — it already worked gated, and its reserve/confirm is interleaved with the approval fork. *Leave working code working; prove the new saga on the 7 standalone legs first.* That later pass has now landed (bd `babelstone-t7o3.18`): the constitution debit leg composes the shared `SettlementReferences` derivation rather than a hand-coded copy, so the constitution and the substrate settlement leg derive the identical Core-facing references — the approval-fork lifecycle stays exactly where it is (§10).
 
 ---
 
@@ -143,10 +143,11 @@ A vertical slice closes the P1 first, then generalises:
 
 - `MOVEMENT_APPEND_FIRST` — a call-site/architecture assertion: no decider calls a settlement port before its append (the orphan window cannot reopen). Also the safe-to-delete signal for the eager port (§5).
 - `MOVEMENT_CASH_LEG_IDEMPOTENT` — an integration test (gated-settlement, WireMock Core): a retried `Originated` cash leg cannot double-move (it inherits the ACL guard; the eager bypass is gone).
+- `SETTLEMENT_LEG_SCA_GATE_CANNOT_BYPASS` (bd `babelstone-t7o3.19`, `Live`) — an integration test: an `Originated` money-mover cash leg with absent/stale step-up SCA is refused at the RECEIVER (the Core ACL settlement leg) `422 SCA_REQUIRED` before `ConfirmDebit`/`ConfirmCredit`, re-checked at the settlement-dispatch instant; the substrate attests, never denies ([ADR-PC-032 §A7/§A8](./adrs/ADR-PC-032-money-movement-primitive.md)). The settlement-leg analogue of `MCP_SCA_GATE_CANNOT_BYPASS`.
 
 **Risks:**
 
-- **The constitution refactor is deferred, so two leg-invocation styles coexist** (standalone `SettlementProcess` vs the constitution's embedded reserve/confirm) until the rule-of-three cleanup. Accepted: the *commands* are unified day one (§8); only the *saga that invokes them* differs, and the constitution one already works.
+- **The constitution refactor is DONE (bd `babelstone-t7o3.18`), so the leg machinery is shared, not copied.** Pass 1 left two leg-invocation styles (standalone `SettlementProcess` vs the constitution's embedded reserve/confirm) with the *commands* unified day one (§8). The rule-of-three cleanup then collapsed the duplicated derived-reference machinery: the constitution debit leg and the substrate settlement leg now compose the SAME shared `SettlementReferences` derivation, so they derive the IDENTICAL `external_reference` for a given process id (the cross-saga no-double-debit invariant is structural). The constitution's approval-fork *lifecycle* is unchanged — only the leg's reference assembly is shared.
 - **Multi-`Movement` ordering** (renewal's debit + credit) must hold per-account FIFO through the settlement saga — covered by the dispatcher's per-`process_id` order (bd `babelstone-t7o3.7`), exercised by a renewal integration test.
 - **Credit clearance** is new surface: credits are now confirmation-gated (not eager), so the indeterminate-clearance path must cover credits, not just debits — the WireMock ACL and `SettlementProcess` model the credit non-confirm case.
 - **The `operation` closed code is a contract** the ACL keys on; widening it later is forward-only schema evolution ([ADR-IC-002](../integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md)), pinned by a consumer-driven contract test ([ADR-IC-009](../integration_concepts/adrs/ADR-IC-009-testing-infrastructure.md)).
