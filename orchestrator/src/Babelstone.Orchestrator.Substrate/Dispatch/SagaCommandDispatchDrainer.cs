@@ -308,13 +308,26 @@ public sealed class SagaCommandDispatchDrainer
         }
 
         var resultMessageId = SagaSettlementResultEmit.MessageId(row.MessageId, resultEventType);
+
+        // PROPAGATE the attested step-up-SCA claims forward (bd babelstone-t7o3.19; ADR-PC-032 §A7/§A8). A
+        // multi-step settlement leg emits its IRREVERSIBLE cash command (ConfirmDebit / ConfirmCredit) on a
+        // LATER advance, driven by THIS synthesized result event (BalanceReserved → ConfirmDebit) — which
+        // carries no CloudEvents headers of its own. Re-emitting the delivering command's row SCA on the
+        // result event's extension headers lets the next advance re-thread the SAME attestation onto the cash
+        // leg's outbox row, so the freshness gate the RECEIVER enforces sees the original proof and re-checks
+        // it against SCA_MAX_AGE at the next dispatch instant (never inherited-and-forgotten). The substrate
+        // only carries the claims (attest, don't deny — ADR-IC-006 §P2 / ADR-IC-018 §D2). Null SCA ⇒ no
+        // headers, so a non-money-mover result event is unchanged. Operational, never PII (ADR-PC-004 §P2).
+        var scaHeaders = BuildScaHeaders(row.ScaAcr, row.ScaAuthTime);
+
         var evt = new SagaInboxEvent(
             MessageId: resultMessageId,
             ProcessId: row.ProcessId,
             EventType: resultEventType,
             SourceTopic: SagaSettlementResultEmit.SourceTopic,
             CorrelationId: row.CorrelationId,
-            TraceParent: row.TraceParent);
+            TraceParent: row.TraceParent,
+            ExtensionHeaders: scaHeaders);
 
         // Self-advance on the SAME connection+transaction as the status flip. AdvanceAsync may return a
         // non-Advanced outcome (a graceful no-op) or throw SagaConcurrencyException (the caller retries).
@@ -590,6 +603,43 @@ public sealed class SagaCommandDispatchDrainer
     /// PR2): the saga's process_id. A family route that needs the id in the path declares this literal in
     /// its <see cref="CommandRoute.Path"/>; the substrate fills it from the outbox row.</summary>
     private const string ProcessIdToken = "{process_id}";
+
+    /// <summary>
+    /// Build the extension-attribute map that PROPAGATES the attested SCA claims onto a synthesized result
+    /// event (bd babelstone-t7o3.19), so a later same-saga advance re-threads them onto the irreversible cash
+    /// leg's outbox row. Keys are the ce_-stripped, lowercased projection the consume loop produces and the
+    /// advance handler reads (<c>scaacr</c> / <c>scaauthtime</c>); null when no SCA was attested (the result
+    /// event then carries no SCA headers — a non-money-mover leg is unchanged). Operational, never PII.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? BuildScaHeaders(string? scaAcr, long? scaAuthTime)
+    {
+        if (string.IsNullOrEmpty(scaAcr) && scaAuthTime is null)
+        {
+            return null;
+        }
+
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(scaAcr))
+        {
+            headers[ScaAcrHeaderKey] = scaAcr;
+        }
+
+        if (scaAuthTime is { } authTime)
+        {
+            headers[ScaAuthTimeHeaderKey] =
+                authTime.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return headers;
+    }
+
+    /// <summary>The ce_-stripped, lowercased extension-attribute key carrying the attested OIDC <c>acr</c> on a
+    /// propagated result event (mirrors <c>SagaAdvanceHandler.ScaAcrHeaderKey</c>).</summary>
+    private const string ScaAcrHeaderKey = "scaacr";
+
+    /// <summary>The ce_-stripped, lowercased extension-attribute key carrying the attested OIDC <c>auth_time</c>
+    /// (Unix seconds) on a propagated result event (mirrors <c>SagaAdvanceHandler.ScaAuthTimeHeaderKey</c>).</summary>
+    private const string ScaAuthTimeHeaderKey = "scaauthtime";
 
     /// <summary>The gateway-attested SCA-completion class header the dispatcher re-emits for a
     /// money-mover command (bd babelstone-ls44; ADR-IC-010 §P8 A10). MUST match the engine's
