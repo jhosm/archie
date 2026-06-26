@@ -1,0 +1,216 @@
+# Per-service CPU/memory requests + limits for the single staging node
+# (bd babelstone-zla1.4 residual). Sized for one Hetzner CAX41 — 16 vCPU / 32 GB
+# RAM (ARM). The locked staging-env priority is "an OOM mid-demo is the failure to
+# avoid", so every workload container carries a memory LIMIT (a runaway pod is
+# capped, not allowed to take the node down), while requests stay modest so the
+# whole stack schedules comfortably on one node.
+#
+# Budget (≈28 GB / ≈14 vCPU allocatable after the k3s system reserve):
+#   service            cpu req / lim    mem req / lim     note
+#   grafana-lgtm       500m / 2000m     1Gi / 6Gi         LGTM all-in-one (Loki+Tempo+Mimir+Grafana) — heaviest
+#   redpanda           1000m / 2000m    1Gi / 3Gi         broker (--smp=1; memory-hungry)
+#   postgres           250m / 1000m     512Mi / 2Gi       event store (ADR-PC-001)
+#   backstage          250m / 1000m     768Mi / 2Gi       Node app (~1GB steady / ~2GB peak)
+#   kong               250m / 1000m     256Mi / 1Gi       edge gateway
+#   core-acl-stub      250m / 1000m     256Mi / 1Gi       WireMock (JVM)
+#   backstage-db       100m / 500m      256Mi / 1Gi       Backstage Postgres
+#   otel-collector     100m / 500m      192Mi / 768Mi     telemetry fan-out
+#   openbao            100m / 500m      128Mi / 512Mi     dev mode (in-memory)
+#   redpanda-console   50m / 250m       128Mi / 512Mi     read-only UI
+#   registry           50m / 250m       128Mi / 512Mi     OCI pack registry
+#   ─────────────────────────────────────────────────────────────────────────
+#   Σ requests        ≈ 2.9 vCPU / ≈4.6 Gi   (schedules trivially on one node)
+#   Σ limits          ≈ 10 vCPU / ≈18.25 Gi  (comfortably under node-allocatable
+#                                             → no node-level memory overcommit)
+#
+# Strategic-merge: each document targets one container by name, so adding a
+# `resources:` block is purely additive (the containers list merges by `name`).
+# These apply only in the staging overlay; the dev/ha overlays are unsized (dev is
+# a laptop stack; ha is multi-node and would size differently).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-lgtm
+spec:
+  template:
+    spec:
+      containers:
+        - name: grafana-lgtm
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 6Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redpanda
+spec:
+  template:
+    spec:
+      containers:
+        - name: redpanda
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 3Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  template:
+    spec:
+      containers:
+        - name: postgres
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backstage
+spec:
+  template:
+    spec:
+      containers:
+        - name: backstage
+          resources:
+            requests:
+              cpu: 250m
+              memory: 768Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong
+spec:
+  template:
+    spec:
+      containers:
+        - name: kong
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: core-acl-stub
+spec:
+  template:
+    spec:
+      containers:
+        - name: core-acl-stub
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backstage-db
+spec:
+  template:
+    spec:
+      containers:
+        - name: postgres
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+spec:
+  template:
+    spec:
+      containers:
+        - name: otel-collector
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openbao
+spec:
+  template:
+    spec:
+      containers:
+        - name: openbao
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redpanda-console
+spec:
+  template:
+    spec:
+      containers:
+        - name: redpanda-console
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 512Mi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: registry
+spec:
+  template:
+    spec:
+      containers:
+        - name: registry
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 512Mi

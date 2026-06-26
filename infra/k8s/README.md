@@ -286,6 +286,19 @@ referenced** by the kustomization, and is applied once at cluster bootstrap
 `core-acl-stub` (WireMock) as-is; the real Core-ACL adapter is DEF-1
 (bd babelstone-ub9s), out of scope here.
 
+**Resource sizing — no OOM mid-demo.** `resources.patch.yaml` adds per-service
+CPU/memory requests + limits sized for the single 16 vCPU / 32 GB node (a
+multi-document strategic-merge patch — one document per workload container, each
+adding only its `resources:` block). Every container declares a **memory limit**
+(a runaway pod is capped, not allowed to take the node down — the locked
+staging-env priority), with the sum of limits (≈18 GiB) kept comfortably under
+node-allocatable (≈28 GiB after the k3s system reserve) and requests (≈4.6 GiB)
+low enough that the whole stack schedules on one node. The per-service budget
+table is in the patch file's header. CI asserts every staging workload container
+carries a memory limit, so the sizing stays an invariant rather than a one-off
+(the dev/ha overlays are intentionally unsized — dev is a laptop stack, ha is
+multi-node and would size differently).
+
 Validate (the same CI gate as `dev`/`ha` — CI now loops all three overlays):
 
 ```bash
@@ -296,11 +309,9 @@ mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/ov
 **Account-gated / deferred (not in this overlay yet):** provisioning the node,
 installing the CSI driver + cert-manager + the issuer, pointing DNS at the node IP,
 and the end-to-end cert verification all need the Hetzner account + DNS (Phases
-0–2). Per-service CPU/memory **requests/limits** sized for the 32 GB node, the
-**app/engine service** manifests (engine, orchestrator, acl, notification,
-mcp-server) and the **Mission Control** UI ingress are the later phases
-(bd babelstone-zla1.4 sizing residual, zla1.5); the real Backstage **image** is
-zla1.6 (the base still pins `:placeholder`).
+0–2). The **app/engine service** manifests (engine, orchestrator, acl,
+notification, mcp-server) and the **Mission Control** UI ingress are zla1.5; the
+real Backstage **image** is zla1.6 (the base still pins `:placeholder`).
 
 ## Out of scope (downstream)
 
