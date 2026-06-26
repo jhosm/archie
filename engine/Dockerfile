@@ -28,8 +28,9 @@ RUN dotnet publish engine/src/Babelstone.Engine.Api/Babelstone.Engine.Api.csproj
 # same the host integration tests + CI exercise. Bump in lockstep with mise.toml.
 #
 # TARGETARCH is set automatically by buildx (amd64 / arm64); the image-build.yml matrix builds a
-# single-arch amd64 image today, but pinning per-arch checksums keeps a future multi-arch build
-# correct rather than silently grabbing the wrong binary.
+# multi-arch manifest (linux/amd64 + linux/arm64, bd babelstone-zla1.8), so these per-arch checksums
+# select the right binary for whichever leg buildx is emulating rather than silently grabbing the
+# wrong arch.
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS oci-tools
 ARG TARGETARCH
 ARG ORAS_VERSION=1.3.2
