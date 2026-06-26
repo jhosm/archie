@@ -23,6 +23,7 @@ info:
   x-authorized-consumers:
     - acl                 # downstream core-banking early-repayment settlement projection (ADR-IC-012)
     - notification        # borrower-facing early-repayment confirmation (ADR-IC-011)
+    - orchestrator        # the substrate-owned settlement saga auto-starts off the Movement headers (ADR-PC-032 / ADR-IC-018 §P5)
 channels:
   personal_loan:
     description: |
@@ -76,6 +77,14 @@ components:
           ce_datacontenttype:  { type: string, const: 'application/avro' }
           ce_subject:          { type: string, description: 'aggregate_id — the specific loan this event is about.' }
           ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. personal_loan.' }
+          # Movement-routing extension attributes (ADR-PC-032 / ADR-IC-018 §P5) — promoted from the
+          # event's Originated Movement(s) by the engine-spine MovementHeaders seam. Closed-enum strings,
+          # never PII (ADR-PC-004 §P2). Present whenever the event carries an Originated Movement (an early
+          # repayment always does), absent otherwise. The substrate settlement saga auto-starts on
+          # ce_movementorigin == Originated and fans out / branches on the ordered ce_movementdirections list
+          # (one settlement instance per Movement — ADR-PC-032 §A9/§A10).
+          ce_movementorigin:     { type: string, enum: ['Originated', 'Observed'], description: 'The Movement origin — Originated for an early repayment (a cash leg to drive).' }
+          ce_movementdirections: { type: string, pattern: '^(Debit|Credit)(,(Debit|Credit))*$', description: 'The ordered, comma-separated list of every Originated Movement direction relative to account_ref, in carrier order — a single entry for a standalone leg (Debit for an early repayment, value leaves the borrower repayment account), N for a multi-direction event. The substrate fans out one settlement instance per entry.' }
       # §P6: payload is the governed Avro schema, referenced (not restated). The PR gate
       # resolves the .avsc on disk hermetically; the main lane reconciles the subject below.
       x-schema-registry-subject: loans.personal_loan.LoanRepaidEarly-value
