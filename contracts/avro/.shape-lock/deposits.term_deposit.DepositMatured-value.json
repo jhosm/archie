@@ -1,0 +1,37 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "principal_returned_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "net_interest_paid_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "total_payout_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "matured_on",
+      "optional": false,
+      "type": "int@date"
+    },
+    {
+      "has_default": true,
+      "name": "auto_renewal_policy",
+      "optional": true,
+      "type": "[null,string]"
+    }
+  ],
+  "name": "DepositMatured",
+  "namespace": "deposits.term_deposit",
+  "subject": "deposits.term_deposit.DepositMatured-value"
+}

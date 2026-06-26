@@ -77,4 +77,45 @@ must instead carry a reference resolved internally behind the engine's OpenBao b
 Default compatibility is **BACKWARD** (ADR-IC-002 §Consequences). Registration is a CI
 gate, not a runtime operation (ADR-IC-002 §P3) — the engine's startup register-if-absent
 (`Babelstone.Engine.Avro`) is a **walking-skeleton convenience**; the authoritative
-CI-gate compatibility check is Epic G.3.
+CI-gate compatibility check is Epic G.3 (`scripts/avro-compat-check.sh`, run by `make
+avro-compat-check`).
+
+### Per-subject / per-family override
+
+The compatibility level is **BACKWARD by default**, but a single global setting is too
+coarse: ADR-IC-002 §Consequences names **FULL** for events with many known consumers, and
+the §Residual-risks "compatibility group overrides — per-subject deviation from the global
+compatibility setting" anticipates exactly this. Drop a **`.avro-compat` sidecar** in any
+directory under `contracts/avro/`. Each non-blank, non-`#` line is `KEY=LEVEL`:
+
+```
+# contracts/avro/deposits/term_deposit/.avro-compat
+*=FULL                                                 # per-FAMILY default for this subtree
+deposits.term_deposit.DepositMatured-value=BACKWARD    # per-SUBJECT override
+```
+
+`LEVEL` is one of `BACKWARD` / `BACKWARD_TRANSITIVE` / `FORWARD` / `FORWARD_TRANSITIVE` /
+`FULL` / `FULL_TRANSITIVE` / `NONE`. **Most specific wins**: a per-subject line beats the
+`*` wildcard, and a deeper directory beats a shallower one. Absent any match, the global
+default (BACKWARD) applies. The override is **not a relaxation back door** — the registry
+enforces the chosen level for real, so naming FULL makes the gate *stricter*, not weaker.
+
+### Day-one shape-lock
+
+The §P3 registry check is a **no-op for a brand-new subject** ("no previously-published
+version means nothing to break"), so a day-one field-**type** mistake on a new subject
+(e.g. an amount typed `int` instead of `long`, or a date authored as a bare `int` with no
+`logicalType`) would reach the wire with only review standing between it and a wrong type.
+The **shape-lock** closes that gap: every subject carries a committed golden snapshot of
+its structural fingerprint under `contracts/avro/.shape-lock/{subject}.json`. A new subject
+**must** carry a snapshot (a missing one fails the gate), and any later structural drift
+fails until the snapshot is intentionally re-locked. The snapshot is doc-insensitive (a
+`doc` edit never trips it) and Docker-free, so it runs in both the full and the
+`AVRO_COMPAT_STATIC_ONLY=1` path, and is independently asserted by a default-lane unit test
+(`ShapeLockSnapshotTests`, `Babelstone.OutboxPublisher.Tests`).
+
+Author / re-lock a snapshot in the SAME change as the schema change:
+
+```bash
+./scripts/avro-compat-check.sh --update-shape-lock   # (or AVRO_SHAPE_LOCK_UPDATE=1)
+```
