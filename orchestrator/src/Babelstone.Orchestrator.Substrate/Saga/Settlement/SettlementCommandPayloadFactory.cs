@@ -27,13 +27,10 @@ namespace Babelstone.Orchestrator.Saga.Settlement;
 /// </remarks>
 public static class SettlementCommandPayloadFactory
 {
-    // The derived-reference prefixes. Each is a DETERMINISTIC namespacing of the process id for one leg —
-    // stable across re-emission, so the body is byte-stable and the ACL idempotency dedups on it (the reserve
-    // and the not-executed-clearance reissue both derive the SAME reference). NOT minted.
-    private const string AccountPrefix = "ACCT-";
-    private const string ReservationPrefix = "RSV-";
-    private const string CoreHoldPrefix = "CORE-HOLD-";
-    private const string CreditPrefix = "CREDIT-";
+    // The derived-reference prefixes + the derivation live in the ONE shared SettlementReferences home
+    // (feature-design §8/§10, the rule-of-three cleanup bd babelstone-t7o3.18) — so the substrate settlement
+    // leg and a family's embedded debit leg derive the IDENTICAL external_reference for the same process id
+    // (the cross-saga no-double-debit invariant is structural, not a pair of literals that agree). NOT minted.
 
     /// <summary>
     /// Build the full typed payload for <paramref name="commandType"/>, or null if there is no recipe for it
@@ -61,23 +58,23 @@ public static class SettlementCommandPayloadFactory
                 ProcessId = processId,
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
-                AccountRef = DerivedRef(AccountPrefix, processId),
-                ReservationRef = DerivedRef(ReservationPrefix, processId),
+                AccountRef = SettlementReferences.Derive(SettlementReferences.AccountPrefix, processId),
+                ReservationRef = SettlementReferences.Derive(SettlementReferences.ReservationPrefix, processId),
             },
             SettlementProcess.ConfirmDebit => new ConfirmDebitCommand
             {
                 ProcessId = processId,
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
-                CoreHoldRef = DerivedRef(CoreHoldPrefix, processId),
+                CoreHoldRef = SettlementReferences.Derive(SettlementReferences.CoreHoldPrefix, processId),
             },
             SettlementProcess.ConfirmCredit => new ConfirmCreditCommand
             {
                 ProcessId = processId,
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
-                AccountRef = DerivedRef(AccountPrefix, processId),
-                CreditRef = DerivedRef(CreditPrefix, processId),
+                AccountRef = SettlementReferences.Derive(SettlementReferences.AccountPrefix, processId),
+                CreditRef = SettlementReferences.Derive(SettlementReferences.CreditPrefix, processId),
             },
             SettlementProcess.QueryCoreDebitStatus => new QueryCoreDebitStatusCommand
             {
@@ -86,21 +83,16 @@ public static class SettlementCommandPayloadFactory
                 CorrelationId = correlationId,
                 // The SAME derived hold reference the indeterminate ConfirmDebit used (deterministic, not
                 // minted), so the clearance query resolves exactly that in-flight operation.
-                CoreHoldRef = DerivedRef(CoreHoldPrefix, processId),
+                CoreHoldRef = SettlementReferences.Derive(SettlementReferences.CoreHoldPrefix, processId),
             },
             SettlementProcess.QueryCoreCreditStatus => new QueryCoreCreditStatusCommand
             {
                 ProcessId = processId,
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
-                CreditRef = DerivedRef(CreditPrefix, processId),
+                CreditRef = SettlementReferences.Derive(SettlementReferences.CreditPrefix, processId),
             },
             _ => null,
         };
     }
-
-    // A DETERMINISTIC derived reference for one settlement leg: the prefix + the process id's hex. Stable
-    // across re-emission (no minted value), so the assembled payload is byte-stable (ADR-PC-010 §P5) and the
-    // ACL's idempotency dedup on it works (the reserve and any reissue derive the SAME reference).
-    private static string DerivedRef(string prefix, Guid processId) => prefix + processId.ToString("N");
 }

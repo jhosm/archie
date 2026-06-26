@@ -1,3 +1,5 @@
+using Babelstone.Orchestrator.Saga.Settlement;
+
 namespace Babelstone.Families.TermDeposit.Orchestration;
 
 /// <summary>
@@ -37,11 +39,14 @@ namespace Babelstone.Families.TermDeposit.Orchestration;
 /// </remarks>
 public static class SagaCommandPayloadFactory
 {
-    // The derived-reference prefixes (Document 05). Each is a DETERMINISTIC namespacing of the
-    // process id for one leg — stable across re-emission, so the body is byte-stable. NOT minted.
-    private const string ReservationPrefix = "RSV-";
-    private const string CoreHoldPrefix = "CORE-HOLD-";
-    private const string CoreTxnPrefix = "CT-";
+    // The derived-reference prefixes + the derivation live in the ONE shared substrate
+    // SettlementReferences home (feature-design §8/§10, the rule-of-three cleanup bd babelstone-t7o3.18).
+    // The constitution debit leg now composes the SAME shared derivation as the substrate-owned settlement
+    // saga, so the constitution's ReserveAccountBalance / ConfirmDebit / QueryCoreDebitStatus and the
+    // settlement saga's debit legs derive the IDENTICAL external_reference for the same process id — the
+    // cross-saga no-double-debit invariant is structural, not a pair of literals that happen to agree. The
+    // constitution-unique ActivateDeposit / ReverseCoreDebit Core-txn reference rides the SAME shared
+    // CoreTxnPrefix. NOT minted, no clock (ADR-PC-010 §P5).
 
     /// <summary>
     /// Build the full typed payload for <paramref name="commandType"/>, or null if there is no
@@ -74,7 +79,7 @@ public static class SagaCommandPayloadFactory
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
                 AccountRef = reference.SourceAccountRef,
-                ReservationRef = DerivedRef(ReservationPrefix, processId),
+                ReservationRef = SettlementReferences.Derive(SettlementReferences.ReservationPrefix, processId),
             },
             ConstitutionProcess.ValidateProductLimits => new ValidateProductLimitsCommand
             {
@@ -98,7 +103,7 @@ public static class SagaCommandPayloadFactory
                 // the clearance answered not-executed): the §332 guard returns the recorded core_reference
                 // rather than re-debiting. Do NOT mint a fresh ref here — the no-double-debit invariant
                 // at v1 (before DEF-1's ACL guard exists) rests on this reference being stable.
-                CoreHoldRef = DerivedRef(CoreHoldPrefix, processId),
+                CoreHoldRef = SettlementReferences.Derive(SettlementReferences.CoreHoldPrefix, processId),
             },
             // ActivateDeposit is the ENGINE-bound constitution command (bd babelstone-t7o3.11 / 3k10 /
             // c8d8): its wire body is the engine's MINIMAL ConstituteDepositRequest (snake_case,
@@ -113,7 +118,7 @@ public static class SagaCommandPayloadFactory
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
                 DepositRef = reference.DepositRef,
-                CoreTxnRef = DerivedRef(CoreTxnPrefix, processId),
+                CoreTxnRef = SettlementReferences.Derive(SettlementReferences.CoreTxnPrefix, processId),
                 ProductCode = reference.ProductRef,
                 PrincipalCents = reference.AmountMinorUnits,
                 FundingAccount = reference.SourceAccountRef,
@@ -123,14 +128,14 @@ public static class SagaCommandPayloadFactory
                 ProcessId = processId,
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
-                ReservationRef = DerivedRef(ReservationPrefix, processId),
+                ReservationRef = SettlementReferences.Derive(SettlementReferences.ReservationPrefix, processId),
             },
             ConstitutionProcess.ReverseCoreDebit => new ReverseCoreDebitCommand
             {
                 ProcessId = processId,
                 CausationMessageId = causationMessageId,
                 CorrelationId = correlationId,
-                CoreTxnRef = DerivedRef(CoreTxnPrefix, processId),
+                CoreTxnRef = SettlementReferences.Derive(SettlementReferences.CoreTxnPrefix, processId),
             },
             ConstitutionProcess.QueryCoreDebitStatus => new QueryCoreDebitStatusCommand
             {
@@ -140,15 +145,9 @@ public static class SagaCommandPayloadFactory
                 DepositRef = reference.DepositRef,
                 // The SAME derived Core hold reference the indeterminate ConfirmDebit used, so the
                 // clearance query resolves exactly that in-flight operation (deterministic, not minted).
-                CoreHoldRef = DerivedRef(CoreHoldPrefix, processId),
+                CoreHoldRef = SettlementReferences.Derive(SettlementReferences.CoreHoldPrefix, processId),
             },
             _ => null,
         };
     }
-
-    // A DETERMINISTIC derived reference for one saga leg: the prefix + the process id's hex. Stable
-    // across re-emission (no minted value), so the assembled payload is byte-stable (ADR-PC-010 §P5).
-    // The same process id always yields the same leg reference, which is also what makes the ACL's
-    // idempotency dedup on it work (the reserve and the release both derive the SAME reservation ref).
-    private static string DerivedRef(string prefix, Guid processId) => prefix + processId.ToString("N");
 }
