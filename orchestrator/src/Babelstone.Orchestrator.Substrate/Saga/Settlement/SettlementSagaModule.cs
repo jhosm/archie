@@ -14,10 +14,10 @@ namespace Babelstone.Orchestrator.Saga.Settlement;
 /// <para>
 /// <b>EventAutoStarted on a <c>Movement</c>-bearing event (ADR-IC-018 §P5).</b> The saga is BORN when a
 /// money-moving event carrying an <c>Originated</c> <c>Movement</c> arrives, admitted by the header predicate
-/// (<c>movementorigin == Originated</c>); the engine relay promotes the movement's <c>origin</c> /
-/// <c>direction</c> to CloudEvents extension headers, which the substrate reads — never the payload. The
-/// machine's <see cref="SettlementProcess.SubstituteAsync"/> resolves the generic start event to the debit or
-/// credit branch from the promoted <c>movementdirection</c> header.
+/// (<c>movementorigin == Originated</c>); the engine relay promotes the movement's <c>origin</c> and the
+/// ordered <c>movementdirections</c> list to CloudEvents extension headers, which the substrate reads — never
+/// the payload. The machine's <see cref="SettlementProcess.SubstituteAsync"/> resolves the generic start event
+/// to the debit or credit branch from this leg's single-entry <c>movementdirections</c> list.
 /// </para>
 /// <para>
 /// <b>The consume topics are HOST-supplied, not named here (ORCH-3 / ADR-IC-018 §P4).</b> The substrate names
@@ -89,7 +89,8 @@ public sealed class SettlementSagaModule : ISagaModule
     /// header is <c>Originated</c> (ADR-IC-018 §P5/§D5; ADR-PC-032 slot 2 — an Originated movement has a cash
     /// leg to drive, an Observed one does not). The substrate evaluates this predicate on the record's
     /// extension-attribute HEADERS only (never the payload). The direction branch is resolved AFTER start by
-    /// the machine's <see cref="SettlementProcess.SubstituteAsync"/> from the <c>movementdirection</c> header.
+    /// the machine's <see cref="SettlementProcess.SubstituteAsync"/> from this leg's single-entry
+    /// <c>movementdirections</c> list.
     /// </summary>
     /// <remarks>
     /// <b>Record-name-AGNOSTIC (<see cref="AutoStartMatch.ByHeaderPredicate"/>).</b> UNLIKE every product-family
@@ -110,13 +111,14 @@ public sealed class SettlementSagaModule : ISagaModule
             headers.TryGetValue(OriginHeader, out var origin)
             && string.Equals(origin, OriginatedValue, StringComparison.Ordinal),
         Match: AutoStartMatch.ByHeaderPredicate,
-        // MULTI-DIRECTION fan-out (ADR-PC-032 §A9 amendment 2026-06-26, option b). A single Movement-bearing
-        // event MAY carry money moving two ways at once (a renewal's rollover-debit + interest-credit). The
-        // producer (Babelstone.Engine.MovementHeaders) emits the ordered movementdirections composite for such
-        // an event; this projector fans it into ONE settlement instance per Movement, each at a deterministic
-        // per-Movement process id and gated by its own direction (the substrate only INVOKES this — the
-        // settlement-specific composite shape lives here, family-agnostic; ADR-IC-018 §P5). A single-direction
-        // event has no composite, so the projector returns the lone event unchanged (no fan-out).
+        // MULTI-DIRECTION fan-out (ADR-PC-032 §A9/§A10, option b). A single Movement-bearing event MAY carry
+        // money moving two ways at once (a renewal's rollover-debit + interest-credit). The producer
+        // (Babelstone.Engine.MovementHeaders) emits the ordered movementdirections list; when it spans more
+        // than one direction this projector fans it into ONE settlement instance per Movement, each at a
+        // deterministic per-Movement process id and gated by its own direction (the substrate only INVOKES this
+        // — the settlement-specific list shape lives here, family-agnostic; ADR-IC-018 §P5). A standalone
+        // single-direction event's one-entry list does not fan out, so the projector returns the lone event
+        // unchanged.
         FanOut: FanOutByMovementDirection);
 
     /// <inheritdoc />
@@ -134,12 +136,12 @@ public sealed class SettlementSagaModule : ISagaModule
 
     /// <summary>
     /// Fan a matched Movement-bearing event into ONE per-Movement settlement event per Originated direction
-    /// (ADR-PC-032 §A9 amendment 2026-06-26, option b). Reads the <c>movementdirections</c> composite the
-    /// producer emits for a multi-direction event; for each direction in carrier order it projects the source
-    /// event into a per-Movement <see cref="Inbox.SagaInboxEvent"/> (its own derived process id / dedup id, its
-    /// direction pinned, the composite stripped). The PRIMARY (index 0) keeps the event's own ids; the
-    /// secondaries are deterministically derived (so a redelivery re-derives them — effectively-once per leg).
-    /// A single-direction event (no composite) returns the lone source event UNCHANGED — the substrate then
+    /// (ADR-PC-032 §A9/§A10, option b). Reads the ordered <c>movementdirections</c> list the producer emits;
+    /// when it spans more than one direction, for each direction in carrier order it projects the source event
+    /// into a per-Movement <see cref="Inbox.SagaInboxEvent"/> (its own derived process id / dedup id, its list
+    /// reduced to that single direction). The PRIMARY (index 0) keeps the event's own ids; the secondaries are
+    /// deterministically derived (so a redelivery re-derives them — effectively-once per leg). A standalone
+    /// single-direction event (one-entry list) returns the lone source event UNCHANGED — the substrate then
     /// starts the established single instance. Pure (no clock, no I/O); names no family.
     /// </summary>
     public static IReadOnlyList<Inbox.SagaInboxEvent> FanOutByMovementDirection(Inbox.SagaInboxEvent source)
@@ -147,7 +149,8 @@ public sealed class SettlementSagaModule : ISagaModule
         var directions = SettlementMovementFanout.ParseDirections(source.ExtensionHeaders);
         if (directions.Count < 2)
         {
-            // No multi-direction composite → no fan-out. The established single instance settles the event.
+            // A single-entry (or absent) movementdirections list → no fan-out. The established single instance
+            // settles the event, keeping its own ce_subject; the substitutor's SingleDirection branches it.
             return [source];
         }
 

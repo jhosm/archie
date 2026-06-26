@@ -121,7 +121,7 @@ public sealed class PersonalLoanConstitutionService(
         //    settlement on this path (ADR-PC-032 §Decision slot 5: eager settle is illegal; record the
         //    Movement and append FIRST). The cash leg is the substrate-owned settlement saga's GATED,
         //    downstream step: it auto-starts off the Movement's promoted ce_movementorigin /
-        //    ce_movementdirection headers (bd babelstone-t7o3.20) and effects the credit against the Core ACL.
+        //    ce_movementdirections headers (bd babelstone-t7o3.20) and effects the credit against the Core ACL.
         //    Append-first closes the orphan window by construction — the FACT is durable first, the cash is a
         //    retryable consequence (ADR-PC-031 §D3); there is no settle-then-append window to leave a debit
         //    orphaned. The command id (when supplied) makes this append idempotent (ADR-PC-029 slot 4).

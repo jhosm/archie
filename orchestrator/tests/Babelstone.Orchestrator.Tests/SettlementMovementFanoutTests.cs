@@ -5,21 +5,20 @@ using Xunit;
 namespace Babelstone.Orchestrator.Tests;
 
 /// <summary>
-/// Unit proof of the multi-direction Movement fan-out (ADR-PC-032 §A9 amendment 2026-06-26, option b; bd
-/// babelstone-t7o3.21). In plain English: a single event can carry money moving two opposite ways at once — a
-/// deposit renewal rolls the principal over (a debit) AND pays the interest (a credit). One settlement saga
-/// instance branches to ONE direction, so the substrate turns that one event into one settlement subject per
-/// Movement, each gated by its own direction. These pin that the fan-out projector reads the producer's
-/// <c>movementdirections</c> composite, derives a distinct, DETERMINISTIC subject per Movement (so a
-/// redelivery re-derives the same subjects — effectively-once per leg), and pins each leg's own direction.
+/// Unit proof of the multi-direction Movement fan-out (ADR-PC-032 §A9/§A10, option b; bd babelstone-t7o3.21).
+/// In plain English: a single event can carry money moving two opposite ways at once — a deposit renewal rolls
+/// the principal over (a debit) AND pays the interest (a credit). One settlement saga instance branches to ONE
+/// direction, so the substrate turns that one event into one settlement subject per Movement, each gated by its
+/// own direction. These pin that the fan-out projector reads the producer's ordered <c>movementdirections</c>
+/// list, derives a distinct, DETERMINISTIC subject per Movement (so a redelivery re-derives the same subjects —
+/// effectively-once per leg), and reduces each leg's list to its own single direction.
 /// </summary>
 public sealed class SettlementMovementFanoutTests
 {
     private const string OriginHeader = "movementorigin";
-    private const string DirectionHeader = "movementdirection";
     private const string DirectionsHeader = "movementdirections";
 
-    private static SagaInboxEvent MultiDirectionEvent(string composite, Guid? subject = null) => new(
+    private static SagaInboxEvent MultiDirectionEvent(string directions, Guid? subject = null) => new(
         MessageId: Guid.Parse("11111111-1111-1111-1111-111111111111"),
         ProcessId: subject ?? Guid.Parse("22222222-2222-2222-2222-222222222222"),
         EventType: "DepositRenewed",
@@ -29,8 +28,7 @@ public sealed class SettlementMovementFanoutTests
         ExtensionHeaders: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             [OriginHeader] = "Originated",
-            [DirectionHeader] = "Debit",     // the producer's first direction
-            [DirectionsHeader] = composite,  // the ordered composite the fan-out reads
+            [DirectionsHeader] = directions,  // the ordered list the fan-out reads
             ["scaacr"] = "urn:bank:sca:psd2",
             ["scaauthtime"] = "1750000000",
         });
@@ -41,9 +39,10 @@ public sealed class SettlementMovementFanoutTests
         var projections = SettlementSagaModule.FanOutByMovementDirection(MultiDirectionEvent("Debit,Credit"));
 
         Assert.Equal(2, projections.Count);
-        // Carrier order is preserved: the debit leg first, the credit leg second (feature-design §6).
-        Assert.Equal("Debit", projections[0].ExtensionHeaders![DirectionHeader]);
-        Assert.Equal("Credit", projections[1].ExtensionHeaders![DirectionHeader]);
+        // Carrier order is preserved: the debit leg first, the credit leg second (feature-design §6). Each
+        // leg's movementdirections list is reduced to its OWN single direction.
+        Assert.Equal("Debit", projections[0].ExtensionHeaders![DirectionsHeader]);
+        Assert.Equal("Credit", projections[1].ExtensionHeaders![DirectionsHeader]);
     }
 
     [Fact]
@@ -79,15 +78,15 @@ public sealed class SettlementMovementFanoutTests
     }
 
     [Fact]
-    public void Each_leg_strips_the_composite_so_it_never_re_fans_out()
+    public void Each_leg_carries_a_single_entry_list_so_it_never_re_fans_out()
     {
         var projections = SettlementSagaModule.FanOutByMovementDirection(MultiDirectionEvent("Debit,Credit"));
 
         foreach (var leg in projections)
         {
-            // The composite is consumed by the fan-out — a leg must be a single-direction subject the
-            // established substitutor resolves, never a re-fan-out (no recursion past depth 1).
-            Assert.False(leg.ExtensionHeaders!.ContainsKey(DirectionsHeader));
+            // The list is REDUCED to this leg's one direction by the fan-out — a single-entry list the
+            // established substitutor resolves, and which is inert on re-entry (no recursion past depth 1).
+            Assert.DoesNotContain(",", leg.ExtensionHeaders![DirectionsHeader]);
             // Re-projecting a leg yields itself (length 1) — proving it does not fan out again.
             Assert.Single(SettlementSagaModule.FanOutByMovementDirection(leg));
         }
@@ -111,8 +110,9 @@ public sealed class SettlementMovementFanoutTests
     [Fact]
     public void A_single_direction_event_does_not_fan_out()
     {
-        // No composite → the lone event is returned unchanged; the substrate starts exactly one instance (the
-        // established path for the 7 standalone legs — disbursement, maturity, coupon, early-termination).
+        // A one-entry movementdirections list → the lone event is returned unchanged; the substrate starts
+        // exactly one instance (the established path for the 7 standalone legs — disbursement, maturity,
+        // coupon, early-termination).
         var single = new SagaInboxEvent(
             MessageId: Guid.NewGuid(),
             ProcessId: Guid.NewGuid(),
@@ -122,7 +122,7 @@ public sealed class SettlementMovementFanoutTests
             ExtensionHeaders: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 [OriginHeader] = "Originated",
-                [DirectionHeader] = "Credit",
+                [DirectionsHeader] = "Credit",
             });
 
         var projections = SettlementSagaModule.FanOutByMovementDirection(single);

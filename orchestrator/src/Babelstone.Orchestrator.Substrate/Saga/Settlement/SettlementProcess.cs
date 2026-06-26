@@ -21,9 +21,9 @@ namespace Babelstone.Orchestrator.Saga.Settlement;
 /// <para>
 /// <b>Parameterised by DIRECTION (the gating asymmetry of ADR-PC-016 slot 5).</b> The saga is
 /// event-auto-started (ADR-IC-018 §P5) on a <c>Movement</c>-bearing event whose promoted
-/// <c>ce_movementdirection</c> / <c>ce_movementorigin</c> CloudEvents headers the substrate reads — never
+/// <c>ce_movementdirections</c> / <c>ce_movementorigin</c> CloudEvents headers the substrate reads — never
 /// the payload. The single start event resolves, via <see cref="IEventSubstitutor"/> on the start
-/// headers, to a direction-specific effective event:
+/// headers (this leg's single-entry <c>movementdirections</c>), to a direction-specific effective event:
 /// <list type="bullet">
 ///   <item><b><c>Debit</c></b> → FUNDS-GATED: <c>ReserveAccountBalance</c> (the reversible hold) then
 ///   <c>ConfirmDebit</c> (the irreversible debit). A refused reserve (<c>InsufficientBalance</c>) parks;
@@ -62,8 +62,8 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
     /// <summary>The GENERIC start event the substrate auto-starts the saga on — a <c>Movement</c>-bearing
     /// family event, admitted by the module's header predicate (<c>movementorigin == Originated</c>). The
     /// <see cref="SubstituteAsync"/> hook resolves it to a direction-specific effective event from the
-    /// promoted <c>ce_movementdirection</c> header, so the table branches by direction WITHOUT the substrate
-    /// reading the payload (ADR-IC-018 §D5). It is the <c>ce_type</c> the engine relay stamps as the
+    /// leg's single-entry <c>ce_movementdirections</c> list, so the table branches by direction WITHOUT the
+    /// substrate reading the payload (ADR-IC-018 §D5). It is the <c>ce_type</c> the engine relay stamps as the
     /// generic money-movement start marker; a family event with no Originated movement never matches.</summary>
     public const string MovementOriginated = "MovementOriginated";
 
@@ -223,13 +223,15 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
 
     /// <summary>
     /// <see cref="IEventSubstitutor"/> — resolve the GENERIC <see cref="MovementOriginated"/> start event to
-    /// a direction-specific effective event from the promoted <c>movementdirection</c> CloudEvents header
+    /// a direction-specific effective event from the promoted <c>movementdirections</c> CloudEvents header
     /// (ADR-IC-018 §D5 — the substrate reads headers, never the payload). This is how the saga parameterises
-    /// by direction WITHOUT a payload read: the start headers the consume loop projected carry
-    /// <c>movementdirection</c> (Debit | Credit), and this PURE map (the header → effective-event function)
-    /// picks the debit or credit branch the table then drives. For every other (state, event) — and for a
-    /// start event with no/unknown direction header — the incoming event is returned unchanged (the table
-    /// then rejects an unstartable event as NoTransition, fail-closed, never a guessed direction).
+    /// by direction WITHOUT a payload read: by the time the table sees a Movement-bearing event the fan-out has
+    /// reduced it to a SINGLE-direction leg, so its <c>movementdirections</c> list carries exactly one entry
+    /// (Debit | Credit), and this PURE map (the header → effective-event function) picks the debit or credit
+    /// branch the table then drives. For every other (state, event) — and for a start event whose
+    /// <c>movementdirections</c> is absent/unknown or (not-yet-fanned-out) carries MORE THAN ONE entry — the
+    /// incoming event is returned unchanged (the table then rejects an unstartable event as NoTransition,
+    /// fail-closed, never a guessed direction).
     /// </summary>
     /// <remarks>
     /// The COUNT-style impurity the constitution substitutor has (reading the transition log) is absent
@@ -252,14 +254,13 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
             return Task.FromResult(incomingEventType);
         }
 
-        // The direction promoted by the engine relay onto the Movement-bearing event's CloudEvents headers
-        // (lowercased, ce_-stripped by the consume loop). Debit -> the funds-gated branch; Credit -> the
-        // confirmation-gated branch. An absent/unknown direction returns the un-substituted start event,
-        // which has no transition out of SETTLEMENT_STARTED -> NoTransition (fail-closed, never a guess).
-        var direction = extensionHeaders is not null
-            && extensionHeaders.TryGetValue(DirectionHeader, out var d)
-            ? d
-            : null;
+        // The lone direction this leg's movementdirections list declares — the engine relay promoted the
+        // ordered list onto the Movement-bearing event's CloudEvents headers, and the fan-out reduced this leg
+        // to a single entry (lowercased, ce_-stripped by the consume loop). Debit -> the funds-gated branch;
+        // Credit -> the confirmation-gated branch. Null (absent/unknown, or a not-yet-fanned-out multi-entry
+        // list) returns the un-substituted start event, which has no transition out of SETTLEMENT_STARTED ->
+        // NoTransition (fail-closed, never a guess).
+        var direction = SettlementMovementFanout.SingleDirection(extensionHeaders);
 
         var effective = direction switch
         {
@@ -270,11 +271,6 @@ public sealed partial class SettlementProcess : TableStateMachine, IEventSubstit
 
         return Task.FromResult(effective);
     }
-
-    /// <summary>The promoted CloudEvents extension-attribute name (ce_-stripped, lowercased by the consume
-    /// loop) carrying a <c>Movement</c>'s <see cref="MovementOriginated"/> direction. The engine relay
-    /// promotes the ADR-PC-032 <c>Movement.Direction</c> to this header on the carrying event.</summary>
-    public const string DirectionHeader = "movementdirection";
 
     /// <summary>The promoted direction value for a debit movement (ADR-PC-032 <c>SettlementDirection.Debit</c>
     /// — value leaves the named account). The relay promotes the enum's <c>ToString()</c> verbatim.</summary>

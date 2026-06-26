@@ -11,7 +11,7 @@ namespace Babelstone.Orchestrator.Tests;
 /// through the consume→advance path (bd babelstone-t7o3.20 AC#3; ADR-PC-032 §A7/§A8; ADR-IC-018 §P5/§D5
 /// family-agnostic-saga amendment). In plain English: this drives a `LoanDisbursed`-shaped inbox event —
 /// whose `ce_type` record name is `LoanDisbursed`, carrying the producer's `ce_movementorigin=Originated` /
-/// `ce_movementdirection` extension headers — straight through <see cref="SagaAdvanceHandler.AdvanceAsync"/>
+/// `ce_movementdirections` extension headers — straight through <see cref="SagaAdvanceHandler.AdvanceAsync"/>
 /// (the real consume-loop dispatch), and asserts a <see cref="SettlementProcess"/> instance IS BORN and the
 /// correct debit/credit branch is selected. It closes the gap the contract test
 /// (<see cref="MovementHeaderAutoStartContractTests"/>) deliberately could not reach: that test exercises the
@@ -24,7 +24,8 @@ namespace Babelstone.Orchestrator.Tests;
 /// The substrate never rewrites `ce_type` (it would break the engine inbox's `ce_type`↔`schema_id` decode);
 /// instead the record-name-agnostic rule matches on the `movementorigin` header and the substrate drives the
 /// advance with the saga's GENERIC `MovementOriginated` marker, which the table /
-/// <see cref="SettlementProcess.SubstituteAsync"/> resolve to the direction branch from `ce_movementdirection`.
+/// <see cref="SettlementProcess.SubstituteAsync"/> resolve to the direction branch from the leg's single-entry
+/// `ce_movementdirections` list.
 /// A bare <see cref="RecordingCommandSink"/> absorbs the saga's first emitted command (no typed route needed).
 /// </remarks>
 [Trait("Category", "Integration")]
@@ -43,8 +44,8 @@ public sealed class MovementSagaAutoStartIntegrationTests(OrchestratorPostgresFi
     private static IReadOnlyDictionary<string, string> MovementHeaders(string direction) =>
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            [SettlementSagaModule.OriginHeader] = "Originated",       // ce_movementorigin (producer value)
-            [SettlementProcess.DirectionHeader] = direction,          // ce_movementdirection (Debit | Credit)
+            [SettlementSagaModule.OriginHeader] = "Originated",          // ce_movementorigin (producer value)
+            [SettlementMovementFanout.DirectionsHeader] = direction,     // ce_movementdirections (one entry: Debit | Credit)
         };
 
     [Fact]
@@ -52,7 +53,7 @@ public sealed class MovementSagaAutoStartIntegrationTests(OrchestratorPostgresFi
     {
         // A disbursement is an Originated CREDIT (the lump sum enters the borrower's account). The event's
         // ce_type record name is LoanDisbursed, NOT MovementOriginated — the record-name-agnostic rule must
-        // still auto-start the settlement saga and resolve the CREDIT branch from ce_movementdirection.
+        // still auto-start the settlement saga and resolve the CREDIT branch from ce_movementdirections.
         var sink = new RecordingCommandSink();
         var handler = NewSettlementAutoStartHandler(sink);
         var loanId = Guid.NewGuid();
@@ -100,7 +101,7 @@ public sealed class MovementSagaAutoStartIntegrationTests(OrchestratorPostgresFi
         var observed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             [SettlementSagaModule.OriginHeader] = "Observed",
-            [SettlementProcess.DirectionHeader] = "Credit",
+            [SettlementMovementFanout.DirectionsHeader] = "Credit",
         };
         var outcome = await RunAsync(handler, new SagaInboxEvent(
             MessageId: Guid.NewGuid(), ProcessId: processId, EventType: LoanDisbursedEventType,
@@ -129,10 +130,10 @@ public sealed class MovementSagaAutoStartIntegrationTests(OrchestratorPostgresFi
     [Fact]
     public async Task A_multi_direction_event_fans_out_into_one_settlement_instance_per_movement()
     {
-        // A renewal carries a rollover-DEBIT + an interest-CREDIT on ONE event (ADR-PC-032 §A9 amendment
-        // 2026-06-26, option b). The producer emits the movementdirections composite; the substrate fans the
-        // ONE event into TWO settlement instances — the PRIMARY on the event's own subject (the debit branch,
-        // the first direction) and a derived SECONDARY (the credit branch) — both born atomically.
+        // A renewal carries a rollover-DEBIT + an interest-CREDIT on ONE event (ADR-PC-032 §A9/§A10, option
+        // b). The producer emits the ordered movementdirections list; the substrate fans the ONE event into
+        // TWO settlement instances — the PRIMARY on the event's own subject (the debit branch, the first
+        // direction) and a derived SECONDARY (the credit branch) — both born atomically.
         var sink = new RecordingCommandSink();
         var handler = NewSettlementAutoStartHandler(sink);
         var renewalId = Guid.NewGuid();
@@ -140,8 +141,7 @@ public sealed class MovementSagaAutoStartIntegrationTests(OrchestratorPostgresFi
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             [SettlementSagaModule.OriginHeader] = "Originated",
-            [SettlementProcess.DirectionHeader] = "Debit",        // the producer's first direction
-            [SettlementMovementFanout.DirectionsHeader] = "Debit,Credit", // the ordered composite
+            [SettlementMovementFanout.DirectionsHeader] = "Debit,Credit", // the ordered list (one entry per Movement)
         };
         var outcome = await RunAsync(handler, new SagaInboxEvent(
             MessageId: Guid.NewGuid(), ProcessId: renewalId, EventType: "DepositRenewed",

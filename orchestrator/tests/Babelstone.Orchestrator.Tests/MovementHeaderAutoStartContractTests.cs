@@ -7,7 +7,7 @@ namespace Babelstone.Orchestrator.Tests;
 /// <summary>
 /// The PRODUCER↔CONSUMER contract for the Movement-routing CloudEvents headers (ADR-PC-032 §A7/§A8;
 /// ADR-IC-018 §P5/§D5; bd babelstone-t7o3.20). In plain English: the engine spine promotes a Movement-bearing
-/// event's origin/direction to the <c>ce_movementorigin</c> / <c>ce_movementdirection</c> headers (its
+/// event's origin/direction to the <c>ce_movementorigin</c> / <c>ce_movementdirections</c> headers (its
 /// producer, <c>Babelstone.Engine.MovementHeaders</c>); the substrate-owned settlement saga reads those SAME
 /// header values to auto-start and to pick the debit/credit branch (its consumer, the
 /// <see cref="SettlementSagaModule"/> auto-start predicate + the <see cref="SettlementProcess"/> substitutor).
@@ -51,7 +51,7 @@ public sealed class MovementHeaderAutoStartContractTests
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             [SettlementSagaModule.OriginHeader] = OriginatedValue,
-            [SettlementProcess.DirectionHeader] = DebitValue,
+            [SettlementMovementFanout.DirectionsHeader] = DebitValue,
         };
         Assert.True(rule!.HeaderPredicate!(headers));
     }
@@ -79,13 +79,14 @@ public sealed class MovementHeaderAutoStartContractTests
     public async Task The_substitutor_resolves_the_branch_from_the_producer_emitted_direction_value(
         string producerDirection, string expectedEffectiveEvent)
     {
-        // After auto-start, the machine's substitutor maps the generic start event to the debit or credit
-        // branch from the SAME movementdirection wire value the producer emits
-        // (SettlementDirection.Debit/Credit .ToString()).
+        // After auto-start (and fan-out, which reduces each leg to its single direction), the machine's
+        // substitutor maps the generic start event to the debit or credit branch from the leg's single-entry
+        // movementdirections list — the SAME wire value the producer emits (SettlementDirection.Debit/Credit
+        // .ToString()).
         var machine = new SettlementProcess();
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            [SettlementProcess.DirectionHeader] = producerDirection,
+            [SettlementMovementFanout.DirectionsHeader] = producerDirection,
         };
 
         var effective = await machine.SubstituteAsync(

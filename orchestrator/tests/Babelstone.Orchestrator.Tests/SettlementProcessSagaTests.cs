@@ -144,14 +144,15 @@ public sealed class SettlementProcessSagaTests
     [Theory]
     [InlineData("Debit", SettlementProcess.DebitMovementOriginated)]
     [InlineData("Credit", SettlementProcess.CreditMovementOriginated)]
-    public async Task The_start_event_resolves_to_a_direction_branch_from_the_movementdirection_header(
+    public async Task The_start_event_resolves_to_a_direction_branch_from_the_movementdirections_header(
         string direction, string expectedEffectiveEvent)
     {
-        // The substitutor reads ONLY the promoted ce_movementdirection header (never the payload, §D5) and
-        // maps the generic MovementOriginated start event to the debit or credit branch the table drives.
+        // The substitutor reads ONLY the leg's single-entry ce_movementdirections list (never the payload,
+        // §D5) and maps the generic MovementOriginated start event to the debit or credit branch the table
+        // drives.
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            [SettlementProcess.DirectionHeader] = direction,
+            [SettlementMovementFanout.DirectionsHeader] = direction,
         };
 
         var effective = await _machine.SubstituteAsync(
@@ -163,7 +164,7 @@ public sealed class SettlementProcessSagaTests
     }
 
     [Fact]
-    public async Task An_absent_or_unknown_direction_header_leaves_the_unstartable_event_unchanged()
+    public async Task An_absent_unknown_or_unfanned_multi_direction_header_leaves_the_unstartable_event_unchanged()
     {
         // No/unknown direction -> the un-substituted start event, which has NO transition out of
         // SETTLEMENT_STARTED -> the advance handler rejects it as NoTransition (fail-closed, never a guess).
@@ -173,12 +174,21 @@ public sealed class SettlementProcessSagaTests
             processId: Guid.NewGuid(), extensionHeaders: null, ct: default);
         Assert.Equal(SettlementProcess.MovementOriginated, unchanged);
 
-        var unknownDir = new Dictionary<string, string> { [SettlementProcess.DirectionHeader] = "Sideways" };
+        var unknownDir = new Dictionary<string, string> { [SettlementMovementFanout.DirectionsHeader] = "Sideways" };
         var stillUnchanged = await _machine.SubstituteAsync(
             SettlementProcess.States.SettlementStarted, SettlementProcess.MovementOriginated,
             transitionLog: null!, connection: null!, transaction: null!,
             processId: Guid.NewGuid(), extensionHeaders: unknownDir, ct: default);
         Assert.Equal(SettlementProcess.MovementOriginated, stillUnchanged);
+
+        // A still-multi-entry list (one a fan-out should have split, but didn't) is NOT resolved to the first
+        // entry — it fail-closes to the unstartable event, never a guessed/partial settlement.
+        var unfanned = new Dictionary<string, string> { [SettlementMovementFanout.DirectionsHeader] = "Debit,Credit" };
+        var multiUnchanged = await _machine.SubstituteAsync(
+            SettlementProcess.States.SettlementStarted, SettlementProcess.MovementOriginated,
+            transitionLog: null!, connection: null!, transaction: null!,
+            processId: Guid.NewGuid(), extensionHeaders: unfanned, ct: default);
+        Assert.Equal(SettlementProcess.MovementOriginated, multiUnchanged);
 
         // A non-start event is returned unchanged regardless of headers.
         var nonStart = await _machine.SubstituteAsync(

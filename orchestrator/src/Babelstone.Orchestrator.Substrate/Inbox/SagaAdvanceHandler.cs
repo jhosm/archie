@@ -356,18 +356,19 @@ public sealed class SagaAdvanceHandler
                 return AdvanceOutcome.UnknownSaga;
             }
 
-            // (2a-FANOUT) Optional MULTI-INSTANCE fan-out (ADR-PC-032 §A9 amendment 2026-06-26; ADR-IC-018
-            // §P5). A single matched event MAY need to start MORE THAN ONE saga instance — the settlement saga
-            // fans a multi-direction Movement-bearing event (a renewal's rollover-debit + interest-credit) into
-            // ONE instance per Movement, each gated by its own direction. The rule's FanOut projector (the
-            // module's, header-only, family-agnostic — the substrate only invokes it) returns the per-instance
-            // events, the PRIMARY (the event's own ids) FIRST. We process every SECONDARY (index >= 1) here, in
-            // THIS SAME transaction, so all legs start atomically with the primary's offset commit
-            // (effectively-once, all-or-nothing); each secondary's projected event carries its own derived
-            // process_id / message_id and its own pinned direction header, and has the fan-out composite
-            // REMOVED so it never re-fans-out (no recursion past depth 1). The PRIMARY then continues below with
-            // the index-0 projection (its direction pinned — a no-op for a single-direction event). A null/
-            // single-element projection is "no fan-out": message is unchanged, exactly the established path.
+            // (2a-FANOUT) Optional MULTI-INSTANCE fan-out (ADR-PC-032 §A9/§A10; ADR-IC-018 §P5). A single
+            // matched event MAY need to start MORE THAN ONE saga instance — the settlement saga fans a
+            // multi-direction Movement-bearing event (a renewal's rollover-debit + interest-credit) into ONE
+            // instance per Movement, each gated by its own direction. The rule's FanOut projector (the module's,
+            // header-only, family-agnostic — the substrate only invokes it) returns the per-instance events, the
+            // PRIMARY (the event's own ids) FIRST. We process every SECONDARY (index >= 1) here, in THIS SAME
+            // transaction, so all legs start atomically with the primary's offset commit (effectively-once,
+            // all-or-nothing); each secondary's projected event carries its own derived process_id / message_id
+            // and its movementdirections list reduced to its OWN single direction, so it branches THIS leg and
+            // never re-fans-out (a single-entry list is inert — no recursion past depth 1). The PRIMARY then
+            // continues below with the index-0 projection (its list reduced to the first direction). A null/
+            // single-element projection is "no fan-out": message is unchanged, exactly the established path for
+            // a standalone single-direction leg.
             if (autoStart.FanOut is { } fanOut)
             {
                 var projections = fanOut(message);
@@ -376,15 +377,15 @@ public sealed class SagaAdvanceHandler
                     for (var i = 1; i < projections.Count; i++)
                     {
                         // Each secondary is a full advance on the SAME connection/transaction: it auto-starts
-                        // its own derived-process_id instance (its composite is stripped → its own FanOut is a
-                        // no-op) and advances it with its pinned direction. A non-Advanced outcome (a duplicate
-                        // on redelivery) is the effectively-once guarantee; a SagaConcurrencyException
+                        // its own derived-process_id instance (its movementdirections list is a single entry →
+                        // its own FanOut is a no-op) and advances it with that direction. A non-Advanced outcome
+                        // (a duplicate on redelivery) is the effectively-once guarantee; a SagaConcurrencyException
                         // propagates so the whole unit rolls back and redelivers (all legs together).
                         await AdvanceCoreAsync(connection, transaction, projections[i], span, ct);
                     }
 
-                    // Drive the PRIMARY with the index-0 projection (its direction pinned, composite stripped),
-                    // so the established single-instance advance below settles the first Movement.
+                    // Drive the PRIMARY with the index-0 projection (its movementdirections list reduced to the
+                    // first direction), so the established single-instance advance below settles the first Movement.
                     message = projections[0];
                 }
             }

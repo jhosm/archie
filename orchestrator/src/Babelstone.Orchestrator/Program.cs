@@ -134,7 +134,7 @@ var sagaModules = new ISagaModule[]
     // home that effects any family's cash leg. EventAutoStarted on a Movement-bearing event (a
     // ce_movementorigin == Originated header); the direction branch (debit funds-gated Reserve->Confirm vs
     // credit confirmation-gated Confirm) is resolved by the machine's IEventSubstitutor from the promoted
-    // ce_movementdirection header. The HOST (the §D4 composition root, which MAY name a family) supplies the
+    // ce_movementdirections list. The HOST (the §D4 composition root, which MAY name a family) supplies the
     // family integration topics where Movement-bearing events arrive — the substrate module names none of
     // them (ORCH-3). At v1 the only loaded family is term-deposit, so it subscribes that family's
     // integration topic(s); a new family's integration topics are added here, zero substrate diff.

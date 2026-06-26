@@ -28,7 +28,7 @@ public interface IEventSubstitutor
     /// <param name="extensionHeaders">The incoming record's NON-standard CloudEvents extension attributes
     /// (ce_-stripped, lowercased — ADR-IC-018 §P5/§D5), the SAME header map the auto-start predicate sees.
     /// Null when the record carried no extension attributes. Lets a header-keyed substitution (e.g. the
-    /// settlement saga resolving a generic start event to its debit/credit branch from <c>movementdirection</c>)
+    /// settlement saga resolving a generic start event to its debit/credit branch from <c>movementdirections</c>)
     /// read the headers WITHOUT decoding the payload — preserving the extraction-ready boundary (ADR-IC-018
     /// §D5). A substitutor that needs no header (the constitution reissue-budget) simply ignores it.</param>
     Task<string> SubstituteAsync(
