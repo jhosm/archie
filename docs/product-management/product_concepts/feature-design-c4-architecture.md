@@ -326,7 +326,7 @@ sequenceDiagram
     participant ACL as Core ACL<br/>(family-agnostic)
     participant Dep as Deposit aggregate<br/>(family-owned: engine)
 
-    Note over Saga,Sub: BuildTable() (from_state, event) -> (next_state, commands) IS the spec.<br/>Saga = vocabulary (States/events/commands); Sub = generic advance/persist/dispatch.
+    Note over Saga,Sub: BuildTable() (from_state, event) -> (next_state, commands) IS the spec.<br/>Saga = vocabulary (States/events/commands), Sub = generic advance/persist/dispatch.
 
     App->>Edge: POST /api/v1/deposits/constitute
     Edge->>Saga: create ConstitutionProcess in STARTED + ConstitutionRequested (outbox)
@@ -356,7 +356,7 @@ sequenceDiagram
     end
 
     rect rgb(255,250,230)
-    Note over Saga: Approval fork (OnAdvancedAsync self-emit at VALIDATIONS_COMPLETE;<br/>pure ApprovalForkHandler.Decide on edge-pinned references, in-process, off-bus)
+    Note over Saga: Approval fork (OnAdvancedAsync self-emit at VALIDATIONS_COMPLETE,<br/>pure ApprovalForkHandler.Decide on edge-pinned references, in-process, off-bus)
     alt auto-approve (ConstitutionApproved)
         Note over Saga: VALIDATIONS_COMPLETE -> (APPROVED, ConfirmDebit)
     else route to workflow (WorkflowApprovalRequired)
@@ -373,13 +373,13 @@ sequenceDiagram
     ACL-->>Saga: DebitConfirmed
     Note over Saga: APPROVED -> (APPROVED, ActivateDeposit)
     Saga->>Dep: ActivateDeposit
-    Dep-->>Saga: DepositConstituted (engine outbox; ce_type DepositConstituted)
+    Dep-->>Saga: DepositConstituted (engine outbox, ce_type DepositConstituted)
     Note over Saga: APPROVED -> COMPLETED  [*] terminal
     deactivate Saga
     end
 
     rect rgb(255,240,245)
-    Note over Saga,ACL: COMPENSATION FORK A — COMPENSATE_VALIDATIONS (early, pre-debit; LimitsRejected)
+    Note over Saga,ACL: COMPENSATION FORK A — COMPENSATE_VALIDATIONS (early, pre-debit — LimitsRejected)
     Dep-->>Saga: LimitsRejected (from PARALLEL_VALIDATION or AWAIT_LIMITS_VALIDATED)
     Note over Saga: -> (COMPENSATE_VALIDATIONS, ReleaseBalanceReservation)
     Saga->>ACL: ReleaseBalanceReservation
@@ -394,7 +394,7 @@ sequenceDiagram
     end
 
     rect rgb(255,235,240)
-    Note over Saga,ACL: COMPENSATION FORK B — COMPENSATE_POST_DEBIT (late, post-debit; ActivationFailed)
+    Note over Saga,ACL: COMPENSATION FORK B — COMPENSATE_POST_DEBIT (late, post-debit — ActivationFailed)
     Dep-->>Saga: ActivationFailed (from APPROVED, money already moved)
     Note over Saga: APPROVED -> (COMPENSATE_POST_DEBIT, ReverseCoreDebit)
     Saga->>ACL: ReverseCoreDebit
@@ -515,8 +515,10 @@ The one **family-agnostic** saga that lives in the substrate, because moving mon
 stateDiagram-v2
     direction TB
 
+    [*] --> SETTLEMENT_STARTED : MovementOriginated (origin=Originated)
+
     note right of SETTLEMENT_STARTED
-        Family-AGNOSTIC settlement saga (orchestrator substrate;
+        Family-AGNOSTIC settlement saga (orchestrator substrate,
         ADR-PC-032 slot 5 / ADR-IC-018 Amendment 2026-06-24).
         Auto-started (EventAutoStarted) on a Movement-bearing
         event whose promoted ce_movementorigin == Originated.
@@ -526,8 +528,6 @@ stateDiagram-v2
           Credit -> CreditMovementOriginated (confirmation-gated)
         Unknown/absent direction -> NoTransition (fail-closed).
     end note
-
-    [*] --> SETTLEMENT_STARTED : MovementOriginated (origin=Originated)
 
     %% === DEBIT path — funds-gated: Reserve -> Confirm ===
     SETTLEMENT_STARTED --> RESERVING : DebitMovementOriginated / ReserveAccountBalance
