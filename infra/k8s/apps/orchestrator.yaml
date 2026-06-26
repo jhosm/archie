@@ -1,0 +1,147 @@
+# Orchestrator — the constitution-saga edge + workers (ADR-IC-003), bd babelstone-zla1.5.2.
+#
+# One pod runs: the saga-substrate migration (self-applied on boot), the per-module Redpanda
+# consume loops, the saga command dispatcher (drains saga_outbox → HTTP to engine + settlement),
+# and the edge HTTP front door (POST /api/v1/deposits/constitute → 202 + SSE,
+# GET /api/v1/processes/{id}/stream). It owns its OWN database (babelstone_orchestrator),
+# SEPARATE from the engine's babelstone DB — they share table names (both have `inbox`), so they
+# cannot co-locate. CREATE DATABASE can't run in a transaction and the host only applies SCHEMA,
+# so an initContainer creates the DB first; the saga schema then self-migrates on boot.
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  labels:
+    app.kubernetes.io/name: orchestrator
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: orchestrator
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  labels:
+    app.kubernetes.io/name: orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orchestrator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orchestrator
+    spec:
+      # Create the orchestrator's dedicated DB before the saga schema self-migrates on boot.
+      # Idempotent (guarded by a pg_database check); connects to the existing babelstone DB as
+      # the superuser to issue CREATE DATABASE (which can't run inside a transaction). Mirrors
+      # create_orchestrator_db() in scripts/demo-lib.sh.
+      initContainers:
+        - name: create-orchestrator-db
+          image: postgres:18-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h "$PGHOST" -p 5432 -U "$PGUSER" -d "$PGDATABASE" >/dev/null 2>&1; do
+                echo "waiting for postgres ..."; sleep 2
+              done
+              if [ "$(psql -tAc "SELECT 1 FROM pg_database WHERE datname='babelstone_orchestrator'")" = "1" ]; then
+                echo "database babelstone_orchestrator already exists"
+              else
+                echo "creating database babelstone_orchestrator"
+                psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE babelstone_orchestrator"
+              fi
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_USER
+            # Connect to the existing babelstone DB to issue CREATE DATABASE.
+            - name: PGDATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_DB
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+      containers:
+        - name: orchestrator
+          image: ghcr.io/jhosm/babelstone-orchestrator:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+            # Two connection strings by design (DDL migration role + least-priv runtime role).
+            # Staging collapses both onto the bootstrap superuser (no separate orchestrator login
+            # provisioned yet — least-privilege roles are later hardening, ADR-PC-001 §P3). Both
+            # target the orchestrator's OWN babelstone_orchestrator DB.
+            - name: ConnectionStrings__OrchestratorMigration
+              value: Host=postgres;Port=5432;Database=babelstone_orchestrator;Username=babelstone;Password=$(POSTGRES_PASSWORD)
+            - name: ConnectionStrings__Orchestrator
+              value: Host=postgres;Port=5432;Database=babelstone_orchestrator;Username=babelstone;Password=$(POSTGRES_PASSWORD)
+            # Kestrel binds nothing without this (the image's runtime base has no aspnet default).
+            - name: ASPNETCORE_URLS
+              value: http://0.0.0.0:8080
+            - name: ASPNETCORE_ENVIRONMENT
+              value: Production
+            # Event bus — INTERNAL Redpanda listener (consume loops + the domain topic).
+            - name: Kafka__BootstrapServers
+              value: redpanda:9092
+            # The dispatcher's HTTP legs: ActivateDeposit → engine, settlement → the ACL stub.
+            - name: Engine__BaseUrl
+              value: http://engine:8080
+            - name: Settlement__BaseUrl
+              value: http://core-acl-stub:8080
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+          # No /health or /ready route; probe the TCP socket (a bound 8080 = Kestrel is up).
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 250m
+              memory: 384Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

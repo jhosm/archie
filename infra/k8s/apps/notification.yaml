@@ -1,0 +1,47 @@
+# Notification — per-service outbox/reminder worker (ADR-IC-011), bd babelstone-zla1.5.2.
+#
+# A headless .NET BackgroundService (NOT an HTTP API): it polls the engine's read surface and
+# decides reminders are due. So it has NO inbound port — no Service, no Ingress, no probes that
+# connect to a port (there's nothing listening). replicas:1 is required: the v1 dedupe ledger is
+# in-memory and per-pod, so two replicas would each independently decide the same reminder is due.
+# It talks only to the engine API and the OTLP collector; no DB, Kafka, Kong, or OpenBao. No PII.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification
+  labels:
+    app.kubernetes.io/name: notification
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: notification
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: notification
+    spec:
+      containers:
+        - name: notification
+          image: ghcr.io/jhosm/babelstone-notification:latest
+          env:
+            # The only hard-required runtime config (the host throws if the engine URL is unset).
+            - name: Engine__BaseUrl
+              value: http://engine:8080
+            # Fail-fast without a deployment environment (ADR-IC-007 §P1 non-blank requirement).
+            - name: DOTNET_ENVIRONMENT
+              value: Production
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+          # No port → no httpGet/tcpSocket probe is meaningful; rely on the restart policy. On a
+          # transient engine-read failure the worker backs off (exponential, 5-min ceiling) and
+          # keeps running rather than crashing, so a liveness probe would only cause false restarts.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
