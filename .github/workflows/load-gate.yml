@@ -27,10 +27,16 @@ name: Load acceptance gate
 # a v*-rc* tag) and on demand. NOT every PR — the gate needs Docker + a real
 # PostgreSQL and is by design an RC-cadence acceptance gate, not a per-push check.
 #
-# NOTE (handoff to the j72w / Q.7 owner): wiring this gate as a REQUIRED status
+# NOTE (resolved by the j72w / Q.7 owner): wiring this gate as a REQUIRED status
 # check on the protected branch is owned by the ci.yml / required-checks lane
-# (bd babelstone-j72w). This file deliberately does NOT touch ci.yml; the
-# required-check integration is a follow-up for that lane.
+# (bd babelstone-j72w). This file deliberately does NOT touch ci.yml. Q.7's
+# disposition: this gate is RC-tag cadence (it triggers ONLY on a v*-rc* tag push
+# and workflow_dispatch — never on pull_request), so it is NOT a per-PR required
+# status check. A branch ruleset evaluates required checks against PRs targeting the
+# branch; a check that never reports on a PR would leave every PR permanently
+# unsatisfied (the skipped-required-check footgun ci.yml's "CI gate" aggregator
+# exists to avoid). Enforcement for this gate is at the RC, per ADR-PC-011 §8.4 —
+# see .github/rulesets/README.md for the recorded disposition.
 #
 # Security: the only ${{ }} expansions are in `uses:`/`with:` for trusted actions
 # (checkout, mise-action). No untrusted, PR-controlled input is referenced in any

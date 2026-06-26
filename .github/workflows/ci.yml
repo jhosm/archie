@@ -873,11 +873,27 @@ jobs:
     # directly would block every PR that doesn't touch their path. Instead the ruleset
     # requires this ONE always-present job, which passes iff every job that *did* run
     # succeeded. Treats `skipped` (path not touched) and `success` as OK; fails on
-    # `failure` or `cancelled`. DETERMINISM_GATE (A.7, archie-k03q) is already covered
-    # via the `engine` job (the HandlerPurity analyser + fixture-replay determinism test
-    # in its non-Integration tier). The still-pending fitness gates — acceptance gates (L.3),
-    # no-PII/emit-contract (G.6) — join `needs` as they land, so coverage grows without
-    # re-touching the ruleset. (CodeQL has its own always-run gate in codeql.yml.)
+    # `failure` or `cancelled`. (CodeQL has its own always-run gate in codeql.yml.)
+    #
+    # Fitness-gate coverage (Q.7 close-out, archie-j72w): every fitness gate Q.7 set out
+    # to require is ALREADY enforced through a job this aggregator `needs:`, so no new
+    # required check (and no new `needs:` entry) is owed:
+    #   • DETERMINISM_GATE (A.7, archie-k03q) — the HandlerPurity analyser + fixture-replay
+    #     determinism test run in the `engine` job's non-Integration tier.
+    #   • no-PII / emit-contract (G.6, archie-2eo0) — NoPiiTelemetryAttributeAnalyzerTests,
+    #     BabelstonePiiGuardTests, ClientPseudonymTests, and EmitContractFitnessTests all
+    #     live in engine/Babelstone.slnx test projects, run by the `engine` job's
+    #     non-Integration tier (no separate job to wire).
+    #   • code-coverage floor (Q.y, archie-2t16.13) — the fail-closed coverage-floor STEPS
+    #     run inside the `engine` (.NET), `pack-validate` (Go), and `mcp-server` (Python)
+    #     jobs, all already in `needs:` — by design no new required check (the Phase-1
+    #     destabilisation note).
+    # The acceptance gate (L.3, archie-2e6q) is the SEPARATE load-gate.yml workflow on
+    # RC-tag cadence (push of a v*-rc* tag): it never runs on pull_request, so it is
+    # deliberately NOT a per-PR required status check (a never-reported required check
+    # would deadlock every PR — the same skipped-required-check footgun this aggregator
+    # exists to avoid). Its enforcement is at the RC, per ADR-PC-011 §8.4; see
+    # .github/rulesets/README.md for that disposition.
     name: CI gate
     needs:
       - changes
