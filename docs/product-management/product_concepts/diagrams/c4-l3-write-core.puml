@@ -4,39 +4,40 @@
 !include <C4/C4_Component>
 ' Remote fallback: !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
 
-AddElementTag("family", $bgColor="#B8860B", $fontColor="#FFFFFF", $borderColor="#7A5B08", $legendText="Loaded from the family schema at startup (not engine code)")
+AddElementTag("family", $bgColor="#B8860B", $fontColor="#FFFFFF", $borderColor="#7A5B08", $legendText="Family-owned, loaded from the family schema (not engine code)")
 AddElementTag("estate", $bgColor="#2E7D6B", $fontColor="#FFFFFF", $borderColor="#1F5749", $legendText="Inherited integration estate")
 AddElementTag("ref", $bgColor="#8A94A6", $fontColor="#FFFFFF", $borderColor="#5F6A7D", $legendText="Detailed in another Level 3 diagram")
 
-title Component — L3.1 Write core (Engine process): command → handlers → append
+title Component — L3.1 Write core (Engine process): command -> decider -> append
 
-Container(kong, "Kong Gateway CE", "estate", "Edge: auth / SCA / rate-limit; forwards validated commands", $tags="estate")
+Container(callers, "Kong / MCP / Orchestrator", "estate", "Authenticated, SCA-checked callers: REST via Kong, MCP tool calls, and the saga dispatcher", $tags="estate")
 
-Container_Boundary(engine, "Engine process — C# / .NET 9") {
-  Component(api, "Command API", "AspNetCore", "Accepts state-changing commands; returns 202 + stream_url")
-  Component(dispatch, "Command dispatcher", "C#", "Rehydrates the stream, resolves the calculation context, invokes the family handler, drives the one-transaction append")
-  Component(resolver, "Parameter resolver", "C#", "Resolves the instance's PINNED pack_version + schema_version + rate_sheet_version into an immutable calculation context (day-count, rate, compounding, withholding). The ONLY component that reads the version cache — the impure shell around the pure kernel")
-  Component(handlers, "Family handlers", "pure (state,event,ctx)->new_state, loaded from family schema", "Orchestrate the family lifecycle and CALL the kernel with the resolved context; deterministic, side-effect-free; the engine dispatches to them, it does not contain them", $tags="family")
-  Component(kernel, "Financial-math kernel (cash-flow primitives)", "C#, PURE, family-agnostic", "Same inputs ALWAYS produce same outputs: no reads, no I/O, no clock. Takes (values, calc-context) -> result in decimal: balance evolution S(t+dt)=S(t)(1+r·dt)-pay+draw, day-count, compounding, accrual J=sum S·r·dt, TAE, TANB/TANL split, PV/IRR")
+Container_Boundary(engine, "Engine process — C# / .NET 10 (generic substrate)") {
+  Component(ingress, "Command ingress", "AspNetCore", "Synchronous, idempotent command surface (ADR-PC-029). Consults command_dedup BEFORE any side effect — a replayed command id short-circuits to the original outcome. ONE ingress for REST / MCP / saga / the sync authorization path (ADR-PC-034)")
+  Component(decider, "Family decider", "gold, family-owned, IMPURE shell (ADR-PC-021)", "Resolves the rate sheet point-in-time; checks the lifecycle legality table (IsLegal -> DomainRejectedException); invokes the kernel; DECIDES which events to emit, incl. the append-first Movement (ADR-PC-032) and HoldPlaced (ADR-PC-033)", $tags="family")
+  Component(folds, "Family fold handlers", "gold, family-owned, PURE (state,event,ctx)->new_state", "LABEL state only — never decide or guard; analyser-pure (no clock/I-O/randomness, BENG001/002/003). Replay correctness rests on this purity", $tags="family")
+  Component(resolver, "Parameter resolver", "C#", "Turns the instance's PINNED pack_version + schema_version + rate_sheet_version into an immutable calculation context (day-count, rate, compounding, withholding). The ONLY component that reads the version cache — the impure shell around the pure kernel")
+  Component(kernel, "Financial-math kernel", "C#, PURE, family-agnostic", "Same inputs ALWAYS produce same outputs: no reads, no I/O, no clock. (values, calc-context) -> decimal: balance evolution, day-count, compounding, accrual, AMORTIZATION schedule, TAE, TANB/TANL split, PV/IRR")
   Component(money, "Money / decimal boundary", "C# record Money(long Cents)", "Pure: rounds once HALF_EVEN at the decimal->cents boundary on event emission; Roslyn-analyser-guarded")
   Component(crypto, "PII crypto-shredding envelope", "C# + KMS/HSM", "Field-level per-subject encryption of PII payload fields before append; key destruction = GDPR erasure")
-  Component(esa, "Event-store access", "C# + Npgsql", "append(stream, expectedVersion, events, outbox_rows) in ONE local tx, optimistic concurrency on (stream_id, sequence_number); load() ordered for rehydrate")
+  Component(esa, "Event-store access", "C# + Npgsql", "append(stream, expectedVersion, events, outbox_rows, command_dedup) in ONE local tx; optimistic concurrency on (stream_id, sequence_number); load() ordered for rehydrate")
 }
 
 Component(packcache, "Pack / variant / rate-sheet cache", "in-memory, version-keyed, immutable — see L3.4", "Version-pinned pack params + variant config + resolved rate sheets, populated out-of-process at load (L3.4); reads here are in-process", $tags="ref")
-ContainerDb(pg, "Engine PostgreSQL", "PostgreSQL", "events (source of truth) + outbox + snapshots")
+ContainerDb(pg, "Engine PostgreSQL", "PostgreSQL", "events (source of truth, self-describing JSON payload) + outbox + command_dedup + snapshots")
 
-Rel(kong, api, "Validated command", "HTTPS, mTLS")
-Rel(api, dispatch, "Dispatch command")
-Rel(dispatch, esa, "load() — rehydrate from snapshot + events")
-Rel(dispatch, resolver, "Resolve calc context from pinned versions")
+Rel(callers, ingress, "Command (+ command id)", "HTTPS, mTLS")
+Rel(ingress, esa, "command_dedup pre-check (replay short-circuit)")
+Rel(ingress, decider, "Dispatch command")
+Rel(decider, esa, "load() — rehydrate from snapshot + events")
+Rel(decider, folds, "Fold events to rehydrate / label state")
+Rel(decider, resolver, "Resolve calc context from pinned versions")
 Rel(resolver, packcache, "Read version-pinned params (in-process, immutable)")
-Rel(dispatch, handlers, "Apply (state, event, calc-context)")
-Rel(handlers, kernel, "Compute via primitives (pure: explicit inputs only)")
+Rel(decider, kernel, "Compute via primitives (pure: explicit inputs only)")
 Rel(kernel, money, "Round result to cents (HALF_EVEN, once)")
-Rel(dispatch, crypto, "Encrypt PII payload fields before append")
-Rel(dispatch, esa, "append(events + outbox) in ONE tx")
-Rel(esa, pg, "INSERT events + outbox; read snapshots", "SQL")
+Rel(decider, crypto, "Encrypt PII payload fields before append")
+Rel(decider, esa, "append(events + outbox + command_dedup) in ONE tx")
+Rel(esa, pg, "INSERT events + outbox + command_dedup; read snapshots", "SQL")
 
 SHOW_LEGEND()
 @enduml

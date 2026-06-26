@@ -10,8 +10,8 @@ AddElementTag("ref", $bgColor="#8A94A6", $fontColor="#FFFFFF", $borderColor="#5F
 
 title Component — L3.4 Loading & config (Engine process): pack/schema load → immutable cache
 
-Container_Boundary(engine, "Engine process — C# / .NET 9") {
-  Component(schemaloader, "Family-schema loader", "C# at startup", "Loads family event types, handlers, projections, lifecycle state machine, pack-binding declarations — the engine-vs-family separation mechanism")
+Container_Boundary(engine, "Engine process — C# / .NET 10") {
+  Component(schemaloader, "Family-schema loader", "C# at startup", "Loads each family's event types, pure folds, DECIDER (ADR-PC-021), projections, lifecycle legality table, pack-binding declarations — and host-side its saga module (ADR-IC-018) and notification rule (ADR-IC-019). The engine-vs-family separation mechanism")
   Component(packloader, "Pack loader / verifier", "C#", "Pulls pack by digest; verifies cosign signature (attests CUE validation passed in CI); structural re-parse; records pack_versions; fail-loud on mismatch")
   Component(ratesvc, "Rate-sheet resolver", "C#", "Resolves version-pinned rate sheets (ADR-PC-008)")
   Component(cache, "Pack / variant / rate-sheet cache", "in-memory, version-keyed, immutable", "Populated here at load; read in-process by the parameter resolver (L3.1)")

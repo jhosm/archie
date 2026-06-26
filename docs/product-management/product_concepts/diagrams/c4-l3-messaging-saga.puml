@@ -4,30 +4,41 @@
 !include <C4/C4_Component>
 ' Remote fallback: !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
 
-AddElementTag("family", $bgColor="#B8860B", $fontColor="#FFFFFF", $borderColor="#7A5B08", $legendText="Loaded from the family schema at startup (not engine code)")
+AddElementTag("family", $bgColor="#B8860B", $fontColor="#FFFFFF", $borderColor="#7A5B08", $legendText="Loaded family module (not substrate code)")
 AddElementTag("estate", $bgColor="#2E7D6B", $fontColor="#FFFFFF", $borderColor="#1F5749", $legendText="Inherited integration estate")
 AddElementTag("ref", $bgColor="#8A94A6", $fontColor="#FFFFFF", $borderColor="#5F6A7D", $legendText="Detailed in another Level 3 diagram")
 
-title Component — L3.3 Messaging & saga (Engine process): outbox, inbox, orchestration
+title Component — L3.3 Messaging (engine edges) & saga (orchestrator substrate + family modules)
 
-Container_Boundary(engine, "Engine process — C# / .NET 9") {
-  Component(sagadisp, "Saga dispatcher", "C#", "In-process state-machine dispatcher; advances sagas on inbound events; emits commands + compensations; identity trio (correlation/causation/message id) on every message")
-  Component(sagasm, "Saga state machines", "C#", "renewal · moratorium application · legacy-SoR transition; participates as a step in the integration constitution saga (ADR-IC-003)")
-  Component(inbox, "Inbox consumer", "C#", "Consumes ACL confirmations + saga events from Redpanda; dedups by message_id")
-  Component(outbox, "Outbox-relay worker", "C#, polling publisher", "SELECT ... FOR UPDATE SKIP LOCKED over the outbox; publishes to Redpanda; emits publish-lag SLI (ADR-IC-004)")
+Container_Boundary(engine, "Engine process — C# / .NET 10 (generic substrate)") {
+  Component(outbox, "Outbox-relay worker", "C#, polling publisher", "SELECT ... FOR UPDATE SKIP LOCKED over the outbox; CATALOG-GATED publish (ADR-IC-017, fail-closed); frames the Confluent wire format; publish-lag SLI (ADR-IC-004)")
+  Component(inbox, "Inbox consumer (InboxPump)", "C#", "Consume loop off Redpanda; dedups by message_id; the IInboxMessageHandler seam the orchestrator's advance plugs onto")
 }
 
-ContainerDb(pg, "Engine PostgreSQL", "PostgreSQL", "saga_state + events + outbox (one database, one local tx)")
-Container(redpanda, "Redpanda CE", "estate", "Event backbone", $tags="estate")
-Container(acl, "ACL service", "estate", "Receives domain commands; returns confirmations via Redpanda", $tags="estate")
+Container_Boundary(orch, "Saga orchestrator — C#, estate / in-house (ADR-IC-018)") {
+  Component(edge, "Edge front door", "AspNetCore", "POST /constitute STARTs a saga; returns 202 + process_id + SSE stream (ADR-IC-006 P4); first commands to saga_outbox — nothing on the bus")
+  Component(advance, "Inbox-driven advance (SagaAdvanceHandler)", "C#, family-agnostic", "One tx: dedup message_id, load saga, run transition, append audit, emit commands via the saga_outbox seam; effectively-once")
+  Component(tsm, "TableStateMachine runtime", "C#, family-agnostic", "(from_state, event_type) -> (next_state, commands) table IS the spec; an illegal transition is rejected (ADR-IC-003 P2)")
+  Component(stores, "SagaStateStore + SagaTransitionLog", "C# + Npgsql", "saga_state row under optimistic concurrency; immutable saga_transition audit; saga_outbox command emission")
+  Component(constitution, "ConstitutionProcess (+ renewal)", "loaded family saga module — term_deposit", "The concrete (from,event)->(next,commands) tables; live in families/term-deposit/...Orchestration via ISagaModule, NOT in the substrate", $tags="family")
+  Component(settlement, "Settlement saga", "C#, family-AGNOSTIC (substrate)", "Direction-parameterised, confirmation-gated cash leg; auto-started on a Movement-bearing event (ADR-PC-032 slot 5 / ADR-IC-018 amendment)")
+}
 
+ContainerDb(orchpg, "Orchestrator PostgreSQL", "PostgreSQL", "saga_state + saga_transition + saga_outbox + inbox; OWN role babelstone_orchestrator (NOT the engine DB)", $tags="estate")
+Container(redpanda, "Redpanda CE", "estate", "Event backbone", $tags="estate")
+Container(acl, "ACL service", "estate", "Receives domain & settlement commands (mTLS, orchestrator identity only); returns confirmations via Redpanda", $tags="estate")
+
+Rel(outbox, redpanda, "Publish catalogued integration events", "Avro")
 Rel(redpanda, inbox, "ACL confirmations + saga events", "Avro consume")
-Rel(inbox, sagadisp, "Deliver inbound event (deduped)")
-Rel(sagadisp, sagasm, "Run transition")
-Rel(sagadisp, acl, "Issue domain command", "mTLS")
-Rel(sagadisp, pg, "saga_state + emitted events + outbox in ONE local tx", "SQL")
-Rel(outbox, pg, "Poll outbox (FOR UPDATE SKIP LOCKED)", "SQL")
-Rel(outbox, redpanda, "Publish domain & integration events", "Avro")
+Rel(inbox, advance, "Deliver inbound message (IInboxMessageHandler, deduped)")
+Rel(advance, tsm, "Ask for the legal transition")
+Rel(tsm, constitution, "Dispatch to the loaded family table")
+Rel(tsm, settlement, "Dispatch to the substrate settlement table")
+Rel(advance, stores, "Persist saga_state + transition + saga_outbox in ONE tx")
+Rel(stores, orchpg, "SQL")
+Rel(edge, stores, "Create STARTED saga + first transition (one tx)")
+Rel(advance, acl, "Issue domain / settlement commands (drained from saga_outbox)", "mTLS")
+Rel(acl, redpanda, "Confirmations", "Avro")
 
 SHOW_LEGEND()
 @enduml

@@ -12,14 +12,14 @@ title Component — L3.2 Projection & query (Engine process): event log → bite
 
 Container(kong, "Kong Gateway CE", "estate", "Edge for queries + SSE", $tags="estate")
 
-Container_Boundary(engine, "Engine process — C# / .NET 9") {
+Container_Boundary(engine, "Engine process — C# / .NET 10") {
   Component(projrt, "Projection runtime", "C#", "Reads the event log; dispatches each event to the family projections; maintains valid_time / transaction_time; per-projection sync (inline with append) or async (catch-up) update")
-  Component(projectors, "Family projections", "loaded from family schema", "position · accrual schedule · maturity calendar · withholding ledger — pure folds of events into bitemporal derived state", $tags="family")
+  Component(projectors, "Family projections", "gold, loaded from family schema (two families today)", "term_deposit: position · accrual schedule · maturity calendar · withholding ledger. personal_loan: loan position · amortization schedule. account capability: available/accounting balance + hold ledger (ADR-PC-033). Pure folds into bitemporal derived state", $tags="family")
   Component(snap, "Snapshot machinery", "C#", "Triggers per-N / lifecycle / calendar; snapshot hash includes last event_id; discard-and-rebuild drills (advisory until verified)")
   Component(queryapi, "Query API", "AspNetCore", "As-of / point-in-time reads from the read models; SSE saga-status stream")
 }
 
-Component(kernel, "Financial-math kernel", "PURE — see L3.1", "The accrual-schedule projector computes the ex-ante schedule by calling the same pure kernel with a resolved calc-context", $tags="ref")
+Component(kernel, "Financial-math kernel", "PURE — see L3.1", "The accrual/amortization-schedule projector computes the ex-ante schedule by calling the same pure kernel with a resolved calc-context", $tags="ref")
 ContainerDb(pg, "Engine PostgreSQL", "PostgreSQL", "events (read) + bitemporal read-model projections + snapshots")
 
 Rel(kong, queryapi, "Queries (as-of, position) + SSE", "HTTPS / SSE")
