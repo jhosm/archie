@@ -797,6 +797,26 @@ jobs:
           echo "$pg_standby" | grep -q 'topology.kubernetes.io/zone' \
             || fail "ADR-PC-005 §P1 violation: standby missing zone anti-affinity (off-site not expressed)"
           echo "HA assertions passed (ADR-IC-001 3-node Redpanda; ADR-PC-005 §P1 synchronous off-site warm standby)"
+      - name: Assert resource limits in the staging overlay (bd babelstone-zla1.4)
+        # The staging box is one fixed 16 vCPU / 32 GB node, and the locked
+        # staging-env priority is "no OOM mid-demo". Every workload container in the
+        # staging render MUST therefore declare a memory limit (a runaway pod is
+        # capped, not allowed to take the node down). Each base pod is single-
+        # container, so a per-document check suffices. Fails CI if a future change
+        # adds an unsized container — the sizing stays an invariant, not a one-off.
+        run: |
+          set -euo pipefail
+          staging="$(mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging)"
+          missing="$(echo "$staging" | awk '
+            BEGIN{RS="\n---\n"}
+            /kind: (Deployment|StatefulSet)/ && (!/limits:/ || !/memory:/){
+              n="?"; if (match($0,/\n  name: [a-z0-9-]+/)) n=substr($0,RSTART+9,RLENGTH-9)
+              print n
+            }')"
+          if [ -n "$missing" ]; then
+            echo "::error::staging sizing violation: workload container(s) lack a memory limit (bd babelstone-zla1.4): $missing"; exit 1
+          fi
+          echo "staging sizing assertion passed (every workload container declares a memory limit)"
 
   docs:
     needs: changes

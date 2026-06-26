@@ -97,3 +97,10 @@ patches:
   # provisioned CSI volume mounts with lost+found, and Postgres refuses to initdb
   # into a non-empty data root, so the data must live one level down).
   - path: backstage-db-storage.patch.yaml
+  # Per-service CPU/memory requests + limits sized for the single 16 vCPU / 32 GB
+  # node (bd babelstone-zla1.4). A multi-document strategic-merge patch — one doc
+  # per workload container, each adding only its `resources:` block. The locked
+  # priority is no OOM mid-demo: every container carries a memory limit, with the
+  # sum of limits kept under node-allocatable. See resources.patch.yaml for the
+  # full budget table.
+  - path: resources.patch.yaml
