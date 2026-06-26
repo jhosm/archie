@@ -59,14 +59,15 @@ public sealed class PersonalLoanDeciderTests
     public void DecideDisbursement_movement_promotes_originated_credit_headers_for_the_settlement_saga()
     {
         // The producer hop (bd babelstone-t7o3.20): the recorded Movement promotes ce_movementorigin=Originated
-        // and ce_movementdirection=Credit, the headers the substrate-owned settlement saga auto-starts on.
+        // and a one-entry ce_movementdirections=Credit list, the headers the substrate-owned settlement saga
+        // auto-starts on.
         var command = DisburseCommand(Guid.NewGuid(), principalCents: 500_000, termMonths: 24);
         var disbursed = PersonalLoanDecider.DecideDisbursement(command, tanBasisPoints: 600, rateSheetVersionId: "rs-1");
 
         var headers = disbursed.IntegrationHeaders;
         Assert.NotNull(headers);
         Assert.Equal("Originated", headers![MovementHeaders.OriginKey]);
-        Assert.Equal("Credit", headers[MovementHeaders.DirectionKey]);
+        Assert.Equal("Credit", headers[MovementHeaders.DirectionsKey]);
     }
 
     [Fact]

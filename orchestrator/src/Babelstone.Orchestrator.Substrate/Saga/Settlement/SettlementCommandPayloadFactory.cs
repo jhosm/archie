@@ -16,7 +16,7 @@ namespace Babelstone.Orchestrator.Saga.Settlement;
 /// </para>
 /// <para>
 /// <b>The opaque <c>account_ref</c> seam.</b> ADR-PC-032 carries the real <c>Movement.AccountRef</c> as an
-/// opaque reference; the engine relay promotes it (alongside <c>movementdirection</c>) to a CloudEvents
+/// opaque reference; the engine relay promotes it (alongside <c>movementdirections</c>) to a CloudEvents
 /// extension header on the carrying event, which the saga's start path reads (ADR-IC-018 §D5 — headers, never
 /// the payload). At the PLATFORM layer this issue builds (the saga + the settlement command surface), the
 /// command body uses the process-id-derived reference as the account/hold/credit token; the wiring that

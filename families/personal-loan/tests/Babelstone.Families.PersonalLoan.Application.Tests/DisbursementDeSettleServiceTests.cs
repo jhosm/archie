@@ -63,9 +63,10 @@ public sealed class DisbursementDeSettleServiceTests
         Assert.Equal(MovementOrigin.Originated, movement.Origin);       // → the gated settlement saga drives it
         Assert.Equal(commandId, movement.CommandId);
 
-        // The event promotes the headers the settlement saga auto-starts on (the producer hop, t7o3.20).
+        // The event promotes the headers the settlement saga auto-starts on (the producer hop, t7o3.20):
+        // a one-entry movementdirections list for this standalone Credit leg.
         Assert.Equal("Originated", disbursed.IntegrationHeaders![MovementHeaders.OriginKey]);
-        Assert.Equal("Credit", disbursed.IntegrationHeaders[MovementHeaders.DirectionKey]);
+        Assert.Equal("Credit", disbursed.IntegrationHeaders[MovementHeaders.DirectionsKey]);
     }
 
     [Fact]

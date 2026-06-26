@@ -72,7 +72,7 @@ public sealed record RecordedPreconditionVerdict(
 /// the prior eager <c>Debit</c>-on-the-borrower wrinkle, feature-design §134), operation
 /// <see cref="MovementOperation.Disburse"/>. The engine no longer settles eagerly on the append path; this
 /// recorded movement is what the substrate-owned settlement saga auto-starts off (its
-/// <c>ce_movementorigin</c> / <c>ce_movementdirection</c> headers promoted by the generic engine-spine seam,
+/// <c>ce_movementorigin</c> / <c>ce_movementdirections</c> headers promoted by the generic engine-spine seam,
 /// bd babelstone-t7o3.20) to effect the cash leg, gated. Optional/additive (defaulted empty) so pre-Movement
 /// streams still replay (forward-only schema evolution, ADR-IC-002): an empty carrier declares no settlement
 /// headers and starts no saga.</param>
@@ -98,7 +98,7 @@ public sealed record LoanDisbursed(
 
     /// <summary>
     /// Promote the disbursement Movement's origin/direction to the <c>ce_movementorigin</c> /
-    /// <c>ce_movementdirection</c> CloudEvents extension headers the substrate-owned settlement saga
+    /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
     /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5). Routed through the GENERIC engine-spine seam
     /// (<see cref="MovementHeaders.ForOriginatedMovements"/>, bd babelstone-t7o3.20) — it names no family, so
     /// every Movement-bearing event gets the headers the same way. Null/empty movements (pre-Movement

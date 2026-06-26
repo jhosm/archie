@@ -200,7 +200,7 @@ public sealed class SettlementLegStepUpScaIntegrationTests : IAsyncLifetime
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             [SettlementSagaModule.OriginHeader] = "Originated",
-            [SettlementProcess.DirectionHeader] = "Credit",
+            [SettlementMovementFanout.DirectionsHeader] = "Credit",
         };
         if (scaAcr is not null)
         {
