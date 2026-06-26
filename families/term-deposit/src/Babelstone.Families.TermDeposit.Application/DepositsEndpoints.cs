@@ -53,6 +53,15 @@ public static class DepositsEndpoints
         // slot 4) — erasure must be safely retryable since key destruction is irreversible.
         app.MapPost("/v1/deposits/{id:guid}/erase-personal-data", ErasePersonalDataAsync);
 
+        // Operator-only correction (D.5 / F.6, bd babelstone-k6r8.11): the thin front door to the
+        // bitemporal supersession (ADR-PC-002 §P2) the projection runtime already implements. Appends a
+        // store-only DepositCorrected whose valid-time is effective_from; the projection supersedes the
+        // prior belief, never overwrites it. Restricted to OPERATOR actors (ops:* / operator:*) — a
+        // non-operator actor is a 422 — and carries a mandatory Idempotency-Key (ADR-PC-029 slot 4): a
+        // correction is REPEATABLE (it leaves the deposit Active), so an at-least-once retry must dedupe
+        // rather than double-tally, the same idempotency contract the partial-withdrawal sibling carries.
+        app.MapPost("/v1/deposits/{id:guid}/correction", CorrectAsync);
+
         // The renewal-saga command surface (bd babelstone-mtto PR B): the two idempotent legs the
         // renewal saga drives, replacing the retired monolithic RenewAsync. {id} is the CLOSING (Matured)
         // deposit id; constitute-renewal opens the NEW stream (201 + Location /v1/deposits/{newId}),
@@ -633,6 +642,100 @@ public static class DepositsEndpoints
         var hydrated = await runtime.LoadAsync(id, ct);
         return Results.Ok(
             new ErasePersonalDataResponse(id, hydrated.State.Lifecycle.ToString().ToUpperInvariant(), commitSequence));
+    }
+
+    /// <summary>
+    /// Operator-only correction (D.5 / F.6, bd babelstone-k6r8.11): the thin front door to the bitemporal
+    /// supersession (ADR-PC-002 §P2) the projection runtime already implements. Appends a store-only
+    /// <c>DepositCorrected</c> whose valid-time is <c>effective_from</c>; the projection turns that into a
+    /// supersede-then-insert (the prior belief is disavowed, never overwritten). Restricted to OPERATOR
+    /// actors (the service rejects a non-operator actor with a domain rejection → 422) and idempotent on a
+    /// mandatory <c>Idempotency-Key</c> (ADR-PC-029 slot 4 — a correction is repeatable, so a retry must
+    /// dedupe rather than double-tally). STORE-ONLY: no money moves, the deposit stays Active.
+    /// </summary>
+    private static async Task<IResult> CorrectAsync(
+        Guid id,
+        CorrectDepositRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        TermDepositConstitutionService service,
+        AggregateRuntime<DepositPosition> runtime,
+        ICommandLog commandLog,
+        CancellationToken ct)
+    {
+        // ADR-PC-029 slot 4: a deterministic Idempotency-Key is MANDATORY here. UNLIKE the one-shot,
+        // lifecycle-guarded money-movers (re-maturing a Matured deposit is already a 422), a correction is
+        // genuinely REPEATABLE: it leaves the deposit Active, so the SAME deposit could be corrected again.
+        // Without a dedup key, the dispatcher's at-least-once retry would tally the correction twice. Fail
+        // loud (400) rather than accept a non-idempotent correction, exactly as the partial-withdrawal /
+        // erasure / renewal siblings do.
+        if (idempotencyKey is null || !Guid.TryParse(idempotencyKey, out var commandId))
+        {
+            return Results.Problem(
+                "Idempotency-Key header is required and must be a UUID (ADR-PC-029 slot 4).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // Pre-check BEFORE any side effect (decide / append): a known command id replays the ORIGINAL
+        // outcome with NO second append (ADR-PC-029 slot 4). Returns the same commit_sequence the first
+        // apply did, off the authoritative fold — the idempotent retry the mandatory key requires (NOT the
+        // operator/lifecycle 422, which only guards a NEW correction with a fresh command id). The
+        // crash-atomic guarantee is the in-transaction command_dedup INSERT; this read keeps the common
+        // sequential retry off the write path.
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(new CorrectDepositResponse(
+                id, replay.State.Lifecycle.ToString().ToUpperInvariant(), receipt.CommitSequence));
+        }
+
+        // The actor defaults to ops:clerk (an operator actor) when omitted — a correction is operator-only,
+        // so the default is an operator, never a customer/agent actor. The service re-checks the operator
+        // guard and rejects a non-operator actor with a DomainRejectedException (→ 422). The valid-time the
+        // bitemporal supersession needs is effective_from (a date on the body), NOT a host wall-clock — so
+        // there is no clock read here; the service stamps AppendContext.ValidTime from effective_from.
+        var command = new CorrectDepositCommand(
+            DepositId: id,
+            CorrectionId: request.CorrectionId,
+            CorrectedField: request.CorrectedField,
+            PreviousValueRef: request.PreviousValueRef,
+            CorrectedValueRef: request.CorrectedValueRef,
+            EffectiveFrom: request.EffectiveFrom,
+            CorrectionReason: request.CorrectionReason,
+            Actor: request.Actor ?? "ops:clerk",
+            CommandId: commandId);
+
+        long commitSequence;
+        try
+        {
+            commitSequence = await service.CorrectAsync(command, ct);
+        }
+        catch (DuplicateCommandException)
+        {
+            // A concurrent duplicate slipped past the pre-check: the in-transaction command_dedup INSERT
+            // rolled the append back (no second append) and the dedup guard fired. Return the ORIGINAL
+            // outcome verbatim off the authoritative fold — the idempotent replay slot 4 mandates.
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(new CorrectDepositResponse(
+                id, replay.State.Lifecycle.ToString().ToUpperInvariant(), replay.Version));
+        }
+        catch (ConcurrencyException)
+        {
+            return Results.Problem($"Deposit {id} was modified concurrently.", statusCode: StatusCodes.Status409Conflict);
+        }
+        catch (DomainRejectedException e)
+        {
+            // The operator guard (non-operator actor) or the F.3 lifecycle gate (not Active / not
+            // constituted). Surface as a 422 — never append a correction on a silent default. Wiring
+            // faults (a missing handler, a mis-pinned pack) throw other types and propagate as a 500.
+            return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
+        // The post-append fold is authoritative (read-your-writes by construction): the deposit stays
+        // Active with the correction tallied; its head version is the commit_sequence on the response.
+        var hydrated = await runtime.LoadAsync(id, ct);
+        return Results.Ok(new CorrectDepositResponse(
+            id, hydrated.State.Lifecycle.ToString().ToUpperInvariant(), commitSequence));
     }
 
     /// <summary>

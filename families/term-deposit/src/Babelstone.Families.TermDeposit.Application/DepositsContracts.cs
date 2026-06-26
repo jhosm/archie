@@ -105,6 +105,47 @@ public sealed record ErasePersonalDataRequest(
 public sealed record ErasePersonalDataResponse(Guid DepositId, string Status, long CommitSequence);
 
 /// <summary>
+/// Correct a previously-recorded fact on a live deposit (D.5 / F.6, bd babelstone-k6r8.11): the
+/// operator-only HTTP front door to the bitemporal supersession (ADR-PC-002 §P2) the projection runtime
+/// already implements. The route <c>{id}</c> is the deposit id; the body carries the correction's
+/// structural facts. The engine appends a single store-only <c>DepositCorrected</c> whose valid-time is
+/// <see cref="EffectiveFrom"/>, which the bitemporal projection turns into a supersede-then-insert — the
+/// prior belief is kept and disavowed, never overwritten. STORE-ONLY: no money moves, the deposit stays
+/// Active. The endpoint requires an OPERATOR actor (the <c>ops:</c> / <c>operator:</c> namespace) and a
+/// mandatory <c>Idempotency-Key</c> (ADR-PC-029 slot 4 — a correction is repeatable, so a retry must
+/// dedupe rather than double-tally).
+/// </summary>
+/// <remarks>
+/// Every field is a structural reference or a stable code — NO PII (ADR-PC-004 §P2).
+/// <see cref="PreviousValueRef"/> / <see cref="CorrectedValueRef"/> are OPAQUE references the engine
+/// resolves internally, NEVER the values themselves.
+/// </remarks>
+/// <param name="CorrectionId">A stable, operator-supplied id for this correction (e.g. <c>corr-001</c>),
+/// recorded for audit lineage. Distinct from the <c>Idempotency-Key</c> (the ADR-PC-029 dedup key).</param>
+/// <param name="CorrectedField">The name of the recorded fact being corrected (e.g. <c>principal</c>) —
+/// a structural field name, never a value.</param>
+/// <param name="PreviousValueRef">An OPAQUE reference to the value as previously recorded — never PII.</param>
+/// <param name="CorrectedValueRef">An OPAQUE reference to the corrected value — never PII.</param>
+/// <param name="EffectiveFrom">The valid-time the correction takes effect FROM — the date that feeds the
+/// ADR-PC-002 §P2 bitemporal supersession (the append's <c>ValidTime</c> at midnight UTC).</param>
+/// <param name="CorrectionReason">A stable, non-PII reason code/string (e.g. <c>clerk-entry</c>).</param>
+/// <param name="Actor">The OPERATOR actor recorded on the append (e.g. <c>ops:clerk</c>); a non-operator
+/// actor is rejected with a 422. Defaults to <c>ops:clerk</c> when omitted.</param>
+public sealed record CorrectDepositRequest(
+    string CorrectionId,
+    string CorrectedField,
+    string PreviousValueRef,
+    string CorrectedValueRef,
+    DateOnly EffectiveFrom,
+    string CorrectionReason,
+    string? Actor = null);
+
+/// <summary>The correction outcome: the deposit, its (unchanged, still Active) lifecycle status, and the
+/// commit sequence the correction append reached (ADR-IC-005 §P3 read-your-writes token). Carries no PII —
+/// structural facts only.</summary>
+public sealed record CorrectDepositResponse(Guid DepositId, string Status, long CommitSequence);
+
+/// <summary>
 /// Step 2 of the renewal saga (bd babelstone-mtto PR B): open the renewed instance off a CLOSING
 /// (Matured) deposit. The route <c>{id}</c> is the closing deposit id; the body is MINIMAL
 /// (bd babelstone-mtto.5) — just the new deposit id, the renewal instant and the actor. The engine

@@ -185,6 +185,54 @@ public sealed record PartialWithdrawCommand(
     Guid CommandId);
 
 /// <summary>
+/// Correct a previously-recorded fact on a live deposit (D.5 / F.6, bd babelstone-k6r8.11): the thin
+/// operator-only front door to the bitemporal supersession that ADR-PC-002 §P2 already implements in
+/// the projection runtime. Appends a single store-only <c>DepositCorrected</c> event whose valid-time
+/// is <see cref="EffectiveFrom"/>, which the bitemporal projection (PostgresProjectionStore.
+/// SupersedeAndWriteAsync) turns into a supersede-then-insert — the prior belief is kept and disavowed,
+/// never overwritten. It carries NO new value, only OPAQUE references: <see cref="PreviousValueRef"/>
+/// and <see cref="CorrectedValueRef"/> point at the resolvable values, so NO PII rides the event
+/// (ADR-PC-004 §P2). This is a STORE-ONLY correction — no money moves, no settlement leg, the deposit
+/// stays Active (the F.3 <c>Correct</c> transition is state-preserving).
+/// </summary>
+/// <remarks>
+/// <b>Operator-only (ops-actor-guarded).</b> A correction is a privileged back-office act — a clerk
+/// fixing a data-entry mistake, a regulatory-ops operator restating a fact — not a customer-facing
+/// command. The endpoint and the service therefore require an OPERATOR actor (the <c>ops:</c> /
+/// <c>operator:</c> actor namespace, e.g. <c>ops:clerk</c> or <c>operator:regulatory-ops</c>); a
+/// non-operator actor is rejected before any append. The actor is recorded on the append for audit.
+/// </remarks>
+/// <param name="CorrectionId">A stable, operator-supplied id for THIS correction (e.g. <c>corr-001</c>)
+/// — recorded on the event for audit lineage. Not the idempotency key (that is <see cref="CommandId"/>).</param>
+/// <param name="CorrectedField">The name of the recorded fact being corrected (e.g. <c>principal</c>) —
+/// a structural field name, never a value.</param>
+/// <param name="PreviousValueRef">An OPAQUE reference to the value as previously recorded — a resolvable
+/// reference, NEVER the value itself or any PII (ADR-PC-004 §P2).</param>
+/// <param name="CorrectedValueRef">An OPAQUE reference to the corrected value — a resolvable reference,
+/// NEVER the value itself or any PII.</param>
+/// <param name="EffectiveFrom">The valid-time the correction takes effect FROM — the date that feeds the
+/// ADR-PC-002 §P2 bitemporal supersession (it becomes the append's <c>AppendContext.ValidTime</c> at
+/// midnight UTC, mirroring how the D.5 <c>ForcedCorrectionRoundTripTests</c> constructs the event).</param>
+/// <param name="CorrectionReason">A stable, non-PII reason code/string for the correction
+/// (e.g. <c>clerk-entry</c>) — recorded on the event, never a customer fact.</param>
+/// <param name="CommandId">The ingress idempotency key (ADR-PC-029 slot 4): the append dedupes on it
+/// in-transaction (the <c>command_dedup</c> INSERT), so an at-least-once retry of the SAME correction
+/// returns the original outcome rather than appending a second <c>DepositCorrected</c>. Mandatory —
+/// UNLIKE the one-shot lifecycle steps (maturity / coupon), a correction is REPEATABLE (it leaves the
+/// deposit Active), so a non-idempotent retry would double-tally the correction; the idempotency key is
+/// the only safe contract for it (the same contract the partial-withdrawal / erasure commands carry).</param>
+public sealed record CorrectDepositCommand(
+    Guid DepositId,
+    string CorrectionId,
+    string CorrectedField,
+    string PreviousValueRef,
+    string CorrectedValueRef,
+    DateOnly EffectiveFrom,
+    string CorrectionReason,
+    string Actor,
+    Guid CommandId);
+
+/// <summary>
 /// Record the GDPR Article 17 erasure fact on a deposit (bd babelstone-nzw6): append
 /// <see cref="Babelstone.Engine.PersonalDataErasureRequested"/> so the deposit folds to <c>Erased</c>. The actual
 /// crypto-shredding of the subject's key (<c>IPiiKeyStore.DestroyKeyAsync</c>, ADR-PC-004 §P3) is the
