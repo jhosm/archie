@@ -15,6 +15,13 @@ which stamps every resource here. It references base's Secret/ConfigMap seam
 base; `kustomize build` of this dir alone still renders (it just emits the app resources
 without the infra they wire to).
 
+| Slice | Resource | Kind | Notes |
+|---|---|---|---|
+| zla1.5.1 | `engine` | Deployment + Service (8080) | the event-sourced product kernel (ADR-PC-010) |
+| zla1.5.1 | `event-store-migrate` | Job | applies the event-store schema before the engine boots |
+| zla1.5.2 | `orchestrator` | Deployment + Service (8080) | constitution-saga edge + workers (ADR-IC-003); its own `babelstone_orchestrator` DB |
+| zla1.5.2 | `notification` | Deployment (no Service) | headless reminder worker (ADR-IC-011); replicas:1 |
+
 ## zla1.5.1 — engine + the event-store migration
 
 | Resource | Kind | Notes |
@@ -61,6 +68,29 @@ The DB password is the one secret on this path: `POSTGRES_PASSWORD` from base's
 `babelstone-dev-secrets` (a **dev-only placeholder**; real OpenBao-backed provisioning is M.2
 / bd babelstone-puu3 — never commit real credentials). `OpenBao__Enabled=false`, so the engine
 resolves the password from config; no PII crosses the bus (ADR-PC-004).
+
+## zla1.5.2 — orchestrator + notification
+
+The **orchestrator** (ADR-IC-003) is the constitution-saga edge *and* its workers in one pod:
+the edge HTTP front door (`POST /api/v1/deposits/constitute` → 202 + SSE), the per-module
+Redpanda consume loops, and the dispatcher (saga_outbox → HTTP to the engine + the settlement
+stub). Two things differ from the engine:
+
+- **Its own database.** It owns `babelstone_orchestrator`, separate from the engine's
+  `babelstone` DB (they share table names, so they can't co-locate). An **initContainer** creates
+  that DB idempotently (guarded `CREATE DATABASE`, which can't run in a transaction) before the
+  orchestrator's `SagaMigrationHostedService` self-applies the saga schema on boot. Both its
+  connection strings (the DDL migration role + the runtime role) collapse onto the dev superuser
+  for staging — separate least-privilege logins are later hardening (ADR-PC-001 §P3).
+- **`ASPNETCORE_URLS` is mandatory** — its image's runtime base has no aspnet default, so Kestrel
+  binds nothing unless told to (`http://0.0.0.0:8080`).
+
+The **notification** worker (ADR-IC-011) is a headless `BackgroundService` — **no port, no
+Service, no probes** (nothing listens), `replicas:1` (its v1 dedupe ledger is in-memory and
+per-pod). It only reads the engine API and exports telemetry; no DB/Kafka/Kong/OpenBao, no PII.
+
+Both run the stock multi-arch images (`babelstone-orchestrator`, `babelstone-notification`) — no
+derived image or pack-bake needed (only the engine loads a pack).
 
 ## Validate
 
