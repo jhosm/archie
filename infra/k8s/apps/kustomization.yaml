@@ -14,7 +14,8 @@
 # alone still renders, it just emits app resources without the infra they depend on.
 #
 # Ships so far: the event-store migration Job + engine (zla1.5.1); the orchestrator
-# (+ its DB-create init) and the notification worker (zla1.5.2).
+# (+ its DB-create init) and the notification worker (zla1.5.2); the mcp-server
+# (+ its mutual-TLS cert seam in overlays/staging/bootstrap/mcp-mtls.yaml, zla1.5.3).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -23,6 +24,7 @@ resources:
   - engine.yaml
   - orchestrator.yaml
   - notification.yaml
+  - mcp-server.yaml
 
 configMapGenerator:
   # The engine event-store SQL — the SAME files the engine ships

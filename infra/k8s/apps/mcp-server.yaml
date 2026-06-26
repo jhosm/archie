@@ -1,0 +1,120 @@
+# MCP server (ADR-IC-010) — the secured tool edge AI agents use, bd babelstone-zla1.5.3.
+#
+# Stateless Python service; agents NEVER reach it directly — only through Kong, over MUTUAL TLS
+# (ADR-IC-006 §P5 / ADR-IC-010 §P5). uvicorn serves HTTPS using the server cert mounted at /certs
+# and, with MCP_TLS_CERT_REQS=2, REQUIRES + verifies the client cert Kong presents against the
+# same CA — so a Kong-bypassing actor on the pod network is rejected at the TLS handshake. The
+# /certs material is issued by a cert-manager internal-CA Issuer (overlays/staging/bootstrap/
+# mcp-mtls.yaml) into the babelstone-mcp-tls Secret; this Deployment only mounts it.
+# ClusterIP Service (no Ingress): the only inbound path is Kong (api.babelstone.dev → Kong → mTLS).
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-server
+  labels:
+    app.kubernetes.io/name: mcp-server
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mcp-server
+  ports:
+    - name: https
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+  labels:
+    app.kubernetes.io/name: mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mcp-server
+    spec:
+      containers:
+        - name: mcp-server
+          image: ghcr.io/jhosm/babelstone-mcp-server:latest
+          ports:
+            - name: https
+              containerPort: 8080
+          env:
+            # Fail-fast: the server refuses to start without a resolvable deployment.environment
+            # (telemetry.py, ADR-IC-007 §P1). Compose doesn't set this — it is a k8s must-add.
+            - name: DEPLOYMENT_ENVIRONMENT
+              value: Production
+            # Outbound tool targets — the code defaults are localhost:8080/8090, WRONG in-cluster.
+            - name: BABELSTONE_ENGINE_URL
+              value: http://engine:8080
+            - name: BABELSTONE_ORCHESTRATOR_URL
+              value: http://orchestrator:8080
+            # Must stay in LOCK-STEP with kong.yml: the aud the /mcp pre-function checks
+            # (MCP_SERVER_URI = http://localhost:8000/mcp, kong.yml) and the IAM `iss`.
+            - name: BABELSTONE_MCP_SERVER_URI
+              value: http://localhost:8000/mcp
+            - name: BABELSTONE_IAM_URL
+              value: https://iam.babelstone.example/
+            - name: MCP_BIND_HOST
+              value: 0.0.0.0
+            - name: MCP_BIND_PORT
+              value: "8080"
+            # Mutual TLS: serve with the server cert+key, and REQUIRE a client cert verified
+            # against the shared CA (CERT_REQUIRED). The files are mapped from the cert-manager
+            # Secret keys by the volume `items` below.
+            - name: MCP_TLS_CERTFILE
+              value: /certs/mcp-server.crt
+            - name: MCP_TLS_KEYFILE
+              value: /certs/mcp-server.key
+            - name: MCP_TLS_CA_CERTS
+              value: /certs/ca.crt
+            - name: MCP_TLS_CERT_REQS
+              value: "2"
+            # Telemetry to the Collector (OTLP/HTTP 4318), never direct-to-backend (ADR-IC-007 §P1).
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector:4318
+          volumeMounts:
+            - name: mcp-tls
+              mountPath: /certs
+              readOnly: true
+          # mTLS requires a client cert, so a plain httpGet probe would fail the handshake; a TCP
+          # socket probe confirms uvicorn is bound without needing to present a cert.
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        # Map the cert-manager Secret's standard keys (tls.crt/tls.key/ca.crt) to the filenames
+        # the MCP_TLS_* env expects (/certs/mcp-server.{crt,key} + /certs/ca.crt).
+        - name: mcp-tls
+          secret:
+            secretName: babelstone-mcp-tls
+            items:
+              - key: tls.crt
+                path: mcp-server.crt
+              - key: tls.key
+                path: mcp-server.key
+              - key: ca.crt
+                path: ca.crt
