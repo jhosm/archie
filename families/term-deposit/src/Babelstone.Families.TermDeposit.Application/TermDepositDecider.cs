@@ -64,6 +64,44 @@ public static class TermDepositDecider
     /// records (ADR-PC-024 §5). Stable, machine-readable, non-PII — like every failure reason.</summary>
     public const string EligibilityNotMetReason = "ELIGIBILITY_NOT_MET";
 
+    /// <summary>The operator actor namespaces a correction (D.5 / F.6, bd babelstone-k6r8.11) is
+    /// restricted to: a back-office clerk (<c>ops:</c>) or a regulatory-ops operator (<c>operator:</c>) —
+    /// the same conventions the D.5 <c>ForcedCorrectionRoundTripTests</c> (<c>ops:clerk</c>) and the
+    /// pack-migration write path (<c>operator:regulatory-ops</c>) already use. A correction is a
+    /// privileged restatement of a recorded fact, never a customer-facing command, so it fails loud for
+    /// any other actor (a customer/agent/saga actor like <c>mcp:dev</c> or <c>saga:renewal</c>).</summary>
+    private static readonly string[] OperatorActorPrefixes = ["ops:", "operator:"];
+
+    /// <summary>
+    /// Is <paramref name="actor"/> an OPERATOR actor permitted to issue a correction (D.5 / F.6,
+    /// bd babelstone-k6r8.11)? True only for the <c>ops:</c> / <c>operator:</c> namespaces. Pure
+    /// string predicate — no clock, no I/O (BENG001/002/003). The service turns a <c>false</c> here
+    /// into a <see cref="DomainRejectedException"/> BEFORE any append, so a correction from a
+    /// non-operator actor never reaches the store.
+    /// </summary>
+    public static bool IsOperatorActor(string actor) =>
+        !string.IsNullOrEmpty(actor)
+        && Array.Exists(OperatorActorPrefixes, prefix => actor.StartsWith(prefix, StringComparison.Ordinal));
+
+    /// <summary>
+    /// Build the store-only <see cref="DepositCorrected"/> event from an operator correction command
+    /// (D.5 / F.6, bd babelstone-k6r8.11). PURE — no clock, no I/O, no money math (a correction moves no
+    /// money): it maps the command's structural facts onto the event 1:1, exactly the event shape the D.5
+    /// <c>ForcedCorrectionRoundTripTests</c> constructs by hand. The valid-time/supersession is the
+    /// SERVICE's job (it stamps <see cref="CorrectDepositCommand.EffectiveFrom"/> onto
+    /// <c>AppendContext.ValidTime</c>); this only decides the event payload. Carries OPAQUE references
+    /// only — no PII rides the event (ADR-PC-004 §P2).
+    /// </summary>
+    public static DepositCorrected DecideCorrection(CorrectDepositCommand command) =>
+        new(
+            DepositId: command.DepositId,
+            CorrectionId: command.CorrectionId,
+            CorrectedField: command.CorrectedField,
+            PreviousValueRef: command.PreviousValueRef,
+            CorrectedValueRef: command.CorrectedValueRef,
+            EffectiveFrom: command.EffectiveFrom,
+            CorrectionReason: command.CorrectionReason);
+
     /// <summary>
     /// Build <see cref="DepositConstituted"/> from the command, stamping the resolved TAN and
     /// the rate-sheet version it came from (ADR-PC-008 §P3). The maturity date is derived from

@@ -414,6 +414,69 @@ public sealed class TermDepositConstitutionService(
     }
 
     /// <summary>
+    /// Correct a previously-recorded fact on a live deposit (D.5 / F.6, bd babelstone-k6r8.11): the thin
+    /// operator-only application surface over the bitemporal supersession ADR-PC-002 §P2 already
+    /// implements in the projection runtime. Rehydrates the deposit (must be Active — the F.3
+    /// <c>Correct</c> transition gate decides), checks the actor is an OPERATOR actor, builds the
+    /// store-only <c>DepositCorrected</c> via the pure decider, and appends it with the append's
+    /// <c>AppendContext.ValidTime</c> set to <see cref="CorrectDepositCommand.EffectiveFrom"/> — exactly
+    /// how the D.5 <c>ForcedCorrectionRoundTripTests</c> constructs the event by hand, only now behind a
+    /// command instead of a hand-rolled append. The bitemporal projection turns that valid-time into the
+    /// supersede-then-insert (the prior belief is disavowed, never overwritten); this method does NOT
+    /// touch that runtime, which is already built and tested.
+    /// </summary>
+    /// <remarks>
+    /// A correction is STORE-ONLY: no money moves, no settlement leg, the deposit stays Active (the
+    /// fold only tallies <c>CorrectionCount</c>). It carries OPAQUE references only — no PII rides the
+    /// event (ADR-PC-004 §P2). Additive to ADR-PC-002 Path A: no ADR amendment, the event/fold/lifecycle
+    /// transition/family-module registration all pre-exist (the D.5 work); this only adds the command +
+    /// decider + (endpoint, in <c>DepositsEndpoints</c>) that appends it.
+    /// </remarks>
+    /// <returns>The stream's head version after the correction (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
+    public async Task<long> CorrectAsync(CorrectDepositCommand command, CancellationToken ct = default)
+    {
+        // 0. Operator-only gate (D.5 / F.6): a correction is a privileged back-office restatement of a
+        //    recorded fact, never a customer-facing command. Reject a non-operator actor BEFORE any
+        //    rehydrate or append — fail loud, never silently append a correction from an unprivileged actor.
+        if (!TermDepositDecider.IsOperatorActor(command.Actor))
+        {
+            throw new DomainRejectedException(
+                $"Actor '{command.Actor}' is not an operator; only an operator actor (ops:* / operator:*) "
+                + $"may correct deposit {command.DepositId} (D.5 operator-only correction).");
+        }
+
+        // 1. Rehydrate the deposit (load-then-append on the live stream head).
+        var hydrated = await runtime.LoadAsync(command.DepositId, ct);
+        var position = hydrated.State;
+
+        // Transition-legality gate (F.3 state machine): a correction is legal only from Active and is
+        // STATE-PRESERVING (the deposit stays Active afterward). The single LifecycleTransitions table
+        // decides, so a correction on a Matured/closed (or not-yet-constituted) deposit is rejected
+        // uniformly with every other illegal transition.
+        RejectIfIllegal(position.Lifecycle, LifecycleTransitions.Transition.Correct, command.DepositId, "correct");
+
+        // 2. Decide (pure): map the command's structural facts onto the store-only DepositCorrected event
+        //    — the same event shape the D.5 ForcedCorrectionRoundTripTests builds by hand. No financial
+        //    math, no clock: a correction moves no money and carries opaque references only.
+        var corrected = TermDepositDecider.DecideCorrection(command);
+
+        // 3. The append's VALID-TIME is the correction's effective_from (at midnight UTC), NOT the
+        //    transaction-time the runtime stamps — this is exactly what feeds the ADR-PC-002 §P2
+        //    bitemporal supersession (the D.5 test sets AppendContext.ValidTime = effective_from the same
+        //    way). The runtime stamps transaction_time from its injected clock; we supply only valid-time.
+        var validTime = new DateTimeOffset(command.EffectiveFrom.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+
+        // 4. Append at the current head (optimistic concurrency). Thread the CommandId so the append's
+        //    in-transaction command_dedup INSERT fires (ADR-PC-029 slot 4): an at-least-once retry of the
+        //    SAME correction raises DuplicateCommandException and returns the original outcome, never a
+        //    second append — UNLIKE the one-shot lifecycle steps, a correction is REPEATABLE (it leaves
+        //    the deposit Active), so a non-idempotent retry would double-tally the correction.
+        return await runtime.AppendAsync(
+            command.DepositId, hydrated.Version, [corrected],
+            Context(command.Actor, validTime, command.CommandId), ct);
+    }
+
+    /// <summary>
     /// Record the GDPR Article 17 erasure fact on a deposit (bd babelstone-nzw6): append
     /// <see cref="PersonalDataErasureRequested"/> so the deposit folds to <c>Erased</c>. This method is
     /// the SECOND half of the right-to-be-forgotten flow — the host has ALREADY crypto-shredded the
