@@ -312,9 +312,10 @@ mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/ov
 **Account-gated / deferred (not in this overlay yet):** provisioning the node,
 installing the CSI driver + cert-manager + the issuer, pointing DNS at the node IP,
 and the end-to-end cert verification all need the Hetzner account + DNS (Phases
-0–2). The engine, orchestrator, notification, and Mission Control manifests have
-landed (zla1.5.1/.2/.5); **mcp-server + its mTLS seam** is zla1.5.3 and the
-real-Claude **agent host** is the deferred zla1.5.6; the real Backstage **image**
+0–2). The engine, orchestrator, notification, Mission Control, and mcp-server
+manifests have landed (zla1.5.1/.2/.3/.5 — mcp-server behind Kong over mutual TLS,
+its internal-CA chain in `overlays/staging/bootstrap/mcp-mtls.yaml`); the only
+remaining piece is the deferred real-Claude **agent host** (zla1.5.6); the real Backstage **image**
 is zla1.6 (the base still pins `:placeholder`).
 
 ## Out of scope (downstream)

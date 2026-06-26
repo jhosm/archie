@@ -1,0 +1,101 @@
+# Kong↔mcp-server mutual-TLS cert chain (bd babelstone-zla1.5.3) — cluster bootstrap, applied
+# ONCE, NOT part of the kustomize overlay (these are cert-manager CRDs, and the CI gate runs
+# kubeconform -strict with no CRD schemas — a CRD in the build would hard-fail it).
+#
+# It reproduces what compose's mcp-certgen one-shot does, declaratively, via cert-manager:
+# a per-cluster internal CA signs BOTH directions of the mutual TLS, so ONE CA underwrites
+# everything (the load-bearing constraint, ADR-IC-006 §P5 / ADR-IC-010 §P5):
+#   selfSigned Issuer ──► CA Certificate (mcp-mtls-ca) ──► CA Issuer ──┬─► mcp-server SERVER cert
+#                                                                      └─► Kong CLIENT cert
+#
+# What consumes each output:
+#   • babelstone-mcp-tls  — mounted by the mcp-server Deployment at /certs (server cert+key+ca.crt).
+#   • mcp-kong-client-tls — the cert Kong PRESENTS to mcp-server; + the CA (mcp-mtls-ca's ca.crt)
+#     is what Kong VERIFIES the server against. The committed infra/kong/kong.yml carries only the
+#     POC placeholders (client_certificate + ca_certificates + tls_verify on the mcp-server
+#     service); at deploy, scripts/deck-sync.sh renders Kong with this real material (sourced from
+#     the cluster secret seam / OpenBao) — never committed literals. tls_verify flips to true then.
+#
+# Namespaced to babelstone-staging (cert-manager Issuers/Certificates are namespaced, and the
+# Secrets must land in the app namespace). Needs cert-manager installed (the zla1.3 bootstrap).
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mcp-mtls-selfsign
+  namespace: babelstone-staging
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mcp-mtls-ca
+  namespace: babelstone-staging
+spec:
+  isCA: true
+  commonName: babelstone-mcp-internal-ca
+  secretName: mcp-mtls-ca
+  duration: 87600h     # 10 years (the internal CA)
+  renewBefore: 2160h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: mcp-mtls-selfsign
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mcp-mtls-ca
+  namespace: babelstone-staging
+spec:
+  ca:
+    secretName: mcp-mtls-ca
+---
+# The mcp-server's SERVER cert — CN/SAN must include `mcp-server` (the in-cluster Service name
+# Kong dials and verifies). Mounted by the Deployment as /certs.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mcp-server-tls
+  namespace: babelstone-staging
+spec:
+  secretName: babelstone-mcp-tls
+  commonName: mcp-server
+  dnsNames:
+    - mcp-server
+    - mcp-server.babelstone-staging.svc.cluster.local
+  usages:
+    - server auth
+    - digital signature
+    - key encipherment
+  duration: 2160h      # 90 days
+  renewBefore: 360h
+  issuerRef:
+    name: mcp-mtls-ca
+    kind: Issuer
+    group: cert-manager.io
+---
+# Kong's CLIENT cert for the mcp-server hop — signed by the SAME CA, so uvicorn's CERT_REQUIRED
+# verify (against /certs/ca.crt) passes. deck-sync renders this into kong.yml's client_certificate.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mcp-kong-client
+  namespace: babelstone-staging
+spec:
+  secretName: mcp-kong-client-tls
+  commonName: babelstone-mcp-client
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  duration: 2160h
+  renewBefore: 360h
+  issuerRef:
+    name: mcp-mtls-ca
+    kind: Issuer
+    group: cert-manager.io
