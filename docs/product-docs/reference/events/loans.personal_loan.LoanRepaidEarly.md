@@ -13,7 +13,8 @@ The borrower repays the loan early (fin-math §7.5): a partial or full prepaymen
 | `commission_cents` | `long` | The EFFECTIVE early-repayment commission actually charged — already capped to the statutory ceiling and the lost-interest ceiling. Non-negative, integer EUR cents. |
 | `outstanding_balance_after_cents` | `long` | The capital still owed after the repayment as integer EUR cents — 0 for a full repayment, reduced for a partial one. |
 | `repaid_on` | `int` (`date`) | The repayment's as-of date as days since epoch. |
+| `movements` | `array<`record`>` | The early-repayment's money movement(s) recorded append-first ([ADR-PC-032](../../../product-management/product_concepts/adrs/ADR-PC-032-money-movement-primitive.md) slot 5). A REQUIRED array (an event with no movements carries an EMPTY array, never null) defaulted to [] so pre-Movement records still decode (forward-only schema evolution, [ADR-IC-002](../../../product-management/integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md) §P3 / BACKWARD compat). The engine's family-agnostic codec (MovementCarrier) binds this to LoanRepaidEarly's IReadOnlyList<Movement>; the promoted ce_movementorigin / ce_movementdirections headers auto-start the substrate settlement saga. |
 
 ## Governing ADRs
 
-[ADR-IC-002](../../../product-management/integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md), [ADR-PC-004](../../../product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)
+[ADR-IC-002](../../../product-management/integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md), [ADR-PC-004](../../../product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md), [ADR-PC-032](../../../product-management/product_concepts/adrs/ADR-PC-032-money-movement-primitive.md)

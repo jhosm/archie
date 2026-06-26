@@ -14,6 +14,12 @@ namespace Babelstone.Families.PersonalLoan.Application.Tests;
 /// </summary>
 public sealed class PersonalLoanDeciderTests
 {
+    // The opaque account tokens the installment / early-repayment Movement legs are pinned to (never PII,
+    // ADR-PC-004 §P2), and the append-idempotency command id threaded onto each recorded Movement (slot 4).
+    private const string CollectionRef = "acct-token-collection";
+    private const string RepaymentRef = "acct-token-repayment";
+    private static readonly Guid CommandId = new("11111111-1111-1111-1111-111111111111");
+
     [Fact]
     public void DecideDisbursement_stamps_the_resolved_rate_periodic_rate_and_level_installment()
     {
@@ -76,7 +82,7 @@ public sealed class PersonalLoanDeciderTests
         // The first installment of the worked example: interest €50.00, capital €810.66, balance €9,189.34.
         var position = DisbursedPosition(principalCents: 1_000_000, periodicRateBps: 50, termMonths: 12, installmentsPaid: 0);
 
-        var events = PersonalLoanDecider.DecideInstallment(position, new DateOnly(2026, 2, 1));
+        var events = PersonalLoanDecider.DecideInstallment(position, new DateOnly(2026, 2, 1), CollectionRef, CommandId);
         var paid = Assert.IsType<LoanInstallmentPaid>(Assert.Single(events));
 
         Assert.Equal(1, paid.InstallmentNumber);
@@ -86,11 +92,37 @@ public sealed class PersonalLoanDeciderTests
     }
 
     [Fact]
+    public void DecideInstallment_records_an_originated_debit_movement_append_first_against_the_collection_account()
+    {
+        // ADR-PC-032 slot 5 / §A8 (bd babelstone-t7o3.16): the installment records its money leg APPEND-FIRST as
+        // ONE Originated Debit Movement against the borrower's COLLECTION account — interest + capital LEAVES
+        // that account (Debit, direction pinned to the named account). The substrate-owned settlement saga
+        // effects the cash leg, gated, off this recorded Movement; the decider settles nothing.
+        var position = DisbursedPosition(principalCents: 1_000_000, periodicRateBps: 50, termMonths: 12, installmentsPaid: 0);
+
+        var events = PersonalLoanDecider.DecideInstallment(position, new DateOnly(2026, 2, 1), CollectionRef, CommandId);
+        var paid = Assert.IsType<LoanInstallmentPaid>(Assert.Single(events));
+
+        var movement = Assert.Single(paid.Movements!);
+        Assert.Equal(SettlementDirection.Debit, movement.Direction);          // value LEAVES the collection account
+        Assert.Equal(CollectionRef, movement.AccountRef);                     // pinned to the named collection account
+        Assert.Equal(paid.Interest + paid.Capital, movement.Amount);          // the full installment is collected
+        Assert.Equal(MovementOperation.CollectInstallment, movement.Operation); // the closed operation code
+        Assert.Equal(MovementOrigin.Originated, movement.Origin);             // the decider decided it → gated cash leg
+        Assert.Equal(new DateOnly(2026, 2, 1), movement.ValueDate);          // the paid date, not a clock
+        Assert.Equal(CommandId, movement.CommandId);                         // threaded for append idempotency (slot 4)
+
+        // The producer hop: a one-entry ce_movementdirections=Debit list for this standalone collection leg.
+        Assert.Equal("Originated", paid.IntegrationHeaders![MovementHeaders.OriginKey]);
+        Assert.Equal("Debit", paid.IntegrationHeaders[MovementHeaders.DirectionsKey]);
+    }
+
+    [Fact]
     public void DecideInstallment_advances_to_the_correct_row_by_installments_paid()
     {
         // After 2 paid, the next installment is row 3 (interest €41.87 on opening €8,374.63).
         var position = DisbursedPosition(principalCents: 1_000_000, periodicRateBps: 50, termMonths: 12, installmentsPaid: 2);
-        var events = PersonalLoanDecider.DecideInstallment(position, new DateOnly(2026, 4, 1));
+        var events = PersonalLoanDecider.DecideInstallment(position, new DateOnly(2026, 4, 1), CollectionRef, CommandId);
         var paid = (LoanInstallmentPaid)events[^1];
 
         Assert.Equal(3, paid.InstallmentNumber);
@@ -102,7 +134,7 @@ public sealed class PersonalLoanDeciderTests
     {
         var position = DisbursedPosition(principalCents: 1_000_000, periodicRateBps: 50, termMonths: 12, installmentsPaid: 12);
         Assert.Throws<DomainRejectedException>(
-            () => PersonalLoanDecider.DecideInstallment(position, new DateOnly(2027, 1, 1)));
+            () => PersonalLoanDecider.DecideInstallment(position, new DateOnly(2027, 1, 1), CollectionRef, CommandId));
     }
 
     [Fact]
@@ -110,13 +142,18 @@ public sealed class PersonalLoanDeciderTests
     {
         // The 12th installment closes the balance to zero, so it pairs with a LoanSettled.
         var position = DisbursedPosition(principalCents: 1_000_000, periodicRateBps: 50, termMonths: 12, installmentsPaid: 11);
-        var events = PersonalLoanDecider.DecideFinalInstallment(position, new DateOnly(2027, 1, 1));
+        var events = PersonalLoanDecider.DecideFinalInstallment(position, new DateOnly(2027, 1, 1), CollectionRef, CommandId);
 
         Assert.Equal(2, events.Count);
         var paid = Assert.IsType<LoanInstallmentPaid>(events[0]);
         Assert.Equal(12, paid.InstallmentNumber);
         Assert.Equal(Money.Zero, paid.OutstandingBalance); // fully amortized
         Assert.IsType<LoanSettled>(events[1]);
+
+        // The final installment still records its Originated Debit collection Movement append-first.
+        var movement = Assert.Single(paid.Movements!);
+        Assert.Equal(SettlementDirection.Debit, movement.Direction);
+        Assert.Equal(MovementOperation.CollectInstallment, movement.Operation);
     }
 
     [Fact]
@@ -128,13 +165,41 @@ public sealed class PersonalLoanDeciderTests
             with { OutstandingBalance = new Money(1_000_000), TermMonths = 36 };
 
         var events = PersonalLoanDecider.DecideEarlyRepayment(
-            position, new Money(1_000_000), new DateOnly(2026, 6, 1), remainingInstallments: 36);
+            position, new Money(1_000_000), new DateOnly(2026, 6, 1), remainingInstallments: 36, RepaymentRef, CommandId);
 
         var repaid = Assert.IsType<LoanRepaidEarly>(events[0]);
         Assert.Equal(new Money(1_000_000), repaid.CapitalRepaid);
         Assert.Equal(new Money(5_000), repaid.Commission); // 0.50% of €10,000 = €50.00
         Assert.Equal(Money.Zero, repaid.OutstandingBalanceAfter);
         Assert.IsType<LoanSettled>(events[1]); // full repayment settles
+    }
+
+    [Fact]
+    public void DecideEarlyRepayment_records_an_originated_debit_movement_append_first_for_capital_plus_commission()
+    {
+        // ADR-PC-032 slot 5 / §A8 (bd babelstone-t7o3.16): the early repayment records its money leg APPEND-FIRST
+        // as ONE Originated Debit Movement against the borrower's REPAYMENT account — the capital repaid PLUS
+        // the capped commission LEAVES that account (Debit, direction pinned to the named account). The
+        // substrate-owned settlement saga effects the cash leg, gated; the decider settles nothing.
+        var position = DisbursedPosition(principalCents: 1_000_000, periodicRateBps: 50, termMonths: 36, installmentsPaid: 0)
+            with { OutstandingBalance = new Money(1_000_000), TermMonths = 36 };
+
+        var events = PersonalLoanDecider.DecideEarlyRepayment(
+            position, new Money(1_000_000), new DateOnly(2026, 6, 1), remainingInstallments: 36, RepaymentRef, CommandId);
+        var repaid = Assert.IsType<LoanRepaidEarly>(events[0]);
+
+        var movement = Assert.Single(repaid.Movements!);
+        Assert.Equal(SettlementDirection.Debit, movement.Direction);          // value LEAVES the repayment account
+        Assert.Equal(RepaymentRef, movement.AccountRef);                      // pinned to the named repayment account
+        Assert.Equal(repaid.CapitalRepaid + repaid.Commission, movement.Amount); // capital + capped commission
+        Assert.Equal(MovementOperation.RepayEarly, movement.Operation);       // the closed operation code
+        Assert.Equal(MovementOrigin.Originated, movement.Origin);             // the decider decided it → gated cash leg
+        Assert.Equal(new DateOnly(2026, 6, 1), movement.ValueDate);          // the repaid date, not a clock
+        Assert.Equal(CommandId, movement.CommandId);                         // threaded for append idempotency (slot 4)
+
+        // The producer hop: a one-entry ce_movementdirections=Debit list for this standalone repayment leg.
+        Assert.Equal("Originated", repaid.IntegrationHeaders![MovementHeaders.OriginKey]);
+        Assert.Equal("Debit", repaid.IntegrationHeaders[MovementHeaders.DirectionsKey]);
     }
 
     [Fact]
@@ -146,7 +211,7 @@ public sealed class PersonalLoanDeciderTests
             with { OutstandingBalance = new Money(500_000), TermMonths = 36, EarlyRepaymentCommissionBps = 50 };
 
         var events = PersonalLoanDecider.DecideEarlyRepayment(
-            position, new Money(500_000), new DateOnly(2027, 1, 1), remainingInstallments: 12);
+            position, new Money(500_000), new DateOnly(2027, 1, 1), remainingInstallments: 12, RepaymentRef, CommandId);
 
         var repaid = Assert.IsType<LoanRepaidEarly>(events[0]);
         Assert.Equal(new Money(1_250), repaid.Commission); // 0.25% of €5,000 = €12.50
@@ -160,7 +225,7 @@ public sealed class PersonalLoanDeciderTests
             with { OutstandingBalance = new Money(1_000_000), TermMonths = 36 };
 
         var events = PersonalLoanDecider.DecideEarlyRepayment(
-            position, new Money(400_000), new DateOnly(2026, 6, 1), remainingInstallments: 36);
+            position, new Money(400_000), new DateOnly(2026, 6, 1), remainingInstallments: 36, RepaymentRef, CommandId);
 
         var repaid = Assert.IsType<LoanRepaidEarly>(Assert.Single(events)); // no settlement — still open
         Assert.Equal(new Money(600_000), repaid.OutstandingBalanceAfter);
@@ -173,7 +238,7 @@ public sealed class PersonalLoanDeciderTests
             with { OutstandingBalance = new Money(500_000), TermMonths = 36 };
 
         Assert.Throws<DomainRejectedException>(() => PersonalLoanDecider.DecideEarlyRepayment(
-            position, new Money(600_000), new DateOnly(2026, 6, 1), remainingInstallments: 36));
+            position, new Money(600_000), new DateOnly(2026, 6, 1), remainingInstallments: 36, RepaymentRef, CommandId));
     }
 
     [Fact]

@@ -8,6 +8,20 @@
     { "name": "capital_repaid_cents", "type": "long", "doc": "The capital repaid early as integer EUR cents (the whole outstanding balance for a full repayment, or the partial amount)." },
     { "name": "commission_cents", "type": "long", "doc": "The EFFECTIVE early-repayment commission actually charged — already capped to the statutory ceiling and the lost-interest ceiling. Non-negative, integer EUR cents." },
     { "name": "outstanding_balance_after_cents", "type": "long", "doc": "The capital still owed after the repayment as integer EUR cents — 0 for a full repayment, reduced for a partial one." },
-    { "name": "repaid_on", "type": { "type": "int", "logicalType": "date" }, "doc": "The repayment's as-of date as days since epoch." }
+    { "name": "repaid_on", "type": { "type": "int", "logicalType": "date" }, "doc": "The repayment's as-of date as days since epoch." },
+    { "name": "movements", "type": { "type": "array", "items": {
+      "type": "record",
+      "name": "Movement",
+      "doc": "One recorded change of value against a single engine-owned account (ADR-PC-032), carried append-first inside this event. Inlined verbatim from the governed carrier shape contracts/avro/_shared/Movement.avsc.json — an early repayment records ONE Originated Debit Movement against the borrower's repayment account (capital repaid + capped commission LEAVES that account; ADR-PC-032 §A8 / feature-design §2). The substrate-owned settlement saga effects the cash leg, gated, off the promoted ce_movementorigin / ce_movementdirections headers; the engine no longer settles eagerly on the append path.",
+      "fields": [
+        { "name": "account_ref", "type": "string", "doc": "The engine-owned account the value moves against — an OPAQUE token the engine resolves internally, NEVER an IBAN/cleartext or ciphertext PII identifier (ADR-PC-004 §P2). References are allowed on the bus; PII is not." },
+        { "name": "direction", "type": { "type": "enum", "name": "MovementDirection", "symbols": ["Debit", "Credit"] }, "doc": "Debit | Credit, ALWAYS relative to account_ref: Debit = value leaves that account, Credit = value enters it (feature-design §2). (SettlementDirection on the C# side.)" },
+        { "name": "amount_cents", "type": "long", "doc": "The amount moved as integer EUR cents (Money.Cents, ADR-PC-010 §P1). The engine never expresses money as a float." },
+        { "name": "value_date", "type": { "type": "int", "logicalType": "date" }, "doc": "The economic date the value moves (valid_time) as days since epoch — never wall-clock (ADR-PC-032 slot 1)." },
+        { "name": "operation", "type": { "type": "enum", "name": "MovementOperation", "symbols": ["Disburse", "CollectInstallment", "PayMaturity", "PayCoupon", "PayEarlyTermination", "RepayEarly", "RolloverDebit"] }, "doc": "The CLOSED engine-side operation code naming WHICH money move this is (ADR-PC-032 slot 1) — an enum, NOT a free string. The settlement leg maps it to the ACL operation_type half of the idempotency key (ADR-IC-012 §P4). Widen forward-only by ADDING a symbol at the END (ADR-IC-002)." },
+        { "name": "origin", "type": { "type": "enum", "name": "MovementOrigin", "symbols": ["Originated", "Observed"] }, "doc": "Who initiated the movement and what the spine does next (ADR-PC-032 slot 2). Originated = the decider decided it, so its cash leg is effected by the gated settlement leg. Observed = it arrived already cleared (no cash leg). An early repayment is Originated." },
+        { "name": "command_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "The ADR-PC-029 append-idempotency CommandId the originating command carried, threaded on for append idempotency + correlation (ADR-PC-032 slot 4)." }
+      ]
+    } }, "default": [], "doc": "The early-repayment's money movement(s) recorded append-first (ADR-PC-032 slot 5). A REQUIRED array (an event with no movements carries an EMPTY array, never null) defaulted to [] so pre-Movement records still decode (forward-only schema evolution, ADR-IC-002 §P3 / BACKWARD compat). The engine's family-agnostic codec (MovementCarrier) binds this to LoanRepaidEarly's IReadOnlyList<Movement>; the promoted ce_movementorigin / ce_movementdirections headers auto-start the substrate settlement saga." }
   ]
 }

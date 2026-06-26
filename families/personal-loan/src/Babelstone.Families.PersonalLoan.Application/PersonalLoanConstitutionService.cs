@@ -7,10 +7,13 @@ namespace Babelstone.Families.PersonalLoan.Application;
 
 /// <summary>
 /// The personal_loan decider's impure orchestration (ADR-PC-021): it resolves the rate sheet and pack
-/// primitives, calls the pure <see cref="PersonalLoanDecider"/>, settles the money leg, and appends
-/// through the runtime. It depends only on generic engine ports (<see cref="AggregateRuntime{TState}"/>,
-/// <see cref="IRateSheetStore"/>, <see cref="ISettlementPort"/>) plus the pinned <see cref="VerifiedPack"/>
-/// — the dependency arrow is family→engine, never the reverse (ADR-PC-021 §D2).
+/// primitives, calls the pure <see cref="PersonalLoanDecider"/>, and appends through the runtime. EVERY
+/// money-moving leg is now DE-SETTLED — the decider records an Originated <see cref="Movement"/> APPEND-FIRST
+/// on the event and the substrate-owned settlement saga effects the cash leg, gated (ADR-PC-032 slot 5; bd
+/// babelstone-t7o3.16 closed the installment + early-repay legs after t7o3.20/5r9n.1 closed disbursement), so
+/// this service no longer takes an <c>ISettlementPort</c> at all. It depends only on generic engine ports
+/// (<see cref="AggregateRuntime{TState}"/>, <see cref="IRateSheetStore"/>) plus the pinned
+/// <see cref="VerifiedPack"/> — the dependency arrow is family→engine, never the reverse (ADR-PC-021 §D2).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -33,7 +36,8 @@ namespace Babelstone.Families.PersonalLoan.Application;
 ///   the cash leg (ADR-PC-032 §Decision slot 5 — eager settle is ILLEGAL; record-and-append-first). The
 ///   osv6-stated "call settlement port" step is no longer present in EITHER constitution, so a pipeline that
 ///   baked it in would fit neither — the divergence that remains is the Movement's direction/operation and
-///   the de-settled tails, not whether to settle at all.</item>
+///   the de-settled tails, not whether to settle at all. (The installment + early-repayment legs are likewise
+///   Movement-bearing now, bd babelstone-t7o3.16, so the whole personal_loan family is settlement-port-free.)</item>
 ///   <item><b>Pack-primitive reads.</b> Term-deposit constitution reads a partial-withdrawal policy from
 ///   the product config; this disbursement reads no pack primitive at constitution.</item>
 ///   <item><b>Post-decide tails.</b> Term-deposit has the ADVANCE upfront-interest branch; this has none.</item>
@@ -58,7 +62,6 @@ namespace Babelstone.Families.PersonalLoan.Application;
 public sealed class PersonalLoanConstitutionService(
     AggregateRuntime<LoanPosition> runtime,
     IRateSheetStore rateSheets,
-    ISettlementPort settlement,
     VerifiedPack pack,
     IReadOnlyCollection<string>? requiredPreconditions = null)
 {
@@ -132,9 +135,11 @@ public sealed class PersonalLoanConstitutionService(
 
     /// <summary>
     /// Pay one scheduled installment: rehydrate the loan (must be Active), derive the next installment from
-    /// the schedule, COLLECT its amount (settlement debit on the borrower / credit to the lender), and append
-    /// the <see cref="LoanInstallmentPaid"/> — paired with a closing <see cref="LoanSettled"/> when it is the
-    /// final installment (the balance reaches zero). Triggered MANUALLY here, as a deposit coupon is.
+    /// the schedule, record its money leg APPEND-FIRST as an Originated Debit <see cref="Movement"/> against
+    /// the borrower's collection account, and append the <see cref="LoanInstallmentPaid"/> — paired with a
+    /// closing <see cref="LoanSettled"/> when it is the final installment (the balance reaches zero). NO eager
+    /// settlement on this path (ADR-PC-032 slot 5, bd babelstone-t7o3.16): the cash leg is the substrate-owned
+    /// settlement saga's gated, downstream step. Triggered MANUALLY here, as a deposit coupon is.
     /// </summary>
     public async Task<long> PayInstallmentAsync(PayInstallmentCommand command, CancellationToken ct = default)
     {
@@ -147,23 +152,22 @@ public sealed class PersonalLoanConstitutionService(
         // Transition-legality gate (the state machine): paying an installment is legal only from Active.
         RejectIfIllegal(position.Lifecycle, LifecycleTransitions.Transition.PayInstallment, command.LoanId, "pay installment");
 
-        // 2. Decide (pure): the final installment pairs with a settlement; an intermediate one does not.
+        // 2. Decide (pure): the final installment pairs with a settlement; an intermediate one does not. The
+        //    decider records the installment's money leg APPEND-FIRST as an Originated Debit Movement against the
+        //    named collection account (interest + capital LEAVES that account — ADR-PC-032 slot 5).
         var paidOn = DateOnly.FromDateTime(command.PaidAt.UtcDateTime);
         var isFinal = position.InstallmentsPaid + 1 >= position.TermMonths;
         var events = isFinal
-            ? PersonalLoanDecider.DecideFinalInstallment(position, paidOn)
-            : PersonalLoanDecider.DecideInstallment(position, paidOn);
+            ? PersonalLoanDecider.DecideFinalInstallment(position, paidOn, command.CollectionAccountRef, command.CommandId)
+            : PersonalLoanDecider.DecideInstallment(position, paidOn, command.CollectionAccountRef, command.CommandId);
 
-        // 3. Settle (ADR-PC-016): collect the installment (interest + capital) from the borrower's account.
-        var paid = events.OfType<LoanInstallmentPaid>().Single();
-        var installmentTotal = paid.Interest + paid.Capital;
-        await settlement.SettleAsync(
-            new SettlementInstruction(
-                command.LoanId, SettlementDirection.Credit, installmentTotal,
-                command.CollectionAccountRef, "installment"),
-            ct);
-
-        // 4. Append at the current head (optimistic concurrency). The command id makes the append idempotent.
+        // 3. Append at the current head (optimistic concurrency). NO eager settlement on this path (ADR-PC-032
+        //    §Decision slot 5: eager settle is illegal; record the Movement and append FIRST). The cash leg is
+        //    the substrate-owned settlement saga's GATED, downstream step — it auto-starts off the Movement's
+        //    promoted ce_movementorigin / ce_movementdirections headers (bd babelstone-t7o3.20) and effects the
+        //    debit against the Core ACL. Append-first closes the orphan window by construction — the FACT is
+        //    durable first, the cash is a retryable consequence (ADR-PC-031 §D3). The command id makes the
+        //    append idempotent (ADR-PC-029 slot 4).
         return await runtime.AppendAsync(
             command.LoanId, hydrated.Version, events,
             Context(command.Actor, command.PaidAt, command.CommandId), ct);
@@ -171,10 +175,13 @@ public sealed class PersonalLoanConstitutionService(
 
     /// <summary>
     /// Repay a loan early (fin-math §7.5): rehydrate it (must be Active),
-    /// resolve the capped commission by the remaining-term band, COLLECT the repaid capital + commission, and
+    /// resolve the capped commission by the remaining-term band, record the collected capital + commission
+    /// APPEND-FIRST as an Originated Debit <see cref="Movement"/> against the borrower's repayment account, and
     /// append the <see cref="LoanRepaidEarly"/> — paired with a closing <see cref="LoanSettled"/> for a FULL
     /// repayment (the balance reaches zero). The capped-commission math lives in the pure decider; the cap is
-    /// the PT consumer-credit statutory ceiling (0.50% &gt;1y / 0.25% ≤1y).
+    /// the PT consumer-credit statutory ceiling (0.50% &gt;1y / 0.25% ≤1y). NO eager settlement on this path
+    /// (ADR-PC-032 slot 5, bd babelstone-t7o3.16): the cash leg is the substrate-owned settlement saga's gated,
+    /// downstream step.
     /// </summary>
     public async Task<long> RepayEarlyAsync(RepayEarlyCommand command, CancellationToken ct = default)
     {
@@ -188,22 +195,21 @@ public sealed class PersonalLoanConstitutionService(
         RejectIfIllegal(position.Lifecycle, LifecycleTransitions.Transition.RepayEarly, command.LoanId, "repay early");
 
         // 2. Decide (pure): the remaining installments select the statutory cap band and bound the
-        //    lost-interest ceiling. The repayment DATE is derived from the command instant (an input).
+        //    lost-interest ceiling. The repayment DATE is derived from the command instant (an input). The
+        //    decider records the collected capital + capped commission APPEND-FIRST as an Originated Debit
+        //    Movement against the named repayment account (the total LEAVES that account — ADR-PC-032 slot 5).
         var repaidOn = DateOnly.FromDateTime(command.RepaidAt.UtcDateTime);
         var remainingInstallments = position.TermMonths - position.InstallmentsPaid;
         var events = PersonalLoanDecider.DecideEarlyRepayment(
-            position, new Money(command.RepaymentAmountCents), repaidOn, remainingInstallments);
+            position, new Money(command.RepaymentAmountCents), repaidOn, remainingInstallments,
+            command.RepaymentAccountRef, command.CommandId);
 
-        // 3. Settle (ADR-PC-016): collect the repaid capital PLUS the capped commission from the borrower.
-        var repaid = events.OfType<LoanRepaidEarly>().Single();
-        var collected = repaid.CapitalRepaid + repaid.Commission;
-        await settlement.SettleAsync(
-            new SettlementInstruction(
-                command.LoanId, SettlementDirection.Credit, collected,
-                command.RepaymentAccountRef, "early_repayment"),
-            ct);
-
-        // 4. Append at the current head (optimistic concurrency). The command id makes the append idempotent.
+        // 3. Append at the current head (optimistic concurrency). NO eager settlement on this path (ADR-PC-032
+        //    §Decision slot 5: eager settle is illegal; record the Movement and append FIRST). The cash leg is
+        //    the substrate-owned settlement saga's GATED, downstream step — it auto-starts off the Movement's
+        //    promoted ce_movementorigin / ce_movementdirections headers (bd babelstone-t7o3.20) and effects the
+        //    debit against the Core ACL. Append-first closes the orphan window by construction (ADR-PC-031 §D3).
+        //    The command id makes the append idempotent (ADR-PC-029 slot 4).
         return await runtime.AppendAsync(
             command.LoanId, hydrated.Version, events,
             Context(command.Actor, command.RepaidAt, command.CommandId), ct);

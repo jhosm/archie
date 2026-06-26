@@ -141,13 +141,35 @@ public sealed record LoanDisbursementFailed(
 /// <param name="Capital">The period's capital-amortized leg (Money cents).</param>
 /// <param name="OutstandingBalance">The capital still owed AFTER this installment (Money cents).</param>
 /// <param name="PaidOn">The installment's paid date — carried by the source event (never a clock).</param>
+/// <param name="Movements">The installment's money movement(s) recorded APPEND-FIRST on this event
+/// (ADR-PC-032 slot 5 / feature-design money-movement-settlement §7; bd babelstone-t7o3.16). An installment
+/// collection records ONE <see cref="MovementOrigin.Originated"/> <see cref="Movement"/>: a
+/// <see cref="SettlementDirection.Debit"/> against the borrower's named COLLECTION account (interest + capital
+/// LEAVES that account — direction pinned to the named account, feature-design §2), operation
+/// <see cref="MovementOperation.CollectInstallment"/>. The engine no longer settles eagerly on this path; the
+/// substrate-owned settlement saga auto-starts off the promoted <c>ce_movementorigin</c> /
+/// <c>ce_movementdirections</c> headers (the engine-spine seam, bd babelstone-t7o3.20) to effect the cash leg,
+/// gated. Optional/additive (defaulted empty) so pre-Movement streams still replay (forward-only schema
+/// evolution, ADR-IC-002): an empty carrier declares no settlement headers and starts no saga.</param>
 public sealed record LoanInstallmentPaid(
     Guid LoanId,
     int InstallmentNumber,
     Money Interest,
     Money Capital,
     Money OutstandingBalance,
-    DateOnly PaidOn) : DomainEvent;
+    DateOnly PaidOn,
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent
+{
+    /// <summary>
+    /// Promote the installment-collection Movement's origin/direction to the <c>ce_movementorigin</c> /
+    /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
+    /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5). Routed through the GENERIC engine-spine seam
+    /// (<see cref="MovementHeaders.ForOriginatedMovements"/>) — it names no family. Null/empty movements
+    /// (pre-Movement streams) declare no settlement header, starting no saga.
+    /// </summary>
+    public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
+        MovementHeaders.ForOriginatedMovements(Movements ?? []);
+}
 
 /// <summary>
 /// The borrower repays the loan early (fin-math §7.5): a partial or full
@@ -167,13 +189,34 @@ public sealed record LoanInstallmentPaid(
 /// <param name="OutstandingBalanceAfter">The capital still owed after the repayment — <c>Money.Zero</c>
 /// for a full repayment (the loan then settles), reduced for a partial one (Money cents).</param>
 /// <param name="RepaidOn">The repayment's as-of date — an input, never a clock read.</param>
+/// <param name="Movements">The early-repayment's money movement(s) recorded APPEND-FIRST on this event
+/// (ADR-PC-032 slot 5 / feature-design money-movement-settlement §7; bd babelstone-t7o3.16). An early
+/// repayment records ONE <see cref="MovementOrigin.Originated"/> <see cref="Movement"/>: a
+/// <see cref="SettlementDirection.Debit"/> against the borrower's named REPAYMENT account (capital repaid +
+/// capped commission LEAVES that account — direction pinned to the named account, feature-design §2), operation
+/// <see cref="MovementOperation.RepayEarly"/>. The engine no longer settles eagerly on this path; the
+/// substrate-owned settlement saga auto-starts off the promoted <c>ce_movementorigin</c> /
+/// <c>ce_movementdirections</c> headers (the engine-spine seam, bd babelstone-t7o3.20) to effect the cash leg,
+/// gated. Optional/additive (defaulted empty) so pre-Movement streams still replay (forward-only schema
+/// evolution, ADR-IC-002): an empty carrier declares no settlement headers and starts no saga.</param>
 public sealed record LoanRepaidEarly(
     Guid LoanId,
     Money CapitalRepaid,
     Money Commission,
     Money OutstandingBalanceAfter,
-    DateOnly RepaidOn) : DomainEvent
+    DateOnly RepaidOn,
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent
 {
+    /// <summary>
+    /// Promote the early-repayment Movement's origin/direction to the <c>ce_movementorigin</c> /
+    /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
+    /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5). Routed through the GENERIC engine-spine seam
+    /// (<see cref="MovementHeaders.ForOriginatedMovements"/>) — it names no family. Null/empty movements
+    /// (pre-Movement streams) declare no settlement header, starting no saga.
+    /// </summary>
+    public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
+        MovementHeaders.ForOriginatedMovements(Movements ?? []);
+
     // Early repayment is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1) — a
     // balance-changing point where the instance's state is interpretable on its own.
     public override bool IsLifecycleBoundary => true;

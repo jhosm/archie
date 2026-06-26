@@ -163,8 +163,14 @@ public static class PersonalLoanDecider
     /// </summary>
     /// <param name="position">The Active loan being amortized (carries the pinned schedule facts).</param>
     /// <param name="paidOn">The installment's paid date — an INPUT, not a clock read.</param>
+    /// <param name="collectionAccountRef">The opaque account token the installment is collected FROM — the
+    /// account the <see cref="MovementOperation.CollectInstallment"/> Debit moves against (the money LEAVES it,
+    /// feature-design §2). An OPAQUE reference, never an IBAN/PII (ADR-PC-004 §P2).</param>
+    /// <param name="commandId">The append-idempotency command id threaded onto the recorded Movement
+    /// (ADR-PC-032 slot 4); a direct caller with no id uses <see cref="Guid.Empty"/>.</param>
     /// <exception cref="DomainRejectedException">If the loan has no installment left to pay (all paid).</exception>
-    public static IReadOnlyList<DomainEvent> DecideInstallment(LoanPosition position, DateOnly paidOn)
+    public static IReadOnlyList<DomainEvent> DecideInstallment(
+        LoanPosition position, DateOnly paidOn, string collectionAccountRef, Guid commandId)
     {
         var nextInstallmentNumber = position.InstallmentsPaid + 1;
         if (nextInstallmentNumber > position.TermMonths)
@@ -179,10 +185,25 @@ public static class PersonalLoanDecider
             position.Principal, position.PeriodicRateBasisPoints, position.TermMonths);
         var row = schedule[nextInstallmentNumber - 1]; // 0-based list, 1-based installment number
 
+        // The installment's money leg recorded APPEND-FIRST as an Originated Debit Movement against the named
+        // collection account (the interest + capital total LEAVES that account — ADR-PC-032 slot 5). The engine
+        // no longer settles eagerly; the substrate settlement saga effects the cash leg, gated, off the
+        // promoted headers. Direction is pinned to the named account (a Debit: value leaves it, feature-design §2).
+        var installmentTotal = row.Interest + row.Capital;
+        var movement = new Movement(
+            AccountRef: collectionAccountRef,
+            Direction: SettlementDirection.Debit,
+            Amount: installmentTotal,
+            ValueDate: paidOn,
+            Operation: MovementOperation.CollectInstallment,
+            Origin: MovementOrigin.Originated,
+            CommandId: commandId);
+
         return
         [
             new LoanInstallmentPaid(
-                position.LoanId, row.Period, row.Interest, row.Capital, row.ClosingBalance, paidOn),
+                position.LoanId, row.Period, row.Interest, row.Capital, row.ClosingBalance, paidOn,
+                Movements: [movement]),
         ];
     }
 
@@ -201,9 +222,15 @@ public static class PersonalLoanDecider
     /// <param name="repaidOn">The repayment's as-of date — an INPUT, not a clock read.</param>
     /// <param name="remainingInstallments">The number of scheduled installments still due — selects the
     /// statutory cap band (&gt;12 ⇒ 0.50%, ≤12 ⇒ 0.25%) and bounds the lost-interest ceiling.</param>
+    /// <param name="repaymentAccountRef">The opaque account token the repayment + commission is collected FROM
+    /// — the account the <see cref="MovementOperation.RepayEarly"/> Debit moves against (the money LEAVES it,
+    /// feature-design §2). An OPAQUE reference, never an IBAN/PII (ADR-PC-004 §P2).</param>
+    /// <param name="commandId">The append-idempotency command id threaded onto the recorded Movement
+    /// (ADR-PC-032 slot 4); a direct caller with no id uses <see cref="Guid.Empty"/>.</param>
     /// <exception cref="DomainRejectedException">If the repayment is non-positive or exceeds the balance.</exception>
     public static IReadOnlyList<DomainEvent> DecideEarlyRepayment(
-        LoanPosition position, Money repaymentAmount, DateOnly repaidOn, int remainingInstallments)
+        LoanPosition position, Money repaymentAmount, DateOnly repaidOn, int remainingInstallments,
+        string repaymentAccountRef, Guid commandId)
     {
         if (repaymentAmount.Cents <= 0)
         {
@@ -234,9 +261,24 @@ public static class PersonalLoanDecider
         var commission = Amortization.EarlyRepaymentCommission(
             repaymentAmount, position.EarlyRepaymentCommissionBps, statutoryCapBps, lostInterestCeiling);
 
+        // The early-repayment's money leg recorded APPEND-FIRST as an Originated Debit Movement against the
+        // named repayment account: the capital repaid PLUS the capped commission LEAVES that account (ADR-PC-032
+        // slot 5). The engine no longer settles eagerly; the substrate settlement saga effects the cash leg,
+        // gated, off the promoted headers. Direction is pinned to the named account (a Debit: value leaves it).
+        var collected = repaymentAmount + commission;
+        var movement = new Movement(
+            AccountRef: repaymentAccountRef,
+            Direction: SettlementDirection.Debit,
+            Amount: collected,
+            ValueDate: repaidOn,
+            Operation: MovementOperation.RepayEarly,
+            Origin: MovementOrigin.Originated,
+            CommandId: commandId);
+
         var events = new List<DomainEvent>
         {
-            new LoanRepaidEarly(position.LoanId, repaymentAmount, commission, balanceAfter, repaidOn),
+            new LoanRepaidEarly(position.LoanId, repaymentAmount, commission, balanceAfter, repaidOn,
+                Movements: [movement]),
         };
 
         // A FULL repayment settles the loan (balance == 0): pair the repayment with a closing LoanSettled.
@@ -254,10 +296,11 @@ public static class PersonalLoanDecider
     /// amortized (balance reaches zero), so the installment is paired with a closing <see cref="LoanSettled"/>.
     /// This is the scheduled-completion analogue of a full early repayment. Pure.
     /// </summary>
-    public static IReadOnlyList<DomainEvent> DecideFinalInstallment(LoanPosition position, DateOnly paidOn)
+    public static IReadOnlyList<DomainEvent> DecideFinalInstallment(
+        LoanPosition position, DateOnly paidOn, string collectionAccountRef, Guid commandId)
     {
-        var installmentEvents = DecideInstallment(position, paidOn);
-        var paid = (LoanInstallmentPaid)installmentEvents[^1];
+        var installmentEvents = DecideInstallment(position, paidOn, collectionAccountRef, commandId);
+        var paid = installmentEvents.OfType<LoanInstallmentPaid>().Single();
 
         var events = new List<DomainEvent>(installmentEvents);
         if (paid.OutstandingBalance.Cents == 0)

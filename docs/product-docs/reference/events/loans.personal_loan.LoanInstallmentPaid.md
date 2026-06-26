@@ -14,7 +14,8 @@ One scheduled installment is paid: the period's interest + capital split (P(t) =
 | `capital_cents` | `long` | The period's capital-amortized leg as integer EUR cents (A(t) = P − J(t)). |
 | `outstanding_balance_cents` | `long` | The capital still owed AFTER this installment as integer EUR cents (S(t) = S(t-1) − A(t)). |
 | `paid_on` | `int` (`date`) | The installment's paid date as days since epoch. |
+| `movements` | `array<`record`>` | The installment's money movement(s) recorded append-first ([ADR-PC-032](../../../product-management/product_concepts/adrs/ADR-PC-032-money-movement-primitive.md) slot 5). A REQUIRED array (an event with no movements carries an EMPTY array, never null) defaulted to [] so pre-Movement records still decode (forward-only schema evolution, [ADR-IC-002](../../../product-management/integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md) §P3 / BACKWARD compat). The engine's family-agnostic codec (MovementCarrier) binds this to LoanInstallmentPaid's IReadOnlyList<Movement>; the promoted ce_movementorigin / ce_movementdirections headers auto-start the substrate settlement saga. |
 
 ## Governing ADRs
 
-[ADR-IC-002](../../../product-management/integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md), [ADR-PC-004](../../../product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)
+[ADR-IC-002](../../../product-management/integration_concepts/adrs/ADR-IC-002-schema-format-and-registry.md), [ADR-PC-004](../../../product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md), [ADR-PC-032](../../../product-management/product_concepts/adrs/ADR-PC-032-money-movement-primitive.md)
