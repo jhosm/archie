@@ -34,6 +34,9 @@ Usage:
 
 Options (env vars):
     MC_PORT           port to serve the UI on                  (default 9000)
+    MC_BIND           interface to bind                        (default 127.0.0.1;
+                      the container image sets 0.0.0.0 so the kube Service/probes
+                      can reach it via the pod IP)
     ENGINE_URL        base URL of the engine (LIVE·engine)     (default http://localhost:8080)
     ORCHESTRATOR_URL  base URL of the orchestrator (LIVE·saga) (default http://localhost:8090)
     TEMPO_URL         base URL of Grafana Tempo's query API     (default http://localhost:3200)
@@ -51,6 +54,10 @@ import urllib.request
 import urllib.error
 
 PORT = int(os.environ.get("MC_PORT", "9000"))
+# Bind interface. Default 127.0.0.1 keeps `python3 serve.py` on a laptop localhost-only
+# (no LAN exposure); the container image overrides this to 0.0.0.0 (ENV in the Dockerfile)
+# so the kube Service and readiness/liveness probes can reach it via the pod IP.
+MC_BIND = os.environ.get("MC_BIND", "127.0.0.1")
 ENGINE_URL = os.environ.get("ENGINE_URL", "http://localhost:8080").rstrip("/")
 ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://localhost:8090").rstrip("/")
 TEMPO_URL = os.environ.get("TEMPO_URL", "http://localhost:3200").rstrip("/")
@@ -183,7 +190,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 def main():
     socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.ThreadingTCPServer(("127.0.0.1", PORT), Handler) as httpd:
+    with socketserver.ThreadingTCPServer((MC_BIND, PORT), Handler) as httpd:
         print("Babelstone Mission Control")
         print("  UI            http://localhost:%d" % PORT)
         print("  engine        %s  (proxied at /v1/*      — LIVE·engine)" % ENGINE_URL)
