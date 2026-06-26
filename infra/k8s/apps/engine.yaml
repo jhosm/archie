@@ -1,0 +1,145 @@
+# Engine — event-sourced product kernel (ADR-PC-010), the first application service on
+# the staging cluster (bd babelstone-zla1.5.1).
+#
+# Runs the pack-baked derived image (ghcr.io/jhosm/babelstone-engine-staging — the base
+# engine image + pt.2026.1 on disk; see infra/k8s/apps/engine/Dockerfile). An initContainer
+# waits for the event-store migration sentinel before the engine starts, so the engine
+# never boots against an unmigrated event store. Single replica (single-node staging box).
+apiVersion: v1
+kind: Service
+metadata:
+  name: engine
+  labels:
+    app.kubernetes.io/name: engine
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: engine
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: engine
+  labels:
+    app.kubernetes.io/name: engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: engine
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: engine
+    spec:
+      # Gate the engine on the event-store migration: poll for the sentinel table the
+      # migration Job writes when it finishes. Decoupled from any hardcoded migration
+      # ceiling, needs no kube RBAC, and is race-free (only the Job applies; this only
+      # waits). The engine's own family read-model migration self-applies after this.
+      initContainers:
+        - name: wait-for-event-store-migration
+          image: postgres:18-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until psql -tAc "SELECT 1 FROM _event_store_apply_complete LIMIT 1" 2>/dev/null | grep -q 1; do
+                echo "waiting for event-store migration to complete ..."
+                sleep 3
+              done
+              echo "event-store migration complete; starting engine."
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_DB
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+      containers:
+        - name: engine
+          image: ghcr.io/jhosm/babelstone-engine-staging:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # Password first, so the $(POSTGRES_PASSWORD) interpolation below resolves.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+            - name: ConnectionStrings__Engine
+              value: Host=postgres;Port=5432;Database=babelstone;Username=babelstone;Password=$(POSTGRES_PASSWORD)
+            # Event bus — INTERNAL Redpanda listener (9092), not the 19092 host listener.
+            - name: Kafka__BootstrapServers
+              value: redpanda:9092
+            - name: Bus__SchemaRegistryUrl
+              value: http://redpanda:8081
+            # Telemetry to the Collector only (ADR-IC-007 §P1), never direct-to-backend.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector:4317
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: grpc
+            # The engine boots-fails without an environment; PII secret boundary stays off
+            # the bus — OpenBao disabled here, DB password resolved from the Secret seam.
+            - name: ASPNETCORE_ENVIRONMENT
+              value: Production
+            - name: ASPNETCORE_HTTP_PORTS
+              value: "8080"
+            - name: OpenBao__Enabled
+              value: "false"
+            # Regulatory pack — disk mode loads pt.2026.1 baked into this image at /app/packs.
+            - name: Engine__PackRegistry
+              value: disk
+            - name: Engine__PacksDir
+              value: /app/packs
+            - name: Engine__PackVersion
+              value: pt.2026.1
+          # The engine returns 404 (not 2xx) for the demo's probe path, which a k8s httpGet
+          # would treat as a failure, and has no /healthz — so probe the TCP socket: a bound
+          # 8080 means Kestrel + the API host are up.
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 250m
+              memory: 384Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

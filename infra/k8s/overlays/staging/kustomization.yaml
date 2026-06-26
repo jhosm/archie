@@ -33,6 +33,10 @@ namespace: babelstone-staging
 
 resources:
   - ../../base
+  # The application services layer (engine + later orchestrator/notification/mcp-server,
+  # plus the event-store migration Job) — bd babelstone-zla1.5. Kept out of base/ (which
+  # stays backing-infra-only); dev/ha don't reference it, so only staging runs the apps.
+  - ../../apps
   # The public edge (built-in networking.k8s.io/v1 Ingress — kubeconform-clean).
   # The cert-manager ClusterIssuer it references is a CRD applied at cluster
   # bootstrap (bootstrap/), deliberately OUTSIDE this kustomization so the strict
