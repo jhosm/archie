@@ -15,7 +15,7 @@ Person(reg, "Engine team + Reg counsel", "Author family schemas (.cue) + pack da
 System_Ext(gitci, "Authoring repo + CI", "Git + CI pipeline: runs pack-validate, cosign sign, oras push")
 
 System_Boundary(engine_sys, "Core Banking Product Engine") {
-  Container(engine, "Engine process", "C# / .NET 9", "Pulls pack by digest; verifies cosign signature; structural re-parse; caches; resolves pack & rate-sheet; pins pack_version + schema_version per instance")
+  Container(engine, "Engine process", "C# / .NET 10", "Pulls pack by digest; verifies cosign signature; structural re-parse; caches; resolves pack & rate-sheet; pins pack_version + schema_version per instance")
   Container(validator, "CUE validator (pack-validate)", "Go static binary, embeds cuelang.org/go", "Depths 1–4: syntax, type-check, pack-compliance, regulatory coherence; one binary serves pre-commit, CI, and engine pack-load")
   ContainerDb(pg, "Engine PostgreSQL", "PostgreSQL", "pack_versions (pack_version → OCI digest); events carry the pinned pack_version + schema_version")
 }

@@ -9,20 +9,20 @@ AddElementTag("estate", $bgColor="#2E7D6B", $fontColor="#FFFFFF", $borderColor="
 title Container — L2.2 Event backbone & downstream consumers
 
 System_Boundary(engine_sys, "Core Banking Product Engine") {
-  Container(engine, "Engine process", "C# / .NET 9", "Produces domain & integration events through its outbox relay")
+  Container(engine, "Engine process", "C# / .NET 10", "Produces domain & integration events through its outbox relay")
 }
 
 Container(redpanda, "Redpanda CE + Schema Registry", "Kafka API + Confluent SR", "Durable event backbone; Avro wire format validated against the registry at publish; topic deposits.integration.events", $tags="estate")
 Container(acl, "ACL service (Deposits)", "dedicated service", "Also a producer here: Core-confirmation events via its own outbox", $tags="estate")
-Container(notify, "Notification service", "service", "Choreography consumer of saga terminal events; HMAC-SHA256 signed webhook delivery; at-least-once; exponential backoff + dead-letter", $tags="estate")
-ContainerDb(notifydb, "Notification PostgreSQL", "PostgreSQL", "subscription store + delivery log + dead-letter records", $tags="estate")
+Container(notify, "Notification service", "family-agnostic scheduler core + loaded family rules (ADR-IC-019)", "Owns a clock; per-tick poll of the maturity calendar; composite notification_id + dedupe ledger; family rules (e.g. term-deposit 14-day pre-maturity pt.notice.maturity) plug in via IFamilyNotificationModule. HMAC-SHA256 signed, at-least-once webhook delivery; backoff + dead-letter", $tags="estate")
+ContainerDb(notifydb, "Notification PostgreSQL", "PostgreSQL", "subscription store + delivery log + dedupe ledger + dead-letter records", $tags="estate")
 
 System_Ext(gl, "General Ledger", "Double-entry postings from posting signals")
 System_Ext(ifrs9, "IFRS 9 System", "Staging / ECL from lifecycle events")
 System_Ext(reporting, "Regulatory Reporting", "FGD return + BdP rate statistics → Banco de Portugal")
 System_Ext(subscriber, "Registered subscriber endpoint", "Agent / partner callback URL — pre-registered, HTTPS, public-IP-validated")
 
-Rel(engine, redpanda, "Publish domain & integration events", "Avro via SR")
+Rel(engine, redpanda, "Outbox relay: publish CATALOGUED integration events (ADR-IC-017, fail-closed)", "Avro via SR")
 Rel(acl, redpanda, "Publish Core-confirmation events", "Avro")
 Rel(redpanda, gl, "Posting signals", "Avro consume")
 Rel(redpanda, ifrs9, "Lifecycle events (DPD, restructuring, write-off triggers)", "Avro consume")
