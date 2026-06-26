@@ -15,6 +15,7 @@
   --ink:#0b0d11; --ink-2:#0e1116; --panel:#14181f; --panel-2:#1a1f28;
   --paper:#ece7db; --paper-soft:#c7c3b8; --muted:#80858f; --faint:#565b65;
   --gold:#e0b15e; --gold-deep:#b98a3c; --verify:#6fd6a0; --wrong:#e0735e;
+  --c4-build:#6aa0d8; --c4-estate:#6fd6a0; --c4-family:#e0b15e; --c4-ext:#7d828c;
   --hair:rgba(236,231,219,0.12); --hair-soft:rgba(236,231,219,0.06);
   --serif:"Fraunces","Iowan Old Style","Charter",Georgia,serif;
   --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,sans-serif;
@@ -43,7 +44,7 @@ body::after {
 /* ---------------- top bar ---------------- */
 .topbar {
   flex:none;
-  display:flex; align-items:center; justify-content:space-between;
+  display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; row-gap:0.7rem;
   padding:1.1rem clamp(1.4rem,3vw,2.6rem); border-bottom:1px solid var(--hair);
   background:rgba(11,13,17,0.6); backdrop-filter:blur(8px);
 }
@@ -51,7 +52,8 @@ body::after {
 .brand .dot { width:7px; height:7px; border-radius:50%; background:var(--gold); box-shadow:0 0 12px var(--gold); }
 .brand b { color:var(--gold); font-weight:600; letter-spacing:0.3em; }
 .brand span { color:var(--muted); }
-.controls { display:flex; align-items:center; gap:1.4rem; }
+.controls { display:flex; align-items:center; gap:0.7rem 1.4rem; flex-wrap:wrap; }
+@media (max-width:1180px){ .controls { gap:0.6rem 1rem; } .seg-label { margin-right:0.35rem; } }
 
 .seg { display:inline-flex; border:1px solid var(--hair); border-radius:8px; overflow:hidden; font-family:var(--mono); font-size:0.72rem; }
 .seg button { background:transparent; color:var(--muted); border:0; padding:0.45rem 0.85rem; cursor:pointer; letter-spacing:0.1em; transition:all 0.2s var(--ease); }
@@ -69,18 +71,38 @@ body::after {
 /* ---------------- layout ---------------- */
 .stage {
   flex:1 1 auto; min-height:0;
-  display:grid; grid-template-columns:300px 1fr 380px; gap:0;
+  display:grid; grid-template-columns:280px 1fr; gap:0;
 }
+.workspace { min-height:0; position:relative; overflow:hidden; }
+.wsview { height:100%; min-height:0; }
+.wsview[hidden] { display:none !important; }
+#viewLedger { display:grid; grid-template-columns:minmax(0,1fr) clamp(300px,30%,380px); height:100%; min-height:0; }
 /* the AI console lives in normal flow at the bottom (see .console); when it opens it
    takes layout space and the stage flexes smaller — so it can never cover the desk. */
 body.console-open .hint-bar { display:none; }
-@media (max-width:1100px){ body{ overflow:auto; } .stage{ grid-template-columns:1fr; grid-auto-rows:min-content; overflow:visible; } }
+@media (max-width:860px){ body{ overflow:auto; } .stage{ grid-template-columns:1fr; grid-auto-rows:min-content; overflow:visible; } #viewLedger{ grid-template-columns:1fr; } .col.position{ overflow:visible; } .col.position #passbook{ overflow:visible; } }
 .col { padding:clamp(1.2rem,2.2vw,2rem); overflow-y:auto; }
 .col.desk { border-right:1px solid var(--hair); display:flex; flex-direction:column; overflow:hidden; }
 /* fields scroll if cramped; the action buttons stay pinned to the bottom of the desk,
    so they're always reachable — even with the AI console open. */
 .desk-fields { flex:1 1 auto; min-height:0; overflow-y:auto; }
-.col.position { border-left:1px solid var(--hair); background:rgba(20,24,31,0.35); }
+.col.position { border-left:1px solid var(--hair); background:rgba(20,24,31,0.35); display:flex; flex-direction:column; overflow:hidden; }
+.col.position .col-title { flex:none; }
+.col.position #passbook { flex:1 1 auto; overflow-y:auto; min-height:0; }
+/* config plane provenance strip — ③ declarative data, pinned per instance */
+.provenance { flex:none; margin-top:1rem; padding-top:0.9rem; border-top:1px solid var(--hair); font-family:var(--mono); }
+.prov-title { display:flex; align-items:center; gap:0.5rem; font-size:0.57rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--faint); }
+.prov-title .prov-plane { margin-left:auto; color:var(--muted); text-transform:none; letter-spacing:0.02em; }
+.prov-grid { margin-top:0.6rem; display:flex; flex-direction:column; gap:0.32rem; }
+.prov-item { display:flex; align-items:baseline; gap:0.5rem; font-size:0.63rem; }
+.prov-item .pk { color:var(--muted); width:64px; flex:none; }
+.prov-item .pv { color:var(--paper-soft); overflow-wrap:anywhere; }
+.prov-item .pver { color:var(--gold); margin-left:auto; white-space:nowrap; }
+.prov-foot { margin-top:0.7rem; display:flex; align-items:center; gap:0.45rem; flex-wrap:wrap; }
+.prov-chip { font-size:0.55rem; letter-spacing:0.04em; padding:0.1rem 0.42rem; border-radius:5px; border:1px solid var(--hair); color:var(--muted); }
+.prov-chip.ok { color:var(--verify); border-color:rgba(111,214,160,0.3); background:rgba(111,214,160,0.07); }
+.prov-chip.pinned { color:var(--gold); border-color:rgba(224,177,94,0.3); background:rgba(224,177,94,0.07); }
+.prov-digest { margin-left:auto; font-size:0.54rem; color:var(--faint); overflow-wrap:anywhere; }
 
 .col-title { font-family:var(--mono); font-size:0.66rem; letter-spacing:0.22em; text-transform:uppercase; color:var(--gold); margin-bottom:1.4rem; display:flex; align-items:center; gap:0.7rem; }
 .col-title::after { content:""; flex:1; height:1px; background:var(--hair); }
@@ -157,6 +179,21 @@ body.console-open .hint-bar { display:none; }
 .status-badge.active { color:var(--gold); border-color:rgba(224,177,94,0.4); }
 .status-badge.matured { color:var(--verify); border-color:rgba(111,214,160,0.4); }
 .status-badge.terminated { color:var(--wrong); border-color:rgba(224,115,94,0.4); }
+.status-badge.performing { color:var(--c4-build); border-color:rgba(106,160,216,0.45); }
+.status-badge.settled { color:var(--verify); border-color:rgba(111,214,160,0.4); }
+.status-badge.repaid { color:var(--wrong); border-color:rgba(224,115,94,0.4); }
+.sign-chip { display:inline-block; margin-top:0.6rem; font-family:var(--mono); font-size:0.58rem; letter-spacing:0.03em; color:var(--muted); border:1px solid var(--hair); border-radius:5px; padding:0.14rem 0.44rem; }
+.sign-chip.asset { color:var(--c4-build); border-color:rgba(106,160,216,0.4); }
+.sign-chip.liability { color:var(--gold); border-color:rgba(224,177,94,0.4); }
+/* family selector — one engine, many families */
+.family-seg { display:flex; width:100%; border:1px solid var(--hair); border-radius:9px; overflow:hidden; margin-bottom:1.2rem; }
+.family-seg button { flex:1; background:transparent; border:0; border-right:1px solid var(--hair); color:var(--muted); font-family:var(--mono); font-size:0.68rem; letter-spacing:0.06em; text-transform:uppercase; padding:0.6rem 0.4rem; cursor:pointer; transition:background .18s, color .18s; }
+.family-seg button:last-child { border-right:0; }
+.family-seg button:hover { color:var(--paper-soft); }
+.family-seg button.on { background:var(--panel-2); color:var(--gold); font-weight:600; }
+.family-seg button .fam-sub { display:block; font-size:0.54rem; letter-spacing:0.02em; text-transform:none; color:var(--faint); margin-top:0.2rem; }
+.family-seg button.on .fam-sub { color:var(--muted); }
+.family-seg button:disabled { opacity:0.5; cursor:not-allowed; }
 
 .pb-id { font-family:var(--mono); font-size:0.68rem; color:var(--faint); margin:1rem 0 1.4rem; word-break:break-all; }
 .pb-principal { font-family:var(--serif); font-size:2.6rem; font-weight:500; line-height:1; }
@@ -194,7 +231,7 @@ body.console-open .hint-bar { display:none; }
   font-family:var(--mono); font-size:0.74rem; color:var(--paper-soft);
   max-height:0; overflow:hidden; transition:max-height 0.35s var(--ease);
 }
-.console.show { max-height:252px; }
+.console.show { max-height:308px; }
 @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(111,214,160,0.5);} 70%{box-shadow:0 0 0 10px rgba(111,214,160,0);} 100%{box-shadow:0 0 0 0 rgba(111,214,160,0);} }
 /* tabbed drawer: MCP tool surface + Telemetry */
 .console .tabs { display:flex; align-items:center; gap:0.1rem; padding:0 1.4rem; border-bottom:1px solid var(--hair-soft); }
@@ -202,7 +239,50 @@ body.console-open .hint-bar { display:none; }
 .console .tab:hover { color:var(--paper-soft); }
 .console .tab.on { color:var(--verify); border-bottom-color:var(--verify); }
 .console .tab-note { margin-left:auto; color:var(--faint); font-size:0.62rem; letter-spacing:0.05em; padding:0.7rem 0; }
-.console .pane { padding:0.7rem 1.4rem 1rem; overflow-y:auto; max-height:204px; }
+.console .pane { padding:0.7rem 1.4rem 1rem; overflow-y:auto; max-height:260px; }
+.console .tabs { overflow-x:auto; scrollbar-width:none; }
+.console .tabs::-webkit-scrollbar { display:none; }
+.console .tab { white-space:nowrap; }
+@media (max-width:1180px){ .console .tab-note { display:none; } }
+/* shared empty + section header */
+.dpane-empty { color:var(--faint); font-family:var(--mono); font-size:0.72rem; padding:1rem 0; }
+.dpane-head { font-family:var(--mono); font-size:0.6rem; color:var(--faint); padding-bottom:0.4rem; margin-bottom:0.5rem; border-bottom:1px solid var(--hair-soft); letter-spacing:0.02em; }
+.dpane-head b { color:var(--paper-soft); }
+/* topic · Avro records */
+.topic-list { display:flex; flex-direction:column; gap:0.5rem; }
+.topic-rec { border:1px solid var(--hair); border-left:2px solid var(--gold); border-radius:7px; background:var(--panel); padding:0.5rem 0.7rem; }
+.topic-rec .tr-head { display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; font-family:var(--mono); font-size:0.66rem; color:var(--paper-soft); }
+.topic-rec .tr-part { color:var(--gold); }
+.topic-rec .tr-badge { margin-left:auto; font-size:0.57rem; color:var(--verify); border:1px solid rgba(111,214,160,0.3); background:rgba(111,214,160,0.08); border-radius:4px; padding:0.05rem 0.34rem; }
+.topic-rec .tr-grid { margin-top:0.4rem; display:grid; grid-template-columns:auto 1fr; gap:0.12rem 0.8rem; font-family:var(--mono); font-size:0.62rem; }
+.topic-rec .tr-grid .k { color:var(--muted); }
+.topic-rec .tr-grid .v { color:var(--paper-soft); overflow-wrap:anywhere; }
+/* transport · outbox + inbox */
+.transport { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+@media (max-width:760px){ .transport { grid-template-columns:1fr; } }
+.tp-col h4 { font-family:var(--mono); font-size:0.62rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); margin:0 0 0.45rem; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; }
+.tp-col h4 .pill { font-size:0.55rem; color:var(--faint); border:1px solid var(--hair); border-radius:4px; padding:0.04rem 0.32rem; letter-spacing:0; text-transform:none; }
+.tp-table { font-family:var(--mono); font-size:0.61rem; width:100%; border-collapse:collapse; }
+.tp-table th { text-align:left; color:var(--faint); font-weight:400; padding:0 0.5rem 0.3rem 0; border-bottom:1px solid var(--hair-soft); }
+.tp-table td { padding:0.24rem 0.5rem 0.24rem 0; border-bottom:1px solid rgba(255,255,255,0.03); color:var(--paper-soft); white-space:nowrap; }
+.st-pending { color:var(--gold); } .st-published { color:var(--verify); } .st-dupe { color:var(--muted); }
+/* metrics · live SLIs */
+.metrics-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:0.7rem; }
+@media (max-width:760px){ .metrics-grid { grid-template-columns:1fr; } }
+.metric { border:1px solid var(--hair); border-radius:7px; background:var(--panel); padding:0.5rem 0.7rem; }
+.metric .m-top { display:flex; align-items:baseline; justify-content:space-between; gap:0.5rem; }
+.metric .m-name { font-family:var(--mono); font-size:0.6rem; color:var(--muted); overflow-wrap:anywhere; }
+.metric .m-val { font-family:var(--mono); font-size:0.98rem; color:var(--paper); white-space:nowrap; }
+.metric .m-val .u { font-size:0.58rem; color:var(--faint); margin-left:0.12rem; }
+.metric .m-spark { margin-top:0.35rem; width:100%; height:26px; display:block; }
+.metric .m-help { font-family:var(--mono); font-size:0.54rem; color:var(--faint); margin-top:0.22rem; line-height:1.4; }
+/* logs · structured + correlated */
+.logs-list { font-family:var(--mono); font-size:0.62rem; line-height:1.6; }
+.log-line { white-space:pre-wrap; word-break:break-word; padding:0.04rem 0; }
+.log-line .ts { color:var(--faint); }
+.log-line .lv-info { color:var(--verify); } .log-line .lv-warn { color:var(--gold); } .log-line .lv-error { color:var(--wrong); }
+.log-line .lg { color:var(--muted); }
+.log-line .kv { color:var(--faint); } .log-line .kv b { color:var(--paper-soft); font-weight:400; }
 .console .pane[hidden] { display:none; }
 /* MCP log */
 .console .line { padding:0.18rem 0; }
@@ -244,6 +324,51 @@ body.console-open .hint-bar { display:none; }
 .console .agent-bar .btn { padding:0.5rem 1.05rem; white-space:nowrap; }
 .console .line.think { opacity:0.7; font-style:italic; }
 .console .line.banner { border-top:1px dashed var(--hair-soft); margin-top:0.35rem; padding-top:0.4rem; }
+
+/* ---------------- topology view (C4 L2, animated) ---------------- */
+.topo-wrap { height:100%; display:flex; flex-direction:column; padding:clamp(1.2rem,2.2vw,2rem); min-height:0; }
+.topo-head { display:flex; align-items:center; justify-content:space-between; gap:1rem; flex:none; flex-wrap:wrap; }
+.topo-legend { display:flex; gap:1rem; flex-wrap:wrap; }
+.topo-legend .lg { display:flex; align-items:center; gap:0.4rem; font-family:var(--mono); font-size:0.62rem; letter-spacing:0.06em; color:var(--muted); }
+.topo-legend .sw { width:10px; height:10px; border-radius:3px; display:inline-block; }
+.sw.build { background:var(--c4-build); } .sw.estate { background:var(--c4-estate); }
+.sw.family { background:var(--c4-family); } .sw.ext { background:var(--c4-ext); }
+.topo-step { flex:none; margin:0.9rem 0; font-family:var(--mono); font-size:0.72rem; color:var(--paper-soft); letter-spacing:0.02em; min-height:1.1rem; border-left:2px solid var(--gold); padding-left:0.7rem; transition:color .2s; }
+.topo-canvas { position:relative; flex:1 1 auto; min-height:420px; }
+.topo-wires { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:1; overflow:visible; }
+.topo-wire { stroke:var(--hair); stroke-width:1.4; transition:stroke .3s, stroke-width .3s; }
+.topo-wire.on { stroke:var(--gold); stroke-width:2.4; }
+.topo-wire.on[data-tone="verify"] { stroke:var(--verify); }
+.topo-wire.on[data-tone="gold"] { stroke:var(--gold); }
+.topo-wire.on[data-tone="wrong"] { stroke:var(--wrong); }
+.topo-wire.on[data-tone="muted"] { stroke:var(--muted); }
+.topo-grid { position:relative; z-index:2; height:100%; display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:0.55rem; align-items:center; }
+.topo-col { display:flex; flex-direction:column; justify-content:center; gap:0.9rem; height:100%; }
+.topo-node {
+  background:linear-gradient(180deg,var(--panel),var(--panel-2));
+  border:1px solid var(--hair); border-top:2px solid var(--c4-ext);
+  border-radius:9px; padding:0.55rem 0.65rem; box-shadow:0 8px 22px rgba(0,0,0,0.28);
+  transition:transform .25s var(--ease), box-shadow .25s, border-color .25s; position:relative;
+}
+.topo-node.build { border-top-color:var(--c4-build); }
+.topo-node.estate { border-top-color:var(--c4-estate); }
+.topo-node.ext { border-top-color:var(--c4-ext); }
+.topo-node .tn-label { font-family:var(--mono); font-size:0.69rem; color:var(--paper); font-weight:500; }
+.topo-node .tn-sub { font-family:var(--mono); font-size:0.57rem; color:var(--muted); margin-top:0.18rem; line-height:1.3; }
+.topo-node .tn-family { margin-top:0.38rem; font-family:var(--mono); font-size:0.55rem; color:var(--gold); background:rgba(224,177,94,0.1); border:1px solid rgba(224,177,94,0.28); border-radius:5px; padding:0.1rem 0.34rem; display:inline-block; max-width:100%; overflow-wrap:anywhere; line-height:1.35; }
+.topo-node.lit { transform:translateY(-3px); border-color:var(--gold); box-shadow:0 0 0 1px var(--gold), 0 12px 30px rgba(224,177,94,0.25); }
+.topo-node.lit[data-tone="verify"] { border-color:var(--verify); box-shadow:0 0 0 1px var(--verify), 0 12px 30px rgba(111,214,160,0.25); }
+.topo-node.lit[data-tone="wrong"] { border-color:var(--wrong); box-shadow:0 0 0 1px var(--wrong), 0 12px 30px rgba(224,115,94,0.25); }
+.topo-node.lit[data-tone="muted"] { border-color:var(--muted); box-shadow:0 0 0 1px var(--muted); }
+.topo-packet {
+  position:absolute; z-index:3; width:11px; height:11px; margin:-5.5px 0 0 -5.5px; border-radius:50%;
+  background:var(--gold); box-shadow:0 0 14px 3px var(--gold); pointer-events:none;
+}
+.topo-packet.verify { background:var(--verify); box-shadow:0 0 14px 3px var(--verify); }
+.topo-packet.gold { background:var(--gold); box-shadow:0 0 16px 4px var(--gold); }
+.topo-packet.wrong { background:var(--wrong); box-shadow:0 0 14px 3px var(--wrong); }
+.topo-packet.muted { background:var(--muted); box-shadow:0 0 10px 2px var(--muted); }
+.topo-foot { flex:none; margin-top:0.9rem; font-family:var(--mono); font-size:0.6rem; color:var(--faint); letter-spacing:0.03em; line-height:1.5; }
 </style>
 </head>
 <body>
@@ -251,13 +376,16 @@ body.console-open .hint-bar { display:none; }
 <div class="topbar">
   <div class="brand"><span class="dot"></span><b>BABELSTONE</b><span>Mission Control</span></div>
   <div class="controls">
+    <div class="ctl-group"><span class="seg-label">View</span>
+      <div class="seg alt" id="viewSeg"><button data-view="ledger" class="on">LEDGER</button><button data-view="topo">TOPOLOGY</button></div>
+    </div>
     <div class="ctl-group"><span class="seg-label">Mode</span>
       <div class="seg" id="modeSeg"><button data-mode="demo" class="on">DEMO</button><button data-mode="live">LIVE·engine</button><button data-mode="saga">LIVE·saga</button></div>
     </div>
     <div class="ctl-group"><span class="seg-label">Operator</span>
       <div class="seg alt" id="opSeg"><button data-op="human" class="on">YOU</button><button data-op="ai">CLAUDE</button></div>
     </div>
-    <div class="ctl-group"><span class="seg-label">Telemetry</span>
+    <div class="ctl-group"><span class="seg-label">Inspector</span>
       <div class="seg alt" id="telSeg"><button data-tel="off" class="on">OFF</button><button data-tel="on">ON</button></div>
     </div>
     <div class="conn demo" id="conn"><span class="led"></span><span id="connText">demo · no backend</span></div>
@@ -270,10 +398,14 @@ body.console-open .hint-bar { display:none; }
     <div class="col-title">Command desk</div>
 
     <div class="desk-fields">
+    <div class="family-seg" id="familySeg">
+      <button data-family="deposit" class="on">Term deposit<span class="fam-sub">liability · the bank owes</span></button>
+      <button data-family="loan">Personal loan<span class="fam-sub">asset · owed to the bank</span></button>
+    </div>
     <div class="field">
-      <label for="principal">Principal</label>
+      <label for="principal" id="principalLabel">Principal</label>
       <input id="principal" type="text" inputmode="numeric" value="10,000" />
-      <div class="hint">EUR · stored as integer cents</div>
+      <div class="hint" id="principalHint">EUR · stored as integer cents</div>
     </div>
     <div class="field">
       <label for="term">Term (days)</label>
@@ -289,9 +421,9 @@ body.console-open .hint-bar { display:none; }
       <div class="hint" id="variantHint">interest_variant = AT_MATURITY</div>
     </div>
     <div class="field readonly">
-      <label>Rate (TAN)</label>
+      <label id="rateLabel">Rate (TAN)</label>
       <div class="val"><b id="rateVal">3.00%</b> · <span id="rateBps">300 bps</span></div>
-      <div class="hint">from rate sheet pt-deposits-2026.1 — not user input</div>
+      <div class="hint" id="rateSheetHint">from rate sheet pt-deposits-2026.1 — not user input</div>
     </div>
     </div>
 
@@ -308,6 +440,8 @@ body.console-open .hint-bar { display:none; }
     </div>
   </div>
 
+  <div class="workspace" id="workspace">
+  <div class="wsview" id="viewLedger">
   <!-- LIVING LEDGER -->
   <div class="col ledger-col">
     <div class="col-title">Living ledger · immutable events</div>
@@ -322,16 +456,42 @@ body.console-open .hint-bar { display:none; }
     <div class="passbook" id="passbook">
       <div class="empty">No position yet.<br />The state on the right is a <i>fold</i> of the events on the left — never stored, always derivable.</div>
     </div>
+    <div class="provenance" id="provenance"></div>
   </div>
+  </div><!-- /viewLedger -->
+
+  <div class="wsview" id="viewTopo" hidden>
+    <div class="topo-wrap">
+      <div class="topo-head">
+        <div class="col-title" style="margin-bottom:0">System topology · follow the event</div>
+        <div class="topo-legend">
+          <span class="lg"><i class="sw build"></i>Engine (build)</span>
+          <span class="lg"><i class="sw estate"></i>Integration estate</span>
+          <span class="lg"><i class="sw family"></i>Family plugin</span>
+          <span class="lg"><i class="sw ext"></i>External system</span>
+        </div>
+      </div>
+      <div class="topo-step" id="topoStep">The C4 container view, live. Run a command on the desk — watch the event travel the estate.</div>
+      <div class="topo-canvas" id="topoCanvas">
+        <svg class="topo-wires" id="topoWires"></svg>
+      </div>
+      <div class="topo-foot">🟦 the deliverable · 🟩 estate whose architecture is fixed · 🟨 family-owned plugin loaded into a substrate · ⬜ out-of-scope product, in-scope integration — colours per feature-design-c4-architecture.md</div>
+    </div>
+  </div>
+  </div><!-- /workspace -->
 </div>
 
 <div class="toast-wrap" id="toasts"></div>
 
 <div class="console" id="console">
   <div class="tabs">
-    <button class="tab on" data-tab="mcp">MCP tool surface</button>
-    <button class="tab" data-tab="telemetry">Telemetry · OpenTelemetry</button>
-    <span class="tab-note" id="tabNote">live where wired — Operator CLAUDE runs a real model · LIVE·engine shows the real Tempo trace · illustrative otherwise</span>
+    <button class="tab on" data-tab="mcp">MCP</button>
+    <button class="tab" data-tab="topic">Topic · Avro</button>
+    <button class="tab" data-tab="transport">Outbox · Inbox</button>
+    <button class="tab" data-tab="metrics">Metrics</button>
+    <button class="tab" data-tab="logs">Logs</button>
+    <button class="tab" data-tab="telemetry">Telemetry</button>
+    <span class="tab-note" id="tabNote">one event, six lenses · all driven by the same facts on the ledger · live where wired, illustrative otherwise</span>
   </div>
   <div class="pane" id="paneMcp">
     <div class="agent-bar" id="agentBar" hidden>
@@ -339,6 +499,31 @@ body.console-open .hint-bar { display:none; }
       <button class="btn primary" id="btnAgentRun">Run</button>
     </div>
     <div id="consoleLog"></div>
+  </div>
+  <div class="pane" id="paneTopic" hidden>
+    <div class="dpane-head">topic <b id="topicFamily">term_deposit</b> · 1 partition · Avro + Schema Registry · catalog-gated (cataloged → promoted to Avro; uncataloged → store-only JSON)</div>
+    <div class="topic-list" id="topicList"><div class="dpane-empty">No records yet. Run a command — every engine fact is relayed onto the topic as an Avro record.</div></div>
+  </div>
+  <div class="pane" id="paneTransport" hidden>
+    <div class="transport">
+      <div class="tp-col">
+        <h4>Engine outbox <span class="pill">FOR UPDATE SKIP LOCKED</span></h4>
+        <table class="tp-table" id="outboxTable"><thead><tr><th>#</th><th>ce_type</th><th>status</th><th>lag</th></tr></thead><tbody id="outboxBody"></tbody></table>
+        <div class="dpane-empty" id="outboxEmpty">Append a fact — the outbox row is written in the same local txn, then the relay drains it.</div>
+      </div>
+      <div class="tp-col">
+        <h4>Consumer inbox <span class="pill">dedup · message_id</span></h4>
+        <table class="tp-table" id="inboxTable"><thead><tr><th>message_id</th><th>consumer</th><th>status</th></tr></thead><tbody id="inboxBody"></tbody></table>
+        <div class="dpane-empty" id="inboxEmpty">Each published record is consumed exactly once — replays dedup by message_id.</div>
+      </div>
+    </div>
+  </div>
+  <div class="pane" id="paneMetrics" hidden>
+    <div class="metrics-grid" id="metricsGrid"></div>
+  </div>
+  <div class="pane" id="paneLogs" hidden>
+    <div class="dpane-head">structured logs · correlated by <b>trace_id</b> · ✓ no PII on fields — opaque references only</div>
+    <div class="logs-list" id="logsList"><div class="dpane-empty">Quiet. Operations emit structured log lines here.</div></div>
   </div>
   <div class="pane" id="paneTrace" hidden>
     <div class="trace" id="traceWaterfall"><div class="empty">Run an operation to see the spans it emits.</div></div>
@@ -361,6 +546,21 @@ body.console-open .hint-bar { display:none; }
     dpz_pt_12m_juros_antecip: { label: "interest in advance",  variant: "ADVANCE",     tan: 300, ppm: 0 }
   };
   var RATE_SHEET = "pt-deposits-2026.1";
+  // Second family — DEMO-only. The engine instance wired to LIVE here runs the term_deposit family;
+  // personal_loan is the architecture's "one engine, many families" thesis made tangible (a gold plugin
+  // + lifecycle table loaded into the SAME substrate), so it is explicitly illustrative.
+  var RATE_SHEET_LOAN = "pt-loans-2026.1";
+  var LOAN_PRODUCTS = {
+    loan_pt_12m_fixed: { label: "12m · fixed rate", n: 12, taeg: 790 },
+    loan_pt_24m_fixed: { label: "24m · fixed rate", n: 24, taeg: 890 },
+    loan_pt_36m_fixed: { label: "36m · fixed rate", n: 36, taeg: 960 }
+  };
+  // ③ declarative-data plane — the signed, CUE-validated config packs pulled by OCI digest and
+  // PINNED per instance at constitution (so a later rate-sheet bump never moves an existing fold).
+  var PACKS = {
+    deposit: { pack: "babelstone-pt-deposits", ver: "1.4.2", schema: "term_deposit",  rate: RATE_SHEET,      digest: "sha256:3f9a07c4…b1d2" },
+    loan:    { pack: "babelstone-pt-loans",    ver: "0.9.1", schema: "personal_loan", rate: RATE_SHEET_LOAN, digest: "sha256:9c21ef88…a7e0" }
+  };
   var API_BASE = "";                 // same-origin; live mode goes through the proxy (serve.py)
   // The gateway-attested owner serve.py injects on /api/v1/* (LIVE·saga). Display-only here — the
   // proxy is the source of truth (DEMO_CLIENT_ID env); an OPAQUE business reference, never PII.
@@ -369,11 +569,13 @@ body.console-open .hint-bar { display:none; }
 
   /* ---------------- state ---------------- */
   var state = {
-    mode: "demo", operator: "human", telemetry: false, tab: "mcp",
+    mode: "demo", operator: "human", telemetry: false, inspector: false, tab: "mcp", view: "ledger", family: "deposit",
     depositId: null, idemKey: null, seq: 0, lifecycle: null,
     principalCents: 0, termDays: 0, busy: false, spans: [],
     variant: "AT_MATURITY", tan: 300, ppm: 0,
     couponsPaid: 0, numCoupons: 0,
+    // personal_loan family (demo): amortization schedule + running tallies
+    loanSchedule: [], instAmt: 0, outstanding: 0, intPaid: 0, prinRepaid: 0,
     accrued: 0, withheld: 0, netPaid: 0,  // running tallies (demo + live coupon deltas)
     // LIVE·saga mode: the constitution saga driven through the orchestrator edge
     processId: null, streamUrl: null, sagaES: null,
@@ -463,6 +665,7 @@ body.console-open .hint-bar { display:none; }
       '</div>';
     ledger.appendChild(row);
     ledger.parentElement.scrollTop = ledger.parentElement.scrollHeight;
+    try { drawerFeed(opts); } catch (e) {}
   }
   function flashLedger() {
     ledger.style.transition = "none"; ledger.style.boxShadow = "inset 0 0 0 2px var(--verify)";
@@ -634,7 +837,8 @@ body.console-open .hint-bar { display:none; }
     var closed = state.lifecycle === "Matured" || state.lifecycle === "TerminatedEarly";
     var active = has && !closed;
     var periodic = state.variant === "PERIODIC";
-    var couponsLeft = state.couponsPaid < state.numCoupons - 1;  // last coupon settles at maturity
+    var stepwise = periodic || state.family === "loan";   // PERIODIC coupons OR loan installments
+    var couponsLeft = state.couponsPaid < state.numCoupons - 1;  // last one settles at maturity / payoff
     // LIVE·saga covers CONSTITUTION only — the saga has no maturity/coupon/retry/terminate legs yet,
     // so those actions are disabled in saga mode (the engine-direct LIVE·engine mode drives them).
     var saga = state.mode === "saga";
@@ -647,8 +851,8 @@ body.console-open .hint-bar { display:none; }
     btnR.title = saga ? sagaTip : "";
     btnM.title = saga ? sagaTip : "";
     // Pay coupon: PERIODIC only, while active and intermediate coupons remain (never in saga mode)
-    btnCoupon.style.display = (periodic && !saga) ? "" : "none";
-    btnCoupon.disabled = state.busy || state.agentBusy || !active || !periodic || !couponsLeft || saga;
+    btnCoupon.style.display = (stepwise && !saga) ? "" : "none";
+    btnCoupon.disabled = state.busy || state.agentBusy || !active || !stepwise || !couponsLeft || saga;
     // Terminate early: DEMO-only (no live endpoint), while active
     btnTerminate.style.display = (active && !saga) ? "" : "none";
     btnTerminate.disabled = state.busy || !active || state.mode === "live" || saga;
@@ -660,15 +864,211 @@ body.console-open .hint-bar { display:none; }
     el("product").disabled = state.busy || has;
     el("principal").disabled = state.busy || has;
     el("term").disabled = state.busy || has;
+    el("familySeg").querySelectorAll("button").forEach(function (b) { b.disabled = state.busy || has; });
     document.querySelectorAll("[data-mcponly]").forEach(function (n) { n.style.display = state.operator === "ai" ? "" : "none"; });
+    renderProvenance();
+  }
+  var _provSig = "";
+  function renderProvenance() {
+    var p = PACKS[state.family] || PACKS.deposit;
+    var pinned = !!state.depositId;
+    var sig = state.family + "|" + pinned;
+    if (sig === _provSig) return;          // only repaint when family or pinned-state changes
+    _provSig = sig;
+    var box = el("provenance"); if (!box) return;
+    box.innerHTML =
+      '<div class="prov-title">Config plane · ' + (pinned ? 'pinned on this instance' : 'governing this engine') +
+        '<span class="prov-plane">③ declarative data</span></div>' +
+      '<div class="prov-grid">' +
+        '<div class="prov-item"><span class="pk">pack</span><span class="pv">' + p.pack + '</span><span class="pver">@ ' + p.ver + '</span></div>' +
+        '<div class="prov-item"><span class="pk">schema</span><span class="pv">' + p.schema + '.v1</span><span class="pver">SR registry</span></div>' +
+        '<div class="prov-item"><span class="pk">rate sheet</span><span class="pv">' + p.rate + '</span></div>' +
+      '</div>' +
+      '<div class="prov-foot">' +
+        '<span class="prov-chip ok">cosign ✓</span>' +
+        '<span class="prov-chip ok">CUE ✓</span>' +
+        (pinned ? '<span class="prov-chip pinned">pinned @ constitution</span>' : '') +
+        '<span class="prov-digest">oci · ' + p.digest + '</span>' +
+      '</div>';
   }
   function syncProduct() {
+    if (state.family === "loan") {
+      var lp = LOAN_PRODUCTS[el("product").value]; if (!lp) return;
+      state.tan = lp.taeg; state.variant = "FIXED_AMORT"; state.ppm = 1;
+      el("rateVal").textContent = (lp.taeg / 100).toFixed(2) + "%";
+      el("rateBps").textContent = lp.taeg + " bps";
+      el("variantHint").textContent = "amortization = FRENCH · installments = " + lp.n;
+      el("rateSheetHint").textContent = "from rate sheet " + RATE_SHEET_LOAN + " — not user input";
+      return;
+    }
     var p = product();
     state.variant = p.variant; state.tan = p.tan; state.ppm = p.ppm;
     el("rateVal").textContent = (p.tan / 100).toFixed(2) + "%";
     el("rateBps").textContent = p.tan + " bps";
     el("variantHint").textContent = "interest_variant = " + p.variant + (p.ppm ? " · payment_period_months = " + p.ppm : "");
+    el("rateSheetHint").textContent = "from rate sheet " + RATE_SHEET + " — not user input";
   }
+
+  /* =====================================================================
+     PERSONAL_LOAN FAMILY (demo) — the SAME engine substrate, a different
+     gold plugin + lifecycle table. Liability (deposit) → asset (loan):
+     Originate → Disburse → InstallmentPaid×n (French amortization, each
+     splitting principal/interest) → Settle, or Early repayment.
+     Reuses depositId / idemKey / seq / couponsPaid / numCoupons so the
+     ledger, drawer feeds, retry and button logic all work unchanged.
+     ===================================================================== */
+  function loanSchedule(principalCents, n, taegBps) {
+    var r = taegBps / 10000 / 12;
+    var inst = r === 0 ? Math.round(principalCents / n) : Math.round(principalCents * r / (1 - Math.pow(1 + r, -n)));
+    var rows = [], outstanding = principalCents;
+    for (var i = 0; i < n; i++) {
+      var interest = Math.round(outstanding * r);
+      var principal = (i === n - 1) ? outstanding : inst - interest;
+      var installment = principal + interest;
+      outstanding = Math.max(0, outstanding - principal);
+      rows.push({ interest: interest, principal: principal, installment: installment, outstanding: outstanding });
+    }
+    return { installment: rows.length ? rows[0].installment : 0, rows: rows };
+  }
+  function renderLoanPosition() {
+    var closed = state.lifecycle === "Matured" || state.lifecycle === "TerminatedEarly";
+    var badge = state.lifecycle === "Matured" ? "settled" : state.lifecycle === "TerminatedEarly" ? "repaid" : "performing";
+    var badgeText = state.lifecycle === "Matured" ? "Settled" : state.lifecycle === "TerminatedEarly" ? "Repaid early" : "Performing";
+    var totalLabel = closed ? "Total repaid" : "Outstanding principal";
+    var totalVal = closed ? (state.principalCents + state.intPaid) : state.outstanding;
+    passbook.innerHTML =
+      '<span class="status-badge ' + badge + '"><span class="d"></span>' + badgeText + '</span>' +
+      '<div class="pb-id">' + state.depositId + '</div>' +
+      '<div class="pb-principal">' + euro(state.principalCents) + '</div>' +
+      '<div class="pb-sub">AMOUNT FINANCED · ' + (state.tan / 100).toFixed(2) + '% TAEG · ' + state.numCoupons + ' INSTALLMENTS</div>' +
+      '<span class="sign-chip asset">asset · receivable — the borrower owes the bank (opposite sign to a deposit)</span>' +
+      '<div class="pb-grid">' +
+        '<div class="pb-row"><span class="k">Interest earned</span><span class="v net" id="vGross">' + euro(state.intPaid) + '</span></div>' +
+        '<div class="pb-row"><span class="k">Principal repaid</span><span class="v" id="vNet">' + euro(state.prinRepaid) + '</span></div>' +
+        '<div class="pb-row"><span class="k">Installments</span><span class="v">' + state.couponsPaid + ' / ' + state.numCoupons + '</span></div>' +
+        '<div class="pb-row total"><span class="k">' + totalLabel + '</span><span class="v" id="vTotal">' + euro(totalVal) + '</span></div>' +
+      '</div>' +
+      '<div class="pb-meta">' +
+        '<div class="cell"><div class="k">Originated</div><div class="v">' + today() + '</div></div>' +
+        '<div class="cell"><div class="k">Final due</div><div class="v">' + addDays(today(), state.termDays) + '</div></div>' +
+        '<div class="cell"><div class="k">Installment</div><div class="v">' + euro(state.instAmt) + '/mo</div></div>' +
+        '<div class="cell"><div class="k">Rate sheet</div><div class="v">' + RATE_SHEET_LOAN + '</div></div>' +
+      '</div>';
+  }
+  async function loanOriginate() {
+    if (state.busy) return;
+    syncProduct();
+    topoFlow("constitute");
+    drawerCmd("originate_loan");
+    state.busy = true; setButtons();
+    var amt = parseCents(el("principal").value);
+    var lp = LOAN_PRODUCTS[el("product").value];
+    state.principalCents = amt; state.idemKey = uuid();
+    state.numCoupons = lp.n; state.couponsPaid = 0;
+    var sched = loanSchedule(amt, lp.n, lp.taeg);
+    state.loanSchedule = sched.rows; state.instAmt = sched.installment;
+    state.outstanding = amt; state.intPaid = 0; state.prinRepaid = 0; state.termDays = lp.n * 30;
+    mcpLog('originate_loan(amount_cents=' + amt + ', term_months=' + lp.n + ', taeg="' + (lp.taeg / 100).toFixed(2) + '%")');
+    await sleep(550);
+    state.depositId = uuid(); state.seq = 1; state.lifecycle = "Active";
+    mcpLog('', 'commit #1 · ' + state.depositId.slice(0, 8));
+    addEvent({ seq: 1, name: "LoanOriginated", meta: el("product").value + " · " + (lp.taeg / 100).toFixed(2) + "% TAEG · idem " + state.idemKey.slice(0, 8), amt: euro(amt), amtClass: "gold" });
+    pushSpan("loan.originated", 17, [["babelstone.partition_key", shortId()], ["babelstone.product_code", el("product").value]]);
+    await sleep(480);
+    state.seq = 2;
+    addEvent({ seq: 2, name: "LoanDisbursed", meta: "funds released · French schedule pinned · " + lp.n + " × " + euro(state.instAmt), amt: euro(amt), amtClass: "verify", verify: true });
+    pushSpan("loan.disbursed", 9, [["babelstone.partition_key", shortId()], ["babelstone.amount_cents", amt]]);
+    renderLoanPosition();
+    toast("Loan originated · " + euro(amt) + " disbursed", "verify");
+    state.busy = false; setButtons();
+  }
+  async function loanInstallment() {
+    if (state.busy || !state.depositId) return;
+    topoFlow("coupon");
+    drawerCmd("pay_installment");
+    state.busy = true; setButtons();
+    await sleep(450);
+    var row = state.loanSchedule[state.couponsPaid] || { interest: 0, principal: state.outstanding, installment: state.outstanding, outstanding: 0 };
+    state.couponsPaid += 1; state.seq += 1;
+    state.intPaid += row.interest; state.prinRepaid += row.principal; state.outstanding = row.outstanding;
+    addEvent({ seq: state.seq, name: "InstallmentPaid", meta: "installment " + state.couponsPaid + "/" + state.numCoupons + " · principal " + euro(row.principal) + " · interest " + euro(row.interest), amt: euro(row.installment), amtClass: "verify", verify: true });
+    pushSpan("loan.installment_allocated", 6, [["babelstone.partition_key", shortId()], ["babelstone.principal_cents", row.principal], ["babelstone.interest_cents", row.interest]], true);
+    renderLoanPosition();
+    countUp("vGross", state.intPaid); countUp("vNet", state.prinRepaid); countUp("vTotal", state.outstanding);
+    toast("Installment " + state.couponsPaid + " · outstanding " + euro(state.outstanding), "verify");
+    state.busy = false; setButtons();
+  }
+  async function loanSettle() {
+    if (state.busy || !state.depositId) return;
+    topoFlow("mature");
+    drawerCmd("settle_loan");
+    state.busy = true; setButtons();
+    await sleep(500);
+    var remInt = 0;
+    for (var i = state.couponsPaid; i < state.loanSchedule.length; i++) remInt += state.loanSchedule[i].interest;
+    state.intPaid += remInt; state.prinRepaid += state.outstanding; state.outstanding = 0;
+    state.couponsPaid = state.numCoupons; state.seq += 1; state.lifecycle = "Matured";
+    addEvent({ seq: state.seq, name: "LoanSettled", meta: "all " + state.numCoupons + " installments cleared · total interest " + euro(state.intPaid), amt: euro(state.principalCents + state.intPaid), amtClass: "verify", verify: true });
+    pushSpan("loan.settled", 8, [["babelstone.partition_key", shortId()], ["babelstone.total_interest_cents", state.intPaid]], true);
+    renderLoanPosition();
+    countUp("vTotal", state.principalCents + state.intPaid);
+    mcpLog('', 'settled · repaid ' + euro(state.principalCents + state.intPaid));
+    toast("Loan settled · repaid " + euro(state.principalCents + state.intPaid), "verify");
+    state.busy = false; setButtons();
+  }
+  async function loanEarlyRepay() {
+    if (state.busy || !state.depositId || state.mode === "live") return;
+    topoFlow("terminate");
+    drawerCmd("early_repay_loan");
+    state.busy = true; setButtons();
+    await sleep(450);
+    var nextRow = state.loanSchedule[Math.min(state.couponsPaid, state.loanSchedule.length - 1)];
+    var accrued = nextRow ? nextRow.interest : 0;
+    var saved = 0;
+    for (var i = state.couponsPaid; i < state.loanSchedule.length; i++) saved += state.loanSchedule[i].interest;
+    saved -= accrued;
+    var payoff = state.outstanding + accrued;
+    state.intPaid += accrued; state.prinRepaid += state.outstanding; state.outstanding = 0;
+    state.couponsPaid = state.numCoupons; state.seq += 1; state.lifecycle = "TerminatedEarly";
+    addEvent({ seq: state.seq, name: "LoanRepaidEarly", meta: "payoff " + euro(payoff) + " · " + euro(saved) + " future interest waived (illustrative)", amt: euro(payoff), amtClass: "wrong" });
+    pushSpan("loan.repaid_early", 7, [["babelstone.partition_key", shortId()], ["babelstone.payoff_cents", payoff]]);
+    renderLoanPosition();
+    countUp("vTotal", state.principalCents + state.intPaid);
+    toast("Loan repaid early · " + euro(payoff) + " (demo)", "err");
+    state.busy = false; setButtons();
+  }
+  function setFamily(fam) {
+    if (state.busy || state.depositId) return;   // can't switch mid-instance
+    state.family = fam;
+    el("familySeg").querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b.dataset.family === fam); });
+    var loan = fam === "loan";
+    el("principalLabel").textContent = loan ? "Amount financed" : "Principal";
+    el("rateLabel").textContent = loan ? "Rate (TAEG)" : "Rate (TAN)";
+    el("principalHint").textContent = loan ? "EUR · disbursed to the borrower" : "EUR · stored as integer cents";
+    el("btnConstitute").childNodes[0].nodeValue = loan ? "Originate loan " : "Constitute deposit ";
+    el("btnMature").childNodes[0].nodeValue = loan ? "Settle (run to term) " : "Mature deposit ";
+    el("btnTerminate").childNodes[0].nodeValue = loan ? "Early repayment " : "Terminate early ";
+    el("btnCoupon").childNodes[0].nodeValue = loan ? "Pay installment " : "Pay coupon ";
+    // repopulate the product dropdown for the family
+    var sel = el("product"); sel.innerHTML = "";
+    var src = loan ? LOAN_PRODUCTS : PRODUCTS;
+    Object.keys(src).forEach(function (k) {
+      var o = document.createElement("option"); o.value = k;
+      o.textContent = loan ? src[k].label : ("12m · " + src[k].label);
+      sel.appendChild(o);
+    });
+    el("principal").value = loan ? "15,000" : "10,000";
+    el("term").value = loan ? "360" : "365";
+    // loans are illustrative-only — the wired engine runs term_deposit; lock LIVE modes
+    el("modeSeg").querySelectorAll("button").forEach(function (b) {
+      if (b.dataset.mode !== "demo") { b.disabled = loan; b.title = loan ? "The engine instance wired here runs the term_deposit family — loans are illustrative (DEMO)" : ""; }
+    });
+    el("topicFamily").textContent = topicName();
+    topoSetFamily(fam);
+    if (loan && state.mode !== "demo") { setMode("demo"); }   // setMode runs doReset (which calls syncProduct)
+    else { syncProduct(); doReset(); }
+  }
+  function topoSetFamily(f) { try { TOPO.setFamily(f); } catch (e) {} }
 
   /* =====================================================================
      LIVE MODE — talk to the real engine (same origin, via serve.py proxy)
@@ -706,7 +1106,10 @@ body.console-open .hint-bar { display:none; }
      ===================================================================== */
   async function doConstitute() {
     if (state.busy) return;
+    if (state.family === "loan") return loanOriginate();
     syncProduct();
+    topoFlow(state.mode === "saga" ? "saga" : "constitute");
+    drawerCmd("constitute_deposit");
     state.busy = true; setButtons();
     var principalCents = parseCents(el("principal").value);
     var termDays = Number(el("term").value) || 365;
@@ -794,6 +1197,8 @@ body.console-open .hint-bar { display:none; }
 
   async function doRetry() {
     if (state.busy || !state.depositId) return;
+    topoFlow("retry");
+    drawerDedup("constitute_deposit");
     state.busy = true; setButtons();
     mcpLog('constitute_deposit(… same Idempotency-Key …)', 'replayed');
     if (state.mode === "live") {
@@ -816,7 +1221,10 @@ body.console-open .hint-bar { display:none; }
 
   // PERIODIC coupon — uses the real POST /v1/deposits/{id}/interest endpoint (no MCP tool exists for it)
   async function doCoupon() {
+    if (state.family === "loan") return loanInstallment();
     if (state.busy || !state.depositId || state.variant !== "PERIODIC") return;
+    topoFlow("coupon");
+    drawerCmd("pay_interest");
     state.busy = true; setButtons();
     if (state.mode === "live") {
       try {
@@ -848,7 +1256,10 @@ body.console-open .hint-bar { display:none; }
   }
 
   async function doMature() {
+    if (state.family === "loan") return loanSettle();
     if (state.busy || !state.depositId) return;
+    topoFlow("mature");
+    drawerCmd("mature_deposit");
     state.busy = true; setButtons();
     mcpLog('mature_deposit(deposit_id="' + state.depositId.slice(0, 8) + '…")');
 
@@ -922,7 +1333,10 @@ body.console-open .hint-bar { display:none; }
 
   // Early termination — DEMO-only: the engine has the decider (penalty bands, floor) but no HTTP endpoint yet.
   async function doTerminate() {
+    if (state.family === "loan") return loanEarlyRepay();
     if (state.busy || !state.depositId || state.mode === "live") return;
+    topoFlow("terminate");
+    drawerCmd("terminate_deposit");
     state.busy = true; setButtons();
     await sleep(450);
     var full = computeInterest(state.principalCents, state.termDays, state.tan);
@@ -953,6 +1367,7 @@ body.console-open .hint-bar { display:none; }
     passbook.innerHTML = '<div class="empty">No position yet.<br />The state on the right is a <i>fold</i> of the events on the left — never stored, always derivable.</div>';
     el("consoleLog").innerHTML = "";
     state.spans = []; renderTrace();
+    drawerReset();
     setButtons();
   }
 
@@ -974,31 +1389,41 @@ body.console-open .hint-bar { display:none; }
     doReset();
   }
   function updateDrawer() {
-    var show = state.operator === "ai" || state.telemetry;
+    var show = state.operator === "ai" || state.inspector;
     el("console").classList.toggle("show", show);
     document.body.classList.toggle("console-open", show);
     // The instruction bar is the real-agent trigger — shown only when Claude is the operator.
     el("agentBar").hidden = state.operator !== "ai";
-    el("paneMcp").hidden = state.tab !== "mcp";
-    el("paneTrace").hidden = state.tab !== "telemetry";
+    var paneByTab = { mcp:"paneMcp", topic:"paneTopic", transport:"paneTransport", metrics:"paneMetrics", logs:"paneLogs", telemetry:"paneTrace" };
+    Object.keys(paneByTab).forEach(function (t) { var p = el(paneByTab[t]); if (p) p.hidden = state.tab !== t; });
     document.querySelectorAll("#console .tab").forEach(function (b) { b.classList.toggle("on", b.dataset.tab === state.tab); });
+    if (state.tab === "topic") renderTopic();
+    else if (state.tab === "transport") renderTransport();
+    else if (state.tab === "metrics") renderMetrics();
+    else if (state.tab === "logs") renderLogs();
   }
-  function setTab(t) { state.tab = t; updateDrawer(); }
+  function setTab(t) {
+    state.tab = t;
+    // The Telemetry TAB itself is what arms the real-trace fetch (was the old Telemetry toggle).
+    state.telemetry = (t === "telemetry");
+    if (state.telemetry && state.mode === "live" && state.traceId && state.traceState !== "real") {
+      state.traceState = "pending"; renderTrace(); fetchRealTrace(state.traceId);
+    }
+    updateDrawer();
+  }
   function setOperator(op) {
     state.operator = op;
     el("opSeg").querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b.dataset.op === op); });
-    if (op === "ai" && !state.telemetry) state.tab = "mcp";
+    if (op === "ai") state.tab = "mcp";   // surface the agent console + instruction bar
     updateDrawer();
     setButtons();
   }
-  function setTelemetry(on) {
-    state.telemetry = on;
+  // The header Inspector toggle opens the drawer (which now holds six lenses, telemetry among them).
+  function setInspector(on) {
+    state.inspector = on;
     el("telSeg").querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", (b.dataset.tel === "on") === on); });
-    if (on) state.tab = "telemetry"; else if (state.operator !== "ai") state.tab = "mcp";
-    // Turning telemetry on AFTER an operation: fetch the real trace for the last engine write.
-    if (on && state.mode === "live" && state.traceId && state.traceState !== "real") {
-      state.traceState = "pending"; renderTrace(); fetchRealTrace(state.traceId);
-    }
+    if (on) { if (state.tab === "mcp" && state.operator !== "ai") state.tab = "topic"; }
+    else if (state.operator !== "ai") state.tab = "mcp";
     updateDrawer();
   }
 
@@ -1311,7 +1736,8 @@ body.console-open .hint-bar { display:none; }
   el("product").addEventListener("change", function () { if (!state.depositId) syncProduct(); setButtons(); });
   el("modeSeg").addEventListener("click", function (e) { if (e.target.dataset.mode) setMode(e.target.dataset.mode); });
   el("opSeg").addEventListener("click", function (e) { if (e.target.dataset.op) setOperator(e.target.dataset.op); });
-  el("telSeg").addEventListener("click", function (e) { if (e.target.dataset.tel) setTelemetry(e.target.dataset.tel === "on"); });
+  el("telSeg").addEventListener("click", function (e) { if (e.target.dataset.tel) setInspector(e.target.dataset.tel === "on"); });
+  el("familySeg").addEventListener("click", function (e) { var b = e.target.closest("button"); if (b && b.dataset.family) setFamily(b.dataset.family); });
   el("console").addEventListener("click", function (e) { if (e.target.dataset.tab) setTab(e.target.dataset.tab); });
   el("btnAgentRun").addEventListener("click", runAgent);
   el("agentInput").addEventListener("keydown", function (e) { if (e.key === "Enter") runAgent(); });
@@ -1319,6 +1745,353 @@ body.console-open .hint-bar { display:none; }
     var c = parseCents(this.value); if (c > 0) this.value = (c / 100).toLocaleString("en-IE");
   });
 
+  /* ============================================================
+     TOPOLOGY VIEW — the C4 L2 container diagram, animated by the
+     event the desk just produced ("follow the event"). DEMO-safe:
+     purely visual, runs regardless of mode/backend.
+     ============================================================ */
+  var TOPO = (function () {
+    var NODES = [
+      { id:"you",   col:0, label:"Channel · YOU",   sub:"owned web / mobile",        plane:"ext" },
+      { id:"mcp",   col:0, label:"MCP server",       sub:"Claude · tools",            plane:"estate" },
+      { id:"kong",  col:1, label:"Kong Gateway",     sub:"JWT · SCA · mTLS",          plane:"estate" },
+      { id:"orch",  col:2, label:"Orchestrator",     sub:"saga substrate",            plane:"estate", family:"ConstitutionProcess" },
+      { id:"acl",   col:2, label:"ACL service",      sub:"idempotent · INDETERMINATE",plane:"estate" },
+      { id:"core",  col:2, label:"Core Banking",     sub:"legacy · conta à ordem",    plane:"ext" },
+      { id:"engine",col:3, label:"Engine process",   sub:".NET · command ingress",    plane:"build", family:"decider · pure folds" },
+      { id:"db",    col:3, label:"Engine PostgreSQL",sub:"events + outbox + projections", plane:"build" },
+      { id:"bus",   col:4, label:"Redpanda + SR",    sub:"term_deposit · Avro",       plane:"estate" },
+      { id:"inbox", col:5, label:"Inbox consumer",   sub:"dedup · message_id",        plane:"estate" },
+      { id:"gl",    col:5, label:"General Ledger",   sub:"posting signals",           plane:"ext" },
+      { id:"ifrs",  col:5, label:"IFRS 9",           sub:"lifecycle events",          plane:"ext" },
+      { id:"reg",   col:5, label:"Reg Reporting",    sub:"FGD · BdP",                 plane:"ext" },
+      { id:"notif", col:5, label:"Notification",     sub:"maturity reminders",        plane:"estate", family:"pt.notice.maturity" }
+    ];
+    var EDGES = [
+      ["you","kong"],["mcp","kong"],["kong","engine"],["kong","orch"],
+      ["orch","acl"],["acl","core"],["orch","engine"],
+      ["engine","db"],["db","bus"],
+      ["bus","inbox"],["bus","gl"],["bus","ifrs"],["bus","reg"],["bus","notif"],["bus","orch"]
+    ];
+    var FLOWS = {
+      constitute: [
+        { seg:["CALLER","kong"], label:"constitute_deposit() → edge" },
+        { seg:["kong","engine"], label:"POST /v1/deposits · idempotent command ingress (ADR-PC-029)" },
+        { pulse:"engine", label:"decider folds the command → DepositConstituted" },
+        { seg:["engine","db"], tone:"gold", label:"events row + outbox row + dedup row · ONE local txn (the atomic seam)" },
+        { seg:["db","bus"], label:"outbox relay · catalog-gated · Avro to the term_deposit topic" },
+        { fan:["bus",["inbox","gl","ifrs","reg","notif"]], label:"pure choreography — consumers fold the fact downstream" }
+      ],
+      mature: [
+        { seg:["CALLER","kong"], label:"mature_deposit() → edge" },
+        { seg:["kong","engine"], label:"POST /v1/deposits/{id}/maturity" },
+        { pulse:"engine", label:"accrual.computed → withholding.applied → DepositMatured" },
+        { seg:["engine","db"], tone:"gold", label:"append + outbox · one txn" },
+        { seg:["db","bus"], label:"outbox relay → topic" },
+        { fan:["bus",["gl","ifrs","reg"]], label:"GL posts · IFRS 9 reads lifecycle · Reg Reporting" }
+      ],
+      coupon: [
+        { seg:["CALLER","kong"], label:"pay coupon → edge" },
+        { seg:["kong","engine"], label:"POST /v1/deposits/{id}/interest" },
+        { pulse:"engine", label:"InterestPaid · flow-by-flow 28% withholding" },
+        { seg:["engine","db"], tone:"gold" },
+        { seg:["db","bus"], label:"outbox relay → topic" },
+        { fan:["bus",["gl","ifrs"]] }
+      ],
+      retry: [
+        { seg:["CALLER","kong"], label:"retry — same Idempotency-Key" },
+        { seg:["kong","engine"], label:"POST /v1/deposits · same key" },
+        { pulse:"engine", tone:"muted", label:"command_dedup HIT → original outcome replayed · NO second append" }
+      ],
+      terminate: [
+        { seg:["CALLER","kong"], label:"terminate early (demo-only decider)" },
+        { seg:["kong","engine"] },
+        { pulse:"engine", tone:"wrong", label:"penalty band · payout floor → DepositTerminatedEarly" },
+        { seg:["engine","db"], tone:"wrong" }
+      ],
+      saga: [
+        { seg:["CALLER","kong"], label:"constitute → orchestrator EDGE" },
+        { seg:["kong","orch"], label:"202 Accepted · process_id + SSE stream" },
+        { seg:["orch","acl"], label:"ReserveAccountBalance · the REVERSIBLE leg" },
+        { seg:["acl","core"], label:"hold on the conta à ordem" },
+        { seg:["acl","orch"], tone:"verify", label:"BalanceReserved → VALIDATIONS_COMPLETE" },
+        { seg:["orch","acl"], tone:"gold", label:"ConfirmDebit · the IRREVERSIBLE money leg" },
+        { seg:["acl","core"], tone:"gold" },
+        { seg:["orch","engine"], label:"ActivateDeposit → lands a real deposit" },
+        { seg:["engine","db"], tone:"gold", label:"append + outbox · one txn" },
+        { seg:["db","bus"], label:"DepositConstituted on the bus" },
+        { seg:["bus","orch"], tone:"verify", label:"inbox correlates ce_subject → process_id · APPROVED → COMPLETED" },
+        { fan:["bus",["gl","ifrs","reg","notif"]], label:"choreography downstream" }
+      ]
+    };
+
+    var canvas, svg, stepEl, built = false, nodeEls = {}, running = 0;
+
+    function build() {
+      canvas = el("topoCanvas"); svg = el("topoWires"); stepEl = el("topoStep");
+      if (!canvas) return;
+      var cols = {};
+      var grid = document.createElement("div");
+      grid.className = "topo-grid";
+      for (var c = 0; c <= 5; c++) {
+        var cv = document.createElement("div"); cv.className = "topo-col"; cols[c] = cv; grid.appendChild(cv);
+      }
+      NODES.forEach(function (n) {
+        var d = document.createElement("div");
+        d.className = "topo-node " + n.plane; d.id = "tn-" + n.id;
+        d.innerHTML = '<div class="tn-label">' + n.label + '</div><div class="tn-sub">' + n.sub + '</div>' +
+          (n.family ? '<div class="tn-family">' + n.family + '</div>' : '');
+        cols[n.col].appendChild(d); nodeEls[n.id] = d;
+      });
+      canvas.appendChild(grid);
+      built = true;
+      relayout();
+    }
+    function centerOf(id) {
+      var node = nodeEls[id]; if (!node) return null;
+      var cr = canvas.getBoundingClientRect(), r = node.getBoundingClientRect();
+      return { x: r.left - cr.left + r.width / 2, y: r.top - cr.top + r.height / 2 };
+    }
+    function relayout() {
+      if (!built) return;
+      var cr = canvas.getBoundingClientRect();
+      svg.setAttribute("viewBox", "0 0 " + cr.width + " " + cr.height);
+      var lines = "";
+      EDGES.forEach(function (e) {
+        var a = centerOf(e[0]), b = centerOf(e[1]); if (!a || !b) return;
+        lines += '<line id="tw-' + e[0] + '-' + e[1] + '" class="topo-wire" x1="' + a.x + '" y1="' + a.y +
+          '" x2="' + b.x + '" y2="' + b.y + '"></line>';
+      });
+      svg.innerHTML = lines;
+    }
+    function wire(a, b) { return svg.querySelector("#tw-" + a + "-" + b) || svg.querySelector("#tw-" + b + "-" + a); }
+    function lightWire(a, b, tone) {
+      var w = wire(a, b); if (!w) return;
+      w.classList.add("on"); if (tone) w.setAttribute("data-tone", tone);
+      setTimeout(function () { w.classList.remove("on"); w.removeAttribute("data-tone"); }, 900);
+    }
+    function litNode(id, tone) {
+      var n = nodeEls[id]; if (!n) return;
+      n.classList.add("lit"); if (tone) n.setAttribute("data-tone", tone);
+      setTimeout(function () { n.classList.remove("lit"); n.removeAttribute("data-tone"); }, 950);
+    }
+    // CSS-transition driven (not rAF) so a backgrounded/throttled tab still completes the sequence;
+    // the setTimeout is the load-bearing resolver, the transition is just the smooth motion.
+    function packet(a, b, tone) {
+      return new Promise(function (resolve) {
+        var pa = centerOf(a), pb = centerOf(b);
+        if (!pa || !pb) { resolve(); return; }
+        lightWire(a, b, tone);
+        var dot = document.createElement("div");
+        dot.className = "topo-packet" + (tone ? " " + tone : "");
+        dot.style.left = pa.x + "px"; dot.style.top = pa.y + "px";
+        canvas.appendChild(dot);
+        void dot.offsetWidth;                       // force reflow so the transition takes
+        dot.style.transition = "left .46s cubic-bezier(.4,0,.2,1), top .46s cubic-bezier(.4,0,.2,1)";
+        dot.style.left = pb.x + "px"; dot.style.top = pb.y + "px";
+        setTimeout(function () { dot.remove(); litNode(b, tone); resolve(); }, 490);
+      });
+    }
+    function caller() { return state.operator === "ai" ? "mcp" : "you"; }
+    function setStep(txt) { if (stepEl && txt) stepEl.textContent = txt; }
+
+    async function flow(kind) {
+      var steps = FLOWS[kind]; if (!steps || !built) return;
+      var token = ++running;
+      for (var i = 0; i < steps.length; i++) {
+        if (token !== running) return;            // superseded by a newer flow
+        var s = steps[i];
+        if (s.label) setStep(s.label);
+        if (s.seg) {
+          var a = s.seg[0] === "CALLER" ? caller() : s.seg[0];
+          litNode(a);
+          await packet(a, s.seg[1], s.tone);
+        } else if (s.pulse) {
+          litNode(s.pulse, s.tone);
+          await sleep(520);
+        } else if (s.fan) {
+          litNode(s.fan[0]);
+          await Promise.all(s.fan[1].map(function (t) { return packet(s.fan[0], t, s.tone); }));
+        }
+        await sleep(95);
+      }
+      if (token === running) setStep("Done — the fact is durable and on the bus. Every box above either appended it, relayed it, or folded it.");
+    }
+
+    function init() {
+      build();
+      if (window.ResizeObserver && canvas) { new ResizeObserver(function () { relayout(); }).observe(canvas); }
+      window.addEventListener("resize", relayout);
+    }
+    function setFamily(fam) {
+      var loan = fam === "loan";
+      var eng = nodeEls["engine"]; if (eng) { var f = eng.querySelector(".tn-family"); if (f) f.textContent = loan ? "personal_loan · decider" : "decider · pure folds"; }
+      var bus = nodeEls["bus"]; if (bus) { var s = bus.querySelector(".tn-sub"); if (s) s.textContent = (loan ? "personal_loan" : "term_deposit") + " · Avro"; }
+      var orch = nodeEls["orch"]; if (orch) { var o = orch.querySelector(".tn-family"); if (o) o.textContent = loan ? "LoanOriginationProcess" : "ConstitutionProcess"; }
+    }
+    return { init: init, flow: flow, relayout: relayout, setFamily: setFamily };
+  })();
+  function topoFlow(k) { try { TOPO.flow(k); } catch (e) {} }
+
+  /* ============================================================
+     DRAWER FEEDS — Topic (Avro) / Outbox·Inbox / Metrics / Logs.
+     All four panes are folded from the SAME domain events the
+     ledger shows ("follow the event"), so the plumbing can never
+     drift from the facts. DEMO-safe · illustrative.
+     ============================================================ */
+  var DOMAIN_EVENTS = {
+    DepositConstituted:     { ce: "deposit.constituted",        sid: 41 },
+    InterestAccrued:        { ce: "deposit.interest_accrued",   sid: 42 },
+    WithholdingApplied:     { ce: "deposit.withholding_applied", sid: 43 },
+    InterestPaid:           { ce: "deposit.interest_paid",      sid: 44 },
+    DepositMatured:         { ce: "deposit.matured",            sid: 45 },
+    DepositTerminatedEarly: { ce: "deposit.terminated_early",   sid: 46 },
+    LoanOriginated:         { ce: "loan.originated",            sid: 61 },
+    LoanDisbursed:          { ce: "loan.disbursed",             sid: 62 },
+    InstallmentPaid:        { ce: "loan.installment_paid",      sid: 63 },
+    LoanSettled:            { ce: "loan.settled",               sid: 64 },
+    LoanRepaidEarly:        { ce: "loan.repaid_early",          sid: 65 }
+  };
+  function topicName() { return state.family === "loan" ? "personal_loan" : "term_deposit"; }
+  var dwTopic = [], dwOutbox = [], dwInbox = [], dwLogs = [], dwOffset = 0;
+  var METRICS = {
+    commands_total:           { v: 0, unit: "",   series: [0], help: "commands accepted at /v1 ingress" },
+    command_dedup_hits_total: { v: 0, unit: "",   series: [0], help: "idempotency replays — no second append" },
+    events_appended_total:    { v: 0, unit: "",   series: [0], help: "immutable facts written to the log" },
+    outbox_publish_lag_ms:    { v: 0, unit: "ms", series: [],  help: "relay lag · publish − commit", gauge: true },
+    inbox_handled_total:      { v: 0, unit: "",   series: [0], help: "records consumed exactly once downstream" }
+  };
+  function dwHex(n) { var s = ""; for (var i = 0; i < n; i++) s += "0123456789abcdef"[Math.floor(Math.random() * 16)]; return s; }
+  function dwClock() { var d = new Date(); function p(x, n) { x = String(x); while (x.length < (n || 2)) x = "0" + x; return x; } return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()) + "." + p(d.getMilliseconds(), 3); }
+  function dwTrace() { return (state.traceId || state.depositId || "trace" + dwHex(11)).slice(0, 8); }
+  function dwSubject() { return state.depositId ? state.depositId.slice(0, 8) : (state.processId || dwHex(8)).slice(0, 8); }
+
+  function bumpMetric(k) { var m = METRICS[k]; if (!m) return; m.v++; m.series.push(m.v); if (m.series.length > 40) m.series.shift(); if (state.tab === "metrics") renderMetrics(); }
+  function sampleMetric(k, val) { var m = METRICS[k]; if (!m) return; m.v = val; m.series.push(val); if (m.series.length > 40) m.series.shift(); if (state.tab === "metrics") renderMetrics(); }
+  function addLog(level, logger, msg, fields) {
+    dwLogs.push({ ts: dwClock(), level: level, logger: logger, msg: msg, fields: fields || {} });
+    if (dwLogs.length > 60) dwLogs.shift();
+    if (state.tab === "logs") renderLogs();
+  }
+  function drawerCmd(tool) {
+    bumpMetric("commands_total");
+    addLog("info", "Babelstone.Engine.Ingress", tool + " accepted", { trace: dwTrace(), idem: (state.idemKey || "—").slice(0, 8) });
+  }
+  function drawerDedup(tool) {
+    bumpMetric("command_dedup_hits_total");
+    addLog("warn", "Babelstone.Engine.Dedup", "command_dedup HIT — original outcome replayed, no second append", { trace: dwTrace(), idem: (state.idemKey || "—").slice(0, 8) });
+  }
+  function drawerFeed(opts) {
+    var name = opts.name;
+    // saga edge fact — lands on the orchestrator's saga_outbox, not the term_deposit topic
+    if (name === "ConstitutionRequested") { addLog("info", "Babelstone.Orchestrator.Edge", "saga STARTED · saga_outbox row written", { trace: dwTrace(), process: (state.processId || "").slice(0, 8) }); return; }
+    // ACL command legs (dispatched rows, seq "→") — reversible/irreversible effects on Core
+    if (opts.seq === "→") { addLog("info", "Babelstone.Orchestrator.Dispatcher", name + " dispatched to Core ACL", { trace: dwTrace(), leg: /Confirm/.test(name) ? "irreversible" : "reversible" }); return; }
+    var d = DOMAIN_EVENTS[name];
+    if (!d) return;                       // not a publishable engine fact
+    bumpMetric("events_appended_total");
+    var ceType = "babelstone." + d.ce + ".v1";
+    var topic = topicName();
+    var ceId = dwHex(8) + "-" + dwHex(4);
+    var rec = { off: dwOffset++, ceType: ceType, ceId: ceId, sid: d.sid, subject: dwSubject(), ts: dwClock(), amount: opts.amt || null, seq: opts.seq, topic: topic };
+    dwTopic.push(rec); if (dwTopic.length > 30) dwTopic.shift();
+    addLog("info", "Babelstone.Engine.Append", name + " appended (seq " + opts.seq + ")", { trace: dwTrace(), deposit: dwSubject() });
+    // outbox row written in the SAME local txn, then drained by the relay after a small lag
+    var ob = { id: dwOutbox.length + 1, ceType: ceType, status: "pending", lag: null };
+    dwOutbox.push(ob); if (dwOutbox.length > 30) dwOutbox.shift();
+    if (state.tab === "topic") renderTopic();
+    if (state.tab === "transport") renderTransport();
+    var lag = 8 + Math.floor(Math.random() * 34);
+    setTimeout(function () {
+      ob.status = "published"; ob.lag = lag;
+      sampleMetric("outbox_publish_lag_ms", lag);
+      addLog("info", "Babelstone.Engine.Outbox", "published " + ceType + " → " + topic, { trace: dwTrace(), lag: lag + "ms" });
+      dwInbox.push({ msg: ceId, consumer: "fan-out", status: "handled" }); if (dwInbox.length > 30) dwInbox.shift();
+      bumpMetric("inbox_handled_total");
+      addLog("info", "Babelstone.Consumers.Inbox", "handled " + ceType + " · dedup by message_id", { trace: dwTrace(), msg: ceId.slice(0, 8) });
+      if (state.tab === "transport") renderTransport();
+    }, 420 + Math.random() * 380);
+  }
+  function renderTopic() {
+    var box = el("topicList"); if (!box) return;
+    if (!dwTopic.length) { box.innerHTML = '<div class="dpane-empty">No records yet. Run a command — every engine fact is relayed onto the topic as an Avro record.</div>'; return; }
+    box.innerHTML = dwTopic.slice().reverse().map(function (r) {
+      return '<div class="topic-rec"><div class="tr-head"><span class="tr-part">' + (r.topic || "term_deposit") + '-0</span> @ offset <b>' + r.off + '</b>' +
+        '<span class="tr-badge">catalog ✓ · Avro · schema #' + r.sid + '</span></div>' +
+        '<div class="tr-grid">' +
+          '<span class="k">ce_type</span><span class="v">' + r.ceType + '</span>' +
+          '<span class="k">ce_id</span><span class="v">' + r.ceId + '</span>' +
+          '<span class="k">ce_subject</span><span class="v">' + r.subject + '… · seq ' + r.seq + '</span>' +
+          '<span class="k">ce_time</span><span class="v">' + r.ts + '</span>' +
+          '<span class="k">ce_source</span><span class="v">/babelstone/engine/' + (r.topic || "term_deposit") + '</span>' +
+          (r.amount ? '<span class="k">payload.amount</span><span class="v">' + r.amount + '</span>' : '') +
+        '</div></div>';
+    }).join("");
+  }
+  function renderTransport() {
+    var ob = el("outboxBody"), ib = el("inboxBody");
+    if (ob) {
+      el("outboxEmpty").style.display = dwOutbox.length ? "none" : "";
+      ob.innerHTML = dwOutbox.slice().reverse().map(function (r) {
+        return '<tr><td>' + r.id + '</td><td>' + r.ceType.replace("babelstone.", "") + '</td>' +
+          '<td class="st-' + r.status + '">' + r.status + '</td><td>' + (r.lag != null ? r.lag + 'ms' : '·') + '</td></tr>';
+      }).join("");
+    }
+    if (ib) {
+      el("inboxEmpty").style.display = dwInbox.length ? "none" : "";
+      ib.innerHTML = dwInbox.slice().reverse().map(function (r) {
+        return '<tr><td>' + r.msg.slice(0, 13) + '…</td><td>' + r.consumer + '</td><td class="st-published">' + r.status + '</td></tr>';
+      }).join("");
+    }
+  }
+  function dwSpark(series, w, h) {
+    if (!series.length) return '';
+    var min = Math.min.apply(null, series), max = Math.max.apply(null, series);
+    if (max === min) max = min + 1;
+    var n = series.length;
+    var pts = series.map(function (v, i) {
+      var x = n === 1 ? 0 : (i / (n - 1)) * w;
+      var y = (h - 2) - ((v - min) / (max - min)) * (h - 4);
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    return '<polyline fill="none" stroke="var(--gold)" stroke-width="1.4" stroke-linejoin="round" points="' + pts + '"/>';
+  }
+  function renderMetrics() {
+    var box = el("metricsGrid"); if (!box) return;
+    var w = 180, h = 26;
+    box.innerHTML = Object.keys(METRICS).map(function (k) {
+      var m = METRICS[k];
+      return '<div class="metric"><div class="m-top"><span class="m-name">' + k + '</span>' +
+        '<span class="m-val">' + m.v + (m.unit ? '<span class="u">' + m.unit + '</span>' : '') + '</span></div>' +
+        '<svg class="m-spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' + dwSpark(m.series, w, h) + '</svg>' +
+        '<div class="m-help">' + m.help + '</div></div>';
+    }).join("");
+  }
+  function renderLogs() {
+    var box = el("logsList"); if (!box) return;
+    if (!dwLogs.length) { box.innerHTML = '<div class="dpane-empty">Quiet. Operations emit structured log lines here.</div>'; return; }
+    box.innerHTML = dwLogs.slice().reverse().map(function (l) {
+      var fields = Object.keys(l.fields).map(function (k) { return '<span class="kv">' + k + '=<b>' + l.fields[k] + '</b></span>'; }).join(' ');
+      return '<div class="log-line"><span class="ts">' + l.ts + '</span> <span class="lv-' + l.level + '">' + l.level.toUpperCase() + '</span> <span class="lg">' + l.logger + '</span> ' + l.msg + '  ' + fields + '</div>';
+    }).join("");
+  }
+  function drawerReset() {
+    dwTopic = []; dwOutbox = []; dwInbox = []; dwLogs = []; dwOffset = 0;
+    Object.keys(METRICS).forEach(function (k) { METRICS[k].v = 0; METRICS[k].series = METRICS[k].gauge ? [] : [0]; });
+    renderTopic(); renderTransport(); renderMetrics(); renderLogs();
+  }
+
+  function setView(v) {
+    state.view = v;
+    el("viewSeg").querySelectorAll("button").forEach(function (b) { b.classList.toggle("on", b.dataset.view === v); });
+    el("viewLedger").hidden = v !== "ledger";
+    el("viewTopo").hidden = v !== "topo";
+    if (v === "topo") setTimeout(function () { TOPO.relayout(); }, 30);
+  }
+  el("viewSeg").addEventListener("click", function (e) { if (e.target.dataset.view) setView(e.target.dataset.view); });
+
+  TOPO.init();
+  setView("ledger");
   syncProduct();
   setButtons();
 })();
