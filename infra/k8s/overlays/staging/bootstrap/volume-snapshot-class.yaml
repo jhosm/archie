@@ -1,0 +1,14 @@
+# VolumeSnapshotClass for the Hetzner CSI driver (bd babelstone-zla1.7) — cluster bootstrap,
+# applied ONCE, NOT part of the kustomize overlay (it's a snapshot.storage.k8s.io CRD, and the CI
+# gate runs kubeconform -strict with no CRD schemas). The volume-snapshot CronJob
+# (overlays/staging/volume-snapshot-cronjob.yaml) references this class by name.
+#
+# Prereq (account/cluster-gated): the external snapshot controller + its CRDs must be installed
+# (they are NOT bundled with k3s) — see bootstrap/README.md. The driver name must match the
+# Hetzner CSI driver the cluster runs (csi.hetzner.cloud).
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: hcloud-volumes
+driver: csi.hetzner.cloud
+deletionPolicy: Delete

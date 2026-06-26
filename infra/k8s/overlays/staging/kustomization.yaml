@@ -49,6 +49,11 @@ resources:
   # rather than in the apps/ product-service layer (bd babelstone-zla1.5.5). Its public
   # Ingress (app.babelstone.dev) is in ingress.yaml above.
   - mission-control.yaml
+  # Ops baseline (bd babelstone-zla1.7): scheduled logical DB backups → Hetzner Object
+  # Storage, and CSI VolumeSnapshots of the data PVCs. (k3s auto-upgrade + the
+  # VolumeSnapshotClass are cluster CRDs in bootstrap/; the runbook is infra/runbooks/.)
+  - backup-cronjobs.yaml
+  - volume-snapshot-cronjob.yaml
 
 # Single-replica everywhere — a single node; the HA topology (overlays/ha) would
 # not schedule here. Pinned explicitly for the same reason the dev overlay does:

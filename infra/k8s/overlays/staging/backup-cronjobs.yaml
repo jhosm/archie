@@ -1,0 +1,114 @@
+# Logical database backups for the staging box (bd babelstone-zla1.7) — copies the HA overlay's
+# scheduled-backup CronJob shape (postgres-pitr-resources.yaml), but LOGICAL (pg_dump) instead of
+# pgBackRest physical PITR (which is the multi-node HA leg, too heavy for one node). Dumps every
+# database to Hetzner Object Storage (S3-compatible) so the data survives the box entirely.
+#
+# Two instances are dumped: the main `postgres` (pg_dumpall → the engine `babelstone` DB + the
+# orchestrator `babelstone_orchestrator` DB) AND the SEPARATE `backstage-db` instance (the
+# catalogue DB), which pg_dumpall against postgres would NOT reach.
+#
+# CI validates SHAPE only (kustomize build + kubeconform); the restore drill is the runbook
+# (infra/runbooks/staging-ops.md). Real S3 + a real bucket are account-gated (the Secret below is
+# a placeholder seam, same contract as base/secrets.example.yaml).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-logical-backup
+  labels:
+    app.kubernetes.io/name: db-logical-backup
+    babelstone.io/dr-role: logical-backup
+spec:
+  # Daily 01:30 UTC. concurrencyPolicy Forbid so a slow dump never overlaps the next run.
+  schedule: "30 1 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 3600
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: db-logical-backup
+            babelstone.io/dr-role: logical-backup
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: pg-dump
+              image: postgres:18-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  # aws-cli (Alpine community) for the S3 upload; busybox already has gzip/date.
+                  apk add --no-cache aws-cli >/dev/null
+                  TS="$(date -u +%Y%m%dT%H%M%SZ)"
+                  S3="aws --endpoint-url ${S3_ENDPOINT} s3 cp -"
+                  echo "dumping main cluster (babelstone + babelstone_orchestrator) ..."
+                  PGPASSWORD="${PG_PASSWORD}" pg_dumpall -h postgres -U "${PG_USER}" \
+                    | gzip | ${S3} "s3://${S3_BUCKET}/postgres/all-${TS}.sql.gz"
+                  echo "dumping backstage (separate instance) ..."
+                  PGPASSWORD="${BACKSTAGE_PG_PASSWORD}" pg_dump -h backstage-db -U backstage backstage \
+                    | gzip | ${S3} "s3://${S3_BUCKET}/backstage/backstage-${TS}.sql.gz"
+                  echo "logical backup complete (${TS})."
+              env:
+                - name: PG_USER
+                  valueFrom:
+                    configMapKeyRef:
+                      name: postgres-config
+                      key: POSTGRES_USER
+                - name: PG_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: babelstone-dev-secrets
+                      key: POSTGRES_PASSWORD
+                # backstage-db's password is still the dev literal in base/backstage.yaml; zla1.6
+                # moves it to the Secret seam, at which point this becomes a secretKeyRef.
+                - name: BACKSTAGE_PG_PASSWORD
+                  value: backstage
+                - name: S3_ENDPOINT
+                  valueFrom:
+                    secretKeyRef:
+                      name: babelstone-backup-secret
+                      key: S3_ENDPOINT
+                - name: S3_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: babelstone-backup-secret
+                      key: S3_BUCKET
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: babelstone-backup-secret
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: babelstone-backup-secret
+                      key: AWS_SECRET_ACCESS_KEY
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+---
+# Backup credential seam — DEV-ONLY placeholders, same contract as base/secrets.example.yaml and
+# the ha overlay's pgbackrest secret. The real Hetzner Object Storage bucket + keys are
+# account-gated; swap this for an uncommitted Secret (or OpenBao-backed provisioning, M.2/puu3).
+# NEVER commit real credentials.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: babelstone-backup-secret
+  annotations:
+    babelstone.io/secret-boundary: "dev-mode-placeholder — real provisioning is account-gated / M.2 (puu3)"
+type: Opaque
+stringData:
+  S3_ENDPOINT: "https://fsn1.your-objectstorage.com"
+  S3_BUCKET: "babelstone-staging-backups-REPLACE_ME"
+  AWS_ACCESS_KEY_ID: "REPLACE_ME"
+  AWS_SECRET_ACCESS_KEY: "REPLACE_ME-not-a-real-secret"
