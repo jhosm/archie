@@ -90,16 +90,49 @@ public sealed class MovementHeadersTests
     }
 
     [Fact]
-    public void An_event_with_originated_movements_in_both_directions_fails_loud_the_multi_direction_split()
+    public void An_event_with_originated_movements_in_both_directions_emits_an_ordered_directions_composite()
     {
-        // The v1 multi-Movement split (ADR-PC-032 §A8): a single movementdirection header cannot express both
-        // a debit and a credit, and the substrate's substitutor reads exactly one. Fail loud rather than
-        // promote a guessed branch — the genuine multi-direction event is a substrate-side follow-up.
-        var ex = Assert.Throws<InvalidOperationException>(() =>
-            MovementHeaders.ForOriginatedMovements(
-                [Originated(SettlementDirection.Debit), Originated(SettlementDirection.Credit)]));
+        // The multi-Movement split, RESOLVED (ADR-PC-032 §A9 amendment 2026-06-26, option b): a renewal's
+        // rollover-debit + interest-credit ride ONE event. The producer emits movementdirection = the FIRST
+        // direction (the primary instance's branch) AND an ordered movementdirections composite listing both,
+        // so the substrate fans the event into one settlement instance per Movement — no fail-loud, no silent
+        // loss, no guessed branch.
+        var headers = MovementHeaders.ForOriginatedMovements(
+            [Originated(SettlementDirection.Debit), Originated(SettlementDirection.Credit)]);
 
-        Assert.Contains("both directions", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(headers);
+        Assert.Equal("Originated", headers![MovementHeaders.OriginKey]);
+        // movementdirection carries the FIRST direction (the primary instance branches on it).
+        Assert.Equal("Debit", headers[MovementHeaders.DirectionKey]);
+        // movementdirections carries the ORDERED set (carrier order) the substrate fans out on.
+        Assert.Equal("Debit,Credit", headers[MovementHeaders.DirectionsKey]);
+        Assert.Equal(3, headers.Count);
+    }
+
+    [Fact]
+    public void The_directions_composite_preserves_carrier_order()
+    {
+        // The substrate fans out in this order and the dispatcher's per-process FIFO preserves it
+        // (feature-design §6 "effects its legs in declared order"). A credit-first carrier emits Credit,Debit.
+        var headers = MovementHeaders.ForOriginatedMovements(
+            [Originated(SettlementDirection.Credit), Originated(SettlementDirection.Debit)]);
+
+        Assert.NotNull(headers);
+        Assert.Equal("Credit", headers![MovementHeaders.DirectionKey]);
+        Assert.Equal("Credit,Debit", headers[MovementHeaders.DirectionsKey]);
+    }
+
+    [Fact]
+    public void A_single_direction_event_emits_no_directions_composite()
+    {
+        // The established single-instance path is byte-for-byte unchanged: a same-direction set carries only
+        // movementorigin + movementdirection, NO composite (the substrate starts exactly one instance).
+        var headers = MovementHeaders.ForOriginatedMovements(
+            [Originated(SettlementDirection.Debit), Originated(SettlementDirection.Debit)]);
+
+        Assert.NotNull(headers);
+        Assert.False(headers!.ContainsKey(MovementHeaders.DirectionsKey));
+        Assert.Equal(2, headers.Count);
     }
 
     [Fact]

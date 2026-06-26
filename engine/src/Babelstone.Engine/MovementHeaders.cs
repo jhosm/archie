@@ -43,17 +43,24 @@ namespace Babelstone.Engine;
 /// keys), so the two producers compose on one hop.
 /// </para>
 /// <para>
-/// <b>Single-direction-per-event for v1 (the multi-Movement split, ADR-PC-032 §A8 / feature-design
-/// money-movement-settlement §6).</b> A <c>movementdirection</c> header carries ONE value, but an event MAY
-/// carry more than one <see cref="Movement"/> (a renewal records a rollover-debit AND an interest-credit).
-/// The substrate's <c>IEventSubstitutor</c> reads exactly one <c>ce_movementdirection</c> and resolves to one
-/// debit/credit branch, so a single event carrying BOTH a debit and a credit Originated movement cannot be
-/// expressed by one header. This helper therefore promotes headers for the SINGLE-Originated-direction case
-/// (every v1 standalone leg — disbursement, maturity, coupon, early-termination — moves money in ONE
-/// direction) and FAILS LOUD on an event whose Originated movements disagree on direction, rather than
-/// silently promoting a guessed branch. Resolving the genuine multi-direction event (one settlement instance
-/// per Movement, each with its own direction) is a substrate-side follow-up; this seam stays the
-/// single-direction producer until then.
+/// <b>Multi-direction events fan out to one settlement instance per Movement (ADR-PC-032 §A9 amendment
+/// 2026-06-26 / feature-design money-movement-settlement §6).</b> A <c>movementdirection</c> header carries ONE
+/// value, but an event MAY carry more than one <see cref="Movement"/> (a renewal records a rollover-debit AND
+/// an interest-credit). The substrate's <c>IEventSubstitutor</c> reads exactly one <c>ce_movementdirection</c>
+/// and resolves to one debit/credit branch, so a single event carrying BOTH a debit and a credit Originated
+/// movement cannot be settled by one saga instance. The chosen model (ADR-PC-032 §A9, option b) is
+/// <b>per-Movement header carriage with one <c>SettlementProcess</c> instance per Originated Movement, each
+/// gated by its own <c>movementdirection</c></b> — NOT one-event-per-Movement (option a), which would split
+/// the renewal's two legs across two appends and break the append-first atomicity of slot 5 (both Movements
+/// are recorded in ONE transaction). So this helper ALWAYS emits the <c>movementdirection</c> for the FIRST
+/// Originated direction (so the single-direction path is byte-for-byte unchanged and the auto-start branches
+/// the primary instance), and ADDITIONALLY emits an ordered <c>movementdirections</c> composite (e.g.
+/// <c>Debit,Credit</c>) listing every Originated direction in carrier order whenever the event carries more
+/// than one Originated direction. The substrate reads the composite and starts one settlement instance per
+/// entry at a deterministic per-Movement process id derived from <c>(ce_subject, index)</c>, each gated by its
+/// own direction — so the multi-direction event settles each leg correctly with no silent loss, and
+/// per-account FIFO holds (each instance gets its own <c>process_id</c> = its own dispatcher FIFO lane). The
+/// values stay closed-enum NAMES only — still no amount, no <see cref="Movement.AccountRef"/>, no PII.
 /// </para>
 /// </remarks>
 public static class MovementHeaders
@@ -65,8 +72,24 @@ public static class MovementHeaders
 
     /// <summary>The extension-attribute key (ce_-stripped, lowercase) carrying a <see cref="Movement"/>'s
     /// <see cref="SettlementDirection"/>. The relay promotes it to <c>ce_movementdirection</c>; the
-    /// substrate's settlement substitutor branches debit/credit on it (ADR-IC-018 §D5).</summary>
+    /// substrate's settlement substitutor branches debit/credit on it (ADR-IC-018 §D5). On a multi-direction
+    /// event this carries the FIRST Originated direction (the primary instance's branch); the full ordered set
+    /// rides <see cref="DirectionsKey"/>.</summary>
     public const string DirectionKey = "movementdirection";
+
+    /// <summary>The extension-attribute key (ce_-stripped, lowercase) carrying the ORDERED, comma-separated
+    /// list of EVERY Originated <see cref="SettlementDirection"/> on a multi-direction event, in carrier order
+    /// (e.g. <c>Debit,Credit</c> for a renewal's rollover-debit + interest-credit). Present ONLY when the event
+    /// carries more than one Originated direction; a single-direction event omits it (its lone direction is on
+    /// <see cref="DirectionKey"/> alone). The relay promotes it to <c>ce_movementdirections</c>; the substrate
+    /// reads it to fan the event out into one settlement instance per Movement (ADR-PC-032 §A9, option b). The
+    /// values are the closed-enum member NAMES — no amount, no account ref, no PII (ADR-PC-004 §P2).</summary>
+    public const string DirectionsKey = "movementdirections";
+
+    /// <summary>The separator joining the ordered directions in the <see cref="DirectionsKey"/> composite. A
+    /// bare comma — the values are closed-enum NAMES (<c>Debit</c> / <c>Credit</c>), so a comma never collides
+    /// with a value.</summary>
+    public const string DirectionsSeparator = ",";
 
     /// <summary>
     /// Derive the <c>movementorigin</c> / <c>movementdirection</c> extension headers for a Movement-bearing
@@ -76,17 +99,26 @@ public static class MovementHeaders
     /// </summary>
     /// <param name="movements">The event's recorded movements (the carrier list). May be empty.</param>
     /// <returns>
-    /// A two-entry dictionary (<c>movementorigin</c> = <c>Originated</c>, <c>movementdirection</c> = the
-    /// shared debit/credit) when the event carries one or more <see cref="MovementOrigin.Originated"/>
-    /// movements that AGREE on direction; <c>null</c> when the event carries no Originated movement (an
+    /// <para>
+    /// <c>null</c> when the event carries no <see cref="MovementOrigin.Originated"/> movement (an
     /// <see cref="MovementOrigin.Observed"/>-only or movement-free event has NO cash leg to drive, so it
     /// declares no settlement headers and starts no saga — the relay leaves its standard CE header set
     /// untouched).
+    /// </para>
+    /// <para>
+    /// For a SINGLE Originated direction (every standalone leg — disbursement, maturity, coupon,
+    /// early-termination — and any set of same-direction movements): a two-entry dictionary
+    /// (<c>movementorigin</c> = <c>Originated</c>, <c>movementdirection</c> = the shared direction). No
+    /// composite is emitted (the substrate starts ONE instance, byte-for-byte the established path).
+    /// </para>
+    /// <para>
+    /// For MULTIPLE Originated directions (a renewal's rollover-debit + interest-credit): a three-entry
+    /// dictionary that ADDS <c>movementdirections</c> = the ordered, comma-separated list of every Originated
+    /// direction in carrier order. <c>movementdirection</c> still carries the FIRST direction (the primary
+    /// instance's branch). The substrate fans this out into one settlement instance per entry (ADR-PC-032 §A9,
+    /// option b) — no silent loss, no guessed branch.
+    /// </para>
     /// </returns>
-    /// <exception cref="InvalidOperationException">The event carries Originated movements that DISAGREE on
-    /// direction (a single event with both a debit and a credit Originated movement) — the single
-    /// <c>movementdirection</c> header cannot express both. This is the deliberate v1 multi-direction split
-    /// (see the type remarks): fail loud rather than promote a guessed branch.</exception>
     public static IReadOnlyDictionary<string, string>? ForOriginatedMovements(
         IReadOnlyList<Movement> movements)
     {
@@ -94,39 +126,46 @@ public static class MovementHeaders
 
         // Only Originated movements have a cash leg to drive (slot 2): an Observed movement arrived already
         // cleared, so its event starts no settlement saga. A movement-free or Observed-only event promotes
-        // no settlement headers.
-        SettlementDirection? direction = null;
+        // no settlement headers. Collect the Originated directions IN CARRIER ORDER — the order the substrate
+        // fans out and the dispatcher's per-process FIFO preserves (feature-design §6 "in declared order").
+        var directions = new List<SettlementDirection>();
         foreach (var movement in movements)
         {
-            if (movement.Origin != MovementOrigin.Originated)
+            if (movement.Origin == MovementOrigin.Originated)
             {
-                continue;
+                directions.Add(movement.Direction);
             }
-
-            if (direction is { } pinned && pinned != movement.Direction)
-            {
-                // Both a debit and a credit Originated movement on ONE event: the single movementdirection
-                // header cannot carry both, and the substrate's substitutor reads exactly one. Fail loud —
-                // the multi-direction event is a substrate-side follow-up, not a silently-guessed branch.
-                throw new InvalidOperationException(
-                    "A Movement-bearing event carries Originated movements in BOTH directions "
-                    + $"({pinned} and {movement.Direction}); the single ce_movementdirection header cannot "
-                    + "express both (ADR-PC-032 §A8 multi-Movement split). Split the directions across "
-                    + "events, or extend the substrate to one settlement instance per Movement.");
-            }
-
-            direction ??= movement.Direction;
         }
 
-        if (direction is not { } resolved)
+        if (directions.Count == 0)
         {
             return null;
         }
 
-        return new Dictionary<string, string>(StringComparer.Ordinal)
+        // The primary instance's branch is the FIRST Originated direction (byte-stable: carrier order is
+        // deterministic). A single-direction event stops here — its lone direction on movementdirection alone,
+        // exactly the established single-instance path (no composite, no behaviour change for the 7 standalone
+        // legs).
+        var headers = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [OriginKey] = MovementOrigin.Originated.ToString(),
-            [DirectionKey] = resolved.ToString(),
+            [DirectionKey] = directions[0].ToString(),
         };
+
+        // A genuinely MULTI-DIRECTION event (e.g. a renewal: rollover-Debit + interest-Credit) ALSO carries the
+        // ordered composite the substrate fans out on — one settlement instance per Originated Movement, each
+        // gated by its own direction (ADR-PC-032 §A9, option b — the case that previously FAILED LOUD). The
+        // composite is the ENUM-NAME list joined by comma; a comma never collides with a closed-enum name. It
+        // is emitted ONLY when the Originated movements span MORE THAN ONE distinct direction: a same-direction
+        // set (two debits) already resolves to ONE branch and is settled by a single instance, so its wire
+        // shape stays movementorigin + movementdirection only — unchanged from before this amendment.
+        var distinctDirections = directions.Distinct().Count();
+        if (distinctDirections > 1)
+        {
+            headers[DirectionsKey] = string.Join(
+                DirectionsSeparator, directions.Select(static d => d.ToString()));
+        }
+
+        return headers;
     }
 }
