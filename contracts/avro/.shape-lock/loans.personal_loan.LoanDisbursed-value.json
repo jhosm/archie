@@ -1,0 +1,91 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "loan_id",
+      "optional": false,
+      "type": "string@uuid"
+    },
+    {
+      "has_default": false,
+      "name": "principal_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "tan_basis_points",
+      "optional": false,
+      "type": "int"
+    },
+    {
+      "has_default": false,
+      "name": "rate_sheet_version_id",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "term_months",
+      "optional": false,
+      "type": "int"
+    },
+    {
+      "has_default": false,
+      "name": "periodic_rate_basis_points",
+      "optional": false,
+      "type": "int"
+    },
+    {
+      "has_default": false,
+      "name": "installment_amount_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "start_date",
+      "optional": false,
+      "type": "int@date"
+    },
+    {
+      "has_default": false,
+      "name": "first_installment_date",
+      "optional": false,
+      "type": "int@date"
+    },
+    {
+      "has_default": false,
+      "name": "purpose",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "product_code",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "disbursement_account_ref",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": true,
+      "name": "early_repayment_commission_bps",
+      "optional": false,
+      "type": "int"
+    },
+    {
+      "has_default": true,
+      "name": "movements",
+      "optional": false,
+      "type": "array<items:record<rec:Movement:account_ref:string,direction:enum,amount_cents:long,value_date:int@date,operation:enum,origin:enum,command_id:string@uuid>>"
+    }
+  ],
+  "name": "LoanDisbursed",
+  "namespace": "loans.personal_loan",
+  "subject": "loans.personal_loan.LoanDisbursed-value"
+}

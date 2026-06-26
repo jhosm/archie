@@ -1,0 +1,109 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "deposit_id",
+      "optional": false,
+      "type": "string@uuid"
+    },
+    {
+      "has_default": false,
+      "name": "principal_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "tan_basis_points",
+      "optional": false,
+      "type": "int"
+    },
+    {
+      "has_default": false,
+      "name": "rate_sheet_version_id",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "term_days",
+      "optional": false,
+      "type": "int"
+    },
+    {
+      "has_default": false,
+      "name": "start_date",
+      "optional": false,
+      "type": "int@date"
+    },
+    {
+      "has_default": false,
+      "name": "maturity_date",
+      "optional": false,
+      "type": "int@date"
+    },
+    {
+      "has_default": false,
+      "name": "interest_variant",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "auto_renewal_policy",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": true,
+      "name": "payment_period_months",
+      "optional": false,
+      "type": "int"
+    },
+    {
+      "has_default": true,
+      "name": "product_code",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": true,
+      "name": "role",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": true,
+      "name": "funding_account",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": true,
+      "name": "min_withdrawal_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": true,
+      "name": "min_remaining_balance_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": true,
+      "name": "lockup_period_days",
+      "optional": false,
+      "type": "int"
+    },
+    {
+      "has_default": true,
+      "name": "product_config_version",
+      "optional": false,
+      "type": "string"
+    }
+  ],
+  "name": "DepositConstituted",
+  "namespace": "deposits.term_deposit",
+  "subject": "deposits.term_deposit.DepositConstituted-value"
+}

@@ -1,0 +1,31 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "instance_id",
+      "optional": false,
+      "type": "string@uuid"
+    },
+    {
+      "has_default": false,
+      "name": "subject_pseudonym",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "erased_on",
+      "optional": false,
+      "type": "int@date"
+    },
+    {
+      "has_default": false,
+      "name": "erasure_reason",
+      "optional": false,
+      "type": "string"
+    }
+  ],
+  "name": "PersonalDataErasureRequested",
+  "namespace": "operations",
+  "subject": "operations.PersonalDataErasureRequested-value"
+}

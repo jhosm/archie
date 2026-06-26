@@ -1,0 +1,43 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "loan_id",
+      "optional": false,
+      "type": "string@uuid"
+    },
+    {
+      "has_default": false,
+      "name": "installment_number",
+      "optional": false,
+      "type": "int"
+    },
+    {
+      "has_default": false,
+      "name": "interest_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "capital_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "outstanding_balance_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "paid_on",
+      "optional": false,
+      "type": "int@date"
+    }
+  ],
+  "name": "LoanInstallmentPaid",
+  "namespace": "loans.personal_loan",
+  "subject": "loans.personal_loan.LoanInstallmentPaid-value"
+}

@@ -1,0 +1,37 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "deposit_id",
+      "optional": false,
+      "type": "string@uuid"
+    },
+    {
+      "has_default": false,
+      "name": "gross_interest_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "withholding_tax_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "net_interest_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "paid_on",
+      "optional": false,
+      "type": "int@date"
+    }
+  ],
+  "name": "InterestPaid",
+  "namespace": "deposits.term_deposit",
+  "subject": "deposits.term_deposit.InterestPaid-value"
+}

@@ -1,0 +1,25 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "total_capital_repaid_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "total_interest_paid_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "settled_on",
+      "optional": false,
+      "type": "int@date"
+    }
+  ],
+  "name": "LoanSettled",
+  "namespace": "loans.personal_loan",
+  "subject": "loans.personal_loan.LoanSettled-value"
+}

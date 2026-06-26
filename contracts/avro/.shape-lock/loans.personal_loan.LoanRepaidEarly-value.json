@@ -1,0 +1,37 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "loan_id",
+      "optional": false,
+      "type": "string@uuid"
+    },
+    {
+      "has_default": false,
+      "name": "capital_repaid_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "commission_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "outstanding_balance_after_cents",
+      "optional": false,
+      "type": "long"
+    },
+    {
+      "has_default": false,
+      "name": "repaid_on",
+      "optional": false,
+      "type": "int@date"
+    }
+  ],
+  "name": "LoanRepaidEarly",
+  "namespace": "loans.personal_loan",
+  "subject": "loans.personal_loan.LoanRepaidEarly-value"
+}
