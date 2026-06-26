@@ -234,4 +234,30 @@ partial current-belief index excludes the superseded rows those reads depend on.
 
 ---
 
+## Amendment — 2026-06-26: the read model reflects supersession + a counter, not yet the corrected values
+
+Added 2026-06-26 (bd `babelstone-j7mm.1`). §P2 above says a `DepositCorrected` "inserts new
+rows **with the corrected values**." The v1 build to date realises the **supersession** half of
+§P2 — the operator correction command (bd `babelstone-k6r8.11` / PR #339) appends `DepositCorrected`
+at `valid_time = effective_from`, and the projection runtime supersedes-then-inserts so both
+beliefs stay queryable — but the corrected **value** is not yet substituted into the folded state.
+The `term_deposit` fold (`DepositCorrectedHandler`) currently only increments `CorrectionCount`, so
+the post-correction belief differs from the prior one by that counter alone. A read therefore
+reflects **that** a correction landed, not **what** it changed: `CurrentBelief` and
+`AsOf(before-the-correction)` return the same principal/rate/maturity, distinguished only by the
+counter. This does not yet meet the [event-store §6.4](../feature-design-event-store-projections.md)
+worked example, in which a corrected principal must read back as the corrected value.
+
+This amendment is **additive and §D5-conformant**: it records the divergence, reverses no part of
+§P1–§P4, and edits no Decision text in place — per the
+[ADR-PC-020 §D3](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) explicit-drift gate, a
+deferral is acknowledged, not silenced. Value substitution (the "corrected values" of §P2) is
+tracked under epic bd `babelstone-j7mm` (L2/A — typed inline structural value, prospective) and
+reconciles this amendment when it lands; retroactive financial recompute of already-settled flows
+is the placeholder epic bd `babelstone-np7p`. The store-only correction is necessary but not
+sufficient for §P2; this records the boundary as a known, tracked limitation rather than silent
+drift. See [04 open questions Q-BG](../04-open-questions.md).
+
+---
+
 *Decided 2026-05-23 by jhosm. Accepted; Q-Y is a production gate, not required for the POC, which assumes bitemporality is needed for all purposes. Mechanism choice (Q-X) made ahead of the §6.3 spike because [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) narrows the candidate set to the application-level path.*

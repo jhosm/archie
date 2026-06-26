@@ -38,6 +38,8 @@ Four properties follow:
 
 The four time-dimensional capabilities — as-of queries (state as of date X, as known on date Y), audit trails, counterfactual replay, forward projection — are properties of this event-sourced model, not features bolted on. Replay correctness is testable: stored fixture event sequences applied to handlers must produce the same projections every time. Full treatment: [event-store](./feature-design-event-store-projections.md).
 
+> **v1 caveat (2026-06-26).** One half of the correction story is still in flight. A retroactive *correction* currently supersedes the prior belief and records *that* a correction occurred — both beliefs stay queryable, nothing is overwritten — but it does not yet substitute the corrected **value** into the projection. So an as-of query today distinguishes the corrected belief from the prior one by the fact of a correction, not yet by the changed value (a corrected principal still reads back as the old amount with a correction counter). Closing that gap — so a corrected principal reads back as the corrected value, per [ADR-PC-002 §P2](./adrs/ADR-PC-002-application-level-bitemporality.md) — is tracked in [04 open questions Q-BG](./04-open-questions.md).
+
 ---
 
 ## 3. The Configuration Surface
