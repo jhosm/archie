@@ -518,11 +518,25 @@ public sealed class SagaAdvanceHandler
         // each family assembles its OWN command bodies); a single-saga host's sink is used as-is.
         var sink = SinkFor(saga.SagaType);
         var traceParent = SagaTraceContext.FormatTraceParent(span);
+
+        // The gateway-attested step-up-SCA claims this advance carries (bd babelstone-t7o3.19; ADR-PC-032
+        // §A7/§A8). For an event-auto-started money-mover leg they arrive on the Movement-bearing event's
+        // CloudEvents headers (the populate hop, bd babelstone-t7o3.20); for a subsequent same-saga advance
+        // the dispatcher's result-event bridge propagates them forward on the synthesized result event's
+        // headers, so an irreversible ConfirmDebit/ConfirmCredit emitted on a LATER advance (off a header-less
+        // result event) still carries the original attestation. The substrate ATTESTS — it re-emits the claims
+        // onto the cash-leg's outbox row; the RECEIVER (the Core ACL settlement leg) is the deny point, never
+        // the substrate (attest-not-deny, ADR-IC-006 §P2 / ADR-PC-019 §P2 / ADR-IC-018 §D2). Read off the
+        // header projection ONLY (never the payload); null for every non-money-mover command (then no SCA
+        // header rides the row and the receiver fail-closes a money-mover with an absent proof).
+        var (scaAcr, scaAuthTime) = ReadScaClaims(message.ExtensionHeaders);
+
         foreach (var commandType in outcome.Commands)
         {
             await sink.EmitAsync(
                 connection, transaction, saga.ProcessId, commandType,
-                message.MessageId, saga.CorrelationId ?? message.CorrelationId, ct, traceParent);
+                message.MessageId, saga.CorrelationId ?? message.CorrelationId, ct, traceParent,
+                scaAcr, scaAuthTime);
         }
 
         // (7) Optional POST-ADVANCE hook (ADR-IC-018 §P6). A machine MAY run additional in-transaction
@@ -570,6 +584,44 @@ public sealed class SagaAdvanceHandler
 
     private static readonly IReadOnlyDictionary<string, string> EmptyHeaders =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Read the gateway-attested step-up-SCA claims off an event's extension-attribute projection (bd
+    /// babelstone-t7o3.19; ADR-PC-032 §A8). The engine relay promotes the attested <c>acr</c> / <c>auth_time</c>
+    /// to <c>ce_scaacr</c> / <c>ce_scaauthtime</c> on a money-mover event; the consume loop projects them
+    /// ce_-stripped + lowercased (<see cref="ScaAcrHeaderKey"/> / <see cref="ScaAuthTimeHeaderKey"/>). Both
+    /// null when absent (the common case — a non-money-mover event), so the receiver fail-closes a money-mover
+    /// with no proof. The <c>auth_time</c> is parsed as Unix seconds; a non-numeric value is treated as absent
+    /// (the receiver then fail-closes), never thrown — a malformed claim must NOT crash the advance.
+    /// </summary>
+    private static (string? Acr, long? AuthTime) ReadScaClaims(
+        IReadOnlyDictionary<string, string>? headers)
+    {
+        if (headers is null)
+        {
+            return (null, null);
+        }
+
+        var acr = headers.TryGetValue(ScaAcrHeaderKey, out var a) && !string.IsNullOrWhiteSpace(a)
+            ? a
+            : null;
+        long? authTime = headers.TryGetValue(ScaAuthTimeHeaderKey, out var t)
+            && long.TryParse(t, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+
+        return (acr, authTime);
+    }
+
+    /// <summary>The ce_-stripped, lowercased extension-attribute key carrying the gateway-attested OIDC
+    /// <c>acr</c> claim on a money-mover event (the engine relay promotes it as <c>ce_scaacr</c>;
+    /// ADR-PC-032 §A8). Operational, never PII.</summary>
+    internal const string ScaAcrHeaderKey = "scaacr";
+
+    /// <summary>The ce_-stripped, lowercased extension-attribute key carrying the gateway-attested OIDC
+    /// <c>auth_time</c> claim (Unix seconds) on a money-mover event (promoted as <c>ce_scaauthtime</c>).
+    /// Operational, never PII.</summary>
+    internal const string ScaAuthTimeHeaderKey = "scaauthtime";
 
     /// <summary>
     /// The first record-name-AGNOSTIC auto-start rule whose header predicate passes against this event's
