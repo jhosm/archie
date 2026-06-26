@@ -252,9 +252,12 @@ the whole VCT list and drop the base storage request. At `kustomize build` /
 only at apply, once Phase-1 `hetzner-k3s` installs the Hetzner CCM + CSI.
 
 **Public edge — the recorded drift.** `ingress.yaml` adds a public Traefik
-`Ingress` (k3s bundles Traefik as the `IngressClass`) for two hosts:
-`api.babelstone.dev` → the **Kong** proxy (8000) and `backstage.babelstone.dev` →
-**Backstage** (7007). Adding any public ingress extends the previous
+`Ingress` (k3s bundles Traefik as the `IngressClass`) for three hosts:
+`api.babelstone.dev` → the **Kong** proxy (8000), `backstage.babelstone.dev` →
+**Backstage** (7007), and `app.babelstone.dev` → **Mission Control** (9000, the demo
+UI, bd babelstone-zla1.5.5 — the browser hits only this host and Mission Control
+same-origin-proxies the engine/orchestrator Services internally). Adding any public
+ingress extends the previous
 "no ingress/gateway exposure beyond Kong" posture, so this is an
 [ADR-PC-020 §D3](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
 **explicit-drift event**, acknowledged in the same change (this section, the scope
@@ -309,9 +312,10 @@ mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/ov
 **Account-gated / deferred (not in this overlay yet):** provisioning the node,
 installing the CSI driver + cert-manager + the issuer, pointing DNS at the node IP,
 and the end-to-end cert verification all need the Hetzner account + DNS (Phases
-0–2). The **app/engine service** manifests (engine, orchestrator, acl,
-notification, mcp-server) and the **Mission Control** UI ingress are zla1.5; the
-real Backstage **image** is zla1.6 (the base still pins `:placeholder`).
+0–2). The engine, orchestrator, notification, and Mission Control manifests have
+landed (zla1.5.1/.2/.5); **mcp-server + its mTLS seam** is zla1.5.3 and the
+real-Claude **agent host** is the deferred zla1.5.6; the real Backstage **image**
+is zla1.6 (the base still pins `:placeholder`).
 
 ## Out of scope (downstream)
 

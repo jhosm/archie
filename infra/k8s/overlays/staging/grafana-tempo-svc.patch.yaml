@@ -1,0 +1,15 @@
+# Expose Grafana Tempo's query API (3200) on the grafana-lgtm Service so Mission Control's
+# Telemetry tab can fetch real traces (/tempo/api/traces/{id} → grafana-lgtm:3200) — bd
+# babelstone-zla1.5.5. Strategic-merge by port: ADDS 3200 alongside the base's 3000 (grafana-ui)
+# without touching it. This is the Tempo QUERY port, not OTLP ingest — 4317/4318 stay unexposed
+# (ADR-IC-007 §P1). If the all-in-one image isn't serving 3200, the UI degrades to the
+# illustrative waterfall (non-fatal).
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-lgtm
+spec:
+  ports:
+    - name: tempo-query
+      port: 3200
+      targetPort: 3200
