@@ -39,6 +39,7 @@ on:
       - 'notification/**'
       - 'mcp-server/**'
       - 'pack-validate/**'
+      - 'docs/demo/mission-control/**'  # the Mission Control UI image (zla1.5.4)
       - 'families/**'              # the engine image's publish pulls in the family projects
       - 'Directory.Packages.props' # central package versions the .NET image restores against
       - '.github/workflows/image-build.yml'
@@ -101,6 +102,13 @@ jobs:
           - service: pack-validate
             dockerfile: pack-validate/Dockerfile
             context: pack-validate
+          # Mission Control demo UI (bd babelstone-zla1.5.4): a self-contained, stdlib-only
+          # Python proxy + static UI, so — like mcp-server / pack-validate — it builds with its
+          # OWN dir as context (serve.py + index.html live there). Publishes
+          # ghcr.io/jhosm/babelstone-mission-control, multi-arch + cosign-signed like the rest.
+          - service: mission-control
+            dockerfile: docs/demo/mission-control/Dockerfile
+            context: docs/demo/mission-control
     # Surface this leg's pushed digest to the fan-in `digests` job (and, downstream, to the
     # Q.5 cosign step). Empty on a PR run (build-only, nothing pushed).
     outputs:
