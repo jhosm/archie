@@ -1,0 +1,24 @@
+# Mount the durable PVC (backstage-db-pvc.yaml) into the Backstage DB Deployment
+# and point PGDATA at a subdirectory — a freshly-provisioned CSI block volume
+# mounts with a lost+found entry, and Postgres refuses to initdb into a non-empty
+# data root, so the data must live one level down. Strategic merge: the env,
+# volumeMounts, and volumes lists all merge by `name`, so this is purely additive.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backstage-db
+spec:
+  template:
+    spec:
+      containers:
+        - name: postgres
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: backstage-db-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: backstage-db-data
+          persistentVolumeClaim:
+            claimName: backstage-db-data

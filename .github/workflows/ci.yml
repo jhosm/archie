@@ -728,10 +728,12 @@ jobs:
         # also mounts), which sit above the kustomization root — hence
         # --load-restrictor=LoadRestrictionsNone. kubeconform -strict catches
         # schema drift against the pinned Kubernetes 1.31.0 API surface.
-        # Both overlays are validated: `dev` (single-replica) and `ha` (the
-        # P.7 production-shaped topology — 3-node Redpanda + PG warm standby).
+        # All overlays are validated: `dev` (single-replica), `ha` (the P.7
+        # production-shaped topology — 3-node Redpanda + PG warm standby), and
+        # `staging` (the always-on demo box — single-replica + durable hcloud
+        # storage + the public Traefik/cert-manager TLS edge; bd babelstone-zla1).
         run: |
-          for overlay in dev ha; do
+          for overlay in dev ha staging; do
             echo "== kubeconform: overlays/$overlay =="
             mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$overlay" \
               | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
