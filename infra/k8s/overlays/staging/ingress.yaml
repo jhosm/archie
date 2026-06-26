@@ -68,3 +68,32 @@ spec:
                 name: backstage
                 port:
                   number: 7007
+---
+# Mission Control demo UI (bd babelstone-zla1.5.5) — the public demo landing. The browser hits
+# only this host; Mission Control same-origin-proxies the engine/orchestrator/tempo/agent
+# Services internally (so the product Services need no public Ingress of their own).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mission-control
+  labels:
+    app.kubernetes.io/name: mission-control
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-babelstone
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - app.babelstone.dev
+      secretName: mission-control-tls
+  rules:
+    - host: app.babelstone.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mission-control
+                port:
+                  number: 9000
