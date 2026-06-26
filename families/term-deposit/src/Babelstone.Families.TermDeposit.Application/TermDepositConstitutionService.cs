@@ -8,25 +8,27 @@ namespace Babelstone.Families.TermDeposit.Application;
 
 /// <summary>
 /// The term-deposit decider's impure orchestration (ADR-PC-021): it resolves the rate sheet
-/// and pack primitives, calls the pure <see cref="TermDepositDecider"/>, settles the money leg
-/// (for the lifecycle steps whose own sagas have not yet landed — constitution is now DE-SETTLED,
-/// bd babelstone-t7o3.4), and appends through the runtime. It depends only on generic engine ports
-/// (<see cref="AggregateRuntime{TState}"/>, <see cref="IRateSheetStore"/>, <see cref="ISettlementPort"/>)
-/// plus the pinned <see cref="VerifiedPack"/> — the dependency arrow is family→engine, never the
-/// reverse (ADR-PC-021 §D2).
+/// and pack primitives, calls the pure <see cref="TermDepositDecider"/>, and appends through the
+/// runtime. EVERY money-moving lifecycle leg is now DE-SETTLED — constitution's principal debit is the
+/// CONSTITUTION saga's gated step (bd babelstone-t7o3.4), and the maturity / coupon / early-termination
+/// credits and the renewal rollover-debit + ADVANCE-interest credit each record an Originated
+/// <see cref="Movement"/> APPEND-FIRST on their event for the substrate-owned settlement saga to effect,
+/// gated (bd babelstone-t7o3.13, ADR-PC-032 slot 5). So this service no longer takes an
+/// <c>ISettlementPort</c> at all. It depends only on generic engine ports
+/// (<see cref="AggregateRuntime{TState}"/>, <see cref="IRateSheetStore"/>) plus the pinned
+/// <see cref="VerifiedPack"/> — the dependency arrow is family→engine, never the reverse (ADR-PC-021 §D2).
 /// </summary>
 /// <remarks>
 /// The pinned <paramref name="pack"/> and its primitive bindings model the engine-instance's
 /// pinned configuration for the walking skeleton (ADR-PC-009); a config registry resolving them
 /// per deposit is later work. The resolve→append pair is two transactions here; the ADR-PC-008
 /// §S2 in-transaction version is a tracked follow-up (bd babelstone-3k10). The shared
-/// resolve→stamp→settle→append choreography is kept as separable steps so it can lift into a
+/// resolve→stamp→decide→append choreography is kept as separable steps so it can lift into a
 /// generic ConstitutionPipeline on the second decider (ADR-PC-021 §P5, bd babelstone-osv6).
 /// </remarks>
 public sealed class TermDepositConstitutionService(
     AggregateRuntime<DepositPosition> runtime,
     IRateSheetStore rateSheets,
-    ISettlementPort settlement,
     VerifiedPack pack,
     string dayCountPrimitive,
     string withholdingPrimitive,
@@ -231,19 +233,25 @@ public sealed class TermDepositConstitutionService(
         // 2. Pack-resolved primitives (fail loud, never a silent default).
         var (dayCount, withholdingBps) = ResolvePrimitives();
 
-        // 3. Decide (pure): variant-branched accrue → withhold → mature.
-        var events = TermDepositDecider.DecideMaturity(position, dayCount, withholdingBps);
+        // 3. Decide (pure): variant-branched accrue → withhold → mature. Materialized to a mutable list so
+        //    the credit-bearing DepositMatured can be replaced with its Movement-bearing copy below.
+        var events = TermDepositDecider.DecideMaturity(position, dayCount, withholdingBps).ToList();
 
-        // 4. Settle (ADR-PC-016): credit the total payout. The DepositMatured event is the last.
+        // 4. RELOCATE the maturity credit onto the substrate-owned settlement saga (bd babelstone-t7o3.13,
+        //    ADR-PC-016 §128 / ADR-PC-029 §60). The engine no longer credits the payout eagerly here: the
+        //    DepositMatured event records its money leg APPEND-FIRST as an Originated Credit Movement against
+        //    the payout account (the payout ENTERS that account), operation PayMaturity. The credit is
+        //    CONFIRMATION-gated, not funds-gated (ADR-PC-016 slot 5). The substrate settlement saga auto-starts
+        //    off the promoted ce_movementorigin / ce_movementdirections headers and effects the credit against
+        //    the Core ACL, parking in HUMAN_INTERVENTION_REQUIRED on failure (no compensation — ADR-IC-003 §P6).
         var matured = (DepositMatured)events[^1];
-        await settlement.SettleAsync(
-            new SettlementInstruction(
-                command.DepositId, SettlementDirection.Credit, matured.TotalPayout,
-                command.PayoutAccount, "maturity"),
-            ct);
+        var maturityMovement = OriginatedCredit(
+            command.PayoutAccount, matured.TotalPayout, matured.MaturedOn, MovementOperation.PayMaturity);
+        events[^1] = matured with { Movements = [maturityMovement] };
 
-        // 5. Append at the current head (optimistic concurrency on the second append). The returned
-        //    head version is the commit_sequence the caller threads for read-your-writes.
+        // 5. Append at the current head (optimistic concurrency on the second append). NO eager settlement on
+        //    this path (ADR-PC-032 slot 5: record the Movement and append FIRST). The returned head version is
+        //    the commit_sequence the caller threads for read-your-writes.
         return await runtime.AppendAsync(
             command.DepositId, hydrated.Version, events,
             Context(command.Actor, command.MaturedAt), ct);
@@ -294,18 +302,22 @@ public sealed class TermDepositConstitutionService(
         // 4. Pack-resolved primitives (fail loud) and decide (pure).
         var (dayCount, withholdingBps) = ResolvePrimitives();
         var events = TermDepositDecider.DecideInterestPayment(
-            position, periodStart, periodEnd, dayCount, withholdingBps);
+            position, periodStart, periodEnd, dayCount, withholdingBps).ToList();
 
-        // 5. Settle (ADR-PC-016): credit the coupon net to the depositor's current account.
+        // 5. RELOCATE the coupon credit onto the substrate-owned settlement saga (bd babelstone-t7o3.13,
+        //    ADR-PC-016 §128 / ADR-PC-029 §60). The engine no longer credits the coupon eagerly: the
+        //    InterestPaid event records its money leg APPEND-FIRST as an Originated Credit Movement against the
+        //    payout account (the coupon net ENTERS that account), operation PayCoupon. CONFIRMATION-gated, not
+        //    funds-gated (ADR-PC-016 slot 5). The substrate settlement saga effects the credit off the promoted
+        //    headers, parking in HUMAN_INTERVENTION_REQUIRED on failure (no compensation — ADR-IC-003 §P6).
         var paid = (InterestPaid)events[^1];
-        await settlement.SettleAsync(
-            new SettlementInstruction(
-                command.DepositId, SettlementDirection.Credit, paid.NetInterest,
-                command.PayoutAccount, "coupon"),
-            ct);
+        var couponMovement = OriginatedCredit(
+            command.PayoutAccount, paid.NetInterest, paid.PaidOn, MovementOperation.PayCoupon);
+        events[^1] = paid with { Movements = [couponMovement] };
 
-        // 6. Append at the current head (optimistic concurrency). The returned head version is the
-        //    commit_sequence the caller threads for read-your-writes.
+        // 6. Append at the current head (optimistic concurrency). NO eager settlement on this path (ADR-PC-032
+        //    slot 5: record the Movement and append FIRST). The returned head version is the commit_sequence
+        //    the caller threads for read-your-writes.
         return await runtime.AppendAsync(
             command.DepositId, hydrated.Version, events,
             Context(command.Actor, command.PaidAt), ct);
@@ -346,18 +358,23 @@ public sealed class TermDepositConstitutionService(
         //    in the decider.
         var terminationDate = DateOnly.FromDateTime(command.TerminatedAt.UtcDateTime);
         var events = TermDepositDecider.DecideEarlyTermination(
-            position, terminationDate, policy, dayCount, withholdingBps, command.TerminationReason);
+            position, terminationDate, policy, dayCount, withholdingBps, command.TerminationReason).ToList();
 
-        // 4. Settle (ADR-PC-016): credit the net settlement to the depositor's current account. The
-        //    DepositTerminatedEarly event is the last and carries the settlement amount.
+        // 4. RELOCATE the early-termination payout onto the substrate-owned settlement saga (bd babelstone-t7o3.13,
+        //    ADR-PC-016 §128 / ADR-PC-029 §60; the HTTP endpoint is bd babelstone-t7o3.13.1). The engine no
+        //    longer credits the net settlement eagerly: the DepositTerminatedEarly event records its money leg
+        //    APPEND-FIRST as an Originated Credit Movement against the payout account (the net settlement ENTERS
+        //    that account), operation PayEarlyTermination. CONFIRMATION-gated, not funds-gated (ADR-PC-016 slot
+        //    5). The substrate settlement saga effects the credit off the promoted headers, parking in
+        //    HUMAN_INTERVENTION_REQUIRED on failure (no compensation — ADR-IC-003 §P6).
         var terminated = (DepositTerminatedEarly)events[^1];
-        await settlement.SettleAsync(
-            new SettlementInstruction(
-                command.DepositId, SettlementDirection.Credit, terminated.NetSettlementAmount,
-                command.PayoutAccount, "early_termination"),
-            ct);
+        var terminationMovement = OriginatedCredit(
+            command.PayoutAccount, terminated.NetSettlementAmount, terminated.TerminatedOn,
+            MovementOperation.PayEarlyTermination);
+        events[^1] = terminated with { Movements = [terminationMovement] };
 
-        // 5. Append at the current head (optimistic concurrency on the second append).
+        // 5. Append at the current head (optimistic concurrency on the second append). NO eager settlement on
+        //    this path (ADR-PC-032 slot 5: record the Movement and append FIRST).
         await runtime.AppendAsync(
             command.DepositId, hydrated.Version, events,
             Context(command.Actor, command.TerminatedAt), ct);
@@ -671,28 +688,36 @@ public sealed class TermDepositConstitutionService(
             closing, command.NewDepositId, closing.RemainingPrincipal, renewalTan, renewalRateSheetVersionId,
             renewalDate, renewalRole, fundingAccount);
 
-        // 7. Settle the rolled-over principal into the new instance (the renewal_rollover debit, monolith
-        //    step 8a) against the CLOSING deposit's funding token. The maturity credit already moved out in
-        //    MatureAsync; only the rollover debit settles here, so the settlement legs now SPLIT across two
-        //    calls — maturity credit from MatureAsync, rollover debit from here. ADVANCE pays its full-term
-        //    interest up front (monolith step 8b), the same as a fresh constitution; the upfront
-        //    InterestPaid rides in the new stream's first transaction.
-        await settlement.SettleAsync(
-            new SettlementInstruction(
-                command.NewDepositId, SettlementDirection.Debit, renewed.Principal,
-                fundingAccount, "renewal_rollover"),
-            ct);
-        var renewalConstitutionEvents = new List<DomainEvent> { renewed };
+        // 7. RELOCATE the renewal money legs onto the substrate-owned settlement saga (bd babelstone-t7o3.13,
+        //    ADR-PC-016 §128 / ADR-PC-029 §60). The engine no longer settles eagerly here: the renewed
+        //    DepositConstituted records its rolled-over-principal leg APPEND-FIRST as an Originated DEBIT
+        //    Movement against the CLOSING deposit's funding token (the matured principal LEAVES the funding
+        //    account into the renewed deposit, operation RolloverDebit). The maturity credit already moved out
+        //    via MatureAsync's gated leg; only the rollover debit rides this stream. ADVANCE pays its full-term
+        //    interest up front (monolith step 8b): its InterestPaid records an Originated CREDIT Movement
+        //    against the funding account (operation PayCoupon), riding the new stream's first transaction. Both
+        //    legs are the substrate saga's gated steps off their promoted headers — never an eager in-engine
+        //    settle (ADR-PC-032 slot 5). Per-account FIFO holds: each Movement keys its own settlement instance.
+        var rolloverMovement = new Movement(
+            AccountRef: fundingAccount,
+            Direction: SettlementDirection.Debit,
+            Amount: renewed.Principal,
+            ValueDate: renewalDate,
+            Operation: MovementOperation.RolloverDebit,
+            Origin: MovementOrigin.Originated,
+            CommandId: command.CommandId ?? Guid.Empty);
+        var renewalConstitutionEvents = new List<DomainEvent>
+        {
+            renewed with { Movements = [rolloverMovement] },
+        };
         if (renewed.InterestVariant == TermDepositDecider.Advance)
         {
             var newPosition = FoldHead(renewed);
-            var advance = TermDepositDecider.DecideAdvance(newPosition, dayCount, withholdingBps);
+            var advance = TermDepositDecider.DecideAdvance(newPosition, dayCount, withholdingBps).ToList();
             var paid = (InterestPaid)advance[^1];
-            await settlement.SettleAsync(
-                new SettlementInstruction(
-                    command.NewDepositId, SettlementDirection.Credit, paid.NetInterest,
-                    fundingAccount, "advance_interest"),
-                ct);
+            var advanceMovement = OriginatedCredit(
+                fundingAccount, paid.NetInterest, paid.PaidOn, MovementOperation.PayCoupon, command.CommandId);
+            advance[^1] = paid with { Movements = [advanceMovement] };
             renewalConstitutionEvents.AddRange(advance);
         }
 
@@ -789,6 +814,29 @@ public sealed class TermDepositConstitutionService(
                 $"Deposit {depositId} is {current}; cannot {action} (illegal lifecycle transition {transition}).");
         }
     }
+
+    /// <summary>
+    /// Build the Originated CREDIT <see cref="Movement"/> a term-deposit payout leg records APPEND-FIRST on its
+    /// event (ADR-PC-032 slot 5; bd babelstone-t7o3.13). A payout (maturity, coupon, early-termination, ADVANCE
+    /// upfront interest) CREDITS the depositor — the value ENTERS the named payout/funding account, so direction
+    /// is pinned to that account (a <see cref="SettlementDirection.Credit"/>, feature-design §2). The credit is
+    /// CONFIRMATION-gated, not funds-gated (ADR-PC-016 slot 5): the substrate-owned settlement saga effects it
+    /// off the promoted headers and parks in HUMAN_INTERVENTION_REQUIRED on failure, never compensates
+    /// (ADR-IC-003 §P6). The one-shot lifecycle commands (maturity/coupon/early-termination) carry no
+    /// ADR-PC-029 command id, so the movement's <c>CommandId</c> is <see cref="Guid.Empty"/> (its append
+    /// idempotency rides the lifecycle gate; the saga's idempotency rides the stable process-id-derived external
+    /// reference, ADR-IC-012 §P4); the renewal legs thread the renewal command's id. Pure — no clock, no I/O.
+    /// </summary>
+    private static Movement OriginatedCredit(
+        string accountRef, Money amount, DateOnly valueDate, MovementOperation operation, Guid? commandId = null) =>
+        new(
+            AccountRef: accountRef,
+            Direction: SettlementDirection.Credit,
+            Amount: amount,
+            ValueDate: valueDate,
+            Operation: operation,
+            Origin: MovementOrigin.Originated,
+            CommandId: commandId ?? Guid.Empty);
 
     /// <summary>
     /// Pack-resolved primitives, fail-loud (never a silent default): the day-count convention and

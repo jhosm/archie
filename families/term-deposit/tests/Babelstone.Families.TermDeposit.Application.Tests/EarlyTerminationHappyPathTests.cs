@@ -60,15 +60,20 @@ public sealed class EarlyTerminationHappyPathTests(ConstitutionFixture fixture)
         Assert.Equal(4, await fixture.CountAsync("events", "stream_id", depositId));
         Assert.Equal(4, await fixture.CountAsync("outbox", "aggregate_id", depositId));
 
-        // The legacy-settlement legs (bd babelstone-t7o3.4): the CONSTITUTION path is de-settled — its
-        // principal debit is now the saga's gated step (ADR-PC-016 §68/§127), so it no longer leads.
-        // Early termination keeps its eager credit for now (its own saga has not landed): the NET
-        // settlement (not the full principal) at the break is the only settlement leg here.
-        Assert.DoesNotContain(settlement.Instructions, i => i.Reason == "constitution");
-        var credit = Assert.Single(settlement.Instructions);
-        Assert.Equal(SettlementDirection.Credit, credit.Direction);
-        Assert.Equal(new Money(1_001_100), credit.Amount);
-        Assert.Equal("early_termination", credit.Reason);
+        // De-settled, gated-saga relocation (bd babelstone-t7o3.4 constitution + bd babelstone-t7o3.13
+        // early termination): NO eager settlement at all — the recording port saw nothing. The early-
+        // termination payout records its money leg APPEND-FIRST as an Originated Credit Movement on
+        // DepositTerminatedEarly (the NET settlement, not the full principal); the substrate-owned settlement
+        // saga effects the cash leg, gated (ADR-PC-032 slot 5; the HTTP money-mover endpoint is bd t7o3.13.1).
+        Assert.Empty(settlement.Instructions);
+
+        var terminated = Assert.Single(await EventsOfAsync<DepositTerminatedEarly>(fixture.ConnectionString, depositId));
+        var movement = Assert.Single(terminated.Movements!);
+        Assert.Equal(SettlementDirection.Credit, movement.Direction);   // the net settlement ENTERS the payout account
+        Assert.Equal(new Money(1_001_100), movement.Amount);
+        Assert.Equal(MovementOperation.PayEarlyTermination, movement.Operation);
+        Assert.Equal(MovementOrigin.Originated, movement.Origin);
+        Assert.Equal("PT50-DDA-001", movement.AccountRef);
     }
 
     [Fact]
@@ -115,8 +120,28 @@ public sealed class EarlyTerminationHappyPathTests(ConstitutionFixture fixture)
             () => DepositPosition.Empty);
         var settlement = new RecordingSettlementPort();
         var service = new TermDepositConstitutionService(
-            runtime, new PostgresRateSheetStore(connectionString), settlement, SkeletonPack.LoadPt2026(),
+            runtime, new PostgresRateSheetStore(connectionString), SkeletonPack.LoadPt2026(),
             dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros", earlyTerminationPolicy: WorkedExample);
         return (runtime, service, settlement);
+    }
+
+    /// <summary>Load the appended events of type <typeparamref name="TEvent"/> off the durable stream, decoding
+    /// the store JSON the runtime fold uses — to assert the Movement a money-moving event records APPEND-FIRST
+    /// (bd babelstone-t7o3.13), the leg the substrate-owned settlement saga effects instead of an eager settle.</summary>
+    private static async Task<IReadOnlyList<TEvent>> EventsOfAsync<TEvent>(string connectionString, Guid streamId)
+        where TEvent : DomainEvent
+    {
+        var store = new PostgresEventStore(connectionString);
+        var serializer = new JsonEventSerializer();
+        var events = new List<TEvent>();
+        await foreach (var envelope in store.LoadAsync(streamId))
+        {
+            if (envelope.EventType.EndsWith(typeof(TEvent).Name, StringComparison.Ordinal))
+            {
+                events.Add((TEvent)serializer.Decode(envelope.Payload, typeof(TEvent)));
+            }
+        }
+
+        return events;
     }
 }

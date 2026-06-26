@@ -566,7 +566,7 @@ public sealed class PackSimulationDepth5Tests(ConstitutionFixture fixture, ITest
             new JsonEventSerializer(), new NullPiiProtector(), TimeProvider.System,
             () => DepositPosition.Empty);
         var service = new TermDepositConstitutionService(
-            runtime, new PostgresRateSheetStore(connectionString), new RecordingSettlementPort(),
+            runtime, new PostgresRateSheetStore(connectionString),
             SkeletonPack.LoadPt2026(), dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros",
             earlyTerminationPolicy: earlyTerminationPolicy,
             // The F.12 partial-withdrawal policy rides on the product config (k6r8.8). ConstituteAsync

@@ -287,21 +287,26 @@ internal static class MovementCarrier
            && parameterType.GetGenericTypeDefinition() == typeof(IReadOnlyList<>)
            && parameterType.GetGenericArguments()[0] == typeof(Movement);
 
-    /// <summary>Build the Avro array of nested Movement records for the carrier field. Fail loud (with
-    /// the parameter name) on a null list — the carrier is a REQUIRED array field, never an optional
-    /// union; an event with no movements carries an EMPTY array, never null.</summary>
+    /// <summary>Build the Avro array of nested Movement records for the carrier field. The carrier is a
+    /// REQUIRED array field on the WIRE — never an optional union: an event with no movements is encoded as
+    /// an EMPTY array, never null. A <c>null</c> C# carrier (the <c>IReadOnlyList&lt;Movement&gt;? = null</c>
+    /// record default — the idiomatic "no movements" value a movement-free or pre-Movement event constructs
+    /// with) is therefore NORMALIZED to the empty array here, so the wire stays "[] never null" while the C#
+    /// default-construction path stays ergonomic. This preserves the wire contract (a decoder always reads an
+    /// array, never null) without forcing every direct construction to spell out <c>Movements: []</c>.</summary>
     public static object ToAvroArray(object? value, Schema fieldSchema, string parameterName)
     {
-        if (value is null)
-        {
-            throw new InvalidOperationException(
-                $"Movement carrier '{parameterName}' is null; it is a required array field (an event with no movements carries an empty array, not null).");
-        }
-
         if (fieldSchema is not ArraySchema arraySchema || arraySchema.ItemSchema is not RecordSchema itemSchema)
         {
             throw new InvalidOperationException(
                 $"Movement carrier '{parameterName}' maps to an Avro array-of-record, but its .avsc field is '{fieldSchema.Tag}'.");
+        }
+
+        // null ⇒ no movements ⇒ the empty wire array (never a null on the wire). A non-null list maps
+        // element-wise to the nested Movement records.
+        if (value is null)
+        {
+            return Array.Empty<object>();
         }
 
         var movements = ((IEnumerable)value).Cast<Movement>();
@@ -309,8 +314,12 @@ internal static class MovementCarrier
     }
 
     /// <summary>Decode the Avro array of nested Movement records back to the carrying event's
-    /// <c>IReadOnlyList&lt;Movement&gt;</c>.</summary>
-    public static IReadOnlyList<Movement> FromAvroArray(object? avroValue, string parameterName)
+    /// <c>IReadOnlyList&lt;Movement&gt;?</c>. An EMPTY wire array (the "no movements" encoding — what a null or
+    /// empty C# carrier is encoded as, see <see cref="ToAvroArray"/>) decodes back to <c>null</c>, the
+    /// idiomatic C# "no movements" the record default constructs with — so a movement-free event round-trips
+    /// to IDENTITY (null → [] wire → null) rather than to a non-equal empty list. A non-empty array decodes
+    /// element-wise to the list. (bd t7o3.13.)</summary>
+    public static IReadOnlyList<Movement>? FromAvroArray(object? avroValue, string parameterName)
     {
         if (avroValue is not object[] array)
         {
@@ -318,7 +327,9 @@ internal static class MovementCarrier
                 $"Movement carrier '{parameterName}' expected an Avro array; got '{avroValue?.GetType().Name ?? "null"}'.");
         }
 
-        return array.Cast<GenericRecord>().Select(FromMovementRecord).ToList();
+        return array.Length == 0
+            ? null
+            : array.Cast<GenericRecord>().Select(FromMovementRecord).ToList();
     }
 
     private static GenericRecord ToMovementRecord(Movement movement, RecordSchema itemSchema)

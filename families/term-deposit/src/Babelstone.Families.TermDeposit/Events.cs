@@ -110,8 +110,28 @@ public sealed record DepositConstituted(
     // version string, NOT PII (ADR-PC-004 §P2). Additive with an Avro default "" so pre-pin records still
     // decode (forward-only evolution, ADR-IC-002 §P3) — empty when no product-config store is wired
     // (direct callers) or the config carried no version. Prospective only (bd babelstone-fk7m.9).
-    string ProductConfigVersion = "") : DomainEvent
+    string ProductConfigVersion = "",
+    // The constitution's money movement(s) recorded APPEND-FIRST (ADR-PC-032 slot 5, bd babelstone-t7o3.13).
+    // FRESH constitution carries NONE (null): its principal debit is the CONSTITUTION saga's gated step
+    // (bd babelstone-t7o3.4, ADR-PC-029 slot 2 — a separate gating mechanism, not this Movement seam). A
+    // RENEWAL constitution (DecideRenewalConstitution) carries ONE Originated Debit Movement against the
+    // funding account — the matured principal re-debited into the renewed deposit (operation RolloverDebit) —
+    // so the substrate-owned settlement saga effects the rollover debit off the promoted headers instead of
+    // the eager SettleAsync. Optional/additive (defaulted null) so the fresh path and pre-Movement streams
+    // declare no settlement header and start no settlement saga (forward-only, ADR-IC-002).
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent
 {
+    /// <summary>
+    /// Promote a RENEWAL constitution's rollover-debit Movement origin/direction to the
+    /// <c>ce_movementorigin</c> / <c>ce_movementdirections</c> CloudEvents extension headers the
+    /// substrate-owned settlement saga auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), via the GENERIC
+    /// engine-spine seam (<see cref="MovementHeaders.ForOriginatedMovements"/>). A FRESH constitution carries no
+    /// Movement, so it declares no settlement header and starts no settlement saga — its principal debit stays
+    /// the CONSTITUTION saga's gated step (bd babelstone-t7o3.4), untouched by this seam.
+    /// </summary>
+    public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
+        MovementHeaders.ForOriginatedMovements(Movements ?? []);
+
     // Constitution is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1): the instance's
     // state is interpretable on its own here, so a snapshot is taken regardless of the per-N count.
     public override bool IsLifecycleBoundary => true;
@@ -132,27 +152,62 @@ public sealed record WithholdingApplied(Money Tax, Money Net) : DomainEvent;
 /// payload. Defaulted to <c>""</c> for backward compatibility with pre-field streams (the Avro
 /// <c>auto_renewal_policy</c> field is the nullable, null-defaulted union, ADR-IC-002 §P2). A
 /// structural enum token, never PII (ADR-PC-004 §P2).</para></summary>
+/// <param name="Movements">The maturity payout's money movement(s) recorded APPEND-FIRST on this event
+/// (ADR-PC-032 slot 5 / feature-design money-movement-settlement §7; bd babelstone-t7o3.13). A maturity
+/// records ONE <see cref="MovementOrigin.Originated"/> <see cref="Movement"/>: a
+/// <see cref="SettlementDirection.Credit"/> against the depositor's named payout account (the payout ENTERS
+/// that account), operation <see cref="MovementOperation.PayMaturity"/>. The credit is CONFIRMATION-gated, not
+/// funds-gated (ADR-PC-016 slot 5). The engine no longer settles eagerly on this path; the substrate-owned
+/// settlement saga auto-starts off the promoted <c>ce_movementorigin</c> / <c>ce_movementdirections</c> headers
+/// to effect the cash leg, gated. Optional/additive (defaulted empty) so pre-Movement streams still replay
+/// (forward-only, ADR-IC-002): an empty carrier declares no settlement headers and starts no saga.</param>
 public sealed record DepositMatured(
     Money PrincipalReturned,
     Money NetInterestPaid,
     Money TotalPayout,
     DateOnly MaturedOn,
-    string AutoRenewalPolicy = "") : DomainEvent
+    string AutoRenewalPolicy = "",
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent
 {
     /// <summary>
-    /// Declares the renewal policy as the <c>autorenewalpolicy</c> CloudEvents extension attribute
-    /// (ADR-IC-018 §P5), which the outbox relay promotes to the <c>ce_autorenewalpolicy</c> header —
-    /// letting a renewal saga filter header-only. Emitted ONLY when the policy is non-empty: an
-    /// empty/absent policy (pre-field streams) declares no extension header, leaving the relay's
-    /// standard CE header set untouched. The token is structural, not PII (ADR-PC-004 §P2).
+    /// Declares the maturity payout's Movement origin/direction (<c>movementorigin</c> /
+    /// <c>movementdirections</c>, ADR-PC-032 §A7/§A8) AND the renewal policy (<c>autorenewalpolicy</c>) as
+    /// CloudEvents extension attributes (ADR-IC-018 §P5), which the outbox relay promotes to the
+    /// <c>ce_*</c> headers. The substrate-owned settlement saga auto-starts on <c>movementorigin == Originated</c>
+    /// (bd babelstone-t7o3.13); a renewal saga still filters header-only on <c>autorenewalpolicy</c>. The two
+    /// producers COMPOSE on one hop — distinct keys, no double-populate. Movement headers come via the GENERIC
+    /// engine-spine seam (<see cref="MovementHeaders.ForOriginatedMovements"/>), so they name no family. Both are
+    /// emitted only when present: a movement-free / empty-policy event declares the corresponding header(s) only
+    /// when it has them. All values are closed-enum / structural tokens, never PII (ADR-PC-004 §P2).
     /// </summary>
-    public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
-        string.IsNullOrEmpty(AutoRenewalPolicy)
-            ? null
-            : new Dictionary<string, string>(StringComparer.Ordinal)
+    public override IReadOnlyDictionary<string, string>? IntegrationHeaders
+    {
+        get
+        {
+            var movementHeaders = MovementHeaders.ForOriginatedMovements(Movements ?? []);
+            var hasPolicy = !string.IsNullOrEmpty(AutoRenewalPolicy);
+            if (movementHeaders is null && !hasPolicy)
             {
-                ["autorenewalpolicy"] = AutoRenewalPolicy,
-            };
+                return null;
+            }
+
+            var headers = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (movementHeaders is not null)
+            {
+                foreach (var kv in movementHeaders)
+                {
+                    headers[kv.Key] = kv.Value;
+                }
+            }
+
+            if (hasPolicy)
+            {
+                headers["autorenewalpolicy"] = AutoRenewalPolicy;
+            }
+
+            return headers;
+        }
+    }
 
     // Maturity is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1) — a closing point
     // where the instance's terminal state is interpretable on its own.
@@ -188,12 +243,33 @@ public sealed record DepositConstitutionFailed(
 
 /// <summary>Interest is paid out (the periodic/coupon variant, vs the single AT_MATURITY flow):
 /// <c>NetInterest = GrossInterest − WithholdingTax</c> conserved to the cent.</summary>
+/// <param name="Movements">The coupon (or ADVANCE upfront-interest) payout's money movement(s) recorded
+/// APPEND-FIRST on this event (ADR-PC-032 slot 5; bd babelstone-t7o3.13). A coupon records ONE
+/// <see cref="MovementOrigin.Originated"/> <see cref="Movement"/>: a <see cref="SettlementDirection.Credit"/>
+/// against the depositor's named payout account (the net coupon ENTERS that account), operation
+/// <see cref="MovementOperation.PayCoupon"/>. The credit is CONFIRMATION-gated, not funds-gated (ADR-PC-016
+/// slot 5). The engine no longer settles eagerly on this path; the substrate-owned settlement saga
+/// auto-starts off the promoted <c>ce_movementorigin</c> / <c>ce_movementdirections</c> headers to effect the
+/// cash leg, gated. Optional/additive (defaulted empty) so pre-Movement streams still replay (forward-only,
+/// ADR-IC-002): an empty carrier declares no settlement headers and starts no saga.</param>
 public sealed record InterestPaid(
     Guid DepositId,
     Money GrossInterest,
     Money WithholdingTax,
     Money NetInterest,
-    DateOnly PaidOn) : DomainEvent;
+    DateOnly PaidOn,
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent
+{
+    /// <summary>
+    /// Promote the coupon Movement's origin/direction to the <c>ce_movementorigin</c> /
+    /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
+    /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), via the GENERIC engine-spine seam
+    /// (<see cref="MovementHeaders.ForOriginatedMovements"/>). Null/empty movements declare no settlement
+    /// header, starting no saga.
+    /// </summary>
+    public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
+        MovementHeaders.ForOriginatedMovements(Movements ?? []);
+}
 
 /// <summary>The deposit auto-renews into a new term: a fresh deposit (<paramref name="NewDepositId"/>)
 /// is constituted from the rolled-over principal at the new rate-sheet-resolved TAN. The new
@@ -219,14 +295,35 @@ public sealed record DepositRenewed(
 /// <paramref name="PenaltyAmount"/> is the EFFECTIVE penalty actually charged and is non-negative. The
 /// gross accrued interest, withholding, and net payout are emitted as the paired
 /// <see cref="InterestAccrued"/>/<see cref="WithholdingApplied"/> flows (02 §2.5).</summary>
+/// <param name="Movements">The early-termination payout's money movement(s) recorded APPEND-FIRST on this
+/// event (ADR-PC-032 slot 5; bd babelstone-t7o3.13 relocates the leg, bd babelstone-t7o3.13.1 adds the
+/// endpoint). An early termination records ONE <see cref="MovementOrigin.Originated"/>
+/// <see cref="Movement"/>: a <see cref="SettlementDirection.Credit"/> against the depositor's named payout
+/// account (the net settlement ENTERS that account), operation
+/// <see cref="MovementOperation.PayEarlyTermination"/>. The credit is CONFIRMATION-gated, not funds-gated
+/// (ADR-PC-016 slot 5). The engine no longer settles eagerly on this path; the substrate-owned settlement saga
+/// auto-starts off the promoted <c>ce_movementorigin</c> / <c>ce_movementdirections</c> headers to effect the
+/// cash leg, gated. Optional/additive (defaulted empty) so pre-Movement streams still replay (forward-only,
+/// ADR-IC-002): an empty carrier declares no settlement headers and starts no saga.</param>
 public sealed record DepositTerminatedEarly(
     Guid DepositId,
     Money PrincipalReturned,
     Money PenaltyAmount,
     Money NetSettlementAmount,
     DateOnly TerminatedOn,
-    string TerminationReason) : DomainEvent
+    string TerminationReason,
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent
 {
+    /// <summary>
+    /// Promote the early-termination payout Movement's origin/direction to the <c>ce_movementorigin</c> /
+    /// <c>ce_movementdirections</c> CloudEvents extension headers the substrate-owned settlement saga
+    /// auto-starts on (ADR-PC-032 §A7/§A8; ADR-IC-018 §P5), via the GENERIC engine-spine seam
+    /// (<see cref="MovementHeaders.ForOriginatedMovements"/>). Null/empty movements declare no settlement
+    /// header, starting no saga.
+    /// </summary>
+    public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
+        MovementHeaders.ForOriginatedMovements(Movements ?? []);
+
     // Early termination is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1).
     public override bool IsLifecycleBoundary => true;
 }
