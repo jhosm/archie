@@ -392,6 +392,114 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal(["term_deposit.DepositConstituted"], await EventTypesAsync(depositId));
     }
 
+    // ── Early-termination money-mover endpoint (F.4; 02 §2.5, bd babelstone-t7o3.13.1) ─────────────────
+    // POST /v1/deposits/{id}/terminate: an irreversible money-mover (SCA-gated like maturity/interest) that
+    // ALSO carries the money-mover idempotency contract (mandatory Idempotency-Key; rejects double-terminate).
+    // The payout is the de-settled, confirmation-gated leg (bd t7o3.13): DepositTerminatedEarly records an
+    // Originated Credit PayEarlyTermination Movement APPEND-FIRST that the substrate-owned settlement saga
+    // effects as the gated ACL credit — never an eager in-engine settle.
+
+    [Fact]
+    public async Task Terminate_over_HTTP_with_fresh_SCA_and_a_key_folds_TerminatedEarly_and_records_the_gated_payout_Movement()
+    {
+        var depositId = await ConstituteActiveDepositAsync();
+
+        var response = await PostMoneyMoverWithScaAndKeyAsync(
+            $"/v1/deposits/{depositId}/terminate",
+            new TerminateEarlyRequest(TerminatedAt: new DateTimeOffset(2026, 3, 16, 0, 0, 0, TimeSpan.Zero)),
+            Guid.NewGuid().ToString());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var terminated = await response.Content.ReadFromJsonAsync<TerminateEarlyResponse>(SnakeCase);
+        Assert.NotNull(terminated);
+        Assert.Equal("TERMINATEDEARLY", terminated.Status);
+
+        // The durable log: constitution then the elapsed-interest flow + the closing DepositTerminatedEarly.
+        Assert.Equal(
+            ["term_deposit.DepositConstituted", "term_deposit.InterestAccrued",
+             "term_deposit.WithholdingApplied", "term_deposit.DepositTerminatedEarly"],
+            await EventTypesAsync(depositId));
+
+        // The de-settled gated payout (bd t7o3.13): DepositTerminatedEarly carries the Originated Credit
+        // PayEarlyTermination Movement the substrate-owned settlement saga effects — NOT an eager settle.
+        var terminatedEvent = Assert.Single(await EventsOfAsync<DepositTerminatedEarly>(depositId));
+        var movement = Assert.Single(terminatedEvent.Movements!);
+        Assert.Equal(SettlementDirection.Credit, movement.Direction);
+        Assert.Equal(MovementOperation.PayEarlyTermination, movement.Operation);
+        Assert.Equal(MovementOrigin.Originated, movement.Origin);
+        Assert.Equal(terminatedEvent.NetSettlementAmount, movement.Amount);
+    }
+
+    [Fact]
+    public async Task ENGINE_COMMAND_IDEMPOTENT_terminate_replay_returns_the_original_and_appends_once()
+    {
+        // The money-mover idempotency contract (ADR-PC-029 slot 4, bd t7o3.13.1): two POSTs with the SAME
+        // Idempotency-Key (the dispatcher's at-least-once retry) terminate ONCE — the second is short-circuited
+        // by the engine's command-dedup pre-check and replays the original outcome, appending exactly one
+        // DepositTerminatedEarly. A double-terminate is rejected.
+        var depositId = await ConstituteActiveDepositAsync();
+
+        var key = Guid.NewGuid().ToString();
+        var body = new TerminateEarlyRequest(TerminatedAt: new DateTimeOffset(2026, 3, 16, 0, 0, 0, TimeSpan.Zero));
+
+        var first = await PostMoneyMoverWithScaAndKeyAsync($"/v1/deposits/{depositId}/terminate", body, key);
+        var second = await PostMoneyMoverWithScaAndKeyAsync($"/v1/deposits/{depositId}/terminate", body, key);
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var firstBody = await first.Content.ReadFromJsonAsync<TerminateEarlyResponse>(SnakeCase);
+        var secondBody = await second.Content.ReadFromJsonAsync<TerminateEarlyResponse>(SnakeCase);
+        Assert.NotNull(firstBody);
+        Assert.NotNull(secondBody);
+        // The replay returns the ORIGINAL read-your-writes token, verbatim.
+        Assert.Equal("TERMINATEDEARLY", firstBody.Status);
+        Assert.Equal("TERMINATEDEARLY", secondBody.Status);
+        Assert.Equal(firstBody.CommitSequence, secondBody.CommitSequence);
+
+        // NO second append: exactly one DepositTerminatedEarly on the stream (a double-terminate is rejected).
+        Assert.Single(await EventsOfAsync<DepositTerminatedEarly>(depositId));
+    }
+
+    [Theory]
+    [InlineData(null)]          // absent: the Idempotency-Key is MANDATORY (ADR-PC-029 slot 4)
+    [InlineData("not-a-uuid")]  // malformed: the command id must be a deterministic UUID
+    public async Task A_terminate_without_a_valid_idempotency_key_is_a_400(string? key)
+    {
+        var depositId = await ConstituteActiveDepositAsync();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/deposits/{depositId}/terminate")
+        {
+            Content = JsonContent.Create(new TerminateEarlyRequest(), options: SnakeCase),
+        };
+        AddFreshSca(request); // fresh SCA so the request reaches the mandatory-key 400, not the SCA 422
+        if (key is not null)
+        {
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", key);
+        }
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        // No termination landed: the stream still holds only the constitution event.
+        Assert.Equal(["term_deposit.DepositConstituted"], await EventTypesAsync(depositId));
+    }
+
+    [Fact]
+    public async Task Terminate_without_any_SCA_proof_is_422_SCA_REQUIRED_and_does_not_settle()
+    {
+        var depositId = await ConstituteActiveDepositAsync();
+
+        // No X-SCA-Acr / X-SCA-Auth-Time — the gateway attested no fresh SCA. A valid key is supplied so the
+        // SCA gate (the route-group filter, BEFORE the handler) is what 422s, not the mandatory-key 400.
+        var response = await PostJsonAsync(
+            $"/v1/deposits/{depositId}/terminate", new TerminateEarlyRequest(), Guid.NewGuid().ToString());
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        await AssertScaRequiredAsync(response);
+        // The deposit did NOT terminate — the stream still carries only the constitution event.
+        Assert.Equal(["term_deposit.DepositConstituted"], await EventTypesAsync(depositId));
+    }
+
     [Fact]
     public async Task The_read_model_materialises_and_the_canonical_GET_and_maturities_scan_serve_it()
     {
@@ -1086,6 +1194,41 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         };
         AddFreshSca(request);
         return await _client.SendAsync(request);
+    }
+
+    /// <summary>POST the early-termination money-mover with BOTH fresh SCA AND an Idempotency-Key — the
+    /// terminate endpoint is SCA-gated (like maturity) AND id-keyed (the money-mover idempotency contract,
+    /// bd babelstone-t7o3.13.1).</summary>
+    private async Task<HttpResponseMessage> PostMoneyMoverWithScaAndKeyAsync<TBody>(string url, TBody body, string key)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = JsonContent.Create(body, options: SnakeCase),
+        };
+        AddFreshSca(request);
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", key);
+        return await _client.SendAsync(request);
+    }
+
+    /// <summary>Load the appended events of type <typeparamref name="TEvent"/> off the durable stream, decoding
+    /// the store payload with the host's own <see cref="IEventSerializer"/> — to assert the Movement a
+    /// money-moving event records APPEND-FIRST (bd babelstone-t7o3.13), the de-settled leg the substrate-owned
+    /// settlement saga effects as the gated ACL credit.</summary>
+    private async Task<IReadOnlyList<TEvent>> EventsOfAsync<TEvent>(Guid streamId)
+        where TEvent : DomainEvent
+    {
+        var store = new Babelstone.EventStore.PostgresEventStore(_pg.GetConnectionString());
+        var serializer = _factory.Services.GetRequiredService<IEventSerializer>();
+        var events = new List<TEvent>();
+        await foreach (var envelope in store.LoadAsync(streamId))
+        {
+            if (envelope.EventType.EndsWith(typeof(TEvent).Name, StringComparison.Ordinal))
+            {
+                events.Add((TEvent)serializer.Decode(envelope.Payload, typeof(TEvent)));
+            }
+        }
+
+        return events;
     }
 
     /// <summary>Attest a FRESH, sufficiently-strong SCA proof on the request, exactly as Kong's

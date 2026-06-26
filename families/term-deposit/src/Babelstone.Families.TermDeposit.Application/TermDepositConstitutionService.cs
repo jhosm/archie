@@ -331,7 +331,9 @@ public sealed class TermDepositConstitutionService(
     /// (<see cref="TermDepositDecider.DecideEarlyTermination"/>); withholding is flow-by-flow on the one
     /// accrued flow, never rate-scaled. Termination is triggered MANUALLY here, exactly as maturity is.
     /// </summary>
-    public async Task TerminateEarlyAsync(TerminateEarlyCommand command, CancellationToken ct = default)
+    /// <returns>The stream's head version after termination (ADR-IC-005 §P3 read-your-writes token /
+    /// commit_sequence) — the HTTP money-mover endpoint threads it back for the idempotent replay.</returns>
+    public async Task<long> TerminateEarlyAsync(TerminateEarlyCommand command, CancellationToken ct = default)
     {
         // 0. The product's early-termination policy is engine-instance config for the walking skeleton
         //    (mirroring the pinned pack stand-in, ADR-PC-009). Fail loud if no policy is configured —
@@ -370,14 +372,17 @@ public sealed class TermDepositConstitutionService(
         var terminated = (DepositTerminatedEarly)events[^1];
         var terminationMovement = OriginatedCredit(
             command.PayoutAccount, terminated.NetSettlementAmount, terminated.TerminatedOn,
-            MovementOperation.PayEarlyTermination);
+            MovementOperation.PayEarlyTermination, command.CommandId);
         events[^1] = terminated with { Movements = [terminationMovement] };
 
         // 5. Append at the current head (optimistic concurrency on the second append). NO eager settlement on
-        //    this path (ADR-PC-032 slot 5: record the Movement and append FIRST).
-        await runtime.AppendAsync(
+        //    this path (ADR-PC-032 slot 5: record the Movement and append FIRST). The command id (when the HTTP
+        //    money-mover supplies one, bd babelstone-t7o3.13.1) makes the append idempotent: a replayed
+        //    terminate raises DuplicateCommandException and returns the original outcome, never a second
+        //    termination (ADR-PC-029 slot 4).
+        return await runtime.AppendAsync(
             command.DepositId, hydrated.Version, events,
-            Context(command.Actor, command.TerminatedAt), ct);
+            Context(command.Actor, command.TerminatedAt, command.CommandId), ct);
     }
 
     /// <summary>

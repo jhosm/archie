@@ -40,6 +40,16 @@ public static class DepositsEndpoints
         moneyMovers.MapPost("/maturity", MatureAsync);
         moneyMovers.MapPost("/interest", PayInterestAsync);
 
+        // Early termination (F.4; 02 §2.5, bd babelstone-t7o3.13.1): break a deposit before maturity and
+        // pay the NET settlement out. An irreversible money-mover, so it sits in the SAME SCA-gated route
+        // group as maturity/interest (the ScaPreconditionFilter enforces fresh gateway-attested SCA BEFORE
+        // any side effect). UNLIKE the one-shot maturity/interest siblings it ALSO carries a mandatory
+        // Idempotency-Key (ADR-PC-029 slot 4): the money-mover idempotency contract rejects a double-terminate
+        // — an at-least-once retry of the SAME terminate replays the original outcome rather than appending a
+        // second termination, the same id-keyed contract the partial-withdrawal / erasure siblings carry. The
+        // payout is the substrate-owned settlement saga's gated ACL credit (the de-settled leg, bd t7o3.13).
+        moneyMovers.MapPost("/terminate", TerminateEarlyAsync);
+
         // Partial early withdrawal (F.12; 02 §2.4.1, bd qze9/9w0g): reduce the principal, leaving the
         // deposit Active. A domain rejection (not Active, within the lock-up, below the minimum, leaving too
         // little, or the whole balance) surfaces as a 422, never a phantom withdrawal. UNLIKE the
@@ -433,6 +443,104 @@ public static class DepositsEndpoints
         // The post-append fold is authoritative (read-your-writes by construction): its head version is
         // the commit_sequence, carried on the response as last_sequence (DepositResponse.FromFold).
         return Results.Ok(DepositResponse.FromFold(hydrated));
+    }
+
+    private static async Task<IResult> TerminateEarlyAsync(
+        Guid id,
+        TerminateEarlyRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        TermDepositConstitutionService service,
+        AggregateRuntime<DepositPosition> runtime,
+        ICommandLog commandLog,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        // The irreversible-money-mover step-up-SCA gate (ADR-IC-010 §P8 Q-BE Q1) runs as the
+        // ScaPreconditionFilter on this route's group in Map() — in the impure shell, BEFORE any side effect.
+        //
+        // ADR-PC-029 slot 4: a deterministic Idempotency-Key is MANDATORY here — early termination is an
+        // irreversible money-mover, so a non-idempotent at-least-once retry must replay the original outcome,
+        // never append a second termination. Fail loud (400) rather than accept a non-idempotent terminate.
+        if (idempotencyKey is null || !Guid.TryParse(idempotencyKey, out var commandId))
+        {
+            return Results.Problem(
+                "Idempotency-Key header is required and must be a UUID (ADR-PC-029 slot 4).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // Pre-check BEFORE any side effect (decide / append): a known command id replays the ORIGINAL outcome
+        // with NO second append (ADR-PC-029 slot 4). Returns the same commit_sequence the first apply did off
+        // the authoritative fold — the idempotent retry the mandatory key requires (NOT the lifecycle 422,
+        // which only guards a NEW terminate with a fresh command id on an already-terminated deposit). The
+        // crash-atomic guarantee is the in-transaction command_dedup INSERT inside the append; this read keeps
+        // the common sequential retry off the write path.
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(new TerminateEarlyResponse(
+                id, replay.State.Lifecycle.ToString().ToUpperInvariant(), receipt.CommitSequence));
+        }
+
+        var command = new TerminateEarlyCommand(
+            DepositId: id,
+            TerminatedAt: request.TerminatedAt ?? clock.GetUtcNow(),
+            PayoutAccount: request.PayoutAccount ?? "PT50-DDA-001",
+            TerminationReason: string.IsNullOrWhiteSpace(request.TerminationReason)
+                ? "CUSTOMER_REQUEST"
+                : request.TerminationReason,
+            Actor: request.Actor ?? "mcp:dev",
+            CommandId: commandId);
+
+        long commitSequence;
+
+        // Early termination is its own accrual + withholding flow, so the same two product-semantic spans the
+        // maturity path opens are opened HERE, in the impure host shell — never in the pure decider/fold
+        // (ADR-PC-010 §P5 / ADR-IC-007 P2/P3). Tags are structural identifiers and cents-native money only —
+        // no PII (ADR-PC-004 §P2 / catalogue OBS_NO_PII_ATTRS).
+        using (var accrual = BabelstoneTelemetry.ActivitySource.StartActivity(
+            BabelstoneAttributes.SpanAccrualComputed, ActivityKind.Internal))
+        using (var withholding = BabelstoneTelemetry.ActivitySource.StartActivity(
+            BabelstoneAttributes.SpanWithholdingApplied, ActivityKind.Internal))
+        {
+            try
+            {
+                commitSequence = await service.TerminateEarlyAsync(command, ct);
+            }
+            catch (DuplicateCommandException dup)
+            {
+                // A concurrent duplicate slipped past the pre-check: the in-transaction command_dedup INSERT
+                // rolled the append back (no second termination) and handed back the ORIGINAL outcome. Return
+                // it verbatim off the authoritative fold — the idempotent replay slot 4 mandates.
+                var replay = await runtime.LoadAsync(id, ct);
+                return Results.Ok(new TerminateEarlyResponse(
+                    id, replay.State.Lifecycle.ToString().ToUpperInvariant(), dup.CommitSequence));
+            }
+            catch (ConcurrencyException)
+            {
+                return Results.Problem($"Deposit {id} was modified concurrently.", statusCode: StatusCodes.Status409Conflict);
+            }
+            catch (DomainRejectedException e)
+            {
+                // Not Active / already terminated / matured (the F.3 lifecycle gate) — surface as a 422, never
+                // double-terminate. A mis-pinned pack / corrupt row / absent early-termination policy throws
+                // other types and propagates as a 500, not a masquerading 422.
+                return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+            }
+
+            var hydrated = await runtime.LoadAsync(id, ct);
+            var terminated = hydrated.State;
+            accrual?.SetTag(BabelstoneAttributes.PartitionKey, id.ToString());
+            accrual?.SetTag(BabelstoneAttributes.InterestCents, terminated.AccruedGrossInterest.Cents);
+            withholding?.SetTag(BabelstoneAttributes.PartitionKey, id.ToString());
+            withholding?.SetTag(BabelstoneAttributes.TaxCents, terminated.WithholdingToDate.Cents);
+        }
+
+        // The post-append fold is authoritative (read-your-writes by construction): the deposit folds to the
+        // terminal TerminatedEarly state; its head version is the commit_sequence on the response.
+        var result = await runtime.LoadAsync(id, ct);
+        return Results.Ok(new TerminateEarlyResponse(
+            id, result.State.Lifecycle.ToString().ToUpperInvariant(), commitSequence));
     }
 
     private static async Task<IResult> WithdrawPartiallyAsync(
