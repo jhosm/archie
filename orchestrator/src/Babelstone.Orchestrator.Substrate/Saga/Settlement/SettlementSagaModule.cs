@@ -91,11 +91,25 @@ public sealed class SettlementSagaModule : ISagaModule
     /// extension-attribute HEADERS only (never the payload). The direction branch is resolved AFTER start by
     /// the machine's <see cref="SettlementProcess.SubstituteAsync"/> from the <c>movementdirection</c> header.
     /// </summary>
+    /// <remarks>
+    /// <b>Record-name-AGNOSTIC (<see cref="AutoStartMatch.ByHeaderPredicate"/>).</b> UNLIKE every product-family
+    /// saga (which starts on ONE named event type, e.g. the renewal saga on <c>DepositMatured</c>), this
+    /// family-agnostic saga starts on ANY family's money-moving event — the §D5 amendment (2026-06-24) decides
+    /// it "is auto-started by *any* family's money-moving event." A single <c>ce_type</c> record-name key
+    /// cannot express that (a real <c>LoanDisbursed</c> / <c>DepositMatured</c> / … each has its OWN record
+    /// name), and the substrate must NOT rewrite <c>ce_type</c> (it would break the engine inbox's
+    /// <c>ce_type</c>↔<c>schema_id</c> decode). So the match is the <c>movementorigin == Originated</c> HEADER
+    /// predicate alone, and <see cref="SettlementProcess.MovementOriginated"/> is the GENERIC start marker the
+    /// substrate drives the auto-started advance with (the table / <see cref="SettlementProcess.SubstituteAsync"/>
+    /// key on it). The promoted header is the engine-spine producer's (<c>MovementHeaders</c>, bd
+    /// babelstone-t7o3.20).
+    /// </remarks>
     public AutoStartRule? AutoStartRule => new AutoStartRule(
         StartEventType: SettlementProcess.MovementOriginated,
         HeaderPredicate: headers =>
             headers.TryGetValue(OriginHeader, out var origin)
-            && string.Equals(origin, OriginatedValue, StringComparison.Ordinal));
+            && string.Equals(origin, OriginatedValue, StringComparison.Ordinal),
+        Match: AutoStartMatch.ByHeaderPredicate);
 
     /// <inheritdoc />
     public void ConfigureServices(IServiceCollection services, SagaModuleContext context)

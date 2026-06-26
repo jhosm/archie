@@ -80,13 +80,57 @@ public enum SagaStartMode
 /// The auto-start rule for an event-auto-started saga (ADR-IC-018 §P5/§D5). The substrate evaluates only
 /// CloudEvents HEADERS — never the Avro payload — preserving the extraction-ready property.
 /// </summary>
-/// <param name="StartEventType">The <c>ce_type</c> record name that triggers a new saga instance.</param>
-/// <param name="HeaderPredicate">An optional additional header predicate (e.g.
-/// <c>ce_autorenewalpolicy != "NONE"</c>). Null means every event of <paramref name="StartEventType"/>
-/// starts an instance.</param>
+/// <remarks>
+/// <para>
+/// Two match shapes, both header-only (ADR-IC-018 §P5/§D5; the §D5 family-agnostic-saga amendment
+/// 2026-06-24, which decides the settlement saga "is auto-started by *any* family's money-moving event"):
+/// </para>
+/// <list type="bullet">
+///   <item><b><see cref="AutoStartMatch.ByStartEventType"/> (default).</b> The rule is keyed by
+///   <see cref="StartEventType"/> == the inbound <c>ce_type</c> record name; the optional
+///   <see cref="HeaderPredicate"/> is an ADDITIONAL filter (e.g. <c>ce_autorenewalpolicy != "NONE"</c>).
+///   The effective start event the substrate drives is the inbound event itself. This is the renewal-saga
+///   shape — one saga starts on ONE named event type.</item>
+///   <item><b><see cref="AutoStartMatch.ByHeaderPredicate"/> (record-name-AGNOSTIC).</b> The rule matches on
+///   the <see cref="HeaderPredicate"/> ALONE, against ANY consumed event regardless of its <c>ce_type</c>
+///   record name — the shape a FAMILY-AGNOSTIC saga that must start on many families' events needs (the
+///   settlement saga: any event carrying <c>ce_movementorigin == Originated</c>). The substrate must NOT
+///   rewrite <c>ce_type</c> (that would break the engine inbox's <c>ce_type</c>↔<c>schema_id</c> decode), so
+///   the rule names the GENERIC start-event marker its table keys on (e.g.
+///   <c>SettlementProcess.MovementOriginated</c>) in <see cref="StartEventType"/>, and the substrate drives
+///   the auto-started advance with THAT marker (not the real record name) so the machine's table /
+///   <see cref="IEventSubstitutor"/> resolve it. A <see cref="HeaderPredicate"/> is REQUIRED for this shape
+///   (a null predicate would match every event — fail-closed at construction).</item>
+/// </list>
+/// </remarks>
+/// <param name="StartEventType">For <see cref="AutoStartMatch.ByStartEventType"/>: the <c>ce_type</c> record
+/// name that triggers a new instance. For <see cref="AutoStartMatch.ByHeaderPredicate"/>: the GENERIC
+/// start-event marker the saga's table keys on (the substrate drives the advance with this, not the real
+/// record name).</param>
+/// <param name="HeaderPredicate">A CloudEvents-header predicate. For
+/// <see cref="AutoStartMatch.ByStartEventType"/> it is an optional additional filter (null = every event of
+/// <paramref name="StartEventType"/> starts an instance); for <see cref="AutoStartMatch.ByHeaderPredicate"/>
+/// it is REQUIRED (it is the whole match).</param>
+/// <param name="Match">Which match shape this rule uses (default <see cref="AutoStartMatch.ByStartEventType"/>,
+/// so every existing rule is unchanged).</param>
 public sealed record AutoStartRule(
     string StartEventType,
-    Func<IReadOnlyDictionary<string, string>, bool>? HeaderPredicate = null);
+    Func<IReadOnlyDictionary<string, string>, bool>? HeaderPredicate = null,
+    AutoStartMatch Match = AutoStartMatch.ByStartEventType);
+
+/// <summary>How an <see cref="AutoStartRule"/> matches an inbound event (ADR-IC-018 §P5/§D5).</summary>
+public enum AutoStartMatch
+{
+    /// <summary>Keyed by <see cref="AutoStartRule.StartEventType"/> == the inbound <c>ce_type</c> record name,
+    /// with the predicate (if any) an additional filter. The renewal/edge shape — one named start event.</summary>
+    ByStartEventType,
+
+    /// <summary>Record-name-AGNOSTIC: matched on the header predicate alone, against ANY consumed event. The
+    /// family-agnostic-saga shape (the settlement saga starting on any family's money-moving event) — the
+    /// substrate drives the advance with the rule's GENERIC <see cref="AutoStartRule.StartEventType"/> marker,
+    /// never rewriting the inbound <c>ce_type</c>.</summary>
+    ByHeaderPredicate,
+}
 
 /// <summary>
 /// Host-side ingredients passed to <see cref="ISagaModule.ConfigureServices"/> — the configuration and

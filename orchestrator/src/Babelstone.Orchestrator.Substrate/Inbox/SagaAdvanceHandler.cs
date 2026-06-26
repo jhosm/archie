@@ -90,14 +90,30 @@ public sealed class SagaAdvanceHandler
     /// </summary>
     private readonly IReadOnlyDictionary<string, AutoStartEntry> _autoStartModules;
 
+    /// <summary>
+    /// The record-name-AGNOSTIC auto-start rules (ADR-IC-018 §P5/§D5 family-agnostic-saga amendment): rules
+    /// matched on the header predicate ALONE, against ANY consumed event regardless of its <c>ce_type</c>
+    /// record name. Evaluated in declaration order ONLY when the record-name-keyed
+    /// <see cref="_autoStartModules"/> lookup misses, so the established record-name model is unchanged and
+    /// takes precedence. Empty for an edge-only / record-name-only host. The settlement saga is the first
+    /// (and at v1 only) entry — it starts on any family's money-moving event (<c>ce_movementorigin ==
+    /// Originated</c>); the substrate names no family (the predicate + marker live in the module).
+    /// </summary>
+    private readonly IReadOnlyList<AutoStartEntry> _headerPredicateAutoStarts;
+
     /// <summary>One event-auto-start rule resolved to what the start needs (ADR-IC-018 §P5). PII-free,
     /// substrate-internal — NOT one of the three concrete saga interfaces the
     /// ORCHESTRATOR_SUBSTRATE_NO_CONCRETE_SAGA gate forbids (it is a plain projection of a module's
-    /// declared rule). The predicate is the family's; the substrate only invokes it.</summary>
+    /// declared rule). The predicate is the family's; the substrate only invokes it. <paramref name="EffectiveStartEventType"/>
+    /// is the event type the substrate drives the auto-started advance with — for a record-name rule it equals
+    /// the inbound event type; for a header-predicate (record-name-agnostic) rule it is the rule's GENERIC
+    /// start-event marker (the saga's table keys on it), so the substrate never rewrites the inbound
+    /// <c>ce_type</c>.</summary>
     private sealed record AutoStartEntry(
         string SagaType,
         string InitialState,
-        Func<IReadOnlyDictionary<string, string>, bool>? HeaderPredicate);
+        Func<IReadOnlyDictionary<string, string>, bool>? HeaderPredicate,
+        string EffectiveStartEventType);
 
     /// <summary>
     /// Host N saga state machines keyed by <c>saga_type</c> (bd babelstone-mtto PR1 — the multi-saga
@@ -153,6 +169,7 @@ public sealed class SagaAdvanceHandler
         // auto-start modules is a wiring error (the registry must be a function), the same stance the
         // machine registry takes on a duplicate saga_type.
         var autoStart = new Dictionary<string, AutoStartEntry>(StringComparer.Ordinal);
+        var headerPredicateAutoStarts = new List<AutoStartEntry>();
         if (modules is not null)
         {
             foreach (var module in modules)
@@ -174,8 +191,31 @@ public sealed class SagaAdvanceHandler
                         "register the machine in the host (ADR-IC-018 §P4).");
                 }
 
-                if (!autoStart.TryAdd(rule.StartEventType,
-                        new AutoStartEntry(module.SagaType, machine.InitialState, rule.HeaderPredicate)))
+                // The EFFECTIVE start event the substrate drives the auto-started advance with equals the
+                // rule's StartEventType for BOTH shapes: a record-name rule's inbound event type IS that
+                // StartEventType, and a header-predicate (record-name-agnostic) rule names its GENERIC start
+                // marker there (so the substrate never rewrites the inbound ce_type).
+                var entry = new AutoStartEntry(
+                    module.SagaType, machine.InitialState, rule.HeaderPredicate, rule.StartEventType);
+
+                if (rule.Match == AutoStartMatch.ByHeaderPredicate)
+                {
+                    // Record-name-AGNOSTIC (ADR-IC-018 §D5 family-agnostic-saga amendment): a null predicate
+                    // would match EVERY event and silently start the saga on unrelated traffic — fail-closed.
+                    if (rule.HeaderPredicate is null)
+                    {
+                        throw new InvalidOperationException(
+                            $"Module '{module.SagaType}' declares a ByHeaderPredicate auto-start rule with no " +
+                            "HeaderPredicate; a record-name-agnostic rule MUST carry a predicate (ADR-IC-018 §P5).");
+                    }
+
+                    headerPredicateAutoStarts.Add(entry);
+                    continue;
+                }
+
+                // Record-name-keyed (the established renewal/edge model): keyed by StartEventType, which must
+                // be a function (a duplicate start event across two modules is a wiring error).
+                if (!autoStart.TryAdd(rule.StartEventType, entry))
                 {
                     throw new InvalidOperationException(
                         $"Duplicate auto-start StartEventType '{rule.StartEventType}': two modules cannot " +
@@ -185,6 +225,7 @@ public sealed class SagaAdvanceHandler
         }
 
         _autoStartModules = autoStart;
+        _headerPredicateAutoStarts = headerPredicateAutoStarts;
     }
 
     /// <summary>
@@ -266,14 +307,24 @@ public sealed class SagaAdvanceHandler
         // EVENT-AUTO-STARTED saga (the renewal saga, ADR-IC-018 §P5) is BORN here: its start event is a
         // bus fact (DepositMatured) with no prior row, so a LoadAsync miss is NOT necessarily "unknown".
         var saga = await _stateStore.LoadAsync(connection, transaction, message.ProcessId, ct);
+        // For an auto-started saga, the EFFECTIVE start event the table is driven with (defaults to the
+        // inbound event type; a record-name-agnostic rule overrides it with its generic start marker). Set
+        // only when this advance auto-starts a saga; null otherwise (an edge-started resume keeps the inbound
+        // event type, set at the effectiveEventType seed below).
+        string? autoStartEffectiveEventType = null;
         if (saga is null)
         {
-            // Does any EventAutoStarted module declare THIS event type as its start trigger, with its
-            // header predicate satisfied (ADR-IC-018 §P5/§D5)? The substrate evaluates only the DECLARED
-            // rule + the record's CloudEvents extension HEADERS (never the Avro payload) — it names no
-            // family. The predicate sees the extension-attribute map the consume loop projected
-            // (autorenewalpolicy, …); a null map is an empty one so a predicate that reads a missing key
-            // simply fails. A non-auto-start event for an unknown process is the existing rejection path.
+            // Does any EventAutoStarted module want to start a saga off THIS event (ADR-IC-018 §P5/§D5)? Two
+            // shapes, both header-only — the substrate evaluates only the DECLARED rule + the record's
+            // CloudEvents extension HEADERS (never the Avro payload), and names no family:
+            //   1) record-name-keyed: a module declares THIS event type as its start trigger, predicate (if
+            //      any) passes (the renewal saga). Tried FIRST so the established model is unchanged.
+            //   2) record-name-AGNOSTIC: no record-name rule matched, but a header-predicate rule's predicate
+            //      passes against this event regardless of its ce_type (the family-agnostic settlement saga,
+            //      §D5 amendment — "auto-started by any family's money-moving event").
+            // The predicate sees the extension-attribute map the consume loop projected (autorenewalpolicy,
+            // movementorigin, …); a null map is an empty one so a predicate that reads a missing key simply
+            // fails. A non-auto-start event for an unknown process is the existing rejection path.
             //
             // GUARD: an EMPTY process id is never a startable subject. The consume loop falls back to
             // Guid.Empty when a record's ce_subject is absent/unparseable (intended for the edge saga's
@@ -281,9 +332,21 @@ public sealed class SagaAdvanceHandler
             // empty-keyed saga instance — the engine relay always stamps ce_subject = aggregate_id, so a
             // missing/garbled subject is a producer defect, fail-closed to the existing UnknownSaga reject
             // (the dedup row still advances the offset). Defensive depth on the §P5 auto-start branch.
-            if (message.ProcessId == Guid.Empty
-                || !_autoStartModules.TryGetValue(message.EventType, out var autoStart)
-                || !PredicatePasses(autoStart.HeaderPredicate, message.ExtensionHeaders))
+            AutoStartEntry? autoStart = null;
+            if (message.ProcessId != Guid.Empty)
+            {
+                if (_autoStartModules.TryGetValue(message.EventType, out var byEventType)
+                    && PredicatePasses(byEventType.HeaderPredicate, message.ExtensionHeaders))
+                {
+                    autoStart = byEventType;
+                }
+                else
+                {
+                    autoStart = MatchHeaderPredicateAutoStart(message.ExtensionHeaders);
+                }
+            }
+
+            if (autoStart is null)
             {
                 // An advance event for a process that was never started (and no auto-start rule matches):
                 // nothing to drive. Record the dedup row so the offset can move past it, then reject.
@@ -291,8 +354,15 @@ public sealed class SagaAdvanceHandler
                 return AdvanceOutcome.UnknownSaga;
             }
 
+            // The effective start event the table is driven with: the rule's EffectiveStartEventType. For a
+            // record-name rule that equals the inbound event type (behaviour-preserving); for a
+            // record-name-agnostic rule it is the generic start marker (e.g. MovementOriginated), so the
+            // machine's table / IEventSubstitutor resolve it WITHOUT the substrate rewriting the inbound
+            // ce_type (which would break the engine inbox's ce_type↔schema_id decode).
+            autoStartEffectiveEventType = autoStart.EffectiveStartEventType;
+
             // Auto-start (ADR-IC-018 §P5): create the saga_state row (process_id = ce_subject, the saga's
-            // InitialState, its saga_type) and fall through to advance it with this SAME start event — all
+            // InitialState, its saga_type) and fall through to advance it with the effective start event — all
             // in the loop's ONE transaction (start + first transition + dedup row commit atomically). The
             // INSERT is idempotent on process_id: a redelivered start (a replayed DepositMatured) collides
             // on the PK and TryStartAsync returns false, so we reload the existing row rather than reset a
@@ -349,11 +419,17 @@ public sealed class SagaAdvanceHandler
         // is impure (it reads the log on this transaction); its DECISION is pure, so the table stays the
         // authority on what each event does (§P2) — the hook only chooses WHICH event applies. For a
         // machine that does not implement the hook this is a no-op: the effective event is the incoming one.
-        var effectiveEventType = message.EventType;
+        // The effective event seed is the inbound event type — EXCEPT for a record-name-agnostic auto-start,
+        // where the substrate drives the table with the rule's generic start marker (autoStartEffectiveEventType,
+        // e.g. MovementOriginated) instead of the real ce_type record name (LoanDisbursed). This is what lets
+        // the family-agnostic settlement saga start on ANY family's money-moving event without rewriting
+        // ce_type: the marker is what the machine's table / IEventSubstitutor key on. For a record-name rule
+        // (and every edge-started resume) autoStartEffectiveEventType is null/equal, so this is unchanged.
+        var effectiveEventType = autoStartEffectiveEventType ?? message.EventType;
         if (machine is IEventSubstitutor substitutor)
         {
             effectiveEventType = await substitutor.SubstituteAsync(
-                saga.State, message.EventType, _transitionLog,
+                saga.State, effectiveEventType, _transitionLog,
                 connection, transaction, saga.ProcessId, message.ExtensionHeaders, ct);
         }
 
@@ -459,6 +535,26 @@ public sealed class SagaAdvanceHandler
 
     private static readonly IReadOnlyDictionary<string, string> EmptyHeaders =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The first record-name-AGNOSTIC auto-start rule whose header predicate passes against this event's
+    /// extension attributes (ADR-IC-018 §P5/§D5 family-agnostic-saga amendment), or null when none match.
+    /// Evaluated in declaration order, ONLY after the record-name-keyed lookup misses — so the established
+    /// record-name model always takes precedence. The predicate is REQUIRED for these rules (enforced at
+    /// construction), so a null predicate never silently matches every event.
+    /// </summary>
+    private AutoStartEntry? MatchHeaderPredicateAutoStart(IReadOnlyDictionary<string, string>? headers)
+    {
+        foreach (var entry in _headerPredicateAutoStarts)
+        {
+            if (PredicatePasses(entry.HeaderPredicate, headers))
+            {
+                return entry;
+            }
+        }
+
+        return null;
+    }
 
     private static async Task<bool> IsDuplicateAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid messageId, CancellationToken ct)
