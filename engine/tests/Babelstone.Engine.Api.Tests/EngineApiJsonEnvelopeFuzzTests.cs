@@ -146,7 +146,6 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
                     services.AddSingleton(serviceProvider => new TermDepositConstitutionService(
                         serviceProvider.GetRequiredService<AggregateRuntime<DepositPosition>>(),
                         serviceProvider.GetRequiredService<IRateSheetStore>(),
-                        serviceProvider.GetRequiredService<ISettlementPort>(),
                         pack,
                         dayCountPrimitive: "act_360",
                         withholdingPrimitive: "irs_juros",

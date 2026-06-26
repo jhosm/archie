@@ -154,12 +154,20 @@ public sealed record PayInterestCommand(
 /// <param name="PayoutAccount">The legacy current account credited the net settlement (settlement).</param>
 /// <param name="TerminationReason">A stable, non-PII reason code recorded on the event
 /// (e.g. <c>CUSTOMER_REQUEST</c>) — never anything about the customer (ADR-PC-004 §P2).</param>
+/// <param name="CommandId">The ingress idempotency key (ADR-PC-029 slot 4) for the early-termination
+/// HTTP money-mover (bd <c>babelstone-t7o3.13.1</c>): the append dedupes on it in-transaction (the
+/// <c>command_dedup</c> INSERT), so an at-least-once retry of the SAME terminate returns the original
+/// outcome rather than appending a second termination. Also threaded onto the recorded payout
+/// <c>Movement</c> for append-idempotency + correlation (ADR-PC-032 slot 4), so the gated cash leg the
+/// substrate settlement saga effects carries a stable id. Nullable for direct in-process callers (family
+/// unit tests) that supply none; the HTTP endpoint makes it mandatory.</param>
 public sealed record TerminateEarlyCommand(
     Guid DepositId,
     DateTimeOffset TerminatedAt,
     string PayoutAccount,
     string TerminationReason,
-    string Actor);
+    string Actor,
+    Guid? CommandId = null);
 
 /// <summary>Withdraw part of a constituted deposit's principal before maturity (F.12; 02 §2.4.1):
 /// reduce the principal by a fixed amount, leaving the deposit OPEN and Active. A PRINCIPAL reduction

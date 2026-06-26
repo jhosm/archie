@@ -80,6 +80,33 @@ public sealed record PartialWithdrawRequest(
     string? Actor = null);
 
 /// <summary>
+/// Break a constituted deposit before maturity (02 §2.5; the F.4 early-termination money-mover endpoint,
+/// bd babelstone-t7o3.13.1). The engine accrues the elapsed-period interest, withholds it, applies the
+/// product's configured penalty (resolved ENGINE-side from the product config — not supplied here), and
+/// records the NET settlement payout APPEND-FIRST as an Originated Credit <see cref="Babelstone.Engine.Movement"/>
+/// on <c>DepositTerminatedEarly</c>, which the substrate-owned settlement saga effects as the gated ACL
+/// credit. The instant is host-stamped if omitted; its DATE is the as-of termination date the elapsed
+/// interest accrues to and the penalty band is selected against.
+/// </summary>
+/// <param name="PayoutAccount">The opaque current-account token the net settlement is credited to — a
+/// reference, NEVER an IBAN (ADR-PC-004 §P2). Defaults to the dev current account when omitted.</param>
+/// <param name="TerminationReason">A stable, non-PII reason code recorded on the event (e.g.
+/// <c>CUSTOMER_REQUEST</c>) — never anything about the customer (ADR-PC-004 §P2). Defaults to
+/// <c>CUSTOMER_REQUEST</c>.</param>
+/// <param name="TerminatedAt">The break instant; host-stamped if omitted.</param>
+/// <param name="Actor">The acting principal recorded on the append; defaults to <c>mcp:dev</c>.</param>
+public sealed record TerminateEarlyRequest(
+    string? PayoutAccount = null,
+    string? TerminationReason = null,
+    DateTimeOffset? TerminatedAt = null,
+    string? Actor = null);
+
+/// <summary>The early-termination outcome: the deposit, its terminal <c>TERMINATEDEARLY</c> status, and the
+/// commit sequence the termination append reached (ADR-IC-005 §P3 read-your-writes token). Carries no PII —
+/// structural facts only.</summary>
+public sealed record TerminateEarlyResponse(Guid DepositId, string Status, long CommitSequence);
+
+/// <summary>
 /// Exercise the data subject's GDPR Article 17 right-to-be-forgotten on a deposit (bd babelstone-nzw6):
 /// the engine crypto-shreds the subject's encryption key (ADR-PC-004 §P3) and records the erasure fact.
 /// </summary>
