@@ -113,10 +113,23 @@ public enum SagaStartMode
 /// it is REQUIRED (it is the whole match).</param>
 /// <param name="Match">Which match shape this rule uses (default <see cref="AutoStartMatch.ByStartEventType"/>,
 /// so every existing rule is unchanged).</param>
+/// <param name="FanOut">An OPTIONAL, family-agnostic fan-out projector (ADR-PC-032 §A9 amendment 2026-06-26;
+/// ADR-IC-018 §P5). A single inbound event MAY need to start MORE THAN ONE saga instance — the canonical case
+/// is a multi-direction Movement-bearing event (a renewal's rollover-debit + interest-credit), which the
+/// settlement saga fans into one instance per Movement, each gated by its own direction. When non-null, the
+/// substrate invokes this on the matched inbound event and auto-starts/advances ONE instance per returned
+/// projection (each carrying its own derived <c>ProcessId</c> / <c>MessageId</c> and per-instance headers);
+/// when null (every other rule) the event starts the single instance keyed on its own <c>ce_subject</c>,
+/// unchanged. The projector reads ONLY the event's CloudEvents headers (never the payload) and names no family
+/// — it is the module's, the substrate only invokes it, exactly as it only invokes
+/// <paramref name="HeaderPredicate"/>. It MUST be a pure function of the event (no clock, no I/O), MUST return
+/// the PRIMARY instance (keeping the event's own ids) first, and a null/empty/single-element result is treated
+/// as "no fan-out" (the single established instance).</param>
 public sealed record AutoStartRule(
     string StartEventType,
     Func<IReadOnlyDictionary<string, string>, bool>? HeaderPredicate = null,
-    AutoStartMatch Match = AutoStartMatch.ByStartEventType);
+    AutoStartMatch Match = AutoStartMatch.ByStartEventType,
+    Func<Inbox.SagaInboxEvent, IReadOnlyList<Inbox.SagaInboxEvent>>? FanOut = null);
 
 /// <summary>How an <see cref="AutoStartRule"/> matches an inbound event (ADR-IC-018 §P5/§D5).</summary>
 public enum AutoStartMatch

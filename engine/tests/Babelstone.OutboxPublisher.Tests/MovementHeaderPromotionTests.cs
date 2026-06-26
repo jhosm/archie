@@ -64,6 +64,21 @@ public sealed class MovementHeaderPromotionTests
     }
 
     [Fact]
+    public void A_multi_direction_row_promotes_the_ce_movementdirections_composite()
+    {
+        // A renewal's rollover-debit + interest-credit ride ONE event; the seam emits movementdirection (the
+        // first direction) AND the movementdirections composite, and the relay promotes BOTH to ce_* headers
+        // — the composite is what the substrate fans out on (ADR-PC-032 §A9 amendment 2026-06-26).
+        var declared = MovementHeaders.ForOriginatedMovements(
+            [Originated(SettlementDirection.Debit), Originated(SettlementDirection.Credit)]);
+        var headers = OutboxDrainer.BuildHeadersCore(Row(declared), source: "urn:babelstone:engine");
+
+        Assert.Equal("Originated", HeaderValue(headers, "ce_movementorigin"));
+        Assert.Equal("Debit", HeaderValue(headers, "ce_movementdirection"));
+        Assert.Equal("Debit,Credit", HeaderValue(headers, "ce_movementdirections"));
+    }
+
+    [Fact]
     public void An_event_with_no_originated_movement_promotes_no_movement_headers()
     {
         // ForOriginatedMovements returns null for an Observed-only / movement-free event, so the row's

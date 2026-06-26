@@ -109,7 +109,15 @@ public sealed class SettlementSagaModule : ISagaModule
         HeaderPredicate: headers =>
             headers.TryGetValue(OriginHeader, out var origin)
             && string.Equals(origin, OriginatedValue, StringComparison.Ordinal),
-        Match: AutoStartMatch.ByHeaderPredicate);
+        Match: AutoStartMatch.ByHeaderPredicate,
+        // MULTI-DIRECTION fan-out (ADR-PC-032 §A9 amendment 2026-06-26, option b). A single Movement-bearing
+        // event MAY carry money moving two ways at once (a renewal's rollover-debit + interest-credit). The
+        // producer (Babelstone.Engine.MovementHeaders) emits the ordered movementdirections composite for such
+        // an event; this projector fans it into ONE settlement instance per Movement, each at a deterministic
+        // per-Movement process id and gated by its own direction (the substrate only INVOKES this — the
+        // settlement-specific composite shape lives here, family-agnostic; ADR-IC-018 §P5). A single-direction
+        // event has no composite, so the projector returns the lone event unchanged (no fan-out).
+        FanOut: FanOutByMovementDirection);
 
     /// <inheritdoc />
     public void ConfigureServices(IServiceCollection services, SagaModuleContext context)
@@ -122,6 +130,34 @@ public sealed class SettlementSagaModule : ISagaModule
         // references the byte-stable payload factory derives.
         services.AddSingleton<ISagaTypedCommandSink>(sp =>
             new SettlementCommandOutboxSink(sp.GetRequiredService<SagaOutboxWriter>()));
+    }
+
+    /// <summary>
+    /// Fan a matched Movement-bearing event into ONE per-Movement settlement event per Originated direction
+    /// (ADR-PC-032 §A9 amendment 2026-06-26, option b). Reads the <c>movementdirections</c> composite the
+    /// producer emits for a multi-direction event; for each direction in carrier order it projects the source
+    /// event into a per-Movement <see cref="Inbox.SagaInboxEvent"/> (its own derived process id / dedup id, its
+    /// direction pinned, the composite stripped). The PRIMARY (index 0) keeps the event's own ids; the
+    /// secondaries are deterministically derived (so a redelivery re-derives them — effectively-once per leg).
+    /// A single-direction event (no composite) returns the lone source event UNCHANGED — the substrate then
+    /// starts the established single instance. Pure (no clock, no I/O); names no family.
+    /// </summary>
+    public static IReadOnlyList<Inbox.SagaInboxEvent> FanOutByMovementDirection(Inbox.SagaInboxEvent source)
+    {
+        var directions = SettlementMovementFanout.ParseDirections(source.ExtensionHeaders);
+        if (directions.Count < 2)
+        {
+            // No multi-direction composite → no fan-out. The established single instance settles the event.
+            return [source];
+        }
+
+        var projections = new List<Inbox.SagaInboxEvent>(directions.Count);
+        for (var i = 0; i < directions.Count; i++)
+        {
+            projections.Add(SettlementMovementFanout.ProjectMovementEvent(source, i, directions[i]));
+        }
+
+        return projections;
     }
 
     /// <summary>The promoted CloudEvents extension-attribute name (ce_-stripped, lowercased) carrying a

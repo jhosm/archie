@@ -126,6 +126,44 @@ public sealed class MovementSagaAutoStartIntegrationTests(OrchestratorPostgresFi
         Assert.Null(await StateOrNullAsync(processId));
     }
 
+    [Fact]
+    public async Task A_multi_direction_event_fans_out_into_one_settlement_instance_per_movement()
+    {
+        // A renewal carries a rollover-DEBIT + an interest-CREDIT on ONE event (ADR-PC-032 §A9 amendment
+        // 2026-06-26, option b). The producer emits the movementdirections composite; the substrate fans the
+        // ONE event into TWO settlement instances — the PRIMARY on the event's own subject (the debit branch,
+        // the first direction) and a derived SECONDARY (the credit branch) — both born atomically.
+        var sink = new RecordingCommandSink();
+        var handler = NewSettlementAutoStartHandler(sink);
+        var renewalId = Guid.NewGuid();
+
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [SettlementSagaModule.OriginHeader] = "Originated",
+            [SettlementProcess.DirectionHeader] = "Debit",        // the producer's first direction
+            [SettlementMovementFanout.DirectionsHeader] = "Debit,Credit", // the ordered composite
+        };
+        var outcome = await RunAsync(handler, new SagaInboxEvent(
+            MessageId: Guid.NewGuid(), ProcessId: renewalId, EventType: "DepositRenewed",
+            SourceTopic: "term_deposit", CorrelationId: null, ExtensionHeaders: headers));
+
+        Assert.Equal(AdvanceOutcome.Advanced, outcome);
+
+        // The PRIMARY instance (the event's own subject) took the DEBIT branch — the funds-gated reserve leg.
+        Assert.Equal(SettlementProcess.States.Reserving, await StateOrNullAsync(renewalId));
+
+        // The SECONDARY instance (a deterministically derived subject) took the CREDIT branch — the
+        // confirmation-gated confirm leg. It is a DISTINCT saga row, born in the SAME transaction.
+        var creditSubject = SettlementMovementFanout.SubjectForMovement(renewalId, 1);
+        Assert.NotEqual(renewalId, creditSubject);
+        Assert.Equal(SettlementProcess.States.ConfirmingCredit, await StateOrNullAsync(creditSubject));
+
+        // Both legs emitted their first command — the debit's ReserveAccountBalance and the credit's
+        // ConfirmCredit — so no Movement was silently lost.
+        Assert.Contains(sink.Emitted, e => e.CommandType == SettlementProcess.ReserveAccountBalance);
+        Assert.Contains(sink.Emitted, e => e.CommandType == SettlementProcess.ConfirmCredit);
+    }
+
     // ---- helpers (modelled on RenewalAutoStartEmptySubjectGuardIntegrationTests) --------------------
 
     private SagaAdvanceHandler NewSettlementAutoStartHandler(RecordingCommandSink sink)

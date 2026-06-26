@@ -113,7 +113,8 @@ public sealed class SagaAdvanceHandler
         string SagaType,
         string InitialState,
         Func<IReadOnlyDictionary<string, string>, bool>? HeaderPredicate,
-        string EffectiveStartEventType);
+        string EffectiveStartEventType,
+        Func<SagaInboxEvent, IReadOnlyList<SagaInboxEvent>>? FanOut);
 
     /// <summary>
     /// Host N saga state machines keyed by <c>saga_type</c> (bd babelstone-mtto PR1 — the multi-saga
@@ -196,7 +197,8 @@ public sealed class SagaAdvanceHandler
                 // StartEventType, and a header-predicate (record-name-agnostic) rule names its GENERIC start
                 // marker there (so the substrate never rewrites the inbound ce_type).
                 var entry = new AutoStartEntry(
-                    module.SagaType, machine.InitialState, rule.HeaderPredicate, rule.StartEventType);
+                    module.SagaType, machine.InitialState, rule.HeaderPredicate, rule.StartEventType,
+                    rule.FanOut);
 
                 if (rule.Match == AutoStartMatch.ByHeaderPredicate)
                 {
@@ -352,6 +354,39 @@ public sealed class SagaAdvanceHandler
                 // nothing to drive. Record the dedup row so the offset can move past it, then reject.
                 await WriteInboxRowAsync(connection, transaction, message, "unknown-saga", ct);
                 return AdvanceOutcome.UnknownSaga;
+            }
+
+            // (2a-FANOUT) Optional MULTI-INSTANCE fan-out (ADR-PC-032 §A9 amendment 2026-06-26; ADR-IC-018
+            // §P5). A single matched event MAY need to start MORE THAN ONE saga instance — the settlement saga
+            // fans a multi-direction Movement-bearing event (a renewal's rollover-debit + interest-credit) into
+            // ONE instance per Movement, each gated by its own direction. The rule's FanOut projector (the
+            // module's, header-only, family-agnostic — the substrate only invokes it) returns the per-instance
+            // events, the PRIMARY (the event's own ids) FIRST. We process every SECONDARY (index >= 1) here, in
+            // THIS SAME transaction, so all legs start atomically with the primary's offset commit
+            // (effectively-once, all-or-nothing); each secondary's projected event carries its own derived
+            // process_id / message_id and its own pinned direction header, and has the fan-out composite
+            // REMOVED so it never re-fans-out (no recursion past depth 1). The PRIMARY then continues below with
+            // the index-0 projection (its direction pinned — a no-op for a single-direction event). A null/
+            // single-element projection is "no fan-out": message is unchanged, exactly the established path.
+            if (autoStart.FanOut is { } fanOut)
+            {
+                var projections = fanOut(message);
+                if (projections is { Count: > 1 })
+                {
+                    for (var i = 1; i < projections.Count; i++)
+                    {
+                        // Each secondary is a full advance on the SAME connection/transaction: it auto-starts
+                        // its own derived-process_id instance (its composite is stripped → its own FanOut is a
+                        // no-op) and advances it with its pinned direction. A non-Advanced outcome (a duplicate
+                        // on redelivery) is the effectively-once guarantee; a SagaConcurrencyException
+                        // propagates so the whole unit rolls back and redelivers (all legs together).
+                        await AdvanceCoreAsync(connection, transaction, projections[i], span, ct);
+                    }
+
+                    // Drive the PRIMARY with the index-0 projection (its direction pinned, composite stripped),
+                    // so the established single-instance advance below settles the first Movement.
+                    message = projections[0];
+                }
             }
 
             // The effective start event the table is driven with: the rule's EffectiveStartEventType. For a
