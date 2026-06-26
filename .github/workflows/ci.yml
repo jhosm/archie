@@ -817,6 +817,24 @@ jobs:
             echo "::error::staging sizing violation: workload container(s) lack a memory limit (bd babelstone-zla1.4): $missing"; exit 1
           fi
           echo "staging sizing assertion passed (every workload container declares a memory limit)"
+      - name: Assert the event-store migration ConfigMap lists every Sql file (bd babelstone-zla1.5.1)
+        # The apps/ migration Job applies the event-store SQL via a configMapGenerator that
+        # lists each engine/src/.../Sql/0*.sql file by hand (a flat ConfigMap can't glob a
+        # directory). If a new 00NN_*.sql migration lands but isn't added to that list, the
+        # engine would boot against a half-migrated DB — silently. Fail CI on that drift.
+        run: |
+          set -euo pipefail
+          sqldir="engine/src/Babelstone.EventStore.Migrations/Sql"
+          kfile="infra/k8s/apps/kustomization.yaml"
+          missing=""
+          for f in "$sqldir"/0*.sql; do
+            base="$(basename "$f")"
+            grep -qF "Sql/$base" "$kfile" || missing="$missing $base"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::event-store migration list out of date — add to $kfile:$missing"; exit 1
+          fi
+          echo "event-store migration list is complete (every Sql/0*.sql is referenced)"
 
   docs:
     needs: changes

@@ -1,0 +1,53 @@
+# Application services layer (bd babelstone-zla1.5).
+#
+# Plain English: a base-sibling kustomization carrying the babelstone APPLICATION services
+# (engine, and — in later slices — orchestrator/notification/mcp-server), kept separate
+# from infra/k8s/base (which is deliberately "backing-infra only"). The staging overlay
+# composes BOTH (`../../base` + `../../apps`); the dev/ha overlays reference only base, so
+# they are unaffected. This keeps base's documented scope intact while giving the always-on
+# staging box the real services.
+#
+# This layer carries NO namespace — the composing overlay (overlays/staging) sets
+# `namespace: babelstone-staging`, which stamps every resource here. It DOES reference the
+# base's Secret/ConfigMap seam (babelstone-dev-secrets, postgres-config) by name, so it is
+# only valid composed onto base (the overlay provides those); `kustomize build` of this dir
+# alone still renders, it just emits app resources without the infra they depend on.
+#
+# zla1.5.1 ships: the event-store migration Job + the engine Deployment/Service.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - event-store-migration-job.yaml
+  - engine.yaml
+
+configMapGenerator:
+  # The engine event-store SQL — the SAME files the engine ships
+  # (engine/src/Babelstone.EventStore.Migrations/Sql), read from above this kustomization
+  # root (requires --load-restrictor=LoadRestrictionsNone, which the staging build passes).
+  # Mounted at /sql in the migration Job. NOTE: when a new 00NN_*.sql migration is added to
+  # the engine, it MUST be added here too — a CI assertion (ci.yml) fails the build if this
+  # list drifts from the on-disk Sql/ dir, so the drift can't land silently.
+  - name: event-store-sql
+    files:
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0001_events_and_outbox.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0002_append_only_role.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0003_snapshots.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0004_rate_sheets.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0005_projections.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0006_pack_versions.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0010_projection_runtime.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0011_projection_checkpoints.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0012_inbox.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0014_bitemporal_read_index.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0015_command_dedup.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0016_outbox_integration_headers.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0017_snapshots_transaction_time.sql
+  # The apply script run by the migration Job (key apply.sh, mounted at /scripts).
+  - name: migration-script
+    files:
+      - apply.sh=migration-apply.sh
+
+generatorOptions:
+  # Stable names so the Job's volume references stay valid (same choice the base makes).
+  disableNameSuffixHash: true

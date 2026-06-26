@@ -1,0 +1,70 @@
+# Event-store migration Job (bd babelstone-zla1.5.1).
+#
+# One-shot psql Job that applies the engine event-store schema (0001..0017+) to the
+# babelstone DB BEFORE the engine boots — the engine does not self-migrate the event
+# store. Uses the stock multi-arch postgres:18-alpine (psql + pg_isready), with the SQL
+# and the apply script delivered as ConfigMap mounts. The apply is ledger-guarded and
+# idempotent (see migration-apply.sh). ttlSecondsAfterFinished lets a completed Job be
+# recreated cleanly on the next `kubectl apply` (the apply re-run is a no-op via the
+# ledger; the sentinel table the engine waits on persists in the DB regardless).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: event-store-migrate
+  labels:
+    app.kubernetes.io/name: event-store-migrate
+    app.kubernetes.io/part-of: babelstone
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: event-store-migrate
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: postgres:18-alpine
+          command: ["sh", "/scripts/apply.sh"]
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_DB
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+              readOnly: true
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: sql
+          configMap:
+            name: event-store-sql
+        - name: script
+          configMap:
+            name: migration-script

@@ -41,6 +41,8 @@ on:
       - 'pack-validate/**'
       - 'families/**'              # the engine image's publish pulls in the family projects
       - 'Directory.Packages.props' # central package versions the .NET image restores against
+      - 'infra/k8s/apps/engine/**' # the pack-baked engine-staging derived image (zla1.5.1)
+      - 'packs/**'                 # engine-staging bakes pt.2026.1 — a pack change rebuilds it
       - '.github/workflows/image-build.yml'
   pull_request:
     paths: *image_paths
@@ -241,6 +243,79 @@ jobs:
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}
           category: image-grype-${{ matrix.service }}
+
+  build-engine-staging:
+    # The pack-baked engine image for the staging cluster (bd babelstone-zla1.5.1): FROM the
+    # base engine image the matrix above just pushed, + COPY pt.2026.1 → /app/packs so the
+    # engine boots in disk pack-mode on the box. It must run AFTER `build` (it FROMs the base
+    # engine image), hence a dependent job — a sibling matrix leg would FROM a not-yet-pushed
+    # image. PUSH-TO-MAIN ONLY: the FROM pulls ghcr.io/jhosm/babelstone-engine, which exists
+    # only after a push publishes it; a fork PR has no GHCR creds to pull it. The derived
+    # Dockerfile is a trivial FROM+COPY, and the manifest that references this image is
+    # static-validated by ci.yml (kustomize+kubeconform) on every PR.
+    name: build engine-staging (pack-baked)
+    needs: build
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # keyless cosign signing (so cd.yml can verify this image by digest)
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up QEMU (cross-arch emulation for the arm64 build leg)
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Derive image tags + labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/jhosm/babelstone-engine-staging
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=long
+      - name: Build + push (multi-arch)
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/k8s/apps/engine/Dockerfile
+          # Same multi-arch + plain-manifest posture as the matrix legs (the staging node is
+          # ARM64; provenance:false keeps steps.build.outputs.digest the image-index digest
+          # cosign signs / cd.yml pins — see the matrix build step).
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          build-args: |
+            BASE_IMAGE=ghcr.io/jhosm/babelstone-engine:latest
+          cache-from: type=gha,scope=image-engine-staging
+          cache-to: type=gha,scope=image-engine-staging,mode=max
+      - name: Resolve pushed image reference (by digest)
+        id: imgref
+        env:
+          IMAGE: ghcr.io/jhosm/babelstone-engine-staging
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "ref=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign the pushed image (keyless OIDC, by digest)
+        # SBOM/scan are intentionally omitted here: this is a thin FROM+COPY over the base
+        # engine image, which the `build` matrix already SBOM'd + scanned + signed; the only
+        # added bytes are the static pt.2026.1 YAML pack (no new package layers). Signing IS
+        # required so cd.yml's cosign-verify-by-digest can promote this image.
+        env:
+          IMAGE_REF: ${{ steps.imgref.outputs.ref }}
+          COSIGN_YES: "true"
+        run: cosign sign "$IMAGE_REF"
 
   digests:
     # Fan the per-service pushed digests back into one place. The cosign keyless-OIDC signing
