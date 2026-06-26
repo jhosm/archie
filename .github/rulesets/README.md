@@ -21,11 +21,20 @@ Protects the default branch (`~DEFAULT_BRANCH`). Wired by **Q.7** (bd `archie-j7
   - **`CI gate`** — the always-run aggregator in [`ci.yml`](../workflows/ci.yml). It covers
     every path-scoped per-subtree job without the skipped-required-check footgun (a skipped
     job never satisfies a required check, so the per-subtree jobs are *not* required
-    directly). `DETERMINISM_GATE` (A.7, `archie-k03q`) is already covered here — the
-    HandlerPurity analyser + fixture-replay determinism test run inside the `engine` job's
-    non-Integration tier, which the gate already `needs:`. The still-pending fitness gates —
-    acceptance gates (L.3), no-PII/emit-contract (G.6) — join the gate's `needs:` as they
-    land, growing coverage without editing this ruleset.
+    directly). Q.7's fitness gates are all enforced through a job this aggregator already
+    `needs:`, so none is a separate required check:
+    - `DETERMINISM_GATE` (A.7, `archie-k03q`) — the HandlerPurity analyser + fixture-replay
+      determinism test run inside the `engine` job's non-Integration tier.
+    - no-PII / emit-contract (G.6, `archie-2eo0`) — `NoPiiTelemetryAttributeAnalyzerTests`,
+      `BabelstonePiiGuardTests`, `ClientPseudonymTests`, and `EmitContractFitnessTests` live
+      in `engine/Babelstone.slnx` test projects, run by the `engine` job's non-Integration
+      tier (no separate job to wire).
+    - code-coverage floor (Q.y, `archie-2t16.13`) — the fail-closed coverage-floor steps run
+      inside the `engine` (.NET), `pack-validate` (Go), and `mcp-server` (Python) jobs, all
+      already in `needs:`; by design no new required check (the Phase-1 destabilisation note).
+
+    A genuinely *new* fitness gate (a job not already transitively under `CI gate`) joins the
+    gate's `needs:` as it lands, growing coverage without editing this ruleset.
   - **`CodeQL gate`** — the always-run aggregator in [`codeql.yml`](../workflows/codeql.yml),
     the SAST twin of `CI gate` (ADR-IC-014, Q.7). CodeQL is path-scoped at its workflow
     trigger, so — exactly like `CI gate` — the ruleset requires this one always-present gate
@@ -60,6 +69,20 @@ Protects the default branch (`~DEFAULT_BRANCH`). Wired by **Q.7** (bd `archie-j7
     Post-Merge" step reads to run `bd close`.
   - **`spec-coverage`** — the [`spec-coverage.yml`](../workflows/spec-coverage.yml) ADR↔catalogue↔test
     coverage checker (ADR-PC-020 §P6).
+
+### Deliberately NOT a per-PR required check: the load-acceptance gate
+
+The [`load-gate.yml`](../workflows/load-gate.yml) composite load-acceptance gate (L.3,
+`archie-2e6q`; [ADR-PC-011](../../docs/product-management/product_concepts/adrs/ADR-PC-011-in-house-load-test-harness.md) §8.4)
+is **RC-tag cadence** — it triggers only on a `v*-rc*` tag push (and `workflow_dispatch`),
+never on `pull_request`. It is therefore **not** in `required_status_checks` above, and that is
+deliberate: a branch ruleset evaluates required checks against PRs targeting the branch, so a
+check that never reports on a PR would leave every PR permanently unsatisfied — the same
+skipped-required-check footgun the `CI gate` aggregator exists to avoid. The gate's enforcement
+point is the release candidate itself (it runs green at the v1 RC or v1 does not ship,
+ADR-PC-011 §8.4), not the per-PR merge bar. If RC-tag gating is later made platform-enforced, it
+belongs in a **tag-targeting** ruleset (target `tag`, e.g. `v*-rc*`), a separate artefact from
+this branch ruleset — not a `required_status_checks` entry here.
 
 ## Applying / re-applying
 
