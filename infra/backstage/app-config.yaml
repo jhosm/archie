@@ -15,6 +15,58 @@
 # (`npx @backstage/create-app`) and built into an image, with @backstage/plugin-catalog-backend-module-*
 # providers for AsyncAPI rendering. The Deployment/Service manifests + this config are the
 # infrastructure half; building+pushing that image and pointing the manifest at it is platform work.
+#
+# RECONCILIATION-WIDGET HANDOFF (bd babelstone-ax0b.6 — read with the deploy issue babelstone-1taq).
+# In plain English: the catalogue already carries three `spec.type: reconciliation` API entities
+# (reconciliation-engine-projection-runtime, reconciliation-acl, reconciliation-notification in
+# contracts/catalog/catalog-info.yaml). But @backstage/plugin-api-docs only NATIVELY renders
+# `openapi` / `asyncapi` / `graphql` (its `defaultDefinitionWidgets()` set), so a reconciliation
+# entity's API-definition tab shows the YAML as UNSTYLED PLAIN TEXT. The fix is a custom api-docs
+# widget — but widget registration is a *frontend* concern (`apiDocsConfigRef`, a utility-API ref),
+# NOT an app-config schema key: there is no `apiDocs:` block Backstage reads here. So the wiring is
+# recorded as a handoff the scaffolded app's image must carry, exactly like the catalog-provider
+# plugins above. No catalogue source-of-truth file changes (the ADR-IC-015 §1–§2 no-drift invariant
+# holds; the reconciliation contracts stay as authored).
+#
+# The sensibly-chosen widget: render the reconciliation contract as syntax-highlighted YAML (via the
+# plugin's own PlainApiDefinitionWidget with `language: 'yaml'`) instead of raw text. When the app is
+# scaffolded (babelstone-1taq), add this factory to `packages/app/src/apis.tsx` — copy verbatim:
+#
+#   import { ApiEntity } from '@backstage/catalog-model';
+#   import {
+#     ApiDefinitionWidget,
+#     apiDocsConfigRef,
+#     defaultDefinitionWidgets,
+#     PlainApiDefinitionWidget,
+#   } from '@backstage/plugin-api-docs';
+#
+#   export const apis: AnyApiFactory[] = [
+#     // ...existing factories...
+#     createApiFactory({
+#       api: apiDocsConfigRef,
+#       deps: {},
+#       factory: () => {
+#         const definitionWidgets = defaultDefinitionWidgets();
+#         return {
+#           getApiDefinitionWidget: (apiEntity: ApiEntity) => {
+#             // babelstone: spec.type: reconciliation -> syntax-highlighted YAML, not plain text.
+#             if (apiEntity.spec.type === 'reconciliation') {
+#               return {
+#                 type: 'reconciliation',
+#                 title: 'Reconciliation contract',
+#                 rawLanguage: 'yaml',
+#                 component: definition => (
+#                   <PlainApiDefinitionWidget definition={definition} language="yaml" />
+#                 ),
+#               } as ApiDefinitionWidget;
+#             }
+#             // every other type (asyncapi / openapi / graphql) keeps its native widget.
+#             return definitionWidgets.find(d => d.type === apiEntity.spec.type);
+#           },
+#         };
+#       },
+#     }),
+#   ];
 
 app:
   title: babelstone catalogue
