@@ -2014,6 +2014,12 @@ body.console-open .hint-bar { display:none; }
   }
   function renderTopic() {
     var box = el("topicList"); if (!box) return;
+    // DEMO mode: the illustrative "follow the event" feed (unchanged). LIVE·engine / LIVE·saga:
+    // read the REAL records off the Redpanda topic via the pandaproxy REST proxy (bd babelstone-f0ic.15.4).
+    if (state.mode === "demo") return renderTopicDemo(box);
+    return renderTopicLive(box);
+  }
+  function renderTopicDemo(box) {
     if (!dwTopic.length) { box.innerHTML = '<div class="dpane-empty">No records yet. Run a command — every engine fact is relayed onto the topic as an Avro record.</div>'; return; }
     box.innerHTML = dwTopic.slice().reverse().map(function (r) {
       return '<div class="topic-rec"><div class="tr-head"><span class="tr-part">' + (r.topic || "term_deposit") + '-0</span> @ offset <b>' + r.off + '</b>' +
@@ -2025,6 +2031,126 @@ body.console-open .hint-bar { display:none; }
           '<span class="k">ce_time</span><span class="v">' + r.ts + '</span>' +
           '<span class="k">ce_source</span><span class="v">/babelstone/engine/' + (r.topic || "term_deposit") + '</span>' +
           (r.amount ? '<span class="k">payload.amount</span><span class="v">' + r.amount + '</span>' : '') +
+        '</div></div>';
+    }).join("");
+  }
+
+  /* ── LIVE Topic·Avro lens (bd babelstone-f0ic.15.4) ──────────────────────────────────────
+     Reads REAL records off the Redpanda topic through serve.py's /pandaproxy/* arm (the Kafka
+     REST consumer-group dance), and resolves the schema badge through /sr/*. PII discipline:
+     records are read in BINARY format, so the payload body is NEVER decoded here — we surface
+     ONLY the broker-given partition/offset, the CloudEvents headers (references, not PII), and
+     the Avro wire schema-id. The payload stays opaque (its PII lives in the engine).            */
+  var liveTopic = { recs: [], state: "idle", err: null, ts: 0 };
+  var srSubjectCache = {};   // schema-id → resolved Schema Registry subject (or "?")
+
+  function b64bytes(s) { var bin = atob(s); var a = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; }
+  function b64utf8(s) { try { return decodeURIComponent(escape(atob(s))); } catch (e) { try { return atob(s); } catch (e2) { return s; } } }
+  // Confluent Avro wire format: byte0 = 0x00 magic, bytes1..4 = big-endian schema id. We read
+  // ONLY this 5-byte header — never the Avro body after it — so no payload field is ever decoded.
+  function wireSchemaId(valB64) {
+    try { var b = b64bytes(valB64); if (b.length >= 5 && b[0] === 0) return (b[1] * 16777216) + (b[2] * 65536) + (b[3] * 256) + b[4]; } catch (e) {}
+    return null;
+  }
+  function valBytes(valB64) { try { return b64bytes(valB64).length; } catch (e) { return null; } }
+  // Decode the record's Kafka headers (pandaproxy returns them base64-encoded). Tolerant of both
+  // the array form ([{key,value}]) and an object map. CloudEvents binary-mode keys are ce_* .
+  function decodeHeaders(hdrs) {
+    var out = {};
+    if (!hdrs) return out;
+    if (Array.isArray(hdrs)) {
+      hdrs.forEach(function (h) { if (h && h.key != null) out[String(h.key).toLowerCase()] = h.value != null ? b64utf8(String(h.value)) : ""; });
+    } else if (typeof hdrs === "object") {
+      Object.keys(hdrs).forEach(function (k) { var v = hdrs[k]; out[k.toLowerCase()] = (typeof v === "string") ? b64utf8(v) : String(v); });
+    }
+    return out;
+  }
+  function mapBinaryRecord(rec) {
+    var h = decodeHeaders(rec.headers);
+    var sid = wireSchemaId(rec.value);
+    return {
+      partition: rec.partition, offset: rec.offset,
+      ceType: h["ce_type"] || h["type"] || "", ceId: h["ce_id"] || h["id"] || "",
+      ceSubject: h["ce_subject"] || h["subject"] || "", ceTime: h["ce_time"] || h["time"] || "",
+      ceSource: h["ce_source"] || h["source"] || "",
+      amountClass: h["ce_amountclass"] || h["amountclass"] || "",
+      sid: sid, bytes: valBytes(rec.value)
+    };
+  }
+  async function resolveSchemaSubjects(recs) {
+    var ids = {};
+    recs.forEach(function (r) { if (r.sid != null) ids[r.sid] = 1; });
+    await Promise.all(Object.keys(ids).map(async function (sid) {
+      if (srSubjectCache[sid] != null) return;
+      try {
+        // Confluent SR: the versions of a schema id carry its subject(s). One GET is enough for the badge.
+        var resp = await fetch("/sr/schemas/ids/" + sid + "/versions");
+        if (!resp.ok) { srSubjectCache[sid] = "?"; return; }
+        var vs = await resp.json();
+        srSubjectCache[sid] = (vs && vs.length && vs[0].subject) ? vs[0].subject : "?";
+      } catch (e) { srSubjectCache[sid] = "?"; }
+    }));
+  }
+  async function loadLiveTopic() {
+    var now = Date.now();
+    if (liveTopic.state === "loading") return;
+    if ((liveTopic.state === "loaded" || liveTopic.state === "error") && (now - liveTopic.ts) < 1500) return;  // debounce
+    liveTopic.state = "loading";
+    var topic = topicName();
+    var group = "mc-lens-" + Math.random().toString(16).slice(2, 10);
+    var inst = "lens";
+    var base = "/pandaproxy/consumers/" + group;
+    var instBase = base + "/instances/" + inst;
+    var KJSON = "application/vnd.kafka.v2+json";
+    try {
+      var c = await fetch(base, { method: "POST", headers: { "Content-Type": KJSON },
+        body: JSON.stringify({ name: inst, format: "binary", "auto.offset.reset": "earliest", "fetch.min.bytes": "1" }) });
+      if (!c.ok) throw new Error("consumer create HTTP " + c.status);
+      var s = await fetch(instBase + "/subscription", { method: "POST", headers: { "Content-Type": KJSON },
+        body: JSON.stringify({ topics: [topic] }) });
+      if (!s.ok) throw new Error("subscribe HTTP " + s.status);
+      var raw = [];
+      for (var i = 0; i < 4 && raw.length < 30; i++) {
+        var r = await fetch(instBase + "/records?timeout=1000&max_bytes=1048576",
+          { headers: { "Accept": "application/vnd.kafka.binary.v2+json" } });
+        if (!r.ok) throw new Error("records HTTP " + r.status);
+        var batch = await r.json();
+        if (batch && batch.length) raw = raw.concat(batch);
+        else if (i > 0) break;   // the first empty poll is the join; a later one means drained
+      }
+      var mapped = raw.map(mapBinaryRecord);
+      await resolveSchemaSubjects(mapped);
+      liveTopic.recs = mapped.slice(-30);
+      liveTopic.state = "loaded"; liveTopic.err = null;
+    } catch (e) {
+      liveTopic.state = "error"; liveTopic.err = (e && e.message) ? e.message : String(e);
+    } finally {
+      liveTopic.ts = Date.now();
+      try { fetch(instBase, { method: "DELETE", headers: { "Content-Type": KJSON } }); } catch (e2) {}  // best-effort cleanup
+      if (state.tab === "topic" && state.mode !== "demo") renderTopic();
+    }
+  }
+  function renderTopicLive(box) {
+    loadLiveTopic();   // debounced; re-renders when it settles
+    var st = liveTopic;
+    if (st.state === "loading" && !st.recs.length) { box.innerHTML = '<div class="dpane-empty">Reading live records from the <b>' + esc(topicName()) + '</b> topic via pandaproxy…</div>'; return; }
+    if (st.state === "error") { box.innerHTML = '<div class="dpane-empty">Broker not reachable via pandaproxy (' + esc(st.err || "") + '). Start the stack (<code>make up</code>) + the engine, then run a command.</div>'; return; }
+    if (!st.recs.length) { box.innerHTML = '<div class="dpane-empty">No records on <b>' + esc(topicName()) + '</b> yet. Run a command to publish a real Avro record.</div>'; return; }
+    box.innerHTML = st.recs.slice().reverse().map(function (r) {
+      var subj = r.sid != null ? (srSubjectCache[r.sid] || "?") : "?";
+      var badge = r.sid != null
+        ? 'catalog ' + (subj !== "?" ? '✓' : '·') + ' · Avro · schema #' + r.sid + (subj !== "?" ? ' · ' + esc(subj) : '')
+        : 'store-only · no Avro wire header';
+      return '<div class="topic-rec"><div class="tr-head"><span class="tr-part">' + esc(topicName()) + '-' + esc(String(r.partition)) + '</span> @ offset <b>' + esc(String(r.offset)) + '</b>' +
+        '<span class="tr-badge">' + badge + '</span></div>' +
+        '<div class="tr-grid">' +
+          (r.ceType ? '<span class="k">ce_type</span><span class="v">' + esc(r.ceType) + '</span>' : '') +
+          (r.ceId ? '<span class="k">ce_id</span><span class="v">' + esc(r.ceId) + '</span>' : '') +
+          (r.ceSubject ? '<span class="k">ce_subject</span><span class="v">' + esc(r.ceSubject) + '</span>' : '') +
+          (r.ceTime ? '<span class="k">ce_time</span><span class="v">' + esc(r.ceTime) + '</span>' : '') +
+          (r.ceSource ? '<span class="k">ce_source</span><span class="v">' + esc(r.ceSource) + '</span>' : '') +
+          (r.amountClass ? '<span class="k">amount_class</span><span class="v">' + esc(r.amountClass) + '</span>' : '') +
+          '<span class="k">payload</span><span class="v">Avro · ' + (r.bytes != null ? esc(String(r.bytes)) + ' bytes' : 'opaque') + ' · not decoded (PII stays in the engine)</span>' +
         '</div></div>';
     }).join("");
   }
@@ -2077,6 +2203,8 @@ body.console-open .hint-bar { display:none; }
   }
   function drawerReset() {
     dwTopic = []; dwOutbox = []; dwInbox = []; dwLogs = []; dwOffset = 0;
+    // Drop any cached LIVE broker read so a mode switch / reset re-reads the topic fresh.
+    liveTopic = { recs: [], state: "idle", err: null, ts: 0 };
     Object.keys(METRICS).forEach(function (k) { METRICS[k].v = 0; METRICS[k].series = METRICS[k].gauge ? [] : [0]; });
     renderTopic(); renderTransport(); renderMetrics(); renderLogs();
   }
