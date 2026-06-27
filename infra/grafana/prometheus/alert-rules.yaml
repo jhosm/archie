@@ -404,9 +404,11 @@ groups:
   # up" signal: the engine continuously emits outbox_publish_lag_seconds, so its
   # ABSENCE means the engine isn't reporting (down, crash-looping, or telemetry
   # broken). Complements the EXTERNAL ingress pinger — the end-to-end uptime check
-  # documented in infra/runbooks/staging-ops.md. NOTE: these rules load via a
-  # standalone Prometheus / the appliance `rule_files:`; wiring rule_files into the
-  # k8s grafana-lgtm appliance is a follow-up (today this file is compose/standalone).
+  # documented in infra/runbooks/staging-ops.md. These rules load into the k8s
+  # grafana-lgtm appliance via `rule_files:` — the staging overlay generates a
+  # grafana-lgtm-rules ConfigMap from this file + prometheus.yaml and subPath-mounts
+  # both into the appliance (bd babelstone-zla1.9). The Compose stack mounts the same
+  # two files directly (infra/grafana/README.md).
   # ---------------------------------------------------------------------------
   - name: staging-liveness
     rules:

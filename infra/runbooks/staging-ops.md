@@ -79,10 +79,12 @@ volumesnapshot -l babelstone.io/dr-role=volume-snapshot --field-selector ...`) p
   "is the box reachable" signal — it tests DNS + TLS + ingress + app from outside the cluster.
   Configure it during Phase 0/2 (account-gated; no in-cluster manifest).
 - **In-cluster signal**: the `EngineMetricsAbsent` rule (`infra/grafana/prometheus/alert-rules.yaml`,
-  `staging-liveness` group) fires when the engine stops emitting its SLI metric. NOTE: loading
-  `alert-rules.yaml` into the k8s grafana-lgtm appliance (`rule_files:`) is a follow-up — today the
-  rules file is wired for compose / a standalone Prometheus. Until then, the external pinger is the
-  live uptime check.
+  `staging-liveness` group) fires when the engine stops emitting its SLI metric. This rule file is
+  now loaded into the staging k8s grafana-lgtm appliance (`rule_files:`) — the staging overlay
+  generates a `grafana-lgtm-rules` ConfigMap from `infra/grafana/prometheus/{prometheus,alert-rules}.yaml`
+  and subPath-mounts both into the appliance at `/otel-lgtm/` (bd babelstone-zla1.9). The external
+  pinger remains the authoritative end-to-end check; the in-cluster rule is the complementary
+  "engine is reporting" signal.
 
 ## 7. Common checks
 

@@ -1,0 +1,52 @@
+# Mount the Critical-SLI Prometheus rules into the staging grafana-lgtm appliance
+# (bd babelstone-zla1.9; ADR-IC-004 §P4 / ADR-IC-007 §P1 / ADR-PC-005 §S2).
+#
+# Plain English: the staging box already has the alert rules on disk
+# (infra/grafana/prometheus/alert-rules.yaml — including the zla1.7
+# EngineMetricsAbsent uptime signal), but the all-in-one grafana-lgtm appliance's
+# bundled Prometheus wasn't loading them. This patch mounts the rule file + the
+# tiny prometheus.yaml overlay (which names it in `rule_files:`) into the
+# appliance so the SLI alerts actually fire in staging.
+#
+# WHY subPath: the grafana/otel-lgtm image keeps its own files under /otel-lgtm/
+# (the bundled prometheus.yaml plus Loki/Tempo/Grafana config). Mounting the
+# ConfigMap as a whole directory at /otel-lgtm would CLOBBER all of them, so we
+# mount each file individually with subPath — the appliance reads
+# /otel-lgtm/prometheus.yaml (config) which `rule_files:`-references the sibling
+# alert-rules.yaml, exactly the paths infra/grafana/README.md documents for the
+# Compose bind-mount. The two files come from the grafana-lgtm-rules ConfigMap the
+# staging kustomization generates from the SAME infra/grafana/prometheus/ source
+# the Compose stack mounts (single config source — the otel-collector-config /
+# kong-config pattern).
+#
+# OTLP boundary preserved: this is a Deployment-only patch (volumes/volumeMounts);
+# it does NOT touch the grafana-lgtm Service, so 4317/4318 stay unexposed
+# (ADR-IC-007 §P1, CI-asserted). The grafana-tempo-svc.patch.yaml Service patch is
+# the only thing that edits ports, and it adds only 3200 (Tempo query).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-lgtm
+spec:
+  template:
+    spec:
+      containers:
+        - name: grafana-lgtm
+          volumeMounts:
+            # The appliance's Prometheus reads its config from /otel-lgtm/prometheus.yaml;
+            # our overlay adds `rule_files: [alert-rules.yaml]` (resolved relative to
+            # that dir) on top of the appliance default global/scrape config.
+            - name: grafana-lgtm-rules
+              mountPath: /otel-lgtm/prometheus.yaml
+              subPath: prometheus.yaml
+              readOnly: true
+            # The Critical-SLI rule groups themselves (the `groups:` file
+            # promtool check rules validates).
+            - name: grafana-lgtm-rules
+              mountPath: /otel-lgtm/alert-rules.yaml
+              subPath: alert-rules.yaml
+              readOnly: true
+      volumes:
+        - name: grafana-lgtm-rules
+          configMap:
+            name: grafana-lgtm-rules
