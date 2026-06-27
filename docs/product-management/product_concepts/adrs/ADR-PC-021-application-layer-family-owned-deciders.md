@@ -326,6 +326,18 @@ Whichever trigger fires first reopens osv6. Until then osv6 stays `DEFERRED` wit
 
 ---
 
+## Amendment — 2026-06-27: `ISettlementPort` is retired — the family-agnostic settlement port role passes to the `Movement` spine (bd `babelstone-t7o3.17`)
+
+The plain-English version: this ADR's Decision (§D2) and topology sketch (§P1) introduced `ISettlementPort` as "the one new generic, family-agnostic port" the deciders depend on. That port has since been replaced wholesale by the **append-first `Movement`** spine, and bd `babelstone-t7o3.17` deletes the now-orphaned `ISettlementPort` / `SettlementInstruction` / `LoggingSettlementPort` types. So the words in §D2/§P1 that name `ISettlementPort` are now stale. The *decision they encode* — deciders depend on generic engine ports, never on a family — is untouched; only the example port changed. This amendment records that so the deletion is not a silent contradiction ([ADR-PC-020](./ADR-PC-020-llm-toolchain-and-conformance-governance.md) §D3).
+
+### A24 · The generic settlement port is now the `Movement` spine, not `ISettlementPort`
+
+- **What changed.** [ADR-PC-032](./ADR-PC-032-money-movement-primitive.md) made eager settlement illegal and replaced the eager `SettleAsync`-before-append port with the **append-first `Movement`** primitive: a money-moving decider records an Originated `Movement` on its event (APPEND-FIRST) and the confirmation-gated substrate-owned settlement saga (ADR-PC-032 slot 5) effects the cash leg. The decider→`ISettlementPort` dependency was already removed leg-by-leg in bd `babelstone-t7o3.13`/`.16` (dated-amended into [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) §128–129 and [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md)); bd `babelstone-t7o3.17` now deletes the unreferenced `ISettlementPort` / `SettlementInstruction` / `LoggingSettlementPort` types (and the `Recording`/`Throwing` test doubles). `SettlementDirection` survives, now owned by the `Movement` spine.
+- **What §D2/§P1 should now read.** Wherever §D2 and the §P1 topology say "the new `ISettlementPort`" / "the one new generic, family-agnostic port", read **the `Movement` spine** (ADR-PC-032). That generic-port enumeration is the only stale text.
+- **What is unchanged (and why this is additive, not a supersession).** §D1–§D5 remain binding, and the prior amendments stay in force. The load-bearing §D2 invariant — *deciders depend on generic engine ports, the dependency arrow is `family → engine`, adding a family is zero generic-engine diff* — holds exactly as written: `Movement` is itself a generic, family-agnostic spine primitive, so the arrow and the open/closed property are untouched. This reverses nothing, adds **no** new gated fitness function (the append-first invariant is gated by `MOVEMENT_APPEND_FIRST`, owned by ADR-PC-032), and changes **no** [commitment-catalogue](./commitment-catalogue.md) row.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — the hand-rolled, single-deployable engine spine this application layer sits above.
