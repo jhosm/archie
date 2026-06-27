@@ -17,12 +17,16 @@
   <ItemGroup>
     <!-- IServiceCollection + AddSingleton for TermDepositNotificationModule.ConfigureServices. -->
     <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <!-- AddHttpClient<DepositReadClient>: this contribution registers its OWN deposit-shaped typed read
+         client (relocated here from the core, ADR-IC-019 D1) over the engine read endpoint. -->
+    <PackageReference Include="Microsoft.Extensions.Http" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- The family → core arrow (ADR-IC-019 §D4): the only project reference, never the reverse, never the
          engine kernel. Brings the contribution port (IFamilyNotificationModule / INotificationScheduleRule /
-         ReminderDecision / NotificationModuleContext) and the family-agnostic read client (DepositReadClient). -->
+         ReminderDecision / NotificationModuleContext). The deposit-shaped read client (DepositReadClient) is
+         family-owned and lives in THIS project (ADR-IC-019 D1), not the core. -->
     <ProjectReference Include="../../../../notification/src/Babelstone.Notification/Babelstone.Notification.csproj" />
   </ItemGroup>
 </Project>

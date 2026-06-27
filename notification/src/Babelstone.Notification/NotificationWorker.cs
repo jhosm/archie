@@ -30,8 +30,8 @@ namespace Babelstone.Notification;
 /// <para>
 /// <b>Cadence / retry / backoff, the same proven shape as the engine relay and the saga dispatcher.</b>
 /// A clean pass waits one <see cref="NotificationSchedulerOptions.PollInterval"/> before the next.
-/// A pass-cycle EXCEPTION (the engine read surface momentarily unavailable — a 5xx or a timeout, which
-/// <see cref="DepositReadClient.ListMaturitiesAsync"/> surfaces rather than swallowing) is treated as
+/// A pass-cycle EXCEPTION (the engine read surface momentarily unavailable — a 5xx or a timeout, which a
+/// family rule's read over the published contract surfaces rather than swallowing) is treated as
 /// BACKPRESSURE: back off exponentially up to a ceiling and retry. The pass's dedupe (ADR-PC-025 slot 4)
 /// makes a retried pass safe — re-reading the same world re-derives the same <c>notification_id</c>s and
 /// raises nothing twice.
