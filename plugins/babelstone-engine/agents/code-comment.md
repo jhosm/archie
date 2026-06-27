@@ -65,8 +65,10 @@ so it is more severe than a stale inline `//`.
 5. **Length earned by irreducibility (Rule 4).** Does the comment restate the type
    signature or the name? Flag the redundant lines; keep only the non-obvious *why*.
 6. **Citation discipline.** Three hard rules:
-   - **ADR refs stop at the bare id.** `ADR-PC-028` ✅ — `ADR-PC-028 §P3` ❌ (the section
-     drifts on amendment; the bare id does not).
+   - **A prose ADR ref stops at the bare id.** In a comment's explanatory text, `ADR-PC-028` ✅
+     — `ADR-PC-028 §P3` ❌ (the section drifts on amendment; the bare id does not). **Exempt the
+     §P6 traceability anchor** (`// ADR-PC-001 §P2`, ADR-PC-020): that structured site-marker
+     keeps its `§section` — do **not** flag it. The rule governs the prose citation, not the anchor.
    - **Keep the fitness/commitment names.** SHOUTING_CASE anchors from the
      [commitment catalogue](docs/product-management/product_concepts/adrs/commitment-catalogue.md)
      (`ENGINE_FAMILY_AGNOSTIC`, `STORE_BUS_ENCODING_EQUIVALENCE`) are the strongest anchor —
