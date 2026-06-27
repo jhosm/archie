@@ -16,7 +16,7 @@ namespace Babelstone.Engine;
 /// / slot 6): it carries an opaque <see cref="AccountRef"/>, a closed <see cref="MovementOperation"/>
 /// code, and generic <see cref="Money"/> / <see cref="SettlementDirection"/> / <see cref="ValueDate"/> —
 /// exactly the family-agnostic shape the spine carries, so <c>ENGINE_FAMILY_AGNOSTIC</c>
-/// (ADR-PC-021 §P2) holds. It is NOT a balanced double-entry
+/// (ADR-PC-021) holds. It is NOT a balanced double-entry
 /// pair: the engine records single-sided movements against its own account balances; posting them as a
 /// balanced journal entry against a chart of accounts is the GL's job (ADR-PC-012), which the engine
 /// never does.
@@ -24,7 +24,7 @@ namespace Babelstone.Engine;
 /// <para>
 /// <b>Carried inside the event, written append-first.</b> A <see cref="Movement"/> rides as data inside
 /// the money-moving event's existing opaque payload — NO new <c>events</c>-table column and NO envelope
-/// change (ADR-PC-001 §P1 / ADR-PC-010 §P3 column contract untouched). Because it rides the event, it is
+/// change (ADR-PC-001 / ADR-PC-010 column contract untouched). Because it rides the event, it is
 /// written append-first inside the event's existing outbox transaction (ADR-IC-004): the FACT is durable
 /// first, the cash leg is a downstream gated consequence (the settlement saga, a SEPARATE issue, not
 /// built here). An event may carry MORE THAN ONE movement (a renewal is a rollover debit AND an interest
@@ -32,23 +32,23 @@ namespace Babelstone.Engine;
 /// </para>
 /// <para>
 /// <b>No PII on the bus.</b> <see cref="AccountRef"/> is an OPAQUE reference the engine resolves
-/// internally, NEVER an IBAN / cleartext or ciphertext account identifier (ADR-PC-004 §P2): references
+/// internally, NEVER an IBAN / cleartext or ciphertext account identifier (ADR-PC-004): references
 /// are allowed on the durable bus, PII is not.
 /// </para>
 /// </remarks>
 /// <param name="AccountRef">The legacy-Core / engine-owned account the value moves against — an OPAQUE
-/// token, a reference the engine resolves internally, NEVER PII (ADR-PC-004 §P2).</param>
+/// token, a reference the engine resolves internally, NEVER PII (ADR-PC-004).</param>
 /// <param name="Direction"><see cref="SettlementDirection.Debit"/> or <see cref="SettlementDirection.Credit"/>,
 /// ALWAYS relative to <paramref name="AccountRef"/>: <c>Debit</c> = value leaves that account, <c>Credit</c>
 /// = value enters it. Pinning direction to the named account is what kills the "a loan pays out yet was
 /// coded Debit" wrinkle the old DTO left ambiguous (feature-design §2).</param>
 /// <param name="Amount">The amount moved, as <see cref="Money"/> (integer cents; crosses from
-/// <see cref="decimal"/> exactly once, ADR-PC-010 §P2). The engine never expresses money as a float.</param>
+/// <see cref="decimal"/> exactly once, ADR-PC-010). The engine never expresses money as a float.</param>
 /// <param name="ValueDate">The economic date the value moves (<c>valid_time</c>), never wall-clock —
 /// supplied by the decider, not read from a clock (ADR-PC-032 slot 1).</param>
 /// <param name="Operation">The CLOSED engine-side operation code for the movement (ADR-PC-032 slot 1,
 /// hardened to a closed type by feature-design §2): an enum, NOT a free string. The settlement leg maps
-/// it to the ACL <c>operation_type</c> half of the idempotency key (ADR-IC-012 §P4). Widening the closed
+/// it to the ACL <c>operation_type</c> half of the idempotency key (ADR-IC-012). Widening the closed
 /// set later is forward-only schema evolution (ADR-IC-002).</param>
 /// <param name="Origin">Who initiated the movement and what the spine does next (ADR-PC-032 slot 2):
 /// <see cref="MovementOrigin.Originated"/> = the decider decided it, so its cash leg is effected by the
@@ -92,10 +92,10 @@ public enum MovementOrigin
 /// (ADR-PC-032 slot 1; hardened from the old free-string <c>Reason</c> to a closed type by
 /// feature-design §2). An enum, not a free string: the settlement leg maps it to the ACL
 /// <c>operation_type</c> half of the <c>(operation_type, saga_step_id, external_reference)</c>
-/// idempotency key (ADR-IC-012 §P4), and a closed set keeps that mapping total. Family-agnostic: these
+/// idempotency key (ADR-IC-012), and a closed set keeps that mapping total. Family-agnostic: these
 /// are GENERIC money-movement verbs (disburse, collect an installment, pay a maturity, …), not a
 /// family-typed shape — each family chooses WHICH of these its lifecycle events carry, but names none of
-/// its own here (ADR-PC-021 §P2 / §A5). Widening the set is forward-only schema evolution (ADR-IC-002):
+/// its own here (ADR-PC-021). Widening the set is forward-only schema evolution (ADR-IC-002):
 /// add a member at the END so existing ordinals are stable.
 /// </summary>
 public enum MovementOperation

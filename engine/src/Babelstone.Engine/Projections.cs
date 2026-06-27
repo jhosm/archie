@@ -3,7 +3,7 @@ using Babelstone.EventStore;
 namespace Babelstone.Engine;
 
 /// <summary>
-/// How a projection is kept up to date (two-modes §5.4, ADR-PC-002 §P4). Declared PER
+/// How a projection is kept up to date (two-modes §5.4, ADR-PC-002). Declared PER
 /// PROJECTION by the family (not hardcoded in the engine); the engine dispatches accordingly.
 /// </summary>
 public enum ProjectionMode
@@ -23,9 +23,9 @@ public enum ProjectionMode
 }
 
 /// <summary>
-/// The deterministic bitemporal stamps for one projection write (ADR-PC-002 §P1). All come
+/// The deterministic bitemporal stamps for one projection write (ADR-PC-002). All come
 /// from the source event, never the wall clock, so a cold rebuild reproduces them exactly
-/// (ADR-PC-010 §P5): <see cref="RecordedAt"/> = the event's transaction_time,
+/// (ADR-PC-010): <see cref="RecordedAt"/> = the event's transaction_time,
 /// <see cref="ValidFrom"/> = the event's valid_time. A position projection's world-time slice
 /// is open-ended, so <see cref="ValidTo"/> is normally <see langword="null"/>.
 /// </summary>
@@ -58,7 +58,7 @@ public interface IProjectionRunner
     Task ApplyAsync(EventEnvelope envelope, CancellationToken ct = default);
 
     /// <summary>
-    /// Rebuild entry point (ADR-PC-002 §P4): supersede every current belief for this kind
+    /// Rebuild entry point (ADR-PC-002): supersede every current belief for this kind
     /// before a cold re-fold. The drainer then re-reads from sequence 0.
     /// </summary>
     Task SupersedeAllForRebuildAsync(DateTimeOffset supersededAt, CancellationToken ct = default);
@@ -112,7 +112,7 @@ public sealed record ProjectionInfra(IProjectionStorage Storage, IEventSerialize
 /// side: the host owns the family-typed <see cref="IReadModelStore{TRow}"/> (the family's own
 /// read-model table) and the codec; the family supplies the fold + the state→row mapper. Generic
 /// over the family's row type <typeparamref name="TRow"/> so the engine spine never names a
-/// deposit's read-model shape (ADR-PC-021 §D2/§P2 — the family closes the type). Kept separate from
+/// deposit's read-model shape (ADR-PC-021 — the family closes the type). Kept separate from
 /// <see cref="ProjectionInfra"/> because the bitemporal <c>projections</c> store and the flat read
 /// model are distinct surfaces with distinct rebuild disciplines (supersede-all vs
 /// truncate-and-refold).

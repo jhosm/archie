@@ -8,7 +8,7 @@ namespace Babelstone.Engine;
 /// (<see cref="AggregateRuntime{TState}"/> takes a <see cref="TimeProvider"/> to stamp
 /// transaction_time) — but its "now" is settable, so a simulation can FAST-FORWARD it through a
 /// deposit's future milestones. The clock stays an injected seam of the impure shell, never reachable
-/// from a handler (ADR-PC-010 §P5): a handler is a pure fold and never reads a clock; the simulation
+/// from a handler (ADR-PC-010): a handler is a pure fold and never reads a clock; the simulation
 /// advances THIS clock and the real lifecycle commands run against it.
 /// </summary>
 /// <remarks>
@@ -48,7 +48,7 @@ public sealed class SimulationClock(DateTimeOffset start) : TimeProvider
 /// <remarks>
 /// The schedule is supplied by the FAMILY, which alone knows what a deposit's milestones are (coupon
 /// boundaries, month-ends, maturity) and how to fire them. The engine spine stays family-agnostic
-/// (ENGINE_FAMILY_AGNOSTIC, ADR-PC-021 §P2): <see cref="SimulationRuntime{TState}"/> only walks an
+/// (ENGINE_FAMILY_AGNOSTIC, ADR-PC-021): <see cref="SimulationRuntime{TState}"/> only walks an
 /// ordered list of <c>(DueAt, Step)</c> pairs and fast-forwards the clock between them — it names no
 /// coupon, no maturity, no family type.
 /// </remarks>
@@ -71,7 +71,7 @@ public sealed record LifecycleMilestone(
 /// <para>
 /// Rehydration reads the durable log read-only (A.3) and folds <em>structural</em> state;
 /// it deliberately does NOT decrypt PII — state transitions run on structural fields
-/// (ADR-PC-004 §P2: PII is off the structural hot path), so a simulation never needs to
+/// (ADR-PC-004: PII is off the structural hot path), so a simulation never needs to
 /// reach OpenBao. Counterfactual inputs (pack version, rate-sheet, clock) flow in per
 /// invocation.
 /// </para>
@@ -133,14 +133,14 @@ public sealed class SimulationRuntime<TState>(
     /// and the firing ORDER — it never constructs a domain event itself. A clock-advanced run therefore
     /// produces the SAME stream a live deposit ticking over real time would, and cold-replays
     /// (ProjectAsync) to the identical terminal state — replay-determinism by construction
-    /// (ADR-PC-010 §P5): the clock is the impure shell's, every date the step stamps is event-captured,
+    /// (ADR-PC-010): the clock is the impure shell's, every date the step stamps is event-captured,
     /// and a rebuild never re-reads a clock.
     /// </para>
     /// <para>
     /// <b>Family-agnostic.</b> This method names no coupon, no maturity, no family type — it only
     /// fast-forwards a clock through an ordered list of due instants and fires the caller's steps. The
     /// FAMILY builds the schedule (it alone knows the milestone dates and the commands), so the spine
-    /// stays family-agnostic (ENGINE_FAMILY_AGNOSTIC, ADR-PC-021 §P2).
+    /// stays family-agnostic (ENGINE_FAMILY_AGNOSTIC, ADR-PC-021).
     /// </para>
     /// <para>
     /// <b>Not structurally side-effect-free.</b> Unlike <see cref="ProjectAsync"/> /

@@ -27,7 +27,7 @@ public sealed class ProjectionStore<TState>(IProjectionStorage storage, IStateSe
     }
 
     /// <summary>
-    /// The steady-state bitemporal update (ADR-PC-002 §P2): atomically supersede the prior belief
+    /// The steady-state bitemporal update (ADR-PC-002): atomically supersede the prior belief
     /// and insert <paramref name="state"/> as the new current belief, stamped with the deterministic
     /// temporal context and the producing event's <paramref name="sourceSequence"/>.
     /// </summary>
@@ -45,12 +45,12 @@ public sealed class ProjectionStore<TState>(IProjectionStorage storage, IStateSe
             SupersededAt: null,
             StructuralPayload: serializer.Serialize(state),
             // Structural state only; the PII ciphertext envelope stays empty until PII lands
-            // (ADR-PC-004 §P2).
+            // (ADR-PC-004).
             PiiCiphertext: ReadOnlyMemory<byte>.Empty);
         return storage.SupersedeAndWriteAsync(record, ct);
     }
 
-    /// <summary>Rebuild supersede-all for this kind (ADR-PC-002 §P4) before a cold re-fold.</summary>
+    /// <summary>Rebuild supersede-all for this kind (ADR-PC-002) before a cold re-fold.</summary>
     public Task SupersedeAllAsync(string kind, DateTimeOffset supersededAt, CancellationToken ct = default)
         => storage.SupersedeAllAsync(kind, supersededAt, ct);
 }

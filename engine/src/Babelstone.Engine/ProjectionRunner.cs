@@ -7,11 +7,11 @@ namespace Babelstone.Engine;
 /// writing bitemporal rows through <see cref="ProjectionStore{TState}"/>. The fold reuses the
 /// SAME pure dispatch as the aggregate runtime (<see cref="HandlerRegistry"/> +
 /// <see cref="IDispatchableHandler.ApplyBoxed"/>), so a projection handler is subject to the same
-/// determinism guarantees (ADR-PC-010 §P5) and the batch-vs-inline equivalence holds.
+/// determinism guarantees (ADR-PC-010) and the batch-vs-inline equivalence holds.
 /// </summary>
 /// <remarks>
 /// Decode is structural-only: the payload is decoded but NOT PII-unprotected (a projection's
-/// structural state carries no PII; ADR-PC-004 §P2). The runner is idempotent under at-least-once
+/// structural state carries no PII; ADR-PC-004). The runner is idempotent under at-least-once
 /// delivery via the <c>source_sequence</c> guard — re-applying an already-folded event is a no-op,
 /// which is what makes the accumulating folds (state.X + event.Y) safe to replay.
 /// </remarks>
@@ -51,7 +51,7 @@ public sealed class ProjectionRunner<TState>(
         var @event = serializer.Decode(envelope.Payload, registration.PayloadType);
         var next = (TState)registration.Handler.ApplyBoxed(state, @event).NewState;
 
-        // Deterministic temporal stamps come from the event, never the clock (ADR-PC-010 §P5).
+        // Deterministic temporal stamps come from the event, never the clock (ADR-PC-010).
         var temporal = new ProjectionTemporalContext(
             RecordedAt: envelope.TransactionTime,
             ValidFrom: envelope.ValidTime,

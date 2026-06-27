@@ -128,7 +128,7 @@ public enum ReconciliationPatterns
 /// </summary>
 /// <remarks>
 /// <para>
-/// NO PII, by construction (ADR-PC-004 §P2 / the no-PII-on-the-durable-bus rule): a contract carries
+/// NO PII, by construction (ADR-PC-004 / the no-PII-on-the-durable-bus rule): a contract carries
 /// only structural <em>references</em> — the consumer's stable name, its projection-kind discriminator,
 /// and a relative path to the catalogued descriptor. A depositor name, NIF, or IBAN never appears in a
 /// contract, the same guarantee the AsyncAPI catalogue and the Avro payloads give.
@@ -236,7 +236,7 @@ public sealed record ConsumerReconciliationReport(
 /// family's projection runner uses. So the engine-side checksum (pattern (a)) is the SAME pure
 /// fold the projection materialises, computed independently from the event log: the two can only
 /// disagree if the materialised belief actually drifted. The spine stays under
-/// ENGINE_FAMILY_AGNOSTIC (ADR-PC-021 §P2).
+/// ENGINE_FAMILY_AGNOSTIC (ADR-PC-021).
 /// </para>
 /// <para>
 /// The fold reuses <see cref="IDispatchableHandler.ApplyBoxed"/> and skips event types the
@@ -244,7 +244,7 @@ public sealed record ConsumerReconciliationReport(
 /// SHA-256 over the SAME structural serialization the store persists (<see cref="JsonStateSerializer{TState}"/>
 /// is deterministic in declaration order), so a clean reconciliation is genuine byte-identity, not
 /// a coincidental digest collision. No clock, no randomness — the reconciler is itself replayable
-/// (ADR-PC-010 §P5).
+/// (ADR-PC-010).
 /// </para>
 /// </remarks>
 public sealed class ProjectionReconciler<TState>(
@@ -335,7 +335,7 @@ public sealed class ProjectionReconciler<TState>(
         // to the ProjectionRebuildDrillStale freshness alert: freshness catches a drill that did not
         // RUN, divergence a drill that RAN and FAILED). A clean drill records its success timestamp on
         // the freshness gauge — evidence the source-of-truth invariant holds for this kind. The metric
-        // is a side-effect at this impure boundary, not inside the cold re-fold (ADR-PC-010 §P5).
+        // is a side-effect at this impure boundary, not inside the cold re-fold (ADR-PC-010).
         if (!result.Identical)
         {
             ReconciliationMetrics.RecordRebuildDivergence(runner.Kind);
@@ -386,7 +386,7 @@ public sealed class ProjectionReconciler<TState>(
             // Observation boundary (M.5 / ADR-IC-007 Layer 1): a mismatch that ran under a declared
             // contract is the §7.1 (a) alertable finding — emit it tagged by the consumer reference.
             // The ChecksumAsync fold itself stays a pure, replayable computation; the metric is a
-            // side-effect here, not inside the fold (ADR-PC-010 §P5).
+            // side-effect here, not inside the fold (ADR-PC-010).
             if (!checksum.Match)
             {
                 ReconciliationMetrics.RecordChecksumMismatch(contract.Consumer, contract.ProjectionKind);
@@ -447,14 +447,14 @@ public sealed class ProjectionReconciler<TState>(
 /// (ADR-IC-007 Layer 1, M.5): the three §7.1 alertable findings as monotonic
 /// counters, plus the §7.2 drill-freshness observable gauge. They are the operational SIDE-EFFECT of
 /// the reconciler's verdicts — emitted at the impure observation boundary, never inside a pure fold
-/// (ADR-PC-010 §P5) — so the <c>projection-reconciliation</c> alert rules
+/// (ADR-PC-010) — so the <c>projection-reconciliation</c> alert rules
 /// (<c>infra/grafana/prometheus/alert-rules.yaml</c>) resolve to live series.
 /// </summary>
 /// <remarks>
 /// <para>
 /// Non-generic on purpose: <see cref="ProjectionReconciler{TState}"/> closes over a family's state
 /// type, but the metrics are family-agnostic dimensions (<c>consumer</c> / <c>projection_kind</c>
-/// REFERENCES, never PII — ADR-PC-004 §P2 / catalogue OBS_NO_PII_ATTRS). Registering them here means
+/// REFERENCES, never PII — ADR-PC-004 / catalogue OBS_NO_PII_ATTRS). Registering them here means
 /// ONE instrument per name on the shared meter regardless of how many closed reconciler types a host
 /// instantiates. A host turns them on with <c>AddMeter(BabelstoneTelemetry.MeterName)</c>; with no
 /// listener attached <see cref="Counter{T}.Add(T, KeyValuePair{string, object?}[])"/> and the gauge
