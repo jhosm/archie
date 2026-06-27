@@ -152,7 +152,7 @@ public sealed class AggregateRuntime<TState>(
 
     /// <summary>
     /// Rehydrates the stream's state AS OF a given per-stream <paramref name="asOfSequence"/> — the
-    /// transaction-time / point-in-time read (the I.2 Query API as-of axis, bd babelstone-b4wp).
+    /// transaction-time / point-in-time read (the I.2 Query API as-of axis).
     /// Honours snapshots (ADR-PC-003 §P3): it seeds from the latest VALID snapshot at or below
     /// <paramref name="asOfSequence"/> and folds only the tail up to and INCLUDING that point — a
     /// snapshot taken PAST the point is the future relative to the read and is excluded. With no
@@ -343,7 +343,7 @@ public sealed class AggregateRuntime<TState>(
         // Sync-mode projections (two-modes §5.4): once the event has committed, drive them within
         // a bounded budget. The hook NEVER rolls back the commit — "the event is true regardless
         // of whether a projection consumed it"; it surfaces its own failure/lag. v1 injects a
-        // no-op (every projection is async); the budgeted hook is the v4 template.
+        // no-op (every projection is async).
         if (postCommitProjector is not null)
         {
             await postCommitProjector.NotifyAppendedAsync(context.Family, ct);
@@ -423,7 +423,7 @@ public sealed class AggregateRuntime<TState>(
             var existing = await snapshots!.TryGetAsync(streamId, ct);
             var eventsSinceSnapshot = existing is null ? newHead + 1 : newHead - existing.AtSequence;
 
-            // Snapshot-lag SLI (ADR-PC-003 §P6 (1), bd babelstone-sk7e): report how far behind the
+            // Snapshot-lag SLI (ADR-PC-003 §P6 (1)): report how far behind the
             // snapshotter is for THIS stream right now — the un-snapshotted depth we just computed — as a
             // process high-water mark the SnapshotLagHigh gauge reads. Recorded BEFORE the policy decision
             // so a stream that has fallen behind is visible even on an append the policy then snapshots

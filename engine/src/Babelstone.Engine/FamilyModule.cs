@@ -78,7 +78,7 @@ public sealed class HandlerRegistry : IHandlerRegistry
 /// <remarks>
 /// The loader registers a module's declared (event_type→handler) bindings as-is. The originally-filed
 /// full bidirectional CUE cross-check (skeleton §5.2 / ADR-PC-006 — proving the declared event types are
-/// EXACTLY a CUE-declared event taxonomy) was DROPPED, not deferred (bd babelstone-e6fr.6): no CUE
+/// EXACTLY a CUE-declared event taxonomy) was DROPPED, not deferred: no CUE
 /// event-type taxonomy exists to check against (the CUE schemas are variant-config, not an event taxonomy),
 /// and the aggregate fold is already FAIL-CLOSED — <see cref="AggregateRuntime{TState}"/>'s fold throws on
 /// any unhandled event type at append AND replay, and <see cref="HandlerRegistry"/> throws on a duplicate

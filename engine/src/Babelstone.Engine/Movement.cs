@@ -81,9 +81,9 @@ public enum MovementOrigin
     Originated,
 
     /// <summary>An already-cleared movement (a card capture, a Core-side posting) arrived via the
-    /// capture/settlement feed (ADR-PC-030 §176). The engine RECORDS it and folds it into the balance;
-    /// there is no cash leg to drive (the money already moved upstream). v1 has no Observed producer — the
-    /// Observed path is specified-but-dormant until shape 3 (ADR-PC-032 Residual risks).</summary>
+    /// capture/settlement feed (ADR-PC-030). The engine RECORDS it and folds it into the balance;
+    /// there is no cash leg to drive (the money already moved upstream). v1 has no Observed producer; the
+    /// path is specified but not yet exercised (ADR-PC-032).</summary>
     Observed,
 }
 

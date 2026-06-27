@@ -5,7 +5,7 @@ namespace Babelstone.Engine;
 /// puts value in. Carried by <see cref="Movement"/> (ADR-PC-032), the engine's single spine atom for
 /// moving money. The old eager settlement seam (ISettlementPort / SettlementInstruction /
 /// LoggingSettlementPort) that this enum once served was deleted once every cash leg moved onto the
-/// append-first Movement pattern and the confirmation-gated settlement saga (bd babelstone-t7o3.17);
+/// append-first Movement pattern and the confirmation-gated settlement saga;
 /// only the generic direction primitive survives, now owned by the Movement spine.
 /// </summary>
 public enum SettlementDirection

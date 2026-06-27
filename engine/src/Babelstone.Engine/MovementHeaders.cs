@@ -31,13 +31,13 @@ namespace Babelstone.Engine;
 /// payload; only the routing discriminators ride the headers.
 /// </para>
 /// <para>
-/// <b>The SCA freshness claims ride the SAME hop (ADR-PC-032 §A8; t7o3.19).</b> For an Originated
+/// <b>The SCA freshness claims ride the SAME hop (ADR-PC-032 §A8).</b> For an Originated
 /// money-mover subject to step-up SCA, the gateway-attested <c>acr</c> / <c>auth_time</c> claims propagate
 /// forward to the event-auto-started settlement leg on these SAME Movement-bearing-event CloudEvents headers
 /// (the operational-metadata channel, never the payload, never PII — the same posture
 /// <c>movementorigin</c> / <c>movementdirections</c> take here). They are promoted as their own extension
 /// attributes (e.g. <c>ce_scaacr</c> / <c>ce_scaauthtime</c>) co-carried on the engine boundary that appends
-/// the event — NOT populated here: that gate and its non-double-populate enforcement are bd t7o3.19's, and
+/// the event — NOT populated here: that gate and its non-double-populate enforcement belong to the SCA-claims producer, and
 /// this seam stays the movement-routing producer. That carriage adds entries to the SAME
 /// <see cref="DomainEvent.IntegrationHeaders"/> map this helper seeds (no double-populate: distinct keys), so
 /// the two producers compose on one hop.
