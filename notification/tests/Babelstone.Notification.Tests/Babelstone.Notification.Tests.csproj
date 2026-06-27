@@ -18,12 +18,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The notification host under test. DepositReadClientTests drives the typed HTTP read client
-         over a fake HttpMessageHandler (no engine, no Docker) — the GET /v1/deposits/{id} path, the
-         snake_case JSON mapping, and the 404→null / 5xx→throw behaviour (ADR-PC-027 contract). The
+    <!-- The notification CORE under test (NotificationFamilyAgnosticTests, NotificationIdTests,
+         NotificationSchedulePassTests). The deposit read client and its tests (DepositReadClientTests) are
+         family-owned and moved to Babelstone.Families.TermDeposit.Notification.Tests (ADR-IC-019 D1). The
          NotificationFamilyAgnosticTests gate parses the core .csproj for a families/** or engine-spine
-         reference (ADR-IC-019 §D2/§P2). The end-to-end read against a real engine is the engine API's
-         own integration tests' job. -->
+         reference (ADR-IC-019 D2/P2) AND scans the core source for an embedded family literal. -->
     <ProjectReference Include="../../src/Babelstone.Notification/Babelstone.Notification.csproj" />
   </ItemGroup>
 </Project>

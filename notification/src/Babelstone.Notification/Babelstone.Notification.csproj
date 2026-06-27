@@ -1,16 +1,18 @@
 <!-- The /notification family-AGNOSTIC core LIBRARY (ADR-IC-019 §D2/§P1 + Amendment 2026-06-24). In
      plain terms: this is the part of the notification service that must never know what a term deposit
      is. It owns the generic poll-loop worker (NotificationWorker), the per-tick engine
-     (NotificationSchedulePass), the composite-id primitive (NotificationId), the dedupe ledger, the
-     storage-opaque read client (DepositReadClient, ADR-PC-027), and the family-contribution port
-     (IFamilyNotificationModule / INotificationScheduleRule). It is a LIBRARY, not the runnable host: the
-     composition root that names families and wires OpenTelemetry/HTTP lives in the sibling
+     (NotificationSchedulePass), the composite-id primitive (NotificationId), the dedupe ledger, and the
+     family-contribution port (IFamilyNotificationModule / INotificationScheduleRule). It does NOT own a
+     deposit read client (a "deposit" is term-deposit knowledge, so the deposit-shaped read client is
+     family-owned and lives in the family contribution, ADR-IC-019 D1). It is a LIBRARY, not the runnable
+     host: the composition root that names families and wires OpenTelemetry lives in the sibling
      Babelstone.Notification.Host exe (the §A2/§D4 exemption holder).
 
      FAMILY-AGNOSTIC (ADR-IC-019 §D2/§P2, gated by NOTIFICATION_FAMILY_AGNOSTIC): this core references
      neither the engine kernel (Babelstone.Engine / Babelstone.EventStore) nor any product family — family
-     scheduling rules + templates plug in through the port at the host edge, and deposit facts are read over
-     the storage-opaque ADR-PC-027 HTTP contract, never the byte store. The NotificationFamilyAgnosticTests
+     scheduling rules + templates + their deposit-shaped read clients plug in through the port at the host
+     edge and read family data over the storage-opaque ADR-PC-027 HTTP contract, never the byte store. The
+     NotificationFamilyAgnosticTests
      gate parses this .csproj for a families/** or engine-spine reference AND scans this project's source for
      an embedded family literal (ADR-IC-019 §D2/§P2 + Amendment-A1). Extraction-ready subtree
      (ADR-PC-019 §P2): it carries its own copy of the shared engine build settings rather than inheriting

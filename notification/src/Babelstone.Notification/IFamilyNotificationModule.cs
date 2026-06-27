@@ -7,10 +7,10 @@ namespace Babelstone.Notification;
 /// A family's contribution to the notification core's composition (ADR-IC-019 §D4/§P4, Amendment
 /// 2026-06-24) — the notification-side mirror of the engine's <c>IFamilyHostModule</c> (ADR-PC-021 §A1)
 /// and the orchestrator's <c>ISagaModule</c> (ADR-IC-018 §D4). In plain terms: the generic notification
-/// core owns the poll loop, the dedupe ledger, the composite-id, the read client and the outbox, but it
-/// must NOT know that a <em>term deposit</em> has a 14-day pre-maturity window or that its reminder uses
-/// the <c>pt.notice.maturity</c> template. Those family-shaped decisions live in a per-family module that
-/// plugs into the core here.
+/// core owns the poll loop, the dedupe ledger, the composite-id and the outbox, but it must NOT know that a
+/// <em>term deposit</em> has a 14-day pre-maturity window, that its reminder uses the <c>pt.notice.maturity</c>
+/// template, or even what a "deposit" is (the deposit-shaped read client is family-owned too — ADR-IC-019
+/// §D1). Those family-shaped decisions live in a per-family module that plugs into the core here.
 /// </summary>
 /// <remarks>
 /// Following the established module shape, this carries an identity and a <see cref="ConfigureServices"/>
@@ -30,10 +30,10 @@ public interface IFamilyNotificationModule
     string FamilyName { get; }
 
     /// <summary>
-    /// Register the family-owned notification services — its <see cref="INotificationScheduleRule"/>(s) —
-    /// into the host container. The family sources its own pack/configuration parameters (e.g. the
-    /// term-deposit opt-out-window width) from <paramref name="ctx"/>, never from a literal in the core.
-    /// Family-agnostic services (the <see cref="DepositReadClient"/>, the dedupe ledger) are resolved from
+    /// Register the family-owned notification services — its <see cref="INotificationScheduleRule"/>(s) and
+    /// the deposit-shaped read client they consume — into the host container. The family sources its own
+    /// pack/configuration parameters (e.g. the term-deposit opt-out-window width) from <paramref name="ctx"/>,
+    /// never from a literal in the core. Family-agnostic services (e.g. the dedupe ledger) are resolved from
     /// the container being configured.
     /// </summary>
     void ConfigureServices(IServiceCollection services, NotificationModuleContext ctx);
@@ -66,34 +66,43 @@ public interface INotificationScheduleRule
 /// The per-deployment ingredients the host hands each <see cref="IFamilyNotificationModule"/> at
 /// composition time — the notification-side <c>FamilyHostContext</c> (ADR-PC-021 §A1). Carries the host
 /// configuration root, the engine read endpoint, and the values the host resolved from the instance-pinned
-/// regulatory pack: the declared disclosure-template refs and the opt-out-window parameter.
+/// regulatory pack: the declared disclosure-template refs and the pack's numeric parameters.
 /// </summary>
 /// <remarks>
 /// It deliberately carries <b>no <c>VerifiedPack</c></b>: that type lives in the engine spine
 /// (<c>Babelstone.Packs</c>) the notification core may not reference (ADR-IC-019 §P2). So the host (the §A2
 /// composition root, which MAY reference the spine) resolves the pinned pack and conveys the needed values
-/// here as PLAIN CLR data (a string list, an <see cref="int"/>) — the core never names a pack type and the
-/// <c>NOTIFICATION_FAMILY_AGNOSTIC</c> gate stays green (bd babelstone-60n8.6). A family module reads
-/// <see cref="PackTemplateRefs"/> / <see cref="AutoRenewalOptoutWindowDays"/> to source its template-set and
-/// window from the pinned pack rather than a family-side constant (ADR-PC-025 §2 pinning). Family-agnostic
-/// services are resolved from the <see cref="IServiceCollection"/> the module is configuring.
+/// here as PLAIN, GENERIC CLR data (a string list, a string→int map) — the core never names a pack type
+/// <em>and never a family-specific parameter</em> (ADR-IC-019 §D1/§P2). A family module reads
+/// <see cref="PackTemplateRefs"/> and looks its own parameters up by pack name via
+/// <see cref="GetPackInt32"/> (e.g. the term-deposit <c>auto_renewal_optout_window_days</c>), sourcing its
+/// template-set and window from the pinned pack rather than a family-side constant (ADR-PC-025 §2 pinning).
+/// Family-agnostic services are resolved from the <see cref="IServiceCollection"/> the module is configuring.
 /// </remarks>
 /// <param name="Configuration">The host configuration root.</param>
 /// <param name="EngineBaseUrl">The ADR-PC-027 deposit read-surface base URL.</param>
 /// <param name="PackTemplateRefs">The instance-pinned pack's declared disclosure-template file refs
 /// (<c>pack.yaml</c> <c>template_refs</c>, e.g. <c>notices</c>) — empty when no pack/templates are configured.
 /// A family module requires its template-set is in this set and fails loud otherwise.</param>
-/// <param name="AutoRenewalOptoutWindowDays">The instance-pinned pack's
-/// <c>parameters/constants.yaml</c> <c>auto_renewal_optout_window_days</c>, or <see langword="null"/> when no
-/// pack is configured — the family module supplies its documented default as the fallback.</param>
+/// <param name="PackParameters">The instance-pinned pack's numeric parameters, reflected generically by their
+/// canonical (snake_case) pack names — empty when no pack is configured. A family module selects the ones it
+/// needs by name (so the core holds the values without naming any family-specific parameter); the family
+/// supplies its documented default when a key is absent.</param>
 public sealed record NotificationModuleContext(
     IConfiguration Configuration,
     string EngineBaseUrl,
     IReadOnlyList<string> PackTemplateRefs,
-    int? AutoRenewalOptoutWindowDays)
+    IReadOnlyDictionary<string, int> PackParameters)
 {
     /// <summary>Read an integer configuration value (e.g. a config-override window width), or
     /// <see langword="null"/> if unset/unparsable — the caller supplies its family-side default.</summary>
     public int? GetInt32(string key) =>
         int.TryParse(Configuration[key], out var value) ? value : null;
+
+    /// <summary>Read a numeric parameter the host reflected from the instance-pinned pack, by its canonical
+    /// (snake_case) pack name — or <see langword="null"/> if the pinned pack declares no such parameter. The
+    /// family names the parameter it needs; the core holds the values generically and never a pack type or a
+    /// family-specific field (ADR-IC-019 §D1/§P2).</summary>
+    public int? GetPackInt32(string key) =>
+        PackParameters.TryGetValue(key, out var value) ? value : null;
 }

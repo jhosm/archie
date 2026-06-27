@@ -30,9 +30,6 @@
   <ItemGroup>
     <!-- The worker host builder (Host.CreateApplicationBuilder + BackgroundService registration). -->
     <PackageReference Include="Microsoft.Extensions.Hosting" />
-    <!-- IHttpClientFactory + the typed-client registration (AddHttpClient&lt;DepositReadClient&gt;): the
-         host wires the core's read client over the ADR-PC-027 HTTP contract (GET /v1/deposits/{id}). -->
-    <PackageReference Include="Microsoft.Extensions.Http" />
     <!-- The host-side OTel-SDK seam (ADR-IC-007 Layer 1): this composition root registers the
          TracerProvider + OTLP exporter so spans the host opens on the shared Babelstone ActivitySource are
          created and exported to the Collector (§P1 — never direct-to-backend). -->
@@ -41,8 +38,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The family-agnostic notification CORE (the loop, schedule pass, dedupe, read client, the
-         contribution port). The host composes it; the core never references back (ADR-IC-019 §P2). -->
+    <!-- The family-agnostic notification CORE (the loop, schedule pass, dedupe, the
+         contribution port — NO deposit read client; that is family-owned, ADR-IC-019 D1). The host composes
+         it; the core never references back (ADR-IC-019 §P2). -->
     <ProjectReference Include="../Babelstone.Notification/Babelstone.Notification.csproj" />
 
     <!-- The family NOTIFICATION contributions the host composes — the §A2 exemption: the host MAY name a
@@ -52,7 +50,7 @@
 
     <!-- The pack model + structural parser (ADR-PC-007). The host (the §A2 composition root, NOT a gated
          core project) resolves the instance-pinned regulatory pack at startup and conveys its declared
-         template_refs + AutoRenewalOptoutWindowDays into NotificationModuleContext as plain data, so a family
+         template_refs + numeric parameters into NotificationModuleContext as plain, generic data, so a family
          module sources its template-set/window from the pinned pack without the family-agnostic core ever
          referencing Babelstone.Packs (ADR-IC-019 §P2 preserved — NotificationFamilyAgnosticTests gates the
          core, not this host; bd babelstone-60n8.6). -->

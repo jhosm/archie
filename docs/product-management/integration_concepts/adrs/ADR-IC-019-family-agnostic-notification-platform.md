@@ -226,6 +226,26 @@ The host composes the modules per §D4/§P4: an **explicit list** at the current
 
 ---
 
+## Amendment — 2026-06-27: the deposit-shaped read client + view DTOs are family-owned (refines the §P1 topology, hardens §D1)
+
+In plain English: when the notification service was first built, the code that reads a *deposit* over HTTP — `DepositReadClient` and its `DepositView` / `DepositMaturityView` / `DepositWithholdingView` DTOs — was placed in the generic core and *called* "family-agnostic" because it avoids a compile-time reference to the family's CLR types. That label was too generous: a thing that *matures*, pays *coupons*, and has *tax withheld* is a term deposit, so that client is term-deposit knowledge sitting in the layer meant to know nothing about products. This amendment records that the deposit-shaped read client is **family-owned** (§D1) and refines §P1's topology, which had listed "the read-contract client" under the core.
+
+### A1 · What moves, and why §P1 is refined
+
+§P1's project topology listed *"the read-contract client"* among the core's components, and the family contribution as *"notice content + scheduling-rule contribution"* only. That placement is **refined**: a read client whose resource and DTOs name deposit concepts (`maturity_date`, `coupons_paid`, `withholding_to_date_cents`) is family-specific *read shape* — exactly what §D1 assigns to the family ("the read shape it requires … is family-owned"). It therefore lives in `families/<X>/**/.Notification` next to the family's scheduling rules, binding the published [ADR-PC-027](../../product_concepts/adrs/ADR-PC-027-deposit-read-surface-canonical-resource.md) contract (still HTTP, still storage-opaque, still never the engine kernel — §D2/§D3 unchanged). The core keeps only genuinely family-agnostic infrastructure: the worker loop, the schedule pass, the composite-id, the dedupe ledger, the per-service outbox, and the `IFamilyNotificationModule` / `INotificationScheduleRule` / `ReminderDecision` port. The §P1 line "the read-contract client" in the core stands only for a *genuinely family-agnostic* read client, if one is ever needed; a deposit-shaped one is not it.
+
+### A2 · The same refinement applies to family-named pack parameters on the module context
+
+`NotificationModuleContext` is a core type. A field literally named `AutoRenewalOptoutWindowDays` on it (auto-renewal is a term-deposit lifecycle concept) is the same §D1 leak in the same class as a deposit DTO. The context therefore conveys the pinned pack's numeric parameters **generically** — a `string → int` map keyed by canonical pack name, read family-side via `GetPackInt32("auto_renewal_optout_window_days")` — so the core holds the values without naming any family-specific parameter. The host (the §A2 composition root, which MAY reference the spine) reflects the typed `VerifiedPack.Parameters` into that generic map; the core still holds **no** `VerifiedPack` (§P2 unchanged).
+
+### A3 · This is additive; it strengthens §D1 and records the divergence from the original §P1 placement
+
+§D1–§D5 stand verbatim; this amendment does not reverse the decision — it makes the code conform to §D1 *more* fully and refines the illustrative §P1 topology accordingly. It records a real divergence from §P1's original core-side placement of the read client (the explicit-drift gate, [ADR-PC-020 §D3/§P9](../../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md) — the "fix the code to conform" branch, riding in the **same change**). The realisation relocates `DepositReadClient` + the `Deposit*View` DTOs (and their unit tests) from `Babelstone.Notification` into `Babelstone.Families.TermDeposit.Notification`, where the family module registers the typed client over the engine read endpoint; `NotificationModuleContext` swaps its `AutoRenewalOptoutWindowDays` field for the generic `PackParameters` map.
+
+**Why the green gate did not catch it.** `NOTIFICATION_FAMILY_AGNOSTIC` (NOTIF-1) bans a `families/**`/engine-spine `ProjectReference` and a `term_deposit`/`TermDeposit`/`Babelstone.Families`/`pt.*` source literal — **not** the bare domain word `Deposit`. So a deposit-shaped client and a family-named context field passed the mechanical gate while violating §D1's spirit — the same **literal-blindness** the 2026-06-24 amendment named for PR #317. As there, the load-bearing fix is the **structural relocation** (which makes the project-reference gate meaningful for reads too), not a smarter regex; `Deposit` is too generic a token to ban without coupling the gate itself to term-deposit vocabulary. NOTIF-1's mechanical definition is unchanged and stays `Live`.
+
+---
+
 ## Cross-references
 
 - **Structures:** [ADR-IC-011](./ADR-IC-011-async-saga-completion-notification.md) (the notification service — its choreography-consumer character and read-model enrichment; this ADR adds the internal family-agnostic discipline IC-011 never named, honouring it, contradicting no clause).

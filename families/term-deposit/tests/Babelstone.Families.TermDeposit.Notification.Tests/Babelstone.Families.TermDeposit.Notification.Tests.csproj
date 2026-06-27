@@ -14,10 +14,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The family notification contribution under test (MaturityReminderRule's window selection +
-         template + IsActive filter). It brings the family-agnostic notification core transitively
-         (DepositReadClient, ReminderDecision), driven here over a fake HttpMessageHandler — no engine,
-         no Docker. The core's own dedupe + composite-id are tested in Babelstone.Notification.Tests. -->
+    <!-- The family notification contribution under test: MaturityReminderRule + WithholdingStatementRule
+         (window/template selection, IsActive filter, fail-loud pack pinning) AND the family-owned
+         DepositReadClient (DepositReadClientTests), all driven over a fake HttpMessageHandler — no engine,
+         no Docker. The contribution defines the deposit-shaped read client itself (ADR-IC-019 D1) and
+         brings the family-agnostic core's contribution port (ReminderDecision, the schedule-rule contract)
+         via its project reference. The core's own dedupe + composite-id are tested in
+         Babelstone.Notification.Tests. -->
     <ProjectReference Include="../../src/Babelstone.Families.TermDeposit.Notification/Babelstone.Families.TermDeposit.Notification.csproj" />
   </ItemGroup>
 </Project>

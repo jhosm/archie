@@ -1,19 +1,20 @@
 using System.Net;
 using System.Text;
-using Babelstone.Notification;
 using Xunit;
 
-namespace Babelstone.Notification.Tests;
+namespace Babelstone.Families.TermDeposit.Notification.Tests;
 
 /// <summary>
-/// Pure unit tests for <see cref="DepositReadClient"/> — the notification service's read window onto
-/// a deposit over the family-agnostic, storage-opaque read contract (ADR-PC-027 / ADR-IC-019 §D3).
-/// Docker-free and engine-free: they drive the client over a fake <see cref="HttpMessageHandler"/>
-/// (no real engine, no network), asserting that the client (1) calls <c>GET /v1/deposits/{id}</c>,
-/// (2) maps the host's snake_case wire JSON into the core-local <see cref="DepositView"/> (money as
-/// integer cents — never the family's <c>DepositResponse</c> CLR type, which the core does not
-/// reference), and (3) returns <see langword="null"/> on a 404 (no deposit resource yet). The
-/// end-to-end read against a real engine is the engine API's own integration tests' job.
+/// Pure unit tests for <see cref="DepositReadClient"/> — the term-deposit family's read window onto
+/// a deposit over the engine's published, storage-opaque read contract (ADR-PC-027 / ADR-IC-019 §D3).
+/// Deposit-shaped and therefore family-owned (§D1): the client lives in the family contribution, not the
+/// family-agnostic core, so its tests live here too. Docker-free and engine-free: they drive the client
+/// over a fake <see cref="HttpMessageHandler"/> (no real engine, no network), asserting that the client
+/// (1) calls <c>GET /v1/deposits/{id}</c>, (2) maps the host's snake_case wire JSON into the family-local
+/// <see cref="DepositView"/> (money as integer cents — binding the published contract, never the
+/// Application-layer <c>DepositResponse</c> CLR type), and (3) returns <see langword="null"/> on a 404
+/// (no deposit resource yet). The end-to-end read against a real engine is the engine API's own
+/// integration tests' job.
 /// </summary>
 public sealed class DepositReadClientTests
 {
@@ -55,7 +56,7 @@ public sealed class DepositReadClientTests
         Assert.Equal(HttpMethod.Get, handler.LastRequest!.Method);
         Assert.Equal($"http://engine.test/v1/deposits/{depositId}", handler.LastRequest.RequestUri!.ToString());
 
-        // snake_case → the core-local DepositView (money as integer cents, dates as DateOnly).
+        // snake_case → the family-local DepositView (money as integer cents, dates as DateOnly).
         Assert.NotNull(view);
         Assert.Equal(depositId, view.DepositId);
         Assert.Equal("Active", view.Lifecycle);
@@ -159,7 +160,7 @@ public sealed class DepositReadClientTests
             "http://engine.test/v1/deposits/maturities?from=2026-06-24&to=2026-07-08",
             handler.LastRequest.RequestUri!.ToString());
 
-        // snake_case → the core-local DepositMaturityView (money as integer cents, dates as DateOnly).
+        // snake_case → the family-local DepositMaturityView (money as integer cents, dates as DateOnly).
         Assert.Equal(2, rows.Count);
         Assert.Equal(new Guid("22222222-2222-2222-2222-222222222222"), rows[0].DepositId);
         Assert.Equal("Active", rows[0].Lifecycle);
@@ -231,7 +232,7 @@ public sealed class DepositReadClientTests
             "http://engine.test/v1/deposits/withholding-statements",
             handler.LastRequest.RequestUri!.ToString());
 
-        // snake_case → the core-local DepositWithholdingView (money as integer cents).
+        // snake_case → the family-local DepositWithholdingView (money as integer cents).
         Assert.Single(rows);
         Assert.Equal(new Guid("44444444-4444-4444-4444-444444444444"), rows[0].DepositId);
         Assert.Equal("Active", rows[0].Lifecycle);
