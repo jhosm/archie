@@ -8,7 +8,7 @@ namespace Babelstone.Engine;
 /// runner's family, fold the tail from the per-stream checkpoint forward, then advance the
 /// checkpoint. Project-THEN-checkpoint, so a crash mid-stream replays the last events — safe
 /// because <see cref="ProjectionRunner{TState}"/> is idempotent (the <c>source_sequence</c> guard).
-/// The runtime owns the clock (ADR-PC-010 §P5); handlers never read it.
+/// The runtime owns the clock (ADR-PC-010); handlers never read it.
 /// </summary>
 public sealed class ProjectionDrainer(
     IEventStore eventStore,
@@ -48,7 +48,7 @@ public sealed class ProjectionDrainer(
     }
 
     /// <summary>
-    /// Cold rebuild (ADR-PC-002 §P4): supersede every current belief for the kind, reset its
+    /// Cold rebuild (ADR-PC-002): supersede every current belief for the kind, reset its
     /// checkpoints, then re-fold from sequence 0. Stays within the SELECT/INSERT/UPDATE grant on
     /// <c>projections</c> (supersede, never delete) plus DELETE on the ephemeral checkpoints.
     /// The current beliefs it re-creates are bit-identical to the first run because every stamp is
