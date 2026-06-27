@@ -1,0 +1,120 @@
+# ADR-PC-036: The Lifecycle-Command Driver — A Downstream Projection-Poll Actor That POSTs the Engine's Command Endpoints
+
+| Field | Value |
+|---|---|
+| Status | Proposed |
+| Date | 2026-06-28 |
+| Deciders | jhosm |
+| Shape | Tool-selection (ADR-PC-000 §D3 residual category — a runtime/operational-discipline posture for *who/which mechanism* drives the engine's clock-driven lifecycle commands on their due dates, declared tool-selection per the §D4 default; F1/F2 do not discriminate, the same class as ADR-PC-034, ADR-PC-035, ADR-PC-019) |
+| Common criteria | [ADR-IC-000](../../integration_concepts/adrs/ADR-IC-000-common-evaluation-criteria.md) (reused per [ADR-PC-000](./ADR-PC-000-namespace-and-contract-shape-framework.md) D2) |
+| Depends on | [ADR-PC-023](./ADR-PC-023-temporal-signals-projection-derived.md) (the engine is clockless; a projection *is* the temporal signal — this is its **write-side twin**), [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) (the synchronous idempotent command surface + `command_dedup` this driver POSTs), [ADR-PC-010 §P5](./ADR-PC-010-dotnet-hand-rolled-engine.md) (handler purity — no clock in the fold), [ADR-PC-002](./ADR-PC-002-application-level-bitemporality.md) (the forward calendar projections that are the temporal signal), [ADR-IC-019](../../integration_concepts/adrs/ADR-IC-019-family-agnostic-notification-platform.md) (the family-agnostic notification poll-loop whose mechanism this reuses), [ADR-PC-032](./ADR-PC-032-money-movement-primitive.md) (the de-settled `Movement` whose gated settlement leg the driver must not outrun), [ADR-PC-031](./ADR-PC-031-personal-loan-family.md) (the recurring installment lifecycle this first serves alongside deposit maturity) |
+| Resolves | the **lifecycle-command-driver gap** surfaced in the term-deposit / personal-loan clock-trigger review (2026-06-28): nothing automated issues the state-changing maturity / installment command on its due date — it is a manual operator / MCP action today. Build issues are filed against this ADR once Accepted |
+| Related | [ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md) (`saga_timers` — the rejected candidate C substrate), [ADR-PC-025](./ADR-PC-025-customer-notification-emit-contract.md) (the read-side `SCHEDULED`-notification scheduler this mirrors on the write side), [ADR-PC-034](./ADR-PC-034-realtime-authorization-technique.md) (the sibling "reach the engine through the [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) command surface, never a new ingress" decision), bd `babelstone-mtto.3` (the renewal pre-maturity opt-out saga-start gate — **already built**; the driver inherits it by firing on/after maturity) |
+
+---
+
+## Context
+
+A deposit *matures* on its maturity date; a personal loan's *installment* falls due each month. Both are **clock-driven** lifecycle steps — and [ADR-PC-023](./ADR-PC-023-temporal-signals-projection-derived.md) deliberately put **no clock inside the engine**: a handler that reads the clock fails the build (`DETERMINISM_GATE`), and no clock-driven engine event type may exist (`NO_CLOCK_DRIVEN_ENGINE_SIGNAL`, BENG004). The state change itself is a *fact* the engine records perfectly well — `DepositMatured`, `LoanInstallmentPaid` — produced by the pure decider behind the [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) command endpoint. What is **missing** is the actor that *issues that command on the due date*.
+
+Today there is none. The command **ingress exists** — `POST /v1/deposits/{id}/maturity` (`MatureAsync`, also the `mature_deposit` MCP tool) and `POST /v1/loans/{id}/installment` (`PayInstallmentAsync`, host-wired with a *mandatory caller-supplied* `Idempotency-Key`) — but it is driven only by **hand**: an operator or the Claude agent presses the button, supplying the date and the key. Two ingress gaps remain even for the manual path: the loan endpoint takes a **caller-supplied** key with no canonical derivation (so a human and an automated driver paying installment N can present *different* keys → a double-collection the engine cannot dedupe), and the loan family has **no MCP tool** at all (the MCP surface is deposit-only). [ADR-PC-023](./ADR-PC-023-temporal-signals-projection-derived.md) named the *read-only notification* consumer deferred (**DEF-2**) but left the **state-changing command driver** unspecified by any ADR. This is its decision.
+
+Five constraints shape every candidate:
+
+- **The engine stays clockless ([ADR-PC-023](./ADR-PC-023-temporal-signals-projection-derived.md)).** The clock must live in a *downstream* actor; the driver reaches the engine only through the [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) command path, so the decider's purity + the lifecycle legality gate run. The due date rides as a **value** (`MaturedAt` / `PaidAt` → the event's `valid_time`); `transaction_time` is runtime-stamped — the [ADR-PC-002](./ADR-PC-002-application-level-bitemporality.md) bitemporal envelope makes a *late* firing record the **correct business date**.
+- **The temporal signal is a projection read.** Term deposits already expose a forward `maturity_calendar` ([02 §2.3](../02-v1-scope-term-deposits.md)). Personal loans expose **only a descriptive paid-amortization projection** (`AmortizationScheduleProjection`) — there is no forward installment calendar; one must be built (a pure fold of `LoanDisbursed` + `LoanInstallmentPaid`).
+- **Money is de-settled ([ADR-PC-032](./ADR-PC-032-money-movement-primitive.md)).** The command appends an `Originated` `Movement`; the gated settlement saga effects the cash and **parks in `HUMAN_INTERVENTION_REQUIRED` on failure (no compensation)**. The engine advances a loan's paid-count on the `LoanInstallmentPaid` **event**, not on settled cash — so a driver that fires installment N+1 the instant N's *command* succeeds can **outrun parked settlement**.
+- **`PayInstallment` is legal repeatedly from `Active`.** Unlike `Mature` (legal only from `Active` → a second attempt is a `DomainRejectedException`, naturally idempotent-ish), a repeated installment command has **no legality backstop** — only a deterministic idempotency key hitting [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) `command_dedup` stops a double-collection.
+- **The 14-day pre-maturity opt-out is already enforced ([02 §2.4.4](../02-v1-scope-term-deposits.md), bd `babelstone-mtto.3`, RESOLVED).** Firing `Mature` emits `DepositMatured`, which auto-starts the renewal saga **only when the renewal-policy header is non-`NONE`** (an opted-out deposit terminates and starts no renewal saga), and a built **saga-start gate** rejects any renewal dated *before* maturity (i.e. within the opt-out window). The driver fires `Mature` on/after the maturity date and **inherits** both gates — the gate's own code names the future scheduler as the partner it back-stops. So automating maturity introduces **no new opt-out exposure**; the protection is upstream of the driver.
+
+Five candidate mechanisms were designed and adversarially reviewed (no tool is purchased or licensed — every option is an in-house .NET component, so this is the [ADR-PC-000 §D3](./ADR-PC-000-namespace-and-contract-shape-framework.md) residual category: F1/F2 degenerate, the decision rides on S1–S4):
+
+| Candidate | Mechanism |
+|---|---|
+| **A** | A **projection-poll lifecycle-command driver** in a new sibling host, reusing the notification scheduler's poll-loop machinery ([ADR-IC-019](../../integration_concepts/adrs/ADR-IC-019-family-agnostic-notification-platform.md)) extracted into a shared `Babelstone.Cadence` library; per-family rules read the forward calendar and POST the command |
+| **B** | A **dedicated lifecycle service** as a separate bounded context, sharing only the pass mechanism, justified by isolating the money-command credential from the read-only notification context |
+| **C** | **Durable `fire_at` timers** on the saga substrate — build the [ADR-IC-003](../../integration_concepts/adrs/ADR-IC-003-saga-orchestrator.md) `saga_timers` table, arm one row per occurrence, fire through `saga_outbox` |
+| **D** | **Promote the `SimulationRuntime` milestone seam** (`LifecycleMilestone(DueAt, Step)` + injected clock) to a hosted production loop |
+| **E** | **Formalize the manual / operator + MCP trigger** with a canonical server-derived per-occurrence idempotency key; defer the automated scheduler |
+
+## Evaluation
+
+### Hard filter results
+
+#### F1 · Cost / licensing
+| Candidate | Licence / cost | Verdict |
+|---|---|---|
+| A–E | All in-house .NET; no new licence or runtime purchased | Pass (degenerate) |
+
+#### F2 · Regulatory fit (GDPR / DORA / PSD2)
+| Candidate | Note | Verdict |
+|---|---|---|
+| A–E | No candidate moves PII onto the bus; all reach the bank's Core only through the existing [ADR-PC-032](./ADR-PC-032-money-movement-primitive.md) gated settlement leg. The one regulatory hazard — auto-renewing against a customer's pre-maturity opt-out — is **already mitigated upstream of any candidate** by the built bd `babelstone-mtto.3` renewal saga-start gate (reject-renewal-before-maturity) and the non-`NONE` renewal-policy auto-start predicate; a driver firing `Mature` on/after maturity inherits both | Pass |
+
+The hard filters do not separate the candidates. The decision is **S1–S4**.
+
+### Soft criteria
+
+#### A (projection-poll driver in a sibling host) — CHOSEN for the automation
+- **S1 · Operational complexity (1–2 people).** Lowest novelty of the automated options: the clock-owning worker, the per-tick `SchedulePass`, the composite-id derivation, and the dedupe ledger already exist and are tested in the notification estate ([ADR-IC-019](../../integration_concepts/adrs/ADR-IC-019-family-agnostic-notification-platform.md)) — the same `BackgroundService` shape as the outbox relay and the saga dispatcher. The driver is a second consumer of that machinery whose *sink* differs (POST-a-command, not raise-a-reminder).
+- **S2 · Ecosystem coherence.** It honors both governing decisions without strain — the clock sits in the sibling host exactly where [ADR-PC-023 §6](./ADR-PC-023-temporal-signals-projection-derived.md) places the notification worker's clock, and it reaches the engine through the [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) command surface (the same "no new ingress" posture as [ADR-PC-034](./ADR-PC-034-realtime-authorization-technique.md)). Projection-poll + due-date-as-`valid_time` gives **correct backfill by construction**: a driver outage loses no firing — the next pass re-derives every still-due, still-`Active` occurrence and stamps each with its own business date.
+- **S3 · Exit cost.** A sibling host + a shared library; no new durable substrate to migrate off. The per-family rule is the only family-specific code, behind the [ADR-IC-019](../../integration_concepts/adrs/ADR-IC-019-family-agnostic-notification-platform.md) `family → core` arrow.
+- **S4 · Longevity.** One mechanism serves both products and scales to a third (deposit `PayInterest` coupons) as a fourth rule with zero core diff; maturity is the degenerate single-occurrence case of the recurring installment loop.
+- **Decisive reason:** it is the *blessed symmetric twin* of the read-side notification scheduler ADR-PC-023 already endorses — the lowest-novelty path that keeps the engine clockless and reaches it only through the decider.
+
+#### E (formalize the manual + MCP trigger) — ADOPTED as the foundation layer (not a rival)
+E is the **strict subset A sits on**: a **canonical server-derived per-occurrence idempotency-key** spec (the existing loan endpoint takes a *caller-supplied* key — the double-pay hazard a manual caller and the driver would otherwise hit), a `pay_installment` MCP tool (loans have none today), a `CommandId` threaded through `MatureDepositCommand` (maturity carries no mandatory key today — it leans on the legality gate), and the non-interactive **SCA service principal** for the money-mover routes. These make the *current* manual path provably safe at-least-once and are required by A *and* every automated layer. The decision **builds E first, then A** — E is a layer, not an alternative.
+
+#### B (dedicated service, separate context) — rejected (folded into A)
+B's thesis — isolate the money-command credential from the read-only disclosures context — is honored by A *already* (A places the driver in its **own** sibling host, never inside `Babelstone.Notification`, sharing only the mechanism library). B's residual distinction is a *separate deployable* for credential isolation, achievable with a **scoped service principal** on A's host; and B's own settlement-health read re-couples the "clean" context back to orchestrator saga state, undercutting the boundary it sells. Net: A plus governance ceremony.
+
+#### C (durable `fire_at` timers on the saga substrate) — rejected (fatal as drawn; reserved as a scale-up)
+**Fatal as designed:** to reuse the dispatcher's `{process_id}` path token and per-aggregate FIFO, C's lane saga must set `process_id = deposit_id` — which **collides with the renewal saga on the `saga_state` primary key** (the renewal saga already keys on the closing deposit id), silently swallowing the renewal saga's `StartSaga` as a duplicate and breaking term-deposit renewal auto-start. Repairable only by abandoning the seam reuse the proposal is built on. Even repaired it is the **heaviest** option (a new `saga_timers` table + a poll worker + a reconciler + a no-bridge lane saga) and **duplicates the calendar projection** it must reconcile against — the reconciler that prevents drift must itself read the projection, which is C's own strongest argument for A's pure poll. Its one unique virtue — durable missed-firing — is already delivered by projection-poll + due-date-as-`valid_time`. **Reserved** as a future scale-up if poll cost over a large portfolio is ever measured to bite.
+
+#### D (promote the `SimulationRuntime` milestone seam) — rejected as a separate actor (one idea harvested)
+Strictly dominated by A: the headline is half-false by construction — in production you **wait** on wall-clock, you do not fast-forward, so the injected-clock *advance* does not carry over; only the `milestone → real-command` *dispatch mapping* transfers, which is a library extraction, not a runtime. D needs the *same* new calendar projection and settlement-health gate as A. **Harvest its one durable idea:** have `SimulationRuntime` and A's driver share that dispatch mapping, so the simulation becomes a **fitness function proving the forecast is what production fires** — a cheap drift guard, adopted as part of A.
+
+## Decision
+
+**Build a downstream, clockless-engine-honoring lifecycle-command driver, in two layers, that discovers due work by polling a forward calendar projection and effects it by POSTing the engine's existing [ADR-PC-029](./ADR-PC-029-engine-command-ingress.md) command endpoint with a deterministic, server-derived, number-pinned idempotency key — the write-side twin of [ADR-PC-023](./ADR-PC-023-temporal-signals-projection-derived.md)'s read-side notification placement.**
+
+1. **Layer 1 — the safe-trigger foundation (candidate E).** The command ingress already exists (`POST /v1/deposits/{id}/maturity`, `POST /v1/loans/{id}/installment`); Layer 1 *hardens* it rather than adding it. Pin a **canonical idempotency-key spec** — the key is derived **server-side** from `(instance_id, command_kind, stable_occurrence_key)`, **never caller-supplied** — so a manual caller and the automated driver converge on the *same* key for the same occurrence (the existing loan endpoint's caller-supplied key is the double-pay hazard this closes); add a `pay_installment` MCP tool (loans have none today); and thread a `CommandId` through `MatureDepositCommand` so maturity dedupes uniformly at `command_dedup` rather than leaning on the legality gate alone. Provision the non-interactive **SCA service principal** for the money-mover routes. This makes the existing manual/operator/MCP path provably idempotent and is the contract surface every automated layer reuses.
+
+2. **Layer 2 — the automated driver (candidate A).** Extract the [ADR-IC-019](../../integration_concepts/adrs/ADR-IC-019-family-agnostic-notification-platform.md) poll-loop machinery (clock-owning worker, per-tick `SchedulePass`, composite-id, dedupe ledger) into a shared `Babelstone.Cadence` library, and stand up a **new sibling host** — **not** inside the read-only `Babelstone.Notification` context, **not** inside the engine assembly (a timer there trips BENG004). Per-family rules (`family → core` arrow, [ADR-IC-019](../../integration_concepts/adrs/ADR-IC-019-family-agnostic-notification-platform.md) §P2) read the forward calendar as-of today and emit one POST per due occurrence through the Layer-1 contract.
+
+3. **The occurrence key is the stable installment *number*, never the due-date.** Because `PayInstallment` is legal repeatedly from `Active`, the legality gate cannot catch a repeat; safety rests **entirely** on `command_dedup` keyed on a stable per-occurrence id. The recurring occurrence key is `(loan, installment-number)` — a re-dated or backfilled retry of installment N reuses the same key and dedupes to **one** money leg (`LIFECYCLE_COMMAND_NUMBER_PINNED_IDEMPOTENT`, below).
+
+4. **A settlement-health gate bounds catch-up.** The driver fires recurring occurrence N+1 only when occurrence N's de-settled cash leg is **not** parked in `HUMAN_INTERVENTION_REQUIRED` — so an automated catch-up after an outage never advances the engine's paid-count past collected cash (`LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE`, below). Maturity (one-shot) needs no such gate.
+
+5. **The loan forward calendar is a new pure projection.** A `personal_loan` `installment_calendar` folded deterministically from `LoanDisbursed` (`StartDate`, `FirstInstallmentDate = StartDate + 1mo`, `TermMonths`, `InstallmentAmount`) **and** `LoanInstallmentPaid` (so the *next unpaid* occurrence surfaces and a paid one drops off — folding from `LoanDisbursed` alone has no notion of "paid" and would re-fire forever). No clock in the fold — [ADR-PC-002](./ADR-PC-002-application-level-bitemporality.md)/[ADR-PC-010 §P5](./ADR-PC-010-dotnet-hand-rolled-engine.md) purity holds, and the projection *is* the temporal signal ([ADR-PC-023](./ADR-PC-023-temporal-signals-projection-derived.md)). It is a new artifact: the loan family today has only the descriptive `AmortizationScheduleProjection`.
+
+6. **Renewal opt-out stays a saga-start concern (bd `babelstone-mtto.3`), already built — the driver inherits it.** Firing `Mature` on the maturity date is correct (the opt-out window has elapsed). Suppressing an *opted-out* renewal is **already enforced upstream of the driver**: the renewal saga-start gate rejects any renewal dated before maturity (the window-timing protection, bd `babelstone-mtto.3` RESOLVED), and the renewal saga auto-starts only on a non-`NONE` policy header (an opted-out deposit starts no renewal). The driver fires `Mature` on/after maturity and inherits both — it neither needs nor may encode a renewal-suppression check itself.
+
+7. **Reject C and B; reserve C; harvest D.** No durable `saga_timers` substrate (C — fatal `saga_state` collision, reserved as a measured scale-up); no separate deployable purely for credential isolation (B — folded into A's sibling host + a scoped principal); share the dispatch mapping with `SimulationRuntime` so the forecast is a fitness function (D's one harvested idea).
+
+## Consequences
+
+**Easier.** The engine stays clockless with no exception — the driver is just another downstream reader of the projection-as-temporal-signal, the symmetric twin of the notification scheduler. Maturity automation reuses production-shaped, already-tested machinery. Backfill is correct by construction (a late firing carries its own `valid_time`). A third clock-driven lifecycle is a new rule with zero core diff. Renewal opt-out needs no new work — the driver inherits the built saga-start gates.
+
+**Harder / locked-in.** A real new write-side surface lands before the loan half automates: a forward `installment_calendar` projection + read-model migration, a **canonical server-derived occurrence-key spec** superseding the existing endpoint's caller-supplied key, a `pay_installment` MCP tool, the `CommandId` thread through `MatureDepositCommand`, and a **non-interactive SCA service principal** on the money-mover routes — a security-sensitive surface that must be a scoped, audited principal, never a blanket exemption. A new sibling host is a new deployable (single-firing/leader-election, monitoring, on-call). Two clock-owners (notification worker + lifecycle worker) now read overlapping projections, so "what fired today?" spans two services.
+
+**Impossible by construction.** A clock cannot enter the engine emit path (the driver is downstream; BENG004 holds). The driver cannot bypass the decider (it POSTs the command; it never appends an event). A repeated installment cannot double-collect while the occurrence key is number-pinned and server-derived (`command_dedup` is the authority).
+
+## Residual risks
+
+- **The number-pinned key omits amount — safe only while [ADR-PC-031](./ADR-PC-031-personal-loan-family.md) forbids restructuring.** Loans model no arrears/missed-installment (good-or-closed binary); a future re-amortization of an already-fired occurrence would be dedupe-swallowed. The key spec must be revisited if/when arrears or restructuring is introduced.
+- **A permanently parked settlement silently stalls a loan's schedule** (the settlement-health gate holds N+1). Correct behaviour, but it must be *alerted*, not invisible — there is no arrears state for the miss to land in.
+- **`command_dedup` retention must exceed the longest driver retry/backfill window** for the recurring case, since the legality gate gives `PayInstallment` zero backstop.
+- **The driver must fire `Mature` on/after the maturity date, never before** — otherwise it would trip the renewal opt-out window gate. This is the one ordering invariant the driver owns; the saga-start gate back-stops it (a too-early renewal is rejected), so a driver bug is caught, not silently mis-renewed.
+- **Poll-vs-push and cadence are operating concerns**, not committed here; a one-shot maturity may fire up to a poll-interval late — acceptable for these latency-tolerant lifecycle steps, and the reserved candidate C is the scale-up path if it is ever measured to bite.
+
+## Verifiable commitments
+
+This decision's load-bearing commitments live in the [commitment catalogue](./commitment-catalogue.md) — the single source of truth for each claim, gate, and `Live`/`Planned`/`Gap` status ([ADR-PC-020 §P5–§P7](./ADR-PC-020-llm-toolchain-and-conformance-governance.md)):
+
+- **Reused (Live).** `NO_CLOCK_DRIVEN_ENGINE_SIGNAL` (row 17, [ADR-PC-023 slot 1](./ADR-PC-023-temporal-signals-projection-derived.md)) — the driver is downstream, so the engine stays clockless and BENG004 holds. `ENGINE_COMMAND_IDEMPOTENT` (row 19, [ADR-PC-029 slot 4](./ADR-PC-029-engine-command-ingress.md)) — the `command_dedup` authority the number-pinned key rides into.
+- **Seeded (Planned).**
+  - `LIFECYCLE_COMMAND_NUMBER_PINNED_IDEMPOTENT` — a driven recurring lifecycle command is idempotency-keyed on `(instance_id, command_kind, stable_occurrence_key)`, the installment occurrence key being the **stable installment number** (never the due-date, never caller-supplied); two firings of occurrence N append **one** money leg.
+  - `LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE` — the driver fires recurring occurrence N+1 only when occurrence N's de-settled cash leg ([ADR-PC-032](./ADR-PC-032-money-movement-primitive.md)) is not parked in `HUMAN_INTERVENTION_REQUIRED`; automated catch-up never advances the paid-count past collected cash.
+
+The renewal opt-out enforcement is **not** new work here — it is the already-built bd `babelstone-mtto.3` saga-start gate plus the non-`NONE` auto-start predicate, which the driver inherits by firing on/after maturity (Decision §6).
