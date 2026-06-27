@@ -31,7 +31,7 @@ public sealed class EarlyTerminationHappyPathTests(ConstitutionFixture fixture)
     {
         await fixture.EnsureRateSheetAsync(SharedSheet);
 
-        var (runtime, service, settlement) = Compose(fixture.ConnectionString);
+        var (runtime, service) = Compose(fixture.ConnectionString);
         var depositId = Guid.NewGuid();
 
         await service.ConstituteAsync(new ConstituteDepositCommand(
@@ -61,11 +61,11 @@ public sealed class EarlyTerminationHappyPathTests(ConstitutionFixture fixture)
         Assert.Equal(4, await fixture.CountAsync("outbox", "aggregate_id", depositId));
 
         // De-settled, gated-saga relocation (bd babelstone-t7o3.4 constitution + bd babelstone-t7o3.13
-        // early termination): NO eager settlement at all — the recording port saw nothing. The early-
-        // termination payout records its money leg APPEND-FIRST as an Originated Credit Movement on
-        // DepositTerminatedEarly (the NET settlement, not the full principal); the substrate-owned settlement
-        // saga effects the cash leg, gated (ADR-PC-032 slot 5; the HTTP money-mover endpoint is bd t7o3.13.1).
-        Assert.Empty(settlement.Instructions);
+        // early termination): NO eager settlement at all — the eager settlement port is GONE
+        // (bd babelstone-t7o3.17). The early-termination payout records its money leg APPEND-FIRST as an
+        // Originated Credit Movement on DepositTerminatedEarly (the NET settlement, not the full principal);
+        // the substrate-owned settlement saga effects the cash leg, gated (ADR-PC-032 slot 5; the HTTP
+        // money-mover endpoint is bd t7o3.13.1). The recorded Movement below is the only money leg.
 
         var terminated = Assert.Single(await EventsOfAsync<DepositTerminatedEarly>(fixture.ConnectionString, depositId));
         var movement = Assert.Single(terminated.Movements!);
@@ -81,7 +81,7 @@ public sealed class EarlyTerminationHappyPathTests(ConstitutionFixture fixture)
     {
         await fixture.EnsureRateSheetAsync(SharedSheet);
 
-        var (_, service, _) = Compose(fixture.ConnectionString);
+        var (_, service) = Compose(fixture.ConnectionString);
         var depositId = Guid.NewGuid();
 
         await service.ConstituteAsync(new ConstituteDepositCommand(
@@ -108,9 +108,10 @@ public sealed class EarlyTerminationHappyPathTests(ConstitutionFixture fixture)
         ("dpz_pt_12m_juros_mensal", "standard", 325),
         ("dpz_pt_12m_juros_antecip", "standard", 300));
 
-    /// <summary>Compose the durable runtime + decider with the in-memory settlement stub and the
-    /// pinned §2.5 worked-example early-termination policy (the engine-instance config stand-in).</summary>
-    private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service, RecordingSettlementPort Settlement)
+    /// <summary>Compose the durable runtime + decider with the pinned §2.5 worked-example early-termination
+    /// policy (the engine-instance config stand-in). No settlement stub: the eager settlement port was
+    /// deleted (bd babelstone-t7o3.17); every money leg now rides an append-first Movement (ADR-PC-032).</summary>
+    private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service)
         Compose(string connectionString)
     {
         var store = new PostgresEventStore(connectionString);
@@ -118,11 +119,10 @@ public sealed class EarlyTerminationHappyPathTests(ConstitutionFixture fixture)
             store, new EventStoreSink(store), TermDepositFamilyModule.Registry(),
             new JsonEventSerializer(), new NullPiiProtector(), TimeProvider.System,
             () => DepositPosition.Empty);
-        var settlement = new RecordingSettlementPort();
         var service = new TermDepositConstitutionService(
             runtime, new PostgresRateSheetStore(connectionString), SkeletonPack.LoadPt2026(),
             dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros", earlyTerminationPolicy: WorkedExample);
-        return (runtime, service, settlement);
+        return (runtime, service);
     }
 
     /// <summary>Load the appended events of type <typeparamref name="TEvent"/> off the durable stream, decoding

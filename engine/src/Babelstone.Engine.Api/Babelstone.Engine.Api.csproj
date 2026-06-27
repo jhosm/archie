@@ -33,6 +33,15 @@
     <ProjectReference Include="../Babelstone.Pii/Babelstone.Pii.csproj" />
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
+    <!-- The personal_loan (credito_pessoal) family's host wiring (bd babelstone-9g77): both project
+         references are the assembly-scan LOAD ANCHOR (ADR-PC-031 §P5 / ADR-PC-021 §A3/§A14). The C#
+         compiler elides a ProjectReference whose types are never named in host code, but these copy
+         each Babelstone.Families.PersonalLoan*.dll next to the host in the output dir, where
+         HostModuleLoader.FamilyHostAssemblies() probes by file (Babelstone.Families.*.dll) and discovers
+         the family's IFamilyHostModule. The host names no PersonalLoan type in code, so
+         ENGINE_API_HOST_FAMILY_AGNOSTIC stays green. -->
+    <ProjectReference Include="../../../families/personal-loan/src/Babelstone.Families.PersonalLoan/Babelstone.Families.PersonalLoan.csproj" />
+    <ProjectReference Include="../../../families/personal-loan/src/Babelstone.Families.PersonalLoan.Application/Babelstone.Families.PersonalLoan.Application.csproj" />
 
     <!-- The IC-004 outbox→Redpanda relay (G.1): this host co-runs the polling relay in-process
          (event-store-skeleton §5.1) so the §P4 publish-lag SLI (outbox_publish_lag_seconds) is

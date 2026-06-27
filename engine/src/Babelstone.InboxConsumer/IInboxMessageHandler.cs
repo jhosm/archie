@@ -53,7 +53,7 @@ public interface IInboxMessageHandler
 /// The default dispatch target until Epic H.1 plugs in the saga: a pure no-op that records nothing
 /// beyond the inbox dedup row itself (it returns no <c>result_summary</c>). It proves the seam —
 /// dedup, transaction, and offset commit all work — without asserting any saga behaviour, the same
-/// way the dev host's <c>LoggingSettlementPort</c> stands in for the real ACL.
+/// way a dev-host stub stands in for the real ACL.
 /// </summary>
 public sealed class NullInboxMessageHandler : IInboxMessageHandler
 {

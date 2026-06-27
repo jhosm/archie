@@ -41,7 +41,7 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         await fixture.EnsureRateSheetAsync(SheetAt("pt-deposits-2026.1", new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero), 300));
         await fixture.EnsureRateSheetAsync(SheetAt("pt-deposits-2027.1", new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero), 275));
 
-        var (runtime, service, settlement) = Compose(fixture.ConnectionString);
+        var (runtime, service) = Compose(fixture.ConnectionString);
         var depositId = Guid.NewGuid();
         var newDepositId = Guid.NewGuid();
 
@@ -112,8 +112,8 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         // legs are recorded APPEND-FIRST as Originated Movements for the substrate-owned settlement saga to
         // effect, gated (ADR-PC-032 slot 5). MatureAsync's DepositMatured carries the closing maturity CREDIT
         // (principal + net out); ConstituteRenewalAsync's renewed DepositConstituted carries the rollover DEBIT
-        // (the rolled-over principal into the new instance). The recording port saw nothing.
-        Assert.Empty(settlement.Instructions);
+        // (the rolled-over principal into the new instance). The eager settlement port is GONE
+        // (bd babelstone-t7o3.17); the recorded Movements below are the only money legs.
 
         // The closing maturity payout's Originated Credit Movement (PayMaturity) on the closing stream.
         var matured = Assert.Single(await EventsOfAsync<DepositMatured>(fixture.ConnectionString, depositId));
@@ -138,7 +138,7 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         await fixture.EnsureRateSheetAsync(SheetAt("pt-deposits-2026.1", new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero), 300));
         await fixture.EnsureRateSheetAsync(SheetAt("pt-deposits-2027.1", new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero), 275));
 
-        var (runtime, service, _) = Compose(fixture.ConnectionString);
+        var (runtime, service) = Compose(fixture.ConnectionString);
         var depositId = Guid.NewGuid();
         var newDepositId = Guid.NewGuid();
 
@@ -179,11 +179,11 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         await fixture.EnsureRateSheetAsync(SheetAt("pt-deposits-2026.1", new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero), 300));
         await fixture.EnsureRateSheetAsync(SheetAt("pt-deposits-2027.1", new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero), 275));
 
-        var (runtime, service, settlement) = Compose(fixture.ConnectionString);
+        var (runtime, service) = Compose(fixture.ConnectionString);
         var depositId = Guid.NewGuid();
         var newDepositId = Guid.NewGuid();
 
-        // An ADVANCE deposit pays interest up front at constitution, so its t=0 settlement also runs.
+        // An ADVANCE deposit pays interest up front at constitution, so its t=0 money leg is recorded too.
         await ConstituteActiveAsync(service, depositId, "ADVANCE", "SAME_TERM_SAME_RATE");
         await MatureAsync(service, depositId);
 
@@ -217,8 +217,8 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
         // De-settled, gated-saga relocation (bd babelstone-t7o3.13): NO eager settlement — both renewal legs
         // on the new stream record Originated Movements APPEND-FIRST for the substrate-owned settlement saga.
         // The renewed DepositConstituted carries the rollover DEBIT; the ADVANCE upfront InterestPaid carries
-        // the advance-interest CREDIT (operation PayCoupon). The recording port saw nothing.
-        Assert.Empty(settlement.Instructions);
+        // the advance-interest CREDIT (operation PayCoupon). The eager settlement port is GONE
+        // (bd babelstone-t7o3.17); the recorded Movements below are the only money legs.
 
         var renewedConstitution = Assert.Single(await EventsOfAsync<DepositConstituted>(fixture.ConnectionString, newDepositId));
         var rolloverMovement = Assert.Single(renewedConstitution.Movements!);
@@ -259,7 +259,7 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
     private static RateSheet SheetAt(string versionId, DateTimeOffset effectiveFrom, int tanBasisPoints) =>
         TestRateSheets.FlatPriced(versionId, Product, "standard", tanBasisPoints, effectiveFrom);
 
-    private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service, RecordingSettlementPort Settlement)
+    private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service)
         Compose(string connectionString)
     {
         var store = new PostgresEventStore(connectionString);
@@ -267,11 +267,10 @@ public sealed class RenewalHappyPathTests(ConstitutionFixture fixture)
             store, new EventStoreSink(store), TermDepositFamilyModule.Registry(),
             new JsonEventSerializer(), new NullPiiProtector(), TimeProvider.System,
             () => DepositPosition.Empty);
-        var settlement = new RecordingSettlementPort();
         var service = new TermDepositConstitutionService(
             runtime, new PostgresRateSheetStore(connectionString), SkeletonPack.LoadPt2026(),
             dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros");
-        return (runtime, service, settlement);
+        return (runtime, service);
     }
 
     /// <summary>Load the appended events of type <typeparamref name="TEvent"/> off the durable stream, decoding

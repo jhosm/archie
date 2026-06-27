@@ -1,39 +1,18 @@
-using Babelstone.FinancialTypes;
-
 namespace Babelstone.Engine;
 
 /// <summary>
-/// The money-movement leg of a lifecycle event: a debit or a credit against a
-/// (legacy) current account (ADR-PC-016 §Payload). A constitution debits the
-/// principal from the funding account; a maturity credits the payout. Amounts are
-/// <see cref="Money"/> (integer cents); the engine never expresses money as a float.
+/// The direction of a money move relative to the account it names: a debit takes value out, a credit
+/// puts value in. Carried by <see cref="Movement"/> (ADR-PC-032), the engine's single spine atom for
+/// moving money. The old eager settlement seam (ISettlementPort / SettlementInstruction /
+/// LoggingSettlementPort) that this enum once served was deleted once every cash leg moved onto the
+/// append-first Movement pattern and the confirmation-gated settlement saga (bd babelstone-t7o3.17);
+/// only the generic direction primitive survives, now owned by the Movement spine.
 /// </summary>
-public sealed record SettlementInstruction(
-    Guid AggregateId,
-    SettlementDirection Direction,
-    Money Amount,
-    string Account,
-    string Reason);
-
-/// <summary>Debit (engine → legacy: take funds) or credit (legacy: receive funds).</summary>
 public enum SettlementDirection
 {
+    /// <summary>Value leaves the named account (engine → legacy: take funds).</summary>
     Debit,
-    Credit,
-}
 
-/// <summary>
-/// The legacy-settlement seam (ADR-PC-016). A decider calls this to move money on the
-/// legacy core during a lifecycle transition; the engine owns only the <i>port</i>, the
-/// host wires the <i>adapter</i>. For the walking skeleton (E.3) the adapter is an
-/// in-memory stub; the WireMock-backed SOAP stub is H.2 (the constitution saga) and the
-/// real ACL is DEF-1 (gated on the Epic-0.6 legacy inventory). A debit is conditional —
-/// legacy may refuse for insufficient funds (a throw); a credit legacy always accepts
-/// (ADR-PC-016 §Semantics). An adapter signals a refused debit by <b>throwing</b> — never by
-/// returning a completed <see cref="Task"/>: a decider settles before it appends, so swallowing
-/// a downstream fault into success would let a constitution proceed without its money leg.
-/// </summary>
-public interface ISettlementPort
-{
-    Task SettleAsync(SettlementInstruction instruction, CancellationToken ct = default);
+    /// <summary>Value enters the named account (legacy: receive funds).</summary>
+    Credit,
 }

@@ -119,9 +119,10 @@ public sealed class TermDepositHostModule : IFamilyHostModule
         services.AddSingleton<IProductConfigStore>(
             _ => new YamlProductConfigStore(ctx.Configuration["Engine:ProductConfigsDir"]));
 
-        // The term-deposit decider (ADR-PC-021): this module is its composition root (§D4). It no longer
-        // takes an ISettlementPort — every money-moving leg is de-settled onto the substrate-owned settlement
-        // saga via Movement-bearing events (bd babelstone-t7o3.13, ADR-PC-032 slot 5).
+        // The term-deposit decider (ADR-PC-021): this module is its composition root (§D4). It has no eager
+        // settlement dependency — every money-moving leg is de-settled onto the substrate-owned settlement
+        // saga via Movement-bearing events (bd babelstone-t7o3.13, ADR-PC-032 slot 5; the old eager
+        // settlement port was deleted in bd babelstone-t7o3.17).
         services.AddSingleton(serviceProvider => new TermDepositConstitutionService(
             serviceProvider.GetRequiredService<AggregateRuntime<DepositPosition>>(),
             serviceProvider.GetRequiredService<IRateSheetStore>(),

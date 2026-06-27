@@ -29,8 +29,8 @@ public sealed class CorrectionCommandTests
     public async Task CorrectAsync_rejects_a_non_operator_actor()
     {
         // A correction is operator-only. A customer/agent actor (mcp:dev) must be refused BEFORE any
-        // append — the ThrowingRateSheetStore/ThrowingSettlementPort prove no resolve/settle happens, and
-        // the NullSink would throw if the append were reached.
+        // append — the ThrowingRateSheetStore proves no resolve happens, and the NullSink would throw if
+        // the append were reached.
         var depositId = Guid.NewGuid();
         var service = ServiceOverStream(depositId, ActiveStream(depositId));
 
@@ -86,6 +86,47 @@ public sealed class CorrectionCommandTests
         Assert.Contains("Correct", ex.Message);
     }
 
+    [Fact]
+    public async Task CorrectAsync_rejects_an_unknown_or_non_correctable_field()
+    {
+        // Typed correctable-field validation (bd babelstone-j7mm.2): a correction naming a field the typed
+        // value-substitution fold cannot apply is rejected BEFORE any append (→ 422), even from an operator
+        // actor on an Active deposit. The NullSink would throw if the append were reached.
+        var depositId = Guid.NewGuid();
+        var service = ServiceOverStream(depositId, ActiveStream(depositId));
+
+        var command = new CorrectDepositCommand(
+            DepositId: depositId, CorrectionId: "corr-001", CorrectedField: "interest_variant",
+            CorrectedPrincipal: null, CorrectedTanBasisPoints: null,
+            CorrectedStartDate: null, CorrectedMaturityDate: null,
+            EffectiveFrom: EffectiveFrom, CorrectionReason: "clerk-entry",
+            Actor: "ops:clerk", CommandId: Guid.NewGuid());
+
+        var ex = await Assert.ThrowsAsync<DomainRejectedException>(() => service.CorrectAsync(command));
+        Assert.Contains("not a correctable structural field", ex.Message);
+        Assert.Contains("interest_variant", ex.Message);
+    }
+
+    [Fact]
+    public async Task CorrectAsync_rejects_a_correctable_field_carrying_no_value()
+    {
+        // The named field must carry its typed corrected value (bd babelstone-j7mm.2): a 'principal'
+        // correction with no CorrectedPrincipal could not read back as the corrected value, so it is
+        // rejected before any append rather than folded as a no-op restatement.
+        var depositId = Guid.NewGuid();
+        var service = ServiceOverStream(depositId, ActiveStream(depositId));
+
+        var command = new CorrectDepositCommand(
+            DepositId: depositId, CorrectionId: "corr-001", CorrectedField: "principal",
+            CorrectedPrincipal: null, CorrectedTanBasisPoints: null,
+            CorrectedStartDate: null, CorrectedMaturityDate: null,
+            EffectiveFrom: EffectiveFrom, CorrectionReason: "clerk-entry",
+            Actor: "ops:clerk", CommandId: Guid.NewGuid());
+
+        var ex = await Assert.ThrowsAsync<DomainRejectedException>(() => service.CorrectAsync(command));
+        Assert.Contains("carries no corrected value", ex.Message);
+    }
+
     // ---- integration test (Testcontainers): the COMMAND appends DepositCorrected and folds it ----
 
     /// <summary>
@@ -123,16 +164,19 @@ public sealed class CorrectionCommandTests
             var commandId = Guid.NewGuid();
             var command = new CorrectDepositCommand(
                 DepositId: depositId, CorrectionId: "corr-001", CorrectedField: "principal",
-                PreviousValueRef: "ref:old", CorrectedValueRef: "ref:new",
+                CorrectedPrincipal: new Money(10_000_000), CorrectedTanBasisPoints: null,
+                CorrectedStartDate: null, CorrectedMaturityDate: null,
                 EffectiveFrom: EffectiveFrom, CorrectionReason: "clerk-entry",
                 Actor: "ops:clerk", CommandId: commandId);
 
             // The COMMAND path (not a hand-appended event): it appends DepositCorrected through the service.
             await service.CorrectAsync(command);
 
-            // (a) The durable fold folds the correction: CorrectionCount advanced to 1, deposit stays Active.
+            // (a) The durable fold folds the correction: CorrectionCount advanced to 1, the corrected VALUE
+            //     reads back (bd babelstone-j7mm.2 — €10,000 constituted, corrected to €100,000), deposit Active.
             var hydrated = await runtime.LoadAsync(depositId);
             Assert.Equal(1, hydrated.State.CorrectionCount);
+            Assert.Equal(new Money(10_000_000), hydrated.State.Principal);
             Assert.Equal(DepositLifecycle.Active, hydrated.State.Lifecycle);
 
             // The correction added exactly one event (constitution + correction = 2 on the stream).
@@ -202,14 +246,15 @@ public sealed class CorrectionCommandTests
     private static CorrectDepositCommand Command(Guid depositId, string actor) =>
         new(
             DepositId: depositId, CorrectionId: "corr-001", CorrectedField: "principal",
-            PreviousValueRef: "ref:old", CorrectedValueRef: "ref:new",
+            CorrectedPrincipal: new Money(10_000_000), CorrectedTanBasisPoints: null,
+            CorrectedStartDate: null, CorrectedMaturityDate: null,
             EffectiveFrom: EffectiveFrom, CorrectionReason: "clerk-entry",
             Actor: actor, CommandId: Guid.NewGuid());
 
     /// <summary>Compose the durable runtime over an in-memory store seeded with <paramref name="stream"/>,
-    /// a discard sink, and rate-sheet/settlement stubs that throw if touched (a correction never resolves a
-    /// sheet or settles — it is store-only). Only LoadAsync is exercised; the append is discarded by the
-    /// NullSink, so the guard + F.3 gate (which fire BEFORE the append) are what these tests pin.</summary>
+    /// a discard sink, and a rate-sheet stub that throws if touched (a correction never resolves a sheet —
+    /// it is store-only). Only LoadAsync is exercised; the append is discarded by the NullSink, so the
+    /// guard + F.3 gate (which fire BEFORE the append) are what these tests pin.</summary>
     private static TermDepositConstitutionService ServiceOverStream(Guid depositId, DomainEvent[] stream)
     {
         var serializer = new JsonEventSerializer();

@@ -117,7 +117,7 @@ public sealed record DepositConstituted(
     // RENEWAL constitution (DecideRenewalConstitution) carries ONE Originated Debit Movement against the
     // funding account — the matured principal re-debited into the renewed deposit (operation RolloverDebit) —
     // so the substrate-owned settlement saga effects the rollover debit off the promoted headers instead of
-    // the eager SettleAsync. Optional/additive (defaulted null) so the fresh path and pre-Movement streams
+    // an eager in-engine settle. Optional/additive (defaulted null) so the fresh path and pre-Movement streams
     // declare no settlement header and start no settlement saga (forward-only, ADR-IC-002).
     IReadOnlyList<Movement>? Movements = null) : DomainEvent
 {
@@ -340,17 +340,33 @@ public sealed record DepositPartiallyWithdrawn(
     public override bool IsLifecycleBoundary => true;
 }
 
-/// <summary>A correction to a previously-recorded fact. Carries opaque REFERENCES only
-/// (<paramref name="PreviousValueRef"/> / <paramref name="CorrectedValueRef"/> point at the
-/// resolvable values) — no PII travels here (ADR-PC-004 §P2). <paramref name="EffectiveFrom"/>
-/// is the valid-time that feeds the D.1 §P2 bitemporal supersession; the real read-model
-/// correction is D.1/D.2, NOT this fold.</summary>
+/// <summary>A correction to a previously-recorded STRUCTURAL fact, carrying the corrected VALUE inline as
+/// a typed field (bd babelstone-j7mm.2; ADR-PC-002 §P2 *Revised 2026-06-27*). Exactly ONE typed
+/// corrected-value field is set — the one named by <paramref name="CorrectedField"/> — and the pure fold
+/// substitutes it into the deposit position, so a query reads back the CORRECTED value, not just a bumped
+/// counter. Structural fields ONLY (principal as Money cents, rate as basis points, dates): these are not
+/// PII, so ADR-PC-004 §P2 does not bind them (the same typed-field precedent as
+/// <see cref="DepositPartiallyWithdrawn"/>'s <c>RemainingPrincipal</c>). <paramref name="EffectiveFrom"/>
+/// is the valid-time that feeds the ADR-PC-002 §P2 bitemporal supersession.</summary>
+/// <param name="CorrectedField">The structural field being corrected (e.g. <c>principal</c>, <c>rate</c>,
+/// <c>start_date</c>, <c>maturity_date</c>) — a stable name, never a value. The decider rejects an
+/// unknown field before any append (ADR-PC-002 §P2 *Revised 2026-06-27*).</param>
+/// <param name="CorrectedPrincipal">The corrected principal (Money cents) when
+/// <paramref name="CorrectedField"/> is <c>principal</c>; null otherwise. A structural amount, NOT PII.</param>
+/// <param name="CorrectedTanBasisPoints">The corrected nominal annual rate in basis points when
+/// <paramref name="CorrectedField"/> is <c>rate</c>; null otherwise.</param>
+/// <param name="CorrectedStartDate">The corrected value-date the deposit started when
+/// <paramref name="CorrectedField"/> is <c>start_date</c>; null otherwise.</param>
+/// <param name="CorrectedMaturityDate">The corrected maturity date when
+/// <paramref name="CorrectedField"/> is <c>maturity_date</c>; null otherwise.</param>
 public sealed record DepositCorrected(
     Guid DepositId,
     string CorrectionId,
     string CorrectedField,
-    string PreviousValueRef,
-    string CorrectedValueRef,
+    Money? CorrectedPrincipal,
+    int? CorrectedTanBasisPoints,
+    DateOnly? CorrectedStartDate,
+    DateOnly? CorrectedMaturityDate,
     DateOnly EffectiveFrom,
     string CorrectionReason) : DomainEvent;
 

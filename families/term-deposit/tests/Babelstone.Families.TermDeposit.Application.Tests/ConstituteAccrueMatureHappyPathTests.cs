@@ -24,7 +24,7 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         // the latest sheet effective for the FAMILY (not by product) and these tests share a container.
         await fixture.EnsureRateSheetAsync(SharedSheet);
 
-        var (runtime, service, settlement) = Compose(fixture.ConnectionString);
+        var (runtime, service) = Compose(fixture.ConnectionString);
         var depositId = Guid.NewGuid();
 
         await service.ConstituteAsync(new ConstituteDepositCommand(
@@ -56,11 +56,11 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         Assert.Equal(4, await fixture.CountAsync("outbox", "aggregate_id", depositId));
 
         // De-settled, gated-saga relocation (bd babelstone-t7o3.4 constitution + bd babelstone-t7o3.13
-        // maturity): NO eager settlement at all — the recording port saw nothing. The constitution path
-        // appends DepositConstituted only (its principal debit is the constitution saga's gated step); the
-        // maturity payout records its money leg APPEND-FIRST as an Originated Credit Movement on
-        // DepositMatured (the substrate-owned settlement saga effects the cash leg, gated — ADR-PC-032 slot 5).
-        Assert.Empty(settlement.Instructions);
+        // maturity): NO eager settlement at all — the eager settlement port is GONE (bd babelstone-t7o3.17).
+        // The constitution path appends DepositConstituted only (its principal debit is the constitution
+        // saga's gated step); the maturity payout records its money leg APPEND-FIRST as an Originated Credit
+        // Movement on DepositMatured (the substrate-owned settlement saga effects the cash leg, gated —
+        // ADR-PC-032 slot 5), asserted below.
 
         // The DepositMatured carries the Originated Credit maturity-payout Movement append-first.
         var matured = Assert.Single(await EventsOfAsync<DepositMatured>(fixture.ConnectionString, depositId));
@@ -81,7 +81,7 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         // product (dpz_pt_12m_juros_mensal) at 325 bps.
         await fixture.EnsureRateSheetAsync(SharedSheet);
 
-        var (runtime, service, settlement) = Compose(fixture.ConnectionString);
+        var (runtime, service) = Compose(fixture.ConnectionString);
         var depositId = Guid.NewGuid();
 
         await service.ConstituteAsync(new ConstituteDepositCommand(
@@ -135,8 +135,8 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
 
         // De-settled, gated-saga relocation (bd babelstone-t7o3.13): NO eager settlement — the coupon and
         // maturity credits each record an Originated Credit Movement APPEND-FIRST on their event for the
-        // substrate-owned settlement saga to effect, gated (ADR-PC-032 slot 5). The recording port saw nothing.
-        Assert.Empty(settlement.Instructions);
+        // substrate-owned settlement saga to effect, gated (ADR-PC-032 slot 5). The eager settlement port is
+        // GONE (bd babelstone-t7o3.17); the recorded Movements below are the only money legs.
 
         // The 11 intermediate coupons each carry an Originated Credit PayCoupon Movement; their nets sum to
         // the running net minus the final-at-maturity coupon (100,549).
@@ -167,7 +167,7 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         // discount). The shared family sheet prices the advance product (dpz_pt_12m_juros_antecip) at 300 bps.
         await fixture.EnsureRateSheetAsync(SharedSheet);
 
-        var (runtime, service, settlement) = Compose(fixture.ConnectionString);
+        var (runtime, service) = Compose(fixture.ConnectionString);
         var depositId = Guid.NewGuid();
 
         await service.ConstituteAsync(new ConstituteDepositCommand(
@@ -201,10 +201,10 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         Assert.Equal(3, await fixture.CountAsync("outbox", "aggregate_id", depositId));
 
         // De-settled (bd babelstone-t7o3.4 constitution + bd babelstone-t7o3.13 maturity): NO eager
-        // settlement at all. The fresh ADVANCE constitution's upfront-interest credit is the constitution
-        // saga's gated leg (the fresh InterestPaid carries NO Movement — its money leg rides that saga); the
-        // maturity payout records its Originated Credit Movement APPEND-FIRST on DepositMatured.
-        Assert.Empty(settlement.Instructions);
+        // settlement at all — the eager settlement port is GONE (bd babelstone-t7o3.17). The fresh ADVANCE
+        // constitution's upfront-interest credit is the constitution saga's gated leg (the fresh InterestPaid
+        // carries NO Movement — its money leg rides that saga); the maturity payout records its Originated
+        // Credit Movement APPEND-FIRST on DepositMatured.
 
         // The fresh ADVANCE upfront InterestPaid carries no Movement (its credit is the constitution saga's).
         var advanceInterest = Assert.Single(await EventsOfAsync<InterestPaid>(fixture.ConnectionString, depositId));
@@ -233,9 +233,10 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
         ("dpz_pt_12m_juros_mensal", "standard", 325),
         ("dpz_pt_12m_juros_antecip", "standard", 300));
 
-    /// <summary>Compose the durable runtime + decider over the term-deposit family with the in-memory
-    /// settlement stub — the same composition the AT_MATURITY happy-path test uses (E.3 §D4).</summary>
-    private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service, RecordingSettlementPort Settlement)
+    /// <summary>Compose the durable runtime + decider over the term-deposit family — the same composition
+    /// the AT_MATURITY happy-path test uses (E.3 §D4). No settlement stub: the eager settlement port was
+    /// deleted (bd babelstone-t7o3.17); every money leg now rides an append-first Movement (ADR-PC-032).</summary>
+    private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service)
         Compose(string connectionString)
     {
         var store = new PostgresEventStore(connectionString);
@@ -243,11 +244,10 @@ public sealed class ConstituteAccrueMatureHappyPathTests(ConstitutionFixture fix
             store, new EventStoreSink(store), TermDepositFamilyModule.Registry(),
             new JsonEventSerializer(), new NullPiiProtector(), TimeProvider.System,
             () => DepositPosition.Empty);
-        var settlement = new RecordingSettlementPort();
         var service = new TermDepositConstitutionService(
             runtime, new PostgresRateSheetStore(connectionString), SkeletonPack.LoadPt2026(),
             dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros");
-        return (runtime, service, settlement);
+        return (runtime, service);
     }
 
     /// <summary>Load the appended events of type <typeparamref name="TEvent"/> off the durable stream, in

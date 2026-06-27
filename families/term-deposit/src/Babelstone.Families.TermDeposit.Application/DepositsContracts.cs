@@ -143,16 +143,25 @@ public sealed record ErasePersonalDataResponse(Guid DepositId, string Status, lo
 /// dedupe rather than double-tally).
 /// </summary>
 /// <remarks>
-/// Every field is a structural reference or a stable code — NO PII (ADR-PC-004 §P2).
-/// <see cref="PreviousValueRef"/> / <see cref="CorrectedValueRef"/> are OPAQUE references the engine
-/// resolves internally, NEVER the values themselves.
+/// Every field is a structural value or a stable code — NO PII (ADR-PC-004 §P2). The body carries the
+/// corrected VALUE inline as a typed structural field (bd babelstone-j7mm.2): the field
+/// <see cref="CorrectedField"/> names carries its corrected value (principal as integer cents, rate as
+/// basis points, dates), the fold substitutes it, and a query reads back the corrected value.
 /// </remarks>
 /// <param name="CorrectionId">A stable, operator-supplied id for this correction (e.g. <c>corr-001</c>),
 /// recorded for audit lineage. Distinct from the <c>Idempotency-Key</c> (the ADR-PC-029 dedup key).</param>
-/// <param name="CorrectedField">The name of the recorded fact being corrected (e.g. <c>principal</c>) —
-/// a structural field name, never a value.</param>
-/// <param name="PreviousValueRef">An OPAQUE reference to the value as previously recorded — never PII.</param>
-/// <param name="CorrectedValueRef">An OPAQUE reference to the corrected value — never PII.</param>
+/// <param name="CorrectedField">The structural field being corrected (e.g. <c>principal</c>, <c>rate</c>,
+/// <c>start_date</c>, <c>maturity_date</c>) — a stable name, never a value. An unknown / non-correctable
+/// field is rejected with a 422 before any append.</param>
+/// <param name="CorrectedPrincipalCents">The corrected principal in integer cents when
+/// <see cref="CorrectedField"/> is <c>principal</c>; null otherwise (money is cents on the wire, never a
+/// float — ADR-PC-010 §P1).</param>
+/// <param name="CorrectedTanBasisPoints">The corrected nominal annual rate in basis points when
+/// <see cref="CorrectedField"/> is <c>rate</c>; null otherwise.</param>
+/// <param name="CorrectedStartDate">The corrected start value-date when <see cref="CorrectedField"/> is
+/// <c>start_date</c>; null otherwise.</param>
+/// <param name="CorrectedMaturityDate">The corrected maturity date when <see cref="CorrectedField"/> is
+/// <c>maturity_date</c>; null otherwise.</param>
 /// <param name="EffectiveFrom">The valid-time the correction takes effect FROM — the date that feeds the
 /// ADR-PC-002 §P2 bitemporal supersession (the append's <c>ValidTime</c> at midnight UTC).</param>
 /// <param name="CorrectionReason">A stable, non-PII reason code/string (e.g. <c>clerk-entry</c>).</param>
@@ -161,8 +170,10 @@ public sealed record ErasePersonalDataResponse(Guid DepositId, string Status, lo
 public sealed record CorrectDepositRequest(
     string CorrectionId,
     string CorrectedField,
-    string PreviousValueRef,
-    string CorrectedValueRef,
+    long? CorrectedPrincipalCents,
+    int? CorrectedTanBasisPoints,
+    DateOnly? CorrectedStartDate,
+    DateOnly? CorrectedMaturityDate,
     DateOnly EffectiveFrom,
     string CorrectionReason,
     string? Actor = null);

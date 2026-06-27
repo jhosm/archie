@@ -20,24 +20,6 @@ internal sealed class JsonEventSerializer : IEventSerializer
         => (DomainEvent)JsonSerializer.Deserialize(payload.Span, payloadType)!;
 }
 
-/// <summary>
-/// The walking-skeleton settlement adapter (ADR-PC-021 §D2; ADR-PC-016): records the money legs
-/// so the happy-path test can assert the debit + credit. The WireMock-backed SOAP stub is H.2;
-/// the real ACL is DEF-1.
-/// </summary>
-internal sealed class RecordingSettlementPort : ISettlementPort
-{
-    private readonly List<SettlementInstruction> _instructions = [];
-
-    public IReadOnlyList<SettlementInstruction> Instructions => _instructions;
-
-    public Task SettleAsync(SettlementInstruction instruction, CancellationToken ct = default)
-    {
-        _instructions.Add(instruction);
-        return Task.CompletedTask;
-    }
-}
-
 /// <summary>Loads and parses the committed pt.2026.1 pack off disk (the C.5 structural parse, no oras/cosign).</summary>
 internal static class SkeletonPack
 {

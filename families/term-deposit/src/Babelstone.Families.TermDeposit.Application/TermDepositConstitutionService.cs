@@ -13,8 +13,8 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// CONSTITUTION saga's gated step (bd babelstone-t7o3.4), and the maturity / coupon / early-termination
 /// credits and the renewal rollover-debit + ADVANCE-interest credit each record an Originated
 /// <see cref="Movement"/> APPEND-FIRST on their event for the substrate-owned settlement saga to effect,
-/// gated (bd babelstone-t7o3.13, ADR-PC-032 slot 5). So this service no longer takes an
-/// <c>ISettlementPort</c> at all. It depends only on generic engine ports
+/// gated (bd babelstone-t7o3.13, ADR-PC-032 slot 5). So this service has no eager settlement dependency
+/// at all (the old eager settlement port was deleted in bd babelstone-t7o3.17). It depends only on generic engine ports
 /// (<see cref="AggregateRuntime{TState}"/>, <see cref="IRateSheetStore"/>) plus the pinned
 /// <see cref="VerifiedPack"/> — the dependency arrow is family→engine, never the reverse (ADR-PC-021 §D2).
 /// </summary>
@@ -418,7 +418,7 @@ public sealed class TermDepositConstitutionService(
 
         // 3. Decide (pure): the withdrawal DATE is derived from the command instant and passed as an INPUT
         //    — no clock in the decider. A partial withdrawal carries NO money leg (02 §2.4.1), so unlike
-        //    TerminateEarlyAsync there is no settlement.SettleAsync here; the decider returns the single
+        //    TerminateEarlyAsync there is no settlement Movement here; the decider returns the single
         //    DepositPartiallyWithdrawn that reduces the principal.
         var withdrawnOn = DateOnly.FromDateTime(command.WithdrawnAt.UtcDateTime);
         var events = PartialWithdrawalDecider.Decide(
@@ -448,11 +448,12 @@ public sealed class TermDepositConstitutionService(
     /// touch that runtime, which is already built and tested.
     /// </summary>
     /// <remarks>
-    /// A correction is STORE-ONLY: no money moves, no settlement leg, the deposit stays Active (the
-    /// fold only tallies <c>CorrectionCount</c>). It carries OPAQUE references only — no PII rides the
-    /// event (ADR-PC-004 §P2). Additive to ADR-PC-002 Path A: no ADR amendment, the event/fold/lifecycle
-    /// transition/family-module registration all pre-exist (the D.5 work); this only adds the command +
-    /// decider + (endpoint, in <c>DepositsEndpoints</c>) that appends it.
+    /// A correction is STORE-ONLY: no money moves, no settlement leg, the deposit stays Active. The fold
+    /// substitutes the corrected typed structural value (bd babelstone-j7mm.2) and bumps
+    /// <c>CorrectionCount</c>, so a query reads back the corrected value. It carries structural values only
+    /// (principal/rate/dates) — no PII rides the event (ADR-PC-004 §P2). Realises the value-substitution
+    /// half of ADR-PC-002 §P2 (*Revised 2026-06-27*); the event/fold/lifecycle transition/family-module
+    /// registration pre-exist (the D.5 work); this adds the command + decider + endpoint that append it.
     /// </remarks>
     /// <returns>The stream's head version after the correction (ADR-IC-005 §P3 read-your-writes token / commit_sequence).</returns>
     public async Task<long> CorrectAsync(CorrectDepositCommand command, CancellationToken ct = default)
@@ -477,9 +478,10 @@ public sealed class TermDepositConstitutionService(
         // uniformly with every other illegal transition.
         RejectIfIllegal(position.Lifecycle, LifecycleTransitions.Transition.Correct, command.DepositId, "correct");
 
-        // 2. Decide (pure): map the command's structural facts onto the store-only DepositCorrected event
-        //    — the same event shape the D.5 ForcedCorrectionRoundTripTests builds by hand. No financial
-        //    math, no clock: a correction moves no money and carries opaque references only.
+        // 2. Decide (pure): validate the correctable field and map the command's corrected typed structural
+        //    value onto the store-only DepositCorrected event (bd babelstone-j7mm.2). No financial math, no
+        //    clock: a correction moves no money. An unknown/non-correctable field throws a
+        //    DomainRejectedException here (→ 422), before any append.
         var corrected = TermDepositDecider.DecideCorrection(command);
 
         // 3. The append's VALID-TIME is the correction's effective_from (at midnight UTC), NOT the

@@ -102,18 +102,25 @@ public sealed class PackParserTests
     }
 
     [Fact]
-    public void Family_manifest_pins_the_term_deposit_family(/* bd babelstone-9w2k.3 */)
+    public void Family_manifest_pins_the_term_deposit_and_personal_loan_families(/* bd babelstone-9w2k.3 / bd babelstone-9g77 */)
     {
-        // The pinned family set the host cross-checks scanned modules against (ADR-PC-009 §P1). The
+        // The pinned family set the host cross-checks scanned modules against (ADR-PC-009 §P1). Each
         // schema_version here must agree with the SAME family's schema_pins entry — one pin, two readers.
         var families = Pt2026().Families;
-        Assert.Single(families);
-        var termDeposit = families[0];
-        Assert.Equal("term_deposit", termDeposit.FamilyName);
+        var schemaPins = Pt2026().Manifest.SchemaPins;
+
+        var termDeposit = families.Single(f => f.FamilyName == "term_deposit");
         Assert.Equal("term_deposit", termDeposit.AggregateType);
         Assert.Equal("term_deposit@2026.1", termDeposit.SchemaVersion);
         Assert.Equal("Babelstone.Families.TermDeposit.Application", termDeposit.PluginAssembly);
-        Assert.Equal(Pt2026().Manifest.SchemaPins["term_deposit"], termDeposit.SchemaVersion);
+        Assert.Equal(schemaPins["term_deposit"], termDeposit.SchemaVersion);
+
+        // The personal_loan (credito_pessoal) family, wired into the host by bd babelstone-9g77.
+        var personalLoan = families.Single(f => f.FamilyName == "personal_loan");
+        Assert.Equal("personal_loan", personalLoan.AggregateType);
+        Assert.Equal("personal_loan@2026.1", personalLoan.SchemaVersion);
+        Assert.Equal("Babelstone.Families.PersonalLoan.Application", personalLoan.PluginAssembly);
+        Assert.Equal(schemaPins["personal_loan"], personalLoan.SchemaVersion);
     }
 
     [Fact]

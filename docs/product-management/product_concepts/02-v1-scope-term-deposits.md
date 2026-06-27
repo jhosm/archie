@@ -197,11 +197,11 @@ remaining_principal_cents, withdrawn_on
 
 ##### `DepositCorrected`
 
-Clerk-data-entry correction (wrong principal, wrong rate, wrong term). Required for bitemporal correctness — distinguishes *what we thought* from *what we now know* (per [event-store §6](./feature-design-event-store-projections.md)). A **store-only** event (no `.avsc`). The engine record corrects one field at a time, carrying opaque *references* to the old and new values (never PII, [ADR-PC-004 §P2](./adrs/ADR-PC-004-pii-crypto-shredding.md)); `effective_from` is the valid-time feeding the bitemporal supersession:
+Clerk-data-entry correction (wrong principal, wrong rate, wrong term). Required for bitemporal correctness — distinguishes *what we thought* from *what we now know* (per [event-store §6](./feature-design-event-store-projections.md)). A **store-only** event (no `.avsc`). The engine record corrects one field at a time, carrying the corrected **value inline as a typed structural field** (principal as cents, rate as basis points, dates) so the fold substitutes it and a query reads back the corrected value (bd `babelstone-j7mm.2`; [ADR-PC-002 §P2](./adrs/ADR-PC-002-application-level-bitemporality.md) *Revised 2026-06-27*). Structural fields only — not PII ([ADR-PC-004 §P2](./adrs/ADR-PC-004-pii-crypto-shredding.md)); `effective_from` is the valid-time feeding the bitemporal supersession:
 
 ```
-deposit_id, correction_id,
-corrected_field, previous_value_ref, corrected_value_ref,
+deposit_id, correction_id, corrected_field,
+corrected_principal?, corrected_tan_basis_points?, corrected_start_date?, corrected_maturity_date?,
 effective_from, correction_reason
 ```
 

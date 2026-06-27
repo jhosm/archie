@@ -21,3 +21,10 @@ families:
     aggregate_type: term_deposit
     schema_version: term_deposit@2026.1
     plugin_assembly: Babelstone.Families.TermDeposit.Application
+  # The personal_loan (credito_pessoal) family, wired into the running host by bd babelstone-9g77.
+  # family_name / schema_version are the SAME values PersonalLoanFamilyModule stamps on every
+  # EventEnvelope; plugin_assembly is the .NET assembly carrying its IFamilyHostModule.
+  - family_name: personal_loan
+    aggregate_type: personal_loan
+    schema_version: personal_loan@2026.1
+    plugin_assembly: Babelstone.Families.PersonalLoan.Application
