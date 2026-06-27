@@ -149,6 +149,11 @@ public static class PackParser
             EngineCompatibleVersions: Required(dto.Dependencies?.EngineCompatibleVersions, vk, "pack.yaml dependencies.engine_compatible_versions"),
             SchemaPins: dto.SchemaPins ?? new(),
             RateSheetRefNames: dto.RateSheetRefs ?? [],
+            // SURFACE the declared disclosure-template file refs (bd babelstone-60n8.6), mirroring
+            // RateSheetRefNames — the parser previously only TOLERATED the DTO field so the pack stayed
+            // loadable (PR #322); it now exposes it on the manifest so a downstream producer can require its
+            // template-set is declared by the instance-pinned pack and fail loud otherwise (ADR-PC-025 §2).
+            TemplateRefNames: dto.TemplateRefs ?? [],
             TestCorpusRef: Required(dto.TestCorpusRef, vk, "pack.yaml test_corpus_ref"));
     }
 

@@ -102,6 +102,29 @@ public sealed class PackParserTests
     }
 
     [Fact]
+    public void Template_refs_are_surfaced_on_the_manifest()
+    {
+        // bd babelstone-60n8.6: the parser SURFACES the declared disclosure-template file refs on the
+        // manifest (not just TOLERATES the DTO field, as it did after PR #322), mirroring RateSheetRefNames —
+        // so a downstream disclosure producer can require its template-set is declared by the instance-pinned
+        // pack and fail loud if a deployment's pack omits it (ADR-PC-025 §2 pinning).
+        Assert.Equal(["notices"], Pt2026().Manifest.TemplateRefNames);
+    }
+
+    [Fact]
+    public void Template_refs_default_empty_for_a_pack_declaring_none()
+    {
+        // A pack that ships no disclosure templates omits template_refs; the parser tolerates the absent
+        // field and surfaces an empty list (the same default-[] stance as the CUE schema and RateSheetRefs).
+        var files = PackTestData.LoadPt2026();
+        var manifest = Encoding.UTF8.GetString(files["pack.yaml"])
+            .Replace("template_refs:\n  - notices", "template_refs: []", StringComparison.Ordinal);
+        files["pack.yaml"] = Encoding.UTF8.GetBytes(manifest);
+
+        Assert.Empty(PackParser.Parse(files, "pt.2026.1").Manifest.TemplateRefNames);
+    }
+
+    [Fact]
     public void Family_manifest_pins_the_term_deposit_and_personal_loan_families(/* bd babelstone-9w2k.3 / bd babelstone-9g77 */)
     {
         // The pinned family set the host cross-checks scanned modules against (ADR-PC-009 §P1). Each

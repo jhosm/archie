@@ -196,6 +196,34 @@ public sealed class PostgresDepositReadModelStoreTests(ConstitutionFixture fixtu
     }
 
     [Fact]
+    public async Task ListWithWithholding_returns_only_deposits_that_withheld_tax_ordered_by_id()
+    {
+        // The annual IRS-withholding statement population (bd babelstone-q15c): every deposit with
+        // withholding_to_date_cents > 0, ALL lifecycles (a Matured deposit still owes a statement), ordered
+        // by stream_id. A deposit with zero withholding (no interest paid yet) is excluded.
+        await ResetAsync();
+        var noWithholding = new Guid("00000000-0000-0000-0000-0000000000aa");
+        var withheldActive = new Guid("00000000-0000-0000-0000-0000000000bb");
+        var withheldMatured = new Guid("00000000-0000-0000-0000-0000000000cc");
+
+        await _store.UpsertAsync(Sample(noWithholding, lastSequence: 0, maturityDate: new DateOnly(2027, 1, 15),
+            lifecycle: "Active", withholdingToDateCents: 0));
+        await _store.UpsertAsync(Sample(withheldMatured, lastSequence: 0, maturityDate: new DateOnly(2026, 1, 15),
+            lifecycle: "Matured", accruedGrossInterestCents: 5_000, withholdingToDateCents: 1_400, netInterestCents: 3_600));
+        await _store.UpsertAsync(Sample(withheldActive, lastSequence: 0, maturityDate: new DateOnly(2027, 6, 1),
+            lifecycle: "Active", accruedGrossInterestCents: 9_000, withholdingToDateCents: 2_520, netInterestCents: 6_480));
+
+        var rows = await _store.ListWithWithholdingAsync();
+
+        // Ordered ascending by stream_id; the zero-withholding deposit is excluded.
+        Assert.Equal([withheldActive, withheldMatured], rows.Select(r => r.StreamId).ToArray());
+        var active = rows.Single(r => r.StreamId == withheldActive);
+        Assert.Equal(9_000, active.AccruedGrossInterestCents);
+        Assert.Equal(2_520, active.WithholdingToDateCents);
+        Assert.Equal(6_480, active.NetInterestCents);
+    }
+
+    [Fact]
     public async Task Truncate_clears_the_read_model()
     {
         await ResetAsync();

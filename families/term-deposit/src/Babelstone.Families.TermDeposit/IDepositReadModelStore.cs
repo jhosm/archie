@@ -24,6 +24,20 @@ public interface IDepositReadModelStore : IReadModelStore<DepositReadModelRow>
         DateOnly fromInclusive, DateOnly toExclusive, CancellationToken ct = default);
 
     /// <summary>
+    /// Every deposit that has had tax withheld (<see cref="DepositReadModelRow.WithholdingToDateCents"/>
+    /// &gt; 0), ordered by <c>stream_id</c> (a deterministic, stable order). Backs the annual
+    /// IRS-withholding statement scheduler (bd babelstone-q15c): the once-a-year run that produces each
+    /// depositor's withholding statement reads this population and the per-row accrual/withholding rollups
+    /// (the read-model projection of <c>term_deposit.accrual_schedule</c> + <c>withholding_ledger</c>),
+    /// then emits an idempotent SCHEDULED notification per deposit. Current belief (no as-of), the same
+    /// stance as the point lookup — the scheduler owns the as-of statement date and the annual cadence
+    /// (ADR-PC-023 §6), never this read. Family-specific (a non-deposit family has no withholding column),
+    /// so it lives on the family store, not the generic spine primitive — the same placement as
+    /// <see cref="ListByMaturityAsync"/>.
+    /// </summary>
+    Task<IReadOnlyList<DepositReadModelRow>> ListWithWithholdingAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Every instance currently in the live (<c>currently_active</c>) lifecycle, as stream ids only,
     /// ordered by <c>stream_id</c> (a deterministic, stable order). Backs the surface §3.6 pack-migration
     /// <c>instance_filter { product_family, currently_active }</c> predicate (ADR-PC-009 §P3): the operator

@@ -65,18 +65,34 @@ public interface INotificationScheduleRule
 /// <summary>
 /// The per-deployment ingredients the host hands each <see cref="IFamilyNotificationModule"/> at
 /// composition time — the notification-side <c>FamilyHostContext</c> (ADR-PC-021 §A1). Carries the host
-/// configuration root (so a family module reads its own pack-pinned parameters, e.g.
-/// <c>TermDeposit:AutoRenewalOptoutWindowDays</c>) and the engine read endpoint. It deliberately carries
-/// <b>no <c>VerifiedPack</c></b>: that type lives in the engine spine (<c>Babelstone.Packs</c>) the
-/// notification core may not reference (ADR-IC-019 §P2), so pack-pinned parameters reach a family module
-/// through configuration here, resolved family-side. Family-agnostic services are resolved from the
-/// <see cref="IServiceCollection"/> the module is configuring.
+/// configuration root, the engine read endpoint, and the values the host resolved from the instance-pinned
+/// regulatory pack: the declared disclosure-template refs and the opt-out-window parameter.
 /// </summary>
+/// <remarks>
+/// It deliberately carries <b>no <c>VerifiedPack</c></b>: that type lives in the engine spine
+/// (<c>Babelstone.Packs</c>) the notification core may not reference (ADR-IC-019 §P2). So the host (the §A2
+/// composition root, which MAY reference the spine) resolves the pinned pack and conveys the needed values
+/// here as PLAIN CLR data (a string list, an <see cref="int"/>) — the core never names a pack type and the
+/// <c>NOTIFICATION_FAMILY_AGNOSTIC</c> gate stays green (bd babelstone-60n8.6). A family module reads
+/// <see cref="PackTemplateRefs"/> / <see cref="AutoRenewalOptoutWindowDays"/> to source its template-set and
+/// window from the pinned pack rather than a family-side constant (ADR-PC-025 §2 pinning). Family-agnostic
+/// services are resolved from the <see cref="IServiceCollection"/> the module is configuring.
+/// </remarks>
 /// <param name="Configuration">The host configuration root.</param>
 /// <param name="EngineBaseUrl">The ADR-PC-027 deposit read-surface base URL.</param>
-public sealed record NotificationModuleContext(IConfiguration Configuration, string EngineBaseUrl)
+/// <param name="PackTemplateRefs">The instance-pinned pack's declared disclosure-template file refs
+/// (<c>pack.yaml</c> <c>template_refs</c>, e.g. <c>notices</c>) — empty when no pack/templates are configured.
+/// A family module requires its template-set is in this set and fails loud otherwise.</param>
+/// <param name="AutoRenewalOptoutWindowDays">The instance-pinned pack's
+/// <c>parameters/constants.yaml</c> <c>auto_renewal_optout_window_days</c>, or <see langword="null"/> when no
+/// pack is configured — the family module supplies its documented default as the fallback.</param>
+public sealed record NotificationModuleContext(
+    IConfiguration Configuration,
+    string EngineBaseUrl,
+    IReadOnlyList<string> PackTemplateRefs,
+    int? AutoRenewalOptoutWindowDays)
 {
-    /// <summary>Read an integer configuration value (e.g. a pack-pinned window width), or
+    /// <summary>Read an integer configuration value (e.g. a config-override window width), or
     /// <see langword="null"/> if unset/unparsable — the caller supplies its family-side default.</summary>
     public int? GetInt32(string key) =>
         int.TryParse(Configuration[key], out var value) ? value : null;

@@ -47,3 +47,32 @@ templates:
       - auto_renewal_policy
       - optout_window_days
       - optout_deadline_date
+
+  # The annual IRS-withholding statement (bd babelstone-q15c). In plain English:
+  # once a year the bank must tell each depositor how much interest their term
+  # deposit earned and how much IRS tax it withheld, for their own tax return.
+  # SCHEDULED — a date arriving (the annual statement run) fires it, not a domain
+  # event, so a downstream scheduler produces the NotificationDue off the
+  # withholding-ledger / accrual-schedule projections (ADR-PC-023), never the
+  # engine. Pinned per instance like every pack primitive (ADR-PC-025 §2).
+  - template_ref: pt.notice.withholding_statement
+    trigger_kind: SCHEDULED
+    title: Declaração anual de retenção na fonte (IRS) — juros de depósito a prazo
+    description: >-
+      Annual statement of the gross interest paid and the IRS tax withheld on a
+      term deposit's interest during the tax year (28% irs_juros on gross
+      interest, flow-by-flow — primitives/withholding.yaml, 02 §2.2). SCHEDULED:
+      the annual statement-run date arriving fires it, so a downstream scheduler
+      — not the engine — produces the NotificationDue off the accrual-schedule +
+      withholding-ledger projections (ADR-PC-023, ADR-PC-025 Context). The figures
+      are the structural cents values below; the depositor's name/NIF/address are
+      resolved at render time from a reference, never carried here (ADR-PC-025 §PII).
+    # Structural interpolation fields only — names, never values, never PII
+    # (ADR-PC-025 §1 data). tax_year is the statement period; the cents figures
+    # are the accrual/withholding rollups the downstream NotificationDue carries.
+    interpolates:
+      - deposit_id
+      - tax_year
+      - accrued_gross_interest_cents
+      - withholding_to_date_cents
+      - net_interest_cents

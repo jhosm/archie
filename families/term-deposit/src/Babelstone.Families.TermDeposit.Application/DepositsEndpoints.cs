@@ -91,6 +91,13 @@ public static class DepositsEndpoints
         // the prefix with the {id:guid} point lookup, but the :guid constraint already excludes the
         // word, so registration order is moot.
         app.MapGet("/v1/deposits/maturities", ListMaturitiesAsync);
+
+        // The annual IRS-withholding statement population (bd babelstone-q15c): every deposit that has had
+        // tax withheld, carrying the accrual/withholding rollups the statement interpolates. A query-named
+        // collection like /maturities (no write-side twin — the fold cannot answer a cross-stream scan), so
+        // no duality. Like "/maturities" the literal route shares the prefix with the {id:guid} point lookup,
+        // but the :guid constraint excludes the word, so registration order is moot.
+        app.MapGet("/v1/deposits/withholding-statements", ListWithholdingStatementsAsync);
         app.MapGet("/v1/deposits/{id:guid}", GetDepositAsync);
     }
 
@@ -323,6 +330,19 @@ public static class DepositsEndpoints
         var rows = await readModel.ListByMaturityAsync(from, to, ct);
         var deposits = rows.Select(DepositResponse.FromReadModel).ToList();
         return Results.Ok(new DepositMaturitiesResponse(deposits));
+    }
+
+    private static async Task<IResult> ListWithholdingStatementsAsync(
+        IDepositReadModelStore readModel, CancellationToken ct)
+    {
+        // The annual IRS-withholding statement scan (bd babelstone-q15c): every deposit with withholding to
+        // date, ordered by id, served from the denormalized read model — the same read-model rollups
+        // (accrued gross + withholding to date + net) the maturities scan returns. Current belief, no
+        // window: the downstream scheduler owns the as-of statement date and the per-tax-year idempotency
+        // (ADR-PC-023 §6), so this read names neither. A query-named collection with no write-side twin.
+        var rows = await readModel.ListWithWithholdingAsync(ct);
+        var deposits = rows.Select(DepositResponse.FromReadModel).ToList();
+        return Results.Ok(new DepositWithholdingStatementsResponse(deposits));
     }
 
     private static async Task<IResult> MatureAsync(

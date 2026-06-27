@@ -332,3 +332,10 @@ public sealed record DepositResponse(
 /// <summary>The maturities range-query result (ADR-IC-005 <c>upcoming_maturities</c>): the deposits
 /// maturing in the requested <c>[from, to)</c> window, ordered by maturity date.</summary>
 public sealed record DepositMaturitiesResponse(IReadOnlyList<DepositResponse> Deposits);
+
+/// <summary>The withholding-statements query result (bd babelstone-q15c): every deposit that has had tax
+/// withheld, ordered by id, carrying the per-row accrual/withholding rollups (the read-model projection of
+/// <c>term_deposit.accrual_schedule</c> + <c>withholding_ledger</c>) the annual IRS-withholding statement
+/// interpolates. A query-named collection with no write-side twin, the same shape as
+/// <see cref="DepositMaturitiesResponse"/>.</summary>
+public sealed record DepositWithholdingStatementsResponse(IReadOnlyList<DepositResponse> Deposits);

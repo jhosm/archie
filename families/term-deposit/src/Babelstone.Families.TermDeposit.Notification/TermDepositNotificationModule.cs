@@ -43,16 +43,33 @@ public sealed class TermDepositNotificationModule : IFamilyNotificationModule
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(ctx);
 
-        // The opt-out window is pack data (ADR-PC-007), resolved family-side from the host configuration —
-        // never a literal in the notification core (ADR-IC-019 §D1). The family-side default applies only
-        // when the host configures no override.
-        var optOutWindowDays = ctx.GetInt32(OptOutWindowDaysConfigKey) ?? DefaultOptOutWindowDays;
+        // The opt-out window is pack data (ADR-PC-007, ADR-PC-025 §2): source it from the instance-pinned
+        // pack the host resolved (ctx.AutoRenewalOptoutWindowDays) — never a literal in the notification core
+        // (ADR-IC-019 §D1). A config override (OptOutWindowDaysConfigKey) is honoured next for operability,
+        // and the family-side documented default is the ultimate fallback only when neither is present
+        // (bd babelstone-60n8.6).
+        var optOutWindowDays =
+            ctx.AutoRenewalOptoutWindowDays
+            ?? ctx.GetInt32(OptOutWindowDaysConfigKey)
+            ?? DefaultOptOutWindowDays;
 
-        // Register the family's schedule rule as the core-resolvable INotificationScheduleRule contract, so
-        // it joins the set the core's NotificationSchedulePass enumerates each tick (exactly as the
-        // orchestrator's ISagaModule registers its typed sink into the saga_type → sink registry). It
-        // resolves the family-agnostic DepositReadClient from the container the host configures.
+        // The disclosure-template sets the instance-pinned pack declares (pack.yaml template_refs), conveyed
+        // by the host as plain data (ADR-IC-019 §P2 — the core holds no pack type). The maturity rule
+        // REQUIRES its template-set is in this set and fails loud otherwise (ADR-PC-025 §2 pinning).
+        var packTemplateRefs = ctx.PackTemplateRefs;
+
+        // Register the family's schedule rules as the core-resolvable INotificationScheduleRule contract, so
+        // each joins the set the core's NotificationSchedulePass enumerates per tick (exactly as the
+        // orchestrator's ISagaModule registers its typed sink into the saga_type → sink registry). They
+        // resolve the family-agnostic DepositReadClient from the container the host configures.
         services.AddSingleton<INotificationScheduleRule>(sp =>
-            new MaturityReminderRule(sp.GetRequiredService<DepositReadClient>(), optOutWindowDays));
+            new MaturityReminderRule(sp.GetRequiredService<DepositReadClient>(), packTemplateRefs, optOutWindowDays));
+
+        // The annual IRS-withholding statement rule (bd babelstone-q15c) — the sibling scheduler that reads
+        // the withholding population (not the maturity calendar) and emits an idempotent SCHEDULED statement
+        // per deposit per tax year. Same family-owned shape, registered alongside the maturity rule with zero
+        // notification-core diff (the open/closed property ADR-IC-019 §D2 commits to).
+        services.AddSingleton<INotificationScheduleRule>(sp =>
+            new WithholdingStatementRule(sp.GetRequiredService<DepositReadClient>()));
     }
 }

@@ -1,5 +1,6 @@
 using Babelstone.Families.TermDeposit.Notification;
 using Babelstone.Notification;
+using Babelstone.Packs;
 using Babelstone.Telemetry;
 using Babelstone.Telemetry.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -89,11 +90,24 @@ builder.Services.AddSingleton(schedulerOptions);
 // (bd babelstone-60n8.3).
 builder.Services.AddSingleton<INotificationDedupeLedger, InMemoryNotificationDedupeLedger>();
 
+// Resolve the instance-pinned regulatory pack (ADR-PC-007 §P4 / ADR-PC-025 §2) at startup, off disk via the
+// structural parser — the walking-skeleton stand-in for the OCI loader, the same disk path the engine host
+// uses. The host is the §A2 composition root and MAY reference Babelstone.Packs (the gate protects only the
+// family-agnostic core); it conveys the pack's declared template_refs + AutoRenewalOptoutWindowDays into the
+// module context as PLAIN data, so a family module sources its template-set/window from the pinned pack
+// without the core ever holding a pack type (ADR-IC-019 §P2, bd babelstone-60n8.6). Fail-loud: a host that
+// cannot resolve its pinned pack must not serve under an unknown disclosure surface.
+var pinnedPack = LoadPinnedPack(builder.Configuration);
+
 // Compose the family notification contributions (ADR-IC-019 §D4 + Amendment 2026-06-24). The host is the
 // §A2 composition root — the only place that names a family. Explicit list now (ADR-PC-021 §A3); a duplicate
 // FamilyName is a composition error (the host-edge guard the engine's HostModuleLoader also enforces). A
 // second family ships a new module on this same list with zero core diff.
-var moduleContext = new NotificationModuleContext(builder.Configuration, engineBaseUrl);
+var moduleContext = new NotificationModuleContext(
+    builder.Configuration,
+    engineBaseUrl,
+    PackTemplateRefs: pinnedPack.Manifest.TemplateRefNames,
+    AutoRenewalOptoutWindowDays: pinnedPack.Parameters.AutoRenewalOptoutWindowDays);
 IReadOnlyList<IFamilyNotificationModule> notificationModules =
 [
     new TermDepositNotificationModule(),
@@ -120,6 +134,50 @@ builder.Services.AddHostedService<NotificationWorker>();
 
 var app = builder.Build();
 await app.RunAsync();
+
+// Loads the instance-pinned regulatory pack off disk via the structural parser (ADR-PC-007 §P4). It globs
+// every *.yaml under the pack directory into the in-tar-relative-path-keyed map PackParser expects (so it
+// picks up primitives, parameters, families, rate-sheet-refs AND templates without a curated file list); the
+// parser reads only the files it knows and ignores extras. Configure with Engine:PackVersion (default
+// pt.2026.1) and Engine:PacksDir (else walk up to find packs/). Fail-loud on a missing dir or an
+// unverifiable/unparsable pack — the same posture as the engine host's disk loader.
+static VerifiedPack LoadPinnedPack(IConfiguration configuration)
+{
+    var version = configuration.GetValue("Engine:PackVersion", "pt.2026.1");
+    var packsDir = configuration["Engine:PacksDir"] ?? FindPacksDir();
+    var packDir = Path.Combine(packsDir, version);
+    if (!Directory.Exists(packDir))
+    {
+        throw new InvalidOperationException(
+            $"pinned pack '{version}' not found under '{packsDir}' (set Engine:PacksDir / Engine:PackVersion). "
+            + "The notification host resolves its instance-pinned pack at startup (ADR-PC-007 §P4).");
+    }
+
+    var files = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+    foreach (var path in Directory.EnumerateFiles(packDir, "*.yaml", SearchOption.AllDirectories))
+    {
+        var relative = Path.GetRelativePath(packDir, path).Replace(Path.DirectorySeparatorChar, '/');
+        files[relative] = File.ReadAllBytes(path);
+    }
+
+    return PackParser.Parse(files, version);
+}
+
+// Walk up from the host's base directory to the repo/deploy root that contains packs/ (worktree-safe, no
+// .git dependency) — the same disk-marker walk the engine host's HostPack uses.
+static string FindPacksDir()
+{
+    var dir = new DirectoryInfo(AppContext.BaseDirectory);
+    while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "packs")))
+    {
+        dir = dir.Parent;
+    }
+
+    return dir is not null
+        ? Path.Combine(dir.FullName, "packs")
+        : throw new InvalidOperationException(
+            $"packs/ directory not found from {AppContext.BaseDirectory}; set Engine:PacksDir.");
+}
 
 namespace Babelstone.Notification.Host
 {

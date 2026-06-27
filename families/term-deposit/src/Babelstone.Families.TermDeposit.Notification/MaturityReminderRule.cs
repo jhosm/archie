@@ -22,30 +22,65 @@ namespace Babelstone.Families.TermDeposit.Notification;
 /// <see cref="TermDepositNotificationModule"/>.
 /// </para>
 /// <para>
-/// <b>The window value is pack-sourced, never a core literal (ADR-PC-007).</b> The PT pack carries the
-/// canonical <c>AutoRenewalOptoutWindowDays</c> (the engine reads it fail-loud at the saga-start gate); this
-/// downstream rule receives it from the host through configuration (<see cref="TermDepositNotificationModule"/>),
-/// falling back to the family-side documented default. A deposit is "in the window" exactly when the engine's
-/// saga-start gate would call it in-window: the window OPENS at <c>maturity_date − N days</c>
-/// (TermDepositConstitutionService §3a), so a deposit is in-window when <c>maturity_date − N ≤ asOf</c>, i.e.
-/// <c>maturity_date ≤ asOf + N</c>. As the engine's range-scan resource is half-open <c>[from, to)</c>,
-/// catching every maturity up to AND INCLUDING <c>asOf + N</c> means scanning <c>[asOf, asOf + N + 1)</c>.
+/// <b>Both the template-set and the window are PACK-sourced, validated against the instance-pinned pack
+/// (ADR-PC-007 / ADR-PC-025 §2 / bd babelstone-60n8.6).</b> The pinned pack DECLARES the disclosure-template
+/// sets it ships (<c>pack.yaml</c> <c>template_refs</c>, e.g. <c>notices</c>) and the canonical
+/// <c>AutoRenewalOptoutWindowDays</c>. The host resolves the pinned pack and conveys both to this rule
+/// through <see cref="NotificationModuleContext"/> (<see cref="TermDepositNotificationModule"/>); the rule
+/// REQUIRES the pinned pack to declare the template-set its <c>pt.notice.maturity</c> notice ships in
+/// (<see cref="MaturityTemplateSetRef"/>) and FAILS LOUD at composition if a deployment's pack omits it —
+/// no silent fall-through to a family constant for a template the pack does not ship. The disclosure
+/// <c>template_ref</c> itself stays family-owned (ADR-IC-019 §D1 keeps it out of the generic core); what is
+/// pack-sourced is the authority over WHETHER it ships and the window width. A deposit is "in the window"
+/// exactly when the engine's saga-start gate would call it in-window: the window OPENS at
+/// <c>maturity_date − N days</c> (TermDepositConstitutionService §3a), so a deposit is in-window when
+/// <c>maturity_date − N ≤ asOf</c>, i.e. <c>maturity_date ≤ asOf + N</c>. As the engine's range-scan resource
+/// is half-open <c>[from, to)</c>, catching every maturity up to AND INCLUDING <c>asOf + N</c> means scanning
+/// <c>[asOf, asOf + N + 1)</c>.
 /// </para>
 /// </remarks>
-public sealed class MaturityReminderRule(DepositReadClient depositReadClient, int optOutWindowDays)
-    : INotificationScheduleRule
+public sealed class MaturityReminderRule : INotificationScheduleRule
 {
-    /// <summary>The pack-namespaced template for a maturity reminder (ADR-PC-025 slot 1 example
-    /// <c>pt.notice.maturity</c>). One of the three parts of the composite notification key.</summary>
+    /// <summary>The pack-namespaced disclosure template for a maturity reminder (ADR-PC-025 slot 1 example
+    /// <c>pt.notice.maturity</c>). Family-owned (ADR-IC-019 §D1) — one of the three parts of the composite
+    /// notification key. Carried on the decision; whether the pinned pack SHIPS it is validated via
+    /// <see cref="MaturityTemplateSetRef"/>.</summary>
     public const string MaturityTemplateRef = "pt.notice.maturity";
 
-    private readonly DepositReadClient _depositReadClient =
-        depositReadClient ?? throw new ArgumentNullException(nameof(depositReadClient));
+    /// <summary>The pack disclosure-template SET (the <c>templates/&lt;name&gt;.yaml</c> file ref the pinned
+    /// pack declares in <c>template_refs</c>) that ships <see cref="MaturityTemplateRef"/>. The rule requires
+    /// the instance-pinned pack to declare this set and fails loud otherwise (bd babelstone-60n8.6).</summary>
+    public const string MaturityTemplateSetRef = "notices";
 
-    private readonly int _optOutWindowDays = optOutWindowDays > 0
-        ? optOutWindowDays
-        : throw new ArgumentOutOfRangeException(
-            nameof(optOutWindowDays), optOutWindowDays, "The opt-out window width must be positive.");
+    private readonly DepositReadClient _depositReadClient;
+    private readonly int _optOutWindowDays;
+
+    /// <summary>
+    /// Composes the rule over the pinned-pack values the host conveys. <paramref name="packTemplateRefs"/> is
+    /// the pinned pack's declared disclosure-template sets; the rule fails loud unless it contains
+    /// <see cref="MaturityTemplateSetRef"/> — a deployment whose pinned pack does not ship the maturity-notice
+    /// template set must not silently fall back to a family constant (ADR-PC-025 §2 pinning, bd babelstone-60n8.6).
+    /// </summary>
+    public MaturityReminderRule(
+        DepositReadClient depositReadClient, IReadOnlyCollection<string> packTemplateRefs, int optOutWindowDays)
+    {
+        _depositReadClient = depositReadClient ?? throw new ArgumentNullException(nameof(depositReadClient));
+        ArgumentNullException.ThrowIfNull(packTemplateRefs);
+
+        if (!packTemplateRefs.Contains(MaturityTemplateSetRef))
+        {
+            throw new InvalidOperationException(
+                $"The instance-pinned pack does not declare the '{MaturityTemplateSetRef}' disclosure-template set "
+                + $"that ships the '{MaturityTemplateRef}' maturity notice (pack.yaml template_refs = "
+                + $"[{string.Join(", ", packTemplateRefs)}]). A maturity reminder cannot disclose under a template "
+                + "the pinned pack does not ship (ADR-PC-025 §2 pinning, bd babelstone-60n8.6).");
+        }
+
+        _optOutWindowDays = optOutWindowDays > 0
+            ? optOutWindowDays
+            : throw new ArgumentOutOfRangeException(
+                nameof(optOutWindowDays), optOutWindowDays, "The opt-out window width must be positive.");
+    }
 
     /// <inheritdoc />
     public string FamilyName => TermDepositNotificationModule.Family;

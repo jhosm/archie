@@ -109,10 +109,42 @@ public sealed class DepositReadClient
         return page?.Deposits ?? [];
     }
 
+    /// <summary>
+    /// The annual IRS-withholding statement population (bd babelstone-q15c) — every deposit that has had
+    /// tax withheld, ordered by id, over the family-agnostic collection resource
+    /// <c>GET /v1/deposits/withholding-statements</c>. This is the read the downstream annual
+    /// withholding-statement scheduler (ADR-PC-023 §6 — the engine owns no clock-driven emission) folds over
+    /// to emit a SCHEDULED statement per deposit for the prior tax year.
+    /// </summary>
+    /// <remarks>
+    /// Like <see cref="ListMaturitiesAsync"/> this binds the host's snake_case wire JSON (money as integer
+    /// cents) into the notification core's OWN <see cref="DepositWithholdingView"/> — it does NOT reference
+    /// the family's <c>DepositWithholdingStatementsResponse</c>/<c>DepositResponse</c> CLR types (that would
+    /// re-introduce the families/** reference ADR-IC-019 §P2 forbids and the
+    /// <c>NOTIFICATION_FAMILY_AGNOSTIC</c> gate catches). Current belief (no as-of / no window): the
+    /// scheduler owns the as-of statement date and the annual cadence. An empty result is a well-formed
+    /// <c>200 []</c>; a 5xx surfaces (it is not "nobody had withholding"), so the scheduler treats it as
+    /// backpressure rather than silently skipping a cycle.
+    /// </remarks>
+    public async Task<IReadOnlyList<DepositWithholdingView>> ListWithholdingStatementsAsync(
+        CancellationToken ct = default)
+    {
+        using var response = await _http.GetAsync("v1/deposits/withholding-statements", ct);
+        response.EnsureSuccessStatusCode();
+
+        var page = await response.Content.ReadFromJsonAsync<WithholdingStatementsPage>(WireJson, ct);
+        return page?.Deposits ?? [];
+    }
+
     /// <summary>The notification core's local read model of the maturities collection
     /// (<c>{ "deposits": [ … ] }</c>) — mirrors the wire JSON, not the family's
     /// <c>DepositMaturitiesResponse</c> CLR type.</summary>
     private sealed record MaturitiesPage(IReadOnlyList<DepositMaturityView> Deposits);
+
+    /// <summary>The notification core's local read model of the withholding-statements collection
+    /// (<c>{ "deposits": [ … ] }</c>) — mirrors the wire JSON, not the family's
+    /// <c>DepositWithholdingStatementsResponse</c> CLR type.</summary>
+    private sealed record WithholdingStatementsPage(IReadOnlyList<DepositWithholdingView> Deposits);
 }
 
 /// <summary>
@@ -165,4 +197,27 @@ public sealed record DepositMaturityView(
     string Lifecycle,
     DateOnly MaturityDate,
     long TotalPayoutCents,
+    long NetInterestCents);
+
+/// <summary>
+/// The notification core's local read model of ONE row in the withholding-statements collection
+/// (<c>GET /v1/deposits/withholding-statements</c>) — the subset of the deposit resource the annual
+/// IRS-withholding statement scheduler needs to emit and render a statement: which deposit, its lifecycle,
+/// and the accrual/withholding rollups (the read-model projection of <c>term_deposit.accrual_schedule</c> +
+/// <c>withholding_ledger</c>) the statement interpolates. Like <see cref="DepositView"/> it binds the
+/// snake_case wire JSON (money as integer cents — ADR-PC-010 §P1), NOT the family's <c>DepositResponse</c>
+/// CLR type, so the notification core names no family type and the <c>NOTIFICATION_FAMILY_AGNOSTIC</c> gate
+/// stays green (ADR-IC-019 §D2/§D3).
+/// </summary>
+/// <param name="DepositId">The deposit's stream id — the <c>instance_id</c> in the ADR-PC-025
+/// composite notification key.</param>
+/// <param name="Lifecycle">The deposit's lifecycle state (e.g. <c>Active</c>, <c>Matured</c>).</param>
+/// <param name="AccruedGrossInterestCents">Gross interest accrued to date, in cents.</param>
+/// <param name="WithholdingToDateCents">Tax withheld to date, in cents — the figure the statement reports.</param>
+/// <param name="NetInterestCents">Net interest to date (gross − withholding), in cents.</param>
+public sealed record DepositWithholdingView(
+    Guid DepositId,
+    string Lifecycle,
+    long AccruedGrossInterestCents,
+    long WithholdingToDateCents,
     long NetInterestCents);
