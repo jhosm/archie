@@ -342,6 +342,20 @@ D1, D2, D3 and §P1–§P11 remain binding as written. D3's requirement that PR 
 
 ---
 
+## Amendment — 2026-06-27: a sixth §P3 review subagent, `code-comment`, joins the layer
+
+Authoring the [code-comment guideline](../../implementation_guidelines/code-comments.md) — the cross-cutting "comment the *why*, cite only durable/verifiable anchors" convention — created a new judgement-class no existing §P3 reviewer covered: **comment rot and citation discipline** (a comment that is inaccurate, will silently drift, cites a `bd` id or an ADR section ref, restates the code/ADR, or speculates about code that does not exist). The guideline deliberately has **no mechanical gate** (a linter can police length and citation-presence, not whether a paragraph is plausible-but-stale), so the enforcement is a dev-time judgement layer — exactly the §P3 shape. Implementation thus added a sixth reviewer; this records it, keeping §A1's enumeration honest.
+
+### A6 · The `code-comment` agent is added to the §P3 layer
+
+A sixth review subagent, [`code-comment`](../../../../plugins/babelstone-engine/agents/code-comment.md), joins the five named in §A1 (`adr-conformance`, `financial-math-reviewer`, `contract-reviewer`, `replay-determinism-auditor`, `doc-consistency`), spawnable as `babelstone-engine:code-comment`. It guards the [code-comment guideline](../../implementation_guidelines/code-comments.md): the litmus ("if this comment became false, would anything catch it?"), the three tiers, the four rules, and citation discipline. Like the others it is read-only and advisory — a judgement *layer*, not a hard gate (§Residual risks unchanged). Its lane is comment hygiene; it defers design contradictions to `adr-conformance`, boundary/PII to `contract-reviewer`, math to `financial-math-reviewer`, and doc prose to `doc-consistency`, so it adds no overlap. Packaging is not a Verifiable commitment, so no [commitment catalogue](./commitment-catalogue.md) row changes.
+
+### A7 · This amends the decision; it does not supersede this ADR
+
+D1, D2, D3 and §P1–§P11 remain binding as written. This amendment is appended to §P3's enumeration of the review subagents — it extends the layer with one more reviewer for a new judgement-class, it does not revise the layer's mechanism, scoping, or its not-a-hard-gate posture.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-019](./ADR-PC-019-repository-strategy-monorepo.md) — the single tree this toolchain and governance run on; its atomic-change property lets a contract + consumers + commitment land together.

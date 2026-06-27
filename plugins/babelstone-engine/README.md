@@ -62,6 +62,7 @@ loose `.claude/agents/*.md` file has none, which is why these moved here first
 | [`contract-reviewer`](./agents/contract-reviewer.md) | Schema evolution, naming, no-PII-on-bus | `babelstone-engine:contract-reviewer` |
 | [`replay-determinism-auditor`](./agents/replay-determinism-auditor.md) | Handler purity, projection rebuildability, fixture replay | `babelstone-engine:replay-determinism-auditor` |
 | [`doc-consistency`](./agents/doc-consistency.md) | Cross-linked docs + C4 vs cited source ("the source wins") | `babelstone-engine:doc-consistency` |
+| [`code-comment`](./agents/code-comment.md) | Comment rot + the [code-comment guideline](../../docs/product-management/implementation_guidelines/code-comments.md) (litmus, tiers, citation discipline) | `babelstone-engine:code-comment` |
 
 Spawn one as `subagent_type: babelstone-engine:<name>`, or `@babelstone-engine:<name>` to
 invoke by mention. These compose *with*, not instead of, the generic `code-review` /
