@@ -50,6 +50,7 @@ make reset     # wipe data volumes and start fresh
 | PostgreSQL | `localhost:5432` | db `babelstone`, user `babelstone`, password `babelstone` |
 | Kafka API | `localhost:19092` | from the host; **inside** the compose network use `redpanda:9092` |
 | Schema Registry | `http://localhost:18081` | inside the network: `http://redpanda:8081` |
+| Redpanda HTTP Proxy | `http://localhost:18082` | pandaproxy (Kafka REST); inside the network: `http://redpanda:8082`. Mission Control's Topic·Avro lens reads topic records over it (no Kafka client) |
 | Redpanda Admin | `localhost:9644` | `rpk` / health |
 | Redpanda Console | `http://localhost:8080` | browse topics + schemas |
 | Kong proxy | `http://localhost:8000` | the edge — external surfaces route through here |
@@ -57,6 +58,9 @@ make reset     # wipe data volumes and start fresh
 | OpenBao | `http://localhost:8200` | API + UI (`/ui`); dev root token `root` |
 | OTLP endpoint | `localhost:4317` (gRPC) / `:4318` (HTTP) | **export all telemetry here** — the collector boundary |
 | Grafana | `http://localhost:3000` | logs/traces/metrics in one UI; anonymous admin (dev) |
+| Prometheus | `http://localhost:9090` | the appliance's metrics query API (`/api/v1/query…`); Mission Control's Metrics lens reads the real SLI series |
+| Loki | `http://localhost:3100` | the appliance's logs query API (`/loki/api/v1/query_range…`); Mission Control's Logs lens reads the real structured logs |
+| Tempo | `http://localhost:3200` | the appliance's traces query API (`/api/traces/{id}`); Mission Control's Telemetry tab reads real spans by trace id |
 | OCI registry | `localhost:5001` | `oras push/pull` packs (host 5001 → 5000; 5000 collides with macOS AirPlay) |
 | Backstage portal | `http://localhost:7007` | renders the AsyncAPI catalogue; profile-gated behind `catalog` (skipped by default `make up`) and up only once the app image is built+pushed — `docker compose --profile catalog up` (see below) |
 

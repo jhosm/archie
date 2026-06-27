@@ -56,11 +56,18 @@ services:
       - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
       - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      # HTTP Proxy (pandaproxy) — the Kafka-REST listener Mission Control's Topic·Avro lens reads
+      # topic records over, so serve.py needs NO Kafka client and stays stdlib-only (bd babelstone-f0ic.15.4).
+      # `internal` for containers on this network (advertise as `redpanda`), `external` for tools on
+      # the host (advertise as `localhost`), mirroring the kafka/SR listener split above.
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
       - --rpc-addr redpanda:33145
       - --advertise-rpc-addr redpanda:33145
     ports:
       - "${REDPANDA_KAFKA_PORT:-19092}:19092"   # Kafka API (from host)
       - "${REDPANDA_SR_PORT:-18081}:18081"      # Schema Registry (from host)
+      - "${REDPANDA_PANDAPROXY_PORT:-18082}:18082" # HTTP Proxy / pandaproxy (Kafka REST, from host)
       - "9644:9644"                             # Admin API (rpk / health)
     volumes:
       - rpdata:/var/lib/redpanda/data
@@ -279,6 +286,14 @@ services:
       - "${GRAFANA_PORT:-3000}:3000"   # Grafana UI
       - "${TEMPO_PORT:-3200}:3200"     # Tempo query API (GET /api/traces/{id}) — Mission Control
                                        # Telemetry tab reads real spans by trace id (bd babelstone-f0ic.9)
+      - "${PROMETHEUS_PORT:-9090}:9090" # Prometheus query API (GET /api/v1/query…) — the appliance
+                                       # already runs Prometheus internally on :9090; publishing it lets
+                                       # the Mission Control Metrics lens read the real SLI series
+                                       # (bd babelstone-f0ic.15.2, prereq for f0ic.15.6)
+      - "${LOKI_PORT:-3100}:3100"      # Loki query API (GET /loki/api/v1/query_range…) — the appliance
+                                       # already runs Loki internally on :3100; publishing it lets the
+                                       # Mission Control Logs lens read the real structured logs
+                                       # (bd babelstone-f0ic.15.2, prereq for f0ic.15.7)
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health || exit 1"]
       interval: 10s
