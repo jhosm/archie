@@ -110,11 +110,20 @@ volumes:
 
 ### Kubernetes
 
-Mount the two files as a ConfigMap into the `grafana-lgtm` Deployment at the
-same paths. (Not wired into the kustomize base in this lane — the base ships the
-appliance with default config; rule provisioning is an additive overlay a deploy
-applies. Kept out of the kustomize tree so the K.3 rules and the M.4 DR overlay
-stay file-disjoint.)
+The two files are mounted as a ConfigMap into the `grafana-lgtm` Deployment at
+the same `/otel-lgtm/` paths. The **staging** overlay
+([`infra/k8s/overlays/staging/`](../k8s/README.md)) wires this (bd
+`babelstone-zla1.9`): a `configMapGenerator` builds the `grafana-lgtm-rules`
+ConfigMap from these same `prometheus/{prometheus,alert-rules}.yaml` files (one
+config source, the base's `otel-collector-config` / `kong-config` pattern), and
+[`grafana-lgtm-rules.patch.yaml`](../k8s/overlays/staging/grafana-lgtm-rules.patch.yaml)
+subPath-mounts each file so the appliance's own `/otel-lgtm/` contents aren't
+clobbered. It is a **staging** concern (where the always-on box's alerts must
+fire), not the kustomize **base** — the base still ships the appliance with
+default config, and `dev`/`ha` don't load rules. The patch touches only the
+Deployment, so the OTLP boundary (no 4317/4318 on the `grafana-lgtm` Service,
+[ADR-IC-007 §P1](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md))
+is preserved.
 
 ## Validating the rules
 

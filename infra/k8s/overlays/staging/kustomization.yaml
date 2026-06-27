@@ -121,3 +121,26 @@ patches:
   # Telemetry tab fetches real traces (bd babelstone-zla1.5.5). Adds 3200 alongside 3000; OTLP
   # 4317/4318 stay unexposed (ADR-IC-007 §P1).
   - path: grafana-tempo-svc.patch.yaml
+  # Mount the Critical-SLI Prometheus rules into the grafana-lgtm appliance so its
+  # bundled Prometheus loads alert-rules.yaml via rule_files (bd babelstone-zla1.9;
+  # ADR-IC-004 §P4 / ADR-PC-005 §S2). Deployment-only patch — subPath-mounts the
+  # prometheus.yaml + alert-rules.yaml from the grafana-lgtm-rules ConfigMap
+  # generated below; the Service (hence the OTLP boundary, ADR-IC-007 §P1) is
+  # untouched. See grafana-lgtm-rules.patch.yaml for the /otel-lgtm path rationale.
+  - path: grafana-lgtm-rules.patch.yaml
+
+# The Critical-SLI rule files for the bundled Prometheus, carried in as a ConfigMap
+# generated FROM the SAME infra/grafana/prometheus/ source the Compose stack mounts
+# (single config source — the base's otel-collector-config / kong-config pattern).
+# Those files sit above the kustomization root, so the build needs
+# --load-restrictor=LoadRestrictionsNone (CI already passes it for every overlay).
+configMapGenerator:
+  - name: grafana-lgtm-rules
+    files:
+      - prometheus.yaml=../../../grafana/prometheus/prometheus.yaml
+      - alert-rules.yaml=../../../grafana/prometheus/alert-rules.yaml
+
+generatorOptions:
+  # Stable name (no content-hash suffix) so the grafana-lgtm-rules.patch.yaml
+  # volume reference stays valid — matches the base's generatorOptions posture.
+  disableNameSuffixHash: true
