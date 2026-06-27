@@ -105,10 +105,11 @@ jobs:
           - service: pack-validate
             dockerfile: pack-validate/Dockerfile
             context: pack-validate
-          # Mission Control demo UI (bd babelstone-zla1.5.4): a self-contained, stdlib-only
-          # Python proxy + static UI, so — like mcp-server / pack-validate — it builds with its
-          # OWN dir as context (serve.py + index.html live there). Publishes
-          # ghcr.io/jhosm/babelstone-mission-control, multi-arch + cosign-signed like the rest.
+          # Mission Control demo UI (bd babelstone-zla1.5.4): a self-contained Python proxy +
+          # static UI (stdlib-only but for one pip dependency — psycopg, for the optional read-only
+          # /pg/* Inspector lenses, bd babelstone-f0ic.15.1), so — like mcp-server / pack-validate —
+          # it builds with its OWN dir as context (requirements.txt + serve.py + index.html live
+          # there). Publishes ghcr.io/jhosm/babelstone-mission-control, multi-arch + cosign-signed.
           - service: mission-control
             dockerfile: docs/demo/mission-control/Dockerfile
             context: docs/demo/mission-control

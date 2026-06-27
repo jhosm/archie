@@ -1,0 +1,8 @@
+# Mission Control serve.py — runtime dependencies.
+#
+# serve.py is stdlib-only for EVERY route EXCEPT the optional read-only Postgres Inspector
+# lenses (/pg/*, bd babelstone-f0ic.15.1), which need a Postgres driver. psycopg is imported
+# lazily, so the engine/saga/agent/tempo/pandaproxy/sr routes all work even if this is not
+# installed — only /pg/* requires it. The [binary] extra ships a self-contained wheel (libpq
+# bundled), so `pip install` needs no system build toolchain.
+psycopg[binary]>=3.1,<4
