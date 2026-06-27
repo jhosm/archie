@@ -366,13 +366,9 @@ public sealed class AccountFrozenHandler<TState> : IEventHandler<TState, Account
 /// stays one-way (ADR-PC-021).
 /// </summary>
 /// <remarks>
-/// Each stored <c>event_type</c> is <c>operations.&lt;EventName&gt;</c> — the synthetic
-/// <c>operations</c> aggregate_type for the engine-declared cross-cutting set, no family prefix
-/// (event-store §4.3). Four §4.1 events are bound here (<see cref="PackVersionMigrated"/>,
-/// <see cref="SchemaVersionMigrated"/>, <see cref="FundsHeld"/>, <see cref="AccountFrozen"/>) plus the
-/// promoted <see cref="PersonalDataErasureRequested"/>; <c>LegacyInstanceObserved</c> (ADR-PC-017,
-/// deferred to DEF-1) joins later. A family that splices this in gets them all without changing its
-/// module again.
+/// Binds the engine-declared cross-cutting set (the file-header remarks list the events and the
+/// <c>operations.&lt;EventName&gt;</c> naming convention) against one family's state. A family that
+/// splices this in gets the whole set without changing its module again.
 /// </remarks>
 public static class CrossCuttingEventRegistrations
 {

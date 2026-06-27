@@ -46,14 +46,8 @@ namespace Babelstone.Engine;
 /// <see cref="decimal"/> exactly once, ADR-PC-010). The engine never expresses money as a float.</param>
 /// <param name="ValueDate">The economic date the value moves (<c>valid_time</c>), never wall-clock —
 /// supplied by the decider, not read from a clock (ADR-PC-032 slot 1).</param>
-/// <param name="Operation">The CLOSED engine-side operation code for the movement (ADR-PC-032 slot 1,
-/// hardened to a closed type by feature-design §2): an enum, NOT a free string. The settlement leg maps
-/// it to the ACL <c>operation_type</c> half of the idempotency key (ADR-IC-012). Widening the closed
-/// set later is forward-only schema evolution (ADR-IC-002).</param>
-/// <param name="Origin">Who initiated the movement and what the spine does next (ADR-PC-032 slot 2):
-/// <see cref="MovementOrigin.Originated"/> = the decider decided it, so its cash leg is effected by the
-/// gated settlement leg; <see cref="MovementOrigin.Observed"/> = it arrived already cleared, so the engine
-/// only records it (no cash leg to drive).</param>
+/// <param name="Operation">Which money move this records — see <see cref="MovementOperation"/>.</param>
+/// <param name="Origin">Who initiated the move and what the spine does next — see <see cref="MovementOrigin"/>.</param>
 /// <param name="CommandId">The ADR-PC-029 append-idempotency <c>CommandId</c> the originating command
 /// carried, threaded onto the movement for append idempotency + correlation (ADR-PC-032 slot 4). A
 /// replayed command id returns the original <c>commit_sequence</c> with no second append, so the movement
