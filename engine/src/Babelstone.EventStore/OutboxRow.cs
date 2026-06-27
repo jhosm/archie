@@ -1,6 +1,6 @@
 namespace Babelstone.EventStore;
 
-/// <summary>Outbox row lifecycle (ADR-IC-004 §P1): written PENDING, flipped PUBLISHED by the relay.</summary>
+/// <summary>Outbox row lifecycle (ADR-IC-004): written PENDING, flipped PUBLISHED by the relay.</summary>
 public enum OutboxStatus
 {
     Pending,
@@ -8,8 +8,8 @@ public enum OutboxStatus
 }
 
 /// <summary>
-/// The outbox row mirroring ADR-IC-004 §P1 column-for-column. Written in the SAME
-/// local transaction as the event it records (§P2 / ADR-PC-001 §P2); drained by the
+/// The outbox row mirroring ADR-IC-004 column-for-column. Written in the SAME
+/// local transaction as the event it records (§P2 / ADR-PC-001); drained by the
 /// polling publisher, which is the only reader.
 /// </summary>
 public sealed record OutboxRow(
@@ -25,7 +25,7 @@ public sealed record OutboxRow(
     DateTimeOffset?      PublishedAt,
     // CloudEvents extension attributes the event declared (DomainEvent.IntegrationHeaders), persisted
     // as the integration_headers JSONB column (migration 0016). The relay promotes each entry to a
-    // ce_<key> header (OutboxDrainer.BuildHeaders, ADR-IC-018 §P5) — keeping every emitted header
+    // ce_<key> header (OutboxDrainer.BuildHeaders, ADR-IC-018) — keeping every emitted header
     // derivable from the outbox row alone (ADR-IC-004). Null for events that declare none; optional +
     // null-defaulted so every existing construction site stays source-compatible.
     IReadOnlyDictionary<string, string>? IntegrationHeaders = null);

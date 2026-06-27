@@ -9,7 +9,7 @@ public interface IEventStore
 {
     /// <summary>
     /// Appends events and their outbox rows in ONE local PostgreSQL transaction
-    /// (ADR-PC-001 §P2 / ADR-IC-004 §P6) — the <c>ES_ATOMIC_APPEND_OUTBOX</c> fitness
+    /// (ADR-PC-001 / ADR-IC-004) — the <c>ES_ATOMIC_APPEND_OUTBOX</c> fitness
     /// function. Either both tables commit or neither does.
     /// </summary>
     /// <param name="streamId">The stream being appended to.</param>

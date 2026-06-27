@@ -16,9 +16,9 @@ namespace Babelstone.EventStore;
 /// <param name="CreatedAt">When the snapshot row was physically written (a wall-clock DB stamp).</param>
 /// <param name="TransactionTime">
 /// The event-derived transaction_time of the head event the snapshot covers (the append-stamped
-/// instant, ADR-PC-010 §P5) — distinct from <paramref name="CreatedAt"/>, which is when the ROW was
+/// instant, ADR-PC-010) — distinct from <paramref name="CreatedAt"/>, which is when the ROW was
 /// written. Lets rehydrate seed last_updated from the snapshot when a stream is fully covered with no
-/// tail (ADR-PC-003 §P3). Nullable: pre-0017 snapshot rows carry null, for which rehydrate falls back
+/// tail (ADR-PC-003). Nullable: pre-0017 snapshot rows carry null, for which rehydrate falls back
 /// to the prior null-on-no-tail behaviour (the cold fold stays correct).
 /// </param>
 public sealed record SnapshotRecord(

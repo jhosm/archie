@@ -15,7 +15,7 @@ public interface ISnapshotStorage
     /// <summary>
     /// Returns the highest-sequence snapshot whose <c>at_sequence</c> is at or below
     /// <paramref name="atOrBeforeSequence"/>, or null if no snapshot covers that point — the
-    /// <c>readLatestSnapshot(stream_id, …, atOrBeforeSequence)</c> read of [ADR-PC-003 §P1] that
+    /// <c>readLatestSnapshot(stream_id, …, atOrBeforeSequence)</c> read of [ADR-PC-003] that
     /// the as-of / point-in-time replay needs. A snapshot taken PAST the requested point is in the
     /// future relative to the read and must be skipped, so the as-of fold seeds only from a snapshot
     /// at-or-before the point and folds the tail up to it (cold from zero when none qualifies — the

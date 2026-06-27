@@ -7,7 +7,7 @@ namespace Babelstone.EventStore;
 
 /// <summary>
 /// The PostgreSQL-backed <see cref="IEventStore"/>. Hand-rolled against the
-/// ADR-PC-001 §P1 / ADR-IC-004 §P1 table contracts (no ORM, ADR-PC-010). All event
+/// ADR-PC-001 / ADR-IC-004 table contracts (no ORM, ADR-PC-010). All event
 /// and outbox SQL is private to this type — the §P2 one-transaction guarantee lives
 /// in exactly one place.
 /// </summary>
@@ -23,7 +23,7 @@ public sealed class PostgresEventStore(string connectionString) : IEventStore
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(events.Count, 1, nameof(events));
         // §P2 atomicity (ES_ATOMIC_APPEND_OUTBOX): events and their outbox rows commit in ONE
-        // transaction — neither half can land without the other. ADR-IC-017 §P1 refines the OLD
+        // transaction — neither half can land without the other. ADR-IC-017 refines the OLD
         // "one outbox row per event" coupling: an UNCATALOGUED event is store-only by construction,
         // so it writes an event row but NO outbox row. A batch of only-uncatalogued events therefore
         // legitimately carries zero outbox rows; the upper bound (never MORE outbox rows than events)
@@ -261,7 +261,7 @@ public sealed class PostgresEventStore(string connectionString) : IEventStore
             command.Parameters.Add(new NpgsqlParameter { Value = r.Status == OutboxStatus.Published ? "PUBLISHED" : "PENDING" });
             command.Parameters.Add(new NpgsqlParameter { Value = r.CreatedAt });
             command.Parameters.Add(new NpgsqlParameter { Value = (object?)r.PublishedAt ?? DBNull.Value });
-            // The family-declared CloudEvents extension attributes (ADR-IC-018 §P5), persisted as
+            // The family-declared CloudEvents extension attributes (ADR-IC-018), persisted as
             // JSONB so the relay reads them back verbatim. A typed NpgsqlDbType.Jsonb parameter sends
             // the serialized map; null integration_headers binds SQL NULL (no extension headers) — the
             // common case and every pre-seam row.

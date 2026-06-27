@@ -7,13 +7,13 @@ namespace Babelstone.EventStore;
 /// the bitemporal store generic (generic axes + opaque <see cref="ProjectionRecord.StructuralPayload"/>,
 /// with the family's typed shape living in the family layer). This is what keeps
 /// <c>Babelstone.EventStore</c>/<c>Babelstone.Engine</c> under ENGINE_FAMILY_AGNOSTIC
-/// (ADR-PC-021 §D2/§P2): the spine never names a deposit's body shape or a deposit-specific query
+/// (ADR-PC-021): the spine never names a deposit's body shape or a deposit-specific query
 /// column — adding a non-deposit family is zero generic-engine diff.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <see cref="StreamId"/> is the row key (= the aggregate/stream id). <see cref="LastSequence"/> is
-/// the ADR-IC-005 §P2 monotonicity guard the spine's UPSERT and the runner's skip both read — this
+/// the ADR-IC-005 monotonicity guard the spine's UPSERT and the runner's skip both read — this
 /// engine's event store has no Redpanda offset (events drain per stream, no cluster-wide order), so
 /// the §P2 <c>last_event_offset</c> is realised as the per-stream <c>sequence_number</c> of the
 /// producing event. <see cref="Detail"/> is the serialized structural read body, carried as opaque
@@ -23,7 +23,7 @@ namespace Babelstone.EventStore;
 /// runner re-hydrates it to continue an accumulating fold across events.
 /// </para>
 /// <para>
-/// No PII lives on a read-model row (ADR-PC-004 §P2) — structural facts only. PII, when it lands,
+/// No PII lives on a read-model row (ADR-PC-004) — structural facts only. PII, when it lands,
 /// rides a separate ciphertext envelope, never the durable read surface.
 /// </para>
 /// </remarks>
@@ -33,7 +33,7 @@ public interface IReadModelRow
     Guid StreamId { get; }
 
     /// <summary>
-    /// The ADR-IC-005 §P2 monotonicity guard: the per-stream <c>sequence_number</c> of the event
+    /// The ADR-IC-005 monotonicity guard: the per-stream <c>sequence_number</c> of the event
     /// that produced this row's state. The spine UPSERT overwrites only on a strictly greater value,
     /// so an at-least-once re-delivery is a no-op.
     /// </summary>

@@ -1,7 +1,7 @@
 namespace Babelstone.EventStore;
 
 /// <summary>
-/// A single Path-A bitemporal projection row (ADR-PC-002 §P1/§P2).
+/// A single Path-A bitemporal projection row (ADR-PC-002).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -19,7 +19,7 @@ namespace Babelstone.EventStore;
 /// double-count a re-delivered event (migration 0010).
 /// </para>
 /// <para>
-/// The record carries two independent time axes (ADR-PC-002 §P1):
+/// The record carries two independent time axes (ADR-PC-002):
 /// <list type="bullet">
 /// <item>
 /// <b>World time</b> — <see cref="ValidFrom"/>/<see cref="ValidTo"/>: the slice of
@@ -30,18 +30,18 @@ namespace Babelstone.EventStore;
 /// <b>Belief time</b> — <see cref="RecordedAt"/>/<see cref="SupersededAt"/>: when we
 /// recorded this belief, and when (if ever) it was superseded by a forced correction.
 /// A <see langword="null"/> <see cref="SupersededAt"/> means the row is the
-/// currently-believed projection (ADR-PC-002 §P2); a corrected row supersedes its
+/// currently-believed projection (ADR-PC-002); a corrected row supersedes its
 /// predecessor in place rather than deleting it, so the full belief history stays
 /// queryable. <see cref="RecordedAt"/> is RUNTIME-SUPPLIED (the source event's
 /// transaction_time), never the SQL clock, so a cold rebuild reproduces it bit-for-bit
-/// (ADR-PC-010 §P5; migration 0010 drops the column DEFAULT).
+/// (ADR-PC-010; migration 0010 drops the column DEFAULT).
 /// </item>
 /// </list>
 /// </para>
 /// <para>
 /// <see cref="StructuralPayload"/> is the serialized cleartext structural state — a
 /// byte-oriented boundary mirroring the snapshot store. <see cref="PiiCiphertext"/> is
-/// the ADR-PC-004 §P2 ciphertext envelope, carried as opaque bytes and left empty until
+/// the ADR-PC-004 ciphertext envelope, carried as opaque bytes and left empty until
 /// PII is added by a later task. No key material lives in this record.
 /// </para>
 /// </remarks>

@@ -11,7 +11,7 @@ namespace Babelstone.EventStore;
 /// <param name="StreamId">The aggregate the command opened/mutated — an OUTPUT for a
 /// constitution, so the replay reads it back from here rather than from the retried request.</param>
 /// <param name="CommitSequence">The per-stream head version the append reached (the
-/// ADR-IC-005 §P3 read-your-writes token the original response carried).</param>
+/// ADR-IC-005 read-your-writes token the original response carried).</param>
 public sealed record CommandReceipt(Guid CommandId, Guid StreamId, long CommitSequence);
 
 /// <summary>

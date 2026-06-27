@@ -4,7 +4,7 @@ using Npgsql;
 namespace Babelstone.EventStore;
 
 /// <summary>
-/// The durable, PostgreSQL-backed <see cref="IPackVersionRegistry"/> (ADR-PC-007 §P3):
+/// The durable, PostgreSQL-backed <see cref="IPackVersionRegistry"/> (ADR-PC-007):
 /// resolves a pinned pack version string (<c>pt.YYYY.N</c>) to its immutable OCI
 /// coordinates — the reference plus the image and signature digests — out of the
 /// <c>pack_versions</c> table (migration 0006). Hand-rolled against the table contract,
@@ -62,7 +62,7 @@ public sealed class PostgresPackVersionRegistry(string connectionString) : IPack
     private const string VersionUniqueConstraint = "pack_versions_version_uq";
 
     /// <summary>
-    /// Pins a pack version to its OCI coordinates (ADR-PC-007 §P3) — the curation write the
+    /// Pins a pack version to its OCI coordinates (ADR-PC-007) — the curation write the
     /// operator/deploy role performs, distinct from the runtime role's read-only resolve.
     /// Idempotent on re-pinning the SAME (ref, digests) triple; a conflicting re-pin of an
     /// existing <c>(pack_id, pack_version)</c> to DIFFERENT coordinates is rejected as a
@@ -131,12 +131,12 @@ public sealed class PostgresPackVersionRegistry(string connectionString) : IPack
 
     /// <summary>
     /// The distinct set of pack versions any live instance references — every value of
-    /// <c>events.pack_version</c> (ADR-PC-007 §P4). This is the eager-load worklist: the host
+    /// <c>events.pack_version</c> (ADR-PC-007). This is the eager-load worklist: the host
     /// resolves + verifies + pulls + caches each of these at startup, fail-loud on any failure.
     /// </summary>
     public async Task<IReadOnlyList<string>> ListLivePackVersionsAsync(CancellationToken ct = default)
     {
-        // Every event carries pack_version in its envelope (ADR-PC-001 §P1); the DISTINCT set
+        // Every event carries pack_version in its envelope (ADR-PC-001); the DISTINCT set
         // is exactly the packs a live instance might resolve against on the hot path.
         const string sql = "SELECT DISTINCT pack_version FROM events ORDER BY pack_version;";
 
@@ -156,7 +156,7 @@ public sealed class PostgresPackVersionRegistry(string connectionString) : IPack
 }
 
 /// <summary>
-/// Raised when a pack-version pin conflicts with an existing row (ADR-PC-007 §P3): either a re-pin
+/// Raised when a pack-version pin conflicts with an existing row (ADR-PC-007): either a re-pin
 /// of an existing <c>(pack_id, pack_version)</c> to DIFFERENT coordinates, or a DIFFERENT
 /// <c>pack_id</c> claiming a <c>pack_version</c> string already pinned to another pack (the
 /// cross-<c>pack_id</c> collision against <c>UNIQUE (pack_version)</c>). A pin is immutable once a

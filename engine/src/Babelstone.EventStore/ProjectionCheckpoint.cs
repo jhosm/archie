@@ -29,7 +29,7 @@ public interface IProjectionCheckpointStore
     Task WriteAsync(ProjectionCheckpointRecord record, CancellationToken ct = default);
 
     /// <summary>
-    /// Resets every checkpoint for a kind (across all streams) for a rebuild (ADR-PC-002 §P4),
+    /// Resets every checkpoint for a kind (across all streams) for a rebuild (ADR-PC-002),
     /// so the next drain re-folds each stream from <c>sequence_number</c> 0. Safe precisely
     /// because a checkpoint is a high-water mark, not belief state.
     /// </summary>

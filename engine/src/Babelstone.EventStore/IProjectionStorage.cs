@@ -2,7 +2,7 @@ namespace Babelstone.EventStore;
 
 /// <summary>
 /// Byte-oriented storage boundary for Path-A bitemporal projection rows
-/// (ADR-PC-002 §P1/§P2).
+/// (ADR-PC-002).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -27,7 +27,7 @@ namespace Babelstone.EventStore;
 public interface IProjectionStorage
 {
     /// <summary>
-    /// Inserts a new projection row (ADR-PC-002 §P1). The caller is responsible for
+    /// Inserts a new projection row (ADR-PC-002). The caller is responsible for
     /// superseding any prior belief first when this write is a forced correction — or
     /// uses <see cref="SupersedeAndWriteAsync"/> to do both atomically.
     /// </summary>
@@ -35,14 +35,14 @@ public interface IProjectionStorage
 
     /// <summary>
     /// Supersedes the currently-believed row(s) for the <c>(streamId, projectionKind)</c>
-    /// pair by stamping <c>superseded_at</c> (ADR-PC-002 §P2). Already-superseded rows are
+    /// pair by stamping <c>superseded_at</c> (ADR-PC-002). Already-superseded rows are
     /// left untouched, so the full belief history remains queryable. Used for the rebuild
     /// supersede-all step; the steady-state update path is <see cref="SupersedeAndWriteAsync"/>.
     /// </summary>
     Task SupersedeAsync(Guid streamId, string projectionKind, DateTimeOffset supersededAt, CancellationToken ct = default);
 
     /// <summary>
-    /// The steady-state bitemporal update (ADR-PC-002 §P2): supersedes the currently-believed
+    /// The steady-state bitemporal update (ADR-PC-002): supersedes the currently-believed
     /// row for the record's <c>(StreamId, ProjectionKind)</c> at <paramref name="record"/>'s
     /// <see cref="ProjectionRecord.RecordedAt"/>, then inserts <paramref name="record"/> as the
     /// new current belief — BOTH in ONE local transaction on ONE connection, so a crash can
@@ -56,7 +56,7 @@ public interface IProjectionStorage
 
     /// <summary>
     /// Supersedes EVERY currently-believed row for <paramref name="projectionKind"/> across all
-    /// streams — the rebuild supersede-all step (ADR-PC-002 §P4): the cold rebuild closes the old
+    /// streams — the rebuild supersede-all step (ADR-PC-002): the cold rebuild closes the old
     /// beliefs (preserving them as history, never deleting) before re-folding each stream from
     /// <c>sequence_number</c> 0 (draining is per stream; the events table carries no cluster-wide
     /// order). Stays inside the SELECT/INSERT/UPDATE grant; no DELETE/TRUNCATE.
@@ -71,7 +71,7 @@ public interface IProjectionStorage
     Task<ProjectionRecord?> ReadCurrentBeliefAsync(Guid streamId, string projectionKind, CancellationToken ct = default);
 
     /// <summary>
-    /// The two-axis bitemporal read (ADR-PC-002 §P1) backing the typed <c>AsOf</c> helper (§P3):
+    /// The two-axis bitemporal read (ADR-PC-002) backing the typed <c>AsOf</c> helper (§P3):
     /// returns the row for the <c>(streamId, projectionKind)</c> pair whose world-time slice
     /// covers <paramref name="validTime"/> AND whose belief-time slice covers
     /// <paramref name="knownAt"/>, or <see langword="null"/> if no row was believed for that
@@ -90,7 +90,7 @@ public interface IProjectionStorage
         CancellationToken ct = default);
 
     /// <summary>
-    /// The full belief history for the <c>(streamId, projectionKind)</c> pair (ADR-PC-002 §P2)
+    /// The full belief history for the <c>(streamId, projectionKind)</c> pair (ADR-PC-002)
     /// backing the typed <c>HistoryOf</c> helper (§P3) — the audit trail of how belief about
     /// this projection changed: every row, superseded and current alike, ordered by belief-time
     /// (<c>recorded_at</c> ascending, <c>row_id</c> ascending only as a deterministic tie-break).
@@ -107,7 +107,7 @@ public interface IProjectionStorage
 /// covers a single <c>(validTime, knownAt)</c> bitemporal point for a
 /// <c>(streamId, projectionKind)</c> pair. At a single point at most one belief is live — the
 /// partial UNIQUE index <c>projections_current_belief_uq</c> (migration 0010) plus the
-/// contiguous supersede-then-insert pair (ADR-PC-002 §P2) keep belief intervals non-overlapping
+/// contiguous supersede-then-insert pair (ADR-PC-002) keep belief intervals non-overlapping
 /// for a covered valid-time. Two overlapping intervals therefore mean the belief store is
 /// corrupt. The repo's posture is FAIL-LOUD: a defensive read surfaces the broken invariant
 /// rather than silently picking the most-recently-recorded belief and masking it

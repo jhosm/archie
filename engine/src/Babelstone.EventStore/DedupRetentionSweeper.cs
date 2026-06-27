@@ -10,7 +10,7 @@ namespace Babelstone.EventStore;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why the command window is so long.</b> ADR-PC-029 §4 fixes the uniqueness window at "at least
+/// <b>Why the command window is so long.</b> ADR-PC-029 fixes the uniqueness window at "at least
 /// the stream's active lifetime". A <c>command_dedup</c> receipt is the ONLY thing that turns a late,
 /// at-least-once retry of an already-applied command into a no-op replay. Prune it while the same
 /// command could still be retried and the retry either (a) re-executes and collides on
@@ -31,7 +31,7 @@ namespace Babelstone.EventStore;
 /// lifetime (a re-delivery past 30 days cannot exist, because the message is gone from the log).
 /// </para>
 /// <para>
-/// Both ledgers carry only structural ids / sequences, never PII (ADR-PC-004 §P2); retention here is
+/// Both ledgers carry only structural ids / sequences, never PII (ADR-PC-004); retention here is
 /// disk-bounding + GDPR data-minimization hygiene, not a PII-erasure obligation.
 /// </para>
 /// </remarks>
@@ -41,7 +41,7 @@ public sealed record DedupRetentionOptions
     public required string ConnectionString { get; init; }
 
     /// <summary>
-    /// How long a <c>command_dedup</c> receipt is kept (ADR-PC-029 §4). MUST exceed the stream's
+    /// How long a <c>command_dedup</c> receipt is kept (ADR-PC-029). MUST exceed the stream's
     /// active lifetime AND the dispatcher's max retry horizon — default 1095 days (3 years), a floor.
     /// </summary>
     public TimeSpan CommandDedupRetention { get; init; } = TimeSpan.FromDays(1095);

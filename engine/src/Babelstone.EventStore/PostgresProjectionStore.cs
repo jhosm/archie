@@ -6,7 +6,7 @@ namespace Babelstone.EventStore;
 /// PostgreSQL-backed <see cref="IProjectionStorage"/>. Hand-rolled, Npgsql-only,
 /// all <c>projections</c> SQL private to this type — the
 /// storage-boundary discipline of <see cref="PostgresSnapshotStore"/> applied to the
-/// Path-A bitemporal projection (ADR-PC-002 §P1/§P2). Every operation scopes to the
+/// Path-A bitemporal projection (ADR-PC-002). Every operation scopes to the
 /// <c>(stream_id, projection_kind)</c> pair (migration 0010).
 /// </summary>
 public sealed class PostgresProjectionStore(string connectionString) : IProjectionStorage
@@ -28,7 +28,7 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
 
     public async Task SupersedeAndWriteAsync(ProjectionRecord record, CancellationToken ct = default)
     {
-        // ADR-PC-002 §P2 — the supersede-then-insert pair is atomic: one connection, one
+        // ADR-PC-002 — the supersede-then-insert pair is atomic: one connection, one
         // transaction. A crash between the two halves can never leave the (stream, kind)
         // with zero or two current-belief rows. The prior belief is superseded AT the new
         // row's RecordedAt (the source event's transaction_time), keeping the belief-time
@@ -44,7 +44,7 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
     public async Task SupersedeAllAsync(
         string projectionKind, DateTimeOffset supersededAt, CancellationToken ct = default)
     {
-        // Rebuild supersede-all (ADR-PC-002 §P4): close every current belief for the kind
+        // Rebuild supersede-all (ADR-PC-002): close every current belief for the kind
         // across all streams. Preserves them as belief history (UPDATE, not DELETE).
         const string sql = """
             UPDATE projections
@@ -66,7 +66,7 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
     {
         // ORDER BY recorded_at DESC (belief-time), row_id DESC only as a deterministic
         // tie-break — never row_id alone, because the BIGSERIAL surrogate is re-assigned on
-        // rebuild and would make the read non-deterministic across rebuilds (ADR-PC-010 §P5).
+        // rebuild and would make the read non-deterministic across rebuilds (ADR-PC-010).
         // For this projection class the tie-break never decides: the partial UNIQUE index
         // (projections_current_belief_uq) leaves exactly one current-belief row per
         // (stream_id, projection_kind), so LIMIT 1 is order-independent and the row_id tie-break
@@ -101,7 +101,7 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
         Guid streamId, string projectionKind, DateTimeOffset validTime, DateTimeOffset knownAt,
         CancellationToken ct = default)
     {
-        // ADR-PC-002 §P1 — the two-axis bitemporal filter that backs the typed AsOf helper (§P3).
+        // ADR-PC-002 — the two-axis bitemporal filter that backs the typed AsOf helper (§P3).
         // World-time covers validTime, belief-time covers knownAt; the belief interval is half-open
         // [recorded_at, superseded_at), so the row a correction superseded becomes invisible once
         // knownAt reaches the correction's transaction_time — this is what makes "as we knew then"
@@ -162,7 +162,7 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
     public async Task<IReadOnlyList<ProjectionRecord>> ReadHistoryOfAsync(
         Guid streamId, string projectionKind, CancellationToken ct = default)
     {
-        // ADR-PC-002 §P2 — every row for the pair, superseded and current, in belief-time order:
+        // ADR-PC-002 — every row for the pair, superseded and current, in belief-time order:
         // the belief-time history of how belief about this projection changed. recorded_at decides
         // the ordering; row_id ASC is only a stable tie-break for rows sharing a recorded_at. The
         // BIGSERIAL surrogate is re-assigned on rebuild, so for this projection class the tie never
@@ -228,7 +228,7 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
         command.Parameters.AddWithValue("recorded_at", record.RecordedAt);
         command.Parameters.AddWithValue("superseded_at", (object?)record.SupersededAt ?? DBNull.Value);
         command.Parameters.AddWithValue("structural_payload", record.StructuralPayload.ToArray());
-        // The PII ciphertext envelope is NULL until PII is added later (ADR-PC-004 §P2);
+        // The PII ciphertext envelope is NULL until PII is added later (ADR-PC-004);
         // an empty payload maps to SQL NULL, not a zero-length BYTEA.
         command.Parameters.AddWithValue(
             "pii_ciphertext",
@@ -240,7 +240,7 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
         NpgsqlConnection connection, NpgsqlTransaction? transaction,
         Guid streamId, string projectionKind, DateTimeOffset supersededAt, CancellationToken ct)
     {
-        // ADR-PC-002 §P2 — stamp superseded_at on the currently-believed row for the
+        // ADR-PC-002 — stamp superseded_at on the currently-believed row for the
         // (stream_id, projection_kind) pair only; already-superseded rows keep their original
         // stamp so the belief history stays intact.
         const string sql = """
