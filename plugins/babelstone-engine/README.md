@@ -23,6 +23,7 @@ hook entry needed.
 | Hook script | Event | Surfaces |
 |---|---|---|
 | [`adr-immutability.sh`](./hooks/scripts/adr-immutability.sh) | PreToolUse (Edit/Write) | An in-place edit to an Accepted ADR's `## Decision` (§D5 / §D3) — warns; CI hard-fails |
+| [`surface-review-reminder.sh`](./hooks/scripts/surface-review-reminder.sh) | PreToolUse (Bash) | On `gh pr create` / `git push -u` whose diff touches governed code/contract/adr paths — reminds to run the [`review`](./skills/review/SKILL.md) skill first (advisory, never gates) |
 | [`surface-engine-analysers.sh`](./hooks/scripts/surface-engine-analysers.sh) | PostToolUse | The determinism + `Money`/`decimal` Roslyn gate after an engine/family `.cs` edit (ADR-PC-010 §P1–§P2,§P5) |
 | [`surface-pii-on-bus.sh`](./hooks/scripts/surface-pii-on-bus.sh) | PostToolUse | PII-shaped field names in a contract schema — no-PII-on-the-durable-bus (ADR-PC-004/025) |
 | [`surface-spec-coverage.sh`](./hooks/scripts/surface-spec-coverage.sh) | PostToolUse | The §P6 ADR↔code↔test coverage checker after an ADR / commitment-catalogue edit |
