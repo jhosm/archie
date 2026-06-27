@@ -200,7 +200,7 @@ public sealed record ReconciliationContract(
 /// §7.3). Each §7.1 pattern the contract opted into has its result populated; a pattern the contract
 /// did NOT declare stays <see langword="null"/>, so the report distinguishes "ran and matched" from
 /// "the consumer's contract does not run this pattern". <see cref="IsClean"/> is the per-consumer
-/// verdict the reconciliation alerting layer (bd babelstone-irfl, M.5) keys off.
+/// verdict the reconciliation alerting layer (M.5) keys off.
 /// </summary>
 /// <param name="Contract">The contract that was driven (carries the consumer name + ref; no PII).</param>
 /// <param name="StreamId">The instance reconciled.</param>
@@ -444,7 +444,7 @@ public sealed class ProjectionReconciler<TState>(
 
 /// <summary>
 /// The reconciliation-result instruments on the shared <see cref="BabelstoneTelemetry.Meter"/>
-/// (ADR-IC-007 Layer 1, M.5 — bd babelstone-k4ny): the three §7.1 alertable findings as monotonic
+/// (ADR-IC-007 Layer 1, M.5): the three §7.1 alertable findings as monotonic
 /// counters, plus the §7.2 drill-freshness observable gauge. They are the operational SIDE-EFFECT of
 /// the reconciler's verdicts — emitted at the impure observation boundary, never inside a pure fold
 /// (ADR-PC-010 §P5) — so the <c>projection-reconciliation</c> alert rules
