@@ -193,6 +193,75 @@ public sealed class DepositReadClientTests
             client.ListMaturitiesAsync(new DateOnly(2026, 6, 24), new DateOnly(2026, 7, 8)));
     }
 
+    // --- the withholding-statements collection (bd babelstone-q15c) ---
+
+    private const string WithholdingStatementsWireJson = """
+        {
+          "deposits": [
+            {
+              "deposit_id": "44444444-4444-4444-4444-444444444444",
+              "sor": "engine",
+              "principal_cents": 1000000,
+              "maturity_date": "2026-07-01",
+              "interest_variant": "AT_MATURITY",
+              "accrued_gross_interest_cents": 9000,
+              "withholding_to_date_cents": 2520,
+              "net_interest_cents": 6480,
+              "total_payout_cents": 1006480,
+              "coupons_paid": 0,
+              "lifecycle": "Active",
+              "last_sequence": 4,
+              "last_updated": "2026-02-10T09:00:00+00:00"
+            }
+          ]
+        }
+        """;
+
+    [Fact]
+    public async Task ListWithholdingStatements_calls_the_collection_and_maps_the_withholding_rollups()
+    {
+        var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, WithholdingStatementsWireJson));
+        var client = NewClient(handler);
+
+        var rows = await client.ListWithholdingStatementsAsync();
+
+        // The family-agnostic collection resource — no window, no as-of (the scheduler owns those).
+        Assert.Equal(HttpMethod.Get, handler.LastRequest!.Method);
+        Assert.Equal(
+            "http://engine.test/v1/deposits/withholding-statements",
+            handler.LastRequest.RequestUri!.ToString());
+
+        // snake_case → the core-local DepositWithholdingView (money as integer cents).
+        Assert.Single(rows);
+        Assert.Equal(new Guid("44444444-4444-4444-4444-444444444444"), rows[0].DepositId);
+        Assert.Equal("Active", rows[0].Lifecycle);
+        Assert.Equal(9_000, rows[0].AccruedGrossInterestCents);
+        Assert.Equal(2_520, rows[0].WithholdingToDateCents);
+        Assert.Equal(6_480, rows[0].NetInterestCents);
+    }
+
+    [Fact]
+    public async Task ListWithholdingStatements_returns_empty_when_nobody_had_withholding()
+    {
+        var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, """{ "deposits": [] }"""));
+        var client = NewClient(handler);
+
+        var rows = await client.ListWithholdingStatementsAsync();
+
+        Assert.Empty(rows);
+    }
+
+    [Fact]
+    public async Task ListWithholdingStatements_throws_on_a_server_error_rather_than_returning_empty()
+    {
+        var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError));
+        var client = NewClient(handler);
+
+        // A 5xx is NOT "nobody had withholding" — surfacing it lets the scheduler back off rather than
+        // silently skip an annual run.
+        await Assert.ThrowsAsync<HttpRequestException>(() => client.ListWithholdingStatementsAsync());
+    }
+
     // --- helpers ---
 
     private static DepositReadClient NewClient(FakeHandler handler) =>

@@ -114,6 +114,39 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
         return rows;
     }
 
+    public async Task<IReadOnlyList<DepositReadModelRow>> ListWithWithholdingAsync(CancellationToken ct = default)
+    {
+        // The annual IRS-withholding statement population (bd babelstone-q15c): every deposit that has had
+        // tax withheld, carrying the per-row accrual/withholding rollups (the read-model projection of
+        // term_deposit.accrual_schedule + withholding_ledger) the statement interpolates. ORDER BY stream_id
+        // is a deterministic, stable order (cf. ListActiveStreamIdsAsync) so the page order never depends on
+        // physical row layout. Current belief, all lifecycles — a matured/renewed deposit still owes a
+        // statement for the tax year it paid (and withheld) interest in; the downstream scheduler decides
+        // the as-of statement date and the per-tax-year idempotency, never this read.
+        const string sql = """
+            SELECT stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
+                   term_days, start_date, maturity_date, interest_variant, auto_renewal_policy,
+                   payment_period_months, lifecycle, accrued_gross_interest_cents, withholding_to_date_cents,
+                   net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated
+            FROM read_model.deposits
+            WHERE withholding_to_date_cents > 0
+            ORDER BY stream_id ASC;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+
+        var rows = new List<DepositReadModelRow>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            rows.Add(Map(reader));
+        }
+
+        return rows;
+    }
+
     public async Task<IReadOnlyList<Guid>> ListActiveStreamIdsAsync(CancellationToken ct = default)
     {
         // currently_active ⇔ the SINGLE live lifecycle (DepositLifecycle.Active); every other label is

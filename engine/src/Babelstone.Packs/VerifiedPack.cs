@@ -35,6 +35,13 @@ public sealed record VerifiedPack(
 }
 
 /// <summary>The pack manifest (pack.yaml): identity, metadata, and version pins (ADR-PC-007 §P1).</summary>
+/// <param name="TemplateRefNames">The names of the pack-shipped disclosure-template files
+/// (<c>templates/&lt;name&gt;.yaml</c>) this pack declares (ADR-PC-025; e.g. <c>notices</c>) — the same
+/// per-pack-set shape as <see cref="RateSheetRefNames"/>. SURFACED (bd babelstone-60n8.6) so a downstream
+/// disclosure producer can require its template-set is declared by the instance-pinned pack and fail loud
+/// if a deployment's pack omits it — every deposit discloses under the pack it was opened with (ADR-PC-025
+/// §2 pinning). The DECLARATIVE half (bd babelstone-oyts): the parser surfaces the manifest list; the
+/// template bodies' render-from-render-time-resolved-PII machinery is an engine/comms follow-up.</param>
 public sealed record PackManifest(
     string PackId,
     string PackVersion,
@@ -48,6 +55,7 @@ public sealed record PackManifest(
     string EngineCompatibleVersions,
     IReadOnlyDictionary<string, string> SchemaPins,
     IReadOnlyList<string> RateSheetRefNames,
+    IReadOnlyList<string> TemplateRefNames,
     string TestCorpusRef);
 
 public sealed record PackBreakingChange(string Id, string Description);

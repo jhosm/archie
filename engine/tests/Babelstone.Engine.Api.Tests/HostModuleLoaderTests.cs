@@ -188,6 +188,7 @@ public sealed class HostModuleLoaderTests
             EngineCompatibleVersions: ">=0.0.0",
             SchemaPins: new Dictionary<string, string>(),
             RateSheetRefNames: [],
+            TemplateRefNames: [],
             TestCorpusRef: "stub");
 
         return new VerifiedPack(

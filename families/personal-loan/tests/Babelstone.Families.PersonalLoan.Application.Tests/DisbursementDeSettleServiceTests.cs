@@ -304,7 +304,7 @@ public sealed class DisbursementDeSettleServiceTests
             PackId: "pt", PackVersion: "2026.1", Namespace: "pt", ManifestSchemaVersion: 1,
             Publisher: "test", PackEffectiveFrom: new DateOnly(2026, 1, 1), BasedOnPackVersion: null,
             DeltaSummary: "", BreakingChanges: [], EngineCompatibleVersions: "*",
-            SchemaPins: new Dictionary<string, string>(), RateSheetRefNames: [], TestCorpusRef: ""),
+            SchemaPins: new Dictionary<string, string>(), RateSheetRefNames: [], TemplateRefNames: [], TestCorpusRef: ""),
         DayCounts: new Dictionary<string, PackDayCount>(),
         Withholdings: new Dictionary<string, PackWithholding>(),
         Fgds: new Dictionary<string, PackFgd>(),

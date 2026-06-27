@@ -109,19 +109,50 @@ public sealed class MaturityReminderRuleTests
     [Fact]
     public void The_rule_rejects_a_non_positive_window()
     {
-        var client = new DepositReadClient(new HttpClient(new RecordingHandler((_, _) => Maturities()))
-        {
-            BaseAddress = new Uri("http://engine.test/"),
-        });
-        Assert.Throws<ArgumentOutOfRangeException>(() => new MaturityReminderRule(client, 0));
+        var client = NewClient(new RecordingHandler((_, _) => Maturities()));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new MaturityReminderRule(client, PackTemplateRefs, 0));
+    }
+
+    [Fact]
+    public void The_rule_fails_loud_when_the_pinned_pack_does_not_declare_the_maturity_template_set()
+    {
+        // bd babelstone-60n8.6: the template-set is PACK-sourced — a deployment whose pinned pack does not
+        // declare the 'notices' disclosure-template set the maturity notice ships in must FAIL LOUD at
+        // composition, never silently fall back to a family constant for a template the pack does not ship
+        // (ADR-PC-025 §2 pinning). An empty / unrelated declared-set throws.
+        var client = NewClient(new RecordingHandler((_, _) => Maturities()));
+        Assert.Throws<InvalidOperationException>(() =>
+            new MaturityReminderRule(client, [], WindowDays));
+        Assert.Throws<InvalidOperationException>(() =>
+            new MaturityReminderRule(client, ["some-other-set"], WindowDays));
+    }
+
+    [Fact]
+    public void The_rule_accepts_the_pack_declared_maturity_template_set()
+    {
+        // The happy path: the pinned pack declares the 'notices' set (MaturityTemplateSetRef), so the rule
+        // composes and its decisions carry the family-owned pt.notice.maturity disclosure ref.
+        var client = NewClient(new RecordingHandler((_, _) => Maturities()));
+        var rule = new MaturityReminderRule(
+            client, [MaturityReminderRule.MaturityTemplateSetRef], WindowDays);
+        Assert.Equal(TermDepositNotificationModule.Family, rule.FamilyName);
     }
 
     // --- helpers ---
 
+    /// <summary>The pinned pack's declared disclosure-template sets the happy-path rule is composed over —
+    /// the 'notices' set (<see cref="MaturityReminderRule.MaturityTemplateSetRef"/>) that ships the maturity
+    /// notice, mirroring pt.2026.1's pack.yaml template_refs.</summary>
+    private static readonly string[] PackTemplateRefs = [MaturityReminderRule.MaturityTemplateSetRef];
+
+    private static DepositReadClient NewClient(RecordingHandler handler) =>
+        new(new HttpClient(handler) { BaseAddress = new Uri("http://engine.test/") });
+
     private static MaturityReminderRule NewRule(RecordingHandler handler)
     {
-        var client = new DepositReadClient(new HttpClient(handler) { BaseAddress = new Uri("http://engine.test/") });
-        return new MaturityReminderRule(client, WindowDays);
+        var client = NewClient(handler);
+        return new MaturityReminderRule(client, PackTemplateRefs, WindowDays);
     }
 
     private static (Guid Id, string Lifecycle, DateOnly Maturity) Row(Guid id, string lifecycle, DateOnly maturity) =>

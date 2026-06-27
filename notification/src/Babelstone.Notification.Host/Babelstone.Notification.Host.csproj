@@ -50,6 +50,14 @@
          core diff. -->
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Notification/Babelstone.Families.TermDeposit.Notification.csproj" />
 
+    <!-- The pack model + structural parser (ADR-PC-007). The host (the §A2 composition root, NOT a gated
+         core project) resolves the instance-pinned regulatory pack at startup and conveys its declared
+         template_refs + AutoRenewalOptoutWindowDays into NotificationModuleContext as plain data, so a family
+         module sources its template-set/window from the pinned pack without the family-agnostic core ever
+         referencing Babelstone.Packs (ADR-IC-019 §P2 preserved — NotificationFamilyAgnosticTests gates the
+         core, not this host; bd babelstone-60n8.6). -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Packs/Babelstone.Packs.csproj" />
+
     <!-- The SDK-free shared telemetry LEAF (ADR-PC-019 §P2): BabelstoneResource (the OBS-1 resource
          contract) + BabelstoneTelemetry (the shared ActivitySource). Referenced directly, not via the engine
          kernel (this host references no kernel), exactly as the orchestrator host does. -->
