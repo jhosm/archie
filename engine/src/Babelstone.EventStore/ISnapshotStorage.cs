@@ -5,7 +5,7 @@ namespace Babelstone.EventStore;
 /// <see cref="IEventStore"/> this is the storage boundary — the only code that
 /// touches the <c>snapshots</c> table. The typed, state-aware layer
 /// (<c>Snapshot&lt;TState&gt;</c>, the take-snapshot policy, the discard-rebuild
-/// drill) sits above this in <c>Babelstone.Engine</c> (A.6).
+/// drill) sits above this in <c>Babelstone.Engine</c>.
 /// </summary>
 public interface ISnapshotStorage
 {

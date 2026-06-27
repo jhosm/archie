@@ -7,7 +7,7 @@ namespace Babelstone.EventStore;
 /// <para>
 /// <see cref="ProjectionKind"/> is the family-prefixed discriminator (e.g.
 /// <c>term_deposit.deposit_position</c>) — one stream carries more than one projection
-/// (F.6), so supersession and current-belief reads scope to the
+/// — so supersession and current-belief reads scope to the
 /// <c>(StreamId, ProjectionKind)</c> pair, and a PARTIAL UNIQUE index enforces exactly one
 /// currently-believed row per pair (migration 0010).
 /// </para>

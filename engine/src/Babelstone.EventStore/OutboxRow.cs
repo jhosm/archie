@@ -10,7 +10,7 @@ public enum OutboxStatus
 /// <summary>
 /// The outbox row mirroring ADR-IC-004 §P1 column-for-column. Written in the SAME
 /// local transaction as the event it records (§P2 / ADR-PC-001 §P2); drained by the
-/// polling publisher (Epic E), which is the only reader.
+/// polling publisher, which is the only reader.
 /// </summary>
 public sealed record OutboxRow(
     Guid                 EventId,

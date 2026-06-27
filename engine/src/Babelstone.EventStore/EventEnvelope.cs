@@ -13,7 +13,7 @@ public sealed record EventEnvelope(
     string               EventType,            // "term_deposit.DepositConstituted"
     int                  EventSchemaVersion,
     string               Family,
-    Guid                 PartitionKey,         // v1 = StreamId; v4 may differ
+    Guid                 PartitionKey,         // v1 = StreamId
     string               PackVersion,          // "pt.2026.1"
     string               SchemaVersion,        // "term_deposit@2026.1"
     DateTimeOffset       ValidTime,

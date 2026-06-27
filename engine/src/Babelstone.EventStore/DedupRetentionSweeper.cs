@@ -16,14 +16,12 @@ namespace Babelstone.EventStore;
 /// command could still be retried and the retry either (a) re-executes and collides on
 /// <c>events_stream_seq_uq</c> → a spurious 409 for a deterministic deposit id, or (b) WORSE, opens a
 /// SECOND deposit for a server-generated deposit id. So the window must exceed BOTH the dispatcher's
-/// max retry horizon AND the stream's active lifetime. The dispatcher's retry horizon is bounded
-/// (<c>SagaCommandDispatcherService</c> backs off to a 30s ceiling and a 4xx is terminal-no-retry),
-/// so the binding term is the stream lifetime: the longest v1 term-deposit product is 24 months
-/// (<c>dpz_pt_24m_…</c>, term_days 730), and an auto-renewal chains a fresh stream rather than
-/// extending one, so 24 months bounds a single stream's active life. The default adds generous
-/// head-room over that — <b>1095 days (3 years)</b> — so a receipt always outlives any command that
-/// could still target its stream, with margin for clock skew and the longest term plus a renewal
-/// boundary. This is a retention floor, not a tuning knob to shorten casually.
+/// max retry horizon AND the stream's active lifetime. The dispatcher's retry horizon is bounded by its
+/// own backoff policy (see <c>SagaCommandDispatcherService</c> and its tests); the binding term is the
+/// stream's active lifetime, bounded by the longest term-deposit product configured in the active pack
+/// (an auto-renewal chains a fresh stream rather than extending one). The default <b>1095 days (3
+/// years)</b> adds generous head-room over that, with margin for clock skew and a renewal boundary.
+/// This is a retention floor, not a tuning knob to shorten casually.
 /// </para>
 /// <para>
 /// <b>Why the inbox window is short.</b> The inbox dedupes PHYSICAL message re-deliveries; a redelivery

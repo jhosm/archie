@@ -69,11 +69,8 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
         // rebuild and would make the read non-deterministic across rebuilds (ADR-PC-010 §P5).
         // For this projection class the tie-break never decides: the partial UNIQUE index
         // (projections_current_belief_uq) leaves exactly one current-belief row per
-        // (stream_id, projection_kind), so LIMIT 1 is order-independent. A FUTURE projection
-        // kind that legitimately keeps multiple un-superseded rows per stream (e.g. F.6's
-        // per-period accrual schedule) and stamps two with an identical recorded_at would make
-        // row_id the deciding factor and break rebuild byte-identity — such a kind must order on
-        // an event-derived key (e.g. source_sequence), not row_id. Flagged for F.6.
+        // (stream_id, projection_kind), so LIMIT 1 is order-independent and the row_id tie-break
+        // never decides.
         const string sql = """
             SELECT stream_id, projection_kind, source_sequence, valid_from, valid_to, recorded_at,
                    superseded_at, structural_payload, pii_ciphertext
@@ -114,7 +111,7 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
         // valid-time). ORDER BY recorded_at DESC + LIMIT 1 keeps the NORMAL single-belief read
         // deterministic; but we deliberately do NOT trust LIMIT 1 to mask a BROKEN invariant.
         //
-        // ADR-PC-002 amendment 2026-06-11 (bd babelstone-zzi4) — FAIL LOUD on overlapping belief
+        // ADR-PC-002 (a later amendment) — FAIL LOUD on overlapping belief
         // intervals. The repo's posture is fail-loud, not silently-pick-the-latest. So we read up to
         // TWO matching rows: if a second row also covers (validTime, knownAt), two belief intervals
         // overlap for one bitemporal point — a corrupt belief store the supersede-then-insert pair
@@ -167,12 +164,10 @@ public sealed class PostgresProjectionStore(string connectionString) : IProjecti
     {
         // ADR-PC-002 §P2 — every row for the pair, superseded and current, in belief-time order:
         // the belief-time history of how belief about this projection changed. recorded_at decides
-        // the ordering; row_id ASC is only a stable tie-break for rows sharing a recorded_at. Like
-        // ReadCurrentBelief, row_id is the BIGSERIAL surrogate, which is re-assigned on rebuild and
-        // so is NOT deterministic across rebuilds — for this projection class the tie never decides
-        // (corrections carry distinct recorded_at), but a future kind that stamps two rows with an
-        // identical recorded_at must order on an event-derived key, not row_id (see the F.6 flag on
-        // ReadCurrentBelief). The current belief (superseded_at NULL) sorts last.
+        // the ordering; row_id ASC is only a stable tie-break for rows sharing a recorded_at. The
+        // BIGSERIAL surrogate is re-assigned on rebuild, so for this projection class the tie never
+        // decides — corrections carry distinct recorded_at. The current belief (superseded_at NULL)
+        // sorts last.
         const string sql = """
             SELECT stream_id, projection_kind, source_sequence, valid_from, valid_to, recorded_at,
                    superseded_at, structural_payload, pii_ciphertext

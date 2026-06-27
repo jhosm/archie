@@ -21,7 +21,9 @@ public interface IEventStore
     /// at <paramref name="expectedVersion"/> + 1.
     /// </param>
     /// <param name="events">The event rows to append; must be non-empty.</param>
-    /// <param name="outboxRows">The outbox rows to write in the same transaction; must be non-empty (§P2).</param>
+    /// <param name="outboxRows">The outbox rows to write in the same transaction — at most one per event, and
+    /// zero when every appended event is uncatalogued (store-only, ADR-IC-017). Never more than the
+    /// <paramref name="events"/> count.</param>
     /// <param name="commandId">
     /// The caller's deterministic command id (ADR-PC-029 slot 4). When non-null, the append is
     /// made <b>idempotent</b>: a receipt is written to the <c>command_dedup</c> ledger
@@ -62,9 +64,8 @@ public interface IEventStore
     /// Returns the distinct <c>stream_id</c>s for a family — the set the async projection
     /// drainer iterates, folding each stream's tail (via <see cref="LoadAsync"/>) from its
     /// per-stream checkpoint. A read-only companion to the append path; it does NOT touch the
-    /// <c>ES_ATOMIC_APPEND_OUTBOX</c> write transaction. (The events table carries no
-    /// cluster-wide total order, so projection draining is per stream; a v4 partition-parallel
-    /// drain would add a global cursor — out of D.2 scope.)
+    /// <c>ES_ATOMIC_APPEND_OUTBOX</c> write transaction. The events table carries no cluster-wide
+    /// total order, so projection draining is per stream.
     /// </summary>
     Task<IReadOnlyList<Guid>> ReadStreamIdsAsync(string family, CancellationToken ct = default);
 }

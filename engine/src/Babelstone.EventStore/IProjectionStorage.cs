@@ -11,11 +11,11 @@ namespace Babelstone.EventStore;
 /// <see cref="ProjectionRecord.StructuralPayload"/> and the meaning of
 /// <see cref="ProjectionRecord.PiiCiphertext"/> are the caller's concern. Every operation
 /// scopes to the <c>(streamId, projectionKind)</c> pair — one stream carries more than one
-/// projection (F.6), so supersession and current-belief reads must not bleed across kinds.
+/// projection, so supersession and current-belief reads must not bleed across kinds.
 /// </para>
 /// <para>
-/// The TYPED bitemporal query helper (AsOf / CurrentBelief / HistoryOf, ADR-PC-002 §P3)
-/// is a separate task (D.3) and sits ABOVE this byte-oriented boundary in
+/// The TYPED bitemporal query helper (AsOf / CurrentBelief / HistoryOf, ADR-PC-002)
+/// sits ABOVE this byte-oriented boundary in
 /// <c>Babelstone.Engine</c> — it deserializes <see cref="ProjectionRecord.StructuralPayload"/>
 /// into <c>TState</c>, the same split as <c>SnapshotStore&lt;TState&gt;</c> over
 /// <see cref="ISnapshotStorage"/>. That typed layer composes the two-axis temporal reads this
@@ -75,11 +75,10 @@ public interface IProjectionStorage
     /// returns the row for the <c>(streamId, projectionKind)</c> pair whose world-time slice
     /// covers <paramref name="validTime"/> AND whose belief-time slice covers
     /// <paramref name="knownAt"/>, or <see langword="null"/> if no row was believed for that
-    /// valid-time at that transaction-time. World-time is covered when
-    /// <c>valid_from &lt;= validTime AND (valid_to IS NULL OR valid_to &gt; validTime)</c>;
-    /// belief-time is covered when <c>recorded_at &lt;= knownAt AND (superseded_at IS NULL OR
-    /// superseded_at &gt; knownAt)</c> — the half-open <c>[recorded_at, superseded_at)</c>
-    /// interval, so the row a correction superseded is invisible once <paramref name="knownAt"/>
+    /// valid-time at that transaction-time. World-time is covered when the row's
+    /// <c>[valid_from, valid_to)</c> slice contains validTime; belief-time when its half-open
+    /// <c>[recorded_at, superseded_at)</c> slice contains knownAt — so the row a correction
+    /// superseded is invisible once <paramref name="knownAt"/>
     /// reaches the correction. This is what makes "as we knew it then" differ from
     /// "as we know it now" after a retroactive correction (§P2). At most one row may cover a
     /// single (validTime, knownAt) point; if more than one does the belief store is corrupt and
@@ -112,7 +111,7 @@ public interface IProjectionStorage
 /// for a covered valid-time. Two overlapping intervals therefore mean the belief store is
 /// corrupt. The repo's posture is FAIL-LOUD: a defensive read surfaces the broken invariant
 /// rather than silently picking the most-recently-recorded belief and masking it
-/// (ADR-PC-002 amendment 2026-06-11, bd babelstone-zzi4).
+/// (ADR-PC-002).
 /// </summary>
 public sealed class OverlappingBeliefIntervalException(
     Guid streamId, string projectionKind, DateTimeOffset validTime, DateTimeOffset knownAt)
