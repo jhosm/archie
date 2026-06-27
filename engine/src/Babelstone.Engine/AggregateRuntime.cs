@@ -95,29 +95,18 @@ public sealed class AggregateRuntime<TState>(
     Action<Exception>? onSnapshotError = null,
     ICalendarBoundaryPolicy? calendarBoundaryPolicy = null)
 {
-    // The bus (outbox) encoder. Defaults to the STORE codec so existing single-codec wiring is
-    // unchanged; the production host injects the real Avro+SR codec to make the outbox carry real Avro
-    // bytes + a registered schema_id while the store keeps self-describing JSON (ADR-PC-028 /
-    // STORE_BUS_ENCODING_EQUIVALENCE). It is an IEventSerializer (the kernel's family-agnostic,
-    // Avro-library-agnostic seam) — the kernel never names Avro or the Schema Registry.
+    // Defaults to the store codec when no bus codec is injected (single-codec wiring); the production
+    // host injects the real Avro+SR codec. Seam contract: the busSerializer constructor-param doc.
     private readonly IEventSerializer _busSerializer = busSerializer ?? serializer;
 
-    // The catalog-gated-relay membership test (ADR-IC-017 / INTEGRATION_EVENT_CATALOG_GATED). The
-    // append always writes the events-envelope row (so EVERY event is appended, folded, replayable), but
-    // an OUTBOX row — the only thing the relay can ever publish — is written ONLY for a catalogued
-    // integration event. An uncatalogued event is store-only by construction. The default is
-    // publish-everything (the pre-ADR-IC-017 behaviour) so existing engine-internal/test wiring is
-    // unchanged; the PRODUCTION host injects the real AvroSchemaCatalog. The seam is FAMILY-AGNOSTIC
-    // (keyed by event_type string only), so the spine names no family — ENGINE_FAMILY_AGNOSTIC holds.
+    // Defaults to publish-everything (pre-ADR-IC-017, for test/internal wiring); the production host
+    // injects the real AvroSchemaCatalog. Seam contract: see IIntegrationEventCatalog.
     private readonly IIntegrationEventCatalog _integrationEventCatalog =
         integrationEventCatalog ?? PublishAllIntegrationEventCatalog.Instance;
 
-    // The calendar-boundary trigger of the composing snapshot policy (ADR-PC-003 / event-store
-    // §8.1). The runtime owns the transaction-time clock (ADR-PC-010), so IT — never a handler —
-    // decides whether an append crossed a reporting-period boundary, by comparing the previous head's
-    // transaction_time to this append's. Defaults to OFF (CalendarGranularity.None) so existing wiring
-    // that hands no policy keeps the pre-A.12 behaviour (per-N + lifecycle only); the production host
+    // Defaults to OFF (CalendarGranularity.None) so per-N-only wiring is unchanged; the production host
     // injects a Month/Year policy from config. Only consulted when a snapshot store + policy are wired.
+    // Trigger semantics: see ICalendarBoundaryPolicy.
     private readonly ICalendarBoundaryPolicy _calendarBoundaryPolicy =
         calendarBoundaryPolicy ?? new CalendarBoundaryPolicy(CalendarGranularity.None);
 
@@ -276,10 +265,8 @@ public sealed class AggregateRuntime<TState>(
             }
 
             var protectedEvent = await protector.ProtectAsync(events[i], ct);
-            // STORE encode (ADR-PC-028): the events.payload book of record is self-describing
-            // JSON, decodable with no Schema Registry (EVENT_STORE_PAYLOAD_SELF_DESCRIBING). This is also
-            // the SOLE decode path — FoldAsync reads events.payload back through `serializer` — so the bus
-            // codec never touches the store / replay path.
+            // STORE encode (ADR-PC-028 / EVENT_STORE_PAYLOAD_SELF_DESCRIBING): self-describing JSON for the
+            // events.payload book of record. See the `serializer` param for the sole-decode-path rationale.
             var storeEncoded = serializer.Encode(protectedEvent);
             var eventId = Guid.NewGuid();
             var sequence = expectedVersion + 1 + i;

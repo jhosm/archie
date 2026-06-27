@@ -127,12 +127,9 @@ public static class MovementHeaders
             return null;
         }
 
-        // ONE ordered movementdirections list — always, whether the event carries one Originated direction or
-        // several (ADR-PC-032, option b). The substrate splits it and starts one settlement instance
-        // per entry, each gated by its own direction: a standalone leg's single-entry list fans to exactly one
-        // instance (no behaviour change for the seven standalone legs), a renewal's two-entry list (Debit,Credit)
-        // to two. The list is the closed-enum NAME of each direction joined by comma; a comma never collides
-        // with a closed-enum name.
+        // ONE ordered movementdirections list — always, single or multi-direction (ADR-PC-032, option b).
+        // Carrier order; the substrate splits it and fans out one settlement instance per entry. See the
+        // <returns> doc and DirectionsKey for the closed-enum-name encoding.
         return new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [OriginKey] = MovementOrigin.Originated.ToString(),
