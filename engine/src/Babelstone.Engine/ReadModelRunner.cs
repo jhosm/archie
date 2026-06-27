@@ -7,7 +7,7 @@ namespace Babelstone.Engine;
 /// <typeparamref name="TState"/> plus the producing event's structural identity. Everything here is
 /// event-derived (the stream id, the per-stream sequence, the event's transaction_time) — never the
 /// wall clock — so the mapper a family supplies stays a pure function and a cold rebuild reproduces
-/// the read-model row byte-for-byte (ADR-PC-010 §P5).
+/// the read-model row byte-for-byte (ADR-PC-010).
 /// </summary>
 public sealed record ReadModelFold<TState>(
     TState State,
@@ -31,12 +31,12 @@ public sealed record ReadModelFold<TState>(
 /// family-agnostic by construction: the engine spine knows the row only through
 /// <see cref="IReadModelRow"/> (stream id + the §P2 sequence guard + the opaque <see cref="IReadModelRow.Detail"/>
 /// body), never a deposit column. The family closes both type parameters and supplies the
-/// <paramref name="map"/>, so the spine stays under ENGINE_FAMILY_AGNOSTIC (ADR-PC-021 §D2/§P2). The
+/// <paramref name="map"/>, so the spine stays under ENGINE_FAMILY_AGNOSTIC (ADR-PC-021). The
 /// mirror of <see cref="ProjectionRunner{TState}"/>, but writing the flat read-model row instead of a
 /// bitemporal belief row.
 /// </para>
 /// <para>
-/// Idempotency under at-least-once delivery is the ADR-IC-005 §P2 monotonicity guard inside
+/// Idempotency under at-least-once delivery is the ADR-IC-005 monotonicity guard inside
 /// <see cref="IReadModelStore{TRow}.UpsertAsync"/>: a re-delivered event whose sequence is at or below
 /// the stored row's is dropped by the UPSERT's WHERE, so re-applying an already-folded event is a
 /// no-op. The mapper MUST be pure (no clock, no I/O, no randomness) — it receives the event's
@@ -100,7 +100,7 @@ public sealed class ReadModelRunner<TState, TRow>(
         new JsonStateSerializer<TState>().Deserialize(detail);
 
     public Task SupersedeAllForRebuildAsync(DateTimeOffset supersededAt, CancellationToken ct = default)
-        // The read model is rebuilt by TRUNCATE + re-fold (ADR-IC-005 §P5), not by supersession —
+        // The read model is rebuilt by TRUNCATE + re-fold (ADR-IC-005), not by supersession —
         // there is no belief history to preserve (it is a flat cache, not the bitemporal store). The
         // drainer's RebuildAsync calls this before resetting checkpoints and re-folding from 0.
         // ASSUMPTION: one read-model runner owns the underlying table, so the store's TRUNCATE is

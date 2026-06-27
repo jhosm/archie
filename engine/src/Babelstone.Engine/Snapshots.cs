@@ -5,7 +5,7 @@ namespace Babelstone.Engine;
 /// <summary>A typed snapshot of projection state (feature-design event-store §8).</summary>
 /// <param name="CreatedAt">When the snapshot row was physically written (a wall-clock DB stamp).</param>
 /// <param name="TransactionTime">
-/// The event-derived transaction_time of the head event the snapshot covers (ADR-PC-010 §P5) — the
+/// The event-derived transaction_time of the head event the snapshot covers (ADR-PC-010) — the
 /// append-stamped instant, distinct from <paramref name="CreatedAt"/> (when the row was written). Lets
 /// rehydrate seed last_updated from the snapshot for a stream fully covered with no tail (ADR-PC-003
 /// §P3). Null for a pre-0017 snapshot row, which then falls back to the prior null-on-no-tail behaviour.
@@ -33,7 +33,7 @@ public sealed class SnapshotStore<TState>(ISnapshotStorage storage, IStateSerial
 
     /// <summary>
     /// The typed wrapper over <see cref="ISnapshotStorage.TryGetAtOrBeforeAsync"/>: the latest *valid*
-    /// snapshot at or below <paramref name="atOrBeforeSequence"/> (ADR-PC-003 §P1 readLatestSnapshot),
+    /// snapshot at or below <paramref name="atOrBeforeSequence"/> (ADR-PC-003 readLatestSnapshot),
     /// hash-verified the same way as <see cref="TryGetAsync"/>. Returns null when no snapshot covers
     /// the point — the as-of read then folds cold from zero (the §P3 correctness fallback). A snapshot
     /// taken PAST the point is excluded by the storage bound, so the as-of fold can never seed from a
@@ -59,7 +59,7 @@ public sealed class SnapshotStore<TState>(ISnapshotStorage storage, IStateSerial
             // verify is the §8.3 worst case (a wrong snapshot trusted as truth). Count it BEFORE throwing
             // so the SnapshotHashMismatch alert sees every rejection — the caller then falls back to a
             // cold fold (the §P3 correctness fallback). A pure store-side emission: it neither folds an
-            // event nor changes rebuilt state (ADR-PC-010 §P5).
+            // event nor changes rebuilt state (ADR-PC-010).
             Telemetry.SnapshotMetrics.RecordHashMismatch();
             throw new InvalidOperationException(
                 $"Snapshot for stream {streamId} at sequence {record.AtSequence} failed hash verification.");
@@ -78,7 +78,7 @@ public sealed class SnapshotStore<TState>(ISnapshotStorage storage, IStateSerial
     /// <summary>
     /// Writes a snapshot at <paramref name="atSequence"/>. <paramref name="transactionTime"/> is the
     /// event-derived transaction_time of the head event the snapshot covers (the append's stamp,
-    /// ADR-PC-010 §P5) — carried so rehydrate can seed last_updated for a fully-covered stream. Defaults
+    /// ADR-PC-010) — carried so rehydrate can seed last_updated for a fully-covered stream. Defaults
     /// to <paramref name="createdAt"/> so a caller that has only one timestamp (e.g. test wiring that
     /// passes a fixed instant) keeps the pre-0017 single-stamp behaviour; the runtime passes the real
     /// append transaction_time explicitly.
@@ -114,7 +114,7 @@ public interface ISnapshotPolicy
 /// calendar boundaries also fire when the caller flags them — those flags are supplied
 /// by the family (which knows its lifecycle events) and the runtime (which owns the
 /// transaction-time clock), so the engine stays family-agnostic. This is the COMPOSING
-/// policy of ADR-PC-003 §P2: a snapshot is taken if ANY of the three triggers fires.
+/// policy of ADR-PC-003: a snapshot is taken if ANY of the three triggers fires.
 /// </summary>
 public sealed class CountBasedSnapshotPolicy(long threshold = 100) : ISnapshotPolicy
 {
@@ -122,7 +122,7 @@ public sealed class CountBasedSnapshotPolicy(long threshold = 100) : ISnapshotPo
         => ctx.EventsSinceSnapshot >= threshold || ctx.IsLifecycleBoundary || ctx.IsCalendarBoundary;
 }
 
-/// <summary>The calendar granularity a snapshot aligns to (ADR-PC-003 §P2 / event-store §8.1).</summary>
+/// <summary>The calendar granularity a snapshot aligns to (ADR-PC-003 / event-store §8.1).</summary>
 public enum CalendarGranularity
 {
     /// <summary>No calendar trigger — the per-N + lifecycle triggers stand alone.</summary>
@@ -136,10 +136,10 @@ public enum CalendarGranularity
 }
 
 /// <summary>
-/// Decides whether an append crossed a CALENDAR BOUNDARY (ADR-PC-003 §P2 / event-store §8.1:
+/// Decides whether an append crossed a CALENDAR BOUNDARY (ADR-PC-003 / event-store §8.1:
 /// "month-end and year-end alignment with reporting periods, regardless of event count"), so an as-of
 /// query at a period boundary returns without a long replay. The runtime owns the transaction-time
-/// clock (ADR-PC-010 §P5), so it asks this policy — never a handler — comparing the PREVIOUS head's
+/// clock (ADR-PC-010), so it asks this policy — never a handler — comparing the PREVIOUS head's
 /// transaction_time against THIS append's transaction_time. The comparison is over the
 /// already-stamped, event-derived transaction_time (not a fresh wall-clock read), so the boundary is a
 /// deterministic function of the log: a replay sees the same boundaries the live append did.

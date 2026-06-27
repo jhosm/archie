@@ -6,11 +6,11 @@ namespace Babelstone.Engine;
 /// One row of a projection's belief history, deserialized — what a row asserted (the world-time
 /// slice <see cref="ValidFrom"/>/<see cref="ValidTo"/>) and when we believed it (the belief-time
 /// slice <see cref="RecordedAt"/>/<see cref="SupersededAt"/>). A <see langword="null"/>
-/// <see cref="SupersededAt"/> is the currently-believed row (ADR-PC-002 §P2); a
+/// <see cref="SupersededAt"/> is the currently-believed row (ADR-PC-002); a
 /// <see langword="null"/> <see cref="ValidTo"/> is an open-ended world-time slice (current and
-/// onward, ADR-PC-002 §P1). The typed sibling of <see cref="ProjectionRecord"/>, with the
+/// onward, ADR-PC-002). The typed sibling of <see cref="ProjectionRecord"/>, with the
 /// structural payload decoded into <typeparamref name="TState"/> and the opaque PII envelope
-/// dropped (a projection's structural state carries no PII, ADR-PC-004 §P2).
+/// dropped (a projection's structural state carries no PII, ADR-PC-004).
 /// </summary>
 public sealed record BeliefRow<TState>(
     TState State,
@@ -21,11 +21,11 @@ public sealed record BeliefRow<TState>(
     DateTimeOffset? SupersededAt);
 
 /// <summary>
-/// The typed bitemporal query helper (ADR-PC-002 §P3) — the small layer family-schema code uses
+/// The typed bitemporal query helper (ADR-PC-002) — the small layer family-schema code uses
 /// instead of hand-writing the four-column temporal join, which is Path A's named correctness
-/// risk (ADR-PC-002 §S4 / Residual Risk 1). Generic over <typeparamref name="TState"/> and
+/// risk (ADR-PC-002 / Residual Risk 1). Generic over <typeparamref name="TState"/> and
 /// family-agnostic by construction (it names no family; the host closes the state type), so the
-/// spine stays under ENGINE_FAMILY_AGNOSTIC (ADR-PC-021 §P2). It mirrors
+/// spine stays under ENGINE_FAMILY_AGNOSTIC (ADR-PC-021). It mirrors
 /// <see cref="ProjectionStore{TState}"/> / <see cref="SnapshotStore{TState}"/>: the bitemporal SQL
 /// lives in the byte store (<see cref="IProjectionStorage"/>); this layer just deserializes the
 /// structural payload into <typeparamref name="TState"/>.
@@ -52,7 +52,7 @@ public sealed record BeliefRow<TState>(
 /// belief line it produces is read with this helper: the disavowed belief is <c>AsOf(validTime,
 /// knownAt = just-before-the-correction)</c> and the corrected belief is <c>AsOf(validTime,
 /// knownAt = now)</c>. After a retroactive correction the two genuinely differ — the
-/// forced-correction round-trip (ADR-PC-002 §P2, spike criterion #1).
+/// forced-correction round-trip (ADR-PC-002, spike criterion #1).
 /// </item>
 /// <item>
 /// <b>Forward projection (#4)</b> — "the state on a future date if no further events occur" — is

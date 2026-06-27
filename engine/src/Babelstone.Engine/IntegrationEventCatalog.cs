@@ -1,7 +1,7 @@
 namespace Babelstone.Engine;
 
 /// <summary>
-/// The catalog-gated-relay membership seam (ADR-IC-017 §P1). In plain English: the engine records
+/// The catalog-gated-relay membership seam (ADR-IC-017). In plain English: the engine records
 /// lots of events, but only the ones a deliberate promotion has put in the integration catalogue
 /// belong on the shared message bus. This is the family-agnostic predicate the append spine consults
 /// to decide whether a just-appended event also gets an outbox row (and so reaches the bus) — an

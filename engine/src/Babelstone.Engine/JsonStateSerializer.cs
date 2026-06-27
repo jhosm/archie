@@ -5,9 +5,9 @@ namespace Babelstone.Engine;
 /// <summary>
 /// Serializes projection / snapshot state to bytes via System.Text.Json with default options.
 /// Property order is the type's declaration order, so output is deterministic for a given type
-/// — the byte-identity the rebuild-determinism gate (ADR-PC-010 §P5) and the snapshot hash rely
+/// — the byte-identity the rebuild-determinism gate (ADR-PC-010) and the snapshot hash rely
 /// on. Families and the host use this for the structural payload; no PII rides here (structural
-/// state only, ADR-PC-004 §P2).
+/// state only, ADR-PC-004).
 /// </summary>
 public sealed class JsonStateSerializer<TState> : IStateSerializer<TState>
 {
