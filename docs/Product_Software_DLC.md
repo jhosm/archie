@@ -139,6 +139,7 @@ Additional specialised agents cover narrower domains:
 - **contract-reviewer**: Avro schema evolution, PII on the bus, event naming conventions.
 - **replay-determinism-auditor**: handler purity, projection folds, fixture replay identity.
 - **doc-consistency**: cross-link integrity, C4 diagram freshness, claims against cited sources.
+- **code-comment**: comment rot and the code-comment guideline — the litmus, citation discipline, no `bd` ids or ADR section refs.
 
 ---
 
