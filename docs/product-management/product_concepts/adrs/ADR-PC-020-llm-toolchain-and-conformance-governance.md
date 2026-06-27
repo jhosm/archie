@@ -352,7 +352,7 @@ A sixth review subagent, [`code-comment`](../../../../plugins/babelstone-engine/
 
 ### A7 · This amends the decision; it does not supersede this ADR
 
-D1, D2, D3 and §P1–§P11 remain binding as written. This amendment is appended to §P3's enumeration of the review subagents — it extends the layer with one more reviewer for a new judgement-class, it does not revise the layer's mechanism, scoping, or its not-a-hard-gate posture.
+D1, D2, D3 and §P1–§P11 remain binding as written. This amendment is appended to §P3's enumeration of the review subagents — it extends the layer with one more reviewer for a new judgement-class, it does not revise the layer's mechanism, scoping, or its not-a-hard-gate posture. In particular **§P6's traceability-anchor form is unchanged**: the [code-comment guideline](../../implementation_guidelines/code-comments.md)'s "a prose ADR reference stops at the bare id" rule is scoped to the *rationale text* of a comment and explicitly exempts the §P6 site-anchor (`// ADR-PC-001 §P2`), which keeps its `§section`. The two share a syntax but are different artifacts; the guideline governs the prose citation, not the §P6 anchor.
 
 ---
 

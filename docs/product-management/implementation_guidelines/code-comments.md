@@ -83,10 +83,16 @@ already carry.
 A comment may cite only anchors that are **durable** (they don't move) and ideally
 **verifiable** (something fails if the comment's claim is wrong). Three concrete rules:
 
-- **ADR references stop at the ADR id.** Write `ADR-PC-028`, never `ADR-PC-028 §P3`. Section
-  numbers are internal structure that shifts when an ADR is amended or superseded; pinning to
-  `§P3` couples the comment to the ADR's *layout*. The bare id stays valid across every
-  amendment. (One exception: the ADR's own filename slug, which is the durable id.)
+- **A prose ADR reference stops at the ADR id.** In the explanatory text of a comment, write
+  `ADR-PC-028`, never `ADR-PC-028 §P3`. Section numbers are internal structure that shifts when
+  an ADR is amended or superseded; pinning to `§P3` couples the rationale to the ADR's *layout*,
+  and the bare id stays valid across every amendment. **This applies to the prose citation only.**
+  It does **not** touch the §P6 *traceability anchor* (`// ADR-PC-001 §P2`,
+  [ADR-PC-020](../product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)) —
+  that structured site-marker keeps its `§section`, by which a reader navigates to the exact
+  principle the line implements; the spec-coverage checker keys on the bare id and ignores the
+  section, so the anchor's precision costs the gate nothing. Two artifacts, one syntax: the rule
+  governs the *rationale*, not the *anchor*.
 
 - **Keep the fitness-function / commitment names.** SHOUTING_CASE anchors like
   `ENGINE_FAMILY_AGNOSTIC` or `STORE_BUS_ENCODING_EQUIVALENCE`, drawn from the
