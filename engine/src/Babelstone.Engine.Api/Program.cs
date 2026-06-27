@@ -145,7 +145,6 @@ builder.Services.AddSingleton(packLoad.Store);
 // The runtime owns the clock (ADR-PC-010 §P5); the host stamps a missing constituted_at/matured_at.
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IRateSheetStore>(_ => new PostgresRateSheetStore(connectionString));
-builder.Services.AddSingleton<ISettlementPort, LoggingSettlementPort>();
 builder.Services.AddSingleton<IEventStore>(_ => new PostgresEventStore(connectionString));
 builder.Services.AddSingleton<IEventSink>(serviceProvider =>
     new EventStoreSink(serviceProvider.GetRequiredService<IEventStore>()));

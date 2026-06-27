@@ -83,24 +83,71 @@ public static class TermDepositDecider
         !string.IsNullOrEmpty(actor)
         && Array.Exists(OperatorActorPrefixes, prefix => actor.StartsWith(prefix, StringComparison.Ordinal));
 
+    /// <summary>The structural fields a correction may target (D.5 / F.6, bd babelstone-j7mm.2). The typed
+    /// value-substitution mechanism only knows how to fold THESE; a correction naming any other field can
+    /// never read back as a corrected value, so the decider rejects it before any append. Stable,
+    /// machine-readable names — not values, not PII (ADR-PC-004 §P2).</summary>
+    public const string CorrectableFieldPrincipal = "principal";
+    public const string CorrectableFieldRate = "rate";
+    public const string CorrectableFieldStartDate = "start_date";
+    public const string CorrectableFieldMaturityDate = "maturity_date";
+
+    private static readonly string[] CorrectableFields =
+        [CorrectableFieldPrincipal, CorrectableFieldRate, CorrectableFieldStartDate, CorrectableFieldMaturityDate];
+
     /// <summary>
     /// Build the store-only <see cref="DepositCorrected"/> event from an operator correction command
-    /// (D.5 / F.6, bd babelstone-k6r8.11). PURE — no clock, no I/O, no money math (a correction moves no
-    /// money): it maps the command's structural facts onto the event 1:1, exactly the event shape the D.5
-    /// <c>ForcedCorrectionRoundTripTests</c> constructs by hand. The valid-time/supersession is the
-    /// SERVICE's job (it stamps <see cref="CorrectDepositCommand.EffectiveFrom"/> onto
-    /// <c>AppendContext.ValidTime</c>); this only decides the event payload. Carries OPAQUE references
-    /// only — no PII rides the event (ADR-PC-004 §P2).
+    /// (D.5 / F.6, bd babelstone-k6r8.11; typed value substitution bd babelstone-j7mm.2). PURE — no clock,
+    /// no I/O, no money math (a correction moves no money): it validates the correctable field and carries
+    /// the corrected typed structural VALUE inline onto the event, which the fold substitutes into the
+    /// deposit position. The valid-time/supersession is the SERVICE's job (it stamps
+    /// <see cref="CorrectDepositCommand.EffectiveFrom"/> onto <c>AppendContext.ValidTime</c>); this only
+    /// decides the event payload. Structural fields only — no PII rides the event (ADR-PC-004 §P2).
     /// </summary>
-    public static DepositCorrected DecideCorrection(CorrectDepositCommand command) =>
-        new(
+    /// <exception cref="DomainRejectedException">The named field is not a correctable structural field, or
+    /// it carries no corrected value — rejected BEFORE any append (the service surfaces it as a 422).</exception>
+    public static DepositCorrected DecideCorrection(CorrectDepositCommand command)
+    {
+        // Typed correctable-field validation (bd babelstone-j7mm.2; ADR-PC-002 §P2 *Revised 2026-06-27*):
+        // reject an unknown / non-correctable field BEFORE any append. The fold only substitutes the
+        // allow-listed structural fields, so a correction naming anything else could not read back as a
+        // corrected value — fail loud, never append a no-op restatement. Pure string check (BENG001/002/003).
+        if (!Array.Exists(CorrectableFields, f => string.Equals(f, command.CorrectedField, StringComparison.Ordinal)))
+        {
+            throw new DomainRejectedException(
+                $"'{command.CorrectedField}' is not a correctable structural field; correctable fields are "
+                + $"{string.Join(", ", CorrectableFields)} (D.5 typed correction, bd babelstone-j7mm.2).");
+        }
+
+        // The named field MUST carry its typed corrected value: the fold substitutes the value the field
+        // names, so a 'principal' correction with no CorrectedPrincipal is a restatement that could not read
+        // back as the corrected value. Reject it before the append rather than silently fold a no-op.
+        var carriesValue = command.CorrectedField switch
+        {
+            CorrectableFieldPrincipal => command.CorrectedPrincipal is not null,
+            CorrectableFieldRate => command.CorrectedTanBasisPoints is not null,
+            CorrectableFieldStartDate => command.CorrectedStartDate is not null,
+            CorrectableFieldMaturityDate => command.CorrectedMaturityDate is not null,
+            _ => false,
+        };
+        if (!carriesValue)
+        {
+            throw new DomainRejectedException(
+                $"correction of '{command.CorrectedField}' carries no corrected value for that field "
+                + "(D.5 typed correction, bd babelstone-j7mm.2).");
+        }
+
+        return new DepositCorrected(
             DepositId: command.DepositId,
             CorrectionId: command.CorrectionId,
             CorrectedField: command.CorrectedField,
-            PreviousValueRef: command.PreviousValueRef,
-            CorrectedValueRef: command.CorrectedValueRef,
+            CorrectedPrincipal: command.CorrectedPrincipal,
+            CorrectedTanBasisPoints: command.CorrectedTanBasisPoints,
+            CorrectedStartDate: command.CorrectedStartDate,
+            CorrectedMaturityDate: command.CorrectedMaturityDate,
             EffectiveFrom: command.EffectiveFrom,
             CorrectionReason: command.CorrectionReason);
+    }
 
     /// <summary>
     /// Build <see cref="DepositConstituted"/> from the command, stamping the resolved TAN and

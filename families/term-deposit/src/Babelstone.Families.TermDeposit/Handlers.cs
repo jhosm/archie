@@ -158,12 +158,61 @@ public sealed class DepositPartiallyWithdrawnHandler : IEventHandler<DepositPosi
 public sealed class DepositCorrectedHandler : IEventHandler<DepositPosition, DepositCorrected>
 {
     public HandlerResult<DepositPosition> Apply(DepositPosition state, DepositCorrected @event)
-        => HandlerResult<DepositPosition>.From(state with
+    {
+        // Typed inline value substitution (bd babelstone-j7mm.2; ADR-PC-002 §P2 *Revised 2026-06-27*).
+        // A data-entry correction means "this is what the value ALWAYS was": substitute the corrected
+        // typed structural value the event carries (the field CorrectedField names; the others are null)
+        // so a query reads back the CORRECTED value, not just a bumped counter. PURE — the event carries
+        // the value, the fold only assigns it (no clock/I/O/derivation, BENG001/002/003), so cold replay
+        // is byte-identical. PROSPECTIVE (L2): future accrual/withholding/payout naturally price on the
+        // corrected value; retroactive recompute of already-crystallized flows is L3 (bd babelstone-np7p).
+        var corrected = state with
         {
-            // The real bitemporal supersession is D.1/D.2; here the fold only tallies that a
-            // correction landed (references resolved elsewhere), keeping the handler pure.
+            TanBasisPoints = @event.CorrectedTanBasisPoints ?? state.TanBasisPoints,
+            StartDate = @event.CorrectedStartDate ?? state.StartDate,
+            MaturityDate = @event.CorrectedMaturityDate ?? state.MaturityDate,
             CorrectionCount = state.CorrectionCount + 1,
-        });
+        };
+
+        if (@event.CorrectedPrincipal is { } correctedPrincipal)
+        {
+            corrected = corrected with
+            {
+                Principal = correctedPrincipal,
+                // "What it always was": rewrite the OPENING principal-timeline segment's amount (keeping its
+                // value-date) so future accrual prices on the corrected principal — NOT a step-change at
+                // effective_from (that is a partial withdrawal). A single-segment timeline (no partial
+                // withdrawal) means remaining principal equals the corrected principal; with a later
+                // withdrawal segment the residual is a retroactive recompute (L3), so leave it then.
+                RemainingPrincipal = state.PrincipalTimeline.Count <= 1 ? correctedPrincipal : state.RemainingPrincipal,
+                PrincipalTimeline = RewriteOpeningPrincipal(state.PrincipalTimeline, correctedPrincipal),
+            };
+        }
+
+        if (@event.CorrectedStartDate is { } correctedStart)
+        {
+            // A corrected start_date rewrites the opening segment's value-date too (the date the principal
+            // was first in force), keeping the accrual windows coherent with the corrected start.
+            corrected = corrected with
+            {
+                PrincipalTimeline = RewriteOpeningFrom(corrected.PrincipalTimeline, correctedStart),
+            };
+        }
+
+        return HandlerResult<DepositPosition>.From(corrected);
+    }
+
+    private static IReadOnlyList<PrincipalSegment> RewriteOpeningPrincipal(
+        IReadOnlyList<PrincipalSegment> timeline, Money correctedPrincipal) =>
+        timeline.Count == 0
+            ? timeline
+            : [timeline[0] with { Principal = correctedPrincipal }, .. timeline.Skip(1)];
+
+    private static IReadOnlyList<PrincipalSegment> RewriteOpeningFrom(
+        IReadOnlyList<PrincipalSegment> timeline, DateOnly correctedFrom) =>
+        timeline.Count == 0
+            ? timeline
+            : [timeline[0] with { From = correctedFrom }, .. timeline.Skip(1)];
 }
 
 public sealed class DepositTransferredToHeirsHandler : IEventHandler<DepositPosition, DepositTransferredToHeirs>

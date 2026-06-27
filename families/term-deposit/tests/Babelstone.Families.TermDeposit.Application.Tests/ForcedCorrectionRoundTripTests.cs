@@ -65,12 +65,15 @@ public sealed class ForcedCorrectionRoundTripTests(ConstitutionFixture fixture)
         Assert.Equal(0, beforeBelief.State.CorrectionCount);          // no correction folded yet
         var correctionKnownFloor = beforeBelief.RecordedAt;          // belief-time of the maturity append
 
-        // A retroactive clerk-data-entry correction (event-store §4.2 / §6.4 worked example). The
-        // fold tallies CorrectionCount; the supersede-then-insert is the projection runtime's job.
+        // A retroactive clerk-data-entry correction (event-store §4.2 / §6.4 worked example): the principal
+        // was recorded as €10,000 (1_000_000 cents) but the true principal is €100,000 (10_000_000 cents).
+        // The typed inline value (bd babelstone-j7mm.2) carries the corrected principal; the pure fold
+        // substitutes it AND bumps CorrectionCount; the supersede-then-insert is the projection runtime's job.
         var head = (await runtime.LoadAsync(depositId)).Version;
         var corrected = new DepositCorrected(
             DepositId: depositId, CorrectionId: "corr-001", CorrectedField: "principal",
-            PreviousValueRef: "ref:old", CorrectedValueRef: "ref:new",
+            CorrectedPrincipal: new Money(10_000_000), CorrectedTanBasisPoints: null,
+            CorrectedStartDate: null, CorrectedMaturityDate: null,
             EffectiveFrom: new DateOnly(2026, 1, 15), CorrectionReason: "clerk-entry");
         await runtime.AppendAsync(
             depositId, head, [corrected],
@@ -79,18 +82,22 @@ public sealed class ForcedCorrectionRoundTripTests(ConstitutionFixture fixture)
 
         await drainer.DrainOnceAsync(runner);
 
-        // 1. CurrentBelief is the CORRECTED belief — CorrectionCount advanced to 1.
+        // 1. CurrentBelief is the CORRECTED belief — CorrectionCount advanced to 1 AND the corrected VALUE
+        //    reads back (bd babelstone-j7mm.2): the principal is now the true €100,000, not the wrong €10,000.
         var corrupted = await query.CurrentBeliefAsync(depositId, Kind);
         Assert.NotNull(corrupted);
         Assert.Equal(1, corrupted.State.CorrectionCount);
+        Assert.Equal(new Money(10_000_000), corrupted.State.Principal); // §6.4: the corrected €100,000
 
         // 2. AsOf the prior valid-time, KNOWN AT just before the correction landed, returns the
-        //    DISAVOWED belief — what we knew then (CorrectionCount still 0). This is the §P2 round-trip.
+        //    DISAVOWED belief — what we knew then (CorrectionCount still 0, the WRONG €10,000 principal).
+        //    This is the §6.4 bitemporal round-trip: the auditor's "what did we believe then" answer.
         var disavowed = await query.AsOfAsync(
             depositId, Kind, validTime: new DateTimeOffset(2027, 1, 15, 0, 0, 0, TimeSpan.Zero),
             knownAt: correctionKnownFloor);
         Assert.NotNull(disavowed);
         Assert.Equal(0, disavowed.State.CorrectionCount);
+        Assert.Equal(new Money(1_000_000), disavowed.State.Principal); // §6.4: the original (wrong) €10,000
 
         // 3. History shows SUPERSESSION, never overwrite: the prior belief is still present with a
         //    non-null superseded_at, and exactly one current belief (superseded_at IS NULL) remains.

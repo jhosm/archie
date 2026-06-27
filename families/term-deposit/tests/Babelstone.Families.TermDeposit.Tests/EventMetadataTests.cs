@@ -49,7 +49,7 @@ public class EventMetadataTests
         new WithholdingApplied(new Money(2_800L), new Money(7_200L)),
         new InterestPaid(Id, new Money(7_500L), new Money(2_100L), new Money(5_400L), OnDate),
         new DepositConstitutionFailed(Id, "RATE_SHEET_NOT_FOUND", "no sheet pinned for term_deposit"),
-        new DepositCorrected(Id, "corr-1", "principal", "prev-ref", "new-ref", OnDate, "TYPO"),
+        new DepositCorrected(Id, "corr-1", "principal", new Money(10_000_000L), null, null, null, OnDate, "TYPO"),
     ];
 
     [Fact]

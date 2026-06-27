@@ -1,3 +1,5 @@
+using Babelstone.FinancialTypes;
+
 namespace Babelstone.Families.TermDeposit.Application;
 
 // The term-deposit command surface (E.3, ADR-PC-021). A command carries only per-deposit
@@ -198,10 +200,12 @@ public sealed record PartialWithdrawCommand(
 /// the projection runtime. Appends a single store-only <c>DepositCorrected</c> event whose valid-time
 /// is <see cref="EffectiveFrom"/>, which the bitemporal projection (PostgresProjectionStore.
 /// SupersedeAndWriteAsync) turns into a supersede-then-insert — the prior belief is kept and disavowed,
-/// never overwritten. It carries NO new value, only OPAQUE references: <see cref="PreviousValueRef"/>
-/// and <see cref="CorrectedValueRef"/> point at the resolvable values, so NO PII rides the event
-/// (ADR-PC-004 §P2). This is a STORE-ONLY correction — no money moves, no settlement leg, the deposit
-/// stays Active (the F.3 <c>Correct</c> transition is state-preserving).
+/// never overwritten. It carries the corrected VALUE inline as a typed structural field (bd
+/// babelstone-j7mm.2; ADR-PC-002 §P2 *Revised 2026-06-27*): the field <see cref="CorrectedField"/> names
+/// carries its corrected typed value, the fold substitutes it, and a query reads back the corrected value.
+/// Structural fields only (principal/rate/dates) — not PII, so ADR-PC-004 §P2 does not bind them. This is
+/// a STORE-ONLY correction — no money moves, no settlement leg, the deposit stays Active (the F.3
+/// <c>Correct</c> transition is state-preserving).
 /// </summary>
 /// <remarks>
 /// <b>Operator-only (ops-actor-guarded).</b> A correction is a privileged back-office act — a clerk
@@ -212,12 +216,17 @@ public sealed record PartialWithdrawCommand(
 /// </remarks>
 /// <param name="CorrectionId">A stable, operator-supplied id for THIS correction (e.g. <c>corr-001</c>)
 /// — recorded on the event for audit lineage. Not the idempotency key (that is <see cref="CommandId"/>).</param>
-/// <param name="CorrectedField">The name of the recorded fact being corrected (e.g. <c>principal</c>) —
-/// a structural field name, never a value.</param>
-/// <param name="PreviousValueRef">An OPAQUE reference to the value as previously recorded — a resolvable
-/// reference, NEVER the value itself or any PII (ADR-PC-004 §P2).</param>
-/// <param name="CorrectedValueRef">An OPAQUE reference to the corrected value — a resolvable reference,
-/// NEVER the value itself or any PII.</param>
+/// <param name="CorrectedField">The structural field being corrected (e.g. <c>principal</c>, <c>rate</c>,
+/// <c>start_date</c>, <c>maturity_date</c>) — a stable name, never a value. The decider rejects an unknown
+/// / non-correctable field BEFORE any append (→ 422).</param>
+/// <param name="CorrectedPrincipal">The corrected principal (Money cents) when <see cref="CorrectedField"/>
+/// is <c>principal</c>; null otherwise. A structural amount, NOT PII (ADR-PC-004 §P2).</param>
+/// <param name="CorrectedTanBasisPoints">The corrected nominal annual rate in basis points when
+/// <see cref="CorrectedField"/> is <c>rate</c>; null otherwise.</param>
+/// <param name="CorrectedStartDate">The corrected start value-date when <see cref="CorrectedField"/> is
+/// <c>start_date</c>; null otherwise.</param>
+/// <param name="CorrectedMaturityDate">The corrected maturity date when <see cref="CorrectedField"/> is
+/// <c>maturity_date</c>; null otherwise.</param>
 /// <param name="EffectiveFrom">The valid-time the correction takes effect FROM — the date that feeds the
 /// ADR-PC-002 §P2 bitemporal supersession (it becomes the append's <c>AppendContext.ValidTime</c> at
 /// midnight UTC, mirroring how the D.5 <c>ForcedCorrectionRoundTripTests</c> constructs the event).</param>
@@ -233,8 +242,10 @@ public sealed record CorrectDepositCommand(
     Guid DepositId,
     string CorrectionId,
     string CorrectedField,
-    string PreviousValueRef,
-    string CorrectedValueRef,
+    Money? CorrectedPrincipal,
+    int? CorrectedTanBasisPoints,
+    DateOnly? CorrectedStartDate,
+    DateOnly? CorrectedMaturityDate,
     DateOnly EffectiveFrom,
     string CorrectionReason,
     string Actor,

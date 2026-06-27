@@ -91,8 +91,6 @@ public sealed class EmitContractFitnessTests
     ///   c8d8): the engine resolves <c>product_code → structural facts</c> (term / variant / renewal /
     ///   cadence / role) READ before the pure decide, exactly like the rate-sheet resolve — a config READ,
     ///   no gate, not a GL/notify signal port (ADR-PC-009 / ADR-PC-008 §S2).</item>
-    /// <item><c>ISettlementPort</c> — the money-movement leg (ADR-PC-016): a legitimate PRE-flag
-    ///   debit/credit, a DISTINCT concern from a GL-posting or notification SIGNAL.</item>
     /// <item><c>VerifiedPack</c> — the pinned per-instance configuration (ADR-PC-009).</item>
     /// <item><c>EarlyTerminationPolicy</c> — a pure penalty-band policy value object, no I/O.</item>
     /// <item><c>string</c> — primitive bindings (the day-count / withholding primitive ids).</item>
@@ -105,7 +103,7 @@ public sealed class EmitContractFitnessTests
     /// </summary>
     private static readonly string[] AllowedDecideAppendDependencies =
     [
-        "AggregateRuntime", "IRateSheetStore", "IProductConfigStore", "ISettlementPort", "VerifiedPack",
+        "AggregateRuntime", "IRateSheetStore", "IProductConfigStore", "VerifiedPack",
         "EarlyTerminationPolicy", "string", "IReadOnlyCollection",
     ];
 
@@ -418,9 +416,8 @@ public sealed class EmitContractFitnessTests
     /// NO-PII-ON-BUS — CLR half. The <c>.avsc</c> scan above covers only the 3 schema-backed events
     /// (the ADR-IC-017 §P4 promoted set: <c>DepositConstituted</c>, <c>InterestPaid</c>,
     /// <c>DepositMatured</c>); 8 of the 11 family events are schemaless today — including the most
-    /// PII-adjacent (<c>DepositTransferredToHeirs</c>'s <c>HeirCaseRef</c>, <c>DepositCorrected</c>'s
-    /// <c>PreviousValueRef</c>/<c>CorrectedValueRef</c>), the de-promoted accrual mechanics
-    /// (<c>InterestAccrued</c>, <c>WithholdingApplied</c>), and the highest-risk future
+    /// PII-adjacent (<c>DepositTransferredToHeirs</c>'s <c>HeirCaseRef</c>), the de-promoted accrual
+    /// mechanics (<c>InterestAccrued</c>, <c>WithholdingApplied</c>), and the highest-risk future
     /// <c>NotificationDue</c> — so without this they ride to the bus unguarded until their
     /// <c>.avsc</c> exists. This scans the CLR record CONSTRUCTOR PARAMETER names off
     /// <c>families/**/Events.cs</c> (the same disk-scan idiom as <see cref="FamilyDomainEventTypeNames"/>),

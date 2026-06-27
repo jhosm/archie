@@ -54,8 +54,11 @@ dependencies:
   engine_compatible_versions: ">=1.0.0,<2.0.0"
 
 # The family-schema version this pack's bundled schemas/ carries (authoring §6).
+# One pin, named twice for the two readers (the engine schema registry here vs the host module roster in
+# families.yaml); the personal_loan pin is added with the family's host wiring (bd babelstone-9g77).
 schema_pins:
   term_deposit: term_deposit@2026.1
+  personal_loan: personal_loan@2026.1
 
 rate_sheet_refs:
   - deposits-pt

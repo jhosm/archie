@@ -11,7 +11,8 @@ namespace Babelstone.Families.PersonalLoan.Application;
 /// money-moving leg is now DE-SETTLED — the decider records an Originated <see cref="Movement"/> APPEND-FIRST
 /// on the event and the substrate-owned settlement saga effects the cash leg, gated (ADR-PC-032 slot 5; bd
 /// babelstone-t7o3.16 closed the installment + early-repay legs after t7o3.20/5r9n.1 closed disbursement), so
-/// this service no longer takes an <c>ISettlementPort</c> at all. It depends only on generic engine ports
+/// this service has no eager settlement dependency at all (the old eager settlement port was deleted in bd
+/// babelstone-t7o3.17). It depends only on generic engine ports
 /// (<see cref="AggregateRuntime{TState}"/>, <see cref="IRateSheetStore"/>) plus the pinned
 /// <see cref="VerifiedPack"/> — the dependency arrow is family→engine, never the reverse (ADR-PC-021 §D2).
 /// </summary>

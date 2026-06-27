@@ -15,8 +15,8 @@ namespace Babelstone.Engine;
 /// <see cref="Direction"/> against one <see cref="AccountRef"/>) and names NO family (ADR-PC-032 slot 1
 /// / slot 6): it carries an opaque <see cref="AccountRef"/>, a closed <see cref="MovementOperation"/>
 /// code, and generic <see cref="Money"/> / <see cref="SettlementDirection"/> / <see cref="ValueDate"/> —
-/// exactly the family-agnostic shape the spine's existing <see cref="SettlementInstruction"/> already
-/// carries, so <c>ENGINE_FAMILY_AGNOSTIC</c> (ADR-PC-021 §P2) holds. It is NOT a balanced double-entry
+/// exactly the family-agnostic shape the spine carries, so <c>ENGINE_FAMILY_AGNOSTIC</c>
+/// (ADR-PC-021 §P2) holds. It is NOT a balanced double-entry
 /// pair: the engine records single-sided movements against its own account balances; posting them as a
 /// balanced journal entry against a chart of accounts is the GL's job (ADR-PC-012), which the engine
 /// never does.

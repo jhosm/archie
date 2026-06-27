@@ -13,7 +13,8 @@ namespace Babelstone.Families.TermDeposit.Application.Tests;
 /// These are PURE unit tests (no Docker): the deposit's prior events are seeded into an in-memory
 /// <see cref="IEventStore"/> so the rehydrated position folds to a terminal lifecycle, and the
 /// service is wired with a <see cref="NullSink"/> (the illegal command must be rejected BEFORE any
-/// append) and a settlement port that fails if touched (rejection must precede the money leg).
+/// append) and a rate-sheet store that fails if touched (rejection must precede any resolution; the
+/// eager settlement port is gone — bd babelstone-t7o3.17 — so there is no money leg to gate here).
 /// The table's own legality matrix is unit-tested separately in the family-tier
 /// <c>LifecycleTransitionsTests</c>; here we pin the decider→table integration.
 /// </summary>
@@ -56,9 +57,9 @@ public sealed class LifecycleRejectionTests
     public async Task MatureAsync_allows_maturing_an_active_deposit()
     {
         // Sanity: the SAME gate lets the legal Active→Matured transition through (it reaches the
-        // settlement leg). The Active stream is a bare constitution; NullSink discards the append.
+        // append). The Active stream is a bare constitution; NullSink discards the append.
         var depositId = Guid.NewGuid();
-        var service = ServiceOverStream(depositId, ActiveStream(depositId), failOnSettle: false);
+        var service = ServiceOverStream(depositId, ActiveStream(depositId));
 
         // Does not throw: the legal transition proceeds past the gate.
         await service.MatureAsync(new MatureDepositCommand(
@@ -85,10 +86,10 @@ public sealed class LifecycleRejectionTests
     ];
 
     /// <summary>Compose the durable runtime over an in-memory store seeded with <paramref name="stream"/>,
-    /// a discard sink, and a rate-sheet store + settlement port that fail if touched (a rejection must
-    /// not resolve a sheet or settle). Only LoadAsync is exercised on the legal-transition path.</summary>
+    /// a discard sink, and a rate-sheet store that fails if touched (a rejection must not resolve a sheet).
+    /// Only LoadAsync is exercised on the legal-transition path.</summary>
     private static TermDepositConstitutionService ServiceOverStream(
-        Guid depositId, DomainEvent[] stream, bool failOnSettle = true)
+        Guid depositId, DomainEvent[] stream)
     {
         var serializer = new JsonEventSerializer();
         var registry = TermDepositFamilyModule.Registry();
@@ -175,14 +176,4 @@ internal sealed class ThrowingRateSheetStore : IRateSheetStore
 
     public Task<RateSheet?> TryGetAsync(string rateSheetVersionId, CancellationToken ct = default) =>
         throw new InvalidOperationException("rate sheet fetched on a rejected command");
-}
-
-/// <summary>A settlement port that fails if invoked when <c>failOnSettle</c> — a rejected command
-/// must never move money. The legal-transition sanity test passes <c>failOnSettle: false</c>.</summary>
-internal sealed class ThrowingSettlementPort(bool failOnSettle) : ISettlementPort
-{
-    public Task SettleAsync(SettlementInstruction instruction, CancellationToken ct = default) =>
-        failOnSettle
-            ? throw new InvalidOperationException("settlement attempted on a rejected command")
-            : Task.CompletedTask;
 }

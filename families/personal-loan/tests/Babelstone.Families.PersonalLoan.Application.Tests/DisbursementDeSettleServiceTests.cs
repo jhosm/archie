@@ -17,7 +17,8 @@ namespace Babelstone.Families.PersonalLoan.Application.Tests;
 /// repayment — must record its money movement ON the event and append FIRST. It must NOT settle eagerly before
 /// the append (the old settle-then-append window that could orphan a cash leg with no durable record). These
 /// drive the real <see cref="PersonalLoanConstitutionService"/> against an in-memory store and assert (1) NO
-/// eager settlement ever happens (the service no longer even takes an <c>ISettlementPort</c>), and (2) the
+/// eager settlement ever happens (the service has no eager settlement dependency — the old eager settlement
+/// port was deleted in bd babelstone-t7o3.17), and (2) the
 /// appended event carries the Originated <see cref="Movement"/> the substrate-owned settlement saga effects the
 /// cash leg off. The double-move / settle-succeeds-append-fails idempotency is the substrate saga's
 /// MOVEMENT_CASH_LEG_IDEMPOTENT (the WireMock-Core integration test on the settlement side); here we prove the

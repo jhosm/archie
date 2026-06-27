@@ -75,6 +75,14 @@ public sealed class HostModuleLoaderTests
         var termDeposit = modules.Single(m => m.FamilyName == "term_deposit");
         Assert.Equal("term_deposit@2026.1", termDeposit.SchemaVersion);
         Assert.Equal("term_deposit", termDeposit.AggregateType);
+
+        // The personal_loan (credito_pessoal) family's host module is likewise discovered from the output
+        // dir once the host carries its ProjectReference (bd babelstone-9g77) — proving the family is wired
+        // into the running host with no per-family host edit beyond that reference (ADR-PC-031 §P5).
+        Assert.Contains(modules, m => m.FamilyName == "personal_loan");
+        var personalLoan = modules.Single(m => m.FamilyName == "personal_loan");
+        Assert.Equal("personal_loan@2026.1", personalLoan.SchemaVersion);
+        Assert.Equal("personal_loan", personalLoan.AggregateType);
     }
 
     [Fact]

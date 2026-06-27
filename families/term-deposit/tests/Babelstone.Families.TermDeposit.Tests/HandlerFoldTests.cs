@@ -166,16 +166,21 @@ public sealed class HandlerFoldTests
     }
 
     [Fact]
-    public void DepositCorrected_increments_the_correction_count()
+    public void DepositCorrected_substitutes_the_typed_value_and_increments_the_correction_count()
     {
         var depositId = Guid.NewGuid();
         var position = Fold(DepositPosition.Empty, new DepositCorrected(
-            depositId, "corr-1", "principal", "prev-ref", "new-ref", new DateOnly(2026, 6, 1), "TYPO"));
+            depositId, "corr-1", "principal", new Money(10_000_000L), null, null, null,
+            new DateOnly(2026, 6, 1), "TYPO"));
         position = Fold(position, new DepositCorrected(
-            depositId, "corr-2", "tan", "prev-ref-2", "new-ref-2", new DateOnly(2026, 7, 1), "RATE_FIX"));
+            depositId, "corr-2", "rate", null, 350, null, null,
+            new DateOnly(2026, 7, 1), "RATE_FIX"));
 
         // Two corrections counted (kills + 1 → − 1 and the statement-removal that leaves 0).
         Assert.Equal(2, position.CorrectionCount);
+        // Typed inline value substitution (bd babelstone-j7mm.2): the corrected principal AND rate read back.
+        Assert.Equal(new Money(10_000_000L), position.Principal);
+        Assert.Equal(350, position.TanBasisPoints);
     }
 
     [Fact]

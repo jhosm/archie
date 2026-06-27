@@ -170,7 +170,7 @@ public sealed class TermDepositDispatchTests
             new DepositTerminatedEarly(Guid.NewGuid(), new Money(1_000_000), new Money(5_000), new Money(995_000),
                 new DateOnly(2026, 6, 15), "customer_request"),
             new DepositPartiallyWithdrawn(Guid.NewGuid(), new Money(200_000), new Money(800_000), new DateOnly(2026, 6, 15)),
-            new DepositCorrected(Guid.NewGuid(), "corr-1", "principal", "ref-old", "ref-new",
+            new DepositCorrected(Guid.NewGuid(), "corr-1", "principal", new Money(10_000_000), null, null, null,
                 new DateOnly(2026, 6, 15), "typo"),
             new DepositTransferredToHeirs(Guid.NewGuid(), "case-1", new Money(1_021_900), new DateOnly(2026, 6, 15)),
             new PersonalDataErasureRequested(Guid.NewGuid(), "a1b2c3d4e5f60718", new DateOnly(2026, 6, 15), "GDPR_ARTICLE_17"),

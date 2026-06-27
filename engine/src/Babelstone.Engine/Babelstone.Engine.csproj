@@ -12,8 +12,8 @@
     <ProjectReference Include="../Babelstone.EventStore/Babelstone.EventStore.csproj" />
     <ProjectReference Include="../Babelstone.Pii/Babelstone.Pii.csproj" />
 
-    <!-- Money is the engine's money type: the generic ISettlementPort (the legacy
-         money-movement seam, ADR-PC-016) carries Money, never a float. FinancialTypes is a
+    <!-- Money is the engine's money type: the generic Movement spine (the money-movement
+         primitive, ADR-PC-032) carries Money, never a float. FinancialTypes is a
          dependency-free value type, so this adds no transitive surface. -->
     <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
 

@@ -27,7 +27,7 @@ public sealed class ConstitutionPreconditionTests(ConstitutionFixture fixture)
 
         // The product gates on is_new_money + salary_domiciled; the saga resolved is_new_money satisfied
         // but salary_domiciled NOT satisfied — the decider must refuse before debiting the principal.
-        var (runtime, service, settlement) = Compose(
+        var (runtime, service) = Compose(
             fixture.ConnectionString,
             requiredPreconditions:
             [
@@ -51,8 +51,9 @@ public sealed class ConstitutionPreconditionTests(ConstitutionFixture fixture)
         Assert.Equal(1, await fixture.CountAsync("events", "stream_id", depositId));
         await fixture.EventIdAsync(depositId, "term_deposit.DepositConstitutionFailed"); // throws if absent/non-unique
 
-        // No settlement at all — the irreversible Core debit never fired (ADR-PC-024 §5: a refusal, not a compensation).
-        Assert.Empty(settlement.Instructions);
+        // No settlement at all — the irreversible Core debit never fired (ADR-PC-024 §5: a refusal, not a
+        // compensation). The eager settlement port is GONE (bd babelstone-t7o3.17): a refusal appends only
+        // DepositConstitutionFailed, with no money leg of any kind.
     }
 
     [Fact]
@@ -60,7 +61,7 @@ public sealed class ConstitutionPreconditionTests(ConstitutionFixture fixture)
     {
         await fixture.EnsureRateSheetAsync(SharedSheet);
 
-        var (runtime, service, settlement) = Compose(
+        var (runtime, service) = Compose(
             fixture.ConnectionString,
             requiredPreconditions:
             [
@@ -79,11 +80,11 @@ public sealed class ConstitutionPreconditionTests(ConstitutionFixture fixture)
         // DepositConstituted was appended. Per bd babelstone-t7o3.4 the constitution path is now
         // DE-SETTLED — the principal debit is the saga's gated ReserveAccountBalance→ConfirmDebit step
         // (ADR-PC-016 §68/§127), NOT an eager in-engine debit — so NO settlement leg fires here, exactly
-        // as in the refusal case above (the difference is the deposit is Active, not Failed).
+        // as in the refusal case above (the difference is the deposit is Active, not Failed). The eager
+        // settlement port is GONE (bd babelstone-t7o3.17), so there is nothing eager to assert against.
         var hydrated = await runtime.LoadAsync(depositId);
         Assert.Equal(DepositLifecycle.Active, hydrated.State.Lifecycle);
         await fixture.EventIdAsync(depositId, "term_deposit.DepositConstituted"); // throws if absent
-        Assert.Empty(settlement.Instructions);
     }
 
     private static ConstituteDepositCommand Command(
@@ -105,7 +106,7 @@ public sealed class ConstitutionPreconditionTests(ConstitutionFixture fixture)
 
     /// <summary>Compose the durable runtime + decider, passing the product's required preconditions
     /// (ADR-PC-024 engine-instance config) — otherwise identical to the happy-path composition.</summary>
-    private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service, RecordingSettlementPort Settlement)
+    private static (AggregateRuntime<DepositPosition> Runtime, TermDepositConstitutionService Service)
         Compose(string connectionString, IReadOnlyCollection<string> requiredPreconditions)
     {
         var store = new PostgresEventStore(connectionString);
@@ -113,11 +114,10 @@ public sealed class ConstitutionPreconditionTests(ConstitutionFixture fixture)
             store, new EventStoreSink(store), TermDepositFamilyModule.Registry(),
             new JsonEventSerializer(), new NullPiiProtector(), TimeProvider.System,
             () => DepositPosition.Empty);
-        var settlement = new RecordingSettlementPort();
         var service = new TermDepositConstitutionService(
             runtime, new PostgresRateSheetStore(connectionString), SkeletonPack.LoadPt2026(),
             dayCountPrimitive: "act_360", withholdingPrimitive: "irs_juros",
             requiredPreconditions: requiredPreconditions);
-        return (runtime, service, settlement);
+        return (runtime, service);
     }
 }

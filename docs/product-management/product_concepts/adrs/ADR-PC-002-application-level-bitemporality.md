@@ -260,4 +260,39 @@ drift. See [04 open questions Q-BG](../04-open-questions.md).
 
 ---
 
+## Amendment — 2026-06-27: typed inline value substitution — §P2 satisfied for structural corrections
+
+Added 2026-06-27 (bd `babelstone-j7mm.2`). In plain English: a correction now actually **changes the
+value a consumer reads** — going forward, the corrected principal/rate/date reads back as the corrected
+value, not just a bumped counter. This closes the deferral the 2026-06-26 amendment above recorded.
+
+`DepositCorrected` now carries the corrected **value inline as a typed structural field**
+(`CorrectedPrincipal` as `Money` cents, `CorrectedTanBasisPoints` as basis points,
+`CorrectedStartDate`/`CorrectedMaturityDate` as dates) — replacing the opaque
+`PreviousValueRef`/`CorrectedValueRef`. The pure `DepositCorrectedHandler` fold **substitutes** the
+corrected value into `DepositPosition` (and still increments `CorrectionCount`), modelled as "this is
+what the value always was" — it rewrites from the original value-date (the opening principal-timeline
+segment), **not** a step-change at `effective_from` (that is a partial withdrawal). Structural fields
+only — these are not PII, so [ADR-PC-004](./ADR-PC-004-pii-crypto-shredding.md) §P2 does not bind them;
+this follows the `DepositPartiallyWithdrawn`/`RemainingPrincipal` typed-field precedent. The decider
+validates a closed correctable-field allow-list (principal / rate / start_date / maturity_date) and
+rejects an unknown or value-less field with a `DomainRejectedException` (→ 422) before any append.
+
+With this, `CurrentBelief` returns the corrected value and `AsOf(before-the-correction)` the original —
+the [event-store §6.4](../feature-design-event-store-projections.md) €10,000 → €100,000 worked example
+now passes end-to-end through the fold (`ForcedCorrectionRoundTripTests`). The fold stays pure (no
+clock/I/O/derivation, BENG001/002/003), so cold replay reproduces byte-identical current-belief rows
+(the [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) §P5 determinism gate).
+
+This amendment is **additive and §D5-conformant**: it realises the value-substitution half of §P2 the
+2026-06-26 amendment deferred, reverses no part of §P1–§P4, and edits no Decision text in place. **Ambition
+L2 (prospective):** future accrual/withholding/payout price on the corrected value; **retroactive
+recompute of already-crystallized flows** (paid PERIODIC coupons, ADVANCE up-front interest, a completed
+maturity) remains out of scope, tracked under the placeholder epic bd `babelstone-np7p`. §P2 is therefore
+satisfied in full for **structural** corrections; the 2026-06-26 S1 deferral is closed/superseded by this
+amendment (the residual is the L3 financial-recompute work, not a §P2 read-model gap). See
+[04 open questions Q-BG](../04-open-questions.md).
+
+---
+
 *Decided 2026-05-23 by jhosm. Accepted; Q-Y is a production gate, not required for the POC, which assumes bitemporality is needed for all purposes. Mechanism choice (Q-X) made ahead of the §6.3 spike because [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) narrows the candidate set to the application-level path.*

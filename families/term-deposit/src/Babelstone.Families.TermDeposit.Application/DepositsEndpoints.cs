@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Babelstone.Engine;
 using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
+using Babelstone.FinancialTypes;
 using Babelstone.Pii;
 using Babelstone.Telemetry;
 using Microsoft.AspNetCore.Builder;
@@ -806,8 +807,12 @@ public static class DepositsEndpoints
             DepositId: id,
             CorrectionId: request.CorrectionId,
             CorrectedField: request.CorrectedField,
-            PreviousValueRef: request.PreviousValueRef,
-            CorrectedValueRef: request.CorrectedValueRef,
+            // Money crosses from the wire's integer cents to the Money type exactly once, here at the
+            // boundary (ADR-PC-010 §P1/§P2) — never a float. Null stays null (the field was not corrected).
+            CorrectedPrincipal: request.CorrectedPrincipalCents is { } cents ? new Money(cents) : null,
+            CorrectedTanBasisPoints: request.CorrectedTanBasisPoints,
+            CorrectedStartDate: request.CorrectedStartDate,
+            CorrectedMaturityDate: request.CorrectedMaturityDate,
             EffectiveFrom: request.EffectiveFrom,
             CorrectionReason: request.CorrectionReason,
             Actor: request.Actor ?? "ops:clerk",

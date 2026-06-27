@@ -102,7 +102,6 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
                     services.AddSingleton<IEventSerializer, JsonEventSerializer>();
                     services.AddSingleton<IPiiProtector, NullPiiProtector>();
                     services.AddSingleton<IRateSheetStore, UnpricedRateSheetStore>();
-                    services.AddSingleton<ISettlementPort, NoopSettlementPort>();
                     services.AddSingleton<IDepositReadModelStore, EmptyDepositReadModelStore>();
 
                     // The GDPR right-to-be-forgotten endpoint's host-shell dependencies (bd babelstone-nzw6):
@@ -468,12 +467,6 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
 
         public Task<RateSheetResolution?> ResolveAsync(string productFamily, DateTimeOffset asOf, CancellationToken ct = default) =>
             Task.FromResult<RateSheetResolution?>(null);
-    }
-
-    /// <summary>A settlement port that always succeeds — money legs are out of scope for an envelope fuzz.</summary>
-    private sealed class NoopSettlementPort : ISettlementPort
-    {
-        public Task SettleAsync(SettlementInstruction instruction, CancellationToken ct = default) => Task.CompletedTask;
     }
 
     /// <summary>An empty read model: GET point lookups miss (→ fold → 404) and range scans are empty.</summary>
