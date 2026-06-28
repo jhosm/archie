@@ -2,9 +2,11 @@ using Babelstone.Engine;
 using Babelstone.Engine.Hosting;
 using Babelstone.EventStore;
 using Babelstone.Families.PersonalLoan;
+using Babelstone.Families.PersonalLoan.Application.Migrations;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Babelstone.Families.PersonalLoan.Application;
@@ -27,15 +29,19 @@ namespace Babelstone.Families.PersonalLoan.Application;
 /// <c>HostModuleLoader.CrossCheckAgainstPackManifest</c> passes fail-closed (ADR-PC-009 §P1).
 /// </para>
 /// <para>
-/// <b>Read model: the bitemporal projections suffice (ADR-PC-002 §P2).</b> Unlike term-deposit (which adds
-/// a denormalized <c>read_model.deposits</c> table + its own migration set), the loan needs NO family-owned
-/// Postgres read-model table for v1: its two bitemporal projections — the loan position and the amortization
-/// schedule (<see cref="PersonalLoanProjectionModule"/>) — materialise into the GENERIC, engine-owned
-/// <c>projections</c> table, and the live read path folds the stream through the
-/// <see cref="AggregateRuntime{TState}"/>. So this module registers only its
-/// <see cref="IProjectionModule"/>; the family-agnostic projection relay term-deposit registers drains it
-/// (the relay's registry enumerates EVERY registered <see cref="IProjectionModule"/>), and the engine
-/// event-store migrations carry zero personal-loan-named tables.
+/// <b>Read model.</b> The loan's THREE bitemporal projections — the loan position, the amortization
+/// schedule, and the installment calendar (<see cref="PersonalLoanProjectionModule"/>) — materialise into
+/// the GENERIC, engine-owned <c>projections</c> table, and the live read path folds the stream through the
+/// <see cref="AggregateRuntime{TState}"/>; this module registers only its <see cref="IProjectionModule"/>,
+/// and the family-agnostic projection relay term-deposit registers drains it (the relay's registry
+/// enumerates EVERY registered <see cref="IProjectionModule"/>). The family ALSO now owns a denormalized
+/// Postgres read-model table — <c>read_model.installment_calendar</c>, the forward next-installment read
+/// surface — created by its OWN forward-only migration set
+/// (<see cref="Babelstone.Families.PersonalLoan.Application.Migrations"/>, under its own
+/// <c>schema_migrations_personal_loan</c> ledger), applied on startup by the
+/// <see cref="ReadModelMigrationHostedService"/> registered below. That family-named table lives in the
+/// family's migration set, NOT the engine's, so the engine event-store migrations still carry zero
+/// personal-loan-named tables (ADR-PC-021 family-owned ownership; ADR-IC-005 §S1 — same Postgres tier).
 /// </para>
 /// </summary>
 public sealed class PersonalLoanHostModule : IFamilyHostModule
@@ -114,22 +120,113 @@ public sealed class PersonalLoanHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<Babelstone.RateSheets.IRateSheetStore>(),
             ctx.Pack));
 
-        // The family's projection declarations (two-modes §5.4): the loan position + the amortization
-        // schedule, both bitemporal/async into the GENERIC projections table. Registering only the
-        // IProjectionModule (not a relay) is deliberate: the family-agnostic projection relay registered by
-        // the term-deposit module builds its ProjectionRegistry from EVERY registered IProjectionModule
-        // (serviceProvider.GetServices<IProjectionModule>()), so a single relay drains both families'
-        // projections — registering a second relay here would double-drain the shared projections/checkpoint
-        // tables. The loan needs NO denormalized family read-model table (see the class remarks).
+        // The family's projection declarations (two-modes §5.4): the loan position, the amortization
+        // schedule, and the installment calendar — all bitemporal/async into the GENERIC projections table.
+        // Registering only the IProjectionModule (not a relay) is deliberate: the family-agnostic projection
+        // relay registered by the term-deposit module builds its ProjectionRegistry from EVERY registered
+        // IProjectionModule (serviceProvider.GetServices<IProjectionModule>()), so a single relay drains both
+        // families' projections — registering a second relay here would double-drain the shared
+        // projections/checkpoint tables.
         services.AddSingleton<IProjectionModule, PersonalLoanProjectionModule>();
+
+        // The operator pack-migration write-path (ADR-PC-009 §P3, surface §3.6): re-pin a live instance to a
+        // newer pack by appending the engine-declared PackVersionMigrated through this family's runtime. The
+        // mechanics are family-AGNOSTIC and live in the engine HOSTING library
+        // (Babelstone.Engine.Hosting.PackMigrationService<TState>, the non-spine host/command-side assembly —
+        // ADR-PC-021 §A9/§A11) — they run no personal-loan domain logic, only read each instance's current
+        // pin off the event store head and append the migration pinned to the target pack (the re-pin lives
+        // on the envelope). The family closes the generic over its own LoanPosition here, composing the
+        // family runtime + the shared event store. Mirrors TermDepositHostModule one-for-one over LoanPosition.
+        services.AddSingleton(serviceProvider => new PackMigrationService<LoanPosition>(
+            serviceProvider.GetRequiredService<AggregateRuntime<LoanPosition>>(),
+            serviceProvider.GetRequiredService<IEventStore>(),
+            FoldModule.FamilyName));
+
+        // Expose the closed write-path through the family-AGNOSTIC IPackMigrationService facade so the single
+        // dispatching /v1/pack-migrations route (registered once at host level) can select it by
+        // product_family without naming LoanPosition (ADR-PC-021 §P2). The same singleton instance is
+        // returned — the facade is just the non-generic view the endpoint dispatches over.
+        services.AddSingleton<IPackMigrationService>(
+            serviceProvider => serviceProvider.GetRequiredService<PackMigrationService<LoanPosition>>());
+
+        // The family side of the surface §3.6 instance_filter seam: resolve the
+        // { product_family, currently_active } predicate to the live loan population. Unlike term-deposit
+        // (which queries a family-OWNED read model), personal_loan has NO read model that lists active loans,
+        // so this resolver folds the EVENT STORE — it enumerates the family's streams
+        // (IEventStore.ReadStreamIdsAsync) and keeps the ones whose folded LoanPosition is still
+        // LoanLifecycle.Active (the family owns what "active" MEANS; the spine hands over a family-agnostic
+        // predicate and gets back a flat id list it feeds, unchanged, into the existing PackMigrationService
+        // preview/migrate loop). Both primitives it folds over — the event store and the family runtime — are
+        // already registered above.
+        services.AddSingleton<IPackMigrationInstanceResolver>(
+            serviceProvider => new LoanInstanceFilterResolver(
+                serviceProvider.GetRequiredService<IEventStore>(),
+                serviceProvider.GetRequiredService<AggregateRuntime<LoanPosition>>(),
+                FoldModule.FamilyName));
+
+        // The family OWNS its read-model schema (ADR-PC-021 family-owned ownership): read_model.installment_calendar
+        // is a family-NAMED table, so its forward-only migration set lives in this family's Application
+        // assembly, not the engine's. The HOST is the composition root that may name a family (ADR-PC-021
+        // A2 — the spine still may not), so it is here, not in the spine, that we apply the family migration.
+        // This hosted service runs the family MigrationRunner on startup against the migration connection
+        // string (DDL privileges, ADR-PC-001 §P3). It assumes the ENGINE schema is already present (the
+        // engine host does NOT run the engine migrations today — only deployment machinery + tests do), and
+        // the family migration's own fail-loud guard RAISEs if the babelstone_engine role (engine migration
+        // 0002) is absent, so an out-of-order run fails clearly rather than corrupting state.
+        //
+        // Resolution prefers a DEDICATED migration-role connection (the production split: DDL privileges
+        // separate from the runtime role, ADR-PC-001 §P3) and falls back to the runtime Engine connection
+        // for the dev/test path (one superuser connection for both). It still fails fast if NOTHING resolves,
+        // rather than booting against an un-migrated read model (mirroring TermDepositHostModule + the
+        // orchestrator's SagaMigrationHostedService).
+        var migrationConnectionString =
+            ctx.Configuration.GetConnectionString("EngineMigration")
+            ?? ctx.Configuration["Engine:MigrationConnectionString"]
+            ?? Environment.GetEnvironmentVariable("ENGINE_MIGRATION_CONNECTION_STRING")
+            ?? ctx.Configuration.GetConnectionString("Engine");
+        services.AddHostedService(_ => new ReadModelMigrationHostedService(migrationConnectionString));
     }
 
     public void MapEndpoints(IEndpointRouteBuilder app)
     {
         LoansEndpoints.Map(app);
-        // The operator pack-migration command surface (POST /v1/pack-migrations) is registered ONCE at host
-        // level (Program.cs) and dispatches on product_family to a family's registered
-        // IPackMigrationService; personal_loan does not yet register one, so it is not pack-migratable in v1
-        // (a separable follow-up, NOT part of the operability wiring this issue delivers).
+        // The operator pack-migration command surface (POST /v1/pack-migrations, ADR-PC-009 §P3 / surface
+        // §3.6) is NOT mapped per family: it is registered ONCE at host level (Program.cs) because the route
+        // is identical across families — a per-family Map would collide (AmbiguousMatchException) the moment
+        // a second family is hosted. The single route dispatches on product_family to this family's registered
+        // IPackMigrationService / IPackMigrationInstanceResolver (wired above), so personal_loan IS now
+        // pack-migratable in v1.
     }
+}
+
+/// <summary>
+/// Applies the personal_loan family's read-model schema on startup (the family OWNS this schema —
+/// ADR-PC-021 family-owned ownership; <c>read_model.installment_calendar</c> is a family-named table, so it
+/// lives in the family's migration set, not the engine's). A hosted service so the host's lifetime owns it;
+/// idempotent — a boot with nothing pending is a no-op (the family <see cref="MigrationRunner"/>'s own
+/// <c>schema_migrations_personal_loan</c> ledger guards it). Modelled on the term-deposit family's
+/// <c>ReadModelMigrationHostedService</c> and the orchestrator's <c>SagaMigrationHostedService</c>. Refuses
+/// to run with no migration connection string rather than booting against an un-migrated read model.
+///
+/// Engine-before-family ordering: this assumes the engine event-store schema is already present (the engine
+/// host runs no engine migrations today; deployment machinery + tests apply them). The family migration's
+/// fail-loud SQL guard RAISEs a clear error if the <c>babelstone_engine</c> role (engine migration 0002) is
+/// absent, so an out-of-order boot fails loud rather than silently.
+/// </summary>
+internal sealed class ReadModelMigrationHostedService(string? migrationConnectionString) : IHostedService
+{
+    public async Task StartAsync(CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(migrationConnectionString))
+        {
+            throw new InvalidOperationException(
+                "No engine migration connection string configured for the personal-loan read-model "
+                + "migrations. Set ConnectionStrings:EngineMigration, Engine:MigrationConnectionString, "
+                + "or ENGINE_MIGRATION_CONNECTION_STRING.");
+        }
+
+        await new MigrationRunner(migrationConnectionString).ApplyAsync(cancellationToken);
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
