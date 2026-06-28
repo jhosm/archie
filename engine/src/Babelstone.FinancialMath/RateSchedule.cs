@@ -3,7 +3,7 @@ using Babelstone.FinancialTypes;
 namespace Babelstone.FinancialMath;
 
 /// <summary>
-/// One segment of a resolved rate VECTOR (fin-math §5; v1-build-backlog F.10). A rate schedule
+/// One segment of a resolved rate VECTOR (fin-math §5). A rate schedule
 /// resolves a single deposit's rate into a deterministic ordered sequence of segments at
 /// constitution, then folds that vector over the simple-interest accrual engine. Two shapes share
 /// this segment type, distinguished by what <see cref="From"/> measures:
@@ -38,7 +38,7 @@ namespace Babelstone.FinancialMath;
 public readonly record struct RateSegment(long From, int RateBasisPoints);
 
 /// <summary>
-/// How a <see cref="RateSchedule"/>'s segments are indexed (fin-math §5; F.10) — the two
+/// How a <see cref="RateSchedule"/>'s segments are indexed (fin-math §5) — the two
 /// non-flat rate shapes the family schema's <c>#SteppedRate</c> models and v1 prices.
 /// </summary>
 public enum RateScheduleKind
@@ -57,7 +57,7 @@ public enum RateScheduleKind
 }
 
 /// <summary>
-/// A resolved rate VECTOR for one deposit (fin-math §5; v1-build-backlog F.10): the deterministic
+/// A resolved rate VECTOR for one deposit (fin-math §5): the deterministic
 /// ordered segments resolved at constitution, plus the kind that says how they fold. The whole
 /// point is to keep the rate-schedule RICHNESS engine-internal: it resolves into a deposit's
 /// accrual state and folds over the existing <see cref="Accrual.SimpleInterest"/> primitive, so
@@ -162,7 +162,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
 
     /// <summary>
     /// The gross interest this schedule accrues over a SUB-WINDOW <c>[windowStart, windowEnd]</c> of
-    /// a deposit anchored at <paramref name="anchorStart"/> (fin-math §5.1; F.10 coupon support).
+    /// a deposit anchored at <paramref name="anchorStart"/> (fin-math §5.1; coupon support).
     /// The schedule's elapsed-day boundaries are measured from <paramref name="anchorStart"/>, so a
     /// PERIODIC coupon window that opens partway through a step-up term is priced
     /// segment-by-segment against the rates in force across exactly that window — a later coupon
@@ -194,7 +194,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
     /// The gross interest of <see cref="AccrueGrossWindow"/> accumulated in <see cref="decimal"/> at
     /// full precision and NOT yet crossed to <see cref="Money"/> — the un-rounded numerator. Exposed so
     /// a caller folding the SAME deposit over MULTIPLE principal segments (a deposit whose principal
-    /// stepped down at a partial withdrawal, F.12) can sum every segment's contribution and cross to
+    /// stepped down at a partial withdrawal) can sum every segment's contribution and cross to
     /// <see cref="Money"/> EXACTLY ONCE (<see cref="AccrueGrossWindowOverPrincipal"/>), preserving the
     /// one-rounding-boundary discipline (ADR-PC-010 §P1–§P2). A single call wrapped in
     /// <see cref="Money.FromCents(decimal)"/> is byte-identical to <see cref="AccrueGrossWindow"/>.
@@ -214,7 +214,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
 
     /// <summary>
     /// Accrue gross interest over <c>[windowStart, windowEnd)</c> for a deposit whose principal is a
-    /// STEP FUNCTION of time — the F.12 partial-withdrawal case (fin-math §8.1). Each
+    /// STEP FUNCTION of time — the partial-withdrawal case (fin-math §8.1). Each
     /// <see cref="PrincipalSegment"/> is the principal in force from its date until the next segment (or
     /// the window end); each segment contributes the same windowed accrual as <see cref="AccrueGrossWindow"/>
     /// restricted to its overlap with the window, accumulated UN-ROUNDED and crossed to <see cref="Money"/>

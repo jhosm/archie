@@ -22,8 +22,8 @@ public readonly record struct WithholdingResult(Money Gross, Money Tax, Money Ne
 public static class Withholding
 {
     // The per-unit basis-point scale (100% = 10,000 bps) is the shared kernel constant
-    // Rate.BasisPointsPerUnit (bd babelstone-5r9n.6) — int, not a decimal field (BMNY002 /
-    // ADR-PC-010 §P1); it promotes to decimal at the boundary.
+    // Rate.BasisPointsPerUnit — int, not a decimal field (BMNY002 / ADR-PC-010 §P1); it
+    // promotes to decimal at the boundary.
 
     /// <summary>
     /// Withhold tax from one gross interest flow. Tax is rounded once at the boundary

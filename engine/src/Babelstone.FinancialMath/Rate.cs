@@ -11,7 +11,7 @@ namespace Babelstone.FinancialMath;
 /// kernel file (<see cref="Accrual"/>, <see cref="Amortization"/>, <see cref="Rates"/>,
 /// <see cref="Withholding"/>) and re-declared again as a local inside the personal-loan decider.
 /// Promoting it to a SINGLE shared constant removes that duplication, so the conversion scale is
-/// stated once and consumed everywhere (bd babelstone-5r9n.6).
+/// stated once and consumed everywhere.
 /// </para>
 /// <para>
 /// <b>Kept as <see cref="int"/>, not a stored <see cref="decimal"/> field</b> — the ADR-PC-010 §P1
@@ -27,7 +27,7 @@ public static class Rate
     /// The per-unit basis-point scale: 100% = 10,000 bps, so dividing a basis-point rate by this
     /// yields the per-unit fraction (e.g. 600 bps / 10,000 = 0.06). The single shared definition
     /// every accrual/amortization/withholding/effective-rate primitive — and the loan decider —
-    /// scales by (bd babelstone-5r9n.6).
+    /// scales by.
     /// </summary>
     public const int BasisPointsPerUnit = 10_000;
 
