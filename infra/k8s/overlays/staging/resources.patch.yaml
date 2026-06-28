@@ -13,15 +13,22 @@
 #   backstage          250m / 1000m     768Mi / 2Gi       Node app (~1GB steady / ~2GB peak)
 #   kong               250m / 1000m     256Mi / 1Gi       edge gateway
 #   core-acl-stub      250m / 1000m     256Mi / 1Gi       WireMock (JVM)
+#   logto              100m / 1000m     256Mi / 768Mi     OAuth/OIDC AS (ADR-IC-021) — Node app
 #   backstage-db       100m / 500m      256Mi / 1Gi       Backstage Postgres
 #   otel-collector     100m / 500m      192Mi / 768Mi     telemetry fan-out
 #   openbao            100m / 500m      128Mi / 512Mi     dev mode (in-memory)
 #   redpanda-console   50m / 250m       128Mi / 512Mi     read-only UI
 #   registry           50m / 250m       128Mi / 512Mi     OCI pack registry
 #   ─────────────────────────────────────────────────────────────────────────
-#   Σ requests        ≈ 2.9 vCPU / ≈4.6 Gi   (schedules trivially on one node)
-#   Σ limits          ≈ 10 vCPU / ≈18.25 Gi  (comfortably under node-allocatable
+#   Σ requests        ≈ 3.0 vCPU / ≈4.85 Gi  (schedules trivially on one node)
+#   Σ limits          ≈ 11 vCPU / ≈19 Gi     (comfortably under node-allocatable
 #                                             → no node-level memory overcommit)
+#
+# Logto is a staging-overlay service (like Mission Control), not a base backing-infra one;
+# it is sized here, alongside the backing infra, rather than inline (Mission Control sizes
+# inline as the demo-UI exception). The Logto DB-lifecycle Jobs/CronJob (logto-jobs.yaml)
+# carry their own inline resources — they are short-lived and exempt from the workload sizing
+# table, the same as the event-store migration Job.
 #
 # Strategic-merge: each document targets one container by name, so adding a
 # `resources:` block is purely additive (the containers list merges by `name`).
@@ -214,3 +221,20 @@ spec:
             limits:
               cpu: 250m
               memory: 512Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logto
+spec:
+  template:
+    spec:
+      containers:
+        - name: logto
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi

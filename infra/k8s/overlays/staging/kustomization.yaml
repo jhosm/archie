@@ -49,6 +49,13 @@ resources:
   # rather than in the apps/ product-service layer (bd babelstone-zla1.5.5). Its public
   # Ingress (app.babelstone.dev) is in ingress.yaml above.
   - mission-control.yaml
+  # Logto — the OAuth 2.1 / OIDC Authorization Server (ADR-IC-021, bd babelstone-zla1.10.2):
+  # the staging box's token issuer (login + SCA + the MCP-agent authority). Staging-specific,
+  # public-facing (auth.babelstone.dev, the 4th host in ingress.yaml above), so it lives in the
+  # overlay rather than the apps/ layer — exactly like Mission Control. logto-jobs.yaml carries
+  # its DB lifecycle (init/seed, the per-release alteration upgrade, the annual key rotation).
+  - logto.yaml
+  - logto-jobs.yaml
   # Ops baseline (bd babelstone-zla1.7): scheduled logical DB backups → Hetzner Object
   # Storage, and CSI VolumeSnapshots of the data PVCs. (k3s auto-upgrade + the
   # VolumeSnapshotClass are cluster CRDs in bootstrap/; the runbook is infra/runbooks/.)
