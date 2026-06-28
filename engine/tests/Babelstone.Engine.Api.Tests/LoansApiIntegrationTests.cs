@@ -1,10 +1,17 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Babelstone.Engine;
+using Babelstone.Engine.Hosting;
+using Babelstone.EventStore;
 using Babelstone.EventStore.Migrations;
+using Babelstone.Families.PersonalLoan;
+using Babelstone.Families.PersonalLoan.Application;
 using Babelstone.RateSheets;
 using Babelstone.TestFixtures;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -111,7 +118,7 @@ public sealed class LoansApiIntegrationTests : IAsyncLifetime
         Assert.Equal(0, afterDisburse.GetProperty("installments_paid").GetInt32());
         Assert.True(afterDisburse.GetProperty("outstanding_balance_cents").GetInt64() > 0);
 
-        // 2. Pay the first installment (mandatory Idempotency-Key). The loan stays ACTIVE.
+        // 2. Pay the first installment (server-derived number-pinned key — no caller key). The loan stays ACTIVE.
         var pay1 = await PayInstallmentAsync(loanId, "acct-ref-001");
         Assert.Equal(HttpStatusCode.OK, pay1.StatusCode);
         var afterPay1 = await GetLoanAsync(loanId);
@@ -129,10 +136,96 @@ public sealed class LoansApiIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Paying_an_installment_without_an_idempotency_key_is_rejected_400()
+    public async Task Paying_an_installment_needs_no_caller_idempotency_key_the_key_is_server_derived()
     {
+        // The installment key provenance INVERTED from caller-supplied to server-derived (ADR-PC-036
+        // §Decision 1+3 / LCD-1; ADR-PC-029 slot 4, AMENDED): the old mandatory-caller-key contract is
+        // retired. A POST with NO Idempotency-Key header now SUCCEEDS — the endpoint derives the
+        // number-pinned key from the stable installment NUMBER, so the manual path is provably idempotent
+        // without the caller having to invent a key.
         var loanId = Guid.NewGuid();
-        await _client.PostAsJsonAsync("/v1/loans", new
+        await DisburseTwoInstallmentLoanAsync(loanId);
+
+        // No Idempotency-Key header, no caller key of any kind — the installment still applies (200 OK).
+        var response = await _client.PostAsJsonAsync(
+            $"/v1/loans/{loanId}/installment", new { collection_account_ref = "acct-ref-001" }, SnakeCase);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, (await GetLoanAsync(loanId)).GetProperty("installments_paid").GetInt32());
+    }
+
+    [Fact]
+    public async Task LIFECYCLE_COMMAND_NUMBER_PINNED_IDEMPOTENT_a_redated_retry_of_an_installment_dedupes_to_one_leg()
+    {
+        // LCD-1 (ADR-PC-036 §Decision 1+3; ADR-PC-029 slot 4). In plain English: when the lifecycle-command
+        // driver (or a person) pays the SAME loan installment twice — even on DIFFERENT business dates — the
+        // engine must collect the money only ONCE. It guarantees this by deriving the idempotency key
+        // SERVER-side from the stable installment NUMBER, never the due-date, so the two firings carry the
+        // SAME key and the second is swallowed by command_dedup. Because PayInstallment is legal repeatedly
+        // from Active, that key is the ONLY guard — the legality gate gives no backstop.
+        var loanId = Guid.NewGuid();
+        // A 2-installment loan, so occurrence 1 is an INTERMEDIATE (non-final) installment that leaves the
+        // loan Active — the repeatable case the number-pinned key must guard (a final installment would
+        // settle and lean on the legality gate instead).
+        await DisburseTwoInstallmentLoanAsync(loanId);
+
+        // Firing #1 (the driver's first pass): pay occurrence 1 on its scheduled due-date. 200 OK.
+        var firstDueDate = new DateTimeOffset(2026, 2, 15, 0, 0, 0, TimeSpan.Zero);
+        var first = await PayInstallmentAsync(loanId, "acct-ref-001", firstDueDate);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(1, (await GetLoanAsync(loanId)).GetProperty("installments_paid").GetInt32());
+
+        // The endpoint derived occurrence 1's key from the stable installment NUMBER, server-side: the
+        // command_dedup receipt exists under EXACTLY LifecycleCommandKey.Derive(loan, "pay_installment", 1),
+        // proving the key is number-pinned and server-derived (not caller-supplied, not due-date-derived).
+        var occurrence1Key = LifecycleCommandKey.Derive(loanId, "pay_installment", 1);
+        var commandLog = _factory.Services.GetRequiredService<ICommandLog>();
+        var receipt = await commandLog.TryGetAsync(occurrence1Key);
+        Assert.NotNull(receipt);
+        Assert.Equal(loanId, receipt.StreamId);
+
+        // Firing #2 — a re-dated / backfilled retry of the SAME occurrence 1 on a DIFFERENT due-date (e.g.
+        // the driver re-firing after an outage with a later business date). It presents occurrence 1's
+        // number-pinned key with PaidAt = secondDueDate. command_dedup swallows it: DuplicateCommandException
+        // carrying the ORIGINAL head, NO second append. The due-date (secondDueDate != firstDueDate) played
+        // no part in the key — the stable installment NUMBER did.
+        var service = _factory.Services.GetRequiredService<PersonalLoanConstitutionService>();
+        var secondDueDate = new DateTimeOffset(2026, 3, 20, 0, 0, 0, TimeSpan.Zero);
+        var dup = await Assert.ThrowsAsync<DuplicateCommandException>(() =>
+            service.PayInstallmentAsync(new PayInstallmentCommand(
+                loanId, secondDueDate, "acct-ref-001", "ops:loan-officer", occurrence1Key)));
+        Assert.Equal(occurrence1Key, dup.CommandId);
+        Assert.Equal(receipt.CommitSequence, dup.CommitSequence); // the ORIGINAL outcome, verbatim
+
+        // ONE Originated money leg: exactly one LoanInstallmentPaid on the stream (after the disbursement),
+        // and the paid-count is still 1 — the re-dated retry moved no money twice.
+        Assert.Equal(
+            ["personal_loan.LoanDisbursed", "personal_loan.LoanInstallmentPaid"],
+            await EventTypesAsync(loanId));
+        Assert.Equal(1, (await GetLoanAsync(loanId)).GetProperty("installments_paid").GetInt32());
+    }
+
+    [Fact]
+    public async Task Get_an_unknown_loan_is_404()
+    {
+        var response = await _client.GetAsync($"/v1/loans/{Guid.NewGuid()}");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    private async Task<HttpResponseMessage> PayInstallmentAsync(
+        Guid loanId, string collectionAccountRef, DateTimeOffset? paidAt = null)
+    {
+        // The installment endpoint derives its idempotency key SERVER-side (ADR-PC-036 / LCD-1), so the
+        // client sends NO Idempotency-Key header — the old mandatory-caller-key contract is retired. The
+        // optional paid_at lets a test contrast two firings on DIFFERENT due-dates (host-stamped when null).
+        return await _client.PostAsJsonAsync(
+            $"/v1/loans/{loanId}/installment",
+            new { collection_account_ref = collectionAccountRef, paid_at = paidAt },
+            SnakeCase);
+    }
+
+    private async Task DisburseTwoInstallmentLoanAsync(Guid loanId)
+    {
+        var disburse = await _client.PostAsJsonAsync("/v1/loans", new
         {
             loan_id = loanId,
             principal_cents = 200_000L,
@@ -143,28 +236,24 @@ public sealed class LoansApiIntegrationTests : IAsyncLifetime
             purpose = "general",
             disbursement_account_ref = "acct-ref-001",
         }, SnakeCase);
-
-        // No Idempotency-Key header — the money-mover contract (ADR-PC-029 slot 4) fails loud at 400.
-        var response = await _client.PostAsJsonAsync(
-            $"/v1/loans/{loanId}/installment", new { collection_account_ref = "acct-ref-001" }, SnakeCase);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, disburse.StatusCode);
     }
 
-    [Fact]
-    public async Task Get_an_unknown_loan_is_404()
+    private async Task<List<string>> EventTypesAsync(Guid streamId)
     {
-        var response = await _client.GetAsync($"/v1/loans/{Guid.NewGuid()}");
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
-    private async Task<HttpResponseMessage> PayInstallmentAsync(Guid loanId, string collectionAccountRef)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/loans/{loanId}/installment")
+        await using var connection = new NpgsqlConnection(_pg.GetConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT event_type FROM events WHERE stream_id = @id ORDER BY sequence_number", connection);
+        command.Parameters.AddWithValue("id", streamId);
+        var types = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
         {
-            Content = JsonContent.Create(new { collection_account_ref = collectionAccountRef }, options: SnakeCase),
-        };
-        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        return await _client.SendAsync(request);
+            types.Add(reader.GetString(0));
+        }
+
+        return types;
     }
 
     private async Task<JsonElement> GetLoanAsync(Guid loanId)
