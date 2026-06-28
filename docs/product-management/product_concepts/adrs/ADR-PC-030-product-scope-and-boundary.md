@@ -222,6 +222,24 @@ No *new* executable commitments are added by this scope/posture decision itself 
 
 ---
 
+## Amendment — 2026-06-28: build `conta à ordem` before `credit_card` (build-sequence reorder)
+
+Authoring the [conta à ordem family ADR (ADR-PC-037)](./ADR-PC-037-conta-a-ordem-family.md) made the readiness ordering explicit: the transactional-account *foundation* (the [ADR-PC-033](./ADR-PC-033-account-abstraction-and-hold-lifecycle.md) Account abstraction, the [ADR-PC-032](./ADR-PC-032-money-movement-primitive.md) Movement read side, the [ADR-PC-034](./ADR-PC-034-realtime-authorization-technique.md) synchronous authorization technique, grouped under the `babelstone-hkwp` "Shape-3 foundations" epic) was built **for the conta à ordem**, and the credit-card account slice is the *second* instance of the same transactional-account abstraction that the conta à ordem first proves. This amendment records that the **build sequence** of the two still-unbuilt families swaps. It is **additive** — it changes the order in which two families are built, not what the engine *is* or where its boundary runs.
+
+### A1 · The build sequence is now `term_deposit → personal_loan → conta à ordem → credit_card`
+
+The §Decision "Family roadmap" lists, and §P2 sequences, the families as `personal_loan` → `credit_card` → `conta à ordem`. The **build order is amended** so the **conta à ordem (transactional account) is built before the credit_card (revolving-asset) account slice**. Rationale: (a) the conta à ordem is *"the hub the others settle against"* (§Decision item 4) and the [ADR-PC-016](./ADR-PC-016-legacy-current-account-adapter.md) v4 destination, so it is the higher-value next family; (b) the transactional-account foundation was already built *for it* (the `babelstone-hkwp` epic, ADR-PC-033/032/034); and (c) the credit-card account slice *reuses* the transactional-account shape (holds, available balance, real-time authorization) the conta à ordem first instantiates ([ADR-PC-037 §S4](./ADR-PC-037-conta-a-ordem-family.md)). The **topology classes are unchanged**: conta à ordem stays the *transactional account* and credit_card the *open-end revolving asset*; only their relative build position swaps. §Open Action 3 (`credit_card`) and §Open Action 4 (`conta à ordem`) are likewise reordered — the conta à ordem family lands first.
+
+### A2 · Reconciles the existing "shape-3 conta à ordem" usage
+
+[ADR-PC-033](./ADR-PC-033-account-abstraction-and-hold-lifecycle.md) and the `babelstone-hkwp` epic ("Shape-3 foundations … the conta à ordem transactional account") already refer to the conta à ordem as the *"shape-3"* family that the deferred Account model grounds. This amendment makes ADR-PC-030's own roadmap numbering consistent with that prior usage rather than leaving the two in latent tension; no change to ADR-PC-033 or the hkwp epic is needed.
+
+### A3 · This amends the decision; it does not supersede this ADR
+
+§Decision (posture **B** — a core product & account ledger), §P1 (the in/out boundary; stages 3–5 owned, rails/SCA/fraud delegated), §P2 (the families ride the one-engine-many-families spine), §P3 (authorization/holds), and the four-shape **topology** all remain binding **as written**. This amendment refines only the *build sequence* recorded in §Decision item-4-vs-item-3, §P2, and §Open Actions 3–4. [ADR-PC-037](./ADR-PC-037-conta-a-ordem-family.md) (conta à ordem, the now-earlier family) and the credit_card family (bd `babelstone-d0ob`, the now-later one) honour this sequence.
+
+---
+
 ## Cross-references
 
 - [ADR-PC-010](./ADR-PC-010-dotnet-hand-rolled-engine.md) — the deterministic-fold kernel whose *nature* this bounds; stages 3–5 stay pure folds, which is why posture D is excluded.
