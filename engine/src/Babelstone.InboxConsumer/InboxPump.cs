@@ -12,22 +12,21 @@ namespace Babelstone.InboxConsumer;
 /// <summary>
 /// The IC-004 consumer half (Document 04 "Inbox Pattern"): the MIRROR of <c>OutboxDrainer</c>. One
 /// <see cref="PumpOnceAsync"/> call consumes the next Redpanda record, un-frames the Confluent
-/// wire-format value (magic byte ‖ big-endian schema_id ‖ Avro), decodes the Avro via the G.3 codec,
+/// wire-format value (magic byte ‖ big-endian schema_id ‖ Avro), decodes the Avro via the codec,
 /// then in ONE PostgreSQL transaction INSERTs the <c>message_id</c> dedup row and runs the handler —
 /// committing the Kafka offset only after the DB transaction commits.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Schema resolution (ADR-IC-002 §Consequences; runtime lookup §P3):</b> the decode resolves the
+/// <b>Schema resolution (ADR-IC-002):</b> the decode resolves the
 /// WRITER schema from the embedded wire-format <c>schema_id</c> via the Schema Registry (an
 /// <see cref="ISchemaByIdResolver"/> with a client-side cache) and reads writer→reader through Avro
 /// schema resolution (the <c>GenericDatumReader</c> gets BOTH the writer and this consumer's local
-/// reader schema). This is the consumer contract ADR-IC-002 §Consequences prescribes — "the schema ID
-/// in the Avro message header is meaningless without the registry"; §P3 adds the runtime point: "at
-/// runtime the Avro SerDe resolves the schema ID by … lookup". It is the OPPOSITE of ADR-IC-004 §P3's
-/// "no SR lookup" optimisation, which is a PUBLISH-path guarantee only. CROSS-CONTEXT FORWARD/BACKWARD
+/// reader schema). This is the consumer contract ADR-IC-002 prescribes — the wire-format schema id is
+/// meaningless without the registry, so the consumer resolves it there. It is the OPPOSITE of
+/// ADR-IC-004's "no SR lookup" optimisation, which is a PUBLISH-path guarantee only. CROSS-CONTEXT FORWARD/BACKWARD
 /// EVOLUTION now decodes correctly: a producer on a NEWER, BACKWARD-compatible writer schema (an
-/// additive field under a default; BACKWARD is the §Consequences compatibility default) embeds a
+/// additive field under a default; BACKWARD is the registry compatibility default) embeds a
 /// different id; resolving it lets the codec drop a writer-only field and default a reader-only one,
 /// instead of mis-decoding → poison. An unknown/unresolvable id is undecodable and routes to the poison
 /// path (skip-and-commit), never a silent mis-decode. When NO resolver is wired (a unit test, or a
@@ -42,14 +41,14 @@ namespace Babelstone.InboxConsumer;
 /// SimulationRuntime, ReadModelRunner) needs <b>no</b> writer-schema resolution at all: the
 /// <c>events.payload</c> is self-describing JSON (ADR-PC-028), decodable with no Schema Registry, so
 /// replay never resolves against a writer schema. <c>EventEnvelope.PayloadSchemaId</c> is the outbound
-/// Avro encoding's id (a bus cross-reference, ADR-IC-004 §P3), not a replay-decode key. (This supersedes
+/// Avro encoding's id (a bus cross-reference, ADR-IC-004), not a replay-decode key. (This supersedes
 /// the earlier "deferred follow-up" framing: ADR-PC-028 decided the store stays JSON, obsoleting the
 /// replay-side Avro-resolution work.)
 /// </para>
 /// <para>
-/// <b>Dedup (Document 04 / ADR-IC-004 §Residual-risks "mandatory, not optional"):</b> the inbox PK
+/// <b>Dedup (Document 04 / ADR-IC-004 "mandatory, not optional"):</b> the inbox PK
 /// on <c>message_id</c> is the dedup mechanism. A duplicate physical delivery (the dual-publish window
-/// the outbox §Residual-risks leaves open, or a Kafka rebalance replay) collides on the PK; the INSERT
+/// the outbox leaves open, or a Kafka rebalance replay) collides on the PK; the INSERT
 /// throws a unique-violation, the transaction rolls back, and the loop treats it as "already processed
 /// → commit the offset and move on". No business effect runs twice — effectively-once.
 /// </para>
@@ -70,17 +69,17 @@ namespace Babelstone.InboxConsumer;
 /// </para>
 /// <para>
 /// <b>Tombstone (GDPR erasure):</b> a record with a key but a null/empty value is Redpanda log
-/// compaction's right-to-erasure signal on a <c>cleanup.policy=compact</c> topic (ADR-IC-001 §P4 /
-/// ADR-IC-002 §P4). It is recognised BEFORE the Avro decode — never deserialised as Avro — and skipped
+/// compaction's right-to-erasure signal on a <c>cleanup.policy=compact</c> topic (ADR-IC-001 /
+/// ADR-IC-002). It is recognised BEFORE the Avro decode — never deserialised as Avro — and skipped
 /// past on its OWN counter, deliberately NOT the poison counter, so a routine crypto-shred upstream
 /// never raises a false dead-letter alert. A handler that owns projection state plugs the actual
-/// erasure in via the H.1 saga seam; this dedup-only assembly's contract-honouring action is
+/// erasure in via the saga seam; this dedup-only assembly's contract-honouring action is
 /// skip-and-commit.
 /// </para>
 /// </remarks>
 public sealed class InboxPump : IDisposable
 {
-    // Confluent wire format (ADR-IC-002 §P3 / ADR-IC-004 §P3): magic byte 0x00, then the 4-byte
+    // Confluent wire format (ADR-IC-002 / ADR-IC-004): magic byte 0x00, then the 4-byte
     // big-endian schema_id, then the bare Avro value — the exact framing OutboxDrainer produces.
     private const byte MagicByte = 0x00;
     private const int WireFormatHeaderLength = 5; // magic byte + 4-byte schema_id
@@ -88,7 +87,7 @@ public sealed class InboxPump : IDisposable
     // Counters on the shared Babelstone meter (ADR-IC-007 Layer 1), tagged by source_topic only —
     // operational tier, never PII. A host turns them on with AddMeter(BabelstoneTelemetry.MeterName);
     // with no listener Add is a near no-op. handled = first-time effects; duplicates = dedup hits
-    // (the §Residual-risks backstop firing); poison = un-processable records skipped.
+    // (the dedup backstop firing); poison = un-processable records skipped.
     private static readonly Counter<long> HandledMessages =
         BabelstoneTelemetry.Meter.CreateCounter<long>(
             BabelstoneAttributes.InboxHandledMetric,
@@ -107,7 +106,7 @@ public sealed class InboxPump : IDisposable
     private static readonly Counter<long> TombstoneMessages =
         BabelstoneTelemetry.Meter.CreateCounter<long>(
             BabelstoneAttributes.InboxTombstoneMetric,
-            description: "Inbox null-payload tombstones skipped (GDPR compaction erasure signal, ADR-IC-002 §P4).");
+            description: "Inbox null-payload tombstones skipped (GDPR compaction erasure signal, ADR-IC-002).");
 
     // PostgreSQL unique-violation SQLSTATE — the inbox_pkey collision that IS the "already processed"
     // signal (Document 04). Matching the SQLSTATE (not the message text) keeps it locale-independent.
@@ -142,9 +141,9 @@ public sealed class InboxPump : IDisposable
         _handler = handler ?? throw new ArgumentNullException(nameof(handler));
         _poisonSink = poisonSink;
         // The SR writer-schema resolver: when present, the decode resolves the WRITER schema by the
-        // embedded wire-format schema_id and reads writer→reader (Avro schema resolution, ADR-IC-002
-        // §Consequences). When null, the decode falls back to the writer == reader fast path (the same-
-        // version intra-context case) — a unit test without an SR, or a deployment that has not wired one yet.
+        // embedded wire-format schema_id and reads writer→reader (Avro schema resolution, ADR-IC-002).
+        // When null, the decode falls back to the writer == reader fast path (the same-version
+        // intra-context case) — a unit test without an SR, or a deployment that has not wired one yet.
         _writerSchemas = writerSchemas;
 
         if (consumer is null)
@@ -210,14 +209,14 @@ public sealed class InboxPump : IDisposable
         }
 
         // A null-payload tombstone (a record with a key but no value) is Redpanda log compaction's
-        // GDPR right-to-erasure signal on a cleanup.policy=compact topic (ADR-IC-001 §P4). The
-        // consumer contract (ADR-IC-002 §P4) requires it be recognised BEFORE the Avro decode: never
+        // GDPR right-to-erasure signal on a cleanup.policy=compact topic (ADR-IC-001). The
+        // consumer contract (ADR-IC-002) requires it be recognised BEFORE the Avro decode: never
         // deserialise null as Avro, and — crucially — do not mistake it for a poison record. This
         // assembly is a dedup + dispatch seam, not a projection owner, so there is no materialised
         // state to delete; the correct, contract-honouring action is skip-and-commit (step past it,
         // count it as a tombstone, never as poison so a routine crypto-shred upstream never raises a
         // false dead-letter alert). A handler that owns projection state plugs that erasure in via the
-        // H.1 saga seam; until then skip-and-commit is the conservative, GDPR-compliant behaviour.
+        // saga seam; until then skip-and-commit is the conservative, GDPR-compliant behaviour.
         if (IsTombstone(result))
         {
             CommitPast(result);
@@ -305,7 +304,7 @@ public sealed class InboxPump : IDisposable
         {
             // The concurrent-race loser (the SELECT above missed a row a racing transaction inserted
             // and committed between this SELECT and this INSERT). The inbox_pkey collision is the
-            // §Residual-risks dedup backstop doing its job: roll back (the handler's effect is
+            // dedup backstop doing its job: roll back (the handler's effect is
             // discarded — it must not commit twice) and report the duplicate. Not an error.
             //
             // The constraint filter is load-bearing: the handler runs INSIDE this try (it may INSERT
@@ -421,8 +420,8 @@ public sealed class InboxPump : IDisposable
     /// <summary>
     /// Decode the bare Avro value into a <see cref="DomainEvent"/>. When a writer-schema resolver is
     /// wired, resolve the WRITER schema by the embedded wire-format <paramref name="schemaId"/> from the
-    /// Schema Registry (cached) and read writer→reader via Avro schema resolution (ADR-IC-002
-    /// §Consequences) — so a producer on a NEWER, BACKWARD-compatible writer schema decodes correctly
+    /// Schema Registry (cached) and read writer→reader via Avro schema resolution (ADR-IC-002) — so a
+    /// producer on a NEWER, BACKWARD-compatible writer schema decodes correctly
     /// against this consumer's OLDER reader schema rather than mis-decoding → poison. With no resolver
     /// wired, fall back to the writer == reader fast path (same-version intra-context topics).
     /// A <c>ce_type</c>↔<c>schema_id</c> record-name mismatch (the header names one record but the id
@@ -442,7 +441,7 @@ public sealed class InboxPump : IDisposable
     }
 
     /// <summary>A compaction tombstone: a record present but with a null OR zero-length value (the GDPR
-    /// erasure signal, ADR-IC-002 §P4). Detected BEFORE any Avro decode so a null payload is never
+    /// erasure signal, ADR-IC-002). Detected BEFORE any Avro decode so a null payload is never
     /// deserialised and never mis-routed to the poison path. Confluent.Kafka surfaces a tombstone as a
     /// null <c>Message.Value</c>; a zero-length value is treated the same, defensively.</summary>
     internal static bool IsTombstone(ConsumeResult<byte[], byte[]> result)
@@ -451,7 +450,7 @@ public sealed class InboxPump : IDisposable
     /// <summary>magic byte 0x00 ‖ big-endian int32 schema_id ‖ avro value → the embedded WRITER
     /// <paramref name="schemaId"/> and the bare Avro value. The schema_id is no longer discarded: the
     /// decode resolves the writer schema from it via the Schema Registry (when a resolver is wired) and
-    /// reads writer→reader under Avro schema resolution (ADR-IC-002 §Consequences). Both the framing AND
+    /// reads writer→reader under Avro schema resolution (ADR-IC-002). Both the framing AND
     /// the id are returned here. The inverse of <c>OutboxDrainer.ToConfluentWireFormat</c>.</summary>
     internal static bool TryUnframe(ReadOnlySpan<byte> framed, out int schemaId, out ReadOnlyMemory<byte> avroValue)
     {

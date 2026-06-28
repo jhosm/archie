@@ -15,7 +15,7 @@ namespace Babelstone.InboxConsumer;
 /// hiccup) leaves the DB transaction rolled back and the offset UNCOMMITTED, so the record is
 /// redelivered. This loop treats it as backpressure — log, back off exponentially up to a ceiling,
 /// then retry — exactly as the outbox relay treats a Redpanda outage (rows stay PENDING, never
-/// FAILED — ADR-IC-004 §P7). It never advances past a record whose effect did not commit; the inbox
+/// FAILED — ADR-IC-004). It never advances past a record whose effect did not commit; the inbox
 /// is the consumer's source of truth that the message was processed, and a transient failure must
 /// not be mistaken for a processed message. Poison records are handled INSIDE the pump (skipped past),
 /// so they do not trip this backoff.

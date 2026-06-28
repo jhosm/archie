@@ -2,9 +2,8 @@ namespace Babelstone.InboxConsumer;
 
 /// <summary>
 /// Configuration for the Redpanda→inbox consumer (the mirror of <c>OutboxRelayOptions</c>).
-/// Everything the consumer needs to subscribe, decode (the wire-format schema_id is embedded in
-/// each record — no Schema-Registry lookup, ADR-IC-004 §P3), deduplicate by <c>message_id</c>
-/// (the CloudEvents <c>ce_id</c> header, ADR-IC-015), and commit offsets.
+/// Everything the consumer needs to subscribe, decode the wire-format value, deduplicate by
+/// <c>message_id</c> (the CloudEvents <c>ce_id</c> header, ADR-IC-015), and commit offsets.
 /// </summary>
 public sealed record InboxConsumerOptions
 {
@@ -31,7 +30,7 @@ public sealed record InboxConsumerOptions
 
     /// <summary>
     /// The topics this consumer subscribes to — the producer routes a record to a topic named after
-    /// the <c>aggregate_type</c> (ADR-IC-004 §Consequences), so a consumer of term-deposit events
+    /// the <c>aggregate_type</c> (ADR-IC-004), so a consumer of term-deposit events
     /// subscribes to "term_deposit".
     /// </summary>
     public required IReadOnlyList<string> Topics { get; init; }
