@@ -134,7 +134,18 @@ while IFS=$'\t' read -r tid st gate link; do
     [ -d "$d" ] || continue
     if grep -rqF "${CODE_INCLUDES[@]}" -e "$tid" "$d" 2>/dev/null; then found_test="yes"; break; fi
   done
-  [ -n "$found_test" ] || err "$CATALOGUE" "Row '$tid' is Live but no test/code under {$CODE_DIRS} references the Test ID."
+  # A commitment may instead be realised by a CI shell-script gate under scripts/ — e.g.
+  # kong-config-check.sh (ADR-IC-006) or grafana-rbac-check.sh (the observability-plane
+  # RBAC enforcement, OBS_PLANE_RBAC / catalogue SEC-2). These run in ci.yml's path-scoped
+  # jobs, so they ARE "a test that exists and runs in CI" (ADR-PC-020 §P6) for a commitment
+  # whose realisation is ops/infra config with NO compiled-code home (the engine/contract
+  # subtrees carry no Grafana/Kong source). Accept a scripts/*.sh gate naming the Test ID as
+  # Live-resolution evidence alongside the code-dir tests. Purely additive — it can only let
+  # MORE rows resolve, never fewer, so it cannot mask a regression in an existing Live row.
+  if [ -z "$found_test" ] && [ -d scripts ] && grep -rqF --include='*.sh' -e "$tid" scripts 2>/dev/null; then
+    found_test="yes"
+  fi
+  [ -n "$found_test" ] || err "$CATALOGUE" "Row '$tid' is Live but no test/code under {$CODE_DIRS} (nor a CI gate under scripts/*.sh) references the Test ID."
 done < "$rows"
 [ "$live" -gt 0 ] || note "no Live commitments yet — engine is a skeleton; test-resolution checks are dormant (all rows Planned)."
 

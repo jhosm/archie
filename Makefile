@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 BACKSTAGE_PORT    ?= 7007
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile gen-saga-topics gen-saga-topics-check kong-config-check deck-sync-dry-run deck-sync cd-migrate-gate cd-migrate edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify rate-sheet-check deploy-rate-sheet docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test load-gate preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile gen-saga-topics gen-saga-topics-check kong-config-check grafana-rbac-check deck-sync-dry-run deck-sync cd-migrate-gate cd-migrate edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify rate-sheet-check deploy-rate-sheet docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test load-gate preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -83,6 +83,9 @@ gen-saga-topics-check: ## Gate: the generated saga-topic manifest matches the ca
 
 kong-config-check: ## Validate the Kong edge config: deck + kong config parse + edge-contract assertions (ADR-IC-006 §P1, needs deck + Docker)
 	@./scripts/kong-config-check.sh
+
+grafana-rbac-check: ## Enforce the observability-plane RBAC end-to-end: noc refused a Tempo query, engineer/admin succeed, read logged (ADR-IC-016 §7 / ADR-IC-007 §P6, needs Docker)
+	@./scripts/grafana-rbac-check.sh
 
 deck-sync-dry-run: ## Prove the OpenBao-backed deck-sync render path with throwaway PEM (no secrets, no live Kong; Q.6/4c81.1)
 	@./scripts/deck-sync.sh --dry-run

@@ -62,7 +62,7 @@ jobs:
               - 'rate-sheets/**'
               - 'packs/**/rate-sheet-refs/**'
               - 'contracts/cue/pack/**'
-            infra: ['infra/**', 'scripts/kong-config-check.sh', 'mise.toml']
+            infra: ['infra/**', 'scripts/kong-config-check.sh', 'scripts/grafana-rbac-check.sh', 'mise.toml']
             docs: ['docs/**', '*.md', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
             # Every input scripts/docs-gen/generate.py reads to render docs/product-docs/reference/
             # (ADR-PC-022 §P2). Kept FAITHFUL so any source change re-runs `make docs-verify`, and in
@@ -722,6 +722,21 @@ jobs:
         # edge-contract fitness assertions (routes present, SSE settings, edge policies,
         # and the engine COMMAND surface NOT publicly exposed — ADR-IC-006 §P5).
         run: ./scripts/kong-config-check.sh
+      - name: Grafana observability-plane RBAC enforcement (ADR-IC-016 §7 / ADR-IC-007 §P6, M.3)
+        # The observability-plane access-control gate (OBS_PLANE_RBAC / catalogue SEC-2,
+        # bd babelstone-njt2.7). The trace/log store is a searchable database of every
+        # financial operation, so it must not be open to all engineers and every access to
+        # a financially-attributed trace must itself be logged (doc 10 Boundary 7). The
+        # script stands up the pinned grafana/otel-lgtm:0.28.0 appliance (Docker is
+        # available on ubuntu-latest, the same lane the engine Testcontainers + Avro-compat
+        # steps use) with the infra/grafana/rbac/ overlay, and asserts END-TO-END that an
+        # anonymous Tempo query is refused (401), a NOC-class token without datasources:query
+        # is refused the trace read (403) while engineer/admin succeed (200), and the
+        # authorised read is recorded user-attributed in Grafana's dataproxy access log —
+        # plus static assertions that the provisioned config still expresses the §P6 role
+        # split + Tempo lock (ADR-PC-020 §D3: no silent divergence). Same check dev runs via
+        # `make grafana-rbac-check`.
+        run: ./scripts/grafana-rbac-check.sh
       - name: Validate K8s manifests (kustomize build + kubeconform, P.6 / P.7)
         # The base configMapGenerator reads ../../kong/kong.yml and
         # ../../otel/collector.yaml (the single config source the Compose stack
