@@ -1,10 +1,10 @@
 namespace Babelstone.FinancialTypes;
 
 /// <summary>
-/// EUR money as a signed-integer count of cents (ADR-PC-010 §P1). Cents is the
+/// EUR money as a signed-integer count of cents (ADR-PC-010). Cents is the
 /// storage and arithmetic substrate; <see cref="decimal"/> is a boundary-only
 /// computation type that enters exactly one place — <see cref="FromCents(decimal)"/> —
-/// where it is rounded HALF_EVEN to cents (§P2). The type intentionally exposes no
+/// where it is rounded HALF_EVEN to cents (ADR-PC-010). The type intentionally exposes no
 /// operator that returns <see cref="decimal"/> from <see cref="Money"/> inputs.
 /// </summary>
 public readonly record struct Money(long Cents)
@@ -12,7 +12,7 @@ public readonly record struct Money(long Cents)
     public static readonly Money Zero = new(0L);
 
     /// <summary>
-    /// The single Decimal→Cents rounding boundary (ADR-PC-010 §P2): round the
+    /// The single Decimal→Cents rounding boundary (ADR-PC-010): round the
     /// fully-computed decimal amount exactly once, HALF_EVEN. Callers compute the
     /// whole expression in full precision and only cross this boundary at the end —
     /// never round intermediate steps (accumulating roundings drifts).

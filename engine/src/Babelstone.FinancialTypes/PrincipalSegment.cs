@@ -1,8 +1,8 @@
 namespace Babelstone.FinancialTypes;
 
 /// <summary>
-/// One segment of a deposit's PRINCIPAL over time (fin-math §8.1 step-function balance; F.12 partial
-/// withdrawal). The principal of a term deposit is normally constant, but a partial early withdrawal
+/// One segment of a deposit's PRINCIPAL over time (fin-math §8.1 step-function balance). The
+/// principal of a term deposit is normally constant, but a partial early withdrawal
 /// reduces it mid-term, making the balance a step function. This segment is
 /// the principal in force from <see cref="From"/> (inclusive) until the next segment's date (or the
 /// accrual window's end for the last).
@@ -15,7 +15,7 @@ namespace Babelstone.FinancialTypes;
 /// no clock, no I/O. The timeline it composes is a deterministic fold of the deposit's events —
 /// <c>DepositConstituted</c> seeds the opening <c>(start, principal)</c>, each
 /// <c>DepositPartiallyWithdrawn</c> appends <c>(withdrawn-on, remaining-principal)</c> — so a cold
-/// replay reproduces it byte-for-byte (ADR-PC-010 §P5).
+/// replay reproduces it byte-for-byte (ADR-PC-010).
 /// </remarks>
 /// <param name="From">The date this principal takes effect — the deposit start for the first segment,
 /// a withdrawal date for each later one. A well-formed timeline ascends strictly by date.</param>
