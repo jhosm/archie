@@ -39,9 +39,16 @@ public sealed class CatalogGatedRelayReverseOrphanTests
         Assert.NotEmpty(relayCapableEventTypes);
 
         // The catalogued event_type set, read straight off the embedded schemas (the single governed
-        // source). Every entry MUST be relay-capable (a registered handler) — a catalogued event with
-        // no handler would be a schema for an event the engine cannot even append.
-        var cataloguedEventTypes = catalog.Entries.Select(e => e.EventType).ToHashSet(StringComparer.Ordinal);
+        // source). Every ENGINE-produced entry MUST be relay-capable (a registered handler) — a
+        // catalogued engine event with no handler would be a schema for an event the engine cannot even
+        // append. DOWNSTREAM-producer schemas (ADR-IC-017 2026-06-26 amendment §3 — x-producer != engine,
+        // e.g. notification's SCHEDULED NotificationDue, ADR-PC-025) are engine-OWNED but not
+        // engine-EMITTED, so there is NO engine DomainEvent / handler to anchor them; this build-time
+        // biconditional is producer-scoped to the engine plane exactly as the shell gate's §P3 leg is.
+        var cataloguedEventTypes = catalog.Entries
+            .Where(e => !DownstreamProducerSchemas.RecordNames.Contains(e.Schema.Name))
+            .Select(e => e.EventType)
+            .ToHashSet(StringComparer.Ordinal);
 
         var biconditionalViolations = new List<string>();
         foreach (var eventType in relayCapableEventTypes)

@@ -1,0 +1,101 @@
+asyncapi: '3.0.0'
+info:
+  title: NotificationDue
+  version: '1'
+  description: |
+    A customer notification of template `template_ref` is due for an instance, carrying the
+    structural data needed to render it. The receiver renders the named pack template (ADR-PC-007)
+    against `data` and delivers it over the customer's preferred channel; the producer commits to
+    WHICH template, with WHAT values, on WHAT date (ADR-PC-025 Decision 2).
+
+    Producer: the family-agnostic NOTIFICATION SCHEDULER (ADR-IC-019), NOT the engine. This is the
+    SCHEDULED leg of the engine-owned NotificationDue contract: the scheduler reads the
+    maturity-calendar / accrual / withholding-ledger projections cross-context and produces this
+    signal itself, because the engine emits no clock-driven signal and runs no scheduler (ADR-PC-023).
+    The engine OWNS the schema and the trigger_kind taxonomy (ADR-PC-025 §6) and emits the
+    EVENT_DRIVEN + PRE_CONTRACTUAL legs of the same schema from its own relay; the enum retains
+    SCHEDULED for this downstream producer. This catalogue entry is therefore marked
+    `x-producer: notification` — the ADR-IC-017 (2026-06-26 amendment) downstream-producer marker.
+
+    Idempotency: at-least-once via the producer's outbox (ADR-IC-004); per-instance order
+    (partition_key = instance_id). A redelivered or replayed NotificationDue is the EXPECTED case the
+    receiver absorbs without re-sending (slot 4), keyed on notification_id; dedupe is consumer-side.
+
+    No PII (ADR-PC-004 §P2 / ADR-PC-025 Decision 1): customer_id is an opaque recipient REFERENCE the
+    communications system resolves at render time against the engine's PII-resolve surface (returning
+    null for a crypto-shredded subject); `data` carries STRUCTURAL interpolation values only. The bus
+    never carries the subject's name, NIF, or contact data.
+  x-owner: platform
+  x-owner-contact: platform-team@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: CONTRACT_PERFORMANCE
+  # ADR-IC-017 (2026-06-26 amendment) §3: the producing service. `notification` (NOT `engine`) — a
+  # registered in-house estate service (ADR-IC-013): the SCHEDULED leg is produced by the notification
+  # scheduler's own outbox (ADR-IC-019), so this entry is EXEMPT from the §P3 reverse-orphan
+  # relay-capable-ENGINE-event leg only. It still carries every other catalogue obligation (validity,
+  # governance fields, no-PII, BACKWARD diff, deprecation lifecycle, subject well-formedness).
+  x-producer: notification
+  x-authorized-consumers:
+    - channel             # the out-of-scope customer-communications / channel system that renders the pack template and delivers it (ADR-PC-025 Counterparty)
+channels:
+  operations:
+    description: |
+      The cross-cutting operational stream (event-store §4.1/§4.3). Topic name == `aggregate_type`
+      (the relay's documented convention) — the synthetic `operations` aggregate_type for facts that
+      apply to ANY instance regardless of product family. The SCHEDULED NotificationDue is produced
+      onto this stream by the notification scheduler's own outbox (ADR-IC-019), not the engine relay.
+      One Avro schema per event type (Option A, doc 08): each event is its own message on this channel.
+    x-compacted: false
+    messages:
+      NotificationDue:
+        $ref: '#/components/messages/NotificationDue'
+operations:
+  publishNotificationDue:
+    action: send
+    channel:
+      $ref: '#/channels/operations'
+    messages:
+      - $ref: '#/channels/operations/messages/NotificationDue'
+components:
+  messages:
+    NotificationDue:
+      name: NotificationDue
+      title: Notification Due
+      summary: A customer notification (template + structural data) is due for an instance.
+      contentType: application/avro
+      bindings:
+        kafka:
+          # CloudEvents 1.0 Binary Content Mode — attributes ride as Kafka headers; the value is the
+          # Avro business payload. No PII (ADR-PC-004 §P2): the payload carries only structural fields
+          # + opaque references (customer_id resolved at render time).
+          key:
+            type: string
+            description: 'aggregate_id (InstanceId) — the Kafka record key (partition_key = instance_id).'
+          bindingVersion: '0.5.0'
+      headers:
+        type: object
+        required:
+          - ce_specversion
+          - ce_id
+          - ce_source
+          - ce_type
+          - ce_time
+          - ce_subject
+          - ce_aggregatetype
+          - ce_datacontenttype
+        properties:
+          ce_specversion:      { type: string, const: '1.0' }
+          ce_id:               { type: string, format: uuid, description: 'Unique event ID (producer outbox event_id).' }
+          ce_source:           { type: string, description: 'URI of the producing service, e.g. urn:babelstone:notification (the scheduler) — NOT the engine, for the SCHEDULED leg.' }
+          ce_type:             { type: string, description: 'Reverse-DNS event type, e.g. com.bank.operations.NotificationDue.' }
+          ce_time:             { type: string, format: date-time }
+          ce_datacontenttype:  { type: string, const: 'application/avro' }
+          ce_subject:          { type: string, description: 'aggregate_id — the specific instance this notification is about.' }
+          ce_aggregatetype:    { type: string, description: 'Aggregate type — operations (the synthetic cross-cutting aggregate_type).' }
+      # §P6: payload is the governed Avro schema, referenced (not restated). The PR gate resolves the
+      # .avsc on disk hermetically; the main lane reconciles the subject below.
+      x-schema-registry-subject: operations.NotificationDue-value
+      payload:
+        schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
+        schema:
+          $ref: '../../avro/operations/NotificationDue.avsc'

@@ -60,6 +60,13 @@ BASELINE_REF="${ASYNCAPI_CATALOG_BASELINE_REF:-origin/main}"
 SCHEMA_REGISTRY_URL="${SCHEMA_REGISTRY_URL:-http://localhost:18081}"
 # Pin the AsyncAPI CLI so the gate is reproducible across runners (no "@latest" drift).
 ASYNCAPI_CLI="${ASYNCAPI_CLI:-@asyncapi/cli@6.0.2}"
+# ADR-IC-017 (2026-06-26 amendment) §1/§4 — the registered estate producer services an event's
+# `x-producer` marker may name: the engine plus the in-house estate (ADR-IC-013 — saga orchestrator,
+# ACL, MCP server, notification service). `engine` is the default and overwhelming-majority value; a
+# non-engine producer is a downstream-produced schema (e.g. notification's SCHEDULED NotificationDue,
+# ADR-PC-025) and an UNKNOWN producer name FAILS the gate, so the producer-scoping of §P3 below cannot
+# become a back door that smuggles an un-relayed engine event past the reverse-orphan check.
+REGISTERED_PRODUCERS="${ASYNCAPI_CATALOG_REGISTERED_PRODUCERS:-engine notification acl orchestrator mcp}"
 
 RECONCILE=0
 [ "${1:-}" = "--reconcile" ] && RECONCILE=1
@@ -120,7 +127,8 @@ note ""
 # ---------------------------------------------------------------------------
 note "-- §P1/§P3/§P5/§P6 structural assertions --"
 declare -a subjects=()
-declare -a referenced_avscs=()   # §P2: the .avsc set the catalog actually $refs (orphan check below)
+declare -a referenced_avscs=()       # §P2: the .avsc set the catalog actually $refs (orphan check below)
+declare -a referenced_producers=()   # ADR-IC-017 amendment: the x-producer of each referenced .avsc (§P3 producer-scoping)
 for f in "${files[@]}"; do
 	doc="$(y2j "$f")" || { err "$f: could not parse YAML"; continue; }
 
@@ -135,6 +143,16 @@ for f in "${files[@]}"; do
 	case "$status" in
 		active|deprecated|sunset|'') ;;
 		*) err "$f: info.x-status '$status' is not one of active|deprecated|sunset (ADR-IC-008 §P1)";;
+	esac
+
+	# ADR-IC-017 (2026-06-26 amendment) §1/§4 — the producing service. Read x-producer (absent defaults
+	# to `engine`, the overwhelming-majority case) and require it to be a REGISTERED estate service. An
+	# unknown producer name fails the gate, so producer-scoping §P3 below cannot smuggle an un-relayed
+	# engine event past the reverse-orphan check by mislabelling its producer.
+	producer="$(printf '%s' "$doc" | jq -r '.info["x-producer"] // "engine"')"
+	case " $REGISTERED_PRODUCERS " in
+		*" $producer "*) ;;
+		*) err "$f: info.x-producer '$producer' is not a registered estate producer service (one of: $REGISTERED_PRODUCERS) — ADR-IC-017 amendment §4 / ADR-IC-013";;
 	esac
 
 	# §P3 — every compacted channel must carry the tombstone contract.
@@ -193,8 +211,9 @@ for f in "${files[@]}"; do
 			continue
 		fi
 		subjects+=("$subject")
-		referenced_avscs+=("$avsc")   # §P2: this catalog file claims this .avsc
-		note "  ok  $f :: $msg  ->  $subject"
+		referenced_avscs+=("$avsc")           # §P2: this catalog file claims this .avsc
+		referenced_producers+=("$producer")   # ADR-IC-017 amendment: this .avsc's producer (§P3 scoping)
+		note "  ok  $f :: $msg  ->  $subject  (x-producer:$producer)"
 	done < <(printf '%s' "$doc" | jq -r '.components.messages | keys[]')
 done
 note ""
@@ -254,8 +273,29 @@ note ""
 # family. The .NET test is the authoritative biconditional proof (it has the real catalog + handler
 # registry, which already includes the spliced cross-cutting registrations); this is the contracts-job
 # mirror that fails the PR at the schema layer.
+#
+# PRODUCER-SCOPED (ADR-IC-017 2026-06-26 amendment §3). The biconditional anchors on the ENGINE's
+# relay-capable event set, so it applies ONLY to entries whose x-producer is `engine` (or absent,
+# which defaults to engine). A DOWNSTREAM-producer schema (x-producer != engine — e.g. notification's
+# SCHEDULED NotificationDue, ADR-PC-025) has no engine DomainEvent to anchor it, and that is correct:
+# the engine does not produce it. Such an entry is EXEMPT from this relay-capable-engine leg ONLY — it
+# still passed §P1 validity/governance, §P6 subject well-formedness, §P4 BACKWARD diff and the no-PII
+# obligations above, and its producer was already proven a registered estate service (§P1 loop).
 # ---------------------------------------------------------------------------
-note "-- §P3 (ADR-IC-017) reverse orphan: every catalogued .avsc is a real DomainEvent (NO_UNCATALOGUED_EVENT_ON_BUS) --"
+note "-- §P3 (ADR-IC-017) reverse orphan: every ENGINE-produced catalogued .avsc is a real DomainEvent (NO_UNCATALOGUED_EVENT_ON_BUS; downstream producers exempt) --"
+# producer_for_avsc <abs-avsc-path> — the x-producer recorded for this .avsc by the §P1 structural loop
+# (engine when absent). Linear lookup over the lockstep referenced_avscs / referenced_producers arrays;
+# every .avsc reaching here has a catalog entry (§P2 guards the orphan case), so a hit is guaranteed.
+producer_for_avsc() {
+	local target="$1" i=0
+	while [ "$i" -lt "${#referenced_avscs[@]}" ]; do
+		if [ "${referenced_avscs[$i]}" = "$target" ]; then
+			printf '%s' "${referenced_producers[$i]}"; return 0
+		fi
+		i=$((i + 1))
+	done
+	printf 'engine'
+}
 FAMILIES_DIR="${ASYNCAPI_CATALOG_FAMILIES_DIR:-families}"
 # The engine spine's cross-cutting event declarations (engine-owned, family-agnostic — event-store
 # §4.1/§4.3). A promoted cross-cutting event (a catalogued .avsc) resolves to a DomainEvent HERE, not
@@ -290,6 +330,14 @@ if [ -d "$AVRO_DIR" ] && [ -d "$FAMILIES_DIR" ]; then
 	while IFS= read -r -d '' avsc; do
 		record_name="$(jq -r '.name // empty' "$avsc")"
 		[ -n "$record_name" ] || { err "$avsc has no Avro record .name (ADR-IC-002 §P1)"; continue; }
+		abs_avsc="$(cd "$(dirname "$avsc")" && pwd)/$(basename "$avsc")"
+		producer="$(producer_for_avsc "$abs_avsc")"
+		# Producer-scoping (amendment §3): a non-engine producer's schema has no engine DomainEvent to
+		# anchor — exempt it from THIS leg only (every other obligation already held above).
+		if [ "$producer" != "engine" ]; then
+			note "  ok  $record_name is x-producer:$producer (downstream-produced — exempt from the relay-capable-engine leg; ADR-IC-017 amendment §3)"
+			continue
+		fi
 		if printf '%s\n' "$domain_event_names" | grep -qxF "$record_name"; then
 			note "  ok  $record_name is a DomainEvent (catalogued ⇔ relay-capable)"
 		else

@@ -32,9 +32,14 @@ public sealed class AvroCatalogSweepTests
     }
 
     // One xUnit case per catalogued schema, keyed by the Avro record name (== the CLR event-type name,
-    // AvroSchemaCatalog.ForRecordName) so a failure NAMES the offending event.
+    // AvroSchemaCatalog.ForRecordName) so a failure NAMES the offending event. DOWNSTREAM-producer
+    // schemas (ADR-IC-017 amendment §3 — x-producer != engine, e.g. notification's SCHEDULED
+    // NotificationDue) are engine-OWNED but not engine-EMITTED, so they have no engine CLR DomainEvent
+    // to round-trip; they are excluded here exactly as the shell gate exempts them from §P3.
     public static IEnumerable<object[]> CataloguedEvents()
-        => new AvroSchemaCatalog().Entries.Select(e => new object[] { e.Schema.Name });
+        => new AvroSchemaCatalog().Entries
+            .Where(e => !DownstreamProducerSchemas.RecordNames.Contains(e.Schema.Name))
+            .Select(e => new object[] { e.Schema.Name });
 
     [Theory]
     [MemberData(nameof(CataloguedEvents))]

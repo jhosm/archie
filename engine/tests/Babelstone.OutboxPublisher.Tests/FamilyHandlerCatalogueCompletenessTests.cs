@@ -73,7 +73,15 @@ public sealed class FamilyHandlerCatalogueCompletenessTests
     {
         var data = new TheoryData<string>();
         foreach (var entry in new AvroSchemaCatalog().Entries)
+        {
+            // DOWNSTREAM-producer schemas (ADR-IC-017 amendment §3 — x-producer != engine, e.g.
+            // notification's SCHEDULED NotificationDue) are engine-OWNED but not engine-EMITTED, so no
+            // family module registers a fold handler for them. Exempt them from the handler-completeness
+            // sweep exactly as the shell gate exempts them from the §P3 relay-capable-engine leg.
+            if (DownstreamProducerSchemas.RecordNames.Contains(entry.Schema.Name))
+                continue;
             data.Add(entry.EventType);
+        }
         return data;
     }
 
