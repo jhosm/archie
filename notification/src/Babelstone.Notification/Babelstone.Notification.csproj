@@ -48,4 +48,16 @@
          Host exe, not here. -->
     <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- The shared CADENCE machinery (ADR-PC-036 §Decision 2 + ADR-IC-019 mechanism reuse): the generic
+         clock-owning poll-loop worker (CadenceWorker), the per-tick pass abstraction (ISchedulePass), the
+         dedupe ledger (IDedupeLedger/InMemoryDedupeLedger), and the composite-id primitive (CompositeId). The
+         notification estate's NotificationWorker/SchedulePass/DedupeLedger/Id are thin named faces over these,
+         so the proven notification cadence and the lifecycle-command driver's cadence (ADR-PC-036) are one
+         tested mechanism. Babelstone.Cadence is generic — neither families/** nor an engine-spine project — so
+         it does NOT widen the NOTIFICATION_FAMILY_AGNOSTIC surface (ADR-IC-019 §D2/§P2): the family → core
+         arrow is untouched, and the core still reaches the engine only over the ADR-PC-027 read contract. -->
+    <ProjectReference Include="../../../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
+  </ItemGroup>
 </Project>

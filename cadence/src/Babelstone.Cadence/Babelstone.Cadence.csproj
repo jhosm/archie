@@ -1,0 +1,46 @@
+<!-- The shared CADENCE machinery LIBRARY (ADR-PC-036 §Decision 2 + ADR-IC-019 mechanism reuse). In plain
+     terms: this is the generic, product-unaware "poll a clock, run one pass per tick, never act twice"
+     engine that the notification scheduler proved out (ADR-IC-019) and the lifecycle-command driver
+     (ADR-PC-036) now reuses. It owns the clock-owning BackgroundService worker (CadenceWorker) and its
+     cadence knobs (CadenceSchedulerOptions), the per-tick pass abstraction (ISchedulePass), the idempotency
+     ledger (IDedupeLedger + InMemoryDedupeLedger), and the deterministic composite-id primitive (CompositeId).
+     It owns NO domain knowledge: it names no family, no engine read shape, and no notification template — a
+     consumer plugs its own ISchedulePass in and the worker drives it. The runnable hosts (the notification
+     worker host, the future lifecycle-driver host) are the §A2-style composition roots; this is just the shared
+     mechanism, the same BackgroundService shape as the engine's outbox relay and the orchestrator's consume loop.
+
+     GENERIC BY CONSTRUCTION: this library references neither the engine kernel (Babelstone.Engine /
+     Babelstone.EventStore) nor any product family nor the notification core — the arrows point INTO it
+     (notification core → cadence; lifecycle driver → cadence), never out. Extraction-ready subtree
+     (ADR-PC-019 §P2): it carries its own copy of the shared engine build settings rather than inheriting
+     engine/Directory.Build.props, and depends only on framework packages — no engine-kernel or family path
+     to drag along. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Cadence</RootNamespace>
+    <AssemblyName>Babelstone.Cadence</AssemblyName>
+
+    <!-- Shared engine build settings (mirrors the notification/orchestrator host csprojs; the cadence
+         subtree is extraction-ready per ADR-PC-019 §P2, so it carries its own copy rather than inheriting
+         the engine's). Runtime pinned by ADR-IC-011 — .NET, the same language as the engine
+         (ADR-PC-010 §.NET 10 LTS). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Doc COVERAGE is a docs concern, not a build gate (same stance as the engine/notification core):
+         CS1591/CS1573 suppressed, doc ROT (malformed XML, broken refs) still fails. -->
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- BackgroundService/IHostedService (CadenceWorker) and ILogger — surfaced through
+         Microsoft.Extensions.Hosting (version pinned centrally via Directory.Packages.props). The runnable
+         Host.CreateApplicationBuilder + OTLP exporter live in the consuming host exes, not here. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+</Project>
