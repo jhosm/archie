@@ -23,6 +23,19 @@ public sealed class MigrationSetTests
     }
 
     [Fact]
+    public void Discovers_the_read_model_body_migration_that_adds_the_detail_column()
+    {
+        // bd babelstone-6cpq.12: the producer needs an opaque read body the ReadModelRunner re-hydrates to
+        // continue its accumulating fold (IReadModelRow.Detail). 0001 created the table without it; 0002
+        // ADDs the detail column, so the family set's second migration is read_model @ version 2.
+        var migration = MigrationSet.All.Single(m => m.Name == "read_model");
+        Assert.Equal(2L, migration.Version);
+        Assert.Contains("detail", migration.Sql);
+        Assert.Contains("ADD COLUMN", migration.Sql);
+        Assert.Contains("read_model.installment_calendar", migration.Sql);
+    }
+
+    [Fact]
     public void Versions_are_strictly_ascending_and_unique()
     {
         var versions = MigrationSet.All.Select(m => m.Version).ToArray();

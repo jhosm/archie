@@ -43,6 +43,18 @@ namespace Babelstone.Families.PersonalLoan.Application;
 /// family's migration set, NOT the engine's, so the engine event-store migrations still carry zero
 /// personal-loan-named tables (ADR-PC-021 family-owned ownership; ADR-IC-005 §S1 — same Postgres tier).
 /// </para>
+/// <para>
+/// <b>Read-model producer (bd babelstone-6cpq.12).</b> That table is now FED. This module registers the
+/// family-owned <see cref="IInstallmentCalendarReadModelStore"/> plus a second
+/// <see cref="IProjectionModule"/> whose runner is a <see cref="ReadModelRunner{TState,TRow}"/> over
+/// <see cref="LoanPosition"/> — it folds the same position the live read path computes and UPSERTs the
+/// next-unpaid occurrence per Active loan into <c>read_model.installment_calendar</c> with the ADR-IC-005
+/// §P2 last_sequence idempotency guard. Routing the read-model runner through the
+/// <see cref="IProjectionModule"/> seam (rather than standing up a second relay) is what lets the SAME
+/// term-deposit-registered relay drain it — that relay's registry enumerates every registered module — so
+/// the "installments due in [from, to)" range scan returns rows with no extra background loop. Mirrors
+/// term-deposit's <c>read_model.deposits</c> feed (ADR-IC-005 §D4).
+/// </para>
 /// </summary>
 public sealed class PersonalLoanHostModule : IFamilyHostModule
 {
@@ -129,6 +141,32 @@ public sealed class PersonalLoanHostModule : IFamilyHostModule
         // projections/checkpoint tables.
         services.AddSingleton<IProjectionModule, PersonalLoanProjectionModule>();
 
+        // The FAMILY-OWNED installment-calendar read-model store (ADR-PC-021 §D2/§P2; bd babelstone-6cpq.12).
+        // read_model.installment_calendar is a family-NAMED, loan-shaped table — one family's domain shape,
+        // not the spine's — so its IInstallmentCalendarReadModelStore registration belongs HERE, in the
+        // family's host module, NOT the host (which must name no family read-model type). The connection
+        // string is the host's already-secret-resolved engine credential threaded via
+        // FamilyHostContext.EngineConnectionString, so the ISecretProvider boundary (ADR-PC-004 A1) stays at
+        // the host composition root — the family module never re-crosses it. The read-model runner below
+        // resolves this store; the family's ReadModelMigrationHostedService (registered further down) owns
+        // the table's schema. Mirrors TermDepositHostModule's IDepositReadModelStore registration.
+        services.AddSingleton<IInstallmentCalendarReadModelStore>(
+            _ => new PostgresInstallmentCalendarReadModelStore(ctx.EngineConnectionString));
+
+        // The CQRS read-model PRODUCER (ADR-IC-005 §D4, bd babelstone-6cpq.12), surfaced as a SECOND
+        // IProjectionModule so the term-deposit-registered, family-agnostic relay drains it with no extra
+        // background loop: that relay builds its ProjectionRegistry from EVERY registered IProjectionModule
+        // (serviceProvider.GetServices<IProjectionModule>()), so contributing the read-model runner here is
+        // all it takes for "installments due in [from, to)" to return rows. The runner folds the SAME
+        // LoanPosition the live read path computes and UPSERTs the next-unpaid occurrence per Active loan
+        // into read_model.installment_calendar under the ADR-IC-005 §P2 last_sequence idempotency guard
+        // (PersonalLoanProjectionModule.CreateReadModelRunner / MapToReadModel). Term-deposit appends its
+        // read-model runner directly to the registry it composes; personal_loan reaches that same shared
+        // registry through this module seam instead — same outcome, lane-local wiring.
+        services.AddSingleton<IProjectionModule>(serviceProvider =>
+            new InstallmentCalendarReadModelModule(
+                serviceProvider.GetRequiredService<IInstallmentCalendarReadModelStore>()));
+
         // The operator pack-migration write-path (ADR-PC-009 §P3, surface §3.6): re-pin a live instance to a
         // newer pack by appending the engine-declared PackVersionMigrated through this family's runtime. The
         // mechanics are family-AGNOSTIC and live in the engine HOSTING library
@@ -197,6 +235,29 @@ public sealed class PersonalLoanHostModule : IFamilyHostModule
         // IPackMigrationService / IPackMigrationInstanceResolver (wired above), so personal_loan IS now
         // pack-migratable in v1.
     }
+}
+
+/// <summary>
+/// The personal_loan family's CQRS read-model runner, surfaced as an <see cref="IProjectionModule"/> so the
+/// term-deposit-registered, family-agnostic projection relay drains it (the relay enumerates EVERY
+/// registered module to build its <c>ProjectionRegistry</c>; bd babelstone-6cpq.12). A SEPARATE module from
+/// <see cref="PersonalLoanProjectionModule"/> — that one declares the bitemporal projections over the
+/// generic <c>projections</c> store; this one declares the single flat read-model runner over the
+/// family-owned <c>read_model.installment_calendar</c> table, a distinct surface with a distinct
+/// (truncate-and-refold) rebuild discipline. Both carry <see cref="FamilyName"/> <c>personal_loan</c>, which
+/// the drainer reads to know whose streams feed the runner; the read-model kind
+/// (<see cref="PersonalLoanProjectionModule.InstallmentReadModelKind"/>) is unique, so the registry accepts
+/// both. The host injects the family-owned store; the family supplies the fold + the state→row mapper over
+/// the generic <see cref="ReadModelInfra{TRow}"/>.
+/// </summary>
+internal sealed class InstallmentCalendarReadModelModule(IInstallmentCalendarReadModelStore store) : IProjectionModule
+{
+    private static readonly PersonalLoanProjectionModule Declarations = new();
+
+    public string FamilyName => Declarations.FamilyName;
+
+    public IReadOnlyList<IProjectionRunner> CreateRunners(ProjectionInfra infra) =>
+        [Declarations.CreateReadModelRunner(new ReadModelInfra<InstallmentCalendarReadModelRow>(store, infra.EventSerializer))];
 }
 
 /// <summary>
