@@ -28,13 +28,13 @@ namespace Babelstone.Notification;
 /// </remarks>
 public sealed class NotificationSchedulePass(
     IEnumerable<INotificationScheduleRule> rules,
-    INotificationDedupeLedger dedupeLedger,
+    IDedupeLedger dedupeLedger,
     ILogger<NotificationSchedulePass>? logger = null) : ISchedulePass
 {
     private readonly IReadOnlyList<INotificationScheduleRule> _rules =
         (rules ?? throw new ArgumentNullException(nameof(rules))).ToList();
 
-    private readonly INotificationDedupeLedger _dedupeLedger =
+    private readonly IDedupeLedger _dedupeLedger =
         dedupeLedger ?? throw new ArgumentNullException(nameof(dedupeLedger));
 
     /// <summary>

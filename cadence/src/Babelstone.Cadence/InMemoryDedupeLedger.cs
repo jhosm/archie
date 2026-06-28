@@ -5,9 +5,9 @@ namespace Babelstone.Cadence;
 /// (ADR-PC-036 §Decision 2 + ADR-IC-019 / ADR-PC-025 slot 4). Thread-safe (a single <see cref="HashSet{T}"/>
 /// behind a lock — a worker runs one pass at a time, but reserving is cheap and the lock keeps a future
 /// concurrent pass honest). A durable, crash-surviving ledger is a later concern; within one process lifetime
-/// this gives the "re-runs don't re-act" guarantee. Left UNSEALED so a domain consumer can subclass it for a
-/// named ledger interface (e.g. the notification estate's <c>InMemoryNotificationDedupeLedger</c>) without
-/// reimplementing the reservation logic.
+/// this gives the "re-runs don't re-act" guarantee. A single-consumer host binds this type directly (as the
+/// notification scheduler does); it is left UNSEALED only so a consumer that genuinely needs a distinct named
+/// ledger type or DI key can subclass it without reimplementing the reservation logic.
 /// </summary>
 public class InMemoryDedupeLedger : IDedupeLedger
 {

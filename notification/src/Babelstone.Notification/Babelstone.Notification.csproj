@@ -1,8 +1,9 @@
 <!-- The /notification family-AGNOSTIC core LIBRARY (ADR-IC-019 §D2/§P1 + Amendment 2026-06-24). In
      plain terms: this is the part of the notification service that must never know what a term deposit
-     is. It owns the generic poll-loop worker (NotificationWorker), the per-tick engine
-     (NotificationSchedulePass), the composite-id primitive (NotificationId), the dedupe ledger, and the
-     family-contribution port (IFamilyNotificationModule / INotificationScheduleRule). It does NOT own a
+     is. It owns the poll-loop worker (NotificationWorker), the per-tick engine
+     (NotificationSchedulePass), the composite-id primitive (NotificationId), and the
+     family-contribution port (IFamilyNotificationModule / INotificationScheduleRule); it dedupes against the
+     shared Babelstone.Cadence ledger (IDedupeLedger) rather than owning a notification-named one. It does NOT own a
      deposit read client (a "deposit" is term-deposit knowledge, so the deposit-shaped read client is
      family-owned and lives in the family contribution, ADR-IC-019 D1). It is a LIBRARY, not the runnable
      host: the composition root that names families and wires OpenTelemetry lives in the sibling
@@ -53,7 +54,9 @@
     <!-- The shared CADENCE machinery (ADR-PC-036 §Decision 2 + ADR-IC-019 mechanism reuse): the generic
          clock-owning poll-loop worker (CadenceWorker), the per-tick pass abstraction (ISchedulePass), the
          dedupe ledger (IDedupeLedger/InMemoryDedupeLedger), and the composite-id primitive (CompositeId). The
-         notification estate's NotificationWorker/SchedulePass/DedupeLedger/Id are thin named faces over these,
+         notification estate binds the shared options/ledger types directly; its NotificationWorker is a named
+         CadenceWorker subclass (for its own log category + a DI-resolvable typed logger) and
+         NotificationSchedulePass/NotificationId add the notification-specific logic over ISchedulePass/CompositeId,
          so the proven notification cadence and the lifecycle-command driver's cadence (ADR-PC-036) are one
          tested mechanism. Babelstone.Cadence is generic — neither families/** nor an engine-spine project — so
          it does NOT widen the NOTIFICATION_FAMILY_AGNOSTIC surface (ADR-IC-019 §D2/§P2): the family → core
