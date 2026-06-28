@@ -15,6 +15,14 @@
 -- engine-owned `projections` table; this table is the flat, query-optimized family-owned read side
 -- (ADR-IC-005 §S1), DISTINCT from that bitemporal belief store.
 --
+-- DEFERRED PRODUCER (bd `babelstone-6cpq.12`): this migration creates and OWNS the table and applies it
+-- on startup, but the PRODUCER that drains the folded calendar INTO it — an IInstallmentCalendarReadModelStore
+-- + a ReadModelRunner mapping the projection to a row (ADR-IC-005 §P2 last_sequence guard), mirroring
+-- term-deposit's `read_model.deposits` feed — is NOT shipped here. Until 6cpq.12 lands, this table is an
+-- empty, queryable-but-unfed range-scan surface; the calendar belief lives only in the bitemporal
+-- `projections` store (point lookup). ADR-PC-023 blesses shipping a projection ahead of its downstream
+-- consumer, so this is a deliberate, tracked staging step — NOT silent dead schema.
+--
 -- ADR-IC-005 §P1 — read-model tables live in a DEDICATED `read_model` schema, separate from the
 --   write-side domain tables (`events`, `projections`, …) in `public`. The schema boundary makes a
 --   cross-boundary join visible in code review; no projector writes the event log and no command path
