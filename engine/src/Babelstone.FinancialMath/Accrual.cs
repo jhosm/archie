@@ -19,8 +19,8 @@ namespace Babelstone.FinancialMath;
 public static class Accrual
 {
     // The per-unit basis-point scale (100% = 10,000 bps) is the shared kernel constant
-    // Rate.Rate.BasisPointsPerUnit (bd babelstone-5r9n.6); it promotes to decimal inside each
-    // boundary expression. Kept as int (not a stored decimal field — BMNY002, ADR-PC-010 §P1).
+    // Rate.BasisPointsPerUnit; it promotes to decimal inside each boundary expression. Kept
+    // as int (not a stored decimal field — BMNY002, ADR-PC-010 §P1).
 
     /// <summary>
     /// Simple interest (fin-math §5.1; the PT term-deposit default). Implements the
@@ -31,8 +31,7 @@ public static class Accrual
     /// <param name="rateBps">Annual nominal rate (TAN) in basis points.</param>
     /// <param name="factor">Day-count <see cref="DayCountFactor"/> from <see cref="DayCount.Between"/>.</param>
     /// <exception cref="ArgumentOutOfRangeException">If the day count is negative (a reversed
-    /// interval) — accrual must never emit negative interest from swapped dates
-    /// (carried obligation from the B.2 review).</exception>
+    /// interval) — accrual must never emit negative interest from swapped dates.</exception>
     public static Money SimpleInterest(Money principal, int rateBps, DayCountFactor factor)
     {
         RequireForwardInterval(factor);

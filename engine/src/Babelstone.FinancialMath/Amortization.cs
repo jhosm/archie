@@ -60,7 +60,7 @@ public sealed record AmortizationRow(
 public static class Amortization
 {
     // The per-unit basis-point scale (100% = 10,000 bps) is the shared kernel constant
-    // Rate.Rate.BasisPointsPerUnit (bd babelstone-5r9n.6) — the same scale Accrual uses; promoted to
+    // Rate.BasisPointsPerUnit — the same scale Accrual uses; promoted to
     // decimal inside each boundary expression. Kept as int (BMNY002 bans stored decimal state, §P1).
 
     /// <summary>
@@ -178,8 +178,8 @@ public static class Amortization
     /// <c>S(m) = C × (1 + r)^m − P × [(1 + r)^m − 1] / r</c>, where <c>P</c> is the level installment.
     /// This is the CLOSED-FORM balance from the amortization formula. v1 derives the same figure from
     /// the integer-cent <see cref="Schedule"/> instead (which conserves to the cent and absorbs rounding
-    /// in the final row) — this method is the analytic cross-check / the basis for a future
-    /// recompute-on-reset path. A zero rate degenerates to <c>C − m × (C / n)</c>.
+    /// in the final row) — this method is the analytic cross-check. A zero rate degenerates to
+    /// <c>C − m × (C / n)</c>.
     /// </summary>
     /// <param name="principal">The original disbursed capital <c>C</c>.</param>
     /// <param name="periodicRateBps">The PERIODIC rate in basis points.</param>

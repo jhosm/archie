@@ -21,7 +21,7 @@ namespace Babelstone.FinancialMath;
 public static class Rates
 {
     // The per-unit basis-point scale (100% = 10,000 bps) is the shared kernel constant
-    // Rate.Rate.BasisPointsPerUnit (bd babelstone-5r9n.6); it promotes to decimal at each boundary.
+    // Rate.BasisPointsPerUnit; it promotes to decimal at each boundary.
 
     /// <summary>
     /// Annual effective rate of a periodic rate compounded <paramref name="periodsPerYear"/>
@@ -180,7 +180,7 @@ public static class Rates
     // directly. The public IRR contract deliberately hides these behind a Newton+bisection
     // fallback, which makes a wrong PV/derivative here unobservable through the public API —
     // the other path rescues, and the root of −PV equals the root of PV — so only a direct
-    // value assertion can prove this numeric core is correct (B.10 mutation triage).
+    // value assertion can prove this numeric core is correct.
     internal static (decimal F, decimal Df) PresentValueAndDerivative(
         IReadOnlyList<(Money Amount, int Period)> cashFlows, decimal i)
     {
