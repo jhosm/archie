@@ -9,11 +9,26 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <!-- The pack-migration integration test asserts events row counts directly against PostgreSQL. -->
+    <PackageReference Include="Npgsql" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/Babelstone.Families.PersonalLoan.Application/Babelstone.Families.PersonalLoan.Application.csproj" />
     <ProjectReference Include="../../src/Babelstone.Families.PersonalLoan/Babelstone.Families.PersonalLoan.csproj" />
+    <!-- The storage + config bits the integration test wires as the composition root (ADR-PC-021 §D4):
+         event store + engine migrations, the rate-sheet store, and the pack parser. The pure decider tier
+         needs only the family + math (transitive). -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.EventStore/Babelstone.EventStore.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.Packs/Babelstone.Packs.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.FinancialMath/Babelstone.FinancialMath.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+    <!-- The shared ContainerStartupGate (throttles concurrent Testcontainers startups). -->
+    <ProjectReference Include="../../../../engine/tests/Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
   </ItemGroup>
 </Project>

@@ -14,16 +14,21 @@ namespace Babelstone.Families.PersonalLoan.Tests;
 public sealed class PersonalLoanProjectionTests
 {
     [Fact]
-    public void Module_declares_two_projections_with_distinct_kinds()
+    public void Module_declares_three_projections_with_distinct_kinds()
     {
         var module = new PersonalLoanProjectionModule();
         var infra = new ProjectionInfra(new InMemoryProjectionStorage(), new JsonEventSerializer());
 
         var runners = module.CreateRunners(infra);
 
-        Assert.Equal(2, runners.Count);
+        Assert.Equal(3, runners.Count);
         Assert.Equal(
-            new[] { "personal_loan.loan_position", "personal_loan.amortization_schedule" },
+            new[]
+            {
+                "personal_loan.loan_position",
+                "personal_loan.amortization_schedule",
+                "personal_loan.installment_calendar",
+            },
             runners.Select(r => r.Kind).ToArray());
         Assert.All(runners, r => Assert.Equal(ProjectionMode.Async, r.Mode));
         Assert.All(runners, r => Assert.Equal("personal_loan", r.Family));
@@ -169,6 +174,102 @@ public sealed class PersonalLoanProjectionTests
         Assert.Equal(a!.StructuralPayload.ToArray(), b!.StructuralPayload.ToArray());
         Assert.Equal(a.SourceSequence, b.SourceSequence);
     }
+
+    // --- installment calendar (the FORWARD next-unpaid occurrence) ---
+
+    [Fact]
+    public void InstallmentCalendar_surfaces_the_first_occurrence_after_disbursement()
+    {
+        var registry = PersonalLoanProjectionModule.InstallmentCalendarRegistry();
+        var loanId = Guid.NewGuid();
+
+        var calendar = Fold(InstallmentCalendarProjection.Empty, registry, Disbursed(loanId, termMonths: 12));
+
+        // Before any installment is paid, the next occurrence is installment 1, due on the anchor.
+        var next = calendar.NextOccurrence;
+        Assert.NotNull(next);
+        Assert.Equal(1, next!.InstallmentNumber);
+        Assert.Equal(new DateOnly(2026, 2, 1), next.DueDate);
+        Assert.Equal(new Money(88_849), next.Amount);
+    }
+
+    [Fact]
+    public void InstallmentCalendar_advances_to_N_plus_1_once_N_is_paid()
+    {
+        var registry = PersonalLoanProjectionModule.InstallmentCalendarRegistry();
+        var loanId = Guid.NewGuid();
+
+        var calendar = Fold(InstallmentCalendarProjection.Empty, registry, Disbursed(loanId, termMonths: 12));
+        calendar = Fold(calendar, registry, new LoanInstallmentPaid(
+            loanId, 1, new Money(5_000), new Money(83_849), new Money(916_151), new DateOnly(2026, 2, 1)));
+
+        // Paying installment 1 advances the forward pointer to occurrence 2, due one month on (the anchor
+        // rolled forward by the paid count — deterministic date arithmetic, never a clock).
+        var next = calendar.NextOccurrence;
+        Assert.NotNull(next);
+        Assert.Equal(2, next!.InstallmentNumber);
+        Assert.Equal(new DateOnly(2026, 3, 1), next.DueDate);
+    }
+
+    [Fact]
+    public void InstallmentCalendar_surfaces_no_further_occurrence_once_fully_paid()
+    {
+        var registry = PersonalLoanProjectionModule.InstallmentCalendarRegistry();
+        var loanId = Guid.NewGuid();
+
+        var calendar = Fold(InstallmentCalendarProjection.Empty, registry, Disbursed(loanId, termMonths: 3));
+        for (var n = 1; n <= 3; n++)
+        {
+            calendar = Fold(calendar, registry, new LoanInstallmentPaid(
+                loanId, n, new Money(5_000), new Money(80_000), new Money(0), new DateOnly(2026, 1 + n, 1)));
+        }
+
+        // Every scheduled installment paid → the calendar is exhausted, no next occurrence.
+        Assert.False(calendar.HasNextOccurrence);
+        Assert.Null(calendar.NextOccurrence);
+    }
+
+    [Fact]
+    public void InstallmentCalendar_ignores_non_schedule_events()
+    {
+        var registry = PersonalLoanProjectionModule.InstallmentCalendarRegistry();
+
+        // Only disbursement + installment move the forward schedule; early repayment / settlement do not.
+        Assert.True(registry.TryResolve("personal_loan.LoanDisbursed", out _));
+        Assert.True(registry.TryResolve("personal_loan.LoanInstallmentPaid", out _));
+        Assert.False(registry.TryResolve("personal_loan.LoanRepaidEarly", out _));
+        Assert.False(registry.TryResolve("personal_loan.LoanSettled", out _));
+    }
+
+    [Fact]
+    public void InstallmentCalendar_is_idempotent_in_the_fold_under_a_redelivered_installment()
+    {
+        var registry = PersonalLoanProjectionModule.InstallmentCalendarRegistry();
+        var loanId = Guid.NewGuid();
+
+        var calendar = Fold(InstallmentCalendarProjection.Empty, registry, Disbursed(loanId, termMonths: 12));
+        var paid1 = new LoanInstallmentPaid(
+            loanId, 1, new Money(5_000), new Money(83_849), new Money(916_151), new DateOnly(2026, 2, 1));
+        calendar = Fold(calendar, registry, paid1);
+        calendar = Fold(calendar, registry, paid1); // a re-delivered installment 1 — the MAX leaves the pointer put
+
+        Assert.Equal(1, calendar.InstallmentsPaid);
+        Assert.Equal(2, calendar.NextOccurrence!.InstallmentNumber);
+    }
+
+    private static LoanDisbursed Disbursed(Guid loanId, int termMonths) => new(
+        LoanId: loanId,
+        Principal: new Money(1_000_000),
+        TanBasisPoints: 600,
+        RateSheetVersionId: "rs-test-1",
+        TermMonths: termMonths,
+        PeriodicRateBasisPoints: 50,
+        InstallmentAmount: new Money(88_849),
+        StartDate: new DateOnly(2026, 1, 1),
+        FirstInstallmentDate: new DateOnly(2026, 2, 1),
+        Purpose: "general",
+        ProductCode: "cp_pt_general_12m",
+        DisbursementAccountRef: "acct-token-borrower");
 
     // --- helpers ---
 
