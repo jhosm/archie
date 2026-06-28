@@ -93,6 +93,7 @@ the full product documentation. Pages are grouped by reader within each quadrant
 *Agent-channel / MCP consumer*
 - [Discover tools and authenticate to the MCP server](./how-to/discover-and-authenticate-to-the-mcp-server.md) — **provisional** (secured edge demo-only / partly unbuilt)
 - [Call a deposit tool and parse the structured result](./how-to/call-a-deposit-tool-and-parse-the-result.md) — **provisional** (walking-skeleton MCP dev server)
+- [Register an agent as a Logto client for the MCP edge](./how-to/register-an-agent-as-a-logto-client.md) — **provisional** (curated cohort; DCR is the accepted gap)
 
 **Explanation**
 

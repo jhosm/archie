@@ -16,6 +16,7 @@ module owns the scope half and the ``AuthContext`` both layers share.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from mcp.shared.exceptions import McpError
@@ -43,6 +44,27 @@ SCA_CNF_X5T_HEADER = "X-SCA-Cnf-X5t"
 # keys on SCOPE, not on MCP method (§A3).
 DEPOSITS_READ = "deposits:read"
 DEPOSITS_WRITE = "deposits:write"
+# The third scope ADR-IC-021 C5 names for the Logto API resource. No tool maps to it YET — there is
+# no transfer tool on the current deposit surface — so it is absent from TOOL_SCOPES below. It is
+# declared here (and in RESOURCE_SCOPES) so the Logto API resource registration and this resource
+# server agree on the exact scope set; the day a transfer tool lands, it maps to this scope (and ONLY
+# this scope) under the same scope-per-tool rule. Reserving it now keeps the registered scope
+# catalogue and the enforced catalogue from drifting.
+TRANSFERS_WRITE = "transfers:write"
+
+# The full scope catalogue the MCP server is registered with as a Logto API resource (RFC 8707 /
+# ADR-IC-021 step 4 + commitment C5). These are the EXACT scope strings an operator declares on the
+# Logto API resource whose identifier is this server's canonical URI; Logto then issues
+# resource-bound tokens carrying only the granted subset. The set is narrow + per-tool by
+# construction — there is no god scope (§P4). `TOOL_SCOPES` below is the enforced projection of this
+# catalogue onto the tools that exist today (transfers:write has no tool yet, so it is declared but
+# not enforceable until its tool ships).
+RESOURCE_SCOPES: frozenset[str] = frozenset({DEPOSITS_READ, DEPOSITS_WRITE, TRANSFERS_WRITE})
+
+# The default canonical URI when BABELSTONE_MCP_SERVER_URI is unset — kept in lock-step with
+# app.py's `_mcp_server_uri` default so the resource indicator the app advertises (RFC 9728
+# metadata `resource`) and the audience tokens must carry (RFC 8707 `aud`) are ONE value.
+_DEFAULT_MCP_SERVER_URI = "http://localhost:8000/mcp"
 
 TOOL_SCOPES: dict[str, str] = {
     "constitute_deposit": DEPOSITS_WRITE,
@@ -144,3 +166,39 @@ def check_tool_scope(auth: AuthContext, tool: str) -> None:
                 ),
             )
         )
+
+
+# ── RFC 8707 resource-server surface (ADR-IC-021 step 4 / commitments C1+C5) ──────────────────────
+# The MCP server is registered with Logto as an API RESOURCE whose identifier IS its canonical URI.
+# These two helpers are the resource-server half of that contract — the single source of truth the
+# audience middleware (app.py) re-checks against — so the URI the server advertises (RFC 9728
+# `resource`) and the URI a token must carry (RFC 8707 `aud`) can never silently diverge.
+
+
+def mcp_resource_indicator() -> str:
+    """This server's canonical URI — the RFC 8707 resource indicator (ADR-IC-021 step 4).
+
+    It is BOTH the Logto API-resource identifier an operator registers AND the `aud` an access token
+    must carry to be accepted here. Returned verbatim from ``BABELSTONE_MCP_SERVER_URI`` (no implicit
+    trailing-slash mutation): the MCP-Auth SDK is trailing-slash-significant, so the operator sets the
+    env to the EXACT registered identifier and the server echoes it unchanged. Agent SDKs MUST send
+    this as the ``resource`` request parameter so Logto binds ``aud`` to it; if a client omits it,
+    Logto falls back to a default resource and the binding silently weakens (the §Residual-risks
+    footgun ADR-IC-021 flags — hence the resource indicator is a first-class, single-sourced value).
+    """
+    return os.environ.get("BABELSTONE_MCP_SERVER_URI", _DEFAULT_MCP_SERVER_URI)
+
+
+def audience_binds_resource(aud_claim: object, resource: str) -> bool:
+    """True iff a token's ``aud`` is bound to ``resource`` (RFC 8707, ADR-IC-021 C1).
+
+    ``aud`` may be a single string or a JSON array (RFC 7519 §4.1.3); a match on the string form, or
+    on any array element, is a binding. Anything else (a wrong audience, a ``None``/absent claim, a
+    non-string/non-list value) is NOT bound — fail-closed, so a token minted for another MCP resource
+    is rejected (the cross-resource replay defence Logto's native RFC 8707 makes meaningful).
+    """
+    if isinstance(aud_claim, str):
+        return aud_claim == resource
+    if isinstance(aud_claim, list):
+        return resource in aud_claim
+    return False

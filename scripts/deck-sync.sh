@@ -80,6 +80,17 @@ BAO_KONG_MCP_CERT_PATH="${BAO_KONG_MCP_CERT_PATH:-secret/data/babelstone/edge/ko
 BAO_INTERNAL_CA_PATH="${BAO_INTERNAL_CA_PATH:-secret/data/babelstone/edge/internal-ca-bundle}"
 BAO_IAM_JWT_PUBKEY_PATH="${BAO_IAM_JWT_PUBKEY_PATH:-secret/data/babelstone/edge/iam-jwt-public-key}"
 
+# ── IAM issuer repoint (ADR-IC-021 rollout step 3 / bd babelstone-zla1.10.3) ──────────
+# The committed kong.yml carries the POC issuer `https://iam.babelstone.example/` as the
+# `iam-issuer` consumer's JWT `iss` key — fine for the dev/CI stack + the offline contract
+# harness, which mint tokens under that iss. At staging deploy the IAM is **Logto**
+# (ADR-IC-021), whose `iss` is its OIDC base URL. Rewriting the committed placeholder to the
+# real Logto issuer here is the SAME deploy-time-placeholder-swap as the §P7 signing key — so
+# the staging gateway validates Logto-issued tokens with NO edge-contract change. Overridable
+# so a different environment can repoint without editing this script.
+IAM_ISSUER_POC="https://iam.babelstone.example/"          # the committed placeholder iss
+BABELSTONE_IAM_ISSUER="${BABELSTONE_IAM_ISSUER:-https://auth.babelstone.dev/oidc}"  # Logto staging iss
+
 # ── arg parse ────────────────────────────────────────────────────────────────────────
 MODE="sync"          # sync | render-only | rotate | dry-run
 ROTATE_OP=""         # add | remove
@@ -234,6 +245,34 @@ with open(render, "w") as f:
 PY
 }
 
+# ── repoint the iam-issuer `iss` at Logto (ADR-IC-021 step 3, bd babelstone-zla1.10.3) ─
+# Rewrite the `iam-issuer` consumer's JWT `iss` key from the committed POC placeholder to the
+# real Logto staging issuer. The committed file carries exactly one `- key: <POC iss>` line on
+# that consumer; we replace its VALUE only (id/value-anchored, never a blind global edit). The
+# render is `deck file validate`d afterwards, so a botched rewrite fails the gate, not Kong.
+rewrite_iam_issuer() {
+  POC="$IAM_ISSUER_POC" NEW="$BABELSTONE_IAM_ISSUER" mise exec -- python3 - "$RENDER" <<'PY'
+import os, re, sys
+render = sys.argv[1]
+poc, new = os.environ["POC"], os.environ["NEW"]
+with open(render) as f:
+    lines = f.readlines()
+# Replace the iam-issuer consumer's `- key: <poc>` value (the JWT iss). Match a list item whose
+# value is exactly the POC issuer so a comment that merely names the iss is never rewritten.
+pat = re.compile(r'^(\s*-\s*key:\s*)' + re.escape(poc) + r'\s*$')
+hits = 0
+for i, ln in enumerate(lines):
+    m = pat.match(ln)
+    if m:
+        lines[i] = f"{m.group(1)}{new}\n"
+        hits += 1
+if hits != 1:
+    sys.exit(f"iam-issuer iss rewrite: expected exactly 1 `- key: {poc}` line, found {hits}")
+with open(render, "w") as f:
+    f.writelines(lines)
+PY
+}
+
 # ── flip `tls_verify: false` → true on the orchestrator/engine upstreams (§P5) ───────
 # The MCP service already runs tls_verify: true; the orchestrator-edge + engine upstreams
 # are POC `false` until the CA bundle is mounted. Now that the real internal CA bundle is
@@ -267,8 +306,12 @@ render_from_openbao() {
   # 3) internal CA bundle (upstream-server-cert verification, §P5)
   splice_pem ca_certificate "$CA_BUNDLE_ID" cert "$(bao_field "$BAO_INTERNAL_CA_PATH" cert)"
 
-  # 4) IAM RS256 signing public key (JWT validation, §P7)
+  # 4) IAM RS256 signing public key (JWT validation, §P7) — Logto's JWKS signing key (ADR-IC-021).
   splice_pem consumer "$IAM_CONSUMER" rsa_public_key "$(bao_field "$BAO_IAM_JWT_PUBKEY_PATH" rsa_public_key)"
+
+  # 4b) repoint the iam-issuer `iss` at Logto (ADR-IC-021 step 3): the committed POC issuer →
+  #     the real Logto staging issuer, so the gateway trusts Logto-minted tokens.
+  rewrite_iam_issuer
 
   # 5) now the CA bundle is real, flip upstream verify on (the reverse half of §P5 mTLS)
   flip_tls_verify
@@ -305,10 +348,11 @@ rotate_jwt_key() {
       # add a SECOND jwt_secrets entry for the iam-issuer consumer carrying the next key,
       # keyed by a rotation-suffixed iss so both validate during the overlap window.
       local next; next="$(bao_field "$BAO_IAM_JWT_PUBKEY_PATH" rsa_public_key_next)"
-      KEY_NEXT="$next" mise exec -- python3 - "$RENDER" <<'PY'
+      KEY_NEXT="$next" ISS_NEXT="${BABELSTONE_IAM_ISSUER}/next" mise exec -- python3 - "$RENDER" <<'PY'
 import os, re, sys
 render = sys.argv[1]
 nxt = os.environ["KEY_NEXT"].rstrip("\n")
+iss_next = os.environ["ISS_NEXT"]
 with open(render) as f: lines = f.readlines()
 # Append a second jwt_secrets entry after the existing one on the iam-issuer consumer.
 # Find the existing `rsa_public_key: |` block end, then insert a sibling list item.
@@ -323,7 +367,7 @@ while i < len(lines):
         while j < len(lines) and (lines[j].strip()=="" or lines[j].startswith(body)):
             out.append(lines[j]); j += 1
         item_indent = indent[:-2] if len(indent) >= 2 else indent
-        out.append(f"{item_indent}- key: https://iam.babelstone.example/next\n")
+        out.append(f"{item_indent}- key: {iss_next}\n")
         out.append(f"{item_indent}  algorithm: RS256\n")
         out.append(f"{item_indent}  secret: unused-for-rs256\n")
         out.append(f"{item_indent}  rsa_public_key: |\n")

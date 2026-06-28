@@ -1,0 +1,68 @@
+# Mount the Grafana RBAC + Logto-OIDC overlay into the staging grafana-lgtm appliance
+# (Boundary 6, ADR-IC-021 step 3 / ADR-IC-007 §P6, bd babelstone-zla1.10.1).
+#
+# Plain English: staging is the public, always-on box where operators actually log in, so unlike
+# the dev `make up` (which deliberately skips this overlay to keep boot simple) staging MOUNTS the
+# infra/grafana/rbac config as code. That turns on three things at once: (1) operator SSO through
+# Logto's OIDC (the grafana.ini [auth.generic_oauth] block), (2) the §P6 RBAC roles + Tempo
+# datasource lock (the provisioning/*.yaml), and (3) anonymous access OFF — the regulated-store
+# posture (ADR-IC-007 §P4). The files ride in via the grafana-rbac ConfigMap the staging
+# kustomization generates from the SAME infra/grafana/rbac/ source the Compose stack + the
+# grafana-rbac-check CI gate use (single config source).
+#
+# WHY subPath: the grafana/otel-lgtm image keeps its own files under /otel-lgtm/grafana/. Mounting
+# the ConfigMap as a whole directory would clobber them, so each file mounts individually — the
+# appliance reads Grafana's override at conf/custom.ini (its config homepath) and access-control
+# provisioning at conf/provisioning/access-control/, exactly the paths infra/grafana/rbac/README.md
+# documents for the Compose bind-mount.
+#
+# SECRET: the Logto client secret is NEVER committed. It is injected here from the OpenBao-seeded
+# Secret (babelstone-dev-secrets, key LOGTO_GRAFANA_CLIENT_SECRET — add it alongside the other
+# staging secrets at deploy; CI validates structure only). Grafana maps the GF_AUTH_GENERIC_OAUTH_*
+# env onto [auth.generic_oauth], so client_secret stays out of grafana.ini.
+#
+# OTLP boundary preserved: Deployment-only patch (env/volumes/volumeMounts); it does NOT touch the
+# grafana-lgtm Service, so 4317/4318 stay unexposed (ADR-IC-007 §P1, CI-asserted).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-lgtm
+spec:
+  template:
+    spec:
+      containers:
+        - name: grafana-lgtm
+          env:
+            # Honour grafana.ini [auth.anonymous] enabled=false — the appliance force-defaults
+            # anonymous-Admin ON via an env var that wins over the .ini, so pin it off here.
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "false"
+            # The Logto OIDC client secret — injected from the OpenBao-seeded Secret, never in git.
+            - name: GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: LOGTO_GRAFANA_CLIENT_SECRET
+          volumeMounts:
+            # Grafana's override config (RBAC on + access logging on + Logto generic_oauth).
+            - name: grafana-rbac
+              mountPath: /otel-lgtm/grafana/conf/custom.ini
+              subPath: custom.ini
+              readOnly: true
+            # The §P6 access-control provisioning (custom roles, Tempo datasource lock, teams).
+            - name: grafana-rbac
+              mountPath: /otel-lgtm/grafana/conf/provisioning/access-control/roles.yaml
+              subPath: roles.yaml
+              readOnly: true
+            - name: grafana-rbac
+              mountPath: /otel-lgtm/grafana/conf/provisioning/access-control/datasource-permissions.yaml
+              subPath: datasource-permissions.yaml
+              readOnly: true
+            - name: grafana-rbac
+              mountPath: /otel-lgtm/grafana/conf/provisioning/access-control/teams.yaml
+              subPath: teams.yaml
+              readOnly: true
+      volumes:
+        - name: grafana-rbac
+          configMap:
+            name: grafana-rbac

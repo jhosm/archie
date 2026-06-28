@@ -56,6 +56,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
+from .auth import audience_binds_resource, mcp_resource_indicator
 from .server import mcp
 from .telemetry import instrument_asgi_app
 
@@ -65,8 +66,13 @@ WELL_KNOWN_PATH = "/.well-known/oauth-protected-resource"
 
 
 def _mcp_server_uri() -> str:
-    """This server's canonical URI — the value tokens must carry as ``aud`` (RFC 8707 / §P3)."""
-    return os.environ.get("BABELSTONE_MCP_SERVER_URI", "http://localhost:8000/mcp")
+    """This server's canonical URI — the value tokens must carry as ``aud`` (RFC 8707 / §P3).
+
+    Single-sourced from ``auth.mcp_resource_indicator`` (the RFC 8707 resource indicator that is also
+    the Logto API-resource identifier, ADR-IC-021 step 4) so the advertised ``resource`` and the
+    enforced ``aud`` are the SAME value.
+    """
+    return mcp_resource_indicator()
 
 
 def _iam_url() -> str:
@@ -98,12 +104,12 @@ def _audience_claim(token: str) -> object:
 
 
 def _audience_matches(aud_claim: object, expected: str) -> bool:
-    """True iff ``expected`` is the audience (string form) or appears in it (list form)."""
-    if isinstance(aud_claim, str):
-        return aud_claim == expected
-    if isinstance(aud_claim, list):
-        return expected in aud_claim
-    return False
+    """True iff ``expected`` is the audience (string form) or appears in it (list form).
+
+    Delegates to ``auth.audience_binds_resource`` — the RFC 8707 binding check (ADR-IC-021 C1) — so
+    the app-layer re-check and the resource-server contract share one implementation.
+    """
+    return audience_binds_resource(aud_claim, expected)
 
 
 class AudienceMiddleware(BaseHTTPMiddleware):

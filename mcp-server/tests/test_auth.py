@@ -25,7 +25,17 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 
 from babelstone_mcp import app as app_module
-from babelstone_mcp.auth import AuthContext, check_tool_scope
+from babelstone_mcp.auth import (
+    DEPOSITS_READ,
+    DEPOSITS_WRITE,
+    RESOURCE_SCOPES,
+    TOOL_SCOPES,
+    TRANSFERS_WRITE,
+    AuthContext,
+    audience_binds_resource,
+    check_tool_scope,
+    mcp_resource_indicator,
+)
 
 MCP_URI = "http://localhost:8000/mcp"
 IAM_URL = "https://iam.babelstone.example/"
@@ -253,3 +263,54 @@ def test_unknown_tool_has_no_scope_grant() -> None:
     auth = AuthContext(client_id="CLI-7", scopes=frozenset({"deposits:read", "deposits:write"}))
     with pytest.raises(McpError):
         check_tool_scope(auth, "transfer_funds")
+
+
+# ── RFC 8707 resource-server surface (ADR-IC-021 step 4 / C1+C5, bd babelstone-zla1.10.4) ──────────
+
+
+def test_resource_indicator_returns_the_registered_uri() -> None:
+    # The canonical URI is the RFC 8707 resource indicator AND the Logto API-resource identifier; the
+    # app advertises it (RFC 9728 `resource`) and tokens must carry it as `aud`. Returned verbatim
+    # from the env (no trailing-slash mutation — the MCP-Auth SDK is slash-significant).
+    assert mcp_resource_indicator() == MCP_URI
+
+
+def test_resource_indicator_is_what_the_well_known_advertises() -> None:
+    # The single-sourcing guard: the RFC 9728 metadata `resource` IS the resource indicator, so a
+    # token's `aud` (checked against the same value) can never drift from what discovery advertises.
+    assert app_module._mcp_server_uri() == mcp_resource_indicator()
+
+
+def test_resource_scopes_are_the_three_adr_ic_021_scopes() -> None:
+    # ADR-IC-021 C5: the Logto API resource declares exactly deposits:read / deposits:write /
+    # transfers:write — narrow, per-tool, no god scope. This is the registered scope catalogue.
+    assert RESOURCE_SCOPES == frozenset({DEPOSITS_READ, DEPOSITS_WRITE, TRANSFERS_WRITE})
+    assert TRANSFERS_WRITE == "transfers:write"
+
+
+def test_transfers_write_is_declared_but_maps_to_no_current_tool() -> None:
+    # transfers:write is reserved in the resource catalogue but has no tool yet (no transfer tool on
+    # the deposit surface), so it is deliberately absent from the ENFORCED per-tool projection.
+    assert TRANSFERS_WRITE in RESOURCE_SCOPES
+    assert TRANSFERS_WRITE not in TOOL_SCOPES.values()
+    # Every scope that IS enforced per-tool must be one the resource is registered with (no tool can
+    # require a scope Logto would never mint for this resource).
+    assert set(TOOL_SCOPES.values()).issubset(RESOURCE_SCOPES)
+
+
+def test_audience_binds_resource_string_form() -> None:
+    assert audience_binds_resource(MCP_URI, MCP_URI) is True
+    assert audience_binds_resource("https://other-resource.example/", MCP_URI) is False
+
+
+def test_audience_binds_resource_list_form() -> None:
+    # RFC 7519 §4.1.3 — `aud` may be an array; a match on any element binds.
+    assert audience_binds_resource(["https://other.example/", MCP_URI], MCP_URI) is True
+    assert audience_binds_resource(["https://a.example/", "https://b.example/"], MCP_URI) is False
+
+
+def test_audience_binds_resource_fail_closed_on_absent_or_odd_claim() -> None:
+    # A missing `aud` (None) or a non-string/non-list value is NOT bound — fail-closed, so a
+    # cross-resource or malformed token is rejected (RFC 8707 / ADR-IC-021 C1).
+    assert audience_binds_resource(None, MCP_URI) is False
+    assert audience_binds_resource(12345, MCP_URI) is False
