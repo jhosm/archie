@@ -1,3 +1,4 @@
+using Babelstone.Cadence;
 using Babelstone.Families.TermDeposit.Notification;
 using Babelstone.Notification;
 using Babelstone.Packs;
@@ -76,11 +77,11 @@ builder.Services.AddSingleton(TimeProvider.System);
 // The schedule pass's cadence/retry/backoff knobs (ADR-PC-023 §6). Bound from the "Notification"
 // configuration section so an operator can tune the poll interval; the generous one-hour default sits well
 // inside a reminder's latency tolerance.
-var schedulerOptions = new NotificationSchedulerOptions();
+var schedulerOptions = new CadenceSchedulerOptions();
 var pollSeconds = builder.Configuration.GetValue<double?>("Notification:PollIntervalSeconds");
 if (pollSeconds is > 0)
 {
-    schedulerOptions = new NotificationSchedulerOptions { PollInterval = TimeSpan.FromSeconds(pollSeconds.Value) };
+    schedulerOptions = new CadenceSchedulerOptions { PollInterval = TimeSpan.FromSeconds(pollSeconds.Value) };
 }
 
 builder.Services.AddSingleton(schedulerOptions);
@@ -88,7 +89,7 @@ builder.Services.AddSingleton(schedulerOptions);
 // The slot-4 idempotency ledger (ADR-PC-025): the "already raised this notification_id" memory the schedule
 // pass dedupes against. In-memory for v1; a durable, crash-surviving ledger is the emission child's concern
 // (bd babelstone-60n8.3).
-builder.Services.AddSingleton<INotificationDedupeLedger, InMemoryNotificationDedupeLedger>();
+builder.Services.AddSingleton<IDedupeLedger, InMemoryDedupeLedger>();
 
 // Resolve the instance-pinned regulatory pack (ADR-PC-007 §P4 / ADR-PC-025 §2) at startup, off disk via the
 // structural parser — the walking-skeleton stand-in for the OCI loader, the same disk path the engine host

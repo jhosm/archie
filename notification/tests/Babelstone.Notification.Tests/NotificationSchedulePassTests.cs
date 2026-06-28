@@ -1,3 +1,4 @@
+using Babelstone.Cadence;
 using Babelstone.Notification;
 using Xunit;
 
@@ -16,7 +17,7 @@ namespace Babelstone.Notification.Tests;
 /// returns, driven here by a fake rule that names no family.</item>
 /// </list>
 /// The as-of date is an INPUT (no clock read inside the pass), and the real
-/// <see cref="InMemoryNotificationDedupeLedger"/> backs the dedupe.
+/// <see cref="InMemoryDedupeLedger"/> backs the dedupe.
 /// </summary>
 public sealed class NotificationSchedulePassTests
 {
@@ -80,7 +81,7 @@ public sealed class NotificationSchedulePassTests
     // --- helpers ---
 
     private static NotificationSchedulePass NewPass(params INotificationScheduleRule[] rules) =>
-        new(rules, new InMemoryNotificationDedupeLedger());
+        new(rules, new InMemoryDedupeLedger());
 
     private static ReminderDecision Decision(Guid instanceId, DateOnly occurrence) =>
         new(instanceId, TemplateRef, occurrence, Today, new Dictionary<string, long>());

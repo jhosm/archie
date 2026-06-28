@@ -107,8 +107,9 @@ public class CadenceWorker : BackgroundService
 /// A cadence worker's cadence knobs — owned by the consuming service, not the engine (ADR-PC-023 §6: read
 /// cadence, retry and backoff are the downstream consumer's). Latency-tolerant work (a notification reminder,
 /// a lifecycle command on a generous due date) defaults to a generous poll interval; an operator tunes it from
-/// configuration at the host composition root. Left UNSEALED so a domain consumer can subclass it for a named
-/// options type (e.g. the notification estate's <c>NotificationSchedulerOptions</c>).
+/// configuration at the host composition root. A single-consumer host binds this type directly (as the
+/// notification scheduler does); it is left UNSEALED only so a consumer that genuinely needs a distinct named
+/// options type or DI key can subclass it.
 /// </summary>
 public class CadenceSchedulerOptions
 {
