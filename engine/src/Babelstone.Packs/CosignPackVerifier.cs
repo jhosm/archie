@@ -1,8 +1,8 @@
 namespace Babelstone.Packs;
 
 /// <summary>
-/// How <c>cosign verify</c> is configured (ADR-PC-007 §P2). Production is keyless OIDC (the
-/// issuer + certificate identity come from CI signing, story Q.5); local dev/CI may verify
+/// How <c>cosign verify</c> is configured (ADR-PC-007). Production is keyless OIDC (the
+/// issuer + certificate identity come from CI signing); local dev/CI may verify
 /// against a public key. The concrete prod issuer/subject are configuration, never hardcoded.
 /// </summary>
 public sealed class CosignVerificationPolicy
@@ -13,7 +13,7 @@ public sealed class CosignVerificationPolicy
 
     public IReadOnlyList<string> BuildVerifyArgs(string reference) => _verifyArgs(reference);
 
-    /// <summary>Keyless OIDC verification (production / Q.5): the signer's OIDC issuer + certificate identity.</summary>
+    /// <summary>Keyless OIDC verification (production): the signer's OIDC issuer + certificate identity.</summary>
     public static CosignVerificationPolicy Keyless(string oidcIssuer, string certificateIdentity)
     {
         ArgumentException.ThrowIfNullOrEmpty(oidcIssuer);
@@ -31,9 +31,9 @@ public sealed class CosignVerificationPolicy
 }
 
 /// <summary>
-/// Verifies a pack's cosign signature with the <c>cosign</c> CLI (ADR-PC-007 §P2), at load time
+/// Verifies a pack's cosign signature with the <c>cosign</c> CLI (ADR-PC-007), at load time
 /// only. A verified signature is the attestation that the pack's CUE depths 1–4 passed in CI
-/// (ADR-PC-006 §P3) — so the loader trusts the parse and does not re-run <c>cue vet</c>. Any
+/// (ADR-PC-006) — so the loader trusts the parse and does not re-run <c>cue vet</c>. Any
 /// non-zero exit (unsigned, wrong signer, tampered digest) is fatal: it throws
 /// <see cref="PackLoadException"/> rather than letting an unverified pack load.
 /// </summary>

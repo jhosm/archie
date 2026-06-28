@@ -3,7 +3,7 @@ using System.Formats.Tar;
 namespace Babelstone.Packs;
 
 /// <summary>
-/// Pulls a pack by digest with <c>oras</c> (ADR-PC-007 §P2), at load time only. Mirrors the
+/// Pulls a pack by digest with <c>oras</c> (ADR-PC-007), at load time only. Mirrors the
 /// command packs/pack.sh uses: <c>oras pull [--oci-layout] &lt;ref&gt;@&lt;digest&gt; -o &lt;tmp&gt;</c>,
 /// then reads the single <c>pack.tar</c> layer and extracts its members by relative path.
 /// </summary>

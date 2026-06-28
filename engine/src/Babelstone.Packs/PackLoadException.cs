@@ -1,7 +1,7 @@
 namespace Babelstone.Packs;
 
 /// <summary>
-/// A pack load failed and the engine must NOT proceed (ADR-PC-007 §P4 fail-loud). Covers a
+/// A pack load failed and the engine must NOT proceed (ADR-PC-007 fail-loud). Covers a
 /// missing pin, a failed/absent cosign signature, a failed oras pull, a YAML parse error, an
 /// unknown closed-schema key, an unmappable primitive, or a version-key mismatch. There is no
 /// silent fallback to a stale or bundled pack — a handler resolving against a half-loaded or

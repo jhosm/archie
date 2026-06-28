@@ -5,7 +5,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- YAML parser for the auditor-readable pack data files (ADR-PC-007 §S2). A pure
+    <!-- YAML parser for the auditor-readable pack data files (ADR-PC-007). A pure
          parser owning no state — consistent with the hand-rolled-core preference (the
          loader, cache, and fail-loud logic are all hand-rolled here). -->
     <PackageReference Include="YamlDotNet" />
