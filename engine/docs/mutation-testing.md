@@ -65,13 +65,28 @@ Several scopes share the one periodic lane, each with its own config and score f
   outright — so ignoring the class does not create a blind spot for the seams' "dropped `ORDER BY`"
   or the packs' "relaxed strict-parse" mutants of interest. The configs differ in score floor — the
   kernel is fully pinned (`break` 90), the family + seam/boundary legs start modestly (`break` 70 /
-  60). Each leg also passes `--project` and `--test-project`; `--project` is resolved by name
-  against the test project's references, so the family legs name the bare csproj
+  60). Each NON-kernel leg also passes `--project` and `--test-project`; `--project` is resolved by
+  name against the test project's references, so the family legs name the bare csproj
   (`Babelstone.Families.TermDeposit.csproj`) while pointing `--test-project` at the `../families/...`
-  path (the family projects are members of `engine/Babelstone.slnx`). The whole solution is built
-  and its full test set runs against each leg's mutants (more killing tests ⇒ higher score), which
-  is why a leg is *not* run in Stryker "project mode" — that would drop the cross-project tests and
-  collapse the score.
+  path (the family projects are members of `engine/Babelstone.slnx`). For these legs the whole
+  solution is built and its full test set runs against each mutant (more killing tests ⇒ higher
+  score), which is why they are *not* run in Stryker "project mode" — that would drop the
+  cross-project tests and collapse the score.
+- **Operating mode — the pure-kernel exception (Money + FinancialMath).** These two legs run in
+  Stryker **TEST-PROJECT context**, not solution context: the workflow sets `working-directory` to
+  the kernel's own test project and passes only `--project` (no `--test-project`), so Stryker runs
+  ONLY that one Docker-free suite. Solution context is wrong for them on two counts. (1) It dragged
+  the WHOLE Docker-backed solution test set — the Postgres / OCI / Redpanda Testcontainers tiers of
+  the sibling legs — through *every* mutant, which made the supposedly "pure, fast" kernel legs slow
+  and, over the FinancialMath leg's 264 IRR/TAEG-solver mutants, exhausted the runner ("runner
+  received a shutdown signal" — a resource kill, never a score miss). (2) The kernel is *self-pinned*
+  by its own property / golden-corpus / boundary suite, so the cross-project tests add no kills it
+  needs. Scoped, the legs finish in **seconds** with no Docker: Money holds **100 %** and
+  FinancialMath **95.88 %**, both ≥ the 90 floor. FinancialMath's ~4 % gap is boundary mutants in
+  `RateSchedule` / `Amortization` that sibling-family tests had been killing in solution mode — most
+  are *equivalent* (a `>` vs `>=` inside a max/min ternary yields the identical bound); pinning the
+  genuine ones (the zero-day-window guards) in the kernel's own suite and justifying the equivalents
+  is a tracked ratchet (**bd babelstone-nihb**).
 - **Mutation scope — what each leg does NOT mutate.** Pure hosting / configuration / observability /
   shell-adapter glue is carved out of the mutated set, leaving the behaviour the leg exists to guard.
   This is the [triage](#surviving-mutant-triage) "unproductive code" verdict applied declaratively: a
@@ -106,9 +121,12 @@ Several scopes share the one periodic lane, each with its own config and score f
     exercised only by the Docker `OciPackStoreIntegrationTests`). `PackParser.cs` — the fail-loud
     structural strict-parse, the boundary-data mutant of interest — stays mutated, as do
     `VerifiedPack.cs` and `OciToolchainGuard.cs`.
-- **Locally:** from `engine/`, `dotnet tool restore` then e.g. the kernel (no Docker):
-  `dotnet tool run dotnet-stryker --project Babelstone.FinancialMath.csproj --test-project tests/Babelstone.FinancialMath.Tests/Babelstone.FinancialMath.Tests.csproj --config-file stryker-config.kernel.json`.
-  The pure term-deposit leg runs the same way against the family config:
+- **Locally:** run `dotnet tool restore` once from `engine/` (the tool manifest lives there). The
+  kernel legs run in TEST-PROJECT context, so `cd` into the kernel test project and pass only
+  `--project` (no `--test-project`) — the no-Docker, seconds-fast path CI uses:
+  `cd tests/Babelstone.FinancialMath.Tests && dotnet tool run dotnet-stryker --project Babelstone.FinancialMath.csproj --config-file ../../stryker-config.kernel.json`
+  (Money is the same shape from `tests/Babelstone.FinancialTypes.Tests`).
+  The pure term-deposit leg, by contrast, runs in SOLUTION context from `engine/` against the family config:
   `dotnet tool run dotnet-stryker --project Babelstone.Families.TermDeposit.csproj --test-project ../families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/Babelstone.Families.TermDeposit.Tests.csproj --config-file stryker-config.family.json`.
   The spine, integration-seam, boundary codec/data, and `.Application` family legs swap in (or
   stay on) `stryker-config.json` / the family config and need Docker (the Testcontainers tier
@@ -130,8 +148,9 @@ pure kernel is fully pinnable, the Docker-backed spine is held to a more modest 
 | Boundary codec — Engine.Avro | `stryker-config.json` | 60 | 70 | 85 |
 
 `break` is the hard gate — a run below it **fails** the lane. The kernel floor sits at 90
-against an achieved 100 %: the headroom absorbs normal evolution (a new primitive landing a
-few mutants ahead of its test) without masking real erosion. A floor starts at the
+against an achieved 100 % (Money) / 95.88 % (FinancialMath, in the scoped test-project mode above —
+the remaining boundary mutants are tracked in bd babelstone-nihb): the headroom absorbs normal
+evolution (a new primitive landing a few mutants ahead of its test) without masking real erosion. A floor starts at the
 achievable score and ratchets **up** as triage closes gaps — it never moves down to
 accommodate a regression. Lowering a `break` requires the same explicit-drift
 acknowledgement as any other gate change.

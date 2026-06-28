@@ -11,11 +11,15 @@
 # Kong PROXY (8000), which still applies every declarative route + edge policy.
 # Traefik does NOT bypass Kong for the product API. Backstage (the catalogue
 # portal — not part of the ADR-IC-006 product surface) gets its own subdomain
-# straight through Traefik. Grafana is intentionally NOT exposed (no public
-# unauthenticated dashboard); OTLP 4317/4318 stays unexposed per ADR-IC-007 §P1.
+# straight through Traefik. Logto (the ADR-IC-021 OAuth/OIDC Authorization Server —
+# the token ISSUER, not a product route) likewise gets its own auth subdomain
+# straight through Traefik, so Kong's product routes stay the ADR-IC-006 edge.
+# Grafana is intentionally NOT exposed (no public unauthenticated dashboard); OTLP
+# 4317/4318 stays unexposed per ADR-IC-007 §P1.
 #
-# Hosts are babelstone.dev subdomains (the locked domain). DNS → node IP is the
-# account-gated Phase-0/2 step; at build time these are inert strings.
+# Hosts are babelstone.dev subdomains (the locked domain): api → Kong, backstage →
+# Backstage, app → Mission Control, auth → Logto (the 4th public host). DNS → node IP
+# is the account-gated Phase-0/2 step; at build time these are inert strings.
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -97,3 +101,35 @@ spec:
                 name: mission-control
                 port:
                   number: 9000
+---
+# Logto — the OAuth 2.1 / OIDC Authorization Server (ADR-IC-021, bd babelstone-zla1.10.2): the
+# staging box's token ISSUER (login + SCA + the MCP-agent authority). The 4th public host. It is
+# NOT a product route — it sits beside Backstage/Mission Control straight through Traefik, so
+# Kong stays the ADR-IC-006 edge for the product API (auth subdomain, reverse-proxied per the
+# ADR-IC-021 staging rollout). Only the main app port (3001 — sign-in + OIDC discovery + JWKS)
+# is fronted; the admin console (3002) stays cluster-internal (operator port-forward).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: logto
+  labels:
+    app.kubernetes.io/name: logto
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-babelstone
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - auth.babelstone.dev
+      secretName: logto-tls
+  rules:
+    - host: auth.babelstone.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: logto
+                port:
+                  number: 3001

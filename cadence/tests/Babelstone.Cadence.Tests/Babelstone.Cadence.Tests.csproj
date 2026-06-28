@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The shared CADENCE machinery under test (ADR-PC-036 §Decision 2 + ADR-IC-019 mechanism reuse): the
+         clock-owning CadenceWorker loop, the in-memory IDedupeLedger, and the CompositeId primitive. Docker-free
+         and engine-free — the worker loop is driven by a hand-rolled fake TimeProvider (so no FakeTimeProvider
+         package is needed). -->
+    <ProjectReference Include="../../src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
+  </ItemGroup>
+</Project>

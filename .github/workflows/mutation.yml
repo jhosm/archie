@@ -42,6 +42,11 @@ permissions:
 jobs:
   mutation:
     runs-on: ubuntu-latest
+    # Bound each leg below GitHub's 6h hard cap so a runaway leg fails as an explicit timeout rather
+    # than the opaque "runner received a shutdown signal" (the mode the FinancialMath leg hit before
+    # the kernel legs were scoped to test-project context). The slowest legs are the Docker-backed
+    # spine/boundary ones (~2.5–5h); 350m leaves headroom under the cap.
+    timeout-minutes: 350
     strategy:
       fail-fast: false
       matrix:
@@ -55,15 +60,24 @@ jobs:
             project: Babelstone.Engine.csproj
             test: tests/Babelstone.Engine.Tests/Babelstone.Engine.Tests.csproj
             config: stryker-config.json
-          # Financial-math kernel (B.10) — pure, fast; higher score floor (kernel config).
+          # Financial-math kernel (B.10) — pure, fast; higher score floor (kernel config). These two
+          # run in Stryker TEST-PROJECT context (scoped: true → working-directory IS the test project,
+          # no --test-project): only their own Docker-free suite runs, so each leg is seconds-fast and
+          # resource-light. SOLUTION context (every other leg) instead drags the whole Docker-backed
+          # solution test set through every mutant — which exhausted the runner on the FinancialMath
+          # leg (264 IRR/TAEG-solver mutants → "runner received a shutdown signal", never a score).
+          # The kernel is self-pinned by its own property/golden-corpus/boundary suite, so scoping does
+          # not collapse the score (engine/docs/mutation-testing.md "How it runs").
           - name: Money
             project: Babelstone.FinancialTypes.csproj
-            test: tests/Babelstone.FinancialTypes.Tests/Babelstone.FinancialTypes.Tests.csproj
+            workdir: engine/tests/Babelstone.FinancialTypes.Tests
             config: stryker-config.kernel.json
+            scoped: true
           - name: FinancialMath
             project: Babelstone.FinancialMath.csproj
-            test: tests/Babelstone.FinancialMath.Tests/Babelstone.FinancialMath.Tests.csproj
+            workdir: engine/tests/Babelstone.FinancialMath.Tests
             config: stryker-config.kernel.json
+            scoped: true
           # Term-deposit family (bd babelstone-2t16.16) — pure cent-math, kernel-style ignores,
           # break floor 70 (stryker-config.family.json). The .Application leg's read-model store
           # carries a Testcontainers (Postgres) tier, so the leg runs Docker-backed.
@@ -114,20 +128,35 @@ jobs:
       - name: Restore tools (dotnet-stryker)
         working-directory: engine
         run: dotnet tool restore
+      # Pure-kernel legs (scoped: true) — Stryker TEST-PROJECT context: working-directory IS the test
+      # project and there is NO --test-project, so Stryker runs ONLY that one Docker-free suite (seconds),
+      # not the ~1h Docker-laden solution-mode run that exhausted the runner. The config lives in engine/,
+      # so it is referenced by absolute path ($GITHUB_WORKSPACE) since the cwd is the test project.
+      - name: Run Stryker on ${{ matrix.name }} (kernel, test-project context)
+        if: matrix.scoped
+        working-directory: ${{ matrix.workdir }}
+        env:
+          STRYKER_PROJECT: ${{ matrix.project }}
+          STRYKER_CONFIG: ${{ matrix.config }}
+        run: dotnet tool run dotnet-stryker --project "$STRYKER_PROJECT" --config-file "$GITHUB_WORKSPACE/engine/$STRYKER_CONFIG"
+      # All other legs — Stryker SOLUTION context: the whole solution's test set runs against each
+      # mutant (more killing tests ⇒ higher score; engine/docs/mutation-testing.md). The break
+      # threshold in the leg's config fails the run below the score floor. The spine/seam/boundary
+      # legs' integration tier needs Docker, which ubuntu-latest provides.
       - name: Run Stryker on ${{ matrix.name }}
+        if: ${{ !matrix.scoped }}
         working-directory: engine
         env:
           STRYKER_PROJECT: ${{ matrix.project }}
           STRYKER_TEST_PROJECT: ${{ matrix.test }}
           STRYKER_CONFIG: ${{ matrix.config }}
-        # The break threshold in the leg's config fails the run below the score floor. The
-        # spine legs' integration tier needs Docker, which ubuntu-latest provides; the kernel
-        # legs are pure and use it only incidentally.
         run: dotnet tool run dotnet-stryker --project "$STRYKER_PROJECT" --test-project "$STRYKER_TEST_PROJECT" --config-file "$STRYKER_CONFIG"
       - name: Upload mutation report
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: stryker-report-${{ matrix.name }}
-          path: engine/StrykerOutput/**/reports/mutation-report.html
+          # Solution-context legs write under engine/StrykerOutput; the scoped kernel legs write under
+          # their test project (engine/tests/<Leg>.Tests/StrykerOutput). Match both.
+          path: engine/**/StrykerOutput/**/reports/mutation-report.html
           if-no-files-found: ignore

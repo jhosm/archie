@@ -1,0 +1,200 @@
+# Logto database lifecycle Jobs (ADR-IC-021 §staging-rollout, bd babelstone-zla1.10.2).
+#
+# Plain English: Logto keeps its data in Postgres, and three chores keep that schema healthy —
+# (1) create + seed the database the first time, (2) apply a schema upgrade when the Logto image
+# bumps (a manual step Logto requires on every release), and (3) rotate the OIDC token-signing
+# keys once a year. Each is a Kubernetes Job/CronJob so the chore is declarative and auditable
+# rather than a hand-run command. All three reuse the existing Postgres and the OpenBao-seeded
+# Secret (never inline literals, never on the bus — ADR-PC-004 §A1).
+#
+# CI VALIDATES ONLY (kustomize build + kubeconform); the live apply is account-gated (Phase 0-2).
+---
+# (1) db init — create the `logto` database, then seed the schema (`logto db init` / `db seed`).
+#     CREATE DATABASE cannot run in a transaction and the logto image carries no psql, so an
+#     initContainer (postgres image) creates the DB idempotently (mirrors the orchestrator's
+#     create-DB init), then the main container runs the Logto CLI seed. The seed installs the
+#     OIDC signing key into `oidc.privateKeys` from the OpenBao-held material below, so the key
+#     in the DB is OpenBao material — not image-generated. ttlSecondsAfterFinished lets a
+#     completed Job be recreated cleanly on the next apply (the seed is idempotent).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: logto-db-init
+  labels:
+    app.kubernetes.io/name: logto-db-init
+    app.kubernetes.io/part-of: babelstone
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: logto-db-init
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: create-logto-db
+          image: postgres:18-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h "$PGHOST" -p 5432 -U "$PGUSER" -d "$PGDATABASE" >/dev/null 2>&1; do
+                echo "waiting for postgres ..."; sleep 2
+              done
+              if [ "$(psql -tAc "SELECT 1 FROM pg_database WHERE datname='logto'")" = "1" ]; then
+                echo "database logto already exists"
+              else
+                echo "creating database logto"
+                psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE logto"
+              fi
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_USER
+            # Connect to the existing babelstone DB to issue CREATE DATABASE.
+            - name: PGDATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_DB
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+      containers:
+        - name: db-init
+          image: svhd/logto:latest
+          # `logto db init` — seed the schema into the freshly created `logto` DB (idempotent;
+          # a no-op if already seeded).
+          command: ["sh", "-c", "npm run cli db seed"]
+          env:
+            - name: LOGTO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DB_URL
+              value: postgres://babelstone:$(LOGTO_DB_PASSWORD)@postgres:5432/logto
+            # Vault KEK + the initial OIDC signing key, both from the OpenBao-seeded Secret —
+            # never inline literals (ADR-PC-004 §A1).
+            - name: SECRET_VAULT_KEK
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: SECRET_VAULT_KEK
+            - name: OIDC_PRIVATE_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: OIDC_PRIVATE_KEYS
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# (2) db alteration deploy — one-shot upgrade Job. Logto requires a MANUAL `db alteration deploy`
+#     per release (ADR-IC-021 §soft-criteria names this the one real recurring chore). Re-run it
+#     after the image tag bumps; idempotent (a no-op when already at `latest`). Modelled on the
+#     event-store migration Job (apps/event-store-migration-job.yaml).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: logto-db-alteration
+  labels:
+    app.kubernetes.io/name: logto-db-alteration
+    app.kubernetes.io/part-of: babelstone
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: logto-db-alteration
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: db-alteration
+          image: svhd/logto:latest
+          command: ["sh", "-c", "npm run cli db alteration deploy latest"]
+          env:
+            - name: LOGTO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DB_URL
+              value: postgres://babelstone:$(LOGTO_DB_PASSWORD)@postgres:5432/logto
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# (3) rotate oidc.privateKeys — annual signing-key rotation CronJob (ADR-IC-021 §staging-rollout,
+#     §C step 1: "schedule the annual signing-key rotation, grace-period enabled, as a cron Job").
+#     `db config rotate` GENERATES a fresh key in-DB and keeps the previous one in JWKS for a
+#     grace period, so tokens signed before the roll still verify until they expire — hence no
+#     injected key material here, only DB_URL. Modelled on volume-snapshot-cronjob.yaml (Forbid
+#     concurrency, bounded history + deadline); needs no kube-API access (it only talks to
+#     Postgres), so no ServiceAccount/RBAC, unlike the snapshotter.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: logto-key-rotation
+  labels:
+    app.kubernetes.io/name: logto-key-rotation
+spec:
+  # Annually at 03:00 UTC on 1 January.
+  schedule: "0 3 1 1 *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: logto-key-rotation
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: rotate
+              image: svhd/logto:latest
+              command: ["sh", "-c", "npm run cli db config rotate oidc.privateKeys"]
+              env:
+                - name: LOGTO_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: babelstone-dev-secrets
+                      key: POSTGRES_PASSWORD
+                - name: DB_URL
+                  value: postgres://babelstone:$(LOGTO_DB_PASSWORD)@postgres:5432/logto
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi

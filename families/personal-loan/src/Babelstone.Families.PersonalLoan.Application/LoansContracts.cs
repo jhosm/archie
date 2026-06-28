@@ -41,8 +41,10 @@ public sealed record DisburseLoanRequest(
     string? Actor = null);
 
 /// <summary>Pay one scheduled installment (POST /v1/loans/{id}/installment): the engine derives the next
-/// installment from the loan's schedule and folds it. Carries a mandatory <c>Idempotency-Key</c>
-/// (ADR-PC-029 slot 4) — an at-least-once retry must not double-pay.</summary>
+/// installment from the loan's schedule and folds it. Takes NO caller <c>Idempotency-Key</c> — the key is
+/// SERVER-DERIVED and number-pinned on the stable installment NUMBER (ADR-PC-036 §Decision 1+3, LCD-1;
+/// ADR-PC-029 slot 4): a re-dated at-least-once retry of the same occurrence reuses the same key and
+/// dedupes to one money leg, so it cannot double-pay.</summary>
 /// <param name="CollectionAccountRef">The OPAQUE account token the installment is collected from (a
 /// reference, NOT an IBAN — ADR-PC-004 §P2).</param>
 /// <param name="PaidAt">The instant the installment is paid; host-stamped when omitted.</param>

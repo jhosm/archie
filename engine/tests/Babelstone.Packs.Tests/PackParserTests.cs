@@ -237,4 +237,112 @@ public sealed class PackParserTests
         var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
         Assert.Contains("rate_sheet_version_id", ex.Message);
     }
+
+    [Theory]
+    // B.10 mutation backstop: every governed field PackParser feeds through Required(...) must fail
+    // loud when emptied — a relaxed guard that returned the empty string instead of throwing would let
+    // a malformed pack into the engine with a silent default (the "relaxed strict-parse rejection"
+    // mutant of interest, engine/docs/mutation-testing.md). The happy-path Pt2026() parse pins the
+    // present-value side of each Required ternary; these cases pin the missing-value side, so BOTH the
+    // always-throw and never-throw mutants of every field's guard die. One case per field the existing
+    // fail-loud tests above do not already exercise a MISSING value for.
+    [InlineData("pack.yaml", "pack_id: pt", "pack_id: \"\"", "pack_id")]
+    [InlineData("pack.yaml", "pack_version: \"2026.1\"", "pack_version: \"\"", "pack_version")]
+    [InlineData("pack.yaml", "namespace: pt", "namespace: \"\"", "namespace")]
+    [InlineData("pack.yaml", "publisher: pt-pack-team@engine.internal", "publisher: \"\"", "publisher")]
+    [InlineData("pack.yaml", "engine_compatible_versions: \">=1.0.0,<2.0.0\"", "engine_compatible_versions: \"\"", "engine_compatible_versions")]
+    [InlineData("pack.yaml", "test_corpus_ref: oci://babelstone-packs/pt-deposit-tests@2026.1", "test_corpus_ref: \"\"", "test_corpus_ref")]
+    [InlineData("primitives/withholding.yaml", "formula_ref: engine.withholding.percentage", "formula_ref: \"\"", "formula_ref")]
+    [InlineData("primitives/withholding.yaml", "basis: gross_interest", "basis: \"\"", "basis")]
+    [InlineData("primitives/withholding.yaml", "timing: at_credit", "timing: \"\"", "timing")]
+    [InlineData("primitives/withholding.yaml", "{ id: pme_leader, evidence: declaration_pme }", "{ id: \"\", evidence: declaration_pme }", "exemption.id")]
+    [InlineData("primitives/withholding.yaml", "{ id: pme_leader, evidence: declaration_pme }", "{ id: pme_leader, evidence: \"\" }", "exemption.evidence")]
+    [InlineData("primitives/withholding.yaml", "modelo_39: { required: true, frequency: annual }", "modelo_39: { required: true, frequency: \"\" }", "frequency")]
+    [InlineData("primitives/fgd.yaml", "scheme: fgd_pt", "scheme: \"\"", "scheme")]
+    [InlineData("primitives/reporting.yaml", "regulator: banco_de_portugal", "regulator: \"\"", "regulator")]
+    [InlineData("primitives/day-count.yaml", "formula_ref: engine.day_count.actual_360", "formula_ref: \"\"", "formula_ref")]
+    [InlineData("families.yaml", "family_name: term_deposit", "family_name: \"\"", "family_name")]
+    [InlineData("families.yaml", "aggregate_type: term_deposit", "aggregate_type: \"\"", "aggregate_type")]
+    [InlineData("families.yaml", "plugin_assembly: Babelstone.Families.TermDeposit.Application", "plugin_assembly: \"\"", "plugin_assembly")]
+    [InlineData("rate-sheet-refs/deposits-pt.yaml", "product_family: term_deposit", "product_family: \"\"", "product_family")]
+    public void A_required_field_emptied_in_any_pack_file_fails_loud(string path, string find, string replace, string expectedFieldFragment)
+    {
+        var files = PackTestData.LoadPt2026();
+        var original = Encoding.UTF8.GetString(files[path]);
+        var mutated = original.Replace(find, replace, StringComparison.Ordinal);
+        // Self-check: the find-string must actually be present, so a fixture edit that drifts the YAML
+        // fails HERE (no-op replace) rather than passing a test that no longer mutates anything.
+        Assert.NotEqual(original, mutated);
+        files[path] = Encoding.UTF8.GetBytes(mutated);
+
+        var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
+        Assert.Contains(expectedFieldFragment, ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_empty_expected_version_key_is_rejected()
+        // The pin the WHOLE parse cross-checks `pack_id.pack_version` against — an empty pin must be
+        // rejected up front (ArgumentException), not slip through to a misleading version-key mismatch.
+        => Assert.Throws<ArgumentException>(() => PackParser.Parse(PackTestData.LoadPt2026(), ""));
+
+    [Fact]
+    public void A_null_family_entry_fails_loud()
+    {
+        // A list hole in families.yaml (a `-` with no body → a null entry) must fail loud naming the
+        // file, not NullReference past the per-entry required-field checks.
+        var files = PackTestData.LoadPt2026();
+        files["families.yaml"] = Encoding.UTF8.GetBytes("families:\n  - \n");
+        var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
+        Assert.Contains("empty family entry", ex.Message, StringComparison.Ordinal);
+    }
+
+    // The `?? []` / `?? new()` defaults: an ABSENT optional collection field must surface as an EMPTY
+    // collection, never null — a dropped default would NullReference on the first `foreach`/`.Select`
+    // (or hand a null collection downstream). The sibling tests above use an EXPLICIT empty (`[]`),
+    // which does not exercise the default; these remove the field entirely so the null-coalescing
+    // mutant is the one that breaks.
+
+    [Fact]
+    public void An_absent_template_refs_block_defaults_to_empty_not_null()
+    {
+        var files = PackTestData.LoadPt2026();
+        var pack = Encoding.UTF8.GetString(files["pack.yaml"]).Replace("template_refs:\n  - notices", "", StringComparison.Ordinal);
+        Assert.NotEqual(Encoding.UTF8.GetString(files["pack.yaml"]), pack); // self-check: the block was present
+        files["pack.yaml"] = Encoding.UTF8.GetBytes(pack);
+        Assert.Empty(PackParser.Parse(files, "pt.2026.1").Manifest.TemplateRefNames);
+    }
+
+    [Fact]
+    public void An_absent_breaking_changes_block_parses_to_none()
+    {
+        var files = PackTestData.LoadPt2026();
+        var pack = Encoding.UTF8.GetString(files["pack.yaml"]).Replace("breaking_changes: []", "", StringComparison.Ordinal);
+        Assert.NotEqual(Encoding.UTF8.GetString(files["pack.yaml"]), pack);
+        files["pack.yaml"] = Encoding.UTF8.GetBytes(pack);
+        // A dropped `?? []` would NullReference on the .Select over the (absent) breaking-change list.
+        Assert.Null(Record.Exception(() => PackParser.Parse(files, "pt.2026.1")));
+    }
+
+    [Fact]
+    public void An_absent_rate_sheet_refs_block_defaults_to_no_refs()
+    {
+        var files = PackTestData.LoadPt2026();
+        var pack = Encoding.UTF8.GetString(files["pack.yaml"]).Replace("rate_sheet_refs:\n  - deposits-pt", "", StringComparison.Ordinal);
+        Assert.NotEqual(Encoding.UTF8.GetString(files["pack.yaml"]), pack);
+        files["pack.yaml"] = Encoding.UTF8.GetBytes(pack);
+        // A dropped `?? []` would NullReference on the foreach over the (absent) ref-name list.
+        Assert.Empty(PackParser.Parse(files, "pt.2026.1").RateSheetRefs);
+    }
+
+    [Fact]
+    public void An_absent_permitted_for_defaults_to_an_empty_permitted_set()
+    {
+        // act_365 / 30_360_european carry `permitted_for: []`; remove it so the field is ABSENT and the
+        // `?? []` default is the one under test — the permitted set must be empty, not null.
+        var files = PackTestData.LoadPt2026();
+        var dc = Encoding.UTF8.GetString(files["primitives/day-count.yaml"]).Replace("permitted_for: []", "", StringComparison.Ordinal);
+        Assert.NotEqual(Encoding.UTF8.GetString(files["primitives/day-count.yaml"]), dc);
+        files["primitives/day-count.yaml"] = Encoding.UTF8.GetBytes(dc);
+        Assert.Empty(PackParser.Parse(files, "pt.2026.1").DayCounts["act_365"].PermittedFor);
+    }
 }

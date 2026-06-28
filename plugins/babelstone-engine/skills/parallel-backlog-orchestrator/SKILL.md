@@ -48,9 +48,16 @@ bd -C <primary> dep tree <epic>       # sanity-check edges if working an epic
 Drop anything already claimed/in-progress. **Drop every epic.** `bd ready` returns epics
 (containers) mixed in with leaf issues — one real run had 17 epics among 53 rows — and an epic is
 not a dispatchable unit of work. Dispatch only **leaf issues** (`type: task` / `type: feature`);
-never dispatch an epic. What remains is the bd candidate pool. If the user named specific issues
-("k6r8.10 and its upstream blockers"), intersect the pool with that set and pull in any *ready*
-blockers they depend on.
+never dispatch an epic. **Also drop the issues that are not *agent-dispatchable* at all** — pure
+human / account-bound work an autonomous lane can neither do nor PR: "create a cloud account",
+"register a domain", "mint a billable API token", "run the promote against a real cluster". But
+apply the inverse carefully: an issue gated on an account that doesn't exist yet is often still
+dispatchable, because **artifact authoring is account-independent** — the Helm/kustomize/Terraform
+manifests, the CI gate, the migration can be written and statically validated (`kustomize build |
+kubeconform`, a unit test) on a laptop, even though the live *apply* waits on the account. Authoring
+≠ applying: dispatch the authoring slice; leave the apply for the human. What remains is the bd
+candidate pool. If the user named specific issues ("k6r8.10 and its upstream blockers"), intersect
+the pool with that set and pull in any *ready* blockers they depend on.
 
 **1b — the repo's in-flight no-go regions (bd-independent).** bd status is *not* the full picture of
 what's already being worked on. The no-go regions that bite hardest are often invisible to bd: a
@@ -63,8 +70,8 @@ no-go region **regardless of PR or bd status**:
 git -C <primary> fetch origin                            # so origin/* refs are current first
 git -C <primary> worktree list                           # every checked-out tree
 git -C <primary> branch -a                                # local + remote branches
-# per branch — the files it changes vs main (footprint command; see Step 2 / fix 4):
-git -C <primary> diff --name-only origin/main..<branch>
+# per branch — the files it AUTHORED vs main (footprint command; see Step 2). Use THREE dots:
+git -C <primary> diff --name-only origin/main...<branch>
 # per worktree — its uncommitted edits (staged + unstaged + untracked):
 git -C <worktree-path> status --porcelain
 ```
@@ -81,25 +88,45 @@ predicting each issue's likely file footprint from its title/description and a q
 then group so footprints are disjoint:
 
 - **Disjoint footprints → separate lanes** (run concurrently).
-- **Overlapping footprints → same lane** (run sequentially inside one agent) *or* defer the loser to
-  the saturation refill (Step 6) — never two concurrent lanes on the same files.
+- **Overlapping footprints between two *ready* issues → PACK them into one sequential lane, this
+  run.** This is the default, not a fallback: one agent does both issues in order on one branch and
+  opens a **combined PR** that names both under `## bd issues closed on merge` (one
+  `- Closes babelstone-<id>` line each). Sequential packing is exactly how you ship file-colliding
+  work *in the same run* instead of losing it. (Two issues that share files but are large/unrelated
+  may instead open two stacked PRs — the second branched off the first — but a combined PR is simpler
+  and the default.) What you must NOT do is run two **concurrent** lanes on the same files.
 - **A footprint that overlaps a Step 1b no-go region → defer** it just as you would an inter-lane
   collision. An uncommitted worktree or a pushed-but-unmerged branch owns those files now.
-- **Dependency edge still open → not eligible.** `bd ready` already excludes blocked issues, but
-  re-check: a blocker only *closes* at merge (Step 7 / `post-merge-cleanup`), so a dependent issue
-  will not become ready until a previous run's PR actually merges. Don't dispatch it now.
+- **Distinguish "defer to a future run" from "pack now".** Only one situation forces deferral to a
+  *later* run: a dependency on a PR that has **not merged yet** — `bd ready` excludes open-blocker
+  issues, but re-check, because a blocker only *closes* at merge (Step 7 / `post-merge-cleanup`), so a
+  dependent won't become ready until a previous run's PR actually merges. A plain **file-collision
+  with another ready issue is NOT a deferral** — it packs into a sequential lane (previous bullet). If
+  you find yourself deferring a ready, dispatchable issue purely because its files collide with a lane
+  in *this* run, you are losing throughput: pack it instead.
 
-**Compute a branch's footprint with `git diff --name-only`, never `git log`.** When you need the
-files a branch changed (Step 1b's no-go enumeration, or sizing a candidate's overlap against an
-existing branch), use:
+**Compute a branch's footprint with three-dot `git diff --name-only`, never `git log` and never
+two-dot.** When you need the files a branch changed (Step 1b's no-go enumeration, or sizing a
+candidate's overlap against an existing branch), use the **three-dot** form:
 
 ```bash
-git -C <primary> diff --name-only origin/main..<branch>   # the files; not the commit list
+git -C <primary> diff --name-only origin/main...<branch>   # what the branch AUTHORED (merge-base diff)
 ```
 
-`git log origin/main..<branch>` over-counts: commits already merged via another path still show up,
-making a branch look far larger than the files it actually changes vs `main`. The footprint is the
-*file set the branch differs from `main` by*, which is exactly what `git diff --name-only` reports.
+Two pitfalls, both seen in real runs:
+
+- `git log origin/main..<branch>` over-counts: commits already merged via another path still show up,
+  making a branch look far larger than the files it actually changes.
+- **Two-dot `git diff origin/main..<branch>` inflates when the branch is *behind* main.** Two-dot
+  compares the two tips, so it reports every file *main* changed since the branch forked as if the
+  branch touched it. In one run this made stale comment-pass branches falsely appear to edit the ADR
+  ledger (`commitment-catalogue.md`, the `adr-index`), which would have wrongly marked those files
+  no-go and blocked an unrelated lane.
+
+The footprint you want is *what the branch authored* — the diff from the **merge-base** — which is
+exactly what the three-dot `origin/main...<branch>` reports. Default to three dots for every
+footprint computation; the two-dot form only answers "how does the branch tip differ from main's
+tip", which is not the footprint.
 
 **Verify every asserted blocker before honouring or dismissing it.** A "BLOCKED" in a title or a
 "hard precondition" in a description is a *claim*, not a fact — it may be stale (the blocker already
@@ -117,8 +144,31 @@ ls <asserted-missing-path>                # does the prose-required source/dir a
 Honour a blocker only if the check confirms it; dismiss it only if the check refutes it. Never take
 the asserted state on trust.
 
+**Verify your *own* asserted collisions too — an inferred collision is also a claim.** The rule above
+guards against trusting a blocker *someone else* asserted; the symmetric trap is trusting a collision
+*you* inferred. Before excluding a candidate as "collides with a no-go region / another lane", pull
+its **real** footprint (the three-dot diff for a branch; a scoped read-only investigator for an
+issue) and check **file-level**, not folder- or assembly-level, overlap. In one run an issue was
+excluded by inference — its title and ADR put a new interface "beside" a file in an active no-go
+assembly — but its actual footprint was a *new* file plus new projector/store/migration, fully
+disjoint from the in-flight edits, and it was high-leverage (it unblocked two downstream issues).
+New-file work inside a busy assembly is usually clean: .NET globs `.cs`, so a new file needs no
+`.csproj` edit. Exclude a candidate only on a *verified* file overlap, never on a title-or-ADR hunch.
+
 Cap concurrency at a sane N (≈4–6) so the host and your attention aren't swamped. Aim for the
 *maximum* number of conflict-free lanes up to N.
+
+**Adding lanes to an already-committed plan — check against the *reserved set*.** Planning is not
+always one pass. The user may, after you present the priority lanes, ask you to add more (e.g. "fit
+in the `zla1` staging work too"). When you do a second pass, the committed lanes already **own** a set
+of files — call it the *reserved set* (the union of every committed lane's footprint, plus the
+sequential-packed issues' footprints, plus the shared-ledger rows already claimed). A new candidate
+is admissible only if its footprint is disjoint from the **reserved set** *and* the Step 1b no-go
+regions — not merely disjoint from the other new candidates. Run the same footprint investigation for
+the new candidates, but check each one's overlap against the reserved set explicitly; an issue that
+shares even one file (e.g. `DepositsEndpoints.cs`, a shared `kong.yml`, or a committed lane's
+catalogue row) with a committed lane is not a new concurrent lane — pack it sequentially into that
+lane, or defer it. This keeps the second pass as collision-free as the first.
 
 ## Step 3 — Present the lane plan, then confirm before dispatching
 
@@ -179,7 +229,7 @@ ultracode bullet below.)
       investigations, and on a large backlog they're too much to do by hand reliably. So before any
       lane-carving, run an **Understand-phase Workflow**: fan out one read-only investigator
       `agent()` per candidate (each scoped to *that* issue) that returns its predicted file footprint
-      (`git diff --name-only origin/main..<branch>` where a branch already exists) **and** its
+      (three-dot `git diff --name-only origin/main...<branch>` where a branch already exists) **and** its
       verified-blocker verdict (`bd show` the named dependency, `ls` the asserted-missing path — fix 2
       / fix 4). Collect those into a footprint + verified-blocker map, *then* carve the
       collision-free lanes (Step 2) from that map. Only after the lanes are carved does the lane-
@@ -216,11 +266,20 @@ Either way, give every lane agent the same standing brief:
   resolved by this PR.`). That last section is the authoritative hand-off `post-merge-cleanup` reads
   to know which `bd close` to run, so the lane's own issue ID **must** appear there. On any diff
   touching `engine/ families/ orchestrator/ acl/ notification/ mcp-server/ contracts/ pack-validate/`
-  or `docs/**/adrs/`, run the `babelstone-engine:adr-conformance` agent before pushing.
-- **Do not edit shared-ledger files** — the `commitment-catalogue.md` row(s) and the generated
-  `reference/adr-index`. If your issue needs a Planned→Live catalogue flip, *describe* the exact row +
-  change and report it back; the orchestrator applies every flip centrally (the single-writer rule —
-  see Guardrails). Don't regenerate the `adr-index` yourself either.
+  or `docs/**/adrs/`, the `babelstone-engine:adr-conformance` agent must run — but **in the
+  ultracode/Workflow path a lane `agent()` cannot spawn it** (a Workflow agent has no sub-agent
+  spawn), so the **orchestrator runs adr-conformance centrally** on each such diff after the Workflow
+  returns, before finalising. In the default hand-driven Agent-tool path, the lane runs it before
+  pushing if it can; otherwise the orchestrator runs it centrally. Either way it is never skipped —
+  only relocated to whoever can actually spawn it. Do **not** tell Workflow lanes to run it themselves.
+- **Respect the two shared ledgers (Guardrails has the full rule).** The generated
+  `reference/adr-index` is **single-writer** — never regenerate it in a lane unless you are the one
+  ADR-touching lane the orchestrator nominated to own the `make docs-gen` regen this run. The
+  `commitment-catalogue.md` is **row-addressable**: you may flip **only the one row your issue owns**,
+  and only when the orchestrator has confirmed no other concurrent lane touches that same or an
+  *adjacent* row — edit that single row's cells, never reformat the table. If you are unsure, or your
+  row neighbours another lane's, *describe* the exact row + Planned→Live change and report it back for
+  the orchestrator to apply centrally instead.
 - **Do not run any `bd …` command, do not push to `main`, do not merge.** Report back: issue ID,
   branch, PR URL, CI state, the catalogue flip you need (if any), and anything you couldn't finish.
 
@@ -250,9 +309,12 @@ a known `<abs-path>`). Under a dynamic Workflow the same recovery runs inside an
 ## Step 6 — Keep the queue saturated
 
 As each lane reaches "PR open" or dies, free its slot and refill it from the **DEFERRED** set — the
-ready issues that were held back only because their files collided with a now-finished lane (Step 2).
-Re-claim, worktree, dispatch (Steps 4–5). Keep N agents busy until the ready, collision-free,
-not-yet-dispatched set is empty. Under a dynamic Workflow this saturation *is* the loop-until-dry: the
+ready, **collision-free** lanes that didn't fit because there were more of them than N slots (Step 2),
+plus any lane whose files freed because a concurrent lane *died* with no PR. Re-claim, worktree,
+dispatch (Steps 4–5). Keep N agents busy until the ready, collision-free, not-yet-dispatched set is
+empty. (Note: a ready issue that merely *shares files* with a still-in-flight lane is **not** a refill
+candidate — its files stay owned until that lane's PR merges, a later run's input. Such issues should
+already have been **packed** into the colliding lane as sequential work in Step 2, not parked here.) Under a dynamic Workflow this saturation *is* the loop-until-dry: the
 script keeps N lane `agent()`s busy, refilling each freed slot from DEFERRED until the set is empty —
 you don't drive it slot by slot, and because the orchestrator already claimed DEFERRED up front
 (Step 4), a refill needs no fresh bd write. (Dependency-blocked issues won't appear here — they
@@ -288,21 +350,29 @@ When the queue is drained, the **orchestrator** (never the lanes) reconciles bd 
   this**: the script itself has no shell/bd access, and its `agent()` lanes are lane agents (read-only
   on bd), so every bd write stays with the orchestrator — claimed centrally up front, the single
   `bd dolt push` after the Workflow returns.
-- **Shared-ledger files need a single writer too — the same rule, generalised.** bd's Dolt DB is not
-  the only mutable thing many lanes can race on. Some repo files are **shared ledgers**: any change
-  appends or regenerates a whole-repo artefact rather than editing a lane-local file. The two that
-  bite here are `docs/product-management/product_concepts/adrs/commitment-catalogue.md` (every lane
-  that needs a Planned→Live row flip would edit the same rows) and the **generated `reference/adr-index`**
-  (`make docs-gen` regenerates the whole index whenever *any* lane touches an ADR source, so two lanes
-  both regenerating it produce conflicting whole-file rewrites). Treat these exactly like the
-  one-writer-to-bd rule: a shared ledger gets **a single writer or serialised access**. Concretely —
-  lane agents **do not** edit the commitment-catalogue; they *describe* the exact row + Planned→Live
-  change and report it back, and the **orchestrator applies every catalogue flip centrally** (one
-  writer), the same way it owns every bd write. For the generated `adr-index`, either keep
-  ADR-touching lanes out of the same run or let the orchestrator run the single `make docs-gen` regen
-  centrally after the lanes land — never two lanes regenerating it concurrently. Collision-freedom
-  (the next guardrail) covers ordinary lane-local files; shared ledgers need this stronger
-  single-writer discipline on top.
+- **Shared-ledger files need a single writer too — but the discipline splits by ledger *type*.** bd's
+  Dolt DB is not the only mutable thing many lanes can race on. Some repo files are **shared ledgers**:
+  a change appends to or regenerates a whole-repo artefact rather than editing a lane-local file. The
+  two that bite here behave differently, and conflating them either corrupts the ledger or wastes
+  throughput:
+    - **Wholesale-regenerated ledger → strict single writer.** The **generated `reference/adr-index`**
+      is rebuilt in full by `make docs-gen` whenever *any* lane touches an ADR source, so two lanes
+      regenerating it produce conflicting whole-file rewrites. Either keep ADR-touching lanes out of
+      the same run, or nominate exactly **one** ADR-touching lane (or the orchestrator, centrally) to
+      run the single `make docs-gen` and commit the regen — never two concurrent regenerators.
+    - **Row-addressable ledger → disjoint-row writers are safe.** The
+      `docs/product-management/product_concepts/adrs/commitment-catalogue.md` is a table; a lane that
+      flips its *own* row Planned→Live edits a different line from a lane flipping another row. Two
+      such edits to **non-adjacent** rows do not git-conflict (verify the rows are well separated
+      first, e.g. with `grep -n`). So a lane **may** own its single row *iff* the orchestrator has
+      confirmed (a) no other concurrent lane touches that same or an adjacent row, and (b) the lane
+      edits only that row's cells and never reformats the table. When rows are adjacent, two lanes
+      need the same row, or you are unsure — fall back to the safe default: lanes *describe* the exact
+      row + change and the **orchestrator applies the flips centrally**, serialised, one at a time.
+  The point is to reserve the expensive single-writer/central-application discipline for *genuine*
+  contention (whole-file regen, same/adjacent rows) and not pay it where edits are provably disjoint.
+  Collision-freedom (the next guardrail) covers ordinary lane-local files; shared ledgers need this
+  type-aware discipline on top.
 - **Collision-free is non-negotiable.** Two concurrent lanes must never touch the same files. When
   unsure whether footprints overlap, serialise them in one lane or defer one — correctness over
   concurrency.

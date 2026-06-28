@@ -50,6 +50,34 @@ user. Those structured (JSON) log lines are scraped by the OTel Collector into L
 who-queried-what trail is queryable and retained. This satisfies the doc 10 Boundary 7 / PSD2
 requirement: *access to traces carrying financial attributes is itself logged.*
 
+## Enforced end-to-end in CI (`scripts/grafana-rbac-check.sh`)
+
+The access controls above are not just declared — they are **proven against a real Grafana** on
+every `infra/**` change. [`scripts/grafana-rbac-check.sh`](../../../scripts/grafana-rbac-check.sh)
+(run by the CI `infra` job and locally via `make grafana-rbac-check`) stands up the pinned
+`grafana/otel-lgtm:0.28.0` appliance with this subtree's `grafana.ini` as the config overlay,
+then asserts the **end-to-end enforcement** that flips catalogue row **SEC-2** (`OBS_PLANE_RBAC`)
+from `Planned` to `Live`:
+
+- an **anonymous** Tempo query is **refused** (`401`) — the plane is not world-readable;
+- a **NOC-class token** without the `datasources:query` privilege is **refused** the Tempo trace
+  read (`403`, *"Permissions needed: datasources:query"*) while **engineer/admin** tokens
+  **succeed** (`200`);
+- the authorised engineer/admin read is **recorded** in the Grafana dataproxy access log
+  (`logger=data-proxy-log`, `datasource=tempo`, with the acting `username`), and the refused NOC
+  read is **not** (it is denied before the proxy) — exactly *who read a financially-attributed
+  trace, and when*.
+
+Static assertions in the same script pin that `grafana.ini` / `roles.yaml` /
+`datasource-permissions.yaml` still express the §P6 role split + Tempo lock, so a future edit
+cannot silently drop one ([ADR-PC-020 §D3](../../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md):
+no silent divergence). Run the static block alone (no Docker) with
+`GRAFANA_RBAC_CHECK_STATIC_ONLY=1 ./scripts/grafana-rbac-check.sh`.
+
+**What the live leg asserts is the OSS-enforceable `datasources:query` *action-level* gate**, not
+the per-datasource Tempo lock — see the next section for why, and which hardening is out of OSS
+scope.
+
 ## OSS reality and the Enterprise / gateway fallback (honest scope)
 
 [ADR-IC-007 §P6 baseline (2026-05-17)](../../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md):
@@ -65,6 +93,18 @@ gateway/Enterprise upgrade is the documented production hardening when the role 
 folder granularity. The bundled `otel-lgtm` appliance runs OSS Grafana, so this is the active
 posture for the self-hosted POC.
 
+**Precisely what OSS enforces (verified live by `grafana-rbac-check.sh`).** On the OSS tier the
+`custom roles` in `roles.yaml` and the managed `datasourcePermissions` in
+`datasource-permissions.yaml` are an **Enterprise** feature — the OSS fine-grained-RBAC API
+(`/api/access-control/roles`) returns `404`, and the OSS basic `Viewer` role grants
+`datasources:query` on **every** datasource. So the *faithful* "noc-viewer may query Prometheus
+but not Tempo" split is **not** OSS-enforceable; that per-datasource granularity is precisely the
+Enterprise / upstream-gateway hardening named above. What the live CI gate enforces instead is the
+**OSS-enforceable `datasources:query` *action-level* gate**: a token **without** that privilege is
+refused trace reads (`403`), one **with** it succeeds (`200`), anonymous access is refused, and the
+authorised read is logged. The gate models the NOC posture with a no-`datasources:query` token,
+which is the honest OSS realisation of doc 10 Boundary 7 until the Enterprise/gateway split lands.
+
 ## How to apply (additive overlay — not mounted by default)
 
 Like [`infra/grafana/prometheus/`](../prometheus/README.md), this is an **additive overlay** a
@@ -75,8 +115,15 @@ deployment mounts it **before** the first service emits a financial span ([ADR-I
 ```yaml
 # infra/compose.yaml, under the grafana-lgtm service:
 volumes:
-  - ./grafana/rbac/grafana.ini:/otel-lgtm/grafana/conf/grafana.ini:ro
+  # The otel-lgtm appliance resolves Grafana's override config at conf/custom.ini (its run dir,
+  # /otel-lgtm/grafana, is the config homepath), so the overlay rides there — NOT conf/grafana.ini.
+  - ./grafana/rbac/grafana.ini:/otel-lgtm/grafana/conf/custom.ini:ro
   - ./grafana/rbac/provisioning:/otel-lgtm/grafana/conf/provisioning/access-control:ro
+environment:
+  # The appliance force-defaults anonymous-Admin ON (an env var that wins over the .ini) for
+  # zero-config local use; set this to honour grafana.ini's [auth.anonymous] enabled = false —
+  # the regulated-store posture. (On Grafana Enterprise/standalone the .ini alone suffices.)
+  - GF_AUTH_ANONYMOUS_ENABLED=false
 ```
 
 On Kubernetes the same files ride as a `ConfigMap` mounted at the appliance's Grafana config +

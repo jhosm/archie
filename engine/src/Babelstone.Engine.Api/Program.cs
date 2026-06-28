@@ -160,6 +160,18 @@ builder.Services.AddSingleton<ICommandLog>(_ => new PostgresCommandLog(connectio
 // `projections` discriminator columns + the `projection_checkpoints` table they read/write.
 builder.Services.AddSingleton<IProjectionStorage>(_ => new PostgresProjectionStore(connectionString));
 builder.Services.AddSingleton<IProjectionCheckpointStore>(_ => new PostgresProjectionCheckpointStore(connectionString));
+// The spine-owned, account_ref-keyed MOVEMENT LEDGER (ADR-PC-032 §A1 / §95 read side): the read
+// half the money-movement ADR named but deferred until the discoverability seam (IMovementBearing)
+// existed. It is a family-agnostic spine component (ADR-PC-021 §P2) — ONE account-keyed projection,
+// NOT a per-family copy — backed by the same PostgreSQL tier (migration 0019 owns `movement_ledger`).
+// The store is registered here beside the other spine projection storage; the MovementLedgerProjector
+// folds every Movement-bearing event's Movements into it by pattern-matching the IMovementBearing seam,
+// so it stays cross-family and account-keyed (a single account_ref receives movements from many
+// streams), which is why it is a directly-driven spine projector rather than a per-family
+// IProjectionRunner on the per-stream drainer.
+builder.Services.AddSingleton<IMovementLedgerStore>(_ => new PostgresMovementLedgerStore(connectionString));
+builder.Services.AddSingleton(serviceProvider =>
+    new MovementLedgerProjector(serviceProvider.GetRequiredService<IMovementLedgerStore>()));
 // A.11 snapshot runtime wiring (ADR-PC-003): the byte-oriented snapshot store is a family-agnostic
 // spine component (ADR-PC-021), backed by the same PostgreSQL tier as the event store (ADR-PC-003 §D
 // — snapshots are rows in a `snapshots` table in the SAME database). The family module composes the
