@@ -1,4 +1,5 @@
 using Babelstone.Engine;
+using Babelstone.Engine.Hosting;
 using Babelstone.EventStore;
 using Babelstone.Families.PersonalLoan;
 using Microsoft.AspNetCore.Builder;
@@ -13,8 +14,10 @@ namespace Babelstone.Families.PersonalLoan.Application;
 /// sibling of <c>DepositsEndpoints</c>. Mirrors the term-deposit surface shape: a thin HTTP front door over
 /// the pure decider via <see cref="PersonalLoanConstitutionService"/>, with the host owning the wall clock
 /// at the boundary (it stamps a missing disbursed_at / paid_at / repaid_at) so the decider stays pure
-/// (ADR-PC-010 §P5). The money-movers carry a mandatory <c>Idempotency-Key</c> (ADR-PC-029 slot 4): an
-/// at-least-once retry replays the original outcome rather than moving money twice. NO eager settlement on
+/// (ADR-PC-010 §P5). The money-movers are idempotent (ADR-PC-029 slot 4): an at-least-once retry replays the
+/// original outcome rather than moving money twice. The <b>installment</b> path's key is SERVER-DERIVED and
+/// number-pinned (ADR-PC-036 §Decision 1+3, LCD-1) — no caller key; the other money-movers (early-repayment /
+/// write-off / erase) keep a mandatory caller-supplied <c>Idempotency-Key</c>. NO eager settlement on
 /// any path — each money-moving event records its leg APPEND-FIRST as a Movement for the substrate-owned
 /// settlement saga to effect, gated (ADR-PC-032 slot 5).
 /// </summary>
@@ -23,6 +26,11 @@ public static class LoansEndpoints
     private const string OperatorActor = "ops:loan-officer";
     private const string DpoActor = "ops:dpo";
 
+    // The stable command-kind code the installment idempotency key is derived under (ADR-PC-036 §Decision
+    // 1+3, LCD-1) — never caller input, so the operator, the MCP agent, and the automated driver all
+    // converge on the same number-pinned key for the same occurrence.
+    private const string PayInstallmentCommandKind = "pay_installment";
+
     public static void Map(IEndpointRouteBuilder app)
     {
         // Disburse a new loan (opens the stream). The Idempotency-Key is OPTIONAL here (the new-stream
@@ -30,7 +38,9 @@ public static class LoansEndpoints
         // dedupes (ADR-PC-029 slot 4).
         app.MapPost("/v1/loans", DisburseAsync);
 
-        // The amortizing money-movers: each carries a mandatory Idempotency-Key (ADR-PC-029 slot 4).
+        // The amortizing money-movers. The installment path's idempotency key is SERVER-DERIVED and
+        // number-pinned (ADR-PC-036 §Decision 1+3, LCD-1) — it takes NO caller Idempotency-Key. Early
+        // repayment keeps a mandatory caller-supplied Idempotency-Key (ADR-PC-029 slot 4).
         app.MapPost("/v1/loans/{id:guid}/installment", PayInstallmentAsync);
         app.MapPost("/v1/loans/{id:guid}/early-repayment", RepayEarlyAsync);
 
@@ -107,23 +117,89 @@ public static class LoansEndpoints
             new LoanCommandResponse(request.LoanId, Status(hydrated.State), commitSequence));
     }
 
-    private static Task<IResult> PayInstallmentAsync(
+    /// <summary>
+    /// Pay one scheduled installment — the SERVER-DERIVED, number-pinned idempotent money-mover
+    /// (ADR-PC-036 §Decision 1+3, LCD-1; the loan half of the lifecycle-command driver's Layer-1
+    /// safe-trigger foundation). Unlike the other money-movers, this path takes NO caller-supplied
+    /// <c>Idempotency-Key</c>: the key is derived HERE from the occurrence's own identity —
+    /// <c>(loan, "pay_installment", installment-number)</c> — so a manual operator, the MCP agent, and the
+    /// automated driver paying the SAME installment all converge on the SAME key and dedupe to ONE money
+    /// leg at <c>command_dedup</c> (ADR-PC-029 slot 4, AMENDED: the installment key's provenance inverts
+    /// from caller-supplied to server-derived). The installment NUMBER is the stable occurrence key — never
+    /// the <c>PaidAt</c> due-date — so a re-dated or backfilled retry of occurrence N is swallowed
+    /// (number-pinned, ADR-PC-036 §Decision 3; safe only while ADR-PC-031 forbids re-amortization).
+    /// <c>PayInstallment</c> is legal repeatedly from <c>Active</c>, so the legality gate gives no backstop —
+    /// the number-pinned key is the only guard against a double-collection.
+    /// </summary>
+    private static async Task<IResult> PayInstallmentAsync(
         Guid id,
         PayInstallmentRequest request,
-        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
         PersonalLoanConstitutionService service,
         AggregateRuntime<LoanPosition> runtime,
         ICommandLog commandLog,
         TimeProvider clock,
         CancellationToken ct)
-        => RunIdempotentAsync(
-            id, idempotencyKey, runtime, commandLog,
-            commandId => service.PayInstallmentAsync(
+    {
+        // Load the AUTHORITATIVE fold and derive the next stable installment number (InstallmentsPaid + 1;
+        // the final-installment pairing is decided downstream in PersonalLoanConstitutionService). The
+        // occurrence key is that NUMBER, never the due-date — so the derived command id is identical across
+        // a re-dated retry of the same occurrence (LCD-1).
+        var hydrated = await runtime.LoadAsync(id, ct);
+        var installmentNumber = hydrated.State.InstallmentsPaid + 1;
+        var commandId = LifecycleCommandKey.Derive(id, PayInstallmentCommandKind, installmentNumber);
+
+        // Pre-check BEFORE any side effect: a known command id replays the ORIGINAL outcome with NO second
+        // append. The crash-atomic guarantee is the in-transaction command_dedup INSERT below; this read just
+        // keeps the common sequential retry off the write path (mirrors RunIdempotentAsync's pre-check).
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(new LoanCommandResponse(id, Status(replay.State), receipt.CommitSequence));
+        }
+
+        long commitSequence;
+        try
+        {
+            commitSequence = await service.PayInstallmentAsync(
                 new PayInstallmentCommand(
                     id, request.PaidAt ?? clock.GetUtcNow(), request.CollectionAccountRef,
                     request.Actor ?? OperatorActor, commandId),
-                ct),
-            ct);
+                ct);
+        }
+        catch (DuplicateCommandException)
+        {
+            // A concurrent duplicate of the SAME occurrence slipped past the pre-check: the in-transaction
+            // command_dedup INSERT rolled the append back. Return the ORIGINAL outcome off the authoritative
+            // fold (the idempotent replay slot 4 mandates).
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(new LoanCommandResponse(id, Status(replay.State), replay.Version));
+        }
+        catch (ConcurrencyException)
+        {
+            // A concurrent writer reached the head between our load and our append. If that winner was a
+            // concurrent firing of THIS SAME occurrence (its number-pinned key now exists), the intended
+            // effect already happened — replay its outcome rather than surface a spurious 409. Otherwise it
+            // is a genuine clash on a DIFFERENT command — surface 409.
+            var raced = await commandLog.TryGetAsync(commandId, ct);
+            if (raced is not null)
+            {
+                var replay = await runtime.LoadAsync(id, ct);
+                return Results.Ok(new LoanCommandResponse(id, Status(replay.State), raced.CommitSequence));
+            }
+
+            return Results.Problem($"Loan {id} was modified concurrently.", statusCode: StatusCodes.Status409Conflict);
+        }
+        catch (DomainRejectedException e)
+        {
+            // An illegal lifecycle transition (e.g. paying an installment on a settled loan) — surface a 422,
+            // never an append on a silent default. Wiring faults throw other types and propagate as a 500.
+            return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
+
+        var hydratedAfter = await runtime.LoadAsync(id, ct);
+        return Results.Ok(new LoanCommandResponse(id, Status(hydratedAfter.State), commitSequence));
+    }
 
     private static Task<IResult> RepayEarlyAsync(
         Guid id,
