@@ -234,41 +234,6 @@ consumers:
           EwIDAQAB
           -----END PUBLIC KEY-----
 
-  # ── The non-interactive lifecycle-command-driver service principal (ADR-PC-036 §Decision 1 /
-  # Consequences; bd babelstone-6cpq.4) ────────────────────────────────────────────────────────────
-  # The ADR-PC-036 lifecycle-command driver fires a deposit's maturity / coupon on its due date as a
-  # MACHINE — there is no human behind it to pass a fresh PSD2 SCA step-up, so it has no human
-  # acr/auth_time. Its authorisation is instead a SCOPED OAuth credential the IAM (ADR-IC-021) mints for
-  # THIS principal: the `lifecycle:deposit-money-mover` scope, which authorises the deposit money-mover
-  # lifecycle commands and ONLY those. Modelling it as its OWN Kong consumer makes the principal a
-  # first-class, auditable, separately-rate-limited identity (ADR-PC-036's "scoped, audited principal,
-  # never a blanket exemption") — distinct from the interactive `iam-issuer` consumer above. The
-  # route-scoped allowance + the X-SCA-Service-Principal attestation live on the engine-lifecycle-movers
-  # route below; the engine's ScaServicePrincipal re-scopes it to maturity + interest (never terminate),
-  # so the allowance is route-scoped on BOTH sides (defense in depth).
-  #
-  # POC posture: the driver's tokens carry a DISTINCT `iss` (its own service-principal realm), validated
-  # here against the driver realm's signing key. The POC reuses the throwaway iam-issuer public key as a
-  # placeholder so the config parses; at deploy time the service-principal realm gets its own signing key
-  # (a deliberate `deck sync`, ADR-IC-006 §P7), exactly like the iam-issuer rotation.
-  - username: lifecycle-driver
-    jwt_secrets:
-      - key: https://iam.babelstone.example/lifecycle-driver
-        algorithm: RS256
-        secret: unused-for-rs256
-        # POC THROWAWAY public key (placeholder, == the iam-issuer POC key) — replaced by the real
-        # service-principal realm signing key at deploy time (a key rotation is a deliberate `deck sync`).
-        rsa_public_key: |
-          -----BEGIN PUBLIC KEY-----
-          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm28DnOOCLqSixANucnRv
-          HYo3ID/liJXVP8xQJMXLBnG5rT8Oz1WV6SpbSVdVAiw19txFcrO93NzH0t5iN3NS
-          FgeCyaRYKN9HuTg5ZVpZF2aHkT0Qo3nr+QhyzUBHE9Y4p6j7s5evQZ3/ZlA4Hglv
-          dMHGXZYrb/EXj9cCpZrKHl23Aqb8na4/PRLI7+zwBz4FTXebWM2JVyEAxFxaRYId
-          NaBjMBJVvCuKWlyx81vK68AUsmSPQEOU5LB96XLRcAoKyj6+hpnQE4uuRyd3rlTf
-          7UdjRw2h8KCO8lWEQGaHIwfyogRtZGyPLQGR+0H7a5kPT64I3dpzPck8DQjvKuWe
-          EwIDAQAB
-          -----END PUBLIC KEY-----
-
 services:
   # ── The I.1 constitute front door (orchestrator upstream, default timeouts) ────
   - name: orchestrator-edge
@@ -878,8 +843,10 @@ services:
           # jwt: per-route (de-globalized, ADR-IC-010 §P2 Amendment 2026-06-15). A money-mover — validate
           # signature/expiry/issuer, NO anonymous consumer. This is the gate that makes reading the scope /
           # SCA claims + sub in the pre-function below sound (see the ORDERING note on the constitute route):
-          # a forged/tampered token is 401'd here before upstream. The driver's tokens validate against the
-          # lifecycle-driver consumer's key (a distinct iss); a human caller's against iam-issuer.
+          # a forged/tampered token is 401'd here before upstream. Per ADR-IC-021 the driver is a Logto m2m
+          # client under the SAME issuer as human callers, so BOTH validate against the single iam-issuer
+          # consumer's key (one iss); the driver is told apart by its `scope` claim (read in the pre-function
+          # below), not by a distinct consumer/iss.
           - name: jwt
             config:
               claims_to_verify: ["exp"]
@@ -887,8 +854,9 @@ services:
               maximum_expiration: 0
               header_names: ["authorization"]
           # ADR-IC-006 §P3: 5 req/min per consumer — the same tight money-mover budget as constitute. The
-          # lifecycle-driver consumer gets its OWN counter (limit_by: consumer), so the automated driver's
-          # cadence cannot starve interactive callers and vice versa.
+          # driver and any human caller map to the single iam-issuer consumer (ADR-IC-021 m2m, same iss), so
+          # limit_by: consumer is a per-consumer budget; because this plugin is attached to THIS route only,
+          # its counter is scoped to the lifecycle money-movers — separate from the constitute route's counter.
           - name: rate-limiting
             config:
               minute: 5
@@ -950,7 +918,7 @@ services:
                   if type(claims) ~= "table" then claims = {} end
 
                   -- (a) Caller identity for audit (ADR-IC-006 §P4): OVERWRITE X-Client-Id from the validated
-                  -- sub (the lifecycle-driver's client_id, or a human's), never a client-supplied value.
+                  -- sub (the driver m2m client's client_id, or a human's), never a client-supplied value.
                   if type(claims.sub) == "string" and claims.sub ~= "" then
                     kong.service.request.set_header("X-Client-Id", claims.sub)
                   else

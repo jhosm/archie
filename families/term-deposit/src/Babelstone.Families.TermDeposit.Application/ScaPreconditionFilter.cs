@@ -36,10 +36,11 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// This preserves every §P8 / ADR-PC-010 §P5 constraint the inline check satisfied: the filter runs in the
 /// impure host shell, BEFORE the handler executes (so before any side effect). The clock is injected (the
 /// shell owns the wall-clock, never the pure decider). The principal-use audit trail (ADR-PC-036
-/// §Consequences — the principal's use must be audited, not invisible) resolves its logger lazily from the
-/// request services on the audit branch, so the filter's CONSTRUCTION carries no logger dependency and stays
-/// trivially composable in any host. The route leaf the principal is scoped against is derived from the
-/// request path's trailing segment.
+/// §Consequences — the principal's use must be audited, not invisible) resolves its logger via
+/// GetRequiredService from the request services on the audit branch, so the obligation is STRUCTURAL: a host
+/// missing an ILoggerFactory fails loudly there rather than silently skipping the audit. The filter's
+/// CONSTRUCTION still carries no logger dependency and stays trivially composable in any host. The route leaf
+/// the principal is scoped against is derived from the request path's trailing segment.
 /// </para>
 /// </remarks>
 internal sealed class ScaPreconditionFilter(TimeProvider clock) : IEndpointFilter
@@ -61,13 +62,15 @@ internal sealed class ScaPreconditionFilter(TimeProvider clock) : IEndpointFilte
         // principal hits the unchanged fail-closed default.
         if (ScaServicePrincipal.IsAuthorised(headers, operation))
         {
-            // Structural audit only — the scope token + the route leaf, never PII (ADR-PC-004 §P2). This
-            // is the "audited principal, never invisible" obligation of ADR-PC-036 §Consequences. The
-            // logger is resolved lazily and null-safely from request services so the filter's construction
-            // needs no logger dependency (any host can compose it with just the clock).
+            // Structural audit only — the scope token + the route leaf, never PII (ADR-PC-004 §P2). This is
+            // the "audited principal, never invisible" obligation of ADR-PC-036 §Consequences — so the audit
+            // is STRUCTURAL, not best-effort: the logger is resolved with GetRequiredService, so a host that
+            // forgot to register an ILoggerFactory fails LOUDLY here instead of silently dropping the audit
+            // (which would soften the obligation). The filter's CONSTRUCTION still needs no logger dependency
+            // (any host can compose it with just the clock); only the audit branch touches request services.
             context.HttpContext.RequestServices
-                .GetService<ILoggerFactory>()
-                ?.CreateLogger<ScaPreconditionFilter>()
+                .GetRequiredService<ILoggerFactory>()
+                .CreateLogger<ScaPreconditionFilter>()
                 .LogInformation(
                     "SCA bypassed via the scoped non-interactive service principal ({Scope}) on the "
                         + "{Operation} money-mover route (ADR-PC-036 lifecycle-command driver).",

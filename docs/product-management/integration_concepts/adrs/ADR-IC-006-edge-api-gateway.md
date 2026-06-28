@@ -199,6 +199,8 @@ For every route that represents a financial operation (at minimum: `POST /api/v1
 
 The specific claim name and value agreed with the IAM implementation must be documented alongside this ADR. A contract test (document 07) must assert at the gateway level — not the application level — that a request without the SCA claim receives `403 SCA_REQUIRED`.
 
+*Revised 2026-06-28: the engine-lifecycle-movers route is a second attest-not-deny money-mover channel for the ADR-PC-036 non-interactive lifecycle driver.*
+
 ### P3 — Rate limiting: per-consumer identity with IP fallback
 
 Two `rate-limiting` plugin configurations are applied:
