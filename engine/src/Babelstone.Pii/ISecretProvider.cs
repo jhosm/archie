@@ -7,7 +7,7 @@ namespace Babelstone.Pii;
 /// (2026-05-31), <b>distinct</b> from <see cref="IPiiKeyStore"/>:
 /// <list type="bullet">
 ///   <item><see cref="IPiiKeyStore"/> is per-subject <i>transit</i> keys — key material
-///   stays at the boundary and the engine never holds a key (§P2).</item>
+///   stays at the boundary and the engine never holds a key (ADR-PC-004).</item>
 ///   <item><see cref="ISecretProvider"/> is <i>KV</i> application secrets — the engine
 ///   <b>does</b> hold the resolved credential in memory to open connections.</item>
 /// </list>
@@ -15,8 +15,8 @@ namespace Babelstone.Pii;
 /// </summary>
 /// <remarks>
 /// A resolved credential lives only at the composition root: it is NEVER carried by a
-/// saga message (ADR-IC-003 §P7 — saga messages carry the identity trio only) nor placed
-/// on the durable integration bus (ADR-PC-004 §P2 / the PII-bus rule).
+/// saga message (ADR-IC-003 — saga messages carry the identity trio only) nor placed
+/// on the durable integration bus (ADR-PC-004 / the PII-bus rule).
 ///
 /// <para><b>Rotation contract.</b> Credential rotation is a KV v2 <i>version bump</i> in
 /// the store followed by <see cref="RefreshAsync"/> here — the inverse of transit

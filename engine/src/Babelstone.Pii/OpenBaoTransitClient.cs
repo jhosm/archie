@@ -55,7 +55,7 @@ public sealed class OpenBaoTransitClient(HttpClient httpClient, string token, st
         }
 
         // The ONLY benign decrypt failure is a destroyed/absent subject key — the GDPR
-        // post-erasure state (§P3), surfaced as null. A 4xx alone does NOT prove that:
+        // post-erasure state (ADR-PC-004), surfaced as null. A 4xx alone does NOT prove that:
         // transit also answers 4xx for corrupt ciphertext, a wrong-subject key, a sealed
         // or misconfigured mount, and a denied token. Treating any 4xx as erasure would
         // silently report intact PII as erased (data the bank must retain reads as gone),

@@ -7,14 +7,14 @@ public sealed record PiiField(string Name, byte[] Plaintext);
 public sealed record EncryptedField(string Name, byte[] Ciphertext);
 
 /// <summary>
-/// The field-level crypto envelope (ADR-PC-004 §P2 / event-store §6.2): seals a set of
+/// The field-level crypto envelope (ADR-PC-004 / event-store §6.2): seals a set of
 /// PII fields under one subject's key and opens them again, returning <c>null</c> for
-/// fields whose subject key has been destroyed (= erasure, §P3). Structural fields are
+/// fields whose subject key has been destroyed (= erasure, ADR-PC-004). Structural fields are
 /// never PII and never pass through here — they stay cleartext and queryable.
 /// </summary>
 /// <remarks>
 /// Which fields are PII is, in the finished system, declared by the family's CUE schema
-/// (ADR-PC-004 §P1). Until the CUE schema language (Epic C) and a family module (Epic E)
+/// (ADR-PC-004). Until the CUE schema language (Epic C) and a family module (Epic E)
 /// exist, the caller supplies the PII field set explicitly; this envelope is agnostic to
 /// where that set comes from. The schema-driven annotation + the CI lint that rejects
 /// unannotated string fields are tracked as a follow-up.
