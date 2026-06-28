@@ -5,7 +5,7 @@ namespace Babelstone.FinancialMath;
 /// <summary>
 /// One row of a French-system (constant-installment) amortization
 /// schedule — the amortization table a closed-end loan repays against (fin-math §3, §4.1).
-/// Every monetary leg is integer cents (<see cref="Money"/>, ADR-PC-010 §P1): the period interest
+/// Every monetary leg is integer cents (<see cref="Money"/>, ADR-PC-010): the period interest
 /// <see cref="Interest"/>, the capital amortized <see cref="Capital"/>, the level installment
 /// <see cref="Installment"/> (Interest + Capital), and the <see cref="ClosingBalance"/> left after it.
 /// </summary>
@@ -33,7 +33,7 @@ public sealed record AmortizationRow(
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Rounding discipline (ADR-PC-010 §P1–§P2).</b> The level installment is computed in
+/// <b>Rounding discipline (ADR-PC-010).</b> The level installment is computed in
 /// <see cref="decimal"/> at full precision and crossed to <see cref="Money"/> exactly once via
 /// <see cref="Money.FromCents(decimal)"/> (HALF_EVEN). The schedule is then built by EXACT integer-cent
 /// arithmetic off that one rounded installment: each period's interest is rounded once, capital is the
@@ -51,7 +51,7 @@ public sealed record AmortizationRow(
 /// TAN or a day-count — a closed-end loan amortizes on a period grid, not on actual days.
 /// </para>
 /// <para>
-/// <b>No clock, no I/O (ADR-PC-010 §P5).</b> Every input is explicit; the schedule is a deterministic
+/// <b>No clock, no I/O (ADR-PC-010).</b> Every input is explicit; the schedule is a deterministic
 /// function of <c>(principal, periodicRateBps, periods)</c> and rebuilds byte-identically on replay.
 /// A zero periodic rate is supported (a 0%-TAN promotional loan): the installment degenerates to
 /// <c>principal / n</c> with no interest leg.
@@ -61,7 +61,7 @@ public static class Amortization
 {
     // The per-unit basis-point scale (100% = 10,000 bps) is the shared kernel constant
     // Rate.BasisPointsPerUnit — the same scale Accrual uses; promoted to
-    // decimal inside each boundary expression. Kept as int (BMNY002 bans stored decimal state, §P1).
+    // decimal inside each boundary expression. Kept as int (BMNY002 bans stored decimal state, ADR-PC-010).
 
     /// <summary>
     /// The level (constant) installment of a French-system loan (fin-math §4.1):
@@ -89,7 +89,7 @@ public static class Amortization
 
         decimal r = periodicRateBps / (decimal)Rate.BasisPointsPerUnit;
         // discount = 1 − (1 + r)^−n = 1 − 1 / (1 + r)^n. Integer-power decimal (DecimalMath.Pow),
-        // never Math.Pow — money math stays out of binary double (ADR-PC-010 §P1).
+        // never Math.Pow — money math stays out of binary double (ADR-PC-010).
         decimal growth = DecimalMath.Pow(1m + r, periods);
         decimal discount = 1m - (1m / growth);
         decimal installment = (decimal)principal.Cents * r / discount;
@@ -142,7 +142,7 @@ public static class Amortization
             {
                 interest = PeriodInterest(opening, periodicRateBps);
                 // Capital is the residual of the LEVEL installment minus interest — one rounding
-                // (the interest), then exact integer subtraction (no second rounding, ADR-PC-010 §P2).
+                // (the interest), then exact integer subtraction (no second rounding, ADR-PC-010).
                 capital = installment - interest;
                 payment = installment;
             }
@@ -206,7 +206,7 @@ public static class Amortization
 
         decimal r = periodicRateBps / (decimal)Rate.BasisPointsPerUnit;
         // Use the UN-rounded level installment here so the closed form is internally consistent in
-        // full precision; the single rounding is at the final Money boundary (ADR-PC-010 §P2).
+        // full precision; the single rounding is at the final Money boundary (ADR-PC-010).
         decimal growthN = DecimalMath.Pow(1m + r, periods);
         decimal levelInstallment = (decimal)principal.Cents * r / (1m - (1m / growthN));
 

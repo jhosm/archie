@@ -4,7 +4,7 @@ namespace Babelstone.FinancialMath;
 /// Day-count conventions (fin-math §2.2 — one of the three variable dimensions).
 /// Pack-parameterised: a regulatory pack selects the convention; the kernel never
 /// hardcodes it. Each convention resolves to the <c>(Days, Basis)</c> pair that
-/// ADR-PC-010 §P1's accrual formula multiplies by —
+/// ADR-PC-010 accrual formula multiplies by —
 /// <c>principal_cents × rate_bps × Days / (Basis × 10000)</c>.
 /// </summary>
 public enum DayCountConvention
@@ -26,8 +26,8 @@ public enum DayCountConvention
 /// <summary>
 /// The <c>(Days, Basis)</c> an accrual multiplies by:
 /// <c>interest = principal × rate × Days / Basis</c>. Both are integers by design
-/// (ADR-PC-010 §P1) — the year fraction is never materialised as a <c>decimal</c>, so
-/// rounding happens exactly once, downstream, at the Money boundary (§P2).
+/// (ADR-PC-010) — the year fraction is never materialised as a <c>decimal</c>, so
+/// rounding happens exactly once, downstream, at the Money boundary (ADR-PC-010).
 /// </summary>
 /// <param name="Days">Day count under the chosen convention. May be zero (equal dates)
 /// or negative (reversed interval) — the primitive is total and additive over
@@ -37,7 +37,7 @@ public readonly record struct DayCountFactor(int Days, int Basis);
 
 /// <summary>
 /// Pure day-count primitives (fin-math §2.2). No clock, no I/O — dates are explicit
-/// inputs, satisfying the determinism discipline (ADR-PC-010 §P5).
+/// inputs, satisfying the determinism discipline (ADR-PC-010).
 /// </summary>
 public static class DayCount
 {

@@ -5,9 +5,9 @@ namespace Babelstone.FinancialMath;
 /// <summary>
 /// Pure interest-accrual primitives (fin-math §5, §8). All three modes compute the whole
 /// amount in <see cref="decimal"/> at full precision and cross to <see cref="Money"/>
-/// exactly once, via <see cref="Money.FromCents(decimal)"/> (ADR-PC-010 §P1–§P2). Rates are
+/// exactly once, via <see cref="Money.FromCents(decimal)"/> (ADR-PC-010). Rates are
 /// integer basis points — 1% = 100 bps, so the PT default TAN 6% is <c>600</c>. No clock,
-/// no I/O: every time input is an explicit day count (§P5).
+/// no I/O: every time input is an explicit day count (ADR-PC-010).
 /// </summary>
 /// <remarks>
 /// <c>rateBps</c> may be negative <b>by design</b>: a negative TAN (negative-rate
@@ -20,11 +20,11 @@ public static class Accrual
 {
     // The per-unit basis-point scale (100% = 10,000 bps) is the shared kernel constant
     // Rate.BasisPointsPerUnit; it promotes to decimal inside each boundary expression. Kept
-    // as int (not a stored decimal field — BMNY002, ADR-PC-010 §P1).
+    // as int (not a stored decimal field — BMNY002, ADR-PC-010).
 
     /// <summary>
     /// Simple interest (fin-math §5.1; the PT term-deposit default). Implements the
-    /// ADR-PC-010 §P1 accrual form exactly:
+    /// ADR-PC-010 accrual form exactly:
     /// <c>interest = principal_cents × rate_bps × Days / (Basis × 10000)</c>.
     /// </summary>
     /// <param name="principal">Capital the interest accrues on.</param>

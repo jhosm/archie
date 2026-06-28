@@ -2,7 +2,7 @@ namespace Babelstone.FinancialMath;
 
 /// <summary>
 /// Base-10 numeric primitives shared across the kernel. The single rule these exist to
-/// uphold (ADR-PC-010 §P1–§P2): compounding and rate math stay in <see cref="decimal"/>,
+/// uphold (ADR-PC-010): compounding and rate math stay in <see cref="decimal"/>,
 /// never <see cref="double"/> — <see cref="System.Math.Pow"/> would route the computation
 /// through binary floating point and silently drift the low cents. Every exponent the
 /// kernel raises is a whole number of compounding periods, so an exact integer-power

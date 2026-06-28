@@ -5,12 +5,12 @@ namespace Babelstone.FinancialMath;
 /// <summary>
 /// Effective-rate metrics (fin-math §5.4, §6). These return a <b>rate</b>, not
 /// <see cref="FinancialTypes.Money"/>: a rate is a dimensionless per-unit fraction
-/// (<c>0.0617</c> = 6.17%), so it sits outside the §P1–§P2 cents discipline — that
+/// (<c>0.0617</c> = 6.17%), so it sits outside the ADR-PC-010 cents discipline — that
 /// discipline governs money <i>amounts</i>, which is why the boundary analysers guard
 /// stored <c>decimal</c> state but not a computed rate. The fraction is returned at full
 /// <see cref="decimal"/> precision; rounding to a reported figure (DL 133/2009 publishes
 /// the TAEG to one decimal place of a percentage) is a presentation concern left to the
-/// caller. Pure: rates in basis points, no clock, no I/O (§P5).
+/// caller. Pure: rates in basis points, no clock, no I/O (ADR-PC-010).
 /// </summary>
 /// <remarks>
 /// <c>tanBps</c> may be negative, consistently with <see cref="Accrual"/>: a negative

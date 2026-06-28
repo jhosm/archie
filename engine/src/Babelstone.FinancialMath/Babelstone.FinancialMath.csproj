@@ -7,18 +7,18 @@
   <ItemGroup>
     <!-- The test assembly pins the IRR solver's numeric core (PresentValue /
          PresentValueAndDerivative) directly: the public API's Newton+bisection fallback
-         makes a wrong PV/derivative unobservable from outside, so mutation testing (B.10)
+         makes a wrong PV/derivative unobservable from outside, so mutation testing
          needs internal visibility to prove that core correct. -->
     <InternalsVisibleTo Include="Babelstone.FinancialMath.Tests" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Accrual and withholding (B.3/B.4) produce Money: the kernel rounds the fully
-         computed decimal to cents exactly once via Money.FromCents (ADR-PC-010 §P2). -->
+    <!-- Accrual and withholding produce Money: the kernel rounds the fully
+         computed decimal to cents exactly once via Money.FromCents (ADR-PC-010). -->
     <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
 
-    <!-- The §P1–§P2 boundary analysers guard the kernel too: it is where decimal
-         accrual math (B.3+) crosses to Money, so the decimal-state ban (BMNY002) and
+    <!-- The ADR-PC-010 boundary analysers guard the kernel too: it is where decimal
+         accrual math crosses to Money, so the decimal-state ban (BMNY002) and
          the round-once rule (BMNY001) most need enforcing. Passed as a checker, never
          linked (ReferenceOutputAssembly=false); warnings are errors per
          Directory.Build.props, so a BMNY00x violation fails the build. -->

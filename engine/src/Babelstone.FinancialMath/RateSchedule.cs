@@ -20,7 +20,7 @@ namespace Babelstone.FinancialMath;
 /// This is NOT variable/indexed rate (an Euribor-linked rate resolved per reset window) — that is
 /// v3. Every segment's <see cref="RateBasisPoints"/> is a FIXED rate known at constitution; the
 /// vector is purely a deterministic function of the (resolved) sheet and the deposit's term/
-/// principal, so a cold replay reproduces it byte-for-byte (ADR-PC-010 §P5).
+/// principal, so a cold replay reproduces it byte-for-byte (ADR-PC-010).
 /// <para>The product vocabulary in the COMMENTS below (e.g. "deposit") is deliberate and policy-
 /// conformant: a shared-kernel primitive's prose may name the product it prices. The EXECUTABLE surface
 /// stays math-first AND in plain English: types, methods, parameters, enum members, and thrown messages
@@ -67,7 +67,7 @@ public enum RateScheduleKind
 /// <remarks>
 /// <para><b>Purity &amp; rounding.</b> Both fold modes accumulate the whole interest in
 /// <see cref="decimal"/> at full precision and cross to <see cref="Money"/> EXACTLY ONCE, at the
-/// end (ADR-PC-010 §P1–§P2). They never round a per-segment sub-amount and re-sum cents — that
+/// end (ADR-PC-010). They never round a per-segment sub-amount and re-sum cents — that
 /// would open a rounding gap a flat-rate equivalent would not have, breaking the "one segment ⇒
 /// flat" equivalence this type guarantees.</para>
 /// <para><b>Flow-by-flow withholding is unaffected.</b> A rate schedule changes only how the GROSS
@@ -196,7 +196,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
     /// a caller folding the SAME deposit over MULTIPLE principal segments (a deposit whose principal
     /// stepped down at a partial withdrawal) can sum every segment's contribution and cross to
     /// <see cref="Money"/> EXACTLY ONCE (<see cref="AccrueGrossWindowOverPrincipal"/>), preserving the
-    /// one-rounding-boundary discipline (ADR-PC-010 §P1–§P2). A single call wrapped in
+    /// one-rounding-boundary discipline (ADR-PC-010). A single call wrapped in
     /// <see cref="Money.FromCents(decimal)"/> is byte-identical to <see cref="AccrueGrossWindow"/>.
     /// </summary>
     internal decimal AccrueGrossWindowRaw(
@@ -231,7 +231,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
     /// </remarks>
     /// <param name="principalTimeline">The ordered <c>(date, principal-in-force)</c> segments, ascending
     /// by <see cref="PrincipalSegment.From"/>, the first at the deposit start. A deterministic fold of the
-    /// event stream (ADR-PC-010 §P5).</param>
+    /// event stream (ADR-PC-010).</param>
     /// <param name="anchorStart">The deposit's start — the anchor the rate vector's elapsed-day
     /// boundaries count from.</param>
     /// <param name="windowStart">The accrual window's inclusive start.</param>
@@ -334,7 +334,7 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
 
             long segDays = hi - lo;
             // Same (Days/Basis) shape as SimpleInterest — accumulate un-rounded so the final
-            // cross-to-Money is the single rounding boundary (ADR-PC-010 §P1–§P2).
+            // cross-to-Money is the single rounding boundary (ADR-PC-010).
             accrued += (decimal)principal.Cents * Segments[i].RateBasisPoints * segDays
                      / ((decimal)basis * Rate.BasisPointsPerUnit);
         }

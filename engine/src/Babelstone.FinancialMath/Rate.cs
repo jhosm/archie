@@ -14,11 +14,11 @@ namespace Babelstone.FinancialMath;
 /// stated once and consumed everywhere.
 /// </para>
 /// <para>
-/// <b>Kept as <see cref="int"/>, not a stored <see cref="decimal"/> field</b> — the ADR-PC-010 §P1
+/// <b>Kept as <see cref="int"/>, not a stored <see cref="decimal"/> field</b> — the ADR-PC-010
 /// boundary discipline (BMNY002) bans stored decimal money state; the constant promotes to
 /// <see cref="decimal"/> inside each boundary expression. <see cref="ScaledByBasisPoints"/> is the
 /// shared, UN-ROUNDED numerator helper for callers (such as the decider) that must fold the result
-/// into a larger single-rounding expression rather than round it per step (§P2).
+/// into a larger single-rounding expression rather than round it per step (ADR-PC-010).
 /// </para>
 /// </remarks>
 public static class Rate
@@ -36,8 +36,8 @@ public static class Rate
     /// <see cref="decimal"/> and NOT crossed to a money boundary. This is the per-period interest
     /// leg in full precision: callers that must multiply it by a further factor (e.g. a remaining-
     /// installment count) before the single rounding fold it into one expression and cross to money
-    /// exactly once themselves (ADR-PC-010 §P1–§P2) — rounding here and then multiplying would be the
-    /// "round each step then combine" shape §P2 forbids.
+    /// exactly once themselves (ADR-PC-010) — rounding here and then multiplying would be the
+    /// "round each step then combine" shape ADR-PC-010 forbids.
     /// </summary>
     /// <param name="cents">The capital the rate applies to, in integer cents.</param>
     /// <param name="rateBps">The rate in basis points.</param>

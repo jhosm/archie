@@ -22,7 +22,7 @@ public readonly record struct WithholdingResult(Money Gross, Money Tax, Money Ne
 public static class Withholding
 {
     // The per-unit basis-point scale (100% = 10,000 bps) is the shared kernel constant
-    // Rate.BasisPointsPerUnit — int, not a decimal field (BMNY002 / ADR-PC-010 §P1); it
+    // Rate.BasisPointsPerUnit — int, not a decimal field (BMNY002 / ADR-PC-010); it
     // promotes to decimal at the boundary.
 
     /// <summary>
