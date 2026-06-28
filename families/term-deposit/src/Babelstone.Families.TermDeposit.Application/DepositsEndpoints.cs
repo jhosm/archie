@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Babelstone.Families.TermDeposit.Application;
 
@@ -31,11 +32,16 @@ public static class DepositsEndpoints
 
         // Irreversible money-movers (maturity, PERIODIC coupon) carry the step-up-SCA gate as a
         // ROUTE-GROUP property, not per-handler boilerplate: the ScaPreconditionFilter runs in the impure
-        // host shell BEFORE the handler (so before any side effect), reads the gateway-attested
-        // X-SCA-Acr/X-SCA-Auth-Time, and short-circuits 422 SCA_REQUIRED on absent/stale proof (ADR-IC-010
-        // §P8 Q-BE Q1 / ADR-PC-010 §P5 — the pure decider never sees the check). Anything mapped on this
-        // group is gated by construction, so the two money-movers can't drift out of SCA parity; the
-        // ungated siblings below stay on `app`.
+        // host shell BEFORE the handler (so before any side effect) and authorises one of two ways —
+        //   (1) HUMAN step-up: the gateway-attested X-SCA-Acr/X-SCA-Auth-Time fresh SCA proof (the agent /
+        //       customer flow), short-circuiting 422 SCA_REQUIRED on absent/stale proof (ADR-IC-010 §P8
+        //       Q-BE Q1 / ADR-PC-010 §P5 — the pure decider never sees the check); or
+        //   (2) the NON-INTERACTIVE scoped service principal (ADR-PC-036, bd babelstone-6cpq.4): the
+        //       lifecycle-command driver firing maturity/interest on the due date has no human acr, so a
+        //       SCOPED gateway-attested X-SCA-Service-Principal claim authorises it — ROUTE-SCOPED to
+        //       maturity + interest only (ScaServicePrincipal.AuthorisedOperations), audited, never blanket.
+        // Anything mapped on this group is gated by construction, so the money-movers can't drift out of SCA
+        // parity; the ungated siblings below stay on `app`.
         var moneyMovers = app.MapGroup("/v1/deposits/{id:guid}")
             .AddEndpointFilter<ScaPreconditionFilter>();
         moneyMovers.MapPost("/maturity", MatureAsync);
@@ -44,11 +50,15 @@ public static class DepositsEndpoints
         // Early termination (F.4; 02 §2.5, bd babelstone-t7o3.13.1): break a deposit before maturity and
         // pay the NET settlement out. An irreversible money-mover, so it sits in the SAME SCA-gated route
         // group as maturity/interest (the ScaPreconditionFilter enforces fresh gateway-attested SCA BEFORE
-        // any side effect). UNLIKE the one-shot maturity/interest siblings it ALSO carries a mandatory
-        // Idempotency-Key (ADR-PC-029 slot 4): the money-mover idempotency contract rejects a double-terminate
-        // — an at-least-once retry of the SAME terminate replays the original outcome rather than appending a
-        // second termination, the same id-keyed contract the partial-withdrawal / erasure siblings carry. The
-        // payout is the substrate-owned settlement saga's gated ACL credit (the de-settled leg, bd t7o3.13).
+        // any side effect). HUMAN-SCA ONLY: terminate is NOT in the scoped service principal's allowance
+        // (ScaServicePrincipal.AuthorisedOperations is maturity + interest only) — the automated lifecycle
+        // driver never breaks a deposit, so its principal cannot reach this route; a non-interactive caller
+        // here still hits the fail-closed 422. UNLIKE the one-shot maturity/interest siblings it ALSO carries
+        // a mandatory Idempotency-Key (ADR-PC-029 slot 4): the money-mover idempotency contract rejects a
+        // double-terminate — an at-least-once retry of the SAME terminate replays the original outcome rather
+        // than appending a second termination, the same id-keyed contract the partial-withdrawal / erasure
+        // siblings carry. The payout is the substrate-owned settlement saga's gated ACL credit (the
+        // de-settled leg, bd t7o3.13).
         moneyMovers.MapPost("/terminate", TerminateEarlyAsync);
 
         // Partial early withdrawal (F.12; 02 §2.4.1, bd qze9/9w0g): reduce the principal, leaving the
@@ -98,6 +108,15 @@ public static class DepositsEndpoints
         // no duality. Like "/maturities" the literal route shares the prefix with the {id:guid} point lookup,
         // but the :guid constraint excludes the word, so registration order is moot.
         app.MapGet("/v1/deposits/withholding-statements", ListWithholdingStatementsAsync);
+
+        // The per-stream withholding-ledger read (bd babelstone-60n8.8): the DATED withholding flows of ONE
+        // deposit, served from the term_deposit.withholding_ledger projection. ADDITIVE — it exposes the
+        // per-flow dates the canonical point read's cumulative withholding_to_date rollup cannot, so a
+        // downstream reader can slice withholding PER TAX YEAR (ADR-PC-027 storage-opaque read surface,
+        // ADR-IC-019 §D3, ADR-PC-023 §6). A {id:guid}/withholding-ledger sub-path, distinct from the
+        // {id:guid} point lookup, so registration order is moot. Read-only — no command stapled to the read
+        // surface (ADR-PC-018 §6).
+        app.MapGet("/v1/deposits/{id:guid}/withholding-ledger", GetWithholdingLedgerAsync);
         app.MapGet("/v1/deposits/{id:guid}", GetDepositAsync);
     }
 
@@ -345,6 +364,33 @@ public static class DepositsEndpoints
         return Results.Ok(new DepositWithholdingStatementsResponse(deposits));
     }
 
+    private static async Task<IResult> GetWithholdingLedgerAsync(
+        Guid id,
+        HttpContext http,
+        CancellationToken ct)
+    {
+        // The per-stream withholding-ledger read (bd babelstone-60n8.8): serve the DATED withholding flows
+        // from the term_deposit.withholding_ledger projection's current belief. ADR-PC-027 storage-opacity:
+        // the URL names the resource (the deposit's withholding ledger), never the Postgres `projections`
+        // table behind it. A pure READ that CONSUMES the spine's IProjectionStorage through the typed
+        // ProjectionStore — it never appends or mutates, so no command is stapled to the read surface
+        // (ADR-PC-018 §6). The projection is ASYNC-materialised (the relay), so this read is eventually
+        // consistent like the read-model GET. A deposit that has had NO withholding flow yet carries no
+        // ledger belief → 404 (the sub-resource does not exist), the same unknown-resource verdict the
+        // point read gives — never a phantom empty ledger.
+        //
+        // The typed ProjectionStore<WithholdingLedger> is resolved from request services (not as a method
+        // parameter) so the minimal-API RequestDelegateFactory infers no body for it — a host that maps this
+        // surface without yet registering the store still builds its endpoint table; only an actual call here
+        // needs it.
+        var ledgerStore = http.RequestServices.GetRequiredService<ProjectionStore<WithholdingLedger>>();
+        var belief = await ledgerStore.TryReadCurrentAsync(
+            id, TermDepositProjectionModule.WithholdingLedgerKind, ct);
+        return belief is null
+            ? Results.NotFound()
+            : Results.Ok(DepositWithholdingLedgerResponse.FromLedger(id, belief.State));
+    }
+
     private static async Task<IResult> MatureAsync(
         Guid id,
         MatureDepositRequest request,
@@ -353,10 +399,12 @@ public static class DepositsEndpoints
         TimeProvider clock,
         CancellationToken ct)
     {
-        // The irreversible-money-mover step-up-SCA gate (ADR-IC-010 §P8 Q-BE Q1) runs as the
-        // ScaPreconditionFilter on this route's group in Map() — in the impure shell, BEFORE any side
-        // effect, off the gateway-attested X-SCA-Acr/X-SCA-Auth-Time. The handler is reached only once
-        // fresh SCA is present, so it stays pure domain orchestration (ADR-PC-010 §P5).
+        // The irreversible-money-mover SCA gate (ADR-IC-010 §P8 Q-BE Q1) runs as the ScaPreconditionFilter
+        // on this route's group in Map() — in the impure shell, BEFORE any side effect. It authorises EITHER
+        // a human step-up (the gateway-attested X-SCA-Acr/X-SCA-Auth-Time fresh proof) OR the ADR-PC-036
+        // non-interactive scoped service principal (the lifecycle driver firing maturity on its due date,
+        // X-SCA-Service-Principal). The handler is reached only once one of the two authorises, so it stays
+        // pure domain orchestration (ADR-PC-010 §P5).
         var command = new MatureDepositCommand(
             DepositId: id,
             MaturedAt: request.MaturedAt ?? clock.GetUtcNow(),
@@ -417,9 +465,11 @@ public static class DepositsEndpoints
         CancellationToken ct)
     {
         // A PERIODIC coupon is the same irreversible-money-mover class as maturity, so it sits in the
-        // same SCA-gated route group in Map(): the ScaPreconditionFilter enforces fresh gateway-attested
-        // SCA BEFORE any side effect (ADR-IC-010 §P8 / ADR-PC-010 §P5). SCA parity by construction —
-        // both money-movers share one filter, so neither can be less guarded than the other.
+        // same SCA-gated route group in Map(): the ScaPreconditionFilter enforces authorisation BEFORE any
+        // side effect (ADR-IC-010 §P8 / ADR-PC-010 §P5) — either a human step-up (fresh gateway-attested
+        // X-SCA-Acr/X-SCA-Auth-Time) or the ADR-PC-036 scoped service principal (the lifecycle driver's
+        // coupon firing, X-SCA-Service-Principal). SCA parity by construction — both money-movers share one
+        // filter, so neither can be less guarded than the other, and the principal is scoped to BOTH alike.
         var command = new PayInterestCommand(
             DepositId: id,
             PaidAt: request.PaidAt ?? clock.GetUtcNow(),
@@ -478,6 +528,8 @@ public static class DepositsEndpoints
     {
         // The irreversible-money-mover step-up-SCA gate (ADR-IC-010 §P8 Q-BE Q1) runs as the
         // ScaPreconditionFilter on this route's group in Map() — in the impure shell, BEFORE any side effect.
+        // HUMAN-SCA ONLY here: terminate is NOT in the ADR-PC-036 scoped service principal's allowance, so the
+        // non-interactive lifecycle driver can never authorise an early termination (ScaServicePrincipal).
         //
         // ADR-PC-029 slot 4: a deterministic Idempotency-Key is MANDATORY here — early termination is an
         // irreversible money-mover, so a non-idempotent at-least-once retry must replay the original outcome,

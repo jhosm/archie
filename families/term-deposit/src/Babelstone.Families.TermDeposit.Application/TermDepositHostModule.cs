@@ -193,6 +193,20 @@ public sealed class TermDepositHostModule : IFamilyHostModule
         // wired with no post-commit hook — so the live read path (GET /v1/deposits) is unaffected;
         // switching reads to the materialised projection is D.3/D.4.
         services.AddSingleton<IProjectionModule, TermDepositProjectionModule>();
+
+        // The per-stream withholding-ledger READ store (bd babelstone-60n8.8): the
+        // GET /v1/deposits/{id}/withholding-ledger route reads the term_deposit.withholding_ledger
+        // projection's current belief through this typed store, composing the family-agnostic byte storage
+        // (IProjectionStorage — the spine) with the family's structural JSON state codec (the SAME
+        // JsonStateSerializer the projection runner WRITES with, so a read deserialises exactly what the
+        // async relay materialised). Reading IProjectionStorage CONSUMES the spine; it never edits it — the
+        // family→spine arrow that keeps EngineFamilyAgnosticTests green. The dated entries this exposes are
+        // the per-tax-year slicing surface the cumulative read-model rollup cannot give (ADR-PC-027 /
+        // ADR-IC-019 §D3).
+        services.AddSingleton(serviceProvider => new ProjectionStore<WithholdingLedger>(
+            serviceProvider.GetRequiredService<IProjectionStorage>(),
+            new JsonStateSerializer<WithholdingLedger>()));
+
         services.AddSingleton(serviceProvider =>
         {
             var infra = new ProjectionInfra(

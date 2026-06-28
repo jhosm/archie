@@ -339,3 +339,61 @@ public sealed record DepositMaturitiesResponse(IReadOnlyList<DepositResponse> De
 /// interpolates. A query-named collection with no write-side twin, the same shape as
 /// <see cref="DepositMaturitiesResponse"/>.</summary>
 public sealed record DepositWithholdingStatementsResponse(IReadOnlyList<DepositResponse> Deposits);
+
+/// <summary>
+/// The per-stream withholding-ledger read (bd babelstone-60n8.8): every DATED withholding flow recorded on a
+/// deposit, served from the <c>term_deposit.withholding_ledger</c> projection over
+/// <c>GET /v1/deposits/{id}/withholding-ledger</c>. This is the ADDITIVE read surface that exposes the
+/// per-flow dates the <see cref="DepositResponse"/> rollups (cumulative <c>withholding_to_date</c>) cannot —
+/// so a downstream reader (the annual IRS-withholding statement scheduler) can slice withholding PER TAX
+/// YEAR rather than reporting a single cumulative figure (ADR-PC-027 storage-opaque read surface, ADR-IC-019
+/// §D3, ADR-PC-023 §6, ADR-PC-025 slot 4). Money is integer cents (ADR-PC-010 §P1); no PII (ADR-PC-004 §P2)
+/// — structural facts only. Read-only and per-stream: it consumes the projection, it never mutates it.
+/// </summary>
+/// <param name="DepositId">The deposit's stream id.</param>
+/// <param name="Entries">The withholding flows in fold (append) order, each carrying its own
+/// <c>withheld_on</c> date — the per-tax-year slicing key.</param>
+/// <param name="TotalGrossCents">Running sum of every flow's gross interest, conserved to the cent.</param>
+/// <param name="TotalTaxCents">Running sum of every flow's withholding tax (sum of per-flow taxes).</param>
+/// <param name="TotalNetCents">Running sum of every flow's net interest; <c>gross = tax + net</c>.</param>
+public sealed record DepositWithholdingLedgerResponse(
+    Guid DepositId,
+    IReadOnlyList<WithholdingLedgerEntryResponse> Entries,
+    long TotalGrossCents,
+    long TotalTaxCents,
+    long TotalNetCents)
+{
+    /// <summary>Project the folded <see cref="WithholdingLedger"/> belief onto the wire shape — money to
+    /// integer cents, the per-flow <c>WithheldOn</c> date carried verbatim so the consumer slices by tax
+    /// year.</summary>
+    public static DepositWithholdingLedgerResponse FromLedger(Guid depositId, WithholdingLedger ledger) => new(
+        DepositId: depositId,
+        Entries: ledger.Entries
+            .Select(e => new WithholdingLedgerEntryResponse(
+                WithheldOn: e.WithheldOn,
+                GrossCents: e.Gross.Cents,
+                TaxCents: e.Tax.Cents,
+                NetCents: e.Net.Cents,
+                Source: e.Source))
+            .ToList(),
+        TotalGrossCents: ledger.TotalGross.Cents,
+        TotalTaxCents: ledger.TotalTax.Cents,
+        TotalNetCents: ledger.TotalNet.Cents);
+}
+
+/// <summary>One DATED withholding flow on the ledger read surface (bd babelstone-60n8.8): the per-flow
+/// (gross, tax, net) exactly as recorded plus the date it was withheld on — the slicing key a per-tax-year
+/// statement needs. Money is integer cents (ADR-PC-010 §P1); no PII.</summary>
+/// <param name="WithheldOn">The date the flow was withheld on (AT_MATURITY / termination date, or the
+/// coupon's paid date) — the per-tax-year slicing key.</param>
+/// <param name="GrossCents">The flow's gross interest, in cents.</param>
+/// <param name="TaxCents">The flow's withholding tax, in cents.</param>
+/// <param name="NetCents">The flow's net interest, in cents (<c>gross = tax + net</c>).</param>
+/// <param name="Source">Which event produced the flow — <c>withholding</c> (AT_MATURITY split) or
+/// <c>coupon</c> (a PERIODIC/ADVANCE InterestPaid leg).</param>
+public sealed record WithholdingLedgerEntryResponse(
+    DateOnly WithheldOn,
+    long GrossCents,
+    long TaxCents,
+    long NetCents,
+    string Source);

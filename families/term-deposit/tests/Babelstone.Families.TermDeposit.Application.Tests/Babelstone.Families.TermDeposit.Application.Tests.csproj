@@ -17,6 +17,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- ScaServicePrincipalTests names Microsoft.AspNetCore.Http.IHeaderDictionary / HeaderDictionary
+         to exercise the scoped non-interactive SCA service principal (ADR-PC-036, bd babelstone-6cpq.4).
+         FrameworkReference is non-transitive, so the plain test SDK project must declare it itself to
+         compile against the same ASP.NET Core abstractions the Application project's host wiring uses. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The decider under test, plus the storage + config bits the integration test wires as
          the composition root (ADR-PC-021 §D4): event store + migrations, the rate-sheet store,
          and the pack parser. The pure decider tier needs only the family + math (transitive). -->

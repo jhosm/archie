@@ -38,6 +38,16 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// Document 10 / ADR-IC-006 §P5 commit to).
 /// </para>
 /// <para>
+/// NON-INTERACTIVE PRINCIPAL ESCAPE (ADR-PC-036, bd babelstone-6cpq.4). This check is the HUMAN step-up
+/// gate only. A machine actor — the ADR-PC-036 lifecycle-command driver firing a deposit's maturity /
+/// coupon on its due date — has no human <c>acr</c>/<c>auth_time</c> to present, so it would always 422
+/// here. Its authorisation is instead a SCOPED, gateway-attested service-principal claim recognised by the
+/// sibling <see cref="ScaServicePrincipal"/>, which the <see cref="ScaPreconditionFilter"/> consults BEFORE
+/// this check. That escape is route-scoped (maturity / interest only, never terminate) and audited; it
+/// only ever WIDENS authorisation for those two routes. This <see cref="Check"/> is unchanged and remains
+/// the fail-closed default for every caller that is not a recognised scoped principal.
+/// </para>
+/// <para>
 /// SENDER-CONSTRAINT (RFC 8705 mTLS-bound, ADR-IC-010 §A8, bd babelstone-26rb). The refreshed step-up
 /// token is now sender-constrained: it carries a <c>cnf.x5t#S256</c> thumbprint Kong validated against
 /// the presented client cert and attests as <see cref="CnfX5tHeader"/>. A token replayed from a
