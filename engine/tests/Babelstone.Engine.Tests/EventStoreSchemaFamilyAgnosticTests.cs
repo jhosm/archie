@@ -64,6 +64,9 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
     /// bulk_operation_jobs + bulk_operation_targets (0018 — the generic, family-agnostic bulk-operations
     /// runner work-table substrate, ADR-PC-035; the operation kind is a free VARCHAR and the per-item
     /// params/precondition are opaque JSONB, so the spine names no family).
+    /// <c>movement_ledger</c> (0019 — the spine-owned, <c>account_ref</c>-keyed movement ledger, the
+    /// ADR-PC-032 §A1 read side; it folds only the family-agnostic <c>Movement</c> atom via the
+    /// <c>IMovementBearing</c> seam, so it carries no family-named column).
     /// <c>schema_migrations</c> is created by <see cref="MigrationRunner"/> in code (not a
     /// <c>.sql</c> resource, so the parse never sees it today); it is listed defensively so that moving
     /// the ledger DDL into a migration file stays green.
@@ -72,7 +75,7 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
     [
         "events", "outbox", "snapshots", "rate_sheets", "projections",
         "pack_versions", "projection_checkpoints", "inbox", "command_dedup", "schema_migrations",
-        "bulk_operation_jobs", "bulk_operation_targets",
+        "bulk_operation_jobs", "bulk_operation_targets", "movement_ledger",
     ];
 
     /// <summary>

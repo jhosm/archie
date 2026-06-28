@@ -90,7 +90,7 @@ public sealed record LoanDisbursed(
     string ProductCode,
     string DisbursementAccountRef,
     int EarlyRepaymentCommissionBps = 0,
-    IReadOnlyList<Movement>? Movements = null) : DomainEvent
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent, IMovementBearing
 {
     // Disbursement is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1): the instance's
     // state is interpretable on its own here, so a snapshot is taken regardless of the per-N count.
@@ -106,6 +106,15 @@ public sealed record LoanDisbursed(
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
         MovementHeaders.ForOriginatedMovements(Movements ?? []);
+
+    /// <summary>
+    /// The <see cref="IMovementBearing"/> READ view (ADR-PC-032 §A1) the spine's account-keyed movement
+    /// ledger folds: the disbursement's movements as a NON-null list. Maps the nullable
+    /// <see cref="Movements"/> carrier — kept nullable+defaulted so pre-Movement streams still replay
+    /// (forward-only schema evolution, ADR-IC-002) — onto the non-null seam member by coalescing
+    /// <see langword="null"/> to empty, so the generic projector folds it with no per-event null guard.
+    /// </summary>
+    IReadOnlyList<Movement> IMovementBearing.Movements => Movements ?? [];
 }
 
 /// <summary>
@@ -158,7 +167,7 @@ public sealed record LoanInstallmentPaid(
     Money Capital,
     Money OutstandingBalance,
     DateOnly PaidOn,
-    IReadOnlyList<Movement>? Movements = null) : DomainEvent
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent, IMovementBearing
 {
     /// <summary>
     /// Promote the installment-collection Movement's origin/direction to the <c>ce_movementorigin</c> /
@@ -169,6 +178,14 @@ public sealed record LoanInstallmentPaid(
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
         MovementHeaders.ForOriginatedMovements(Movements ?? []);
+
+    /// <summary>
+    /// The <see cref="IMovementBearing"/> READ view (ADR-PC-032 §A1) the spine's account-keyed movement
+    /// ledger folds: this installment's movements as a NON-null list (the nullable <see cref="Movements"/>
+    /// carrier coalesced to empty so pre-Movement streams still replay, ADR-IC-002). Same seam mapping as
+    /// the sibling Movement-bearing loan events — the spine folds them all uniformly, naming no family.
+    /// </summary>
+    IReadOnlyList<Movement> IMovementBearing.Movements => Movements ?? [];
 }
 
 /// <summary>
@@ -205,7 +222,7 @@ public sealed record LoanRepaidEarly(
     Money Commission,
     Money OutstandingBalanceAfter,
     DateOnly RepaidOn,
-    IReadOnlyList<Movement>? Movements = null) : DomainEvent
+    IReadOnlyList<Movement>? Movements = null) : DomainEvent, IMovementBearing
 {
     /// <summary>
     /// Promote the early-repayment Movement's origin/direction to the <c>ce_movementorigin</c> /
@@ -216,6 +233,14 @@ public sealed record LoanRepaidEarly(
     /// </summary>
     public override IReadOnlyDictionary<string, string>? IntegrationHeaders =>
         MovementHeaders.ForOriginatedMovements(Movements ?? []);
+
+    /// <summary>
+    /// The <see cref="IMovementBearing"/> READ view (ADR-PC-032 §A1) the spine's account-keyed movement
+    /// ledger folds: this early repayment's movements as a NON-null list (the nullable
+    /// <see cref="Movements"/> carrier coalesced to empty so pre-Movement streams still replay,
+    /// ADR-IC-002). Same seam mapping as the sibling Movement-bearing loan events — folded uniformly.
+    /// </summary>
+    IReadOnlyList<Movement> IMovementBearing.Movements => Movements ?? [];
 
     // Early repayment is a snapshot lifecycle boundary (ADR-PC-003 §P2 / event-store §8.1) — a
     // balance-changing point where the instance's state is interpretable on its own.
