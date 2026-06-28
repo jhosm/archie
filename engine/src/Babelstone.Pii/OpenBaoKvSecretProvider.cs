@@ -13,9 +13,9 @@ namespace Babelstone.Pii;
 /// </summary>
 /// <remarks>
 /// Unlike <see cref="OpenBaoTransitClient"/> — which keeps key material at the boundary so
-/// the engine never holds a key (§P2) — a KV secret <b>is</b> handed to the engine: the
+/// the engine never holds a key (ADR-PC-004) — a KV secret <b>is</b> handed to the engine: the
 /// resolved credential lives in process memory at the composition root, never on a saga
-/// message (ADR-IC-003 §P7) nor the durable bus (§P2). Rotation is a KV v2 version bump
+/// message (ADR-IC-003) nor the durable bus (ADR-PC-004). Rotation is a KV v2 version bump
 /// observed via <see cref="RefreshAsync"/>, the inverse of transit crypto-shredding. No SDK
 /// is used (ADR-PC-010 hand-rolled-core exception); a single <see cref="SendAsync"/>
 /// chokepoint attaches the AppRole client token, and no response or error path ever
