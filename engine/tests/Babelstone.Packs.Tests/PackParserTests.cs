@@ -278,4 +278,71 @@ public sealed class PackParserTests
         var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
         Assert.Contains(expectedFieldFragment, ex.Message, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void An_empty_expected_version_key_is_rejected()
+        // The pin the WHOLE parse cross-checks `pack_id.pack_version` against — an empty pin must be
+        // rejected up front (ArgumentException), not slip through to a misleading version-key mismatch.
+        => Assert.Throws<ArgumentException>(() => PackParser.Parse(PackTestData.LoadPt2026(), ""));
+
+    [Fact]
+    public void A_null_family_entry_fails_loud()
+    {
+        // A list hole in families.yaml (a `-` with no body → a null entry) must fail loud naming the
+        // file, not NullReference past the per-entry required-field checks.
+        var files = PackTestData.LoadPt2026();
+        files["families.yaml"] = Encoding.UTF8.GetBytes("families:\n  - \n");
+        var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
+        Assert.Contains("empty family entry", ex.Message, StringComparison.Ordinal);
+    }
+
+    // The `?? []` / `?? new()` defaults: an ABSENT optional collection field must surface as an EMPTY
+    // collection, never null — a dropped default would NullReference on the first `foreach`/`.Select`
+    // (or hand a null collection downstream). The sibling tests above use an EXPLICIT empty (`[]`),
+    // which does not exercise the default; these remove the field entirely so the null-coalescing
+    // mutant is the one that breaks.
+
+    [Fact]
+    public void An_absent_template_refs_block_defaults_to_empty_not_null()
+    {
+        var files = PackTestData.LoadPt2026();
+        var pack = Encoding.UTF8.GetString(files["pack.yaml"]).Replace("template_refs:\n  - notices", "", StringComparison.Ordinal);
+        Assert.NotEqual(Encoding.UTF8.GetString(files["pack.yaml"]), pack); // self-check: the block was present
+        files["pack.yaml"] = Encoding.UTF8.GetBytes(pack);
+        Assert.Empty(PackParser.Parse(files, "pt.2026.1").Manifest.TemplateRefNames);
+    }
+
+    [Fact]
+    public void An_absent_breaking_changes_block_parses_to_none()
+    {
+        var files = PackTestData.LoadPt2026();
+        var pack = Encoding.UTF8.GetString(files["pack.yaml"]).Replace("breaking_changes: []", "", StringComparison.Ordinal);
+        Assert.NotEqual(Encoding.UTF8.GetString(files["pack.yaml"]), pack);
+        files["pack.yaml"] = Encoding.UTF8.GetBytes(pack);
+        // A dropped `?? []` would NullReference on the .Select over the (absent) breaking-change list.
+        Assert.Null(Record.Exception(() => PackParser.Parse(files, "pt.2026.1")));
+    }
+
+    [Fact]
+    public void An_absent_rate_sheet_refs_block_defaults_to_no_refs()
+    {
+        var files = PackTestData.LoadPt2026();
+        var pack = Encoding.UTF8.GetString(files["pack.yaml"]).Replace("rate_sheet_refs:\n  - deposits-pt", "", StringComparison.Ordinal);
+        Assert.NotEqual(Encoding.UTF8.GetString(files["pack.yaml"]), pack);
+        files["pack.yaml"] = Encoding.UTF8.GetBytes(pack);
+        // A dropped `?? []` would NullReference on the foreach over the (absent) ref-name list.
+        Assert.Empty(PackParser.Parse(files, "pt.2026.1").RateSheetRefs);
+    }
+
+    [Fact]
+    public void An_absent_permitted_for_defaults_to_an_empty_permitted_set()
+    {
+        // act_365 / 30_360_european carry `permitted_for: []`; remove it so the field is ABSENT and the
+        // `?? []` default is the one under test — the permitted set must be empty, not null.
+        var files = PackTestData.LoadPt2026();
+        var dc = Encoding.UTF8.GetString(files["primitives/day-count.yaml"]).Replace("permitted_for: []", "", StringComparison.Ordinal);
+        Assert.NotEqual(Encoding.UTF8.GetString(files["primitives/day-count.yaml"]), dc);
+        files["primitives/day-count.yaml"] = Encoding.UTF8.GetBytes(dc);
+        Assert.Empty(PackParser.Parse(files, "pt.2026.1").DayCounts["act_365"].PermittedFor);
+    }
 }
