@@ -39,7 +39,9 @@ All Services are `ClusterIP` — in the `base`, `dev`, and `ha` overlays they ar
 reached via `kubectl port-forward`. **The `staging` overlay is the one exception**
 ([see below](#staging-overlay--the-always-on-public-demo-box-bd-babelstone-zla1)):
 it adds a public Traefik `Ingress` + cert-manager/Let's Encrypt TLS fronting the
-Kong edge and the Backstage portal — the always-on demo box. That is a deliberate,
+Kong edge, the Backstage portal, the Mission Control demo UI, and the Logto OAuth/OIDC
+auth subdomain ([ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md))
+— the always-on demo box. That is a deliberate,
 recorded extension of the previous "no ingress/gateway exposure beyond Kong"
 posture: an
 [ADR-PC-020 §D3](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
@@ -76,7 +78,9 @@ infra/k8s/
     │   └── files/                    # primary replication-setup shell hook + pg_hba.conf
     └── staging/                # always-on public demo box (single-node; see below)
         ├── kustomization.yaml        # ns babelstone-staging; replicas=1; storage + edge patches
-        ├── ingress.yaml              # public Traefik Ingress (Kong edge + Backstage), cert-manager TLS
+        ├── ingress.yaml              # public Traefik Ingress (Kong edge + Backstage + Mission Control + Logto), cert-manager TLS
+        ├── logto.yaml                # Logto OAuth/OIDC AS (ADR-IC-021): Service + Deployment — the auth.babelstone.dev issuer
+        ├── logto-jobs.yaml           # Logto DB lifecycle: init/seed Job + alteration-deploy upgrade Job + annual key-rotation CronJob
         ├── storageclass.patch.yaml   # JSON6902: pin hcloud-volumes on the stateful VCTs
         ├── backstage-db-pvc.yaml     # durable PVC for the Backstage DB (base ships it PVC-less)
         ├── backstage-db-storage.patch.yaml # mount that PVC + PGDATA subdir
@@ -252,12 +256,20 @@ the whole VCT list and drop the base storage request. At `kustomize build` /
 only at apply, once Phase-1 `hetzner-k3s` installs the Hetzner CCM + CSI.
 
 **Public edge — the recorded drift.** `ingress.yaml` adds a public Traefik
-`Ingress` (k3s bundles Traefik as the `IngressClass`) for three hosts:
+`Ingress` (k3s bundles Traefik as the `IngressClass`) for **four** hosts:
 `api.babelstone.dev` → the **Kong** proxy (8000), `backstage.babelstone.dev` →
-**Backstage** (7007), and `app.babelstone.dev` → **Mission Control** (9000, the demo
+**Backstage** (7007), `app.babelstone.dev` → **Mission Control** (9000, the demo
 UI, bd babelstone-zla1.5.5 — the browser hits only this host and Mission Control
-same-origin-proxies the engine/orchestrator Services internally). Adding any public
-ingress extends the previous
+same-origin-proxies the engine/orchestrator Services internally), and
+`auth.babelstone.dev` → **Logto** (3001, the OAuth 2.1 / OIDC Authorization Server,
+[ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md),
+bd babelstone-zla1.10.2 — the staging box's token **issuer**: login, SCA, and the
+MCP-agent authority). Logto is the **4th public host**; it is the token issuer, not
+a product route, so it sits beside Backstage/Mission Control straight through Traefik
+and Kong stays the [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
+edge for the product API (only Logto's main app port 3001 is fronted — sign-in + OIDC
+discovery + JWKS; its admin console on 3002 stays cluster-internal, operator
+port-forward). Adding any public ingress extends the previous
 "no ingress/gateway exposure beyond Kong" posture, so this is an
 [ADR-PC-020 §D3](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
 **explicit-drift event**, acknowledged in the same change (this section, the scope

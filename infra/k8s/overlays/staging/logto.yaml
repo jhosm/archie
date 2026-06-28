@@ -1,0 +1,165 @@
+# Logto — OAuth 2.1 / OIDC Authorization Server (ADR-IC-021), the staging box's IAM
+# (bd babelstone-zla1.10.2).
+#
+# Plain English: this is the service that logs users in and hands out the tokens for the public
+# staging box — the login screen, the strong-customer-authentication (SCA) step, and the
+# authority third-party AI agents talk to over MCP. Kong already CHECKS tokens at the edge and
+# the MCP server already VALIDATES them; Logto is the missing ISSUER that ADR-IC-021 selected.
+# It runs as a single Node container reusing the existing Postgres (its own `logto` database)
+# and sits behind the public `auth.babelstone.dev` Traefik Ingress (ingress.yaml) — the 4th
+# public host on the box.
+#
+# Secret boundary (ADR-PC-004 §A1 / ADR-IC-021 §staging-rollout): the secret-vault KEK and the
+# OIDC token-signing key are sourced from the OpenBao-seeded Secret via secretKeyRef — NEVER an
+# inline literal, never on the bus. Logto persists the signing key in its DB config
+# (`oidc.privateKeys`): the init/seed Job (logto-jobs.yaml) installs it from this same OpenBao
+# material, and the annual rotate CronJob rolls a fresh key in-DB with a grace period. It is
+# referenced on the Pod here too so the signing-key dependency is explicit and the material is
+# pod-injected, not baked into the image.
+#
+# Lives in the staging overlay (not the apps/ product-service layer): like Mission Control it is
+# a staging-specific, public-facing concern. Multi-arch upstream image (svhd/logto) — the CAX41
+# staging node is ARM64 (bd babelstone-zla1.8). CI VALIDATES ONLY (kustomize build +
+# kubeconform); the live apply / DNS / cert issuance is account-gated (Phase 0-2).
+apiVersion: v1
+kind: Service
+metadata:
+  name: logto
+  labels:
+    app.kubernetes.io/name: logto
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: logto
+  ports:
+    # Main app: the sign-in experience, the OAuth/OIDC endpoints + RFC 8414 discovery, and the
+    # APIs. The ONLY port the public Ingress fronts (auth.babelstone.dev → 3001).
+    - name: http
+      port: 3001
+      targetPort: 3001
+    # Admin console: operators reach it via `kubectl port-forward` to hand-register each MCP
+    # agent client (DCR is the accepted gap — ADR-IC-021 §C6). Deliberately NOT ingressed.
+    - name: admin
+      port: 3002
+      targetPort: 3002
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logto
+  labels:
+    app.kubernetes.io/name: logto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: logto
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: logto
+    spec:
+      # Gate Logto on its DB being seeded: poll for the `logto_configs` table the init Job
+      # (logto-jobs.yaml) writes, so the server never boots against an un-seeded schema.
+      # Race-free (only the Job seeds; this only waits) — mirrors the engine's
+      # wait-for-event-store-migration init.
+      initContainers:
+        - name: wait-for-logto-db
+          image: postgres:18-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until psql -tAc "SELECT 1 FROM logto_configs LIMIT 1" 2>/dev/null | grep -q 1; do
+                echo "waiting for the logto database to be seeded ..."
+                sleep 3
+              done
+              echo "logto database seeded; starting Logto."
+          env:
+            - name: PGHOST
+              value: postgres
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              value: logto
+            - name: PGUSER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+      containers:
+        - name: logto
+          image: svhd/logto:latest
+          ports:
+            - name: http
+              containerPort: 3001
+            - name: admin
+              containerPort: 3002
+          env:
+            # Password first, so the $(LOGTO_DB_PASSWORD) interpolation in DB_URL resolves.
+            - name: LOGTO_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: POSTGRES_PASSWORD
+            # Logto reuses the existing Postgres (ADR-IC-021 §soft-criteria) in its own `logto`
+            # database (created by the init Job). Same hardcoded-user / interpolated-password
+            # seam the engine + orchestrator use.
+            - name: DB_URL
+              value: postgres://babelstone:$(LOGTO_DB_PASSWORD)@postgres:5432/logto
+            # Public base URL — the auth subdomain fronted by Traefik (ingress.yaml). Behind a
+            # reverse proxy, so trust the forwarded headers.
+            - name: ENDPOINT
+              value: https://auth.babelstone.dev
+            - name: TRUST_PROXY_HEADER
+              value: "true"
+            - name: PORT
+              value: "3001"
+            - name: ADMIN_PORT
+              value: "3002"
+            # Secret-vault KEK — encrypts connector secrets at rest. Sourced from the
+            # OpenBao-seeded Secret (ADR-PC-004 §A1); NEVER an inline literal, never on the bus.
+            - name: SECRET_VAULT_KEK
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: SECRET_VAULT_KEK
+            # OIDC token-signing key, same OpenBao-held material. Logto PERSISTS it in the DB
+            # (`oidc.privateKeys`), seeded by logto-jobs.yaml and annually rotated; referenced
+            # here so the signing-key dependency is explicit and the material is pod-injected,
+            # not image-baked.
+            - name: OIDC_PRIVATE_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: babelstone-dev-secrets
+                  key: OIDC_PRIVATE_KEYS
+          # Logto's main endpoint has no guaranteed 2xx liveness route; probe the TCP socket (a
+          # bound 3001 = the Node server is up) — the same convention as engine/orchestrator.
+          readinessProbe:
+            tcpSocket:
+              port: 3001
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: 3001
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          # The CPU/memory request + limit is centralised in resources.patch.yaml (the staging
+          # "no OOM mid-demo" sizing invariant), alongside the other staging workloads.
