@@ -63,6 +63,35 @@ public class RateScheduleBoundaryTests
             () => schedule.AccrueGross(Principal, Start, Start.AddDays(-1), Act360));
     }
 
+    // --- zero-day-window accrual (start == end) on every branch: 0, never a throw ----------------
+    // A zero-length interval accrues nothing and must NOT trip the reversed-interval guard:
+    // factor.Days == 0 is not < 0, so accrual returns Money.Zero rather than throwing. These pin the
+    // `factor.Days < 0` boundary on each of the three accrual branches (flat → SimpleInterestRaw,
+    // step-up → AccrueStepUpWindowRaw, amount-tiered → AccrueAmountTieredRaw), killing the `< 0` → `<= 0`
+    // mutant that would otherwise wrongly throw on a legitimate zero-day window. (The strictly-negative
+    // case is already pinned by the reversed-interval tests above; this is the OTHER side of the guard.)
+
+    [Fact]
+    public void Flat_accrual_of_a_zero_day_window_is_zero_and_does_not_throw()
+    {
+        var schedule = RateSchedule.Flat(600);
+        Assert.Equal(Money.Zero, schedule.AccrueGross(Principal, Start, Start, Act360));
+    }
+
+    [Fact]
+    public void StepUp_accrual_of_a_zero_day_window_is_zero_and_does_not_throw()
+    {
+        var schedule = RateSchedule.StepUp([new RateSegment(0, 600)]);
+        Assert.Equal(Money.Zero, schedule.AccrueGross(Principal, Start, Start, Act360));
+    }
+
+    [Fact]
+    public void AmountTiered_accrual_of_a_zero_day_window_is_zero_and_does_not_throw()
+    {
+        var schedule = RateSchedule.AmountTiered([new RateSegment(0, 600)]);
+        Assert.Equal(Money.Zero, schedule.AccrueGross(Principal, Start, Start, Act360));
+    }
+
     // --- amount-tiered tranche bounds ------------------------------------------------------------
 
     [Fact]

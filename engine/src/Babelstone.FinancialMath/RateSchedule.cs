@@ -258,8 +258,15 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
             // overlap (e.g. a withdrawal that lands after this coupon window).
             DateOnly segFrom = principalTimeline[i].From;
             DateOnly segTo = i + 1 < principalTimeline.Count ? principalTimeline[i + 1].From : DateOnly.MaxValue;
+            // Stryker disable once Equality: at segFrom == windowStart both ternary branches yield the same
+            // date, so > vs >= produces the identical lower bound — boundary-equivalent, no test can tell
+            // them apart. (The min/max-swap variant is killed by the multi-principal window-clamp test.)
             DateOnly lo = segFrom > windowStart ? segFrom : windowStart;
+            // Stryker disable once Equality: at segTo == windowEnd both branches yield the same date, so
+            // < vs <= produces the identical upper bound — boundary-equivalent.
             DateOnly hi = segTo < windowEnd ? segTo : windowEnd;
+            // Stryker disable once Equality: at hi == lo the window is zero-width; whether we skip (<=) or
+            // fall through (<), the segment contributes a zero-day accrual, so the running total is identical.
             if (hi <= lo)
             {
                 continue;
@@ -327,6 +334,8 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
             // Overlap of [segFrom, segTo) with the window [winFromDay, winToDay).
             long lo = Math.Max(segFrom, winFromDay);
             long hi = Math.Min(segTo, winToDay);
+            // Stryker disable once Equality: at hi == lo the overlap is zero days (segDays == 0), so
+            // skipping (<=) or processing (<) the segment adds exactly zero either way — boundary-equivalent.
             if (hi <= lo)
             {
                 continue; // this segment does not overlap the window
@@ -357,11 +366,16 @@ public sealed record RateSchedule(RateScheduleKind Kind, IReadOnlyList<RateSegme
         for (int i = 0; i < Segments.Count; i++)
         {
             long trancheFrom = Segments[i].From;
+            // Stryker disable once Equality: at trancheFrom == principal.Cents this tranche is zero-width
+            // (trancheTo clips to principal.Cents ⇒ trancheCents == 0) and the next, strictly-greater
+            // boundary breaks anyway, so >= vs > yields the same total — boundary-equivalent.
             if (trancheFrom >= principal.Cents)
             {
                 break; // the principal does not reach this tranche
             }
             long trancheTo = i + 1 < Segments.Count ? Segments[i + 1].From : principal.Cents;
+            // Stryker disable once Equality: at trancheTo == principal.Cents the clip assigns the value it
+            // already holds, so > vs >= leaves trancheTo unchanged either way — boundary-equivalent.
             if (trancheTo > principal.Cents)
             {
                 trancheTo = principal.Cents; // clip the top in-range tranche to the actual principal

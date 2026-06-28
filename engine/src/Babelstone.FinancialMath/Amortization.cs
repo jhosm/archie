@@ -192,6 +192,10 @@ public static class Amortization
             throw new ArgumentOutOfRangeException(
                 nameof(paid), paid, "Paid-installment count must be in [0, periods].");
 
+        // Stryker disable once Block: the paid == 0 fast-path is a redundant shortcut — both branches
+        // below already return the principal exactly at m = 0 (the zero-rate branch gives C − 0·(C/n) = C;
+        // the closed form gives C·(1+r)^0 − P·((1+r)^0 − 1)/r = C·1 − 0 = C), so emptying this block is
+        // provably equivalent — no test can observe the difference.
         if (paid == 0)
         {
             return principal;
@@ -264,6 +268,10 @@ public static class Amortization
 
         // 3. The lost-interest ceiling (§7.5): the commission may never exceed the interest the borrower
         //    would still have paid. A commission above it is clamped DOWN to it (never up).
+        // Stryker disable once Equality: at commission.Cents == lostInterestCeiling.Cents the two operands
+        // are equal Money values, so returning commission (>) or lostInterestCeiling (>=) gives the identical
+        // result — the boundary equality mutant is not killable (see the test
+        // EarlyRepaymentCommission_keeps_the_commission_when_it_does_not_exceed_the_ceiling).
         return commission.Cents > lostInterestCeiling.Cents ? lostInterestCeiling : commission;
     }
 
