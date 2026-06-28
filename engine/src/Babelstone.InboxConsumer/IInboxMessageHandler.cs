@@ -4,7 +4,7 @@ namespace Babelstone.InboxConsumer;
 
 /// <summary>
 /// The THIN dispatch seam between the inbox consume loop and whatever processes a deduplicated
-/// message. This is the plug-point Epic H.1 (the saga state machine in PG) wires a real handler
+/// message. This is the plug-point the saga state machine (in PG) wires a real handler
 /// into — this assembly deliberately does NOT build a saga (orchestrator/ stays a stub).
 /// </summary>
 /// <remarks>
@@ -18,7 +18,7 @@ namespace Babelstone.InboxConsumer;
 /// and the offset commit — the handler just contributes its effect.
 /// </para>
 /// <para>
-/// <b>Determinism / purity (ADR-PC-010 §P5):</b> the message's domain fold path stays pure — no
+/// <b>Determinism / purity (ADR-PC-010):</b> the message's domain fold path stays pure — no
 /// clock, no randomness, no out-of-transaction I/O. A handler that must persist state does it
 /// through the supplied connection/transaction; a handler that must call an external system follows
 /// Document 04's rule (call a retryable-idempotent endpoint BEFORE the inbox insert, or emit a
@@ -50,7 +50,7 @@ public interface IInboxMessageHandler
 }
 
 /// <summary>
-/// The default dispatch target until Epic H.1 plugs in the saga: a pure no-op that records nothing
+/// The default dispatch target until the saga is plugged in: a pure no-op that records nothing
 /// beyond the inbox dedup row itself (it returns no <c>result_summary</c>). It proves the seam —
 /// dedup, transaction, and offset commit all work — without asserting any saga behaviour, the same
 /// way a dev-host stub stands in for the real ACL.

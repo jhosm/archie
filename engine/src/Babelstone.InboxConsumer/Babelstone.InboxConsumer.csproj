@@ -8,24 +8,24 @@
     <!-- The IC-004 consumer half — the MIRROR of Babelstone.OutboxPublisher. The ONLY
          consumer-side assembly that touches both Redpanda (Confluent.Kafka: the IConsumer)
          and PostgreSQL (Npgsql: the inbox dedup row). The engine's write half does not know
-         Redpanda exists; the dispatch SEAM (IInboxMessageHandler) keeps the saga (Epic H.1)
+         Redpanda exists; the dispatch SEAM (IInboxMessageHandler) keeps the saga
          off this assembly too. Confluent deps stay HERE and in Babelstone.Engine.Avro —
          never in Babelstone.EventStore. -->
     <PackageReference Include="Npgsql" />
     <PackageReference Include="Confluent.Kafka" />
     <!-- No DIRECT Confluent.SchemaRegistry reference is needed here: the SR writer-schema-by-id
-         resolution the consumer/bus-decode path now performs (ADR-IC-002 §Consequences; runtime lookup
-         §P3) lives behind the ISchemaByIdResolver
-         seam in Babelstone.Engine.Avro (referenced below), which also ships the Confluent-backed
-         ConfluentSchemaByIdResolver a host wires in. This assembly depends only on the seam; the
-         Confluent.SchemaRegistry type stays transitively available via Babelstone.Engine.Avro. -->
+         resolution the consumer/bus-decode path now performs (ADR-IC-002) lives behind the
+         ISchemaByIdResolver seam in Babelstone.Engine.Avro (referenced below), which also ships the
+         Confluent-backed ConfluentSchemaByIdResolver a host wires in. This assembly depends only on
+         the seam; the Confluent.SchemaRegistry type stays transitively available via
+         Babelstone.Engine.Avro. -->
     <!-- BackgroundService/IHostedService for the in-process consume loop (the inbox mirror
          of the §5.1 outbox relay's hosted poll loop). -->
     <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The Avro codec (G.3 / E.4): the consumer decodes the Confluent wire-format value the
+    <!-- The Avro codec: the consumer decodes the Confluent wire-format value the
          relay produced (magic byte ‖ big-endian schema_id ‖ Avro). Brings the schema catalog +
          IEventSerializer; Confluent/Avro deps already live here transitively. -->
     <ProjectReference Include="../Babelstone.Engine.Avro/Babelstone.Engine.Avro.csproj" />
