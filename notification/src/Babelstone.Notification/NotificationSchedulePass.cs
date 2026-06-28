@@ -1,3 +1,4 @@
+using Babelstone.Cadence;
 using Microsoft.Extensions.Logging;
 
 namespace Babelstone.Notification;
@@ -16,11 +17,19 @@ namespace Babelstone.Notification;
 /// ADR-IC-019 §D1/Amendment-A1). The clock lives one layer up, in <see cref="NotificationWorker"/>
 /// (ADR-PC-023 §6); this pass is a deterministic function of the as-of date and the registered rules, so it
 /// is trivially testable with a fake rule and the in-memory ledger.
+/// <para>
+/// It is the notification estate's <see cref="ISchedulePass"/> — the per-tick pass the shared clock-owning
+/// <see cref="NotificationWorker"/> (a <c>Babelstone.Cadence.CadenceWorker</c>) drives (ADR-PC-036 §Decision 2 +
+/// ADR-IC-019 mechanism reuse). The interface's <see cref="ISchedulePass.RunOnceAsync"/> is satisfied
+/// explicitly by delegating to the public, richer-typed <see cref="RunOnceAsync"/> below (which returns the
+/// raised reminders for callers/tests that want them); the worker discards the result and only needs the tick
+/// to run.
+/// </para>
 /// </remarks>
 public sealed class NotificationSchedulePass(
     IEnumerable<INotificationScheduleRule> rules,
     INotificationDedupeLedger dedupeLedger,
-    ILogger<NotificationSchedulePass>? logger = null)
+    ILogger<NotificationSchedulePass>? logger = null) : ISchedulePass
 {
     private readonly IReadOnlyList<INotificationScheduleRule> _rules =
         (rules ?? throw new ArgumentNullException(nameof(rules))).ToList();
@@ -75,4 +84,12 @@ public sealed class NotificationSchedulePass(
 
         return raised;
     }
+
+    /// <summary>
+    /// The shared <see cref="ISchedulePass"/> tick the clock-owning <see cref="NotificationWorker"/> drives:
+    /// run one pass as-of <paramref name="asOf"/> and discard the per-tick result (the worker only needs the
+    /// tick to run; callers that want the raised reminders use the public <see cref="RunOnceAsync"/>).
+    /// </summary>
+    async Task ISchedulePass.RunOnceAsync(DateOnly asOf, CancellationToken ct) =>
+        await RunOnceAsync(asOf, ct);
 }

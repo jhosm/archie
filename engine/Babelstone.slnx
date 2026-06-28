@@ -53,6 +53,14 @@
     <!-- The family-AGNOSTIC saga substrate (ADR-IC-018 §P1/§P2): the runtime + stores + ports +
          ISagaModule plug-in, carrying no families/** or engine-kernel reference. -->
     <Project Path="../orchestrator/src/Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
+    <!-- The shared CADENCE machinery LIBRARY (ADR-PC-036 §Decision 2 + ADR-IC-019 mechanism reuse,
+         bd babelstone-6cpq.6): the generic clock-owning poll-loop worker, the per-tick ISchedulePass
+         abstraction, the IDedupeLedger + in-memory ledger, and the CompositeId primitive — extracted from the
+         notification estate so the notification scheduler and the future lifecycle-command driver share one
+         tested mechanism. Generic by construction: it carries NO families/** or engine-spine reference (the
+         arrows point INTO it), so it is neither a §P1 core nor a §P2 spine project. Extraction-ready subtree
+         (ADR-PC-019 §P2). -->
+    <Project Path="../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
     <!-- The in-house notification family-AGNOSTIC core LIBRARY (ADR-IC-011, DEF-2 / bd babelstone-60n8.1/.2;
          §D4 split by bd babelstone-9u70): the poll loop, the per-tick schedule pass, the composite-id +
          dedupe, the storage-opaque ADR-PC-027 read client, and the IFamilyNotificationModule contribution
@@ -100,6 +108,11 @@
          integration tests (the latter [Trait("Category","Integration")], filtered out of the
          default lane). -->
     <Project Path="../orchestrator/tests/Babelstone.Orchestrator.Tests/Babelstone.Orchestrator.Tests.csproj" />
+    <!-- The shared CADENCE machinery tests (bd babelstone-6cpq.6): Docker-free unit tests over the generic
+         worker loop (clock-derived as-of date, clean-tick cadence, backpressure retry), the in-memory dedupe
+         ledger, and the composite-id primitive — driven by a hand-rolled fake TimeProvider, no FakeTimeProvider
+         package. -->
+    <Project Path="../cadence/tests/Babelstone.Cadence.Tests/Babelstone.Cadence.Tests.csproj" />
     <!-- DEF-2 notification (bd babelstone-60n8.1 / .5): Docker-free + engine-free tests — the deposit
          read client over a fake HttpMessageHandler (it calls GET /v1/deposits/{id} and maps the
          snake_case wire shape, ADR-PC-027) + the NOTIFICATION_FAMILY_AGNOSTIC fitness gate that
