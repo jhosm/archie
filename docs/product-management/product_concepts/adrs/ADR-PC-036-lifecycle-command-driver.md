@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-06-28 |
 | Deciders | jhosm |
 | Shape | Tool-selection (ADR-PC-000 §D3 residual category — a runtime/operational-discipline posture for *who/which mechanism* drives the engine's clock-driven lifecycle commands on their due dates, declared tool-selection per the §D4 default; F1/F2 do not discriminate, the same class as ADR-PC-034, ADR-PC-035, ADR-PC-019) |
