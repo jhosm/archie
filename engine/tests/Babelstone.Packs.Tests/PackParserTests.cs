@@ -237,4 +237,45 @@ public sealed class PackParserTests
         var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
         Assert.Contains("rate_sheet_version_id", ex.Message);
     }
+
+    [Theory]
+    // B.10 mutation backstop: every governed field PackParser feeds through Required(...) must fail
+    // loud when emptied — a relaxed guard that returned the empty string instead of throwing would let
+    // a malformed pack into the engine with a silent default (the "relaxed strict-parse rejection"
+    // mutant of interest, engine/docs/mutation-testing.md). The happy-path Pt2026() parse pins the
+    // present-value side of each Required ternary; these cases pin the missing-value side, so BOTH the
+    // always-throw and never-throw mutants of every field's guard die. One case per field the existing
+    // fail-loud tests above do not already exercise a MISSING value for.
+    [InlineData("pack.yaml", "pack_id: pt", "pack_id: \"\"", "pack_id")]
+    [InlineData("pack.yaml", "pack_version: \"2026.1\"", "pack_version: \"\"", "pack_version")]
+    [InlineData("pack.yaml", "namespace: pt", "namespace: \"\"", "namespace")]
+    [InlineData("pack.yaml", "publisher: pt-pack-team@engine.internal", "publisher: \"\"", "publisher")]
+    [InlineData("pack.yaml", "engine_compatible_versions: \">=1.0.0,<2.0.0\"", "engine_compatible_versions: \"\"", "engine_compatible_versions")]
+    [InlineData("pack.yaml", "test_corpus_ref: oci://babelstone-packs/pt-deposit-tests@2026.1", "test_corpus_ref: \"\"", "test_corpus_ref")]
+    [InlineData("primitives/withholding.yaml", "formula_ref: engine.withholding.percentage", "formula_ref: \"\"", "formula_ref")]
+    [InlineData("primitives/withholding.yaml", "basis: gross_interest", "basis: \"\"", "basis")]
+    [InlineData("primitives/withholding.yaml", "timing: at_credit", "timing: \"\"", "timing")]
+    [InlineData("primitives/withholding.yaml", "{ id: pme_leader, evidence: declaration_pme }", "{ id: \"\", evidence: declaration_pme }", "exemption.id")]
+    [InlineData("primitives/withholding.yaml", "{ id: pme_leader, evidence: declaration_pme }", "{ id: pme_leader, evidence: \"\" }", "exemption.evidence")]
+    [InlineData("primitives/withholding.yaml", "modelo_39: { required: true, frequency: annual }", "modelo_39: { required: true, frequency: \"\" }", "frequency")]
+    [InlineData("primitives/fgd.yaml", "scheme: fgd_pt", "scheme: \"\"", "scheme")]
+    [InlineData("primitives/reporting.yaml", "regulator: banco_de_portugal", "regulator: \"\"", "regulator")]
+    [InlineData("primitives/day-count.yaml", "formula_ref: engine.day_count.actual_360", "formula_ref: \"\"", "formula_ref")]
+    [InlineData("families.yaml", "family_name: term_deposit", "family_name: \"\"", "family_name")]
+    [InlineData("families.yaml", "aggregate_type: term_deposit", "aggregate_type: \"\"", "aggregate_type")]
+    [InlineData("families.yaml", "plugin_assembly: Babelstone.Families.TermDeposit.Application", "plugin_assembly: \"\"", "plugin_assembly")]
+    [InlineData("rate-sheet-refs/deposits-pt.yaml", "product_family: term_deposit", "product_family: \"\"", "product_family")]
+    public void A_required_field_emptied_in_any_pack_file_fails_loud(string path, string find, string replace, string expectedFieldFragment)
+    {
+        var files = PackTestData.LoadPt2026();
+        var original = Encoding.UTF8.GetString(files[path]);
+        var mutated = original.Replace(find, replace, StringComparison.Ordinal);
+        // Self-check: the find-string must actually be present, so a fixture edit that drifts the YAML
+        // fails HERE (no-op replace) rather than passing a test that no longer mutates anything.
+        Assert.NotEqual(original, mutated);
+        files[path] = Encoding.UTF8.GetBytes(mutated);
+
+        var ex = Assert.Throws<PackLoadException>(() => PackParser.Parse(files, "pt.2026.1"));
+        Assert.Contains(expectedFieldFragment, ex.Message, StringComparison.Ordinal);
+    }
 }
