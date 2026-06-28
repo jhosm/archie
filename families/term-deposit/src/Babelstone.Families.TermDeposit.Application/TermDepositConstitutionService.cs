@@ -251,10 +251,15 @@ public sealed class TermDepositConstitutionService(
 
         // 5. Append at the current head (optimistic concurrency on the second append). NO eager settlement on
         //    this path (ADR-PC-032 slot 5: record the Movement and append FIRST). The returned head version is
-        //    the commit_sequence the caller threads for read-your-writes.
+        //    the commit_sequence the caller threads for read-your-writes. Thread the SERVER-DERIVED CommandId
+        //    (ADR-PC-036 Decision 1) so the append's in-transaction command_dedup INSERT fires (ADR-PC-029
+        //    slot 4): two firings of the SAME maturity occurrence carry the SAME derived id and append ONCE —
+        //    maturity now dedupes uniformly at command_dedup, independent of the F.3 legality gate (which was
+        //    formerly the only backstop). A direct in-process caller that supplies no id (null) keeps the old
+        //    non-idempotent append, leaning on the legality gate as before.
         return await runtime.AppendAsync(
             command.DepositId, hydrated.Version, events,
-            Context(command.Actor, command.MaturedAt), ct);
+            Context(command.Actor, command.MaturedAt, command.CommandId), ct);
     }
 
     /// <summary>

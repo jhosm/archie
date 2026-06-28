@@ -212,6 +212,43 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal("Matured", matured.Lifecycle);
     }
 
+    [Fact]
+    public async Task ENGINE_COMMAND_IDEMPOTENT_mature_dedupes_at_command_dedup_independent_of_the_legality_gate()
+    {
+        // ADR-PC-036 Decision 1 (bd babelstone-6cpq.3): maturity now carries a SERVER-DERIVED command id —
+        // hash(deposit_id, "mature"), the one-shot occurrence key — so two maturity POSTs for the SAME deposit
+        // dedupe at command_dedup (ADR-PC-029 slot 4) to a SINGLE DepositMatured, INDEPENDENT of the F.3
+        // legality gate. The tell is the second response: BEFORE this change a re-mature was a 422 (the legality
+        // gate rejecting the illegal Matured→Mature transition); now it is an idempotent REPLAY (200, the
+        // original outcome) — proof the at-least-once safety rides command_dedup, not the legality gate. This is
+        // the dispatcher's / lifecycle-driver's at-least-once retry of a still-due maturity arriving twice.
+        var depositId = await ConstituteActiveDepositAsync();
+
+        var first = await PostMoneyMoverWithFreshScaAsync(
+            $"/v1/deposits/{depositId}/maturity", new MatureDepositRequest());
+        var second = await PostMoneyMoverWithFreshScaAsync(
+            $"/v1/deposits/{depositId}/maturity", new MatureDepositRequest());
+
+        // BOTH succeed — the second is the dedupe REPLAY, NOT the legality 422.
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        var firstBody = await first.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
+        var secondBody = await second.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
+        Assert.NotNull(firstBody);
+        Assert.NotNull(secondBody);
+        Assert.Equal("Matured", firstBody.Lifecycle);
+        Assert.Equal("Matured", secondBody.Lifecycle);
+        // The replay returns the ORIGINAL read-your-writes token, verbatim — same head version.
+        Assert.Equal(firstBody.LastSequence, secondBody.LastSequence);
+
+        // NO second append: exactly ONE DepositMatured on the stream (the AT_MATURITY flow ran once).
+        Assert.Single(await EventsOfAsync<DepositMatured>(depositId));
+        Assert.Equal(
+            ["term_deposit.DepositConstituted", "term_deposit.InterestAccrued",
+             "term_deposit.WithholdingApplied", "term_deposit.DepositMatured"],
+            await EventTypesAsync(depositId));
+    }
+
     // ── §Decision 1 non-interactive scoped SCA service principal (ADR-PC-036, bd babelstone-6cpq.4) ──────
     // The lifecycle-command driver fires maturity / coupon on the due date as a MACHINE — it has no human
     // acr/auth_time to step up. Its authorisation is a SCOPED gateway-attested X-SCA-Service-Principal claim
