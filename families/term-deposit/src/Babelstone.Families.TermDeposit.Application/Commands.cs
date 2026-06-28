@@ -125,11 +125,21 @@ public sealed record MinimalConstituteDepositRequest(
 
 /// <summary>Mature a constituted deposit: accrue → withhold → pay out the AT_MATURITY single flow.</summary>
 /// <param name="PayoutAccount">The legacy current account credited the total payout (settlement).</param>
+/// <param name="CommandId">The SERVER-DERIVED one-shot occurrence key (ADR-PC-036 Decision 1), computed by
+/// the canonical <c>Babelstone.Engine.Hosting.LifecycleCommandKey.Derive(deposit_id, "mature", 1)</c> —
+/// the SAME helper the loan installment endpoint uses (LCD-1), maturity being the degenerate one-shot
+/// occurrence (constant occurrence number 1). NEVER caller-supplied. The maturity append dedupes on it at
+/// <c>command_dedup</c> (ADR-PC-029 slot 4): two firings for the SAME deposit occurrence (a manual/MCP
+/// retry, or the future lifecycle driver re-firing a still-due maturity) converge on the SAME id and
+/// append ONCE, independent of the F.3 legality gate (which formerly was the only backstop). Nullable only
+/// for direct in-process callers (family unit tests) that construct the command without exercising
+/// idempotency; the HTTP/MCP boundary always derives and supplies it.</param>
 public sealed record MatureDepositCommand(
     Guid DepositId,
     DateTimeOffset MaturedAt,
     string PayoutAccount,
-    string Actor);
+    string Actor,
+    Guid? CommandId = null);
 
 /// <summary>Pay one PERIODIC coupon: accrue the next coupon window's interest, withhold that one
 /// flow, and credit the net to the depositor's current account (02 §2.1 <c>CF(k) = +J_k</c>). The

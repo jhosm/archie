@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Babelstone.Engine;
+using Babelstone.Engine.Hosting;
 using Babelstone.EventStore;
 using Babelstone.Families.TermDeposit;
 using Babelstone.FinancialTypes;
@@ -26,6 +27,16 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// </summary>
 public static class DepositsEndpoints
 {
+    // The stable command_kind tag the SERVER-DERIVED maturity idempotency key is namespaced under
+    // (ADR-PC-036 Decision 1) — the same canonical LifecycleCommandKey.Derive spec the loan installment
+    // endpoint uses (LCD-1), separating the maturity command space from any other on the same deposit.
+    private const string MatureCommandKind = "mature";
+
+    // Maturity is the degenerate ONE-SHOT lifecycle occurrence (exactly one per deposit), so its stable
+    // occurrence number is the constant 1 — where a recurring installment pins the installment NUMBER
+    // (ADR-PC-036 §Decision 3), maturity has a single occurrence and never re-fires under a new number.
+    private const long MatureOccurrence = 1;
+
     public static void Map(IEndpointRouteBuilder app)
     {
         app.MapPost("/v1/deposits", ConstituteAsync);
@@ -396,6 +407,7 @@ public static class DepositsEndpoints
         MatureDepositRequest request,
         TermDepositConstitutionService service,
         AggregateRuntime<DepositPosition> runtime,
+        ICommandLog commandLog,
         TimeProvider clock,
         CancellationToken ct)
     {
@@ -405,11 +417,33 @@ public static class DepositsEndpoints
         // non-interactive scoped service principal (the lifecycle driver firing maturity on its due date,
         // X-SCA-Service-Principal). The handler is reached only once one of the two authorises, so it stays
         // pure domain orchestration (ADR-PC-010 §P5).
+
+        // ADR-PC-036 Decision 1: the maturity command id is SERVER-DERIVED via the CANONICAL
+        // LifecycleCommandKey.Derive(deposit_id, "mature", 1) — the SAME helper the loan installment endpoint
+        // uses (LCD-1), maturity being the degenerate one-shot occurrence (constant occurrence number 1).
+        // NEVER caller-supplied. A manual caller, the MCP mature_deposit tool, and the future lifecycle driver
+        // all compute the SAME id for this one maturity occurrence, so the append dedupes at command_dedup
+        // (ADR-PC-029 slot 4) rather than leaning on the F.3 legality gate alone.
+        var commandId = LifecycleCommandKey.Derive(id, MatureCommandKind, MatureOccurrence);
+
+        // Pre-check BEFORE any side effect (decide / append): a known command id replays the ORIGINAL outcome
+        // with NO second append (ADR-PC-029 slot 4). Returns the same commit_sequence the first apply did off
+        // the authoritative fold — the idempotent retry the derived key gives (NOT the lifecycle 422, which the
+        // driver must not depend on for at-least-once safety). The crash-atomic guarantee is the in-transaction
+        // command_dedup INSERT inside the append; this read keeps the common sequential retry off the write path.
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(DepositResponse.FromFold(replay));
+        }
+
         var command = new MatureDepositCommand(
             DepositId: id,
             MaturedAt: request.MaturedAt ?? clock.GetUtcNow(),
             PayoutAccount: request.PayoutAccount ?? "PT50-DDA-001",
-            Actor: request.Actor ?? "mcp:dev");
+            Actor: request.Actor ?? "mcp:dev",
+            CommandId: commandId);
 
         Hydrated<DepositPosition> hydrated;
 
@@ -426,6 +460,15 @@ public static class DepositsEndpoints
             try
             {
                 await service.MatureAsync(command, ct);
+            }
+            catch (DuplicateCommandException)
+            {
+                // A concurrent duplicate slipped past the pre-check: the in-transaction command_dedup INSERT
+                // rolled the append back (NO second maturity) and the dedup guard fired. Return the ORIGINAL
+                // outcome verbatim off the authoritative fold — the idempotent replay slot 4 mandates, NOT the
+                // legality 422 (ADR-PC-036 Decision 1: maturity dedupes at command_dedup, not the gate).
+                var replay = await runtime.LoadAsync(id, ct);
+                return Results.Ok(DepositResponse.FromFold(replay));
             }
             catch (ConcurrencyException)
             {
