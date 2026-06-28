@@ -142,6 +142,38 @@ public sealed class DepositReadClient
         return page?.Deposits ?? [];
     }
 
+    /// <summary>
+    /// The per-stream DATED withholding ledger for <paramref name="depositId"/> — every withholding flow
+    /// recorded on the deposit, each carrying its own <c>withheld_on</c> date — over the read resource
+    /// <c>GET /v1/deposits/{id}/withholding-ledger</c> (bd babelstone-60n8.8, ADR-PC-027 / ADR-IC-019 §D3).
+    /// This is the read the annual IRS-withholding statement scheduler folds over to slice withholding PER
+    /// TAX YEAR, instead of reporting the cumulative <c>withholding_to_date</c> rollup the population read
+    /// carries.
+    /// </summary>
+    /// <remarks>
+    /// Like the other reads here it binds the host's snake_case wire JSON (money as integer cents —
+    /// ADR-PC-010 §P1) into the contribution's OWN <see cref="WithholdingLedgerEntryView"/>, not the
+    /// Application-layer <c>DepositWithholdingLedgerResponse</c> CLR type — so this contribution binds the
+    /// published contract, not the engine-side producer assembly (ADR-IC-019 §D3). A deposit with no
+    /// withholding flow yet has no ledger resource (HTTP 404) and returns an EMPTY list: a deposit that
+    /// withheld nothing simply contributes nothing to any tax-year slice. A 5xx surfaces (it is not "no
+    /// withholding"), so the scheduler treats it as backpressure rather than silently skipping a cycle.
+    /// </remarks>
+    public async Task<IReadOnlyList<WithholdingLedgerEntryView>> GetWithholdingLedgerAsync(
+        Guid depositId, CancellationToken ct = default)
+    {
+        using var response = await _http.GetAsync($"v1/deposits/{depositId}/withholding-ledger", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return [];
+        }
+
+        response.EnsureSuccessStatusCode();
+
+        var page = await response.Content.ReadFromJsonAsync<WithholdingLedgerPage>(WireJson, ct);
+        return page?.Entries ?? [];
+    }
+
     /// <summary>The contribution's local read model of the maturities collection
     /// (<c>{ "deposits": [ … ] }</c>) — mirrors the wire JSON, not the Application-layer
     /// <c>DepositMaturitiesResponse</c> CLR type.</summary>
@@ -151,6 +183,12 @@ public sealed class DepositReadClient
     /// (<c>{ "deposits": [ … ] }</c>) — mirrors the wire JSON, not the Application-layer
     /// <c>DepositWithholdingStatementsResponse</c> CLR type.</summary>
     private sealed record WithholdingStatementsPage(IReadOnlyList<DepositWithholdingView> Deposits);
+
+    /// <summary>The contribution's local read model of the per-stream withholding-ledger resource
+    /// (<c>{ "deposit_id": …, "entries": [ … ], "total_*_cents": … }</c>) — mirrors the wire JSON, not the
+    /// Application-layer <c>DepositWithholdingLedgerResponse</c> CLR type. Only <c>entries</c> is bound: the
+    /// running totals are the cumulative figures the per-tax-year slice deliberately re-computes itself.</summary>
+    private sealed record WithholdingLedgerPage(IReadOnlyList<WithholdingLedgerEntryView> Entries);
 }
 
 /// <summary>
@@ -228,3 +266,24 @@ public sealed record DepositWithholdingView(
     long AccruedGrossInterestCents,
     long WithholdingToDateCents,
     long NetInterestCents);
+
+/// <summary>
+/// The contribution's local read model of ONE DATED flow in the per-stream withholding ledger
+/// (<c>GET /v1/deposits/{id}/withholding-ledger</c>, bd babelstone-60n8.8) — the subset the annual
+/// IRS-withholding statement scheduler needs to slice withholding per tax year: the date the flow was
+/// withheld on plus its (gross, tax, net) cents. Like <see cref="DepositWithholdingView"/> it binds the
+/// snake_case wire JSON (money as integer cents — ADR-PC-010 §P1), NOT the Application-layer
+/// <c>WithholdingLedgerEntryResponse</c> CLR type, so this contribution binds the published contract, not
+/// the producer assembly (ADR-IC-019 §D3). Deposit-shaped, hence family-owned (§D1).
+/// </summary>
+/// <param name="WithheldOn">The date the flow was withheld on — the per-tax-year slicing key.</param>
+/// <param name="GrossCents">The flow's gross interest, in cents.</param>
+/// <param name="TaxCents">The flow's withholding tax, in cents — the figure a tax-year statement sums.</param>
+/// <param name="NetCents">The flow's net interest, in cents (<c>gross = tax + net</c>).</param>
+/// <param name="Source">Which event produced the flow — <c>withholding</c> or <c>coupon</c>.</param>
+public sealed record WithholdingLedgerEntryView(
+    DateOnly WithheldOn,
+    long GrossCents,
+    long TaxCents,
+    long NetCents,
+    string Source);

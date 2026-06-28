@@ -31,12 +31,15 @@ namespace Babelstone.Families.TermDeposit.Notification;
 /// the as-of date and trivially testable.
 /// </para>
 /// <para>
-/// <b>v1 figure (documented approximation).</b> The read-model rollup carries withholding TO DATE (cumulative
-/// across the deposit's life), not a per-tax-year slice — a true per-year breakdown needs the dated entries of
-/// the <c>withholding_ledger</c> projection, which is not yet exposed over the read surface. v1 reports the
-/// cumulative figure as-of the run, labelled with the prior tax year; the per-year split is a documented
-/// follow-up. No PII rides the decision (ADR-PC-025 PII rule) — only the structural cents figures; the
-/// depositor's name/NIF is resolved by reference at render time.
+/// <b>Per-tax-year figure (bd babelstone-60n8.8).</b> The statement reports the withholding for the PRIOR
+/// TAX YEAR, not a cumulative-to-date figure. The rule reads each deposit's DATED withholding ledger
+/// (<c>GET /v1/deposits/{id}/withholding-ledger</c> — the <c>withholding_ledger</c> projection's per-flow
+/// dates now exposed over the read surface, ADR-PC-027 / ADR-IC-019 §D3) and SUMS only the flows withheld in
+/// that tax year, replacing the earlier cumulative <c>withholding_to_date</c> approximation. A deposit whose
+/// withholding all fell in a different year contributes no statement for this one. No PII rides the decision
+/// (ADR-PC-025 PII rule) — only the structural cents figures; the depositor's name/NIF is resolved by
+/// reference at render time. The three <c>Amounts</c> keys are kept stable for the
+/// <c>pt.notice.withholding_statement</c> template contract; their VALUES are now the tax-year slice.
 /// </para>
 /// </remarks>
 public sealed class WithholdingStatementRule(DepositReadClient depositReadClient) : INotificationScheduleRule
@@ -52,18 +55,20 @@ public sealed class WithholdingStatementRule(DepositReadClient depositReadClient
     public string FamilyName => TermDepositNotificationModule.Family;
 
     /// <summary>
-    /// Read every deposit that has had tax withheld and, for each one that can still receive a statement,
-    /// produce a <see cref="ReminderDecision"/> for the <c>pt.notice.withholding_statement</c> template keyed
-    /// on the prior tax year. The composite id and the dedupe are applied by the core's
-    /// <see cref="NotificationSchedulePass"/>, so returning the same deposit on a later pass in the same year
-    /// does not re-notify (ADR-PC-025 slot 4).
+    /// Read every deposit that has had tax withheld and, for each one that can still receive a statement AND
+    /// actually withheld tax in the PRIOR tax year, produce a <see cref="ReminderDecision"/> for the
+    /// <c>pt.notice.withholding_statement</c> template keyed on that tax year — carrying the per-tax-year
+    /// slice of its DATED withholding ledger (bd babelstone-60n8.8), not the cumulative-to-date figure. The
+    /// composite id and the dedupe are applied by the core's <see cref="NotificationSchedulePass"/>, so
+    /// returning the same deposit on a later pass in the same year does not re-notify (ADR-PC-025 slot 4).
     /// </summary>
     public async Task<IReadOnlyList<ReminderDecision>> EvaluateAsync(DateOnly asOf, CancellationToken ct = default)
     {
         // The statement covers the prior completed calendar (tax) year; the occurrence the composite id is
         // keyed on is that year's boundary, so the annual cadence is the dedupe ledger absorbing every repeat
         // within the year and admitting exactly one statement per deposit per tax year.
-        var taxYearEnd = new DateOnly(asOf.Year - 1, 12, 31);
+        var taxYear = asOf.Year - 1;
+        var taxYearEnd = new DateOnly(taxYear, 12, 31);
 
         var deposits = await _depositReadClient.ListWithholdingStatementsAsync(ct);
 
@@ -77,16 +82,34 @@ public sealed class WithholdingStatementRule(DepositReadClient depositReadClient
                 continue;
             }
 
+            // Slice the deposit's DATED withholding ledger to the target tax year (bd babelstone-60n8.8):
+            // sum ONLY the flows withheld in that calendar/tax year — the per-year figure, replacing the
+            // cumulative withholding_to_date the v1 approximation reported. The ledger read is empty for a
+            // deposit with no materialised withholding flow yet (404 → []), which yields no slice.
+            var ledger = await _depositReadClient.GetWithholdingLedgerAsync(deposit.DepositId, ct);
+            var yearFlows = ledger.Where(entry => entry.WithheldOn.Year == taxYear).ToList();
+
+            // No withholding in the target tax year → no statement is due for THAT year. A deposit whose
+            // withholding all fell in another year does not get a statement keyed on this one (the cumulative
+            // v1 figure would have wrongly raised one).
+            if (yearFlows.Count == 0)
+            {
+                continue;
+            }
+
             decisions.Add(new ReminderDecision(
                 InstanceId: deposit.DepositId,
                 TemplateRef: WithholdingStatementTemplateRef,
                 OccurrenceKey: taxYearEnd,
                 DueAt: asOf,
+                // The three keys are kept stable for the pt.notice.withholding_statement template contract;
+                // their VALUES are now the tax-year slice (the sum of that year's per-flow figures), never
+                // the cumulative-to-date rollup.
                 Amounts: new Dictionary<string, long>
                 {
-                    ["accrued_gross_interest_cents"] = deposit.AccruedGrossInterestCents,
-                    ["withholding_to_date_cents"] = deposit.WithholdingToDateCents,
-                    ["net_interest_cents"] = deposit.NetInterestCents,
+                    ["accrued_gross_interest_cents"] = yearFlows.Sum(entry => entry.GrossCents),
+                    ["withholding_to_date_cents"] = yearFlows.Sum(entry => entry.TaxCents),
+                    ["net_interest_cents"] = yearFlows.Sum(entry => entry.NetCents),
                 }));
         }
 

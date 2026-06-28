@@ -21,7 +21,11 @@ namespace Babelstone.Families.TermDeposit;
 /// <param name="Net">The flow's net interest, as recorded; <c>Gross = Tax + Net</c> by construction.</param>
 /// <param name="Source">Which event produced the entry — <c>"withholding"</c> for
 /// <c>WithholdingApplied</c> (the AT_MATURITY split), <c>"coupon"</c> for an <c>InterestPaid</c> leg.</param>
-public sealed record WithholdingEntry(Money Gross, Money Tax, Money Net, string Source);
+/// <param name="WithheldOn">The DATE the flow was withheld on — the <c>WithholdingApplied.WithheldOn</c>
+/// (AT_MATURITY / early termination) or the <c>InterestPaid.PaidOn</c> (coupon) — so a downstream reader
+/// can slice the ledger per tax year (ADR-PC-027 read surface, bd babelstone-60n8.8). Event-derived, so a
+/// cold rebuild reproduces it exactly (ADR-PC-010 §P5).</param>
+public sealed record WithholdingEntry(Money Gross, Money Tax, Money Net, string Source, DateOnly WithheldOn);
 
 /// <summary>
 /// The withholding-ledger projection (F.6, babelstone-3kjl): the per-stream record of every
@@ -79,7 +83,7 @@ public sealed class WithholdingLedgerWithholdingAppliedHandler : IEventHandler<W
         var gross = @event.Net + @event.Tax;
         return HandlerResult<WithholdingLedger>.From(state with
         {
-            Entries = [.. state.Entries, new WithholdingEntry(gross, @event.Tax, @event.Net, "withholding")],
+            Entries = [.. state.Entries, new WithholdingEntry(gross, @event.Tax, @event.Net, "withholding", @event.WithheldOn)],
             TotalGross = state.TotalGross + gross,
             TotalTax = state.TotalTax + @event.Tax,
             TotalNet = state.TotalNet + @event.Net,
@@ -93,9 +97,9 @@ public sealed class WithholdingLedgerInterestPaidHandler : IEventHandler<Withhol
         => HandlerResult<WithholdingLedger>.From(state with
         {
             // A PERIODIC/ADVANCE coupon carries its own gross/withholding/net flow; record it as
-            // stamped (gross = tax + net, conserved command-side). Withholding each coupon as it is
-            // paid is the §5.4 multi-period rule.
-            Entries = [.. state.Entries, new WithholdingEntry(@event.GrossInterest, @event.WithholdingTax, @event.NetInterest, "coupon")],
+            // stamped (gross = tax + net, conserved command-side) and dated on its PaidOn so the ledger
+            // can be sliced per tax year. Withholding each coupon as it is paid is the §5.4 multi-period rule.
+            Entries = [.. state.Entries, new WithholdingEntry(@event.GrossInterest, @event.WithholdingTax, @event.NetInterest, "coupon", @event.PaidOn)],
             TotalGross = state.TotalGross + @event.GrossInterest,
             TotalTax = state.TotalTax + @event.WithholdingTax,
             TotalNet = state.TotalNet + @event.NetInterest,

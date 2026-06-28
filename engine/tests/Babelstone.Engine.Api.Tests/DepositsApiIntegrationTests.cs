@@ -212,6 +212,63 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal("Matured", matured.Lifecycle);
     }
 
+    // ── §Decision 1 non-interactive scoped SCA service principal (ADR-PC-036, bd babelstone-6cpq.4) ──────
+    // The lifecycle-command driver fires maturity / coupon on the due date as a MACHINE — it has no human
+    // acr/auth_time to step up. Its authorisation is a SCOPED gateway-attested X-SCA-Service-Principal claim
+    // that authorises ONLY maturity + interest (never terminate). These tests are the engine half: the
+    // principal settles a maturity with NO human SCA, but is REFUSED on the terminate money-mover (which
+    // stays human-SCA-only), so the fail-closed 422 still governs the routes it is not scoped to.
+
+    [Fact]
+    public async Task Mature_with_the_scoped_service_principal_and_no_human_SCA_settles_normally()
+    {
+        var depositId = await ConstituteActiveDepositAsync();
+
+        // NO X-SCA-Acr / X-SCA-Auth-Time — a machine actor has none. The scoped principal claim alone
+        // authorises the maturity money-mover (ADR-PC-036 §Decision 1).
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/deposits/{depositId}/maturity")
+        {
+            Content = JsonContent.Create(new MatureDepositRequest(), options: SnakeCase),
+        };
+        AddServicePrincipal(request);
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var matured = await response.Content.ReadFromJsonAsync<DepositResponse>(SnakeCase);
+        Assert.NotNull(matured);
+        Assert.Equal("Matured", matured.Lifecycle);
+    }
+
+    [Fact]
+    public async Task Terminate_with_the_service_principal_but_no_human_SCA_is_422_SCA_REQUIRED()
+    {
+        var depositId = await ConstituteActiveDepositAsync();
+
+        // The scoped principal is route-limited to maturity + interest — terminate is NOT in its allowance,
+        // so even with the principal header (and a valid key) the route falls back to the human-SCA gate
+        // and 422s with no human acr/auth_time. The deposit does not settle.
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/deposits/{depositId}/terminate")
+        {
+            Content = JsonContent.Create(new TerminateEarlyRequest(), options: SnakeCase),
+        };
+        AddServicePrincipal(request);
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString());
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        await AssertScaRequiredAsync(response);
+        Assert.Equal(["term_deposit.DepositConstituted"], await EventTypesAsync(depositId));
+    }
+
+    /// <summary>Attest the scoped non-interactive SCA service principal on the request, exactly as Kong's
+    /// route-scoped set_header attestation would from the lifecycle driver's AS-signed scope claim
+    /// (ADR-PC-036 / ScaServicePrincipal). No human acr/auth_time — a machine actor has none.</summary>
+    private static void AddServicePrincipal(HttpRequestMessage request) =>
+        request.Headers.TryAddWithoutValidation(
+            ScaServicePrincipal.PrincipalHeader, ScaServicePrincipal.LifecycleMoneyMoverScope);
+
     /// <summary>Constitute a vanilla Active AT_MATURITY deposit and return its id — the precondition for
     /// the money-mover SCA-gate tests.</summary>
     private async Task<Guid> ConstituteActiveDepositAsync()
@@ -747,6 +804,53 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
 
         var response = await _client.PostAsJsonAsync("/v1/pack-migrations", request, SnakeCase);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task The_withholding_ledger_read_surfaces_the_dated_flow_after_maturity()
+    {
+        // bd babelstone-60n8.8 end-to-end over the real host: constitute → mature an AT_MATURITY deposit, then
+        // read the new per-stream GET /v1/deposits/{id}/withholding-ledger and assert the DATED withholding
+        // flow. The decider dates WithholdingApplied on the maturity date, the async relay materialises the
+        // term_deposit.withholding_ledger projection, and the read surface exposes the per-flow date so a
+        // downstream reader can slice per tax year. Proves the wire path: dated emit → projection → read.
+        var depositId = await ConstituteActiveDepositAsync();
+
+        var maturity = await PostMoneyMoverWithFreshScaAsync(
+            $"/v1/deposits/{depositId}/maturity", new MatureDepositRequest());
+        Assert.Equal(HttpStatusCode.OK, maturity.StatusCode);
+
+        // The withholding_ledger projection is async-materialised by the relay — poll until the per-stream
+        // read surfaces it (404 → 200 once the row lands).
+        var ledger = await EventuallyAsync(async () =>
+        {
+            var resp = await _client.GetAsync($"/v1/deposits/{depositId}/withholding-ledger");
+            return resp.StatusCode == HttpStatusCode.OK
+                ? await resp.Content.ReadFromJsonAsync<DepositWithholdingLedgerResponse>(SnakeCase)
+                : null;
+        });
+
+        Assert.NotNull(ledger);
+        var entry = Assert.Single(ledger!.Entries);
+        // AT_MATURITY deposit: StartDate 2026-01-15 + 365 days → maturity 2027-01-15 is the flow date.
+        Assert.Equal(new DateOnly(2027, 1, 15), entry.WithheldOn);
+        Assert.Equal("withholding", entry.Source);
+        // Conserved per flow (gross = tax + net), and the single flow IS the running total.
+        Assert.Equal(entry.GrossCents, entry.TaxCents + entry.NetCents);
+        Assert.True(entry.TaxCents > 0);
+        Assert.Equal(ledger.TotalTaxCents, entry.TaxCents);
+    }
+
+    [Fact]
+    public async Task The_withholding_ledger_read_for_a_deposit_with_no_withholding_is_404()
+    {
+        // A freshly-constituted (Active) deposit has no withholding flow yet — its withholding-ledger
+        // sub-resource does not exist, so the read is a clean 404 (never a phantom empty ledger).
+        var depositId = await ConstituteActiveDepositAsync();
+
+        var response = await _client.GetAsync($"/v1/deposits/{depositId}/withholding-ledger");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     private static async Task<T?> EventuallyAsync<T>(Func<Task<T?>> probe) where T : class

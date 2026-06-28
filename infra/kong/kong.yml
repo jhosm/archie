@@ -234,6 +234,41 @@ consumers:
           EwIDAQAB
           -----END PUBLIC KEY-----
 
+  # ── The non-interactive lifecycle-command-driver service principal (ADR-PC-036 §Decision 1 /
+  # Consequences; bd babelstone-6cpq.4) ────────────────────────────────────────────────────────────
+  # The ADR-PC-036 lifecycle-command driver fires a deposit's maturity / coupon on its due date as a
+  # MACHINE — there is no human behind it to pass a fresh PSD2 SCA step-up, so it has no human
+  # acr/auth_time. Its authorisation is instead a SCOPED OAuth credential the IAM (ADR-IC-021) mints for
+  # THIS principal: the `lifecycle:deposit-money-mover` scope, which authorises the deposit money-mover
+  # lifecycle commands and ONLY those. Modelling it as its OWN Kong consumer makes the principal a
+  # first-class, auditable, separately-rate-limited identity (ADR-PC-036's "scoped, audited principal,
+  # never a blanket exemption") — distinct from the interactive `iam-issuer` consumer above. The
+  # route-scoped allowance + the X-SCA-Service-Principal attestation live on the engine-lifecycle-movers
+  # route below; the engine's ScaServicePrincipal re-scopes it to maturity + interest (never terminate),
+  # so the allowance is route-scoped on BOTH sides (defense in depth).
+  #
+  # POC posture: the driver's tokens carry a DISTINCT `iss` (its own service-principal realm), validated
+  # here against the driver realm's signing key. The POC reuses the throwaway iam-issuer public key as a
+  # placeholder so the config parses; at deploy time the service-principal realm gets its own signing key
+  # (a deliberate `deck sync`, ADR-IC-006 §P7), exactly like the iam-issuer rotation.
+  - username: lifecycle-driver
+    jwt_secrets:
+      - key: https://iam.babelstone.example/lifecycle-driver
+        algorithm: RS256
+        secret: unused-for-rs256
+        # POC THROWAWAY public key (placeholder, == the iam-issuer POC key) — replaced by the real
+        # service-principal realm signing key at deploy time (a key rotation is a deliberate `deck sync`).
+        rsa_public_key: |
+          -----BEGIN PUBLIC KEY-----
+          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm28DnOOCLqSixANucnRv
+          HYo3ID/liJXVP8xQJMXLBnG5rT8Oz1WV6SpbSVdVAiw19txFcrO93NzH0t5iN3NS
+          FgeCyaRYKN9HuTg5ZVpZF2aHkT0Qo3nr+QhyzUBHE9Y4p6j7s5evQZ3/ZlA4Hglv
+          dMHGXZYrb/EXj9cCpZrKHl23Aqb8na4/PRLI7+zwBz4FTXebWM2JVyEAxFxaRYId
+          NaBjMBJVvCuKWlyx81vK68AUsmSPQEOU5LB96XLRcAoKyj6+hpnQE4uuRyd3rlTf
+          7UdjRw2h8KCO8lWEQGaHIwfyogRtZGyPLQGR+0H7a5kPT64I3dpzPck8DQjvKuWe
+          EwIDAQAB
+          -----END PUBLIC KEY-----
+
 services:
   # ── The I.1 constitute front door (orchestrator upstream, default timeouts) ────
   - name: orchestrator-edge
@@ -805,6 +840,153 @@ services:
                   if body.sor ~= "engine" then return deny_sor() end
 
                   -- sor == engine: fall through and proxy to the engine upstream (this service).
+
+  # ── The lifecycle-command-driver money-mover channel (ADR-PC-036 §Decision 1 / Consequences;
+  # bd babelstone-6cpq.4) ───────────────────────────────────────────────────────────────────────────
+  # The ADR-PC-036 lifecycle-command driver POSTs the engine's existing maturity / coupon command
+  # endpoints on the due date — a NON-INTERACTIVE actor with no human SCA step-up. This service is the
+  # SCOPED, AUDITED edge channel for that principal ("a security-sensitive surface that must be a scoped,
+  # audited principal, never a blanket exemption", ADR-PC-036 §Consequences). It carries the engine
+  # upstream + mTLS (§P5 Boundary 2), but UNLIKE the general engine COMMAND surface (POST /v1/deposits,
+  # which stays deliberately ABSENT from the edge — the orchestrator's internal saga target) it exposes
+  # ONLY the two clock-driven lifecycle money-movers, route-scoped by the regex below to
+  # /maturity + /interest. /terminate is NOT here — a customer-initiated early termination is never
+  # driver-fired and stays a human-SCA money-mover (the engine's ScaServicePrincipal re-excludes it too,
+  # so the allowance is route-scoped on BOTH sides).
+  #
+  # ATTEST-NOT-DENY (ADR-IC-006 §P2 / ADR-IC-010 §P8). Like the MCP route, the per-route pre-function
+  # does NOT 403 on missing/stale SCA — it ATTESTS the AS-signed claims to the engine and lets the engine
+  # decide: a token carrying the `lifecycle:deposit-money-mover` scope is attested as
+  # X-SCA-Service-Principal (the engine's ScaServicePrincipal authorises it with no human step-up); a
+  # HUMAN caller on this route (no lifecycle scope) is attested its acr/auth_time and falls to the
+  # engine's human-SCA gate (422 SCA_REQUIRED on absent/stale proof). Every attested header is OVERWRITTEN
+  # from the validated token, so a client-supplied X-SCA-* / X-Client-Id can never forge a principal or an
+  # identity (the same anti-spoof set_header pattern as the constitute / MCP routes).
+  - name: engine-lifecycle-movers
+    url: https://engine:8080
+    client_certificate: 7e9b6f1a-2c4d-4e8a-9b1f-0a2c4d6e8f10
+    tls_verify: false
+    routes:
+      # The route-scoped allowance: ONLY the maturity + coupon money-movers (the regex alternation
+      # excludes /terminate and every other sub-path). strip_path:false so the engine receives the
+      # verbatim /v1/deposits/{id}/maturity|interest path its ScaPreconditionFilter route-leaf check reads.
+      - name: deposits-lifecycle-movers
+        methods: ["POST"]
+        paths: ["~/v1/deposits/[^/]+/(maturity|interest)$"]
+        strip_path: false
+        plugins:
+          # jwt: per-route (de-globalized, ADR-IC-010 §P2 Amendment 2026-06-15). A money-mover — validate
+          # signature/expiry/issuer, NO anonymous consumer. This is the gate that makes reading the scope /
+          # SCA claims + sub in the pre-function below sound (see the ORDERING note on the constitute route):
+          # a forged/tampered token is 401'd here before upstream. The driver's tokens validate against the
+          # lifecycle-driver consumer's key (a distinct iss); a human caller's against iam-issuer.
+          - name: jwt
+            config:
+              claims_to_verify: ["exp"]
+              key_claim_name: iss
+              maximum_expiration: 0
+              header_names: ["authorization"]
+          # ADR-IC-006 §P3: 5 req/min per consumer — the same tight money-mover budget as constitute. The
+          # lifecycle-driver consumer gets its OWN counter (limit_by: consumer), so the automated driver's
+          # cadence cannot starve interactive callers and vice versa.
+          - name: rate-limiting
+            config:
+              minute: 5
+              policy: local
+              limit_by: consumer
+              fault_tolerant: true
+          # ADR-IC-006 §P6: propagate the W3C traceparent so the driver → engine span tree is one trace.
+          - name: opentelemetry
+            config:
+              traces_endpoint: http://otel-collector:4318/v1/traces
+              propagation:
+                extract: ["w3c"]
+                inject: ["w3c"]
+                default_format: w3c
+              resource_attributes:
+                service.name: kong-edge
+          - name: pre-function
+            config:
+              access:
+                # ── Scoped service-principal + attest-not-deny SCA attestation (ADR-PC-036 / ADR-IC-006
+                # §P2 / ADR-IC-010 §P8) ───────────────────────────────────────────────────────────────
+                # We re-decode the token payload only to read claims the CE jwt plugin does not surface; per
+                # the ORDERING note on the constitute route, this route's no-anonymous jwt gates the proxy,
+                # so only a validly-signed token's claims take effect end-to-end. Defensive decoding
+                # (cjson.safe + a pure base64url decoder) — a bad token can never 500; a malformed/absent
+                # token attests EMPTY headers, so the engine fails closed (422 SCA_REQUIRED). NO PII in the
+                # attested headers (ADR-PC-004 §P2): a structural scope token + a sub identity only.
+                - |
+                  local cjson = require("cjson.safe")
+
+                  -- The route-scoped lifecycle money-mover scope (ADR-PC-036 §Decision 1 / ADR-IC-021) —
+                  -- kept in lock-step with ScaServicePrincipal.LifecycleMoneyMoverScope on the engine.
+                  local LIFECYCLE_SCOPE = "lifecycle:deposit-money-mover"
+
+                  local function b64url_decode(seg)
+                    if type(seg) ~= "string" or seg == "" then return nil end
+                    local s = seg:gsub("-", "+"):gsub("_", "/")
+                    local pad = #s % 4
+                    if pad == 2 then s = s .. "=="
+                    elseif pad == 3 then s = s .. "="
+                    elseif pad == 1 then return nil end
+                    return ngx.decode_base64(s)
+                  end
+
+                  -- Decode the (jwt-gated) token's claims. A bad/absent token leaves claims empty so every
+                  -- attested header below is set to its fail-closed empty value.
+                  local claims = nil
+                  local auth = kong.request.get_header("authorization")
+                  if type(auth) == "string" then
+                    local scheme, token = auth:match("^(%a+)%s+(.+)$")
+                    if token and scheme:lower() == "bearer" then
+                      local _, payload_seg = token:match("^([^%.]+)%.([^%.]+)%.([^%.]+)$")
+                      if payload_seg then
+                        local payload_json = b64url_decode(payload_seg)
+                        if payload_json then claims = cjson.decode(payload_json) end
+                      end
+                    end
+                  end
+                  if type(claims) ~= "table" then claims = {} end
+
+                  -- (a) Caller identity for audit (ADR-IC-006 §P4): OVERWRITE X-Client-Id from the validated
+                  -- sub (the lifecycle-driver's client_id, or a human's), never a client-supplied value.
+                  if type(claims.sub) == "string" and claims.sub ~= "" then
+                    kong.service.request.set_header("X-Client-Id", claims.sub)
+                  else
+                    kong.service.request.set_header("X-Client-Id", "")
+                  end
+
+                  -- (b) Scoped service principal (ADR-PC-036): attest X-SCA-Service-Principal ONLY when the
+                  -- token's space-delimited `scope` claim carries the EXACT lifecycle money-mover scope.
+                  -- OVERWRITE unconditionally so a client cannot forge a principal: a token without the scope
+                  -- attests the empty value and the engine treats it as "not a principal".
+                  local is_principal = false
+                  if type(claims.scope) == "string" then
+                    for s in claims.scope:gmatch("%S+") do
+                      if s == LIFECYCLE_SCOPE then is_principal = true break end
+                    end
+                  end
+                  if is_principal then
+                    kong.service.request.set_header("X-SCA-Service-Principal", LIFECYCLE_SCOPE)
+                  else
+                    kong.service.request.set_header("X-SCA-Service-Principal", "")
+                  end
+
+                  -- (c) Attest-not-deny human SCA claims (ADR-IC-006 §P2 / ADR-IC-010 §P8): a HUMAN caller
+                  -- on this route (no lifecycle scope) still gets the engine's human-SCA freshness gate.
+                  -- Attest acr/auth_time; the engine decides freshness and 422s SCA_REQUIRED if stale. We do
+                  -- NOT 403 here — a 403 would kill a legitimate step-up-then-retry before the engine answers.
+                  if type(claims.acr) == "string" and claims.acr ~= "" then
+                    kong.service.request.set_header("X-SCA-Acr", claims.acr)
+                  else
+                    kong.service.request.set_header("X-SCA-Acr", "")
+                  end
+                  if type(claims.auth_time) == "number" and claims.auth_time % 1 == 0 then
+                    kong.service.request.set_header("X-SCA-Auth-Time", string.format("%d", claims.auth_time))
+                  else
+                    kong.service.request.set_header("X-SCA-Auth-Time", "")
+                  end
 
   # ── The MCP agent channel (ADR-IC-010 — Epic J / bd babelstone-e50n) ──────────────
   # The bank's MCP server is ONE more route on this shared edge gateway (ADR-IC-010

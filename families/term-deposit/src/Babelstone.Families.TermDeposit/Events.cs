@@ -142,8 +142,14 @@ public sealed record DepositConstituted(
 public sealed record InterestAccrued(Money GrossInterest, DateOnly AsOf) : DomainEvent;
 
 /// <summary>Withholding tax applied flow-by-flow to the gross interest:
-/// <c>Withholding.Withhold(gross, 2800) → (Tax, Net)</c>, with <c>Net = Gross − Tax</c> conserved to the cent.</summary>
-public sealed record WithholdingApplied(Money Tax, Money Net) : DomainEvent;
+/// <c>Withholding.Withhold(gross, 2800) → (Tax, Net)</c>, with <c>Net = Gross − Tax</c> conserved to the cent.
+/// <para><paramref name="WithheldOn"/> DATES the flow — for AT_MATURITY the maturity date, for early
+/// termination the termination date — so the withholding ledger can be sliced per tax year on the read
+/// surface (ADR-PC-027, ADR-IC-019 §D3, bd babelstone-60n8.8). STORE-ONLY and purely additive: there is no
+/// WithholdingApplied.avsc, so this event is never bus-published, and the field is null-defaulted so a
+/// pre-field stream replays byte-for-byte unchanged (forward-only, ADR-IC-002). A structural date, never
+/// PII (ADR-PC-004 §P2).</para></summary>
+public sealed record WithholdingApplied(Money Tax, Money Net, DateOnly WithheldOn = default) : DomainEvent;
 
 /// <summary>The deposit matures and pays out: <c>TotalPayout = Principal + NetInterest</c>.
 /// <para><paramref name="AutoRenewalPolicy"/> carries the deposit's renewal policy

@@ -424,7 +424,9 @@ public static class TermDepositDecider
         return
         [
             new InterestAccrued(gross, end),
-            new WithholdingApplied(withheld.Tax, withheld.Net),
+            // Date the withholding flow on the accrual end (the maturity date) so the ledger slices per
+            // tax year (bd babelstone-60n8.8) — a value the pure decider already holds, never a clock.
+            new WithholdingApplied(withheld.Tax, withheld.Net, end),
             new DepositMatured(position.RemainingPrincipal, withheld.Net, payout, end,
                 AutoRenewalPolicy: position.AutoRenewalPolicy),
         ];
@@ -452,7 +454,8 @@ public static class TermDepositDecider
         return
         [
             new InterestAccrued(gross, position.MaturityDate),
-            new WithholdingApplied(withheld.Tax, withheld.Net),
+            // The final coupon's withholding is dated on the maturity date (bd babelstone-60n8.8).
+            new WithholdingApplied(withheld.Tax, withheld.Net, position.MaturityDate),
             new DepositMatured(position.RemainingPrincipal, withheld.Net, payout, position.MaturityDate,
                 AutoRenewalPolicy: position.AutoRenewalPolicy),
         ];
@@ -556,7 +559,8 @@ public static class TermDepositDecider
         return
         [
             new InterestAccrued(grossAccrued, terminationDate),
-            new WithholdingApplied(withheld.Tax, withheld.Net),
+            // The early-termination withholding flow is dated on the termination date (bd babelstone-60n8.8).
+            new WithholdingApplied(withheld.Tax, withheld.Net, terminationDate),
             new DepositTerminatedEarly(
                 position.DepositId, position.RemainingPrincipal, effectivePenalty, settlement,
                 terminationDate, terminationReason),
