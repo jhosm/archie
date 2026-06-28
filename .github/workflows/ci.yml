@@ -27,6 +27,7 @@ jobs:
       acl: ${{ steps.filter.outputs.acl }}
       mcp_server: ${{ steps.filter.outputs.mcp_server }}
       notification: ${{ steps.filter.outputs.notification }}
+      lifecycle: ${{ steps.filter.outputs.lifecycle }}
       product_configs: ${{ steps.filter.outputs.product_configs }}
       packs: ${{ steps.filter.outputs.packs }}
       rate_sheets: ${{ steps.filter.outputs.rate_sheets }}
@@ -47,6 +48,7 @@ jobs:
             acl: ['acl/**']
             mcp_server: ['mcp-server/**']
             notification: ['notification/**']
+            lifecycle: ['lifecycle-driver/**']
             product_configs: ['product-configs/**']
             packs: ['packs/**']
             # Every input the rate-sheets job's validation step reads (ci.yml `rate-sheets` job):
@@ -501,6 +503,50 @@ jobs:
         run: |
           dotnet build notification/src/Babelstone.Notification.Host/Babelstone.Notification.Host.csproj --configuration Release --nologo
           dotnet test notification/tests/Babelstone.Notification.Tests/Babelstone.Notification.Tests.csproj --configuration Release --nologo --filter "Category!=Integration"
+
+  lifecycle:
+    needs: changes
+    if: ${{ needs.changes.outputs.lifecycle == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Pin the toolchain from mise.toml (the single source of truth, ADR-PC-010
+      # .NET 10 LTS; the lifecycle-driver runtime is ADR-IC-011 ".NET, stack-coherent
+      # with the engine") so CI builds against the same SDK as every dev machine —
+      # no second version pin in this YAML to drift from it.
+      - uses: jdx/mise-action@v4
+        with:
+          # TEMP pin: mise v2026.6.7 shipped with NO linux-x64 asset (jdx/mise broken release),
+          # so mise-action fetching "latest" 404s on any cache-miss. Pin to the last good release.
+          # Remove once upstream restores a working latest (this is the mise CLI itself, which
+          # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
+          version: "2026.6.6"
+      - name: Cache NuGet packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('lifecycle-driver/**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Build + unit/analyser tests (ADR-PC-036, ADR-IC-009 unit tier)
+        # restore + build (warnings-as-errors via each csproj's own TreatWarningsAsErrors —
+        # the lifecycle-driver subtree carries its build settings inline, not via the engine's
+        # Directory.Build.props, since it is extraction-ready per ADR-PC-019 §P2) + the
+        # Docker-free test lane. Building the HOST transitively builds the Babelstone.Lifecycle
+        # core LIBRARY, the shared Babelstone.Cadence machinery, and the Babelstone.Engine.Hosting
+        # seam (for the server-derived, number-pinned LifecycleCommandKey it references — LCD-1).
+        # The dispatch-ledger re-tick no-op (LifecycleDispatchLedgerTests), the per-tick pass's
+        # dedupe + check-then-POST-then-record ordering (LifecycleSchedulePassTests), and the
+        # command sink's end-to-end POST through a fake HttpMessageHandler (HttpLifecycleCommandSinkTests)
+        # run here; all need no infrastructure, so the Category!=Integration convention the engine +
+        # orchestrator + notification jobs use excludes any future Testcontainers tier.
+        #
+        # `dotnet test` takes ONE path — the core test project here. The lifecycle projects are ALSO
+        # in engine/Babelstone.slnx, so the engine job's coverage tier measures the core when an engine
+        # change runs; this path-scoped job keeps lifecycle-driver/**-only changes green (the engine
+        # job's filter does not include lifecycle-driver/**), mirroring the notification job's shape.
+        run: |
+          dotnet build lifecycle-driver/src/Babelstone.Lifecycle.Host/Babelstone.Lifecycle.Host.csproj --configuration Release --nologo
+          dotnet test lifecycle-driver/tests/Babelstone.Lifecycle.Tests/Babelstone.Lifecycle.Tests.csproj --configuration Release --nologo --filter "Category!=Integration"
 
   product-configs:
     needs: changes
@@ -959,6 +1005,7 @@ jobs:
       - acl
       - mcp-server
       - notification
+      - lifecycle
       - product-configs
       - packs
       - rate-sheets

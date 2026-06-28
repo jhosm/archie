@@ -1,0 +1,72 @@
+<!-- The lifecycle-command driver CORE library (ADR-PC-036 §Decision 2, candidate A — the automated layer;
+     bd babelstone-6cpq.7). In plain terms: this is the "tick a clock, find the lifecycle steps that are due
+     today, and POST each one to the engine exactly once" machinery for the new sibling driver host. It owns
+     the per-tick schedule pass (LifecycleSchedulePass — a Babelstone.Cadence ISchedulePass), the per-family
+     due-work port (ILifecycleCommandRule + LifecycleCommandDecision), the dispatch ledger that makes a
+     re-tick of an already-fired occurrence a no-op (LifecycleDispatchLedger), the generic command-POST sink
+     contract + its HTTP implementation (ILifecycleCommandSink / HttpLifecycleCommandSink), and the
+     clock-owning worker shell (LifecycleWorker, a Babelstone.Cadence CadenceWorker subclass).
+
+     REUSE, NOT REINVENT (ADR-PC-036 §Decision 2): the clock-owning poll-loop worker, the per-tick pass
+     abstraction, and the cadence/backoff knobs are the SAME tested Babelstone.Cadence mechanism the
+     notification scheduler proved out (ADR-IC-019). This core only adds the lifecycle-specific sink (POST a
+     command, never raise a reminder) over that machinery.
+
+     CLOCKLESS ENGINE, REACHED ONLY VIA THE COMMAND SURFACE (ADR-PC-023 / ADR-PC-029,
+     NO_CLOCK_DRIVEN_ENGINE_SIGNAL): the driver is DOWNSTREAM. It owns the clock and reaches the engine ONLY
+     by HTTP-POSTing the engine's existing ADR-PC-029 command endpoints — it never reads the engine byte
+     store and never makes the engine read a clock. The idempotency key it POSTs (and dedupes its own dispatch
+     ledger on) is the canonical, SERVER-DERIVED, number-pinned LifecycleCommandKey (referenced from
+     Babelstone.Engine.Hosting — derived the SAME way the engine derives it, so a manual caller, the MCP agent
+     and this driver all converge on ONE key per occurrence; LCD-1).
+
+     Extraction-ready subtree (ADR-PC-019 §P2): carries its own copy of the shared build settings rather than
+     inheriting engine/Directory.Build.props, mirroring the cadence + notification subtrees. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Lifecycle</RootNamespace>
+    <AssemblyName>Babelstone.Lifecycle</AssemblyName>
+
+    <!-- Shared engine build settings (mirrors the cadence/notification host csprojs; the lifecycle-driver
+         subtree is extraction-ready per ADR-PC-019 §P2, so it carries its own copy rather than inheriting the
+         engine's). Runtime pinned by ADR-IC-011 — .NET, the same language as the engine (ADR-PC-010 §.NET 10 LTS). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Doc COVERAGE is a docs concern, not a build gate (same stance as the engine/cadence/notification
+         core): CS1591/CS1573 suppressed, doc ROT (malformed XML, broken refs) still fails. -->
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- BackgroundService/IHostedService (the LifecycleWorker shell), ILogger, and the typed-HttpClient
+         surface the HTTP sink consumes — surfaced through Microsoft.Extensions.Hosting (version pinned
+         centrally via Directory.Packages.props). The runnable Host.CreateApplicationBuilder + the typed
+         HttpClient registration live in the consuming host exe, not here. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The shared CADENCE machinery (ADR-PC-036 §Decision 2 + ADR-IC-019 mechanism reuse): the generic
+         clock-owning poll-loop worker (CadenceWorker, subclassed here as LifecycleWorker), the per-tick pass
+         abstraction (ISchedulePass, implemented by LifecycleSchedulePass), and the cadence knobs
+         (CadenceSchedulerOptions). The notification scheduler and this lifecycle-command driver are then ONE
+         tested mechanism. Babelstone.Cadence is generic — neither families/** nor an engine-spine project. -->
+    <ProjectReference Include="../../../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
+
+    <!-- LifecycleCommandKey (ADR-PC-036 §Decision 1+3, LCD-1) — the canonical, SERVER-DERIVED, number-pinned
+         idempotency key the driver POSTs and dedupes its dispatch ledger on. REFERENCED, not reinvented: it
+         already lives in the engine hosting seam (Babelstone.Engine.Hosting), derived the SAME way the loan
+         installment endpoint derives it, so a manual caller, the MCP agent and this driver converge on ONE key
+         per occurrence. This is a COMPILE-TIME reference to a pure static helper only — the driver still reaches
+         the engine at runtime ONLY over the ADR-PC-029 command HTTP surface (it never reads the byte store, and
+         the engine stays clockless: NO_CLOCK_DRIVEN_ENGINE_SIGNAL holds). The lifecycle driver is downstream and
+         subject to no family-agnostic gate, so naming the engine hosting seam here is sound. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
+  </ItemGroup>
+</Project>

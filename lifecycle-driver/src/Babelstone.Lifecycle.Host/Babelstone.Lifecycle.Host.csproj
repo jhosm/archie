@@ -1,0 +1,50 @@
+<!-- The lifecycle-command driver worker HOST — the new sibling deployable (ADR-PC-036 §Decision 2,
+     candidate A; bd babelstone-6cpq.7). In plain terms: this is the runnable, always-on process that owns the
+     clock the engine deliberately lacks, ticks on a cadence, finds the lifecycle steps that are due today, and
+     POSTs each to the engine's command surface exactly once. It is the composition root: it resolves the
+     engine base URL, wires the typed command-POST HttpClient, the dispatch ledger, the cadence knobs and the
+     clock, registers the per-tick pass over the family rules, and runs the clock-owning worker.
+
+     A SEPARATE deployable, deliberately (ADR-PC-036 §Decision 2 / candidate B folded into A): it is NOT inside
+     the read-only Babelstone.Notification context (so the money-command credential is isolated from the
+     disclosures context) and NOT inside the engine assembly (a timer there trips BENG004 /
+     NO_CLOCK_DRIVEN_ENGINE_SIGNAL). It mirrors the notification worker host shape (Microsoft.NET.Sdk.Worker, a
+     BackgroundService poll-loop host, NOT an HTTP API) but is its own process. Single-firing/leader-election,
+     monitoring and a durable dispatch ledger are operating concerns it owns as it hardens
+     (ADR-PC-036 §Consequences) — the v1 host is the clockless-engine-honoring skeleton: Cadence worker +
+     dispatch ledger + command-POST sink.
+
+     Extraction-ready subtree (ADR-PC-019 §P2): the host carries its OWN copy of the shared build settings
+     rather than inheriting engine/Directory.Build.props, exactly as the notification host does. -->
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Babelstone.Lifecycle.Host</RootNamespace>
+    <AssemblyName>Babelstone.Lifecycle.Host</AssemblyName>
+
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The worker host builder (Host.CreateApplicationBuilder + BackgroundService registration). -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <!-- AddHttpClient: the host registers the typed command-POST HttpClient whose BaseAddress is the engine's
+         ADR-PC-029 command surface (a service ENDPOINT, not a credential — resolved straight from config). -->
+    <PackageReference Include="Microsoft.Extensions.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The lifecycle-command driver CORE (the per-tick pass, the dispatch ledger, the command-POST sink, the
+         family-rule port, and the clock-owning LifecycleWorker). The host composes it; the core never
+         references back. -->
+    <ProjectReference Include="../Babelstone.Lifecycle/Babelstone.Lifecycle.csproj" />
+  </ItemGroup>
+</Project>

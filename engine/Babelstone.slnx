@@ -72,6 +72,21 @@
          the core loop. It is the ONE place that names a family (the §A2 exemption), so it is NOT a §P1 core
          project and NOTIFICATION_FAMILY_AGNOSTIC does not gate it. -->
     <Project Path="../notification/src/Babelstone.Notification.Host/Babelstone.Notification.Host.csproj" />
+    <!-- The lifecycle-command driver CORE library (ADR-PC-036 §Decision 2, candidate A; bd babelstone-6cpq.7):
+         the per-tick LifecycleSchedulePass (a Babelstone.Cadence ISchedulePass), the family-rule port
+         (ILifecycleCommandRule + LifecycleCommandDecision), the dispatch ledger that makes a re-tick of an
+         already-fired occurrence a no-op (LifecycleDispatchLedger, keyed on the server-derived number-pinned
+         LifecycleCommandKey it references — not reinvents), the command-POST sink (ILifecycleCommandSink /
+         HttpLifecycleCommandSink), and the clock-owning LifecycleWorker. REUSES Babelstone.Cadence; reaches the
+         engine ONLY over the ADR-PC-029 command surface (the engine stays clockless —
+         NO_CLOCK_DRIVEN_ENGINE_SIGNAL holds). Extraction-ready subtree (ADR-PC-019 §P2). -->
+    <Project Path="../lifecycle-driver/src/Babelstone.Lifecycle/Babelstone.Lifecycle.csproj" />
+    <!-- The lifecycle-command driver worker HOST (ADR-PC-036 §Decision 2; bd babelstone-6cpq.7): the runnable
+         sibling deployable that owns the clock, ticks the Cadence worker, dedupes on the dispatch ledger, and
+         POSTs due commands through the sink. A SEPARATE deployable — NOT inside Babelstone.Notification (money-
+         command credential isolation) and NOT inside the engine assembly (a timer there trips BENG004). It is
+         the composition root, so it is not a gated core project. -->
+    <Project Path="../lifecycle-driver/src/Babelstone.Lifecycle.Host/Babelstone.Lifecycle.Host.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <!-- Shared test-support library (ic10): the single Redpanda Testcontainers fixture both the
@@ -118,6 +133,12 @@
          snake_case wire shape, ADR-PC-027) + the NOTIFICATION_FAMILY_AGNOSTIC fitness gate that
          parses the core .csproj for a families/** or engine-spine reference (ADR-IC-019 §D2/§P2). -->
     <Project Path="../notification/tests/Babelstone.Notification.Tests/Babelstone.Notification.Tests.csproj" />
+    <!-- The lifecycle-command driver tests (ADR-PC-036 §Decision 2; bd babelstone-6cpq.7): Docker-free +
+         live-engine-free unit tests — the dispatch ledger's re-tick no-op + number-pinned dispatch id
+         (LifecycleDispatchLedgerTests), the per-tick pass's dedupe + check-then-POST-then-record ordering
+         (LifecycleSchedulePassTests), and the command sink's end-to-end POST through a fake HttpMessageHandler
+         (HttpLifecycleCommandSinkTests). -->
+    <Project Path="../lifecycle-driver/tests/Babelstone.Lifecycle.Tests/Babelstone.Lifecycle.Tests.csproj" />
     <!-- L.1 load harness smoke/self-test (ADR-PC-011): Docker-free determinism + envelope + observer tests. -->
     <Project Path="load/Babelstone.LoadHarness.Tests/Babelstone.LoadHarness.Tests.csproj" />
     <!-- L.3a–d runner component tests (ADR-PC-011, bd babelstone-2e6q.1..4): Docker-free arg-parsing,
