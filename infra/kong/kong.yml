@@ -199,11 +199,32 @@ ca_certificates:
       DtJI1N8sIX60R517r+xi+FoCm2I=
       -----END CERTIFICATE-----
 
-# ── JWT signing keys (ADR-IC-006 §1 / §P7) ──────────────────────────────────────
+# ── JWT signing keys (ADR-IC-006 §1 / §P7; IAM = Logto, ADR-IC-021) ──────────────
 # The `jwt` plugin validates a bearer token's signature against a key pre-registered
 # on the issuing CONSUMER. Kong CE's jwt plugin requires the IAM's public key to be
 # PRE-REGISTERED (ADR-IC-006 Consequences: "jwt plugin requires public key
 # pre-registration"; §P7: key rotation is a deliberate `deck sync`).
+#
+# WHO THE ISSUER IS (ADR-IC-021): the single OAuth 2.1 / OIDC Authorization Server is
+# **Logto**. On the staging box it serves discovery at
+# `https://auth.babelstone.dev/oidc/.well-known/openid-configuration` and its JWKS at
+# `https://auth.babelstone.dev/oidc/jwks`; the `iss` it stamps is
+# `https://auth.babelstone.dev/oidc`. "Repointing Kong at Logto" (ADR-IC-021 rollout
+# step 3 / bd babelstone-zla1.10.3) means registering THAT issuer + Logto's JWKS signing
+# key on the `iam-issuer` consumer below — there is NO edge-contract change (ADR-IC-006
+# honoured/unchanged): the routes, plugins, and SCA/identity pre-functions are untouched;
+# only the token *issuer* this consumer trusts moves to Logto. The de-globalized per-route
+# jwt plugins keep validating against this single consumer (a Logto m2m driver and a human
+# caller share the same `iss`, ADR-IC-021).
+#
+# DEV vs STAGING (why the committed value stays a placeholder): the committed `key` /
+# `rsa_public_key` below are POC placeholders for the dev/CI stack + the offline contract
+# harness (which mint `iss=https://iam.babelstone.example/` tokens). At staging deploy time
+# scripts/deck-sync.sh renders the REAL Logto material over them from OpenBao — the SAME
+# POC-placeholder-replaced-at-deploy model §P7 already uses for the signing key — rewriting
+# `iss` to `$BABELSTONE_IAM_ISSUER` (default `https://auth.babelstone.dev/oidc`) and splicing
+# Logto's JWKS public key. So the staging gateway validates Logto-issued tokens while the
+# committed file stays byte-for-byte parseable for CI + the contract tests.
 #
 # RESIDUAL (ADR-IC-006 §P7): automatic JWKS rotation is NOT native to Kong CE's jwt
 # plugin — a key rotation is a deliberate three-step `deck sync` (add new, retain old
@@ -211,18 +232,20 @@ ca_certificates:
 # burdensome, APISIX's openid-connect with JWKS polling is the documented upgrade path.
 consumers:
   - username: iam-issuer
-    # The `key` is the JWT `iss` claim the IAM stamps; `algorithm` pins RS256
-    # (asymmetric, per ADR-IC-006 §1: "signature (RS256/ES256)"). `rsa_public_key` is
-    # a POC placeholder — replaced by the real IAM signing public key at deploy time.
+    # The `key` is the JWT `iss` claim the IAM (Logto, ADR-IC-021) stamps; `algorithm`
+    # pins RS256 (asymmetric, per ADR-IC-006 §1: "signature (RS256/ES256)"). Both `key`
+    # and `rsa_public_key` are POC placeholders — deck-sync.sh rewrites the iss to the
+    # Logto staging issuer and splices Logto's JWKS signing key at deploy time.
     jwt_secrets:
       - key: https://iam.babelstone.example/
         algorithm: RS256
         # For RS256 the signature is verified against rsa_public_key; `secret` is
         # unused for asymmetric algorithms but the schema requires the field present.
         secret: unused-for-rs256
-        # POC THROWAWAY public key paired with the cert above — replaced by the real IAM
-        # signing public key at deploy time (a key rotation is a deliberate `deck sync`,
-        # ADR-IC-006 §P7). Present so the jwt entity validates and the gate runs.
+        # POC THROWAWAY public key paired with the cert above — replaced by Logto's real
+        # JWKS signing public key at deploy time (a key rotation is a deliberate `deck
+        # sync`, ADR-IC-006 §P7 / ADR-IC-021). Present so the jwt entity validates and the
+        # gate runs.
         rsa_public_key: |
           -----BEGIN PUBLIC KEY-----
           MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAm28DnOOCLqSixANucnRv

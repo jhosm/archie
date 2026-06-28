@@ -135,6 +135,14 @@ patches:
   # generated below; the Service (hence the OTLP boundary, ADR-IC-007 §P1) is
   # untouched. See grafana-lgtm-rules.patch.yaml for the /otel-lgtm path rationale.
   - path: grafana-lgtm-rules.patch.yaml
+  # Mount the Grafana RBAC + Logto-OIDC overlay into grafana-lgtm (Boundary 6, ADR-IC-021 step 3 /
+  # ADR-IC-007 §P6, bd babelstone-zla1.10.1). Staging is the public box where operators log in, so
+  # it turns ON operator SSO via Logto's generic_oauth + the §P6 RBAC roles/Tempo lock + anonymous
+  # OFF — the rbac overlay dev keeps unmounted. Deployment-only patch (env + subPath volumeMounts),
+  # so the grafana-lgtm Service (the OTLP §P1 boundary) is untouched. Files ride in via the
+  # grafana-rbac ConfigMap generated below from the same infra/grafana/rbac/ source the
+  # grafana-rbac-check gate uses (single config source).
+  - path: grafana-oidc.patch.yaml
 
 # The Critical-SLI rule files for the bundled Prometheus, carried in as a ConfigMap
 # generated FROM the SAME infra/grafana/prometheus/ source the Compose stack mounts
@@ -146,6 +154,18 @@ configMapGenerator:
     files:
       - prometheus.yaml=../../../grafana/prometheus/prometheus.yaml
       - alert-rules.yaml=../../../grafana/prometheus/alert-rules.yaml
+  # The Grafana RBAC + Logto-OIDC overlay (Boundary 6, bd babelstone-zla1.10.1), generated from the
+  # SAME infra/grafana/rbac/ source the Compose stack + the grafana-rbac-check CI gate consume.
+  # grafana-oidc.patch.yaml subPath-mounts these into the appliance: custom.ini is Grafana's config
+  # override (RBAC + access logging + Logto generic_oauth), the three provisioning yamls are the §P6
+  # access-control (roles, the Tempo datasource lock, teams). disableNameSuffixHash (above) keeps the
+  # name 'grafana-rbac' stable for the patch's volume reference.
+  - name: grafana-rbac
+    files:
+      - custom.ini=../../../grafana/rbac/grafana.ini
+      - roles.yaml=../../../grafana/rbac/provisioning/roles.yaml
+      - datasource-permissions.yaml=../../../grafana/rbac/provisioning/datasource-permissions.yaml
+      - teams.yaml=../../../grafana/rbac/provisioning/teams.yaml
 
 generatorOptions:
   # Stable name (no content-hash suffix) so the grafana-lgtm-rules.patch.yaml

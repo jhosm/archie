@@ -11,6 +11,18 @@
 # Production binds team membership to the IdP groups via SSO (ADR-IC-007 §P6 names SAML/OAuth/
 # LDAP as the Enterprise SSO path); for the self-hosted POC the teams exist and roles are bound,
 # and membership is seeded by the operator.
+#
+# The IdP is Logto (ADR-IC-021, bd zla1.10.1). Operators log in through Logto's generic_oauth
+# (see ../grafana.ini [auth.generic_oauth]); their Logto `roles` claim maps to a Grafana ORG role
+# there — the OSS-enforceable bridge: babelstone:admin → Admin, babelstone:engineer → Editor,
+# babelstone:noc / babelstone:compliance → Viewer. Those org roles are what Grafana enforces on the
+# OSS tier; binding the Logto group to THIS team (and so its CUSTOM role + datasource permissions
+# below) is the Enterprise team-sync / upstream-gateway hardening the README documents. The Logto
+# group ↔ team correspondence is one-to-one by name:
+#   Logto babelstone:noc        → team 'noc'            (role babelstone:noc-viewer)
+#   Logto babelstone:engineer   → team 'engineering'    (role babelstone:engineer)
+#   Logto babelstone:compliance → team 'compliance'     (role babelstone:compliance-viewer)
+#   Logto babelstone:admin      → team 'platform-admin' (role babelstone:admin)
 apiVersion: 1
 
 teams:
