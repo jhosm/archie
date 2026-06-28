@@ -5,7 +5,7 @@ namespace Babelstone.Packs;
 
 /// <summary>
 /// A regulatory pack that has been pulled by digest, cosign-verified, and structurally parsed
-/// (ADR-PC-007 §P4) — the immutable in-memory model the engine resolves primitives and
+/// (ADR-PC-007) — the immutable in-memory model the engine resolves primitives and
 /// parameters against. Held version-keyed in <see cref="OciPackStore"/>'s cache; a handler
 /// reads it purely (no I/O). The data shape is the pack.sh DATA_FILES layout one-for-one.
 /// </summary>
@@ -34,14 +34,13 @@ public sealed record VerifiedPack(
             : throw new PackLoadException(VersionKey, null, $"day-count id '{id}' is not declared in the pack.");
 }
 
-/// <summary>The pack manifest (pack.yaml): identity, metadata, and version pins (ADR-PC-007 §P1).</summary>
+/// <summary>The pack manifest (pack.yaml): identity, metadata, and version pins (ADR-PC-007).</summary>
 /// <param name="TemplateRefNames">The names of the pack-shipped disclosure-template files
 /// (<c>templates/&lt;name&gt;.yaml</c>) this pack declares (ADR-PC-025; e.g. <c>notices</c>) — the same
-/// per-pack-set shape as <see cref="RateSheetRefNames"/>. SURFACED (bd babelstone-60n8.6) so a downstream
-/// disclosure producer can require its template-set is declared by the instance-pinned pack and fail loud
-/// if a deployment's pack omits it — every deposit discloses under the pack it was opened with (ADR-PC-025
-/// §2 pinning). The DECLARATIVE half (bd babelstone-oyts): the parser surfaces the manifest list; the
-/// template bodies' render-from-render-time-resolved-PII machinery is an engine/comms follow-up.</param>
+/// per-pack-set shape as <see cref="RateSheetRefNames"/>. Surfaced so a downstream disclosure producer
+/// can require its template-set is declared by the instance-pinned pack and fail loud if a deployment's
+/// pack omits it — every deposit discloses under the pack it was opened with (ADR-PC-025). The parser
+/// surfaces the manifest list, but the template bodies are not rendered here.</param>
 public sealed record PackManifest(
     string PackId,
     string PackVersion,
@@ -62,7 +61,7 @@ public sealed record PackBreakingChange(string Id, string Description);
 
 /// <summary>
 /// A day-count primitive binding (primitives/day-count.yaml): an engine formula reference plus the
-/// pack-declared <c>permitted_for</c> families (the depth-4 regulatory permitted-set, babelstone-fk7m.2).
+/// pack-declared <c>permitted_for</c> families (the depth-4 regulatory permitted-set).
 /// The permitted-set is enforced by <c>pack-validate</c> at config-deploy time; the engine carries it
 /// for audit visibility and does not re-enforce it at resolution.
 /// </summary>
@@ -105,19 +104,19 @@ public sealed record PackReporting(bool Active, string Frequency, string Regulat
 /// <summary>Closed pack-level scalar parameters (parameters/constants.yaml). An unknown key fails the parse.</summary>
 public sealed record PackParameters(int MaxConsumerRateBps, int AutoRenewalOptoutWindowDays);
 
-/// <summary>A version-pinned rate-sheet reference (rate-sheet-refs/*.yaml); the sheet body lives in C.6.</summary>
+/// <summary>A version-pinned rate-sheet reference (rate-sheet-refs/*.yaml).</summary>
 public sealed record PackRateSheetRef(string ProductFamily, string RateSheetVersionId);
 
 /// <summary>
-/// One entry of the pack's family-manifest (families.yaml; ADR-PC-007 §P1, bd babelstone-9w2k.3):
+/// One entry of the pack's family-manifest (families.yaml; ADR-PC-007):
 /// the FAMILY SET this deployment is pinned to run. The host's <c>HostModuleLoader</c> cross-checks
 /// each scanned family host module against these entries and fails closed on a family/schema-version
-/// skew or a pinned family with no loadable module (ADR-PC-009 §P1 — the pinned pack is the
+/// skew or a pinned family with no loadable module (ADR-PC-009 — the pinned pack is the
 /// authoritative per-deployment family set; every module stamps <see cref="SchemaVersion"/> onto every
 /// EventEnvelope, so a newer-than-pinned module is an audit/replay hazard).
 /// </summary>
 /// <param name="FamilyName">The family id (e.g. <c>term_deposit</c>) — matches the module's <c>FamilyName</c>.</param>
-/// <param name="AggregateType">The event-envelope aggregate_type / bus topic the family writes under (== <see cref="FamilyName"/>, the documented convention; ADR-IC-004 §Consequences).</param>
+/// <param name="AggregateType">The event-envelope aggregate_type / bus topic the family writes under (== <see cref="FamilyName"/>, the documented convention; ADR-IC-004).</param>
 /// <param name="SchemaVersion">The pinned family schema version (e.g. <c>term_deposit@2026.1</c>) — matches <c>IFamilyModule.SchemaVersion</c> and the same family's <c>schema_pins</c> entry.</param>
 /// <param name="PluginAssembly">The .NET assembly carrying the family's <c>IFamilyHostModule</c>, so a skew message can name the offending box.</param>
 public sealed record PackFamily(

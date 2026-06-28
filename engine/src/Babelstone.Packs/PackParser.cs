@@ -8,9 +8,9 @@ namespace Babelstone.Packs;
 
 /// <summary>
 /// Structurally parses a pulled-and-verified pack's YAML data files into an immutable
-/// <see cref="VerifiedPack"/> (ADR-PC-007 §P4). This is a STRUCTURAL parse, NOT a <c>cue vet</c>
+/// <see cref="VerifiedPack"/> (ADR-PC-007). This is a STRUCTURAL parse, NOT a <c>cue vet</c>
 /// re-run — the verified cosign signature already attests CUE depths 1–4 passed in CI
-/// (§P2 / ADR-PC-006 §P3), which is what rejects duplicate keys and full-schema violations.
+/// (ADR-PC-007 / ADR-PC-006), which is what rejects duplicate keys and full-schema violations.
 /// The structural parse fails loud on what it can see locally: a missing file, a YAML error, an
 /// unknown key in a closed schema (the deserializer is strict — no <c>IgnoreUnmatchedProperties</c>),
 /// an empty-bodied entry, a null/empty required field, an unmappable primitive, or a version-key
@@ -36,7 +36,7 @@ public static class PackParser
 
         var manifest = ParseManifest(files, expectedVersionKey);
 
-        // Version-key cross-check (ADR-PC-007 §P1): catches a registry mis-mapping (pin →
+        // Version-key cross-check (ADR-PC-007): catches a registry mis-mapping (pin →
         // wrong digest → wrong content) before the wrong pack is ever cached.
         var actualVersionKey = $"{manifest.PackId}.{manifest.PackVersion}";
         if (!string.Equals(actualVersionKey, expectedVersionKey, StringComparison.Ordinal))
@@ -105,11 +105,11 @@ public static class PackParser
     }
 
     /// <summary>
-    /// Parses the family-manifest (families.yaml; ADR-PC-007 §P1, bd babelstone-9w2k.3) — the pinned
-    /// FAMILY SET the host cross-checks scanned modules against (ADR-PC-009 §P1). A missing file, an
+    /// Parses the family-manifest (families.yaml; ADR-PC-007) — the pinned
+    /// FAMILY SET the host cross-checks scanned modules against (ADR-PC-009). A missing file, an
     /// empty entry, or a null/empty required field fails loud as a <see cref="PackLoadException"/>, the
     /// same fail-loud structural-parse stance as every other pack file. The closed-schema rejection
-    /// (unknown field, malformed schema_version) rides on the verified cosign signature (§P2).
+    /// (unknown field, malformed schema_version) rides on the verified cosign signature (ADR-PC-007).
     /// </summary>
     private static IReadOnlyList<PackFamily> ParseFamilies(IReadOnlyDictionary<string, byte[]> files, string vk)
     {
@@ -149,10 +149,9 @@ public static class PackParser
             EngineCompatibleVersions: Required(dto.Dependencies?.EngineCompatibleVersions, vk, "pack.yaml dependencies.engine_compatible_versions"),
             SchemaPins: dto.SchemaPins ?? new(),
             RateSheetRefNames: dto.RateSheetRefs ?? [],
-            // SURFACE the declared disclosure-template file refs (bd babelstone-60n8.6), mirroring
-            // RateSheetRefNames — the parser previously only TOLERATED the DTO field so the pack stayed
-            // loadable (PR #322); it now exposes it on the manifest so a downstream producer can require its
-            // template-set is declared by the instance-pinned pack and fail loud otherwise (ADR-PC-025 §2).
+            // Surface the declared disclosure-template file refs, mirroring RateSheetRefNames, so a
+            // downstream producer can require its template-set is declared by the instance-pinned pack
+            // and fail loud otherwise (ADR-PC-025).
             TemplateRefNames: dto.TemplateRefs ?? [],
             TestCorpusRef: Required(dto.TestCorpusRef, vk, "pack.yaml test_corpus_ref"));
     }
@@ -217,11 +216,10 @@ public static class PackParser
         public DependenciesDto? Dependencies { get; set; }
         public Dictionary<string, string>? SchemaPins { get; set; }
         public List<string>? RateSheetRefs { get; set; }
-        // The pack-set's disclosure/notice template_refs (bd babelstone-oyts, PR #322) — the same
-        // per-pack-set shape as rate_sheet_refs. The DECLARATIVE half: the parser TOLERATES the manifest
-        // field so the pack remains loadable, while the engine-side consumption (rendering, the
-        // template-pack-version pinned per instance — ADR-PC-025) is a deferred follow-up. Without this
-        // property the strict deserializer rejects pt.2026.1's pack.yaml ("template_refs not found").
+        // The pack-set's disclosure/notice template_refs — the same per-pack-set shape as
+        // rate_sheet_refs (ADR-PC-025). The strict deserializer rejects an unknown key, so without this
+        // property pt.2026.1's pack.yaml fails to load ("template_refs not found"); the parser surfaces
+        // the field, but the template bodies are not rendered here.
         public List<string>? TemplateRefs { get; set; }
         public string? TestCorpusRef { get; set; }
         public List<object>? PrimitiveOverlays { get; set; }

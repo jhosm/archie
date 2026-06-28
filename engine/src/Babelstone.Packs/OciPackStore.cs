@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 namespace Babelstone.Packs;
 
 /// <summary>
-/// The in-engine pack loader/verifier (C.5, ADR-PC-007 §P4). On <see cref="GetAsync"/> it
+/// The in-engine pack loader/verifier (ADR-PC-007). On <see cref="GetAsync"/> it
 /// resolves a pin to its digest, cosign-verifies, pulls by digest, structurally parses, and
 /// caches — all out-of-process work happening once at LOAD time. <see cref="Resolve"/> is the
 /// pure cache read a handler uses on the hot path. Every failure is a <see cref="PackLoadException"/>;
@@ -15,7 +15,7 @@ public sealed class OciPackStore(
     IPackSource source) : IPackStore
 {
     // Immutable once populated: a pin is content-addressed (digest) and never re-resolves
-    // mid-life (ADR-PC-009 §P1), so an entry never legitimately changes. No as-of dimension.
+    // mid-life (ADR-PC-009), so an entry never legitimately changes. No as-of dimension.
     private readonly ConcurrentDictionary<string, VerifiedPack> _cache = new(StringComparer.Ordinal);
 
     // Per-pin gate so concurrent first-sight loads pull + verify exactly once.
@@ -45,18 +45,18 @@ public sealed class OciPackStore(
                 return cached; // another caller loaded it while we waited
             }
 
-            // 1. Resolve the pin → digest (§P3). A missing entry is fail-loud, never a skip.
+            // 1. Resolve the pin → digest (ADR-PC-007). A missing entry is fail-loud, never a skip.
             var packRef = await registry.ResolveAsync(packVersion, ct)
                 ?? throw new PackLoadException(packVersion, null,
                     "no pack_versions registry entry — the pack version is unknown or unpinned.");
 
-            // 2. cosign verify BEFORE trusting any content (§P2). Throws on unsigned/wrong-signer.
+            // 2. cosign verify BEFORE trusting any content (ADR-PC-007). Throws on unsigned/wrong-signer.
             await verifier.VerifyAsync(packRef.OciRef, packRef.Digest, ct);
 
-            // 3. Pull by digest (§P2). Throws on pull failure.
+            // 3. Pull by digest (ADR-PC-007). Throws on pull failure.
             var files = await source.PullByDigestAsync(packRef.OciRef, packRef.Digest, ct);
 
-            // 4. Structural parse + version-key cross-check (§P4). Throws on any inconsistency.
+            // 4. Structural parse + version-key cross-check (ADR-PC-007). Throws on any inconsistency.
             var pack = PackParser.Parse(files, packVersion);
 
             // 5. Cache immutably.

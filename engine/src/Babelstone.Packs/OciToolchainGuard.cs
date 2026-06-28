@@ -1,16 +1,16 @@
 namespace Babelstone.Packs;
 
 /// <summary>
-/// A defense-in-depth preflight for OCI pack mode (ADR-PC-007 §P2/§P4). OCI mode shells out to the
+/// A defense-in-depth preflight for OCI pack mode (ADR-PC-007). OCI mode shells out to the
 /// <c>oras</c> and <c>cosign</c> CLIs at LOAD time (<see cref="OrasPackSource"/> /
 /// <see cref="CosignPackVerifier"/> via <see cref="OciPackStore"/>).
 /// <para>
 /// The production chiseled (distroless-style) runtime image the engine ships in
 /// (<c>aspnet:10.0-noble-chiseled-extra</c>, engine/Dockerfile) now BUNDLES both static binaries on
-/// PATH via its <c>oci-tools</c> build stage (bd vrn4) — two checksum-verified Go binaries, no shell,
-/// no package manager, so the base-OS CVE surface the image-build grype scan flags (ADR-IC-014 §S2)
+/// PATH via its <c>oci-tools</c> build stage — two checksum-verified Go binaries, no shell,
+/// no package manager, so the base-OS CVE surface the image-build grype scan flags (ADR-IC-014)
 /// is unchanged. On that intended production path this guard is a silent no-op and OCI pack loading
-/// proceeds: the fail-FAST refusal bd 4ow6 shipped (when the image omitted the tools) is lifted there.
+/// proceeds: the earlier fail-fast refusal (when the image omitted the tools) does not apply there.
 /// </para>
 /// <para>
 /// The guard is retained for the residual misconfiguration: OCI mode selected in some OTHER image
@@ -60,7 +60,7 @@ public static class OciToolchainGuard
 
         // Name the offending tool(s) and the runtime-image cause so an operator knows the fix without
         // spelunking ProcessRunner. PackLoadException keeps the failure on the established fail-loud
-        // channel (ADR-PC-007 §P4) the host already aborts non-zero on.
+        // channel (ADR-PC-007) the host already aborts non-zero on.
         throw new PackLoadException(null, null,
             $"OCI pack mode (Engine:PackRegistry=oci) requires the {string.Join(" and ", RequiredTools)} CLI(s) on PATH, " +
             $"but the following are missing: {string.Join(", ", missing)}. " +
