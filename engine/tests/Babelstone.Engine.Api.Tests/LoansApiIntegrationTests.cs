@@ -146,9 +146,16 @@ public sealed class LoansApiIntegrationTests : IAsyncLifetime
         var loanId = Guid.NewGuid();
         await DisburseTwoInstallmentLoanAsync(loanId);
 
-        // No Idempotency-Key header, no caller key of any kind — the installment still applies (200 OK).
-        var response = await _client.PostAsJsonAsync(
-            $"/v1/loans/{loanId}/installment", new { collection_account_ref = "acct-ref-001" }, SnakeCase);
+        // No Idempotency-Key header, no caller key of any kind — the installment still applies (200 OK). SCA
+        // is a SEPARATE axis (bd babelstone-6cpq.14): the installment is now a money-mover behind the step-up
+        // gate, so fresh gateway-attested SCA is supplied — but what's under test here is the absence of a
+        // CALLER idempotency key, NOT the SCA proof, so the key is still deliberately omitted.
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/loans/{loanId}/installment")
+        {
+            Content = JsonContent.Create(new { collection_account_ref = "acct-ref-001" }, options: SnakeCase),
+        };
+        AddFreshSca(request);
+        var response = await _client.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(1, (await GetLoanAsync(loanId)).GetProperty("installments_paid").GetInt32());
     }
@@ -211,16 +218,123 @@ public sealed class LoansApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    // ── §P8 step-up-SCA gate on the loan money-movers (bd babelstone-6cpq.14) ───────────────────────────
+    // The loan installment is an irreversible money-mover (it collects the scheduled installment from the
+    // customer), so — exactly like the deposit maturity / coupon — it refuses to settle without FRESH
+    // gateway-attested SCA. This is what makes the MCP_SCA_GATE_CANNOT_BYPASS invariant genuinely cover
+    // loans: no money-mover settles on the agent's word; the gate transitions on the bank's own signal (the
+    // AS-signed acr/auth_time Kong attests), enforced by the SHARED ScaPreconditionFilter on the money-mover
+    // route group in LoansEndpoints.Map (ADR-IC-010 §P8 / ADR-PC-010 §P5). These are the engine half.
+
+    [Fact]
+    public async Task MCP_SCA_GATE_CANNOT_BYPASS_paying_an_installment_without_SCA_is_422_and_does_not_collect()
+    {
+        var loanId = Guid.NewGuid();
+        await DisburseTwoInstallmentLoanAsync(loanId);
+
+        // No X-SCA-Acr / X-SCA-Auth-Time at all — the gateway attested no fresh SCA. The route-group filter
+        // 422s BEFORE any side effect, so the installment is NEVER collected.
+        var response = await _client.PostAsJsonAsync(
+            $"/v1/loans/{loanId}/installment", new { collection_account_ref = "acct-ref-001" }, SnakeCase);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        await AssertScaRequiredAsync(response);
+        // NOTHING collected: the stream still carries only the disbursement, and the paid-count is unchanged.
+        Assert.Equal(["personal_loan.LoanDisbursed"], await EventTypesAsync(loanId));
+        Assert.Equal(0, (await GetLoanAsync(loanId)).GetProperty("installments_paid").GetInt32());
+    }
+
+    [Fact]
+    public async Task Paying_an_installment_with_a_stale_SCA_auth_time_is_422_and_does_not_collect()
+    {
+        var loanId = Guid.NewGuid();
+        await DisburseTwoInstallmentLoanAsync(loanId);
+
+        // SCA happened, but too long ago (auth_time well beyond ScaPrecondition.MaxAgeSeconds): a money-mover
+        // needs RECENT SCA, not merely ever-completed — so the gate 422s and nothing is collected.
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/loans/{loanId}/installment")
+        {
+            Content = JsonContent.Create(new { collection_account_ref = "acct-ref-001" }, options: SnakeCase),
+        };
+        request.Headers.TryAddWithoutValidation(ScaPrecondition.AcrHeader, "urn:bank:sca:psd2");
+        var stale = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - (ScaPrecondition.MaxAgeSeconds + 60);
+        request.Headers.TryAddWithoutValidation(ScaPrecondition.AuthTimeHeader, stale.ToString());
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        await AssertScaRequiredAsync(response);
+        Assert.Equal(["personal_loan.LoanDisbursed"], await EventTypesAsync(loanId));
+        Assert.Equal(0, (await GetLoanAsync(loanId)).GetProperty("installments_paid").GetInt32());
+    }
+
+    [Fact]
+    public async Task Paying_an_installment_with_fresh_attested_SCA_settles_the_installment()
+    {
+        var loanId = Guid.NewGuid();
+        await DisburseTwoInstallmentLoanAsync(loanId);
+
+        // The success posture: fresh gateway-attested SCA (the agent / customer flow after step-up).
+        var response = await PayInstallmentAsync(loanId, "acct-ref-001");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, (await GetLoanAsync(loanId)).GetProperty("installments_paid").GetInt32());
+    }
+
+    [Fact]
+    public async Task Paying_an_installment_with_the_scoped_service_principal_and_no_human_SCA_settles()
+    {
+        var loanId = Guid.NewGuid();
+        await DisburseTwoInstallmentLoanAsync(loanId);
+
+        // NO human X-SCA-Acr / X-SCA-Auth-Time — the ADR-PC-036 lifecycle-command driver is a machine actor
+        // with none. The scoped X-SCA-Service-Principal claim (now authorising `installment`, bd
+        // babelstone-6cpq.9 / .14) alone authorises the loan installment money-mover.
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/loans/{loanId}/installment")
+        {
+            Content = JsonContent.Create(new { collection_account_ref = "acct-ref-001" }, options: SnakeCase),
+        };
+        request.Headers.TryAddWithoutValidation(
+            ScaServicePrincipal.PrincipalHeader, ScaServicePrincipal.LifecycleMoneyMoverScope);
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, (await GetLoanAsync(loanId)).GetProperty("installments_paid").GetInt32());
+    }
+
     private async Task<HttpResponseMessage> PayInstallmentAsync(
         Guid loanId, string collectionAccountRef, DateTimeOffset? paidAt = null)
     {
         // The installment endpoint derives its idempotency key SERVER-side (ADR-PC-036 / LCD-1), so the
-        // client sends NO Idempotency-Key header — the old mandatory-caller-key contract is retired. The
-        // optional paid_at lets a test contrast two firings on DIFFERENT due-dates (host-stamped when null).
-        return await _client.PostAsJsonAsync(
-            $"/v1/loans/{loanId}/installment",
-            new { collection_account_ref = collectionAccountRef, paid_at = paidAt },
-            SnakeCase);
+        // client sends NO Idempotency-Key header — the old mandatory-caller-key contract is retired. But the
+        // installment is now an irreversible money-mover behind the step-up-SCA gate (bd babelstone-6cpq.14),
+        // so a SUCCESSFUL POST must carry FRESH gateway-attested SCA, exactly as the deposit money-movers do.
+        // The optional paid_at lets a test contrast two firings on DIFFERENT due-dates (host-stamped when null).
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/loans/{loanId}/installment")
+        {
+            Content = JsonContent.Create(
+                new { collection_account_ref = collectionAccountRef, paid_at = paidAt }, options: SnakeCase),
+        };
+        AddFreshSca(request);
+        return await _client.SendAsync(request);
+    }
+
+    /// <summary>Attest a FRESH, sufficiently-strong SCA proof on the request, exactly as Kong's set_header
+    /// attestation would from an AS-signed token (acr present, auth_time = now) — the agent / customer
+    /// success posture on a loan money-mover (bd babelstone-6cpq.14, mirrors the deposit suite).</summary>
+    private static void AddFreshSca(HttpRequestMessage request)
+    {
+        request.Headers.TryAddWithoutValidation(ScaPrecondition.AcrHeader, "urn:bank:sca:psd2");
+        request.Headers.TryAddWithoutValidation(
+            ScaPrecondition.AuthTimeHeader, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString());
+    }
+
+    /// <summary>Assert a 422 response carries the stable <c>SCA_REQUIRED</c> code (no PII).</summary>
+    private static async Task AssertScaRequiredAsync(HttpResponseMessage response)
+    {
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(ScaPrecondition.RequiredCode, problem.GetProperty("code").GetString());
     }
 
     private async Task DisburseTwoInstallmentLoanAsync(Guid loanId)

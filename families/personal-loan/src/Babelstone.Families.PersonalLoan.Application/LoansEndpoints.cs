@@ -20,6 +20,17 @@ namespace Babelstone.Families.PersonalLoan.Application;
 /// write-off / erase) keep a mandatory caller-supplied <c>Idempotency-Key</c>. NO eager settlement on
 /// any path — each money-moving event records its leg APPEND-FIRST as a Movement for the substrate-owned
 /// settlement saga to effect, gated (ADR-PC-032 slot 5).
+/// <para>
+/// STEP-UP SCA on the irreversible money-movers (ADR-IC-010 §P8 / the <c>MCP_SCA_GATE_CANNOT_BYPASS</c>
+/// commitment; bd babelstone-6cpq.14). <c>/installment</c> and <c>/early-repayment</c> sit behind the SHARED
+/// <see cref="ScaPreconditionFilter"/> (relocated to <c>Babelstone.Engine.Hosting</c>, ADR-PC-021 §A9) on a
+/// money-mover route group, exactly as <c>DepositsEndpoints</c> gates maturity / interest / terminate. The
+/// filter fail-closes a money-mover with no fresh gateway-attested SCA <c>422 SCA_REQUIRED</c> BEFORE any
+/// side effect, so an agent cannot collect an irreversible loan leg on its own word. <c>/installment</c> (a
+/// clock-driven money-mover) also accepts the ADR-PC-036 scoped service principal; <c>/early-repayment</c>
+/// (customer-initiated) is human-SCA-only. <c>/disburse</c>, <c>/write-off</c>, <c>/erase-personal-data</c>
+/// and the read surface are ungated (see <see cref="Map"/>).
+/// </para>
 /// </summary>
 public static class LoansEndpoints
 {
@@ -35,22 +46,51 @@ public static class LoansEndpoints
     {
         // Disburse a new loan (opens the stream). The Idempotency-Key is OPTIONAL here (the new-stream
         // append is naturally a one-shot), but honoured when supplied so a retry of the SAME disbursement
-        // dedupes (ADR-PC-029 slot 4).
+        // dedupes (ADR-PC-029 slot 4). NOT step-up-SCA-gated: disbursement of an already-approved,
+        // already-priced loan is an origination-side action (ADR-PC-030 / ADR-PC-024), not an agent-triggered
+        // collection from the customer, so it stays on `app` outside the money-mover route group.
         app.MapPost("/v1/loans", DisburseAsync);
 
-        // The amortizing money-movers. The installment path's idempotency key is SERVER-DERIVED and
-        // number-pinned (ADR-PC-036 §Decision 1+3, LCD-1) — it takes NO caller Idempotency-Key. Early
-        // repayment keeps a mandatory caller-supplied Idempotency-Key (ADR-PC-029 slot 4).
-        app.MapPost("/v1/loans/{id:guid}/installment", PayInstallmentAsync);
-        app.MapPost("/v1/loans/{id:guid}/early-repayment", RepayEarlyAsync);
+        // The irreversible money-movers carry the step-up-SCA gate as a ROUTE-GROUP property, not per-handler
+        // boilerplate, exactly mirroring DepositsEndpoints: the SHARED ScaPreconditionFilter (relocated to
+        // Babelstone.Engine.Hosting, ADR-PC-021 §A9 — ONE gate mechanism both families reference, never a
+        // per-family copy) runs in the impure host shell BEFORE the handler (so before any side effect) and
+        // authorises one of two ways —
+        //   (1) HUMAN step-up: the gateway-attested X-SCA-Acr/X-SCA-Auth-Time fresh SCA proof (the MCP agent /
+        //       customer flow), short-circuiting 422 SCA_REQUIRED on absent/stale proof — this is what makes
+        //       the MCP_SCA_GATE_CANNOT_BYPASS commitment genuinely cover loans (ADR-IC-010 §P8; ADR-PC-010
+        //       §P5 — the pure decider never sees the check); or
+        //   (2) the NON-INTERACTIVE scoped service principal (ADR-PC-036, bd babelstone-6cpq.9/.14): the
+        //       lifecycle-command driver firing the installment on its due date has no human acr, so a SCOPED
+        //       gateway-attested X-SCA-Service-Principal claim authorises it — ROUTE-SCOPED to /installment
+        //       only among the loan routes (ScaServicePrincipal.AuthorisedOperations), audited, never blanket.
+        // /installment is a CLOCK-DRIVEN money-mover (it collects the scheduled installment from the
+        // customer), so it is gated AND in the scoped principal's allowance — both the lifecycle driver and an
+        // MCP agent with fresh human SCA can pay it. /early-repayment is ALSO an irreversible money-mover (it
+        // collects a prepayment + commission), so it sits in the SAME gated group, but HUMAN-SCA ONLY: it is
+        // CUSTOMER-INITIATED (not in AuthorisedOperations), the loan analogue of the deposit /terminate, so
+        // the automated driver can never repay a loan early. Anything mapped on this group is gated by
+        // construction, so the loan money-movers can't drift out of SCA parity with the deposit ones; the
+        // ungated siblings below stay on `app`. The installment path's idempotency key is still SERVER-DERIVED
+        // and number-pinned (ADR-PC-036 §Decision 1+3, LCD-1) — no caller Idempotency-Key — and early
+        // repayment keeps its mandatory caller-supplied Idempotency-Key (ADR-PC-029 slot 4); SCA is a SEPARATE
+        // axis layered in front of both (a money-mover needs BOTH a valid idempotency contract AND fresh SCA).
+        var moneyMovers = app.MapGroup("/v1/loans/{id:guid}")
+            .AddEndpointFilter<ScaPreconditionFilter>();
+        moneyMovers.MapPost("/installment", PayInstallmentAsync);
+        moneyMovers.MapPost("/early-repayment", RepayEarlyAsync);
 
-        // Write-off recognises a loss (no money moves); erase-personal-data records the GDPR Article 17 fact
-        // after the host crypto-shredded the key. Both carry a mandatory Idempotency-Key (ADR-PC-029 slot 4).
+        // Write-off recognises a loss — NO money moves (it is an operator-recorded accounting fact, not a
+        // money-mover — ADR-PC-030 §P1 / the WriteOffLoanRequest contract), so it is NOT step-up-SCA-gated:
+        // the same posture as the deposit operator-only /correction (also ungated). erase-personal-data is a
+        // GDPR Article 17 surface governed by its OWN crypto-shred discipline (ADR-PC-004 §P3), a DIFFERENT
+        // gate, not the money-mover SCA gate. Both stay on `app` and keep their mandatory Idempotency-Key
+        // (ADR-PC-029 slot 4).
         app.MapPost("/v1/loans/{id:guid}/write-off", WriteOffAsync);
         app.MapPost("/v1/loans/{id:guid}/erase-personal-data", ErasePersonalDataAsync);
 
         // The query surface: ONE canonical loan resource, folded from the event stream (the bitemporal
-        // projections suffice — no denormalized read-model table, ADR-PC-002 §P2). Read-only.
+        // projections suffice — no denormalized read-model table, ADR-PC-002 §P2). Read-only, ungated.
         app.MapGet("/v1/loans/{id:guid}", GetLoanAsync);
     }
 

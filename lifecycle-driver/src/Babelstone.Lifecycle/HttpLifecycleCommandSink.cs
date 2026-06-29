@@ -50,9 +50,10 @@ public sealed class HttpLifecycleCommandSink(HttpClient http, ILogger<HttpLifecy
 
     /// <summary>The gateway-attested scoped SCA service-principal header (ADR-PC-036 §Decision 1) — kept in
     /// lock-step with the engine-side constant
-    /// <c>Babelstone.Families.TermDeposit.Application.ScaServicePrincipal.PrincipalHeader</c>. Named locally
-    /// here (not referenced) so the generic driver core stays free of any family-application dependency; the
-    /// engine authorises the route from the gateway-attested value, never the caller's word.</summary>
+    /// <c>Babelstone.Engine.Hosting.ScaServicePrincipal.PrincipalHeader</c> (relocated to the shared hosting
+    /// assembly, ADR-PC-021 §A9 / bd babelstone-6cpq.14). Named locally here (not referenced) so the generic
+    /// driver core stays free of any engine/hosting dependency; the engine authorises the route from the
+    /// gateway-attested value, never the caller's word.</summary>
     public const string ServicePrincipalHeader = "X-SCA-Service-Principal";
 
     /// <summary>Matches the engine API host's wire contract: snake_case property names
