@@ -186,12 +186,15 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             serviceProvider => new DepositInstanceFilterResolver(
                 serviceProvider.GetRequiredService<IDepositReadModelStore>(), FoldModule.FamilyName));
 
-        // D.2 projection runtime (ADR-PC-002 §P4, two-modes §5.4): the family declares its
-        // projections (currently just the deposit position) + their folds; the generic runtime
-        // (registry + drainer) lives in the spine. The async relay materialises them into the
-        // bitemporal `projections` table. v1 runs every projection async — the runtime above is
-        // wired with no post-commit hook — so the live read path (GET /v1/deposits) is unaffected;
-        // switching reads to the materialised projection is D.3/D.4.
+        // D.2 projection declarations (ADR-PC-002 §P4, two-modes §5.4): the family declares its
+        // projections (the deposit position + the F.6 accrual schedule / maturity calendar /
+        // withholding ledger) + their folds. The generic runtime (registry + drainer + relay) is
+        // composed family-AGNOSTICALLY at the host root by AddProjectionRuntime (Program.cs), which
+        // enumerates EVERY registered IProjectionModule — so contributing the module here is all it
+        // takes for the single shared relay to drain this family. Registering a relay here instead
+        // would make term_deposit the de-facto owner of shared spine infrastructure (the coupling bd
+        // babelstone-tfr4 removed, where hosting another family alone left it with no relay) and
+        // double-drain the shared projections/checkpoint tables.
         services.AddSingleton<IProjectionModule, TermDepositProjectionModule>();
 
         // The per-stream withholding-ledger READ store (bd babelstone-60n8.8): the
@@ -207,37 +210,18 @@ public sealed class TermDepositHostModule : IFamilyHostModule
             serviceProvider.GetRequiredService<IProjectionStorage>(),
             new JsonStateSerializer<WithholdingLedger>()));
 
-        services.AddSingleton(serviceProvider =>
-        {
-            var infra = new ProjectionInfra(
-                serviceProvider.GetRequiredService<IProjectionStorage>(),
-                serviceProvider.GetRequiredService<IEventSerializer>());
-            var bitemporalRunners = serviceProvider.GetServices<IProjectionModule>().SelectMany(module => module.CreateRunners(infra));
-
-            // D.4 CQRS read model (ADR-IC-005): the denormalized read-model runner is its own kind
-            // alongside the four bitemporal projections, sharing the same async drainer/relay. It
-            // folds the same deposit-position state into read_model.deposits (the I.2 Query API
-            // surface). Composed here from the FAMILY-OWNED read-model store (the deposit-shaped
-            // table is the family's domain shape, not the spine's — ADR-PC-021 §D2/§P2); the family
-            // supplies the fold + the state→row mapper over the generic ReadModelInfra<TRow>. The
-            // read_model.deposits schema itself is now FAMILY-OWNED too: the family's own migration
-            // set (Babelstone.Families.TermDeposit.Application.Migrations, 0001_read_model.sql)
-            // creates it, applied by the ReadModelMigrationHostedService registered below — the
-            // engine event-store migrations carry zero family-named tables (ADR-PC-021 family-owned
-            // ownership).
-            var readModelInfra = new ReadModelInfra<DepositReadModelRow>(
-                serviceProvider.GetRequiredService<IDepositReadModelStore>(),
-                serviceProvider.GetRequiredService<IEventSerializer>());
-            var readModelRunner = new TermDepositProjectionModule().CreateReadModelRunner(readModelInfra);
-
-            return new ProjectionRegistry(bitemporalRunners.Append(readModelRunner));
-        });
-        services.AddSingleton(serviceProvider => new ProjectionDrainer(
-            serviceProvider.GetRequiredService<IEventStore>(),
-            serviceProvider.GetRequiredService<IProjectionCheckpointStore>(),
-            serviceProvider.GetRequiredService<TimeProvider>()));
-        services.AddSingleton(new ProjectionRelayOptions());
-        services.AddHostedService<ProjectionRelayService>();
+        // D.4 CQRS read model (ADR-IC-005): the denormalized read-model runner is contributed as a
+        // SECOND IProjectionModule (DepositReadModelModule, below), so the same family-neutral
+        // host-root relay drains it alongside the four bitemporal projections. No family owns the
+        // registry now (bd babelstone-tfr4), so the runner reaches it through the same IProjectionModule
+        // seam the bitemporal projections use — not a direct Append onto a registry term_deposit
+        // composed. It folds the same deposit-position state into the FAMILY-OWNED read_model.deposits
+        // table (ADR-PC-021 §D2/§P2; the family supplies the fold + the state→row mapper over the
+        // generic ReadModelInfra<TRow>), whose schema the family's own migration set owns
+        // (Babelstone.Families.TermDeposit.Application.Migrations, 0001_read_model.sql), applied by the
+        // ReadModelMigrationHostedService registered below.
+        services.AddSingleton<IProjectionModule>(serviceProvider =>
+            new DepositReadModelModule(serviceProvider.GetRequiredService<IDepositReadModelStore>()));
 
         // The family OWNS its read-model schema (ADR-PC-021 family-owned ownership): read_model.deposits
         // is a family-NAMED table, so its forward-only migration set lives in the family's Application
@@ -273,6 +257,30 @@ public sealed class TermDepositHostModule : IFamilyHostModule
         // the moment a second family is hosted. The single route dispatches on product_family to this
         // family's registered IPackMigrationService / IPackMigrationInstanceResolver (wired above).
     }
+}
+
+/// <summary>
+/// The term-deposit family's CQRS read-model runner, surfaced as an <see cref="IProjectionModule"/> so the
+/// family-neutral projection relay (composed once at the host root by <c>AddProjectionRuntime</c>) drains it —
+/// the relay enumerates EVERY registered module to build its <c>ProjectionRegistry</c> (bd babelstone-tfr4). A
+/// SEPARATE module from <see cref="TermDepositProjectionModule"/>: that one declares the four bitemporal
+/// projections over the generic <c>projections</c> store; this one declares the single flat read-model runner
+/// over the family-owned <c>read_model.deposits</c> table, a distinct surface with a distinct
+/// (truncate-and-refold) rebuild discipline. Both carry <see cref="FamilyName"/> <c>term_deposit</c>, which the
+/// drainer reads to know whose streams feed the runner; the read-model kind
+/// (<see cref="TermDepositProjectionModule.DepositReadModelKind"/>) is unique, so the registry accepts both.
+/// The host injects the family-owned store; the family supplies the fold + the state→row mapper over the
+/// generic <see cref="ReadModelInfra{TRow}"/>. Reaches the shared registry through the same module seam the
+/// bitemporal projections use, owning no relay (bd babelstone-tfr4).
+/// </summary>
+internal sealed class DepositReadModelModule(IDepositReadModelStore store) : IProjectionModule
+{
+    private static readonly TermDepositProjectionModule Declarations = new();
+
+    public string FamilyName => Declarations.FamilyName;
+
+    public IReadOnlyList<IProjectionRunner> CreateRunners(ProjectionInfra infra) =>
+        [Declarations.CreateReadModelRunner(new ReadModelInfra<DepositReadModelRow>(store, infra.EventSerializer))];
 }
 
 /// <summary>

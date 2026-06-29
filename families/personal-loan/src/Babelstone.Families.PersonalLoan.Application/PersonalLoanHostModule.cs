@@ -33,8 +33,9 @@ namespace Babelstone.Families.PersonalLoan.Application;
 /// schedule, and the installment calendar (<see cref="PersonalLoanProjectionModule"/>) — materialise into
 /// the GENERIC, engine-owned <c>projections</c> table, and the live read path folds the stream through the
 /// <see cref="AggregateRuntime{TState}"/>; this module registers only its <see cref="IProjectionModule"/>,
-/// and the family-agnostic projection relay term-deposit registers drains it (the relay's registry
-/// enumerates EVERY registered <see cref="IProjectionModule"/>). The family ALSO now owns a denormalized
+/// and the family-agnostic projection relay composed once at the host root (Program.cs / AddProjectionRuntime,
+/// bd babelstone-tfr4) drains it (the relay's registry enumerates EVERY registered
+/// <see cref="IProjectionModule"/>). The family ALSO now owns a denormalized
 /// Postgres read-model table — <c>read_model.installment_calendar</c>, the forward next-installment read
 /// surface — created by its OWN forward-only migration set
 /// (<see cref="Babelstone.Families.PersonalLoan.Application.Migrations"/>, under its own
@@ -135,10 +136,10 @@ public sealed class PersonalLoanHostModule : IFamilyHostModule
         // The family's projection declarations (two-modes §5.4): the loan position, the amortization
         // schedule, and the installment calendar — all bitemporal/async into the GENERIC projections table.
         // Registering only the IProjectionModule (not a relay) is deliberate: the family-agnostic projection
-        // relay registered by the term-deposit module builds its ProjectionRegistry from EVERY registered
-        // IProjectionModule (serviceProvider.GetServices<IProjectionModule>()), so a single relay drains both
-        // families' projections — registering a second relay here would double-drain the shared
-        // projections/checkpoint tables.
+        // relay composed once at the host root (Program.cs / AddProjectionRuntime, bd babelstone-tfr4) builds
+        // its ProjectionRegistry from EVERY registered IProjectionModule (serviceProvider.GetServices<IProjectionModule>()),
+        // so a single relay drains every family's projections — registering a second relay here would
+        // double-drain the shared projections/checkpoint tables.
         services.AddSingleton<IProjectionModule, PersonalLoanProjectionModule>();
 
         // The FAMILY-OWNED installment-calendar read-model store (ADR-PC-021 §D2/§P2; bd babelstone-6cpq.12).
