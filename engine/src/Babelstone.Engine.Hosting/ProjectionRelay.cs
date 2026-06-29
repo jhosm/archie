@@ -66,8 +66,8 @@ public sealed class ProjectionRelayService(
 /// The sync-mode post-commit hook (two-modes §5.4): after an append commits, drives the family's
 /// SYNC projections within a bounded budget. A failure or timeout NEVER propagates — "the event is
 /// true regardless of whether a projection consumed it" — it is logged and the lag surfaces via the
-/// projection's own checkpoint. v1 declares every projection async, so this finds no sync runners
-/// and no-ops; it is the v4 template, exercised by the post-commit-never-rolls-back test.
+/// projection's own checkpoint. Every v1 projection is async, so this finds no sync runners and
+/// no-ops.
 /// </summary>
 public sealed class BudgetedPostCommitProjector(
     ProjectionDrainer drainer,
