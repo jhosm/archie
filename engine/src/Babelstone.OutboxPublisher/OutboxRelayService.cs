@@ -40,8 +40,9 @@ public sealed class OutboxRelayService(
             catch (Exception ex)
             {
                 // Redpanda unavailability (or a transient DB error) is backpressure: rows stay
-                // PENDING, we back off exponentially up to the ceiling, then keep retrying. The
-                // publish-lag SLI + alerting is Epic G.1 (this loop just keeps the rows safe).
+                // PENDING, we back off exponentially up to the ceiling, then keep retrying. Surfacing
+                // the outage as a metric is OutboxLagObserver's publish-lag SLI; this loop's only job
+                // is to keep the rows safe.
                 logger?.LogWarning(ex, "Outbox drain cycle failed; backing off {Backoff} and retrying (rows stay PENDING).", backoff);
                 await Task.Delay(backoff, stoppingToken);
                 backoff = backoff < MaxBackoff ? backoff + backoff : MaxBackoff;
