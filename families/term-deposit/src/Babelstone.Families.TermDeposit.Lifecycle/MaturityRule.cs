@@ -1,6 +1,7 @@
 using Babelstone.Families.TermDeposit;
+using Babelstone.Lifecycle;
 
-namespace Babelstone.Lifecycle;
+namespace Babelstone.Families.TermDeposit.Lifecycle;
 
 /// <summary>
 /// The term-deposit family's lifecycle-command rule (ADR-PC-036 §Decision 2 + §Decision 6; bd

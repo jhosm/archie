@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The lifecycle-command driver HOST under test: LifecycleModuleLoader's assembly-scan discovery
+         (ADR-PC-036 §Decision 2/5; ADR-PC-021 §A3/§P4). The family .Lifecycle contributions are referenced so
+         their Babelstone.Families.*.Lifecycle.dll land in the TEST output dir — exactly where the loader's
+         base-directory probe scans (AppContext.BaseDirectory), so the test proves discovery the same way the
+         host boots it. The test names NO family TYPE — it asserts the loader returns each family by NAME — so it
+         is the fitness proof that a family is discovered with zero host-composition edit. -->
+    <ProjectReference Include="../../src/Babelstone.Lifecycle.Host/Babelstone.Lifecycle.Host.csproj" />
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Lifecycle/Babelstone.Families.TermDeposit.Lifecycle.csproj" />
+    <ProjectReference Include="../../../families/personal-loan/src/Babelstone.Families.PersonalLoan.Lifecycle/Babelstone.Families.PersonalLoan.Lifecycle.csproj" />
+  </ItemGroup>
+</Project>

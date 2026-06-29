@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The family LIFECYCLE contribution under test: InstallmentRule (the recurring installment decision keyed
+         on the stable installment NUMBER, the re-tick no-op, the advance-to-N+1-only-after-N-paid invariant, the
+         collection-account recovery, the no-SCA-principal case), driven over a fake installment-calendar store
+         with the real LifecycleSchedulePass + dispatch ledger — no engine, no Docker. The contribution brings
+         the driver core's family-rule port (ILifecycleCommandRule / LifecycleCommandDecision) and the
+         LifecycleCommandKey seam via its project reference. The core's own dedupe + dispatch-id are tested in
+         Babelstone.Lifecycle.Tests. -->
+    <ProjectReference Include="../../src/Babelstone.Families.PersonalLoan.Lifecycle/Babelstone.Families.PersonalLoan.Lifecycle.csproj" />
+  </ItemGroup>
+</Project>

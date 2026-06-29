@@ -1,10 +1,11 @@
 using Babelstone.Engine;
 using Babelstone.Engine.Hosting;
 using Babelstone.Families.PersonalLoan;
+using Babelstone.Families.PersonalLoan.Lifecycle;
 using Babelstone.Lifecycle;
 using Xunit;
 
-namespace Babelstone.Lifecycle.Tests;
+namespace Babelstone.Families.PersonalLoan.Lifecycle.Tests;
 
 /// <summary>
 /// Tests for <see cref="InstallmentRule"/> — the personal-loan family's recurring lifecycle-command rule
