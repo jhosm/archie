@@ -301,11 +301,10 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
 
     /// <summary>Attest the scoped non-interactive SCA service principal on the request, exactly as Kong's
     /// route-scoped set_header attestation would from the lifecycle driver's AS-signed scope claim
-    /// (ADR-PC-036 / ScaServicePrincipal). The DEPOSIT money-mover scope (maturity / interest require it,
-    /// per-family scoping, bd babelstone-6cpq.14). No human acr/auth_time — a machine actor has none.</summary>
+    /// (ADR-PC-036 / ScaServicePrincipal). No human acr/auth_time — a machine actor has none.</summary>
     private static void AddServicePrincipal(HttpRequestMessage request) =>
         request.Headers.TryAddWithoutValidation(
-            ScaServicePrincipal.PrincipalHeader, ScaServicePrincipal.DepositMoneyMoverScope);
+            ScaServicePrincipal.PrincipalHeader, ScaServicePrincipal.LifecycleMoneyMoverScope);
 
     /// <summary>Constitute a vanilla Active AT_MATURITY deposit and return its id — the precondition for
     /// the money-mover SCA-gate tests.</summary>

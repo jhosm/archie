@@ -28,32 +28,17 @@ public sealed class ScaServicePrincipalTests
         new HeaderDictionary { [ScaServicePrincipal.PrincipalHeader] = scopeValue };
 
     [Theory]
-    [InlineData(ScaServicePrincipal.MaturityOperation, ScaServicePrincipal.DepositMoneyMoverScope)]
-    [InlineData(ScaServicePrincipal.InterestOperation, ScaServicePrincipal.DepositMoneyMoverScope)]
-    [InlineData(ScaServicePrincipal.InstallmentOperation, ScaServicePrincipal.LoanMoneyMoverScope)]
-    public void A_scoped_principal_authorises_its_family_money_mover_route(string operation, string scope)
+    [InlineData(ScaServicePrincipal.MaturityOperation)]
+    [InlineData(ScaServicePrincipal.InterestOperation)]
+    [InlineData(ScaServicePrincipal.InstallmentOperation)]
+    public void A_scoped_principal_authorises_the_money_mover_lifecycle_routes(string operation)
     {
-        // The exact PER-FAMILY money-mover scope, attested by the gateway, authorises that family's
-        // clock-driven money-mover the ADR-PC-036 driver fires — the deposit maturity + coupon under the
-        // deposit scope, the loan installment under the loan scope (bd babelstone-6cpq.14) — with no human
-        // step-up needed for a machine actor.
-        var headers = WithPrincipal(scope);
+        // The exact lifecycle money-mover scope, attested by the gateway, authorises the clock-driven
+        // money-movers the ADR-PC-036 driver fires across families — the deposit maturity + coupon and the
+        // loan installment (bd babelstone-6cpq.14) — with no human step-up needed for a machine actor.
+        var headers = WithPrincipal(ScaServicePrincipal.LifecycleMoneyMoverScope);
 
         Assert.True(ScaServicePrincipal.IsAuthorised(headers, operation));
-    }
-
-    [Theory]
-    [InlineData(ScaServicePrincipal.InstallmentOperation, ScaServicePrincipal.DepositMoneyMoverScope)]
-    [InlineData(ScaServicePrincipal.MaturityOperation, ScaServicePrincipal.LoanMoneyMoverScope)]
-    [InlineData(ScaServicePrincipal.InterestOperation, ScaServicePrincipal.LoanMoneyMoverScope)]
-    public void A_principal_scoped_to_the_wrong_family_is_refused(string operation, string wrongFamilyScope)
-    {
-        // CROSS-FAMILY ISOLATION (bd babelstone-6cpq.14): a valid scope for the WRONG family does not
-        // authorise — a deposit-scoped token cannot pay a loan installment, and a loan-scoped token cannot
-        // mature/coupon a deposit. So a leaked driver token is confined to its own family's money-movers.
-        var headers = WithPrincipal(wrongFamilyScope);
-
-        Assert.False(ScaServicePrincipal.IsAuthorised(headers, operation));
     }
 
     [Theory]
@@ -63,12 +48,11 @@ public sealed class ScaServicePrincipalTests
     [InlineData("erase-personal-data")] // GDPR Article 17 — a DIFFERENT gate
     public void A_scoped_principal_is_refused_on_a_non_authorised_route(string operation)
     {
-        // SCOPE-LIMITED: even WITH a valid family principal header, the principal cannot reach a route outside
-        // its allowance. The customer-initiated money-movers (terminate, early-repayment) and the
-        // operator/GDPR surfaces (write-off, erase-personal-data) are human-SCA-only, so neither family scope
-        // authorises them — the "scoped, not blanket" guarantee (ADR-PC-036 §Consequences). Presenting the
-        // deposit scope is representative; an operation outside OperationScopes is refused for ANY scope.
-        var headers = WithPrincipal(ScaServicePrincipal.DepositMoneyMoverScope);
+        // SCOPE-LIMITED: even WITH a valid principal header, the principal cannot reach a route outside its
+        // allowance. The customer-initiated money-movers (terminate, early-repayment) and the operator/GDPR
+        // surfaces (write-off, erase-personal-data) are human-SCA-only, so the driver's principal is refused
+        // there — the "scoped, not blanket" guarantee (ADR-PC-036 §Consequences).
+        var headers = WithPrincipal(ScaServicePrincipal.LifecycleMoneyMoverScope);
 
         Assert.False(ScaServicePrincipal.IsAuthorised(headers, operation));
     }
@@ -94,8 +78,8 @@ public sealed class ScaServicePrincipalTests
     public void A_principal_carrying_the_scope_among_others_is_still_authorised()
     {
         // The OAuth `scope` claim is space-delimited and may carry several scopes; membership of the exact
-        // family money-mover scope is what authorises, so an additional scope does not break recognition.
-        var headers = WithPrincipal($"openid {ScaServicePrincipal.DepositMoneyMoverScope} deposits:read");
+        // lifecycle money-mover scope is what authorises, so an additional scope does not break recognition.
+        var headers = WithPrincipal($"openid {ScaServicePrincipal.LifecycleMoneyMoverScope} deposits:read");
 
         Assert.True(ScaServicePrincipal.IsAuthorised(headers, ScaServicePrincipal.MaturityOperation));
     }
@@ -127,13 +111,11 @@ public sealed class ScaServicePrincipalTests
     }
 
     [Fact]
-    public void The_scope_tokens_match_the_gateway_attestation_contract()
+    public void The_scope_token_matches_the_gateway_attestation_contract()
     {
-        // The engine-side scope values MUST equal the Kong route-scoped allowances and the IAM-minted scopes
-        // (lock-step, ADR-IC-021) — pin the literals so a drift on either side is caught here. The loan scope
-        // (bd babelstone-6cpq.14) is the per-family analogue of the deposit one.
-        Assert.Equal("lifecycle:deposit-money-mover", ScaServicePrincipal.DepositMoneyMoverScope);
-        Assert.Equal("lifecycle:loan-money-mover", ScaServicePrincipal.LoanMoneyMoverScope);
+        // The engine-side scope value MUST equal the Kong route-scoped allowance and the IAM-minted scope
+        // (lock-step, ADR-IC-021) — pin the literal so a drift on either side is caught here.
+        Assert.Equal("lifecycle:deposit-money-mover", ScaServicePrincipal.LifecycleMoneyMoverScope);
         Assert.Equal("X-SCA-Service-Principal", ScaServicePrincipal.PrincipalHeader);
     }
 }

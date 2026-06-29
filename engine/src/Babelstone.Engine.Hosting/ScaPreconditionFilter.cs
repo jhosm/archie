@@ -82,7 +82,7 @@ public sealed class ScaPreconditionFilter(TimeProvider clock) : IEndpointFilter
                 .LogInformation(
                     "SCA bypassed via the scoped non-interactive service principal ({Scope}) on the "
                         + "{Operation} money-mover route (ADR-PC-036 lifecycle-command driver).",
-                    ScaServicePrincipal.RequiredScope(operation),
+                    ScaServicePrincipal.LifecycleMoneyMoverScope,
                     operation);
             return await next(context);
         }
