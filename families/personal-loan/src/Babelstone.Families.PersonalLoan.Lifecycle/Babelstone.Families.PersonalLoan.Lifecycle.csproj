@@ -1,0 +1,36 @@
+<!-- The personal-loan family's LIFECYCLE-COMMAND contribution (ADR-PC-036 §Decision 2/3/5; ADR-PC-021 §A3/§P4):
+     the family-owned InstallmentRule + the IFamilyLifecycleModule that binds the family's Npgsql forward
+     installment-calendar store behind the driver's family-agnostic store interface and registers the rule. It
+     plugs into the family-agnostic lifecycle-command driver via the family → core arrow (ADR-IC-019 §P2), never
+     the reverse. The lifecycle driver core names no family; THIS assembly (a Babelstone.Families.* assembly the
+     host discovers by assembly-scan) holds the personal-loan knowledge. Build settings inherit from
+     families/Directory.Build.props → engine/Directory.Build.props (net10.0, nullable, warnings-as-errors,
+     deterministic). -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Families.PersonalLoan.Lifecycle</RootNamespace>
+    <AssemblyName>Babelstone.Families.PersonalLoan.Lifecycle</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- IServiceCollection + AddSingleton for PersonalLoanLifecycleModule.ConfigureServices. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The lifecycle-driver CORE: the family → core arrow (ADR-IC-019 §P2). Brings the contribution port
+         (IFamilyLifecycleModule / LifecycleModuleContext) + the rule contract (ILifecycleCommandRule /
+         LifecycleCommandDecision). The core never references back. -->
+    <ProjectReference Include="../../../../lifecycle-driver/src/Babelstone.Lifecycle/Babelstone.Lifecycle.csproj" />
+    <!-- The engine kernel: InstallmentRule re-hydrates the loan's projected LoanPosition via
+         JsonStateSerializer<LoanPosition> to recover its collection-account reference (a pure re-hydration of
+         already-projected bytes). -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <!-- The family CORE (pure-fold) read side InstallmentRule range-scans: IInstallmentCalendarReadModelStore +
+         InstallmentCalendarReadModelRow + the folded LoanPosition. -->
+    <ProjectReference Include="../Babelstone.Families.PersonalLoan/Babelstone.Families.PersonalLoan.csproj" />
+    <!-- The family APPLICATION layer: the Npgsql PostgresInstallmentCalendarReadModelStore the module binds
+         behind the store interface (the §D4 composition root names Postgres here, not in the driver core). -->
+    <ProjectReference Include="../Babelstone.Families.PersonalLoan.Application/Babelstone.Families.PersonalLoan.Application.csproj" />
+  </ItemGroup>
+</Project>

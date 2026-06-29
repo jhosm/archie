@@ -1,9 +1,6 @@
 using Babelstone.Cadence;
-using Babelstone.Families.PersonalLoan;
-using Babelstone.Families.PersonalLoan.Application;
-using Babelstone.Families.TermDeposit;
-using Babelstone.Families.TermDeposit.Application;
 using Babelstone.Lifecycle;
+using Babelstone.Lifecycle.Host;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -79,23 +76,22 @@ builder.Services.AddSingleton<LifecycleDispatchLedger>();
 builder.Services.AddHttpClient<ILifecycleCommandSink, HttpLifecycleCommandSink>(client =>
     client.BaseAddress = new Uri(engineBaseUrl.EndsWith('/') ? engineBaseUrl : engineBaseUrl + "/"));
 
-// The family READ-MODEL STORES the rules range-scan (ADR-PC-036 §Decision 2/5). The composition root is the
-// place that names a family and binds the Npgsql implementation behind the interface (ADR-IC-019 §D4): the
-// rules + the generic driver name only the interface, so the read side stays storage-agnostic and the host
-// alone knows it is Postgres. Both read the SAME engine read-model database (the engine MATERIALISES these
-// rows; the driver only reads them).
-builder.Services.AddSingleton<IDepositReadModelStore>(
-    new PostgresDepositReadModelStore(readModelConnectionString));
-builder.Services.AddSingleton<IInstallmentCalendarReadModelStore>(
-    new PostgresInstallmentCalendarReadModelStore(readModelConnectionString));
-
-// The family ILifecycleCommandRule contributions (ADR-PC-036 §Decision 2; bd babelstone-6cpq.8/.9). Each
-// reads its own forward calendar as-of today and emits one decision per due occurrence; the generic pass
-// derives the number-pinned id, dedupes, and POSTs (the family → core arrow, ADR-IC-019 §P2). MaturityRule is
-// the one-shot deposit-maturity case; InstallmentRule is the recurring personal-loan installment case. A
-// third clock-driven lifecycle is a fourth rule registered here with zero generic-driver diff (ADR-PC-036 §S4).
-builder.Services.AddSingleton<ILifecycleCommandRule, MaturityRule>();
-builder.Services.AddSingleton<ILifecycleCommandRule, InstallmentRule>();
+// Compose the family ILifecycleCommandRule contributions by ASSEMBLY-SCAN discovery (ADR-PC-036; ADR-PC-021 —
+// the lifecycle-driver twin of the engine's HostModuleLoader). The host is the composition root — the ONLY
+// place that MAY name a family (ADR-IC-019) — but it names NONE: LifecycleModuleLoader scans the
+// Babelstone.Families.*.Lifecycle assemblies shipped beside the host for IFamilyLifecycleModule contributions
+// and fails loud on a duplicate FamilyName. Each module registers its OWN family-owned Npgsql read-model store
+// (behind the family-agnostic store interface the rule depends on) + its rule, over the read-model connection
+// conveyed here — so the read side stays storage-agnostic and the driver core names no family (the family →
+// core arrow, ADR-IC-019). The rules range-scan their forward calendars as-of today and emit one decision per
+// due occurrence; the generic pass derives the number-pinned id, dedupes, and POSTs. Adding a clock-driven
+// lifecycle to a NEW family is its .Lifecycle module + the host ProjectReference (so its dll lands beside the
+// host for the scan) — ZERO edit here (ADR-PC-036, "a fourth rule with zero core diff").
+var moduleContext = new LifecycleModuleContext(builder.Configuration, readModelConnectionString);
+foreach (var module in new LifecycleModuleLoader().LoadAll(LifecycleModuleLoader.FamilyLifecycleAssemblies()))
+{
+    module.ConfigureServices(builder.Services, moduleContext);
+}
 
 // The per-tick engine over the registered family rules + the dispatch ledger + the sink (ADR-PC-036 §Decision 2).
 builder.Services.AddSingleton<LifecycleSchedulePass>();

@@ -1,7 +1,8 @@
 using Babelstone.Engine;
 using Babelstone.Families.PersonalLoan;
+using Babelstone.Lifecycle;
 
-namespace Babelstone.Lifecycle;
+namespace Babelstone.Families.PersonalLoan.Lifecycle;
 
 /// <summary>
 /// The personal-loan family's lifecycle-command rule (ADR-PC-036 §Decision 2, 3 &amp; 5; bd babelstone-6cpq.9) —
@@ -10,7 +11,7 @@ namespace Babelstone.Lifecycle;
 /// (ADR-PC-023); this rule reads the loan's forward <c>installment_calendar</c> read model as-of today, finds
 /// the single NEXT-unpaid installment that has fallen due per Active loan, and says "fire <c>PayInstallment</c>
 /// on it" — the generic driver derives the canonical id, dedupes, and POSTs. It is the recurring sibling of the
-/// one-shot <see cref="MaturityRule"/>.
+/// one-shot <c>MaturityRule</c>.
 /// </summary>
 /// <remarks>
 /// <para>

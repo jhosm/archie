@@ -41,11 +41,20 @@
          the term-deposit maturity-reminder rule + template (the 14-day window, pt.notice.maturity) and the
          IFamilyNotificationModule, depending only on the notification core (family → core), never the kernel. -->
     <Project Path="../families/term-deposit/src/Babelstone.Families.TermDeposit.Notification/Babelstone.Families.TermDeposit.Notification.csproj" />
+    <!-- The family's LIFECYCLE-COMMAND contribution (ADR-PC-036 §Decision 2/5; ADR-PC-021 §A3/§P4): the
+         term-deposit MaturityRule + the IFamilyLifecycleModule that binds its Npgsql read-model store and
+         registers the rule, discovered by the lifecycle host's assembly-scan. Family → core arrow, never the
+         reverse; depends on the lifecycle driver core, not the kernel. -->
+    <Project Path="../families/term-deposit/src/Babelstone.Families.TermDeposit.Lifecycle/Babelstone.Families.TermDeposit.Lifecycle.csproj" />
     <!-- The personal_loan family (ADR-PC-031 / ADR-PC-030 roadmap item 2): the closed-end personal-loan
          ASSET family — the 2nd family on the engine, mirroring the term-deposit liability. The pure-fold
          schema + the impure decider/application layer; same family → engine plugin arrow (ADR-PC-021). -->
     <Project Path="../families/personal-loan/src/Babelstone.Families.PersonalLoan/Babelstone.Families.PersonalLoan.csproj" />
     <Project Path="../families/personal-loan/src/Babelstone.Families.PersonalLoan.Application/Babelstone.Families.PersonalLoan.Application.csproj" />
+    <!-- The personal-loan family's LIFECYCLE-COMMAND contribution (ADR-PC-036 §Decision 2/3/5): the recurring
+         InstallmentRule + the IFamilyLifecycleModule that binds its forward installment-calendar Npgsql store
+         and registers the rule, discovered by the lifecycle host's assembly-scan (family → core arrow). -->
+    <Project Path="../families/personal-loan/src/Babelstone.Families.PersonalLoan.Lifecycle/Babelstone.Families.PersonalLoan.Lifecycle.csproj" />
     <!-- The in-house saga orchestrator (ADR-IC-003, Epic H.1): the hand-rolled ConstitutionProcess
          state machine + saga-state/transition persistence + idempotent inbox-driven advance. An
          extraction-ready subtree (ADR-PC-019 §P2) that builds with the engine pipeline. -->
@@ -114,11 +123,17 @@
     <!-- The family NOTIFICATION contribution tests (bd babelstone-9u70): the maturity-reminder rule's window
          selection + template + Active-only filter, over a fake HttpMessageHandler (no engine, no Docker). -->
     <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Notification.Tests/Babelstone.Families.TermDeposit.Notification.Tests.csproj" />
+    <!-- The family LIFECYCLE contribution tests (ADR-PC-036 §Decision 2/6): MaturityRule's one-shot maturity
+         decision, on/after-maturity ordering, Active-only filter and backfill, over a fake read-model store. -->
+    <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Lifecycle.Tests/Babelstone.Families.TermDeposit.Lifecycle.Tests.csproj" />
     <!-- The personal_loan family tests (ADR-PC-031): replay/fold tests over the loan position,
          lifecycle legality, the amortization-schedule projection, and the pure decider's
          French-system amortization + capped early-repayment math. -->
     <Project Path="../families/personal-loan/tests/Babelstone.Families.PersonalLoan.Tests/Babelstone.Families.PersonalLoan.Tests.csproj" />
     <Project Path="../families/personal-loan/tests/Babelstone.Families.PersonalLoan.Application.Tests/Babelstone.Families.PersonalLoan.Application.Tests.csproj" />
+    <!-- The family LIFECYCLE contribution tests (ADR-PC-036 §Decision 2/3/5): InstallmentRule's number-pinned
+         recurring decision, the re-tick no-op, advance-to-N+1-only-after-N-paid, over a fake calendar store. -->
+    <Project Path="../families/personal-loan/tests/Babelstone.Families.PersonalLoan.Lifecycle.Tests/Babelstone.Families.PersonalLoan.Lifecycle.Tests.csproj" />
     <!-- H.1 saga substrate: pure state-machine tests + saga-persistence/advance/role-envelope
          integration tests (the latter [Trait("Category","Integration")], filtered out of the
          default lane). -->
@@ -139,6 +154,10 @@
          (LifecycleSchedulePassTests), and the command sink's end-to-end POST through a fake HttpMessageHandler
          (HttpLifecycleCommandSinkTests). -->
     <Project Path="../lifecycle-driver/tests/Babelstone.Lifecycle.Tests/Babelstone.Lifecycle.Tests.csproj" />
+    <!-- The lifecycle-command driver HOST tests (ADR-PC-036 §Decision 2/5; ADR-PC-021 §A3/§P4): the
+         LifecycleModuleLoader assembly-scan discovery fitness proof — both shipped families are discovered with
+         no host-composition edit naming them, in a stable order. -->
+    <Project Path="../lifecycle-driver/tests/Babelstone.Lifecycle.Host.Tests/Babelstone.Lifecycle.Host.Tests.csproj" />
     <!-- L.1 load harness smoke/self-test (ADR-PC-011): Docker-free determinism + envelope + observer tests. -->
     <Project Path="load/Babelstone.LoadHarness.Tests/Babelstone.LoadHarness.Tests.csproj" />
     <!-- L.3a–d runner component tests (ADR-PC-011, bd babelstone-2e6q.1..4): Docker-free arg-parsing,

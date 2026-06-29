@@ -1,9 +1,10 @@
 using Babelstone.Engine.Hosting;
 using Babelstone.Families.TermDeposit;
+using Babelstone.Families.TermDeposit.Lifecycle;
 using Babelstone.Lifecycle;
 using Xunit;
 
-namespace Babelstone.Lifecycle.Tests;
+namespace Babelstone.Families.TermDeposit.Lifecycle.Tests;
 
 /// <summary>
 /// Tests for <see cref="MaturityRule"/> — the term-deposit family's one-shot lifecycle-command rule
