@@ -28,7 +28,7 @@ PC_ADRS="docs/product-management/product_concepts/adrs"
 IC_ADRS="docs/product-management/integration_concepts/adrs"
 CATALOGUE="$PC_ADRS/commitment-catalogue.md"
 # Buildable subtrees that may carry `// ADR-PC-NNN` code anchors (ADR-PC-019 §P1).
-CODE_DIRS="engine families orchestrator acl mcp-server notification pack-validate contracts"
+CODE_DIRS="engine families orchestrator acl mcp-server notification lifecycle-driver cadence pack-validate contracts"
 # Only real source files carry anchors — not the scaffold's README.md / Dockerfile.
 CODE_INCLUDES=(--include='*.cs' --include='*.go' --include='*.py' --include='*.ts' --include='*.tsx' --include='*.sql' --include='*.fs')
 
