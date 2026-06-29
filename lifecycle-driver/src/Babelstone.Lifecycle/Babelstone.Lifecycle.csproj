@@ -68,5 +68,19 @@
          the engine stays clockless: NO_CLOCK_DRIVEN_ENGINE_SIGNAL holds). The lifecycle driver is downstream and
          subject to no family-agnostic gate, so naming the engine hosting seam here is sound. -->
     <ProjectReference Include="../../../engine/src/Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
+
+    <!-- The family READ-SIDE the per-family lifecycle rules range-scan as-of today (ADR-PC-036 §Decision 2 +
+         §Decision 5; bd babelstone-6cpq.8/.9). MaturityRule reads the term-deposit maturity calendar
+         (IDepositReadModelStore + DepositReadModelRow) and InstallmentRule reads the personal-loan forward
+         installment_calendar (IInstallmentCalendarReadModelStore + InstallmentCalendarReadModelRow +
+         LoanPosition). These are the family CORE (pure-fold) projects — the store INTERFACES + row types +
+         folded position only; the Npgsql implementations live in the family .Application projects the HOST
+         wires (so neither ASP.NET nor a DB driver leaks into this core). The dependency is the family → driver
+         arrow (ADR-IC-019 §P2): the family read side flows in, the families never reference the driver. The
+         lifecycle driver is downstream and subject to no family-agnostic gate (see the Engine.Hosting note
+         above), so naming the family read side here is sound; the GENERIC machinery (the pass, ledger, sink,
+         worker) still names no family. -->
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
+    <ProjectReference Include="../../../families/personal-loan/src/Babelstone.Families.PersonalLoan/Babelstone.Families.PersonalLoan.csproj" />
   </ItemGroup>
 </Project>

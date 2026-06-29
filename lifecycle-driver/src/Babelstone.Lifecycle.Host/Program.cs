@@ -1,4 +1,8 @@
 using Babelstone.Cadence;
+using Babelstone.Families.PersonalLoan;
+using Babelstone.Families.PersonalLoan.Application;
+using Babelstone.Families.TermDeposit;
+using Babelstone.Families.TermDeposit.Application;
 using Babelstone.Lifecycle;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -28,6 +32,21 @@ var engineBaseUrl =
         "No engine API base URL configured. Set Engine:BaseUrl, ConnectionStrings:Engine, or " +
         "BABELSTONE_ENGINE_BASE_URL (the ADR-PC-029 command surface — POST /v1/loans/{id}/installment, " +
         "POST /v1/deposits/{id}/maturity).");
+
+// The engine read-model database the family rules range-scan to find due work (ADR-PC-036 §Decision 2/5;
+// ADR-IC-005 read-model tier). The forward calendars — term_deposit's maturity range scan and personal_loan's
+// installment_calendar — are the temporal signal (ADR-PC-023): the rule reads them as-of today, the engine
+// stays clockless. This is the read-side connection (the family read-model stores' SELECTs); it is DISTINCT
+// from Engine:BaseUrl above (the WRITE-side command HTTP surface the sink POSTs). Fail-loud: a driver that
+// cannot reach the read model cannot discover due commands, so it must not start.
+var readModelConnectionString =
+    builder.Configuration["Engine:ReadModelConnectionString"]
+    ?? builder.Configuration.GetConnectionString("EngineReadModel")
+    ?? Environment.GetEnvironmentVariable("BABELSTONE_ENGINE_READMODEL_CONNECTION")
+    ?? throw new InvalidOperationException(
+        "No engine read-model connection string configured. Set Engine:ReadModelConnectionString, " +
+        "ConnectionStrings:EngineReadModel, or BABELSTONE_ENGINE_READMODEL_CONNECTION (the ADR-IC-005 " +
+        "read-model tier the family rules range-scan: read_model.deposits, read_model.installment_calendar).");
 
 // The wall-clock the worker loop OWNS (ADR-PC-023 §6 — the engine emits no clock-driven signal, so the
 // downstream driver owns the clock). TimeProvider.System in production; a test substitutes a fake so the loop
@@ -60,10 +79,25 @@ builder.Services.AddSingleton<LifecycleDispatchLedger>();
 builder.Services.AddHttpClient<ILifecycleCommandSink, HttpLifecycleCommandSink>(client =>
     client.BaseAddress = new Uri(engineBaseUrl.EndsWith('/') ? engineBaseUrl : engineBaseUrl + "/"));
 
+// The family READ-MODEL STORES the rules range-scan (ADR-PC-036 §Decision 2/5). The composition root is the
+// place that names a family and binds the Npgsql implementation behind the interface (ADR-IC-019 §D4): the
+// rules + the generic driver name only the interface, so the read side stays storage-agnostic and the host
+// alone knows it is Postgres. Both read the SAME engine read-model database (the engine MATERIALISES these
+// rows; the driver only reads them).
+builder.Services.AddSingleton<IDepositReadModelStore>(
+    new PostgresDepositReadModelStore(readModelConnectionString));
+builder.Services.AddSingleton<IInstallmentCalendarReadModelStore>(
+    new PostgresInstallmentCalendarReadModelStore(readModelConnectionString));
+
+// The family ILifecycleCommandRule contributions (ADR-PC-036 §Decision 2; bd babelstone-6cpq.8/.9). Each
+// reads its own forward calendar as-of today and emits one decision per due occurrence; the generic pass
+// derives the number-pinned id, dedupes, and POSTs (the family → core arrow, ADR-IC-019 §P2). MaturityRule is
+// the one-shot deposit-maturity case; InstallmentRule is the recurring personal-loan installment case. A
+// third clock-driven lifecycle is a fourth rule registered here with zero generic-driver diff (ADR-PC-036 §S4).
+builder.Services.AddSingleton<ILifecycleCommandRule, MaturityRule>();
+builder.Services.AddSingleton<ILifecycleCommandRule, InstallmentRule>();
+
 // The per-tick engine over the registered family rules + the dispatch ledger + the sink (ADR-PC-036 §Decision 2).
-// Family ILifecycleCommandRule contributions plug in here with zero core diff — the first are the sibling bd
-// issues babelstone-6cpq.8 (term-deposit maturity, one-shot) and babelstone-6cpq.9 (personal-loan installment,
-// recurring), which this host stands up. With no rule registered yet the pass simply runs an empty tick.
 builder.Services.AddSingleton<LifecycleSchedulePass>();
 
 // The host shell — the standing BackgroundService the schedule pass runs inside. It OWNS the clock, cadence,
