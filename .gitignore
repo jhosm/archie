@@ -49,6 +49,10 @@ __pycache__/
 # Editor / backup artefacts — never commit (e.g. kustomization.yaml.bak)
 *.bak
 
+# Hetzner k3s provisioning (infra/hetzner-k3s) — the generated cluster-admin kubeconfig is a
+# credential (feeds cd.yml's KUBECONFIG_B64), never commit it.
+/infra/hetzner-k3s/kubeconfig
+
 # Walking-skeleton demo runtime (scripts/demo-mcp.sh): logs + pidfiles
 /.demo-mcp/
 

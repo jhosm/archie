@@ -12,7 +12,7 @@ Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. State
 
 ## 1. Provision / first bring-up (Phases 0–2, account-gated)
 
-1. Provision the node + k3s with the Hetzner CCM + CSI (Phase 1, `hetzner-k3s`).
+1. Provision the node + k3s with the Hetzner CCM + CSI (Phase 1, `hetzner-k3s`) — see **§1.1** below.
 2. Point DNS A records `app`, `api`, `backstage`.`babelstone.dev` at the node IP.
 3. Install the cluster add-ons (all under [`../k8s/overlays/staging/bootstrap/`](../k8s/overlays/staging/bootstrap/)):
    - **cert-manager** (Helm) — see `bootstrap/README.md`.
@@ -27,6 +27,25 @@ Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. State
    and the Kong mTLS material (via `deck-sync`).
 6. Deploy: `kubectl apply -k infra/k8s/overlays/staging` (or dispatch `cd.yml` with
    `overlay: staging`).
+
+### 1.1 Phase 1 — provision the cluster (`hetzner-k3s`)
+
+Step 1 above is one `hetzner-k3s` command. The cluster config lives at
+[`../hetzner-k3s/cluster.yaml`](../hetzner-k3s/cluster.yaml) (1× CAX41 ARM, Helsinki `hel1`,
+single-node k3s); the full walk-through + prereqs are in
+[`../hetzner-k3s/README.md`](../hetzner-k3s/README.md). In short:
+
+```bash
+cd infra/hetzner-k3s
+export HCLOUD_TOKEN=<read/write Hetzner Cloud API token>   # never commit; takes precedence over the config
+# replace REPLACE_ME/32 in cluster.yaml with your operator IP; pin a valid `hetzner-k3s releases` version
+hetzner-k3s create --config cluster.yaml                   # creates the node + k3s + Hetzner CCM/CSI; writes ./kubeconfig
+```
+
+The generated `./kubeconfig` is a cluster-admin credential — **gitignored, never committed**. It
+is the source for `cd.yml`'s `KUBECONFIG_B64` environment secret (`base64 < kubeconfig`). The
+Hetzner CCM + CSI driver come up automatically, so `hcloud-volumes` resolves for the durable-storage
+patch at Phase 3. Then continue with step 2 (DNS) → step 3 (`bootstrap/`, Phase 2) above.
 
 ## 2. Redeploy / promote a new build
 
