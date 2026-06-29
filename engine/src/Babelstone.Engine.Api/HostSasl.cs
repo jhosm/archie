@@ -8,9 +8,9 @@ namespace Babelstone.Engine.Api;
 /// Builds the <see cref="KafkaSaslOptions"/> a co-hosted Kafka client (today: the outbox→Redpanda
 /// relay producer) presents to the broker, resolving its SCRAM credential at the host composition
 /// root through the existing <see cref="ISecretProvider"/> seam (ADR-IC-016 plane ii §6 / ADR-PC-004
-/// §A1). This is the host-side wiring njt2.1 deferred: njt2.1 added the <see cref="KafkaSaslOptions"/>
-/// applier and the <c>Sasl</c> property on the relay options, but Program.cs still built those options
-/// with no credential, so SASL was OFF for every client. This connects the secret seam to the option.
+/// §A1). It connects the secret seam to the relay's <see cref="KafkaSaslOptions"/>: the applier and the
+/// <c>Sasl</c> property on the relay options carry no credential on their own, so this resolver supplies
+/// it — without it SASL stays OFF for every client.
 ///
 /// <para><b>The split (ADR-IC-016 §4–§6).</b> A Kafka client's identity is two parts handled
 /// differently:</para>

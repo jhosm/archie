@@ -57,9 +57,9 @@ public static class HostPackLoading
         // ── OCI mode (ADR-PC-007 §P3/§P4) ──────────────────────────────────────────────────────
         // Preflight, before any registry/pull/verify work: OCI mode shells out to oras + cosign at
         // load time. The production chiseled runtime image now BUNDLES both static binaries on PATH
-        // (engine/Dockerfile oci-tools stage, bd vrn4), so on the intended production path this is a
-        // silent no-op and the engine boots straight into OCI pack loading — the fail-FAST refusal
-        // bd 4ow6 shipped is lifted there. The guard is retained as a defense-in-depth safety net for
+        // (engine/Dockerfile oci-tools stage), so on the intended production path this is a
+        // silent no-op and the engine boots straight into OCI pack loading — the earlier fail-FAST refusal
+        // is lifted there. The guard is retained as a defense-in-depth safety net for
         // the residual misconfiguration: OCI mode selected in some OTHER image that legitimately lacks
         // the tools (a hand-rolled or older runtime). In that case it still throws a clear, named
         // PackLoadException here rather than letting it surface as an opaque "could not start 'oras'"
@@ -80,7 +80,7 @@ public static class HostPackLoading
         // §P4 worklist: every pack version any live instance references (events.pack_version), UNION
         // the configured primary so a fresh instance with an empty event log still loads its pack.
         //
-        // This read runs at STARTUP and is fatal-on-failure (bd babelstone-5grf): a host that cannot
+        // This read runs at STARTUP and is fatal-on-failure: a host that cannot
         // read its worklist cannot know which packs a live instance references, so it must NOT boot
         // and start serving against an unknown set — it fails loud, exactly like an unresolvable pin
         // does below. A DB-connectivity failure here would otherwise escape as a bare NpgsqlException

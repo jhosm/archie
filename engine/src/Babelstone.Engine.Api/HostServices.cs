@@ -6,12 +6,12 @@ namespace Babelstone.Engine.Api;
 
 /// <summary>
 /// The event-store payload codec: self-describing JSON. Per ADR-PC-028 this is the DECIDED, permanent
-/// format for the <c>events.payload</c> book of record (readable with no
-/// Schema Registry) — no longer the "deferred-Avro stand-in"; hardening it as the decided store codec
-/// (deterministic order, explicit versioning) is bd babelstone-36mk. This same codec currently also fills
-/// the OUTBOX payload, where it stays a placeholder until the Avro+SR bus encoding lands and the write
-/// path dual-encodes (JSON → store, Avro+schema_id → outbox; ADR-IC-004 §P3). SchemaId is a constant 1 —
-/// the placeholder for that outbound Avro id, not a decode key for the JSON payload.
+/// format for the <c>events.payload</c> book of record — readable with no Schema Registry
+/// (EVENT_STORE_PAYLOAD_SELF_DESCRIBING). In the default JSON bus posture this same codec also fills the
+/// OUTBOX payload (the runtime reuses the store codec); with <c>Bus:Encoding=avro</c> the dual-encode
+/// split routes JSON → store and Avro+<c>schema_id</c> → outbox instead (ADR-PC-028 /
+/// STORE_BUS_ENCODING_EQUIVALENCE, composed by <see cref="HostBusEncoding"/>). SchemaId is a constant 1
+/// — the id stamped on the JSON-posture outbox row, not a decode key for the self-describing payload.
 /// </summary>
 public sealed class JsonEventSerializer : IEventSerializer
 {

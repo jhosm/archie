@@ -19,8 +19,8 @@
          name a family (ADR-PC-021 A2), so this reference is legitimate here, not in the spine. -->
     <ProjectReference Include="../Babelstone.Engine.Avro/Babelstone.Engine.Avro.csproj" />
     <ProjectReference Include="../Babelstone.EventStore/Babelstone.EventStore.csproj" />
-    <!-- The shared host-composition contract assembly (ADR-PC-021 §A1, relocated 2026-06-20 /
-         bd babelstone-9w2k.1): IFamilyHostModule + FamilyHostContext + the family-agnostic
+    <!-- The shared host-composition contract assembly (ADR-PC-021 §A1, relocated 2026-06-20):
+         IFamilyHostModule + FamilyHostContext + the family-agnostic
          in-process hosting components (BusEventSerializer marker, ProjectionRelayService/Options).
          The host composes families over this contract; HostBusEncoding (Avro/SR → BusEventSerializer)
          stays here and now produces the Hosting-defined marker. -->
@@ -33,7 +33,7 @@
     <ProjectReference Include="../Babelstone.Pii/Babelstone.Pii.csproj" />
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
-    <!-- The personal_loan (credito_pessoal) family's host wiring (bd babelstone-9g77): both project
+    <!-- The personal_loan (credito_pessoal) family's host wiring: both project
          references are the assembly-scan LOAD ANCHOR (ADR-PC-031 §P5 / ADR-PC-021 §A3/§A14). The C#
          compiler elides a ProjectReference whose types are never named in host code, but these copy
          each Babelstone.Families.PersonalLoan*.dll next to the host in the output dir, where
@@ -55,7 +55,7 @@
          Babelstone.Telemetry (through Babelstone.Engine); referenced explicitly so the resource
          helper (BabelstoneResource) is a first-order dependency of the composition root. -->
     <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
-    <!-- The host-side OTel-SDK seam (K.5, bd scd2.3): registers Npgsql's BUILT-IN query telemetry
+    <!-- The host-side OTel-SDK seam (K.5): registers Npgsql's BUILT-IN query telemetry
          (per-command CLIENT spans + the db.client.operation.duration histogram) onto THIS host's
          existing TracerProvider + MeterProvider — covering every engine Postgres call (event-store
          appends, outbox drain + lag observer, projection/checkpoint stores) with no per-call wiring
@@ -63,12 +63,12 @@
     <ProjectReference Include="../Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
-    <!-- Npgsql's built-in OTel instrumentation (K.5, bd scd2.3): declared DIRECTLY here because the
+    <!-- Npgsql's built-in OTel instrumentation (K.5): declared DIRECTLY here because the
          Babelstone.Telemetry.Hosting seam keeps Npgsql.OpenTelemetry PrivateAssets="all" (so it does
          not leak into the DB-free notification host). This host is where AddNpgsqlQueryTelemetry()
          actually runs — over every engine Postgres call — so it needs the runtime assembly present. -->
     <PackageReference Include="Npgsql.OpenTelemetry" />
-    <!-- Inbound-request instrumentation (bd babelstone-2dex): the inbound HTTP request becomes a
+    <!-- Inbound-request instrumentation: the inbound HTTP request becomes a
          SERVER span that adopts the caller's W3C traceparent, so the deposit.* custom spans nest
          under it (parented to the inbound trace) rather than starting as disconnected roots. -->
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
