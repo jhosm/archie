@@ -5,10 +5,10 @@ using NpgsqlTypes;
 namespace Babelstone.RateSheets;
 
 /// <summary>
-/// The PostgreSQL-backed <see cref="IRateSheetStore"/> (ADR-PC-008 §P1). Hand-rolled
+/// The PostgreSQL-backed <see cref="IRateSheetStore"/> (ADR-PC-008). Hand-rolled
 /// against the <c>rate_sheets</c> table contract — no ORM (ADR-PC-010). Writes are
 /// INSERT-only; immutability is enforced by the runtime role's privilege envelope
-/// (migration 0004 / ADR-PC-001 §P3), not by this code. The body round-trips through
+/// (migration 0004 / ADR-PC-001), not by this code. The body round-trips through
 /// <see cref="RateSheetJson.Options"/> so the stored JSONB matches the deployed YAML.
 /// </summary>
 public sealed class PostgresRateSheetStore(string connectionString) : IRateSheetStore
@@ -46,7 +46,7 @@ public sealed class PostgresRateSheetStore(string connectionString) : IRateSheet
         {
             // Either the version-id PK or the (product_family, effective_from) unique key.
             // Surface a typed conflict; the deploy endpoint re-reads to decide idempotent
-            // success vs a genuine 409 (ADR-PC-008 §P2).
+            // success vs a genuine 409 (ADR-PC-008).
             throw new DuplicateRateSheetVersionException(sheet.RateSheetVersionId, e);
         }
     }
@@ -72,7 +72,7 @@ public sealed class PostgresRateSheetStore(string connectionString) : IRateSheet
     public async Task<RateSheetResolution?> ResolveAsync(
         string productFamily, DateTimeOffset asOf, CancellationToken ct = default)
     {
-        // §P3: "the sheet active at T" — highest effective_from not after the instant.
+        // ADR-PC-008: "the sheet active at T" — highest effective_from not after the instant.
         // Served by rate_sheets_resolve_idx (product_family, effective_from DESC).
         const string sql = """
             SELECT rate_sheet_version_id, body

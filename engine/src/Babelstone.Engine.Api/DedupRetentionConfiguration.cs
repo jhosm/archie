@@ -13,7 +13,7 @@ namespace Babelstone.Engine.Api;
 /// <para>
 /// All four knobs are now config-overridable, not just the two retention windows. The split matters:
 /// <see cref="DedupRetentionOptions.CommandDedupRetention"/> and
-/// <see cref="DedupRetentionOptions.InboxRetention"/> are correctness-bounded windows (ADR-PC-029 §4 —
+/// <see cref="DedupRetentionOptions.InboxRetention"/> are correctness-bounded windows (ADR-PC-029 —
 /// the command window is a FLOOR, not a knob to shorten casually), whereas
 /// <see cref="DedupRetentionOptions.BatchSize"/> and <see cref="DedupRetentionOptions.SweepInterval"/>
 /// are pure OPERATIONAL tuning: no value of either can break correctness (every setting only trades

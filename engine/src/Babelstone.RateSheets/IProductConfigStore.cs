@@ -10,27 +10,27 @@ namespace Babelstone.RateSheets;
 /// <remarks>
 /// <para>
 /// <b>The engine is the constitution authority (the maintainer's Q2 choice; resolution-in-transaction
-/// is ADR-PC-008 §S2).</b> Where the rejected v1 stand-in pinned the structural facts at the
+/// is ADR-PC-008).</b> Where the rejected v1 stand-in pinned the structural facts at the
 /// orchestrator edge and shipped them on the wire, the engine now resolves them itself — alongside the
-/// rate-sheet resolve, in the SAME constitution transaction (the ADR-PC-008 §S2 in-transaction
+/// rate-sheet resolve, in the SAME constitution transaction (the ADR-PC-008 in-transaction
 /// property). The resolved facts are the SHAPE only (term, variant, renewal policy, coupon cadence,
-/// role); the TAN is a separate rate-sheet resolve (ADR-PC-008 §P3), and the day-count / withholding
+/// role); the TAN is a separate rate-sheet resolve (ADR-PC-008), and the day-count / withholding
 /// primitives are pack-resolved. This store NEVER carries a price.
 /// </para>
 /// <para>
-/// <b>Family-agnostic seam (ADR-PC-021 §D2/§P2).</b> This interface lives in the generic
+/// <b>Family-agnostic seam (ADR-PC-021).</b> This interface lives in the generic
 /// <c>Babelstone.RateSheets</c> spine, next to <see cref="IRateSheetStore"/>. A family decider
 /// (e.g. <c>TermDepositConstitutionService</c>) consumes it — that is the family→spine arrow, which
 /// is allowed. The spine never references a family, so the <c>EngineFamilyAgnosticTests</c> fitness
 /// function stays green.
 /// </para>
 /// <para>
-/// <b>Version pinning (ADR-PC-009 §A2).</b> Each resolved config carries a content-hash
+/// <b>Version pinning (ADR-PC-009).</b> Each resolved config carries a content-hash
 /// <see cref="ProductConfig.ConfigVersion"/> (SHA-256 over the config YAML bytes) that the decider
 /// stamps onto <c>DepositConstituted</c> as a per-instance pin — a PAYLOAD-shaped pin, exactly like
 /// <c>rate_sheet_version_id</c> (NOT an envelope/AppendContext column like <c>pack_version</c>) — so a
-/// replay can prove which product-config generation a deposit was constituted under (ADR-PC-009 §A2,
-/// REPLAY_PIN_PER_EVENT; ADR-PC-008 §S2 resolution-in-transaction). The product-config YAMLs are
+/// replay can prove which product-config generation a deposit was constituted under (ADR-PC-009,
+/// REPLAY_PIN_PER_EVENT; ADR-PC-008 resolution-in-transaction). The product-config YAMLs are
 /// static, deploy-time artefacts with no versioned deploy registry, so the content hash IS the
 /// version: any edit to the YAML yields a new <c>ConfigVersion</c>.
 /// </para>
@@ -50,8 +50,8 @@ public interface IProductConfigStore
 /// The STRUCTURAL facts the engine resolves for a product code at constitution — the deposit's
 /// shape, never its price. Mirrors the committed <c>product-configs/*.yaml</c> fields the engine
 /// already validates at deploy time (term_days / interest_variant / auto_renewal_policy /
-/// payment_period_months), plus the pricing role the rate-sheet resolve keys on. No PII (ADR-PC-004
-/// §P2): every field is a closed code or an integer count.
+/// payment_period_months), plus the pricing role the rate-sheet resolve keys on. No PII
+/// (ADR-PC-004): every field is a closed code or an integer count.
 /// </summary>
 /// <param name="ProductId">The product code these facts describe (e.g. <c>dpz_pt_12m_juros_venc</c>).</param>
 /// <param name="TermDays">The deposit term in days (e.g. 365).</param>
@@ -74,8 +74,8 @@ public interface IProductConfigStore
 /// from — a SHA-256 content hash (<c>sha256:&lt;hex&gt;</c>) over the config YAML bytes, computed at
 /// load (the disk loader sets it; <c>FromConfigs</c> callers default it to <c>""</c>). The decider
 /// stamps it onto <c>DepositConstituted</c> as a per-instance pin so a replay can prove which
-/// product-config generation a deposit was constituted under (ADR-PC-009 §A2, REPLAY_PIN_PER_EVENT).
-/// A structural version string, never PII (ADR-PC-004 §P2). Defaults to <c>""</c> so the test seam and
+/// product-config generation a deposit was constituted under (ADR-PC-009, REPLAY_PIN_PER_EVENT).
+/// A structural version string, never PII (ADR-PC-004). Defaults to <c>""</c> so the test seam and
 /// pre-pin callers construct unchanged.</param>
 public sealed record ProductConfig(
     string ProductId,

@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 namespace Babelstone.RateSheets;
 
 /// <summary>
-/// The numerical body of a rate sheet (ADR-PC-008 §P1, surface §2.2): a map of
+/// The numerical body of a rate sheet (ADR-PC-008, surface §2.2): a map of
 /// <c>product_id -&gt; role -&gt; ordered principal bands</c>. Stored as JSONB, 1:1 with
 /// the deployed YAML. The envelope fields (version id, family, pack, effective_from,
 /// approver) are columns on <see cref="RateSheet"/>, never part of the body — the
@@ -24,7 +24,7 @@ public sealed class RoleRates
 
     /// <summary>
     /// The ordered bands. Read-only to match the documented immutability of a published
-    /// sheet (ADR-PC-008 §P1: once published, never edited); the band sequence is set at
+    /// sheet (ADR-PC-008: once published, never edited); the band sequence is set at
     /// construction (deserialize or author code) and never mutated thereafter.
     /// </summary>
     public IReadOnlyList<RateBand> Bands
@@ -91,7 +91,7 @@ public sealed class RateBand
 /// <summary>
 /// Reads / writes a <see cref="RateBand"/> against its wire shape — a snake_case object
 /// <c>{ "principal_cents": [lower, upper], "tan_basis_points": n }</c> — preserving the
-/// JSONB round-trip 1:1 with the deployed YAML (ADR-PC-008 §P1, §S3). Shape validation
+/// JSONB round-trip 1:1 with the deployed YAML (ADR-PC-008). Shape validation
 /// happens here, so a malformed band is rejected at deserialize rather than surfacing as a
 /// wrong rate at resolution: <c>principal_cents</c> must be exactly <c>[lower, upper]</c>
 /// with a non-null, non-negative lower and an upper that is either <c>null</c> (the
@@ -233,7 +233,7 @@ public static class RateSheetJson
     };
 
     /// <summary>
-    /// A canonical string form of a body for idempotency comparison (ADR-PC-008 §P2:
+    /// A canonical string form of a body for idempotency comparison (ADR-PC-008:
     /// "identical body under an existing version id is 200, different is 409"). Object
     /// keys are sorted so the comparison is independent of author key order and of the
     /// reordering PostgreSQL applies when it normalises JSONB on read-back. Array order

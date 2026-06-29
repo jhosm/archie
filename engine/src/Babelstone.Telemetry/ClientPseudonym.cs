@@ -6,7 +6,7 @@ namespace Babelstone.Telemetry;
 /// <summary>
 /// Derives the salted, one-way <b>pseudonym</b> that a span carries under
 /// <see cref="BabelstoneAttributes.SubjectPseudonym"/> in place of a raw <c>client_id</c>
-/// (ADR-IC-016 plane iii §8 / Document 10 Principle 4).
+/// (ADR-IC-016 plane iii / Document 10 Principle 4).
 ///
 /// <para>The raw client id is PII — it keys directly into the Customer Data Store — so it may never
 /// ride a telemetry signal. Attaching a non-reversible hash instead lets an operator correlate the
@@ -20,7 +20,7 @@ namespace Babelstone.Telemetry;
 /// once the salt leaks; keying the hash (HMAC) makes the salt a true secret key, so the residual-risk
 /// ADR-IC-016 flags ("a weak or unsalted hash re-introduces the personal-data-index risk") is closed.
 /// The salt is resolved at the host composition root through the <c>ISecretProvider</c> seam
-/// (ADR-PC-004 §A1) — it is a secret, never a compile-time constant, and never logged or spanned.</para>
+/// (ADR-PC-004) — it is a secret, never a compile-time constant, and never logged or spanned.</para>
 ///
 /// <para><b>Purity.</b> Derivation is a pure function of (salt, clientId): no clock, no I/O, no
 /// randomness — the salt is supplied by the caller. The same inputs always yield the same pseudonym,

@@ -5,13 +5,13 @@ using Npgsql;
 namespace Babelstone.OutboxPublisher;
 
 /// <summary>
-/// The §P4 publish-lag SLI (ADR-IC-004 §P4 / ADR-IC-007 Layer 1): an <see cref="ObservableGauge{T}"/>
+/// The publish-lag SLI (ADR-IC-004 / ADR-IC-007 Layer 1): an <see cref="ObservableGauge{T}"/>
 /// named <c>outbox_publish_lag_seconds</c> on the shared Babelstone meter, carrying the age in
 /// seconds of the OLDEST <c>PENDING</c> outbox row at each metrics-collection cycle.
 /// </summary>
 /// <remarks>
 /// <para>
-/// §P4 mandates a GAUGE of "the age in seconds of the oldest PENDING row at the time of the poll",
+/// ADR-IC-004 mandates a GAUGE of "the age in seconds of the oldest PENDING row at the time of the poll",
 /// alarmed Warning &gt;30s and Critical &gt;5min — the Critical case being "the publisher is not
 /// running or Redpanda is unavailable". A per-published-row latency histogram cannot serve those
 /// alerts: in exactly those failure modes NO row publishes, so a per-row instrument goes silent
@@ -21,7 +21,7 @@ namespace Babelstone.OutboxPublisher;
 /// <para>
 /// The value is <c>EXTRACT(EPOCH FROM clock_timestamp() - MIN(created_at))</c> over PENDING rows,
 /// computed entirely in the DB — single-clock by construction, so no host/DB clock skew can bias it
-/// (0 when the backlog is empty). The query is bounded by the §P5 partial index on
+/// (0 when the backlog is empty). The query is bounded by the ADR-IC-004 partial index on
 /// <c>(created_at, sequence_number) WHERE status = 'PENDING'</c>.
 /// </para>
 /// <para>

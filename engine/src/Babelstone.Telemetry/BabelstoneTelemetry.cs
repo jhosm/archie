@@ -29,19 +29,19 @@ public static class BabelstoneTelemetry
 }
 
 /// <summary>
-/// The two snapshotter operational signals ADR-PC-003 §P6 calls for, emitted by the runtime / snapshot
+/// The two snapshotter operational signals ADR-PC-003 calls for, emitted by the runtime / snapshot
 /// store so the <c>snapshot-operations</c> alert group can go live:
 /// <list type="bullet">
 ///   <item><b>snapshot lag</b> — an observable gauge of the largest un-snapshotted event count observed
-///   across streams (§P6 (1)). Gauge-shaped because the <c>SnapshotLagHigh</c> alert reads it
+///   across streams (ADR-PC-003). Gauge-shaped because the <c>SnapshotLagHigh</c> alert reads it
 ///   instantaneously (<c>&gt; 500</c>); a cumulative counter could never describe "how far behind RIGHT
 ///   NOW". <see cref="RecordLag"/> raises a per-process high-water mark from the post-commit snapshot
 ///   path; the gauge reports it each collection cycle.</item>
 ///   <item><b>hash-mismatch on read</b> — a monotonic counter incremented where
-///   <c>SnapshotStore.Verify</c> rejects a snapshot whose stored hash did not verify (§P6 (2) / §8.3).
+///   <c>SnapshotStore.Verify</c> rejects a snapshot whose stored hash did not verify (ADR-PC-003 / event-store §8.3).
 ///   <see cref="RecordHashMismatch"/> is called from the verify guard.</item>
 /// </list>
-/// These are pure RUNTIME/STORE emissions (ADR-PC-010 §P5): they never touch a pure handler, the
+/// These are pure RUNTIME/STORE emissions (ADR-PC-010): they never touch a pure handler, the
 /// replayed fold, or rebuilt state — emitting a snapshot metric cannot change what an event folds to, so
 /// replay determinism is unaffected. With no meter listener attached, an instrument's record/observe is a
 /// near-zero-cost no-op. The instruments live on the shared <see cref="BabelstoneTelemetry.Meter"/> so a
@@ -49,7 +49,7 @@ public static class BabelstoneTelemetry
 /// </summary>
 public static class SnapshotMetrics
 {
-    // The largest un-snapshotted event count observed since process start (the §P6 (1) lag high-water
+    // The largest un-snapshotted event count observed since process start (the ADR-PC-003 lag high-water
     // mark). A long behind an interlocked guard: the post-commit snapshot path raises it, the observable
     // gauge reads it. It only ever rises within a process — a deep stream that snapshots does not "undo"
     // the fact the snapshotter was once that far behind; an operator's signal is the PEAK lag, and a
@@ -96,7 +96,7 @@ public static class SnapshotMetrics
         while (System.Threading.Interlocked.CompareExchange(ref _maxLagEvents, eventsSinceSnapshot, current) != current);
     }
 
-    /// <summary>Increment the §P6 (2) hash-mismatch counter — called where <c>SnapshotStore.Verify</c> rejects a snapshot.</summary>
+    /// <summary>Increment the ADR-PC-003 hash-mismatch counter — called where <c>SnapshotStore.Verify</c> rejects a snapshot.</summary>
     public static void RecordHashMismatch() => HashMismatch.Add(1);
 
     private static long ObserveMaxLag() => System.Threading.Interlocked.Read(ref _maxLagEvents);

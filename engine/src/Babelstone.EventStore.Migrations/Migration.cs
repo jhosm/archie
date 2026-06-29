@@ -1,7 +1,7 @@
 namespace Babelstone.EventStore.Migrations;
 
 /// <summary>
-/// A single forward-only DDL step (ADR-PC-001 §P5). Once applied, a migration is
+/// A single forward-only DDL step (ADR-PC-001). Once applied, a migration is
 /// immutable: its <see cref="Sql"/> is never edited, only superseded by a
 /// higher-<see cref="Version"/> migration.
 /// </summary>

@@ -20,13 +20,13 @@ public static class BabelstoneResource
     /// <summary>Every Babelstone host shares this namespace, so traces group under one estate.</summary>
     public const string ServiceNamespace = "babelstone";
 
-    /// <summary>The engine command/query host's <c>service.name</c> (ADR-PC-021 §D5).</summary>
+    /// <summary>The engine command/query host's <c>service.name</c> (ADR-PC-021).</summary>
     public const string EngineApiServiceName = "babelstone-engine-api";
 
-    /// <summary>The rate-sheet deploy host's <c>service.name</c> (ADR-PC-008 §P2).</summary>
+    /// <summary>The rate-sheet deploy host's <c>service.name</c> (ADR-PC-008).</summary>
     public const string RateSheetsApiServiceName = "babelstone-rate-sheets-api";
 
-    /// <summary>The saga orchestrator host's <c>service.name</c> (ADR-IC-018 §D4 composition root).
+    /// <summary>The saga orchestrator host's <c>service.name</c> (ADR-IC-018 composition root).
     /// Its saga-advance spans (opened on the SHARED <c>Babelstone.Engine</c> source) carry this
     /// service identity, so a saga trace shows the orchestrator and engine as distinct services
     /// under one estate namespace.</summary>
@@ -43,7 +43,7 @@ public static class BabelstoneResource
     /// Resolves <c>deployment.environment</c> from <c>DOTNET_ENVIRONMENT</c>, then
     /// <c>ASPNETCORE_ENVIRONMENT</c>. <b>Fails fast</b>: when neither variable is set (or both are
     /// blank), this throws rather than defaulting — a host must not start with traces silently
-    /// mis-attributed to an assumed environment. ADR-IC-007 §P1 requires a <i>non-blank</i>
+    /// mis-attributed to an assumed environment. ADR-IC-007 requires a <i>non-blank</i>
     /// <c>deployment.environment</c>; we satisfy it by refusing to boot without an explicit one.
     /// </summary>
     /// <exception cref="InvalidOperationException">Neither environment variable is set to a non-blank value.</exception>

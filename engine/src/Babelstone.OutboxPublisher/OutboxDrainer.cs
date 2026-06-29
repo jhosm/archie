@@ -14,33 +14,33 @@ namespace Babelstone.OutboxPublisher;
 /// SELECTs PENDING outbox rows in drain order, claiming each aggregate with a per-aggregate
 /// advisory lock and each row <c>FOR UPDATE SKIP LOCKED</c> (so concurrent relay instances claim
 /// disjoint rows — never the same row twice, and never concurrent in-flight rows for the same
-/// <c>aggregate_id</c> — ADR-IC-004 §P2 / §Residual-risks), builds the Confluent wire-format value
-/// from the row's embedded <c>schema_id</c> (NO Schema-Registry lookup — ADR-IC-004 §P3), sets the
+/// <c>aggregate_id</c> — ADR-IC-004), builds the Confluent wire-format value
+/// from the row's embedded <c>schema_id</c> (NO Schema-Registry lookup — ADR-IC-004), sets the
 /// CloudEvents Binary-mode Kafka headers (ADR-IC-015), produces keyed by <c>aggregate_id</c> to a
 /// topic named after <c>aggregate_type</c>, flips the row to PUBLISHED (the only verbs the engine
 /// role holds on outbox), and records the per-row publish-latency histogram on the shared meter.
-/// The §P4 publish-lag SLI itself — the gauge of the oldest PENDING row's age — is emitted by
+/// The ADR-IC-004 publish-lag SLI itself — the gauge of the oldest PENDING row's age — is emitted by
 /// <see cref="OutboxLagObserver"/>, which keeps reporting during an outage when nothing publishes.
 /// </summary>
 /// <remarks>
 /// The read + publish + flip run in ONE transaction: the per-aggregate advisory locks and the
 /// <c>FOR UPDATE</c> row locks are held until commit, so a second concurrent drainer's read steps
 /// over this drainer's in-flight rows (SKIP LOCKED) AND over any aggregate this drainer already
-/// holds (the advisory lock is what makes cross-instance per-aggregate order a §P2 hard guarantee,
-/// not just per-row no-double-publish). The §Residual-risks dual-publish window shrinks to a crash
+/// holds (the advisory lock is what makes cross-instance per-aggregate order an ADR-IC-004 hard guarantee,
+/// not just per-row no-double-publish). The ADR-IC-004 dual-publish window shrinks to a crash
 /// between produce-ack and commit, which consumer-inbox idempotency absorbs. On Redpanda
 /// unavailability the produce throws, the transaction rolls back, the rows stay PENDING (NEVER
-/// FAILED — ADR-IC-004 §P7), and the hosted loop backs off.
+/// FAILED — ADR-IC-004), and the hosted loop backs off.
 /// </remarks>
 public sealed class OutboxDrainer : IAsyncDisposable
 {
-    // Confluent wire format (ADR-IC-002 §P3 / ADR-IC-004 §P3): magic byte 0x00, then the
+    // Confluent wire format (ADR-IC-002 / ADR-IC-004): magic byte 0x00, then the
     // 4-byte big-endian schema_id, then the bare Avro value the codec produced.
     private const byte MagicByte = 0x00;
 
     // The per-row publish-LATENCY histogram on the shared Babelstone meter (ADR-IC-007 Layer 1): one
     // histogram of seconds-from-enqueue-to-ack, tagged by aggregate_type. This is an ADDITION, NOT
-    // the §P4 SLI — that is the oldest-PENDING-row gauge in OutboxLagObserver, which (unlike a per-row
+    // the ADR-IC-004 SLI — that is the oldest-PENDING-row gauge in OutboxLagObserver, which (unlike a per-row
     // metric) keeps reporting during an outage. A host turns this on with
     // AddMeter(BabelstoneTelemetry.MeterName); with no listener Record is a near no-op. The lag value
     // is computed single-clock in the DB (published_at − created_at, both DB-stamped) so host/DB clock
@@ -61,8 +61,8 @@ public sealed class OutboxDrainer : IAsyncDisposable
         if (producer is null)
         {
             // Order is preserved by draining and producing one row at a time per aggregate, with a
-            // per-aggregate advisory lock keeping a second drainer off the same aggregate (ADR-IC-004
-            // §P2). EnableIdempotence keeps the broker from reordering this producer's retries.
+            // per-aggregate advisory lock keeping a second drainer off the same aggregate
+            // (ADR-IC-004). EnableIdempotence keeps the broker from reordering this producer's retries.
             var config = new ProducerConfig
             {
                 BootstrapServers = options.BootstrapServers,
@@ -87,18 +87,18 @@ public sealed class OutboxDrainer : IAsyncDisposable
     /// Drains one batch of PENDING rows. Returns the number of rows published this cycle.
     /// Produces each row synchronously (produce + await ack) before marking it PUBLISHED and
     /// moving to the next — per-aggregate FIFO by construction, held across instances by the
-    /// per-aggregate advisory lock the read takes (ADR-IC-004 §P2).
+    /// per-aggregate advisory lock the read takes (ADR-IC-004).
     /// </summary>
     /// <remarks>
     /// A produce failure rolls the whole transaction back, leaving every row in the batch PENDING for
-    /// the next cycle (ADR-IC-004 §P7) — no row is ever marked PUBLISHED without an ack. The §P2
+    /// the next cycle (ADR-IC-004) — no row is ever marked PUBLISHED without an ack. The ADR-IC-004
     /// concurrency seam that makes the read claim disjoint rows is detailed where the SQL takes it.
     /// </remarks>
     /// <remarks>
     /// One transaction holds the row + advisory locks across the batch's synchronous produce-and-ack
     /// round-trips, so <see cref="OutboxRelayOptions.BatchSize"/> governs the worst-case lock-hold
-    /// time: a slow/backpressured Redpanda lengthens it. At banking volumes (§S1) and the default
-    /// batch this is acceptable; tune BatchSize down if the §S1 polling-query SLA is at risk.
+    /// time: a slow/backpressured Redpanda lengthens it. At banking volumes (ADR-IC-004) and the default
+    /// batch this is acceptable; tune BatchSize down if the ADR-IC-004 polling-query SLA is at risk.
     /// </remarks>
     public async Task<int> DrainOnceAsync(CancellationToken ct = default)
     {
@@ -118,13 +118,13 @@ public sealed class OutboxDrainer : IAsyncDisposable
 
         // Commit releases the FOR UPDATE locks and makes the PUBLISHED flips visible together. If a
         // produce above threw, we never reach here — the using-dispose rolls back and the rows stay
-        // PENDING (ADR-IC-004 §P7), so no row is ever lost or marked PUBLISHED without an ack.
+        // PENDING (ADR-IC-004), so no row is ever lost or marked PUBLISHED without an ack.
         await transaction.CommitAsync(ct);
         return published;
     }
 
     /// <summary>
-    /// Records the per-row publish-latency histogram for one row (an addition, NOT the §P4 SLI):
+    /// Records the per-row publish-latency histogram for one row (an addition, NOT the ADR-IC-004 SLI):
     /// the seconds between the row's enqueue (<c>created_at</c>) and its publish ack
     /// (<c>published_at</c>), tagged by <c>aggregate_type</c> so latency is breakable by topic. The
     /// value is computed single-clock in the DB by <see cref="MarkPublishedAsync"/> so host/DB clock
@@ -148,7 +148,7 @@ public sealed class OutboxDrainer : IAsyncDisposable
         };
 
         // Topic = aggregate_type verbatim (e.g. "term_deposit"). Documented convention; the
-        // SMT-style auto-routing is out of scope (ADR-IC-004 §Consequences).
+        // SMT-style auto-routing is out of scope (ADR-IC-004).
         var topic = row.AggregateType;
         await _producer.ProduceAsync(topic, message, ct);
     }
@@ -181,7 +181,7 @@ public sealed class OutboxDrainer : IAsyncDisposable
         Add(headers, "ce_datacontenttype", "application/avro");
         Add(headers, "ce_subject", row.AggregateId.ToString());
         Add(headers, "ce_aggregatetype", row.AggregateType);
-        // The family-declared CloudEvents extension attributes (ADR-IC-018 §P5): each entry the event
+        // The family-declared CloudEvents extension attributes (ADR-IC-018): each entry the event
         // declared (via DomainEvent.IntegrationHeaders, persisted on the row's integration_headers
         // column) becomes a ce_<key> header, e.g. autorenewalpolicy -> ce_autorenewalpolicy. The relay
         // names no key — it copies whatever the event declared, so the seam is family-agnostic. Still
@@ -203,7 +203,7 @@ public sealed class OutboxDrainer : IAsyncDisposable
     /// <summary>
     /// Reverse-DNS CloudEvents type (ADR-IC-015): "term_deposit.DepositConstituted" →
     /// "com.bank.deposits.DepositConstituted". The "deposits" domain mirrors the Avro
-    /// namespace prefix (ADR-IC-002 §P1); "com.bank" is the deployment's reverse-DNS root.
+    /// namespace prefix (ADR-IC-002); "com.bank" is the deployment's reverse-DNS root.
     /// </summary>
     internal static string ReverseDnsType(string eventType)
     {
@@ -215,11 +215,11 @@ public sealed class OutboxDrainer : IAsyncDisposable
     private static async Task<List<OutboxRow>> ReadPendingAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, int batchSize, CancellationToken ct)
     {
-        // The §P2 drain (amended 2026-05-29): ORDER BY created_at, sequence_number — NOT event_id.
+        // The ADR-IC-004 drain (amended 2026-05-29): ORDER BY created_at, sequence_number — NOT event_id.
         //
-        // Two locks, two distinct §P2 jobs:
+        // Two locks, two distinct ADR-IC-004 jobs:
         //
-        //   • pg_try_advisory_xact_lock(hashtextextended(aggregate_id::text, 0)) — the §P2
+        //   • pg_try_advisory_xact_lock(hashtextextended(aggregate_id::text, 0)) — the ADR-IC-004
         //     "lock granularity that prevents concurrent in-flight rows for the same aggregate_id".
         //     SKIP LOCKED alone would let drainer A hold seq 1 of aggregate X while drainer B claims
         //     the still-unlocked seq 2 and produces it FIRST → out-of-order on X's partition. The
@@ -230,7 +230,7 @@ public sealed class OutboxDrainer : IAsyncDisposable
         //     same key harmlessly), and pg_try_* is non-blocking so a contended aggregate is skipped,
         //     not waited on (no lock-wait, no deadlock).
         //
-        //   • FOR UPDATE SKIP LOCKED (ADR-IC-004 §P2 / §Residual-risks) — the row-level
+        //   • FOR UPDATE SKIP LOCKED (ADR-IC-004) — the row-level
         //     HA-coordination seam: each returned row is row-locked for the open transaction so a
         //     concurrent drainer steps over it, claiming a disjoint set — competing instances never
         //     select the same PENDING row, so they cannot double-publish.
@@ -281,7 +281,7 @@ public sealed class OutboxDrainer : IAsyncDisposable
         Status: r.GetString(7) == "PUBLISHED" ? OutboxStatus.Published : OutboxStatus.Pending,
         CreatedAt: r.GetFieldValue<DateTimeOffset>(8),
         PublishedAt: r.IsDBNull(9) ? null : r.GetFieldValue<DateTimeOffset>(9),
-        // The family-declared CloudEvents extension attributes (ADR-IC-018 §P5), read back from the
+        // The family-declared CloudEvents extension attributes (ADR-IC-018), read back from the
         // integration_headers JSONB column. NULL (the common case, every pre-seam row) → no extension
         // headers; BuildHeaders then emits the standard CE set only.
         IntegrationHeaders: r.IsDBNull(10)

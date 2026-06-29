@@ -4,10 +4,10 @@ using Babelstone.RateSheets;
 namespace Babelstone.RateSheets.Api;
 
 /// <summary>
-/// The <c>POST /v1/rate-sheets</c> request body (ADR-PC-008 §P2, surface §2.2). The
+/// The <c>POST /v1/rate-sheets</c> request body (ADR-PC-008, surface §2.2). The
 /// envelope fields are columns on the stored row; <see cref="Products"/> is the JSONB
 /// body (1:1 with the deployed YAML). The deploying principal is NOT in the payload —
-/// it arrives as the gateway-authenticated <c>X-Deploy-Actor</c> header (§P4) and is
+/// it arrives as the gateway-authenticated <c>X-Deploy-Actor</c> header (ADR-PC-008) and is
 /// recorded as <c>published_by</c>; <see cref="ApprovedBy"/> / <see cref="ApprovalRef"/>
 /// carry the treasury sign-off that the row must record.
 /// </summary>
@@ -45,7 +45,7 @@ public sealed record RateSheetResponse(
 }
 
 /// <summary>
-/// Resolves the pack-declared rate bounds a sheet must honour at deploy (ADR-PC-008 §P2,
+/// Resolves the pack-declared rate bounds a sheet must honour at deploy (ADR-PC-008,
 /// surface §2.5) from the VERIFIED pack keyed on the sheet's <c>pack_version</c> — the bound
 /// is the signed pack's <c>parameters/constants.yaml</c> <c>max_consumer_rate_bps</c>, never a
 /// host-side configuration knob. <see cref="For"/> throws <see cref="PackLoadException"/> for a
@@ -61,7 +61,7 @@ public interface IRateBoundsSource
 /// Resolves <see cref="RateBounds"/> from the verified pack (C.5, <see cref="IPackStore"/>):
 /// <c>[0, max_consumer_rate_bps]</c> read from the signed pack's <c>parameters/constants.yaml</c>
 /// keyed on <c>pack_version</c>. <see cref="IPackStore.Resolve"/> is the pure hot-path cache read
-/// (the pack was pulled-by-digest and cosign-verified once at load time, ADR-PC-007 §P4); an
+/// (the pack was pulled-by-digest and cosign-verified once at load time, ADR-PC-007); an
 /// unknown <c>pack_version</c> surfaces as a <see cref="PackLoadException"/> the caller maps to a
 /// clean deploy rejection. The floor is 0: a pack declares only the consumer-rate ceiling, and the
 /// floor is what makes a negative TAN a deploy-time validation failure — <see cref="RateBand"/>

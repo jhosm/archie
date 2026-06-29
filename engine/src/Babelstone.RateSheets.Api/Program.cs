@@ -57,7 +57,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.PropertyNameCaseInsensitive = false;
 });
 
-// The rate sheets live in the same PostgreSQL tier as the event log (ADR-PC-008 §P1).
+// The rate sheets live in the same PostgreSQL tier as the event log (ADR-PC-008).
 var connectionString = builder.Configuration.GetConnectionString("RateSheets")
     ?? throw new InvalidOperationException(
         "ConnectionStrings:RateSheets is required (the PostgreSQL rate_sheets tier, ADR-PC-008 §P1).");
@@ -65,7 +65,7 @@ var connectionString = builder.Configuration.GetConnectionString("RateSheets")
 builder.Services.AddSingleton<IRateSheetStore>(_ => new PostgresRateSheetStore(connectionString));
 builder.Services.AddSingleton<RateSheetValidator>();
 
-// Pack bounds (surface §2.5, ADR-PC-008 §P2): the §P2 rate bound is read from the VERIFIED pack's
+// Pack bounds (surface §2.5, ADR-PC-008): the ADR-PC-008 rate bound is read from the VERIFIED pack's
 // parameters/constants.yaml (max_consumer_rate_bps) keyed on the sheet's pack_version (C.5), not a
 // host config knob. A disk-backed HostPackStore is the walking-skeleton stand-in for the cosign-
 // verifying OciPackStore (the same load-time/hot-path split); the host pre-loads the configured
