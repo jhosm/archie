@@ -17,7 +17,7 @@
          (the shared meter the runtime guard's corrective strip-counter is created on). The arrow is
          Hosting → Telemetry leaf only; the leaf gains no SDK or hosting dependency. -->
     <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
-    <!-- Npgsql's built-in OTel instrumentation (bd scd2.3 / K.5): AddNpgsql() (query CLIENT spans)
+    <!-- Npgsql's built-in OTel instrumentation (K.5): AddNpgsql() (query CLIENT spans)
          + AddNpgsqlInstrumentation() (db.client.operation.duration). PrivateAssets="all" so this
          Postgres-driver dependency is NOT leaked transitively to consumers of this seam: the
          notification host is deliberately DB-free (ADR-IC-019) and must reference the shared

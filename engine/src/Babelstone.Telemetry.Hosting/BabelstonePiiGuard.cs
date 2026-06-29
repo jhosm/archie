@@ -157,7 +157,7 @@ public static class BabelstonePiiGuard
     private const string LogSignal = "log";
 
     /// <summary>
-    /// Registers the runtime no-PII guard for TRACES on the host's EXISTING tracer provider (njt2.9). Call
+    /// Registers the runtime no-PII guard for TRACES on the host's EXISTING tracer provider. Call
     /// inside the same <c>WithTracing(...)</c> lambda that does <c>AddSource(...)</c>, immediately before
     /// <c>.AddOtlpExporter()</c>, so the guard's <c>OnEnd</c> strips any non-admitted span tag BEFORE the
     /// exporter serialises the span. Mirrors the <see cref="BabelstoneNpgsqlInstrumentation"/> seam shape.
@@ -166,7 +166,7 @@ public static class BabelstonePiiGuard
         => tracing.AddProcessor(new BabelstoneAttributeTierProcessor());
 
     /// <summary>
-    /// Registers the runtime no-PII guard for LOGS on the host's OTel logger provider (njt2.10). Call inside
+    /// Registers the runtime no-PII guard for LOGS on the host's OTel logger provider. Call inside
     /// the <c>WithLogging(...)</c> lambda, before <c>.AddOtlpExporter()</c>, so the guard strips any
     /// PII-fragment structured-state field BEFORE the exporter serialises the record.
     /// </summary>
@@ -174,7 +174,7 @@ public static class BabelstonePiiGuard
         => logging.AddProcessor(new BabelstoneLogRecordTierProcessor());
 
     /// <summary>
-    /// Registers the runtime no-PII guard for METRICS on the host's meter provider (njt2.11) as an OTel
+    /// Registers the runtime no-PII guard for METRICS on the host's meter provider as an OTel
     /// <c>View</c> with an explicit <see cref="MetricStreamConfiguration.TagKeys"/> allowlist over the
     /// <c>Babelstone.Engine</c> meter instruments — the only emit-time metric filter (a processor cannot
     /// touch metrics). A dimension whose key is outside <see cref="AdmittedMetricTagKeys"/> is dropped at
@@ -223,7 +223,7 @@ public static class BabelstonePiiGuard
 }
 
 /// <summary>
-/// The TRACE leg of the runtime no-PII guard (njt2.9): a <see cref="BaseProcessor{Activity}"/> whose
+/// The TRACE leg of the runtime no-PII guard: a <see cref="BaseProcessor{Activity}"/> whose
 /// <see cref="OnEnd"/> walks the ending span's tags and drops any whose key is outside the admitted
 /// <c>babelstone.*</c>/semantic-convention namespace allowlist, BEFORE the span is exported. Fail-closed:
 /// a manual span tag is always namespaced, so anything else (a stray un-namespaced or PII-named key) is
@@ -261,7 +261,7 @@ public sealed class BabelstoneAttributeTierProcessor : BaseProcessor<Activity>
 }
 
 /// <summary>
-/// The LOG leg of the runtime no-PII guard (njt2.10): a <see cref="BaseProcessor{LogRecord}"/> whose
+/// The LOG leg of the runtime no-PII guard: a <see cref="BaseProcessor{LogRecord}"/> whose
 /// <see cref="OnEnd"/> filters the ending record's structured-state attributes, dropping any un-namespaced
 /// key that carries a PII fragment (e.g. a <c>{Account}</c> message-template field) BEFORE the record is
 /// exported, while keeping the admitted namespaces and the operational un-namespaced fields §P5 relies on
