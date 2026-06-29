@@ -30,6 +30,7 @@ python -m babelstone_mcp               # run the server (Streamable HTTP)
 | `get_deposit` | tool (declares `outputSchema`, P6) | `deposits:read` | `GET /v1/deposits/{deposit_id}` |
 | `mature_deposit` | tool (declares `outputSchema`, P6) | `deposits:write` | `POST /v1/deposits/{deposit_id}/maturity` |
 | `pay_interest` | tool (declares `outputSchema`, P6) | `deposits:write` | `POST /v1/deposits/{deposit_id}/interest` |
+| `pay_installment` | tool (declares `outputSchema`, P6) | `deposits:write` | `POST /v1/loans/{loan_id}/installment` (NO caller key — the engine derives a number-pinned, SERVER-DERIVED key, ADR-PC-036 §Decision 1+3) |
 | `constitute_deposit_saga` | tool (declares `outputSchema`, P6) | `deposits:write` | orchestrator `POST /api/v1/deposits/constitute` (saga PRODUCER, Document 11 Pattern 2; returns a `PROC-…` `process_id`) |
 | `get_process_status` | tool (declares `outputSchema`, P6) | `deposits:read` | orchestrator `GET /api/v1/processes/{process_id}/status` (async-completion poll, Document 11 Pattern 2) |
 

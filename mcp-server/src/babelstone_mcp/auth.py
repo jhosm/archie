@@ -74,6 +74,13 @@ TOOL_SCOPES: dict[str, str] = {
     "constitute_deposit_saga": DEPOSITS_WRITE,
     "mature_deposit": DEPOSITS_WRITE,
     "pay_interest": DEPOSITS_WRITE,
+    # The personal-loan installment money-mover (bd babelstone-6cpq.2) is a WRITE — it collects an
+    # amortizing payment — so it carries deposits:write, the existing money-mover write scope. The MCP
+    # resource-scope catalogue is the three scopes ADR-IC-021 C5 fixes (deposits:read / deposits:write /
+    # transfers:write); a dedicated loans:write scope would need an ADR-IC-021 C5 amendment + Logto
+    # re-registration, so the first loan tool reuses the existing write scope under the same scope-per-tool
+    # rule (§P4 — one tool maps to exactly one scope, no god scope).
+    "pay_installment": DEPOSITS_WRITE,
     "get_deposit": DEPOSITS_READ,
     # The async-completion polling tool (Document 11 Pattern 2; bd babelstone-vjoi) is a READ — it only
     # observes saga process status — so it carries the reserved read scope; a deposits:read token can poll
