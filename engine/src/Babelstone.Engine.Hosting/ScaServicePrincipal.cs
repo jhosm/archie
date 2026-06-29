@@ -10,7 +10,7 @@ namespace Babelstone.Engine.Hosting;
 /// </summary>
 /// <remarks>
 /// <para>
-/// FAMILY-NEUTRAL HOME (ADR-PC-021 §A9, bd babelstone-6cpq.14). This principal lives in the shared
+/// FAMILY-NEUTRAL HOME (ADR-PC-021 §A9). This principal lives in the shared
 /// <c>Babelstone.Engine.Hosting</c> assembly so both the term-deposit money-movers and the personal-loan
 /// money-movers recognise the SAME scoped credential — the lifecycle-command driver is ONE actor firing
 /// clock-driven money-movers across families, so it carries one principal, not a per-family copy.
@@ -63,12 +63,12 @@ public static class ScaServicePrincipal
     /// clock-driven money-mover lifecycle commands (the deposit's maturity + coupon and the loan's
     /// installment). Kept in lock-step with the Kong route-scoped allowance in <c>infra/kong/kong.yml</c>
     /// and the scope the IAM (ADR-IC-021) mints for the lifecycle-driver service principal.
-    /// <para>NOTE (bd babelstone-6cpq.14): the literal value keeps its <c>deposit-money-mover</c> spelling
-    /// for byte-for-byte lock-step with the existing Kong route allowance, the IAM-minted scope, and the
+    /// <para>NOTE: the literal value keeps its <c>deposit-money-mover</c> spelling for byte-for-byte
+    /// lock-step with the existing Kong route allowance, the IAM-minted scope, and the
     /// <c>HttpLifecycleCommandSink</c> contract — it is now a FAMILY-NEUTRAL scope by MEANING (it authorises
     /// the loan installment too) even though the string still reads "deposit". Renaming the value is a
-    /// cross-system IAM/Kong contract change deferred out of this family-scoped PR; <see cref="AuthorisedOperations"/>
-    /// is the authoritative route-scoping, not the scope's spelling.</para></summary>
+    /// cross-system IAM/Kong contract change, so <see cref="AuthorisedOperations"/> is the authoritative
+    /// route-scoping, not the scope's spelling.</para></summary>
     public const string LifecycleMoneyMoverScope = "lifecycle:deposit-money-mover";
 
     /// <summary>The maturity money-mover route leaf (<c>POST /v1/deposits/{id}/maturity</c>).</summary>
@@ -78,7 +78,7 @@ public static class ScaServicePrincipal
     public const string InterestOperation = "interest";
 
     /// <summary>The loan-installment money-mover route leaf (<c>POST /v1/loans/{id}/installment</c>) — the
-    /// clock-driven loan occurrence the ADR-PC-036 driver fires on its due date (bd babelstone-6cpq.9 / .14).
+    /// clock-driven loan occurrence the ADR-PC-036 driver fires on its due date.
     /// Scoped, not blanket: the loan's customer-initiated money-movers (early-repayment) and operator/GDPR
     /// surfaces (write-off, erase-personal-data) are deliberately NOT here.</summary>
     public const string InstallmentOperation = "installment";

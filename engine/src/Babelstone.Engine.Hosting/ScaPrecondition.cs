@@ -4,11 +4,11 @@ namespace Babelstone.Engine.Hosting;
 
 /// <summary>
 /// The step-up-SCA precondition on an irreversible money-mover (ADR-IC-010 §P8 / Document 11
-/// §Human-in-the-Loop · Q-BE resolution, bd babelstone-ziu3.5).
+/// §Human-in-the-Loop · Q-BE resolution).
 /// </summary>
 /// <remarks>
 /// <para>
-/// FAMILY-NEUTRAL HOME (ADR-PC-021 §A9, bd babelstone-6cpq.14). This gate is a cross-cutting host-shell
+/// FAMILY-NEUTRAL HOME (ADR-PC-021 §A9). This gate is a cross-cutting host-shell
 /// concern, not one family's business, so it lives in the shared <c>Babelstone.Engine.Hosting</c> assembly
 /// alongside the other family-agnostic in-process hosting components — the single home both the term-deposit
 /// money-movers (<c>DepositsEndpoints</c>) and the personal-loan money-movers (<c>LoansEndpoints</c>) wire it
@@ -46,7 +46,7 @@ namespace Babelstone.Engine.Hosting;
 /// Document 10 / ADR-IC-006 §P5 commit to).
 /// </para>
 /// <para>
-/// NON-INTERACTIVE PRINCIPAL ESCAPE (ADR-PC-036, bd babelstone-6cpq.4 / .9 / .14). This check is the HUMAN
+/// NON-INTERACTIVE PRINCIPAL ESCAPE (ADR-PC-036). This check is the HUMAN
 /// step-up gate only. A machine actor — the ADR-PC-036 lifecycle-command driver firing a deposit's maturity
 /// / coupon or a loan's installment on its due date — has no human <c>acr</c>/<c>auth_time</c> to present, so
 /// it would always 422 here. Its authorisation is instead a SCOPED, gateway-attested service-principal claim
@@ -57,7 +57,7 @@ namespace Babelstone.Engine.Hosting;
 /// and remains the fail-closed default for every caller that is not a recognised scoped principal.
 /// </para>
 /// <para>
-/// SENDER-CONSTRAINT (RFC 8705 mTLS-bound, ADR-IC-010 §A8, bd babelstone-26rb). The refreshed step-up
+/// SENDER-CONSTRAINT (RFC 8705 mTLS-bound, ADR-IC-010 §A8). The refreshed step-up
 /// token is now sender-constrained: it carries a <c>cnf.x5t#S256</c> thumbprint Kong validated against
 /// the presented client cert and attests as <see cref="CnfX5tHeader"/>. A token replayed from a
 /// different sender was already 401'd at the gateway (its <c>cnf</c> did not match the presented cert),

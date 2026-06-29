@@ -19,7 +19,7 @@ namespace Babelstone.Engine.Hosting;
 /// construction here, the host never names a family aggregate type.
 ///
 /// This interface lives in the shared hosting-contract assembly <c>Babelstone.Engine.Hosting</c>
-/// (ADR-PC-021 §A1, relocated 2026-06-20 / bd babelstone-9w2k.1) — NOT in the host
+/// (ADR-PC-021 §A1, relocated 2026-06-20) — NOT in the host
 /// <c>Babelstone.Engine.Api</c> as originally, and never in the generic engine spine. A family's
 /// <c>.Application</c> project can reference this contract assembly to implement its own module
 /// without a <c>family → host</c> cycle, while the <c>family → engine</c> arrow stays one-way
@@ -41,7 +41,7 @@ public interface IFamilyHostModule
     /// The family schema version this module composes (e.g. <c>"term_deposit@2026.1"</c>) — the SAME value
     /// the family's <c>IFamilyModule.SchemaVersion</c> stamps onto every <c>EventEnvelope</c> (ADR-PC-009 §P1).
     /// The host's <c>HostModuleLoader</c> cross-checks this against the pinned pack's family-manifest at load
-    /// and FAILS CLOSED on a skew (bd babelstone-9w2k.3) — a newer-than-pinned module is an audit/replay hazard.
+    /// and FAILS CLOSED on a skew — a newer-than-pinned module is an audit/replay hazard.
     /// </summary>
     string SchemaVersion { get; }
 

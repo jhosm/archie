@@ -14,7 +14,7 @@ namespace Babelstone.Engine.Hosting;
 /// <see cref="IEventSerializer"/> seam, so the Avro/Schema-Registry surface stays confined to the host
 /// (<c>HostBusEncoding</c> in <c>Babelstone.Engine.Api</c>) + <c>Babelstone.Engine.Avro</c> spine
 /// (EVENT_STORE_PAYLOAD_SELF_DESCRIBING / ENGINE_FAMILY_AGNOSTIC). This MARKER lives in the shared
-/// hosting-contract assembly (relocated 2026-06-20 / bd babelstone-9w2k.1) so a family host module can
+/// hosting-contract assembly (relocated 2026-06-20) so a family host module can
 /// resolve it without a <c>family → host</c> cycle; the Avro/SR composition that PRODUCES one stays in
 /// the host. Construction is LAZY at the host's composition root (see <c>HostBusEncoding</c>): the
 /// Avro+SR resolver only reaches the registry when this is first resolved, so a host that does not opt
