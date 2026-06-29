@@ -52,9 +52,9 @@ kubectl apply -f infra/k8s/overlays/staging/bootstrap/
 kubectl apply -k infra/k8s/overlays/staging
 ```
 
-Prereqs: DNS A records `api.babelstone.dev`, `backstage.babelstone.dev`, and
-`app.babelstone.dev` point at the node IP, and Traefik (k3s-bundled) is reachable on
-`:80` for the HTTP-01 ACME challenge. The full provision/restore/upgrade runbook is
+Prereqs: DNS A records `api.babelstone.dev`, `backstage.babelstone.dev`,
+`app.babelstone.dev`, and `auth.babelstone.dev` (the four Ingress hosts) point at the node
+IP, and Traefik (k3s-bundled) is reachable on `:80` for the HTTP-01 ACME challenge. The full provision/restore/upgrade runbook is
 Phase 6 (bd babelstone-zla1.7).
 
 **Kong↔mcp-server mTLS swap (after `mcp-mtls.yaml` is applied).** The committed

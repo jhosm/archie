@@ -13,7 +13,8 @@ Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. State
 ## 1. Provision / first bring-up (Phases 0–2, account-gated)
 
 1. Provision the node + k3s with the Hetzner CCM + CSI (Phase 1, `hetzner-k3s`) — see **§1.1** below.
-2. Point DNS A records `app`, `api`, `backstage`.`babelstone.dev` at the node IP.
+2. Point DNS A records `app`, `api`, `backstage`, `auth`.`babelstone.dev` at the node IP
+   (the four Ingress hosts: Mission Control, Kong, Backstage, and the Logto OIDC issuer).
 3. Install the cluster add-ons (all under [`../k8s/overlays/staging/bootstrap/`](../k8s/overlays/staging/bootstrap/)):
    - **cert-manager** (Helm) — see `bootstrap/README.md`.
    - the **external CSI snapshot controller + CRDs** (NOT bundled with k3s) — required by the
