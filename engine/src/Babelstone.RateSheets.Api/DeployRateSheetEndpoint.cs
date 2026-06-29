@@ -15,9 +15,8 @@ namespace Babelstone.RateSheets.Api;
 /// Observability (ADR-IC-007 Layer 1): a 409 conflict and any unexpected exception leave a
 /// structured server-side record under a stable <see cref="BabelstoneEvents"/> id, carrying the
 /// deploy context (version id, product family, effective_from, deploy actor) — none of it PII (a
-/// rate-sheet deploy carries no depositor data), the same operational-tier discipline §P4 holds
-/// for span attributes. The OTel logging integration stamps trace_id/span_id, so the record
-/// correlates to its trace.
+/// rate-sheet deploy carries no depositor data). The OTel logging integration stamps
+/// trace_id/span_id, so the record correlates to its trace.
 /// </summary>
 internal static class DeployRateSheetEndpoint
 {
