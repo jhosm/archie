@@ -20,10 +20,9 @@ public interface ISchemaIdResolver
 /// </summary>
 /// <remarks>
 /// Startup register-if-absent is a <b>walking-skeleton convenience</b>. ADR-IC-002 §P3 makes
-/// registration a CI gate, never a producer-startup operation; the authoritative CI-gate
-/// compatibility check is Epic G.3. This resolver is what the E.4/E.6 test path uses to make
-/// outbox rows carry real ids against a Testcontainer SR; production registers in CI and this
-/// resolver collapses to a pure lookup (RegisterIfAbsent: false).
+/// registration a CI gate, never a producer-startup operation. This resolver is what the test
+/// path uses to make outbox rows carry real ids against a Testcontainer SR; production registers
+/// in CI and this resolver collapses to a pure lookup (RegisterIfAbsent: false).
 /// </remarks>
 public sealed class ConfluentSchemaIdResolver : ISchemaIdResolver, IDisposable
 {
