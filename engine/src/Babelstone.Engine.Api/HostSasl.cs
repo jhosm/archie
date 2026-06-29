@@ -7,23 +7,23 @@ namespace Babelstone.Engine.Api;
 /// <summary>
 /// Builds the <see cref="KafkaSaslOptions"/> a co-hosted Kafka client (today: the outbox→Redpanda
 /// relay producer) presents to the broker, resolving its SCRAM credential at the host composition
-/// root through the existing <see cref="ISecretProvider"/> seam (ADR-IC-016 plane ii §6 / ADR-PC-004
-/// §A1). It connects the secret seam to the relay's <see cref="KafkaSaslOptions"/>: the applier and the
+/// root through the existing <see cref="ISecretProvider"/> seam (ADR-IC-016 plane ii / ADR-PC-004).
+/// It connects the secret seam to the relay's <see cref="KafkaSaslOptions"/>: the applier and the
 /// <c>Sasl</c> property on the relay options carry no credential on their own, so this resolver supplies
 /// it — without it SASL stays OFF for every client.
 ///
-/// <para><b>The split (ADR-IC-016 §4–§6).</b> A Kafka client's identity is two parts handled
+/// <para><b>The split (ADR-IC-016).</b> A Kafka client's identity is two parts handled
 /// differently:</para>
 /// <list type="bullet">
 ///   <item>The <b>username</b> is the declarative <i>service identity</i> (<c>svc-outbox-publisher</c>,
 ///   the SASL/SCRAM principal in <c>infra/redpanda/topic-acls.yaml</c>) — not a secret, so it comes
 ///   from <see cref="IConfiguration"/> (<c>Kafka:Sasl:Username</c>). One distinct identity per client
-///   contains a compromise to that client's grants (§4).</item>
+///   contains a compromise to that client's grants (ADR-IC-016).</item>
 ///   <item>The <b>password</b> IS the secret, so it resolves through <see cref="ISecretProvider"/> —
 ///   <see cref="OpenBaoKvSecretProvider"/> when <c>OpenBao:Enabled</c>, the configuration-backed
-///   provider otherwise — exactly the <c>ConnectionStrings:Engine</c> pattern (§A1). The resolved
+///   provider otherwise — exactly the <c>ConnectionStrings:Engine</c> pattern (ADR-PC-004). The resolved
 ///   value lives only here in process memory to open the connection; it is NEVER logged, placed on a
-///   span attribute, or carried on the durable bus (§Residual-risks / ADR-PC-004 §P2).</item>
+///   span attribute, or carried on the durable bus (ADR-IC-016 / ADR-PC-004).</item>
 /// </list>
 ///
 /// <para><b>OFF-when-unconfigured (the additive local-dev posture).</b> With no
@@ -86,7 +86,7 @@ public static class HostSasl
     }
 
     /// <summary>
-    /// Parses the configured SASL mechanism, defaulting to SCRAM-SHA-256 (the ADR-IC-016 §4 baseline)
+    /// Parses the configured SASL mechanism, defaulting to SCRAM-SHA-256 (the ADR-IC-016 baseline)
     /// and rejecting the cleartext PLAIN mechanism outright — it would put the password on the wire.
     /// </summary>
     private static SaslMechanism ParseMechanism(string? configured)
@@ -108,7 +108,7 @@ public static class HostSasl
 
     /// <summary>
     /// Parses the configured transport security protocol, defaulting to SASL_SSL (the deployment posture
-    /// so the SCRAM exchange is never in cleartext, ADR-IC-016 §6).
+    /// so the SCRAM exchange is never in cleartext, ADR-IC-016).
     /// </summary>
     private static SecurityProtocol ParseSecurityProtocol(string? configured)
         => string.IsNullOrWhiteSpace(configured)

@@ -2,12 +2,12 @@ namespace Babelstone.Telemetry;
 
 /// <summary>
 /// The versioned <c>babelstone.*</c> span-attribute key contract and the manual span names
-/// (ADR-IC-007 P2/P3). These keys are a wire contract read by Grafana/Tempo queries and
+/// (ADR-IC-007). These keys are a wire contract read by Grafana/Tempo queries and
 /// catalogue fitness functions — <b>never rename a key</b>; add a new one and deprecate the old.
 ///
-/// Every key here is in the ADR-IC-007 P4 <i>operational</i> tier: structural identifiers only.
+/// Every key here is in the ADR-IC-007 <i>operational</i> tier: structural identifiers only.
 /// No NIF, IBAN, name, e-mail, or other personal/financial-restricted value may be carried under
-/// these keys (catalogue <c>OBS_NO_PII_ATTRS</c> / ADR-PC-004 §P2). Money is carried as integer
+/// these keys (catalogue <c>OBS_NO_PII_ATTRS</c> / ADR-PC-004). Money is carried as integer
 /// cents under <see cref="InterestCents"/> / <see cref="TaxCents"/> — never a formatted decimal —
 /// matching the engine's cents-native discipline.
 /// </summary>
@@ -29,7 +29,7 @@ public static class BabelstoneAttributes
     public const string AsOf = "babelstone.as_of";
 
     /// <summary>
-    /// A PSEUDONYM for the customer a span needs to reference for debugging (ADR-IC-016 plane iii §8):
+    /// A PSEUDONYM for the customer a span needs to reference for debugging (ADR-IC-016 plane iii):
     /// a short, salted, one-way hash of the raw <c>client_id</c>, NOT the id itself. The raw id is
     /// PII (it keys into the Customer Data Store) and may never ride a telemetry signal; the
     /// pseudonym lets an operator correlate the spans of one customer's debugging session without the
@@ -41,28 +41,28 @@ public static class BabelstoneAttributes
     /// </summary>
     public const string SubjectPseudonym = "babelstone.subject_pseudonym";
 
-    /// <summary>Manual span name for a deposit constitution (ADR-IC-007 P2 <c>&lt;entity&gt;.&lt;operation&gt;</c>).</summary>
+    /// <summary>Manual span name for a deposit constitution (ADR-IC-007 <c>&lt;entity&gt;.&lt;operation&gt;</c>).</summary>
     public const string SpanConstituted = "deposit.constituted";
 
-    /// <summary>Manual span name for an interest-accrual computation (ADR-IC-007 P2 <c>&lt;layer&gt;.&lt;operation&gt;</c>).</summary>
+    /// <summary>Manual span name for an interest-accrual computation (ADR-IC-007 <c>&lt;layer&gt;.&lt;operation&gt;</c>).</summary>
     public const string SpanAccrualComputed = "accrual.computed";
 
-    /// <summary>Manual span name for a withholding-tax application (ADR-IC-007 P2 <c>&lt;layer&gt;.&lt;operation&gt;</c>).</summary>
+    /// <summary>Manual span name for a withholding-tax application (ADR-IC-007 <c>&lt;layer&gt;.&lt;operation&gt;</c>).</summary>
     public const string SpanWithholdingApplied = "withholding.applied";
 
     /// <summary>
     /// Manual span name for ONE saga-advance step (H.5): the orchestrator drives a saga forward
-    /// from one inbound event, decides the legal transition (ADR-IC-003 §P2), and emits the
+    /// from one inbound event, decides the legal transition (ADR-IC-003), and emits the
     /// decided commands. The span is opened in the impure advance shell, parented to the inbound
     /// event's W3C trace context (the <c>traceparent</c> header), so a saga's work shows up as a
     /// connected chain in the distributed trace (ADR-IC-007 Layer 1 — <c>traceparent</c> is the
     /// mechanism by which the identity trio becomes distributed tracing; Document 06 "each saga
-    /// state transition" is a manual span). <c>&lt;entity&gt;.&lt;operation&gt;</c> per ADR-IC-007 P2.
+    /// state transition" is a manual span). <c>&lt;entity&gt;.&lt;operation&gt;</c> per ADR-IC-007.
     /// </summary>
     public const string SpanSagaAdvance = "saga.advance";
 
     /// <summary>The saga instance reference the span is for (the Document 05 PROC-… id). Structural
-    /// identifier, NOT PII — ADR-IC-003 §P3 requires <c>process_id</c> on every orchestrator span.</summary>
+    /// identifier, NOT PII — ADR-IC-003 requires <c>process_id</c> on every orchestrator span.</summary>
     public const string SagaProcessId = "babelstone.saga.process_id";
 
     /// <summary>Which state machine governs the advance (e.g. <c>ConstitutionProcess</c>). Structural,
@@ -70,7 +70,7 @@ public static class BabelstoneAttributes
     public const string SagaType = "babelstone.saga.type";
 
     /// <summary>The inbound event TYPE that drove the advance (e.g. <c>BalanceReserved</c>) — the key
-    /// the transition table keys on (ADR-IC-003 §P2). A type name, never PII.</summary>
+    /// the transition table keys on (ADR-IC-003). A type name, never PII.</summary>
     public const string SagaEventType = "babelstone.saga.event_type";
 
     /// <summary>The saga state move this advance took, rendered <c>FROM-&gt;TO</c> (e.g.
@@ -84,41 +84,41 @@ public static class BabelstoneAttributes
     public const string SagaOutcome = "babelstone.saga.outcome";
 
     /// <summary>
-    /// The CORRELATION reference (Primitive 4 / ADR-IC-003 §P7): the originating request's
-    /// correlation id, carried UNCHANGED through the whole saga. ADR-IC-003 §P3 requires it on every
+    /// The CORRELATION reference (Primitive 4 / ADR-IC-003): the originating request's
+    /// correlation id, carried UNCHANGED through the whole saga. ADR-IC-003 requires it on every
     /// orchestrator span so a saga is one searchable chain. It is a structural GUID reference, NOT
     /// PII — distinct from the OTel <c>trace_id</c> the span itself carries (the two are correlated
-    /// in Grafana, ADR-IC-007 P-consequences). Pseudonymous by construction (Document 06).
+    /// in Grafana, ADR-IC-007). Pseudonymous by construction (Document 06).
     /// </summary>
     public const string SagaCorrelationId = "babelstone.saga.correlation_id";
 
     /// <summary>
-    /// The CAUSATION reference (Primitive 4 / ADR-IC-003 §P7): the <c>message_id</c> (ce_id) of the
+    /// The CAUSATION reference (Primitive 4 / ADR-IC-003): the <c>message_id</c> (ce_id) of the
     /// inbound event that triggered this advance — the cause of the commands it emits. A pre-existing
     /// reference carried through, never minted. Structural, not PII.
     /// </summary>
     public const string SagaCausationId = "babelstone.saga.causation_id";
 
     /// <summary>
-    /// The outbox publish-lag SLI (ADR-IC-004 §P4): an <i>observable gauge</i> of the age in seconds
+    /// The outbox publish-lag SLI (ADR-IC-004): an <i>observable gauge</i> of the age in seconds
     /// of the OLDEST <c>PENDING</c> outbox row at each collection cycle — <c>clock_timestamp() −
     /// MIN(created_at)</c> over PENDING rows, computed in the DB (single-clock; 0 when the backlog is
-    /// empty). It keeps reporting (and climbing) even when nothing publishes, so the §P4 Warning
+    /// empty). It keeps reporting (and climbing) even when nothing publishes, so the ADR-IC-004 Warning
     /// (&gt;30s) and Critical (&gt;5min "publisher not running or Redpanda unavailable") thresholds
     /// can fire during an outage — the exact failure mode the SLI exists to catch. The metric name is
-    /// the §P4 contract string — a Prometheus/Grafana query reads it by this exact name, so it follows
+    /// the ADR-IC-004 contract string — a Prometheus/Grafana query reads it by this exact name, so it follows
     /// snake_case-with-unit-suffix convention, never the <c>babelstone.*</c> span-key contract above.
     /// Warning/critical thresholds (30s / 5min) are deployment-time Grafana rules, not code.
     /// </summary>
     public const string OutboxPublishLagMetric = "outbox_publish_lag_seconds";
 
     /// <summary>
-    /// The per-row outbox publish-<i>latency</i> histogram (a G.1 addition, NOT the §P4 SLI): the
+    /// The per-row outbox publish-<i>latency</i> histogram (a G.1 addition, NOT the ADR-IC-004 SLI): the
     /// seconds between a row's enqueue (<c>created_at</c>) and its successful publish ack
     /// (<c>published_at</c>), recorded once per published row, tagged by <see cref="AggregateType"/>.
     /// It measures end-to-end delivery latency for rows that DID publish; it is deliberately a
-    /// DISTINCT name from <see cref="OutboxPublishLagMetric"/> so it does not shadow the §P4 backlog-age
-    /// gauge (a per-row metric goes silent during an outage — the opposite of what §P4 needs). Computed
+    /// DISTINCT name from <see cref="OutboxPublishLagMetric"/> so it does not shadow the ADR-IC-004 backlog-age
+    /// gauge (a per-row metric goes silent during an outage — the opposite of what ADR-IC-004 needs). Computed
     /// single-clock in the DB (<c>published_at − created_at</c>, both DB-stamped) so host/DB clock skew
     /// cannot bias or negate it. snake_case-with-unit-suffix, not a <c>babelstone.*</c> span key.
     /// </summary>
@@ -150,7 +150,7 @@ public static class BabelstoneAttributes
     /// <summary>
     /// Inbox messages skipped as DUPLICATE physical deliveries (G.2): the <c>message_id</c> PK
     /// collided, the transaction rolled back, no effect ran. This counter rising is the ADR-IC-004
-    /// §Residual-risks dedup backstop doing its mandatory job (absorbing the dual-publish window) —
+    /// dedup backstop doing its mandatory job (absorbing the dual-publish window) —
     /// healthy in moderation, a producer/relay symptom if it dominates. Tagged by <see cref="SourceTopic"/>.
     /// </summary>
     public const string InboxDuplicatesMetric = "inbox_duplicates_total";
@@ -166,7 +166,7 @@ public static class BabelstoneAttributes
     /// <summary>
     /// Inbox null-payload TOMBSTONES skipped (G.2): a Redpanda log-compaction tombstone (a record with
     /// a key but a null/empty value — the GDPR right-to-erasure signal on a <c>cleanup.policy=compact</c>
-    /// topic, ADR-IC-001 §P4 / ADR-IC-002 §P4). It is committed-past WITHOUT being decoded as Avro, and
+    /// topic, ADR-IC-001 / ADR-IC-002). It is committed-past WITHOUT being decoded as Avro, and
     /// counted here — DISTINCT from <see cref="InboxPoisonMetric"/> so a routine crypto-shred upstream
     /// never fires a false poison alert. A rising rate is the normal shape of erasure traffic, not a
     /// contract gap. Tagged by <see cref="SourceTopic"/>. snake_case metric name, not a span key.
@@ -213,7 +213,7 @@ public static class BabelstoneAttributes
     /// (<c>RebuildReconciliation.Identical == true</c>) the reconciler has observed this process. The
     /// <c>ProjectionRebuildDrillStale</c> alert fires when <c>time() − this &gt; 35 days</c> (the §7.2
     /// monthly cadence + grace), and <c>absent()</c> covers a never-recorded drill — a missed drill is a
-    /// process incident (ADR-PC-005 §P5). It is the in-process companion to the externally-pushed
+    /// process incident (ADR-PC-005). It is the in-process companion to the externally-pushed
     /// drill-freshness metric the projection-rebuild-drill script emits via Pushgateway; both carry the
     /// SAME name so the rule reads either source uniformly. snake_case-with-unit-suffix, not a span key.
     /// </summary>
@@ -223,7 +223,7 @@ public static class BabelstoneAttributes
     /// The CONSUMER dimension the reconciliation counters are tagged with (the
     /// <c>ReconciliationContract.Consumer</c> stable name, e.g. <c>engine</c> / <c>acl</c> /
     /// <c>notification</c>) — the same identity used in the AsyncAPI <c>x-authorized-consumers</c> list.
-    /// A structural REFERENCE, never PII (ADR-PC-004 §P2 / catalogue OBS_NO_PII_ATTRS). The metric label
+    /// A structural REFERENCE, never PII (ADR-PC-004 / catalogue OBS_NO_PII_ATTRS). The metric label
     /// key is the bare <c>consumer</c> string the alert rules group by — it is a metric dimension, not a
     /// <c>babelstone.*</c> span-attribute key, so it does not carry the span-key prefix.
     /// </summary>
@@ -239,7 +239,7 @@ public static class BabelstoneAttributes
     public const string ProjectionKind = "projection_kind";
 
     /// <summary>
-    /// SNAPSHOT LAG (ADR-PC-003 §P6 (1) / event-store §8.1): an <i>observable
+    /// SNAPSHOT LAG (ADR-PC-003 / event-store §8.1): an <i>observable
     /// gauge</i> of the largest un-snapshotted event count observed across streams since process start —
     /// the depth of events appended past a stream's latest snapshot. The post-commit snapshot path
     /// (<c>AggregateRuntime.TrySnapshotAsync</c>) updates the high-water mark each time it evaluates the
@@ -247,7 +247,7 @@ public static class BabelstoneAttributes
     /// cumulative total) because the <c>SnapshotLagHigh</c> alert reads it instantaneously
     /// (<c>snapshot_lag_events &gt; 500</c>) — a counter, which only ever climbs, would never describe
     /// "how far behind is the snapshotter RIGHT NOW". It keeps reporting even when nothing snapshots, so
-    /// the §P6 WARNING fires during a snapshotter outage — the exact failure mode it exists to catch.
+    /// the ADR-PC-003 WARNING fires during a snapshotter outage — the exact failure mode it exists to catch.
     /// Snapshots are a rebuildable cache, so this is a WARNING (a deep un-snapshotted stream makes the
     /// next cold replay slower, never wrong). The metric name is the alert-rule contract string — a
     /// Prometheus/Grafana query reads it by this exact name — so it is snake_case, never a
@@ -256,11 +256,11 @@ public static class BabelstoneAttributes
     public const string SnapshotLagEventsMetric = "snapshot_lag_events";
 
     /// <summary>
-    /// SNAPSHOT HASH-MISMATCH ON READ (ADR-PC-003 §P6 (2) / event-store §8.3): a
+    /// SNAPSHOT HASH-MISMATCH ON READ (ADR-PC-003 / event-store §8.3): a
     /// monotonic counter incremented where <c>SnapshotStore.Verify</c> finds a snapshot's stored
     /// <c>(state ‖ last_event_id)</c> hash disagreeing with a recompute on read — the worst
     /// event-sourcing failure mode (a silently-wrong snapshot trusted as truth), caught by the §8.3
-    /// guard. The read still throws and falls back to a cold fold (the §P3 correctness fallback), so a
+    /// guard. The read still throws and falls back to a cold fold (the ADR-PC-003 correctness fallback), so a
     /// single mismatch is recoverable (discard-and-rebuild); a RECURRING one is a snapshot-infrastructure
     /// bug to page on, which is why the <c>SnapshotHashMismatch</c> alert reads
     /// <c>increase(snapshot_hash_mismatch_total[1h]) &gt; 0</c> at <c>severity: critical</c>. snake_case-

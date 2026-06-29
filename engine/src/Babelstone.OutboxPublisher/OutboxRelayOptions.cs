@@ -2,7 +2,7 @@ namespace Babelstone.OutboxPublisher;
 
 /// <summary>
 /// Configuration for the outbox→Redpanda relay. The relay derives everything else
-/// (topic, key, headers, wire-format value) from the outbox row itself (ADR-IC-004 §P1/§P3).
+/// (topic, key, headers, wire-format value) from the outbox row itself (ADR-IC-004).
 /// </summary>
 public sealed record OutboxRelayOptions
 {
@@ -25,9 +25,9 @@ public sealed record OutboxRelayOptions
     /// </summary>
     public string Source { get; init; } = "urn:babelstone:engine";
 
-    /// <summary>Max rows drained per poll cycle (the §P2 "LIMIT N ORDER BY created_at, sequence_number").</summary>
+    /// <summary>Max rows drained per poll cycle (the ADR-IC-004 "LIMIT N ORDER BY created_at, sequence_number").</summary>
     public int BatchSize { get; init; } = 256;
 
-    /// <summary>Poll interval for the hosted background loop (ADR-IC-004 §S1 default 200ms).</summary>
+    /// <summary>Poll interval for the hosted background loop (ADR-IC-004 default 200ms).</summary>
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromMilliseconds(200);
 }

@@ -28,7 +28,7 @@ public static class HostBusEncoding
     /// JSON posture never touches the Schema Registry. The dev Schema-Registry URL defaults to the
     /// infra/compose.yaml external listener (<c>http://localhost:18081</c>); override with
     /// <c>Bus:SchemaRegistryUrl</c>. <c>Bus:RegisterSchemas</c> (default <c>true</c> for the walking
-    /// skeleton, ADR-IC-002 §P3 register-if-absent convenience) controls register-if-absent vs pure
+    /// skeleton, ADR-IC-002 register-if-absent convenience) controls register-if-absent vs pure
     /// lookup.
     /// </summary>
     public static void AddBusEncoding(IServiceCollection services, IConfiguration configuration)

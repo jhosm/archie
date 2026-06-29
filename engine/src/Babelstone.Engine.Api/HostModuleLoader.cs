@@ -6,7 +6,7 @@ namespace Babelstone.Engine.Api;
 
 /// <summary>
 /// Discovers the <see cref="IFamilyHostModule"/> implementations the host composes, by assembly-scan
-/// over the host's compile-referenced assemblies (ADR-PC-021 §A3 Option B / §P4 "composition is
+/// over the host's compile-referenced assemblies (ADR-PC-021 Option B / "composition is
 /// discovery at the host/test edge"). This is the host-side twin of the engine's
 /// <see cref="FamilyModuleLoader"/> for fold modules: same in-process scan, same public-parameterless-ctor
 /// activation, same fail-loud diagnostics — applied to the decider+endpoint host modules instead of the
@@ -14,30 +14,30 @@ namespace Babelstone.Engine.Api;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why this realizes the §A3-deferred discovery.</b> The host previously held the
-/// explicit Option-A list <c>[new TermDepositHostModule()]</c>; ADR-PC-021 §A3 promised that swapping it for
+/// <b>Why this realizes the ADR-PC-021-deferred discovery.</b> The host previously held the
+/// explicit Option-A list <c>[new TermDepositHostModule()]</c>; ADR-PC-021 promised that swapping it for
 /// <c>FamilyModuleLoader</c>-style assembly-scan would be a localized change with ZERO change to any family,
 /// because every module already implements the same contract with a public parameterless ctor. This loader
 /// is that change. Adding a family is now its module + the host <c>ProjectReference</c> — no list edit, no
 /// surgical thread through <c>Program.cs</c>.
 /// </para>
 /// <para>
-/// <b>§A3-BLESSED in-process scan, not drop-in plugins.</b> It scans the COMPILE-REFERENCED assemblies the
+/// <b>ADR-PC-021-BLESSED in-process scan, not drop-in plugins.</b> It scans the COMPILE-REFERENCED assemblies the
 /// host already loaded (a referenced assembly must be loadable to be composed or scanned — the accepted cost
-/// of an in-tree host, ADR-PC-021 §A3). It is deliberately NOT an <c>Assembly.LoadFrom</c> glob over a plugin
+/// of an in-tree host, ADR-PC-021). It is deliberately NOT an <c>Assembly.LoadFrom</c> glob over a plugin
 /// directory: the in-process scan keeps compile-time type safety, AOT-friendliness, and greppability that the
-/// drop-in model gives up (§A3 "out of scope here").
+/// drop-in model gives up (ADR-PC-021 "out of scope here").
 /// </para>
 /// <para>
 /// <b>Reflection stays at the composition root.</b> This type lives in <c>Babelstone.Engine.Api</c> — the host,
-/// the standing exemption that MAY name a family (ADR-PC-021 §A2) — never in the engine spine (ADR-PC-010 §P5:
+/// the standing exemption that MAY name a family (ADR-PC-021) — never in the engine spine (ADR-PC-010:
 /// reflection is confined to the composition root, not the dispatch spine).
 /// </para>
 /// <para>
 /// <b>Stable ordering preserves engine-before-family migration ordering.</b> Modules are returned in a STABLE
 /// order (by assembly name, then full type name) so the host's per-module loops run deterministically across
 /// boots. The engine event-store schema is applied by deployment machinery/tests BEFORE any family read-model
-/// migration runs (ADR-PC-021 §A6); a family module's <c>ReadModelMigrationHostedService</c> assumes the engine
+/// migration runs (ADR-PC-021); a family module's <c>ReadModelMigrationHostedService</c> assumes the engine
 /// schema is present and fails loud if it is not, so a stable, deterministic module order keeps that ordering
 /// reproducible rather than dependent on reflection's unspecified type-enumeration order.
 /// </para>
@@ -95,7 +95,7 @@ public sealed class HostModuleLoader
 
         // Stable order (assembly name, then full type name) so the host's per-module ConfigureServices /
         // MapEndpoints loops run deterministically across boots, preserving the engine-before-family
-        // migration ordering reproducibility (ADR-PC-021 §A6) rather than depending on reflection's
+        // migration ordering reproducibility (ADR-PC-021) rather than depending on reflection's
         // unspecified type-enumeration order.
         modules.Sort((left, right) =>
         {
@@ -112,10 +112,10 @@ public sealed class HostModuleLoader
 
     /// <summary>
     /// Cross-checks the discovered family host modules against the pinned pack's family-manifest
-    /// (<see cref="VerifiedPack.Families"/>) and FAILS CLOSED on any skew (ADR-PC-007 §P1 /
-    /// ADR-PC-009 §P1). The pinned pack is the authoritative per-deployment family set;
+    /// (<see cref="VerifiedPack.Families"/>) and FAILS CLOSED on any skew (ADR-PC-007 /
+    /// ADR-PC-009). The pinned pack is the authoritative per-deployment family set;
     /// every module stamps its <see cref="IFamilyHostModule.SchemaVersion"/> onto every <c>EventEnvelope</c>
-    /// (ADR-PC-009 §P1) and the registry resolves the pin through it on replay (§P2), so a family/schema
+    /// (ADR-PC-009) and the registry resolves the pin through it on replay (ADR-PC-009), so a family/schema
     /// skew between the code that loaded and the pack the instance is pinned to is an audit/replay hazard —
     /// NOT a tolerable degradation. Mirrors <see cref="HostPackLoading"/>'s fatal-on-load discipline: a
     /// mismatch throws here, at the composition seam, so the host exits non-zero before serving its first
@@ -196,16 +196,16 @@ public sealed class HostModuleLoader
     /// The candidate assemblies to scan: the family-host assemblies shipped alongside the in-tree host. Two
     /// complementary anchors, both keyed off the <c>Babelstone.Families.</c> name prefix (the family-agnostic
     /// membership predicate — no family is named): (1) the host assembly's compile-reference graph
-    /// (<c>host.GetReferencedAssemblies()</c>), the §A14 anchor — valid when the host still names a family
+    /// (<c>host.GetReferencedAssemblies()</c>), the ADR-PC-021 anchor — valid when the host still names a family
     /// type; and (2) the OUTPUT-directory probe (<c>Babelstone.Families.*.dll</c> in
     /// <see cref="AppContext.BaseDirectory"/>), the robust primary anchor. The probe matters because the C#
     /// compiler ELIDES a <c>ProjectReference</c> from the IL metadata reference list when no type in it is used
     /// in code, and the host's composition now names NO family type (the last family wiring was relocated
     /// into the family module) — so the compile-graph anchor alone would discover ZERO families.
-    /// The family <c>ProjectReference</c>s (kept per §A14) copy each <c>Babelstone.Families.*.dll</c> next to
+    /// The family <c>ProjectReference</c>s (kept per ADR-PC-021) copy each <c>Babelstone.Families.*.dll</c> next to
     /// the host in the output dir, so the probe finds them by file. Both stay anchored to the in-tree COMPILE
-    /// graph (a referenced assembly must be loadable to be scanned, ADR-PC-021 §A3) and out of an
-    /// <c>Assembly.LoadFrom</c> plugin glob over an external directory (§A3 "out of scope here") — the probe
+    /// graph (a referenced assembly must be loadable to be scanned, ADR-PC-021) and out of an
+    /// <c>Assembly.LoadFrom</c> plugin glob over an external directory (ADR-PC-021 "out of scope here") — the probe
     /// reads only the host's OWN output dir, where its compile-referenced families land. Adding a family is its
     /// module + the host <c>ProjectReference</c>; THIS enumeration picks it up with no edit.
     /// </summary>
@@ -229,7 +229,7 @@ public sealed class HostModuleLoader
         };
 
         // The host's compile-reference graph: the `Babelstone.Families.*` assemblies named in
-        // host.GetReferencedAssemblies(). This is the §A14 compile-graph anchor — BUT the C# compiler
+        // host.GetReferencedAssemblies(). This is the ADR-PC-021 compile-graph anchor — BUT the C# compiler
         // elides a `ProjectReference` from the IL metadata reference list when no type in it is used in
         // code, and the host's composition now names NO family type (the last family wiring was relocated
         // into the family module). So this pass alone would discover ZERO families
@@ -248,7 +248,7 @@ public sealed class HostModuleLoader
             assemblies[name] = Assembly.Load(reference);
         }
 
-        // The base-directory probe: the family `ProjectReference`s (§A14, kept as the load anchor) copy
+        // The base-directory probe: the family `ProjectReference`s (ADR-PC-021, kept as the load anchor) copy
         // their `Babelstone.Families.*.dll` next to the host in the OUTPUT directory — identically under
         // `dotnet run` (the host's own process) and `WebApplicationFactory<Program>` (the in-process test
         // boot). Discovering them HERE, by file, keeps assembly-scan working even though the host names no
