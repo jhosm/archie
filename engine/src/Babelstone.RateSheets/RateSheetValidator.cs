@@ -2,7 +2,7 @@ namespace Babelstone.RateSheets;
 
 /// <summary>
 /// The pack-declared bounds a rate sheet's TANs must honour at deploy
-/// (ADR-PC-008 §P2, surface §2.5). For pt.2026.1 this is
+/// (ADR-PC-008, surface §2.5). For pt.2026.1 this is
 /// <c>[0, max_consumer_rate_bps]</c> with <c>max_consumer_rate_bps = 2000</c>
 /// (packs/pt.2026.1/parameters/constants.yaml). The bounds are supplied by the
 /// caller (resolved from the pack) rather than read here, so the validator stays a
@@ -64,7 +64,7 @@ public sealed record RateRef(string ProductId, string Role);
 public sealed record ActiveProductConfig(string ProductId, IReadOnlyList<RateRef> RateRefs);
 
 /// <summary>
-/// Validates a rate-sheet body at deploy time (ADR-PC-008 §P2): a sheet that leaves
+/// Validates a rate-sheet body at deploy time (ADR-PC-008): a sheet that leaves
 /// a band gap, overlaps bands, or breaches the pack bound is rejected at the
 /// <c>POST /v1/rate-sheets</c> boundary, never at first constitution.
 /// </summary>

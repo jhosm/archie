@@ -47,7 +47,7 @@
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.9" />
 
     <!-- Test toolchain: runner, assertions, property-based testing, integration containers. -->
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.6.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="FsCheck.Xunit" Version="3.3.3" />
@@ -73,7 +73,7 @@
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.9" />
 
     <!-- YAML parser for the in-engine pack loader (ADR-PC-007 §S2, Babelstone.Packs). -->
-    <PackageVersion Include="YamlDotNet" Version="18.0.0" />
+    <PackageVersion Include="YamlDotNet" Version="18.1.0" />
 
     <!-- OpenTelemetry (ADR-IC-007 Layer 1, Epic K.1). OpenTelemetry.Api carries only the
          System.Diagnostics ActivitySource surface — it lives in Babelstone.Telemetry and the
@@ -94,7 +94,7 @@
          present, so the engine's manual deposit.* spans nest under it instead of being roots.
          Wired only in Babelstone.Engine.Api (the engine command/query host). Its own 1.15.x line,
          the latest tracking the 1.16.0 core. -->
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.16.0" />
     <!-- Npgsql's BUILT-IN OpenTelemetry instrumentation (ADR-IC-007 Layer 1, bd scd2.3 / K.5):
          AddNpgsql() on the TracerProvider emits a CLIENT span per database command, and
          AddNpgsqlInstrumentation() on the MeterProvider emits the stable OTel

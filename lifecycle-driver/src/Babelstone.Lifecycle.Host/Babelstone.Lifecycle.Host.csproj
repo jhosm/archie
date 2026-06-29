@@ -34,17 +34,33 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The worker host builder (Host.CreateApplicationBuilder + BackgroundService registration). -->
-    <PackageReference Include="Microsoft.Extensions.Hosting" />
-    <!-- AddHttpClient: the host registers the typed command-POST HttpClient whose BaseAddress is the engine's
-         ADR-PC-029 command surface (a service ENDPOINT, not a credential — resolved straight from config). -->
-    <PackageReference Include="Microsoft.Extensions.Http" />
+    <!-- The ASP.NET shared framework, pulled into the runtime graph transitively by the family .Lifecycle
+         contributions → their .Application projects (whose IFamilyHostModule + endpoints reference the
+         minimal-API types). The lifecycle host is NOT a web app — it never maps an endpoint; the .Application
+         assemblies ride along only for the Npgsql read-model store classes the family .Lifecycle modules bind
+         (Postgres{Deposit,InstallmentCalendar}ReadModelStore). Declared explicitly so the Worker host resolves
+         the framework those transitive references require.
+         The shared framework already provides Host.CreateApplicationBuilder (Microsoft.Extensions.Hosting) and
+         AddHttpClient (Microsoft.Extensions.Http), so no explicit PackageReference to either is needed (an
+         explicit one would be redundant — NU1510). -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- The lifecycle-command driver CORE (the per-tick pass, the dispatch ledger, the command-POST sink, the
-         family-rule port, and the clock-owning LifecycleWorker). The host composes it; the core never
-         references back. -->
+         family-rule + module ports IFamilyLifecycleModule / ILifecycleCommandRule + LifecycleModuleContext, and
+         the clock-owning LifecycleWorker). The host composes it; the core never references back and names no
+         family. -->
     <ProjectReference Include="../Babelstone.Lifecycle/Babelstone.Lifecycle.csproj" />
+
+    <!-- The family .Lifecycle CONTRIBUTIONS (ADR-PC-036 §Decision 2/5; ADR-PC-021 §A3/§P4): each carries its
+         family's IFamilyLifecycleModule + rule + the Npgsql read-model store the module binds behind the
+         family-agnostic store interface. Referenced ONLY so their Babelstone.Families.*.Lifecycle.dll land
+         beside the host in the output dir, where LifecycleModuleLoader's base-directory probe discovers them by
+         assembly-scan — the host's Program.cs names NO type from them (so the compiler elides these from the IL
+         reference graph; the ProjectReference still copies the dll). Adding a clock-driven lifecycle to a new
+         family is a new .Lifecycle ProjectReference here + its module — no Program.cs edit (ADR-PC-036 §S4). -->
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Lifecycle/Babelstone.Families.TermDeposit.Lifecycle.csproj" />
+    <ProjectReference Include="../../../families/personal-loan/src/Babelstone.Families.PersonalLoan.Lifecycle/Babelstone.Families.PersonalLoan.Lifecycle.csproj" />
   </ItemGroup>
 </Project>

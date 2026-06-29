@@ -17,13 +17,13 @@ namespace Babelstone.RateSheets;
 /// rate-sheet cross-artefact checks already consume; there is no versioned deploy endpoint for them,
 /// so they are loaded structurally at the engine host's startup and cached immutably. A missing
 /// directory or an unparseable file fails the load loud rather than constituting on a silent default
-/// (the same discipline the pack loader takes, ADR-PC-007 §P4). Each loaded config is stamped with a
+/// (the same discipline the pack loader takes, ADR-PC-007). Each loaded config is stamped with a
 /// content-hash <see cref="ProductConfig.ConfigVersion"/> (SHA-256 of the YAML bytes) so the decider can
-/// pin which config generation a deposit was constituted under (ADR-PC-009 §A2); since there is no
+/// pin which config generation a deposit was constituted under (ADR-PC-009); since there is no
 /// versioned deploy timeline yet, the content hash IS the version.
 /// </para>
 /// <para>
-/// <b>Structural facts only, never price (ADR-PC-008 §S2).</b> This store reads <c>term_days</c>,
+/// <b>Structural facts only, never price (ADR-PC-008).</b> This store reads <c>term_days</c>,
 /// <c>interest_variant</c>, <c>auto_renewal_policy</c>, and <c>payment_period_months</c> (0 when the
 /// file omits it — AT_MATURITY / ADVANCE have no coupons). The TAN is the rate-sheet resolve's job;
 /// the <c>rate:</c> / <c>early_termination:</c> / <c>principal_bounds:</c> blocks in the YAML are NOT
@@ -31,7 +31,7 @@ namespace Babelstone.RateSheets;
 /// product (the role-selector machinery is a follow-up; the command may still override the role).
 /// </para>
 /// <para>
-/// <b>Family-agnostic (ADR-PC-021 §P2).</b> This lives in the generic <c>Babelstone.RateSheets</c>
+/// <b>Family-agnostic (ADR-PC-021).</b> This lives in the generic <c>Babelstone.RateSheets</c>
 /// spine — a host composes it and a family decider consumes the <see cref="IProductConfigStore"/>
 /// seam, the family→spine arrow. No family is referenced, so <c>EngineFamilyAgnosticTests</c> stays
 /// green. The interest-variant / renewal-policy tokens it normalises to (AT_MATURITY / PERIODIC /
@@ -180,7 +180,7 @@ public sealed class YamlProductConfigStore : IProductConfigStore
             MinWithdrawalCents: yaml.PartialWithdrawal?.MinWithdrawalCents ?? 0,
             MinRemainingBalanceCents: yaml.PartialWithdrawal?.MinRemainingBalanceCents ?? 0,
             LockupPeriodDays: yaml.PartialWithdrawal?.LockupPeriodDays ?? 0,
-            // The per-generation content version the decider pins on DepositConstituted (ADR-PC-009 §A2).
+            // The per-generation content version the decider pins on DepositConstituted (ADR-PC-009).
             ConfigVersion: ComputeConfigVersion(raw));
     }
 

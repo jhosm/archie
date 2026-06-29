@@ -58,7 +58,7 @@ jobs:
           # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
           version: "2026.6.6"
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('engine/**/*.csproj') }}

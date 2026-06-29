@@ -123,7 +123,7 @@ jobs:
       # QEMU registers binfmt handlers so this amd64 runner can build the linux/arm64 leg of the
       # multi-arch manifest via emulation — the CAX41 staging node is ARM64 (bd babelstone-zla1.8).
       - name: Set up QEMU (cross-arch emulation for the arm64 build leg)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -313,7 +313,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Set up QEMU (cross-arch emulation for the arm64 build leg)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR

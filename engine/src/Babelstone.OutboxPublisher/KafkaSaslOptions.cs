@@ -4,11 +4,11 @@ namespace Babelstone.OutboxPublisher;
 
 /// <summary>
 /// The SASL/SCRAM credential a Kafka client presents to Redpanda to prove its service identity
-/// (ADR-IC-016 plane ii §4–§6). The username/password are resolved at the host composition root
-/// through the existing <c>ISecretProvider</c> seam (ADR-PC-004 §A1 — "Redpanda SASL credentials
+/// (ADR-IC-016 plane ii). The username/password are resolved at the host composition root
+/// through the existing <c>ISecretProvider</c> seam (ADR-PC-004 — "Redpanda SASL credentials
 /// later") and passed in here; this assembly never reaches the secret boundary itself, and the
 /// resolved secret lives only in process memory to open the connection — it is NEVER logged, placed
-/// on a span attribute, or carried on the durable bus (ADR-IC-016 §Residual-risks / ADR-PC-004 §P2).
+/// on a span attribute, or carried on the durable bus (ADR-IC-016 / ADR-PC-004).
 ///
 /// <para>When <see cref="Username"/> is null/empty the credential is treated as <b>absent</b> and
 /// SASL is left OFF — the plaintext local-dev posture (no auth on a loopback Redpanda). In a
@@ -21,7 +21,7 @@ public sealed record KafkaSaslOptions
     /// <summary>
     /// The per-service SCRAM username (a distinct identity per client — the outbox publisher's is
     /// distinct from the Deposits API's, so a compromised publisher can only publish to the topics it
-    /// is authorized for, ADR-IC-016 §4). Null/empty ⇒ SASL disabled.
+    /// is authorized for, ADR-IC-016). Null/empty ⇒ SASL disabled.
     /// </summary>
     public string? Username { get; init; }
 
@@ -30,7 +30,7 @@ public sealed record KafkaSaslOptions
     public string? Password { get; init; }
 
     /// <summary>
-    /// The SASL mechanism. SCRAM-SHA-256 is the chosen baseline (ADR-IC-016 §4 — the simpler
+    /// The SASL mechanism. SCRAM-SHA-256 is the chosen baseline (ADR-IC-016 — the simpler
     /// credential to issue and rotate at this scale); SCRAM-SHA-512 is the stronger variant a
     /// deployment may pick. PLAIN is intentionally NOT offered — it would put the password on the wire.
     /// </summary>

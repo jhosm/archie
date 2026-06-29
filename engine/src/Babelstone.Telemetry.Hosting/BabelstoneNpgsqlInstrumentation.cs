@@ -5,7 +5,7 @@ using OpenTelemetry.Trace;
 namespace Babelstone.Telemetry.Hosting;
 
 /// <summary>
-/// Wires Npgsql's BUILT-IN OpenTelemetry instrumentation (K.5, bd scd2.3) onto the OTel providers a
+/// Wires Npgsql's BUILT-IN OpenTelemetry instrumentation (K.5) onto the OTel providers a
 /// host already configures (ADR-IC-007 Layer 1). In plain terms: every database call the engine
 /// makes to PostgreSQL — the event-store appends, the outbox drain + lag observer, the projection
 /// and checkpoint stores, the rate-sheet store — now produces a query-level trace span and feeds the
@@ -35,7 +35,7 @@ namespace Babelstone.Telemetry.Hosting;
 /// </para>
 ///
 /// <para>
-/// <b>Packaging note (bd njt2.9):</b> this project keeps <c>Npgsql.OpenTelemetry</c> as a
+/// <b>Packaging note:</b> this project keeps <c>Npgsql.OpenTelemetry</c> as a
 /// <c>PrivateAssets="all"</c> dependency, so it is NOT carried transitively to projects that merely
 /// reference this seam for the SDK-free <c>AddBabelstonePiiGuard</c> guard (the DB-free notification
 /// host, ADR-IC-019, must not gain a Postgres driver). Therefore any host that actually CALLS

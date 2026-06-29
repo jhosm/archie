@@ -6,12 +6,12 @@ namespace Babelstone.Engine.Hosting;
 
 /// <summary>
 /// The step-up-SCA precondition wired as an endpoint filter on the irreversible money-mover route group
-/// (ADR-IC-010 §P8 / Q-BE resolution, bd babelstone-ziu3.5), now with the non-interactive scoped
+/// (ADR-IC-010 §P8 / Q-BE resolution), now with the non-interactive scoped
 /// service-principal escape for the ADR-PC-036 lifecycle-command driver.
 /// </summary>
 /// <remarks>
 /// <para>
-/// FAMILY-NEUTRAL HOME (ADR-PC-021 §A9, bd babelstone-6cpq.14). This filter is a cross-cutting host-shell
+/// FAMILY-NEUTRAL HOME (ADR-PC-021 §A9). This filter is a cross-cutting host-shell
 /// component, so it lives in the shared <c>Babelstone.Engine.Hosting</c> assembly and is <c>public</c> for
 /// cross-assembly use — both the term-deposit money-movers (<c>DepositsEndpoints.Map</c>) and the
 /// personal-loan money-movers (<c>LoansEndpoints.Map</c>) attach the SAME filter type to their

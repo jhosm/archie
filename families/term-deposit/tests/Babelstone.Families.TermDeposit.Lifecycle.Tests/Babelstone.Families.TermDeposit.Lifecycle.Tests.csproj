@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The family LIFECYCLE contribution under test: MaturityRule (the one-shot maturity decision, the
+         on/after-maturity ordering invariant, the Active-only filter, backfill under the same number-pinned id),
+         driven over a fake deposit read-model store with the real LifecycleSchedulePass + dispatch ledger — no
+         engine, no Docker. The contribution brings the driver core's family-rule port (ILifecycleCommandRule /
+         LifecycleCommandDecision) and the LifecycleCommandKey seam via its project reference. The core's own
+         dedupe + dispatch-id are tested in Babelstone.Lifecycle.Tests. -->
+    <ProjectReference Include="../../src/Babelstone.Families.TermDeposit.Lifecycle/Babelstone.Families.TermDeposit.Lifecycle.csproj" />
+  </ItemGroup>
+</Project>

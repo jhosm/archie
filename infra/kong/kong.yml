@@ -855,12 +855,21 @@ services:
     client_certificate: 7e9b6f1a-2c4d-4e8a-9b1f-0a2c4d6e8f10
     tls_verify: false
     routes:
-      # The route-scoped allowance: ONLY the maturity + coupon money-movers (the regex alternation
-      # excludes /terminate and every other sub-path). strip_path:false so the engine receives the
-      # verbatim /v1/deposits/{id}/maturity|interest path its ScaPreconditionFilter route-leaf check reads.
+      # The route-scoped allowance: ONLY the clock-driven lifecycle money-movers the ADR-PC-036
+      # driver fires across families — the deposit's maturity + coupon AND the loan's installment
+      # (the per-family regexes each pin their exact sub-path leaf, excluding /terminate,
+      # /early-repayment and every other sub-path). The ONE family-neutral
+      # `lifecycle:deposit-money-mover` service-principal scope authorises all three leaves on the
+      # engine (ScaServicePrincipal.AuthorisedOperations = {maturity, interest, installment}), so the
+      # loan installment needs no new scope — only this route allowance, so the existing scope is
+      # attested on the loan route too (bd babelstone-6cpq.16). strip_path:false so the engine
+      # receives the verbatim /v1/deposits/{id}/maturity|interest or /v1/loans/{id}/installment path
+      # its ScaPreconditionFilter route-leaf check reads.
       - name: deposits-lifecycle-movers
         methods: ["POST"]
-        paths: ["~/v1/deposits/[^/]+/(maturity|interest)$"]
+        paths:
+          - "~/v1/deposits/[^/]+/(maturity|interest)$"
+          - "~/v1/loans/[^/]+/installment$"
         strip_path: false
         plugins:
           # jwt: per-route (de-globalized, ADR-IC-010 §P2 Amendment 2026-06-15). A money-mover — validate

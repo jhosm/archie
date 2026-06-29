@@ -23,7 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The real IEventSerializer (Epic E.4) lives in its OWN assembly so the Confluent/Avro
+    <!-- The real IEventSerializer lives in its OWN assembly so the Confluent/Avro
          surface stays out of Babelstone.Engine and Babelstone.EventStore
          (event-store-skeleton §2.1/§5.4): Engine sees only the IEventSerializer seam, EventStore
          stays Npgsql-only. Apache.Avro builds the GenericRecord + value bytes; Confluent.SchemaRegistry

@@ -1,0 +1,32 @@
+<!-- The term-deposit family's LIFECYCLE-COMMAND contribution (ADR-PC-036 §Decision 2/5; ADR-PC-021 §A3/§P4):
+     the family-owned MaturityRule + the IFamilyLifecycleModule that binds the family's Npgsql read-model store
+     behind the driver's family-agnostic store interface and registers the rule. It plugs into the
+     family-agnostic lifecycle-command driver exactly as the family's .Notification contribution plugs into the
+     notification core — the family → core arrow (ADR-IC-019 §P2), never the reverse. The lifecycle driver core
+     names no family; THIS assembly (a Babelstone.Families.* assembly the host discovers by assembly-scan) holds
+     the term-deposit knowledge. Build settings inherit from families/Directory.Build.props →
+     engine/Directory.Build.props (net10.0, nullable, warnings-as-errors, deterministic). -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Families.TermDeposit.Lifecycle</RootNamespace>
+    <AssemblyName>Babelstone.Families.TermDeposit.Lifecycle</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- IServiceCollection + AddSingleton for TermDepositLifecycleModule.ConfigureServices. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The lifecycle-driver CORE: the family → core arrow (ADR-IC-019 §P2). Brings the contribution port
+         (IFamilyLifecycleModule / LifecycleModuleContext) + the rule contract (ILifecycleCommandRule /
+         LifecycleCommandDecision). The core never references back. -->
+    <ProjectReference Include="../../../../lifecycle-driver/src/Babelstone.Lifecycle/Babelstone.Lifecycle.csproj" />
+    <!-- The family CORE (pure-fold) read side MaturityRule range-scans: IDepositReadModelStore +
+         DepositReadModelRow + the DepositLifecycle vocabulary. -->
+    <ProjectReference Include="../Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
+    <!-- The family APPLICATION layer: the Npgsql PostgresDepositReadModelStore the module binds behind the
+         store interface (the §D4 composition root names Postgres here, not in the driver core). -->
+    <ProjectReference Include="../Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
+  </ItemGroup>
+</Project>

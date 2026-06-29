@@ -8,7 +8,7 @@ namespace Babelstone.OutboxPublisher;
 /// (event-store-skeleton §5.1: the relay co-hosts in the engine process, no separate worker).
 /// Poll loop: drain a batch every <see cref="OutboxRelayOptions.PollInterval"/>; on a produce
 /// failure (Redpanda unavailable) treat it as BACKPRESSURE — back off and retry, leaving rows
-/// PENDING, NEVER FAILED (ADR-IC-004 §P7).
+/// PENDING, NEVER FAILED (ADR-IC-004).
 /// </summary>
 public sealed class OutboxRelayService(
     OutboxDrainer drainer,

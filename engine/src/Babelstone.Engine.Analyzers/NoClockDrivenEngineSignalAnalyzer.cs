@@ -18,7 +18,7 @@ namespace Babelstone.Engine.Analyzers;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The CONTRACT half (PR #122) is a lexical name-scan over schema + family event types —
+/// The CONTRACT half is a lexical name-scan over schema + family event types —
 /// it bans the <c>DepositMaturityApproaching</c> / <c>PaymentDue</c> forbidden <i>names</i>.
 /// That scan is evadable by an off-list clock-driven type (e.g. <c>DepositMaturityForecast</c>):
 /// a name the list does not know, but still constructed from a clock read. This analyser is the

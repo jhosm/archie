@@ -154,6 +154,55 @@ async def test_mature_with_fresh_sca_returns_position_normally() -> None:
     assert result["lifecycle"] == "Matured"
 
 
+# ---------------------------------------------------------------------------------------------
+# Personal-loan installment money-mover (bd babelstone-6cpq.2) — the E1 server-derived key reuse.
+#
+# UNLIKE constitute (and the deposit money-movers' saga channel), the installment endpoint takes NO
+# caller Idempotency-Key: the engine derives the key SERVER-side, number-pinned on the stable
+# installment NUMBER (ADR-PC-036 §Decision 1+3 / LCD-1; bd babelstone-6cpq.1). So the client must NOT
+# mint a key — dedup is the engine's number-pinned key, not a tool-supplied one.
+# ---------------------------------------------------------------------------------------------
+
+
+async def test_pay_installment_posts_to_the_loan_surface_with_no_caller_key() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content)
+        captured["idempotency_key"] = request.headers.get("Idempotency-Key")
+        captured["x_client_id"] = request.headers.get("X-Client-Id")
+        return httpx.Response(200, json={"loan_id": "loan-1", "status": "ACTIVE", "commit_sequence": 4})
+
+    result = await _client(handler).pay_installment(
+        "loan-1", "acct-ref-001", client_id="CLI-LOAN-1"
+    )
+
+    assert result == {"loan_id": "loan-1", "status": "ACTIVE", "commit_sequence": 4}
+    assert captured["method"] == "POST"
+    assert captured["url"] == "http://engine/v1/loans/loan-1/installment"
+    # The opaque collection account ref rides the body (a reference, never an IBAN — ADR-PC-004 §P2).
+    assert captured["body"] == {"collection_account_ref": "acct-ref-001"}
+    # The load-bearing assertion: NO caller idempotency key — the engine derives the number-pinned key
+    # itself (ADR-PC-036 / bd babelstone-6cpq.1), so the agent channel must not supply one.
+    assert captured["idempotency_key"] is None
+    # The gateway-attested caller is still forwarded for audit/ownership (ADR-IC-010 §P3).
+    assert captured["x_client_id"] == "CLI-LOAN-1"
+
+
+async def test_pay_installment_422_sca_required_raises_typed_sca_error() -> None:
+    # The installment inherits the money-mover §P8 step-up gate: a 422 SCA_REQUIRED surfaces as the typed
+    # ScaRequiredError so the tool can step up + retry, exactly like mature / pay_interest.
+    from babelstone_mcp.engine_client import ScaRequiredError
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"code": "SCA_REQUIRED"})
+
+    with pytest.raises(ScaRequiredError):
+        await _client(handler).pay_installment("loan-1", "acct-ref-001")
+
+
 async def test_client_id_is_forwarded_as_x_client_id_on_every_surface() -> None:
     # The gateway-attested caller (the OAuth sub Kong overwrote into X-Client-Id, ADR-IC-010 §P3)
     # is forwarded to the engine on each surface so the engine sees who acted, for audit/ownership.

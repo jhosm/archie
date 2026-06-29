@@ -4,10 +4,9 @@ namespace Babelstone.Money.Analyzers;
 
 /// <summary>
 /// The diagnostic descriptors for the Money boundary analysers (ADR-PC-010 §P1–§P2).
-/// These are the MECHANICAL half of MONEY_BOUNDARY_FIXTURES (commitment-catalogue #2);
-/// the unit half lives in the sealed fixture corpus (B.1). All three are warnings, and
-/// the engine builds warnings-as-errors (Directory.Build.props), so a violation fails
-/// the build.
+/// These are the MECHANICAL half of MONEY_BOUNDARY_FIXTURES (commitment-catalogue); the
+/// unit half lives in the sealed fixture corpus. All three are warnings, and the engine
+/// builds warnings-as-errors, so a violation fails the build.
 /// </summary>
 internal static class MoneyDiagnostics
 {

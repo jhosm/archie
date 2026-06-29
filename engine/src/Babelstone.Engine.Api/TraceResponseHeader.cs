@@ -13,8 +13,8 @@ namespace Babelstone.Engine.Api;
 /// would have to re-parse. The header value therefore equals <c>Activity.Current.TraceId</c>.</para>
 ///
 /// <para>The trace id is an opaque hex identifier minted by the tracer — never a subject reference,
-/// NIF, IBAN, or any other personal/financial value (ADR-IC-007 §P4 operational tier /
-/// ADR-PC-004 §P2 — no PII on the trace-id surface).</para>
+/// NIF, IBAN, or any other personal/financial value (ADR-IC-007 operational tier /
+/// ADR-PC-004 — no PII on the trace-id surface).</para>
 ///
 /// <para>The <c>X-</c> prefix is deprecated by RFC 6648 in general, but is kept here for consistency
 /// with the existing edge convention (<c>X-Client-Id</c>, attested at the Kong edge).</para>

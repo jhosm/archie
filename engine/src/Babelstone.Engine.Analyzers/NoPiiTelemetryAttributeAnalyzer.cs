@@ -24,7 +24,7 @@ namespace Babelstone.Engine.Analyzers;
 /// constant, so this constant-folding analyser fires on none of the real call sites. The control that
 /// actually keeps personal data out of the regulated trace/log/metric store is the RUNTIME emit-time
 /// guard — <c>BabelstoneAttributeTierProcessor</c> and the <c>AddBabelstonePiiGuard</c> seam in
-/// <c>Babelstone.Telemetry.Hosting</c> (bd njt2.9–2.11) — which inspects each attribute AS IT IS
+/// <c>Babelstone.Telemetry.Hosting</c> — which inspects each attribute AS IT IS
 /// EMITTED. This analyser is the cheap build-time backstop for the one shape that guard cannot pre-empt
 /// at review time: a future engineer hard-coding a literal PII key/value at a call site. It must never
 /// be read as the gate that earns OBS-3 its <c>Live</c> status; the runtime leg is.

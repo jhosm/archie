@@ -13,10 +13,10 @@ namespace Babelstone.Engine.Api;
 public sealed record HostPackLoad(IPackStore Store, VerifiedPack PrimaryPack);
 
 /// <summary>
-/// Wires the engine-instance's pack load at startup (ADR-PC-007 §P4). Two modes, selected by
+/// Wires the engine-instance's pack load at startup (ADR-PC-007). Two modes, selected by
 /// <c>Engine:PackRegistry</c> — never a silent fallback:
 /// <list type="bullet">
-/// <item><b>oci</b> (production, §P3/§P4): the durable Postgres <c>pack_versions</c> registry
+/// <item><b>oci</b> (production, ADR-PC-007): the durable Postgres <c>pack_versions</c> registry
 /// resolves each pinned version to its OCI coordinates; the cosign-verifying, oras-pulling
 /// <see cref="OciPackStore"/> eager-loads EVERY pack version any live instance references
 /// (<c>events.pack_version</c>) plus the configured primary, fail-loud — the host process aborts
@@ -31,7 +31,7 @@ public static class HostPackLoading
     /// <summary>
     /// Loads the instance's packs per the configured mode. The OCI path is async (it pulls + verifies
     /// out-of-process); on any failure it throws — the caller lets that escape so the host exits
-    /// non-zero with the <see cref="PackLoadException"/> message in the log (§P4 fail-loud).
+    /// non-zero with the <see cref="PackLoadException"/> message in the log (ADR-PC-007 fail-loud).
     /// </summary>
     public static async Task<HostPackLoad> LoadAsync(
         IConfiguration configuration, string connectionString, ILogger logger, CancellationToken ct = default)
@@ -54,7 +54,7 @@ public static class HostPackLoading
                 $"Engine:PackRegistry='{mode}' is not recognised; expected 'disk' (dev) or 'oci' (ADR-PC-007 §P3/§P4).");
         }
 
-        // ── OCI mode (ADR-PC-007 §P3/§P4) ──────────────────────────────────────────────────────
+        // ── OCI mode (ADR-PC-007) ──────────────────────────────────────────────────────
         // Preflight, before any registry/pull/verify work: OCI mode shells out to oras + cosign at
         // load time. The production chiseled runtime image now BUNDLES both static binaries on PATH
         // (engine/Dockerfile oci-tools stage), so on the intended production path this is a
@@ -77,14 +77,14 @@ public static class HostPackLoading
         var verifier = BuildVerifier(configuration);
         var store = new OciPackStore(registry, verifier, source);
 
-        // §P4 worklist: every pack version any live instance references (events.pack_version), UNION
+        // ADR-PC-007 worklist: every pack version any live instance references (events.pack_version), UNION
         // the configured primary so a fresh instance with an empty event log still loads its pack.
         //
         // This read runs at STARTUP and is fatal-on-failure: a host that cannot
         // read its worklist cannot know which packs a live instance references, so it must NOT boot
         // and start serving against an unknown set — it fails loud, exactly like an unresolvable pin
         // does below. A DB-connectivity failure here would otherwise escape as a bare NpgsqlException
-        // (no §P4 context); we translate it to a PackLoadException so the operator sees the same
+        // (no ADR-PC-007 context); we translate it to a PackLoadException so the operator sees the same
         // fail-loud framing — but it stays FATAL either way (the host exits non-zero). This is the
         // decided posture: degrade-and-serve is wrong (it would silently skip pre-loading live packs,
         // turning the first hot-path Resolve into a fail-loud miss long after boot).
@@ -125,7 +125,7 @@ public static class HostPackLoading
             }
             catch (PackLoadException ex)
             {
-                // §P4: a pull/verify/parse failure at startup is FATAL — no silent degradation. Log
+                // ADR-PC-007: a pull/verify/parse failure at startup is FATAL — no silent degradation. Log
                 // the offending pin clearly, then rethrow so the host exits non-zero.
                 logger.LogCritical(ex,
                     "FATAL: pack version '{Version}' referenced by a live instance could not be loaded/verified — refusing to serve (ADR-PC-007 §P4).",
@@ -142,7 +142,7 @@ public static class HostPackLoading
     private static IPackVerifier BuildVerifier(IConfiguration configuration)
     {
         // Public-key verification (local dev/CI) when a key path is configured; otherwise keyless
-        // OIDC (production / Q.5). The issuer + identity are configuration, never hardcoded (§P2).
+        // OIDC (production / Q.5). The issuer + identity are configuration, never hardcoded (ADR-PC-007).
         var publicKeyPath = configuration["Engine:CosignPublicKeyPath"];
         if (!string.IsNullOrEmpty(publicKeyPath))
         {

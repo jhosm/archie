@@ -1,15 +1,15 @@
 namespace Babelstone.RateSheets;
 
 /// <summary>
-/// A versioned, immutable rate sheet (ADR-PC-008 §P1) — one row of the
+/// A versioned, immutable rate sheet (ADR-PC-008) — one row of the
 /// <c>rate_sheets</c> table. Once published it is never edited; a correction ships
 /// as a new <see cref="RateSheetVersionId"/> with a later <see cref="EffectiveFrom"/>
-/// (§P5, surface §2.6).
+/// (ADR-PC-008, surface §2.6).
 /// </summary>
-/// <param name="RateSheetVersionId">Unique id of this sheet version — the value pinned on <c>DepositConstituted</c> (§P3).</param>
+/// <param name="RateSheetVersionId">Unique id of this sheet version — the value pinned on <c>DepositConstituted</c> (ADR-PC-008).</param>
 /// <param name="ProductFamily">The product family this sheet prices (e.g. <c>term-deposit</c>).</param>
 /// <param name="PackVersion">The regulatory pack version the sheet was authored against.</param>
-/// <param name="EffectiveFrom">Instant from which this version is the candidate active sheet (§P3); a correction ships as a new version with a later value (§P5).</param>
+/// <param name="EffectiveFrom">Instant from which this version is the candidate active sheet (ADR-PC-008); a correction ships as a new version with a later value (ADR-PC-008).</param>
 /// <param name="Body">The rate table — resolves <c>(product, role, principal)</c> to <c>tan_basis_points</c>.</param>
 /// <param name="ApprovedBy">Who approved the sheet before publication.</param>
 /// <param name="ApprovalRef">Reference to the approval record (audit trail).</param>
@@ -30,11 +30,11 @@ public sealed record RateSheet(
     DateTimeOffset? PublishedAt = null);
 
 /// <summary>
-/// The sheet resolved as active at a constitution instant (ADR-PC-008 §P3). Carries
+/// The sheet resolved as active at a constitution instant (ADR-PC-008). Carries
 /// the <see cref="RateSheetVersionId"/> to pin on <c>DepositConstituted</c> and the
 /// <see cref="Body"/> to resolve the concrete <c>(product, role, principal) -&gt;
 /// tan_basis_points</c>. Storing both the version id and the resolved value on the
-/// event is deliberate (§P3): the id anchors audit/replay, the value answers "what
+/// event is deliberate (ADR-PC-008): the id anchors audit/replay, the value answers "what
 /// rate is this deposit paying?" without re-resolution.
 /// </summary>
 public sealed record RateSheetResolution(string RateSheetVersionId, RateSheetBody Body)

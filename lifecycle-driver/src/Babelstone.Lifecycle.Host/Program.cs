@@ -1,5 +1,6 @@
 using Babelstone.Cadence;
 using Babelstone.Lifecycle;
+using Babelstone.Lifecycle.Host;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -28,6 +29,21 @@ var engineBaseUrl =
         "No engine API base URL configured. Set Engine:BaseUrl, ConnectionStrings:Engine, or " +
         "BABELSTONE_ENGINE_BASE_URL (the ADR-PC-029 command surface — POST /v1/loans/{id}/installment, " +
         "POST /v1/deposits/{id}/maturity).");
+
+// The engine read-model database the family rules range-scan to find due work (ADR-PC-036 §Decision 2/5;
+// ADR-IC-005 read-model tier). The forward calendars — term_deposit's maturity range scan and personal_loan's
+// installment_calendar — are the temporal signal (ADR-PC-023): the rule reads them as-of today, the engine
+// stays clockless. This is the read-side connection (the family read-model stores' SELECTs); it is DISTINCT
+// from Engine:BaseUrl above (the WRITE-side command HTTP surface the sink POSTs). Fail-loud: a driver that
+// cannot reach the read model cannot discover due commands, so it must not start.
+var readModelConnectionString =
+    builder.Configuration["Engine:ReadModelConnectionString"]
+    ?? builder.Configuration.GetConnectionString("EngineReadModel")
+    ?? Environment.GetEnvironmentVariable("BABELSTONE_ENGINE_READMODEL_CONNECTION")
+    ?? throw new InvalidOperationException(
+        "No engine read-model connection string configured. Set Engine:ReadModelConnectionString, " +
+        "ConnectionStrings:EngineReadModel, or BABELSTONE_ENGINE_READMODEL_CONNECTION (the ADR-IC-005 " +
+        "read-model tier the family rules range-scan: read_model.deposits, read_model.installment_calendar).");
 
 // The wall-clock the worker loop OWNS (ADR-PC-023 §6 — the engine emits no clock-driven signal, so the
 // downstream driver owns the clock). TimeProvider.System in production; a test substitutes a fake so the loop
@@ -60,10 +76,24 @@ builder.Services.AddSingleton<LifecycleDispatchLedger>();
 builder.Services.AddHttpClient<ILifecycleCommandSink, HttpLifecycleCommandSink>(client =>
     client.BaseAddress = new Uri(engineBaseUrl.EndsWith('/') ? engineBaseUrl : engineBaseUrl + "/"));
 
+// Compose the family ILifecycleCommandRule contributions by ASSEMBLY-SCAN discovery (ADR-PC-036; ADR-PC-021 —
+// the lifecycle-driver twin of the engine's HostModuleLoader). The host is the composition root — the ONLY
+// place that MAY name a family (ADR-IC-019) — but it names NONE: LifecycleModuleLoader scans the
+// Babelstone.Families.*.Lifecycle assemblies shipped beside the host for IFamilyLifecycleModule contributions
+// and fails loud on a duplicate FamilyName. Each module registers its OWN family-owned Npgsql read-model store
+// (behind the family-agnostic store interface the rule depends on) + its rule, over the read-model connection
+// conveyed here — so the read side stays storage-agnostic and the driver core names no family (the family →
+// core arrow, ADR-IC-019). The rules range-scan their forward calendars as-of today and emit one decision per
+// due occurrence; the generic pass derives the number-pinned id, dedupes, and POSTs. Adding a clock-driven
+// lifecycle to a NEW family is its .Lifecycle module + the host ProjectReference (so its dll lands beside the
+// host for the scan) — ZERO edit here (ADR-PC-036, "a fourth rule with zero core diff").
+var moduleContext = new LifecycleModuleContext(builder.Configuration, readModelConnectionString);
+foreach (var module in new LifecycleModuleLoader().LoadAll(LifecycleModuleLoader.FamilyLifecycleAssemblies()))
+{
+    module.ConfigureServices(builder.Services, moduleContext);
+}
+
 // The per-tick engine over the registered family rules + the dispatch ledger + the sink (ADR-PC-036 §Decision 2).
-// Family ILifecycleCommandRule contributions plug in here with zero core diff — the first are the sibling bd
-// issues babelstone-6cpq.8 (term-deposit maturity, one-shot) and babelstone-6cpq.9 (personal-loan installment,
-// recurring), which this host stands up. With no rule registered yet the pass simply runs an empty tick.
 builder.Services.AddSingleton<LifecycleSchedulePass>();
 
 // The host shell — the standing BackgroundService the schedule pass runs inside. It OWNS the clock, cadence,

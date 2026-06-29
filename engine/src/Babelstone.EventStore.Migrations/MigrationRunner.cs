@@ -5,7 +5,7 @@ namespace Babelstone.EventStore.Migrations;
 /// <summary>
 /// Applies the forward-only <see cref="MigrationSet"/> against a PostgreSQL database.
 /// Thin and hand-rolled (ADR-PC-010): no migration framework owns the schema. It
-/// connects as the migration role (ADR-PC-001 §P3) — the role that holds the
+/// connects as the migration role (ADR-PC-001) — the role that holds the
 /// DDL and UPDATE/DELETE privileges the engine's runtime role is denied.
 /// </summary>
 public sealed class MigrationRunner(string connectionString)

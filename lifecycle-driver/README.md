@@ -83,11 +83,23 @@ service endpoint not a credential), registers the typed command-POST `HttpClient
 the dispatch ledger and the cadence knobs, registers the per-tick pass over the family rules, and runs the
 clock-owning worker. Family `ILifecycleCommandRule` contributions plug in here with zero core diff.
 
-**Family rules** are the sibling work that lands on this host:
-[bd `babelstone-6cpq.8`](../docs/product-management/product_concepts/adrs/ADR-PC-036-lifecycle-command-driver.md)
-(term-deposit maturity, the one-shot case over the `maturity_calendar`) and `babelstone-6cpq.9`
-(personal-loan installment, the recurring case over the `installment_calendar`, with the settlement-health
-gate). With no rule registered yet the host runs an empty tick — the clockless-engine-honoring skeleton.
+**Family rules** are the sibling work that lands on this host, and now have
+([bd `babelstone-6cpq.8`](../docs/product-management/product_concepts/adrs/ADR-PC-036-lifecycle-command-driver.md) /
+`babelstone-6cpq.9`):
+
+- `MaturityRule` (term-deposit maturity, the one-shot case over the `maturity_calendar`) — reads the deposit
+  read model as-of today, fires `Mature` once per Active deposit that has reached maturity, on/after the
+  maturity date only, under the canonical `("mature", 1)` key. It INHERITS the built renewal opt-out /
+  saga-start gates (bd `babelstone-mtto.3`) and encodes none.
+- `InstallmentRule` (personal-loan installment, the recurring case over the `installment_calendar`) — reads
+  the forward installment calendar, fires `PayInstallment` for the next-unpaid occurrence per Active loan
+  under the number-pinned `("pay_installment", installment-number)` key, advancing to N+1 only once N is
+  recorded paid.
+
+Both live in the driver core as concrete `ILifecycleCommandRule`s and are composed in `Program.cs`; the rules
+read the family read-model stores (the host wires the Npgsql implementations) and reach the engine ONLY by
+POSTing through the sink. The recurring **settlement-health gate** (`LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE`,
+LCD-2, ADR-PC-036 §Decision 4) is a separate follow-up — not encoded by either rule yet.
 
 ## Idempotency, in one line
 
@@ -100,11 +112,13 @@ the due-date, so a re-dated or backfilled retry of occurrence N dedupes to one m
 (`ENGINE_COMMAND_IDEMPOTENT`); the dispatch ledger is the cheap front-line that keeps the driver from
 re-POSTing every tick.
 
-> Status: **skeleton host shipped (LCD-1/LCD-2 mechanism), family rules next.** The host owns the clock,
-> runs the Cadence worker, dedupes on the number-pinned dispatch id, and POSTs through the command sink
-> with the scoped SCA principal. **Not** built here: the per-family forward-calendar rules
-> (bd `babelstone-6cpq.8` / `.9`), and the operating-concern hardening the host owns as it matures —
-> single-firing/leader-election, a durable dispatch ledger, and monitoring
+> Status: **host + both family rules shipped.** The host owns the clock, runs the Cadence worker, dedupes on
+> the number-pinned dispatch id, and POSTs through the command sink with the scoped SCA principal; the
+> term-deposit `MaturityRule` and personal-loan `InstallmentRule` (bd `babelstone-6cpq.8` / `.9`) read their
+> forward calendars and contribute the due commands. **Not** built here: the recurring settlement-health gate
+> (`LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE`, LCD-2, ADR-PC-036 §Decision 4), and the operating-concern
+> hardening the host owns as it matures — single-firing/leader-election, a durable dispatch ledger, and
+> monitoring
 > ([ADR-PC-036](../docs/product-management/product_concepts/adrs/ADR-PC-036-lifecycle-command-driver.md)
 > §Consequences). Extraction-ready subtree per
 > [ADR-PC-019 §P2](../docs/product-management/product_concepts/adrs/ADR-PC-019-repository-strategy-monorepo.md);

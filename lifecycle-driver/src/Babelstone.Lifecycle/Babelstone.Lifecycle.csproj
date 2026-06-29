@@ -65,8 +65,20 @@
          installment endpoint derives it, so a manual caller, the MCP agent and this driver converge on ONE key
          per occurrence. This is a COMPILE-TIME reference to a pure static helper only — the driver still reaches
          the engine at runtime ONLY over the ADR-PC-029 command HTTP surface (it never reads the byte store, and
-         the engine stays clockless: NO_CLOCK_DRIVEN_ENGINE_SIGNAL holds). The lifecycle driver is downstream and
-         subject to no family-agnostic gate, so naming the engine hosting seam here is sound. -->
+         the engine stays clockless: NO_CLOCK_DRIVEN_ENGINE_SIGNAL holds). The driver core stays FAMILY-agnostic
+         (the LIFECYCLE_FAMILY_AGNOSTIC fitness test forbids a families/** reference) but MAY name the engine
+         hosting seam — Babelstone.Engine.Hosting is the shared host-composition contract assembly, NOT a family
+         and NOT a §P2 spine project, so this reference is sound. -->
     <ProjectReference Include="../../../engine/src/Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
+
+    <!-- NOTE: the driver core references NO families/** project — the family → core arrow holds one-way
+         (ADR-IC-019 §P2). The per-family rules (MaturityRule, InstallmentRule) and the Npgsql read-model stores
+         they range-scan now live in the Babelstone.Families.*.Lifecycle CONTRIBUTIONS, which the HOST discovers
+         by assembly-scan and composes (ADR-PC-036 §Decision 2/5; ADR-PC-021 §A3/§P4). This core names ONLY the
+         family-agnostic ports — IFamilyLifecycleModule / LifecycleModuleContext / ILifecycleCommandRule /
+         LifecycleCommandDecision — so it stays family-agnostic, the same shape the notification core holds. The
+         invariant is guarded by the LIFECYCLE_FAMILY_AGNOSTIC fitness test (Babelstone.Lifecycle.Tests), which
+         fails the build if a families/** reference ever creeps back in. -->
+
   </ItemGroup>
 </Project>

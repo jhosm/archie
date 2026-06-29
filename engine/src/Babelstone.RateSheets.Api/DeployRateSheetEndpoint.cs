@@ -6,11 +6,11 @@ using Microsoft.Extensions.Logging;
 namespace Babelstone.RateSheets.Api;
 
 /// <summary>
-/// The <c>POST /v1/rate-sheets</c> handler (ADR-PC-008 §P2): validate against the
+/// The <c>POST /v1/rate-sheets</c> handler (ADR-PC-008): validate against the
 /// pack bound, then apply the idempotency rule keyed on <c>rate_sheet_version_id</c> —
 /// a new version is created (201), an identical re-POST is replayed (200), and a
 /// different body under an existing version id is rejected (409), enforcing the
-/// forward-only immutability guarantee (§P5) at the API boundary as well as the table.
+/// forward-only immutability guarantee (ADR-PC-008) at the API boundary as well as the table.
 ///
 /// Observability (ADR-IC-007 Layer 1): a 409 conflict and any unexpected exception leave a
 /// structured server-side record under a stable <see cref="BabelstoneEvents"/> id, carrying the
@@ -37,7 +37,7 @@ internal static class DeployRateSheetEndpoint
         // — a stable log scope an operator filters on, matching the ILogger<T> default category name.
         var logger = loggerFactory.CreateLogger(LogCategory);
 
-        // §P2: an Idempotency-Key header, when supplied, must equal the version id —
+        // ADR-PC-008: an Idempotency-Key header, when supplied, must equal the version id —
         // the version id IS the natural idempotency key, so no separate header is needed.
         if (http.Headers.TryGetValue("Idempotency-Key", out var key)
             && !string.IsNullOrEmpty(key)
@@ -48,7 +48,7 @@ internal static class DeployRateSheetEndpoint
                 statusCode: StatusCodes.Status400BadRequest);
         }
 
-        // §P4 + Amendment A3: the deploying principal is the gateway-authenticated identity, not
+        // ADR-PC-008 + Amendment A3: the deploying principal is the gateway-authenticated identity, not
         // a payload field a caller can spoof. It is recorded as published_by; the treasury approver
         // and sign-off reference travel in the body and are recorded as approved_by / approval_ref.
         if (!http.Headers.TryGetValue("X-Deploy-Actor", out var actor) || string.IsNullOrWhiteSpace(actor))
@@ -58,7 +58,7 @@ internal static class DeployRateSheetEndpoint
                 statusCode: StatusCodes.Status401Unauthorized);
         }
 
-        // §P2: the bound the sheet must honour comes from the VERIFIED pack keyed on the sheet's
+        // ADR-PC-008: the bound the sheet must honour comes from the VERIFIED pack keyed on the sheet's
         // pack_version (C.5), not a host-side config. A pack_version the engine has not loaded
         // (unknown/unpinned) is the caller's mistake — a stale or typo'd pin — so it is a 400
         // deploy rejection, not a 500: the pack abstractions surface it as a PackLoadException.
@@ -96,7 +96,7 @@ internal static class DeployRateSheetEndpoint
             // Truncate to PostgreSQL's microsecond resolution at the boundary so the value we
             // store and the value we compare on a re-POST share a precision. Without this, an
             // effective_from carrying sub-microsecond (100ns) ticks round-trips as a truncated
-            // value, and the §P2 identity check (existing == incoming) would misclassify an
+            // value, and the ADR-PC-008 identity check (existing == incoming) would misclassify an
             // identical re-POST as a 409 (a forward-only-immutability breach that did not happen).
             ToMicroseconds(request.EffectiveFrom),
             body,
@@ -125,7 +125,7 @@ internal static class DeployRateSheetEndpoint
             catch (DuplicateRateSheetVersionException)
             {
                 // Race: a concurrent deploy committed first under the same version id, or claimed
-                // this family's effective_from. Re-read and apply the same §P2 rule.
+                // this family's effective_from. Re-read and apply the same ADR-PC-008 rule.
                 var raced = await store.TryGetAsync(sheet.RateSheetVersionId, ct);
                 return raced is null
                     ? Conflict(sheet, logger,
@@ -187,7 +187,7 @@ internal static class DeployRateSheetEndpoint
     }
 
     // A 409, recorded server-side under a stable id (ADR-IC-007 Layer 1) with the deploy context —
-    // a forward-only-immutability breach (§P5) the operator should see, not just a bare HTTP 409.
+    // a forward-only-immutability breach (ADR-PC-008) the operator should see, not just a bare HTTP 409.
     // DeployActor is the sheet's PublishedBy, i.e. the gateway-authenticated X-Deploy-Actor header.
     private static IResult Conflict(RateSheet incoming, ILogger logger, string detail)
     {

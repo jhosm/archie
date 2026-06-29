@@ -87,7 +87,7 @@ public interface IPackMigrationService
 /// (which knows the family + schema_version pins). This service always consumes an EXPLICIT id list — the
 /// sound minimal filter. A predicate <c>instance_filter</c> (e.g. <c>{ product_family, currently_active }</c>,
 /// surface §3.6) is resolved to that id list UPSTREAM, at the endpoint, by a family-supplied
-/// <see cref="IPackMigrationInstanceResolver"/> over the family read model (bd babelstone-7giq) — so the
+/// <see cref="IPackMigrationInstanceResolver"/> over the family read model — so the
 /// predicate widens to a candidate set and this service's per-head <c>from_pack_version</c> check narrows
 /// it, with preview/idempotency unchanged. The cross-stream query stays family-owned; this write-path
 /// never grows a read-model dependency.

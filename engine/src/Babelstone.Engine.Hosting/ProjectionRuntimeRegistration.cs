@@ -15,7 +15,7 @@ namespace Babelstone.Engine.Hosting;
 /// <para>
 /// This used to live inside <c>TermDepositHostModule</c>, which made term_deposit the de-facto owner of shared
 /// spine infrastructure: a host running another family alone (e.g. personal_loan) registered no relay, so its
-/// projections and read models were never drained (bd babelstone-tfr4). Lifting it here — called ONCE from
+/// projections and read models were never drained. Lifting it here — called ONCE from
 /// <c>Program.cs</c> — restores the §D4 shape: families declare projections, the composition root owns the
 /// runtime. The same co-hosted, in-process BackgroundService shape as the outbox relay.
 /// </para>

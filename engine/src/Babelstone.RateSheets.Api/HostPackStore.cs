@@ -8,7 +8,7 @@ namespace Babelstone.RateSheets.Api;
 /// the OCI loader (C.5, <see cref="OciPackStore"/>) on the dev boundary, mirroring the engine
 /// host's <c>HostPack</c>. It structurally parses each configured pack version off the on-disk
 /// <c>packs/</c> tree (the same <c>PackParser.Parse</c> the OCI loader runs after pulling by digest)
-/// and caches it immutably, so the deploy's §P2 bound comes from the pack's own
+/// and caches it immutably, so the deploy's ADR-PC-008 bound comes from the pack's own
 /// <c>parameters/constants.yaml</c> rather than a host config knob.
 /// </summary>
 /// <remarks>
