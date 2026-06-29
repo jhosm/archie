@@ -174,8 +174,8 @@ public static class BabelstoneAttributes
     public const string InboxTombstoneMetric = "inbox_tombstone_total";
 
     /// <summary>
-    /// Projection-reconciliation CHECKSUM MISMATCH (event-store §7.1 pattern (a), M.5 — bd
-    /// babelstone-k4ny): a monotonic counter incremented when a per-instance state checksum finds the
+    /// Projection-reconciliation CHECKSUM MISMATCH (event-store §7.1 pattern (a), M.5): a monotonic
+    /// counter incremented when a per-instance state checksum finds the
     /// projection's materialised belief disagreeing byte-for-byte with an independent cold fold of the
     /// event log (<c>ChecksumReconciliation.Match == false</c>) — consumer drift since the last
     /// reconciliation. Tagged by <see cref="ReconciliationConsumer"/> and <see cref="ProjectionKind"/>.
@@ -239,7 +239,7 @@ public static class BabelstoneAttributes
     public const string ProjectionKind = "projection_kind";
 
     /// <summary>
-    /// SNAPSHOT LAG (ADR-PC-003 §P6 (1) / event-store §8.1, bd babelstone-sk7e): an <i>observable
+    /// SNAPSHOT LAG (ADR-PC-003 §P6 (1) / event-store §8.1): an <i>observable
     /// gauge</i> of the largest un-snapshotted event count observed across streams since process start —
     /// the depth of events appended past a stream's latest snapshot. The post-commit snapshot path
     /// (<c>AggregateRuntime.TrySnapshotAsync</c>) updates the high-water mark each time it evaluates the
@@ -256,7 +256,7 @@ public static class BabelstoneAttributes
     public const string SnapshotLagEventsMetric = "snapshot_lag_events";
 
     /// <summary>
-    /// SNAPSHOT HASH-MISMATCH ON READ (ADR-PC-003 §P6 (2) / event-store §8.3, bd babelstone-sk7e): a
+    /// SNAPSHOT HASH-MISMATCH ON READ (ADR-PC-003 §P6 (2) / event-store §8.3): a
     /// monotonic counter incremented where <c>SnapshotStore.Verify</c> finds a snapshot's stored
     /// <c>(state ‖ last_event_id)</c> hash disagreeing with a recompute on read — the worst
     /// event-sourcing failure mode (a silently-wrong snapshot trusted as truth), caught by the §8.3

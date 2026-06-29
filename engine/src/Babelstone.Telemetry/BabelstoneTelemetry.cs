@@ -30,7 +30,7 @@ public static class BabelstoneTelemetry
 
 /// <summary>
 /// The two snapshotter operational signals ADR-PC-003 §P6 calls for, emitted by the runtime / snapshot
-/// store so the <c>snapshot-operations</c> alert group can go live (bd babelstone-sk7e):
+/// store so the <c>snapshot-operations</c> alert group can go live:
 /// <list type="bullet">
 ///   <item><b>snapshot lag</b> — an observable gauge of the largest un-snapshotted event count observed
 ///   across streams (§P6 (1)). Gauge-shaped because the <c>SnapshotLagHigh</c> alert reads it
