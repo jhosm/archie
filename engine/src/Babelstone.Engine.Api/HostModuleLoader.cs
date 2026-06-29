@@ -14,7 +14,7 @@ namespace Babelstone.Engine.Api;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Why this realizes the §A3-deferred discovery.</b> Until bd <c>babelstone-9w2k.2</c> the host held the
+/// <b>Why this realizes the §A3-deferred discovery.</b> The host previously held the
 /// explicit Option-A list <c>[new TermDepositHostModule()]</c>; ADR-PC-021 §A3 promised that swapping it for
 /// <c>FamilyModuleLoader</c>-style assembly-scan would be a localized change with ZERO change to any family,
 /// because every module already implements the same contract with a public parameterless ctor. This loader
@@ -112,8 +112,8 @@ public sealed class HostModuleLoader
 
     /// <summary>
     /// Cross-checks the discovered family host modules against the pinned pack's family-manifest
-    /// (<see cref="VerifiedPack.Families"/>) and FAILS CLOSED on any skew (bd babelstone-9w2k.3 /
-    /// ADR-PC-007 §P1 / ADR-PC-009 §P1). The pinned pack is the authoritative per-deployment family set;
+    /// (<see cref="VerifiedPack.Families"/>) and FAILS CLOSED on any skew (ADR-PC-007 §P1 /
+    /// ADR-PC-009 §P1). The pinned pack is the authoritative per-deployment family set;
     /// every module stamps its <see cref="IFamilyHostModule.SchemaVersion"/> onto every <c>EventEnvelope</c>
     /// (ADR-PC-009 §P1) and the registry resolves the pin through it on replay (§P2), so a family/schema
     /// skew between the code that loaded and the pack the instance is pinned to is an audit/replay hazard —
@@ -200,8 +200,8 @@ public sealed class HostModuleLoader
     /// type; and (2) the OUTPUT-directory probe (<c>Babelstone.Families.*.dll</c> in
     /// <see cref="AppContext.BaseDirectory"/>), the robust primary anchor. The probe matters because the C#
     /// compiler ELIDES a <c>ProjectReference</c> from the IL metadata reference list when no type in it is used
-    /// in code, and the host's composition now names NO family type (bd babelstone-9w2k.5 relocated the last
-    /// family wiring into the family module) — so the compile-graph anchor alone would discover ZERO families.
+    /// in code, and the host's composition now names NO family type (the last family wiring was relocated
+    /// into the family module) — so the compile-graph anchor alone would discover ZERO families.
     /// The family <c>ProjectReference</c>s (kept per §A14) copy each <c>Babelstone.Families.*.dll</c> next to
     /// the host in the output dir, so the probe finds them by file. Both stay anchored to the in-tree COMPILE
     /// graph (a referenced assembly must be loadable to be scanned, ADR-PC-021 §A3) and out of an
@@ -231,8 +231,8 @@ public sealed class HostModuleLoader
         // The host's compile-reference graph: the `Babelstone.Families.*` assemblies named in
         // host.GetReferencedAssemblies(). This is the §A14 compile-graph anchor — BUT the C# compiler
         // elides a `ProjectReference` from the IL metadata reference list when no type in it is used in
-        // code, and the host's composition now names NO family type (bd babelstone-9w2k.5 relocated the
-        // last family wiring into the family module). So this pass alone would discover ZERO families
+        // code, and the host's composition now names NO family type (the last family wiring was relocated
+        // into the family module). So this pass alone would discover ZERO families
         // post-relocation. We keep it (it is correct when the host DOES still reference a family type) and
         // add the base-directory probe below as the robust primary anchor.
         foreach (var reference in host.GetReferencedAssemblies())

@@ -6,7 +6,7 @@ using Confluent.SchemaRegistry;
 namespace Babelstone.Engine.Api;
 
 /// <summary>
-/// Composes the engine host's bus-encoding posture (bd <c>babelstone-36mk</c>). Two modes, selected by
+/// Composes the engine host's bus-encoding posture. Two modes, selected by
 /// the <c>Bus:Encoding</c> configuration key — never a silent fallback:
 /// <list type="bullet">
 /// <item><c>avro</c> (production): the outbox carries real Avro + a registered Schema-Registry

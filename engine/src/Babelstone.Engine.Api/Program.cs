@@ -25,7 +25,7 @@ builder.Services.AddProblemDetails();
 // source (accrual.computed / withholding.applied, emitted in the AggregateRuntime shell) and
 // export over OTLP to the Collector (P1 — never direct-to-backend). The resource stamps
 // service.name + service.namespace=babelstone + deployment.environment so every trace is
-// attributable (OBS-1). Environment resolution fails fast: a host with no DOTNET_ENVIRONMENT /
+// attributable (OBS_RESOURCE_ATTRS). Environment resolution fails fast: a host with no DOTNET_ENVIRONMENT /
 // ASPNETCORE_ENVIRONMENT refuses to boot rather than mis-attribute traces to an assumed env.
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
@@ -36,7 +36,7 @@ builder.Services.AddOpenTelemetry()
             new KeyValuePair<string, object>(BabelstoneResource.DeploymentEnvironmentKey, BabelstoneResource.ResolveEnvironment()),
         ]))
     .WithTracing(tracing => tracing
-        // The inbound HTTP request becomes a SERVER span (bd babelstone-2dex). When the caller
+        // The inbound HTTP request becomes a SERVER span. When the caller
         // sends a W3C traceparent (ADR-IC-007 Layer 1 — traceparent is the join), that span adopts
         // its trace id, so the manual deposit.* spans started in the endpoints (children of
         // Activity.Current) nest under THIS trace instead of each becoming its own root. With no
@@ -44,12 +44,12 @@ builder.Services.AddOpenTelemetry()
         // under it all the same — either way the request's work is one connected trace.
         .AddAspNetCoreInstrumentation()
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
-        // Npgsql's built-in query CLIENT spans (K.5, bd scd2.3): one span per database command across
+        // Npgsql's built-in query CLIENT spans (K.5): one span per database command across
         // every engine Postgres call (event-store appends, outbox drain + lag observer,
         // projection/checkpoint stores), registered on THIS same provider so they nest under the
         // request's server span and the manual deposit.* spans — never a second, parallel provider.
         .AddNpgsqlQueryTelemetry()
-        // The runtime no-PII guard (njt2.9, OBS_NO_PII_ATTRS / ADR-IC-007 §P4): strips any span tag
+        // The runtime no-PII guard (OBS_NO_PII_ATTRS / ADR-IC-007 §P4): strips any span tag
         // whose key is outside the admitted babelstone.*/semantic-convention tier at OnEnd, BEFORE the
         // exporter runs — the load-bearing emit-time control over the regulated trace store. Registered
         // LAST so it sees the tags the manual spans + Npgsql/AspNetCore auto-instrumentation produced.
@@ -63,17 +63,17 @@ builder.Services.AddOpenTelemetry()
     // registered below, so the instruments AddMeter picks up here are actually produced in-process.
     .WithMetrics(metrics => metrics
         .AddMeter(BabelstoneTelemetry.MeterName)
-        // Npgsql's built-in db.client.operation.duration histogram (K.5, bd scd2.3): query-latency
+        // Npgsql's built-in db.client.operation.duration histogram (K.5): query-latency
         // per database command, emitted on THIS same meter provider so it is exported through the
         // one OTLP pipe alongside the engine's own instruments (the outbox-lag SLI et al.).
         .AddNpgsqlQueryTelemetry()
-        // The runtime no-PII guard for METRICS (njt2.11): a View with an explicit TagKeys allowlist over
+        // The runtime no-PII guard for METRICS (OBS_NO_PII_ATTRS): a View with an explicit TagKeys allowlist over
         // the Babelstone.Engine meter instruments, so a metric dimension whose key is outside the admitted
         // babelstone.*/operational tier is dropped at emit. Scoped to the Babelstone meter, so Npgsql's
         // db.* dimensions are untouched. A View — not a processor — is the only emit-time metric filter.
         .AddBabelstonePiiGuard()
         .AddOtlpExporter())
-    // Logs (njt2.10, ADR-IC-007 Layer 1 §P5 / OBS_NO_PII_ATTRS): wire an OTel LoggerProvider so the
+    // Logs (ADR-IC-007 Layer 1 §P5 / OBS_NO_PII_ATTRS): wire an OTel LoggerProvider so the
     // estate's structured logs flow over the same OTLP pipe, and run the runtime no-PII guard over them —
     // a BaseProcessor<LogRecord> that strips any un-namespaced PII-fragment field (e.g. a {Account}
     // message-template hole) before export, while keeping the §P5 operational references. Registered
@@ -157,7 +157,7 @@ builder.Services.AddSingleton<ICommandLog>(_ => new PostgresCommandLog(connectio
 // stores are family-agnostic spine components (ADR-PC-021), backed by the same PostgreSQL tier as
 // the event store. The typed runtime (registry + drainer + relay) is composed family-AGNOSTICALLY at
 // this host root by AddProjectionRuntime below — over these stores and EVERY family's registered
-// IProjectionModule — so no single family owns it (bd babelstone-tfr4); migrations 0010/0011 own the
+// IProjectionModule — so no single family owns it; migrations 0010/0011 own the
 // `projections` discriminator columns + the `projection_checkpoints` table they read/write.
 builder.Services.AddSingleton<IProjectionStorage>(_ => new PostgresProjectionStore(connectionString));
 builder.Services.AddSingleton<IProjectionCheckpointStore>(_ => new PostgresProjectionCheckpointStore(connectionString));
@@ -183,12 +183,12 @@ builder.Services.AddSingleton(serviceProvider =>
 builder.Services.AddSingleton<ISnapshotStorage>(_ => new PostgresSnapshotStore(connectionString));
 // D.4 CQRS read model (ADR-IC-005): the denormalized read-model STORE is FAMILY-OWNED (ADR-PC-021
 // §D2/§P2 family-owned ownership) — the deposit-shaped table is one family's domain shape, so its
-// IDepositReadModelStore / PostgresDepositReadModelStore registration moved INTO TermDepositHostModule
-// (bd babelstone-9w2k.5), where the read-model runner over it is already composed. The host no longer
+// IDepositReadModelStore / PostgresDepositReadModelStore registration moved INTO TermDepositHostModule,
+// where the read-model runner over it is already composed. The host no longer
 // names a family read-model type; the module registers its own store from the host's already-secret-
 // resolved engine connection string (FamilyHostContext.EngineConnectionString), so the ISecretProvider
 // boundary (ADR-PC-004 A1) still lives only at this composition root.
-// The dual-encode split (ADR-PC-028 §Decision / STORE_BUS_ENCODING_EQUIVALENCE, bd babelstone-36mk):
+// The dual-encode split (ADR-PC-028 §Decision / STORE_BUS_ENCODING_EQUIVALENCE):
 //   • STORE codec — the self-describing JSON JsonEventSerializer fills events.payload (the book of
 //     record, decodable with NO Schema Registry — EVENT_STORE_PAYLOAD_SELF_DESCRIBING). It is the
 //     runtime's `serializer` (and its sole decode/replay path), UNCHANGED.
@@ -202,7 +202,7 @@ builder.Services.AddSingleton<IPiiProtector, NullPiiProtector>();
 
 // The per-subject PII transit-key boundary (IPiiKeyStore, ADR-PC-004 §P2/§P3) — distinct from the
 // IPiiProtector encrypt seam above and the ISecretProvider KV seam: this is the GDPR crypto-shred
-// primitive (DestroyKeyAsync) the right-to-be-forgotten endpoint drives (bd babelstone-nzw6).
+// primitive (DestroyKeyAsync) the right-to-be-forgotten endpoint drives.
 // Default to the identity NullPiiKeyStore so `make up` / local dev wires the erasure flow end-to-end
 // without OpenBao (no PII is encrypted yet — the NullPiiProtector posture — so there is no real key to
 // shred). With OpenBao:Enabled the real per-subject transit keys drop in via the same seam, no code
@@ -232,7 +232,7 @@ builder.Services.AddSingleton<IIntegrationEventCatalog>(_ => new AvroSchemaCatal
 // own endpoints. This compose block stays family-count-invariant — adding a family is a new
 // module + a ProjectReference, never an edit here. The explicit Option-A list
 // (§A3, `[new TermDepositHostModule()]`) is now ASSEMBLY-SCAN discovery (§A3 Option B / §P4,
-// realized 2026-06-20 / bd babelstone-9w2k.2): HostModuleLoader scans the host's compile-referenced
+// realized 2026-06-20): HostModuleLoader scans the host's compile-referenced
 // Babelstone.Families.* assemblies for public-parameterless-ctor IFamilyHostModule types, fail-loud on
 // a duplicate-family collision (the host-module analogue of HandlerRegistry's duplicate-event_type
 // throw), and returns them STABLY ordered so the engine-before-family read-model migration ordering
@@ -242,7 +242,7 @@ var familyHostContext = new FamilyHostContext(pack, builder.Configuration, conne
 IReadOnlyList<IFamilyHostModule> familyModules =
     new HostModuleLoader().LoadAll(HostModuleLoader.FamilyHostAssemblies());
 
-// MANDATORY fail-closed version-skew cross-check (bd babelstone-9w2k.3 / ADR-PC-007 §P1 / ADR-PC-009
+// MANDATORY fail-closed version-skew cross-check (ADR-PC-007 §P1 / ADR-PC-009
 // §P1): the pinned pack's family-manifest (families.yaml) is the authoritative per-deployment family
 // set. Each discovered module stamps its SchemaVersion onto every EventEnvelope (§P1), so a family or
 // schema-version skew between the code that loaded and the pack the instance is pinned to is an
@@ -269,7 +269,7 @@ foreach (var module in familyModules)
 
 // The family-AGNOSTIC async projection runtime (ADR-PC-002 §P4, two-modes §5.4): the single
 // in-process relay + its registry + drainer, composed ONCE here at the §D4 composition root rather
-// than inside any one family module (bd babelstone-tfr4 — previously term_deposit owned this, so a
+// than inside any one family module (previously term_deposit owned this, so a
 // host running another family alone had no relay and never drained its projections/read model). The
 // registry is built lazily from EVERY family's registered IProjectionModule (resolved after Build(),
 // so all the ConfigureServices calls above have run); each family contributes only modules, the host
@@ -292,9 +292,9 @@ builder.Services.AddProjectionRuntime();
 // the Redpanda external listener in infra/compose.yaml (localhost:19092), the same convention
 // `make up` exposes.
 var bootstrapServers = builder.Configuration["Kafka:BootstrapServers"] ?? "localhost:19092";
-// The relay producer's SASL/SCRAM identity (ADR-IC-016 plane ii §4–§6 / KAFKA_SASL_TOPIC_ACL). njt2.1
-// added the KafkaSaslOptions applier + the Sasl property; THIS resolves the actual credential at the
-// composition root and puts it on the option. The username (svc-outbox-publisher) is declarative
+// The relay producer's SASL/SCRAM identity (ADR-IC-016 plane ii §4–§6 / KAFKA_SASL_TOPIC_ACL): THIS
+// composition root resolves the actual credential and puts it on the relay option. The username
+// (svc-outbox-publisher) is declarative
 // config; the PASSWORD resolves through the SAME ISecretProvider seam as ConnectionStrings:Engine
 // (OpenBaoKvSecretProvider when OpenBao:Enabled, configuration-backed otherwise — §A1). The resolved
 // secret stays here in process memory to open the connection: never logged, never on a span, never on
@@ -313,7 +313,7 @@ builder.Services.AddSingleton(serviceProvider =>
 builder.Services.AddHostedService<OutboxRelayService>();
 builder.Services.AddSingleton(new OutboxLagObserver(connectionString));
 
-// The dedup-ledger retention sweep (bd babelstone-e6fr.10), co-hosted in this process (the same
+// The dedup-ledger retention sweep, co-hosted in this process (the same
 // §5.1 in-process-loop shape as the outbox relay). It bounds the unbounded growth of the two dedup
 // ledgers — command_dedup (migration 0015) and inbox (migration 0012) — by deleting their aged tail
 // on a slow housekeeping cadence. The per-table retention windows are deliberately ASYMMETRIC: the
@@ -340,11 +340,11 @@ app.Services.GetRequiredService<OutboxLagObserver>();
 app.UseExceptionHandler();
 
 // Hand the active trace id back to the caller on EVERY response — command and query alike
-// (bd babelstone-2dex; ADR-IC-007 Layer 1). The id is read from Activity.Current (the inbound
+// (ADR-IC-007 Layer 1). The id is read from Activity.Current (the inbound
 // request's SERVER span, created by AddAspNetCoreInstrumentation above) inside Response.OnStarting,
 // so it is captured just before the headers flush, when the request activity is still current. The
 // value is the bare 32-hex W3C trace id (TraceResponseHeader.Name), which a caller — Mission
-// Control's Telemetry tab (bd babelstone-f0ic.9) — uses to fetch the trace from Grafana Tempo. The
+// Control's Telemetry tab — uses to fetch the trace from Grafana Tempo. The
 // trace id is an opaque operational identifier, never PII (ADR-IC-007 §P4 / ADR-PC-004 §P2). Placed
 // before endpoint mapping so it wraps every endpoint; a request with no server span (none here once
 // instrumentation is on) simply omits the header rather than emitting an empty one.
