@@ -155,8 +155,9 @@ builder.Services.AddSingleton<IEventSink>(serviceProvider =>
 builder.Services.AddSingleton<ICommandLog>(_ => new PostgresCommandLog(connectionString));
 // D.2 projection runtime storage (ADR-PC-002 §P4): the byte-oriented projection + checkpoint
 // stores are family-agnostic spine components (ADR-PC-021), backed by the same PostgreSQL tier as
-// the event store. The family module composes the typed runtime (registry + drainer + relay) over
-// them, so it resolves these rather than registering them; migrations 0010/0011 own the
+// the event store. The typed runtime (registry + drainer + relay) is composed family-AGNOSTICALLY at
+// this host root by AddProjectionRuntime below — over these stores and EVERY family's registered
+// IProjectionModule — so no single family owns it (bd babelstone-tfr4); migrations 0010/0011 own the
 // `projections` discriminator columns + the `projection_checkpoints` table they read/write.
 builder.Services.AddSingleton<IProjectionStorage>(_ => new PostgresProjectionStore(connectionString));
 builder.Services.AddSingleton<IProjectionCheckpointStore>(_ => new PostgresProjectionCheckpointStore(connectionString));
@@ -265,6 +266,15 @@ foreach (var module in familyModules)
 {
     module.ConfigureServices(builder.Services, familyHostContext);
 }
+
+// The family-AGNOSTIC async projection runtime (ADR-PC-002 §P4, two-modes §5.4): the single
+// in-process relay + its registry + drainer, composed ONCE here at the §D4 composition root rather
+// than inside any one family module (bd babelstone-tfr4 — previously term_deposit owned this, so a
+// host running another family alone had no relay and never drained its projections/read model). The
+// registry is built lazily from EVERY family's registered IProjectionModule (resolved after Build(),
+// so all the ConfigureServices calls above have run); each family contributes only modules, the host
+// owns the relay. The same co-hosted in-process shape as the outbox relay below.
+builder.Services.AddProjectionRuntime();
 
 // The IC-004 outbox→Redpanda relay (G.1), co-hosted in this process (event-store-skeleton §5.1).
 // Two pieces register here, the same proven shape as the projection relay above:
