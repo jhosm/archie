@@ -52,8 +52,7 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
     /// — a writer-added field the reader does not know is dropped; a reader field absent from the writer
     /// falls to its schema default. The single-argument <see cref="Decode(ReadOnlyMemory{byte}, Type)"/>
     /// is the writer == reader fast path; this overload is what the inbox consumer uses once the SR has
-    /// resolved the real writer schema. The new overload leaves the existing decode untouched (it is
-    /// purely additive) so the two paths stay independent.
+    /// resolved the real writer schema.
     /// </summary>
     public DomainEvent Decode(ReadOnlyMemory<byte> payload, Type payloadType, global::Avro.Schema writerSchema)
     {
@@ -231,13 +230,12 @@ public sealed class AvroEventSerializer(AvroSchemaCatalog catalog, ISchemaIdReso
     {
         // Writer schema == reader schema (the local catalog schema for this record name). This is the
         // intra-process / same-version FAST PATH: cold replay reads the same family schema the runtime
-        // wrote (Epic E walking skeleton), and the inbox consumer's no-resolver fallback reads same-
-        // version intra-context topics. It does NOT perform Avro schema RESOLUTION — a caller that must
-        // read a DIFFERENT writer schema (cross-context BACKWARD/FORWARD evolution, ADR-IC-002
-        // §Consequences) resolves the writer schema by its embedded id from the Schema Registry and uses
-        // the Decode(payload, payloadType, writerSchema) overload, which threads writer + reader into the
-        // resolving ReadAvro below. (The event-store replay/rebuild path still calls THIS fast path and
-        // must adopt that overload before any forward .avsc evolution ships — a deferred follow-up.)
+        // wrote, and the inbox consumer's no-resolver fallback reads same-version intra-context topics.
+        // It does NOT perform Avro schema RESOLUTION — a caller that must read a DIFFERENT writer schema
+        // (cross-context BACKWARD/FORWARD evolution, ADR-IC-002 §Consequences) resolves the writer schema
+        // by its embedded id from the Schema Registry and uses the Decode(payload, payloadType,
+        // writerSchema) overload, which threads writer + reader into the resolving ReadAvro below. (The
+        // event-store replay/rebuild path also uses THIS fast path, reading writer == reader.)
         var reader = new GenericDatumReader<GenericRecord>(schema, schema);
         using var stream = new MemoryStream(payload.ToArray(), writable: false);
         var decoder = new BinaryDecoder(stream);
@@ -318,7 +316,7 @@ internal static class MovementCarrier
     /// empty C# carrier is encoded as, see <see cref="ToAvroArray"/>) decodes back to <c>null</c>, the
     /// idiomatic C# "no movements" the record default constructs with — so a movement-free event round-trips
     /// to IDENTITY (null → [] wire → null) rather than to a non-equal empty list. A non-empty array decodes
-    /// element-wise to the list. (bd t7o3.13.)</summary>
+    /// element-wise to the list.</summary>
     public static IReadOnlyList<Movement>? FromAvroArray(object? avroValue, string parameterName)
     {
         if (avroValue is not object[] array)
