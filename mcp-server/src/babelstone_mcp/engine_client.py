@@ -1,8 +1,9 @@
 """HTTP client for the engine command/query boundary (Babelstone.Engine.Api, ADR-PC-021 §D5).
 
-A thin async wrapper over the three surfaces the MCP server maps: constitute (POST), read a
-deposit position (GET), and mature (POST). Money crosses the wire as integer cents (ADR-PC-010 §P1),
-snake_case.
+A thin async wrapper over the engine command/query surfaces the MCP server maps: the deposit commands
+(constitute / mature / pay-interest, POST), the deposit position read (GET), and the personal-loan
+installment money-mover (POST /v1/loans/{id}/installment). Money crosses the wire as integer cents
+(ADR-PC-010 §P1), snake_case.
 The client is fail-loud: a non-2xx engine response raises (``raise_for_status``) rather than
 returning a partial/empty result — the MCP layer surfaces that to the agent.
 
@@ -192,6 +193,34 @@ class EngineClient:
         _raise_for_sca_required(response)
         response.raise_for_status()
         # §P9: sanitise any customer-writable free-text before the coupon position reaches the agent.
+        return sanitize_engine_response(response.json())
+
+    async def pay_installment(
+        self, loan_id: str, collection_account_ref: str, client_id: str | None = None
+    ) -> dict[str, Any]:
+        """POST /v1/loans/{id}/installment — pays the next scheduled installment, returns the loan
+        command outcome ({loan_id, status, commit_sequence}).
+
+        Carries NO ``Idempotency-Key`` header — UNLIKE ``constitute`` (and the deposit money-movers'
+        saga channel), the installment key is SERVER-DERIVED and number-pinned on the stable installment
+        NUMBER (ADR-PC-036 §Decision 1+3 / LCD-1; ADR-PC-029 slot 4, AMENDED): the engine derives the key
+        from ``(loan, "pay_installment", installment-number)`` itself, so a manual operator, this MCP
+        agent, and the automated driver paying the SAME occurrence all converge on ONE key and dedupe to
+        ONE money leg. The client therefore supplies no key of its own (bd babelstone-6cpq.1) — a re-dated
+        at-least-once retry of the same occurrence cannot double-collect. ``collection_account_ref`` is an
+        OPAQUE account token the installment is collected from (a reference, NEVER an IBAN — ADR-PC-004
+        §P2). Raises :class:`ScaRequiredError` on the engine's ``422 SCA_REQUIRED`` step-up gate (§P8, Q-BE
+        Q1) so the money-mover tool can step up + retry (Q2); raises ``HTTPStatusError`` on any other
+        non-2xx (e.g. a 422 lifecycle rejection on a settled loan).
+        """
+        response = await self._client.post(
+            f"{self._base_url}/v1/loans/{loan_id}/installment",
+            json={"collection_account_ref": collection_account_ref},
+            headers=_with_client_id(None, client_id),
+        )
+        _raise_for_sca_required(response)
+        response.raise_for_status()
+        # §P9: sanitise any customer-writable free-text before the loan outcome reaches the agent.
         return sanitize_engine_response(response.json())
 
     async def aclose(self) -> None:

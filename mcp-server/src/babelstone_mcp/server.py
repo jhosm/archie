@@ -1,4 +1,5 @@
-"""The FastMCP server: ``constitute_deposit``, ``get_deposit``, ``mature_deposit``, ``pay_interest``.
+"""The FastMCP server: ``constitute_deposit``, ``get_deposit``, ``mature_deposit``, ``pay_interest``,
+``pay_installment``.
 
 All map 1:1 to the engine's HTTP API. Per ADR-IC-010's 2026-05-31 amendment, the tool/resource
 axis is *control ownership* (model-invokable vs host-attached), not CQRS command/query — so a read
@@ -534,6 +535,69 @@ async def pay_interest(deposit_id: str, ctx: Context) -> DepositPosition:
         lambda: engine().pay_interest(deposit_id, client_id=auth.client_id),
     )
     return DepositPosition(**position)
+
+
+class PayInstallmentResult(BaseModel):
+    """Structured tool output (ADR-IC-010 §P6) — a personal-loan installment command outcome.
+
+    Every field is a structural, PII-free value (ADR-PC-004 §P2): the loan id, the folded lifecycle
+    status, and the per-stream commit sequence (ADR-IC-005 §P3 read-your-writes token). It mirrors the
+    engine's ``LoanCommandResponse`` shape — the loan command surface returns the command outcome, not a
+    full position (UNLIKE the deposit money-movers, which return the folded ``DepositPosition``).
+    """
+
+    loan_id: str = Field(description="The loan id (UUID).")
+    status: str = Field(
+        description="Lifecycle state after the installment — ACTIVE while installments remain, SETTLED "
+        "once the final installment clears the outstanding balance."
+    )
+    commit_sequence: int = Field(
+        description="The per-stream version this installment committed (ADR-IC-005 §P3)."
+    )
+
+
+@mcp.tool()
+async def pay_installment(
+    loan_id: str, collection_account_ref: str, ctx: Context
+) -> PayInstallmentResult:
+    """Pay the next scheduled installment on a personal loan — collects one amortizing payment from the
+    collection account and returns the loan's updated command outcome.
+
+    ``loan_id`` is the engine-assigned UUID. ``collection_account_ref`` is the OPAQUE account token the
+    installment is collected from (a reference the PII boundary already issued — NEVER a raw IBAN,
+    ADR-PC-004 §P2). The engine derives WHICH installment (the next unpaid number) and the principal/
+    interest split from the loan's amortization schedule — not supplied here. The result carries the
+    folded ``status`` (ACTIVE while installments remain, SETTLED once the final one clears the balance)
+    and the ``commit_sequence`` read-your-writes token.
+
+    The installment is idempotent WITHOUT a caller key: the engine derives a stable, number-pinned
+    idempotency key from the occurrence's own identity (``(loan, "pay_installment", number)``), so a
+    repeat call for the SAME occurrence dedupes to ONE money leg and never double-collects (ADR-PC-036
+    §Decision 1+3 / LCD-1; ADR-PC-029 slot 4, AMENDED). This tool therefore supplies NO key of its own
+    (bd babelstone-6cpq.1) — UNLIKE ``constitute_deposit``, whose agent-channel command mints a per-call
+    key.
+
+    Requires ``deposits:write`` (ADR-IC-010 §P4 — the money-mover write scope; the loan tool reuses the
+    existing write scope, see ``auth.TOOL_SCOPES``). Like ``mature_deposit``, the collection is
+    irreversible, so under §P8 it is gated by real step-up SCA (Q-BE resolved, bd babelstone-ziu3.5): the
+    ENGINE 422s the installment without FRESH gateway-attested SCA, this tool fires the URL-mode step-up
+    elicitation, and RETRIES with the refreshed token. The installment settles on the bank's own signal
+    (the AS signature the engine sees), never the agent's report — the §P8 invariant. A declined/cancelled
+    step-up aborts the call with an ``McpError`` and collects nothing.
+    """
+    auth = _authorize(ctx, "pay_installment")
+    outcome = await _settle_with_stepup_sca(
+        ctx,
+        "PAY_INSTALLMENT",
+        lambda: engine().pay_installment(
+            loan_id, collection_account_ref, client_id=auth.client_id
+        ),
+    )
+    return PayInstallmentResult(
+        loan_id=outcome["loan_id"],
+        status=outcome["status"],
+        commit_sequence=outcome["commit_sequence"],
+    )
 
 
 async def _settle_with_stepup_sca(
