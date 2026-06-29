@@ -4,7 +4,7 @@ Kustomize manifests for the deployed **backing-infra** stack, per
 [ADR-IC-013 §D2](../../docs/product-management/integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md)
 (IaC subtree co-located in the monorepo). These deploy the **same 10 services**
 as [`infra/compose.yaml`](../compose.yaml) to a Kubernetes cluster, shaped for a
-single **dev / staging** environment.
+single **dev** environment (the always-on **staging** box is its own `overlays/staging`).
 
 Packaging is **Kustomize** (base + overlays). This is a packaging choice, not an
 ADR-level decision — it is recorded here and in the introducing PR body rather
@@ -253,7 +253,7 @@ staging-env decision. The pin is a JSON6902 add-op (`storageclass.patch.yaml`) �
 `volumeClaimTemplates` has no strategic-merge key, so a merge patch would *replace*
 the whole VCT list and drop the base storage request. At `kustomize build` /
 `kubeconform` time `storageClassName` is just a string; it binds to a real driver
-only at apply, once Phase-1 `hetzner-k3s` installs the Hetzner CCM + CSI.
+only at apply, once Phase-1 [`hetzner-k3s`](../hetzner-k3s/) installs the Hetzner CCM + CSI.
 
 **Public edge — the recorded drift.** `ingress.yaml` adds a public Traefik
 `Ingress` (k3s bundles Traefik as the `IngressClass`) for **four** hosts:
@@ -324,7 +324,8 @@ mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/ov
 **Account-gated / deferred (not in this overlay yet):** provisioning the node,
 installing the CSI driver + cert-manager + the issuer, pointing DNS at the node IP,
 and the end-to-end cert verification all need the Hetzner account + DNS (Phases
-0–2). The engine, orchestrator, notification, Mission Control, and mcp-server
+0–2). The Phase-1 provisioner config now lives in [`../hetzner-k3s/`](../hetzner-k3s/)
+(`hetzner-k3s create`); the apply itself stays account-gated. The engine, orchestrator, notification, Mission Control, and mcp-server
 manifests have landed (zla1.5.1/.2/.3/.5 — mcp-server behind Kong over mutual TLS,
 its internal-CA chain in `overlays/staging/bootstrap/mcp-mtls.yaml`); the only
 remaining piece is the deferred real-Claude **agent host** (zla1.5.6); the real Backstage **image**
@@ -332,7 +333,7 @@ is zla1.6 (the base still pins `:placeholder`).
 
 ## Out of scope (downstream)
 
-The `dev` overlay is a single, non-HA, dev/staging-shaped environment; the `ha`
+The `dev` overlay is a single, non-HA, dev-shaped environment; the `ha`
 overlay adds the production-shaped topology; the `staging` overlay (both above)
 adds the always-on public demo box. The remaining scope split:
 

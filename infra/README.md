@@ -98,11 +98,13 @@ before `make up`; defaults live in `compose.yaml`.
 ## Deployed environment (K8s) (`k8s/`)
 
 The deployed counterpart of the Compose stack lives under [`k8s/`](./k8s/) —
-Kustomize manifests (base + `overlays/dev` + `overlays/ha`), per
+Kustomize manifests (base + `overlays/dev` + `overlays/ha` + `overlays/staging`), per
 [ADR-IC-013 §D2](../docs/product-management/integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md)
 (IaC subtree co-located in the monorepo). It deploys the **same 10 services**
-(9 backing-infra + the v1 Core-ACL settlement stub) to Kubernetes: `overlays/dev` is single-replica dev/staging;
-`overlays/ha` is the production-shaped HA topology (P.7).
+(9 backing-infra + the v1 Core-ACL settlement stub) to Kubernetes: `overlays/dev` is single-replica
+dev; `overlays/ha` is the production-shaped HA topology (P.7); `overlays/staging` is the always-on
+public demo box (single-node k3s on Hetzner — bd babelstone-zla1). The staging cluster itself is
+provisioned (Phase 1) from [`hetzner-k3s/`](./hetzner-k3s/), a layer below these manifests.
 
 ```bash
 mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/dev
@@ -118,8 +120,9 @@ Scope is deliberately narrow (matching the Compose stack):
   topology (3-node Redpanda, Postgres primary + synchronous off-site warm
   standby) is **P.7** (babelstone-ixkp), in the sibling `overlays/ha` — see
   [`k8s/README.md`](./k8s/README.md). Both overlays are CI-validated.
-- **No CD pipeline** — CI only validates manifests (`kustomize build` +
-  `kubeconform`); promotion/apply is **Q.6** (babelstone-4c81).
+- **CD is the `cd.yml` promotion pipeline (Q.6, babelstone-4c81).** The infra CI job here only
+  validates manifests (`kustomize build` + `kubeconform`); the human-dispatched promotion/apply
+  lives in [`.github/workflows/cd.yml`](../.github/workflows/cd.yml).
 - **OpenBao is a dev-mode seam** — real provisioning is **M.2** (babelstone-puu3).
 
 See [`k8s/README.md`](./k8s/README.md) for the full layout and scope boundaries.

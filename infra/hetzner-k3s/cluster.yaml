@@ -1,0 +1,78 @@
+---
+# hetzner-k3s cluster config — the always-on staging / demo box (Phase 1).
+#
+# One CAX41 ARM node running single-node k3s in Hetzner Helsinki (hel1), on babelstone.dev.
+# Consumed by `hetzner-k3s create --config cluster.yaml` to CREATE the cluster that the
+# Kustomize overlay (infra/k8s/overlays/staging) then deploys INTO. Targets hetzner-k3s v2.6.0+.
+# See ./README.md for the provision walk-through.
+#
+# THE HETZNER API TOKEN IS NOT IN THIS FILE — ON PURPOSE.
+# hetzner-k3s reads it from the HCLOUD_TOKEN environment variable, which takes precedence over
+# any in-file `hetzner_token:` key. That is the upstream-documented way to keep the config
+# safely committable to a repo. Export it locally before provisioning, never commit it:
+#     export HCLOUD_TOKEN=<your read/write Hetzner Cloud API token>
+# Same secret-by-reference discipline as the rest of the estate: the committed file is the seam;
+# the credential arrives at runtime.
+
+config_format_version: 1            # required by hetzner-k3s v2.6.0+
+
+cluster_name: babelstone-staging    # prefixes every Hetzner resource name; lowercase + hyphen only
+kubeconfig_path: "./kubeconfig"     # cluster-admin credential — GITIGNORED, never commit (feeds cd.yml's KUBECONFIG_B64)
+
+# VERIFY before `create`: run `hetzner-k3s releases` and pin a currently-supported k3s release
+# (the latest patch of the minor you want). A hard-coded version goes stale.
+k3s_version: v1.32.0+k3s1
+
+networking:
+  ssh:
+    port: 22
+    use_agent: false
+    use_private_ip: false
+    public_key_path: "~/.ssh/babelstone-staging.pub"
+    private_key_path: "~/.ssh/babelstone-staging"
+  allowed_networks:
+    # hetzner-k3s synthesises the Hetzner Cloud Firewall from these CIDR lists.
+    ssh:
+      - REPLACE_ME/32     # lock SSH(22) to your operator / jump-host IP — REPLACE before `create`
+    api:
+      # k8s API(6443) open to the world: the GitHub-hosted cd.yml runner has no stable egress IP,
+      # so a network allow-list can't admit it. Auth is the cluster's mutual-TLS client cert (the
+      # kubeconfig), not the firewall. Deliberate staging trade-off — tighten for a real tier.
+      - 0.0.0.0/0
+  public_network:
+    ipv4: true
+    ipv6: true
+  private_network:
+    enabled: true
+    subnet: 10.0.0.0/16
+
+datastore:
+  # k3s control-plane store: embedded etcd. On a single node it is a single-member (NON-HA) control
+  # plane — a property of the 1-node box, NOT the event store. (The ADR-PC-005-relevant degradation
+  # is the box-level one: a single-replica Postgres event store with no warm standby, versus the HA
+  # overlays/ha topology — recorded in the PR body as an ADR-PC-020 §D3 explicit-drift.)
+  mode: etcd
+
+# Single node has no workers, so the one master MUST run workloads — without this, k3s taints the
+# master NoSchedule and nothing can be placed. Defaults false, so it is easy to omit and get a
+# running-but-unschedulable cluster.
+schedule_workloads_on_masters: true
+
+masters_pool:
+  instance_type: cax41    # ARM Ampere; stocked in hel1
+  instance_count: 1
+  locations:
+    - hel1                 # Helsinki
+
+# No worker_node_pools and no autoscaling on a single-node cluster.
+
+addons:
+  # The Hetzner CSI driver (default-on) is load-bearing: the staging overlay pins
+  # storageClassName: hcloud-volumes on its stateful claims, which only binds once this is up.
+  # (The Hetzner Cloud Controller Manager is always installed by hetzner-k3s regardless.)
+  csi_driver:
+    enabled: true
+  cluster_autoscaler:
+    enabled: false         # no autoscaled pools on a single node (defaults true)
+
+protect_against_deletion: true   # guards against an accidental `hetzner-k3s delete`
