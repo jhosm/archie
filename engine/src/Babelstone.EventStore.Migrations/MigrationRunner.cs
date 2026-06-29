@@ -18,6 +18,12 @@ public sealed class MigrationRunner(string connectionString)
         );
         """;
 
+    // A stable, arbitrary 64-bit key naming this runner's session advisory lock. Two
+    // runners that start concurrently (overlapping deploys, an app boot racing CI) would
+    // otherwise both read the ledger, both apply migration N, and collide on an opaque
+    // duplicate-key / "already exists" error. The lock serialises them: the second waits.
+    private const long MigrationLockKey = 3937070637541916881;
+
     /// <summary>
     /// Applies every migration not yet recorded in <c>schema_migrations</c>, in
     /// ascending version order. Each migration runs in its own transaction together
@@ -25,12 +31,6 @@ public sealed class MigrationRunner(string connectionString)
     /// applied version. Idempotent: a second call with nothing pending is a no-op.
     /// </summary>
     /// <returns>The migrations applied by this call, in the order applied.</returns>
-    // A stable, arbitrary 64-bit key naming this runner's session advisory lock. Two
-    // runners that start concurrently (overlapping deploys, an app boot racing CI) would
-    // otherwise both read the ledger, both apply migration N, and collide on an opaque
-    // duplicate-key / "already exists" error. The lock serialises them: the second waits.
-    private const long MigrationLockKey = 3937070637541916881;
-
     public async Task<IReadOnlyList<Migration>> ApplyAsync(CancellationToken ct = default)
     {
         await using var connection = new NpgsqlConnection(connectionString);
