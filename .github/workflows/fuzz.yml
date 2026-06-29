@@ -71,7 +71,7 @@ jobs:
       # run's generated corpus instead of restarting from the seeds. The run-id suffix
       # makes every run save a fresh entry; restore-keys pulls the most recent prior one.
       - name: Cache generated fuzz corpus (cumulative)
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/go-build/fuzz
           key: fuzz-${{ matrix.target }}-${{ github.run_id }}
@@ -126,7 +126,7 @@ jobs:
           # mise.toml cannot pin -- not a tool version, so the no-YAML-pin convention does not apply).
           version: "2026.6.6"
       - name: Cache NuGet packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('engine/**/*.csproj') }}
