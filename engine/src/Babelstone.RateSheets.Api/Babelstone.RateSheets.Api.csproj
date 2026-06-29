@@ -19,15 +19,15 @@
          (BabelstoneResource) + the SDK hosting integration and OTLP exporter, for OBS-1 parity
          with the engine host. -->
     <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
-    <!-- The host-side OTel-SDK seam (K.5, bd scd2.3): registers Npgsql's built-in query CLIENT spans
+    <!-- The host-side OTel-SDK seam (K.5): registers Npgsql's built-in query CLIENT spans
          on this host's existing TracerProvider so the rate-sheet store's Postgres calls are visible in
          the trace too (OBS-1 parity with the engine host). Kept out of the SDK-free Babelstone.Telemetry. -->
     <ProjectReference Include="../Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
-    <!-- Npgsql's built-in OTel instrumentation (K.5, bd scd2.3): declared DIRECTLY here because the
+    <!-- Npgsql's built-in OTel instrumentation (K.5): declared DIRECTLY here because the
          Babelstone.Telemetry.Hosting seam keeps Npgsql.OpenTelemetry PrivateAssets="all" (so it does not
-         leak into the DB-free notification host, bd njt2.9). This host calls AddNpgsqlQueryTelemetry()
+         leak into the DB-free notification host). This host calls AddNpgsqlQueryTelemetry()
          on its rate-sheet store's Postgres calls, so it needs the runtime assembly present. -->
     <PackageReference Include="Npgsql.OpenTelemetry" />
   </ItemGroup>

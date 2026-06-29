@@ -18,12 +18,11 @@ builder.Services.AddProblemDetails();
 // OpenTelemetry tracing + logging (ADR-IC-007 Layer 1, Epic K.1): the same resource discipline as
 // the engine host (OBS-1 parity) — service.name + service.namespace=babelstone +
 // deployment.environment — exporting over OTLP to the Collector (P1, which fans out to Tempo/Loki).
-// Tracing listens to the shared Babelstone.Engine source so any manual span this host opens later is
-// captured; logging ships the host's structured ILogger records (the 409 conflict + unexpected-error
-// events, BabelstoneEvents) down the same OTLP pipe so trace_id/span_id correlate a log to its trace
-// (the document-06 / §P1 trace-to-log navigation). As the engine's first HTTP host, this establishes
-// the OTel logging wiring future engine HTTP surfaces follow. Environment resolution fails fast: no
-// DOTNET_ENVIRONMENT / ASPNETCORE_ENVIRONMENT means the host refuses to boot (no assumed env).
+// Tracing subscribes to the shared Babelstone.Engine activity source, mirroring the engine host
+// (OBS-1 parity); logging ships the host's structured ILogger records (the 409 conflict +
+// unexpected-error events, BabelstoneEvents) down the same OTLP pipe so trace_id/span_id correlate
+// a log to its trace (the document-06 / §P1 trace-to-log navigation). Environment resolution fails
+// fast: no DOTNET_ENVIRONMENT / ASPNETCORE_ENVIRONMENT means the host refuses to boot (no assumed env).
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
         .AddService(BabelstoneResource.RateSheetsApiServiceName)
@@ -34,7 +33,7 @@ builder.Services.AddOpenTelemetry()
         ]))
     .WithTracing(tracing => tracing
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
-        // Npgsql's built-in query CLIENT spans (K.5, bd scd2.3): one span per database command the
+        // Npgsql's built-in query CLIENT spans (K.5): one span per database command the
         // rate-sheet store issues, on THIS same provider so they share the host resource + OTLP pipe
         // (OBS-1 parity with the engine host) — never a second, parallel provider.
         .AddNpgsqlQueryTelemetry()
@@ -84,11 +83,9 @@ builder.Services.AddSingleton<IPackStore>(packStore);
 builder.Services.AddSingleton<IRateBoundsSource, PackRateBoundsSource>();
 
 // INTERIM product-config registry (surface §2.5 cross-artefact invariants): no in-engine
-// product-config registry exists until Epic E/F, so the default reports no active configs and the
-// "referenced product_id exists" / "active config's rate_ref is covered" checks pass vacuously —
-// a sheet is judged on its self-contained shape alone, never rejected merely because the registry
-// is unwired. Replace with a registry-backed source when product configs land; the validator and
-// the deploy path already consume the IProductConfigSource seam.
+// product-config registry exists until Epic E/F, so the default (EmptyProductConfigSource) reports
+// no active configs and the cross-artefact checks pass vacuously — a sheet is judged on its
+// self-contained shape alone, never rejected merely because the registry is unwired.
 builder.Services.AddSingleton<IProductConfigSource, EmptyProductConfigSource>();
 
 var app = builder.Build();
