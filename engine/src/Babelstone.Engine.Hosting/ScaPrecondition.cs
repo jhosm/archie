@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Http;
 
-namespace Babelstone.Families.TermDeposit.Application;
+namespace Babelstone.Engine.Hosting;
 
 /// <summary>
 /// The step-up-SCA precondition on an irreversible money-mover (ADR-IC-010 §P8 / Document 11
@@ -8,9 +8,17 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// </summary>
 /// <remarks>
 /// <para>
+/// FAMILY-NEUTRAL HOME (ADR-PC-021 §A9, bd babelstone-6cpq.14). This gate is a cross-cutting host-shell
+/// concern, not one family's business, so it lives in the shared <c>Babelstone.Engine.Hosting</c> assembly
+/// alongside the other family-agnostic in-process hosting components — the single home both the term-deposit
+/// money-movers (<c>DepositsEndpoints</c>) and the personal-loan money-movers (<c>LoansEndpoints</c>) wire it
+/// from. ONE gate mechanism referenced by both families, never a per-family copy.
+/// </para>
+/// <para>
 /// In plain English: before the engine settles something irreversible for an AI agent — maturing a
-/// deposit, paying a coupon — it must see proof that the customer just passed a fresh strong-authentication
-/// (SCA) challenge at the bank. That proof is NOT something the agent can assert: it is the bank's own
+/// deposit, paying a coupon, collecting a loan installment — it must see proof that the customer just passed
+/// a fresh strong-authentication (SCA) challenge at the bank. That proof is NOT something the agent can
+/// assert: it is the bank's own
 /// authorization server (AS) signing an <c>acr</c> (authentication-context-class) claim into the access
 /// token, and Kong — having validated that signature — attesting it to the engine as the
 /// <c>X-SCA-Acr</c> / <c>X-SCA-Auth-Time</c> headers (the same <c>set_header</c> overwrite-from-the-token
@@ -38,14 +46,15 @@ namespace Babelstone.Families.TermDeposit.Application;
 /// Document 10 / ADR-IC-006 §P5 commit to).
 /// </para>
 /// <para>
-/// NON-INTERACTIVE PRINCIPAL ESCAPE (ADR-PC-036, bd babelstone-6cpq.4). This check is the HUMAN step-up
-/// gate only. A machine actor — the ADR-PC-036 lifecycle-command driver firing a deposit's maturity /
-/// coupon on its due date — has no human <c>acr</c>/<c>auth_time</c> to present, so it would always 422
-/// here. Its authorisation is instead a SCOPED, gateway-attested service-principal claim recognised by the
-/// sibling <see cref="ScaServicePrincipal"/>, which the <see cref="ScaPreconditionFilter"/> consults BEFORE
-/// this check. That escape is route-scoped (maturity / interest only, never terminate) and audited; it
-/// only ever WIDENS authorisation for those two routes. This <see cref="Check"/> is unchanged and remains
-/// the fail-closed default for every caller that is not a recognised scoped principal.
+/// NON-INTERACTIVE PRINCIPAL ESCAPE (ADR-PC-036, bd babelstone-6cpq.4 / .9 / .14). This check is the HUMAN
+/// step-up gate only. A machine actor — the ADR-PC-036 lifecycle-command driver firing a deposit's maturity
+/// / coupon or a loan's installment on its due date — has no human <c>acr</c>/<c>auth_time</c> to present, so
+/// it would always 422 here. Its authorisation is instead a SCOPED, gateway-attested service-principal claim
+/// recognised by the sibling <see cref="ScaServicePrincipal"/>, which the <see cref="ScaPreconditionFilter"/>
+/// consults BEFORE this check. That escape is route-scoped (the deposit maturity / coupon and the loan
+/// installment only — never a customer-initiated money-mover such as terminate / early-repayment) and
+/// audited; it only ever WIDENS authorisation for those scoped routes. This <see cref="Check"/> is unchanged
+/// and remains the fail-closed default for every caller that is not a recognised scoped principal.
 /// </para>
 /// <para>
 /// SENDER-CONSTRAINT (RFC 8705 mTLS-bound, ADR-IC-010 §A8, bd babelstone-26rb). The refreshed step-up
