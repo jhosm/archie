@@ -10,7 +10,7 @@ using Npgsql;
 namespace Babelstone.OutboxPublisher;
 
 /// <summary>
-/// The IC-004 polling relay (Epic E.4, hardened in G.1). One <see cref="DrainOnceAsync"/> call:
+/// The IC-004 polling relay. One <see cref="DrainOnceAsync"/> call:
 /// SELECTs PENDING outbox rows in drain order, claiming each aggregate with a per-aggregate
 /// advisory lock and each row <c>FOR UPDATE SKIP LOCKED</c> (so concurrent relay instances claim
 /// disjoint rows — never the same row twice, and never concurrent in-flight rows for the same
@@ -39,7 +39,7 @@ public sealed class OutboxDrainer : IAsyncDisposable
     private const byte MagicByte = 0x00;
 
     // The per-row publish-LATENCY histogram on the shared Babelstone meter (ADR-IC-007 Layer 1): one
-    // histogram of seconds-from-enqueue-to-ack, tagged by aggregate_type. This is a G.1 ADDITION, NOT
+    // histogram of seconds-from-enqueue-to-ack, tagged by aggregate_type. This is an ADDITION, NOT
     // the §P4 SLI — that is the oldest-PENDING-row gauge in OutboxLagObserver, which (unlike a per-row
     // metric) keeps reporting during an outage. A host turns this on with
     // AddMeter(BabelstoneTelemetry.MeterName); with no listener Record is a near no-op. The lag value
@@ -90,12 +90,9 @@ public sealed class OutboxDrainer : IAsyncDisposable
     /// per-aggregate advisory lock the read takes (ADR-IC-004 §P2).
     /// </summary>
     /// <remarks>
-    /// The read claims each row <c>FOR UPDATE SKIP LOCKED</c> and each aggregate with a
-    /// transaction-scoped advisory lock, and the whole cycle runs in one transaction, so concurrent
-    /// drainers claim disjoint rows AND never share an aggregate (no double-publish, no cross-instance
-    /// reordering) without blocking on each other (pg_try_* + SKIP LOCKED → no lock-wait, no deadlock).
-    /// A produce failure rolls the transaction back, leaving every row in the batch PENDING for the
-    /// next cycle (ADR-IC-004 §P7).
+    /// A produce failure rolls the whole transaction back, leaving every row in the batch PENDING for
+    /// the next cycle (ADR-IC-004 §P7) — no row is ever marked PUBLISHED without an ack. The §P2
+    /// concurrency seam that makes the read claim disjoint rows is detailed where the SQL takes it.
     /// </remarks>
     /// <remarks>
     /// One transaction holds the row + advisory locks across the batch's synchronous produce-and-ack
@@ -127,7 +124,7 @@ public sealed class OutboxDrainer : IAsyncDisposable
     }
 
     /// <summary>
-    /// Records the per-row publish-latency histogram for one row (a G.1 addition, NOT the §P4 SLI):
+    /// Records the per-row publish-latency histogram for one row (an addition, NOT the §P4 SLI):
     /// the seconds between the row's enqueue (<c>created_at</c>) and its publish ack
     /// (<c>published_at</c>), tagged by <c>aggregate_type</c> so latency is breakable by topic. The
     /// value is computed single-clock in the DB by <see cref="MarkPublishedAsync"/> so host/DB clock
