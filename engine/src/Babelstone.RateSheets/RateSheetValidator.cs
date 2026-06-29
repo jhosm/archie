@@ -131,9 +131,9 @@ public sealed class RateSheetValidator
     }
 
     /// <summary>
-    /// True if <paramref name="body"/> prices <paramref name="rateRef"/> — the reusable
-    /// coverage primitive behind the symmetric §2.5 invariant, callable from either side of the
-    /// sheet/config pair so the two can never be accepted in a state where they disagree. Coverage is
+    /// True if <paramref name="body"/> prices <paramref name="rateRef"/> — the reusable, pure
+    /// coverage primitive behind the §2.5 cross-artefact invariant, used by the deploy-time check
+    /// that rejects a sheet leaving any active config's <c>rate_ref</c> unpriced. Coverage is
     /// <c>(product, role)</c> presence with at least one band: a present pair's bands are
     /// exhaustive over the WHOLE supported principal range by the cross-band check
     /// (<see cref="ValidateBands"/>), so a covered pair prices every principal and no per-principal
