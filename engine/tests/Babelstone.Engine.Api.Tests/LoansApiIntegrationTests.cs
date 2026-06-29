@@ -288,19 +288,45 @@ public sealed class LoansApiIntegrationTests : IAsyncLifetime
         await DisburseTwoInstallmentLoanAsync(loanId);
 
         // NO human X-SCA-Acr / X-SCA-Auth-Time — the ADR-PC-036 lifecycle-command driver is a machine actor
-        // with none. The scoped X-SCA-Service-Principal claim (now authorising `installment`, bd
-        // babelstone-6cpq.9 / .14) alone authorises the loan installment money-mover.
+        // with none. The scoped X-SCA-Service-Principal claim carrying the LOAN money-mover scope (bd
+        // babelstone-6cpq.9 / .14) alone authorises the loan installment money-mover. It is the loan-specific
+        // scope, NOT the deposit one — cross-family isolation (the next test pins the deposit scope is refused).
         var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/loans/{loanId}/installment")
         {
             Content = JsonContent.Create(new { collection_account_ref = "acct-ref-001" }, options: SnakeCase),
         };
         request.Headers.TryAddWithoutValidation(
-            ScaServicePrincipal.PrincipalHeader, ScaServicePrincipal.LifecycleMoneyMoverScope);
+            ScaServicePrincipal.PrincipalHeader, ScaServicePrincipal.LoanMoneyMoverScope);
 
         var response = await _client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(1, (await GetLoanAsync(loanId)).GetProperty("installments_paid").GetInt32());
+    }
+
+    [Fact]
+    public async Task A_deposit_scoped_principal_cannot_pay_a_loan_installment_cross_family_isolation()
+    {
+        var loanId = Guid.NewGuid();
+        await DisburseTwoInstallmentLoanAsync(loanId);
+
+        // Scoped-not-blanket ACROSS families (bd babelstone-6cpq.14): a principal carrying the DEPOSIT
+        // money-mover scope — not the loan one — is refused on the loan installment route, and with no human
+        // SCA either it falls through to the fail-closed 422. A leaked deposit-driver token cannot collect a
+        // loan installment.
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/loans/{loanId}/installment")
+        {
+            Content = JsonContent.Create(new { collection_account_ref = "acct-ref-001" }, options: SnakeCase),
+        };
+        request.Headers.TryAddWithoutValidation(
+            ScaServicePrincipal.PrincipalHeader, ScaServicePrincipal.DepositMoneyMoverScope);
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        await AssertScaRequiredAsync(response);
+        Assert.Equal(["personal_loan.LoanDisbursed"], await EventTypesAsync(loanId));
+        Assert.Equal(0, (await GetLoanAsync(loanId)).GetProperty("installments_paid").GetInt32());
     }
 
     private async Task<HttpResponseMessage> PayInstallmentAsync(
