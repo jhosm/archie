@@ -47,7 +47,7 @@ public sealed record RateSheetValidationResult(bool IsValid, IReadOnlyList<strin
 /// pair's bands are exhaustive over <c>[min, ∞)</c>). So the <c>(product, role, principal)</c>
 /// coverage the surface asks for is the product of two checks — this ref's <c>(product, role)</c>
 /// presence, and exhaustiveness over the principal axis — and the ref itself collapses to
-/// <c>(product_id, role)</c>. <b>Decision (bd babelstone-ktfx):</b> whole-range principal
+/// <c>(product_id, role)</c>. <b>Decision:</b> whole-range principal
 /// coverage is the intended §2.5 semantics; per-config principal pinning is explicitly NOT a
 /// thing in v1, so the principal axis stays out of the ref. See
 /// <see cref="RateSheetValidator.Covers"/> for the coverage primitive this implies.
@@ -132,16 +132,14 @@ public sealed class RateSheetValidator
 
     /// <summary>
     /// True if <paramref name="body"/> prices <paramref name="rateRef"/> — the reusable
-    /// coverage primitive behind the symmetric §2.5 invariant. A future product-config deploy
-    /// path uses this in reverse: it rejects a config whose <c>rate_ref</c> the active sheet
-    /// does not cover (surface §2.5 "At product-config deploy"), so the engine never accepts a
-    /// state where the two artefacts disagree, whichever deploys first. Coverage is
+    /// coverage primitive behind the symmetric §2.5 invariant, callable from either side of the
+    /// sheet/config pair so the two can never be accepted in a state where they disagree. Coverage is
     /// <c>(product, role)</c> presence with at least one band: a present pair's bands are
     /// exhaustive over the WHOLE supported principal range by the cross-band check
     /// (<see cref="ValidateBands"/>), so a covered pair prices every principal and no per-principal
     /// probe is needed. This is exactly why the surface's <c>(product, role, principal)</c> coverage
     /// is met by a <c>(product, role)</c> ref: the principal axis is whole-range, never per-config
-    /// (the §2.5 decision, bd babelstone-ktfx — see <see cref="RateRef"/>).
+    /// (the §2.5 decision — see <see cref="RateRef"/>).
     /// </summary>
     public static bool Covers(RateSheetBody body, RateRef rateRef) =>
         body.Products.TryGetValue(rateRef.ProductId, out var roles)
@@ -174,7 +172,7 @@ public sealed class RateSheetValidator
         // (2) Every active config's rate_ref must be covered by the sheet — a config asking for a
         // (product, role) the sheet doesn't price would leave a constitution unpriceable, so it is
         // rejected at deploy, never at first constitution. Coverage is whole-range over the
-        // principal axis (the §2.5 decision, bd babelstone-ktfx): a present (product, role) pair's
+        // principal axis (the §2.5 decision): a present (product, role) pair's
         // bands are exhaustive over [min, ∞), so a covered ref prices EVERY principal — there is no
         // per-config principal to pin, and so none to check.
         foreach (var config in activeConfigs)
