@@ -44,7 +44,7 @@ public sealed class YamlProductConfigStore : IProductConfigStore
     // Tolerant by design: a product-config YAML carries blocks this store does not read (`rate:`,
     // `early_termination:`, `principal_bounds:`, `currency:`, `day_count:`, `schema:`, `pack:`), so
     // unmatched keys are ignored rather than fatal. It DOES read the optional `partial_withdrawal:`
-    // block (the F.12 policy primitives, bd k6r8.8). The closed-schema strictness lives in the CUE
+    // block (the F.12 policy primitives). The closed-schema strictness lives in the CUE
     // depths-1–4 validator (ADR-PC-006), which the committed configs already pass in CI; this is the
     // runtime structural read of the SHAPE fields, not a re-run of that validation.
     private static readonly IDeserializer Deserializer = new DeserializerBuilder()
@@ -119,7 +119,7 @@ public sealed class YamlProductConfigStore : IProductConfigStore
         // Read the raw bytes ONCE: deserialise the shape from them AND derive the content version from
         // the same bytes, so the pinned ConfigVersion is exactly the on-disk artefact's hash (the thing
         // an auditor sees in git). Any edit to the YAML — even a comment — yields a new version, which is
-        // the intended "which generation" semantics until a versioned deploy registry lands (fk7m.9).
+        // the intended "which generation" semantics while there is no versioned deploy registry.
         byte[] raw;
         try
         {
@@ -172,7 +172,7 @@ public sealed class YamlProductConfigStore : IProductConfigStore
             // v1 launch products all price under the standard role; the role-selector machinery on the
             // YAML's rate.flat.rate_ref is a follow-up, and the command may override the role anyway.
             DefaultRole: "standard",
-            // F.12 partial-withdrawal gates (bd k6r8.8). An OMITTED partial_withdrawal block leaves all
+            // F.12 partial-withdrawal gates. An OMITTED partial_withdrawal block leaves all
             // three at 0 — the engine resolves that to PartialWithdrawalPolicy.Unrestricted (02 §2.4.1).
             // Present-but-zero on any gate means "no minimum / no lock-up" for that gate, the same
             // degenerate semantics. The depth-4 coherence of the values (lockup_period_days < term_days; min-remaining <
@@ -186,7 +186,7 @@ public sealed class YamlProductConfigStore : IProductConfigStore
 
     // SHA-256 over the raw config bytes, rendered as `sha256:<lowercase-hex>`. Deterministic (same bytes
     // ⇒ same version on any host/replay) and order-free; no clock, no randomness. The `sha256:` prefix
-    // names the algorithm so a future registry-issued version (fk7m.9) is distinguishable from a hash.
+    // names the algorithm, so the version string is self-describing rather than a bare hex digest.
     private static string ComputeConfigVersion(byte[] raw) =>
         "sha256:" + Convert.ToHexStringLower(SHA256.HashData(raw));
 
@@ -218,7 +218,7 @@ public sealed class YamlProductConfigStore : IProductConfigStore
         public string? AutoRenewalPolicy { get; set; }
         public int PaymentPeriodMonths { get; set; }
 
-        // The optional F.12 partial-withdrawal block (bd k6r8.8). Null when the variant omits it ⇒ the
+        // The optional F.12 partial-withdrawal block. Null when the variant omits it ⇒ the
         // engine resolves PartialWithdrawalPolicy.Unrestricted. Field names mirror the CUE
         // #PartialWithdrawal block (underscored keys via the deserializer's naming convention).
         public PartialWithdrawalYaml? PartialWithdrawal { get; set; }

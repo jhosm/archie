@@ -25,15 +25,14 @@ namespace Babelstone.RateSheets;
 /// function stays green.
 /// </para>
 /// <para>
-/// <b>Version pinning (ADR-PC-009 §A2).</b> Each resolved config now carries a content-hash
+/// <b>Version pinning (ADR-PC-009 §A2).</b> Each resolved config carries a content-hash
 /// <see cref="ProductConfig.ConfigVersion"/> (SHA-256 over the config YAML bytes) that the decider
 /// stamps onto <c>DepositConstituted</c> as a per-instance pin — a PAYLOAD-shaped pin, exactly like
 /// <c>rate_sheet_version_id</c> (NOT an envelope/AppendContext column like <c>pack_version</c>) — so a
 /// replay can prove which product-config generation a deposit was constituted under (ADR-PC-009 §A2,
-/// REPLAY_PIN_PER_EVENT; ADR-PC-008 §S2 resolution-in-transaction). The product-config YAMLs are still
-/// static, deploy-time artefacts: a full versioned <c>POST /v1/product-configs</c> deploy registry
-/// (mirroring the rate-sheet deploy API) remains later work (bd `babelstone-fk7m.9` follow-up). Until
-/// that lands the content hash is the version: any edit to the YAML yields a new <c>ConfigVersion</c>.
+/// REPLAY_PIN_PER_EVENT; ADR-PC-008 §S2 resolution-in-transaction). The product-config YAMLs are
+/// static, deploy-time artefacts with no versioned deploy registry, so the content hash IS the
+/// version: any edit to the YAML yields a new <c>ConfigVersion</c>.
 /// </para>
 /// </remarks>
 public interface IProductConfigStore
