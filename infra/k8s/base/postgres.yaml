@@ -37,6 +37,16 @@ spec:
       containers:
         - name: postgres
           image: postgres:18-alpine
+          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). readOnlyRootFilesystem
+          # is omitted: Postgres writes its unix socket to /var/run/postgresql and
+          # scratch to /tmp on the root fs, so a read-only root would break initdb/startup.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: postgres
               containerPort: 5432

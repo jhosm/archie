@@ -2,3 +2,18 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: babelstone-dev
+  # Pod Security Admission (ADR-IC-016 zero-trust posture, CIS PSA): enforce the
+  # `baseline` profile on every Pod admitted to this namespace — privileged
+  # containers, host namespaces, and hostPath are rejected. `baseline` STILL
+  # ALLOWS the IPC_LOCK capability OpenBao needs for mlock (only privileged /
+  # host-namespace pods are refused), so the hardened workloads below stay
+  # admissible. `warn`/`audit` are pinned a notch stricter at `restricted` as
+  # forward-guidance: a deploy that violates the stricter profile is surfaced
+  # (warning + audit annotation) without being blocked, so the gap to a future
+  # enforce=restricted is visible before it is enforced. The base name is
+  # `babelstone-dev`; the staging overlay renames it to `babelstone-staging`,
+  # carrying these labels through unchanged.
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted

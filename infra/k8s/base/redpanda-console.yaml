@@ -33,6 +33,16 @@ spec:
       containers:
         - name: redpanda-console
           image: docker.redpanda.com/redpandadata/console:v2.8.0
+          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). A stateless Go
+          # web UI that holds no on-disk state, so readOnlyRootFilesystem is feasible.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8080
