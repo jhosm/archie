@@ -40,6 +40,16 @@ spec:
       containers:
         - name: grafana-lgtm
           image: grafana/otel-lgtm:0.28.0
+          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). readOnlyRootFilesystem
+          # is omitted: the all-in-one appliance writes Loki/Tempo/Prometheus/Grafana state
+          # to root-fs paths (no data volume here), so a read-only root would break it.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
           ports:
             # Only the Grafana UI port is declared. The container also listens
             # on OTLP internally, reachable only via the Collector fan-out

@@ -58,6 +58,18 @@ spec:
                   key: OPENBAO_DEV_TOKEN
             - name: BAO_ADDR
               value: http://127.0.0.1:8200
+          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). Drop ALL
+          # capabilities, then ADD BACK only IPC_LOCK — OpenBao mlock()s its
+          # memory to keep key material out of swap, and that needs IPC_LOCK.
+          # enforce=baseline ALLOWS IPC_LOCK (it rejects only privileged /
+          # host-namespace pods), so the namespace stays at baseline.
+          # readOnlyRootFilesystem is omitted: even in -dev mode OpenBao writes
+          # runtime files (plugin/socket scratch) to its root fs.
           securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
+              drop: ["ALL"]
               add: ["IPC_LOCK"]

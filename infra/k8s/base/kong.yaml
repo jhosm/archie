@@ -39,6 +39,16 @@ spec:
       containers:
         - name: kong
           image: kong:3.9.1
+          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). readOnlyRootFilesystem
+          # is omitted: Kong writes nginx prefix runtime files (temp paths, pids, sockets)
+          # under /usr/local/kong at startup, so a read-only root would break boot.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: proxy
               containerPort: 8000

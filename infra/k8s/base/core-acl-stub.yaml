@@ -40,6 +40,16 @@ spec:
       containers:
         - name: core-acl-stub
           image: wiremock/wiremock:3.9.1
+          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). readOnlyRootFilesystem
+          # is omitted: the WireMock JVM needs a writable /tmp (and its working dir) at
+          # startup, so a read-only root would break it.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
           args: ["--verbose", "--disable-banner"]
           ports:
             - name: http

@@ -35,6 +35,17 @@ spec:
       containers:
         - name: registry
           image: registry:3.1.1
+          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). The distribution
+          # storage driver writes all blobs and upload scratch under its rootdirectory
+          # (/var/lib/registry, the mounted PVC below), so readOnlyRootFilesystem is feasible.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: registry
               containerPort: 5000

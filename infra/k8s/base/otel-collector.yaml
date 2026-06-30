@@ -45,6 +45,17 @@ spec:
       containers:
         - name: otel-collector
           image: otel/opentelemetry-collector-contrib:0.153.0
+          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). The collector's pipeline
+          # is in-memory fan-out only (no file_storage extension), so readOnlyRootFilesystem
+          # is feasible — config is mounted read-only and it writes nothing to disk.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
           args:
             - --config=/etc/otel/collector.yaml
           ports:

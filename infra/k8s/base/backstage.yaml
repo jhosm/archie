@@ -70,6 +70,16 @@ spec:
       containers:
         - name: postgres
           image: postgres:16-alpine
+          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). readOnlyRootFilesystem
+          # is omitted: Postgres writes its unix socket to /var/run/postgresql and scratch
+          # to /tmp on the root fs, so a read-only root would break initdb/startup.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: postgres
               containerPort: 5432
@@ -110,6 +120,16 @@ spec:
           # human-handoff note above). There is no turnkey upstream image to pin here.
           image: ghcr.io/jhosm/babelstone-backstage:placeholder
           imagePullPolicy: IfNotPresent
+          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). readOnlyRootFilesystem
+          # is omitted: the Backstage Node app writes caches/scratch to /tmp and its working
+          # dir at runtime, so a read-only root would break it.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 7007

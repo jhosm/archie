@@ -49,6 +49,16 @@ spec:
       containers:
         - name: redpanda
           image: docker.redpanda.com/redpandadata/redpanda:v24.3.1
+          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). readOnlyRootFilesystem
+          # is omitted: redpanda generates /etc/redpanda/redpanda.yaml and writes runtime
+          # state outside the data PVC at startup, so a read-only root would break boot.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
           # Mirrors the compose command (single source of truth for the dev
           # broker shape): internal listener advertised as `redpanda`, external
           # as `localhost` (only the internal one matters in-cluster).
