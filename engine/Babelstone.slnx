@@ -148,6 +148,10 @@
          snake_case wire shape, ADR-PC-027) + the NOTIFICATION_FAMILY_AGNOSTIC fitness gate that
          parses the core .csproj for a families/** or engine-spine reference (ADR-IC-019 §D2/§P2). -->
     <Project Path="../notification/tests/Babelstone.Notification.Tests/Babelstone.Notification.Tests.csproj" />
+    <!-- The notification worker HOST tests (bd babelstone-kuw2): the NotificationModuleLoader assembly-scan
+         discovery fitness proof — the shipped term-deposit family is discovered with no host-composition edit
+         naming it, in a stable order, and a duplicate FamilyName fails loud (ADR-IC-019 §D4; ADR-PC-021 §A3). -->
+    <Project Path="../notification/tests/Babelstone.Notification.Host.Tests/Babelstone.Notification.Host.Tests.csproj" />
     <!-- The lifecycle-command driver tests (ADR-PC-036 §Decision 2; bd babelstone-6cpq.7): Docker-free +
          live-engine-free unit tests — the dispatch ledger's re-tick no-op + number-pinned dispatch id
          (LifecycleDispatchLedgerTests), the per-tick pass's dedupe + check-then-POST-then-record ordering

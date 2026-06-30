@@ -1,6 +1,6 @@
 using Babelstone.Cadence;
-using Babelstone.Families.TermDeposit.Notification;
 using Babelstone.Notification;
+using Babelstone.Notification.Host;
 using Babelstone.Packs;
 using Babelstone.Telemetry;
 using Babelstone.Telemetry.Hosting;
@@ -17,11 +17,12 @@ using OpenTelemetry.Trace;
 // Host.CreateApplicationBuilder, the same shape the engine's outbox relay and the orchestrator's consume
 // loop run as hosted services.
 //
-// This is the §D4/§A2 COMPOSITION ROOT (ADR-IC-019 §D4 + Amendment 2026-06-24): the ONE place that names a
-// family. It holds the explicit list of IFamilyNotificationModule contributions (explicit-list-now,
-// assembly-scan-later — ADR-PC-021 §A3), composes each into DI, and runs the family-agnostic core loop. The
-// core (Babelstone.Notification) references neither the engine kernel nor any family; the host wires them
-// together — gated by NOTIFICATION_FAMILY_AGNOSTIC over the CORE, not this host.
+// This is the §D4/§A2 COMPOSITION ROOT (ADR-IC-019 §D4 + Amendment 2026-06-24): the ONE place that MAY name a
+// family — but it names NONE. It DISCOVERS the IFamilyNotificationModule contributions by assembly-scan
+// (NotificationModuleLoader, the realized "assembly-scan-later" of ADR-PC-021 §A3), composes each into DI, and
+// runs the family-agnostic core loop. The core (Babelstone.Notification) references neither the engine kernel
+// nor any family; the host wires them together — gated by NOTIFICATION_FAMILY_AGNOSTIC over the CORE, not this
+// host.
 var builder = Host.CreateApplicationBuilder(args);
 
 // OpenTelemetry tracing (ADR-IC-007 Layer 1): turn ON the tracer for this host and export over OTLP to the
@@ -100,10 +101,13 @@ builder.Services.AddSingleton<IDedupeLedger, InMemoryDedupeLedger>();
 // cannot resolve its pinned pack must not serve under an unknown disclosure surface.
 var pinnedPack = LoadPinnedPack(builder.Configuration);
 
-// Compose the family notification contributions (ADR-IC-019 §D4 + Amendment 2026-06-24). The host is the
-// §A2 composition root — the only place that names a family. Explicit list now (ADR-PC-021 §A3); a duplicate
-// FamilyName is a composition error (the host-edge guard the engine's HostModuleLoader also enforces). A
-// second family ships a new module on this same list with zero core diff.
+// Compose the family notification contributions by ASSEMBLY-SCAN discovery (ADR-IC-019 §D4 + Amendment
+// 2026-06-24; ADR-PC-021 §A3 — the notification-side twin of the engine's HostModuleLoader). The host is the
+// §A2 composition root — the only place that MAY name a family — but it names NONE: NotificationModuleLoader
+// scans the Babelstone.Families.*.Notification assemblies shipped beside the host for IFamilyNotificationModule
+// contributions and fails loud on a duplicate FamilyName (the host-edge guard the engine's HostModuleLoader
+// also enforces). A second family ships a new module + the host ProjectReference (so its dll lands beside the
+// host for the scan) with ZERO edit here.
 var moduleContext = new NotificationModuleContext(
     builder.Configuration,
     engineBaseUrl,
@@ -117,20 +121,8 @@ var moduleContext = new NotificationModuleContext(
         ["auto_renewal_optout_window_days"] = pinnedPack.Parameters.AutoRenewalOptoutWindowDays,
         ["max_consumer_rate_bps"] = pinnedPack.Parameters.MaxConsumerRateBps,
     });
-IReadOnlyList<IFamilyNotificationModule> notificationModules =
-[
-    new TermDepositNotificationModule(),
-];
-
-var composedFamilies = new HashSet<string>(StringComparer.Ordinal);
-foreach (var module in notificationModules)
+foreach (var module in new NotificationModuleLoader().LoadAll(NotificationModuleLoader.FamilyNotificationAssemblies()))
 {
-    if (!composedFamilies.Add(module.FamilyName))
-    {
-        throw new InvalidOperationException(
-            $"Duplicate notification module for family '{module.FamilyName}' (ADR-IC-019 §D4 composition).");
-    }
-
     module.ConfigureServices(builder.Services, moduleContext);
 }
 
