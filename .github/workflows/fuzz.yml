@@ -49,6 +49,11 @@ jobs:
   fuzz:
     name: fuzz ${{ matrix.target }}
     runs-on: ubuntu-latest
+    # Bound the run below GitHub's 6h hard cap so a genuine HANG — itself one of the failure modes
+    # under test (a non-terminating input that `-fuzztime` cannot interrupt) — fails as an explicit
+    # timeout rather than burning a full 6h runner, matching mutation.yml's convention. Raise this if
+    # you ever workflow_dispatch a `fuzztime` longer than this leaves room for (default 5m).
+    timeout-minutes: 60
     strategy:
       fail-fast: false   # one target finding a crasher must not cancel the others
       matrix:
@@ -116,6 +121,10 @@ jobs:
   fuzz-dotnet:
     name: fuzz Avro decode (.NET)
     runs-on: ubuntu-latest
+    # Same hang-guard as the Go leg: bound the deep sweep below the 6h cap so a non-terminating
+    # decode (the AvroDecodeFuzzTests per-decode budget catches most, but a stuck test host would
+    # not) fails as an explicit timeout. 30m clears the default 500k-iteration sweep with headroom.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4 # pins the .NET 10 SDK from mise.toml (ADR-PC-010), as in ci.yml
@@ -139,11 +148,32 @@ jobs:
         # is the non-Integration (Docker-free) tier — the decode fuzz needs no broker/DB.
         env:
           FUZZ_ITERATIONS: ${{ github.event.inputs.fuzz_iterations || '500000' }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           if ! printf '%s' "$FUZZ_ITERATIONS" | grep -Eq '^[1-9][0-9]*$'; then
             echo "::warning::invalid fuzz_iterations '$FUZZ_ITERATIONS'; using the test default"
             unset FUZZ_ITERATIONS
           fi
+          # Vary the RNG seed per run so each scheduled sweep explores FRESH inputs instead of
+          # replaying the same deterministic bytes every week (the per-PR lane keeps the test's fixed
+          # default seed for reproducibility). RUN_ID is trusted (not a dispatch input); fold it into
+          # int32 range so AvroDecodeFuzzTests' int parser accepts it. The effective seed is echoed
+          # here and logged by the test, so any discovery is reproducible by re-running with it.
+          export FUZZ_SEED=$(( RUN_ID % 2147483647 ))
+          echo "Using FUZZ_SEED=$FUZZ_SEED (derived from run id $RUN_ID)"
           dotnet test tests/Babelstone.OutboxPublisher.Tests/Babelstone.OutboxPublisher.Tests.csproj \
             --configuration Release --nologo \
-            --filter "FullyQualifiedName~AvroDecodeFuzzTests"
+            --filter "FullyQualifiedName~AvroDecodeFuzzTests" \
+            --logger "trx;LogFileName=fuzz.trx" \
+            --results-directory TestResults
+
+      # Mirror the Go leg: on a found crasher the assert message embeds the offending input as hex
+      # (and the FUZZ_SEED), so the .trx is a self-contained reproducer. Upload it so a human can fix
+      # and commit the bytes back as a permanent seed.
+      - name: Upload Avro-decode fuzz reproducer on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crasher-avro-decode
+          path: engine/TestResults/
+          if-no-files-found: warn

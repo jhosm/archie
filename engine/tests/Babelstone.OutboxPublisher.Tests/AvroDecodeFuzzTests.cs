@@ -45,9 +45,14 @@ public sealed class AvroDecodeFuzzTests(ITestOutputHelper output)
 
     // How many fuzz iterations the deterministic per-PR lane runs. Kept modest so the default
     // `dotnet test` lane stays fast; the scheduled fuzz.yml leg multiplies it via FUZZ_ITERATIONS
-    // for a deeper sweep without changing code. A FIXED seed makes a failure reproducible.
+    // for a deeper sweep without changing code.
     private const int DefaultIterations = 20_000;
-    private const int RngSeed = 0x5EED_F0_0D;
+
+    // The per-PR lane uses this FIXED seed so a failure is reproducible. The scheduled fuzz.yml leg
+    // overrides it via FUZZ_SEED (derived from the run id) so each weekly sweep explores fresh inputs
+    // instead of replaying the same bytes; the effective seed is logged below and named in the
+    // failure message, so a discovery stays reproducible by re-running with that FUZZ_SEED.
+    private const int DefaultRngSeed = 0x5EED_F0_0D;
 
     // A hard per-decode wall-clock budget. A malformed varint length prefix can make Apache.Avro's
     // BinaryDecoder attempt a huge read/allocation; a true HANG (not just a slow decode) is as much a
@@ -106,7 +111,8 @@ public sealed class AvroDecodeFuzzTests(ITestOutputHelper output)
     {
         var serializer = NewSerializer();
         var seeds = BuildSeedCorpus(serializer);
-        var rng = new Random(RngSeed);
+        var rngSeed = SeedValue();
+        var rng = new Random(rngSeed);
         var iterations = IterationBudget();
 
         var failures = new ConcurrentBag<string>();
@@ -137,11 +143,12 @@ public sealed class AvroDecodeFuzzTests(ITestOutputHelper output)
         }
 
         _output.WriteLine(
-            $"fuzz iterations={iterations} seeds={seeds.Count} → cleanDecodes={cleanDecodes} cleanRejections={cleanRejections} failures={failures.Count}");
+            $"fuzz seed={rngSeed} iterations={iterations} seeds={seeds.Count} → cleanDecodes={cleanDecodes} cleanRejections={cleanRejections} failures={failures.Count}");
 
         Assert.True(
             failures.IsEmpty,
-            "Decode must never crash or hang on fuzzed Avro bytes; offending inputs:\n" + string.Join("\n", failures.Take(10)));
+            $"Decode must never crash or hang on fuzzed Avro bytes (reproduce with FUZZ_SEED={rngSeed}); offending inputs:\n"
+                + string.Join("\n", failures.Take(10)));
     }
 
     /// <summary>
@@ -370,6 +377,14 @@ public sealed class AvroDecodeFuzzTests(ITestOutputHelper output)
         => int.TryParse(Environment.GetEnvironmentVariable("FUZZ_ITERATIONS"), out var n) && n > 0
             ? n
             : DefaultIterations;
+
+    // RNG seed: DefaultRngSeed on the per-PR lane (reproducible); FUZZ_SEED overrides it on the
+    // scheduled leg so each run explores fresh inputs. fuzz.yml folds the run id into int32 range
+    // before exporting it; the chosen value is logged by the fuzz body so a discovery is reproducible.
+    private static int SeedValue()
+        => int.TryParse(Environment.GetEnvironmentVariable("FUZZ_SEED"), out var s)
+            ? s
+            : DefaultRngSeed;
 
     // A real DepositConstituted payload, PREFIXED with the 5-byte Confluent wire-format frame
     // (magic 0x00 + a 4-byte schema id). The codec's Decode expects the BARE Avro value (the relay
