@@ -221,6 +221,130 @@ public sealed class EdgeProcessApiIntegrationTests(OrchestratorPostgresFixture f
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // --- Body fuzz: a malformed constitution body must be a 4xx, never a 5xx, and never hang ---------
+
+    /// <summary>
+    /// In plain English: throw a batch of broken JSON bodies at the constitution route and confirm the
+    /// edge always answers with a client error (4xx), never a server crash (5xx), and never hangs. The
+    /// fuzz bodies carry NO gateway-attested caller header, so a well-formed-but-unauthenticated body
+    /// stops at the 403 ownership gate BEFORE any saga start — nothing reaches PostgreSQL, so the fuzz
+    /// writes no rows; a malformed body is rejected by model binding (400). Either way: 4xx-never-5xx.
+    /// </summary>
+    /// <remarks>
+    /// The orchestrator-edge twin of <c>EngineApiJsonEnvelopeFuzzTests</c> (the ADR-IC-006 §P4 command
+    /// boundary). Integration-tier because the edge host composes its real saga module + EdgeServices over
+    /// the test PostgreSQL — the SAME proven <see cref="EdgeHost"/> the happy-path tests use; the fuzz
+    /// bodies never reach the DB, but the host construction does. The corpus is a fixed-seed deterministic
+    /// set (a flaky fuzz is unacceptable); <c>FUZZ_SEED</c> overrides the seed for a fresh sweep.
+    /// </remarks>
+    [Fact]
+    public async Task A_malformed_constitute_body_is_always_4xx_never_5xx_and_never_hangs()
+    {
+        await using var edge = NewEdge();
+        using var client = edge.Client();
+
+        var corpus = ConstituteBodyCorpus().ToList();
+        Assert.True(
+            corpus.Count >= 20,
+            $"constitute fuzz corpus collapsed to {corpus.Count} bodies — the fuzz would vacuously pass");
+
+        foreach (var body in corpus)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, ProcessApiEndpoints.ConstituteRoute)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+            };
+            // Deliberately NO X-Client-Id header: a well-formed body 403s at the ownership gate before any
+            // saga start (no DB write), a malformed body 400s at model binding. Both are 4xx.
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+            HttpResponseMessage response;
+            try
+            {
+                response = await client.SendAsync(request, cts.Token);
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                Assert.Fail($"POST {ProcessApiEndpoints.ConstituteRoute} hung on body: {Truncate(body)}");
+                throw; // unreachable; satisfies definite assignment of `response`
+            }
+
+            var status = (int)response.StatusCode;
+            Assert.True(
+                status is >= 400 and < 500,
+                $"POST constitute returned {status} (expected 4xx) on body: {Truncate(body)}");
+            response.Dispose();
+        }
+    }
+
+    /// <summary>A bounded, deterministic set of malformed/abused constitution bodies derived from a valid
+    /// seed — unparseable JSON, type-swapped fields, missing fields, wrong value domains, oversized
+    /// strings. Seeded RNG keeps it identical across runs; FUZZ_SEED overrides for a fresh sweep.</summary>
+    private static IEnumerable<string> ConstituteBodyCorpus()
+    {
+        var seedJson = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["product_code"] = "TD-TRAD-12M",
+            ["amount"] = 1_000_000,
+            ["source_account_ref"] = "acct-ref-001",
+            ["interest_account_ref"] = "acct-ref-001",
+        });
+
+        var seed = int.TryParse(Environment.GetEnvironmentVariable("FUZZ_SEED"), out var s)
+            ? s
+            : unchecked((int)0x_C0FF_EE01);
+        var random = new Random(seed);
+        var document = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(seedJson)!;
+        var keys = new List<string>(document.Keys);
+
+        // --- Structurally malformed / unparseable (model binding must 400) ---
+        yield return string.Empty;                       // empty body → binds to null → 400
+        yield return "   ";                               // whitespace only
+        yield return "{";                                 // unterminated object
+        yield return seedJson[..(seedJson.Length / 2)];   // truncated mid-document
+        yield return seedJson + seedJson;                 // two documents concatenated
+        yield return "[" + seedJson + "]";               // a JSON array where an object is expected
+        yield return "42";                               // a bare number
+        yield return "true";                             // a bare boolean
+        yield return "{ \"a\": }";                       // missing value
+        yield return "{ , }";                            // stray comma
+        yield return "{ \"amount\": NaN }";              // non-JSON NaN literal
+        yield return "{ \"amount\": 00123 }";            // illegal leading zeros
+        yield return "{ \"\\uD800\": 1 }";               // lone high surrogate (bad encoding)
+
+        // --- Well-formed JSON, semantically abused (each binds to a 400 or stops at the 403 gate) ---
+        foreach (var key in keys)
+        {
+            yield return Rewrite(document, key, JsonSerializer.SerializeToElement(random.Next(0, 1000)));
+            yield return Rewrite(document, key, JsonSerializer.SerializeToElement("not-the-right-type"));
+            yield return Rewrite(document, key, JsonSerializer.SerializeToElement(new[] { 1, 2, 3 }));
+            yield return Rewrite(document, key, JsonSerializer.SerializeToElement((string?)null));
+        }
+
+        foreach (var key in keys)
+        {
+            var without = new Dictionary<string, JsonElement>(document);
+            without.Remove(key);
+            yield return JsonSerializer.Serialize(without);
+        }
+
+        yield return "{}";                                                                       // every field missing
+        yield return Rewrite(document, "amount", JsonSerializer.SerializeToElement(-1));         // negative amount
+        yield return Rewrite(document, "amount", JsonSerializer.SerializeToElement(long.MaxValue));
+        yield return Rewrite(document, "amount", JsonSerializer.SerializeToElement("9999999999999999999999999999")); // overflows long
+        yield return Rewrite(document, "product_code", JsonSerializer.SerializeToElement(new string('A', 100_000))); // oversized
+        yield return Rewrite(document, "source_account_ref", JsonSerializer.SerializeToElement(string.Empty));
+    }
+
+    private static string Rewrite(Dictionary<string, JsonElement> document, string key, JsonElement value)
+    {
+        var copy = new Dictionary<string, JsonElement>(document) { [key] = value };
+        return JsonSerializer.Serialize(copy);
+    }
+
+    private static string Truncate(string body) =>
+        body.Length <= 200 ? body : body[..200] + $"...(+{body.Length - 200} chars)";
+
     // --- helpers -----------------------------------------------------------------------
 
     private static Task<HttpResponseMessage> GetStatusAsync(

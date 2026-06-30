@@ -1,6 +1,8 @@
 name: Fuzz
 
-# Continuous (scheduled) fuzzing of the project's byte-parsing surfaces. TWO families of target:
+# Continuous (scheduled) fuzzing of the project's byte-parsing surfaces — the places a producer, an
+# attacker who can publish to a topic, a malformed HTTP caller, or a corrupt artifact can hand the
+# system bytes that MUST yield a clean rejection, never a panic/crash/hang. Two engines, several targets:
 #
 #   1. The Go `fuzz` job — pack-validate's non-engineer-authored surfaces (C.8, bd archie-2t16.6):
 #      the DISCOVERY half of the Go fuzz work. The regression half — re-running the committed seed
@@ -12,16 +14,30 @@ name: Fuzz
 #      be reproduced locally and committed back as a permanent seed (after which the per-PR `go test`
 #      guards it forever). The generated corpus is cached so coverage is cumulative across runs.
 #
-#   2. The `fuzz-dotnet` job — the engine's Avro event-DECODE path (bd babelstone-2t16.15): the bytes
-#      a consumer parses off the bus (AvroEventSerializer.Decode, ADR-IC-002/ADR-IC-004 §P3). This is
-#      a deterministic PROPERTY/corpus fuzz (AvroDecodeFuzzTests) — unlike `go test -fuzz` it is a
-#      normal `dotnet test` that completes, so it ALSO runs on the per-PR engine CI lane at its default
-#      iteration budget; here it runs a DEEPER sweep via FUZZ_ITERATIONS on the schedule. (SharpFuzz
-#      coverage-guided fuzzing of the same entrypoint is a deferred STRETCH follow-up.)
+#   2. The `fuzz-dotnet` MATRIX — the in-process .NET decode/parse boundaries. Each is a deterministic
+#      property/corpus fuzz (a normal `dotnet test` that COMPLETES, unlike `go test -fuzz`), so each
+#      ALSO runs on its per-PR CI lane at a default budget; here each runs a DEEPER sweep driven by
+#      FUZZ_ITERATIONS / FUZZ_HTTP_ITERATIONS, with the RNG seed varied per run (FUZZ_SEED, folded from
+#      the run id) so each weekly sweep explores fresh inputs. The targets:
+#        - Avro value decode (AvroDecodeFuzzTests, bd babelstone-2t16.15): the event bytes a consumer
+#          parses off the bus (AvroEventSerializer.Decode, ADR-IC-002/ADR-IC-004 §P3).
+#        - Inbox wire-format un-framing (InboxWireFormatFuzzTests): the Confluent magic+schema_id frame
+#          wrapping each bus value (InboxPump.TryUnframe) — the parse BEFORE the Avro decode; together
+#          with the Avro leg they cover the full off-bus value parse chain.
+#        - Saga CloudEvents header decode (SagaInboxHeaderFuzzTests): the orchestrator's payload-blind
+#          header parse off the bus (SagaConsumeLoop.TryDecodeHeaders, ADR-IC-015 / ADR-IC-018 §P5).
+#        - Command JSON envelopes (EngineApiJsonEnvelopeFuzzTests): the HTTP command bodies at the
+#          engine's ADR-PC-021 §D5 boundary — a malformed body must be a 4xx, never a 5xx.
+#      A trx reproducer is uploaded on any failure; the assert messages name the FUZZ_SEED to replay.
 #
-# Contract under test, the same for both (ADR-PC-007 §169 for packs; its .NET twin for the decode
-# path): malformed/garbage input yields a CLEAN rejection — a well-typed parse/decode failure —
-# never a panic/crash/hang.
+# Not here (by design): the orchestrator EDGE command-JSON fuzz (the malformed-body leg of
+# EdgeProcessApiIntegrationTests, the ADR-IC-006 §P4 boundary) is Integration-tier — it composes the
+# real edge host over PostgreSQL — so it runs on the per-PR orchestrator integration lane, NOT in this
+# Docker-free scheduled job. SharpFuzz coverage-guided fuzzing of the Avro entrypoint is a deferred STRETCH.
+#
+# Contract under test, the same for every target (ADR-PC-007 §169 for packs; its .NET twin for the
+# decode/parse paths): malformed/garbage input yields a CLEAN rejection — a well-typed parse/decode
+# failure or a 4xx — never a panic/crash/hang.
 
 on:
   schedule:
@@ -33,9 +49,13 @@ on:
         required: false
         default: "5m"
       fuzz_iterations:
-        description: "Iteration budget for the .NET Avro-decode property fuzz (e.g. 200000)"
+        description: "Iteration budget for the in-process .NET decode/parse fuzzers (e.g. 200000)"
         required: false
         default: "500000"
+      fuzz_http_iterations:
+        description: "Extra randomized bodies per endpoint for the .NET command-JSON HTTP fuzz (e.g. 20000)"
+        required: false
+        default: "20000"
 
 permissions:
   contents: read
@@ -112,19 +132,34 @@ jobs:
           path: pack-validate/${{ matrix.dir }}/testdata/fuzz/${{ matrix.target }}/
           if-no-files-found: warn
 
-  # The .NET leg (bd babelstone-2t16.15): the engine's Avro event-DECODE path — the bytes a
-  # consumer parses off the bus (AvroEventSerializer.Decode, ADR-IC-002 / ADR-IC-004 §P3). Unlike
-  # `go test -fuzz`, this is a deterministic property/corpus fuzz that COMPLETES (AvroDecodeFuzzTests),
-  # so it also runs on the per-PR engine CI lane at its default budget; here it runs a DEEPER sweep
-  # driven by FUZZ_ITERATIONS. The contract: Decode never crashes/hangs — it decodes cleanly or
-  # clean-rejects with a well-typed decode failure.
+  # The .NET MATRIX (see the header note): the in-process decode/parse boundaries. Each is a normal
+  # `dotnet test` that COMPLETES (so it also runs per-PR); here each runs a DEEPER, fresh-seeded sweep.
+  # All are the non-Integration (Docker-free) tier — they need no broker/DB. The orchestrator header
+  # fuzz lives in a project that ALSO holds Postgres-backed integration tests, but the --filter selects
+  # only its fuzz class, so xUnit never spins up the integration fixture.
   fuzz-dotnet:
-    name: fuzz Avro decode (.NET)
+    name: fuzz ${{ matrix.name }} (.NET)
     runs-on: ubuntu-latest
-    # Same hang-guard as the Go leg: bound the deep sweep below the 6h cap so a non-terminating
-    # decode (the AvroDecodeFuzzTests per-decode budget catches most, but a stuck test host would
-    # not) fails as an explicit timeout. 30m clears the default 500k-iteration sweep with headroom.
+    # Same hang-guard as the Go leg: bound each sweep below the 6h cap so a non-terminating decode/parse
+    # (the tests' per-iteration budgets catch most, but a stuck test host would not) fails as an
+    # explicit timeout. 30m clears the default budgets with headroom.
     timeout-minutes: 30
+    strategy:
+      fail-fast: false   # one target finding a crasher must not cancel the others
+      matrix:
+        include:
+          - name: Avro decode
+            project: engine/tests/Babelstone.OutboxPublisher.Tests/Babelstone.OutboxPublisher.Tests.csproj
+            filter: AvroDecodeFuzzTests
+          - name: inbox wire-format
+            project: engine/tests/Babelstone.InboxConsumer.Tests/Babelstone.InboxConsumer.Tests.csproj
+            filter: InboxWireFormatFuzzTests
+          - name: saga inbox headers
+            project: orchestrator/tests/Babelstone.Orchestrator.Tests/Babelstone.Orchestrator.Tests.csproj
+            filter: SagaInboxHeaderFuzzTests
+          - name: command JSON envelope
+            project: engine/tests/Babelstone.Engine.Api.Tests/Babelstone.Engine.Api.Tests.csproj
+            filter: EngineApiJsonEnvelopeFuzzTests
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4 # pins the .NET 10 SDK from mise.toml (ADR-PC-010), as in ci.yml
@@ -138,42 +173,47 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ hashFiles('engine/**/*.csproj') }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('engine/**/*.csproj', 'orchestrator/**/*.csproj') }}
           restore-keys: nuget-${{ runner.os }}-
-      - name: Fuzz the Avro decode path (deep sweep)
-        working-directory: engine
-        # FUZZ_ITERATIONS is a workflow_dispatch input → treat as untrusted: pass via env and
-        # validate it is a bare positive integer before letting AvroDecodeFuzzTests read it (the test
-        # falls back to its own default for anything non-numeric, but we sanitise here too). The leg
-        # is the non-Integration (Docker-free) tier — the decode fuzz needs no broker/DB.
+      - name: Fuzz ${{ matrix.name }} (deep sweep)
+        # Pass everything via env (the file's convention: never interpolate ${{ }} into the shell).
+        # FUZZ_ITERATIONS / FUZZ_HTTP_ITERATIONS are workflow_dispatch inputs → untrusted, validated as
+        # bare positive integers below before a test reads them (each test also falls back to its own
+        # default). PROJECT/FILTER come from the workflow-defined matrix, quoted for consistency. Each
+        # test reads only the budget var it needs; the other is simply ignored.
         env:
           FUZZ_ITERATIONS: ${{ github.event.inputs.fuzz_iterations || '500000' }}
+          FUZZ_HTTP_ITERATIONS: ${{ github.event.inputs.fuzz_http_iterations || '20000' }}
+          PROJECT: ${{ matrix.project }}
+          FILTER: ${{ matrix.filter }}
           RUN_ID: ${{ github.run_id }}
         run: |
           if ! printf '%s' "$FUZZ_ITERATIONS" | grep -Eq '^[1-9][0-9]*$'; then
             echo "::warning::invalid fuzz_iterations '$FUZZ_ITERATIONS'; using the test default"
             unset FUZZ_ITERATIONS
           fi
-          # Vary the RNG seed per run so each scheduled sweep explores FRESH inputs instead of
-          # replaying the same deterministic bytes every week (the per-PR lane keeps the test's fixed
-          # default seed for reproducibility). RUN_ID is trusted (not a dispatch input); fold it into
-          # int32 range so AvroDecodeFuzzTests' int parser accepts it. The effective seed is echoed
-          # here and logged by the test, so any discovery is reproducible by re-running with it.
+          if ! printf '%s' "$FUZZ_HTTP_ITERATIONS" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "::warning::invalid fuzz_http_iterations '$FUZZ_HTTP_ITERATIONS'; using the test default"
+            unset FUZZ_HTTP_ITERATIONS
+          fi
+          # Vary the RNG seed per run so each scheduled sweep explores FRESH inputs instead of replaying
+          # the same deterministic corpus (the per-PR lanes keep each test's fixed default seed). RUN_ID
+          # is trusted (not a dispatch input); fold it into int32 range so the tests' int seed parsers
+          # accept it. The seed is echoed here and logged by each test, so a discovery is reproducible.
           export FUZZ_SEED=$(( RUN_ID % 2147483647 ))
-          echo "Using FUZZ_SEED=$FUZZ_SEED (derived from run id $RUN_ID)"
-          dotnet test tests/Babelstone.OutboxPublisher.Tests/Babelstone.OutboxPublisher.Tests.csproj \
+          echo "Using FUZZ_SEED=$FUZZ_SEED (derived from run id $RUN_ID) for $FILTER"
+          dotnet test "$PROJECT" \
             --configuration Release --nologo \
-            --filter "FullyQualifiedName~AvroDecodeFuzzTests" \
+            --filter "FullyQualifiedName~$FILTER" \
             --logger "trx;LogFileName=fuzz.trx" \
             --results-directory TestResults
 
-      # Mirror the Go leg: on a found crasher the assert message embeds the offending input as hex
-      # (and the FUZZ_SEED), so the .trx is a self-contained reproducer. Upload it so a human can fix
-      # and commit the bytes back as a permanent seed.
-      - name: Upload Avro-decode fuzz reproducer on failure
+      # On a found crasher the assert message names the FUZZ_SEED (and, for the byte fuzzers, the hex
+      # input), so the .trx is a self-contained reproducer. Upload it per target.
+      - name: Upload fuzz reproducer on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: fuzz-crasher-avro-decode
-          path: engine/TestResults/
+          name: fuzz-crasher-dotnet-${{ matrix.filter }}
+          path: TestResults/
           if-no-files-found: warn

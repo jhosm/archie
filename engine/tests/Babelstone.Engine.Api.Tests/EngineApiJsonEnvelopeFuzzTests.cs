@@ -45,16 +45,21 @@ namespace Babelstone.Engine.Api.Tests;
 /// </para>
 ///
 /// <para>
-/// The mutation corpus is generated from a FIXED seed (<see cref="Seed"/>) so the run is fully
+/// The per-PR corpus is generated from a FIXED seed (<see cref="DefaultSeed"/>) so the run is fully
 /// deterministic — the engine values replay-determinism, and a flaky fuzz test is unacceptable. The
 /// corpus is small and the per-request timeout is short, so the whole suite stays well inside the
-/// per-PR unit budget.
+/// per-PR unit budget. The scheduled <c>fuzz.yml</c> leg overrides the seed (<c>FUZZ_SEED</c>) and
+/// appends <c>FUZZ_HTTP_ITERATIONS</c> extra randomized bodies per endpoint for a deeper sweep.
 /// </para>
 /// </summary>
 public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
 {
-    /// <summary>Fixed seed: the corpus must be identical on every run (no flakiness, ADR-IC-009 unit tier).</summary>
-    private const int Seed = unchecked((int)0x_BABE_5709);
+    /// <summary>Default seed: the per-PR corpus must be identical on every run (no flakiness, ADR-IC-009
+    /// unit tier). The scheduled <c>fuzz.yml</c> leg overrides it via <c>FUZZ_SEED</c> to explore fresh
+    /// inputs, and appends <c>FUZZ_HTTP_ITERATIONS</c> extra randomized bodies per endpoint for a deeper
+    /// sweep; the per-PR lane runs ONLY the fixed corpus (<c>FUZZ_HTTP_ITERATIONS</c> defaults to 0, so
+    /// the unit run stays fast and deterministic).</summary>
+    private const int DefaultSeed = unchecked((int)0x_BABE_5709);
 
     /// <summary>Per-request ceiling: a malformed body must complete fast (never hang). Generous for a loaded CI box.</summary>
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
@@ -310,7 +315,7 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
     /// </summary>
     private static IEnumerable<string> MutationCorpus(string seedJson)
     {
-        var random = new Random(Seed);
+        var random = new Random(SeedValue());
         var document = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(seedJson)!;
         var keys = new List<string>(document.Keys);
 
@@ -389,6 +394,54 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
                 yield return Rewrite(document, key, JsonSerializer.SerializeToElement(" �"));
             }
         }
+
+        // --- Extra randomized bodies for the scheduled deep sweep (FUZZ_HTTP_ITERATIONS > 0) ---
+        // The per-PR lane runs only the deterministic corpus above (extra defaults to 0); fuzz.yml sets a
+        // budget so each scheduled run explores fresh mutations off the same seed. `random` is already
+        // seeded by SeedValue() and advanced deterministically, so the extra bodies stay reproducible.
+        var extra = ExtraRandomBodies();
+        for (var n = 0; n < extra; n++)
+        {
+            yield return RandomMutation(random, seedJson, document, keys);
+        }
+    }
+
+    /// <summary>One more randomized mutation off the valid seed — a random pick of truncation, a char
+    /// flip, a field type-swap, an oversized string, a dropped field, or trailing junk. Drawn from the
+    /// same seeded RNG as the fixed corpus, so the scheduled sweep stays reproducible per FUZZ_SEED.</summary>
+    private static string RandomMutation(
+        Random random, string seedJson, Dictionary<string, JsonElement> document, List<string> keys)
+    {
+        switch (random.Next(0, 6))
+        {
+            case 0:
+                return seedJson[..random.Next(0, seedJson.Length + 1)];                  // truncate
+            case 1:
+            {
+                if (seedJson.Length == 0)
+                {
+                    return seedJson;
+                }
+
+                var chars = seedJson.ToCharArray();
+                chars[random.Next(chars.Length)] = (char)random.Next(32, 127);            // flip a char
+                return new string(chars);
+            }
+            case 2:
+                return Rewrite(document, keys[random.Next(keys.Count)],
+                    JsonSerializer.SerializeToElement(random.Next()));                    // field → random int
+            case 3:
+                return Rewrite(document, keys[random.Next(keys.Count)],
+                    JsonSerializer.SerializeToElement(new string('x', random.Next(0, 2048)))); // field → big string
+            case 4:
+            {
+                var without = new Dictionary<string, JsonElement>(document);
+                without.Remove(keys[random.Next(keys.Count)]);                            // drop a field
+                return JsonSerializer.Serialize(without);
+            }
+            default:
+                return seedJson + new string((char)random.Next(32, 127), random.Next(0, 16)); // trailing junk
+        }
     }
 
     private static string Rewrite(Dictionary<string, JsonElement> document, string key, JsonElement value)
@@ -402,6 +455,17 @@ public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
 
     private static string Truncate(string body) =>
         body.Length <= 200 ? body : body[..200] + $"...(+{body.Length - 200} chars)";
+
+    /// <summary>The corpus seed: DefaultSeed on the per-PR lane (reproducible); FUZZ_SEED overrides it on
+    /// the scheduled fuzz.yml leg so each run explores fresh inputs (the seed is named in any failure).</summary>
+    private static int SeedValue()
+        => int.TryParse(Environment.GetEnvironmentVariable("FUZZ_SEED"), out var s) ? s : DefaultSeed;
+
+    /// <summary>Extra randomized bodies per endpoint for the scheduled deep sweep. 0 on the per-PR lane
+    /// (only the fixed corpus runs, keeping the unit lane fast); fuzz.yml sets FUZZ_HTTP_ITERATIONS to a
+    /// bounded budget — each is a real in-memory HTTP round-trip, so the budget stays modest, not 500k.</summary>
+    private static int ExtraRandomBodies()
+        => int.TryParse(Environment.GetEnvironmentVariable("FUZZ_HTTP_ITERATIONS"), out var n) && n > 0 ? n : 0;
 
     private static string PacksDir()
     {
