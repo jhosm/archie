@@ -19,7 +19,9 @@ namespace Babelstone.Orchestrator.Tests;
 /// payload-blind CloudEvents Binary-mode header decode (ADR-IC-015 / ADR-IC-018 §P5) that keys the saga
 /// on the type name alone (ADR-IC-003 §P2), never the Avro value. A UNIT-lane test (ADR-IC-009 tiering):
 /// it boots NO broker and NO PostgreSQL — it calls the internal static decode directly over a
-/// synthetic <see cref="ConsumeResult{TKey,TValue}"/>, so it also runs on the per-PR orchestrator CI lane.
+/// synthetic <see cref="ConsumeResult{TKey,TValue}"/>. The <c>[Trait("Category","Fuzz")]</c> confines
+/// it to the scheduled <c>fuzz.yml</c> .NET leg — excluded from the per-PR <c>ci.yml</c> lanes and
+/// <c>mutation.yml</c> (the maintainer directive — fuzz tests execute only in <c>fuzz.yml</c>).
 /// </para>
 ///
 /// <para>
@@ -31,6 +33,7 @@ namespace Babelstone.Orchestrator.Tests;
 /// override the seed/budget for a fresh or deeper sweep.
 /// </para>
 /// </summary>
+[Trait("Category", "Fuzz")]
 public sealed class SagaInboxHeaderFuzzTests(ITestOutputHelper output)
 {
     private readonly ITestOutputHelper _output = output;

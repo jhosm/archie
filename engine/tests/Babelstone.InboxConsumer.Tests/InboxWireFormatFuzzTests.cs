@@ -18,7 +18,9 @@ namespace Babelstone.InboxConsumer.Tests;
 /// VALUE decode is fuzzed separately and deeply by <c>AvroDecodeFuzzTests</c> (the scheduled
 /// <c>fuzz.yml</c> .NET leg); together they cover the full off-bus parse chain — the framing half here,
 /// the value half there. This is a UNIT-lane test (ADR-IC-009 tiering): it boots NO broker, decodes no
-/// Avro, and completes, so it also runs on the per-PR engine CI lane at its default budget.
+/// Avro, and completes. The <c>[Trait("Category","Fuzz")]</c> confines it to the scheduled
+/// <c>fuzz.yml</c> .NET leg — excluded from the per-PR <c>ci.yml</c> lanes and <c>mutation.yml</c>
+/// (the maintainer directive — fuzz tests execute only in <c>fuzz.yml</c>).
 /// </para>
 ///
 /// <para>
@@ -29,6 +31,7 @@ namespace Babelstone.InboxConsumer.Tests;
 /// <c>FUZZ_ITERATIONS</c> / <c>FUZZ_SEED</c> override the budget/seed for a deeper or fresh sweep.
 /// </para>
 /// </summary>
+[Trait("Category", "Fuzz")]
 public sealed class InboxWireFormatFuzzTests(ITestOutputHelper output)
 {
     private readonly ITestOutputHelper _output = output;

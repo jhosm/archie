@@ -14,26 +14,26 @@ name: Fuzz
 #      be reproduced locally and committed back as a permanent seed (after which the per-PR `go test`
 #      guards it forever). The generated corpus is cached so coverage is cumulative across runs.
 #
-#   2. The `fuzz-dotnet` MATRIX — the in-process .NET decode/parse boundaries. Each is a deterministic
-#      property/corpus fuzz (a normal `dotnet test` that COMPLETES, unlike `go test -fuzz`), so each
-#      ALSO runs on its per-PR CI lane at a default budget; here each runs a DEEPER sweep driven by
-#      FUZZ_ITERATIONS / FUZZ_HTTP_ITERATIONS, with the RNG seed varied per run (FUZZ_SEED, folded from
-#      the run id) so each weekly sweep explores fresh inputs. The targets:
+#   2. The `fuzz-dotnet` MATRIX — the .NET decode/parse boundaries, each a deterministic property/corpus
+#      fuzz (a normal `dotnet test` that COMPLETES, unlike `go test -fuzz`). Every one is tagged
+#      `[Trait("Category","Fuzz")]`, and THIS workflow is the ONLY place they run: ci.yml and mutation.yml
+#      exclude `Category=Fuzz` (the maintainer directive — fuzz tests execute only in fuzz.yml). Each leg
+#      runs a DEEPER sweep driven by FUZZ_ITERATIONS / FUZZ_HTTP_ITERATIONS, with the RNG seed varied per
+#      run (FUZZ_SEED, folded from the run id) so each weekly sweep explores fresh inputs. The targets:
 #        - Avro value decode (AvroDecodeFuzzTests, bd babelstone-2t16.15): the event bytes a consumer
 #          parses off the bus (AvroEventSerializer.Decode, ADR-IC-002/ADR-IC-004 §P3).
 #        - Inbox wire-format un-framing (InboxWireFormatFuzzTests): the Confluent magic+schema_id frame
 #          wrapping each bus value (InboxPump.TryUnframe) — the parse BEFORE the Avro decode; together
 #          with the Avro leg they cover the full off-bus value parse chain.
-#        - Saga CloudEvents header decode (SagaInboxHeaderFuzzTests): the orchestrator's payload-blind
-#          header parse off the bus (SagaConsumeLoop.TryDecodeHeaders, ADR-IC-015 / ADR-IC-018 §P5).
 #        - Command JSON envelopes (EngineApiJsonEnvelopeFuzzTests): the HTTP command bodies at the
 #          engine's ADR-PC-021 §D5 boundary — a malformed body must be a 4xx, never a 5xx.
+#        - Saga CloudEvents header decode (SagaInboxHeaderFuzzTests): the orchestrator's payload-blind
+#          header parse off the bus (SagaConsumeLoop.TryDecodeHeaders, ADR-IC-015 / ADR-IC-018 §P5).
+#        - Orchestrator EDGE command-JSON (EdgeProcessApiIntegrationTests' malformed-body leg, ADR-IC-006
+#          §P4): Integration-tier — it composes the real edge host over PostgreSQL via Testcontainers, so
+#          its leg (the orchestrator project, shared with the saga-header fuzz) needs the runner's Docker.
 #      A trx reproducer is uploaded on any failure; the assert messages name the FUZZ_SEED to replay.
-#
-# Not here (by design): the orchestrator EDGE command-JSON fuzz (the malformed-body leg of
-# EdgeProcessApiIntegrationTests, the ADR-IC-006 §P4 boundary) is Integration-tier — it composes the
-# real edge host over PostgreSQL — so it runs on the per-PR orchestrator integration lane, NOT in this
-# Docker-free scheduled job. SharpFuzz coverage-guided fuzzing of the Avro entrypoint is a deferred STRETCH.
+#      SharpFuzz coverage-guided fuzzing of the Avro entrypoint is a deferred STRETCH.
 #
 # Contract under test, the same for every target (ADR-PC-007 §169 for packs; its .NET twin for the
 # decode/parse paths): malformed/garbage input yields a CLEAN rejection — a well-typed parse/decode
@@ -132,34 +132,37 @@ jobs:
           path: pack-validate/${{ matrix.dir }}/testdata/fuzz/${{ matrix.target }}/
           if-no-files-found: warn
 
-  # The .NET MATRIX (see the header note): the in-process decode/parse boundaries. Each is a normal
-  # `dotnet test` that COMPLETES (so it also runs per-PR); here each runs a DEEPER, fresh-seeded sweep.
-  # All are the non-Integration (Docker-free) tier — they need no broker/DB. The orchestrator header
-  # fuzz lives in a project that ALSO holds Postgres-backed integration tests, but the --filter selects
-  # only its fuzz class, so xUnit never spins up the integration fixture.
+  # The .NET MATRIX (see the header note): the decode/parse boundaries, selected by the
+  # `[Trait("Category","Fuzz")]` tag. This is the ONLY workflow that runs them — ci.yml and mutation.yml
+  # exclude `Category=Fuzz` (maintainer directive: fuzz runs only here). Each leg runs one test PROJECT's
+  # Fuzz-tagged tests; `--filter "Category=Fuzz"` picks exactly those. The three engine legs are the
+  # non-Integration (Docker-free) tier (no broker/DB). The orchestrator leg runs BOTH its fuzz tests:
+  # the in-process saga-header fuzz AND the Postgres-backed edge-body fuzz, which spins up its own
+  # PostgreSQL via Testcontainers — the ubuntu-latest runner ships Docker, so no `services:` block.
   fuzz-dotnet:
     name: fuzz ${{ matrix.name }} (.NET)
     runs-on: ubuntu-latest
     # Same hang-guard as the Go leg: bound each sweep below the 6h cap so a non-terminating decode/parse
     # (the tests' per-iteration budgets catch most, but a stuck test host would not) fails as an
-    # explicit timeout. 30m clears the default budgets with headroom.
+    # explicit timeout. 30m clears the default budgets (incl. the orchestrator leg's Testcontainers
+    # spin-up + edge fuzz) with headroom.
     timeout-minutes: 30
     strategy:
       fail-fast: false   # one target finding a crasher must not cancel the others
       matrix:
         include:
           - name: Avro decode
+            slug: avro-decode
             project: engine/tests/Babelstone.OutboxPublisher.Tests/Babelstone.OutboxPublisher.Tests.csproj
-            filter: AvroDecodeFuzzTests
           - name: inbox wire-format
+            slug: inbox-wire-format
             project: engine/tests/Babelstone.InboxConsumer.Tests/Babelstone.InboxConsumer.Tests.csproj
-            filter: InboxWireFormatFuzzTests
-          - name: saga inbox headers
-            project: orchestrator/tests/Babelstone.Orchestrator.Tests/Babelstone.Orchestrator.Tests.csproj
-            filter: SagaInboxHeaderFuzzTests
           - name: command JSON envelope
+            slug: command-json-envelope
             project: engine/tests/Babelstone.Engine.Api.Tests/Babelstone.Engine.Api.Tests.csproj
-            filter: EngineApiJsonEnvelopeFuzzTests
+          - name: orchestrator (saga headers + edge body)
+            slug: orchestrator
+            project: orchestrator/tests/Babelstone.Orchestrator.Tests/Babelstone.Orchestrator.Tests.csproj
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4 # pins the .NET 10 SDK from mise.toml (ADR-PC-010), as in ci.yml
@@ -179,13 +182,12 @@ jobs:
         # Pass everything via env (the file's convention: never interpolate ${{ }} into the shell).
         # FUZZ_ITERATIONS / FUZZ_HTTP_ITERATIONS are workflow_dispatch inputs → untrusted, validated as
         # bare positive integers below before a test reads them (each test also falls back to its own
-        # default). PROJECT/FILTER come from the workflow-defined matrix, quoted for consistency. Each
-        # test reads only the budget var it needs; the other is simply ignored.
+        # default). PROJECT comes from the workflow-defined matrix, quoted for consistency. Each test
+        # reads only the budget var it needs; the other is simply ignored.
         env:
           FUZZ_ITERATIONS: ${{ github.event.inputs.fuzz_iterations || '500000' }}
           FUZZ_HTTP_ITERATIONS: ${{ github.event.inputs.fuzz_http_iterations || '20000' }}
           PROJECT: ${{ matrix.project }}
-          FILTER: ${{ matrix.filter }}
           RUN_ID: ${{ github.run_id }}
         run: |
           if ! printf '%s' "$FUZZ_ITERATIONS" | grep -Eq '^[1-9][0-9]*$'; then
@@ -197,14 +199,14 @@ jobs:
             unset FUZZ_HTTP_ITERATIONS
           fi
           # Vary the RNG seed per run so each scheduled sweep explores FRESH inputs instead of replaying
-          # the same deterministic corpus (the per-PR lanes keep each test's fixed default seed). RUN_ID
-          # is trusted (not a dispatch input); fold it into int32 range so the tests' int seed parsers
+          # the same deterministic corpus (a local run keeps each test's fixed default seed). RUN_ID is
+          # trusted (not a dispatch input); fold it into int32 range so the tests' int seed parsers
           # accept it. The seed is echoed here and logged by each test, so a discovery is reproducible.
           export FUZZ_SEED=$(( RUN_ID % 2147483647 ))
-          echo "Using FUZZ_SEED=$FUZZ_SEED (derived from run id $RUN_ID) for $FILTER"
+          echo "Using FUZZ_SEED=$FUZZ_SEED (derived from run id $RUN_ID) for $PROJECT"
           dotnet test "$PROJECT" \
             --configuration Release --nologo \
-            --filter "FullyQualifiedName~$FILTER" \
+            --filter "Category=Fuzz" \
             --logger "trx;LogFileName=fuzz.trx" \
             --results-directory TestResults
 
@@ -214,6 +216,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: fuzz-crasher-dotnet-${{ matrix.filter }}
+          name: fuzz-crasher-dotnet-${{ matrix.slug }}
           path: TestResults/
           if-no-files-found: warn

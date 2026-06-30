@@ -31,8 +31,10 @@ namespace Babelstone.Engine.Api.Tests;
 ///
 /// <para>
 /// Formally: a LIGHT, bounded, deterministic property-fuzz of the ADR-PC-021 §D5 command boundary
-/// (<see cref="DepositsEndpoints"/>). It is a UNIT-lane test (ADR-IC-009 unit/integration tiering) —
-/// it boots NO PostgreSQL container and is NOT the scheduled Go fuzz lane (<c>fuzz.yml</c>). Instead
+/// (<see cref="DepositsEndpoints"/>). It boots NO PostgreSQL container and runs ONLY on the scheduled
+/// <c>fuzz.yml</c> .NET leg — the <c>[Trait("Category","Fuzz")]</c> excludes it from the per-PR
+/// <c>ci.yml</c> lanes and from <c>mutation.yml</c> (the maintainer directive — fuzz runs only in
+/// <c>fuzz.yml</c>). Instead
 /// it composes a minimal in-memory <see cref="TestServer"/> that maps the REAL endpoints with the
 /// REAL host JSON options (snake_case, case-sensitive), the REAL <c>AddProblemDetails()</c> +
 /// <c>UseExceptionHandler()</c> error pipeline, and the REAL deciders/runtime — only the leaf I/O
@@ -52,6 +54,7 @@ namespace Babelstone.Engine.Api.Tests;
 /// appends <c>FUZZ_HTTP_ITERATIONS</c> extra randomized bodies per endpoint for a deeper sweep.
 /// </para>
 /// </summary>
+[Trait("Category", "Fuzz")]
 public sealed class EngineApiJsonEnvelopeFuzzTests : IAsyncLifetime
 {
     /// <summary>Default seed: the per-PR corpus must be identical on every run (no flakiness, ADR-IC-009
