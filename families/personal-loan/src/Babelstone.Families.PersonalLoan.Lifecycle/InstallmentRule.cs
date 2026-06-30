@@ -50,6 +50,16 @@ public sealed class InstallmentRule(IInstallmentCalendarReadModelStore loans) : 
     /// compile dependency.</summary>
     public const string CommandKindPayInstallment = "pay_installment";
 
+    /// <summary>The scoped, non-interactive SCA service principal the loan installment money-mover route
+    /// authorises the driver by (ADR-PC-036 §Decision 1; bd babelstone-6cpq.14/.15). Kept in lock-step with the
+    /// engine-side <c>ScaServicePrincipal.LifecycleMoneyMoverScope</c>; named locally (not referenced) so the
+    /// driver core takes no dependency on the engine hosting assembly — exactly the lock-step-by-constant
+    /// discipline the one-shot <c>MaturityRule.DepositMoneyMoverScope</c> uses. The token keeps its
+    /// <c>deposit-money-mover</c> spelling for byte-for-byte lock-step with the gateway/IAM allowance; it is the
+    /// SAME literal MaturityRule presents — a FAMILY-NEUTRAL scope by MEANING (it authorises the loan installment
+    /// too) even though the string still reads "deposit".</summary>
+    public const string DepositMoneyMoverScope = "lifecycle:deposit-money-mover";
+
     // The loan's structural state (a LoanPosition) is serialized into the read-model row's Detail by the SAME
     // codec the read-model runner uses, so deserializing it here recovers the loan's disbursement-account
     // reference — the only per-loan account token the driver can present as the installment's collection
@@ -104,9 +114,13 @@ public sealed class InstallmentRule(IInstallmentCalendarReadModelStore loans) : 
                     ["paid_at"] = AtUtcMidnight(dueDate),
                 },
                 DueAt: dueDate,
-                // The loan installment endpoint derives its key server-side and is NOT SCA-step-up-gated, so
-                // no scoped principal is presented (ADR-PC-036 §Decision 1; ILifecycleCommandDecision).
-                ServicePrincipalScope: null));
+                // The loan installment route is a clock-driven money-mover behind the SHARED SCA gate
+                // (bd babelstone-6cpq.14): the non-interactive driver has no human acr/auth_time, so it presents
+                // the SCOPED, gateway-attested service principal that authorises ONLY the lifecycle money-movers
+                // (ADR-PC-036 §Decision 1) — the SAME scope MaturityRule presents for the deposit maturity — and
+                // the gate admits it instead of refusing 422 SCA_REQUIRED. The key stays server-derived; the
+                // scope is route-scoped, not blanket (ILifecycleCommandDecision).
+                ServicePrincipalScope: DepositMoneyMoverScope));
         }
 
         return decisions;
