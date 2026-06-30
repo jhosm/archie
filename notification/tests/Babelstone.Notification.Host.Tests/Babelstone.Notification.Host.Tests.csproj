@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The notification worker HOST under test: NotificationModuleLoader's assembly-scan discovery
+         (ADR-IC-019 §D4; ADR-PC-021 §A3). The family .Notification contribution is referenced so its
+         Babelstone.Families.TermDeposit.Notification.dll lands in the TEST output dir — exactly where the
+         loader's base-directory probe scans (AppContext.BaseDirectory), so the test proves discovery the same
+         way the host boots it. The test names NO family TYPE — it asserts the loader returns each family by
+         NAME — so it is the fitness proof that a family is discovered with zero host-composition edit. -->
+    <ProjectReference Include="../../src/Babelstone.Notification.Host/Babelstone.Notification.Host.csproj" />
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Notification/Babelstone.Families.TermDeposit.Notification.csproj" />
+  </ItemGroup>
+</Project>
