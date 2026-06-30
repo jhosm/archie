@@ -3,6 +3,7 @@ using Babelstone.Engine.Hosting;
 using Babelstone.Families.PersonalLoan;
 using Babelstone.Families.PersonalLoan.Lifecycle;
 using Babelstone.Lifecycle;
+using Microsoft.AspNetCore.Http;
 using Xunit;
 
 namespace Babelstone.Families.PersonalLoan.Lifecycle.Tests;
@@ -20,7 +21,10 @@ namespace Babelstone.Families.PersonalLoan.Lifecycle.Tests;
 /// <item>the driver advances to N+1 ONLY after N is recorded paid (the calendar fold's next-unpaid pointer
 /// advances on the <c>LoanInstallmentPaid</c> event), and N+1 carries a DISTINCT id;</item>
 /// <item>the decision carries the loan's own collection account (recovered from the row's detail) and its due
-/// date, and presents NO SCA principal (the installment route is not step-up-gated);</item>
+/// date, and presents the SCOPED lifecycle money-mover SCA principal (the installment route is a clock-driven
+/// money-mover behind the shared SCA gate — the SAME scope MaturityRule presents; bd babelstone-6cpq.14/.15);</item>
+/// <item>that presented scope, attested as the gateway service-principal header, AUTHORISES the engine's
+/// SCA-gated <c>/installment</c> route, so the legit clock-driven driver POST is admitted, not 422;</item>
 /// <item>an installment not yet due is not fired.</item>
 /// </list>
 /// </summary>
@@ -95,7 +99,7 @@ public sealed class InstallmentRuleTests
     }
 
     [Fact]
-    public async Task The_decision_carries_the_loan_collection_account_due_date_and_no_sca_principal()
+    public async Task The_decision_carries_the_loan_collection_account_due_date_and_the_scoped_sca_principal()
     {
         var loan = Guid.NewGuid();
         var rule = new InstallmentRule(new FakeInstallmentStore(Loan(loan, nextNumber: 3, nextDue: Today)));
@@ -112,8 +116,33 @@ public sealed class InstallmentRuleTests
         Assert.Equal(
             new DateTimeOffset(Today.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
             Assert.IsType<DateTimeOffset>(decision.Body["paid_at"]));
-        // The loan installment route derives its key server-side and is NOT SCA-step-up-gated.
-        Assert.Null(decision.ServicePrincipalScope);
+        // The installment route is a clock-driven money-mover behind the shared SCA gate, so the non-interactive
+        // driver presents the SCOPED lifecycle money-mover principal — the SAME literal MaturityRule presents.
+        Assert.Equal(InstallmentRule.DepositMoneyMoverScope, decision.ServicePrincipalScope);
+    }
+
+    [Fact]
+    public async Task The_presented_scope_authorises_the_gated_installment_route_so_the_driver_is_not_422()
+    {
+        // Round-trip the contract: the scope the rule presents, attested by the gateway as the service-principal
+        // header, MUST authorise the engine's SCA-gated /installment money-mover (bd babelstone-6cpq.14) — so the
+        // legit clock-driven driver POST is ADMITTED, not refused 422 SCA_REQUIRED. This mirrors the term-deposit
+        // maturity driver-path (MaturityRule presents the same scope; ScaServicePrincipal authorises the leaf).
+        var loan = Guid.NewGuid();
+        var rule = new InstallmentRule(new FakeInstallmentStore(Loan(loan, nextNumber: 1, nextDue: Today)));
+
+        var decision = Assert.Single(await rule.EvaluateAsync(Today));
+        Assert.NotNull(decision.ServicePrincipalScope);
+
+        IHeaderDictionary attested = new HeaderDictionary
+        {
+            [ScaServicePrincipal.PrincipalHeader] = decision.ServicePrincipalScope,
+        };
+        // The gateway-attested scope admits the loan installment leaf — no fall-through to the human-SCA 422.
+        Assert.True(ScaServicePrincipal.IsAuthorised(attested, ScaServicePrincipal.InstallmentOperation));
+        // And the scope the rule presents is byte-for-byte the engine's gateway-attested money-mover scope, so
+        // a drift on either side (rule literal vs engine/Kong/IAM allowance) is caught here.
+        Assert.Equal(ScaServicePrincipal.LifecycleMoneyMoverScope, decision.ServicePrincipalScope);
     }
 
     [Fact]

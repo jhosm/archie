@@ -14,6 +14,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The gated-route test names Microsoft.AspNetCore.Http.IHeaderDictionary / HeaderDictionary to round-trip
+         the scope InstallmentRule presents through Babelstone.Engine.Hosting.ScaServicePrincipal.IsAuthorised —
+         proving the engine's SCA-gated /installment money-mover ADMITS the legit driver, not 422 (bd
+         babelstone-6cpq.14/.15). FrameworkReference is non-transitive, so this plain test SDK project must
+         declare it itself to compile against the same ASP.NET Core abstractions the engine host wiring uses. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The family LIFECYCLE contribution under test: InstallmentRule (the recurring installment decision keyed
          on the stable installment NUMBER, the re-tick no-op, the advance-to-N+1-only-after-N-paid invariant, the
          collection-account recovery, the no-SCA-principal case), driven over a fake installment-calendar store
