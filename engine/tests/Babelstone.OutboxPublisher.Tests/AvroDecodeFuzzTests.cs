@@ -29,9 +29,10 @@ namespace Babelstone.OutboxPublisher.Tests;
 ///   (b) throws a RECOGNISED decode-failure exception (see <see cref="IsCleanDecodeRejection"/>).
 /// It must NOT throw an unrecognised exception type, must NOT return null, and must NOT hang.
 ///
-/// This is PROPERTY-BASED / corpus fuzzing — the deterministic baseline that runs on the normal
-/// per-PR <c>dotnet test</c> lane AND, with a larger budget, on the scheduled <c>fuzz.yml</c> .NET
-/// leg. SharpFuzz/libFuzzer coverage-guided fuzzing is the STRETCH (a deferred follow-up; see the
+/// This is PROPERTY-BASED / corpus fuzzing — the deterministic baseline. It runs ONLY on the
+/// scheduled <c>fuzz.yml</c> .NET leg: the <c>[Trait("Category","Fuzz")]</c> excludes it from the
+/// per-PR <c>ci.yml</c> lanes and from <c>mutation.yml</c> (the maintainer directive — fuzz tests
+/// execute only in <c>fuzz.yml</c>). SharpFuzz/libFuzzer coverage-guided fuzzing is the STRETCH (a deferred follow-up; see the
 /// class-tail note). The corpus is seeded from real encoded payloads of every catalogued
 /// term-deposit event, then mutated; pure random byte strings cover the unstructured tail.
 ///
@@ -39,6 +40,7 @@ namespace Babelstone.OutboxPublisher.Tests;
 /// mutation operators (bd 2t16.16/.17/.19) extend <see cref="Mutators"/>, and a JSON-envelope leg
 /// (bd 2t16.20) adds a parallel fuzz class over the envelope decode rather than the Avro value.
 /// </remarks>
+[Trait("Category", "Fuzz")]
 public sealed class AvroDecodeFuzzTests(ITestOutputHelper output)
 {
     private readonly ITestOutputHelper _output = output;

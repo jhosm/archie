@@ -235,9 +235,13 @@ public sealed class EdgeProcessApiIntegrationTests(OrchestratorPostgresFixture f
     /// boundary). Integration-tier because the edge host composes its real saga module + EdgeServices over
     /// the test PostgreSQL — the SAME proven <see cref="EdgeHost"/> the happy-path tests use; the fuzz
     /// bodies never reach the DB, but the host construction does. The corpus is a fixed-seed deterministic
-    /// set (a flaky fuzz is unacceptable); <c>FUZZ_SEED</c> overrides the seed for a fresh sweep.
+    /// set (a flaky fuzz is unacceptable); <c>FUZZ_SEED</c> overrides the seed for a fresh sweep. The
+    /// <c>[Trait("Category","Fuzz")]</c> on THIS method (alongside the class's Integration trait) confines
+    /// it to the scheduled <c>fuzz.yml</c> edge leg — excluded from the per-PR <c>ci.yml</c> integration
+    /// lane and from <c>mutation.yml</c> (the maintainer directive — fuzz runs only in <c>fuzz.yml</c>).
     /// </remarks>
     [Fact]
+    [Trait("Category", "Fuzz")]
     public async Task A_malformed_constitute_body_is_always_4xx_never_5xx_and_never_hangs()
     {
         await using var edge = NewEdge();

@@ -138,7 +138,10 @@ jobs:
         env:
           STRYKER_PROJECT: ${{ matrix.project }}
           STRYKER_CONFIG: ${{ matrix.config }}
-        run: dotnet tool run dotnet-stryker --project "$STRYKER_PROJECT" --config-file "$GITHUB_WORKSPACE/engine/$STRYKER_CONFIG"
+        # --test-case-filter excludes the Category=Fuzz suites: fuzz tests are slow property loops and are
+        # not mutation killers, and per the maintainer directive they execute ONLY in fuzz.yml. (No fuzz
+        # test lives in the kernel legs today, but the filter keeps the directive uniform.)
+        run: dotnet tool run dotnet-stryker --project "$STRYKER_PROJECT" --config-file "$GITHUB_WORKSPACE/engine/$STRYKER_CONFIG" --test-case-filter "Category!=Fuzz"
       # All other legs — Stryker SOLUTION context: the whole solution's test set runs against each
       # mutant (more killing tests ⇒ higher score; engine/docs/mutation-testing.md). The break
       # threshold in the leg's config fails the run below the score floor. The spine/seam/boundary
@@ -150,7 +153,10 @@ jobs:
           STRYKER_PROJECT: ${{ matrix.project }}
           STRYKER_TEST_PROJECT: ${{ matrix.test }}
           STRYKER_CONFIG: ${{ matrix.config }}
-        run: dotnet tool run dotnet-stryker --project "$STRYKER_PROJECT" --test-project "$STRYKER_TEST_PROJECT" --config-file "$STRYKER_CONFIG"
+        # --test-case-filter excludes the Category=Fuzz suites (e.g. AvroDecodeFuzzTests in
+        # OutboxPublisher.Tests, InboxWireFormatFuzzTests in InboxConsumer.Tests): they are slow property
+        # loops, not mutation killers, and per the maintainer directive run ONLY in fuzz.yml.
+        run: dotnet tool run dotnet-stryker --project "$STRYKER_PROJECT" --test-project "$STRYKER_TEST_PROJECT" --config-file "$STRYKER_CONFIG" --test-case-filter "Category!=Fuzz"
       - name: Upload mutation report
         if: always()
         uses: actions/upload-artifact@v7
