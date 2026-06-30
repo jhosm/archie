@@ -65,4 +65,12 @@
     <ProjectReference Include="../../../engine/src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj"
                       OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- The test project fuzzes the consume loop's INTERNAL header decode (SagaConsumeLoop.TryDecodeHeaders,
+         ADR-IC-015) directly — a pure, broker-free property test of the off-bus parse boundary. The decode
+         stays internal (it is not a public substrate API); exposing it to the test assembly only, the same
+         mechanism Babelstone.InboxConsumer uses for its wire-format tests. -->
+    <InternalsVisibleTo Include="Babelstone.Orchestrator.Tests" />
+  </ItemGroup>
 </Project>
