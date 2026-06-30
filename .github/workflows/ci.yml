@@ -65,7 +65,7 @@ jobs:
               - 'packs/**/rate-sheet-refs/**'
               - 'contracts/cue/pack/**'
             infra: ['infra/**', 'scripts/kong-config-check.sh', 'scripts/grafana-rbac-check.sh', 'mise.toml']
-            docs: ['docs/**', '*.md', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
+            docs: ['docs/**', 'infra/docs/**', '*.md', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
             # Every input scripts/docs-gen/generate.py reads to render docs/product-docs/reference/
             # (ADR-PC-022 §P2). Kept FAITHFUL so any source change re-runs `make docs-verify`, and in
             # sync with the .githooks/pre-commit `staged_docs_src` list that regenerates the same tree
@@ -920,7 +920,7 @@ jobs:
       - name: Markdown link check (offline)
         uses: lycheeverse/lychee-action@v2
         with:
-          args: "--offline --no-progress docs/**/*.md ./*.md"
+          args: "--offline --no-progress docs/**/*.md infra/docs/**/*.md ./*.md"
           fail: true
       # Graphviz + a JRE from apt; PlantUML itself is pinned (not apt's) — the
       # apt package on ubuntu-24.04 ships a C4 bundled-stdlib too old to resolve
