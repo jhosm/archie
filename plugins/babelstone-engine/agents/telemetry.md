@@ -5,9 +5,9 @@ description: >-
   adding or changing telemetry — a manual span, a metric/instrument, a structured
   log, or the babelstone.* attribute/event contract — and before committing or
   opening a PR, whenever a diff touches instrumentation in engine/, families/,
-  orchestrator/, acl/, notification/ (C# — ActivitySource/Meter/ILogger,
-  BabelstoneAttributes, BabelstoneEvents, BabelstoneTelemetry) or mcp-server/
-  (Python OTel). Reviews the change against
+  orchestrator/, acl/, notification/, lifecycle-driver/, cadence/ (C# —
+  ActivitySource/Meter/ILogger, BabelstoneAttributes, BabelstoneEvents,
+  BabelstoneTelemetry) or mcp-server/ (Python OTel). Reviews the change against
   docs/product-management/implementation_guidelines/telemetry.md — the litmus and
   the seven rules — and flags what the mechanical gates cannot judge: whether the
   right thing is instrumented, named right, at the right level, non-PII by design,
