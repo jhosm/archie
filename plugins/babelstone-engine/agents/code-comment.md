@@ -38,6 +38,7 @@ that belong to them:
 | Doc / C4 prose vs its cited source | `doc-consistency` agent | None — that agent owns `docs/**` prose |
 | Boundary / schema / no-PII-on-bus claims in a comment | `contract-reviewer` agent | Defer the boundary judgement; flag only the comment's accuracy/citation form |
 | Financial-math correctness a comment asserts | `financial-math-reviewer` agent | Defer the math; flag only that an asserted number has no test behind it |
+| A telemetry-signal property a comment asserts (PII-safety, log level, span placement, wire-contract naming) | `telemetry` agent | Defer the signal substance; flag only the comment's accuracy/citation form |
 | `## Decision` edited in place; PR-body ADR section | `adr-immutability` hook + `adr-governance.yml` CI | None |
 
 **Your class is comment rot and guideline conformance** — *a comment that is inaccurate,
