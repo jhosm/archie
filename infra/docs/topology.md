@@ -98,7 +98,7 @@ There are three paths in, and they share one gateway.
 The engine and orchestrator don't call every downstream directly — they publish
 events to **Redpanda** and let consumers subscribe. The engine writes events and
 its **outbox** in one database transaction, then a relay worker publishes them to
-Kafka (the outbox pattern, [ADR-IC-004](../../docs/product-management/integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)).
+Redpanda (the outbox pattern, [ADR-IC-004](../../docs/product-management/integration_concepts/adrs/ADR-IC-004-outbox-pattern-mechanism.md)).
 Who may produce or consume which topic is not a convention — it's declared in
 [`infra/redpanda/topic-acls.yaml`](../redpanda/topic-acls.yaml) and enforced by the
 broker. Topics are named after the `aggregate_type` (e.g. `term_deposit`) plus the

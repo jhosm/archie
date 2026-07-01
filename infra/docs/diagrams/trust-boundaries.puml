@@ -26,7 +26,7 @@ Container(kong, "Kong edge", "DB-less gateway", "OAuth + SCA + rate-limit + payl
 Container(mcp, "MCP server", "FastMCP", "Audience-bound tokens, narrow scopes, engine-side SCA gate")
 Container(orch, "Orchestrator", ".NET", "The only thing allowed to command the ACL")
 Container(engine, "Engine", ".NET", "Settles only on attested SCA claims")
-Container(redpanda, "Redpanda", "Kafka + SR", "A shared medium, not a trusted bus")
+Container(redpanda, "Redpanda", "Kafka API + SR", "A shared medium, not a trusted bus")
 Container(acl, "ACL", "stub today", "Orchestrator-only command port")
 Container(grafana, "Observability", "Grafana LGTM", "A regulated data store of all operations")
 Container(openbao, "OpenBao", "secret boundary", "Per-subject keys; crypto-shredding")
