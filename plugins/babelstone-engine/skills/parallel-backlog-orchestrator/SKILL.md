@@ -3,8 +3,9 @@ name: parallel-backlog-orchestrator
 description: >-
   Survey the ready bd backlog, carve it into the maximum set of collision-free lanes, then
   dispatch one isolated worktree agent per lane and keep the queue saturated — retrying crashed
-  agents, nudging stale GitHub mergeability caches, and rebasing on conflict — until no ready
-  work remains. ONE central Dolt writer (the orchestrator) owns every bd write; lane agents
+  agents, nudging stale GitHub mergeability caches, rebasing on conflict, and running the §P3
+  `review` layer over each lane's diff — until no ready work remains. ONE central Dolt writer
+  (the orchestrator) owns every bd write; lane agents
   never touch bd or push to `main`. Hands finished lanes to `post-merge-cleanup`. Use when the
   user wants to parallelise the backlog, run several ready issues at once, ship multiple PRs in
   one go, or "run ready work in lanes" — the orchestration companion to `post-merge-cleanup`.
@@ -99,7 +100,7 @@ then group so footprints are disjoint:
   collision. An uncommitted worktree or a pushed-but-unmerged branch owns those files now.
 - **Distinguish "defer to a future run" from "pack now".** Only one situation forces deferral to a
   *later* run: a dependency on a PR that has **not merged yet** — `bd ready` excludes open-blocker
-  issues, but re-check, because a blocker only *closes* at merge (Step 7 / `post-merge-cleanup`), so a
+  issues, but re-check, because a blocker only *closes* at merge (Step 8 / `post-merge-cleanup`), so a
   dependent won't become ready until a previous run's PR actually merges. A plain **file-collision
   with another ready issue is NOT a deferral** — it packs into a sequential lane (previous bullet). If
   you find yourself deferring a ready, dispatchable issue purely because its files collide with a lane
@@ -249,7 +250,7 @@ ultracode bullet below.)
       loop) claims every issue this run will touch — the planned lanes *and* the DEFERRED refill set,
       against the frozen Step 1 snapshot — **centrally up front**, *before* launching the Workflow; the
       Workflow ships code + PRs only; and you reconcile bd **centrally after** it returns (the single
-      `bd dolt push`, plus un-claiming anything that never shipped — Step 7). Lane `agent()`s still
+      `bd dolt push`, plus un-claiming anything that never shipped — Step 8). Lane `agent()`s still
       never push `main` and never merge.
     - Still **propose-then-apply** (Step 3): show the lane plan and launch the Workflow only on the
       user's go-ahead.
@@ -264,14 +265,21 @@ Either way, give every lane agent the same standing brief:
   lead, the `## ADRs touched/honoured` section, and the `## bd issues closed on merge` section —
   one `- Closes babelstone-<id>` line per issue the lane resolves (or `- None — no bd issue is
   resolved by this PR.`). That last section is the authoritative hand-off `post-merge-cleanup` reads
-  to know which `bd close` to run, so the lane's own issue ID **must** appear there. On any diff
-  touching `engine/ families/ orchestrator/ acl/ notification/ mcp-server/ contracts/ pack-validate/`
-  or `docs/**/adrs/`, the `babelstone-engine:adr-conformance` agent must run — but **in the
-  ultracode/Workflow path a lane `agent()` cannot spawn it** (a Workflow agent has no sub-agent
-  spawn), so the **orchestrator runs adr-conformance centrally** on each such diff after the Workflow
-  returns, before finalising. In the default hand-driven Agent-tool path, the lane runs it before
-  pushing if it can; otherwise the orchestrator runs it centrally. Either way it is never skipped —
-  only relocated to whoever can actually spawn it. Do **not** tell Workflow lanes to run it themselves.
+  to know which `bd close` to run, so the lane's own issue ID **must** appear there.
+- **Each lane's diff gets the §P3 review layer before the run is finalised — via the
+  `babelstone-engine:review` skill, not a hardcoded agent.** That skill discovers the domain
+  reviewers from disk and routes the diff to the ones its paths/nature touch (`adr-conformance`,
+  `contract-reviewer`, `financial-math-reviewer`, `replay-determinism-auditor`, `doc-consistency`,
+  `code-comment`, `telemetry` — whatever is on disk, so a newly-added reviewer is picked up with no
+  edit here). Running the skill **subsumes the old standalone adr-conformance step**: adr-conformance
+  is one of the reviewers it routes to (still mandatory on any `engine/ families/ orchestrator/ acl/
+  notification/ mcp-server/ contracts/ pack-validate/` or `docs/**/adrs/` diff), so invoke the skill
+  — don't also spawn that agent separately and double-run it. Because the skill spawns
+  `babelstone-engine:*` sub-agents and **a lane cannot reliably nest sub-agents (a Workflow lane
+  `agent()` cannot at all)**, the **orchestrator runs the review skill centrally**, pointed at each
+  lane's own branch/worktree so it scores only that lane's authored diff. Never skipped — only
+  relocated to the orchestrator, the one process that can spawn. Do **not** tell lanes to run it
+  themselves. Acting on its verdict is Step 7.
 - **Respect the two shared ledgers (Guardrails has the full rule).** The generated
   `reference/adr-index` is **single-writer** — never regenerate it in a lane unless you are the one
   ADR-touching lane the orchestrator nominated to own the `make docs-gen` regen this run. The
@@ -320,7 +328,34 @@ you don't drive it slot by slot, and because the orchestrator already claimed DE
 (Step 4), a refill needs no fresh bd write. (Dependency-blocked issues won't appear here — they
 unblock only when a blocker *merges*, a later run's input, not this one's.)
 
-## Step 7 — Land, record centrally, hand off
+## Step 7 — Review each lane's diff before it's done (the §P3 gate)
+
+A lane isn't finished when it goes green — it's finished when the domain reviewers have seen its
+diff. Run the [`review` skill](../review/SKILL.md) **centrally, per lane**, pointed at that lane's
+branch/worktree so it scores only what the lane authored (the three-dot footprint, Step 2), not the
+whole run. The skill discovers the reviewers from disk and fans out only the ones the diff touches,
+then rolls up one `PASS | CHANGES REQUESTED` verdict — so this single step covers `adr-conformance`,
+`telemetry`, and every sibling reviewer without the orchestrator hardcoding a roster that would rot.
+
+- **When.** In the **default hand-driven path**, review a lane as it reports green / PR-open —
+  interleaved with the Steps 5–6 wheel, before that lane counts as done. In the **ultracode** path
+  the Workflow lanes can't spawn reviewers, so run the skill on each lane's diff **centrally after
+  the Workflow returns** (the same relocation the old adr-conformance step used).
+- **Feed `CHANGES REQUESTED` back into the lane — at least once.** A finding is not a stamp to note
+  and ignore: re-dispatch the lane through the Step 5 machinery (a fresh Agent on the same worktree
+  in the default path; a follow-up Agent on the lane's branch in ultracode) to address the findings
+  and update the PR, then re-review. Cap the loop at one or two passes — if a finding survives, it is
+  a genuine judgement call, so **surface it in the Step 8 report and let the maintainer decide**
+  rather than looping forever or silently dropping it.
+- **Advisory, never a hard gate (§P3, [ADR-PC-020](../../../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)).**
+  The review layer is dev-time judgement; the mechanical CI gates (the `## ADRs touched/honoured`
+  PR-body check, `adr-governance.yml`, the fitness functions, the runtime PII guard) remain the
+  authoritative bar and run regardless. This step catches the judgement they can't — so act on it,
+  but don't treat an unresolved advisory finding as a merge-blocker the skill was never meant to be.
+- **Lanes the diff doesn't concern.** If the review skill finds no reviewer whose scope a lane's diff
+  touches, it says so and stops — that lane needs no review pass. Don't force one.
+
+## Step 8 — Land, record centrally, hand off
 
 When the queue is drained, the **orchestrator** (never the lanes) reconciles bd and reports:
 
@@ -337,8 +372,10 @@ When the queue is drained, the **orchestrator** (never the lanes) reconciles bd 
   `git push` of your own (orchestrator) working branch if any.
 - Verify the **primary checkout is still clean** (`git -C <primary> status`) — a lane that leaked
   edits into it is a bug to flag, per the worktree-cwd-leak lesson.
-- Report: PRs opened (with URLs + CI state), lanes recovered from crashes/nudges, lanes deferred or
-  blocked and why. Point the user at `post-merge-cleanup` to retire lanes **after** the maintainer
+- Report: PRs opened (with URLs + CI state), lanes recovered from crashes/nudges, the **Step 7
+  review verdict per lane** (PASS, or CHANGES REQUESTED with the findings addressed or left for the
+  maintainer to decide), lanes deferred or blocked and why. Point the user at `post-merge-cleanup`
+  to retire lanes **after** the maintainer
   merges — this skill opens lanes (each PR naming its issue under `## bd issues closed on merge`);
   that one reads that section to `bd close` and retire the branch/worktree.
 
