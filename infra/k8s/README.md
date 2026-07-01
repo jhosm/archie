@@ -3,8 +3,9 @@
 Kustomize manifests for the deployed **backing-infra** stack, per
 [ADR-IC-013 §D2](../../docs/product-management/integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md)
 (IaC subtree co-located in the monorepo). These deploy the **same 10 services**
-as [`infra/compose.yaml`](../compose.yaml) to a Kubernetes cluster, shaped for a
-single **dev** environment (the always-on **staging** box is its own `overlays/staging`).
+as [`infra/compose.yaml`](../compose.yaml) to a Kubernetes cluster. **`base` is the
+single-replica, non-HA rendering** (the dev-shaped seam); the **ha** and **staging**
+overlays diverge from it (the always-on **staging** box is its own `overlays/staging`).
 
 Packaging is **Kustomize** (base + overlays). This is a packaging choice, not an
 ADR-level decision — it is recorded here and in the introducing PR body rather
@@ -35,7 +36,7 @@ application/engine service images (they connect to this stack).
 | backstage (catalogue portal) + backstage-db | Deployment ×2 | 7007, 5432 | [ADR-IC-015](../../docs/product-management/integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) (supersedes the retired ADR-IC-008) — renders `catalog-info.yaml`; app image is human-handoff (bd babelstone-s4ol.1) |
 | core-acl-stub (v1 Core-ACL settlement stub) | Deployment | 8080 | [ADR-PC-016](../../docs/product-management/product_concepts/adrs/ADR-PC-016-legacy-current-account-adapter.md) / [ADR-PC-029](../../docs/product-management/product_concepts/adrs/ADR-PC-029-engine-command-ingress.md) — WireMock; real ACL is DEF-1 (bd babelstone-ub9s) |
 
-All Services are `ClusterIP` — in the `base`, `dev`, and `ha` overlays they are
+All Services are `ClusterIP` — in the `base` and `ha` renderings they are
 reached via `kubectl port-forward`. **The `staging` overlay is the one exception**
 ([see below](#staging-overlay--the-always-on-public-demo-box-bd-babelstone-zla1)):
 it adds a public Traefik `Ingress` + cert-manager/Let's Encrypt TLS fronting the
@@ -60,9 +61,7 @@ infra/k8s/
 │   ├── namespace.yaml          # babelstone-dev
 │   ├── <service>.yaml          # one file per backing service
 │   └── secrets.example.yaml    # DEV-ONLY placeholder Secret (see below)
-└── overlays/
-    ├── dev/                    # single env; replicas=1 (no HA)
-    │   └── kustomization.yaml
+└── overlays/                   # base itself is the single-replica, non-HA rendering
     ├── ha/                     # production-shaped HA topology (P.7 — see below)
     │   ├── kustomization.yaml
     │   ├── redpanda-ha.yaml          # 1->3 node seed-discovered cluster
@@ -89,16 +88,17 @@ infra/k8s/
             └── README.md             # bootstrap apply order + prereqs
 ```
 
-Render the manifests (swap `dev` for `ha` to render the HA topology):
+Render the manifests (`base` is the single-replica rendering; swap it for
+`overlays/ha` or `overlays/staging` to render those):
 
 ```bash
-mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/dev
+mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/base
 ```
 
-Validate them (this is the CI gate — CI runs it for **both** overlays):
+Validate them (this is the CI gate — CI runs it for `base` and **both** overlays):
 
 ```bash
-mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/dev \
+mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/base \
   | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
 ```
 
@@ -113,8 +113,8 @@ mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/ov
 
 ## Namespace
 
-Everything lands in the **`babelstone-dev`** namespace (set by both
-`base/kustomization.yaml` and the `overlays/dev` overlay).
+Everything lands in the **`babelstone-dev`** namespace (set by
+`base/kustomization.yaml`; the `staging` overlay renames it to `babelstone-staging`).
 
 ## Configuration — single source of truth
 
@@ -156,13 +156,13 @@ cluster-internally. CI asserts the grafana-lgtm Service never exposes 4317/4318.
 
 ## HA overlay — production-shaped topology (P.7)
 
-The **`overlays/ha`** overlay (babelstone-ixkp) diverges from the *same*
-`base`/`dev` seam the `dev` overlay does, in the HA direction. It is the
+The **`overlays/ha`** overlay (babelstone-ixkp) diverges from **`base`** in the HA
+direction. It is the
 topology [ADR-PC-005 §P1](../../docs/product-management/product_concepts/adrs/ADR-PC-005-dr-rto-rpo.md)
 mandates for the source of truth (`events`, `outbox`, `saga_state`): a committed
 event durable on **two** nodes before acknowledgement → **RPO ≈ 0**.
 
-| Concern | dev overlay | ha overlay |
+| Concern | base (single-node) | ha overlay |
 |---|---|---|
 | Redpanda | 1 node (`--mode=dev-container`) | **3-node Raft quorum**, seed-discovered via a headless Service ([ADR-IC-001](../../docs/product-management/integration_concepts/adrs/ADR-IC-001-event-backbone-message-broker.md)) |
 | Postgres | 1 node | **primary + synchronous off-site warm standby** (streaming replication; `synchronous_standby_names`) |
@@ -230,13 +230,13 @@ real credentials; M.2 replaces it with OpenBao-backed provisioning.
 
 The **`overlays/staging`** overlay is the single, always-on, **public** demo /
 staging environment: one CAX41 ARM node running single-node k3s in Hetzner
-Helsinki, on the domain `babelstone.dev`. It diverges from the *same* `base`/`dev`
+Helsinki, on the domain `babelstone.dev`. It diverges from **`base`** — the *same*
 seam the `ha` overlay does — but in the **staging** direction, not the HA one. It
 runs one copy of everything (HA would not fit a single node — do **not** promote
-`overlays/ha` here), but adds two things the `dev` overlay deliberately omits:
+`overlays/ha` here), but adds two things `base` deliberately omits:
 **durable storage** and a **public TLS edge**.
 
-| Concern | dev overlay | staging overlay |
+| Concern | base (single-node) | staging overlay |
 |---|---|---|
 | Namespace | `babelstone-dev` | `babelstone-staging` |
 | Storage | unset → k3s `local-path` (node-local, ephemeral) | `hcloud-volumes` (Hetzner CSI block — survives node rebuild, **snapshot-able**) |
@@ -311,10 +311,10 @@ node-allocatable (≈28 GiB after the k3s system reserve) and requests (≈4.6 G
 low enough that the whole stack schedules on one node. The per-service budget
 table is in the patch file's header. CI asserts every staging workload container
 carries a memory limit, so the sizing stays an invariant rather than a one-off
-(the dev/ha overlays are intentionally unsized — dev is a laptop stack, ha is
-multi-node and would size differently).
+(the `base` and `ha` renderings are intentionally unsized — `base` is a laptop
+stack, ha is multi-node and would size differently).
 
-Validate (the same CI gate as `dev`/`ha` — CI now loops all three overlays):
+Validate (the same CI gate as `base`/`ha` — CI loops `base` plus both overlays):
 
 ```bash
 mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging \
@@ -333,7 +333,7 @@ is zla1.6 (the base still pins `:placeholder`).
 
 ## Out of scope (downstream)
 
-The `dev` overlay is a single, non-HA, dev-shaped environment; the `ha`
+The `base` is a single, non-HA, dev-shaped rendering; the `ha`
 overlay adds the production-shaped topology; the `staging` overlay (both above)
 adds the always-on public demo box. The remaining scope split:
 

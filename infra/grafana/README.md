@@ -120,7 +120,7 @@ config source, the base's `otel-collector-config` / `kong-config` pattern), and
 subPath-mounts each file so the appliance's own `/otel-lgtm/` contents aren't
 clobbered. It is a **staging** concern (where the always-on box's alerts must
 fire), not the kustomize **base** — the base still ships the appliance with
-default config, and `dev`/`ha` don't load rules. The patch touches only the
+default config, and `base`/`ha` don't load rules. The patch touches only the
 Deployment, so the OTLP boundary (no 4317/4318 on the `grafana-lgtm` Service,
 [ADR-IC-007 §P1](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md))
 is preserved.

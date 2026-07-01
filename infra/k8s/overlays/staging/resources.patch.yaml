@@ -32,7 +32,7 @@
 #
 # Strategic-merge: each document targets one container by name, so adding a
 # `resources:` block is purely additive (the containers list merges by `name`).
-# These apply only in the staging overlay; the dev/ha overlays are unsized (dev is
+# These apply only in the staging overlay; the base/ha renderings are unsized (base is
 # a laptop stack; ha is multi-node and would size differently).
 ---
 apiVersion: apps/v1
