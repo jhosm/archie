@@ -213,7 +213,7 @@ The **explicit-drift gate** (ADR-PC-020 §D3): *no change may contradict an Acce
 
 - `docs/product-management/integration_concepts/` documents are numbered `00–11` and intended to be read in sequence
 - `docs/product-management/financial_concepts/` documents are standalone references, not sequenced
-- `docs/product-management/implementation_guidelines/` documents are standalone authoring conventions, not sequenced — cross-cutting "how we write the code" rules (e.g. `code-comments.md`, the code-comment guideline)
+- `docs/product-management/implementation_guidelines/` documents are standalone authoring conventions, not sequenced — cross-cutting "how we write the code" rules (e.g. `code-comments.md`, the code-comment guideline; `telemetry.md`, the telemetry-authoring guideline)
 - `docs/product-management/product_concepts/` documents are numbered `00–04` for the core brief, plus `feature-design-*.md` companions for each architectural sub-topic
 - `docs/product-docs/reference/` is the **generated reference** (ADR-PC-022; moved under `docs/product-docs/` on 2026-06-19 — bd sfnt.26): rendered from the contracts / MCP / ADR sources — **never hand-edit it** (`make docs-gen` regenerates; `make docs-verify` gates drift in CI, the same guarantee ADR-IC-008 gives the EventCatalog). It is the generated quadrant of the `product-docs/` Diátaxis set; the concern-axis series under `product-management/` stay physically untouched
 - The running example is a Portuguese term deposit system — patterns are general, the example is specific
