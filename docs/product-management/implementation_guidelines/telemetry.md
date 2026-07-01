@@ -13,8 +13,8 @@ you. The *why* behind all of this is
 day-to-day "what do I do when I add code" companion.
 
 This is a standalone reference (the `implementation_guidelines/` series is not sequenced). It
-governs the telemetry emitted from `engine/`, `families/`, `orchestrator/`, `acl/`, and
-`notification/` (C#) and `mcp-server/` (Python). It does **not** re-decide the observability
+governs the telemetry emitted from the .NET components — `engine/`, `families/`, `orchestrator/`,
+`acl/`, `notification/`, `lifecycle-driver/`, and `cadence/` (C#) — and `mcp-server/` (Python). It does **not** re-decide the observability
 *stack* (that is [ADR-IC-007](../integration_concepts/adrs/ADR-IC-007-observability-stack.md)) or
 the conceptual *why* (that is Document 06) — it tells you how to write a signal that conforms to
 both.
