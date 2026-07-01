@@ -118,16 +118,18 @@ logical `deposits.integration.events` / `deposits.process.events` domain topics.
 
 ## The four deployment shapes
 
-The *same* set of services is packaged four ways. The dev Compose stack and the
-k8s `dev` overlay are for working on a laptop; `ha` and `staging` are the
-deployed shapes. Crucially, the Kong and OTel-Collector configs are **one source
+The *same* set of services is packaged four ways. The Compose stack and the k8s
+`base` rendering are for working on a laptop; `ha` and `staging` are the
+deployed shapes. (`base` *is* the single-replica, non-HA rendering — `ha` and
+`staging` are overlays that diverge from it; there is no separate `dev` overlay.)
+Crucially, the Kong and OTel-Collector configs are **one source
 of truth** ([`kong/kong.yml`](../kong/kong.yml), [`otel/collector.yaml`](../otel/collector.yaml))
 — the k8s ConfigMaps are generated from the same files Compose mounts, so a config
 change updates every shape at once.
 
-| Concern | Compose (`infra/compose.yaml`) | k8s `dev` | k8s `ha` | k8s `staging` |
+| Concern | Compose (`infra/compose.yaml`) | k8s `base` | k8s `ha` | k8s `staging` |
 |---|---|---|---|---|
-| Purpose | Laptop walking skeleton | Single-env cluster test | Production-shaped HA | Always-on public demo box |
+| Purpose | Laptop walking skeleton | Single-replica cluster render | Production-shaped HA | Always-on public demo box |
 | Where | Docker on your machine | Any cluster | Any cluster | Single-node k3s (Hetzner) |
 | Postgres | 1 node | 1 node | **Primary + synchronous off-site standby** (RPO ≈ 0) | 1 node, durable volume |
 | Redpanda | 1 node (dev-container) | 1 node | **3-node Raft quorum** | 1 node |
