@@ -42,7 +42,8 @@ One **engine** (event-sourced, the source of truth) is fronted by a single
 **orchestrator** (sagas), the **MCP server** (agent channel), and the
 **ACL** (to Core Banking, currently a stub) — connect it to the outside world.
 Security is organised as **nine trust boundaries** across three planes: mutual
-TLS between services, SASL + ACLs on Kafka, and a no-PII-leaks observability plane.
+TLS between services, SASL + ACLs on the Redpanda event bus, and a no-PII-leaks
+observability plane.
 
 ---
 

@@ -44,8 +44,8 @@ the whole posture on one screen; the sections below add detail.
 |---|---|---|---|---|
 | **B1** | External clients → gateway | OAuth token validation, PSD2 SCA for money ops, rate-limiting, payload validation | [`kong/kong.yml`](../kong/kong.yml); `scripts/edge-contract-test.sh` | **Live** — edge policies enforced; full SCA depends on the issuer (staging) |
 | **B2** | Gateway → internal services | Mutual TLS on every hop; plain HTTP is a config error | `kong/kong.yml` + `mcp-certgen`; [ADR-IC-016 plane (i)](../../docs/product-management/integration_concepts/adrs/ADR-IC-016-service-identity-and-mtls.md) | **Partial** — Kong↔MCP mTLS is live; the broader internal mesh waits on the services existing |
-| **B3** | Producer → Kafka | Distinct SASL/SCRAM identity per producer; topic ACLs as config | [`redpanda/topic-acls.yaml`](../redpanda/topic-acls.yaml); `KafkaSaslOptions` | **Partial** — producer-side wiring live; broker-side ACL enforcement planned |
-| **B4** | Kafka → each consumer | Each consumer subscribes only to the topics it needs; data minimization | [`redpanda/topic-acls.yaml`](../redpanda/topic-acls.yaml) | **Planned** — lands per consumer as each consumer service is built |
+| **B3** | Producer → Redpanda | Distinct SASL/SCRAM identity per producer; topic ACLs as config | [`redpanda/topic-acls.yaml`](../redpanda/topic-acls.yaml); `KafkaSaslOptions` | **Partial** — producer-side wiring live; broker-side ACL enforcement planned |
+| **B4** | Redpanda → each consumer | Each consumer subscribes only to the topics it needs; data minimization | [`redpanda/topic-acls.yaml`](../redpanda/topic-acls.yaml) | **Planned** — lands per consumer as each consumer service is built |
 | **B5** | ACL → Core Banking | Dedicated service account; orchestrator-only command port; read-only reconciliation credential | [ADR-IC-012](../../docs/product-management/integration_concepts/adrs/ADR-IC-012-anti-corruption-layer-implementation.md), [ADR-IC-016](../../docs/product-management/integration_concepts/adrs/ADR-IC-016-service-identity-and-mtls.md) | **Blocked** — the real ACL is not built; the stub stands in |
 | **B6** | Ops console → saga / Core | Step-up MFA, 4-eyes over a threshold, immutable audit log | [Document 10 §B6](../../docs/product-management/integration_concepts/10-security-and-threat-model.md) | **Planned** — the operations console is not built yet |
 | **B7** | Observability → all data | RBAC by role; structural-only spans (no PII in telemetry) | `infra/grafana/rbac/`; `Babelstone.Telemetry/BabelstoneAttributes.cs` | **Partial** — no-PII spans live; RBAC config landed; end-to-end enforcement test planned |
@@ -65,8 +65,10 @@ because they fail differently:
   Certificates come from the OpenBao secret boundary, never from a saga message.
   *Today:* live for Kong↔MCP; the rest is blocked on the in-house services (the ACL
   especially) having real listening code.
-- **Plane (ii) — Kafka is SASL/SCRAM + topic ACLs.** Every Kafka client logs in
-  with its own username; [`topic-acls.yaml`](../redpanda/topic-acls.yaml) says who
+- **Plane (ii) — the event bus is SASL/SCRAM + topic ACLs.** The bus is
+  **Redpanda** (Kafka-API-compatible), so these are the Kafka wire protocol's own
+  SASL/SCRAM and topic-ACL primitives. Every client that connects to Redpanda logs
+  in with its own username; [`topic-acls.yaml`](../redpanda/topic-acls.yaml) says who
   may read or write which topic. A compromised publisher can only reach the topics
   it's granted — it cannot issue commands or touch another context's topics.
   *Today:* producer-side credential wiring is live; broker-side enforcement is
@@ -134,7 +136,7 @@ green crossings.
 
 - **Secrets live in OpenBao, never in config or on the bus.** Credentials and
   encryption keys are resolved at service start-up; they never appear in a log, a
-  span, a saga message, or a Kafka record.
+  span, a saga message, or a Redpanda record.
 - **PII is crypto-shredded** ([ADR-PC-004](../../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)).
   Each data subject gets an OpenBao transit key; a PII field is encrypted with it
   *before* it enters an event. GDPR erasure = destroying that key, after which
@@ -173,7 +175,7 @@ If you're here to critique, start with the two **blocked** boundaries and the
   console both depend on services that aren't built yet. The mechanism is decided;
   the enforcement isn't there. This is the single most important thing to know.
 - **B2, B3, B4, B7 are partial.** The decisions and the producer/config side exist;
-  the enforcement legs (internal mesh mTLS, broker-side Kafka ACLs, the Grafana RBAC
+  the enforcement legs (internal mesh mTLS, broker-side Redpanda topic ACLs, the Grafana RBAC
   enforcement test) land as the surrounding services do.
 - **B8's residual is the IBAN-in-event case** — worth a hard look from a GDPR angle.
 - **B1 and B9 are the most complete** — the edge and the agent channel both have
