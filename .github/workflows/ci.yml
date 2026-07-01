@@ -798,14 +798,16 @@ jobs:
         # also mounts), which sit above the kustomization root — hence
         # --load-restrictor=LoadRestrictionsNone. kubeconform -strict catches
         # schema drift against the pinned Kubernetes 1.31.0 API surface.
-        # All overlays are validated: `dev` (single-replica), `ha` (the P.7
-        # production-shaped topology — 3-node Redpanda + PG warm standby), and
-        # `staging` (the always-on demo box — single-replica + durable hcloud
-        # storage + the public Traefik/cert-manager TLS edge; bd babelstone-zla1).
+        # All renderings are validated: `base` (the single-replica, non-HA
+        # backing-infra rendering — the dev-shaped seam the two overlays diverge
+        # from), `ha` (the P.7 production-shaped topology — 3-node Redpanda + PG
+        # warm standby), and `staging` (the always-on demo box — single-replica +
+        # durable hcloud storage + the public Traefik/cert-manager TLS edge; bd
+        # babelstone-zla1).
         run: |
-          for overlay in dev ha staging; do
-            echo "== kubeconform: overlays/$overlay =="
-            mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$overlay" \
+          for target in base overlays/ha overlays/staging; do
+            echo "== kubeconform: $target =="
+            mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/$target" \
               | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
           done
       - name: Assert ADR commitments in rendered manifests (P.6)
@@ -813,7 +815,7 @@ jobs:
         # these ADRs must fail CI, not land silently (ADR-PC-020 §D3).
         run: |
           set -euo pipefail
-          rendered="$(mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/dev)"
+          rendered="$(mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/base)"
           # ADR-IC-006: Kong runs DB-less (KONG_DATABASE=off).
           if ! echo "$rendered" | grep -A1 'name: KONG_DATABASE' | grep -q 'value: "off"'; then
             echo "::error::ADR-IC-006 violation: Kong KONG_DATABASE is not 'off'"; exit 1

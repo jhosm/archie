@@ -1,13 +1,13 @@
 # staging overlay — the always-on demo/staging environment (bd babelstone-zla1).
 #
 # Plain English: this is the single, public, always-on box. It takes the same
-# `base` backing-infra stack the `dev` overlay does, runs ONE copy of everything
+# `base` backing-infra stack, runs ONE copy of everything
 # (a single 32GB ARM node — HA would not fit), pins DURABLE Hetzner CSI block
 # storage so data survives a node rebuild and is snapshot-able, and puts a public
 # HTTPS front door (Traefik Ingress + cert-manager/Let's Encrypt TLS) in front of
 # the Kong edge and the Backstage portal.
 #
-# Diverges from the SAME base/dev seam the `overlays/ha` overlay does, in the
+# Diverges from the SAME `base` the `overlays/ha` overlay does, in the
 # staging direction:
 #   1. namespace      babelstone-dev → babelstone-staging
 #   2. storage        unset (k3s local-path) → hcloud-volumes (durable, snapshot-able)
@@ -22,7 +22,7 @@
 # section) and the introducing PR body. Kong stays the ADR-IC-006 edge; OTLP
 # 4317/4318 is never exposed (ADR-IC-007 §P1); no PII crosses the bus (ADR-PC-004).
 #
-# CI VALIDATES ONLY (kustomize build + kubeconform, the same gate as dev/ha).
+# CI VALIDATES ONLY (kustomize build + kubeconform, the same gate as base/ha).
 # Provisioning the node, installing the Hetzner CSI driver + cert-manager + the
 # Let's Encrypt ClusterIssuer (bootstrap/), pointing DNS at the node, and applying
 # this overlay are the account-gated Phase 0–2 steps (cd.yml promotes it).
@@ -35,7 +35,7 @@ resources:
   - ../../base
   # The application services layer (engine + later orchestrator/notification/mcp-server,
   # plus the event-store migration Job) — bd babelstone-zla1.5. Kept out of base/ (which
-  # stays backing-infra-only); dev/ha don't reference it, so only staging runs the apps.
+  # stays backing-infra-only); base and the ha overlay don't reference it, so only staging runs the apps.
   - ../../apps
   # The public edge (built-in networking.k8s.io/v1 Ingress — kubeconform-clean).
   # The cert-manager ClusterIssuer it references is a CRD applied at cluster
@@ -63,9 +63,9 @@ resources:
   - volume-snapshot-cronjob.yaml
 
 # Single-replica everywhere — a single node; the HA topology (overlays/ha) would
-# not schedule here. Pinned explicitly for the same reason the dev overlay does:
-# make the intent the documented seam, not an inherited default. (core-acl-stub
-# carries no pin here, matching the dev overlay.)
+# not schedule here. Pinned explicitly (base already ships single-replica) to
+# make the single-node intent the documented seam, not an inherited default.
+# (core-acl-stub carries no pin here, matching base.)
 replicas:
   - name: postgres
     count: 1
@@ -138,7 +138,7 @@ patches:
   # Mount the Grafana RBAC + Logto-OIDC overlay into grafana-lgtm (Boundary 6, ADR-IC-021 step 3 /
   # ADR-IC-007 §P6, bd babelstone-zla1.10.1). Staging is the public box where operators log in, so
   # it turns ON operator SSO via Logto's generic_oauth + the §P6 RBAC roles/Tempo lock + anonymous
-  # OFF — the rbac overlay dev keeps unmounted. Deployment-only patch (env + subPath volumeMounts),
+  # OFF — the rbac config base leaves unmounted. Deployment-only patch (env + subPath volumeMounts),
   # so the grafana-lgtm Service (the OTLP §P1 boundary) is untouched. Files ride in via the
   # grafana-rbac ConfigMap generated below from the same infra/grafana/rbac/ source the
   # grafana-rbac-check gate uses (single config source).

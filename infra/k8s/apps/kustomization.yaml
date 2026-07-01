@@ -3,8 +3,8 @@
 # Plain English: a base-sibling kustomization carrying the babelstone APPLICATION services
 # (engine, and — in later slices — orchestrator/notification/mcp-server), kept separate
 # from infra/k8s/base (which is deliberately "backing-infra only"). The staging overlay
-# composes BOTH (`../../base` + `../../apps`); the dev/ha overlays reference only base, so
-# they are unaffected. This keeps base's documented scope intact while giving the always-on
+# composes BOTH (`../../base` + `../../apps`); the ha overlay references only base, so
+# it is unaffected. This keeps base's documented scope intact while giving the always-on
 # staging box the real services.
 #
 # This layer carries NO namespace — the composing overlay (overlays/staging) sets

@@ -5,7 +5,7 @@ in later slices the orchestrator, notification worker, and MCP server) as Kubern
 It's kept separate from [`../base`](../base), which is deliberately *backing-infra only*
 (Postgres, Redpanda, Kong, …). The always-on **staging** overlay composes both
 ([`../overlays/staging`](../overlays/staging) references `../../base` **and** `../../apps`);
-the `dev` and `ha` overlays reference only `base`, so they're unaffected and base keeps its
+the `ha` overlay references only `base`, so it's unaffected and base keeps its
 documented scope. Governed by [ADR-IC-013 §D2](../../docs/product-management/integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md)
 (IaC co-located in the monorepo); tracked under bd babelstone-zla1.5.
 

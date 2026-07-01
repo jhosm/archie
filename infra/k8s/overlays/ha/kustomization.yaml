@@ -1,6 +1,6 @@
 # HA / production-shaped overlay (P.7, babelstone-ixkp).
 #
-# Diverges from the SAME base/dev seam the dev overlay does, in the HA
+# Diverges from `base` in the HA
 # direction: a 3-node Redpanda quorum and a Postgres primary + SYNCHRONOUS
 # off-site warm standby. This is the topology ADR-PC-005 §P1 mandates for the
 # source of truth (`events`, `outbox`, `saga_state`) — RPO ≈ 0, a committed
