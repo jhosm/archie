@@ -64,7 +64,7 @@ Single-slice variants: `make demo-mcp` (engine→MCP walking skeleton), `make de
 | [`contracts/`](./contracts/) | The governed contract surface — Avro payloads, CUE family schemas, and the AsyncAPI event catalogue |
 | [`pack-validate/`](./pack-validate/) | Go binary that validates regulatory packs (ADR-PC-006) |
 | [`packs/`](./packs/) · [`product-configs/`](./product-configs/) · [`rate-sheets/`](./rate-sheets/) | Regulatory packs, product variant configs, and rate sheets — the data the engine is configured with |
-| [`infra/`](./infra/) | Docker Compose dev stack, Kong/OpenBao/Grafana config, and runbooks |
+| [`infra/`](./infra/) | Docker Compose dev stack, Kong/OpenBao/Grafana config, and runbooks — start with the [**Infrastructure & Security guide**](./infra/docs/README.md) for a readable tour of the topology and the trust boundaries |
 | [`scripts/`](./scripts/) | The shell entry points behind the `make` targets (demos, CI gates, deploys) |
 
 ### Documentation
