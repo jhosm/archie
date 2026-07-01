@@ -54,7 +54,7 @@ know what to open when you need the real depth.
 
 **Operational / how-to:**
 - [`infra/README.md`](../README.md) — the dev Compose stack, endpoint by endpoint.
-- [`infra/k8s/README.md`](../k8s/README.md) — the deployed stack: `dev` / `ha` / `staging` overlays.
+- [`infra/k8s/README.md`](../k8s/README.md) — the deployed stack: `base` plus the `ha` / `staging` overlays.
 - [`infra/runbooks/`](../runbooks/) — operational procedures (DR, snapshots, reconciliation).
 - The root [`Makefile`](../../Makefile) and `scripts/demo-*.sh` — bring-up and the runnable demos.
 
