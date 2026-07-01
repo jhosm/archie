@@ -64,6 +64,7 @@ loose `.claude/agents/*.md` file has none, which is why these moved here first
 | [`replay-determinism-auditor`](./agents/replay-determinism-auditor.md) | Handler purity, projection rebuildability, fixture replay | `babelstone-engine:replay-determinism-auditor` |
 | [`doc-consistency`](./agents/doc-consistency.md) | Cross-linked docs + C4 vs cited source ("the source wins") | `babelstone-engine:doc-consistency` |
 | [`code-comment`](./agents/code-comment.md) | Comment rot + the [code-comment guideline](../../docs/product-management/implementation_guidelines/code-comments.md) (litmus, tiers, citation discipline) | `babelstone-engine:code-comment` |
+| [`telemetry`](./agents/telemetry.md) | The ungated half of the [telemetry guideline](../../docs/product-management/implementation_guidelines/telemetry.md) — right-to-instrument, wire-contract naming, non-PII-by-design, emit-in-the-shell (the OBS-* fitness functions + runtime PII guard own the rest) | `babelstone-engine:telemetry` |
 
 Spawn one as `subagent_type: babelstone-engine:<name>`, or `@babelstone-engine:<name>` to
 invoke by mention. These compose *with*, not instead of, the generic `code-review` /
