@@ -764,6 +764,9 @@ body.console-open .hint-bar { display:none; }
     state.sagaState = d.state; state.sagaVersion = d.version; state.sagaTerminal = !!d.terminal;
     var pid = (state.processId || "").slice(0, 8) + "…";
     if (changed) addEvent({ seq: "v" + d.version, name: "Saga · " + d.state, meta: sagaStateBlurb(d.state) });
+    // Topology lens (bd babelstone-f0ic.15.3): light the REAL legs this advance produced —
+    // saga_transition + saga_outbox rows read through the /pg window, not a canned script.
+    try { topoSagaRealAdvance(); } catch (e) {}
     // surface the settlement legs as the saga crosses the matching phase (each once). The matching
     // illustrative spans land on the Telemetry tab here too — the orchestrator isn't OTel-wired
     // (ADR-IC-007 §P1), so these mirror the saga's real legs without claiming to be a Tempo trace.
@@ -1153,6 +1156,7 @@ body.console-open .hint-bar { display:none; }
         }
         renderPosition(p);
         toast("Constituted · commit #" + state.seq, "verify");
+        topoLiveEventChain();   // Topology lens: animate the REAL appended events (f0ic.15.3)
       } catch (e) { toast("Constitute failed (" + (e.status || "?") + "): " + e.message, "err"); state.depositId = null; }
     } else if (state.mode === "saga") {
       // LIVE·saga: open the deposit through the ORCHESTRATOR EDGE (Document 05 §Step 0). The edge
@@ -1247,6 +1251,7 @@ body.console-open .hint-bar { display:none; }
         pushSpan("withholding.applied", 4, [["babelstone.partition_key", shortId()], ["babelstone.tax_cents", dTax]], true);
         renderPosition(p);
         toast("Coupon " + p.coupons_paid + " · " + euro(dNet) + " net", "verify");
+        topoLiveEventChain();   // Topology lens: animate the REAL appended events (f0ic.15.3)
       } catch (e) { toast("Coupon failed (" + (e.status || "?") + "): " + e.message, "err"); }
     } else {
       await sleep(450);
@@ -1293,6 +1298,7 @@ body.console-open .hint-bar { display:none; }
         countUp("vTotal", p.total_payout_cents);
         mcpLog('', 'payout ' + euro(p.total_payout_cents));
         toast("Matured · payout " + euro(p.total_payout_cents), "verify");
+        topoLiveEventChain();   // Topology lens: animate the REAL appended events (f0ic.15.3)
       } catch (e) { toast("Mature failed (" + (e.status || "?") + "): " + e.message, "err"); }
     } else if (state.variant === "AT_MATURITY") {
       var calc = computeInterest(state.principalCents, state.termDays, state.tan);
@@ -1369,6 +1375,7 @@ body.console-open .hint-bar { display:none; }
     state.processId = null; state.streamUrl = null;
     state.sagaState = null; state.sagaVersion = -1; state.sagaTerminal = false; state.sagaSeenLeg = false; state.sagaSeenDebit = false; state.sagaReached = 0;
     state.traceId = null; state.realTrace = null; state.traceState = "illustrative";
+    try { topoLiveReset(); } catch (e) {}   // fresh saga-leg / event-chain cursors (f0ic.15.3)
     syncProduct();
     ledger.innerHTML = '<div class="empty"><span class="big">An empty stream.</span>Every command appends an immutable, sequence-numbered fact. Constitute a deposit to begin.</div>';
     passbook.innerHTML = '<div class="empty">No position yet.<br />The state on the right is a <i>fold</i> of the events on the left — never stored, always derivable.</div>';
@@ -1393,6 +1400,9 @@ body.console-open .hint-bar { display:none; }
       setConn("demo", "demo · no backend");
       el("hintBar").innerHTML = 'Mode <b>DEMO</b> needs no backend · <b>LIVE·engine</b> drives the engine direct · <b>LIVE·saga</b> drives the constitution saga';
     }
+    // Topology lens (bd babelstone-f0ic.15.3): LIVE modes render the estate-derived manifest
+    // (C4 model + live topics); DEMO restores the canned offline view.
+    try { topoApplyModeManifest(); } catch (e) {}
     doReset();
   }
   function updateDrawer() {
@@ -1834,27 +1844,68 @@ body.console-open .hint-bar { display:none; }
       ]
     };
 
-    var canvas, svg, stepEl, built = false, nodeEls = {}, running = 0;
+    // The ACTIVE node/edge set: the canned C4 view by default; replaced by the estate-derived
+    // manifest (serve.py /topology/manifest — parsed from the repo's C4 L2 .puml sources + live
+    // Redpanda topics) in the LIVE modes (bd babelstone-f0ic.15.3). The FLOWS above keep their
+    // canned ids; nid() translates them onto the manifest's C4 ids so the animations keep working.
+    var activeNodes = NODES, activeEdges = EDGES, manifestOn = false;
+    var C4_ALIAS = { you: "channels", db: "pg", bus: "redpanda", ifrs: "ifrs9", reg: "reporting", notif: "notify" };
+
+    var canvas, svg, stepEl, gridEl = null, built = false, nodeEls = {}, running = 0;
+
+    function nid(id) {
+      // Resolve a flow-step id against the ACTIVE node set: canned id when present, its C4 alias
+      // when the manifest is applied, else the id itself (a missing node simply no-ops the step).
+      if (nodeEls[id]) return id;
+      var alias = C4_ALIAS[id];
+      return (alias && nodeEls[alias]) ? alias : id;
+    }
 
     function build() {
       canvas = el("topoCanvas"); svg = el("topoWires"); stepEl = el("topoStep");
       if (!canvas) return;
+      if (gridEl) { gridEl.remove(); gridEl = null; }
+      nodeEls = {};
       var cols = {};
       var grid = document.createElement("div");
       grid.className = "topo-grid";
       for (var c = 0; c <= 5; c++) {
         var cv = document.createElement("div"); cv.className = "topo-col"; cols[c] = cv; grid.appendChild(cv);
       }
-      NODES.forEach(function (n) {
+      activeNodes.forEach(function (n) {
         var d = document.createElement("div");
         d.className = "topo-node " + n.plane; d.id = "tn-" + n.id;
-        d.innerHTML = '<div class="tn-label">' + n.label + '</div><div class="tn-sub">' + n.sub + '</div>' +
-          (n.family ? '<div class="tn-family">' + n.family + '</div>' : '');
-        cols[n.col].appendChild(d); nodeEls[n.id] = d;
+        d.innerHTML = '<div class="tn-label">' + esc(n.label) + '</div><div class="tn-sub">' + esc(n.sub || "") + '</div>' +
+          (n.family ? '<div class="tn-family">' + esc(n.family) + '</div>' : '');
+        cols[Math.max(0, Math.min(5, n.col))].appendChild(d); nodeEls[n.id] = d;
       });
       canvas.appendChild(grid);
+      gridEl = grid;
       built = true;
       relayout();
+    }
+
+    // Swap the canned view for the estate-derived manifest (or back with null). Nodes carry the
+    // C4 label/tech/plane + the serve.py column hint; the bus node is annotated with the LIVE
+    // topic list read off Redpanda. Purely structural data — service and topic names, never PII.
+    function applyManifest(manifest) {
+      if (!manifest || !manifest.nodes || !manifest.nodes.length) {
+        manifestOn = false; activeNodes = NODES; activeEdges = EDGES;
+        build();
+        return;
+      }
+      activeNodes = manifest.nodes.map(function (n) {
+        var node = { id: n.id, col: n.col || 0, label: n.label, sub: n.tech || n.plane, plane: n.plane };
+        if (n.id === "redpanda" && manifest.topics && manifest.topics.length) {
+          node.family = manifest.topics.slice(0, 3).join(" · ") + (manifest.topics.length > 3 ? " · +" + (manifest.topics.length - 3) : "");
+        }
+        return node;
+      });
+      activeEdges = manifest.edges.map(function (e) { return [e[0], e[1]]; });
+      manifestOn = true;
+      build();
+      if (stepEl) stepEl.textContent = "Topology derived from the estate — the repo's C4 L2 model" +
+        (manifest.source && manifest.source.topics === "pandaproxy" ? " + the live Redpanda topic list." : " (broker offline — topics unavailable).");
     }
     function centerOf(id) {
       var node = nodeEls[id]; if (!node) return null;
@@ -1866,7 +1917,7 @@ body.console-open .hint-bar { display:none; }
       var cr = canvas.getBoundingClientRect();
       svg.setAttribute("viewBox", "0 0 " + cr.width + " " + cr.height);
       var lines = "";
-      EDGES.forEach(function (e) {
+      activeEdges.forEach(function (e) {
         var a = centerOf(e[0]), b = centerOf(e[1]); if (!a || !b) return;
         lines += '<line id="tw-' + e[0] + '-' + e[1] + '" class="topo-wire" x1="' + a.x + '" y1="' + a.y +
           '" x2="' + b.x + '" y2="' + b.y + '"></line>';
@@ -1880,7 +1931,7 @@ body.console-open .hint-bar { display:none; }
       setTimeout(function () { w.classList.remove("on"); w.removeAttribute("data-tone"); }, 900);
     }
     function litNode(id, tone) {
-      var n = nodeEls[id]; if (!n) return;
+      var n = nodeEls[nid(id)]; if (!n) return;
       n.classList.add("lit"); if (tone) n.setAttribute("data-tone", tone);
       setTimeout(function () { n.classList.remove("lit"); n.removeAttribute("data-tone"); }, 950);
     }
@@ -1888,6 +1939,7 @@ body.console-open .hint-bar { display:none; }
     // the setTimeout is the load-bearing resolver, the transition is just the smooth motion.
     function packet(a, b, tone) {
       return new Promise(function (resolve) {
+        a = nid(a); b = nid(b);
         var pa = centerOf(a), pb = centerOf(b);
         if (!pa || !pb) { resolve(); return; }
         lightWire(a, b, tone);
@@ -1904,8 +1956,11 @@ body.console-open .hint-bar { display:none; }
     function caller() { return state.operator === "ai" ? "mcp" : "you"; }
     function setStep(txt) { if (stepEl && txt) stepEl.textContent = txt; }
 
-    async function flow(kind) {
-      var steps = FLOWS[kind]; if (!steps || !built) return;
+    // Run an ARBITRARY step sequence — the primitive both the canned FLOWS and the LIVE
+    // real-leg/real-chain animations (bd babelstone-f0ic.15.3) share. A newer sequence
+    // supersedes a running one (the token), exactly as before.
+    async function flowSteps(steps, doneLabel) {
+      if (!steps || !steps.length || !built) return;
       var token = ++running;
       for (var i = 0; i < steps.length; i++) {
         if (token !== running) return;            // superseded by a newer flow
@@ -1924,7 +1979,18 @@ body.console-open .hint-bar { display:none; }
         }
         await sleep(95);
       }
-      if (token === running) setStep("Done — the fact is durable and on the bus. Every box above either appended it, relayed it, or folded it.");
+      if (token === running && doneLabel) setStep(doneLabel);
+    }
+
+    function flow(kind) {
+      return flowSteps(FLOWS[kind],
+        "Done — the fact is durable and on the bus. Every box above either appended it, relayed it, or folded it.");
+    }
+    // The ingress-only prefix of a canned flow (caller → edge → service): what LIVE mode animates
+    // immediately on click, before the REAL chain (fetched from the estate) animates the rest.
+    function ingress(kind) {
+      var steps = FLOWS[kind];
+      return flowSteps(steps ? steps.slice(0, 2) : null);
     }
 
     function init() {
@@ -1934,13 +2000,143 @@ body.console-open .hint-bar { display:none; }
     }
     function setFamily(fam) {
       var loan = fam === "loan";
-      var eng = nodeEls["engine"]; if (eng) { var f = eng.querySelector(".tn-family"); if (f) f.textContent = loan ? "personal_loan · decider" : "decider · pure folds"; }
-      var bus = nodeEls["bus"]; if (bus) { var s = bus.querySelector(".tn-sub"); if (s) s.textContent = (loan ? "personal_loan" : "term_deposit") + " · Avro"; }
-      var orch = nodeEls["orch"]; if (orch) { var o = orch.querySelector(".tn-family"); if (o) o.textContent = loan ? "LoanOriginationProcess" : "ConstitutionProcess"; }
+      var eng = nodeEls[nid("engine")]; if (eng) { var f = eng.querySelector(".tn-family"); if (f) f.textContent = loan ? "personal_loan · decider" : "decider · pure folds"; }
+      var bus = nodeEls[nid("bus")]; if (bus && !manifestOn) { var s = bus.querySelector(".tn-sub"); if (s) s.textContent = (loan ? "personal_loan" : "term_deposit") + " · Avro"; }
+      var orch = nodeEls[nid("orch")]; if (orch) { var o = orch.querySelector(".tn-family"); if (o) o.textContent = loan ? "LoanOriginationProcess" : "ConstitutionProcess"; }
     }
-    return { init: init, flow: flow, relayout: relayout, setFamily: setFamily };
+    return { init: init, flow: flow, flowSteps: flowSteps, ingress: ingress, relayout: relayout,
+             setFamily: setFamily, applyManifest: applyManifest };
   })();
-  function topoFlow(k) { try { TOPO.flow(k); } catch (e) {} }
+
+  /* ── LIVE Topology (bd babelstone-f0ic.15.3): real saga legs + real event chain ──────────
+     In the LIVE modes the topology stops replaying a canned script:
+       • the node/edge manifest is fetched from serve.py's /topology/manifest (derived from the
+         repo's C4 L2 model + the live Redpanda topic list) instead of the hardcoded list;
+       • LIVE·saga lights the ACTUAL legs the saga took — saga_transition rows (state moves) and
+         saga_outbox rows (dispatched commands), read through the /pg window as the SSE stream
+         advances;
+       • LIVE·engine animates the REAL event chain — the stream's events read from public.events
+         (structural envelope columns only, never the payload).
+     DEMO keeps the canned, offline animation unchanged; a dead /pg window degrades to canned. */
+  var topoLive = { manifest: null, sagaTid: 0, sagaSeq: 0, sagaStarted: false, sagaBusy: false,
+                   sagaPending: false, pgDead: false, eventSeq: -1 };
+  function topoLiveReset() {
+    topoLive.sagaTid = 0; topoLive.sagaSeq = 0; topoLive.sagaStarted = false;
+    topoLive.sagaBusy = false; topoLive.sagaPending = false; topoLive.eventSeq = -1;
+  }
+  async function topoApplyModeManifest() {
+    if (state.mode === "demo") { try { TOPO.applyManifest(null); } catch (e) {} return; }
+    try {
+      if (!topoLive.manifest) {
+        var res = await fetch(API_BASE + "/topology/manifest");
+        if (res.ok) topoLive.manifest = await res.json();
+      }
+      TOPO.applyManifest(topoLive.manifest);
+    } catch (e) { /* stay on the canned view — the estate read is best-effort */ }
+  }
+  // LIVE·saga: called on every SSE state change. Serialised (busy/pending) so rapid advances
+  // batch rather than cutting each other's animation off mid-leg.
+  function topoSagaRealAdvance() {
+    if (state.mode !== "saga" || !state.processId || topoLive.pgDead) return;
+    if (topoLive.sagaBusy) { topoLive.sagaPending = true; return; }
+    topoLive.sagaBusy = true;
+    (async function () {
+      try {
+        var res = await fetch(API_BASE + "/pg/processes/" + encodeURIComponent(state.processId) + "/transitions");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        var d = await res.json();
+        var steps = [];
+        if (!topoLive.sagaStarted) {
+          topoLive.sagaStarted = true;
+          steps.push({ seg: ["CALLER", "kong"], label: "constitute → orchestrator EDGE (real saga " + (state.processId || "") + ")" });
+          steps.push({ seg: ["kong", "orch"], label: "202 Accepted · saga STARTED" });
+        }
+        // Merge the NEW transition + command-leg rows into one time-ordered animation batch.
+        var items = [];
+        (d.transitions || []).forEach(function (t) {
+          if (Number(t.id) > topoLive.sagaTid) items.push({ at: t.occurred_at, kind: "t", row: t });
+        });
+        (d.legs || []).forEach(function (l) {
+          if (Number(l.seq) > topoLive.sagaSeq) items.push({ at: l.created_at, kind: "l", row: l });
+        });
+        items.sort(function (a, b) { return String(a.at) < String(b.at) ? -1 : 1; });
+        items.forEach(function (it) {
+          if (it.kind === "t") {
+            var t = it.row;
+            topoLive.sagaTid = Math.max(topoLive.sagaTid, Number(t.id));
+            var fail = sagaIsFailure(t.to_state), done = t.to_state === "COMPLETED";
+            steps.push({ pulse: "orch", tone: fail ? "wrong" : done ? "verify" : undefined,
+                         label: "saga_transition #" + t.id + " · " + t.event_type + " · " + t.from_state + " → " + t.to_state });
+            if (done) {
+              // The engine's DepositConstituted carried it over the line (ADR-PC-029 slot 2):
+              // show the real return path — engine append → bus → the orchestrator's inbox.
+              steps.push({ seg: ["engine", "db"], tone: "gold", label: "engine append + outbox · one txn" });
+              steps.push({ seg: ["db", "bus"], label: "DepositConstituted on the bus" });
+              steps.push({ seg: ["bus", "orch"], tone: "verify", label: "inbox correlates → COMPLETED" });
+            }
+          } else {
+            var l = it.row;
+            topoLive.sagaSeq = Math.max(topoLive.sagaSeq, Number(l.seq));
+            var toEngine = /activate|constitute|renewal/i.test(String(l.command_type));
+            steps.push({ seg: ["orch", toEngine ? "engine" : "acl"],
+                         tone: /confirm/i.test(String(l.command_type)) ? "gold" : undefined,
+                         label: "saga_outbox #" + l.seq + " · " + l.command_type + " · " + String(l.status).toLowerCase() });
+            if (!toEngine) steps.push({ seg: ["acl", "core"] });
+          }
+        });
+        if (steps.length) {
+          await TOPO.flowSteps(steps, state.sagaTerminal
+            ? "Real path complete — every leg above came from saga_transition / saga_outbox, not a script."
+            : null);
+        }
+      } catch (e) {
+        // /pg window unavailable (no psycopg, DB down): degrade ONCE to the canned saga flow.
+        topoLive.pgDead = true;
+        if (!topoLive.sagaStarted) { topoLive.sagaStarted = true; try { TOPO.flow("saga"); } catch (e2) {} }
+      } finally {
+        topoLive.sagaBusy = false;
+        if (topoLive.sagaPending) { topoLive.sagaPending = false; topoSagaRealAdvance(); }
+      }
+    })();
+  }
+  // LIVE·engine: animate the stream's REAL new events after a successful command.
+  function topoLiveEventChain() {
+    if (state.mode !== "live" || !state.depositId || topoLive.pgDead) return;
+    (async function () {
+      try {
+        var res = await fetch(API_BASE + "/pg/streams/" + encodeURIComponent(state.depositId) + "/events");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        var d = await res.json();
+        var fresh = (d.rows || []).filter(function (r) { return Number(r.sequence_number) > topoLive.eventSeq; });
+        if (!fresh.length) return;
+        var steps = [];
+        fresh.forEach(function (r) {
+          topoLive.eventSeq = Math.max(topoLive.eventSeq, Number(r.sequence_number));
+          steps.push({ pulse: "engine", label: "events #" + r.sequence_number + " · " + r.event_type + " · pack " + (r.pack_version || "—") });
+          steps.push({ seg: ["engine", "db"], tone: "gold" });
+        });
+        steps.push({ seg: ["db", "bus"], label: "outbox relay · catalog-gated · Avro" });
+        steps.push({ fan: ["bus", ["inbox", "gl", "ifrs", "reg", "notif"]], label: "choreography — consumers fold the real fact downstream" });
+        await TOPO.flowSteps(steps, "Real chain — every event above came from public.events (structural columns; the payload never crossed).");
+      } catch (e) { topoLive.pgDead = true; }
+    })();
+  }
+
+  function topoFlow(k) {
+    try {
+      if (state.mode === "live" && (k === "constitute" || k === "mature" || k === "coupon")) {
+        // LIVE·engine: animate the real ingress now; topoLiveEventChain() animates the REAL
+        // appended events once the command commits (called from the live handlers).
+        TOPO.ingress(k);
+      } else if (state.mode === "saga" && k === "saga") {
+        // LIVE·saga: the real legs animate from saga_transition/saga_outbox as the SSE stream
+        // advances (topoSagaRealAdvance, called from onSagaState) — no canned script here.
+        topoLiveReset();
+      } else {
+        TOPO.flow(k);
+      }
+    } catch (e) {}
+  }
 
   /* ============================================================
      DRAWER FEEDS — Topic (Avro) / Outbox·Inbox / Metrics / Logs.
