@@ -18,7 +18,20 @@ break `kustomize build` + the `kubeconform` CI gate. It is operator-run, not CI-
 - [`cluster.yaml`](./cluster.yaml) — the [hetzner-k3s](https://github.com/vitobotta/hetzner-k3s)
   cluster config (v2.6.0+ format): 1× CAX41 ARM, Hetzner Helsinki (`hel1`), single-node k3s,
   embedded etcd, the Hetzner CSI driver enabled. The Hetzner API token is **not** in this file —
-  it is supplied at runtime via the `HCLOUD_TOKEN` environment variable (see below).
+  it is supplied at runtime via the `HCLOUD_TOKEN` environment variable (see below). The SSH
+  allow-list is likewise **not** a real value in this file: it is the `REPLACE_ME/32` sentinel
+  that `provision.sh` substitutes (deliberately invalid, so a direct `create` against the
+  committed file cannot succeed).
+- [`provision.sh`](./provision.sh) — the **only supported way to run `create`**
+  (bd babelstone-zla1.12.6): a fail-closed preflight + render wrapper. It requires
+  `SSH_ALLOWED_CIDR` (env, like `HCLOUD_TOKEN`), validates it as explicit IPv4 `/32`(s) —
+  refusing `REPLACE_ME`, `0.0.0.0/0`, and any broader mask — renders the gitignored
+  `cluster.rendered.yaml`, re-checks the rendered `networking.allowed_networks.ssh` list, and
+  only then execs `hetzner-k3s create`. `--check-only` runs the preflight + render without
+  creating anything. Rationale: the fastest "fix" for a failed create used to be pasting
+  `0.0.0.0/0`, opening SSH to the whole internet on the box that holds etcd, the cluster-admin
+  credential, and the cloud token (ADR-IC-006 minimise-public-surface posture; CIS host
+  hardening).
 
 ## Prerequisites (Phase 0 — bd babelstone-zla1.1)
 
@@ -39,14 +52,18 @@ cd infra/hetzner-k3s
 #    upstream-blessed way to keep cluster.yaml committable. NEVER commit the token.
 export HCLOUD_TOKEN=<your read/write Hetzner Cloud API token>
 
-# 2. Lock SSH to your IP: replace the REPLACE_ME/32 placeholder in cluster.yaml's
-#    networking.allowed_networks.ssh with your operator/jump-host /32.
+# 2. Lock SSH to your IP — by env var, same discipline as the token. provision.sh REFUSES
+#    to run when this is unset, still REPLACE_ME, 0.0.0.0/0, or not an explicit /32
+#    (comma-separate a small list if you need more than one host). Don't edit cluster.yaml.
+export SSH_ALLOWED_CIDR=<your operator/jump-host IP>/32
 
 # 3. Pin a valid k3s version (the committed one can be stale):
 hetzner-k3s releases | tail        # list supported releases; set cluster.yaml's k3s_version
 
-# 4. Create the cluster (writes ./kubeconfig — gitignored):
-hetzner-k3s create --config cluster.yaml
+# 4. Create the cluster via the fail-closed wrapper (preflights the SSH allow-list, renders
+#    the gitignored cluster.rendered.yaml, then runs `hetzner-k3s create`; writes
+#    ./kubeconfig — gitignored). `./provision.sh --check-only` dry-runs the preflight.
+./provision.sh
 
 # 5. Verify:
 export KUBECONFIG="$PWD/kubeconfig"
