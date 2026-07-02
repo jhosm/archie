@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Babelstone.Cadence;
 using Microsoft.Extensions.Logging;
 
@@ -30,5 +31,9 @@ public sealed class LifecycleWorker(
     LifecycleSchedulePass schedulePass,
     CadenceSchedulerOptions options,
     TimeProvider clock,
-    ILogger<LifecycleWorker> logger)
-    : CadenceWorker(schedulePass, options, clock, logger);
+    ILogger<LifecycleWorker> logger,
+    // The SHARED Babelstone.Engine ActivitySource the host registers (from Babelstone.Telemetry) so the base
+    // CadenceWorker opens its per-tick `cadence.pass` span on the one estate-wide source — the driver's ticks
+    // show up in the same trace surface as the engine, orchestrator and notification worker (ADR-IC-007).
+    ActivitySource activitySource)
+    : CadenceWorker(schedulePass, options, clock, logger, activitySource);

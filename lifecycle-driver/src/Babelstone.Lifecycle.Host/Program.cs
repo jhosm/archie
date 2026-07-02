@@ -1,9 +1,14 @@
 using Babelstone.Cadence;
 using Babelstone.Lifecycle;
 using Babelstone.Lifecycle.Host;
+using Babelstone.Telemetry;
+using Babelstone.Telemetry.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 // The lifecycle-command driver worker HOST (ADR-PC-036 §Decision 2, candidate A; ADR-IC-011 runtime — .NET,
 // stack-coherent with the engine; ADR-IC-013 in-house estate placement; ADR-PC-019 §P2 extraction-ready
@@ -17,6 +22,35 @@ using Microsoft.Extensions.Hosting;
 // key (LCD-1). The engine stays CLOCKLESS — the driver reaches it ONLY over the command HTTP surface, never
 // the byte store, and never makes the engine read a clock (NO_CLOCK_DRIVEN_ENGINE_SIGNAL holds).
 var builder = Host.CreateApplicationBuilder(args);
+
+// OpenTelemetry tracing + logs (ADR-IC-007 Layer 1): turn ON the tracer/logger for this driver host and export
+// over OTLP to the Collector (§P1 — never direct-to-backend), mirroring the notification host. Spans open on
+// the SHARED Babelstone.Engine ActivitySource (from the SDK-free Babelstone.Telemetry leaf — NOT the engine
+// kernel): the base CadenceWorker's per-tick `cadence.pass` and the sink's `lifecycle.dispatch` show up in the
+// same trace surface as the engine, orchestrator and notification worker. The resource stamps
+// service.name=babelstone-lifecycle + service.namespace=babelstone + deployment.environment (OBS-1);
+// ResolveEnvironment fails fast on an unset environment. The runtime no-PII guard (OBS_NO_PII_ATTRS /
+// ADR-IC-007 §P4) strips any non-admitted span tag / log field at emit, before the exporter.
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource
+        .AddService(BabelstoneResource.LifecycleServiceName)
+        .AddAttributes(
+        [
+            new KeyValuePair<string, object>(BabelstoneResource.ServiceNamespaceKey, BabelstoneResource.ServiceNamespace),
+            new KeyValuePair<string, object>(BabelstoneResource.DeploymentEnvironmentKey, BabelstoneResource.ResolveEnvironment()),
+        ]))
+    .WithTracing(tracing => tracing
+        .AddSource(BabelstoneTelemetry.ActivitySourceName)
+        .AddBabelstonePiiGuard()
+        .AddOtlpExporter())
+    .WithLogging(logging => logging
+        .AddBabelstonePiiGuard()
+        .AddOtlpExporter());
+
+// The SHARED Babelstone.Engine ActivitySource the LifecycleWorker resolves and hands to its base CadenceWorker
+// (which opens `cadence.pass` on it). Registered as a singleton so the worker's constructor injection resolves
+// it; it is the same process-wide source AddSource turned on above, so the two agree by construction.
+builder.Services.AddSingleton(BabelstoneTelemetry.ActivitySource);
 
 // The engine's ADR-PC-029 command surface this driver POSTs to. A service ENDPOINT, not a credential, so — like
 // the notification host's read endpoint and the orchestrator's — it resolves straight from configuration (no

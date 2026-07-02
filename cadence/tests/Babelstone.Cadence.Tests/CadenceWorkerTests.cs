@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Babelstone.Cadence;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -74,10 +75,46 @@ public sealed class CadenceWorkerTests
         Assert.True(worker.ExecuteTask!.IsCompletedSuccessfully, "the worker stopped gracefully");
     }
 
+    [Fact]
+    public async Task Each_tick_opens_a_cadence_pass_span_on_the_injected_source()
+    {
+        // The host injects the shared Babelstone.Engine ActivitySource; a test injects its own and listens on it
+        // by name (so this test stays framework-only — no Babelstone.Telemetry reference, the cadence subtree
+        // must stay extraction-ready, ADR-PC-019 §P2).
+        using var source = new ActivitySource("Babelstone.Cadence.Tests");
+        var captured = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = s => s.Name == source.Name,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = a => { lock (captured) { captured.Add(a); } },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var clock = new FixedClock(new DateTimeOffset(2026, 6, 24, 9, 30, 0, TimeSpan.Zero));
+        var pass = new CountingPass(target: 1);
+        var worker = NewWorker(pass, clock, source);
+
+        await StartAsync(worker);
+        await pass.Reached.WaitAsync(SafetyTimeout);
+        await StopAsync(worker);
+
+        List<Activity> snapshot;
+        lock (captured) { snapshot = captured.ToList(); }
+
+        // The per-tick span is `cadence.pass` (ADR-IC-007 <entity>.<operation>), tagged with the worker-derived
+        // as-of date under the structural babelstone.as_of key (never PII — a plain calendar date). The loop can
+        // tick several times before the stop lands (a 1 ms cadence), so assert at-least-one rather than exactly
+        // one; the clock is fixed, so every tick carries the same as-of.
+        Assert.Contains(snapshot, a => a.OperationName == "cadence.pass");
+        var span = snapshot.First(a => a.OperationName == "cadence.pass");
+        Assert.Equal(new DateOnly(2026, 6, 24).ToString("O"), span.GetTagItem("babelstone.as_of"));
+    }
+
     // --- helpers ---
 
-    private static CadenceWorker NewWorker(ISchedulePass pass, TimeProvider clock) =>
-        new(pass, new CadenceSchedulerOptions { PollInterval = Tick }, clock, NullLogger<CadenceWorker>.Instance);
+    private static CadenceWorker NewWorker(ISchedulePass pass, TimeProvider clock, ActivitySource? source = null) =>
+        new(pass, new CadenceSchedulerOptions { PollInterval = Tick }, clock, NullLogger<CadenceWorker>.Instance, source);
 
     private static Task StartAsync(CadenceWorker worker) =>
         ((IHostedService)worker).StartAsync(CancellationToken.None);

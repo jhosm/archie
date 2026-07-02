@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Babelstone.Telemetry;
 using Microsoft.Extensions.Logging;
 
 namespace Babelstone.Lifecycle;
@@ -71,6 +73,18 @@ public sealed class HttpLifecycleCommandSink(HttpClient http, ILogger<HttpLifecy
     {
         ArgumentNullException.ThrowIfNull(decision);
 
+        // The domain span for ONE dispatch (ADR-IC-007 <entity>.<operation>; SpanLifecycleDispatch). Opened on
+        // the SHARED Babelstone.Engine source in this impure sink shell, it nests under the worker's per-tick
+        // `cadence.pass` span so a tick's POSTs read as a connected chain. It carries only STRUCTURAL tags —
+        // the target stream id, the command-kind code, the occurrence key (ADR-PC-036 §Decision 1+3) — never
+        // PII (money rides the wire body as integer cents, ADR-PC-004; OBS_NO_PII_ATTRS). With no listener the
+        // StartActivity is a near-zero-cost no-op, so a non-observed host and the test path are unaffected.
+        using var activity = BabelstoneTelemetry.ActivitySource.StartActivity(
+            BabelstoneAttributes.SpanLifecycleDispatch);
+        activity?.SetTag(BabelstoneAttributes.PartitionKey, decision.InstanceId.ToString("D"));
+        activity?.SetTag(BabelstoneAttributes.LifecycleCommandKind, decision.CommandKind);
+        activity?.SetTag(BabelstoneAttributes.LifecycleOccurrenceKey, decision.OccurrenceKey);
+
         using var request = new HttpRequestMessage(HttpMethod.Post, decision.RequestPath)
         {
             // The body is the engine API's snake_case wire shape; an empty body still posts {} so the endpoint
@@ -96,6 +110,9 @@ public sealed class HttpLifecycleCommandSink(HttpClient http, ILogger<HttpLifecy
         // throws HttpRequestException, which the worker loop treats as a back-off-and-retry signal.
         if (!response.IsSuccessStatusCode)
         {
+            // Mark the dispatch span failed before EnsureSuccessStatusCode throws, so a backpressure retry is
+            // visible in the trace as an errored dispatch (the status code is operational, not PII).
+            activity?.SetStatus(ActivityStatusCode.Error, $"engine returned {(int)response.StatusCode}");
             logger?.LogWarning(
                 "Lifecycle command POST {Path} for instance {InstanceId} occurrence {OccurrenceKey} returned "
                 + "{Status}; treating as backpressure (the next pass retries — command_dedup makes it safe).",

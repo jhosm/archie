@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using Babelstone.Engine.Hosting;
 using Babelstone.Lifecycle;
+using Babelstone.Telemetry;
 using Xunit;
 
 namespace Babelstone.Lifecycle.Tests;
@@ -106,6 +108,46 @@ public sealed class HttpLifecycleCommandSinkTests
         // pass retries it (the engine deduping the re-POST).
         await Assert.ThrowsAsync<HttpRequestException>(
             () => sink.DispatchAsync(decision, LifecycleCommandKey.Derive(loan, PayInstallment, 1)));
+    }
+
+    [Fact]
+    public async Task It_opens_a_lifecycle_dispatch_span_with_structural_tags_and_no_pii()
+    {
+        var deposit = Guid.NewGuid();
+        var commandId = LifecycleCommandKey.Derive(deposit, "mature_deposit", 1);
+        var handler = new CapturingHandler(HttpStatusCode.OK);
+        var sink = new HttpLifecycleCommandSink(new HttpClient(handler) { BaseAddress = EngineBase });
+
+        // Listen on the SHARED Babelstone.Engine source exactly as a real OTel tracer's
+        // AddSource(BabelstoneTelemetry.ActivitySourceName) would (the same harness as TelemetrySpanTests).
+        var captured = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = s => s.Name == BabelstoneTelemetry.ActivitySourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = captured.Add,
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var decision = new LifecycleCommandDecision(
+            InstanceId: deposit,
+            CommandKind: "mature_deposit",
+            OccurrenceKey: 1,
+            RequestPath: $"/v1/deposits/{deposit:D}/maturity",
+            Body: new Dictionary<string, object?>(),
+            DueAt: new DateOnly(2026, 7, 1));
+
+        await sink.DispatchAsync(decision, commandId);
+
+        // One `lifecycle.dispatch` span (ADR-IC-007 <entity>.<operation>) carrying only STRUCTURAL tags: the
+        // target stream id (partition_key), the command-kind code, and the occurrence key (ADR-PC-036).
+        var span = Assert.Single(captured, a => a.OperationName == BabelstoneAttributes.SpanLifecycleDispatch);
+        Assert.Equal(deposit.ToString("D"), span.GetTagItem(BabelstoneAttributes.PartitionKey));
+        Assert.Equal("mature_deposit", span.GetTagItem(BabelstoneAttributes.LifecycleCommandKind));
+        Assert.Equal(1L, span.GetTagItem(BabelstoneAttributes.LifecycleOccurrenceKey));
+
+        // No PII key on the dispatch span (ADR-PC-004 / OBS_NO_PII_ATTRS): every tag key is babelstone.* structural.
+        Assert.All(span.TagObjects, tag => Assert.StartsWith("babelstone.", tag.Key));
     }
 
     /// <summary>An <see cref="HttpMessageHandler"/> that captures the single request it is sent (and its body)
