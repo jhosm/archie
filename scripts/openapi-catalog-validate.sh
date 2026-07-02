@@ -10,7 +10,7 @@
 # AsyncAPI gate):
 #
 #   (1) SPECTRAL LINT — `spectral lint` with the built-in `oas` ruleset PLUS the FROZEN project
-#       .spectral.yaml, which requires the ADR-IC-020 §P1 governance fields (info.x-owner,
+#       .spectral.yaml, which requires the ADR-IC-020 Decision §2 governance fields (info.x-owner,
 #       x-owner-contact, x-status [active|deprecated|sunset], x-gdpr-legal-basis,
 #       x-authorized-consumers) — the mirror of the AsyncAPI §P1 field set. Only `error`-severity
 #       findings block the build (`--fail-severity=error`); style `warn`s are advisory.
@@ -35,12 +35,24 @@
 #       non-public command/agent channels (OPENAPI_EXCLUDE_SERVICES):
 #         * mcp-server            — the LLM agent channel, catalogued via AsyncAPI/MCP, not REST
 #                                   (ADR-IC-010; explicitly excluded by ADR-IC-020 / bd ax0b.2).
-#         * engine-sor-ops        — the SoR-routed existing-instance money-mover (a gateway-resolved
-#                                   internal command surface, ADR-PC-018).
+#                                   NOTE: excluding the whole mcp-server service also drops its
+#                                   UNAUTHENTICATED public discovery route
+#                                   GET /.well-known/oauth-protected-resource (kong.yml). That
+#                                   public route is KNOWINGLY excluded here (not silently swallowed):
+#                                   it is OAuth-metadata discovery, not a product REST operation, and
+#                                   is not catalogued in the OpenAPI surface — see bd ax0b.2.
+#         * engine-sor-ops        — the SoR-routed existing-instance money-mover (ADR-PC-018). This
+#                                   is a PUBLIC, client-facing route in infra/kong/kong.yml (per-route
+#                                   iam-issuer JWT + PSD2-SCA acr/auth_time freshness + X-Client-Id
+#                                   IDOR guard), so it is DEFERRED, not internal: not yet catalogued
+#                                   in the OpenAPI surface; catalogue in a follow-up (contract review,
+#                                   bd ax0b.2).
 #         * engine-lifecycle-movers — the ADR-PC-036 clock-driven service-principal money-movers
 #                                   (a scoped, audited command channel, NOT the public client API).
-#       These are the same negative-invariant class as the deliberately-absent POST /v1/deposits:
-#       command surfaces, not the public read/constitute API the tier-1 specs (bd ax0b.3) document.
+#       engine-lifecycle-movers is the same negative-invariant class as the deliberately-absent
+#       POST /v1/deposits: a command surface, not the public read/constitute API the tier-1 specs
+#       (bd ax0b.3) document. engine-sor-ops and the mcp-server discovery route are instead DEFERRED
+#       public routes — excluded for now, to be catalogued in a follow-up, not internal channels.
 #
 #   SSE EXEMPTION: an operation marked x-sse-stream: true streams text/event-stream, not a JSON body,
 #   so the response-body check is WAIVED for it (the REST mirror of the AsyncAPI x-compacted case).
@@ -169,7 +181,7 @@ note ""
 # (1) Spectral lint — oas ruleset + the FROZEN governance ruleset. One invocation over the whole
 # set; only error-severity findings fail the build.
 # ---------------------------------------------------------------------------
-note "-- (1) spectral lint (oas + $SPECTRAL_RULESET governance fields; ADR-IC-020 §P1) --"
+note "-- (1) spectral lint (oas + $SPECTRAL_RULESET governance fields; ADR-IC-020 Decision §2) --"
 if [ ! -f "$SPECTRAL_RULESET" ]; then
 	err "the frozen Spectral ruleset $SPECTRAL_RULESET is missing (ADR-IC-020)"
 else
@@ -178,16 +190,16 @@ else
 		note "  ok    spectral lint clean (no error-severity findings)"
 	else
 		sed 's/^/    /' /tmp/openapi-spectral.out >&2 || true
-		err "spectral lint reported error-severity findings (see above) — a malformed spec or a missing governance x-* field (ADR-IC-020 §P1)"
+		err "spectral lint reported error-severity findings (see above) — a malformed spec or a missing governance x-* field (ADR-IC-020 Decision §2)"
 	fi
 fi
 note ""
 
 # ---------------------------------------------------------------------------
 # (2) oasdiff breaking-change diff vs origin/main. Per file, diff the baseline version against the
-# working tree; a BREAKING change fails unless info.x-breaking-change-approved: true (ADR-IC-020 §P4).
+# working tree; a BREAKING change fails unless info.x-breaking-change-approved: true (ADR-IC-020 Decision §3).
 # ---------------------------------------------------------------------------
-note "-- (2) oasdiff breaking-change diff vs $BASELINE_REF (ADR-IC-020 §P4) --"
+note "-- (2) oasdiff breaking-change diff vs $BASELINE_REF (ADR-IC-020 Decision §3) --"
 if [ "$SKIP_BREAKING" = "1" ]; then
 	note "  skipped (OPENAPI_SKIP_BREAKING=1)"
 elif ! command -v docker >/dev/null 2>&1; then
@@ -217,7 +229,7 @@ else
 				note "  ok    $f: breaking change(s) — APPROVED (x-breaking-change-approved:true)"
 			else
 				sed 's/^/    /' /tmp/openapi-oasdiff.out >&2 || true
-				err "$f: breaking change(s) vs $BASELINE_REF without x-breaking-change-approved:true (ADR-IC-020 §P4)"
+				err "$f: breaking change(s) vs $BASELINE_REF without x-breaking-change-approved:true (ADR-IC-020 Decision §3)"
 			fi
 		fi
 	done
