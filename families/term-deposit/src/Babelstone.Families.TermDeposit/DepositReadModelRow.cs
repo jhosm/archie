@@ -83,4 +83,12 @@ public sealed record DepositReadModelRow(
     int CouponsPaid,
     ReadOnlyMemory<byte> Detail,
     long LastSequence,
-    DateTimeOffset LastUpdated) : IReadModelRow;
+    DateTimeOffset LastUpdated,
+    // The product-config generation pin (content hash sha256:<hex>, ADR-PC-009 §A2), denormalized
+    // from the folded DepositPosition.ProductConfigVersion so the read-model row stays a complete
+    // stand-in for the live fold (bd babelstone-f0ic.15.8). ADDITIVE with the "" default — the same
+    // prospective-only semantics as ProductCode: pre-pin deposits (bd fk7m.9/v794) carry the empty
+    // string and are NOT back-fillable, so callers render "—" for them. A structural version
+    // string, NOT PII (ADR-PC-004 §P2). Appended (not slotted beside ProductCode) so existing
+    // positional constructions keep compiling — the trailing default IS the additive contract.
+    string ProductConfigVersion = "") : IReadModelRow;

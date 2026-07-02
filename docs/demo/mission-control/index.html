@@ -591,7 +591,10 @@ body.console-open .hint-bar { display:none; }
     // from Grafana Tempo. traceState: "illustrative" | "pending" | "real" | "unavailable".
     traceId: null, realTrace: null, traceState: "illustrative",
     // LIVE·agent (bd babelstone-f0ic.6.3): a real Claude run driven via POST /agent/stream
-    agentBusy: false, agentAbort: null
+    agentBusy: false, agentAbort: null,
+    // Config-provenance strip (bd babelstone-f0ic.15.8): the product-config generation pin the
+    // engine projects on GET /v1/deposits/{id} ("" for pre-pin deposits; null before any read).
+    productConfigVersion: null
   };
 
   /* ---------------- elements ---------------- */
@@ -682,6 +685,10 @@ body.console-open .hint-bar { display:none; }
   /* ---------------- position rendering ---------------- */
   function renderPosition(p, opts) {
     opts = opts || {};
+    // Config-provenance strip (bd babelstone-f0ic.15.8): the engine projects the pinned
+    // product_config_version on the canonical deposit resource — capture it for the strip
+    // ("" = a pre-pin instance, rendered "—"; undefined = demo/no field, leave as-is).
+    if (p.product_config_version !== undefined) state.productConfigVersion = p.product_config_version;
     var badge = p.lifecycle === "Matured" ? "matured" : p.lifecycle === "TerminatedEarly" ? "terminated" : "active";
     var totalLabel = p.lifecycle === "Matured" ? "Total payout" : p.lifecycle === "TerminatedEarly" ? "Net settlement" : "Current value";
     var couponsCell = (state.ppm > 0 && p.coupons_paid !== undefined)
@@ -795,6 +802,18 @@ body.console-open .hint-bar { display:none; }
         pushSpan("saga.constitution_failed", 8, [["babelstone.process_id", pid], ["babelstone.outcome", "fail_closed"]], false, true);
       }
       if (state.sagaES) { try { state.sagaES.close(); } catch (e) {} state.sagaES = null; }
+      // Config-provenance strip (bd babelstone-f0ic.15.8): the saga landed a REAL deposit — read
+      // it back once so the engine-projected product_config_version reaches the strip too.
+      if (d.state === "COMPLETED" && state.depositId) {
+        api("GET", "/v1/deposits/" + state.depositId)
+          .then(function (g) {
+            if (g.json && g.json.product_config_version !== undefined) {
+              state.productConfigVersion = g.json.product_config_version;
+              renderProvenance();
+            }
+          })
+          .catch(function () { /* engine read unavailable — the strip keeps its "—" */ });
+      }
       toast(d.state === "COMPLETED" ? "Saga complete · DepositConstituted" : "Saga ended · " + d.state, d.state === "COMPLETED" ? "verify" : "err");
     }
     setButtons();
@@ -880,9 +899,14 @@ body.console-open .hint-bar { display:none; }
   }
   var _provSig = "";
   function renderProvenance() {
+    // DEMO renders the illustrative pack card; the LIVE modes read the REAL pinned identity
+    // (bd babelstone-f0ic.15.8): the head pin off events.pack_version + the pack_versions OCI
+    // coordinates via /pg/provenance, the registry presence via the GET-only /registry arm, and
+    // the product_config_version the engine now projects on GET /v1/deposits/{id}.
+    if (state.mode !== "demo") return renderProvenanceLive();
     var p = PACKS[state.family] || PACKS.deposit;
     var pinned = !!state.depositId;
-    var sig = state.family + "|" + pinned;
+    var sig = "demo|" + state.family + "|" + pinned;
     if (sig === _provSig) return;          // only repaint when family or pinned-state changes
     _provSig = sig;
     var box = el("provenance"); if (!box) return;
@@ -899,6 +923,102 @@ body.console-open .hint-bar { display:none; }
         '<span class="prov-chip ok">CUE ✓</span>' +
         (pinned ? '<span class="prov-chip pinned">pinned @ constitution</span>' : '') +
         '<span class="prov-digest">oci · ' + p.digest + '</span>' +
+      '</div>';
+  }
+
+  /* ── LIVE config-provenance strip (bd babelstone-f0ic.15.8) ──────────────────────────────
+     Every fact shown is real: the pack pin comes off events.pack_version (a top-level non-PII
+     column on every event — latest by sequence IS the instance pin, ADR-PC-009); its OCI
+     coordinates come from the durable pack_versions registry (ADR-PC-007 §P3); the "oci ✓" chip
+     is a Distribution-v2 manifest-presence check through the GET-only /registry arm; the cosign
+     chip surfaces the REGISTERED signature digest as the fact (full cosign verify stays a
+     CI/deploy attestation — never re-run in a browser); "CUE ✓" derives from signature presence
+     (a pack is only signed after CUE validation, ADR-PC-006 §P3). product_config_version is the
+     ONE piece not SQL-readable (it lives inside the Avro payload) — the engine projects it on
+     GET /v1/deposits/{id}; pre-pin deposits carry "" and render "—".                          */
+  var provLive = { id: null, data: null, registry: "unknown", state: "idle", ts: 0 };
+
+  async function loadProvenance() {
+    var id = state.depositId;
+    var now = Date.now();
+    if (!id || provLive.state === "loading") return;
+    if (provLive.id === id && (provLive.state === "loaded" || provLive.state === "error") && (now - provLive.ts) < 4000) return;
+    provLive.state = "loading"; provLive.id = id;
+    try {
+      var res = await fetch(API_BASE + "/pg/provenance/" + encodeURIComponent(id));
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      provLive.data = await res.json();
+      provLive.state = "loaded";
+      // Registry presence: does the pinned image digest resolve in the OCI registry? (GET-only.)
+      var pack = provLive.data && provLive.data.pack;
+      provLive.registry = "unknown";
+      if (pack && pack.oci_ref && pack.image_digest) {
+        var repo = String(pack.oci_ref);
+        repo = repo.replace(/^[a-z]+:\/\//, "");
+        repo = repo.indexOf("/") >= 0 ? repo.slice(repo.indexOf("/") + 1) : repo;
+        repo = repo.split("@")[0].split(":")[0];
+        try {
+          var mr = await fetch(API_BASE + "/registry/v2/" + repo + "/manifests/" + pack.image_digest,
+            { headers: { "Accept": "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" } });
+          provLive.registry = mr.ok ? "present" : "absent";
+        } catch (e) { provLive.registry = "unreachable"; }
+      }
+    } catch (e) {
+      provLive.state = "error"; provLive.data = null;
+    } finally {
+      provLive.ts = Date.now();
+      renderProvenance();
+    }
+  }
+  function provDigestShort(d) { return d ? esc(String(d).slice(0, 15)) + "…" + esc(String(d).slice(-4)) : "—"; }
+  function renderProvenanceLive() {
+    var box = el("provenance"); if (!box) return;
+    _provSig = "";                          // live repaints freely; demo re-sigs on return
+    if (!state.depositId) {
+      box.innerHTML =
+        '<div class="prov-title">Config plane · live<span class="prov-plane">③ declarative data</span></div>' +
+        '<div class="prov-grid"><div class="prov-item"><span class="pk">pin</span><span class="pv">constitute an instance — its pack pin (events.pack_version) appears here, read live</span></div></div>';
+      return;
+    }
+    loadProvenance();
+    var d = provLive.data, pin = d && d.pin, pack = d && d.pack;
+    if (provLive.state === "error") {
+      box.innerHTML =
+        '<div class="prov-title">Config plane · live<span class="prov-plane">③ declarative data</span></div>' +
+        '<div class="prov-grid"><div class="prov-item"><span class="pk">pin</span><span class="pv">/pg window unavailable — provenance unreadable (start the stack + pip install -r requirements.txt)</span></div></div>';
+      return;
+    }
+    if (!d) {
+      box.innerHTML =
+        '<div class="prov-title">Config plane · live<span class="prov-plane">③ declarative data</span></div>' +
+        '<div class="prov-grid"><div class="prov-item"><span class="pk">pin</span><span class="pv">reading the head pin…</span></div></div>';
+      return;
+    }
+    var pcv = state.productConfigVersion;
+    var regChip = provLive.registry === "present" ? '<span class="prov-chip ok">oci ✓ digest present</span>'
+      : provLive.registry === "absent" ? '<span class="prov-chip">oci · digest not in registry</span>'
+      : provLive.registry === "unreachable" ? '<span class="prov-chip">oci · registry unreachable</span>' : '';
+    var sigChip = pack && pack.signature_digest
+      ? '<span class="prov-chip ok" title="' + esc(pack.signature_digest) + '">cosign ✓ sig registered</span>'
+      : '<span class="prov-chip">cosign · no signature recorded</span>';
+    var cueChip = pack && pack.signature_digest
+      ? '<span class="prov-chip ok" title="a pack is signed only after CUE validation (ADR-PC-006 §P3)">CUE ✓ (signed ⇒ validated)</span>'
+      : '';
+    box.innerHTML =
+      '<div class="prov-title">Config plane · pinned on this instance (live)<span class="prov-plane">③ declarative data</span></div>' +
+      '<div class="prov-grid">' +
+        '<div class="prov-item"><span class="pk">pack</span><span class="pv">' + esc(pack ? pack.pack_id : (pin && pin.pack_version ? "(unregistered pin)" : "—")) + '</span>' +
+          '<span class="pver">@ ' + esc(pin && pin.pack_version ? pin.pack_version : "—") + '</span></div>' +
+        (pack ? '<div class="prov-item"><span class="pk">oci ref</span><span class="pv">' + esc(pack.oci_ref) + '</span></div>' : '') +
+        (pack ? '<div class="prov-item"><span class="pk">image</span><span class="pv" title="' + esc(pack.image_digest) + '">' + provDigestShort(pack.image_digest) + '</span></div>' : '') +
+        '<div class="prov-item"><span class="pk">config gen</span><span class="pv"' + (pcv ? ' title="' + esc(pcv) + '"' : '') + '>' +
+          (pcv ? provDigestShort(pcv) : "—") + '</span>' +
+          (pcv ? '<span class="pver">pinned @ constitution</span>' : '<span class="pver">pre-pin instance</span>') + '</div>' +
+      '</div>' +
+      '<div class="prov-foot">' +
+        sigChip + cueChip +
+        '<span class="prov-chip pinned">pinned @ constitution</span>' + regChip +
+        (pack && pack.signature_digest ? '<span class="prov-digest">sig · ' + provDigestShort(pack.signature_digest) + '</span>' : '') +
       '</div>';
   }
   function syncProduct() {
@@ -1375,6 +1495,8 @@ body.console-open .hint-bar { display:none; }
     state.processId = null; state.streamUrl = null;
     state.sagaState = null; state.sagaVersion = -1; state.sagaTerminal = false; state.sagaSeenLeg = false; state.sagaSeenDebit = false; state.sagaReached = 0;
     state.traceId = null; state.realTrace = null; state.traceState = "illustrative";
+    state.productConfigVersion = null;
+    provLive = { id: null, data: null, registry: "unknown", state: "idle", ts: 0 };   // f0ic.15.8
     try { topoLiveReset(); } catch (e) {}   // fresh saga-leg / event-chain cursors (f0ic.15.3)
     syncProduct();
     ledger.innerHTML = '<div class="empty"><span class="big">An empty stream.</span>Every command appends an immutable, sequence-numbered fact. Constitute a deposit to begin.</div>';

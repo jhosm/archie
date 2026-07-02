@@ -108,6 +108,10 @@ AGENT_URL = os.environ.get("AGENT_URL", "http://localhost:8091").rstrip("/")
 PANDAPROXY_URL = os.environ.get("PANDAPROXY_URL", "http://localhost:18082").rstrip("/")
 SCHEMA_REGISTRY_URL = os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:18081").rstrip("/")
 LOKI_URL = os.environ.get("LOKI_URL", "http://localhost:3100").rstrip("/")
+# The local OCI registry that distributes the signed regulatory packs (ADR-PC-007; host port 5001
+# in infra/compose.yaml). The /registry/* arm is GET-ONLY: the provenance strip reads Distribution
+# v2 manifest/referrer metadata (a "signature referrer exists" badge) — it never pushes.
+REGISTRY_URL = os.environ.get("REGISTRY_URL", "http://localhost:5001").rstrip("/")
 DEMO_CLIENT_ID = os.environ.get("DEMO_CLIENT_ID", "CLI-DEMO-0001")
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -161,6 +165,12 @@ _PG_ALLOWLIST = {
         "schema_id", "status", "created_at", "published_at",
     },
     ("engine", "inbox"): {"message_id", "source_topic", "processed_at", "result_summary"},
+    # The durable pack-version registry (ADR-PC-007 §P3, migration 0006): resolves a pinned
+    # pack_version string to its immutable OCI coordinates. Digests / refs / version strings are
+    # structural facts; registered_by (an operator identity) is deliberately ABSENT.
+    ("engine", "pack_versions"): {
+        "pack_id", "pack_version", "oci_ref", "image_digest", "signature_digest", "registered_at",
+    },
     ("engine", "command_dedup"): {"command_id", "stream_id", "commit_sequence", "created_at"},
     ("orchestrator", "saga_state"): {
         "process_id", "saga_type", "state", "version", "correlation_id", "created_at", "updated_at",
@@ -448,6 +458,26 @@ def pg_command_dedup_tail(limit=20):
     return {"db": "engine", "table": "command_dedup", "count": len(rows), "rows": rows}
 
 
+# ── Config-provenance strip (bd babelstone-f0ic.15.8) ────────────────────────────────────────
+def pg_provenance(stream_id):
+    """The REAL signed/pinned pack identity for one instance: the head pin (events.pack_version is
+    a top-level non-PII column on EVERY event — latest by sequence is the instance's current pin,
+    ADR-PC-009) joined through public.pack_versions to its immutable OCI coordinates (ADR-PC-007
+    §P3). Structural facts only. NB product_config_version is NOT SQL-readable (it lives inside the
+    Avro payload BYTEA) — the UI reads it off GET /v1/deposits/{id}, never through this window."""
+    head = pg_select("engine", "events",
+                     ["pack_version", "sequence_number", "event_type", "transaction_time"],
+                     where=[("stream_id", stream_id)], order="sequence_number", descending=True, limit=1)
+    pin = head[0] if head else None
+    pack = None
+    if pin and pin.get("pack_version"):
+        rows = pg_select("engine", "pack_versions",
+                         ["pack_id", "pack_version", "oci_ref", "image_digest", "signature_digest", "registered_at"],
+                         where=[("pack_version", pin["pack_version"])], limit=1)
+        pack = rows[0] if rows else None
+    return {"stream_id": stream_id, "pin": pin, "pack": pack}
+
+
 # ── Topology lens history reads (bd babelstone-f0ic.15.3) ────────────────────────────────────
 def pg_resolve_process(handle):
     """Resolve a process handle to its saga_state row. Accepts the client-facing PROC-… reference
@@ -661,6 +691,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # resolves a record's wire schema-id to its subject/version for the catalog badge. Strip
             # the /sr prefix. Read-only GETs of structural schema metadata — no PII.
             return SCHEMA_REGISTRY_URL, None, self.path[len("/sr"):]
+        if self.path.startswith("/registry/"):
+            # The OCI registry's Distribution v2 API (config-provenance strip, bd babelstone-
+            # f0ic.15.8): the UI checks the pinned image digest is PRESENT and that a cosign
+            # signature referrer exists — surfacing signature_digest as the fact. Full cosign
+            # VERIFY stays a CI/deploy attestation (ADR-PC-007), never re-run in a browser. Strip
+            # the /registry prefix so the upstream sees /v2/…. GET-only (enforced in do_POST etc.):
+            # this window can read pack metadata, it can never push. Digests are structural — no PII.
+            return REGISTRY_URL, None, self.path[len("/registry"):]
         if self.path.startswith("/loki/"):
             # Grafana Loki's query API (Logs lens, bd babelstone-f0ic.15.7): the Logs lens fetches the
             # REAL structured logs at /loki/api/v1/query_range, correlated by the active trace id. Loki's
@@ -789,6 +827,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 # structural envelope columns only (never events.payload).
                 stream_id = path[len("/pg/streams/"):-len("/events")]
                 body = pg_stream_events(stream_id, limit=qlimit(default=200))
+            elif path.startswith("/pg/provenance/"):
+                # Config-provenance strip (bd babelstone-f0ic.15.8): the instance's head pack pin
+                # + its OCI coordinates from the durable pack_versions registry.
+                body = pg_provenance(path[len("/pg/provenance/"):])
             else:
                 raise PgError(404, "no such /pg route: %s" % path)
             payload = json.dumps(body, default=_json_default).encode()
@@ -824,13 +866,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._relay("GET", route[0], route[1], route[2])
         return super().do_GET()
 
+    def _refuse_mutation(self):
+        """The GET-only arms (the OCI /registry window; Prometheus /prom): reads are the whole
+        point — a mutating verb through these arms is refused before any relay."""
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/registry/") or path.startswith("/prom/"):
+            self.send_error(405, "read-only arm — GET only")
+            return True
+        return False
+
     def do_POST(self):
+        if self._refuse_mutation():
+            return
         route = self._route()
         if route is not None:
             return self._relay("POST", route[0], route[1], route[2])
         self.send_error(405)
 
     def do_PUT(self):
+        if self._refuse_mutation():
+            return
         route = self._route()
         if route is not None:
             return self._relay("PUT", route[0], route[1], route[2])
@@ -839,6 +894,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_DELETE(self):
         # The Topic·Avro lens deletes its pandaproxy consumer instance when it's done reading, so
         # the consumer-group dance cleans up after itself (no leaked consumers).
+        if self._refuse_mutation():
+            return
         route = self._route()
         if route is not None:
             return self._relay("DELETE", route[0], route[1], route[2])
@@ -857,6 +914,7 @@ def main():
         print("  pandaproxy    %s  (proxied at /pandaproxy/* — Topic·Avro real records)" % PANDAPROXY_URL)
         print("  schema-reg    %s  (proxied at /sr/*      — Topic·Avro schema badge)" % SCHEMA_REGISTRY_URL)
         print("  loki          %s  (proxied at /loki/*   — Logs lens real logs, allowlisted)" % LOKI_URL)
+        print("  registry      %s  (proxied at /registry/* — provenance strip, GET-only)" % REGISTRY_URL)
         print("  postgres      /pg/* read-only Inspector lenses %s" % ("(ENABLED)" if PG_ENABLE else "(disabled — not bound to loopback)"))
         print("  mode          open the page, flip the toggle to LIVE·engine or LIVE·saga")
         print("  Ctrl-C to stop")
