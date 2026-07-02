@@ -1,0 +1,49 @@
+@startuml trust-boundaries
+' Source of truth for the trust-boundary diagram embedded in ../security-posture.md.
+' Regenerate the SVG with:
+'   plantuml -tsvg infra/docs/diagrams/trust-boundaries.puml
+' The nine trust boundaries of Document 10, drawn on the runtime estate and
+' COLOURED BY how much of the control actually runs today. The mechanism + the
+' precise Live/Planned/Blocked status for each crossing lives in the table in
+' ../security-posture.md — this picture is the map, that table is the detail.
+!include <C4/C4_Container>
+' Remote fallback: !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+' Each boundary crossing is coloured by how much of its control is enforced today.
+AddRelTag("live",    $lineColor="#2E7D32", $textColor="#1B5E20", $lineThickness=2)
+AddRelTag("partial", $lineColor="#EF8C2E", $textColor="#9A5700", $lineThickness=2)
+AddRelTag("blocked", $lineColor="#C62828", $textColor="#B71C1C", $lineStyle=DashedLine, $lineThickness=2)
+
+LAYOUT_WITH_LEGEND()
+
+title Trust boundaries — coloured by what runs today (green = enforced · amber = partial · red dashed = blocked)
+
+Person_Ext(channels, "Channels", "Untrusted: mobile / web / branch")
+Person_Ext(agents,   "LLM agents", "Untrusted third-party runtime")
+Person_Ext(ops,      "Operators", "Highest privilege, weakest inherent security")
+
+Container(kong, "Kong edge", "DB-less gateway", "OAuth + SCA + rate-limit + payload validation")
+Container(mcp, "MCP server", "FastMCP", "Audience-bound tokens, narrow scopes, engine-side SCA gate")
+Container(orch, "Orchestrator", ".NET", "The only thing allowed to command the ACL")
+Container(engine, "Engine", ".NET", "Settles only on attested SCA claims")
+Container(redpanda, "Redpanda", "Kafka API + SR", "A shared medium, not a trusted bus")
+Container(acl, "ACL", "stub today", "Orchestrator-only command port")
+Container(grafana, "Observability", "Grafana LGTM", "A regulated data store of all operations")
+Container(openbao, "OpenBao", "secret boundary", "Per-subject keys; crypto-shredding")
+System_Ext(core, "Core Banking", "Where the real money moves")
+
+Rel(agents, kong, "B9: OAuth 2.1, RFC 8707 audience, URL-mode confirmation", $tags="live")
+Rel(channels, kong, "B1: OAuth + PSD2 SCA + rate-limit + schema validation", $tags="live")
+Rel(kong, mcp, "B2: mutual TLS (Kong↔MCP)", $tags="live")
+Rel(kong, orch, "B2: mutual TLS to internal services (broader mesh)", $tags="partial")
+Rel(kong, engine, "B2: mutual TLS", $tags="partial")
+Rel(mcp, engine, "B9: actor from token sub, scopes per tool", $tags="live")
+Rel(engine, redpanda, "B3: SASL/SCRAM producer identity + topic ACLs", $tags="partial")
+Rel(redpanda, orch, "B4: per-consumer topic authorization", $tags="partial")
+Rel(orch, acl, "B5/B6: orchestrator-identity-only command port", $tags="blocked")
+Rel(acl, core, "B5: dedicated account, read-only reconciliation", $tags="blocked")
+Rel(ops, orch, "B6: step-up MFA, 4-eyes, immutable audit log", $tags="blocked")
+Rel(engine, grafana, "B7: RBAC + structural-only spans (no PII)", $tags="partial")
+Rel(engine, openbao, "B8: PII encrypted per subject; erasure = key destruction", $tags="live")
+
+@enduml

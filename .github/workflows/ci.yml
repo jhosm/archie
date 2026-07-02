@@ -65,7 +65,7 @@ jobs:
               - 'packs/**/rate-sheet-refs/**'
               - 'contracts/cue/pack/**'
             infra: ['infra/**', 'scripts/kong-config-check.sh', 'scripts/grafana-rbac-check.sh', 'mise.toml']
-            docs: ['docs/**', '*.md', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
+            docs: ['docs/**', 'infra/docs/**', '*.md', '.github/workflows/ci.yml', '.github/scripts/diagram-render-check.sh']
             # Every input scripts/docs-gen/generate.py reads to render docs/product-docs/reference/
             # (ADR-PC-022 §P2). Kept FAITHFUL so any source change re-runs `make docs-verify`, and in
             # sync with the .githooks/pre-commit `staged_docs_src` list that regenerates the same tree
@@ -798,14 +798,16 @@ jobs:
         # also mounts), which sit above the kustomization root — hence
         # --load-restrictor=LoadRestrictionsNone. kubeconform -strict catches
         # schema drift against the pinned Kubernetes 1.31.0 API surface.
-        # All overlays are validated: `dev` (single-replica), `ha` (the P.7
-        # production-shaped topology — 3-node Redpanda + PG warm standby), and
-        # `staging` (the always-on demo box — single-replica + durable hcloud
-        # storage + the public Traefik/cert-manager TLS edge; bd babelstone-zla1).
+        # All renderings are validated: `base` (the single-replica, non-HA
+        # backing-infra rendering — the dev-shaped seam the two overlays diverge
+        # from), `ha` (the P.7 production-shaped topology — 3-node Redpanda + PG
+        # warm standby), and `staging` (the always-on demo box — single-replica +
+        # durable hcloud storage + the public Traefik/cert-manager TLS edge; bd
+        # babelstone-zla1).
         run: |
-          for overlay in dev ha staging; do
-            echo "== kubeconform: overlays/$overlay =="
-            mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$overlay" \
+          for target in base overlays/ha overlays/staging; do
+            echo "== kubeconform: $target =="
+            mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/$target" \
               | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
           done
       - name: Assert ADR commitments in rendered manifests (P.6)
@@ -813,7 +815,7 @@ jobs:
         # these ADRs must fail CI, not land silently (ADR-PC-020 §D3).
         run: |
           set -euo pipefail
-          rendered="$(mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/dev)"
+          rendered="$(mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/base)"
           # ADR-IC-006: Kong runs DB-less (KONG_DATABASE=off).
           if ! echo "$rendered" | grep -A1 'name: KONG_DATABASE' | grep -q 'value: "off"'; then
             echo "::error::ADR-IC-006 violation: Kong KONG_DATABASE is not 'off'"; exit 1
@@ -918,7 +920,7 @@ jobs:
       - name: Markdown link check (offline)
         uses: lycheeverse/lychee-action@v2
         with:
-          args: "--offline --no-progress docs/**/*.md ./*.md"
+          args: "--offline --no-progress docs/**/*.md infra/docs/**/*.md ./*.md"
           fail: true
       # Graphviz + a JRE from apt; PlantUML itself is pinned (not apt's) — the
       # apt package on ubuntu-24.04 ships a C4 bundled-stdlib too old to resolve

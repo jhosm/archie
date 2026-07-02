@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
 # diagram-render-check.sh — CI guard: every committed C4 PlantUML source under
-# docs/ must render cleanly to SVG.
+# docs/ or infra/ must render cleanly to SVG.
 #
 # Mirrors the render step in .githooks/pre-commit, but over *all* docs/**/*.puml
-# and as a READ-ONLY check (renders into a temp dir; never touches the working
+# and infra/**/*.puml, and as a READ-ONLY check (renders into a temp dir; never touches the working
 # tree). Render-only by design: no PlantUML version is pinned across dev machines
 # and CI (the Brewfile installs it unpinned; mise.toml does not manage it), and
 # SVG output is not byte-stable across PlantUML versions — so this asserts each
@@ -42,7 +42,7 @@ while IFS= read -r puml; do
     echo "ok: ${puml}"
   fi
   rm -rf "$tmp"
-done < <(find docs -name '*.puml' | sort)
+done < <(find docs infra -name '*.puml' | sort)
 
 echo "Rendered ${count} PlantUML source(s); exit status ${status}."
 exit "$status"

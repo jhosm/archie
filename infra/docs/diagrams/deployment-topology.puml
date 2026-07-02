@@ -1,0 +1,74 @@
+@startuml deployment-topology
+' Source of truth for the deployment-topology diagram embedded in ../topology.md.
+' Regenerate the SVG with:
+'   plantuml -tsvg infra/docs/diagrams/deployment-topology.puml
+' (GitHub can't render PlantUML, so the committed .svg beside this file is what
+' readers see; the CI render-check + the pre-commit hook keep it in step.)
+!include <C4/C4_Container>
+' Remote fallback if a renderer lacks the bundled stdlib:
+' !include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+' Status legend — what actually runs today vs what is a reserved seam.
+AddElementTag("infra",    $bgColor="#2E7D6B", $fontColor="#FFFFFF", $borderColor="#1F5749", $legendText="Backing infrastructure — runs today (Compose + k8s)")
+AddElementTag("estate",   $bgColor="#1565C0", $fontColor="#FFFFFF", $borderColor="#0D47A1", $legendText="In-house application service — source exists, real image runs")
+AddElementTag("skeleton", $bgColor="#9E9E9E", $fontColor="#FFFFFF", $borderColor="#616161", $legendText="In-house service — subtree is still a skeleton (run as a demo host process, not yet a deployable image)")
+AddElementTag("stub",     $bgColor="#EF8C2E", $fontColor="#000000", $borderColor="#B5670F", $legendText="Stand-in — WireMock stub; the real component is out of scope here")
+AddElementTag("staging",  $bgColor="#6A4FB3", $fontColor="#FFFFFF", $borderColor="#4A357F", $legendText="Staging overlay only (not in the dev stack)")
+
+title Deployment topology — the Babelstone estate (one engine + boundary services + backing infra)
+
+' ─────────────── Outside the trust boundary ───────────────
+Person_Ext(channels, "Channels", "Mobile / web / branch / call-centre, acting for a customer or clerk")
+Person_Ext(agents,   "LLM agents", "Claude / ChatGPT / self-hosted — third-party code the bank does not trust")
+System_Ext(core,     "Core Banking (legacy)", "Owns the conta à ordem; the system of record that moves real money")
+
+' ─────────────── The single front door ───────────────
+Container(kong, "Kong Gateway CE", "Kong / nginx, DB-less", "The ONLY ingress. Validates OAuth tokens, enforces PSD2 SCA, rate-limits, validates payloads, proxies SSE, opens mTLS to upstreams. Config is one file: kong/kong.yml", $tags="infra")
+Container(logto, "Logto", "OAuth 2.1 / OIDC AS", "The token issuer (login, SCA, agent authority). Staging overlay only", $tags="staging")
+
+System_Boundary(apps, "In-house application services (the estate)") {
+  Container(engine, "Engine", "C# / .NET 10", "Event-sourced product kernel: idempotent command ingress, family deciders, append/load, projections, outbox + inbox workers. NO sagas", $tags="skeleton")
+  ContainerDb(engpg, "Engine PostgreSQL", "PostgreSQL 18", "events (source of truth) + outbox + projections + command_dedup + pack_versions", $tags="infra")
+  Container(orch, "Orchestrator", "C# / .NET 10", "Saga runtime + edge-over-saga front door: STARTs the constitution saga, returns 202 + SSE stream; drives engine + ACL", $tags="skeleton")
+  ContainerDb(orchpg, "Orchestrator PostgreSQL", "PostgreSQL", "saga_state + transitions + saga_outbox + inbox (own role)", $tags="infra")
+  Container(mcp, "MCP server", "Python / FastMCP", "The agent channel: exposes the deposit tools over Streamable HTTP. No host port — reachable ONLY through Kong over mTLS", $tags="estate")
+  Container(notif, "Notification", "C# (skeleton)", "Family-agnostic customer notifications from terminal saga events", $tags="skeleton")
+  Container(lifecycle, "Lifecycle driver", "C# (skeleton)", "Time-driven lifecycle ops (maturity, accrual) with leader election", $tags="skeleton")
+}
+
+System_Boundary(backing, "Backing infrastructure") {
+  Container(redpanda, "Redpanda + Schema Registry", "Kafka API + Confluent SR", "Event backbone; Avro on the wire; one topic per aggregate_type", $tags="infra")
+  Container(acl, "Core-ACL settlement stub", "WireMock", "Stands in for the real ACL: reserve / confirm / release / reverse money legs. Real ACL is out of scope (DEF-1)", $tags="stub")
+  Container(openbao, "OpenBao", "Vault-compatible", "Per-subject transit keys (PII crypto-shredding) + KV creds. The secret boundary", $tags="infra")
+  Container(otel, "OTel Collector", "OpenTelemetry", "The single telemetry export boundary — every service exports OTLP here, nothing exports past it", $tags="infra")
+  Container(grafana, "Grafana LGTM", "Grafana + Loki + Tempo + Prometheus", "All-in-one observability appliance; its OTLP ingest is NOT host-exposed", $tags="infra")
+  Container(registry, "OCI registry", "Distribution registry", "Regulatory packs, oras-pushed and pulled by digest", $tags="infra")
+  Container(backstage, "Backstage portal", "Backstage + PostgreSQL", "Renders the governed AsyncAPI catalogue; app image is a human-handoff (profile-gated)", $tags="infra")
+}
+
+' ─────────────── The request / data path ───────────────
+Rel(channels, kong, "Commands, queries, subscribe to SSE", "HTTPS REST / SSE")
+Rel(agents, kong, "MCP tool calls (bearer token, audience-bound)", "HTTPS")
+Rel_R(kong, logto, "Validate tokens against the issuer", "OIDC / JWKS")
+Rel(kong, mcp, "Proxy /mcp to the agent channel", "HTTPS, mutual TLS")
+Rel(kong, orch, "Saga-shaped ops (constitution): START + follow", "HTTPS, mTLS")
+Rel(kong, engine, "Read-model queries (engine COMMAND surface is NOT public)", "HTTPS, mTLS")
+
+Rel(mcp, engine, "Invoke deposit tools", "HTTP")
+Rel(orch, engine, "Drive lifecycle commands", "mTLS, idempotent ingress")
+Rel(orch, acl, "Settlement legs — orchestrator identity ONLY", "mTLS")
+Rel(acl, core, "Execute money movements (when the real ACL lands)", "SOAP / REST / MQ")
+
+Rel(engine, engpg, "Append events + outbox + dedup in ONE tx; load; read", "SQL")
+Rel(orch, orchpg, "saga_state + audit + outbox in one tx", "SQL")
+Rel(engine, redpanda, "Outbox relay → integration events; inbox ← confirmations", "Avro")
+Rel(orch, redpanda, "Produce process events; consume to advance the saga", "Avro")
+Rel(notif, redpanda, "Consume terminal saga events", "Avro")
+
+' ─────────────── Cross-cutting seams (drawn once from the engine as the representative producer) ───────────────
+Rel(engine, openbao, "Encrypt PII per subject; resolve SASL/DB creds", "HTTPS")
+Rel(engine, otel, "Export traces / metrics / logs (so does every service)", "OTLP")
+Rel_R(otel, grafana, "Forward OTLP (the only writer)", "OTLP")
+
+SHOW_LEGEND()
+@enduml
