@@ -1,17 +1,28 @@
 openapi: 3.1.0
 # contracts/openapi/specs/engine-reads.openapi.yaml — the PUBLIC CQRS query reads
-# (ADR-IC-005 / ADR-PC-027; catalogued per ADR-IC-020). One hand-written OpenAPI spec for the
-# two engine-upstream READ routes exposed through Kong: the canonical deposit point-read and
-# the maturities range scan. These are the ONLY engine routes on the public edge — the engine
-# COMMAND POST /v1/deposits is absent by design (ADR-IC-006 §P5), and the gate's negative
-# invariant fails any spec that tries to document it.
+# (ADR-IC-005 / ADR-PC-027; catalogued per ADR-IC-020; bd babelstone-ax0b.3). One hand-written
+# OpenAPI spec for the two engine-upstream READ routes exposed through Kong: the canonical
+# deposit point-read and the maturities range scan. These are the ONLY engine READ routes on
+# the public edge — the engine COMMAND POST /v1/deposits is absent by design (ADR-IC-006 §P5),
+# and the gate's negative invariant fails any spec that tries to document it. The additive
+# engine reads (withholding-statements, withholding-ledger) are NOT Kong routes and so are
+# deliberately NOT here (the REVERSE reconcile would fail them).
+#
+# Shapes are transcribed from the REAL code surface, not invented: DepositResponse /
+# DepositMaturitiesResponse in families/term-deposit/src/Babelstone.Families.TermDeposit
+# .Application/DepositsContracts.cs, and the GetDepositAsync / ListMaturitiesAsync handler
+# signatures in DepositsEndpoints.cs (snake_case on the wire — the host's JSON options; money
+# as integer cents, ADR-PC-010 §P1). No PII (ADR-PC-004 §P2) — structural facts only.
 info:
   title: Babelstone Engine — Deposit Query Reads
   version: 1.0.0
   description: >
     The CQRS read surface for term deposits. One canonical read resource
-    (GET /v1/deposits/{id}, optionally as-of a sequence) plus the maturities range scan.
-    Read-only; no money moves here.
+    (GET /v1/deposits/{id} — optionally as-of a sequence, with an If-Min-Sequence
+    read-your-writes token) plus the maturities range scan. Read-only; no money moves here
+    (ADR-PC-018 §6 — the engine never staples a command onto its read surface). Whether an
+    answer is served from the denormalized read model or an authoritative fold of the event
+    stream is the engine's private business, never a separate URL (ADR-IC-005 §P2/§P3).
   # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
   x-owner: platform-engine
   x-owner-contact: platform-engine@babelstone.example
@@ -21,6 +32,14 @@ info:
     - retail-web
     - retail-mobile
     - ops-console
+  # ── ADR-IC-020 Decision §3 breaking-change approval (openapi-catalog-validate.sh step 2) ──
+  # APPROVED for THIS change only: the 1.0.0 seed (PR #431's governance-gate scaffold) sketched
+  # placeholder schemas (Deposit{id,…}, MaturityList{items}) that never matched the shipped
+  # DTOs; this revision replaces them with the REAL DepositResponse/DepositMaturitiesResponse
+  # shapes and makes from/to required (as the handler binds them). No consumer ever integrated
+  # against the placeholder sketch. REMOVE this flag in the next change that touches this file
+  # — leaving it would silently pre-approve a FUTURE breaking change.
+  x-breaking-change-approved: true
 servers:
   - url: https://api.babelstone.example
     description: Public edge gateway (Kong).
@@ -29,82 +48,229 @@ paths:
     get:
       operationId: listMaturities
       summary: The maturities range scan.
-      description: Deposits maturing within a range — an operational read.
+      description: >
+        Deposits maturing within the half-open [from, to) window, ordered by maturity date —
+        an operational read (ADR-IC-005 upcoming_maturities). A query-named collection with no
+        write-side twin. A from >= to window is an empty, well-formed result, not an error.
+        Rate-limited to 200 req/min per consumer (ADR-IC-006 §P3 authenticated-read budget).
+      security:
+        - bearerAuth: []
       parameters:
         - name: from
           in: query
-          required: false
+          required: true
+          description: Window start (inclusive), ISO 8601 date.
           schema:
             type: string
             format: date
         - name: to
           in: query
-          required: false
+          required: true
+          description: Window end (exclusive), ISO 8601 date.
           schema:
             type: string
             format: date
       responses:
         '200':
-          description: The list of maturing deposits.
+          description: The deposits maturing in the window, ordered by maturity date.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MaturityList'
+                $ref: '#/components/schemas/DepositMaturities'
+        '400':
+          description: Missing or malformed from/to date.
         '401':
-          description: Missing or invalid bearer token.
+          description: Missing or invalid bearer token (gateway jwt validation).
+        '429':
+          description: Rate limit exceeded (200 req/min per consumer, ADR-IC-006 §P3).
   /v1/deposits/{id}:
     get:
       operationId: getDeposit
       summary: The one canonical deposit read resource.
+      description: >
+        Served from the denormalized read-model row by default; folded authoritatively from
+        the event stream when the caller passes an If-Min-Sequence token the row has not yet
+        caught up to (read-your-writes, ADR-IC-005 §P3) or asks for a historical
+        ?as_of_sequence=N point-in-time answer. Both paths fill the SAME shape — the consumer
+        never sees which served it. Rate-limited to 200 req/min per consumer.
+      security:
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
           required: true
+          description: The deposit's stream id.
           schema:
             type: string
             format: uuid
         - name: as_of_sequence
           in: query
           required: false
-          description: Read the deposit state as of a specific event sequence number.
+          description: >
+            Read the deposit state as of a specific per-stream event sequence number (the
+            historical fold, never the read model — ADR-IC-005 §P2).
           schema:
             type: integer
             format: int64
             minimum: 0
+        - name: If-Min-Sequence
+          in: header
+          required: false
+          description: >
+            The read-your-writes barrier (ADR-IC-005 §P3): the commit_sequence a command
+            returned. When the read-model row is staler than this token the engine folds the
+            stream to the authoritative head instead of serving the stale row.
+          schema:
+            type: integer
+            format: int64
       responses:
         '200':
-          description: The deposit read model.
+          description: The deposit read model (last_sequence tells which version the answer reflects).
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Deposit'
         '401':
-          description: Missing or invalid bearer token.
+          description: Missing or invalid bearer token (gateway jwt validation).
         '404':
-          description: No such deposit.
+          description: No such deposit (a genuinely non-existent stream).
+        '429':
+          description: Rate limit exceeded (200 req/min per consumer, ADR-IC-006 §P3).
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        OAuth 2.0 bearer token validated at the gateway (per-route jwt plugin — signature,
+        expiry, issuer; ADR-IC-006 §1).
   schemas:
     Deposit:
       type: object
-      required: [id, product_code, sor]
+      description: >
+        The deposit resource (DepositResponse, ADR-PC-021 §D5 boundary) — snake_case on the
+        wire, money as integer cents (ADR-PC-010 §P1), structural facts only, no PII
+        (ADR-PC-004 §P2).
+      required:
+        - deposit_id
+        - sor
+        - principal_cents
+        - tan_basis_points
+        - rate_sheet_version_id
+        - product_code
+        - term_days
+        - start_date
+        - maturity_date
+        - interest_variant
+        - auto_renewal_policy
+        - payment_period_months
+        - accrued_gross_interest_cents
+        - withholding_to_date_cents
+        - net_interest_cents
+        - total_payout_cents
+        - coupons_paid
+        - lifecycle
+        - last_sequence
+        - last_updated
       properties:
-        id:
+        deposit_id:
           type: string
           format: uuid
-        product_code:
+          description: The deposit's stream id.
+        sor:
           type: string
+          description: The system-of-record for this instance (ADR-PC-018 §6.2 routing truth).
+          enum: [engine, legacy]
         principal_cents:
           type: integer
           format: int64
-        sor:
+          description: Current principal, integer cents.
+        tan_basis_points:
+          type: integer
+          description: The resolved nominal annual rate (TAN), basis points.
+        rate_sheet_version_id:
           type: string
-          description: The system-of-record for this instance (ADR-PC-018 / ADR-PC-027).
-          enum: [engine, legacy]
-    MaturityList:
+          description: The price/version key the TAN was resolved from.
+        product_code:
+          type: string
+          description: >
+            The catalogue structural code (prospective-only — pre-v794 deposits carry the ""
+            default).
+        term_days:
+          type: integer
+          description: The deposit's term, days.
+        start_date:
+          type: string
+          format: date
+        maturity_date:
+          type: string
+          format: date
+        interest_variant:
+          type: string
+          description: AT_MATURITY / PERIODIC / ADVANCE.
+        auto_renewal_policy:
+          type: string
+        payment_period_months:
+          type: integer
+          description: PERIODIC coupon cadence in months (0 for AT_MATURITY / ADVANCE).
+        accrued_gross_interest_cents:
+          type: integer
+          format: int64
+        withholding_to_date_cents:
+          type: integer
+          format: int64
+        net_interest_cents:
+          type: integer
+          format: int64
+        total_payout_cents:
+          type: integer
+          format: int64
+        coupons_paid:
+          type: integer
+        lifecycle:
+          type: string
+          description: >
+            The lifecycle state label (e.g. ACTIVE, MATURED, RENEWED, TERMINATEDEARLY,
+            ERASED) — a structural string, deliberately not a closed enum here.
+        last_sequence:
+          type: integer
+          format: int64
+          description: >
+            The per-stream version this answer reflects (ADR-IC-005 §P3) — hand it back as
+            If-Min-Sequence for read-after-write.
+        last_updated:
+          type: string
+          format: date-time
+          description: The producing event's transaction_time (honest staleness display).
+      examples:
+        - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+          sor: engine
+          principal_cents: 1000000
+          tan_basis_points: 250
+          rate_sheet_version_id: rs-2026-02
+          product_code: TD-PT-12M-STD
+          term_days: 365
+          start_date: "2026-01-15"
+          maturity_date: "2027-01-15"
+          interest_variant: AT_MATURITY
+          auto_renewal_policy: NO_RENEWAL
+          payment_period_months: 0
+          accrued_gross_interest_cents: 11500
+          withholding_to_date_cents: 0
+          net_interest_cents: 8280
+          total_payout_cents: 1008280
+          coupons_paid: 0
+          lifecycle: ACTIVE
+          last_sequence: 3
+          last_updated: "2026-06-30T12:00:00Z"
+    DepositMaturities:
       type: object
-      required: [items]
+      description: The maturities range-query result (DepositMaturitiesResponse) — snake_case on the wire.
+      required: [deposits]
       properties:
-        items:
+        deposits:
           type: array
+          description: The deposits maturing in the requested [from, to) window, ordered by maturity date.
           items:
             $ref: '#/components/schemas/Deposit'

@@ -30,9 +30,12 @@
 #       Kong `[^/]+` / `(?<id>[^/]+)` regex or an OpenAPI `{id}` template, canonicalises to `{}`),
 #       so /v1/deposits/[^/]+$ (Kong) and /v1/deposits/{id} (spec) compare equal.
 #
-#       PUBLIC scope: the client-facing edge (constitute + saga stream) and the engine query reads —
-#       the orchestrator-edge / orchestrator-sse / engine-query Kong services. EXCLUDED as
-#       non-public command/agent channels (OPENAPI_EXCLUDE_SERVICES):
+#       PUBLIC scope: the client-facing edge (constitute + saga stream), the engine query reads, and
+#       the SoR-routed existing-instance money-mover — the orchestrator-edge / orchestrator-sse /
+#       engine-query / engine-sor-ops Kong services (engine-sor-ops was a DEFERRED exclusion of the
+#       bd ax0b.2 contract review; catalogued by bd ax0b.3 in engine-sor-ops.openapi.yaml and now
+#       reconciled like every other public route). EXCLUDED as non-public command/agent channels
+#       (OPENAPI_EXCLUDE_SERVICES):
 #         * mcp-server            — the LLM agent channel, catalogued via AsyncAPI/MCP, not REST
 #                                   (ADR-IC-010; explicitly excluded by ADR-IC-020 / bd ax0b.2).
 #                                   NOTE: excluding the whole mcp-server service also drops its
@@ -41,21 +44,28 @@
 #                                   public route is KNOWINGLY excluded here (not silently swallowed):
 #                                   it is OAuth-metadata discovery, not a product REST operation, and
 #                                   is not catalogued in the OpenAPI surface — see bd ax0b.2.
-#         * engine-sor-ops        — the SoR-routed existing-instance money-mover (ADR-PC-018). This
-#                                   is a PUBLIC, client-facing route in infra/kong/kong.yml (per-route
-#                                   iam-issuer JWT + PSD2-SCA acr/auth_time freshness + X-Client-Id
-#                                   IDOR guard), so it is DEFERRED, not internal: not yet catalogued
-#                                   in the OpenAPI surface; catalogue in a follow-up (contract review,
-#                                   bd ax0b.2).
 #         * engine-lifecycle-movers — the ADR-PC-036 clock-driven service-principal money-movers
 #                                   (a scoped, audited command channel, NOT the public client API).
 #       engine-lifecycle-movers is the same negative-invariant class as the deliberately-absent
 #       POST /v1/deposits: a command surface, not the public read/constitute API the tier-1 specs
-#       (bd ax0b.3) document. engine-sor-ops and the mcp-server discovery route are instead DEFERRED
-#       public routes — excluded for now, to be catalogued in a follow-up, not internal channels.
+#       (bd ax0b.3) document. The mcp-server discovery route remains a DEFERRED public route —
+#       excluded for now, to be catalogued in a follow-up, not an internal channel.
 #
 #   SSE EXEMPTION: an operation marked x-sse-stream: true streams text/event-stream, not a JSON body,
 #   so the response-body check is WAIVED for it (the REST mirror of the AsyncAPI x-compacted case).
+#
+#   INTERNAL-ROUTE WAIVER (x-internal-route; bd ax0b.3): an operation may document a REAL upstream
+#   HTTP surface that is deliberately NOT (yet) exposed through Kong — today the mcp->orchestrator
+#   process-status snapshot GET /api/v1/processes/{id}/status (Document 11 Pattern 2, bd vjoi). Such
+#   an operation carries x-internal-route: "<non-empty reason string>" and is WAIVED from the REVERSE
+#   reconcile ONLY. The waiver is deliberately narrow and self-policing:
+#     * the value MUST be a non-empty STRING reason (a bare `true` does not waive — it still fails
+#       REVERSE, forcing the author to state why the route is internal);
+#     * the NEGATIVE invariant (POST /v1/deposits) still applies — the marker cannot smuggle the
+#       engine command surface into a spec;
+#     * CONTRADICTION CHECK: if a marked operation IS an exposed public Kong route, the gate FAILS —
+#       so when the route later goes public in kong.yml, the same change must drop the marker
+#       (lock-step, never silent drift). Proven by the internal-marker-on-a-public-route self-test.
 #
 # TOOLING IS PINNED (no @latest drift — the AsyncAPI gate's discipline): the Spectral CLI and the
 # oasdiff image versions are fixed below. Spectral runs via npx (Node ships on the runner); oasdiff
@@ -63,8 +73,9 @@
 #
 # SELF-TEST (--self-test): runs the gate against the negative fixtures under
 # contracts/openapi/_selftest/<case>/ and asserts each FAILS — the executable proof that a missing
-# governance field, a spec path that is not a public route, a public route with no spec, and a spec
-# describing POST /v1/deposits are all caught (ADR-IC-020 / bd ax0b.2 acceptance criteria).
+# governance field, a spec path that is not a public route, a public route with no spec, a spec
+# describing POST /v1/deposits, and an x-internal-route marker left on a route that IS public are
+# all caught (ADR-IC-020 / bd ax0b.2 + ax0b.3 acceptance criteria).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -82,7 +93,9 @@ OASDIFF_IMAGE="${OPENAPI_OASDIFF_IMAGE:-tufin/oasdiff:v1.21.0}"
 JS_YAML="${JS_YAML:-js-yaml@4.1.0}"
 
 # Kong services whose routes are NOT the public client-facing REST surface (see header).
-OPENAPI_EXCLUDE_SERVICES="${OPENAPI_EXCLUDE_SERVICES:-mcp-server engine-sor-ops engine-lifecycle-movers}"
+# engine-sor-ops left this list when bd ax0b.3 catalogued it (engine-sor-ops.openapi.yaml) —
+# it is a public client-facing money-mover, so the FORWARD reconcile now covers it.
+OPENAPI_EXCLUDE_SERVICES="${OPENAPI_EXCLUDE_SERVICES:-mcp-server engine-lifecycle-movers}"
 
 # Skip the git-baseline breaking-change diff (used by --self-test, whose fixture specs are not
 # tracked in git, and available as an escape hatch when origin/main is unresolvable).
@@ -243,18 +256,21 @@ note ""
 note "-- structural: response-body present (SSE-exempt) + collect spec operations --"
 declare -a spec_ops=()          # "METHOD <canon-path>"
 declare -a spec_ops_raw=()      # "METHOD <raw-path> (<file>)" for messages, lockstep with spec_ops
+declare -a spec_ops_internal=() # "true"/"false" — x-internal-route non-empty-STRING waiver, lockstep
 for f in "${files[@]}"; do
 	doc="$(y2j "$f")" || { err "$f: could not parse YAML"; continue; }
 	while IFS= read -r line; do
 		[ -n "$line" ] || continue
-		# line = "<METHOD>\t<path>\t<has_sse>\t<has_2xx_json>"
+		# line = "<METHOD>\t<path>\t<has_sse>\t<has_2xx_json>\t<is_internal>"
 		method="$(printf '%s' "$line" | cut -f1)"
 		path="$(printf '%s' "$line" | cut -f2)"
 		has_sse="$(printf '%s' "$line" | cut -f3)"
 		has_body="$(printf '%s' "$line" | cut -f4)"
+		is_internal="$(printf '%s' "$line" | cut -f5)"
 		cp="$(canon "$path")"
 		spec_ops+=("$method $cp")
 		spec_ops_raw+=("$method $path ($f)")
+		spec_ops_internal+=("$is_internal")
 		# NEGATIVE INVARIANT: POST /v1/deposits (the bare engine command, no sub-path) must never be a
 		# public spec (ADR-IC-006 §P5 / ADR-IC-020). Checked on the canonical path so a templated form
 		# cannot dodge it.
@@ -278,7 +294,9 @@ for f in "${files[@]}"; do
 		| ([ (.value.responses // {}) | to_entries[]
 			| select(.key | test("^2..$"))
 			| ((.value.content // {}) | length) ] | (add // 0) > 0 | tostring) as $body
-		| "\($m)\t\($p)\t\($sse)\t\($body)"
+		| ((.value["x-internal-route"] // null)
+			| (type == "string" and length > 0) | tostring) as $internal
+		| "\($m)\t\($p)\t\($sse)\t\($body)\t\($internal)"
 	')
 done
 note ""
@@ -330,18 +348,27 @@ else
 			i=$((i + 1))
 		done
 
-		# REVERSE — every spec operation is an exposed public Kong route.
+		# REVERSE — every spec operation is an exposed public Kong route, UNLESS it carries the
+		# x-internal-route non-empty-STRING waiver (see header). A waived op that IS a public Kong
+		# route is a CONTRADICTION and fails — going public in kong.yml must drop the marker in the
+		# same change.
 		i=0
 		while [ "$i" -lt "${#spec_ops[@]}" ]; do
-			so="${spec_ops[$i]}"; sraw="${spec_ops_raw[$i]}"
+			so="${spec_ops[$i]}"; sraw="${spec_ops_raw[$i]}"; sint="${spec_ops_internal[$i]}"
 			found=0
 			for ko in ${kong_ops[@]+"${kong_ops[@]}"}; do
 				[ "$ko" = "$so" ] && { found=1; break; }
 			done
-			if [ "$found" = "1" ]; then
+			if [ "$sint" = "true" ]; then
+				if [ "$found" = "1" ]; then
+					err "spec operation [$sraw] carries x-internal-route but IS an exposed public Kong route — remove the marker in the change that exposes the route (ADR-IC-020 reconcile lock-step)"
+				else
+					note "  ok    REVERSE  spec op [$sraw] :: internal (x-internal-route) — waived, not a public Kong route by design"
+				fi
+			elif [ "$found" = "1" ]; then
 				note "  ok    REVERSE  spec op [$sraw] is a public Kong route"
 			else
-				err "spec operation [$sraw] (canonical: $so) is NOT an exposed public Kong route (ADR-IC-020 REVERSE reconcile — a spec must document a real public route, never an internal/command surface)"
+				err "spec operation [$sraw] (canonical: $so) is NOT an exposed public Kong route (ADR-IC-020 REVERSE reconcile — a spec must document a real public route, never an internal/command surface; a deliberately internal surface needs x-internal-route: \"<reason>\")"
 			fi
 			i=$((i + 1))
 		done
