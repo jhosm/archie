@@ -43,6 +43,14 @@
          it; the core never references back (ADR-IC-019 §P2). -->
     <ProjectReference Include="../Babelstone.Notification/Babelstone.Notification.csproj" />
 
+    <!-- The DELIVERY half (bd babelstone-60n8.4/.7): the ADR-IC-004 outbox + ADR-IC-011 HMAC-webhook
+         transport for SCHEDULED and EVENT_DRIVEN NotificationDue, family-agnostic like the core. Shipped
+         beside the host; ACTIVATION is one composition line —
+         builder.Services.AddNotificationWebhookDelivery(builder.Configuration) — in Program.cs (dormant
+         until Notification:Webhook:EndpointUrl is configured, so adding the line never breaks an
+         unconfigured host). -->
+    <ProjectReference Include="../Babelstone.Notification.Delivery/Babelstone.Notification.Delivery.csproj" />
+
     <!-- The family NOTIFICATION contributions the host composes — the §A2 exemption: the host MAY name a
          family; the core MAY NOT (ADR-IC-019 §D4). Adding a family is a new line here + its module, zero
          core diff. -->
