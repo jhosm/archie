@@ -1,6 +1,6 @@
 openapi: 3.1.0
 # NEGATIVE FIXTURE — a copy of the engine-reads spec with info.x-owner DROPPED. The frozen
-# .spectral.yaml governance rule babelstone-info-x-owner MUST fail this (ADR-IC-020 §P1).
+# .spectral.yaml governance rule babelstone-info-x-owner MUST fail this (ADR-IC-020 Decision §2).
 info:
   title: Babelstone Engine — Deposit Query Reads
   version: 1.0.0

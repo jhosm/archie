@@ -14,7 +14,7 @@ info:
     SSE stream. The engine COMMAND surface (POST /v1/deposits) is DELIBERATELY NOT here — it
     is the orchestrator's internal, mTLS-only saga target, never the public write path
     (ADR-IC-006 §P5 Boundary 2).
-  # ── ADR-IC-020 §P1 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
   x-owner: platform-edge
   x-owner-contact: platform-edge@babelstone.example
   x-status: active
