@@ -75,6 +75,16 @@ public sealed class RenewalSagaModule : ISagaModule
     public IReadOnlyList<string> ConsumeTopics => [SagaConsumeTopics.TermDepositIntegrationTopic];
 
     /// <summary>
+    /// The term-deposit family-INTEGRATION topics (the catalogue-generated constants) — declared, like
+    /// the constitution module's, so the HOST derives the substrate settlement saga's subscribe set
+    /// from the DISCOVERED modules without naming this family (ADR-PC-040 §D3; duplicates across the
+    /// family's modules are unioned by the host). Namespace-qualified: the property shares the
+    /// generated class's name.
+    /// </summary>
+    public IReadOnlyList<string> FamilyIntegrationTopics =>
+        global::Babelstone.Families.TermDeposit.Orchestration.FamilyIntegrationTopics.All;
+
+    /// <summary>
     /// The renewal saga's OWN Kafka consumer group (ADR-IC-018 §P4) — distinct from the constitution
     /// group, so the two sagas read the shared <c>term_deposit</c> topic independently with no shared-group
     /// contention.

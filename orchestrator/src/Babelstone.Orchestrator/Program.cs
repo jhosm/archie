@@ -1,4 +1,3 @@
-using Babelstone.Families.TermDeposit.Orchestration;
 using Babelstone.Orchestrator;
 using Babelstone.Orchestrator.Dispatch;
 using Babelstone.Orchestrator.Edge;
@@ -105,12 +104,14 @@ var engineBaseUrl = builder.Configuration["Engine:BaseUrl"]
 var settlementBaseUrl = builder.Configuration["Settlement:BaseUrl"] ?? "http://localhost:8089";
 
 // The orchestrator hosts the FAMILY-AGNOSTIC substrate; each concrete saga is a FAMILY-OWNED MODULE
-// (ADR-IC-018 §D1/§D4/§P4). The host — the §D4 composition root, the standing exemption that MAY name a
-// family (ADR-PC-021 §A2 pattern) — holds an EXPLICIT module list at the current saga count (ADR-PC-021
-// §A3: explicit now, assembly-scan later) and loops over it: it lets each module register its
-// family-owned services (ConfigureServices) and registers the machine/bridge/router each contributes.
-// Adding a family's saga is a new module here, ZERO substrate diff (ADR-IC-018 §Consequences). H.3
-// renewal (babelstone-mtto PR2) is the next module — an EventAutoStarted one.
+// (ADR-IC-018 §D1/§D4/§P4). The host — the §D4 composition root, the standing exemption that MAY
+// ProjectReference families/** (ADR-PC-021 §A2 pattern; the <BabelstoneRole>CompositionRoot marker,
+// ADR-PC-040 §D2) — DISCOVERS the family saga modules by assembly-scan (SagaModuleLoader over the
+// shared FamilyModuleScanner, ADR-IC-018 §D6's realized "assembly-scan later" / ADR-PC-040 §D3) and
+// loops over them: each module registers its family-owned services (ConfigureServices) and the host
+// registers the machine/bridge/router each contributes. It names NO family: adding a family's saga is
+// the family's own .Orchestration module + the host ProjectReference (so its dll lands beside the host
+// for the scan) — ZERO edit here (ADR-IC-018 §Consequences), gated by COMPOSITION_ROOT_NAMES_NO_FAMILY.
 var sagaModuleContext = new SagaModuleContext(
     RuntimeConnectionString: runtimeConnectionString
         ?? throw new InvalidOperationException(
@@ -119,26 +120,33 @@ var sagaModuleContext = new SagaModuleContext(
     EngineBaseUrl: engineBaseUrl,
     SettlementBaseUrl: settlementBaseUrl);
 
-var sagaModules = new ISagaModule[]
+// At v1 this discovers the term-deposit family's TWO modules: the EdgeStarted constitution saga and
+// the EventAutoStarted renewal saga (which starts on the engine's DepositMatured fact with a non-NONE
+// ce_autorenewalpolicy header, in its OWN consumer group over the same family topic; ADR-IC-003 §A7 —
+// the engine resolves every renewal fact from the closing deposit, so its command body is minimal).
+var familySagaModules = new SagaModuleLoader().LoadAll(SagaModuleLoader.FamilySagaAssemblies(), sagaModuleContext);
+
+// The SUBSTRATE-OWNED settlement saga (bd babelstone-t7o3.15, ADR-PC-032; ADR-IC-018 Amendment
+// 2026-06-24). UNLIKE the family modules it lives in the SUBSTRATE — it names no family, keying only
+// on the Movement atom's generic direction + opaque account_ref — so it is the one shared home that
+// effects any family's cash leg, and it is NOT discovered from a family assembly: the host constructs
+// it explicitly (a substrate name, not a family name). EventAutoStarted on a Movement-bearing event (a
+// ce_movementorigin == Originated header); the direction branch (debit funds-gated Reserve->Confirm vs
+// credit confirmation-gated Confirm) is resolved by the machine's IEventSubstitutor from the promoted
+// ce_movementdirections list. Its subscribe set — the family integration topics where Movement-bearing
+// events arrive — is the UNION of the DISCOVERED family modules' declared FamilyIntegrationTopics
+// (each answers from its catalogue-generated constants), so neither the substrate module (ORCH-3) nor
+// this host names a family topic: a new family's integration topics arrive with its discovered module,
+// zero diff here. Ordered for a deterministic subscription list across boots.
+var familyIntegrationTopics = familySagaModules
+    .SelectMany(module => module.FamilyIntegrationTopics)
+    .Distinct(StringComparer.Ordinal)
+    .Order(StringComparer.Ordinal)
+    .ToArray();
+
+var sagaModules = new List<ISagaModule>(familySagaModules)
 {
-    new TermDepositSagaModule(sagaModuleContext),
-    // H.3 renewal (bd babelstone-mtto PR2): the SECOND saga on this substrate — an EventAutoStarted one.
-    // It starts on the engine's DepositMatured fact (a non-NONE ce_autorenewalpolicy header) and runs in
-    // its OWN consumer group over the SAME term_deposit topic. It carries NO product/role/funding config
-    // (ADR-IC-003 §A7): the engine resolves every renewal fact from the Matured closing deposit it loads
-    // (ADR-PC-009; bd babelstone-mtto.5), so the command body is the minimal { new_deposit_id }.
-    new RenewalSagaModule(sagaModuleContext),
-    // The SUBSTRATE-OWNED settlement saga (bd babelstone-t7o3.15, ADR-PC-032; ADR-IC-018 Amendment
-    // 2026-06-24). UNLIKE the two term-deposit modules it lives in the SUBSTRATE — it names no family,
-    // keying only on the Movement atom's generic direction + opaque account_ref — so it is the one shared
-    // home that effects any family's cash leg. EventAutoStarted on a Movement-bearing event (a
-    // ce_movementorigin == Originated header); the direction branch (debit funds-gated Reserve->Confirm vs
-    // credit confirmation-gated Confirm) is resolved by the machine's IEventSubstitutor from the promoted
-    // ce_movementdirections list. The HOST (the §D4 composition root, which MAY name a family) supplies the
-    // family integration topics where Movement-bearing events arrive — the substrate module names none of
-    // them (ORCH-3). At v1 the only loaded family is term-deposit, so it subscribes that family's
-    // integration topic(s); a new family's integration topics are added here, zero substrate diff.
-    new SettlementSagaModule(sagaModuleContext, [.. FamilyIntegrationTopics.All]),
+    new SettlementSagaModule(sagaModuleContext, familyIntegrationTopics),
 };
 
 foreach (var module in sagaModules)
