@@ -38,6 +38,15 @@ proxies these backends:
                   "catalog ✓ · Avro · schema #id" badge. Strip the /sr prefix. Read-only GETs of
                   structural schema metadata — no PII.
 
+  • /loki/*     → Grafana Loki's query API (Logs lens, bd babelstone-f0ic.15.7): the Logs lens reads
+                  REAL structured logs at /loki/api/v1/query_range, correlated by the trace id the UI
+                  already captures per write (Tempo↔Loki share the OTel trace_id/span_id stamp). Loki's
+                  native API already lives under /loki/…, so the path is forwarded UNCHANGED. Defence in
+                  depth on PII: the JSON response is passed through a BFF-side STRUCTURAL-FIELD ALLOWLIST
+                  before it reaches the browser — only structural label/field names survive, and any
+                  field whose NAME matches a PII substring is dropped — so we do NOT rely solely on the
+                  emit-time OTel guard (the collector has no redaction yet — Epic K). References only.
+
   • /pg/*       → READ-ONLY Postgres (Inspector lenses, bd babelstone-f0ic.15.1): a guarded,
                   dev-only, 127.0.0.1-only window onto the engine + orchestrator databases.
                   Every query selects from a STRUCTURAL-column allowlist that forbids the
@@ -70,6 +79,8 @@ Options (env vars):
                       (Topic·Avro lens, /pandaproxy/* → Kafka REST)
     SCHEMA_REGISTRY_URL  base URL of the Schema Registry        (default http://localhost:18081)
                       (Topic·Avro lens schema badge, /sr/*)
+    LOKI_URL          base URL of Grafana Loki's query API      (default http://localhost:3100)
+                      (Logs lens, /loki/* → /loki/api/v1/query_range by trace id)
     MC_ENGINE_DSN     read-only DSN for the engine DB           (default postgresql://babelstone:
                       babelstone@127.0.0.1:5432/babelstone) — /pg/* Inspector lenses
     MC_ORCH_DSN       read-only DSN for the orchestrator DB     (default …/babelstone_orchestrator)
@@ -95,6 +106,7 @@ TEMPO_URL = os.environ.get("TEMPO_URL", "http://localhost:3200").rstrip("/")
 AGENT_URL = os.environ.get("AGENT_URL", "http://localhost:8091").rstrip("/")
 PANDAPROXY_URL = os.environ.get("PANDAPROXY_URL", "http://localhost:18082").rstrip("/")
 SCHEMA_REGISTRY_URL = os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:18081").rstrip("/")
+LOKI_URL = os.environ.get("LOKI_URL", "http://localhost:3100").rstrip("/")
 DEMO_CLIENT_ID = os.environ.get("DEMO_CLIENT_ID", "CLI-DEMO-0001")
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -163,6 +175,89 @@ _PG_ALLOWLIST = {
 }
 
 _PG_DSN = {"engine": ENGINE_DSN, "orchestrator": ORCH_DSN}
+
+# ── PII firewall for the Logs lens (Grafana Loki proxy, bd babelstone-f0ic.15.7) ─────────────
+# Loki returns each matching stream with a label set plus its raw log lines. The emit-time OTel
+# guard is the FIRST line of defence, but the collector has no redaction yet (Epic K), so the BFF
+# ALSO enforces a structural-field allowlist here (belt-and-suspenders, mirroring the /pg/* window):
+# before a Loki response reaches the browser, every stream-label key AND — when a log line is a JSON
+# object — every field key is checked. A key survives only if it is a known STRUCTURAL name (an id, a
+# level/severity, a logger/service name, a trace/span id, a status, a sequence, a schema id, or a
+# clock stamp); anything else is dropped, and any key whose name contains a PII substring is refused
+# outright even if a future edit adds it to the allowlist. Values are never inspected for PII — the
+# discipline is on field NAMES (structural references only ever cross this boundary); a free-form
+# `msg`/`body` line stays intact because that is the human-readable log text the lens must show.
+_LOKI_FORBIDDEN_SUBSTR = _PG_FORBIDDEN_SUBSTR  # payload / detail / cipher / secret / nif / iban
+_LOKI_ALLOWED_FIELDS = {
+    # timestamp / severity / origin
+    "ts", "time", "timestamp", "observed_timestamp", "level", "severity", "severity_text",
+    "logger", "logger_name", "service_name", "service", "scope_name",
+    # the human-readable message (free-form text, but a structurally-named field)
+    "msg", "message", "body",
+    # OTel trace correlation — the whole point of the lens
+    "trace_id", "traceid", "span_id", "spanid", "trace_flags",
+    # structural domain references (opaque ids / labels — never PII)
+    "family", "event_type", "status", "correlation_id", "causation_id", "process_id",
+    "stream_id", "sequence_number", "schema_id", "message_id", "source_topic",
+    "aggregate_type", "aggregate_id", "partition", "offset",
+    # common Loki/OTel-exporter structural labels
+    "job", "exporter", "detected_level", "container", "namespace", "pod",
+}
+
+
+def _loki_allow(fields):
+    """Return a copy of a label/field dict keeping ONLY allowlisted STRUCTURAL keys and dropping any
+    key whose name matches a forbidden PII substring. Field NAMES are the gate; values are untouched."""
+    out = {}
+    for k, v in fields.items():
+        kl = str(k).lower()
+        if any(bad in kl for bad in _LOKI_FORBIDDEN_SUBSTR):
+            continue                       # PII-named field — refuse outright
+        if kl in _LOKI_ALLOWED_FIELDS:
+            out[k] = v
+    return out
+
+
+def _loki_filter_line(line):
+    """A Loki log line is opaque text OR a JSON object of fields. Plain text (the `msg`) passes through
+    unchanged; a JSON object is re-emitted through the structural allowlist so no PII-named field rides
+    along in the body. Non-JSON / non-object lines are left exactly as-is."""
+    s = line.strip()
+    if not (s.startswith("{") and s.endswith("}")):
+        return line
+    try:
+        obj = json.loads(s)
+    except Exception:
+        return line
+    if not isinstance(obj, dict):
+        return line
+    return json.dumps(_loki_allow(obj))
+
+
+def _loki_filter(raw):
+    """Apply the BFF structural-field allowlist to a Loki query_range response body (bytes → bytes).
+    Filters both the per-stream label set and any JSON-object log line. A body we can't parse (an error
+    string, an unexpected shape) is returned UNCHANGED — the allowlist only ever removes, never adds."""
+    try:
+        doc = json.loads(raw)
+    except Exception:
+        return raw
+    data = doc.get("data") if isinstance(doc, dict) else None
+    result = data.get("result") if isinstance(data, dict) else None
+    if not isinstance(result, list):
+        return raw
+    for stream in result:
+        if not isinstance(stream, dict):
+            continue
+        labels = stream.get("stream")
+        if isinstance(labels, dict):
+            stream["stream"] = _loki_allow(labels)
+        values = stream.get("values")
+        if isinstance(values, list):
+            for pair in values:
+                if isinstance(pair, list) and len(pair) >= 2 and isinstance(pair[1], str):
+                    pair[1] = _loki_filter_line(pair[1])
+    return json.dumps(doc).encode()
 
 
 class PgError(Exception):
@@ -314,6 +409,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # resolves a record's wire schema-id to its subject/version for the catalog badge. Strip
             # the /sr prefix. Read-only GETs of structural schema metadata — no PII.
             return SCHEMA_REGISTRY_URL, None, self.path[len("/sr"):]
+        if self.path.startswith("/loki/"):
+            # Grafana Loki's query API (Logs lens, bd babelstone-f0ic.15.7): the Logs lens fetches the
+            # REAL structured logs at /loki/api/v1/query_range, correlated by the active trace id. Loki's
+            # native API ALREADY lives under /loki/…, so the path is forwarded UNCHANGED (no prefix to
+            # strip). Defence in depth: the JSON response is run through the BFF structural-field
+            # allowlist (_loki_filter, applied in _relay) before it reaches the browser — no PII crosses.
+            return LOKI_URL, None, self.path
         return None
 
     def _relay(self, method, base_url, inject, upstream_path):
@@ -353,7 +455,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._stream_relay(resp)
         else:
             with resp:
-                self._write_relay(resp.status, resp.headers, resp.read())
+                payload = resp.read()
+            # Logs lens defence-in-depth: strip any non-structural / PII-named field from Loki's
+            # response on the BFF before it reaches the browser (bd babelstone-f0ic.15.7).
+            if self.path.startswith("/loki/"):
+                payload = _loki_filter(payload)
+            self._write_relay(resp.status, resp.headers, payload)
 
     def _write_relay(self, status, headers, payload):
         self.send_response(status)
@@ -452,6 +559,7 @@ def main():
         print("  agent         %s  (proxied at /agent/*   — LIVE·agent real Claude)" % AGENT_URL)
         print("  pandaproxy    %s  (proxied at /pandaproxy/* — Topic·Avro real records)" % PANDAPROXY_URL)
         print("  schema-reg    %s  (proxied at /sr/*      — Topic·Avro schema badge)" % SCHEMA_REGISTRY_URL)
+        print("  loki          %s  (proxied at /loki/*   — Logs lens real logs, allowlisted)" % LOKI_URL)
         print("  postgres      /pg/* read-only Inspector lenses %s" % ("(ENABLED)" if PG_ENABLE else "(disabled — not bound to loopback)"))
         print("  mode          open the page, flip the toggle to LIVE·engine or LIVE·saga")
         print("  Ctrl-C to stop")
