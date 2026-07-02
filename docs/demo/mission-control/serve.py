@@ -190,6 +190,9 @@ _PG_ALLOWLIST = {
     ("orchestrator", "saga_outbox"): {
         "seq", "message_id", "process_id", "command_type", "causation_id", "correlation_id",
         "status", "created_at", "published_at",
+        # Outbound W3C Trace Context (migration 0003: "opaque 00-<trace-id>-<span-id>-<flags>;
+        # operational, NOT PII") — the saga-leg → Tempo deep-link key (bd babelstone-f0ic.15.9).
+        "traceparent",
     },
     ("orchestrator", "inbox"): {"message_id", "source_topic", "processed_at", "result_summary"},
 }
@@ -510,7 +513,7 @@ def pg_process_transitions(handle):
                             where=[("process_id", pid)], order="id", descending=False, limit=200)
     legs = pg_select("orchestrator", "saga_outbox",
                      ["seq", "message_id", "process_id", "command_type", "causation_id",
-                      "correlation_id", "status", "created_at", "published_at"],
+                      "correlation_id", "status", "created_at", "published_at", "traceparent"],
                      where=[("process_id", pid)], order="seq", descending=False, limit=200)
     return {"process": process, "transitions": transitions, "legs": legs}
 
@@ -535,7 +538,7 @@ def pg_saga_outbox_tail(process_id=None, limit=20):
         where.append(("process_id", process_id))
     rows = pg_select("orchestrator", "saga_outbox",
                      ["seq", "message_id", "process_id", "command_type", "causation_id",
-                      "correlation_id", "status", "created_at", "published_at"],
+                      "correlation_id", "status", "created_at", "published_at", "traceparent"],
                      where=where, order="seq", descending=True, limit=limit)
     return {"db": "orchestrator", "table": "saga_outbox", "count": len(rows), "rows": rows}
 

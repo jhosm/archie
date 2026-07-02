@@ -266,6 +266,9 @@ body.console-open .hint-bar { display:none; }
 .tp-table th { text-align:left; color:var(--faint); font-weight:400; padding:0 0.5rem 0.3rem 0; border-bottom:1px solid var(--hair-soft); }
 .tp-table td { padding:0.24rem 0.5rem 0.24rem 0; border-bottom:1px solid rgba(255,255,255,0.03); color:var(--paper-soft); white-space:nowrap; }
 .st-pending { color:var(--gold); } .st-published { color:var(--verify); } .st-dupe { color:var(--muted); }
+/* saga-leg → Tempo deep-link (bd babelstone-f0ic.15.9) */
+.trace-link { color:var(--verify); text-decoration:none; border-bottom:1px dotted rgba(111,214,160,0.5); cursor:pointer; }
+.trace-link:hover { color:var(--paper); border-bottom-color:var(--paper); }
 /* metrics · live SLIs */
 .metrics-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:0.7rem; }
 @media (max-width:760px){ .metrics-grid { grid-template-columns:1fr; } }
@@ -529,7 +532,7 @@ body.console-open .hint-bar { display:none; }
     <div class="metrics-grid" id="metricsGrid"></div>
   </div>
   <div class="pane" id="paneLogs" hidden>
-    <div class="dpane-head">structured logs · correlated by <b>trace_id</b> · ✓ no PII on fields — opaque references only</div>
+    <div class="dpane-head">structured logs · correlated by <b>trace_id</b> · <span id="logsNoPii"><span class="nopii">✓ no PII on fields</span> — opaque references only</span></div>
     <div class="logs-list" id="logsList"><div class="dpane-empty">Quiet. Operations emit structured log lines here.</div></div>
   </div>
   <div class="pane" id="paneTrace" hidden>
@@ -1680,8 +1683,13 @@ body.console-open .hint-bar { display:none; }
       '<span class="metric">outbox_publish_latency_seconds · p50 <b>0.011</b></span>',
       '<span class="metric">inbox_handled_total <b>—</b></span>'
     ].join("");
+    // The no-PII line goes LIVE where Prometheus answers (bd babelstone-f0ic.15.9): the runtime
+    // guard's corrective counter read through /prom, instead of an unverified static claim.
+    if (state.mode !== "demo") loadNoPii();
+    var noPiiLine = noPiiBadgeHtml("on spans")
+      || '<span class="nopii">✓ No PII on spans</span> — operational tier only';
     var foot = 'service.name=<b>babelstone-engine-api</b> · service.namespace=<b>babelstone</b><br>' +
-      '<span class="nopii">✓ No PII on spans</span> — operational tier only · ADR-IC-007 §P4 · ADR-PC-004 §P2<br>';
+      noPiiLine + ' · ADR-IC-007 §P4 · ADR-PC-004 §P2<br>';
     if (real) {
       foot += '✓ Pulled from <b>Grafana Tempo</b> by trace id (proxied at <code>/tempo</code>) — open it in Grafana on <b>localhost:3000</b>.';
     } else if (state.mode === "live" && state.traceState === "unavailable") {
@@ -1879,7 +1887,12 @@ body.console-open .hint-bar { display:none; }
   el("opSeg").addEventListener("click", function (e) { if (e.target.dataset.op) setOperator(e.target.dataset.op); });
   el("telSeg").addEventListener("click", function (e) { if (e.target.dataset.tel) setInspector(e.target.dataset.tel === "on"); });
   el("familySeg").addEventListener("click", function (e) { var b = e.target.closest("button"); if (b && b.dataset.family) setFamily(b.dataset.family); });
-  el("console").addEventListener("click", function (e) { if (e.target.dataset.tab) setTab(e.target.dataset.tab); });
+  el("console").addEventListener("click", function (e) {
+    if (e.target.dataset.tab) setTab(e.target.dataset.tab);
+    // Saga-leg → Tempo deep-link (bd babelstone-f0ic.15.9): a leg's traceparent opens its trace.
+    var link = e.target.closest ? e.target.closest("[data-trace]") : null;
+    if (link && link.dataset.trace) { e.preventDefault(); openTraceDeepLink(link.dataset.trace); }
+  });
   el("btnAgentRun").addEventListener("click", runAgent);
   el("agentInput").addEventListener("keydown", function (e) { if (e.key === "Enter") runAgent(); });
   el("principal").addEventListener("blur", function () {
@@ -2549,6 +2562,71 @@ body.console-open .hint-bar { display:none; }
       if (state.tab === "transport" && state.mode !== "demo") renderTransport();
     }
   }
+  /* ── Cheap wins (bd babelstone-f0ic.15.9) ────────────────────────────────────────────────
+     (1) Saga-leg → Tempo deep-link: saga_outbox.traceparent (an opaque W3C 00-<trace>-<span>-<flags>
+         header — operational, NOT PII, per its migration contract) is surfaced as a click-through:
+         the trace id it carries is fetched from Grafana Tempo through the existing /tempo arm and
+         rendered on the Telemetry tab — the leg's REAL distributed trace, one click away.
+     (2) Live no-PII badge: the static "✓ no PII" assurance goes live by reading
+         telemetry_pii_attributes_stripped_total (the runtime PII guard's corrective counter)
+         through the /prom arm — 0 (or an absent series: nothing ever stripped) proves the
+         assurance; a non-zero count flips the badge red instead of lying.                       */
+  function traceIdFromParent(tp) {
+    var m = /^00-([0-9a-f]{32})-/.exec(String(tp || "").toLowerCase());
+    return m ? m[1] : null;
+  }
+  function traceLinkHtml(tp) {
+    var tid = traceIdFromParent(tp);
+    return tid
+      ? '<a href="#" class="trace-link" data-trace="' + esc(tid) + '" title="open this leg\'s REAL trace from Grafana Tempo (traceparent → /tempo)">' + esc(tid.slice(0, 8)) + '…</a>'
+      : '·';
+  }
+  function openTraceDeepLink(tid) {
+    // Point the Telemetry tab at this leg's trace and fetch it from Tempo — works in any LIVE
+    // mode (the saga legs carry the traceparent even though the orchestrator write path isn't
+    // the engine's X-Trace-Id path).
+    state.traceId = tid; state.realTrace = null; state.traceState = "pending";
+    setTab("telemetry");
+    renderTrace();
+    fetchRealTrace(tid);
+  }
+
+  var noPii = { v: null, state: "idle", ts: 0 };
+  async function loadNoPii() {
+    if (state.mode === "demo") return;
+    var now = Date.now();
+    if (noPii.state === "loading" || (now - noPii.ts) < 10000) return;   // a slow-moving assurance
+    noPii.state = "loading";
+    try {
+      var res = await fetch(API_BASE + "/prom/api/v1/query?query=" +
+        encodeURIComponent("sum(telemetry_pii_attributes_stripped_total)"));
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var doc = await res.json();
+      var r = doc && doc.data && doc.data.result;
+      // An ABSENT series means the guard never stripped anything (a counter with no measurements
+      // is not exported) — the conformant, expected reading. Report it as the live 0 it is.
+      noPii.v = (r && r.length && r[0].value) ? Number(r[0].value[1]) : 0;
+      noPii.state = "loaded";
+    } catch (e) {
+      noPii.v = null; noPii.state = "error";   // Prometheus down — fall back to the static badge
+    } finally {
+      noPii.ts = Date.now();
+      renderNoPiiBadges();
+    }
+  }
+  function noPiiBadgeHtml(surface) {
+    if (state.mode === "demo" || noPii.v === null) return null;   // static assurance stands in
+    return noPii.v > 0
+      ? '<span style="color:var(--wrong)">✗ ' + Math.round(noPii.v) + ' PII-named attribute(s) STRIPPED at emit (' + surface + ') — telemetry_pii_attributes_stripped_total · live</span>'
+      : '<span class="nopii">✓ no PII ' + surface + ' — telemetry_pii_attributes_stripped_total = 0 · live</span>';
+  }
+  function renderNoPiiBadges() {
+    var lg = el("logsNoPii");
+    var badge = noPiiBadgeHtml("on fields");
+    if (lg && badge) lg.innerHTML = badge;
+    if (state.tab === "telemetry") renderTrace();
+  }
+
   function tpShortId(v) { return v == null ? "—" : esc(String(v).slice(0, 8)) + "…"; }
   function tpClock(iso) {
     // Postgres TIMESTAMPTZ serialises ISO-ish; show the local HH:MM:SS tail for table density.
@@ -2586,7 +2664,8 @@ body.console-open .hint-bar { display:none; }
     var legRows = ((d.sagaLegs && d.sagaLegs.rows) || []).map(function (r) {
       var stCls = String(r.status || "").toUpperCase() === "PENDING" ? "st-pending" : "st-published";
       return '<tr><td>' + tpShortId(r.process_id) + '</td><td>' + esc(String(r.command_type || "")) + '</td>' +
-        '<td class="' + stCls + '">' + esc(String(r.status || "").toLowerCase()) + '</td></tr>';
+        '<td class="' + stCls + '">' + esc(String(r.status || "").toLowerCase()) + '</td>' +
+        '<td>' + traceLinkHtml(r.traceparent) + '</td></tr>';
     }).join("");
     box.innerHTML =
       '<div class="dpane-head">engine outbox · <b>' + pending + ' pending</b> / ' + published + ' published · ' +
@@ -2597,8 +2676,8 @@ body.console-open .hint-bar { display:none; }
           '<h4>Engine outbox <span class="pill">FOR UPDATE SKIP LOCKED</span> <span class="pill">public.outbox · live</span></h4>' +
           '<table class="tp-table"><thead><tr><th>#</th><th>event_type</th><th>status</th><th>latency</th></tr></thead><tbody>' + obRows + '</tbody></table>' +
           (obRows ? '' : '<div class="dpane-empty">No outbox rows yet — run a command.</div>') +
-          (legRows ? '<h4 style="margin-top:0.8rem">Saga outbox <span class="pill">saga_outbox · command legs</span></h4>' +
-            '<table class="tp-table"><thead><tr><th>process</th><th>command_type</th><th>status</th></tr></thead><tbody>' + legRows + '</tbody></table>' : '') +
+          (legRows ? '<h4 style="margin-top:0.8rem">Saga outbox <span class="pill">saga_outbox · command legs</span> <span class="pill">trace → Tempo</span></h4>' +
+            '<table class="tp-table"><thead><tr><th>process</th><th>command_type</th><th>status</th><th>trace</th></tr></thead><tbody>' + legRows + '</tbody></table>' : '') +
         '</div>' +
         '<div class="tp-col">' +
           '<h4>Consumer inbox <span class="pill">dedup · message_id</span> <span class="pill">live</span></h4>' +
@@ -2813,6 +2892,7 @@ body.console-open .hint-bar { display:none; }
     }
   }
   function renderLogsLive(box) {
+    loadNoPii();   // live no-PII badge in the pane header (bd babelstone-f0ic.15.9)
     if (!state.traceId) { box.innerHTML = '<div class="dpane-empty">No active trace yet. Run a command — the Logs lens queries <b>Grafana Loki</b> by the write\'s <b>trace_id</b>.</div>'; return; }
     loadLiveLogs();   // debounced; re-renders when it settles
     var st = liveLogs, tid = esc(state.traceId.slice(0, 12));
