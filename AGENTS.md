@@ -16,6 +16,7 @@ implementation. The docs deliverables are `.md` files organised into three serie
 - `engine/` — C# (.NET 10) event-sourced product kernel
 - `families/` — domain family handlers
 - `orchestrator/`, `acl/`, `notification/` — .NET boundary services
+- `lifecycle-driver/` — .NET clock-owning lifecycle-command driver host (ADR-PC-036); `cadence/` — the shared clock-owning poll-loop machinery it and `notification/` reuse (ADR-IC-019)
 - `mcp-server/` — Python MCP server (ADR-IC-010)
 - `contracts/` — Avro/CUE schemas and fixtures
 - `pack-validate/` — Go binary for pack validation (ADR-PC-006)

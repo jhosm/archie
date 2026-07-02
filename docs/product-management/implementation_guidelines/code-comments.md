@@ -10,8 +10,8 @@ comment make a claim that nothing would catch if it became false.
 
 This is a standalone reference (the `implementation_guidelines/` series is not sequenced).
 It governs hand-written comments in `engine/`, `families/`, `orchestrator/`, `acl/`,
-`notification/` (C# `///` and `//`), `mcp-server/` (Python docstrings and `#`), and
-`pack-validate/` (Go `//`). It does **not** govern the generated reference under
+`notification/`, `lifecycle-driver/`, `cadence/` (C# `///` and `//`), `mcp-server/` (Python
+docstrings and `#`), and `pack-validate/` (Go `//`). It does **not** govern the generated reference under
 `docs/product-docs/reference/` (that is machine-rendered — see
 [ADR-PC-022](../product_concepts/adrs/ADR-PC-022-product-documentation-architecture.md))
 or the concept/ADR prose under `docs/product-management/`.
