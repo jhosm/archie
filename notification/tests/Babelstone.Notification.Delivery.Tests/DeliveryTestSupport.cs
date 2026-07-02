@@ -21,15 +21,30 @@ internal static class DeliveryTestSupport
         TemplatePackVersion = "pt.2026.1",
     };
 
-    /// <summary>A drain pass over the fakes, with jitter pinned to 0 so backoff times are exact.</summary>
+    /// <summary>A drain pass over the fakes, with jitter pinned to 0 so backoff times are exact. The
+    /// EVENT_DRIVEN seams default inert: a Null bus source and a PII resolver that resolves nothing.</summary>
     public static WebhookDeliveryPass Pass(
-        IDeliveryOutbox outbox, FakeHandler handler, MutableClock clock, WebhookDeliveryOptions? options = null)
+        IDeliveryOutbox outbox,
+        FakeHandler handler,
+        MutableClock clock,
+        WebhookDeliveryOptions? options = null,
+        INotificationDueSource? source = null,
+        IPiiResolveClient? piiResolveClient = null)
     {
         options ??= Options();
         var client = new WebhookDeliveryClient(
             new FakeHttpClientFactory(handler), options, clock, NullLogger<WebhookDeliveryClient>.Instance);
+        var renderer = new PiiResolvingNoticeRenderer(
+            piiResolveClient ?? new FakePiiResolveClient(), options, NullLogger<PiiResolvingNoticeRenderer>.Instance);
         return new WebhookDeliveryPass(
-            outbox, client, options, clock, NullLogger<WebhookDeliveryPass>.Instance, jitter: () => 0.0);
+            outbox,
+            client,
+            source ?? new NullNotificationDueSource(),
+            renderer,
+            options,
+            clock,
+            NullLogger<WebhookDeliveryPass>.Instance,
+            jitter: () => 0.0);
     }
 
     public static NotificationDueSignal Signal(
@@ -91,5 +106,55 @@ internal static class DeliveryTestSupport
         private readonly HttpClient _client = new(handler, disposeHandler: false);
 
         public HttpClient CreateClient(string name) => _client;
+    }
+
+    /// <summary>An in-memory <see cref="INotificationDueSource"/>: hands out each queued batch once —
+    /// the consumed-bus stand-in for the EVENT_DRIVEN ingress tests.</summary>
+    public sealed class FakeNotificationDueSource : INotificationDueSource
+    {
+        private readonly Queue<IReadOnlyList<NotificationDueSignal>> _batches = new();
+
+        public Func<IReadOnlyList<NotificationDueSignal>>? OnPoll { get; set; }
+
+        public void QueueBatch(params NotificationDueSignal[] signals) => _batches.Enqueue(signals);
+
+        public Task<IReadOnlyList<NotificationDueSignal>> PollAsync(CancellationToken ct = default)
+        {
+            if (OnPoll is not null)
+            {
+                return Task.FromResult(OnPoll());
+            }
+
+            return Task.FromResult(_batches.TryDequeue(out var batch)
+                ? batch
+                : (IReadOnlyList<NotificationDueSignal>)[]);
+        }
+    }
+
+    /// <summary>A scripted <see cref="IPiiResolveClient"/>: answers a fixed field map (empty by default —
+    /// the shredded/no-surface outcome), records every resolve, and can be told to throw (the
+    /// resolve-surface-down transient case).</summary>
+    public sealed class FakePiiResolveClient : IPiiResolveClient
+    {
+        public Dictionary<string, string> Pii { get; } = new(StringComparer.Ordinal);
+
+        public List<(Guid SubjectRef, IReadOnlyList<string> Fields)> Resolves { get; } = [];
+
+        public Exception? ThrowOnResolve { get; set; }
+
+        public Task<IReadOnlyDictionary<string, string>> ResolveAsync(
+            Guid subjectRef, IReadOnlyList<string> fields, CancellationToken ct = default)
+        {
+            if (ThrowOnResolve is not null)
+            {
+                throw ThrowOnResolve;
+            }
+
+            Resolves.Add((subjectRef, fields));
+            IReadOnlyDictionary<string, string> resolved =
+                Pii.Where(pair => fields.Contains(pair.Key, StringComparer.Ordinal))
+                    .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+            return Task.FromResult(resolved);
+        }
     }
 }

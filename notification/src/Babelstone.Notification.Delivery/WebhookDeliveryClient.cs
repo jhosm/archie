@@ -79,9 +79,13 @@ public sealed class WebhookDeliveryClient(
     /// </summary>
     /// <param name="record">The outbox record being attempted (its signal + enqueue instant ride the envelope).</param>
     /// <param name="attempt">This attempt's 1-based number (<c>record.Attempts + 1</c> at the call site).</param>
+    /// <param name="rendered">The per-attempt rendered notice for an EVENT_DRIVEN delivery
+    /// (bd babelstone-60n8.7) — carried on the envelope's <c>rendered</c> slot and DISCARDED with the
+    /// request (its PII is transient by contract, ADR-PC-025 §PII); <see langword="null"/> for the
+    /// SCHEDULED leg, whose rendering is the downstream consumer's (ADR-PC-025 Decision 2).</param>
     /// <param name="ct">Cancellation from the worker loop.</param>
     public async Task<WebhookDeliveryResult> DeliverAsync(
-        DeliveryRecord record, int attempt, CancellationToken ct = default)
+        DeliveryRecord record, int attempt, RenderedNotice? rendered = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(record);
         ArgumentOutOfRangeException.ThrowIfLessThan(attempt, 1);
@@ -101,7 +105,11 @@ public sealed class WebhookDeliveryClient(
                 signal.TriggerKind,
                 signal.CausationId,
                 signal.Data,
-                signal.DueAt));
+                signal.DueAt),
+            Rendered: rendered is null
+                ? null
+                : new RenderedPayload(
+                    rendered.TemplateRef, rendered.TemplatePackVersion, rendered.Fields, rendered.PiiResolved));
 
         // Serialise ONCE and sign the exact string sent — the §D3 signature covers the raw body byte for
         // byte, so the body must not be re-serialised after signing.
@@ -185,13 +193,25 @@ public sealed class WebhookDeliveryClient(
     }
 
     /// <summary>The ADR-IC-011 §P2 delivery envelope: the stable idempotency key, the per-attempt
-    /// bookkeeping, and the notification payload the consumer renders from.</summary>
+    /// bookkeeping, the notification payload the consumer renders from, and — for an EVENT_DRIVEN
+    /// delivery — the notice this estate already rendered (<c>rendered</c> is <c>null</c> on the
+    /// SCHEDULED leg, where rendering is the consumer's).</summary>
     private sealed record WebhookEnvelope(
         Guid IdempotencyKey,
         int DeliveryAttempt,
         Guid EventId,
         DateTimeOffset OccurredAt,
-        NotificationPayload Notification);
+        NotificationPayload Notification,
+        RenderedPayload? Rendered);
+
+    /// <summary>The rendered-notice slot (bd babelstone-60n8.7): the full interpolation field set — the
+    /// structural values plus the render-time-resolved PII, which exists ONLY on this in-flight request
+    /// (ADR-PC-025 §PII; the outbox record behind it stays structural).</summary>
+    private sealed record RenderedPayload(
+        string TemplateRef,
+        string TemplatePackVersion,
+        IReadOnlyDictionary<string, string> Fields,
+        bool PiiResolved);
 
     /// <summary>The <c>NotificationDue</c> business payload on the wire (ADR-PC-025 Decision 1) — the same
     /// field set the governed Avro schema carries, in the snake_case JSON the repo's HTTP contracts use.</summary>

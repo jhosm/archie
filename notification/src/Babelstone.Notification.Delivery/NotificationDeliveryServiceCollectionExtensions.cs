@@ -48,6 +48,14 @@ public static class NotificationDeliveryServiceCollectionExtensions
                 + "environment/secret store (never committed, never logged).");
         }
 
+        // The PII fields the EVENT_DRIVEN renderer resolves (ADR-PC-025 §PII), configurable as an array
+        // under Notification:Webhook:PiiFields; the name/NIF default matches the ADR-PC-025 example set.
+        var piiFields = configuration.GetSection($"{ConfigSection}:PiiFields").GetChildren()
+            .Select(child => child.Value)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .ToArray();
+
         var options = new WebhookDeliveryOptions
         {
             EndpointUrl = endpointUrl,
@@ -60,6 +68,7 @@ public static class NotificationDeliveryServiceCollectionExtensions
             TemplatePackVersion =
                 configuration[$"{ConfigSection}:TemplatePackVersion"]
                 ?? configuration.GetValue("Engine:PackVersion", "pt.2026.1")!,
+            PiiFields = piiFields.Length > 0 ? piiFields : ["name", "nif"],
         };
         services.AddSingleton(options);
 
@@ -85,6 +94,28 @@ public static class NotificationDeliveryServiceCollectionExtensions
         // sink through its optional INotificationDeliverySink parameter and hands every newly-raised
         // reminder to the outbox.
         services.AddSingleton<INotificationDeliverySink, ScheduledReminderDeliverySink>();
+
+        // The EVENT_DRIVEN ingress seam (bd babelstone-60n8.7): dormant Null source until the engine-side
+        // EVENT_DRIVEN emission + its bus consumer land — TryAdd, so composing the real consumer later
+        // replaces it with no other change (see INotificationDueSource remarks).
+        services.TryAddSingleton<INotificationDueSource, NullNotificationDueSource>();
+
+        // Render-time PII resolution (ADR-PC-025 §PII): the renderer asks the ENGINE by reference, per
+        // attempt, over the published resolve surface — a NAMED factory client on the engine API endpoint
+        // (a service ENDPOINT, not a credential; the same posture and fallback chain as the host's read
+        // client). PII rides one POST transiently and is never persisted.
+        var engineBaseUrl =
+            configuration["Engine:BaseUrl"]
+            ?? configuration.GetConnectionString("Engine")
+            ?? Environment.GetEnvironmentVariable("BABELSTONE_ENGINE_BASE_URL")
+            ?? throw new InvalidOperationException(
+                "Webhook delivery is configured but no engine API base URL is. Set Engine:BaseUrl, "
+                + "ConnectionStrings:Engine, or BABELSTONE_ENGINE_BASE_URL — the EVENT_DRIVEN renderer "
+                + "resolves PII at render time over the engine's resolve surface (ADR-PC-025 §PII).");
+        services.AddHttpClient(EnginePiiResolveClient.HttpClientName, http =>
+            http.BaseAddress = new Uri(engineBaseUrl.EndsWith('/') ? engineBaseUrl : engineBaseUrl + "/"));
+        services.AddSingleton<IPiiResolveClient, EnginePiiResolveClient>();
+        services.AddSingleton<INoticeRenderer, PiiResolvingNoticeRenderer>();
 
         // The outbound HTTP leg: a NAMED factory client (never captured — the singleton delivery client
         // asks the factory per attempt, so handler rotation keeps working) with redirects OFF: the

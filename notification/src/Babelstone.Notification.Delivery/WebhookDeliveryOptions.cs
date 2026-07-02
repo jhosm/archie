@@ -46,6 +46,11 @@ public sealed class WebhookDeliveryOptions
     /// outbound signals pin that version; true per-instance pinning (ADR-PC-009) rides in when the read
     /// surface exposes the instance's pinned version.</summary>
     public required string TemplatePackVersion { get; init; }
+
+    /// <summary>The PII field names the EVENT_DRIVEN renderer resolves at render time against the
+    /// engine's PII-resolve surface (ADR-PC-025 §PII — e.g. the name/NIF a maturity notice interpolates).
+    /// <c>Notification:Webhook:PiiFields</c>; resolved by reference per attempt, never persisted.</summary>
+    public IReadOnlyList<string> PiiFields { get; init; } = ["name", "nif"];
 }
 
 /// <summary>

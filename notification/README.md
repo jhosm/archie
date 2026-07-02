@@ -69,19 +69,35 @@ API endpoint (`Engine:BaseUrl`, a service endpoint not a credential), registers 
 on the shared `Babelstone.Engine` ActivitySource (`service.name=babelstone-notification`) from the
 SDK-free `Babelstone.Telemetry` leaf — not the engine kernel.
 
+**`src/Babelstone.Notification.Delivery/`** — the **delivery half** (bd `babelstone-60n8.4` /
+`babelstone-60n8.7`): the ADR-IC-004 per-service **delivery outbox** drained by an
+[ADR-IC-011](../docs/product-management/integration_concepts/adrs/ADR-IC-011-async-saga-completion-notification.md)
+**HMAC-SHA256-signed webhook** client — at-least-once, §D4 exponential backoff (±25% jitter,
+Retry-After honoured, permanent-4xx abandon, exhaustion dead-letter), idempotency anchored on the
+composite `notification_id` ([ADR-PC-025](../docs/product-management/product_concepts/adrs/ADR-PC-025-customer-notification-emit-contract.md)
+slot 4, consumer-side dedupe). ONE transport for BOTH legs, parameterised by `trigger_kind`: the
+SCHEDULED leg arrives through the core's `INotificationDeliverySink` port; the EVENT_DRIVEN leg drains an
+`INotificationDueSource` bus seam into the SAME outbox and renders the instance-pinned template per
+attempt with **render-time PII resolution** over the engine's resolve surface (ADR-PC-025 §PII — PII
+rides one POST transiently, never the outbox, never the bus). Family-agnostic like the core (gated by
+`NOTIFICATION_FAMILY_AGNOSTIC`); composed by one host line
+(`AddNotificationWebhookDelivery`, dormant until `Notification:Webhook:EndpointUrl` is configured).
+
 **Family contributions** live family-side, not here — the term-deposit maturity-reminder rule (its
 opt-out-window width pack-sourced via configuration, [ADR-PC-007](../docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md))
 is `families/term-deposit/src/Babelstone.Families.TermDeposit.Notification/`, which references this core
 only (the `family → core` arrow).
 
-> Status: **family-agnostic scheduler shipped, emission deferred.** The estate owns the clock, polls the
-> maturity calendar, and raises a deduplicated list of *due* reminders (bd `babelstone-60n8.2` timing
-> loop + the [ADR-IC-019](../docs/product-management/integration_concepts/adrs/ADR-IC-019-family-agnostic-notification-platform.md)
-> §D1 family-agnostic split). What is **not** built yet: turning a raised reminder into a `NotificationDue`
-> outbox event (bd `babelstone-60n8.3` emission contract, blocked on the downstream-producer schema home),
-> and the whole **delivery half** — rendering, PII resolution, channel send — which is the downstream
-> communications system ([ADR-PC-025](../docs/product-management/product_concepts/adrs/ADR-PC-025-customer-notification-emit-contract.md))
-> and ADR-IC-011's still-unbuilt delivery service. The dedupe ledger is in-memory v1; a durable store
-> lands with emission. Extraction-ready subtree per
+> Status: **scheduler + webhook delivery shipped; bus consumer and durable stores deferred.** The estate
+> owns the clock, polls the maturity calendar, raises deduplicated *due* reminders (bd `babelstone-60n8.2`
+> + the [ADR-IC-019](../docs/product-management/integration_concepts/adrs/ADR-IC-019-family-agnostic-notification-platform.md)
+> §D1 family-agnostic split), and now **delivers** them over the ADR-IC-011 signed webhook through the
+> ADR-IC-004 outbox (bd `babelstone-60n8.4`), with the EVENT_DRIVEN leg sharing the same transport
+> (bd `babelstone-60n8.7`). What is **not** built yet: the engine-side EVENT_DRIVEN `NotificationDue`
+> emission and its Redpanda consumer (the `INotificationDueSource` seam ships a Null default until then),
+> the engine's `GET /v1/pii/resolve` surface (the client tolerates its absence — notices render
+> structurally), the §D4 `NotificationDeliveryExhausted` backbone event, and activation in `Program.cs`
+> (one `AddNotificationWebhookDelivery` composition line). The dedupe ledger and the delivery outbox are
+> in-memory v1; durable, crash-surviving stores land together. Extraction-ready subtree per
 > [ADR-PC-019 §P2](../docs/product-management/product_concepts/adrs/ADR-PC-019-repository-strategy-monorepo.md);
 > placement per [ADR-IC-013](../docs/product-management/integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md).
