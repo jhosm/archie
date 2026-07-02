@@ -1,0 +1,156 @@
+# CD deploy ServiceAccount — least-privilege credential for cd.yml's promote lane
+# (bd babelstone-zla1.12.1; ADR-IC-013 CD design; least-privilege per ADR-IC-016 §3 /
+# ADR-PC-004 §A1's scoped-credential posture).
+#
+# Plain English: the deploy pipeline used to log in with the cluster's master key
+# (the cluster-admin kubeconfig hetzner-k3s generates). If that leaked it could read
+# every secret in the cluster and could not be revoked without rebuilding the cluster
+# CA. This file creates a narrow "deployer" identity instead: a ServiceAccount that
+# may apply exactly the kinds `kustomize build overlays/staging` renders, inside the
+# babelstone-staging namespace, and nothing else. Its token CAN be revoked — delete
+# the token Secret (or the whole ServiceAccount) and mint a new one.
+#
+# Applied ONCE at Phase-2 bootstrap (with the operator's cluster-admin kubeconfig,
+# like everything in this directory), AFTER the namespace exists — see ./README.md.
+# Then mint the CD kubeconfig with scripts/cd-kubeconfig.sh and store it as the
+# KUBECONFIG_B64 environment secret; cd.yml refuses a cluster-admin credential at
+# apply time (it probes `kubectl auth can-i '*' '*'` and fails closed).
+#
+# Lives in bootstrap/ (not the kustomization) on purpose: it is cluster-setup applied
+# by a HUMAN with admin rights, not something the overlay apply should self-grant.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cd-deployer
+  namespace: babelstone-staging
+  labels:
+    app.kubernetes.io/name: cd-deployer
+    app.kubernetes.io/part-of: babelstone
+---
+# Long-lived token for the ServiceAccount (k8s 1.24+ no longer auto-creates these).
+# This IS the credential cd.yml holds (inside the kubeconfig scripts/cd-kubeconfig.sh
+# mints) — a stored secret is the accepted v1 trade-off; the later/production step is
+# a short-lived per-run token via OIDC federation instead (recorded in the bd issue).
+# Revoke by deleting this Secret; re-mint with cd-kubeconfig.sh.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cd-deployer-token
+  namespace: babelstone-staging
+  labels:
+    app.kubernetes.io/name: cd-deployer
+    app.kubernetes.io/part-of: babelstone
+  annotations:
+    kubernetes.io/service-account.name: cd-deployer
+type: kubernetes.io/service-account-token
+---
+# Namespaced Role — the verbs `kubectl apply -k overlays/staging` actually needs
+# (get + create + patch for client-side apply; list/update for kubectl's diffing and
+# annotation rewrites), on exactly the kinds the overlay renders. No wildcard, no
+# delete (except Jobs, below), and NO general secret read/write.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cd-deployer
+  namespace: babelstone-staging
+  labels:
+    app.kubernetes.io/name: cd-deployer
+    app.kubernetes.io/part-of: babelstone
+rules:
+  # Core kinds the render carries: Services, ConfigMaps (generated kong/otel/rules
+  # configs), the backstage-db PVC, and the volume-snapshotter ServiceAccount.
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "persistentvolumeclaims", "serviceaccounts"]
+    verbs: ["get", "list", "create", "patch", "update"]
+  # Secrets: GET only, and only the two named operator-provisioned Secrets — the
+  # placeholder-vs-real preflight (scripts/cd-secret-preflight.sh --live,
+  # bd babelstone-zla1.12.4) reads them before apply. The overlay renders NO Secret
+  # bodies (the dev placeholders are dropped from the staging render), so the
+  # deployer never needs secret create/patch — and deliberately doesn't get it:
+  # a leaked deploy token cannot overwrite the real credentials.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["babelstone-dev-secrets", "babelstone-backup-secret"]
+    verbs: ["get"]
+  # Workloads: the base/apps Deployments + the postgres/redpanda/registry/backstage-db
+  # StatefulSets.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "create", "patch", "update"]
+  # Jobs (event-store migration, logto db init/alteration) + CronJobs (backups,
+  # volume snapshots, logto key rotation). Jobs additionally need DELETE: a Job's
+  # template is immutable, so promoting a changed migration/init Job requires
+  # delete-and-recreate (the previous run is usually already TTL-reaped).
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "create", "patch", "update"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "patch", "update", "delete"]
+  # The public-edge Ingresses (app/api/backstage/auth hosts).
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "create", "patch", "update"]
+  # The overlay renders the volume-snapshotter Role/RoleBinding
+  # (volume-snapshot-cronjob.yaml), so the deployer must be able to apply RBAC…
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "create", "patch", "update"]
+  # …and RBAC escalation-prevention requires the grantor to HOLD every permission it
+  # grants: this mirrors the volume-snapshotter Role's rules exactly (the deployer
+  # never creates snapshots itself; without this, applying that Role is Forbidden).
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["create", "get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cd-deployer
+  namespace: babelstone-staging
+  labels:
+    app.kubernetes.io/name: cd-deployer
+    app.kubernetes.io/part-of: babelstone
+subjects:
+  - kind: ServiceAccount
+    name: cd-deployer
+    namespace: babelstone-staging
+roleRef:
+  kind: Role
+  name: cd-deployer
+  apiGroup: rbac.authorization.k8s.io
+---
+# The ONE cluster-scoped grant: the overlay render includes the Namespace object
+# itself, so `kubectl apply` must get/patch it (re-asserting the Pod Security
+# Admission labels). Scoped by resourceNames to babelstone-staging only. NOTE:
+# `create` cannot be name-restricted in RBAC, so it is deliberately absent — the
+# namespace is created once at bootstrap by the human operator (see ./README.md);
+# the deployer can only converge the one namespace that already exists.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cd-deployer-namespace
+  labels:
+    app.kubernetes.io/name: cd-deployer
+    app.kubernetes.io/part-of: babelstone
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    resourceNames: ["babelstone-staging"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cd-deployer-namespace
+  labels:
+    app.kubernetes.io/name: cd-deployer
+    app.kubernetes.io/part-of: babelstone
+subjects:
+  - kind: ServiceAccount
+    name: cd-deployer
+    namespace: babelstone-staging
+roleRef:
+  kind: ClusterRole
+  name: cd-deployer-namespace
+  apiGroup: rbac.authorization.k8s.io
