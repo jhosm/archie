@@ -2625,6 +2625,10 @@ body.console-open .hint-bar { display:none; }
   }
   function renderMetrics() {
     var box = el("metricsGrid"); if (!box) return;
+    // DEMO renders the illustrative in-browser tallies; LIVE·engine / LIVE·saga drive the five
+    // SLI cards from REAL Prometheus series through serve.py's GET-only /prom arm
+    // (bd babelstone-f0ic.15.6) — the same demo/live split as the other lenses.
+    if (state.mode !== "demo") return renderMetricsLive(box);
     var w = 180, h = 26;
     box.innerHTML = Object.keys(METRICS).map(function (k) {
       var m = METRICS[k];
@@ -2632,6 +2636,75 @@ body.console-open .hint-bar { display:none; }
         '<span class="m-val">' + m.v + (m.unit ? '<span class="u">' + m.unit + '</span>' : '') + '</span></div>' +
         '<svg class="m-spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' + dwSpark(m.series, w, h) + '</svg>' +
         '<div class="m-help">' + m.help + '</div></div>';
+    }).join("");
+  }
+
+  /* ── LIVE Metrics lens (bd babelstone-f0ic.15.6) ─────────────────────────────────────────
+     Each of the five cards maps to a VERIFIED emitted instrument on the shared Babelstone meter
+     (exported OTLP → Collector → Prometheus, ADR-IC-007):
+       · commands_total / command_dedup_hits_total / events_appended_total — the engine
+         command-surface counters added with this issue (AggregateRuntime shell +
+         MeteredCommandLog; ADR-PC-029 slot 4 makes the dedup hit visible, since the ledger
+         collision itself is silent);
+       · outbox_publish_lag_seconds — the ADR-IC-004 oldest-PENDING-age gauge (converted to ms
+         for the card, matching the demo card's unit);
+       · inbox_handled_total — the consumer-inbox first-time-handled counter (G.2).
+     Values come from Prometheus range queries over the last 15 minutes (the series IS the
+     sparkline); a card whose series is absent says so instead of faking a zero. PII was stripped
+     at emit by the metric View allowlist — only structural dimensions exist in this store.     */
+  var LIVE_SLIS = [
+    { key: "commands_total",           q: "sum(commands_total)",            unit: "",   help: "commands applied at the engine command surface · runtime-shell counter" },
+    { key: "command_dedup_hits_total", q: "sum(command_dedup_hits_total)",  unit: "",   help: "idempotent replays refused a second apply (ADR-PC-029 slot 4) — the only visible trace of a silent dedup" },
+    { key: "events_appended_total",    q: "sum(events_appended_total)",     unit: "",   help: "immutable facts committed to the log (counted per event, post-commit)" },
+    { key: "outbox_publish_lag_ms",    q: "outbox_publish_lag_seconds * 1000", unit: "ms", help: "oldest PENDING outbox row age (the ADR-IC-004 SLI gauge · seconds→ms)", gauge: true },
+    { key: "inbox_handled_total",      q: "sum(inbox_handled_total)",       unit: "",   help: "records consumed exactly once downstream (inbox first-time handles)" }
+  ];
+  var liveMetrics = { series: {}, state: "idle", err: null, ts: 0 };
+
+  async function loadLiveMetrics() {
+    var now = Date.now();
+    if (liveMetrics.state === "loading") return;
+    if ((liveMetrics.state === "loaded" || liveMetrics.state === "error") && (now - liveMetrics.ts) < 3000) return;  // debounce
+    liveMetrics.state = "loading";
+    var endS = Math.floor(Date.now() / 1000), startS = endS - 15 * 60, step = 15;
+    try {
+      await Promise.all(LIVE_SLIS.map(async function (s) {
+        var url = API_BASE + "/prom/api/v1/query_range?query=" + encodeURIComponent(s.q)
+          + "&start=" + startS + "&end=" + endS + "&step=" + step;
+        var res = await fetch(url);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        var doc = await res.json();
+        var result = doc && doc.data && doc.data.result;
+        var values = (result && result.length && result[0].values) || [];
+        liveMetrics.series[s.key] = values.map(function (p) { return Number(p[1]); });
+      }));
+      liveMetrics.state = "loaded"; liveMetrics.err = null;
+    } catch (e) {
+      liveMetrics.state = "error"; liveMetrics.err = (e && e.message) ? e.message : String(e);
+    } finally {
+      liveMetrics.ts = Date.now();
+      if (state.tab === "metrics" && state.mode !== "demo") renderMetrics();
+    }
+  }
+  function fmtMetric(v, gauge) {
+    if (v == null || isNaN(v)) return "—";
+    return gauge ? (Math.round(v * 10) / 10).toLocaleString("en-IE") : Math.round(v).toLocaleString("en-IE");
+  }
+  function renderMetricsLive(box) {
+    loadLiveMetrics();   // debounced; re-renders when it settles
+    var st = liveMetrics, w = 180, h = 26;
+    if (st.state === "error" && !Object.keys(st.series).length) {
+      box.innerHTML = '<div class="dpane-empty">Prometheus not reachable via <code>/prom</code> (' + esc(st.err || "") + '). Bring up the LGTM stack (<code>docker compose -f infra/compose.yaml up -d otel-collector grafana-lgtm</code>) and run a command.</div>';
+      return;
+    }
+    box.innerHTML = LIVE_SLIS.map(function (s) {
+      var series = st.series[s.key];
+      var has = series && series.length;
+      var val = has ? series[series.length - 1] : null;
+      return '<div class="metric"><div class="m-top"><span class="m-name">' + s.key + ' <span style="color:var(--verify)">· live</span></span>' +
+        '<span class="m-val">' + fmtMetric(val, s.gauge) + (s.unit ? '<span class="u">' + s.unit + '</span>' : '') + '</span></div>' +
+        '<svg class="m-spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' + (has ? dwSpark(series, w, h) : '') + '</svg>' +
+        '<div class="m-help">' + s.help + (has ? '' : ' · <i>no series yet — run a command (Prometheus scrapes the OTLP pipe every few seconds)</i>') + '</div></div>';
     }).join("");
   }
   function renderLogs() {
@@ -2759,6 +2832,8 @@ body.console-open .hint-bar { display:none; }
     liveLogs = { rows: [], state: "idle", err: null, ts: 0, trace: null };
     // And the LIVE Outbox·Inbox lens cache (bd babelstone-f0ic.15.5) — re-read the tables fresh.
     liveTransport = { data: null, state: "idle", err: null, ts: 0 };
+    // And the LIVE Metrics lens cache (bd babelstone-f0ic.15.6) — re-query Prometheus fresh.
+    liveMetrics = { series: {}, state: "idle", err: null, ts: 0 };
     Object.keys(METRICS).forEach(function (k) { METRICS[k].v = 0; METRICS[k].series = METRICS[k].gauge ? [] : [0]; });
     renderTopic(); renderTransport(); renderMetrics(); renderLogs();
   }
