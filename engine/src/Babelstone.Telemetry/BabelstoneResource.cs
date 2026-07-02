@@ -39,6 +39,15 @@ public static class BabelstoneResource
     /// estate namespace alongside the engine and orchestrator.</summary>
     public const string NotificationServiceName = "babelstone-notification";
 
+    /// <summary>The lifecycle-command driver host's <c>service.name</c> (ADR-PC-036 §Decision 2 /
+    /// ADR-IC-011 / ADR-IC-013 in-house estate). The clock-owning sibling worker that ticks a cadence,
+    /// finds the lifecycle steps due as-of today, and POSTs each to the engine's ADR-PC-029 command
+    /// surface; its spans (the per-tick <c>cadence.pass</c> and the per-command <c>lifecycle.dispatch</c>,
+    /// opened on the SHARED <c>Babelstone.Engine</c> source) carry this identity, so the driver shows up
+    /// as a distinct service under the one estate namespace alongside the engine, orchestrator and
+    /// notification worker.</summary>
+    public const string LifecycleServiceName = "babelstone-lifecycle";
+
     /// <summary>
     /// Resolves <c>deployment.environment</c> from <c>DOTNET_ENVIRONMENT</c>, then
     /// <c>ASPNETCORE_ENVIRONMENT</c>. <b>Fails fast</b>: when neither variable is set (or both are

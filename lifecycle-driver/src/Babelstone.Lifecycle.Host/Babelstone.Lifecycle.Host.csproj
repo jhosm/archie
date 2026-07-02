@@ -47,6 +47,25 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- OpenTelemetry SDK + OTLP exporter (ADR-IC-007 Layer 1), the same two packages the notification host
+         brings: AddOpenTelemetry/ConfigureResource/WithTracing/WithLogging (Extensions.Hosting) and the OTLP
+         exporter. The SDK is wired only in the runnable host, never the extraction-ready cores. -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The SDK-free shared telemetry LEAF (ADR-PC-019 §P2): BabelstoneResource (the OBS-1 resource stamp),
+         the babelstone.* attribute contract, and the shared Babelstone.Engine ActivitySource the host registers
+         and turns on. Referenced by the runnable host exactly as the notification host references it. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+
+    <!-- The telemetry HOSTING seam: AddBabelstonePiiGuard (the runtime emit-time no-PII guard, OBS-3), wired on
+         both the trace and log pipelines above. Host-only, carrying no engine-kernel or family path. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The lifecycle-command driver CORE (the per-tick pass, the dispatch ledger, the command-POST sink, the
          family-rule + module ports IFamilyLifecycleModule / ILifecycleCommandRule + LifecycleModuleContext, and
          the clock-owning LifecycleWorker). The host composes it; the core never references back and names no

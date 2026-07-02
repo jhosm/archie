@@ -71,6 +71,15 @@
          and NOT a §P2 spine project, so this reference is sound. -->
     <ProjectReference Include="../../../engine/src/Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
 
+    <!-- The SDK-free shared telemetry LEAF (ADR-PC-019 §P2): the versioned babelstone.* span-attribute /
+         span-name contract (BabelstoneAttributes) and the shared Babelstone.Engine ActivitySource
+         (BabelstoneTelemetry) the sink opens its `lifecycle.dispatch` span on. Referencing it here (as the
+         notification host does) is sound — Babelstone.Telemetry is a leaf contract assembly, NOT a family
+         (LIFECYCLE_FAMILY_AGNOSTIC forbids only families/**) and NOT an engine spine project; it carries no
+         OTel SDK or engine-kernel path. The core stays clockless-engine-honoring: it names the telemetry
+         CONTRACT, not the engine byte store. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+
     <!-- NOTE: the driver core references NO families/** project — the family → core arrow holds one-way
          (ADR-IC-019 §P2). The per-family rules (MaturityRule, InstallmentRule) and the Npgsql read-model stores
          they range-scan now live in the Babelstone.Families.*.Lifecycle CONTRIBUTIONS, which the HOST discovers

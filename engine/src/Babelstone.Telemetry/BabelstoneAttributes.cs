@@ -51,6 +51,26 @@ public static class BabelstoneAttributes
     public const string SpanWithholdingApplied = "withholding.applied";
 
     /// <summary>
+    /// Manual span name for ONE lifecycle-command dispatch (ADR-PC-036 §Decision 2): the lifecycle
+    /// driver's HTTP sink POSTs a single due command to the engine's ADR-PC-029 command surface. Opened in
+    /// the impure sink shell (never a pure schedule pass or fold), it nests under the driver worker's
+    /// per-tick <c>cadence.pass</c> span, so a tick's dispatches read as a connected chain in the trace.
+    /// <c>&lt;entity&gt;.&lt;operation&gt;</c> per ADR-IC-007. It carries only structural tags
+    /// (<see cref="PartitionKey"/> for the target stream, <see cref="LifecycleCommandKind"/>,
+    /// <see cref="LifecycleOccurrenceKey"/>) — never PII (ADR-PC-004 / OBS_NO_PII_ATTRS).
+    /// </summary>
+    public const string SpanLifecycleDispatch = "lifecycle.dispatch";
+
+    /// <summary>The STABLE lifecycle command-kind code the dispatch targets (e.g. <c>pay_installment</c>,
+    /// <c>mature_deposit</c> — ADR-PC-036 §Decision 1). A kind name, never PII.</summary>
+    public const string LifecycleCommandKind = "babelstone.lifecycle.command_kind";
+
+    /// <summary>The STABLE per-occurrence key the dispatch is for (the installment number, or <c>1</c> for a
+    /// one-shot maturity — ADR-PC-036 §Decision 3). A structural ordinal that makes a dispatch span
+    /// idempotency-addressable; never PII.</summary>
+    public const string LifecycleOccurrenceKey = "babelstone.lifecycle.occurrence_key";
+
+    /// <summary>
     /// Manual span name for ONE saga-advance step (H.5): the orchestrator drives a saga forward
     /// from one inbound event, decides the legal transition (ADR-IC-003), and emits the
     /// decided commands. The span is opened in the impure advance shell, parented to the inbound

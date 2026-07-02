@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -46,16 +47,25 @@ public class CadenceWorker : BackgroundService
     private readonly TimeProvider _clock;
     private readonly ILogger _logger;
 
+    // The SHARED Babelstone.Engine ActivitySource, injected by the host (which owns the OTel wiring and the
+    // Babelstone.Telemetry contract). It arrives as a plain BCL ActivitySource so this generic library stays
+    // framework-only and extraction-ready (ADR-PC-019 §P2 — no engine/src or family reference): the host,
+    // not cadence, names Babelstone.Telemetry. Optional/nullable: a host that wires no tracer (or a test)
+    // leaves it null and the per-tick span becomes a no-op, exactly like an unlistened ActivitySource.
+    private readonly ActivitySource? _activitySource;
+
     public CadenceWorker(
         ISchedulePass schedulePass,
         CadenceSchedulerOptions options,
         TimeProvider clock,
-        ILogger logger)
+        ILogger logger,
+        ActivitySource? activitySource = null)
     {
         _schedulePass = schedulePass ?? throw new ArgumentNullException(nameof(schedulePass));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _activitySource = activitySource;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -72,7 +82,7 @@ public class CadenceWorker : BackgroundService
                 // The worker owns the clock: derive TODAY here (not in the schedule pass, which stays a
                 // deterministic function of the as-of date — ADR-PC-023 §6).
                 var asOf = DateOnly.FromDateTime(_clock.GetUtcNow().UtcDateTime);
-                await _schedulePass.RunOnceAsync(asOf, stoppingToken);
+                await RunPassAsync(asOf, stoppingToken);
 
                 backoff = _options.PollInterval; // a clean pass resets the backoff
                 await Task.Delay(_options.PollInterval, _clock, stoppingToken);
@@ -99,6 +109,31 @@ public class CadenceWorker : BackgroundService
 
                 backoff = backoff < MaxBackoff ? backoff + backoff : MaxBackoff;
             }
+        }
+    }
+
+    // One per-tick pass, wrapped in the manual `cadence.pass` span (ADR-IC-007 <entity>.<operation>). The span
+    // is opened in this impure loop shell — never inside the pass, which stays a deterministic function of the
+    // as-of date (ADR-PC-023 §6). The span name and the `babelstone.as_of` tag key are string literals rather
+    // than Babelstone.Telemetry constants ON PURPOSE: this library is extraction-ready and must not reference
+    // engine/src (ADR-PC-019 §P2), so it cannot name BabelstoneAttributes; the literals mirror that contract's
+    // values (`BabelstoneAttributes.AsOf`). With no injected source or no listener, StartActivity returns null
+    // and this is a near-zero-cost no-op. The as-of date is a plain calendar date — structural, never PII.
+    private async Task RunPassAsync(DateOnly asOf, CancellationToken stoppingToken)
+    {
+        using var activity = _activitySource?.StartActivity("cadence.pass");
+        activity?.SetTag("babelstone.as_of", asOf.ToString("O"));
+        try
+        {
+            await _schedulePass.RunOnceAsync(asOf, stoppingToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Mark the tick's span as failed before it disposes, so a backpressure retry is visible in the
+            // trace as an errored pass; the exception still propagates to the loop's back-off handler. A
+            // cancellation (graceful shutdown) is filtered out above — it is not a pass failure.
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            throw;
         }
     }
 }

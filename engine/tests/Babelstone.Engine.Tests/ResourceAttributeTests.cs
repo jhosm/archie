@@ -30,6 +30,7 @@ public sealed class ResourceAttributeTests
     [InlineData("babelstone-rate-sheets-api")]
     [InlineData("babelstone-orchestrator")]
     [InlineData("babelstone-notification")]
+    [InlineData("babelstone-lifecycle")]
     public void Host_resource_carries_service_name_namespace_and_environment(string serviceName)
     {
         var attributes = WithEnvironment("Staging", () =>
