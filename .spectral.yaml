@@ -21,13 +21,13 @@
 extends: ["spectral:oas"]
 
 rules:
-  # ── ADR-IC-020 §P1 governance source-of-truth fields (mirror of AsyncAPI info.x-* set) ──
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (mirror of AsyncAPI info.x-* set) ──
   # Every catalogued OpenAPI spec MUST name a human owner, a contact for that owner, a
   # lifecycle status, a GDPR legal basis, and the authorised consumers — so the catalogue
   # never lists a REST API with no owner, no privacy basis, or an open-ended consumer set.
 
   babelstone-info-x-owner:
-    description: "info.x-owner is required — the owning team/service (ADR-IC-020 §P1)."
+    description: "info.x-owner is required — the owning team/service (ADR-IC-020 Decision §2)."
     message: "{{description}}"
     severity: error
     given: "$.info"
@@ -36,7 +36,7 @@ rules:
       function: truthy
 
   babelstone-info-x-owner-contact:
-    description: "info.x-owner-contact is required — how to reach the owner (ADR-IC-020 §P1)."
+    description: "info.x-owner-contact is required — how to reach the owner (ADR-IC-020 Decision §2)."
     message: "{{description}}"
     severity: error
     given: "$.info"
@@ -45,7 +45,7 @@ rules:
       function: truthy
 
   babelstone-info-x-status-present:
-    description: "info.x-status is required — the API lifecycle status (ADR-IC-020 §P1)."
+    description: "info.x-status is required — the API lifecycle status (ADR-IC-020 Decision §2)."
     message: "{{description}}"
     severity: error
     given: "$.info"
@@ -54,7 +54,7 @@ rules:
       function: truthy
 
   babelstone-info-x-status-enum:
-    description: "info.x-status MUST be one of active|deprecated|sunset (ADR-IC-020 §P1 closed enum)."
+    description: "info.x-status MUST be one of active|deprecated|sunset (ADR-IC-020 Decision §2 closed enum)."
     message: "{{description}} — got '{{value}}'."
     severity: error
     given: "$.info.x-status"
@@ -67,7 +67,7 @@ rules:
           - sunset
 
   babelstone-info-x-gdpr-legal-basis:
-    description: "info.x-gdpr-legal-basis is required — the GDPR Art.6 basis for the data this API touches (ADR-IC-020 §P1)."
+    description: "info.x-gdpr-legal-basis is required — the GDPR Art.6 basis for the data this API touches (ADR-IC-020 Decision §2)."
     message: "{{description}}"
     severity: error
     given: "$.info"
@@ -76,7 +76,7 @@ rules:
       function: truthy
 
   babelstone-info-x-authorized-consumers:
-    description: "info.x-authorized-consumers is required — the closed set of consumers allowed to call this API (ADR-IC-020 §P1)."
+    description: "info.x-authorized-consumers is required — the closed set of consumers allowed to call this API (ADR-IC-020 Decision §2)."
     message: "{{description}}"
     severity: error
     given: "$.info"
