@@ -8,6 +8,13 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>Babelstone.LoadHarness.Runner</RootNamespace>
     <AssemblyName>Babelstone.LoadHarness.Runner</AssemblyName>
+
+    <!-- The ADR-PC-040 §D2 covenant role: declared non-shipping TEST TOOLING (the ADR-PC-011
+         load-test harness), which — like a test project — legitimately names/references families to
+         drive them. NOT a composition root and NOT a family-agnostic core; the repo-wide
+         FAMILY_TO_CORE_DEFAULT_DENY gate skips TestRig projects the way it skips IsTestProject
+         ones, and the marker keeps the exemption explicit and greppable instead of silent. -->
+    <BabelstoneRole>TestRig</BabelstoneRole>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
