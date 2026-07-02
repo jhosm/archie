@@ -55,8 +55,14 @@ kubectl get pods -A           # Hetzner CCM + CSI driver come up automatically
 ```
 
 The generated `./kubeconfig` is a **cluster-admin credential** — it is gitignored and must never
-be committed. It is what the deploy pipeline consumes: base64 it into the `KUBECONFIG_B64` GitHub
-environment secret that [`.github/workflows/cd.yml`](../../.github/workflows/cd.yml) reads.
+be committed, and it is **for the human operator only** (bootstrap, break-glass). It is NOT what
+the deploy pipeline consumes: [`.github/workflows/cd.yml`](../../.github/workflows/cd.yml) refuses
+a cluster-admin credential at apply time (bd babelstone-zla1.12.1). Instead, at Phase-2 bootstrap
+you apply the scoped deploy RBAC
+([`../k8s/overlays/staging/bootstrap/cd-deploy-rbac.yaml`](../k8s/overlays/staging/bootstrap/cd-deploy-rbac.yaml))
+and mint the least-privilege `cd-deployer` kubeconfig with
+[`scripts/cd-kubeconfig.sh`](../../scripts/cd-kubeconfig.sh) — THAT is what goes into the
+`KUBECONFIG_B64` GitHub environment secret.
 
 ## Hand-off — what comes next
 

@@ -17,7 +17,9 @@
 config_format_version: 1            # required by hetzner-k3s v2.6.0+
 
 cluster_name: babelstone-staging    # prefixes every Hetzner resource name; lowercase + hyphen only
-kubeconfig_path: "./kubeconfig"     # cluster-admin credential — GITIGNORED, never commit (feeds cd.yml's KUBECONFIG_B64)
+kubeconfig_path: "./kubeconfig"     # cluster-admin credential — GITIGNORED, never commit; OPERATOR-ONLY
+                                    # (cd.yml's KUBECONFIG_B64 is the scoped cd-deployer SA kubeconfig
+                                    # minted by scripts/cd-kubeconfig.sh, never this file — zla1.12.1)
 
 # VERIFY before `create`: run `hetzner-k3s releases` and pin a currently-supported k3s release
 # (the latest patch of the minor you want). A hard-coded version goes stale.

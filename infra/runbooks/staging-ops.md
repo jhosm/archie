@@ -43,10 +43,15 @@ export HCLOUD_TOKEN=<read/write Hetzner Cloud API token>   # never commit; takes
 hetzner-k3s create --config cluster.yaml                   # creates the node + k3s + Hetzner CCM/CSI; writes ./kubeconfig
 ```
 
-The generated `./kubeconfig` is a cluster-admin credential — **gitignored, never committed**. It
-is the source for `cd.yml`'s `KUBECONFIG_B64` environment secret (`base64 < kubeconfig`). The
-Hetzner CCM + CSI driver come up automatically, so `hcloud-volumes` resolves for the durable-storage
-patch at Phase 3. Then continue with step 2 (DNS) → step 3 (`bootstrap/`, Phase 2) above.
+The generated `./kubeconfig` is a cluster-admin credential — **gitignored, never committed**, and
+**operator-only** (bootstrap + break-glass). It is *not* what `cd.yml` deploys with: the
+`KUBECONFIG_B64` environment secret must carry the least-privilege `cd-deployer` ServiceAccount
+kubeconfig instead (bd babelstone-zla1.12.1) — apply
+`infra/k8s/overlays/staging/bootstrap/cd-deploy-rbac.yaml` at Phase 2, then mint it with
+`scripts/cd-kubeconfig.sh` (walk-through in `bootstrap/README.md`; `cd.yml` probes and refuses a
+cluster-admin credential at apply time). The Hetzner CCM + CSI driver come up automatically, so
+`hcloud-volumes` resolves for the durable-storage patch at Phase 3. Then continue with step 2
+(DNS) → step 3 (`bootstrap/`, Phase 2) above.
 
 ## 2. Redeploy / promote a new build
 
