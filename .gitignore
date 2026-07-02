@@ -50,8 +50,11 @@ __pycache__/
 *.bak
 
 # Hetzner k3s provisioning (infra/hetzner-k3s) — the generated cluster-admin kubeconfig is a
-# credential (feeds cd.yml's KUBECONFIG_B64), never commit it.
+# credential (operator-only; cd.yml uses the scoped cd-deployer kubeconfig instead), never
+# commit it. The rendered cluster config carries the real SSH allow-list provision.sh
+# substitutes (bd babelstone-zla1.12.6) — environment-specific, never commit it either.
 /infra/hetzner-k3s/kubeconfig
+/infra/hetzner-k3s/cluster.rendered.yaml
 
 # Walking-skeleton demo runtime (scripts/demo-mcp.sh): logs + pidfiles
 /.demo-mcp/

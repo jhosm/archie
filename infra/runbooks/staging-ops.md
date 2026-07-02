@@ -54,8 +54,10 @@ single-node k3s); the full walk-through + prereqs are in
 ```bash
 cd infra/hetzner-k3s
 export HCLOUD_TOKEN=<read/write Hetzner Cloud API token>   # never commit; takes precedence over the config
-# replace REPLACE_ME/32 in cluster.yaml with your operator IP; pin a valid `hetzner-k3s releases` version
-hetzner-k3s create --config cluster.yaml                   # creates the node + k3s + Hetzner CCM/CSI; writes ./kubeconfig
+export SSH_ALLOWED_CIDR=<your operator IP>/32              # REQUIRED — provision.sh refuses REPLACE_ME / 0.0.0.0/0 / non-/32
+# pin a valid `hetzner-k3s releases` version in cluster.yaml, then:
+./provision.sh    # fail-closed SSH-allow-list preflight → renders cluster.rendered.yaml → `hetzner-k3s create`
+                  # (creates the node + k3s + Hetzner CCM/CSI; writes ./kubeconfig — bd babelstone-zla1.12.6)
 ```
 
 The generated `./kubeconfig` is a cluster-admin credential — **gitignored, never committed**, and
