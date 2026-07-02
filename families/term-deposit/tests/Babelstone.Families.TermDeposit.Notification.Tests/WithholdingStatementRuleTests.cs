@@ -19,7 +19,10 @@ namespace Babelstone.Families.TermDeposit.Notification.Tests;
 /// <item>a deposit whose withholding fell in a DIFFERENT year gets no statement for this one;</item>
 /// <item>an Erased deposit (no render-time PII) is not a statement target;</item>
 /// <item>each decision carries the <c>pt.notice.withholding_statement</c> template + the structural per-year
-/// cents figures (no PII — ADR-PC-025 PII rule).</item>
+/// cents figures (no PII — ADR-PC-025 PII rule);</item>
+/// <item>a PRE-FIELD withholding flow (a <c>WithholdingApplied</c> stored before the <c>WithheldOn</c> field
+/// existed, folding to <c>0001-01-01</c>) is SURFACED, not silently dropped from the tax-year slice
+/// (bd babelstone-60n8.9).</item>
 /// </list>
 /// The composite-id derivation and the "re-runs don't re-notify" dedupe are CORE concerns
 /// (<c>NotificationSchedulePass</c>), tested in Babelstone.Notification.Tests — a family rule never
@@ -181,6 +184,36 @@ public sealed class WithholdingStatementRuleTests
         var decisions = await rule.EvaluateAsync(Today);
 
         Assert.Empty(decisions);
+    }
+
+    [Fact]
+    public async Task A_pre_field_withholding_flow_is_surfaced_not_silently_dropped()
+    {
+        // Regression for bd babelstone-60n8.9. A WithholdingApplied event stored BEFORE the WithheldOn field
+        // existed (bd babelstone-60n8.8) folds to default(DateOnly) = 0001-01-01 on replay (deterministic, no
+        // clock — §P5 holds); over the read surface it arrives as a ledger entry whose withheld_on is
+        // 0001-01-01. The per-tax-year slice (entry.WithheldOn.Year == taxYear) can match NO real tax year, so
+        // without a guard it would SILENTLY drop the flow: here the deposit ALSO has a dated 2025 flow, so the
+        // rule would emit a 2025 statement summing ONLY the dated flow and silently OMIT the pre-field one —
+        // under-reporting a statutory figure. The rule must fail LOUD instead, naming the deposit, so the stream
+        // is backfilled before any statement is scheduled.
+        var d1 = Guid.NewGuid();
+        var handler = new RoutingHandler(
+            population: [Row(d1, "Matured")],
+            ledgers: new Dictionary<Guid, LedgerFlow[]>
+            {
+                [d1] =
+                [
+                    // Pre-field flow: no recoverable date → 0001-01-01, exactly what the fold produces.
+                    Flow(default, gross: 4_000, tax: 1_120, net: 2_880, "withholding"),
+                    Flow(new DateOnly(2025, 12, 31), gross: 5_000, tax: 1_400, net: 3_600, "withholding"),
+                ],
+            });
+        var rule = NewRule(handler);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => rule.EvaluateAsync(Today));
+        // The failure names the specific deposit so an operator knows exactly which stream to backfill.
+        Assert.Contains(d1.ToString(), ex.Message);
     }
 
     // --- helpers ---
