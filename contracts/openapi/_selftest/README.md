@@ -14,11 +14,11 @@ Cases (ADR-IC-020 / bd babelstone-ax0b.2 acceptance criteria):
 
 | case | defect | check it trips |
 | --- | --- | --- |
-| `missing-governance-field` | `engine-reads` spec drops `info.x-owner` | Spectral governance rule (ADR-IC-020 §P1) |
+| `missing-governance-field` | `engine-reads` spec drops `info.x-owner` | Spectral governance rule (ADR-IC-020 Decision §2) |
 | `spec-path-not-a-route` | a spec documents `GET /v1/nonexistent` | REVERSE reconcile (not a public Kong route) |
 | `route-with-no-spec` | the `engine-reads` spec is removed | FORWARD reconcile (public route with no spec) |
 | `post-deposits-command` | a spec documents `POST /v1/deposits` | negative invariant + REVERSE reconcile |
 
-The breaking-change gate (oasdiff, ADR-IC-020 §P4) is exercised by the real `--fail-on ERR` diff
+The breaking-change gate (oasdiff, ADR-IC-020 Decision §3) is exercised by the real `--fail-on ERR` diff
 against `origin/main`, not by this hermetic self-test (which uses untracked throwaway specs with no
 git baseline).

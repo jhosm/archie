@@ -12,7 +12,7 @@ info:
     The CQRS read surface for term deposits. One canonical read resource
     (GET /v1/deposits/{id}, optionally as-of a sequence) plus the maturities range scan.
     Read-only; no money moves here.
-  # ── ADR-IC-020 §P1 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
   x-owner: platform-engine
   x-owner-contact: platform-engine@babelstone.example
   x-status: active
