@@ -28,7 +28,32 @@ PC_ADRS="docs/product-management/product_concepts/adrs"
 IC_ADRS="docs/product-management/integration_concepts/adrs"
 CATALOGUE="$PC_ADRS/commitment-catalogue.md"
 # Buildable subtrees that may carry `// ADR-PC-NNN` code anchors (ADR-PC-019 §P1).
-CODE_DIRS="engine families orchestrator acl mcp-server notification lifecycle-driver cadence pack-validate contracts"
+#
+# Derived from the repo's tracked top-level directories minus an explicit exclusion
+# set, rather than hand-maintained: a new top-level estate dir (a future family or
+# boundary service) is auto-in-scope, so no Live commitment fails coverage merely
+# because its dir was forgotten (bd babelstone-64uw.4 — lifecycle-driver + cadence
+# previously had to be hand-added in PR #404 for a commitment to resolve).
+#
+# Excluded (everything that is NOT a compiled-source subtree carrying ADR anchors):
+#   - dot-dirs (.github, .beads, .claude, .config, .githooks, …) — tooling/CI/config;
+#   - docs / docfx — prose and generated reference, no code anchors;
+#   - infra — Docker/ops config, no compiled source;
+#   - scripts — the CI *.sh gates, resolved SEPARATELY below (see the scripts/*.sh
+#     Live-resolution branch), so it must stay out of CODE_DIRS;
+#   - packs / product-configs / rate-sheets / plugins / research — asset, config,
+#     regulatory-pack and plugin trees with no ADR-anchored compiled source.
+# Deriving (not hardcoding) means the exclusion list is the thing to maintain, and a
+# forgotten *new* code dir now fails open (in scope) instead of failing silently.
+CODE_EXCLUDE_DIRS="docs docfx infra scripts packs plugins product-configs rate-sheets research"
+CODE_DIRS=""
+while IFS= read -r d; do
+  case "$d" in .*) continue ;; esac                # dot-dirs are never code subtrees
+  skip=""
+  for x in $CODE_EXCLUDE_DIRS; do [ "$d" = "$x" ] && { skip=1; break; }; done
+  [ -n "$skip" ] && continue
+  CODE_DIRS="${CODE_DIRS:+$CODE_DIRS }$d"
+done < <(git ls-tree -d --name-only HEAD)
 # Only real source files carry anchors — not the scaffold's README.md / Dockerfile.
 CODE_INCLUDES=(--include='*.cs' --include='*.go' --include='*.py' --include='*.ts' --include='*.tsx' --include='*.sql' --include='*.fs')
 
