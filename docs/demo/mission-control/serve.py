@@ -112,6 +112,12 @@ LOKI_URL = os.environ.get("LOKI_URL", "http://localhost:3100").rstrip("/")
 # in infra/compose.yaml). The /registry/* arm is GET-ONLY: the provenance strip reads Distribution
 # v2 manifest/referrer metadata (a "signature referrer exists" badge) — it never pushes.
 REGISTRY_URL = os.environ.get("REGISTRY_URL", "http://localhost:5001").rstrip("/")
+# Prometheus inside the grafana-lgtm appliance (host port 9090, infra/compose.yaml — the P-PORTS
+# prereq, bd babelstone-f0ic.15.2). The /prom/* arm is GET-ONLY (Metrics lens, bd f0ic.15.6): the
+# UI runs instant/range queries over the engine's SLI series. PII is stripped at EMIT by the
+# metric View allowlist (AddBabelstonePiiGuard — only admitted structural dimensions survive), so
+# no BFF-side response filter is needed here: what Prometheus stores is already references-only.
+PROM_URL = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 DEMO_CLIENT_ID = os.environ.get("DEMO_CLIENT_ID", "CLI-DEMO-0001")
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -699,6 +705,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # the /registry prefix so the upstream sees /v2/…. GET-only (enforced in do_POST etc.):
             # this window can read pack metadata, it can never push. Digests are structural — no PII.
             return REGISTRY_URL, None, self.path[len("/registry"):]
+        if self.path.startswith("/prom/"):
+            # Prometheus's query API (Metrics lens, bd babelstone-f0ic.15.6): the five SLI cards run
+            # instant/range queries here (mirrors the /tempo arm — strip the /prom prefix so the
+            # upstream sees its own /api/v1/… path). GET-only (enforced in do_POST etc.). PII was
+            # already stripped at emit by the metric View allowlist — references only in the store.
+            return PROM_URL, None, self.path[len("/prom"):]
         if self.path.startswith("/loki/"):
             # Grafana Loki's query API (Logs lens, bd babelstone-f0ic.15.7): the Logs lens fetches the
             # REAL structured logs at /loki/api/v1/query_range, correlated by the active trace id. Loki's
@@ -915,6 +927,7 @@ def main():
         print("  schema-reg    %s  (proxied at /sr/*      — Topic·Avro schema badge)" % SCHEMA_REGISTRY_URL)
         print("  loki          %s  (proxied at /loki/*   — Logs lens real logs, allowlisted)" % LOKI_URL)
         print("  registry      %s  (proxied at /registry/* — provenance strip, GET-only)" % REGISTRY_URL)
+        print("  prometheus    %s  (proxied at /prom/*   — Metrics lens live SLIs, GET-only)" % PROM_URL)
         print("  postgres      /pg/* read-only Inspector lenses %s" % ("(ENABLED)" if PG_ENABLE else "(disabled — not bound to loopback)"))
         print("  mode          open the page, flip the toggle to LIVE·engine or LIVE·saga")
         print("  Ctrl-C to stop")

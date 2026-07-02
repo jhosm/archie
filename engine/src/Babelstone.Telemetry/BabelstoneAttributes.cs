@@ -160,6 +160,41 @@ public static class BabelstoneAttributes
     public const string SourceTopic = "babelstone.source_topic";
 
     /// <summary>
+    /// Commands APPLIED at the engine's command surface (bd babelstone-f0ic.15.6): a monotonic
+    /// counter incremented once per command whose decided events COMMITTED through
+    /// <c>AggregateRuntime.AppendAsync</c> — the impure runtime shell every family command funnels
+    /// through, so one emit site covers every ingress (ADR-PC-029) without per-endpoint sprawl.
+    /// A dedup replay does NOT count here (it appends nothing) — it counts on
+    /// <see cref="CommandDedupHitsMetric"/> instead, so the two series partition retries from work.
+    /// Tagged by <see cref="AggregateType"/> (the family). snake_case-with-<c>_total</c> — a
+    /// Prometheus/Grafana query (the Mission Control Metrics lens) reads it by this exact string,
+    /// never a <c>babelstone.*</c> span key.
+    /// </summary>
+    public const string CommandsMetric = "commands_total";
+
+    /// <summary>
+    /// Command-idempotency REPLAYS refused a second apply (ADR-PC-029 slot 4 doing its job;
+    /// bd babelstone-f0ic.15.6): a monotonic counter incremented when a command id is found
+    /// already-applied — either at the endpoint pre-check (the <c>ICommandLog</c> receipt read, the
+    /// common sequential retry) or by the in-transaction <c>command_dedup</c> PK collision (the
+    /// concurrent racer). The ledger row itself is a SILENT collision, so this counter is the ONLY
+    /// visible trace of a dedup hit — a rising rate is at-least-once redelivery being absorbed
+    /// (healthy in moderation; a dispatcher symptom if it dominates). Dimensionless (the pre-check
+    /// site has no family in scope). snake_case metric name, not a span key.
+    /// </summary>
+    public const string CommandDedupHitsMetric = "command_dedup_hits_total";
+
+    /// <summary>
+    /// Immutable facts COMMITTED to the event log (bd babelstone-f0ic.15.6): a monotonic counter
+    /// incremented by the batch size on each successful <c>AggregateRuntime.AppendAsync</c> commit —
+    /// emitted in the runtime shell AFTER the sink transaction succeeds, never in a pure
+    /// decider/fold and never on a rolled-back append (OBS_SPAN_PRODUCT_SEMANTICS / ADR-PC-010).
+    /// Tagged by <see cref="AggregateType"/> (the family). snake_case metric name read by the
+    /// Metrics lens by this exact string, not a span key.
+    /// </summary>
+    public const string EventsAppendedMetric = "events_appended_total";
+
+    /// <summary>
     /// Inbox messages handled for the FIRST time (G.2): the dedup row was inserted and the handler
     /// ran inside one transaction (Document 04). A monotonic counter, tagged by <see cref="SourceTopic"/>.
     /// Distinct from <see cref="InboxDuplicatesMetric"/> (the dedup-backstop firing). snake_case

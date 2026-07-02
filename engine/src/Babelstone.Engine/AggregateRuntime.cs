@@ -325,7 +325,24 @@ public sealed class AggregateRuntime<TState>(
             }
         }
 
-        await sink.AppendAsync(streamId, expectedVersion, envelopes, outboxRows, context.CommandId, ct);
+        try
+        {
+            await sink.AppendAsync(streamId, expectedVersion, envelopes, outboxRows, context.CommandId, ct);
+        }
+        catch (DuplicateCommandException)
+        {
+            // A concurrent replay lost the in-transaction command_dedup race (ADR-PC-029 slot 4):
+            // nothing appended, the original outcome rides the exception to the caller. Count the
+            // hit — the ledger collision is otherwise SILENT, so this counter is its only visible
+            // trace (bd babelstone-f0ic.15.6) — and rethrow unchanged.
+            EngineCommandMetrics.RecordDedupHit();
+            throw;
+        }
+
+        // The command-surface SLIs (bd babelstone-f0ic.15.6), recorded in this impure shell AFTER
+        // the sink transaction committed (never in a pure decider/fold, never on a rollback —
+        // ADR-PC-010 / OBS_SPAN_PRODUCT_SEMANTICS): one applied command, events.Count new facts.
+        EngineCommandMetrics.RecordCommandApplied(context.Family, events.Count);
 
         // Sync-mode projections (two-modes §5.4): once the event has committed, drive them within
         // a bounded budget. The hook NEVER rolls back the commit — "the event is true regardless
