@@ -6,7 +6,7 @@ namespace Babelstone.Money.Analyzers;
 
 /// <summary>
 /// BMNY003 — flags any user-defined operator or conversion that returns <c>decimal</c>
-/// from a <c>Money</c> input (ADR-PC-010 §P1). Money must never silently degrade to
+/// from a <c>Money</c> input (ADR-PC-010). Money must never silently degrade to
 /// decimal through arithmetic or a cast; the only path out is the explicit, read-only
 /// <c>Money.ToDecimal()</c> projection.
 /// </summary>

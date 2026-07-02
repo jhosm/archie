@@ -3,7 +3,7 @@ using Microsoft.CodeAnalysis;
 namespace Babelstone.Money.Analyzers;
 
 /// <summary>
-/// The diagnostic descriptors for the Money boundary analysers (ADR-PC-010 §P1–§P2).
+/// The diagnostic descriptors for the Money boundary analysers (ADR-PC-010).
 /// These are the MECHANICAL half of MONEY_BOUNDARY_FIXTURES (commitment-catalogue); the
 /// unit half lives in the sealed fixture corpus. All three are warnings, and the engine
 /// builds warnings-as-errors, so a violation fails the build.

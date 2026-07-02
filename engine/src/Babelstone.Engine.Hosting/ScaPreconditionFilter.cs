@@ -6,12 +6,12 @@ namespace Babelstone.Engine.Hosting;
 
 /// <summary>
 /// The step-up-SCA precondition wired as an endpoint filter on the irreversible money-mover route group
-/// (ADR-IC-010 §P8 / Q-BE resolution), now with the non-interactive scoped
+/// (ADR-IC-010 / Q-BE resolution), now with the non-interactive scoped
 /// service-principal escape for the ADR-PC-036 lifecycle-command driver.
 /// </summary>
 /// <remarks>
 /// <para>
-/// FAMILY-NEUTRAL HOME (ADR-PC-021 §A9). This filter is a cross-cutting host-shell
+/// FAMILY-NEUTRAL HOME (ADR-PC-021). This filter is a cross-cutting host-shell
 /// component, so it lives in the shared <c>Babelstone.Engine.Hosting</c> assembly and is <c>public</c> for
 /// cross-assembly use — both the term-deposit money-movers (<c>DepositsEndpoints.Map</c>) and the
 /// personal-loan money-movers (<c>LoansEndpoints.Map</c>) attach the SAME filter type to their
@@ -41,10 +41,10 @@ namespace Babelstone.Engine.Hosting;
 /// is not scoped to (a customer-initiated money-mover such as <c>/terminate</c> or <c>/early-repayment</c>).
 /// </para>
 /// <para>
-/// This preserves every §P8 / ADR-PC-010 §P5 constraint the inline check satisfied: the filter runs in the
+/// This preserves every ADR-IC-010 / ADR-PC-010 constraint the inline check satisfied: the filter runs in the
 /// impure host shell, BEFORE the handler executes (so before any side effect). The clock is injected (the
 /// shell owns the wall-clock, never the pure decider). The principal-use audit trail (ADR-PC-036
-/// §Consequences — the principal's use must be audited, not invisible) resolves its logger via
+/// — the principal's use must be audited, not invisible) resolves its logger via
 /// GetRequiredService from the request services on the audit branch, so the obligation is STRUCTURAL: a host
 /// missing an ILoggerFactory fails loudly there rather than silently skipping the audit. The filter's
 /// CONSTRUCTION still carries no logger dependency and stays trivially composable in any host. The route leaf
@@ -70,8 +70,8 @@ public sealed class ScaPreconditionFilter(TimeProvider clock) : IEndpointFilter
         // (/terminate, /early-repayment), and a caller with no principal hits the unchanged fail-closed default.
         if (ScaServicePrincipal.IsAuthorised(headers, operation))
         {
-            // Structural audit only — the scope token + the route leaf, never PII (ADR-PC-004 §P2). This is
-            // the "audited principal, never invisible" obligation of ADR-PC-036 §Consequences — so the audit
+            // Structural audit only — the scope token + the route leaf, never PII (ADR-PC-004). This is
+            // the "audited principal, never invisible" obligation of ADR-PC-036 — so the audit
             // is STRUCTURAL, not best-effort: the logger is resolved with GetRequiredService, so a host that
             // forgot to register an ILoggerFactory fails LOUDLY here instead of silently dropping the audit
             // (which would soften the obligation). The filter's CONSTRUCTION still needs no logger dependency

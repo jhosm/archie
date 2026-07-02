@@ -27,11 +27,11 @@ namespace Babelstone.Telemetry.Hosting;
 ///
 /// <para>
 /// This is the engine's CLIENT-tier complement to the manual product-semantic spans
-/// (<c>accrual.computed</c> / <c>withholding.applied</c>, ADR-IC-007 P2) and the request-tier
+/// (<c>accrual.computed</c> / <c>withholding.applied</c>, ADR-IC-007) and the request-tier
 /// <c>AddAspNetCoreInstrumentation</c> SERVER span: server span → manual product spans → these
 /// Npgsql query spans, one connected trace per request. It carries the OTel database semantic-
-/// convention attributes (db.system, db.namespace, …) — structural, never PII (ADR-IC-007 P4 /
-/// ADR-PC-004 §P2): the instrumentation tags the operation, not parameter values.
+/// convention attributes (db.system, db.namespace, …) — structural, never PII (ADR-IC-007 /
+/// ADR-PC-004): the instrumentation tags the operation, not parameter values.
 /// </para>
 ///
 /// <para>
@@ -65,7 +65,7 @@ public static class BabelstoneNpgsqlInstrumentation
     /// </summary>
     public static TracerProviderBuilder AddNpgsqlQueryTelemetry(this TracerProviderBuilder tracing)
         // PII ENVELOPE — DO NOT pass NpgsqlTracingOptions that enable command-text/db.statement tags
-        // (ADR-IC-007 §P4 / OBS_NO_PII_ATTRS, ADR-PC-004 §P2). Bare AddNpgsql() uses the driver's
+        // (ADR-IC-007 / OBS_NO_PII_ATTRS, ADR-PC-004). Bare AddNpgsql() uses the driver's
         // default options, which attach the OPERATION shape (db.system, db.namespace, …) to spans but
         // NOT the SQL statement text — so query parameter values never reach the trace backend. The
         // class-level "tags the operation, not parameter values" guarantee holds ONLY while this stays
@@ -75,7 +75,7 @@ public static class BabelstoneNpgsqlInstrumentation
 
     /// <summary>
     /// Registers Npgsql's <c>db.client.operation.duration</c> histogram (and the related connection
-    /// metrics) on the host's EXISTING meter provider (ADR-IC-007 Layer 1 / ADR-IC-004 §P4 sibling).
+    /// metrics) on the host's EXISTING meter provider (ADR-IC-007 Layer 1 / ADR-IC-004 sibling).
     /// Call this inside the same <c>WithMetrics(...)</c> lambda that already does
     /// <c>AddMeter(BabelstoneTelemetry.MeterName)</c> + <c>AddOtlpExporter()</c>, so the query-latency
     /// histogram is exported alongside the engine's own meter instruments (the outbox-lag SLI et al.)

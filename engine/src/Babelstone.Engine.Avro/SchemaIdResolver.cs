@@ -4,7 +4,7 @@ namespace Babelstone.Engine.Avro;
 
 /// <summary>
 /// Resolves the Schema-Registry schema_id for an event_type's subject, so the codec can
-/// embed it at WRITE time (ADR-IC-002 §P3 / ADR-IC-004 §P3). The id is what the relay
+/// embed it at WRITE time (ADR-IC-002 / ADR-IC-004). The id is what the relay
 /// later puts in the Confluent wire-format header WITHOUT a runtime SR lookup.
 /// </summary>
 public interface ISchemaIdResolver
@@ -19,7 +19,7 @@ public interface ISchemaIdResolver
 /// lookup, never an SR round-trip).
 /// </summary>
 /// <remarks>
-/// Startup register-if-absent is a <b>walking-skeleton convenience</b>. ADR-IC-002 §P3 makes
+/// Startup register-if-absent is a <b>walking-skeleton convenience</b>. ADR-IC-002 makes
 /// registration a CI gate, never a producer-startup operation. This resolver is what the test
 /// path uses to make outbox rows carry real ids against a Testcontainer SR; production registers
 /// in CI and this resolver collapses to a pure lookup (RegisterIfAbsent: false).

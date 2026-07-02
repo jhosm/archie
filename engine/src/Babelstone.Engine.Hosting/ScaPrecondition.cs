@@ -3,12 +3,12 @@ using Microsoft.AspNetCore.Http;
 namespace Babelstone.Engine.Hosting;
 
 /// <summary>
-/// The step-up-SCA precondition on an irreversible money-mover (ADR-IC-010 §P8 / Document 11
+/// The step-up-SCA precondition on an irreversible money-mover (ADR-IC-010 / Document 11
 /// §Human-in-the-Loop · Q-BE resolution).
 /// </summary>
 /// <remarks>
 /// <para>
-/// FAMILY-NEUTRAL HOME (ADR-PC-021 §A9). This gate is a cross-cutting host-shell
+/// FAMILY-NEUTRAL HOME (ADR-PC-021). This gate is a cross-cutting host-shell
 /// concern, not one family's business, so it lives in the shared <c>Babelstone.Engine.Hosting</c> assembly
 /// alongside the other family-agnostic in-process hosting components — the single home both the term-deposit
 /// money-movers (<c>DepositsEndpoints</c>) and the personal-loan money-movers (<c>LoansEndpoints</c>) wire it
@@ -25,12 +25,12 @@ namespace Babelstone.Engine.Hosting;
 /// anti-spoof pattern Kong already uses for <c>X-Client-Id</c>). If the proof is absent, too weak, or
 /// stale, the engine refuses with <c>422 SCA_REQUIRED</c> and the MCP tool fires the step-up elicitation
 /// and retries with a refreshed token. The trust anchor is the AS signature Kong validated, never the
-/// courier (the agent) — which is exactly what §P8 requires: "the irreversible action transitions on the
+/// courier (the agent) — which is exactly what ADR-IC-010 requires: "the irreversible action transitions on the
 /// bank's own out-of-band signal, not anything the agent reports back."
 /// </para>
 /// <para>
 /// This is Q1 (SCA-trigger detection) of the Q-BE fork: the maintainer chose the engine-returns-a-structured
-/// <c>SCA_REQUIRED</c> path (ADR-IC-010 §P8 recommended), over a Kong <c>pre-function</c> gate on <c>/mcp</c>
+/// <c>SCA_REQUIRED</c> path (ADR-IC-010 recommended), over a Kong <c>pre-function</c> gate on <c>/mcp</c>
 /// (which would 403 before the server could elicit) or a proactive prompt-always (which over-prompts a
 /// caller who already holds fresh SCA). The freshness window mirrors the constitute/SoR REST-route SCA
 /// gate already in <c>infra/kong/kong.yml</c> (<c>SCA_MAX_AGE = 300</c> s): a money-mover needs SCA that is
@@ -41,9 +41,9 @@ namespace Babelstone.Engine.Hosting;
 /// FAIL-CLOSED throughout: a missing/empty <c>acr</c>, a missing/non-numeric <c>auth_time</c>, an
 /// <c>auth_time</c> in the future, or one older than the window all return the SAME single
 /// <c>SCA_REQUIRED</c> verdict — no branch leaks a distinguishing signal. The refusal carries no PII
-/// (ADR-PC-004 §P2): a stable code + a generic message only. The header NAMES match the Kong attestation;
+/// (ADR-PC-004): a stable code + a generic message only. The header NAMES match the Kong attestation;
 /// the engine never reads the raw token (it trusts the gateway attestation, the Boundary-2 model
-/// Document 10 / ADR-IC-006 §P5 commit to).
+/// Document 10 / ADR-IC-006 commit to).
 /// </para>
 /// <para>
 /// NON-INTERACTIVE PRINCIPAL ESCAPE (ADR-PC-036). This check is the HUMAN
@@ -57,7 +57,7 @@ namespace Babelstone.Engine.Hosting;
 /// and remains the fail-closed default for every caller that is not a recognised scoped principal.
 /// </para>
 /// <para>
-/// SENDER-CONSTRAINT (RFC 8705 mTLS-bound, ADR-IC-010 §A8). The refreshed step-up
+/// SENDER-CONSTRAINT (RFC 8705 mTLS-bound, ADR-IC-010). The refreshed step-up
 /// token is now sender-constrained: it carries a <c>cnf.x5t#S256</c> thumbprint Kong validated against
 /// the presented client cert and attests as <see cref="CnfX5tHeader"/>. A token replayed from a
 /// different sender was already 401'd at the gateway (its <c>cnf</c> did not match the presented cert),
@@ -79,7 +79,7 @@ public static class ScaPrecondition
 
     /// <summary>The gateway-attested RFC 8705 mTLS-bound sender-constraint thumbprint (the step-up
     /// token's <c>cnf.x5t#S256</c> Kong validated against the presented client cert and attested,
-    /// ADR-IC-010 §A8). A non-empty value means the refreshed step-up token was sender-constrained —
+    /// ADR-IC-010). A non-empty value means the refreshed step-up token was sender-constrained —
     /// a stolen token replayed from a different sender was already rejected at the gateway (its
     /// <c>cnf</c> did not match the presented cert), so the engine ACCEPTS this attested binding as
     /// additive context and never re-derives it. Empty/absent means a plain (POC-legacy) Bearer.</summary>
@@ -100,7 +100,7 @@ public static class ScaPrecondition
     /// </summary>
     /// <remarks>
     /// <paramref name="now"/> is the host's wall-clock instant (the impure shell owns the clock,
-    /// ADR-PC-010 §P5 — this is a precondition CHECK, never folded into the pure decider). The endpoint
+    /// ADR-PC-010 — this is a precondition CHECK, never folded into the pure decider). The endpoint
     /// passes <c>TimeProvider.GetUtcNow()</c>; a test passes a fixed instant. <paramref name="headers"/>
     /// is the inbound request's header collection.
     /// </remarks>
@@ -129,7 +129,7 @@ public static class ScaPrecondition
     }
 
     /// <summary>The single fail-closed verdict — one 422 + stable code for every SCA failure, so no
-    /// branch leaks a distinguishing signal. No PII (ADR-PC-004 §P2): a stable code + generic message.</summary>
+    /// branch leaks a distinguishing signal. No PII (ADR-PC-004): a stable code + generic message.</summary>
     private static IResult Denied() =>
         Results.Problem(
             "Strong Customer Authentication (PSD2 SCA) is required for this operation. Complete the "

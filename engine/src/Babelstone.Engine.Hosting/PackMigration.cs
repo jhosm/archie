@@ -12,7 +12,7 @@ namespace Babelstone.Engine.Hosting;
 /// closed over a family's <c>TState</c> the spine must not name. This facade exposes the same
 /// preview/migrate operations (all already family-agnostic — Guids and version strings, no <c>TState</c>)
 /// plus the <see cref="ProductFamily"/> selection key, so the endpoint dispatches over
-/// <c>IEnumerable&lt;IPackMigrationService&gt;</c> without ever naming a family (ADR-PC-021 §P2).
+/// <c>IEnumerable&lt;IPackMigrationService&gt;</c> without ever naming a family (ADR-PC-021).
 /// </summary>
 public interface IPackMigrationService
 {
@@ -35,8 +35,8 @@ public interface IPackMigrationService
 }
 
 /// <summary>
-/// The operator pack-migration write-path (ADR-PC-009 §P3, surface §3.6), generic over ANY family
-/// projection <typeparamref name="TState"/> so it stays FAMILY-AGNOSTIC (ADR-PC-021 §A9/§A11). In plain
+/// The operator pack-migration write-path (ADR-PC-009, surface §3.6), generic over ANY family
+/// projection <typeparamref name="TState"/> so it stays FAMILY-AGNOSTIC (ADR-PC-021). In plain
 /// English: a live instance is locked for life to the regulatory pack it was opened under, and the ONLY
 /// sanctioned way to move it to a newer pack — when a regulator forces a retroactive change — is this
 /// explicit, audited operator migration. The operator names a target instance set, a <c>from</c>→<c>to</c>
@@ -49,11 +49,11 @@ public interface IPackMigrationService
 /// family domain logic — no money math, no rate/pack resolution, no product rules. They are pure
 /// structural plumbing for an engine-declared event: read the head pin, append a no-op
 /// <see cref="PackVersionMigrated"/> pinned to the target pack. It names no family, so it is NOT the
-/// family-owned command-side decider ADR-PC-021 §D1 keeps in the family Application layer; but it IS a
+/// family-owned command-side decider ADR-PC-021 keeps in the family Application layer; but it IS a
 /// command-side write-path that <em>consumes</em> the engine's append spine (a port consumer, not a
-/// port), so it does NOT belong in the family-agnostic engine kernel either (ADR-PC-021 §D1/§C rejected
+/// port), so it does NOT belong in the family-agnostic engine kernel either (ADR-PC-021 rejected
 /// the decider-in-the-generic-engine placement). Its home is <c>Babelstone.Engine.Hosting</c> — the
-/// non-spine assembly ADR-PC-021 §A9/§A11 created for exactly this family-agnostic host/command-side
+/// non-spine assembly ADR-PC-021 created for exactly this family-agnostic host/command-side
 /// plumbing, beside the <see cref="PackMigrationsEndpoints"/> operator surface. A family closes the
 /// generic by resolving <c>PackMigrationService&lt;ItsState&gt;</c> in its host module and registering it
 /// behind the <see cref="IPackMigrationService"/> facade; the operator surface
@@ -63,7 +63,7 @@ public interface IPackMigrationService
 /// <para>
 /// <b>Re-pin lives on the ENVELOPE.</b> The migration event is appended with
 /// <c>AppendContext.PackVersion = to_pack_version</c>, so the event itself and every event after it
-/// carry the new pin while prior history stays pinned to <c>from_pack_version</c> (ADR-PC-009 §P1/§P3 —
+/// carry the new pin while prior history stays pinned to <c>from_pack_version</c> (ADR-PC-009 —
 /// the pin is a per-event fact; the migration boundary is intrinsic to the stream). The projection fold
 /// is a no-op (the engine-owned <see cref="PackVersionMigratedHandler{TState}"/>); nothing about the
 /// instance's money/lifecycle changes here.
@@ -76,7 +76,7 @@ public interface IPackMigrationService
 /// SKIPPED, never re-pinned, so re-issuing the same migration is a no-op on the already-migrated ones.
 /// </para>
 /// <para>
-/// <b>Idempotent per (migration, instance)</b> (ADR-PC-009 §P3: <c>migration_id</c> is the dedupe key;
+/// <b>Idempotent per (migration, instance)</b> (ADR-PC-009: <c>migration_id</c> is the dedupe key;
 /// ADR-PC-029 slot 4). Each per-instance append carries a deterministic command id derived from
 /// <c>(migration_id, instance_id)</c>, so an at-least-once retry of the whole migration replays the
 /// original per-instance outcome rather than appending a second <see cref="PackVersionMigrated"/>.
@@ -101,7 +101,7 @@ public sealed class PackMigrationService<TState>(
     /// The product family this write-path migrates (the family supplies it from its own
     /// <c>FamilyName</c> when it closes the generic), so the single dispatching endpoint can select this
     /// service by <c>product_family</c> through the <see cref="IPackMigrationService"/> facade. The spine
-    /// never names the family — the family hands its own name across the seam (ADR-PC-021 §P2).
+    /// never names the family — the family hands its own name across the seam (ADR-PC-021).
     /// </summary>
     public string ProductFamily => productFamily;
 
@@ -175,8 +175,8 @@ public sealed class PackMigrationService<TState>(
                 OperatorActor: operatorActor);
 
             // The re-pin: append at the current head, with the AppendContext pinned to the TARGET pack —
-            // so this event and every later event carry to_pack_version on the envelope (ADR-PC-009
-            // §P1/§P3). The family + schema_version pins are carried forward from the existing head
+            // so this event and every later event carry to_pack_version on the envelope (ADR-PC-009).
+            // The family + schema_version pins are carried forward from the existing head
             // (the migration moves only the PACK pin, never the schema pin). Idempotent on the
             // deterministic (migration_id, instance_id) command id (ADR-PC-029 slot 4): an at-least-once
             // retry replays rather than appends twice.
@@ -226,7 +226,7 @@ public sealed class PackMigrationService<TState>(
     /// <summary>
     /// A deterministic command id for the per-instance append, derived from <c>(migration_id,
     /// instance_id)</c> so the SAME migration re-applied to the SAME instance dedupes (ADR-PC-029 slot 4
-    /// / ADR-PC-009 §P3 migration_id dedupe). A v5-style namespaced SHA-1 UUID over the two — stable
+    /// / ADR-PC-009 migration_id dedupe). A v5-style namespaced SHA-1 UUID over the two — stable
     /// across retries, distinct per (migration, instance). Pure: no clock, no randomness (the same
     /// inputs always yield the same id), so an at-least-once retry of the whole migration targets the
     /// same dedup receipt. Mirrors the renewal new-deposit-id derivation.

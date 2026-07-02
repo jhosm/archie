@@ -5,10 +5,10 @@ namespace Babelstone.Engine.Analyzers;
 /// <summary>
 /// Shared diagnostic descriptors for the build-time engine analysers (BENG001–005). Each is a
 /// warning and the engine builds warnings-as-errors, so any one fails the build. They back three
-/// commitments: BENG001–003 are the build-time half of DETERMINISM_GATE (ADR-PC-010 §P5;
+/// commitments: BENG001–003 are the build-time half of DETERMINISM_GATE (ADR-PC-010;
 /// feature-design event-store §5.1 — the runtime half is the fixture-replay test), BENG004 is the
-/// structural half of NO_CLOCK_DRIVEN_ENGINE_SIGNAL (ADR-PC-023 §D1), and BENG005 is the
-/// build-time tripwire leg of OBS_NO_PII_ATTRS (ADR-IC-007 §P4). Per-descriptor rationale is on
+/// structural half of NO_CLOCK_DRIVEN_ENGINE_SIGNAL (ADR-PC-023), and BENG005 is the
+/// build-time tripwire leg of OBS_NO_PII_ATTRS (ADR-IC-007). Per-descriptor rationale is on
 /// each field below.
 /// </summary>
 internal static class EngineDiagnostics

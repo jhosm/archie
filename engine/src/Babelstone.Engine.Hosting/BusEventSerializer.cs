@@ -3,8 +3,8 @@ using Babelstone.Engine;
 namespace Babelstone.Engine.Hosting;
 
 /// <summary>
-/// The BUS codec the engine write half hands its outbox rows (ADR-PC-028 §Decision dual-encode):
-/// real Avro bytes + a registered Schema-Registry <c>schema_id</c> (ADR-IC-002 §P3 / ADR-IC-004 §P3),
+/// The BUS codec the engine write half hands its outbox rows (ADR-PC-028 dual-encode):
+/// real Avro bytes + a registered Schema-Registry <c>schema_id</c> (ADR-IC-002 / ADR-IC-004),
 /// distinct from the self-describing JSON the <c>events.payload</c> book of record keeps. A marker
 /// wrapper (not a bare <see cref="IEventSerializer"/>) so DI can tell the bus codec apart from the
 /// store codec — both implement the same family-agnostic seam.

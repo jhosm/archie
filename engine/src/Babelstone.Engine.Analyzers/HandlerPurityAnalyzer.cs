@@ -9,7 +9,7 @@ namespace Babelstone.Engine.Analyzers;
 
 /// <summary>
 /// BENG001/002/003 — bans clock reads, I/O, and randomness REACHABLE FROM event-handler
-/// <c>Apply</c> bodies (ADR-PC-010 §P5). Scope is the methods that implement
+/// <c>Apply</c> bodies (ADR-PC-010). Scope is the methods that implement
 /// <c>Babelstone.Engine.IEventHandler&lt;,&gt;.Apply</c> AND every method they transitively
 /// call within the same assembly — so a clock/I/O/randomness read routed through a private
 /// helper is caught, not just one written inline in <c>Apply</c>. The rest of the engine

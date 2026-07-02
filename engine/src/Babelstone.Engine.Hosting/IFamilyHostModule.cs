@@ -7,8 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Babelstone.Engine.Hosting;
 
 /// <summary>
-/// A family's contribution to the engine host's composition (ADR-PC-021 §D4 "composition at the
-/// edge" / §P4 "composition is discovery at the host/test edge"). The host enumerates the modules
+/// A family's contribution to the engine host's composition (ADR-PC-021 "composition at the
+/// edge" / "composition is discovery at the host/test edge"). The host enumerates the modules
 /// it runs and lets each one register its own closed-generic <c>AggregateRuntime&lt;TState&gt;</c> +
 /// decider (<see cref="ConfigureServices"/>) and map its own HTTP surface (<see cref="MapEndpoints"/>).
 ///
@@ -19,15 +19,15 @@ namespace Babelstone.Engine.Hosting;
 /// construction here, the host never names a family aggregate type.
 ///
 /// This interface lives in the shared hosting-contract assembly <c>Babelstone.Engine.Hosting</c>
-/// (ADR-PC-021 §A1, relocated 2026-06-20) — NOT in the host
+/// (ADR-PC-021, relocated 2026-06-20) — NOT in the host
 /// <c>Babelstone.Engine.Api</c> as originally, and never in the generic engine spine. A family's
 /// <c>.Application</c> project can reference this contract assembly to implement its own module
 /// without a <c>family → host</c> cycle, while the <c>family → engine</c> arrow stays one-way
-/// (§D2/§P2, the <c>ENGINE_FAMILY_AGNOSTIC</c> fitness function). The hosting-contract assembly,
+/// (ADR-PC-021, the <c>ENGINE_FAMILY_AGNOSTIC</c> fitness function). The hosting-contract assembly,
 /// like the host, MAY name a family in principle but by design does not — only the spine libraries
 /// referencing a family is the forbidden edge.
 ///
-/// Today the host holds an explicit list of modules (ADR-PC-021 §P4 "Option A"); because every
+/// Today the host holds an explicit list of modules (ADR-PC-021 "Option A"); because every
 /// module implements this same contract with a public parameterless ctor, swapping the explicit
 /// list for <see cref="FamilyModuleLoader"/>-style assembly-scan discovery later is a localized
 /// change to the host's discovery loop with zero change to families.
@@ -39,7 +39,7 @@ public interface IFamilyHostModule
 
     /// <summary>
     /// The family schema version this module composes (e.g. <c>"term_deposit@2026.1"</c>) — the SAME value
-    /// the family's <c>IFamilyModule.SchemaVersion</c> stamps onto every <c>EventEnvelope</c> (ADR-PC-009 §P1).
+    /// the family's <c>IFamilyModule.SchemaVersion</c> stamps onto every <c>EventEnvelope</c> (ADR-PC-009).
     /// The host's <c>HostModuleLoader</c> cross-checks this against the pinned pack's family-manifest at load
     /// and FAILS CLOSED on a skew — a newer-than-pinned module is an audit/replay hazard.
     /// </summary>
@@ -47,7 +47,7 @@ public interface IFamilyHostModule
 
     /// <summary>
     /// The event-envelope <c>aggregate_type</c> / bus topic this family writes under — by the engine's
-    /// documented convention this equals <see cref="FamilyName"/> (ADR-IC-004 §Consequences). Carried so the
+    /// documented convention this equals <see cref="FamilyName"/> (ADR-IC-004). Carried so the
     /// load-time cross-check against the pack family-manifest is over the full pinned tuple
     /// (family_name, aggregate_type, schema_version), not a subset.
     /// </summary>
