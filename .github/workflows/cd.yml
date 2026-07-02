@@ -160,6 +160,15 @@ jobs:
           echo "== rendering infra/k8s/overlays/$OVERLAY =="
           mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$OVERLAY" \
             | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
+      - name: Secret preflight — the staging render must carry NO placeholder credential bodies
+        # bd babelstone-zla1.12.4 (ADR-PC-004 §A1): staging drops the committed dev-placeholder
+        # Secret (drop-dev-secrets.patch.yaml); this gate proves it stays dropped. Staging only —
+        # base/ha keep the placeholder seam by design (laptop renders, never deployed).
+        if: ${{ (github.event.inputs.overlay || 'staging') == 'staging' }}
+        run: |
+          set -euo pipefail
+          mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/overlays/staging \
+            | ./scripts/cd-secret-preflight.sh --render
       - name: Prove the OpenBao-backed deck-sync render path (dry-run, no secrets, bd 4c81.1)
         # deck-sync.sh --dry-run synthesises throwaway PEM in-process and exercises the WHOLE
         # render: splice the real-material seams (edge + mcp client certs, internal CA bundle, IAM
@@ -219,7 +228,17 @@ jobs:
             exit 1
           fi
           echo "deploy identity is not cluster-admin: $(kubectl auth whoami -o json 2>/dev/null | head -c 300 || echo 'whoami unavailable (pre-1.28 kubectl)')"
-      # 4c — apply the rendered overlay to the cluster with the scoped deploy identity.
+      # 4c — fail-closed live secret preflight (bd babelstone-zla1.12.4): the staging deploy no
+      #      longer renders the babelstone-dev-secrets Secret, so the REAL one must already live
+      #      in the cluster (runbook §1 step 5) and must not still hold a dev placeholder value
+      #      (POSTGRES_PASSWORD 'babelstone', OPENBAO_DEV_TOKEN 'root', the dev Logto KEK/OIDC
+      #      key). Refuse the apply otherwise — a forgotten swap never reaches the public IAM.
+      - name: Live secret preflight (refuse placeholder credentials)
+        if: ${{ github.event.inputs.overlay == 'staging' }}
+        env:
+          KUBECONFIG: ${{ runner.temp }}/kubeconfig
+        run: ./scripts/cd-secret-preflight.sh --live -n babelstone-staging
+      # 4d — apply the rendered overlay to the cluster with the scoped deploy identity.
       - name: kubectl apply the rendered overlay
         env:
           KUBECONFIG: ${{ runner.temp }}/kubeconfig
@@ -228,7 +247,7 @@ jobs:
           set -euo pipefail
           mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$OVERLAY" \
             | kubectl apply -f -
-      # 4d — declarative Kong deck sync with the REAL edge mTLS + IAM key from OpenBao (bd 4c81.1).
+      # 4e — declarative Kong deck sync with the REAL edge mTLS + IAM key from OpenBao (bd 4c81.1).
       #      BAO_ADDR/BAO_TOKEN are environment secrets (a deploy-scoped policy, never root).
       - name: deck sync the edge config (real OpenBao mTLS + IAM key, ADR-IC-006 §P1/§P5/§P7)
         env:
