@@ -93,6 +93,7 @@ import http.server
 import socketserver
 import urllib.request
 import urllib.error
+import urllib.parse
 import json
 
 PORT = int(os.environ.get("MC_PORT", "9000"))
@@ -316,30 +317,23 @@ def _pg_columns(db, table, columns):
     return columns
 
 
-def pg_select(db, table, columns, order=None, descending=True, limit=50):
-    """Open a READ-ONLY connection to the chosen DB and SELECT the allowlisted structural columns.
-    Identifiers are emitted only from the static allowlist (and quoted via psycopg.sql.Identifier),
-    so no caller string ever becomes SQL."""
+def _pg_guard(db):
+    """The shared /pg/* admission check: routes enabled, db known, DSN local. Returns the DSN."""
     if not PG_ENABLE:
         raise PgError(403, "/pg/* is disabled (serve.py is not bound to loopback; set MC_PG_ENABLE=1 to force)")
     if db not in _PG_DSN:
         raise PgError(404, "unknown db: %s (expected 'engine' or 'orchestrator')" % db)
     dsn = _PG_DSN[db]
     _assert_local_dsn(dsn)
-    cols = _pg_columns(db, table, columns)
-    if order is not None:
-        _pg_columns(db, table, [order])  # the ORDER BY column must be allowlisted too
+    return dsn
+
+
+def _pg_run(db, query, params=None):
+    """Open a READ-ONLY connection to the chosen DB and run ONE query (a psycopg sql.Composed built
+    from allowlisted identifiers, or a module-level FIXED SQL string — never caller-assembled text).
+    Caller VALUES only ever travel as bound parameters. Returns rows as dicts."""
+    dsn = _pg_guard(db)
     psycopg = _require_psycopg()
-    from psycopg import sql
-
-    parts = [sql.SQL("SELECT "), sql.SQL(", ").join(sql.Identifier(c) for c in cols),
-             sql.SQL(" FROM "), sql.Identifier(table)]
-    if order is not None:
-        parts += [sql.SQL(" ORDER BY "), sql.Identifier(order),
-                  sql.SQL(" DESC") if descending else sql.SQL(" ASC")]
-    parts += [sql.SQL(" LIMIT "), sql.Literal(int(limit))]
-    query = sql.Composed(parts)
-
     try:
         with psycopg.connect(dsn, autocommit=True, connect_timeout=3) as conn:
             with conn.cursor() as cur:
@@ -347,13 +341,41 @@ def pg_select(db, table, columns, order=None, descending=True, limit=50):
                 # mistaken future query) is rejected by Postgres itself, not just by our SELECT-only
                 # code path. autocommit=True makes this SET persist for the connection's lifetime.
                 cur.execute("SET default_transaction_read_only = on")
-                cur.execute(query)
+                cur.execute(query, params)
                 names = [d.name for d in cur.description]
                 return [dict(zip(names, row)) for row in cur.fetchall()]
     except PgError:
         raise
     except Exception as e:  # psycopg.OperationalError etc. — surface as a clean 502
         raise PgError(502, "Postgres query failed against %s DB: %s" % (db, e))
+
+
+def pg_select(db, table, columns, where=None, order=None, descending=True, limit=50):
+    """SELECT the allowlisted structural columns over the read-only window. Identifiers are emitted
+    only from the static allowlist (and quoted via psycopg.sql.Identifier), so no caller string ever
+    becomes SQL; `where` is a list of (column, value) equality filters whose COLUMN must be
+    allowlisted and whose VALUE is always a bound parameter (never interpolated)."""
+    _pg_guard(db)
+    cols = _pg_columns(db, table, columns)
+    if order is not None:
+        _pg_columns(db, table, [order])  # the ORDER BY column must be allowlisted too
+    where = where or []
+    if where:
+        _pg_columns(db, table, [c for c, _ in where])  # WHERE columns must be allowlisted too
+    psycopg = _require_psycopg()
+    from psycopg import sql
+
+    parts = [sql.SQL("SELECT "), sql.SQL(", ").join(sql.Identifier(c) for c in cols),
+             sql.SQL(" FROM "), sql.Identifier(table)]
+    params = []
+    for i, (c, v) in enumerate(where):
+        parts += [sql.SQL(" WHERE " if i == 0 else " AND "), sql.Identifier(c), sql.SQL(" = %s")]
+        params.append(v)
+    if order is not None:
+        parts += [sql.SQL(" ORDER BY "), sql.Identifier(order),
+                  sql.SQL(" DESC") if descending else sql.SQL(" ASC")]
+    parts += [sql.SQL(" LIMIT "), sql.Literal(int(limit))]
+    return _pg_run(db, sql.Composed(parts), params or None)
 
 
 def pg_smoke():
@@ -363,6 +385,78 @@ def pg_smoke():
                      ["event_id", "aggregate_type", "event_type", "status", "created_at", "published_at"],
                      order="created_at", descending=True, limit=10)
     return {"db": "engine", "table": "outbox", "count": len(rows), "rows": rows}
+
+
+# ── Outbox·Inbox lens (bd babelstone-f0ic.15.5) ──────────────────────────────────────────────
+# The publish-lag SQL, VERBATIM from the engine's OutboxLagObserver.cs (the ADR-IC-004 SLI): the
+# age in seconds of the OLDEST PENDING outbox row, computed entirely in the DB (single-clock, so
+# no host/DB skew can bias it; 0 when the backlog is empty). Reusing the exact statement means the
+# lens shows the SAME number the outbox_publish_lag_seconds gauge exports — not a re-derivation
+# that could drift from it.
+_OUTBOX_LAG_SQL_VERBATIM = """SELECT COALESCE(EXTRACT(EPOCH FROM clock_timestamp() - MIN(created_at)), 0)
+FROM outbox
+WHERE status = 'PENDING';"""
+
+# Row counts by drain status — the transactional-outbox state at a glance (PENDING backlog vs
+# PUBLISHED history). Fixed, module-level SQL over one allowlisted structural column.
+_OUTBOX_COUNTS_SQL = "SELECT status, COUNT(*) AS n FROM outbox GROUP BY status;"
+
+# The recent tail with the per-row publish latency (published_at − created_at, both DB-stamped —
+# the same single-clock discipline as the lag SQL; NULL while a row is still PENDING). Every named
+# column is on the structural allowlist; the payload BYTEA is deliberately absent. LIMIT is bound.
+_OUTBOX_RECENT_SQL = """SELECT event_id, aggregate_type, aggregate_id, sequence_number, event_type, schema_id,
+       status, created_at, published_at,
+       EXTRACT(EPOCH FROM (published_at - created_at)) AS publish_latency_seconds
+FROM outbox
+ORDER BY created_at DESC
+LIMIT %s;"""
+
+
+def pg_outbox_summary(limit=20):
+    """The Outbox·Inbox lens's engine-outbox read: counts by status + the VERBATIM ADR-IC-004
+    publish-lag SQL + the recent tail with per-row publish latency. Structural columns only."""
+    counts = {r["status"]: r["n"] for r in _pg_run("engine", _OUTBOX_COUNTS_SQL)}
+    lag_rows = _pg_run("engine", _OUTBOX_LAG_SQL_VERBATIM)
+    lag_seconds = list(lag_rows[0].values())[0] if lag_rows else 0
+    recent = _pg_run("engine", _OUTBOX_RECENT_SQL, (int(limit),))
+    return {
+        "counts": counts,
+        "publish_lag_seconds": lag_seconds,
+        "publish_lag_sql": _OUTBOX_LAG_SQL_VERBATIM,
+        "rows": recent,
+    }
+
+
+def pg_inbox_tail(db="engine", limit=20):
+    """The consumer-inbox dedup ledger tail (engine or orchestrator): rows are the RESULTING state
+    (one row per logical message) — a dedup is a SILENT PK collision, so there is no per-replay row
+    here; an actual replay hit is only visible via the dispatcher/inbox OTel counters."""
+    rows = pg_select(db, "inbox", ["message_id", "source_topic", "processed_at", "result_summary"],
+                     order="processed_at", descending=True, limit=limit)
+    return {"db": db, "table": "inbox", "count": len(rows), "rows": rows}
+
+
+def pg_command_dedup_tail(limit=20):
+    """The engine command-idempotency ledger tail (ADR-PC-029 slot 4): one row per logical command,
+    with the stream + commit sequence its original apply reached. Same silent-collision semantics as
+    the inbox — the ledger shows state, not replay events."""
+    rows = pg_select("engine", "command_dedup", ["command_id", "stream_id", "commit_sequence", "created_at"],
+                     order="created_at", descending=True, limit=limit)
+    return {"db": "engine", "table": "command_dedup", "count": len(rows), "rows": rows}
+
+
+def pg_saga_outbox_tail(process_id=None, limit=20):
+    """The orchestrator's saga_outbox tail — the saga's dispatched command legs. Optionally filtered
+    to one process (the internal UUID; the PROC-… public handle resolves via /pg/processes/*). The
+    payload BYTEA never crosses; structural columns only."""
+    where = []
+    if process_id:
+        where.append(("process_id", process_id))
+    rows = pg_select("orchestrator", "saga_outbox",
+                     ["seq", "message_id", "process_id", "command_type", "causation_id",
+                      "correlation_id", "status", "created_at", "published_at"],
+                     where=where, order="seq", descending=True, limit=limit)
+    return {"db": "orchestrator", "table": "saga_outbox", "count": len(rows), "rows": rows}
 
 
 def _json_default(o):
@@ -493,15 +587,39 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             resp.close()
 
     def _pg_handle(self):
-        """The read-only Postgres Inspector routes (bd babelstone-f0ic.15.1). Returns True if it
-        handled the request. Today: /pg/smoke (the structural smoke read). The lens-specific
-        select routes (Outbox·Inbox, provenance, topology) build on pg_select() in later issues."""
+        """The read-only Postgres Inspector routes (bd babelstone-f0ic.15.1/.15.5). Returns True if
+        it handled the request. Every route reads STRUCTURAL allowlisted columns only (the PII
+        firewall refuses payload/detail/BYTEA), read-only, loopback-only."""
         if not self.path.startswith("/pg/"):
             return False
-        path = self.path.split("?", 1)[0]
+        split = urllib.parse.urlsplit(self.path)
+        path = split.path
+        qs = urllib.parse.parse_qs(split.query)
+
+        def q(name, default=None):
+            vals = qs.get(name)
+            return vals[0] if vals else default
+
+        def qlimit(default=20, cap=200):
+            try:
+                return max(1, min(int(q("limit", default)), cap))
+            except (TypeError, ValueError):
+                raise PgError(400, "limit must be an integer")
+
         try:
             if path == "/pg/smoke":
                 body = pg_smoke()
+            elif path == "/pg/outbox/summary":
+                # Outbox·Inbox lens (bd babelstone-f0ic.15.5): the real transactional-outbox drain —
+                # counts by status, the VERBATIM ADR-IC-004 publish-lag SQL, and the recent tail.
+                body = pg_outbox_summary(limit=qlimit())
+            elif path == "/pg/inbox/tail":
+                db = q("db", "engine")
+                body = pg_inbox_tail(db=db, limit=qlimit())
+            elif path == "/pg/command-dedup/tail":
+                body = pg_command_dedup_tail(limit=qlimit())
+            elif path == "/pg/saga-outbox/tail":
+                body = pg_saga_outbox_tail(process_id=q("process_id"), limit=qlimit())
             else:
                 raise PgError(404, "no such /pg route: %s" % path)
             payload = json.dumps(body, default=_json_default).encode()

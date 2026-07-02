@@ -506,6 +506,7 @@ body.console-open .hint-bar { display:none; }
     <div class="topic-list" id="topicList"><div class="dpane-empty">No records yet. Run a command — every engine fact is relayed onto the topic as an Avro record.</div></div>
   </div>
   <div class="pane" id="paneTransport" hidden>
+    <div id="transportDemo">
     <div class="transport">
       <div class="tp-col">
         <h4>Engine outbox <span class="pill">FOR UPDATE SKIP LOCKED</span></h4>
@@ -518,6 +519,11 @@ body.console-open .hint-bar { display:none; }
         <div class="dpane-empty" id="inboxEmpty">Each published record is consumed exactly once — replays dedup by message_id.</div>
       </div>
     </div>
+    </div>
+    <!-- LIVE Outbox·Inbox lens (bd babelstone-f0ic.15.5): real Postgres tails via the read-only
+         /pg/* window — engine outbox (with the VERBATIM ADR-IC-004 publish-lag SQL's number),
+         consumer inbox ledgers and the command-dedup ledger. Rendered by renderTransportLive(). -->
+    <div id="transportLive" hidden></div>
   </div>
   <div class="pane" id="paneMetrics" hidden>
     <div class="metrics-grid" id="metricsGrid"></div>
@@ -2158,6 +2164,14 @@ body.console-open .hint-bar { display:none; }
     }).join("");
   }
   function renderTransport() {
+    // DEMO renders the illustrative in-browser feed; LIVE·engine / LIVE·saga read the REAL
+    // outbox / inbox / command-dedup tables through serve.py's read-only /pg/* window
+    // (bd babelstone-f0ic.15.5) — the same demo/live split as renderTopic / renderLogs.
+    var live = state.mode !== "demo";
+    var demoBox = el("transportDemo"), liveBox = el("transportLive");
+    if (demoBox) demoBox.hidden = live;
+    if (liveBox) liveBox.hidden = !live;
+    if (live) return renderTransportLive(liveBox);
     var ob = el("outboxBody"), ib = el("inboxBody");
     if (ob) {
       el("outboxEmpty").style.display = dwOutbox.length ? "none" : "";
@@ -2172,6 +2186,112 @@ body.console-open .hint-bar { display:none; }
         return '<tr><td>' + r.msg.slice(0, 13) + '…</td><td>' + r.consumer + '</td><td class="st-published">' + r.status + '</td></tr>';
       }).join("");
     }
+  }
+
+  /* ── LIVE Outbox·Inbox lens (bd babelstone-f0ic.15.5) ────────────────────────────────────
+     Reads the REAL drain/dedup state through serve.py's read-only /pg/* window: the engine's
+     transactional outbox (counts by status + the VERBATIM ADR-IC-004 publish-lag SQL's number +
+     per-row publish latency), the consumer inbox ledgers (engine + orchestrator) and the engine's
+     command-dedup ledger. PII discipline: every column crossing this boundary is on serve.py's
+     STRUCTURAL allowlist — the payload BYTEA / detail blobs are refused server-side. NB the dedup
+     ledgers show resulting STATE (one row per logical message/command): a replay is a SILENT PK
+     collision, so an actual dedup hit is only visible via the OTel counters (the Metrics lens). */
+  var liveTransport = { data: null, state: "idle", err: null, ts: 0 };
+
+  async function loadLiveTransport() {
+    var now = Date.now();
+    if (liveTransport.state === "loading") return;
+    if ((liveTransport.state === "loaded" || liveTransport.state === "error") && (now - liveTransport.ts) < 1500) return;  // debounce
+    liveTransport.state = "loading";
+    async function pg(path) {
+      var res = await fetch(API_BASE + path);
+      if (!res.ok) {
+        var detail = ""; try { detail = (await res.json()).detail || ""; } catch (e) {}
+        throw new Error("HTTP " + res.status + (detail ? " — " + detail : ""));
+      }
+      return res.json();
+    }
+    try {
+      // The engine-side reads are the lens's backbone; the orchestrator-side reads are additive
+      // (saga mode) and tolerate absence — a missing orchestrator DB must not blank the engine half.
+      var outbox = await pg("/pg/outbox/summary?limit=12");
+      var dedup = await pg("/pg/command-dedup/tail?limit=8");
+      var inboxEng = null, inboxOrch = null, sagaLegs = null;
+      try { inboxEng = await pg("/pg/inbox/tail?db=engine&limit=8"); } catch (e) { inboxEng = null; }
+      try { inboxOrch = await pg("/pg/inbox/tail?db=orchestrator&limit=8"); } catch (e) { inboxOrch = null; }
+      if (state.mode === "saga") {
+        try { sagaLegs = await pg("/pg/saga-outbox/tail?limit=8"); } catch (e) { sagaLegs = null; }
+      }
+      liveTransport.data = { outbox: outbox, inboxEng: inboxEng, inboxOrch: inboxOrch, dedup: dedup, sagaLegs: sagaLegs };
+      liveTransport.state = "loaded"; liveTransport.err = null;
+    } catch (e) {
+      liveTransport.state = "error"; liveTransport.err = (e && e.message) ? e.message : String(e);
+    } finally {
+      liveTransport.ts = Date.now();
+      if (state.tab === "transport" && state.mode !== "demo") renderTransport();
+    }
+  }
+  function tpShortId(v) { return v == null ? "—" : esc(String(v).slice(0, 8)) + "…"; }
+  function tpClock(iso) {
+    // Postgres TIMESTAMPTZ serialises ISO-ish; show the local HH:MM:SS tail for table density.
+    try { var d = new Date(iso); if (!isNaN(d)) { return d.toTimeString().slice(0, 8); } } catch (e) {}
+    return esc(String(iso == null ? "—" : iso).slice(11, 19) || "—");
+  }
+  function renderTransportLive(box) {
+    if (!box) return;
+    loadLiveTransport();   // debounced; re-renders when it settles
+    var st = liveTransport;
+    if (st.state === "loading" && !st.data) { box.innerHTML = '<div class="dpane-empty">Reading the real outbox / inbox / dedup tables via the read-only <code>/pg</code> window…</div>'; return; }
+    if (st.state === "error" && !st.data) { box.innerHTML = '<div class="dpane-empty">Postgres window not reachable (' + esc(st.err || "") + '). Start the stack (<code>make up</code>) + the engine, and <code>pip install -r requirements.txt</code> for psycopg.</div>'; return; }
+    if (!st.data) { box.innerHTML = '<div class="dpane-empty">No data yet.</div>'; return; }
+    var d = st.data, ob = d.outbox || {};
+    var counts = ob.counts || {};
+    var pending = counts.PENDING || 0, published = counts.PUBLISHED || 0;
+    var lag = Number(ob.publish_lag_seconds || 0);
+    var obRows = (ob.rows || []).map(function (r) {
+      var latency = r.publish_latency_seconds != null ? (Number(r.publish_latency_seconds) * 1000).toFixed(0) + "ms" : "·";
+      var stCls = String(r.status || "").toUpperCase() === "PENDING" ? "st-pending" : "st-published";
+      return '<tr><td>#' + esc(String(r.sequence_number)) + '</td><td>' + esc(String(r.event_type || "")) + '</td>' +
+        '<td class="' + stCls + '">' + esc(String(r.status || "").toLowerCase()) + '</td><td>' + latency + '</td></tr>';
+    }).join("");
+    function inboxRows(res, label) {
+      return ((res && res.rows) || []).map(function (r) {
+        return '<tr><td>' + tpShortId(r.message_id) + '</td><td>' + esc(String(r.source_topic || label)) + '</td>' +
+          '<td class="st-published">handled · ' + tpClock(r.processed_at) + '</td></tr>';
+      }).join("");
+    }
+    var ibRows = inboxRows(d.inboxEng, "engine") + inboxRows(d.inboxOrch, "orchestrator");
+    var ddRows = ((d.dedup && d.dedup.rows) || []).map(function (r) {
+      return '<tr><td>' + tpShortId(r.command_id) + '</td><td>' + tpShortId(r.stream_id) + '</td>' +
+        '<td class="st-published">commit #' + esc(String(r.commit_sequence)) + '</td></tr>';
+    }).join("");
+    var legRows = ((d.sagaLegs && d.sagaLegs.rows) || []).map(function (r) {
+      var stCls = String(r.status || "").toUpperCase() === "PENDING" ? "st-pending" : "st-published";
+      return '<tr><td>' + tpShortId(r.process_id) + '</td><td>' + esc(String(r.command_type || "")) + '</td>' +
+        '<td class="' + stCls + '">' + esc(String(r.status || "").toLowerCase()) + '</td></tr>';
+    }).join("");
+    box.innerHTML =
+      '<div class="dpane-head">engine outbox · <b>' + pending + ' pending</b> / ' + published + ' published · ' +
+        'publish-lag <b>' + lag.toFixed(1) + 's</b> <span title="' + esc(ob.publish_lag_sql || "") + '">(the VERBATIM ADR-IC-004 oldest-PENDING-age SQL — the same number the outbox_publish_lag_seconds gauge exports)</span> · ' +
+        '<span class="nopii">✓ structural columns only — the payload BYTEA never crosses</span></div>' +
+      '<div class="transport">' +
+        '<div class="tp-col">' +
+          '<h4>Engine outbox <span class="pill">FOR UPDATE SKIP LOCKED</span> <span class="pill">public.outbox · live</span></h4>' +
+          '<table class="tp-table"><thead><tr><th>#</th><th>event_type</th><th>status</th><th>latency</th></tr></thead><tbody>' + obRows + '</tbody></table>' +
+          (obRows ? '' : '<div class="dpane-empty">No outbox rows yet — run a command.</div>') +
+          (legRows ? '<h4 style="margin-top:0.8rem">Saga outbox <span class="pill">saga_outbox · command legs</span></h4>' +
+            '<table class="tp-table"><thead><tr><th>process</th><th>command_type</th><th>status</th></tr></thead><tbody>' + legRows + '</tbody></table>' : '') +
+        '</div>' +
+        '<div class="tp-col">' +
+          '<h4>Consumer inbox <span class="pill">dedup · message_id</span> <span class="pill">live</span></h4>' +
+          '<table class="tp-table"><thead><tr><th>message_id</th><th>source_topic</th><th>state</th></tr></thead><tbody>' + ibRows + '</tbody></table>' +
+          (ibRows ? '' : '<div class="dpane-empty">No handled messages yet — a consumer inbox row lands once a published record is consumed.</div>') +
+          '<h4 style="margin-top:0.8rem">Command dedup <span class="pill">command_dedup · ADR-PC-029 slot 4</span></h4>' +
+          '<table class="tp-table"><thead><tr><th>command_id</th><th>stream</th><th>original outcome</th></tr></thead><tbody>' + ddRows + '</tbody></table>' +
+          (ddRows ? '' : '<div class="dpane-empty">No command receipts yet.</div>') +
+          '<div class="dpane-empty" style="padding:0.5rem 0 0">A replay is a SILENT PK collision — these ledgers show resulting STATE (one row per logical command/event); an actual dedup hit is visible on the Metrics lens counters.</div>' +
+        '</div>' +
+      '</div>';
   }
   function dwSpark(series, w, h) {
     if (!series.length) return '';
@@ -2319,6 +2439,8 @@ body.console-open .hint-bar { display:none; }
     liveTopic = { recs: [], state: "idle", err: null, ts: 0 };
     // Same for the LIVE Loki logs cache — re-query fresh on the next trace.
     liveLogs = { rows: [], state: "idle", err: null, ts: 0, trace: null };
+    // And the LIVE Outbox·Inbox lens cache (bd babelstone-f0ic.15.5) — re-read the tables fresh.
+    liveTransport = { data: null, state: "idle", err: null, ts: 0 };
     Object.keys(METRICS).forEach(function (k) { METRICS[k].v = 0; METRICS[k].series = METRICS[k].gauge ? [] : [0]; });
     renderTopic(); renderTransport(); renderMetrics(); renderLogs();
   }
