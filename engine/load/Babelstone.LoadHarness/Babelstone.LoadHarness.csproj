@@ -2,6 +2,13 @@
   <PropertyGroup>
     <RootNamespace>Babelstone.LoadHarness</RootNamespace>
     <AssemblyName>Babelstone.LoadHarness</AssemblyName>
+
+    <!-- The ADR-PC-040 §D2 covenant role: declared non-shipping TEST TOOLING (the ADR-PC-011
+         load-test harness), which — like a test project — legitimately names/references families to
+         drive them. NOT a composition root and NOT a family-agnostic core; the repo-wide
+         FAMILY_TO_CORE_DEFAULT_DENY gate skips TestRig projects the way it skips IsTestProject
+         ones, and the marker keeps the exemption explicit and greppable instead of silent. -->
+    <BabelstoneRole>TestRig</BabelstoneRole>
     <!-- A class library, not an executable: the v1 acceptance gate (ADR-PC-011 §G4) is driven by
          the smoke test today and a host wires the full run later. Keeping it a library lets the
          test project exercise the generator/driver/observer modules Docker-free. -->

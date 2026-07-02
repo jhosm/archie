@@ -16,6 +16,14 @@
     <RootNamespace>Babelstone.Notification.Host</RootNamespace>
     <AssemblyName>Babelstone.Notification.Host</AssemblyName>
 
+    <!-- The ADR-PC-040 §D2 covenant role: this host is its estate's COMPOSITION ROOT — the one
+         explicit, visible opt-out that MAY ProjectReference families/** (the ADR-PC-021 §A2
+         standing-exemption pattern: the family references are the module loader's scan anchor).
+         Every project WITHOUT this marker is a family-agnostic core by default, gated repo-wide by
+         FAMILY_TO_CORE_DEFAULT_DENY; a marked root is gated instead by
+         COMPOSITION_ROOT_NAMES_NO_FAMILY (its Program.cs names no Babelstone.Families.* type). -->
+    <BabelstoneRole>CompositionRoot</BabelstoneRole>
+
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
