@@ -25,12 +25,14 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
                 stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
                 term_days, start_date, maturity_date, interest_variant, auto_renewal_policy,
                 payment_period_months, lifecycle, accrued_gross_interest_cents, withholding_to_date_cents,
-                net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated)
+                net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated,
+                product_config_version)
             VALUES (
                 @stream_id, @sor, @principal_cents, @tan_basis_points, @rate_sheet_version_id, @product_code,
                 @term_days, @start_date, @maturity_date, @interest_variant, @auto_renewal_policy,
                 @payment_period_months, @lifecycle, @accrued_gross_interest_cents, @withholding_to_date_cents,
-                @net_interest_cents, @total_payout_cents, @coupons_paid, @detail, @last_sequence, @last_updated)
+                @net_interest_cents, @total_payout_cents, @coupons_paid, @detail, @last_sequence, @last_updated,
+                @product_config_version)
             ON CONFLICT (stream_id) DO UPDATE SET
                 sor                          = EXCLUDED.sor,
                 principal_cents              = EXCLUDED.principal_cents,
@@ -51,7 +53,8 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
                 coupons_paid                 = EXCLUDED.coupons_paid,
                 detail                       = EXCLUDED.detail,
                 last_sequence                = EXCLUDED.last_sequence,
-                last_updated                 = EXCLUDED.last_updated
+                last_updated                 = EXCLUDED.last_updated,
+                product_config_version       = EXCLUDED.product_config_version
             WHERE read_model.deposits.last_sequence < EXCLUDED.last_sequence;
             """;
 
@@ -68,7 +71,8 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
             SELECT stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
                    term_days, start_date, maturity_date, interest_variant, auto_renewal_policy,
                    payment_period_months, lifecycle, accrued_gross_interest_cents, withholding_to_date_cents,
-                   net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated
+                   net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated,
+                   product_config_version
             FROM read_model.deposits
             WHERE stream_id = @stream_id;
             """;
@@ -92,7 +96,8 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
             SELECT stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
                    term_days, start_date, maturity_date, interest_variant, auto_renewal_policy,
                    payment_period_months, lifecycle, accrued_gross_interest_cents, withholding_to_date_cents,
-                   net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated
+                   net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated,
+                   product_config_version
             FROM read_model.deposits
             WHERE maturity_date >= @from_inclusive AND maturity_date < @to_exclusive
             ORDER BY maturity_date ASC, stream_id ASC;
@@ -127,7 +132,8 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
             SELECT stream_id, sor, principal_cents, tan_basis_points, rate_sheet_version_id, product_code,
                    term_days, start_date, maturity_date, interest_variant, auto_renewal_policy,
                    payment_period_months, lifecycle, accrued_gross_interest_cents, withholding_to_date_cents,
-                   net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated
+                   net_interest_cents, total_payout_cents, coupons_paid, detail, last_sequence, last_updated,
+                   product_config_version
             FROM read_model.deposits
             WHERE withholding_to_date_cents > 0
             ORDER BY stream_id ASC;
@@ -215,6 +221,7 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
         command.Parameters.AddWithValue("detail", row.Detail.ToArray());
         command.Parameters.AddWithValue("last_sequence", row.LastSequence);
         command.Parameters.AddWithValue("last_updated", row.LastUpdated);
+        command.Parameters.AddWithValue("product_config_version", row.ProductConfigVersion);
     }
 
     private static DepositReadModelRow Map(NpgsqlDataReader reader) =>
@@ -239,5 +246,6 @@ public sealed class PostgresDepositReadModelStore(string connectionString) : IDe
             CouponsPaid: reader.GetInt32(17),
             Detail: reader.GetFieldValue<byte[]>(18),
             LastSequence: reader.GetInt64(19),
-            LastUpdated: reader.GetFieldValue<DateTimeOffset>(20));
+            LastUpdated: reader.GetFieldValue<DateTimeOffset>(20),
+            ProductConfigVersion: reader.GetString(21));
 }

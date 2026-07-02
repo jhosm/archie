@@ -153,7 +153,10 @@ public sealed class TermDepositProjectionModule : IProjectionModule
             CouponsPaid: p.CouponsPaid,
             Detail: ReadModelDetailSerializer.Serialize(p),
             LastSequence: fold.SourceSequence,
-            LastUpdated: fold.TransactionTime);
+            LastUpdated: fold.TransactionTime,
+            // The product-config generation pin (ADR-PC-009 §A2), copied verbatim off the folded
+            // position — "" for pre-pin deposits (prospective-only, like ProductCode above).
+            ProductConfigVersion: p.ProductConfigVersion);
     }
 
     // The read model denormalizes TWO product keys under their honest names: RateSheetVersionId (the
