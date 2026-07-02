@@ -9,7 +9,7 @@ namespace Babelstone.Families.TermDeposit.Notification.Tests;
 /// <summary>
 /// Tests for <see cref="WithholdingStatementRule"/> — the term-deposit family's annual IRS-withholding
 /// statement contribution (ADR-IC-019 §D1 + Amendment 2026-06-24 / ADR-PC-023 §6 / ADR-PC-025), now
-/// slicing PER TAX YEAR off the dated withholding ledger (bd babelstone-60n8.8). They cover the
+/// slicing PER TAX YEAR off the dated withholding ledger. They cover the
 /// family-shaped half of the acceptance criteria — the part ADR-IC-019 §D1 keeps OUT of the core:
 /// <list type="bullet">
 /// <item>a pass reads the withholding population, then each deposit's DATED ledger, and emits one SCHEDULED
@@ -21,8 +21,8 @@ namespace Babelstone.Families.TermDeposit.Notification.Tests;
 /// <item>each decision carries the <c>pt.notice.withholding_statement</c> template + the structural per-year
 /// cents figures (no PII — ADR-PC-025 PII rule);</item>
 /// <item>a PRE-FIELD withholding flow (a <c>WithholdingApplied</c> stored before the <c>WithheldOn</c> field
-/// existed, folding to <c>0001-01-01</c>) is SURFACED, not silently dropped from the tax-year slice
-/// (bd babelstone-60n8.9).</item>
+/// existed, folding to <c>0001-01-01</c>) is SURFACED, not silently dropped from the tax-year
+/// slice.</item>
 /// </list>
 /// The composite-id derivation and the "re-runs don't re-notify" dedupe are CORE concerns
 /// (<c>NotificationSchedulePass</c>), tested in Babelstone.Notification.Tests — a family rule never
@@ -189,8 +189,8 @@ public sealed class WithholdingStatementRuleTests
     [Fact]
     public async Task A_pre_field_withholding_flow_is_surfaced_not_silently_dropped()
     {
-        // Regression for bd babelstone-60n8.9. A WithholdingApplied event stored BEFORE the WithheldOn field
-        // existed (bd babelstone-60n8.8) folds to default(DateOnly) = 0001-01-01 on replay (deterministic, no
+        // A WithholdingApplied event stored BEFORE the WithheldOn field
+        // existed folds to default(DateOnly) = 0001-01-01 on replay (deterministic, no
         // clock — §P5 holds); over the read surface it arrives as a ledger entry whose withheld_on is
         // 0001-01-01. The per-tax-year slice (entry.WithheldOn.Year == taxYear) can match NO real tax year, so
         // without a guard it would SILENTLY drop the flow: here the deposit ALSO has a dated 2025 flow, so the

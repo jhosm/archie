@@ -31,7 +31,7 @@ namespace Babelstone.Families.TermDeposit.Notification;
 /// the as-of date and trivially testable.
 /// </para>
 /// <para>
-/// <b>Per-tax-year figure (bd babelstone-60n8.8).</b> The statement reports the withholding for the PRIOR
+/// <b>Per-tax-year figure.</b> The statement reports the withholding for the PRIOR
 /// TAX YEAR, not a cumulative-to-date figure. The rule reads each deposit's DATED withholding ledger
 /// (<c>GET /v1/deposits/{id}/withholding-ledger</c> — the <c>withholding_ledger</c> projection's per-flow
 /// dates now exposed over the read surface, ADR-PC-027 / ADR-IC-019 §D3) and SUMS only the flows withheld in
@@ -42,17 +42,15 @@ namespace Babelstone.Families.TermDeposit.Notification;
 /// <c>pt.notice.withholding_statement</c> template contract; their VALUES are now the tax-year slice.
 /// </para>
 /// <para>
-/// <b>Pre-field withholding flows fail loud, not silent (bd babelstone-60n8.9).</b> A
-/// <c>WithholdingApplied</c> event stored BEFORE the <c>WithheldOn</c> field existed (bd babelstone-60n8.8)
+/// <b>Pre-field withholding flows fail loud, not silent.</b> A
+/// <c>WithholdingApplied</c> event stored BEFORE the <c>WithheldOn</c> field existed
 /// folds to <c>default(DateOnly)</c> = <c>0001-01-01</c> on replay — deterministic, no clock, so §P5 holds.
 /// Such a flow carries NO recoverable tax year, so the <c>entry.WithheldOn.Year == taxYear</c> slice below
 /// would SILENTLY drop it from EVERY per-tax-year statement — a legacy depositor would never receive the
 /// statutory withholding statement they are owed, and a deposit that ALSO has dated flows would emit a
 /// statement that silently under-reports (the pre-field flow omitted from the sum). The rule therefore
 /// SURFACES an un-dated flow (throws, naming the deposit) rather than under-reporting, so the stream is
-/// backfilled first — the same fail-loud discipline the engine applies to an empty funding reference. The
-/// eventual backfill/attribution correctness (derive the date from the coupon/maturity flow) is deferred to
-/// the replay-determinism + financial-math reviewers (bd babelstone-60n8.9 scope).
+/// backfilled first — the same fail-loud discipline the engine applies to an empty funding reference.
 /// </para>
 /// </remarks>
 public sealed class WithholdingStatementRule(DepositReadClient depositReadClient) : INotificationScheduleRule
@@ -71,7 +69,7 @@ public sealed class WithholdingStatementRule(DepositReadClient depositReadClient
     /// Read every deposit that has had tax withheld and, for each one that can still receive a statement AND
     /// actually withheld tax in the PRIOR tax year, produce a <see cref="ReminderDecision"/> for the
     /// <c>pt.notice.withholding_statement</c> template keyed on that tax year — carrying the per-tax-year
-    /// slice of its DATED withholding ledger (bd babelstone-60n8.8), not the cumulative-to-date figure. The
+    /// slice of its DATED withholding ledger, not the cumulative-to-date figure. The
     /// composite id and the dedupe are applied by the core's <see cref="NotificationSchedulePass"/>, so
     /// returning the same deposit on a later pass in the same year does not re-notify (ADR-PC-025 slot 4).
     /// </summary>
@@ -95,25 +93,21 @@ public sealed class WithholdingStatementRule(DepositReadClient depositReadClient
                 continue;
             }
 
-            // Slice the deposit's DATED withholding ledger to the target tax year (bd babelstone-60n8.8):
+            // Slice the deposit's DATED withholding ledger to the target tax year:
             // sum ONLY the flows withheld in that calendar/tax year — the per-year figure, replacing the
             // cumulative withholding_to_date the v1 approximation reported. The ledger read is empty for a
             // deposit with no materialised withholding flow yet (404 → []), which yields no slice.
             var ledger = await _depositReadClient.GetWithholdingLedgerAsync(deposit.DepositId, ct);
 
-            // Pre-field guard (bd babelstone-60n8.9): a WithholdingApplied event stored BEFORE the WithheldOn
-            // field existed (bd babelstone-60n8.8) folds to default(DateOnly) = 0001-01-01 on replay. Such a
-            // flow has no recoverable tax year, so the year filter below would SILENTLY drop it from EVERY
-            // statement (and under-report a deposit that also has dated flows). Surface it instead — fail loud,
-            // naming the deposit — so the stream is backfilled before a statement is scheduled, rather than a
-            // legacy depositor silently losing their statutory withholding statement. This is backpressure (it
-            // bubbles up exactly like the client's 5xx surface), never a silent skipped cycle.
+            // An un-dated flow (WithheldOn == default, i.e. 0001-01-01) carries no recoverable tax year, so it
+            // must be backfilled before it can be sliced — surface it rather than silently drop (see the
+            // <para> on the class for the full fail-loud rationale).
             if (ledger.Any(entry => entry.WithheldOn == default))
             {
                 throw new InvalidOperationException(
                     $"Deposit {deposit.DepositId} has a pre-field WithholdingApplied flow with no withheld-on " +
                     "date (default 0001-01-01) — it cannot be sliced to a tax year and must be backfilled before " +
-                    "an annual IRS-withholding statement can be scheduled (bd babelstone-60n8.9).");
+                    "an annual IRS-withholding statement can be scheduled.");
             }
 
             var yearFlows = ledger.Where(entry => entry.WithheldOn.Year == taxYear).ToList();
