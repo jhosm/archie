@@ -45,6 +45,7 @@ on:
       - 'infra/kong/**'
       - 'scripts/deck-sync.sh'
       - 'scripts/cd-migrate.sh'
+      - 'scripts/cd-secret-preflight.sh'
       - 'engine/src/Babelstone.EventStore.Migrations/**'
       - 'orchestrator/src/Babelstone.Orchestrator.Substrate/Migrations/**'
       - 'families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Migrations/**'
