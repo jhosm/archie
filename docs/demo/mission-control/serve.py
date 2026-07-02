@@ -164,6 +164,9 @@ _PG_ALLOWLIST = {
     ("engine", "command_dedup"): {"command_id", "stream_id", "commit_sequence", "created_at"},
     ("orchestrator", "saga_state"): {
         "process_id", "saga_type", "state", "version", "correlation_id", "created_at", "updated_at",
+        # The client-facing PROC-… handle (migration 0005): the key the UI holds, resolved here to
+        # the internal UUID for the transition/leg reads. An opaque reference, never PII.
+        "public_process_id",
     },
     ("orchestrator", "saga_transition"): {
         "id", "process_id", "from_state", "to_state", "event_type", "message_id", "note", "occurred_at",
@@ -445,6 +448,48 @@ def pg_command_dedup_tail(limit=20):
     return {"db": "engine", "table": "command_dedup", "count": len(rows), "rows": rows}
 
 
+# ── Topology lens history reads (bd babelstone-f0ic.15.3) ────────────────────────────────────
+def pg_resolve_process(handle):
+    """Resolve a process handle to its saga_state row. Accepts the client-facing PROC-… reference
+    (resolved via public_process_id) or the internal UUID. Raises 404 when unknown."""
+    key = "public_process_id" if str(handle).startswith("PROC-") else "process_id"
+    rows = pg_select("orchestrator", "saga_state",
+                     ["process_id", "public_process_id", "saga_type", "state", "version",
+                      "correlation_id", "created_at", "updated_at"],
+                     where=[(key, handle)], limit=1)
+    if not rows:
+        raise PgError(404, "unknown process: %s" % handle)
+    return rows[0]
+
+
+def pg_process_transitions(handle):
+    """The REAL path a saga took: its saga_state row + the ordered saga_transition legs + the
+    dispatched saga_outbox command legs — everything the Topology lens needs to light the actual
+    journey instead of a canned sequence. Structural columns only; no payload ever crosses."""
+    process = pg_resolve_process(handle)
+    pid = process["process_id"]
+    transitions = pg_select("orchestrator", "saga_transition",
+                            ["id", "process_id", "from_state", "to_state", "event_type",
+                             "message_id", "note", "occurred_at"],
+                            where=[("process_id", pid)], order="id", descending=False, limit=200)
+    legs = pg_select("orchestrator", "saga_outbox",
+                     ["seq", "message_id", "process_id", "command_type", "causation_id",
+                      "correlation_id", "status", "created_at", "published_at"],
+                     where=[("process_id", pid)], order="seq", descending=False, limit=200)
+    return {"process": process, "transitions": transitions, "legs": legs}
+
+
+def pg_stream_events(stream_id, limit=200):
+    """One stream's REAL event chain (engine public.events), ascending — event types, sequence
+    numbers and the causation/correlation references. The payload BYTEA is refused by the
+    allowlist/PII firewall; only structural envelope columns cross the engine boundary."""
+    rows = pg_select("engine", "events",
+                     ["event_id", "stream_id", "sequence_number", "event_type", "family",
+                      "pack_version", "valid_time", "transaction_time", "causation_id", "correlation_id"],
+                     where=[("stream_id", stream_id)], order="sequence_number", descending=False, limit=limit)
+    return {"db": "engine", "table": "events", "stream_id": stream_id, "count": len(rows), "rows": rows}
+
+
 def pg_saga_outbox_tail(process_id=None, limit=20):
     """The orchestrator's saga_outbox tail — the saga's dispatched command legs. Optionally filtered
     to one process (the internal UUID; the PROC-… public handle resolves via /pg/processes/*). The
@@ -462,6 +507,119 @@ def pg_saga_outbox_tail(process_id=None, limit=20):
 def _json_default(o):
     """Serialise UUID / datetime / Decimal etc. as strings for the JSON response."""
     return str(o)
+
+
+# ── Topology manifest — derived from the estate, not re-hardcoded (bd babelstone-f0ic.15.3) ──
+# The node/edge manifest the Topology lens renders in LIVE modes is DERIVED from the repo's C4 L2
+# PlantUML sources (the architecture's own model — docs/…/product_concepts/diagrams/) and enriched
+# with the LIVE topic list read off Redpanda through the pandaproxy arm. So the picture the lens
+# draws is sourced from the same artefacts the architecture docs render, and a C4 edit flows into
+# the lens without touching this file. Everything here is structural (service names, topic names,
+# relationship labels) — no PII surface exists in a C4 model.
+import re as _re
+
+_C4_DIAGRAM_DIR = os.path.normpath(os.path.join(
+    ROOT, "..", "..", "product-management", "product_concepts", "diagrams"))
+_C4_SOURCES = (
+    "c4-l2-runtime-write-read.puml",        # engine / orchestrator / ACL / core / Kong / Redpanda
+    "c4-l2-event-backbone-consumers.puml",  # downstream consumers: GL / IFRS 9 / reporting / notification
+    "c4-l2-agent-channel.puml",             # the MCP server + agent channel
+)
+# Container(id, "label", "tech", "desc"…) / ContainerDb / System / System_Ext / Person / Person_Ext.
+_C4_NODE_RE = _re.compile(
+    r'^\s*(Person_Ext|Person|System_Ext|System|ContainerDb|Container)\(\s*([A-Za-z0-9_]+)\s*,\s*"([^"]*)"\s*(?:,\s*"([^"]*)")?')
+_C4_REL_RE = _re.compile(
+    r'^\s*(?:Bi)?Rel(?:_[A-Za-z]+)?\(\s*([A-Za-z0-9_]+)\s*,\s*([A-Za-z0-9_]+)\s*,\s*"([^"]*)"')
+
+
+def _c4_parse(text):
+    """Parse ONE C4-PlantUML source into (nodes, edges). Node plane: 'ext' for System_Ext/Person*,
+    'estate' when the line carries $tags=\"estate\", else 'build' (the engine-boundary deliverable)."""
+    nodes, edges = {}, []
+    for line in text.splitlines():
+        m = _C4_NODE_RE.match(line)
+        if m:
+            kind, node_id, label, tech = m.group(1), m.group(2), m.group(3), m.group(4) or ""
+            if kind in ("System_Ext", "Person", "Person_Ext"):
+                plane = "ext"
+            elif '$tags="estate"' in line:
+                plane = "estate"
+            else:
+                plane = "build"
+            nodes[node_id] = {"id": node_id, "label": label, "tech": tech, "plane": plane}
+            continue
+        m = _C4_REL_RE.match(line)
+        if m:
+            edges.append([m.group(1), m.group(2), m.group(3)])
+    return nodes, edges
+
+
+def _c4_columns(nodes, edges):
+    """Assign a left-to-right column hint per node: BFS depth from the source nodes (no inbound
+    edge), capped at 5 — the same 6-column stage the lens lays out. Unreachable nodes fall back to
+    a plane-typical column so nothing lands off-grid."""
+    inbound = {n: 0 for n in nodes}
+    adjacency = {n: [] for n in nodes}
+    for a, b, _ in edges:
+        if a in nodes and b in nodes:
+            adjacency[a].append(b)
+            inbound[b] += 1
+    frontier = [n for n, deg in inbound.items() if deg == 0] or list(nodes)[:1]
+    depth = {n: 0 for n in frontier}
+    queue = list(frontier)
+    # Shortest-path BFS (first visit wins): the Rel graph cycles through the bus (engine→redpanda→
+    # orch→engine), so a longest-path rank would drag every node to the deep end — the hop count
+    # from the callers is the stable left-to-right reading order.
+    while queue:
+        cur = queue.pop(0)
+        for nxt in adjacency.get(cur, []):
+            if nxt not in depth:
+                depth[nxt] = depth[cur] + 1
+                queue.append(nxt)
+    fallback = {"ext": 5, "estate": 3, "build": 3}
+    for node_id, node in nodes.items():
+        node["col"] = min(depth.get(node_id, fallback[node["plane"]]), 5)
+    return nodes
+
+
+def _live_topics():
+    """Best-effort LIVE topic list off Redpanda's HTTP proxy (the same arm the Topic·Avro lens
+    uses). Internal topics are filtered; unreachable broker → None (the manifest says so)."""
+    try:
+        with urllib.request.urlopen(PANDAPROXY_URL + "/topics", timeout=2) as resp:
+            names = json.loads(resp.read())
+        return [t for t in names if isinstance(t, str) and not t.startswith("_")]
+    except Exception:
+        return None
+
+
+def topology_manifest():
+    """The estate-derived node/edge manifest (bd babelstone-f0ic.15.3): C4 L2 sources parsed into
+    nodes/edges (+ column hints), topics read live where the broker answers."""
+    nodes, edges, parsed = {}, [], []
+    for name in _C4_SOURCES:
+        path = os.path.join(_C4_DIAGRAM_DIR, name)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                file_nodes, file_edges = _c4_parse(f.read())
+        except OSError:
+            continue                      # a container image without the docs tree — degrade
+        parsed.append(name)
+        for node_id, node in file_nodes.items():
+            nodes.setdefault(node_id, node)   # first definition wins (the runtime diagram leads)
+        seen = {(a, b) for a, b, _ in edges}
+        for a, b, label in file_edges:
+            if (a, b) not in seen:
+                edges.append([a, b, label])
+                seen.add((a, b))
+    _c4_columns(nodes, edges)
+    topics = _live_topics()
+    return {
+        "source": {"diagrams": parsed, "topics": "pandaproxy" if topics is not None else "unavailable"},
+        "nodes": list(nodes.values()),
+        "edges": edges,
+        "topics": topics or [],
+    }
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -620,6 +778,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 body = pg_command_dedup_tail(limit=qlimit())
             elif path == "/pg/saga-outbox/tail":
                 body = pg_saga_outbox_tail(process_id=q("process_id"), limit=qlimit())
+            elif path.startswith("/pg/processes/") and path.endswith("/transitions"):
+                # Topology lens (bd babelstone-f0ic.15.3): the REAL path one saga took — its
+                # ordered saga_transition legs + dispatched saga_outbox command legs. The handle is
+                # the client-facing PROC-… reference (or the internal UUID).
+                handle = path[len("/pg/processes/"):-len("/transitions")]
+                body = pg_process_transitions(handle)
+            elif path.startswith("/pg/streams/") and path.endswith("/events"):
+                # Topology lens (bd babelstone-f0ic.15.3): one stream's real event chain —
+                # structural envelope columns only (never events.payload).
+                stream_id = path[len("/pg/streams/"):-len("/events")]
+                body = pg_stream_events(stream_id, limit=qlimit(default=200))
             else:
                 raise PgError(404, "no such /pg route: %s" % path)
             payload = json.dumps(body, default=_json_default).encode()
@@ -638,6 +807,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return True
 
     def do_GET(self):
+        if self.path.split("?", 1)[0] == "/topology/manifest":
+            # The estate-derived Topology manifest (bd babelstone-f0ic.15.3): C4 L2 sources parsed
+            # into nodes/edges + the live Redpanda topic list. Read-only, structural names only.
+            payload = json.dumps(topology_manifest(), default=_json_default).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if self._pg_handle():
             return
         route = self._route()
