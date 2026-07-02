@@ -32,21 +32,33 @@ if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
   echo "export PATH=\"\$PATH:$GOBIN_DIR\"" >> "$CLAUDE_ENV_FILE"
 fi
 
-# 1. Install the bd binary (idempotent — skip if already on PATH).
-#    We build from source with `go install` rather than the upstream release
-#    installer: the GitHub release API is rate-limited (HTTP 403) behind the
-#    agent proxy, so the prebuilt-binary path fails. Go's automatic toolchain
-#    switching fetches the required go >= 1.26.2, and bd's embedded Dolt needs
-#    CGO (the remote image ships a C toolchain).
+# 1. Install the bd binary from the gastownhall/beads fork (idempotent — skip if
+#    already on PATH). We build from source: the GitHub release API is rate-limited
+#    (HTTP 403) behind the agent proxy, so the prebuilt-binary path is unavailable.
+#
+#    gastownhall/beads keeps its Go module path as github.com/steveyegge/beads, so
+#    a plain `go install github.com/gastownhall/beads/...` fails with a module-path
+#    mismatch. We use a throwaway module with a `replace` directive that redirects
+#    the steveyegge module path to the gastownhall fork, so `go build` compiles
+#    gastownhall's actual source. The bd binary lives in the cmd/bd subpackage and
+#    needs the gms_pure_go build tag; CGO gives the embedded-Dolt build that
+#    `bd bootstrap` needs (Go's toolchain switching pulls the required go >= 1.26.2).
 if ! command -v bd >/dev/null 2>&1; then
-  log "installing bd (beads) via go install — first run builds from source..."
-  # The bd binary lives in the cmd/bd subpackage and needs the gms_pure_go build
-  # tag (matches the upstream installer). CGO gives the embedded-Dolt build that
-  # `bd bootstrap` needs; fall back to a CGO-less build if the C path fails.
-  if ! CGO_ENABLED=1 GOFLAGS="-tags=gms_pure_go" go install github.com/steveyegge/beads/cmd/bd@latest; then
-    log "CGO build failed; retrying without CGO..."
-    CGO_ENABLED=0 GOFLAGS="-tags=gms_pure_go" go install github.com/steveyegge/beads/cmd/bd@latest
-  fi
+  log "installing bd (beads) from gastownhall/beads — first run builds from source..."
+  work="$(mktemp -d)"
+  (
+    cd "$work"
+    go mod init beads-build >/dev/null 2>&1
+    # Redirect the steveyegge module path to the gastownhall fork; `go get` then
+    # resolves @latest to a concrete version and adds the require line for us.
+    go mod edit -replace=github.com/steveyegge/beads=github.com/gastownhall/beads@latest
+    GOFLAGS=-mod=mod go get github.com/steveyegge/beads/cmd/bd@latest
+    if ! CGO_ENABLED=1 GOFLAGS="-mod=mod -tags=gms_pure_go" go build -o "$GOBIN_DIR/bd" github.com/steveyegge/beads/cmd/bd; then
+      log "CGO build failed; retrying without CGO..."
+      CGO_ENABLED=0 GOFLAGS="-mod=mod -tags=gms_pure_go" go build -o "$GOBIN_DIR/bd" github.com/steveyegge/beads/cmd/bd
+    fi
+  )
+  rm -rf "$work"
   log "bd installed: $(command -v bd) ($(bd version 2>/dev/null | head -1))"
 else
   log "bd already installed: $(command -v bd)"
