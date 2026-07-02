@@ -21,7 +21,7 @@ REGISTRY_PORT     ?= 5001
 BACKSTAGE_PORT    ?= 7007
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile gen-saga-topics gen-saga-topics-check kong-config-check grafana-rbac-check deck-sync-dry-run deck-sync cd-migrate-gate cd-migrate edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify rate-sheet-check deploy-rate-sheet docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test load-gate preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
+.PHONY: help bootstrap doctor contracts-check avro-compat-check asyncapi-catalog-validate asyncapi-catalog-reconcile openapi-catalog-validate openapi-catalog-selftest openapi-catalog-reconcile gen-saga-topics gen-saga-topics-check kong-config-check grafana-rbac-check deck-sync-dry-run deck-sync cd-migrate-gate cd-migrate edge-contract-test mcp-contract-test validate-variant pack-validate-test pack-validate pack-build pack-verify rate-sheet-check deploy-rate-sheet docs-gen docs-verify docs-site docs-site-serve projection-rebuild-drill load-test load-gate preflight ci-triage up down reset logs ps verify demo demo-down demo-mcp demo-mcp-down demo-saga demo-saga-down demo-agent demo-agent-down
 
 PACK ?= pt.2026.1
 VARIANT ?=
@@ -74,6 +74,15 @@ asyncapi-catalog-validate: ## AsyncAPI catalogue §P1–§P6 gate (fast, hermeti
 
 asyncapi-catalog-reconcile: ## Live check: catalogue subjects exist in a throwaway SR (ADR-IC-015 §8, needs Docker)
 	@./scripts/asyncapi-catalog-reconcile.sh
+
+openapi-catalog-validate: ## OpenAPI catalogue gate — Spectral + oasdiff + Kong reconcile (needs Node + jq + Docker, ADR-IC-020)
+	@./scripts/openapi-catalog-validate.sh
+
+openapi-catalog-selftest: ## Prove the OpenAPI gate rejects each negative fixture (ADR-IC-020, bd ax0b.2)
+	@./scripts/openapi-catalog-validate.sh --self-test
+
+openapi-catalog-reconcile: ## Live check: kong.yml routes materialise in a throwaway Kong (ADR-IC-020 main lane, needs Docker)
+	@./scripts/openapi-catalog-reconcile.sh
 
 gen-saga-topics: ## Regenerate the saga family-integration-topic manifest from the AsyncAPI catalogue (bd 9w2k.4)
 	@mise exec -- python3 scripts/gen-saga-topics.py
@@ -149,8 +158,8 @@ preflight: ## Run CI's fast hermetic gates locally before pushing (PREFLIGHT_INT
 	mise exec -- dotnet test orchestrator/tests/Babelstone.Orchestrator.Tests/Babelstone.Orchestrator.Tests.csproj --configuration Release --nologo --filter "Category!=Integration"
 	@echo "==> pack-validate — go build + test (ci.yml: pack-validate)"
 	@$(MAKE) --no-print-directory pack-validate-test
-	@echo "==> contracts (CUE) + AsyncAPI catalogue (ci.yml: contracts)"
-	@$(MAKE) --no-print-directory contracts-check asyncapi-catalog-validate
+	@echo "==> contracts (CUE) + AsyncAPI catalogue + OpenAPI catalogue (ci.yml: contracts)"
+	@$(MAKE) --no-print-directory contracts-check asyncapi-catalog-validate openapi-catalog-validate openapi-catalog-selftest
 	@echo "==> generated reference freshness (ci.yml: docs-verify)"
 	@$(MAKE) --no-print-directory docs-verify
 	@echo "==> mcp-server — pytest (ci.yml: mcp-server)"

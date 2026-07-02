@@ -43,7 +43,7 @@ jobs:
             engine: ['engine/**', '.github/scripts/coverage-floor-cobertura.py']
             pack_validate: ['pack-validate/**']
             families: ['families/**']
-            contracts: ['contracts/**', 'scripts/avro-compat-check.sh', 'scripts/asyncapi-catalog-validate.sh', 'scripts/asyncapi-catalog-reconcile.sh', 'scripts/gen-saga-topics.py', 'scripts/gen-saga-topics-check.sh', 'families/term-deposit/src/Babelstone.Families.TermDeposit.Orchestration/FamilyIntegrationTopics.g.cs']
+            contracts: ['contracts/**', 'scripts/avro-compat-check.sh', 'scripts/asyncapi-catalog-validate.sh', 'scripts/asyncapi-catalog-reconcile.sh', 'scripts/openapi-catalog-validate.sh', 'scripts/openapi-catalog-reconcile.sh', '.spectral.yaml', 'infra/kong/kong.yml', 'scripts/gen-saga-topics.py', 'scripts/gen-saga-topics-check.sh', 'families/term-deposit/src/Babelstone.Families.TermDeposit.Orchestration/FamilyIntegrationTopics.g.cs']
             orchestrator: ['orchestrator/**']
             acl: ['acl/**']
             mcp_server: ['mcp-server/**']
@@ -343,6 +343,28 @@ jobs:
         # script dev runs via `make asyncapi-catalog-validate`. npx pulls the pinned
         # @asyncapi/cli; the ubuntu-latest runner ships Node.
         run: ./scripts/asyncapi-catalog-validate.sh
+      - name: OpenAPI catalogue gate (ADR-IC-020 — Spectral + oasdiff + Kong reconcile, PR lane)
+        # bd babelstone-ax0b.2: the FAST, HERMETIC OpenAPI gate — the REST mirror of the
+        # AsyncAPI catalogue gate above. For every contracts/openapi/specs/*.openapi.yaml it
+        # runs (1) Spectral lint (the built-in `oas` ruleset + the FROZEN .spectral.yaml
+        # governance-field rules: info.x-owner / x-owner-contact / x-status enum /
+        # x-gdpr-legal-basis / x-authorized-consumers — the mirror of the AsyncAPI §P1 set),
+        # (2) an oasdiff `breaking` diff vs the origin/main baseline fetched above (a breaking
+        # change fails unless info.x-breaking-change-approved:true, the §P4 mirror), and
+        # (3) Kong-route <-> spec reconciliation against infra/kong/kong.yml (FORWARD: every
+        # public route has a spec; REVERSE: every spec is a public route; NEGATIVE: POST
+        # /v1/deposits and the mTLS-only command channels never appear as public specs — the
+        # mcp-server routes are excluded, ADR-IC-010). Spectral runs via npx (pinned) and
+        # oasdiff via a pinned Docker image (the runner ships both, as avro-compat-check relies
+        # on). NO live gateway. Same script dev runs via `make openapi-catalog-validate`.
+        run: ./scripts/openapi-catalog-validate.sh
+      - name: OpenAPI catalogue gate self-test (negative fixtures MUST fail, ADR-IC-020)
+        # The executable proof the gate actually rejects a missing governance field, a spec path
+        # that is not a public Kong route, a public route with no spec, and a spec describing the
+        # internal POST /v1/deposits command surface. Builds a throwaway spec set from the good
+        # baseline + each negative fixture under contracts/openapi/_selftest/ and asserts the gate
+        # fails on each. Same check dev runs via `make openapi-catalog-selftest`.
+        run: ./scripts/openapi-catalog-validate.sh --self-test
       - name: Saga integration-topic manifest matches the catalogue (ADR-IC-003, bd babelstone-9w2k.4)
         # The catalogue-derived saga-subscription gate. The orchestrator's sagas subscribe to the
         # engine's family-integration topic, which == the AsyncAPI catalogue channel (topic ==
@@ -363,6 +385,15 @@ jobs:
         # registry. Runs on push to main, not pull_request.
         if: ${{ github.event_name == 'push' }}
         run: ./scripts/asyncapi-catalog-reconcile.sh
+      - name: OpenAPI catalogue live reconciliation (ADR-IC-020 main lane, main only)
+        # The LIVE reconciliation, main lane only (never on PRs — keeps the gate above
+        # hermetic). Loads infra/kong/kong.yml into a throwaway DB-less Kong (the pinned
+        # kong:3.9.1 image kong-config-check uses) and confirms Kong actually MATERIALISES the
+        # public routes — so a config that parses on disk but fails to load its routes into a
+        # running gateway can never pass silently — then delegates the full spec<->route
+        # reconciliation to the hermetic validate script. Runs on push to main, not pull_request.
+        if: ${{ github.event_name == 'push' }}
+        run: ./scripts/openapi-catalog-reconcile.sh
 
   orchestrator:
     needs: changes

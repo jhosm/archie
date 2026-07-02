@@ -1,0 +1,34 @@
+openapi: 3.1.0
+# NEGATIVE FIXTURE — a governance-complete spec that documents the engine COMMAND surface
+# POST /v1/deposits. The negative invariant MUST fail this: the internal command surface must
+# NEVER appear as a public spec (ADR-IC-006 §P5 / ADR-IC-020 — agrees with kong-config-check.sh's
+# POST /v1/deposits absence assertion). The REVERSE reconcile also trips (it is on no public route).
+info:
+  title: Babelstone — Engine command (must not be public)
+  version: 1.0.0
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract
+  x-authorized-consumers:
+    - retail-web
+servers:
+  - url: https://api.babelstone.example
+paths:
+  /v1/deposits:
+    post:
+      operationId: appendDepositCommand
+      summary: The engine command surface (the defect under test — must not be public).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object

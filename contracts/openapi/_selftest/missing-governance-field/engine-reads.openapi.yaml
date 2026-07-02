@@ -1,0 +1,44 @@
+openapi: 3.1.0
+# NEGATIVE FIXTURE — a copy of the engine-reads spec with info.x-owner DROPPED. The frozen
+# .spectral.yaml governance rule babelstone-info-x-owner MUST fail this (ADR-IC-020 §P1).
+info:
+  title: Babelstone Engine — Deposit Query Reads
+  version: 1.0.0
+  # x-owner intentionally MISSING (the defect under test).
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract
+  x-authorized-consumers:
+    - retail-web
+servers:
+  - url: https://api.babelstone.example
+paths:
+  /v1/deposits/maturities:
+    get:
+      operationId: listMaturities
+      summary: The maturities range scan.
+      responses:
+        '200':
+          description: The list of maturing deposits.
+          content:
+            application/json:
+              schema:
+                type: object
+  /v1/deposits/{id}:
+    get:
+      operationId: getDeposit
+      summary: The one canonical deposit read resource.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The deposit read model.
+          content:
+            application/json:
+              schema:
+                type: object
