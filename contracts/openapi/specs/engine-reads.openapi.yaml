@@ -1,0 +1,110 @@
+openapi: 3.1.0
+# contracts/openapi/specs/engine-reads.openapi.yaml — the PUBLIC CQRS query reads
+# (ADR-IC-005 / ADR-PC-027; catalogued per ADR-IC-020). One hand-written OpenAPI spec for the
+# two engine-upstream READ routes exposed through Kong: the canonical deposit point-read and
+# the maturities range scan. These are the ONLY engine routes on the public edge — the engine
+# COMMAND POST /v1/deposits is absent by design (ADR-IC-006 §P5), and the gate's negative
+# invariant fails any spec that tries to document it.
+info:
+  title: Babelstone Engine — Deposit Query Reads
+  version: 1.0.0
+  description: >
+    The CQRS read surface for term deposits. One canonical read resource
+    (GET /v1/deposits/{id}, optionally as-of a sequence) plus the maturities range scan.
+    Read-only; no money moves here.
+  # ── ADR-IC-020 §P1 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract        # GDPR Art.6(1)(b) — performance of the deposit contract
+  x-authorized-consumers:
+    - retail-web
+    - retail-mobile
+    - ops-console
+servers:
+  - url: https://api.babelstone.example
+    description: Public edge gateway (Kong).
+paths:
+  /v1/deposits/maturities:
+    get:
+      operationId: listMaturities
+      summary: The maturities range scan.
+      description: Deposits maturing within a range — an operational read.
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: The list of maturing deposits.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaturityList'
+        '401':
+          description: Missing or invalid bearer token.
+  /v1/deposits/{id}:
+    get:
+      operationId: getDeposit
+      summary: The one canonical deposit read resource.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: as_of_sequence
+          in: query
+          required: false
+          description: Read the deposit state as of a specific event sequence number.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      responses:
+        '200':
+          description: The deposit read model.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deposit'
+        '401':
+          description: Missing or invalid bearer token.
+        '404':
+          description: No such deposit.
+components:
+  schemas:
+    Deposit:
+      type: object
+      required: [id, product_code, sor]
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_code:
+          type: string
+        principal_cents:
+          type: integer
+          format: int64
+        sor:
+          type: string
+          description: The system-of-record for this instance (ADR-PC-018 / ADR-PC-027).
+          enum: [engine, legacy]
+    MaturityList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Deposit'

@@ -1,0 +1,112 @@
+openapi: 3.1.0
+# contracts/openapi/specs/orchestrator-edge.openapi.yaml — the PUBLIC edge front door
+# (ADR-IC-006 §Decision / Document 05; catalogued per ADR-IC-020). One hand-written OpenAPI
+# spec for the two orchestrator-upstream edge routes exposed through Kong: the constitute POST
+# that STARTS the saga, and the long-lived SSE saga-progress stream. The Kong-route <-> spec
+# reconciliation in scripts/openapi-catalog-validate.sh proves every path+method here is an
+# exposed public Kong route and vice-versa (the no-drift anchor).
+info:
+  title: Babelstone Edge — Deposit Constitution API
+  version: 1.0.0
+  description: >
+    The client-facing edge over the constitution saga. A client STARTS a term-deposit
+    constitution here (POST /api/v1/deposits/constitute) and watches its progress over the
+    SSE stream. The engine COMMAND surface (POST /v1/deposits) is DELIBERATELY NOT here — it
+    is the orchestrator's internal, mTLS-only saga target, never the public write path
+    (ADR-IC-006 §P5 Boundary 2).
+  # ── ADR-IC-020 §P1 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-edge
+  x-owner-contact: platform-edge@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract        # GDPR Art.6(1)(b) — performance of the deposit contract
+  x-authorized-consumers:
+    - retail-web
+    - retail-mobile
+servers:
+  - url: https://api.babelstone.example
+    description: Public edge gateway (Kong).
+paths:
+  /api/v1/deposits/constitute:
+    post:
+      operationId: constituteDeposit
+      summary: Start a term-deposit constitution (STARTS the saga).
+      description: >
+        Accepts a constitution request and returns 202 with a process_id and a stream_url.
+        Rate-limited and PSD2-SCA-enforced at the edge (ADR-IC-006 §P2/§P3). The body carries
+        already-tokenised account references — NO raw PII (ADR-PC-004 §P2).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConstituteRequest'
+      responses:
+        '202':
+          description: Constitution accepted; the saga has started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConstituteAccepted'
+        '400':
+          description: Structurally invalid request (rejected at the edge).
+        '401':
+          description: Missing or invalid bearer token.
+        '403':
+          description: Strong Customer Authentication (PSD2 SCA) required.
+  /api/v1/processes/{id}/stream:
+    get:
+      operationId: streamProcess
+      summary: Server-Sent-Events saga-progress stream (long-lived).
+      # ── SSE exemption (ADR-IC-020) — the REST mirror of the AsyncAPI x-compacted special-case. ──
+      # This operation streams text/event-stream frames, not a JSON response body, so the gate's
+      # response-body check is WAIVED for it. Kept in lock-step with the orchestrator-sse Kong route
+      # (30-min read_timeout, buffering off; ADR-IC-006 §P4).
+      x-sse-stream: true
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The process_id returned by the constitute call.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: An open Server-Sent-Events stream of saga-progress frames.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          description: Missing or invalid bearer token.
+        '403':
+          description: The caller does not own this process (per-process ownership).
+components:
+  schemas:
+    ConstituteRequest:
+      type: object
+      required: [product_code, amount, source_account_ref]
+      properties:
+        product_code:
+          type: string
+          description: A catalogue reference (not PII).
+        amount:
+          type: integer
+          minimum: 1
+          description: Positive integer cents (the engine's money discipline).
+        source_account_ref:
+          type: string
+          description: Opaque account token — NOT a raw IBAN (ADR-PC-004 §P2).
+        interest_account_ref:
+          type: string
+          description: Optional opaque account token for interest payouts.
+    ConstituteAccepted:
+      type: object
+      required: [process_id, stream_url]
+      properties:
+        process_id:
+          type: string
+          format: uuid
+        stream_url:
+          type: string
+          format: uri

@@ -1,0 +1,27 @@
+openapi: 3.1.0
+# NEGATIVE FIXTURE — a governance-complete spec that documents a path Kong does NOT expose.
+# The REVERSE reconcile MUST fail: every spec operation must be an exposed public Kong route
+# (ADR-IC-020). GET /v1/nonexistent is on no Kong service.
+info:
+  title: Babelstone — Bogus (not a real route)
+  version: 1.0.0
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract
+  x-authorized-consumers:
+    - retail-web
+servers:
+  - url: https://api.babelstone.example
+paths:
+  /v1/nonexistent:
+    get:
+      operationId: getNonexistent
+      summary: A path Kong does not route (the defect under test).
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object

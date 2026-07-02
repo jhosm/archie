@@ -1,0 +1,85 @@
+# .spectral.yaml — FROZEN project Spectral ruleset for the OpenAPI catalogue gate
+# (ADR-IC-020; bd babelstone-ax0b.2). The REST mirror of the AsyncAPI catalogue gate's
+# §P1 governance-field set (ADR-IC-015 / ADR-IC-008 §P1).
+#
+# In plain English: this file tells Spectral two things about every hand-written OpenAPI
+# spec under contracts/openapi/specs/. First, "be a well-formed OpenAPI document" (the
+# built-in `spectral:oas` ruleset). Second, "carry the governance metadata every catalogued
+# API must declare" — who owns it, how to reach them, its lifecycle status, its GDPR legal
+# basis, and which consumers are authorised. These are the SAME source-of-truth fields the
+# AsyncAPI gate requires on every event, so a REST API cannot enter the Backstage catalogue
+# without the ownership/lifecycle/privacy metadata an event already needs.
+#
+# FROZEN: this ruleset is the contract the gate enforces. Do not weaken a rule (lower a
+# severity, drop a required field, widen the x-status enum) without an ADR amendment /
+# supersession in the SAME change (ADR-PC-020 §D3 explicit-drift gate). The gate runs Spectral
+# with `--fail-severity=error`, so only `error` rules block the build; `warn` rules are advisory.
+#
+# The `oas` ruleset is Spectral's built-in OpenAPI 2/3 conformance set — the Apache-2.0,
+# hermetic REST analogue of `asyncapi validate` (ADR-IC-020: @stoplight/spectral-cli, pinned by
+# scripts/openapi-catalog-validate.sh — no @latest drift, the AsyncAPI gate's pinning discipline).
+extends: ["spectral:oas"]
+
+rules:
+  # ── ADR-IC-020 §P1 governance source-of-truth fields (mirror of AsyncAPI info.x-* set) ──
+  # Every catalogued OpenAPI spec MUST name a human owner, a contact for that owner, a
+  # lifecycle status, a GDPR legal basis, and the authorised consumers — so the catalogue
+  # never lists a REST API with no owner, no privacy basis, or an open-ended consumer set.
+
+  babelstone-info-x-owner:
+    description: "info.x-owner is required — the owning team/service (ADR-IC-020 §P1)."
+    message: "{{description}}"
+    severity: error
+    given: "$.info"
+    then:
+      field: x-owner
+      function: truthy
+
+  babelstone-info-x-owner-contact:
+    description: "info.x-owner-contact is required — how to reach the owner (ADR-IC-020 §P1)."
+    message: "{{description}}"
+    severity: error
+    given: "$.info"
+    then:
+      field: x-owner-contact
+      function: truthy
+
+  babelstone-info-x-status-present:
+    description: "info.x-status is required — the API lifecycle status (ADR-IC-020 §P1)."
+    message: "{{description}}"
+    severity: error
+    given: "$.info"
+    then:
+      field: x-status
+      function: truthy
+
+  babelstone-info-x-status-enum:
+    description: "info.x-status MUST be one of active|deprecated|sunset (ADR-IC-020 §P1 closed enum)."
+    message: "{{description}} — got '{{value}}'."
+    severity: error
+    given: "$.info.x-status"
+    then:
+      function: enumeration
+      functionOptions:
+        values:
+          - active
+          - deprecated
+          - sunset
+
+  babelstone-info-x-gdpr-legal-basis:
+    description: "info.x-gdpr-legal-basis is required — the GDPR Art.6 basis for the data this API touches (ADR-IC-020 §P1)."
+    message: "{{description}}"
+    severity: error
+    given: "$.info"
+    then:
+      field: x-gdpr-legal-basis
+      function: truthy
+
+  babelstone-info-x-authorized-consumers:
+    description: "info.x-authorized-consumers is required — the closed set of consumers allowed to call this API (ADR-IC-020 §P1)."
+    message: "{{description}}"
+    severity: error
+    given: "$.info"
+    then:
+      field: x-authorized-consumers
+      function: truthy
