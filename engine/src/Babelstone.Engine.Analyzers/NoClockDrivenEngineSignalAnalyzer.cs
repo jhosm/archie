@@ -9,7 +9,7 @@ namespace Babelstone.Engine.Analyzers;
 
 /// <summary>
 /// BENG004 — the STRUCTURAL/semantic half of <c>NO_CLOCK_DRIVEN_ENGINE_SIGNAL</c>
-/// (commitment-catalogue row 17; ADR-PC-023 §D1). It flags an engine signal/event
+/// (commitment-catalogue row 17; ADR-PC-023). It flags an engine signal/event
 /// emission whose <b>cause</b> is the clock — a clock/scheduler/timer read whose value
 /// flows into the construction of a <c>Babelstone.Engine.DomainEvent</c> or a
 /// <c>Babelstone.Engine.ScheduledEffect</c>. ADR-PC-023 forbids a signal whose <i>only</i>
@@ -32,7 +32,7 @@ namespace Babelstone.Engine.Analyzers;
 /// method body</i>. If any argument traces back to a clock/scheduler/timer source read — directly,
 /// or through a local assigned from one — the emit is clock-caused and is flagged. Time that
 /// enters the emit as a <i>value</i> (an event field, a method parameter, a command property —
-/// the fact-driven path ADR-PC-023 §D1 preserves) never traces to a clock read, so a
+/// the fact-driven path ADR-PC-023 preserves) never traces to a clock read, so a
 /// command-driven emit is clean. The clock <see cref="IsClockSource"/> set mirrors the one the
 /// handler-purity analyser (BENG001) bans inside <c>Apply</c>, widened here to the whole emit path
 /// and to <c>DateTime.Today</c> (a date-only clock read the emit path must also reject):

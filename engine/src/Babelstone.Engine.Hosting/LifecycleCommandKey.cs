@@ -6,7 +6,7 @@ namespace Babelstone.Engine.Hosting;
 
 /// <summary>
 /// The canonical, SERVER-DERIVED idempotency key for a clock-driven lifecycle command
-/// (ADR-PC-036 §Decision 1+3 — the lifecycle-command driver's Layer-1 safe-trigger foundation; LCD-1).
+/// (ADR-PC-036 — the lifecycle-command driver's Layer-1 safe-trigger foundation; LCD-1).
 /// <para>
 /// In plain English: when something drives the engine on a schedule — a person, the MCP agent, or the
 /// automated lifecycle-command driver — it must NOT invent its own retry key. If a manual operator and
@@ -18,7 +18,7 @@ namespace Babelstone.Engine.Hosting;
 /// <para>
 /// The key is a v5-style namespaced SHA-1 UUID over <c>(instance_id, command_kind,
 /// stable_occurrence_key)</c>. For a personal-loan installment the occurrence key is the STABLE
-/// installment NUMBER, never the due-date (ADR-PC-036 §Decision 3) — so a re-dated or backfilled retry of
+/// installment NUMBER, never the due-date (ADR-PC-036) — so a re-dated or backfilled retry of
 /// occurrence N reuses the same key and dedupes to ONE money leg (ADR-PC-029 slot 4,
 /// <c>ENGINE_COMMAND_IDEMPOTENT</c>). Pure: no clock, no randomness — the same inputs always yield the
 /// same id, so an at-least-once retry targets the same dedup receipt. Mirrors

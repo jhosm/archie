@@ -4,13 +4,13 @@ namespace Babelstone.Engine.Hosting;
 
 /// <summary>
 /// The non-interactive, scoped, gateway-attested SCA service principal for the lifecycle-command
-/// driver's money-mover routes (ADR-PC-036 §Decision 1 / Consequences — "a scoped, audited
-/// principal, never a blanket exemption"; ADR-IC-006 §P2 attest-not-deny; ADR-IC-010 §P8;
+/// driver's money-mover routes (ADR-PC-036 — "a scoped, audited
+/// principal, never a blanket exemption"; ADR-IC-006 attest-not-deny; ADR-IC-010;
 /// ADR-IC-021).
 /// </summary>
 /// <remarks>
 /// <para>
-/// FAMILY-NEUTRAL HOME (ADR-PC-021 §A9). This principal lives in the shared
+/// FAMILY-NEUTRAL HOME (ADR-PC-021). This principal lives in the shared
 /// <c>Babelstone.Engine.Hosting</c> assembly so both the term-deposit money-movers and the personal-loan
 /// money-movers recognise the SAME scoped credential — the lifecycle-command driver is ONE actor firing
 /// clock-driven money-movers across families, so it carries one principal, not a per-family copy.
@@ -27,7 +27,7 @@ namespace Babelstone.Engine.Hosting;
 /// validated and attested to the engine as the <see cref="PrincipalHeader"/> header (the same
 /// <c>set_header</c> overwrite-from-the-token anti-spoof pattern Kong uses for <c>X-Client-Id</c> and the
 /// <c>X-SCA-*</c> headers). The engine trusts the gateway attestation, never the caller's word (the
-/// Boundary-2 attest-not-deny model, ADR-IC-006 §P5 / ADR-IC-010 §P8).
+/// Boundary-2 attest-not-deny model, ADR-IC-006 / ADR-IC-010).
 /// </para>
 /// <para>
 /// SCOPE-LIMITED BY CONSTRUCTION. This principal authorises ONLY the clock-driven lifecycle money-movers —
@@ -38,7 +38,7 @@ namespace Babelstone.Engine.Hosting;
 /// principal has no business doing so. Nor does it touch the GDPR / operator surfaces (erase-personal-data,
 /// write-off). A principal presented against any operation not in <see cref="AuthorisedOperations"/> is
 /// REFUSED here and the caller falls back to the fail-closed human-SCA gate. This is the "scoped, not
-/// blanket" guarantee ADR-PC-036 §Consequences requires made mechanical: the allowance is route-scoped,
+/// blanket" guarantee ADR-PC-036 requires made mechanical: the allowance is route-scoped,
 /// so a leaked driver token cannot be turned on the termination or early-repayment surfaces.
 /// </para>
 /// <para>
@@ -47,7 +47,7 @@ namespace Babelstone.Engine.Hosting;
 /// <see langword="false"/> — the caller then runs the unchanged human-SCA <see cref="ScaPrecondition"/>,
 /// whose default is the <c>422 SCA_REQUIRED</c> refusal. So recognising the principal can only ever
 /// WIDEN authorisation for the scoped routes; it never weakens the default for any other caller or
-/// route. The attestation value carries no PII (ADR-PC-004 §P2) — it is a structural scope token.
+/// route. The attestation value carries no PII (ADR-PC-004) — it is a structural scope token.
 /// </para>
 /// </remarks>
 public static class ScaServicePrincipal

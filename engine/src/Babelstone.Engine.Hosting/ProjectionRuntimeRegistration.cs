@@ -5,9 +5,9 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Babelstone.Engine.Hosting;
 
 /// <summary>
-/// Composes the family-AGNOSTIC async projection runtime at the host composition root (ADR-PC-021 §D4):
+/// Composes the family-AGNOSTIC async projection runtime at the host composition root (ADR-PC-021):
 /// the <see cref="ProjectionRegistry"/>, the <see cref="ProjectionDrainer"/>, and the in-process
-/// <see cref="ProjectionRelayService"/> (two-modes §5.4 async path, ADR-PC-002 §P4). It owns NO family — the
+/// <see cref="ProjectionRelayService"/> (two-modes §5.4 async path, ADR-PC-002). It owns NO family — the
 /// registry is built lazily from EVERY registered <see cref="IProjectionModule"/>, so each family contributes
 /// only its modules and the single shared relay drains them all.
 /// </summary>
@@ -16,7 +16,7 @@ namespace Babelstone.Engine.Hosting;
 /// This used to live inside <c>TermDepositHostModule</c>, which made term_deposit the de-facto owner of shared
 /// spine infrastructure: a host running another family alone (e.g. personal_loan) registered no relay, so its
 /// projections and read models were never drained. Lifting it here — called ONCE from
-/// <c>Program.cs</c> — restores the §D4 shape: families declare projections, the composition root owns the
+/// <c>Program.cs</c> — restores the ADR-PC-021 shape: families declare projections, the composition root owns the
 /// runtime. The same co-hosted, in-process BackgroundService shape as the outbox relay.
 /// </para>
 /// <para>

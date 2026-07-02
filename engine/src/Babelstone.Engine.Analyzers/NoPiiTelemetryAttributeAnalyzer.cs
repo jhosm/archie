@@ -8,7 +8,7 @@ namespace Babelstone.Engine.Analyzers;
 
 /// <summary>
 /// BENG005 — the BUILD-TIME, SECONDARY tripwire leg of <c>OBS_NO_PII_ATTRS</c> (commitment-catalogue
-/// row OBS-3; ADR-IC-007 §P4; ADR-PC-004 §P2; ADR-IC-016 plane (iii)). It fails the build when a
+/// row OBS-3; ADR-IC-007; ADR-PC-004; ADR-IC-016 plane (iii)). It fails the build when a
 /// <b>span</b> attribute setter is written with a <b>literal</b> PII key or value at the call site — a
 /// NIF, IBAN, account number, customer name, or e-mail — either in the attribute <b>key</b> (e.g.
 /// <c>client_nif</c>, <c>core.account</c>) or in a constant attribute <b>value</b> (e.g. an IBAN/NIF/
@@ -41,7 +41,7 @@ namespace Babelstone.Engine.Analyzers;
 /// runtime guard scan: nif, iban, account, name, email, client, phone, address, tax_id); a non-admitted
 /// key that carries a PII fragment is flagged. A constant string value is checked against PII-shaped
 /// literals (IBAN / Portuguese NIF / e-mail). The <c>babelstone.subject_pseudonym</c> key — a salted
-/// one-way hash, ADR-IC-016 plane (iii) §8 — is admitted: it starts with <c>babelstone.</c> and
+/// one-way hash, ADR-IC-016 plane (iii) — is admitted: it starts with <c>babelstone.</c> and
 /// deliberately avoids every PII fragment, so it passes the same scan a real call site would.
 /// </para>
 /// <para>
@@ -49,7 +49,7 @@ namespace Babelstone.Engine.Analyzers;
 /// value laundered through a non-constant expression (a variable read from elsewhere, a helper
 /// return, interpolation of a runtime value) is not constant-foldable here and is not flagged — the
 /// common, reviewable case (a literal PII key or a literal PII value written at the call site) is
-/// closed, exactly the shape §P4's code-review control targets.
+/// closed, exactly the shape ADR-IC-007's code-review control targets.
 /// </para>
 /// </remarks>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
@@ -63,7 +63,7 @@ public sealed class NoPiiTelemetryAttributeAnalyzer : DiagnosticAnalyzer
     private static readonly string[] PiiKeyFragments =
         ["nif", "iban", "account", "name", "email", "client", "phone", "address", "tax_id"];
 
-    // A Portuguese IBAN (PT + 23 digits) — the §P4 personal-restricted example.
+    // A Portuguese IBAN (PT + 23 digits) — the ADR-IC-007 personal-restricted example.
     private static readonly Regex IbanValue =
         new(@"\bPT\d{2}[\s.]?(?:\d[\s.]?){19,21}\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 

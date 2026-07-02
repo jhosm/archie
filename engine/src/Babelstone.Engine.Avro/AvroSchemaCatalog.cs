@@ -5,10 +5,10 @@ namespace Babelstone.Engine.Avro;
 
 /// <summary>
 /// The Avro schemas for the engine's emitted events, discovered from the embedded
-/// <c>contracts/avro/{domain}/{aggregate_type}/{EventName}.avsc</c> — FAMILY-AGNOSTIC (ADR-PC-021 §D2): no family is named here.
+/// <c>contracts/avro/{domain}/{aggregate_type}/{EventName}.avsc</c> — FAMILY-AGNOSTIC (ADR-PC-021): no family is named here.
 /// Each schema yields a catalogued entry keyed both by the stored <c>event_type</c> (derived
 /// from the Avro namespace — <c>{aggregate_type}.{Name}</c>) and by the Avro record name
-/// (== the CLR event-type name), plus the Schema-Registry subject (ADR-IC-002 §P1:
+/// (== the CLR event-type name), plus the Schema-Registry subject (ADR-IC-002:
 /// fully-qualified-name + <c>-value</c>). The <c>.avsc</c> in <c>contracts/avro</c> are the
 /// single governed source and are embedded so a deploy carries its own schemas. Adding a
 /// family is adding its <c>.avsc</c> — nothing in this catalog changes.
@@ -57,7 +57,7 @@ public sealed class AvroSchemaCatalog : IIntegrationEventCatalog
     public IReadOnlyCollection<AvroSchemaEntry> Entries => (IReadOnlyCollection<AvroSchemaEntry>)_byEventType.Values;
 
     /// <summary>
-    /// The catalog-gated-relay membership test (ADR-IC-017 §P1): is this stored <c>event_type</c> a
+    /// The catalog-gated-relay membership test (ADR-IC-017): is this stored <c>event_type</c> a
     /// catalogued integration event? The relay publishes a row IFF this is true — an uncatalogued event
     /// is store-only by construction (appended, folded, replayable, but never on the durable bus).
     /// FAIL-CLOSED: an unknown/uncatalogued event_type returns <c>false</c> (not published), never an
@@ -85,7 +85,7 @@ public sealed class AvroSchemaCatalog : IIntegrationEventCatalog
                 $"No Avro schema catalogued for event '{recordName}'. Its .avsc record name must equal the event-type name.");
 
     // event_type = "{aggregate_type}.{Name}". The Avro namespace is "{domain}.{aggregate_type}"
-    // (ADR-IC-002 §P1) but the engine's stored event_type omits the domain, so the aggregate_type
+    // (ADR-IC-002) but the engine's stored event_type omits the domain, so the aggregate_type
     // is the last namespace segment (e.g. "deposits.term_deposit" → "term_deposit").
     private static string DeriveEventType(RecordSchema schema)
     {

@@ -10,7 +10,7 @@ namespace Babelstone.Telemetry.Hosting;
 
 /// <summary>
 /// The RUNTIME, emit-time no-PII guard for OpenTelemetry signals (commitment <c>OBS_NO_PII_ATTRS</c> /
-/// catalogue row OBS-3; ADR-IC-007 §P4; ADR-PC-004 §P2). In plain terms: the build-time analyser
+/// catalogue row OBS-3; ADR-IC-007; ADR-PC-004). In plain terms: the build-time analyser
 /// (BENG005) can only catch a PII key written as a literal at a call site, but every REAL span/log
 /// attribute and metric dimension in babelstone carries a value computed at runtime (an id's
 /// <c>.ToString()</c>, a money-cents <c>long</c>, a topic name), so the analyser fires on none of them.
@@ -34,8 +34,8 @@ namespace Babelstone.Telemetry.Hosting;
 /// trace processor is a strict, fail-CLOSED prefix allowlist: a tag whose key is outside
 /// <see cref="AdmittedKeyPrefixes"/> is dropped, full stop. A structured-LOG field, by contrast, is
 /// conventionally a bare message-template name (<c>Account</c>, <c>AmountCents</c>, <c>AggregateId</c>,
-/// and the §P5 trio <c>correlation_id</c>/<c>process_id</c>/<c>deposit_id</c>) — NONE of which is
-/// namespaced. A strict prefix allowlist would strip every structured log field, including the §P5
+/// and the ADR-IC-007 trio <c>correlation_id</c>/<c>process_id</c>/<c>deposit_id</c>) — NONE of which is
+/// namespaced. A strict prefix allowlist would strip every structured log field, including the ADR-IC-007
 /// references that are explicitly sufficient and non-PII; so the log processor keeps an un-namespaced
 /// key UNLESS it carries a PII fragment (<c>account</c>, <c>nif</c>, <c>iban</c>, …) — exactly the
 /// analyser's <c>KeyIsPii</c> rule. Both processors admit the same namespaces; they differ only in how
@@ -66,11 +66,11 @@ namespace Babelstone.Telemetry.Hosting;
 public static class BabelstonePiiGuard
 {
     /// <summary>
-    /// The ordinal key-prefix namespace allowlist (ADR-IC-007 §P4 operational tier). Admits:
+    /// The ordinal key-prefix namespace allowlist (ADR-IC-007 operational tier). Admits:
     /// <list type="bullet">
     ///   <item><c>babelstone.</c> — the versioned <see cref="BabelstoneAttributes"/> key contract
     ///   (operational-tier structural identifiers; the salted <c>babelstone.subject_pseudonym</c> lives
-    ///   here too — ADR-IC-016 plane iii §8).</item>
+    ///   here too — ADR-IC-016 plane iii).</item>
     ///   <item>the OTel/Npgsql/AspNetCore semantic-convention namespaces the auto-instrumentation
     ///   legitimately emits — <c>db.*</c>, <c>http.*</c>, <c>url.*</c>, <c>server.*</c>, <c>network.*</c>,
     ///   <c>service.*</c>, plus <c>error.*</c>, <c>exception.*</c>, <c>otel.*</c>, <c>user_agent.*</c>,
@@ -264,7 +264,7 @@ public sealed class BabelstoneAttributeTierProcessor : BaseProcessor<Activity>
 /// The LOG leg of the runtime no-PII guard: a <see cref="BaseProcessor{LogRecord}"/> whose
 /// <see cref="OnEnd"/> filters the ending record's structured-state attributes, dropping any un-namespaced
 /// key that carries a PII fragment (e.g. a <c>{Account}</c> message-template field) BEFORE the record is
-/// exported, while keeping the admitted namespaces and the operational un-namespaced fields §P5 relies on
+/// exported, while keeping the admitted namespaces and the operational un-namespaced fields ADR-IC-007 relies on
 /// (<c>correlation_id</c>/<c>process_id</c>/<c>deposit_id</c>). Allocation-free on the hot path — when no
 /// field needs stripping the attribute list is left untouched.
 /// </summary>

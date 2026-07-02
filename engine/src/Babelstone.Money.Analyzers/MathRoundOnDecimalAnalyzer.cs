@@ -7,7 +7,7 @@ namespace Babelstone.Money.Analyzers;
 
 /// <summary>
 /// BMNY001 — bans <c>Math.Round(decimal, …)</c> anywhere except <c>Money.FromCents</c>,
-/// the single Decimal→Cents rounding boundary (ADR-PC-010 §P2). Rounding decimal more
+/// the single Decimal→Cents rounding boundary (ADR-PC-010). Rounding decimal more
 /// than once accumulates drift; this forces every rounding through that one site. The
 /// <c>double</c> overloads of <c>Math.Round</c> are not money math and are not flagged.
 /// </summary>
