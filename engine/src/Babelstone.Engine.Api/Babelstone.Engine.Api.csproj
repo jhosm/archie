@@ -33,6 +33,11 @@
          The host composes families over this contract; HostBusEncoding (Avro/SR → BusEventSerializer)
          stays here and now produces the Hosting-defined marker. -->
     <ProjectReference Include="../Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
+    <!-- The shared generic FamilyModuleScanner (ADR-PC-040 §D4) HostModuleLoader delegates its
+         discovery mechanics to — the same scan every composition root uses. Babelstone.Cadence is
+         generic by construction (no families/**, no engine-kernel reference; the arrows point INTO
+         it), so this host reference adds no coupling the covenant forbids. -->
+    <ProjectReference Include="../../../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
     <ProjectReference Include="../Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <ProjectReference Include="../Babelstone.Packs/Babelstone.Packs.csproj" />
     <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />

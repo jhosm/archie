@@ -59,6 +59,16 @@ public sealed class TermDepositSagaModule : ISagaModule
     public IReadOnlyList<string> ConsumeTopics => SagaConsumeTopics.ConstitutionProcessTopics;
 
     /// <summary>
+    /// The term-deposit family-INTEGRATION topics (the catalogue-generated constants, CI-gated against
+    /// the AsyncAPI catalogue) — declared so the HOST can derive the substrate settlement saga's
+    /// Movement-bearing subscribe set from the DISCOVERED modules without naming this family
+    /// (ADR-PC-040 §D3; ADR-IC-018 Revised 2026-07-02). Namespace-qualified: the property shares the
+    /// generated class's name.
+    /// </summary>
+    public IReadOnlyList<string> FamilyIntegrationTopics =>
+        global::Babelstone.Families.TermDeposit.Orchestration.FamilyIntegrationTopics.All;
+
+    /// <summary>
     /// The Kafka consumer-group id the constitution consume loop uses. This MUST equal the value the host
     /// used before the substrate split (<c>"babelstone-orchestrator"</c>, the <c>Kafka:GroupId</c> default
     /// in the old Program.cs) so existing committed offsets are preserved — a different group would

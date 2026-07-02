@@ -97,6 +97,12 @@
     <!-- The family-agnostic saga substrate (ADR-IC-018 §P1): the host composes its runtime,
          stores, and ports. -->
     <ProjectReference Include="../Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
+
+    <!-- The shared generic FamilyModuleScanner (ADR-PC-040 §D4) the host's SagaModuleLoader delegates
+         its discovery mechanics to — the same scan the engine/notification/lifecycle hosts use.
+         Babelstone.Cadence is generic by construction (no families/**, no engine-kernel reference;
+         the arrows point INTO it), so the orchestrator subtree stays extraction-ready (ADR-PC-019 §P2). -->
+    <ProjectReference Include="../../../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
     <!-- The term-deposit family's saga module (ADR-IC-018 §D4): the host is the §D4 composition
          root — the standing, intended exemption (ADR-PC-021 §A2's pattern) that MAY reference a
          family/** project so it can compose the modules. The substrate may NOT. -->

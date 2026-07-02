@@ -80,6 +80,11 @@
          family. -->
     <ProjectReference Include="../Babelstone.Lifecycle/Babelstone.Lifecycle.csproj" />
 
+    <!-- The shared generic FamilyModuleScanner (ADR-PC-040 §D4) this host's module loader delegates
+         its discovery mechanics to. Already reachable transitively (the core references
+         Babelstone.Cadence); named explicitly because host code uses its types directly. -->
+    <ProjectReference Include="../../../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
+
     <!-- The family .Lifecycle CONTRIBUTIONS (ADR-PC-036 §Decision 2/5; ADR-PC-021 §A3/§P4): each carries its
          family's IFamilyLifecycleModule + rule + the Npgsql read-model store the module binds behind the
          family-agnostic store interface. Referenced ONLY so their Babelstone.Families.*.Lifecycle.dll land
