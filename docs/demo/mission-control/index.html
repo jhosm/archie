@@ -283,6 +283,7 @@ body.console-open .hint-bar { display:none; }
 .log-line .lv-info { color:var(--verify); } .log-line .lv-warn { color:var(--gold); } .log-line .lv-error { color:var(--wrong); }
 .log-line .lg { color:var(--muted); }
 .log-line .kv { color:var(--faint); } .log-line .kv b { color:var(--paper-soft); font-weight:400; }
+.logs-list .nopii { color:var(--verify); }
 .console .pane[hidden] { display:none; }
 /* MCP log */
 .console .line { padding:0.18rem 0; }
@@ -1439,6 +1440,8 @@ body.console-open .hint-bar { display:none; }
     state.traceId = traceId; state.realTrace = null;
     state.traceState = state.telemetry ? "pending" : "illustrative";
     if (state.telemetry) { renderTrace(); fetchRealTrace(traceId); }
+    // The Logs lens is trace-scoped too: a new write means a new trace to query Loki by.
+    if (state.tab === "logs" && state.mode !== "demo") renderLogs();
   }
   function parseOtlpTrace(data) {
     var spans = [];
@@ -2195,16 +2198,127 @@ body.console-open .hint-bar { display:none; }
   }
   function renderLogs() {
     var box = el("logsList"); if (!box) return;
+    // DEMO renders the illustrative in-browser log buffer; LIVE·engine / LIVE·saga query REAL logs
+    // from Grafana Loki by the active trace id (mirrors renderTopic's demo/live split).
+    if (state.mode === "demo") return renderLogsDemo(box);
+    return renderLogsLive(box);
+  }
+  function renderLogsDemo(box) {
     if (!dwLogs.length) { box.innerHTML = '<div class="dpane-empty">Quiet. Operations emit structured log lines here.</div>'; return; }
     box.innerHTML = dwLogs.slice().reverse().map(function (l) {
       var fields = Object.keys(l.fields).map(function (k) { return '<span class="kv">' + k + '=<b>' + l.fields[k] + '</b></span>'; }).join(' ');
       return '<div class="log-line"><span class="ts">' + l.ts + '</span> <span class="lv-' + l.level + '">' + l.level.toUpperCase() + '</span> <span class="lg">' + l.logger + '</span> ' + l.msg + '  ' + fields + '</div>';
     }).join("");
   }
+
+  /* ── LIVE Logs lens (bd babelstone-f0ic.15.7) ────────────────────────────────────────────
+     Reads REAL structured logs from Grafana Loki through serve.py's /loki/* arm, correlated by
+     the active trace id (the X-Trace-Id the UI captures on every write — Tempo and Loki share the
+     OTel trace_id/span_id stamp). PII discipline is defence-in-depth: serve.py's BFF runs the JSON
+     response through a STRUCTURAL-FIELD allowlist before it reaches the browser (so a PII-named
+     field can never arrive even if the emit-time OTel guard misses it — the collector has no
+     redaction yet, Epic K). Here we render ts/level/logger/msg + the remaining structural field
+     chips, reverse-chron. Everything shown is a structural reference — no PII.                    */
+  var liveLogs = { rows: [], state: "idle", err: null, ts: 0, trace: null };
+  // The structural "columns" the lens renders as ts/level/logger/msg — everything ELSE that the BFF
+  // allowlist let through becomes a field chip. (Names only; the BFF already dropped PII-named keys.)
+  var LOGS_COLUMN_FIELD = {
+    ts:1, time:1, timestamp:1, observed_timestamp:1, level:1, severity:1, severity_text:1,
+    detected_level:1, logger:1, logger_name:1, service_name:1, service:1, scope_name:1,
+    msg:1, message:1, body:1
+  };
+  function lokiClock(tsNs) {
+    try {
+      var s = String(tsNs);
+      var msStr = s.length > 6 ? s.slice(0, -6) : "0";   // ns → ms without Number precision loss
+      var d = new Date(Number(msStr));
+      function p(x, n) { x = String(x); while (x.length < (n || 2)) x = "0" + x; return x; }
+      return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()) + "." + p(d.getMilliseconds(), 3);
+    } catch (e) { return "—"; }
+  }
+  function lokiLevelClass(level) {
+    var v = String(level || "").toLowerCase();
+    if (/^warn/.test(v)) return "warn";
+    if (/^(err|error|fatal|crit)/.test(v)) return "error";
+    return "info";   // info / debug / trace / unknown — the stylesheet defines lv-info/warn/error
+  }
+  function lokiRow(labels, tsNs, line) {
+    var f = {};
+    Object.keys(labels || {}).forEach(function (k) { f[k] = labels[k]; });
+    var msg = line;
+    var s = String(line || "").trim();
+    if (s.charAt(0) === "{" && s.charAt(s.length - 1) === "}") {
+      // The BFF already allowlisted the JSON body's keys; merge them so their values can render.
+      try { var o = JSON.parse(s); if (o && typeof o === "object") { Object.keys(o).forEach(function (k) { f[k] = o[k]; }); msg = o.msg || o.message || o.body || ""; } }
+      catch (e) {}
+    }
+    var level = f.level || f.severity || f.severity_text || f.detected_level || "info";
+    var logger = f.logger || f.logger_name || f.service_name || f.service || f.scope_name || "—";
+    var chips = {};
+    Object.keys(f).forEach(function (k) { if (!LOGS_COLUMN_FIELD[String(k).toLowerCase()]) chips[k] = f[k]; });
+    return { tsNs: String(tsNs), level: String(level), logger: String(logger), msg: String(msg), chips: chips };
+  }
+  function parseLokiStreams(doc) {
+    var data = doc && doc.data;
+    var result = (data && data.result) || [];
+    var rows = [];
+    result.forEach(function (stream) {
+      (stream.values || []).forEach(function (pair) {
+        if (!pair || pair.length < 2) return;
+        rows.push(lokiRow(stream.stream || {}, pair[0], pair[1]));
+      });
+    });
+    // reverse-chron by the fixed-width nanosecond timestamp string (lexicographic == numeric here)
+    rows.sort(function (a, b) { return a.tsNs < b.tsNs ? 1 : a.tsNs > b.tsNs ? -1 : 0; });
+    return rows;
+  }
+  async function loadLiveLogs() {
+    var trace = state.traceId;
+    var now = Date.now();
+    if (liveLogs.state === "loading") return;
+    // re-query whenever the active trace changes; otherwise debounce repeat renders
+    if (liveLogs.trace === trace && (liveLogs.state === "loaded" || liveLogs.state === "error") && (now - liveLogs.ts) < 1500) return;
+    liveLogs.state = "loading"; liveLogs.trace = trace;
+    try {
+      if (!trace) { liveLogs.rows = []; liveLogs.state = "loaded"; liveLogs.err = null; return; }
+      // LogQL: select every OTel-exported stream, then narrow to this trace with a line filter.
+      // Matching the id anywhere in the line is robust whether trace_id is a label, structured
+      // metadata, or embedded in the JSON body. Loki needs at least one stream matcher.
+      var q = '{service_name=~".+"} |= "' + trace + '"';
+      var endMs = Date.now(), startMs = endMs - 3600 * 1000;   // last hour
+      var url = API_BASE + "/loki/api/v1/query_range?limit=200&direction=backward"
+        + "&query=" + encodeURIComponent(q)
+        + "&start=" + new Date(startMs).toISOString()
+        + "&end=" + new Date(endMs).toISOString();
+      var res = await fetch(url);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      liveLogs.rows = parseLokiStreams(await res.json()).slice(0, 200);
+      liveLogs.state = "loaded"; liveLogs.err = null;
+    } catch (e) {
+      liveLogs.state = "error"; liveLogs.err = (e && e.message) ? e.message : String(e);
+    } finally {
+      liveLogs.ts = Date.now();
+      if (state.tab === "logs" && state.mode !== "demo") renderLogs();
+    }
+  }
+  function renderLogsLive(box) {
+    if (!state.traceId) { box.innerHTML = '<div class="dpane-empty">No active trace yet. Run a command — the Logs lens queries <b>Grafana Loki</b> by the write\'s <b>trace_id</b>.</div>'; return; }
+    loadLiveLogs();   // debounced; re-renders when it settles
+    var st = liveLogs, tid = esc(state.traceId.slice(0, 12));
+    if (st.state === "loading" && !st.rows.length) { box.innerHTML = '<div class="dpane-empty">Querying <b>Loki</b> for logs on trace <b>' + tid + '…</b> via <code>/loki</code>…</div>'; return; }
+    if (st.state === "error") { box.innerHTML = '<div class="dpane-empty">Loki not reachable via <code>/loki</code> (' + esc(st.err || "") + '). Bring up the LGTM stack (<code>docker compose -f infra/compose.yaml up -d otel-collector grafana-lgtm</code>) and run a command.</div>'; return; }
+    if (!st.rows.length) { box.innerHTML = '<div class="dpane-empty">No logs on trace <b>' + tid + '…</b> yet — Loki has a few seconds of ingestion lag. <span class="nopii">✓ BFF structural-field allowlist active</span> — references only.</div>'; return; }
+    box.innerHTML = st.rows.map(function (l) {
+      var chips = Object.keys(l.chips).map(function (k) { return '<span class="kv">' + esc(k) + '=<b>' + esc(String(l.chips[k])) + '</b></span>'; }).join(' ');
+      return '<div class="log-line"><span class="ts">' + esc(lokiClock(l.tsNs)) + '</span> <span class="lv-' + lokiLevelClass(l.level) + '">' + esc(l.level.toUpperCase()) + '</span> <span class="lg">' + esc(l.logger) + '</span> ' + esc(l.msg) + '  ' + chips + '</div>';
+    }).join("");
+  }
   function drawerReset() {
     dwTopic = []; dwOutbox = []; dwInbox = []; dwLogs = []; dwOffset = 0;
     // Drop any cached LIVE broker read so a mode switch / reset re-reads the topic fresh.
     liveTopic = { recs: [], state: "idle", err: null, ts: 0 };
+    // Same for the LIVE Loki logs cache — re-query fresh on the next trace.
+    liveLogs = { rows: [], state: "idle", err: null, ts: 0, trace: null };
     Object.keys(METRICS).forEach(function (k) { METRICS[k].v = 0; METRICS[k].series = METRICS[k].gauge ? [] : [0]; });
     renderTopic(); renderTransport(); renderMetrics(); renderLogs();
   }
