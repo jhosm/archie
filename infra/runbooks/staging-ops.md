@@ -23,9 +23,24 @@ Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. State
      k3s upgrade Plan uses).
 4. `kubectl apply -f infra/k8s/overlays/staging/bootstrap/` (the issuers, the
    `VolumeSnapshotClass`, the k3s upgrade `Plan`).
-5. Provision the real secrets (swap the dev placeholders): `babelstone-dev-secrets`
-   (Postgres/OpenBao), `babelstone-backup-secret` (Hetzner Object Storage keys + bucket),
-   and the Kong mTLS material (via `deck-sync`).
+5. Provision the real secrets — **required before the first deploy**: the staging render
+   deliberately carries NO Secret bodies (bd babelstone-zla1.12.4 — the committed dev
+   placeholders are dropped from the build, so a redeploy can never overwrite what you set
+   here), and the deploy **fails closed** if `babelstone-dev-secrets` is missing or still
+   holds a placeholder value (`scripts/cd-secret-preflight.sh`, wired into `cd.yml`).
+   Create it once with real values (all five keys are secretKeyRef'd by workloads):
+
+   ```bash
+   kubectl -n babelstone-staging create secret generic babelstone-dev-secrets \
+     --from-literal=POSTGRES_PASSWORD="$(openssl rand -base64 24)" \
+     --from-literal=OPENBAO_DEV_TOKEN="<real OpenBao token — never 'root'>" \
+     --from-literal=SECRET_VAULT_KEK="$(openssl rand -base64 32)" \
+     --from-file=OIDC_PRIVATE_KEYS=<real PEM signing key file> \
+     --from-literal=LOGTO_GRAFANA_CLIENT_SECRET="<the Logto grafana app client secret>"
+   ```
+
+   Also provision `babelstone-backup-secret` (Hetzner Object Storage keys + bucket) and
+   the Kong mTLS material (via `deck-sync`).
 6. Deploy: `kubectl apply -k infra/k8s/overlays/staging` (or dispatch `cd.yml` with
    `overlay: staging`).
 

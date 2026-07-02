@@ -139,6 +139,16 @@ resolves the `secretKeyRef` wiring.
 
 - **NEVER commit real credentials.** Swap this for an uncommitted Secret (or a
   platform-injected secret) in any real deployment.
+- **The staging overlay never renders it** (bd babelstone-zla1.12.4):
+  `overlays/staging/drop-dev-secrets.patch.yaml` deletes the Secret from the
+  staging build, so the deployed bundle carries no credential bodies and a
+  redeploy cannot clobber the operator-provisioned real `babelstone-dev-secrets`
+  (created once — runbook
+  [`staging-ops.md` §1 step 5](../runbooks/staging-ops.md)).
+  `scripts/cd-secret-preflight.sh` is the fail-closed half: `cd.yml` refuses the
+  staging apply if the render still emits a placeholder body (`--render`, also
+  gated on the hermetic lane) or the live Secret is missing / still holds a
+  placeholder value (`--live`, before `kubectl apply`).
 - **OpenBao runs in `-dev` mode** here — in-memory, auto-unsealed, fixed root
   token. This is a **seam, not real provisioning**. The Deployment carries the
   `babelstone.io/secret-boundary` annotation marking it as such.
