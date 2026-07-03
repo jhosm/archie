@@ -43,19 +43,13 @@ namespace Babelstone.Families.TermDeposit.Lifecycle;
 public sealed class MaturityRule(IDepositReadModelStore deposits) : ILifecycleCommandRule
 {
     /// <summary>The STABLE command-kind the maturity idempotency key is derived under — the shared dispatch
-    /// mapping's <see cref="TermDepositLifecycleDispatch.CommandKindMature"/> (ADR-PC-036 §Decision 7: the
-    /// production rule and the simulation forecast consume ONE mapping), re-exposed here for existing
-    /// callers. MUST equal the engine maturity endpoint's own derivation kind
-    /// (<c>DepositsEndpoints.MatureCommandKind = "mature"</c>) so the driver-derived id and the
-    /// engine-derived id are identical (LCD-1, ADR-PC-036 §Decision 1+3).</summary>
+    /// mapping's <see cref="TermDepositLifecycleDispatch.CommandKindMature"/>, re-exposed here for existing
+    /// callers.</summary>
     public const string CommandKindMature = TermDepositLifecycleDispatch.CommandKindMature;
 
     /// <summary>The scoped, non-interactive SCA service principal the deposit money-mover route authorises the
-    /// driver by (ADR-PC-036 §Decision 1) — the shared dispatch mapping's
-    /// <see cref="TermDepositLifecycleDispatch.MoneyMoverScope"/>, re-exposed here for existing callers.
-    /// Kept in lock-step with the engine-side <c>ScaServicePrincipal.LifecycleMoneyMoverScope</c>; named
-    /// locally (not referenced) so the driver core takes no dependency on the term-deposit Application
-    /// assembly.</summary>
+    /// driver by — the shared dispatch mapping's <see cref="TermDepositLifecycleDispatch.MoneyMoverScope"/>,
+    /// re-exposed here for existing callers.</summary>
     public const string DepositMoneyMoverScope = TermDepositLifecycleDispatch.MoneyMoverScope;
 
     private readonly IDepositReadModelStore _deposits =

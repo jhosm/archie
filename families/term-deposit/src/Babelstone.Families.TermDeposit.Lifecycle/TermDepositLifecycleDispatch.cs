@@ -4,8 +4,8 @@ using Babelstone.Lifecycle;
 namespace Babelstone.Families.TermDeposit.Lifecycle;
 
 /// <summary>
-/// The term-deposit family's ONE LifecycleMilestone→command dispatch mapping (ADR-PC-036 §Decision 7 —
-/// candidate D's harvested idea; bd babelstone-6cpq.11). In plain terms: "deposit D matures on M" must mean
+/// The term-deposit family's ONE LifecycleMilestone→command dispatch mapping (ADR-PC-036 §Decision 7).
+/// In plain terms: "deposit D matures on M" must mean
 /// EXACTLY ONE wire command — same command kind, same one-shot occurrence key, same endpoint path, same body
 /// shape — whether it is the PRODUCTION driver firing it (the <see cref="MaturityRule"/> A4a path) or the
 /// engine's simulation FORECAST scheduling it (a <c>SimulationRuntime</c> <see cref="LifecycleMilestone"/>,

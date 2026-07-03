@@ -34,7 +34,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The LCD-2 settlement-health gate's INTEGRATION twin (ADR-PC-036 §Decision 4; bd babelstone-6cpq.10):
+    <!-- The LCD-2 settlement-health gate's INTEGRATION twin (ADR-PC-036 §Decision 4):
          the real PostgresSettlementHealthProbe read against the ORCHESTRATOR'S REAL saga_state schema — a
          PostgreSQL container the orchestrator's own migration set is applied to. Npgsql for the fixture's
          row inserts; the shared TestFixtures GatedStartAsync gates the container start; excluded from the

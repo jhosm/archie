@@ -8,8 +8,8 @@ namespace Babelstone.Families.PersonalLoan.Lifecycle.Tests;
 
 /// <summary>
 /// The dispatch-mapping FITNESS FUNCTION for the loan installment (ADR-PC-036 §Decision 7 — "share the
-/// dispatch mapping with <c>SimulationRuntime</c> so the forecast is a fitness function"; bd
-/// babelstone-6cpq.11), the recurring sibling of the term-deposit
+/// dispatch mapping with <c>SimulationRuntime</c> so the forecast is a fitness function"), the recurring
+/// sibling of the term-deposit
 /// <c>LifecycleDispatchFitnessTests</c>. In plain terms: a forecast milestone for "installment N of loan L
 /// due on D" and the production command the driver fires for the same occurrence must agree on WHAT fires
 /// — command kind, the number-pinned occurrence key, the due instant, and the canonical dispatch id — or

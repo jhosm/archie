@@ -10,8 +10,8 @@ using Xunit;
 namespace Babelstone.Families.PersonalLoan.Lifecycle.Tests;
 
 /// <summary>
-/// The LCD-2 integration test (ADR-PC-036 §Decision 4, <c>LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE</c>,
-/// catalogue row 106; bd babelstone-6cpq.10): the held-then-resume walk of
+/// The LCD-2 integration test (ADR-PC-036 §Decision 4, <c>LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE</c>):
+/// the held-then-resume walk of
 /// <c>SettlementHealthGateTests</c>, but against the ORCHESTRATOR'S REAL <c>saga_state</c> schema (its own
 /// migration set applied to a PostgreSQL container) read by the REAL
 /// <see cref="PostgresSettlementHealthProbe"/>. In plain terms: this is the cross-service proof — the row

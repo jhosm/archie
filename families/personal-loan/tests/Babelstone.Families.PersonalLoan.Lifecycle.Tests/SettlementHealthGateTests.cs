@@ -1,14 +1,16 @@
+using System.Diagnostics.Metrics;
 using Babelstone.Engine;
 using Babelstone.Engine.Hosting;
 using Babelstone.Families.PersonalLoan;
 using Babelstone.Lifecycle;
+using Babelstone.Telemetry;
 using Xunit;
 
 namespace Babelstone.Families.PersonalLoan.Lifecycle.Tests;
 
 /// <summary>
 /// The LCD-2 settlement-health gate, Docker-free (ADR-PC-036 §Decision 4,
-/// <c>LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE</c>; bd babelstone-6cpq.10). In plain terms: the engine
+/// <c>LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE</c>). In plain terms: the engine
 /// advances a loan's paid-count on the installment EVENT, not on settled CASH — so after an outage, a
 /// catch-up could fire installment N+1 while N's cash is still stuck in human intervention. These tests
 /// drive the REAL <see cref="InstallmentRule"/> + <see cref="LifecycleSchedulePass"/> over a fake calendar
@@ -20,7 +22,11 @@ namespace Babelstone.Families.PersonalLoan.Lifecycle.Tests;
 /// across every pass while parked, no matter how overdue the occurrence is;</item>
 /// <item>the hold is per-instance (a healthy loan in the same pass still fires);</item>
 /// <item>installment 1 is held while the loan's own disbursement leg is parked (same predicate, strictly
-/// safer).</item>
+/// safer);</item>
+/// <item>each hold is COUNTED (<c>lifecycle_schedule_held_total</c>, the
+/// <c>LifecycleDriverMetrics.RecordScheduleHeld</c> emit) so the stall is a page, never invisible;</item>
+/// <item>a probe failure propagates and dispatches nothing — the gate fails CLOSED, never
+/// "cannot see settlement, assume healthy".</item>
 /// </list>
 /// The same held/resume walk against a REAL <c>saga_state</c> row (the orchestrator's actual schema and
 /// state literals) is the integration twin, <c>SettlementHealthGateIntegrationTests</c>.
@@ -49,17 +55,32 @@ public sealed class SettlementHealthGateTests
         probe.Park(loan);
 
         // The gate HOLDS N+1: the calendar surfaces occurrence 2 as due, but the rule refuses to
-        // surface it while the instance's cash leg is parked (ADR-PC-036 §Decision 4).
-        Assert.Empty(await pass.RunOnceAsync(Today));
+        // surface it while the instance's cash leg is parked (ADR-PC-036 §Decision 4) — and the hold is
+        // COUNTED: one lifecycle_schedule_held_total hit, tagged pay_installment, per held occurrence
+        // per pass, so the stalled schedule is a series the alert group pages on, never invisible.
+        var heldHits = 0;
+        using (ListenToHeld(() => heldHits++))
+        {
+            Assert.Empty(await pass.RunOnceAsync(Today));
+        }
+
+        Assert.Equal(1, heldHits);
         Assert.Single(sink.Dispatched);
 
         // The operator resolves the leg (HIR → SETTLEMENT_COMPLETED): the schedule RESUMES on the very
         // next pass — occurrence 2 fires under its own distinct number-pinned id.
         probe.Resolve(loan);
-        var resumed = await pass.RunOnceAsync(Today);
+        var resumedHeldHits = 0;
+        IReadOnlyList<DispatchedCommand> resumed;
+        using (ListenToHeld(() => resumedHeldHits++))
+        {
+            resumed = await pass.RunOnceAsync(Today);
+        }
+
         Assert.Equal(2, Assert.Single(resumed).OccurrenceKey);
         Assert.Equal(LifecycleCommandKey.Derive(loan, EnginePayInstallmentKind, 2), resumed[0].CommandId);
         Assert.Equal(2, sink.Dispatched.Count);
+        Assert.Equal(0, resumedHeldHits); // a resumed schedule is not a held one — the series goes quiet.
     }
 
     [Fact]
@@ -83,7 +104,7 @@ public sealed class SettlementHealthGateTests
         Assert.Empty(sink.Dispatched);
 
         // Settled → the backfill proceeds, from exactly where the cash stands (occurrence 3, its own
-        // OVERDUE due date as the business valid_time — correct backfill by construction, §S2).
+        // OVERDUE due date as the business valid_time — correct backfill by construction).
         probe.Resolve(loan);
         var resumed = await pass.RunOnceAsync(Today.AddDays(3));
         Assert.Equal(3, Assert.Single(resumed).OccurrenceKey);
@@ -125,6 +146,22 @@ public sealed class SettlementHealthGateTests
             new FakeInstallmentStore(Loan(loan, nextNumber: 1, nextDue: Today)), probe);
 
         Assert.Empty(await rule.EvaluateAsync(Today));
+    }
+
+    [Fact]
+    public async Task A_probe_failure_propagates_and_dispatches_nothing_fail_closed()
+    {
+        // The gate fails CLOSED: a probe that cannot answer (orchestrator DB unreachable) THROWS out of
+        // the rule and the pass — the worker treats it as backpressure and retries next tick — and no
+        // occurrence is dispatched on a guess. "Cannot see settlement health" must never read as
+        // "healthy": that would reopen the advance-past-collected-cash hole the gate exists to close.
+        var loan = Guid.NewGuid();
+        var sink = new RecordingSink();
+        var pass = NewPass(sink, new InstallmentRule(
+            new FakeInstallmentStore(Loan(loan, nextNumber: 2, nextDue: Today)), new ThrowingProbe()));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => pass.RunOnceAsync(Today));
+        Assert.Empty(sink.Dispatched);
     }
 
     // --- helpers (the InstallmentRuleTests shapes, kept local so each file reads standalone) ---
@@ -172,6 +209,44 @@ public sealed class SettlementHealthGateTests
             throw new NotSupportedException();
 
         public Task TruncateAsync(CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
+    /// <summary>Listen for lifecycle_schedule_held_total hits tagged with the loan installment kind on
+    /// the shared process-wide meter. Holds only happen inside THIS (sequential) test class, so a tagged
+    /// hit during the listener's window is this test's own.</summary>
+    private static MeterListener ListenToHeld(Action onHit)
+    {
+        var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == BabelstoneTelemetry.MeterName
+                && instrument.Name == BabelstoneAttributes.LifecycleScheduleHeldMetric)
+            {
+                l.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+            {
+                if (tag.Key == BabelstoneAttributes.LifecycleCommandKindTag
+                    && Equals(tag.Value, EnginePayInstallmentKind))
+                {
+                    onHit();
+                    return;
+                }
+            }
+        });
+        listener.Start();
+        return listener;
+    }
+
+    /// <summary>A probe whose read always fails — the "orchestrator database unreachable" case the
+    /// fail-closed contract is gated on.</summary>
+    private sealed class ThrowingProbe : ISettlementHealthProbe
+    {
+        public Task<bool> IsParkedAsync(Guid instanceId, CancellationToken ct = default) =>
+            throw new InvalidOperationException("simulated saga_state read failure");
     }
 
     private sealed class RecordingSink : ILifecycleCommandSink
