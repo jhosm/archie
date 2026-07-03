@@ -31,12 +31,13 @@ public sealed class BulkOpsPostgresFixture : IAsyncLifetime
 
 /// <summary>
 /// Integration tests for the generic bulk-operations runner — the BULK_OP_REGISTER_DRAIN_COMPLETE
-/// gate (ADR-PC-035 §P1–§P5) over real PostgreSQL work-tables and a real event store. In plain
-/// English: a registered job's frozen target set drains to completion in bounded batches; an
-/// idempotent re-drive appends nothing new; a mid-run host restart resumes from PENDING with no
-/// double-apply (the deterministic <c>(job_id, instance_id)</c> command id dedupes); one failing
-/// item is isolated as FAILED and selectively retryable; cancel stops further claims; and progress
-/// is a single query over the frozen set.
+/// gate (ADR-PC-035) over real PostgreSQL work-tables and a real event store. In plain English: a
+/// registered job's frozen target set drains to completion in bounded batches; an idempotent
+/// re-drive appends nothing new; a mid-run host restart resumes from PENDING with no double-apply
+/// (the deterministic command id dedupes); one failing item is isolated as FAILED and selectively
+/// retryable; cancel stops further claims EVEN MID-RUN (the claim requires a DRAINING job) and a
+/// cancelled job cannot be re-armed; the appender refuses a catalogued or unbound event; and
+/// progress is a single query over the frozen set.
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class BulkOperationRunnerIntegrationTests(BulkOpsPostgresFixture fixture)
@@ -60,14 +61,14 @@ public sealed class BulkOperationRunnerIntegrationTests(BulkOpsPostgresFixture f
             new BulkTargetRegistration(poisoned),
         ]));
 
-        // Batch size 2 over 5 targets: the drain must loop bounded batches to exhaustion (§P2).
+        // Batch size 2 over 5 targets: the drain must loop bounded batches to exhaustion (ADR-PC-035).
         var processed = await runtime.Drainer.DrainOnceAsync();
 
         Assert.Equal(5, processed);
         var progress = await runtime.Service.GetProgressAsync(jobId);
         Assert.Equal(new BulkOperationProgress(Total: 5, Applied: 3, Skipped: 1, Failed: 1, Pending: 0), progress);
 
-        // One bad item never aborts the rest (§P5): every healthy instance got exactly one event.
+        // One bad item never aborts the rest (ADR-PC-035): every healthy instance got exactly one event.
         foreach (var instanceId in applied)
         {
             Assert.Equal(1, await HeadSequenceAsync(runtime, instanceId));
@@ -82,7 +83,7 @@ public sealed class BulkOperationRunnerIntegrationTests(BulkOpsPostgresFixture f
         Assert.Equal("FAILED", failedTarget!.Status);
         Assert.Contains("poisoned", failedTarget.FailureReason);
 
-        // The job completes even with a FAILED item — failures are per-item and retryable (§P5).
+        // The job completes even with a FAILED item — failures are per-item and retryable (ADR-PC-035).
         Assert.Equal("COMPLETED", await JobStatusAsync(runtime, jobId));
     }
 
@@ -105,7 +106,7 @@ public sealed class BulkOperationRunnerIntegrationTests(BulkOpsPostgresFixture f
         Assert.Equal(0, await runtime.Drainer.DrainOnceAsync());
         Assert.Equal(1, await HeadSequenceAsync(runtime, healthy));
 
-        // Selective retry (§P5): only the FAILED subset re-arms; the transient fault is gone.
+        // Selective retry (ADR-PC-035): only the FAILED subset re-arms; the transient fault is gone.
         runtime.Strategy.FailInstances.Clear();
         Assert.Equal(1, await runtime.Service.RetryFailedAsync(jobId));
 
@@ -141,7 +142,7 @@ public sealed class BulkOperationRunnerIntegrationTests(BulkOpsPostgresFixture f
         Assert.Equal(3, (await runtime.Service.GetProgressAsync(jobId)).Pending);
 
         // Second "host" (a fresh drainer over the same substrate): the work-table IS the to-do
-        // list (§P2) — it resumes from PENDING and finishes the job.
+        // list (ADR-PC-035) — it resumes from PENDING and finishes the job.
         var restarted = Runtime(runtime);
         var processed = await restarted.Drainer.DrainOnceAsync();
 
@@ -162,10 +163,10 @@ public sealed class BulkOperationRunnerIntegrationTests(BulkOpsPostgresFixture f
         var instanceId = await SeedInstanceAsync(runtime);
         var jobId = Guid.NewGuid();
 
-        // Simulate the §P3 crash window: the append committed but the status flip was lost (the
-        // claim transaction rolled back), so the row is re-claimed PENDING after restart. The
-        // pre-append here uses the SAME deterministic (job_id, instance_id) command id the drainer
-        // will derive.
+        // Simulate the crash window BulkOperationCommandId exists for: the append committed but
+        // the status flip was lost (the claim transaction rolled back), so the row is re-claimed
+        // PENDING after restart. The pre-append here uses the SAME deterministic
+        // (job_id, instance_id) command id the drainer will derive.
         await runtime.Appender.AppendAsync(
             instanceId,
             new BulkNoted(instanceId, "applied"),
@@ -200,6 +201,87 @@ public sealed class BulkOperationRunnerIntegrationTests(BulkOpsPostgresFixture f
         Assert.Equal("CANCELLED", await JobStatusAsync(runtime, jobId));
         Assert.Equal(0, await HeadSequenceAsync(runtime, instanceId)); // nothing appended
         Assert.Equal(1, (await runtime.Service.GetProgressAsync(jobId)).Pending); // still decidable by query
+
+        // A cancelled plan stays cancelled: retry re-arms nothing (re-arming here would accumulate
+        // rows the DRAINING-gated claim can never pick up — permanently pending, silently).
+        Assert.Equal(0, await runtime.Service.RetryFailedAsync(jobId));
+    }
+
+    [Fact]
+    public async Task A_cancel_mid_drain_stops_the_remaining_pending_rows()
+    {
+        var runtime = Runtime();
+        var instances = new List<Guid>();
+        for (var i = 0; i < 4; i++)
+        {
+            instances.Add(await SeedInstanceAsync(runtime));
+        }
+
+        var jobId = Guid.NewGuid();
+        await runtime.Service.RegisterAsync(Registration(jobId, [.. instances.Select(id => new BulkTargetRegistration(id))]));
+
+        // Pass pickup happened (the job is DRAINING) and one batch already applied — the exact
+        // window where a drainer-side "is it cancelled?" check would race. The claim's own
+        // DRAINING requirement is the guard: after the cancel it yields ZERO rows.
+        await runtime.Store.MarkDrainingAsync(jobId);
+        Assert.Equal(2, await runtime.Store.DrainBatchAsync(
+            jobId, batchSize: 2, target => ProcessLikeTheDrainerAsync(runtime, jobId, target)));
+
+        Assert.True(await runtime.Service.CancelAsync(jobId));
+
+        Assert.Equal(0, await runtime.Store.DrainBatchAsync(
+            jobId, batchSize: 2, target => ProcessLikeTheDrainerAsync(runtime, jobId, target)));
+        Assert.Equal(0, await runtime.Drainer.DrainOnceAsync());
+
+        // The remaining PENDING rows were never applied: their streams carry only the seed event.
+        var progress = await runtime.Service.GetProgressAsync(jobId);
+        Assert.Equal(2, progress.Applied + progress.Skipped + progress.Failed);
+        Assert.Equal(2, progress.Pending);
+        var untouched = 0;
+        foreach (var instanceId in instances)
+        {
+            if (await HeadSequenceAsync(runtime, instanceId) == 0)
+            {
+                untouched++;
+            }
+        }
+
+        Assert.Equal(2, untouched);
+    }
+
+    [Fact]
+    public async Task The_appender_refuses_a_catalogued_integration_event()
+    {
+        var runtime = Runtime();
+        var instanceId = await SeedInstanceAsync(runtime);
+
+        // The ADR-IC-017 store-only guard: this appender writes no outbox rows, so a catalogued
+        // event would silently lose its bus leg — it must refuse loud instead.
+        var cataloguingAppender = new BulkInstanceAppender(
+            runtime.Events, runtime.Serializer, new EverythingCatalogued(), [runtime.Module], TimeProvider.System);
+
+        var refusal = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            cataloguingAppender.AppendAsync(
+                instanceId, new BulkNoted(instanceId, "applied"), Guid.NewGuid(), "ops.test", Origin));
+
+        Assert.Contains("catalogued", refusal.Message);
+        Assert.Equal(0, await HeadSequenceAsync(runtime, instanceId)); // nothing appended
+    }
+
+    [Fact]
+    public async Task The_appender_refuses_an_event_the_instances_family_does_not_bind()
+    {
+        var runtime = Runtime();
+        var instanceId = await SeedInstanceAsync(runtime);
+
+        // The fail-closed fold stance: an event the instance's own family cannot fold/replay must
+        // never be appended to its stream.
+        var refusal = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            runtime.Appender.AppendAsync(
+                instanceId, new UnboundEvent(instanceId), Guid.NewGuid(), "ops.test", Origin));
+
+        Assert.Contains("no handler binding", refusal.Message);
+        Assert.Equal(0, await HeadSequenceAsync(runtime, instanceId)); // nothing appended
     }
 
     [Fact]
@@ -246,9 +328,9 @@ public sealed class BulkOperationRunnerIntegrationTests(BulkOpsPostgresFixture f
         ];
     }
 
-    /// <summary>The §P4 adapter shape under test: an optional precondition (skip when the frozen
-    /// input says so) + a per-instance event factory (throwing for poisoned instances, to exercise
-    /// §P5 isolation).</summary>
+    /// <summary>The ADR-PC-035 adapter shape under test: an optional precondition (skip when the
+    /// frozen input says so) + a per-instance event factory (throwing for poisoned instances, to
+    /// exercise per-item isolation).</summary>
     private sealed class TestStrategy : IBulkOperationStrategy
     {
         public HashSet<Guid> FailInstances { get; } = [];
@@ -281,6 +363,14 @@ public sealed class BulkOperationRunnerIntegrationTests(BulkOpsPostgresFixture f
     {
         public bool IsCataloguedIntegrationEvent(string eventType) => false;
     }
+
+    private sealed class EverythingCatalogued : IIntegrationEventCatalog
+    {
+        public bool IsCataloguedIntegrationEvent(string eventType) => true;
+    }
+
+    // Deliberately registered in NO family module: the appender must refuse it fail-closed.
+    private sealed record UnboundEvent(Guid InstanceId) : DomainEvent;
 
     private sealed record TestRuntime(
         BulkOperationService Service,
@@ -385,8 +475,8 @@ public sealed class BulkOperationRunnerIntegrationTests(BulkOpsPostgresFixture f
 }
 
 /// <summary>
-/// Pins the §P3 derivation the whole no-double-append guarantee rests on (ADR-PC-035
-/// §Residual-risks: "the implementing child must keep the derivation pure and test it").
+/// Pins the BulkOperationCommandId derivation the whole no-double-append guarantee rests on —
+/// the determinism test ADR-PC-035 requires the implementing change to carry.
 /// </summary>
 public sealed class BulkOperationCommandIdTests
 {

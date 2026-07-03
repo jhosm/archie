@@ -3,9 +3,9 @@ using Babelstone.EventStore;
 namespace Babelstone.Engine.Hosting;
 
 /// <summary>
-/// The bulk runner's per-instance append — the engine's native op (ADR-PC-035 §P4 step 3): read
-/// the instance's head, append ONE store-only cross-cutting event at it, idempotent on the §P3
-/// deterministic command id. In plain English: this is how one item of a bulk job actually lands —
+/// The bulk runner's per-instance append — the engine's native op (ADR-PC-035): read the
+/// instance's head, append ONE store-only cross-cutting event at it, idempotent on the
+/// deterministic command id (<see cref="BulkOperationCommandId"/>). In plain English: this is how one item of a bulk job actually lands —
 /// the same head-read + atomic append every command uses, with the envelope pins (family, pack,
 /// schema) carried forward from the stream's own head so the spine never has to know which family
 /// the instance belongs to.
@@ -24,14 +24,14 @@ namespace Babelstone.Engine.Hosting;
 /// authority the runtime uses: an event type the family does not bind cannot be appended.
 /// </para>
 /// <para>
-/// <b>Store-only, enforced fail-loud (ADR-PC-035 §P4 / ADR-IC-017).</b> The per-instance event is
+/// <b>Store-only, enforced fail-loud (ADR-PC-035 / ADR-IC-017).</b> The per-instance event is
 /// a store-only cross-cutting fact — appended, folded, replayable, never on the durable bus — so
 /// this appender writes NO outbox rows and REFUSES a catalogued integration event rather than
 /// silently dropping its bus leg. An operation whose event must reach the bus is a deliberate
 /// later extension (dual-encode via the bus codec), not a silent behaviour here.
 /// </para>
 /// <para>
-/// <b>Idempotent per (job, instance) (§P3).</b> The caller passes the deterministic
+/// <b>Idempotent per (job, instance).</b> The caller passes the deterministic
 /// <see cref="BulkOperationCommandId"/>; a re-claimed/retried step replays into
 /// <see cref="DuplicateCommandException"/>, which is returned as the ORIGINAL commit sequence —
 /// a benign no-op, never a second append.
@@ -66,11 +66,11 @@ public sealed class BulkInstanceAppender
     /// <summary>
     /// Append <paramref name="event"/> at the instance's current head, store-only, idempotent on
     /// <paramref name="commandId"/>. Returns the commit sequence — the original one when the
-    /// command id replays (the §P3 no-op path).
+    /// command id replays (the <see cref="BulkOperationCommandId"/> no-op path).
     /// </summary>
     /// <param name="instanceId">The target instance (stream) from the frozen set.</param>
     /// <param name="event">The adapter-built store-only cross-cutting event.</param>
-    /// <param name="commandId">The deterministic <c>(job_id, instance_id)</c> command id (§P3).</param>
+    /// <param name="commandId">The deterministic command id (<see cref="BulkOperationCommandId"/>).</param>
     /// <param name="actor">The job's registering operator — stamped on the envelope for audit.</param>
     /// <param name="validTime">The event's economic time — the caller supplies the job's
     /// registration instant, so a retried/restarted step re-derives the identical envelope stamp
@@ -106,7 +106,7 @@ public sealed class BulkInstanceAppender
 
         if (_catalog.IsCataloguedIntegrationEvent(registration.EventType))
         {
-            // Store-only by decision (ADR-PC-035 §P4 / ADR-IC-017): this appender writes no outbox
+            // Store-only by decision (ADR-PC-035 / ADR-IC-017): this appender writes no outbox
             // rows, so silently accepting a catalogued event would drop its bus leg — refuse loud.
             throw new InvalidOperationException(
                 $"Event type '{registration.EventType}' is a catalogued integration event; the bulk "
@@ -142,8 +142,9 @@ public sealed class BulkInstanceAppender
         }
         catch (DuplicateCommandException replay)
         {
-            // The §P3 no-op path: this exact (job, instance) already applied — return the original
-            // receipt so the target records the true commit sequence, with no second append.
+            // The BulkOperationCommandId no-op path: this exact (job, instance) already applied —
+            // return the original receipt so the target records the true commit sequence, with no
+            // second append.
             return replay.CommitSequence;
         }
     }

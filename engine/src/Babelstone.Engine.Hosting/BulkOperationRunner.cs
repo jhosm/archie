@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Babelstone.Engine.Hosting;
 
-/// <summary>One instance registered into a job's frozen universe (the §P1 registration input).</summary>
+/// <summary>One instance registered into a job's frozen universe (the ADR-PC-035 registration input).</summary>
 /// <param name="InstanceId">The opaque product-instance (stream) reference — never PII.</param>
 /// <param name="ItemParamsJson">Optional per-item params the adapter's event factory consumes; frozen at registration.</param>
 /// <param name="PreconditionInputJson">Optional per-item input to the adapter's precondition; frozen at registration.</param>
@@ -14,16 +14,16 @@ public sealed record BulkTargetRegistration(
     string? PreconditionInputJson = null);
 
 /// <summary>
-/// A bulk-operation registration (ADR-PC-035 §P1): the job header plus the explicit instance list
+/// A bulk-operation registration (ADR-PC-035): the job header plus the explicit instance list
 /// that becomes the frozen universe. The <see cref="JobId"/> is caller-supplied because it IS the
-/// <c>action_id</c> the §P3 per-instance command ids derive from — the operator surface (a tracked
-/// sibling) owns minting it and any register-level idempotency.
+/// <c>action_id</c> the per-instance command ids derive from (<see cref="BulkOperationCommandId"/>);
+/// the operator command surface owns minting it and any register-level idempotency.
 /// </summary>
 /// <param name="JobId">The job's identity and action id.</param>
 /// <param name="OperationKind">The adapter dispatch key (e.g. <c>PackVersionMigrated</c>).</param>
 /// <param name="MatchedSetJson">The audit snapshot of what was matched (the <c>matched_count</c>
 /// preview's predicate) — opaque JSON, no PII.</param>
-/// <param name="RequestedBatchSize">The drainer's bounded claim (§P2 — the re-homed PR #324 cap).</param>
+/// <param name="RequestedBatchSize">The drainer's bounded claim size (ADR-PC-035 / ADR-PC-009).</param>
 /// <param name="Actor">The registering operator — a structural token, never PII.</param>
 /// <param name="Targets">The matched instances — the universe frozen at registration.</param>
 public sealed record BulkOperationRegistration(
@@ -35,17 +35,17 @@ public sealed record BulkOperationRegistration(
     IReadOnlyList<BulkTargetRegistration> Targets);
 
 /// <summary>
-/// The generic bulk-operation service (ADR-PC-035 §P1/§P5/§P6): register a frozen universe
-/// transactionally, answer progress by query, re-arm failures, cancel. In plain English: this is
-/// the operator-facing half of the runner — everything except the draining itself — generic over
-/// the operation (it never reads an adapter), so the command/query HTTP surface (a tracked
-/// sibling) is a thin mapping onto these calls.
+/// The generic bulk-operation service (ADR-PC-035): register a frozen universe transactionally,
+/// answer progress by query, re-arm failures, cancel. In plain English: this is the
+/// operator-facing half of the runner — everything except the draining itself — generic over the
+/// operation (it never reads an adapter), so a command/query HTTP surface is a thin mapping onto
+/// these calls.
 /// </summary>
 public sealed class BulkOperationService(IBulkOperationStore store)
 {
     /// <summary>
-    /// Freeze the universe (§P1): the header and one PENDING target per instance land in one
-    /// transaction; <c>total_count</c> is the frozen matched count. Once registered the set is
+    /// Freeze the universe (ADR-PC-035): the header and one PENDING target per instance land in
+    /// one transaction; <c>total_count</c> is the frozen matched count. Once registered the set is
     /// immutable — a straggler instance is a NEW job, never a re-scan.
     /// </summary>
     public async Task RegisterAsync(BulkOperationRegistration registration, CancellationToken ct = default)
@@ -84,35 +84,40 @@ public sealed class BulkOperationService(IBulkOperationStore store)
         await store.RegisterAsync(job, targets, ct);
     }
 
-    /// <summary>The <c>{total, applied, skipped, failed, pending}</c> tuple by query (§P5/§P6).</summary>
+    /// <summary>The <c>{total, applied, skipped, failed, pending}</c> tuple by query (ADR-PC-035).</summary>
     public Task<BulkOperationProgress> GetProgressAsync(Guid jobId, CancellationToken ct = default)
         => store.GetProgressAsync(jobId, ct);
 
-    /// <summary>Selective retry (§P5): re-arm the FAILED subset to PENDING; the re-run dedupes on the §P3 command id.</summary>
+    /// <summary>Selective retry (ADR-PC-035): re-arm a reopenable job's FAILED subset to PENDING;
+    /// the re-run dedupes on the deterministic command id (<see cref="BulkOperationCommandId"/>).</summary>
     public Task<int> RetryFailedAsync(Guid jobId, CancellationToken ct = default)
         => store.RetryFailedAsync(jobId, ct);
 
-    /// <summary>Cancel (§P5): stop further claims; already-applied items stay applied.</summary>
+    /// <summary>Cancel (ADR-PC-035): stop further claims — enforced by the claim's own DRAINING
+    /// requirement, so it bites even mid-run; already-applied items stay applied.</summary>
     public Task<bool> CancelAsync(Guid jobId, CancellationToken ct = default)
         => store.CancelAsync(jobId, ct);
 }
 
 /// <summary>
-/// The drain half of the runner (ADR-PC-035 §P2–§P5) — the outbox pattern's second instance: claim
-/// a bounded <c>FOR UPDATE SKIP LOCKED</c> batch of PENDING targets, run the per-instance step
+/// The drain half of the runner (ADR-PC-035) — the outbox pattern's second instance: claim a
+/// bounded <c>FOR UPDATE SKIP LOCKED</c> batch of PENDING targets, run the per-instance step
 /// (optional precondition → adapter event factory → native idempotent append), flip each row's
 /// status in the claim transaction, repeat until the job drains, then complete it. In plain
 /// English: the worker that walks a frozen to-do list item by item, safely resumable at any point
-/// because the table IS the to-do list and every append dedupes on the deterministic command id.
+/// because the table IS the to-do list and every append dedupes on the deterministic command id
+/// (<see cref="BulkOperationCommandId"/>).
 /// </summary>
 /// <remarks>
-/// Per-item failure isolation (§P5): a throwing precondition/factory/append marks THAT row
+/// Per-item failure isolation (ADR-PC-035): a throwing precondition/factory/append marks THAT row
 /// <c>FAILED</c> (with an operational-tier reason) and the batch continues — one bad item never
-/// aborts the job. A job whose <c>operation_kind</c> has no registered adapter is flipped
-/// <c>FAILED</c> fail-loud (visible by query) rather than silently starving the queue. Restart
-/// resumability is the substrate's (§P2): claimed-but-uncommitted rows roll back to PENDING, and
-/// the §P3 command id turns any re-run of an already-appended step into a no-op returning the
-/// original receipt.
+/// aborts the job. An append that loses a head race retries bounded times before it counts as a
+/// failure. A job whose <c>operation_kind</c> has no registered adapter is flipped <c>FAILED</c>
+/// fail-loud (visible by query) rather than silently starving the queue. Restart resumability is
+/// the substrate's: claimed-but-uncommitted rows roll back to PENDING, and the deterministic
+/// command id turns any re-run of an already-appended step into a no-op returning the original
+/// receipt. A cancel starves the claim itself (it requires a DRAINING job), so it stops a job
+/// even mid-pass.
 /// </remarks>
 public sealed class BulkOperationDrainer(
     IBulkOperationStore store,
@@ -134,8 +139,8 @@ public sealed class BulkOperationDrainer(
         {
             if (!_strategies.TryGetValue(job.OperationKind, out var strategy))
             {
-                // Fail-loud, by query (§P5/§P6): a job nothing can execute must not sit REGISTERED
-                // forever looking healthy. Its targets stay untouched for audit.
+                // Fail-loud, by query (ADR-PC-035): a job nothing can execute must not sit
+                // REGISTERED forever looking healthy. Its targets stay untouched for audit.
                 logger?.LogError(
                     "Bulk job {JobId} has operation_kind '{OperationKind}' with no registered adapter; marking the job FAILED.",
                     job.JobId, job.OperationKind);
@@ -164,7 +169,7 @@ public sealed class BulkOperationDrainer(
 
             // A cancel raced between batches simply leaves the flip a no-op (TryComplete requires
             // DRAINING); a fully drained job completes here even when some items FAILED — failure
-            // is per-item (§P5), and the failed subset stays selectively retryable.
+            // is per-item (ADR-PC-035), and the failed subset stays selectively retryable.
             await store.TryCompleteAsync(job.JobId, ct);
         }
 
@@ -188,16 +193,33 @@ public sealed class BulkOperationDrainer(
             }
 
             var @event = strategy.CreateEvent(target);
-            var commitSequence = await appender.AppendAsync(
-                target.InstanceId,
-                @event,
-                BulkOperationCommandId.For(job.JobId, target.InstanceId),
-                actor: job.Actor,
-                // The job's registration instant, not a drain-time clock read: a retry/restart
-                // re-derives the identical envelope valid_time.
-                validTime: job.CreatedAt,
-                ct);
-            return BulkTargetOutcome.Applied(commitSequence);
+            var commandId = BulkOperationCommandId.For(job.JobId, target.InstanceId);
+
+            // A ConcurrencyException is a lost head race (another writer — a lifecycle step, a
+            // sibling operation — advanced the stream between the appender's head-read and its
+            // append), not a broken item: the appender re-reads the head on every call, so a
+            // bounded retry usually lands it. Only exhaustion records FAILED — with the exception
+            // name in the reason, so the outcome stays classifiable for selective retry.
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    var commitSequence = await appender.AppendAsync(
+                        target.InstanceId,
+                        @event,
+                        commandId,
+                        actor: job.Actor,
+                        // The job's registration instant, not a drain-time clock read: a
+                        // retry/restart re-derives the identical envelope valid_time.
+                        validTime: job.CreatedAt,
+                        ct);
+                    return BulkTargetOutcome.Applied(commitSequence);
+                }
+                catch (ConcurrencyException) when (attempt < MaxHeadRaceAttempts)
+                {
+                    // retry: the next AppendAsync call re-reads the moved head
+                }
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -205,12 +227,16 @@ public sealed class BulkOperationDrainer(
         }
         catch (Exception ex)
         {
-            // §P5 isolation: record and continue. The reason stays operational-tier (exception
-            // type + truncated message — structural context, never a business amount or PII;
-            // ADR-PC-004, mirroring inbox.result_summary).
+            // Per-item isolation (ADR-PC-035): record and continue. The reason stays
+            // operational-tier (exception type + truncated message — structural context, never a
+            // business amount or PII; ADR-PC-004, mirroring inbox.result_summary).
             return BulkTargetOutcome.Failed(FailureReason(ex));
         }
     }
+
+    // Bounded head-race retries per item: enough to ride out routine concurrent lifecycle writes,
+    // small enough that a genuinely contended stream surfaces as FAILED for selective retry.
+    private const int MaxHeadRaceAttempts = 3;
 
     private static string FailureReason(Exception ex)
     {
@@ -230,7 +256,7 @@ public sealed record BulkOperationRunnerOptions
 /// Hosts the <see cref="BulkOperationDrainer"/> as an in-process <see cref="BackgroundService"/> —
 /// the same co-hosted poll-loop shape as the outbox relay and the spine projection relay. An idle
 /// pass waits the poll interval; a failed pass is backpressure (back off and retry — the
-/// work-table is the durable to-do list, so nothing is lost, §P2).
+/// work-table is the durable to-do list, so nothing is lost, ADR-PC-035).
 /// </summary>
 public sealed class BulkOperationRunnerService(
     BulkOperationDrainer drainer,

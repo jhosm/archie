@@ -3,16 +3,16 @@ using Npgsql;
 namespace Babelstone.EventStore;
 
 /// <summary>
-/// One registered bulk-operation job — the frozen-universe header of ADR-PC-035 §P1, flattened to
+/// One registered bulk-operation job — the frozen-universe header of ADR-PC-035, flattened to
 /// family-agnostic PRIMITIVES (the storage boundary names no engine domain type, the same split as
 /// <see cref="MovementLedgerEntry"/> / <see cref="AccountHoldRow"/>). The <see cref="JobId"/> IS
-/// the <c>action_id</c>: the per-instance command id derives deterministically from
-/// <c>(job_id, instance_id)</c> (§P3), so a retried/restarted step never double-appends.
+/// the <c>action_id</c> the deterministic per-instance command id derives from (the
+/// <c>BulkOperationCommandId</c> contract).
 /// </summary>
 /// <param name="JobId">The job's identity and the action id (migration 0018).</param>
 /// <param name="OperationKind">The adapter key (e.g. <c>PackVersionMigrated</c>) — an open set, never a family name.</param>
 /// <param name="MatchedSetJson">The frozen matched-set predicate/snapshot, opaque JSON — the audit record of what this plan targeted.</param>
-/// <param name="RequestedBatchSize">The drainer's bounded claim size (§P2 — the re-homed PR #324 cap).</param>
+/// <param name="RequestedBatchSize">The drainer's bounded claim size (ADR-PC-035 / ADR-PC-009).</param>
 /// <param name="TotalCount">The size of the frozen universe, set at registration (the matched_count).</param>
 /// <param name="Actor">The registering operator — a structural actor token, never PII.</param>
 /// <param name="Status"><c>REGISTERED → DRAINING → COMPLETED | FAILED | CANCELLED</c>.</param>
@@ -32,11 +32,12 @@ public sealed record BulkOperationJobRow(
     DateTimeOffset? CompletedAt = null);
 
 /// <summary>
-/// One instance in a job's frozen universe (ADR-PC-035 §P2/§P4/§P5) — the per-item work-queue row
+/// One instance in a job's frozen universe (ADR-PC-035) — the per-item work-queue row
 /// of migration 0018. <see cref="ItemParamsJson"/> / <see cref="PreconditionInputJson"/> are opaque
 /// JSON the operation's adapter reads; the spine never parses them.
 /// </summary>
-/// <param name="TargetId">The row's stable identity.</param>
+/// <param name="TargetId">The row's surrogate identity, minted once at registration — the flip key
+/// the drain transaction updates by.</param>
 /// <param name="JobId">The owning frozen set.</param>
 /// <param name="InstanceId">The opaque product-instance (stream) reference — never PII.</param>
 /// <param name="Status"><c>PENDING → APPLIED | SKIPPED | FAILED</c>.</param>
@@ -63,7 +64,7 @@ public sealed record BulkOperationTargetRow(
     DateTimeOffset CreatedAt);
 
 /// <summary>
-/// The terminal outcome of one per-instance step (ADR-PC-035 §P5), recorded by the drainer inside
+/// The terminal outcome of one per-instance step (ADR-PC-035), recorded by the drainer inside
 /// the claim transaction: <c>APPLIED</c> (event appended, with the commit-sequence receipt),
 /// <c>SKIPPED</c> (the precondition declined), or <c>FAILED</c> (an error — recorded with an
 /// operational-tier reason and left for selective retry).
@@ -77,22 +78,23 @@ public sealed record BulkTargetOutcome(string Status, long? CommitSequence = nul
     public static BulkTargetOutcome Failed(string reason) => new("FAILED", FailureReason: reason);
 }
 
-/// <summary>The by-query progress tuple of ADR-PC-035 §P5/§P6: counts over the frozen set.</summary>
+/// <summary>The by-query progress tuple of ADR-PC-035: counts over the frozen set.</summary>
 public sealed record BulkOperationProgress(
     long Total, long Applied, long Skipped, long Failed, long Pending);
 
 /// <summary>
 /// The generic, family-agnostic storage boundary for the bulk-operations work-tables
-/// (ADR-PC-035, migration 0018). Registration freezes the universe transactionally (§P1); the
-/// drainer claims bounded <c>FOR UPDATE SKIP LOCKED</c> batches and flips per-item status inside
-/// one transaction (§P2/§P5); progress, selective retry, and cancel are queries/flips over the
-/// same tables (§P5/§P6). Family-agnostic by construction — opaque ids and JSON only.
+/// (ADR-PC-035, migration 0018). Registration freezes the universe transactionally; the drainer
+/// claims bounded <c>FOR UPDATE SKIP LOCKED</c> batches — only while the job is DRAINING, which is
+/// what makes cancel bite mid-run — and flips per-item status inside one transaction; progress,
+/// selective retry, and cancel are queries/flips over the same tables. Family-agnostic by
+/// construction — opaque ids and JSON only.
 /// </summary>
 public interface IBulkOperationStore
 {
     /// <summary>
     /// Register a job: the header and its one-row-per-instance frozen target set land in ONE
-    /// transaction (§P1) — together or not at all. The set is immutable from here on.
+    /// transaction (ADR-PC-035) — together or not at all. The set is immutable from here on.
     /// </summary>
     Task RegisterAsync(
         BulkOperationJobRow job, IReadOnlyList<BulkOperationTargetRow> targets, CancellationToken ct = default);
@@ -105,12 +107,14 @@ public interface IBulkOperationStore
 
     /// <summary>
     /// Claim one bounded batch of the job's <c>PENDING</c> targets with
-    /// <c>FOR UPDATE SKIP LOCKED</c>, run <paramref name="perItem"/> for each, and record every
-    /// outcome — all inside ONE transaction (§P2/§P5). The per-instance append inside
-    /// <paramref name="perItem"/> commits on its OWN connection (the engine's native path), so a
-    /// crash mid-batch rolls the claim back to <c>PENDING</c> while the §P3 deterministic command
-    /// id makes the re-claimed step a no-op append. Returns the number of rows claimed
-    /// (0 = nothing pending or every pending row was locked by a concurrent drainer).
+    /// <c>FOR UPDATE SKIP LOCKED</c> — the claim requires the job to be <c>DRAINING</c>, so a
+    /// cancelled job yields nothing even mid-pass — run <paramref name="perItem"/> for each, and
+    /// record every outcome, all inside ONE transaction (ADR-PC-035). The per-instance append
+    /// inside <paramref name="perItem"/> commits on its OWN connection (the engine's native path),
+    /// so a crash mid-batch rolls the claim back to <c>PENDING</c> while the deterministic command
+    /// id (<c>BulkOperationCommandId</c>) makes the re-claimed step a no-op append. Returns the
+    /// number of rows claimed (0 = job not draining, nothing pending, or every pending row locked
+    /// by a concurrent drainer).
     /// </summary>
     Task<int> DrainBatchAsync(
         Guid jobId,
@@ -122,29 +126,30 @@ public interface IBulkOperationStore
     /// Flip a <c>DRAINING</c> job with no remaining <c>PENDING</c> targets to <c>COMPLETED</c>
     /// (stamping <c>completed_at</c>). Returns whether the flip happened. A job whose only
     /// non-applied items are <c>FAILED</c>/<c>SKIPPED</c> still completes — failures are isolated
-    /// per item (§P5) and stay selectively retryable.
+    /// per item (ADR-PC-035) and stay selectively retryable.
     /// </summary>
     Task<bool> TryCompleteAsync(Guid jobId, CancellationToken ct = default);
 
     /// <summary>Flip a job to <c>FAILED</c> (e.g. no adapter for its operation kind) — terminal, audited by query.</summary>
     Task MarkJobFailedAsync(Guid jobId, CancellationToken ct = default);
 
-    /// <summary>The <c>{total, applied, skipped, failed, pending}</c> progress tuple by query (§P5/§P6).</summary>
+    /// <summary>The <c>{total, applied, skipped, failed, pending}</c> progress tuple by query (ADR-PC-035).</summary>
     Task<BulkOperationProgress> GetProgressAsync(Guid jobId, CancellationToken ct = default);
 
     /// <summary>
-    /// Selective retry (§P5): re-arm the job's <c>FAILED</c> targets back to <c>PENDING</c> and,
-    /// when any were re-armed, return the job itself to <c>DRAINING</c> so the runner resumes it.
-    /// The re-run is no-op-safe: a partially-applied-then-failed item re-runs under the SAME
-    /// deterministic command id, so it dedupes rather than double-applies (§P3). Returns the
-    /// number of re-armed targets.
+    /// Selective retry (ADR-PC-035): re-arm a REOPENABLE (<c>COMPLETED</c>/<c>FAILED</c>) job's
+    /// <c>FAILED</c> targets back to <c>PENDING</c> and, when any were re-armed, return the job to
+    /// <c>DRAINING</c> so the runner resumes it. A <c>CANCELLED</c> job re-arms nothing — its plan
+    /// stays cancelled. The re-run is no-op-safe on the deterministic command id
+    /// (<c>BulkOperationCommandId</c>). Returns the number of re-armed targets.
     /// </summary>
     Task<int> RetryFailedAsync(Guid jobId, CancellationToken ct = default);
 
     /// <summary>
-    /// Cancel (§P5): flip a non-terminal job to <c>CANCELLED</c> so the drainer claims no further
-    /// <c>PENDING</c> rows. Already-applied items stay applied — the frozen-set audit answer stays
-    /// decidable. Returns whether the flip happened.
+    /// Cancel (ADR-PC-035): flip a non-terminal job to <c>CANCELLED</c> so the drainer claims no
+    /// further <c>PENDING</c> rows — enforced by the claim itself (it requires <c>DRAINING</c>),
+    /// so the stop bites even mid-run. Already-applied items stay applied — the frozen-set audit
+    /// answer stays decidable. Returns whether the flip happened.
     /// </summary>
     Task<bool> CancelAsync(Guid jobId, CancellationToken ct = default);
 
@@ -156,9 +161,9 @@ public interface IBulkOperationStore
 /// PostgreSQL-backed <see cref="IBulkOperationStore"/>. Hand-rolled, Npgsql-only, all
 /// <c>bulk_operation_*</c> SQL private to this type — the storage-boundary discipline of
 /// <see cref="PostgresMovementLedgerStore"/> applied to the work-tables (migration 0018). The
-/// claim uses exactly the 0018-documented shape: a partial-index scan over the <c>PENDING</c>
-/// tail, <c>ORDER BY created_at, target_id</c> for stable FIFO, <c>FOR UPDATE SKIP LOCKED</c> so
-/// concurrent drainers never contend on the same rows.
+/// claim scans the <c>PENDING</c> tail through the partial claim index in stable FIFO order,
+/// <c>FOR UPDATE SKIP LOCKED</c> so concurrent drainers never contend on the same rows, joined to
+/// the job header so only a <c>DRAINING</c> job yields work.
 /// </summary>
 public sealed class PostgresBulkOperationStore(string connectionString) : IBulkOperationStore
 {
@@ -183,8 +188,8 @@ public sealed class PostgresBulkOperationStore(string connectionString) : IBulkO
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(ct);
-        // ONE transaction (§P1): the header and its frozen set land together or not at all — a
-        // crash mid-registration leaves no headerless targets and no targetless plan.
+        // ONE transaction (ADR-PC-035): the header and its frozen set land together or not at all —
+        // a crash mid-registration leaves no headerless targets and no targetless plan.
         await using var transaction = await connection.BeginTransactionAsync(ct);
 
         await using (var command = new NpgsqlCommand(jobSql, connection, transaction))
@@ -270,16 +275,23 @@ public sealed class PostgresBulkOperationStore(string connectionString) : IBulkO
     {
         ArgumentNullException.ThrowIfNull(perItem);
 
-        // The 0018-documented claim, verbatim: PENDING tail only (the partial claim index),
-        // stable FIFO order, SKIP LOCKED so concurrent drainers claim disjoint rows.
+        // The 0018 claim shape — PENDING tail only (the partial claim index), stable FIFO order,
+        // SKIP LOCKED so concurrent drainers claim disjoint rows — JOINED to the job header so a
+        // claim exists only while the job is DRAINING. The join is the cancel guard (ADR-PC-035:
+        // "a cancel stops the drainer claiming further Pending rows"): it holds even mid-batch and
+        // mid-pass, where a drainer-side status check would race the cancel. FOR UPDATE OF t locks
+        // only the target rows; the job row is read unlocked, so a concurrent cancel commits
+        // freely and the NEXT claim sees it.
         const string claimSql = """
-            SELECT target_id, job_id, instance_id, status, item_params::text, precondition_input::text,
-                   attempts, failure_reason, commit_sequence, claimed_at, processed_at, created_at
-            FROM bulk_operation_targets
-            WHERE job_id = @job_id AND status = 'PENDING'
-            ORDER BY created_at, target_id
+            SELECT t.target_id, t.job_id, t.instance_id, t.status, t.item_params::text,
+                   t.precondition_input::text, t.attempts, t.failure_reason, t.commit_sequence,
+                   t.claimed_at, t.processed_at, t.created_at
+            FROM bulk_operation_targets t
+            JOIN bulk_operation_jobs j USING (job_id)
+            WHERE j.job_id = @job_id AND j.status = 'DRAINING' AND t.status = 'PENDING'
+            ORDER BY t.created_at, t.target_id
             LIMIT @batch_size
-            FOR UPDATE SKIP LOCKED;
+            FOR UPDATE OF t SKIP LOCKED;
             """;
         const string flipSql = """
             UPDATE bulk_operation_targets
@@ -294,9 +306,9 @@ public sealed class PostgresBulkOperationStore(string connectionString) : IBulkO
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(ct);
-        // Claim + status flips in ONE transaction (§P2/§P5): a crash before commit rolls every
+        // Claim + status flips in ONE transaction (ADR-PC-035): a crash before commit rolls every
         // claimed row back to PENDING (resumability); the per-instance append inside perItem is on
-        // its own connection and stays safe under the re-claim via the §P3 command id.
+        // its own connection and stays safe under the re-claim via the deterministic command id.
         await using var transaction = await connection.BeginTransactionAsync(ct);
 
         var claimed = new List<BulkOperationTargetRow>();
@@ -313,8 +325,10 @@ public sealed class PostgresBulkOperationStore(string connectionString) : IBulkO
 
         foreach (var target in claimed)
         {
-            // Per-item failure isolation (§P5): perItem NEVER throws for a domain/append failure —
-            // it returns FAILED — so one bad item flips to FAILED and the batch continues.
+            // The store's side of per-item isolation (ADR-PC-035): each returned outcome — FAILED
+            // included — is recorded and the loop continues. An exception escaping perItem rolls
+            // the WHOLE claim back to PENDING (resumable, nothing lost), which the caller reserves
+            // for shutdown, not per-item failures.
             var outcome = await perItem(target);
 
             await using var command = new NpgsqlCommand(flipSql, connection, transaction);
@@ -365,7 +379,7 @@ public sealed class PostgresBulkOperationStore(string connectionString) : IBulkO
 
     public async Task<BulkOperationProgress> GetProgressAsync(Guid jobId, CancellationToken ct = default)
     {
-        // Counts by query over the frozen set (§P5/§P6, the job_status_idx). total comes from the
+        // Counts by query over the frozen set (ADR-PC-035, the job_status_idx). total comes from the
         // header (the frozen matched_count), the breakdown from the targets — so a job with zero
         // targets still answers.
         const string sql = """
@@ -401,10 +415,17 @@ public sealed class PostgresBulkOperationStore(string connectionString) : IBulkO
 
     public async Task<int> RetryFailedAsync(Guid jobId, CancellationToken ct = default)
     {
+        // Re-arm only under a REOPENABLE job (COMPLETED/FAILED): re-arming a CANCELLED job would
+        // accumulate rows the drainer will never claim again (the claim requires DRAINING) —
+        // permanently-pending, silently. A cancelled plan stays cancelled; retry returns 0.
         const string retrySql = """
-            UPDATE bulk_operation_targets
+            UPDATE bulk_operation_targets t
             SET status = 'PENDING', failure_reason = NULL, processed_at = NULL
-            WHERE job_id = @job_id AND status = 'FAILED';
+            FROM bulk_operation_jobs j
+            WHERE j.job_id = t.job_id
+              AND t.job_id = @job_id
+              AND t.status = 'FAILED'
+              AND j.status IN ('COMPLETED', 'FAILED');
             """;
         const string reopenSql = """
             UPDATE bulk_operation_jobs
@@ -438,8 +459,10 @@ public sealed class PostgresBulkOperationStore(string connectionString) : IBulkO
 
     public async Task<bool> CancelAsync(Guid jobId, CancellationToken ct = default)
     {
-        // PENDING rows are left as-is: the drainer only claims for REGISTERED/DRAINING jobs, and
-        // the untouched rows keep the "what did this plan touch?" answer decidable (§P5).
+        // PENDING rows are left as-is — the untouched rows keep the "what did this plan touch?"
+        // answer decidable (ADR-PC-035). What actually STOPS the work is the claim itself: it
+        // joins the job header and requires DRAINING, so this flip starves even a drainer that is
+        // mid-pass on the job (pass-granularity checks alone would race a mid-drain cancel).
         const string sql = """
             UPDATE bulk_operation_jobs
             SET status = 'CANCELLED', completed_at = clock_timestamp()
