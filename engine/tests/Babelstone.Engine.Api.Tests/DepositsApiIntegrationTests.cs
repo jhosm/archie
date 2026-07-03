@@ -890,6 +890,37 @@ public sealed class DepositsApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    [Fact]
+    public async Task The_withholding_ledger_read_for_a_belief_with_no_flows_is_404()
+    {
+        // The OTHER 404 branch: a belief ROW exists but carries no withholding flow. The ledger fold
+        // writes a belief as soon as an InterestAccrued arms the pending-accrual slot (the pre-field date
+        // source) — fold bookkeeping, not a ledger resource — so the read must still be the same clean
+        // 404 as no-row-at-all (never a phantom empty ledger). Seeded directly through the same typed
+        // store the endpoint reads, exactly the state the relay leaves mid-drain between an accrual and
+        // its withholding leg.
+        var depositId = await ConstituteActiveDepositAsync();
+
+        var store = new ProjectionStore<WithholdingLedger>(
+            new Babelstone.EventStore.PostgresProjectionStore(_pg.GetConnectionString()),
+            new JsonStateSerializer<WithholdingLedger>());
+        await store.UpdateAsync(
+            depositId,
+            TermDepositProjectionModule.WithholdingLedgerKind,
+            WithholdingLedger.Empty with
+            {
+                PendingAccrual = new PendingAccrual(
+                    new Babelstone.FinancialTypes.Money(30_417), new DateOnly(2027, 1, 15)),
+            },
+            new ProjectionTemporalContext(
+                RecordedAt: DateTimeOffset.UtcNow, ValidFrom: DateTimeOffset.UtcNow, ValidTo: null),
+            sourceSequence: 1);
+
+        var response = await _client.GetAsync($"/v1/deposits/{depositId}/withholding-ledger");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     private static async Task<T?> EventuallyAsync<T>(Func<Task<T?>> probe) where T : class
     {
         // The async projection relay polls every ~1s; give it generous headroom under a loaded CI box.

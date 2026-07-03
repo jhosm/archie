@@ -53,10 +53,10 @@ namespace Babelstone.Families.TermDeposit.Notification;
 /// discipline the engine applies to an empty funding reference.
 /// </para>
 /// <para>
-/// <b>The cure is fold-side attribution, not this guard.</b> The withholding-ledger fold now dates a
+/// <b>The cure is fold-side attribution, not this guard.</b> The withholding-ledger fold dates a
 /// pre-field flow from its paired <c>InterestAccrued</c> (event-derived, conservation-checked — see the
 /// family's <c>PendingAccrual</c>), so rebuilding the <c>term_deposit.withholding_ledger</c> projection
-/// (ADR-PC-002 §P4 supersede-all + cold re-fold) materialises the dates and clears this guard for every
+/// (ADR-PC-002 supersede-all + cold re-fold) materialises the dates and clears this guard for every
 /// attributable stream. The guard remains as the RESIDUAL: a flow that still lacks a date after a rebuild
 /// has no paired accrual to inherit from and needs investigation, never a guessed tax year.
 /// </para>
