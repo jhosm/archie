@@ -104,6 +104,8 @@ The pure-fold project references only `Babelstone.Engine` + `Babelstone.Financia
 
 **Rejected: a shared `Babelstone.Application`** — an open/closed violation edited on every family. **Rejected: the decider in the engine** — the spine would name families and diff per family. **Rejected: the decider in the pure family project** — dissolves the fold-purity guarantee by dragging impure deps onto it.
 
+*Revised 2026-07-02: the family-agnostic-core + composition-by-discovery covenant this Decision instantiates for the engine estate is now also stated once, cross-cuttingly, in [ADR-PC-040](./ADR-PC-040-family-agnostic-substrate-covenant.md), which adds two default-deny universal backstops behind this ADR's estate gates — `FAMILY_TO_CORE_DEFAULT_DENY` (an unmarked `.csproj` is a gated core by default; the §A2 host exemption becomes the explicit `<BabelstoneRole>CompositionRoot</BabelstoneRole>` marker on `Babelstone.Engine.Api`) and `COMPOSITION_ROOT_NAMES_NO_FAMILY` (the §A17–§A18 host source gate generalised to every marked root) — and relocates the `HostModuleLoader` scan/activation mechanics onto the shared `FamilyModuleScanner` (`Babelstone.Composition`; initially landed in `Babelstone.Cadence`, relocated 2026-07-03), the loader's public contract and the pack-manifest fail-closed cross-check unchanged. §D1–§D5 and every amendment remain binding as written; a new estate inherits the covenant from ADR-PC-040 instead of re-deriving it from this ADR's precedent.*
+
 ---
 
 ## Implementation Principles

@@ -1,0 +1,126 @@
+openapi: 3.1.0
+# contracts/openapi/specs/orchestrator-process-status.openapi.yaml — the saga-status SNAPSHOT
+# read (Document 11 Pattern 2; shipped in bd babelstone-vjoi / PR #251; catalogued per
+# ADR-IC-020; bd babelstone-ax0b.3).
+#
+# ── THE ROUTING NUANCE (why this spec exists but is NOT a Kong route) ─────────────────────
+# GET /api/v1/processes/{processId}/status is served by the orchestrator's Kestrel surface
+# (ProcessApiEndpoints.StatusRoute) but is NOT exposed through the public Kong edge today:
+# its one consumer is the MCP server's get_process_status tool, which reaches the
+# orchestrator over the internal (mTLS) network — an mcp->orchestrator read, the poll-once
+# sibling of the public SSE stream (the agent channel cannot hold a long-lived SSE connection
+# through a tool call). The operation below therefore carries x-internal-route (a REVERSE-
+# reconcile waiver in scripts/openapi-catalog-validate.sh) with this reason; if/when the
+# route IS added to infra/kong/kong.yml, the gate's marker-contradiction check forces the
+# marker's removal in the same change — the spec cannot silently drift out of lock-step.
+#
+# Shapes are transcribed from the REAL code surface: ProcessStatusResponse in
+# orchestrator/src/Babelstone.Orchestrator/Edge/ProcessApiEndpoints.cs (snake_case on the
+# wire — process_id, state, status, version, terminal). PII-free throughout (ADR-PC-004 §P2).
+info:
+  title: Babelstone Orchestrator — Process Status Snapshot
+  version: 1.0.0
+  description: >
+    The poll-once saga-status snapshot — the agent-channel sibling of the SSE saga-progress
+    stream. Returns a single coarse status SNAPSHOT for a constitution process instead of a
+    long-lived stream. Same public PROC-… process key and the same per-process ownership
+    model as the stream (process_id is NOT a capability token). ROUTING NUANCE: this surface
+    is currently consumed ONLY by the MCP server (the get_process_status tool) over the
+    internal network — it is NOT yet a public Kong route; the operation is marked
+    x-internal-route accordingly and leaves the reconcile's public-surface invariants intact.
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-edge
+  x-owner-contact: platform-edge@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract        # GDPR Art.6(1)(b) — performance of the deposit contract
+  x-authorized-consumers:
+    - mcp-server
+servers:
+  - url: https://orchestrator:8080
+    description: >
+      The orchestrator's internal (mTLS-only) Kestrel surface — deliberately NOT the public
+      Kong gateway host, because this route is not publicly exposed (see the routing nuance).
+paths:
+  /api/v1/processes/{processId}/status:
+    get:
+      operationId: getProcessStatus
+      summary: A single PII-free saga-status snapshot (poll-once).
+      # ── REVERSE-reconcile waiver (scripts/openapi-catalog-validate.sh) ──────────────────
+      # A non-empty reason string is REQUIRED. The gate waives the "every spec operation is a
+      # public Kong route" check for this op only, and conversely FAILS the build if this
+      # path+method ever appears as a public Kong route while still carrying the marker.
+      x-internal-route: >-
+        mcp->orchestrator internal read (Document 11 Pattern 2; bd babelstone-vjoi) — not yet
+        a public Kong route; remove this marker in the same change that exposes it on
+        infra/kong/kong.yml.
+      description: >
+        Reads the saga's current state once and projects it to the COARSE agent-facing status
+        (the family-owned AgentStatus map, ADR-IC-018 §D3). The terminality answer comes from
+        the SAME per-machine predicate the SSE stream uses, so poll and stream always agree.
+        Ownership: the caller's gateway-attested identity (X-Client-Id) must match the
+        process's owning client — an unknown reference is 404, a known reference owned by
+        ANOTHER client is 403 (never leak existence vs ownership beyond what the owner
+        already knows).
+      parameters:
+        - name: processId
+          in: path
+          required: true
+          description: The client-facing PROC-… process reference returned by the constitute call.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The current status snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessStatus'
+        '403':
+          description: The caller is not the process's owning client (per-process ownership).
+        '404':
+          description: No such process reference.
+        '500':
+          description: >
+            Fail-closed wiring error — no state machine or agent-status map registered for
+            the saga type (never a silent default).
+components:
+  schemas:
+    ProcessStatus:
+      type: object
+      description: >
+        The poll-once snapshot (ProcessStatusResponse, snake_case on the wire). Every field
+        is structural and PII-free (ADR-PC-004 §P2) — a process reference, a structural state
+        label, a version, a bool.
+      required: [process_id, state, status, version, terminal]
+      properties:
+        process_id:
+          type: string
+          description: The client-facing PROC-… process reference.
+        state:
+          type: string
+          description: The verbatim family saga state (ADR-IC-018 §D3) — the operator-grade label.
+        status:
+          type: string
+          description: The COARSE agent-facing status the family projects the state to.
+          enum:
+            - PROCESSING
+            - AWAITING_APPROVAL
+            - ACTION_REQUIRED
+            - COMPLETED
+            - FAILED
+            - CANCELLED
+        version:
+          type: integer
+          format: int64
+          description: The optimistic-concurrency version this snapshot reflects.
+        terminal:
+          type: boolean
+          description: >
+            Whether the saga has reached a terminal state (the routed machine's answer — the
+            same predicate the SSE stream uses).
+      examples:
+        - process_id: PROC-01J9ZK40
+          state: AWAIT_SETTLEMENT
+          status: PROCESSING
+          version: 4
+          terminal: false

@@ -22,6 +22,14 @@
     <RootNamespace>Babelstone.Lifecycle.Host</RootNamespace>
     <AssemblyName>Babelstone.Lifecycle.Host</AssemblyName>
 
+    <!-- The ADR-PC-040 §D2 covenant role: this host is its estate's COMPOSITION ROOT — the one
+         explicit, visible opt-out that MAY ProjectReference families/** (the ADR-PC-021 §A2
+         standing-exemption pattern: the family references are the module loader's scan anchor).
+         Every project WITHOUT this marker is a family-agnostic core by default, gated repo-wide by
+         FAMILY_TO_CORE_DEFAULT_DENY; a marked root is gated instead by
+         COMPOSITION_ROOT_NAMES_NO_FAMILY (its Program.cs names no Babelstone.Families.* type). -->
+    <BabelstoneRole>CompositionRoot</BabelstoneRole>
+
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
@@ -71,6 +79,16 @@
          the clock-owning LifecycleWorker). The host composes it; the core never references back and names no
          family. -->
     <ProjectReference Include="../Babelstone.Lifecycle/Babelstone.Lifecycle.csproj" />
+
+    <!-- The shared CADENCE poll-loop machinery (ADR-PC-036 §Decision 2 + ADR-IC-019 mechanism reuse).
+         Already reachable transitively (the core references Babelstone.Cadence); named explicitly because
+         host code uses its types directly (CadenceSchedulerOptions in Program.cs). -->
+    <ProjectReference Include="../../../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
+
+    <!-- The shared generic FamilyModuleScanner (ADR-PC-040 §D4) this host's module loader delegates
+         its discovery mechanics to — its own tiny assembly (composition/), separate from the Cadence
+         poll-loop library above. -->
+    <ProjectReference Include="../../../composition/src/Babelstone.Composition/Babelstone.Composition.csproj" />
 
     <!-- The family .Lifecycle CONTRIBUTIONS (ADR-PC-036 §Decision 2/5; ADR-PC-021 §A3/§P4): each carries its
          family's IFamilyLifecycleModule + rule + the Npgsql read-model store the module binds behind the

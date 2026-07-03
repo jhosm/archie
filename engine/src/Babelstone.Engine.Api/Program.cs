@@ -152,7 +152,10 @@ builder.Services.AddSingleton<IEventSink>(serviceProvider =>
 // side — the pre-check a command endpoint consults BEFORE any side effect so an at-least-once
 // retry from the saga dispatcher replays the original outcome. The WRITE side is the
 // in-transaction command_dedup INSERT inside PostgresEventStore.AppendAsync (migration 0015).
-builder.Services.AddSingleton<ICommandLog>(_ => new PostgresCommandLog(connectionString));
+// Wrapped in MeteredCommandLog (bd babelstone-f0ic.15.6): a receipt HIT is an idempotent replay
+// that will never reach the append, so counting it here is what makes dedup — a silent PK
+// collision by design — visible on command_dedup_hits_total for the ops/Metrics surface.
+builder.Services.AddSingleton<ICommandLog>(_ => new MeteredCommandLog(new PostgresCommandLog(connectionString)));
 // D.2 projection runtime storage (ADR-PC-002): the byte-oriented projection + checkpoint
 // stores are family-agnostic spine components (ADR-PC-021), backed by the same PostgreSQL tier as
 // the event store. The typed runtime (registry + drainer + relay) is composed family-AGNOSTICALLY at

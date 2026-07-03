@@ -10,6 +10,14 @@
     <RootNamespace>Babelstone.Orchestrator</RootNamespace>
     <AssemblyName>Babelstone.Orchestrator</AssemblyName>
 
+    <!-- The ADR-PC-040 §D2 covenant role: this host is its estate's COMPOSITION ROOT — the one
+         explicit, visible opt-out that MAY ProjectReference families/** (the ADR-PC-021 §A2
+         standing-exemption pattern: the family references are the module loader's scan anchor).
+         Every project WITHOUT this marker is a family-agnostic core by default, gated repo-wide by
+         FAMILY_TO_CORE_DEFAULT_DENY; a marked root is gated instead by
+         COMPOSITION_ROOT_NAMES_NO_FAMILY (its Program.cs names no Babelstone.Families.* type). -->
+    <BabelstoneRole>CompositionRoot</BabelstoneRole>
+
     <!-- Shared engine build settings (mirrors engine/Directory.Build.props; the
          orchestrator subtree is extraction-ready per ADR-PC-019 §P2, so it carries its
          own copy rather than inheriting the engine's). Runtime pinned by ADR-IC-003's S2
@@ -89,6 +97,14 @@
     <!-- The family-agnostic saga substrate (ADR-IC-018 §P1): the host composes its runtime,
          stores, and ports. -->
     <ProjectReference Include="../Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
+
+    <!-- The shared generic FamilyModuleScanner (ADR-PC-040 §D4) the host's SagaModuleLoader delegates
+         its discovery mechanics to — the same scan the engine/notification/lifecycle hosts use.
+         Babelstone.Composition is generic by construction (no families/**, no engine-kernel reference,
+         no packages at all; the arrows point INTO it), so the orchestrator subtree stays
+         extraction-ready (ADR-PC-019 §P2). The orchestrator runs no Cadence poll loop, so this is its
+         only shared-library reference. -->
+    <ProjectReference Include="../../../composition/src/Babelstone.Composition/Babelstone.Composition.csproj" />
     <!-- The term-deposit family's saga module (ADR-IC-018 §D4): the host is the §D4 composition
          root — the standing, intended exemption (ADR-PC-021 §A2's pattern) that MAY reference a
          family/** project so it can compose the modules. The substrate may NOT. -->

@@ -23,9 +23,24 @@ Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. State
      k3s upgrade Plan uses).
 4. `kubectl apply -f infra/k8s/overlays/staging/bootstrap/` (the issuers, the
    `VolumeSnapshotClass`, the k3s upgrade `Plan`).
-5. Provision the real secrets (swap the dev placeholders): `babelstone-dev-secrets`
-   (Postgres/OpenBao), `babelstone-backup-secret` (Hetzner Object Storage keys + bucket),
-   and the Kong mTLS material (via `deck-sync`).
+5. Provision the real secrets — **required before the first deploy**: the staging render
+   deliberately carries NO Secret bodies (bd babelstone-zla1.12.4 — the committed dev
+   placeholders are dropped from the build, so a redeploy can never overwrite what you set
+   here), and the deploy **fails closed** if `babelstone-dev-secrets` is missing or still
+   holds a placeholder value (`scripts/cd-secret-preflight.sh`, wired into `cd.yml`).
+   Create it once with real values (all five keys are secretKeyRef'd by workloads):
+
+   ```bash
+   kubectl -n babelstone-staging create secret generic babelstone-dev-secrets \
+     --from-literal=POSTGRES_PASSWORD="$(openssl rand -base64 24)" \
+     --from-literal=OPENBAO_DEV_TOKEN="<real OpenBao token — never 'root'>" \
+     --from-literal=SECRET_VAULT_KEK="$(openssl rand -base64 32)" \
+     --from-file=OIDC_PRIVATE_KEYS=<real PEM signing key file> \
+     --from-literal=LOGTO_GRAFANA_CLIENT_SECRET="<the Logto grafana app client secret>"
+   ```
+
+   Also provision `babelstone-backup-secret` (Hetzner Object Storage keys + bucket) and
+   the Kong mTLS material (via `deck-sync`).
 6. Deploy: `kubectl apply -k infra/k8s/overlays/staging` (or dispatch `cd.yml` with
    `overlay: staging`).
 
@@ -39,14 +54,21 @@ single-node k3s); the full walk-through + prereqs are in
 ```bash
 cd infra/hetzner-k3s
 export HCLOUD_TOKEN=<read/write Hetzner Cloud API token>   # never commit; takes precedence over the config
-# replace REPLACE_ME/32 in cluster.yaml with your operator IP; pin a valid `hetzner-k3s releases` version
-hetzner-k3s create --config cluster.yaml                   # creates the node + k3s + Hetzner CCM/CSI; writes ./kubeconfig
+export SSH_ALLOWED_CIDR=<your operator IP>/32              # REQUIRED — provision.sh refuses REPLACE_ME / 0.0.0.0/0 / non-/32
+# pin a valid `hetzner-k3s releases` version in cluster.yaml, then:
+./provision.sh    # fail-closed SSH-allow-list preflight → renders cluster.rendered.yaml → `hetzner-k3s create`
+                  # (creates the node + k3s + Hetzner CCM/CSI; writes ./kubeconfig — bd babelstone-zla1.12.6)
 ```
 
-The generated `./kubeconfig` is a cluster-admin credential — **gitignored, never committed**. It
-is the source for `cd.yml`'s `KUBECONFIG_B64` environment secret (`base64 < kubeconfig`). The
-Hetzner CCM + CSI driver come up automatically, so `hcloud-volumes` resolves for the durable-storage
-patch at Phase 3. Then continue with step 2 (DNS) → step 3 (`bootstrap/`, Phase 2) above.
+The generated `./kubeconfig` is a cluster-admin credential — **gitignored, never committed**, and
+**operator-only** (bootstrap + break-glass). It is *not* what `cd.yml` deploys with: the
+`KUBECONFIG_B64` environment secret must carry the least-privilege `cd-deployer` ServiceAccount
+kubeconfig instead (bd babelstone-zla1.12.1) — apply
+`infra/k8s/overlays/staging/bootstrap/cd-deploy-rbac.yaml` at Phase 2, then mint it with
+`scripts/cd-kubeconfig.sh` (walk-through in `bootstrap/README.md`; `cd.yml` probes and refuses a
+cluster-admin credential at apply time). The Hetzner CCM + CSI driver come up automatically, so
+`hcloud-volumes` resolves for the durable-storage patch at Phase 3. Then continue with step 2
+(DNS) → step 3 (`bootstrap/`, Phase 2) above.
 
 ## 2. Redeploy / promote a new build
 

@@ -2,6 +2,14 @@
   <PropertyGroup>
     <RootNamespace>Babelstone.Engine.Api</RootNamespace>
     <AssemblyName>Babelstone.Engine.Api</AssemblyName>
+
+    <!-- The ADR-PC-040 §D2 covenant role: this host is its estate's COMPOSITION ROOT — the one
+         explicit, visible opt-out that MAY ProjectReference families/** (the ADR-PC-021 §A2
+         standing-exemption pattern: the family references are the module loader's scan anchor).
+         Every project WITHOUT this marker is a family-agnostic core by default, gated repo-wide by
+         FAMILY_TO_CORE_DEFAULT_DENY; a marked root is gated instead by
+         COMPOSITION_ROOT_NAMES_NO_FAMILY (its Program.cs names no Babelstone.Families.* type). -->
+    <BabelstoneRole>CompositionRoot</BabelstoneRole>
   </PropertyGroup>
 
   <ItemGroup>
@@ -25,6 +33,12 @@
          The host composes families over this contract; HostBusEncoding (Avro/SR → BusEventSerializer)
          stays here and now produces the Hosting-defined marker. -->
     <ProjectReference Include="../Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
+    <!-- The shared generic FamilyModuleScanner (ADR-PC-040 §D4) HostModuleLoader delegates its
+         discovery mechanics to — the same scan every composition root uses. Babelstone.Composition is
+         generic by construction (no families/**, no engine-kernel reference, no packages at all; the
+         arrows point INTO it), so this host reference adds no coupling the covenant forbids — and this
+         host, which runs no poll loop, no longer drags in Babelstone.Cadence just for the scanner. -->
+    <ProjectReference Include="../../../composition/src/Babelstone.Composition/Babelstone.Composition.csproj" />
     <ProjectReference Include="../Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <ProjectReference Include="../Babelstone.Packs/Babelstone.Packs.csproj" />
     <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />

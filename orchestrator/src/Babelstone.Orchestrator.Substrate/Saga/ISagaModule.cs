@@ -42,6 +42,20 @@ public interface ISagaModule
     string ConsumerGroupId { get; }
 
     /// <summary>
+    /// The family-INTEGRATION topics this module's family publishes its engine facts on (topic ==
+    /// channel == aggregate_type, the relay's documented convention) — as distinct from
+    /// <see cref="ConsumeTopics"/>, which is what THIS saga subscribes to (and may include internal
+    /// domain topics). Declared so the HOST can derive, from the DISCOVERED family modules, the
+    /// subscribe set a family-agnostic substrate saga (the ADR-PC-032 settlement saga) needs for
+    /// Movement-bearing events — without host code naming any family (ADR-PC-040 §D3; ADR-IC-018
+    /// Revised 2026-07-02). A family module answers it from its catalogue-generated
+    /// <c>FamilyIntegrationTopics.All</c> constants (CI-gated against the AsyncAPI catalogue);
+    /// duplicates across a family's modules are unioned by the host. DEFAULTED to empty so the member
+    /// is additive: a substrate-owned or integration-topic-less module declares nothing.
+    /// </summary>
+    IReadOnlyList<string> FamilyIntegrationTopics => [];
+
+    /// <summary>
     /// How this saga is started (ADR-IC-018 §P5). Edge-started sagas are initiated by an explicit HTTP
     /// call to the edge (the constitution saga); event-auto-started sagas start on a matching bus event.
     /// The host uses this to decide whether to wire the edge starter for this module.

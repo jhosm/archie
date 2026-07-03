@@ -70,6 +70,12 @@
          arrows point INTO it), so it is neither a §P1 core nor a §P2 spine project. Extraction-ready subtree
          (ADR-PC-019 §P2). -->
     <Project Path="../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
+    <!-- The shared COMPOSITION discovery LIBRARY (ADR-PC-040 §D4): the generic FamilyModuleScanner every
+         composition root's estate loader delegates its family-module discovery to — its own tiny assembly,
+         separate from the Cadence poll-loop library above (discovery is composition machinery, not
+         clock-owning cadence). Generic by construction: no families/**, no engine-spine reference, no
+         packages at all. Extraction-ready subtree (ADR-PC-019 §P2). -->
+    <Project Path="../composition/src/Babelstone.Composition/Babelstone.Composition.csproj" />
     <!-- The in-house notification family-AGNOSTIC core LIBRARY (ADR-IC-011, DEF-2 / bd babelstone-60n8.1/.2;
          §D4 split by bd babelstone-9u70): the poll loop, the per-tick schedule pass, the composite-id +
          dedupe, the storage-opaque ADR-PC-027 read client, and the IFamilyNotificationModule contribution
@@ -149,6 +155,11 @@
          ledger, and the composite-id primitive — driven by a hand-rolled fake TimeProvider, no FakeTimeProvider
          package. -->
     <Project Path="../cadence/tests/Babelstone.Cadence.Tests/Babelstone.Cadence.Tests.csproj" />
+    <!-- The shared COMPOSITION discovery LIBRARY tests (ADR-PC-040 §D4): Docker-free unit tests over the
+         generic FamilyModuleScanner mechanics every estate loader delegates to — concrete-implementation
+         scan, stable ordering, fail-loud duplicate-key and activation diagnostics, custom activation —
+         exercised over the test assembly's own fixture types. -->
+    <Project Path="../composition/tests/Babelstone.Composition.Tests/Babelstone.Composition.Tests.csproj" />
     <!-- DEF-2 notification (bd babelstone-60n8.1 / .5): Docker-free + engine-free tests — the deposit
          read client over a fake HttpMessageHandler (it calls GET /v1/deposits/{id} and maps the
          snake_case wire shape, ADR-PC-027) + the NOTIFICATION_FAMILY_AGNOSTIC fitness gate that

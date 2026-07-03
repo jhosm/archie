@@ -1,4 +1,5 @@
 using System.Reflection;
+using Babelstone.Composition;
 using Babelstone.Engine.Hosting;
 using Babelstone.Packs;
 
@@ -50,64 +51,18 @@ public sealed class HostModuleLoader
     /// this discovery seam — never deep inside <c>Activator</c> or at first command — on a module that cannot be
     /// constructed or on a duplicate <see cref="IFamilyHostModule.FamilyName"/> (two modules composing the same
     /// family would double-register its runtime + endpoints, the host-module analogue of
-    /// <see cref="HandlerRegistry"/>'s duplicate-<c>event_type</c> throw).
+    /// <see cref="HandlerRegistry"/>'s duplicate-<c>event_type</c> throw). The scan/activation/ordering
+    /// mechanics are the shared <see cref="FamilyModuleScanner"/> (ADR-PC-040 §D4) — this loader keeps the
+    /// engine's module contract, diagnostics vocabulary, and the pack-manifest cross-check below.
     /// </summary>
     public IReadOnlyList<IFamilyHostModule> LoadAll(IReadOnlyList<Assembly> sources)
     {
-        var modules = new List<IFamilyHostModule>();
-        foreach (var assembly in sources)
-        {
-            foreach (var type in LoadableTypes(assembly))
-            {
-                if (type is not { IsAbstract: false, IsInterface: false } || !typeof(IFamilyHostModule).IsAssignableFrom(type))
-                {
-                    continue;
-                }
-
-                // A module with a constructor dependency would otherwise fail deep inside Activator with a bare
-                // MissingMethodException naming no module. Surface a diagnosable error at the discovery seam
-                // instead — the same stance FamilyModuleLoader takes for fold modules.
-                if (type.GetConstructor(Type.EmptyTypes) is null)
-                {
-                    throw new InvalidOperationException(
-                        $"Family host module '{type.FullName}' must have a public parameterless constructor.");
-                }
-
-                modules.Add((IFamilyHostModule)Activator.CreateInstance(type)!);
-            }
-        }
-
-        // Fail loud on a duplicate (family) registration BEFORE composing — two modules claiming the same
-        // family would each register that family's AggregateRuntime + endpoints, a silent double-wire. This is
-        // the host-module analogue of HandlerRegistry throwing on a duplicate event_type (FamilyModule.cs):
-        // a collision at composition is a build/wiring bug, not a runtime condition.
-        var seenFamilies = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var module in modules)
-        {
-            if (!seenFamilies.Add(module.FamilyName))
-            {
-                throw new InvalidOperationException(
-                    $"Duplicate family host module for family '{module.FamilyName}'. Each family contributes "
-                    + "exactly one IFamilyHostModule (ADR-PC-021 §A3); two modules composing the same family "
-                    + "would double-register its runtime and endpoints.");
-            }
-        }
-
-        // Stable order (assembly name, then full type name) so the host's per-module ConfigureServices /
-        // MapEndpoints loops run deterministically across boots, preserving the engine-before-family
-        // migration ordering reproducibility (ADR-PC-021) rather than depending on reflection's
-        // unspecified type-enumeration order.
-        modules.Sort((left, right) =>
-        {
-            var byAssembly = string.CompareOrdinal(
-                left.GetType().Assembly.GetName().Name,
-                right.GetType().Assembly.GetName().Name);
-            return byAssembly != 0
-                ? byAssembly
-                : string.CompareOrdinal(left.GetType().FullName, right.GetType().FullName);
-        });
-
-        return modules;
+        return FamilyModuleScanner.LoadAll<IFamilyHostModule>(
+            sources,
+            module => module.FamilyName,
+            "family host module",
+            "Each family contributes exactly one IFamilyHostModule (ADR-PC-021 §A3); two modules composing "
+            + "the same family would double-register its runtime and endpoints.");
     }
 
     /// <summary>
@@ -221,76 +176,12 @@ public sealed class HostModuleLoader
     /// </remarks>
     public static IReadOnlyList<Assembly> FamilyHostAssemblies()
     {
-        var host = typeof(HostModuleLoader).Assembly;
-
-        var assemblies = new Dictionary<string, Assembly>(StringComparer.Ordinal)
-        {
-            [host.GetName().Name!] = host,
-        };
-
-        // The host's compile-reference graph: the `Babelstone.Families.*` assemblies named in
-        // host.GetReferencedAssemblies(). This is the ADR-PC-021 compile-graph anchor — BUT the C# compiler
-        // elides a `ProjectReference` from the IL metadata reference list when no type in it is used in
-        // code, and the host's composition now names NO family type (the last family wiring was relocated
-        // into the family module). So this pass alone would discover ZERO families
-        // post-relocation. We keep it (it is correct when the host DOES still reference a family type) and
-        // add the base-directory probe below as the robust primary anchor.
-        foreach (var reference in host.GetReferencedAssemblies())
-        {
-            var name = reference.Name;
-            if (name is null
-                || !name.StartsWith("Babelstone.Families.", StringComparison.Ordinal)
-                || assemblies.ContainsKey(name))
-            {
-                continue;
-            }
-
-            assemblies[name] = Assembly.Load(reference);
-        }
-
-        // The base-directory probe: the family `ProjectReference`s (ADR-PC-021, kept as the load anchor) copy
-        // their `Babelstone.Families.*.dll` next to the host in the OUTPUT directory — identically under
-        // `dotnet run` (the host's own process) and `WebApplicationFactory<Program>` (the in-process test
-        // boot). Discovering them HERE, by file, keeps assembly-scan working even though the host names no
-        // family type in code (so the compiler emits no IL metadata reference to elide). The
-        // `Babelstone.Families.` name prefix is the family-agnostic membership predicate — no family is
-        // named. A DLL that fails to load is skipped (a satellite/native sidecar), never fatal here; a
-        // genuinely missing family then surfaces at the pack family-manifest cross-check, fail-closed.
-        foreach (var dll in Directory.EnumerateFiles(
-            AppContext.BaseDirectory, "Babelstone.Families.*.dll", SearchOption.TopDirectoryOnly))
-        {
-            var name = Path.GetFileNameWithoutExtension(dll);
-            if (assemblies.ContainsKey(name))
-            {
-                continue;
-            }
-
-            try
-            {
-                assemblies[name] = Assembly.Load(new AssemblyName(name));
-            }
-            catch (Exception ex) when (ex is FileNotFoundException or BadImageFormatException or FileLoadException)
-            {
-                // Not a loadable managed family assembly by simple name (e.g. a native/satellite sidecar
-                // matching the glob) — skip it. A real family with a loadable module is still discovered;
-                // a pack-pinned family whose assembly is genuinely absent fails the manifest cross-check.
-            }
-        }
-
-        return [.. assemblies.Values];
-    }
-
-    // One unloadable type in a scanned assembly must not abort discovery of all modules (mirrors
-    // FamilyModuleLoader.LoadableTypes).
-    private static IEnumerable<Type> LoadableTypes(Assembly assembly)
-    {
-        try
-        {
-            return assembly.GetTypes();
-        }
-        catch (ReflectionTypeLoadException ex)
-        {
-            return ex.Types.Where(t => t is not null)!;
-        }
+        // The shared two-anchor enumeration (FamilyModuleScanner.FamilyAssemblies, ADR-PC-040 §D4):
+        // the host's compile-reference graph (valid while the host still names a family type) + the
+        // output-directory `Babelstone.Families.*.dll` probe (the robust primary anchor — the compiler
+        // elides an unused ProjectReference from IL metadata, and this host's composition names no
+        // family type). A DLL that fails to load is skipped, never fatal here; a genuinely missing
+        // family then surfaces at the pack family-manifest cross-check, fail-closed.
+        return FamilyModuleScanner.FamilyAssemblies(typeof(HostModuleLoader).Assembly);
     }
 }

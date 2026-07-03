@@ -1,4 +1,5 @@
 using System.Reflection;
+using Babelstone.Composition;
 using Babelstone.Notification;
 
 namespace Babelstone.Notification.Host;
@@ -9,7 +10,9 @@ namespace Babelstone.Notification.Host;
 /// "explicit-list-now, assembly-scan-later" / "composition is discovery at the host edge"). It is the
 /// notification-side twin of the engine's <c>HostModuleLoader</c> and the lifecycle driver's
 /// <c>LifecycleModuleLoader</c>: same public-parameterless-ctor activation, same fail-loud duplicate-family
-/// diagnostics, same stable ordering — applied to the per-family notification modules.
+/// diagnostics, same stable ordering — all delegated to the shared <see cref="FamilyModuleScanner"/>
+/// (ADR-PC-040 §D4), so the mechanics are written once and every host inherits them; this loader keeps only
+/// the notification estate's module contract and diagnostics vocabulary.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,8 +26,9 @@ namespace Babelstone.Notification.Host;
 /// </para>
 /// <para>
 /// <b>Reflection stays at the composition root.</b> This type lives in the host
-/// (<c>Babelstone.Notification.Host</c>) — the §A2 standing exemption that MAY name a family (ADR-IC-019 §D4) —
-/// never in the family-agnostic notification core (<c>Babelstone.Notification</c>, gated by
+/// (<c>Babelstone.Notification.Host</c>) — the §A2 standing exemption that MAY name a family (ADR-IC-019 §D4;
+/// the <c>&lt;BabelstoneRole&gt;CompositionRoot&lt;/BabelstoneRole&gt;</c> marker, ADR-PC-040 §D2) — never in
+/// the family-agnostic notification core (<c>Babelstone.Notification</c>, gated by
 /// <c>NOTIFICATION_FAMILY_AGNOSTIC</c>). It is an in-process scan over the host's OWN output directory, NOT an
 /// <c>Assembly.LoadFrom</c> glob over an external plugin directory — keeping compile-time type safety and
 /// greppability (the same stance the engine host's loader takes, ADR-PC-021).
@@ -43,142 +47,25 @@ public sealed class NotificationModuleLoader
     {
         ArgumentNullException.ThrowIfNull(sources);
 
-        var modules = new List<IFamilyNotificationModule>();
-        foreach (var assembly in sources)
-        {
-            foreach (var type in LoadableTypes(assembly))
-            {
-                if (type is not { IsAbstract: false, IsInterface: false }
-                    || !typeof(IFamilyNotificationModule).IsAssignableFrom(type))
-                {
-                    continue;
-                }
-
-                // A module with a constructor dependency would otherwise fail deep inside Activator with a bare
-                // MissingMethodException naming no module. Surface a diagnosable error at the discovery seam.
-                if (type.GetConstructor(Type.EmptyTypes) is null)
-                {
-                    throw new InvalidOperationException(
-                        $"Family notification module '{type.FullName}' must have a public parameterless constructor.");
-                }
-
-                modules.Add((IFamilyNotificationModule)Activator.CreateInstance(type)!);
-            }
-        }
-
-        // Fail loud on a duplicate (family) registration BEFORE composing — two modules claiming the same family
-        // would each register that family's schedule rule + read client, a silent double-wire. This is the
-        // notification-side analogue of the engine HostModuleLoader's duplicate-family throw (the same guard the
-        // host's explicit-list composition enforced inline): a collision at composition is a build/wiring bug,
-        // not a runtime condition.
-        var seenFamilies = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var module in modules)
-        {
-            if (!seenFamilies.Add(module.FamilyName))
-            {
-                throw new InvalidOperationException(
-                    $"Duplicate family notification module for family '{module.FamilyName}'. Each family "
-                    + "contributes exactly one IFamilyNotificationModule (ADR-IC-019 §D4 composition); two modules "
-                    + "composing the same family would double-register its schedule rule and deposit read client.");
-            }
-        }
-
-        // Stable order (assembly name, then full type name) so the host's per-module ConfigureServices loop runs
-        // deterministically across boots rather than depending on reflection's unspecified type-enumeration order.
-        modules.Sort((left, right) =>
-        {
-            var byAssembly = string.CompareOrdinal(
-                left.GetType().Assembly.GetName().Name,
-                right.GetType().Assembly.GetName().Name);
-            return byAssembly != 0
-                ? byAssembly
-                : string.CompareOrdinal(left.GetType().FullName, right.GetType().FullName);
-        });
-
-        return modules;
+        return FamilyModuleScanner.LoadAll<IFamilyNotificationModule>(
+            sources,
+            module => module.FamilyName,
+            "family notification module",
+            "Each family contributes exactly one IFamilyNotificationModule (ADR-IC-019 §D4 composition); two "
+            + "modules composing the same family would double-register its schedule rule and deposit read client.");
     }
 
     /// <summary>
-    /// The candidate assemblies to scan: the family notification assemblies shipped alongside the in-tree host.
-    /// Two complementary anchors, both keyed off the <c>Babelstone.Families.</c> name prefix (the family-agnostic
-    /// membership predicate — no family is named): (1) the host assembly's compile-reference graph
-    /// (<c>host.GetReferencedAssemblies()</c>) — valid when the host still names a family type; and (2) the
-    /// OUTPUT-directory probe (<c>Babelstone.Families.*.dll</c> in <see cref="AppContext.BaseDirectory"/>), the
-    /// robust primary anchor.
+    /// The candidate assemblies to scan: the family notification assemblies shipped alongside the in-tree host —
+    /// the shared two-anchor enumeration (<see cref="FamilyModuleScanner.FamilyAssemblies"/>, ADR-PC-040 §D4):
+    /// the host's compile-reference graph (valid while the host still names a family type) + the OUTPUT-directory
+    /// <c>Babelstone.Families.*.dll</c> probe (the robust primary anchor — the compiler elides an unused
+    /// <c>ProjectReference</c> from IL metadata, and this host's composition names no family type). Anchored on
+    /// <c>typeof(NotificationModuleLoader).Assembly</c>, never the entry assembly, so discovery is identical
+    /// booted as a process or referenced in-process by a test.
     /// </summary>
-    /// <remarks>
-    /// The probe matters because the C# compiler ELIDES a <c>ProjectReference</c> from the IL metadata reference
-    /// list when no type in it is used in code, and the host's composition now names NO family type — so the
-    /// compile-graph anchor alone would discover ZERO families. The family <c>ProjectReference</c>s copy each
-    /// <c>Babelstone.Families.*.dll</c> next to the host in the output dir, so the probe finds them by file. The
-    /// anchor is <c>typeof(NotificationModuleLoader).Assembly</c> — the host assembly that carries the family
-    /// <c>ProjectReference</c>s — NOT <see cref="Assembly.GetEntryAssembly"/>, so discovery is identical whether
-    /// the host is booted as a process (<c>dotnet run</c>) or referenced in-process by a test (whose entry
-    /// assembly is the test runner, which does not carry the family references). A dll that fails to load by
-    /// simple name (a native/satellite sidecar matching the glob) is skipped, never fatal.
-    /// </remarks>
     public static IReadOnlyList<Assembly> FamilyNotificationAssemblies()
     {
-        var host = typeof(NotificationModuleLoader).Assembly;
-
-        var assemblies = new Dictionary<string, Assembly>(StringComparer.Ordinal)
-        {
-            [host.GetName().Name!] = host,
-        };
-
-        // (1) The host's compile-reference graph: correct when the host DOES still name a family type, but the
-        // compiler elides an unused ProjectReference, and the host's composition names no family type — so this
-        // pass alone would discover nothing post-relocation. We keep it and add the base-directory probe below.
-        foreach (var reference in host.GetReferencedAssemblies())
-        {
-            var name = reference.Name;
-            if (name is null
-                || !name.StartsWith("Babelstone.Families.", StringComparison.Ordinal)
-                || assemblies.ContainsKey(name))
-            {
-                continue;
-            }
-
-            assemblies[name] = Assembly.Load(reference);
-        }
-
-        // (2) The base-directory probe: the family ProjectReferences copy their Babelstone.Families.*.dll next to
-        // the host in the OUTPUT directory, identically under `dotnet run` and an in-process test. Discovering
-        // them here, by FILE, keeps assembly-scan working even though the host names no family type in code.
-        foreach (var dll in Directory.EnumerateFiles(
-            AppContext.BaseDirectory, "Babelstone.Families.*.dll", SearchOption.TopDirectoryOnly))
-        {
-            var name = Path.GetFileNameWithoutExtension(dll);
-            if (assemblies.ContainsKey(name))
-            {
-                continue;
-            }
-
-            try
-            {
-                assemblies[name] = Assembly.Load(new AssemblyName(name));
-            }
-            catch (Exception ex) when (ex is FileNotFoundException or BadImageFormatException or FileLoadException)
-            {
-                // Not a loadable managed family assembly by simple name (e.g. a native/satellite sidecar matching
-                // the glob) — skip it. A real family with a loadable module is still discovered.
-            }
-        }
-
-        return [.. assemblies.Values];
-    }
-
-    // One unloadable type in a scanned assembly must not abort discovery of all modules (the same loadable-types
-    // guard the engine host's module loader uses).
-    private static IEnumerable<Type> LoadableTypes(Assembly assembly)
-    {
-        try
-        {
-            return assembly.GetTypes();
-        }
-        catch (ReflectionTypeLoadException ex)
-        {
-            return ex.Types.Where(t => t is not null)!;
-        }
+        return FamilyModuleScanner.FamilyAssemblies(typeof(NotificationModuleLoader).Assembly);
     }
 }
