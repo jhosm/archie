@@ -48,12 +48,16 @@ jobs:
             #                        composition file
             #   - the marked composition-root src dirs (their global-import surface is scanned too);
             #     extend this list when a new host gains <BabelstoneRole>CompositionRoot</BabelstoneRole>
-            #   - 'cadence/**'       built by engine/Babelstone.slnx (the shared FamilyModuleScanner
-            #                        + cadence tests run in this lane)
+            #   - 'cadence/**'       built by engine/Babelstone.slnx (the shared clock-owning poll-loop
+            #                        library + cadence tests run in this lane)
+            #   - 'composition/**'   built by engine/Babelstone.slnx (the shared FamilyModuleScanner —
+            #                        moved out of cadence/ into its own subtree — + composition tests
+            #                        run in this lane)
             engine:
               - 'engine/**'
               - '.github/scripts/coverage-floor-cobertura.py'
               - 'cadence/**'
+              - 'composition/**'
               - '**/*.csproj'
               - '**/Program.cs'
               - 'orchestrator/src/Babelstone.Orchestrator/**'
@@ -62,14 +66,17 @@ jobs:
             pack_validate: ['pack-validate/**']
             families: ['families/**']
             contracts: ['contracts/**', 'scripts/avro-compat-check.sh', 'scripts/asyncapi-catalog-validate.sh', 'scripts/asyncapi-catalog-reconcile.sh', 'scripts/openapi-catalog-validate.sh', 'scripts/openapi-catalog-reconcile.sh', '.spectral.yaml', 'infra/kong/kong.yml', 'scripts/gen-saga-topics.py', 'scripts/gen-saga-topics-check.sh', 'families/term-deposit/src/Babelstone.Families.TermDeposit.Orchestration/FamilyIntegrationTopics.g.cs']
-            # The three cadence consumers name 'cadence/**' too: their builds compile the shared
-            # Babelstone.Cadence library (FamilyModuleScanner, CadenceWorker, …) via ProjectReference,
-            # so a cadence-only change must re-run their lanes (previously a silent gap).
-            orchestrator: ['orchestrator/**', 'cadence/**']
+            # Shared-library consumers name the shared subtrees too: their builds compile them via
+            # ProjectReference, so a shared-library-only change must re-run their lanes (previously a
+            # silent gap). All three hosts compile 'composition/**' (the shared FamilyModuleScanner,
+            # ADR-PC-040 §D4 — now its own subtree, no longer inside cadence/); notification and
+            # lifecycle also compile 'cadence/**' (CadenceWorker + the poll-loop machinery). The
+            # orchestrator references Babelstone.Composition only — it runs no Cadence poll loop.
+            orchestrator: ['orchestrator/**', 'composition/**']
             acl: ['acl/**']
             mcp_server: ['mcp-server/**']
-            notification: ['notification/**', 'cadence/**']
-            lifecycle: ['lifecycle-driver/**', 'cadence/**']
+            notification: ['notification/**', 'cadence/**', 'composition/**']
+            lifecycle: ['lifecycle-driver/**', 'cadence/**', 'composition/**']
             product_configs: ['product-configs/**']
             packs: ['packs/**']
             # Every input the rate-sheets job's validation step reads (ci.yml `rate-sheets` job):

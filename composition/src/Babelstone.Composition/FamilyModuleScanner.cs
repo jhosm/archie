@@ -1,6 +1,6 @@
 using System.Reflection;
 
-namespace Babelstone.Cadence;
+namespace Babelstone.Composition;
 
 /// <summary>
 /// The one shared family-module discovery mechanism (ADR-PC-040 §D4) — a generic primitive. In plain
@@ -24,7 +24,7 @@ namespace Babelstone.Cadence;
 /// (e.g. the engine's pack-manifest fail-closed check, ADR-PC-007 §A1).
 /// </para>
 /// <para>
-/// <b>Generic by construction.</b> Like everything in <c>Babelstone.Cadence</c>, this names no family,
+/// <b>Generic by construction.</b> Like everything in <c>Babelstone.Composition</c>, this names no family,
 /// no engine type, and no module contract: the contract arrives as <c>TModule</c> on <see cref="LoadAll"/>, the
 /// family key as a selector, and the diagnostics vocabulary as strings. The only product-adjacent
 /// knowledge is the <see cref="FamilyAssemblyNamePrefix"/> — the family-agnostic membership predicate

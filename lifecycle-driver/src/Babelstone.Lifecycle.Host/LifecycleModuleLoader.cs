@@ -1,5 +1,5 @@
 using System.Reflection;
-using Babelstone.Cadence;
+using Babelstone.Composition;
 using Babelstone.Lifecycle;
 
 namespace Babelstone.Lifecycle.Host;

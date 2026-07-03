@@ -34,10 +34,11 @@
          stays here and now produces the Hosting-defined marker. -->
     <ProjectReference Include="../Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
     <!-- The shared generic FamilyModuleScanner (ADR-PC-040 §D4) HostModuleLoader delegates its
-         discovery mechanics to — the same scan every composition root uses. Babelstone.Cadence is
-         generic by construction (no families/**, no engine-kernel reference; the arrows point INTO
-         it), so this host reference adds no coupling the covenant forbids. -->
-    <ProjectReference Include="../../../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
+         discovery mechanics to — the same scan every composition root uses. Babelstone.Composition is
+         generic by construction (no families/**, no engine-kernel reference, no packages at all; the
+         arrows point INTO it), so this host reference adds no coupling the covenant forbids — and this
+         host, which runs no poll loop, no longer drags in Babelstone.Cadence just for the scanner. -->
+    <ProjectReference Include="../../../composition/src/Babelstone.Composition/Babelstone.Composition.csproj" />
     <ProjectReference Include="../Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <ProjectReference Include="../Babelstone.Packs/Babelstone.Packs.csproj" />
     <ProjectReference Include="../Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />

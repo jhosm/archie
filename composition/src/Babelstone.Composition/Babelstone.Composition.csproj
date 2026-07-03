@@ -1,0 +1,47 @@
+<!-- The shared COMPOSITION discovery LIBRARY (ADR-PC-040 §D4). In plain terms: every Babelstone host
+     composes product "family" plug-ins it must not name in code, so each host discovers them by scanning
+     the family assemblies shipped beside it for implementations of its module contract. This tiny library
+     owns that one shared mechanism (FamilyModuleScanner: the concrete-implementation scan, the fail-loud
+     activation diagnostics, the duplicate-key throw before composing, the stable assembly-then-type
+     ordering, and the two-anchor candidate-assembly enumeration) — extracted from the three near-verbatim
+     estate loaders so every composition root, present and future, gets discovery for free and none can
+     drift from the mechanics. It owns NO domain knowledge: it names no family, no engine type, and no
+     module contract — the contract arrives as a type parameter; the only product-adjacent knowledge is
+     the Babelstone.Families. name-prefix predicate (a pattern, never a family, ADR-PC-021).
+
+     Deliberately its OWN assembly, not part of Babelstone.Cadence: cadence's charter is the clock-owning
+     poll-loop machinery (CadenceWorker/ISchedulePass/IDedupeLedger, ADR-PC-036 §Decision 2 + ADR-IC-019),
+     and parking the scanner there forced a Cadence reference onto hosts (e.g. Babelstone.Engine.Api) that
+     run no poll loop. The arrows point INTO this library (every host → composition), never out.
+
+     GENERIC BY CONSTRUCTION: this library references neither the engine kernel (Babelstone.Engine /
+     Babelstone.EventStore) nor any product family nor any estate core. Extraction-ready subtree
+     (ADR-PC-019 §P2): it carries its own copy of the shared engine build settings rather than inheriting
+     engine/Directory.Build.props, and depends only on the SDK — no packages at all. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Composition</RootNamespace>
+    <AssemblyName>Babelstone.Composition</AssemblyName>
+
+    <!-- Shared engine build settings (mirrors the cadence/notification/orchestrator csprojs; the
+         composition subtree is extraction-ready per ADR-PC-019 §P2, so it carries its own copy rather than
+         inheriting the engine's). Runtime pinned by ADR-IC-011 — .NET, the same language as the engine
+         (ADR-PC-010 §.NET 10 LTS). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Doc COVERAGE is a docs concern, not a build gate (same stance as the engine/cadence libraries):
+         CS1591/CS1573 suppressed, doc ROT (malformed XML, broken refs) still fails. -->
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+
+  <!-- No PackageReferences: the scanner is pure reflection + file probing over the BCL
+       (System.Reflection / System.IO). Keeping the dependency surface at zero is what lets every host —
+       including ones with no hosting/logging stack of their own — reference this without dragging
+       anything along. -->
+</Project>

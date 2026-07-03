@@ -1,8 +1,8 @@
 using System.Reflection;
-using Babelstone.Cadence;
+using Babelstone.Composition;
 using Xunit;
 
-namespace Babelstone.Cadence.Tests;
+namespace Babelstone.Composition.Tests;
 
 /// <summary>
 /// Tests for <see cref="FamilyModuleScanner"/> — the one shared family-module discovery mechanism
