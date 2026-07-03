@@ -61,6 +61,12 @@ jobs:
               - '**/*.csproj'
               - '**/Program.cs'
               - 'orchestrator/src/Babelstone.Orchestrator/**'
+              # The ContractDrift suite (bd ax0b.4) READS the committed OpenAPI specs and
+              # kong.yml as its expected side, so a spec/kong-only change must re-run the
+              # engine lane too (the same consumers-name-their-inputs rule as the shared
+              # subtrees below) — otherwise a spec edit could land without the drift verdict.
+              - 'contracts/openapi/**'
+              - 'infra/kong/kong.yml'
               - 'notification/src/Babelstone.Notification.Host/**'
               - 'lifecycle-driver/src/Babelstone.Lifecycle.Host/**'
             pack_validate: ['pack-validate/**']
