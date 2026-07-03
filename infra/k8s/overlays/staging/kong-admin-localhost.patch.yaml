@@ -1,0 +1,40 @@
+# Bind the Kong Admin API to loopback + drop it from the Service (bd
+# babelstone-zla1.12.8; ADR-IC-006 §P5 minimise-surface posture).
+#
+# Plain English: the Admin API is Kong's full control plane — anything that can
+# reach it can rewrite every edge route and policy. In DB-less mode nothing
+# in-cluster ever needs it at runtime (the config is declarative; the base
+# manifest shipped it on 0.0.0.0:8001 purely as a dev convenience), so staging
+# binds it to 127.0.0.1 inside the pod and removes the 8001 Service port.
+#
+# The one legitimate client — the operator/CI `deck sync` (scripts/deck-sync.sh,
+# cd.yml step 4e) — still works: `kubectl port-forward deploy/kong 8001:8001`
+# tunnels through the kubelet and connects to the POD'S LOOPBACK, so a
+# 127.0.0.1 bind is reachable via port-forward (and via kubectl exec) while
+# being unreachable from any pod on the cluster network. Set/keep the cd.yml
+# KONG_ADMIN_ADDR secret pointing at the port-forwarded http://127.0.0.1:8001
+# (the maintainer's apply-step — the secret value is account-side).
+#
+# Two strategic-merge docs: the Deployment env override (env lists merge by
+# name) and the Service port removal ($patch: delete on the 8001 entry).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong
+spec:
+  template:
+    spec:
+      containers:
+        - name: kong
+          env:
+            - name: KONG_ADMIN_LISTEN
+              value: 127.0.0.1:8001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong
+spec:
+  ports:
+    - port: 8001
+      $patch: delete

@@ -1,0 +1,103 @@
+# GATED OPT-IN — internal mTLS on the engine + orchestrator hops (bd
+# babelstone-zla1.12.8 sub-gap (c); ADR-IC-006 §P5 Boundary 2 / ADR-IC-016
+# plane (i)). NOT enabled by default: the patch reference in kustomization.yaml
+# ships COMMENTED OUT — uncomment it to roll the mTLS extension out to staging.
+#
+# Plain English: this flips the two Kestrel hosts from plain HTTP to HTTPS with
+# a REQUIRED client certificate, using the server certs that
+# bootstrap/internal-mtls.yaml issues from the SAME internal CA as the
+# Kong→mcp-server hop. The committed kong.yml already dials
+# https://engine:8080 / https://orchestrator:8080 and presents the shared
+# client cert (entity 7e9b6f1a-…), and scripts/deck-sync.sh already flips
+# tls_verify:true at deploy time — so the gateway side is ready; this patch is
+# the missing server side.
+#
+# No code change is needed for the TLS listener itself: WebApplication.Create-
+# Builder wires the Kestrel configuration loader by default, so the
+# Kestrel__Endpoints__* env below binds HTTPS + ClientCertificateMode from
+# config alone. The tcpSocket probes keep passing (they test the bind, not the
+# handshake).
+#
+# ROLLOUT ORDER (all steps, same maintenance window):
+#   1. kubectl apply -f overlays/staging/bootstrap/internal-mtls.yaml
+#      (needs mcp-mtls.yaml's mcp-mtls-ca Issuer; wait for the two Secrets).
+#   2. Solve the CLIENT-CERT TRUST remainder (below) — without it,
+#      RequireCertificate REJECTS Kong's internal-CA client cert.
+#   3. Uncomment this patch in kustomization.yaml, deploy, re-run deck-sync.
+#   4. Every plain-http engine/orchestrator caller must switch to https and
+#      present a client cert from the same CA: the orchestrator dispatcher
+#      (Engine__BaseUrl), notification (Engine__BaseUrl), mcp-server
+#      (BABELSTONE_ENGINE_URL/_ORCHESTRATOR_URL), Mission Control's proxy.
+#      Until they do, enabling this BREAKS those hops — that client-side leg is
+#      deliberately out of this patch (tracked as the reported remainder).
+#
+# KNOWN REMAINDER (reported, not silently skipped): .NET's default client-cert
+# validation builds the chain against the CONTAINER'S system trust store, which
+# does not contain the internal CA. Two supported fixes, either is small:
+#   (a) image-side: COPY the CA into /usr/local/share/ca-certificates/ +
+#       `update-ca-certificates` in the runtime image (the CA cert is public
+#       material — the mounted /certs/ca.crt here is the source); or
+#   (b) code-side: ConfigureHttpsDefaults(o => o.ClientCertificateValidation =
+#       ...) pinning /certs/ca.crt (a few lines in each Program.cs).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: engine
+spec:
+  template:
+    spec:
+      containers:
+        - name: engine
+          env:
+            # Explicit Kestrel endpoint config replaces the plain-HTTP port env
+            # (env lists strategic-merge by name; $patch: delete removes it).
+            - name: ASPNETCORE_HTTP_PORTS
+              $patch: delete
+            - name: Kestrel__Endpoints__Https__Url
+              value: https://0.0.0.0:8080
+            - name: Kestrel__Endpoints__Https__Certificate__Path
+              value: /certs/tls.crt
+            - name: Kestrel__Endpoints__Https__Certificate__KeyPath
+              value: /certs/tls.key
+            # Transport-layer client-cert REQUIREMENT (ADR-IC-006 §P5): a
+            # Kong-bypassing caller with no internal-CA client cert is rejected
+            # at the handshake — the same posture the mcp-server already holds.
+            - name: Kestrel__Endpoints__Https__ClientCertificateMode
+              value: RequireCertificate
+          volumeMounts:
+            - name: engine-tls
+              mountPath: /certs
+              readOnly: true
+      volumes:
+        - name: engine-tls
+          secret:
+            secretName: babelstone-engine-tls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+spec:
+  template:
+    spec:
+      containers:
+        - name: orchestrator
+          env:
+            - name: ASPNETCORE_URLS
+              $patch: delete
+            - name: Kestrel__Endpoints__Https__Url
+              value: https://0.0.0.0:8080
+            - name: Kestrel__Endpoints__Https__Certificate__Path
+              value: /certs/tls.crt
+            - name: Kestrel__Endpoints__Https__Certificate__KeyPath
+              value: /certs/tls.key
+            - name: Kestrel__Endpoints__Https__ClientCertificateMode
+              value: RequireCertificate
+          volumeMounts:
+            - name: orchestrator-tls
+              mountPath: /certs
+              readOnly: true
+      volumes:
+        - name: orchestrator-tls
+          secret:
+            secretName: babelstone-orchestrator-tls
