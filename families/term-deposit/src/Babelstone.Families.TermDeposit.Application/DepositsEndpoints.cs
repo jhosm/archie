@@ -386,9 +386,12 @@ public static class DepositsEndpoints
         // table behind it. A pure READ that CONSUMES the spine's IProjectionStorage through the typed
         // ProjectionStore — it never appends or mutates, so no command is stapled to the read surface
         // (ADR-PC-018 §6). The projection is ASYNC-materialised (the relay), so this read is eventually
-        // consistent like the read-model GET. A deposit that has had NO withholding flow yet carries no
-        // ledger belief → 404 (the sub-resource does not exist), the same unknown-resource verdict the
-        // point read gives — never a phantom empty ledger.
+        // consistent like the read-model GET. A deposit that has had NO withholding flow yet → 404 (the
+        // sub-resource does not exist), the same unknown-resource verdict the point read gives — never a
+        // phantom empty ledger. That covers BOTH no-belief-row AND a belief whose Entries are empty: the
+        // fold also tracks the pending accrual awaiting its withholding leg (the pre-field date source,
+        // see PendingAccrual), so a belief row can exist before any withholding flow has folded — internal
+        // fold bookkeeping, not a ledger resource.
         //
         // The typed ProjectionStore<WithholdingLedger> is resolved from request services (not as a method
         // parameter) so the minimal-API RequestDelegateFactory infers no body for it — a host that maps this
@@ -397,7 +400,7 @@ public static class DepositsEndpoints
         var ledgerStore = http.RequestServices.GetRequiredService<ProjectionStore<WithholdingLedger>>();
         var belief = await ledgerStore.TryReadCurrentAsync(
             id, TermDepositProjectionModule.WithholdingLedgerKind, ct);
-        return belief is null
+        return belief is null || belief.State.Entries.Count == 0
             ? Results.NotFound()
             : Results.Ok(DepositWithholdingLedgerResponse.FromLedger(id, belief.State));
     }

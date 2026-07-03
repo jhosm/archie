@@ -22,10 +22,28 @@ namespace Babelstone.Families.TermDeposit;
 /// <param name="Source">Which event produced the entry — <c>"withholding"</c> for
 /// <c>WithholdingApplied</c> (the AT_MATURITY split), <c>"coupon"</c> for an <c>InterestPaid</c> leg.</param>
 /// <param name="WithheldOn">The DATE the flow was withheld on — the <c>WithholdingApplied.WithheldOn</c>
-/// (AT_MATURITY / early termination) or the <c>InterestPaid.PaidOn</c> (coupon) — so a downstream reader
-/// can slice the ledger per tax year (ADR-PC-027 read surface, bd babelstone-60n8.8). Event-derived, so a
-/// cold rebuild reproduces it exactly (ADR-PC-010 §P5).</param>
+/// (AT_MATURITY / early termination), the <c>InterestPaid.PaidOn</c> (coupon), or, for a pre-field
+/// <c>WithholdingApplied</c> that carries no date of its own, the paired <c>InterestAccrued.AsOf</c>
+/// (see <see cref="PendingAccrual"/>) — so a downstream reader can slice the ledger per tax year
+/// (ADR-PC-027 read surface). Event-derived in every case, so a cold rebuild reproduces it exactly
+/// (ADR-PC-010 §P5).</param>
 public sealed record WithholdingEntry(Money Gross, Money Tax, Money Net, string Source, DateOnly WithheldOn);
+
+/// <summary>The most recent <c>InterestAccrued</c> flow awaiting its withholding leg — the deterministic
+/// date source for a <c>WithholdingApplied</c> recorded before the <c>WithheldOn</c> field existed.</summary>
+/// <remarks>
+/// The decider emits every <c>WithholdingApplied</c> immediately after the <c>InterestAccrued</c> it
+/// withholds, both stamped with the SAME date (the maturity or termination date), and the withheld legs
+/// conserve the accrual's gross (<c>Gross = Tax + Net</c>, <c>Withholding.Withhold</c>). A pre-field
+/// withholding flow — one whose <c>WithheldOn</c> replays as <c>default(DateOnly)</c> — therefore recovers
+/// its date from this slot: event-derived only, no clock, so a cold rebuild reproduces the attribution
+/// byte-for-byte (ADR-PC-010 §P5). The slot is CONSUME-ONCE: the next <c>WithholdingApplied</c> reads it
+/// (only when its own gross matches the accrual's — the conservation cross-check) and clears it either way,
+/// so a date can never leak onto a later, unrelated flow.
+/// </remarks>
+/// <param name="Gross">The accrued gross the paired withholding must conserve (<c>Tax + Net</c>).</param>
+/// <param name="AsOf">The accrual date — the date the paired withholding flow was withheld on.</param>
+public sealed record PendingAccrual(Money Gross, DateOnly AsOf);
 
 /// <summary>
 /// The withholding-ledger projection (F.6, babelstone-3kjl): the per-stream record of every
@@ -57,21 +75,27 @@ public sealed record WithholdingEntry(Money Gross, Money Tax, Money Net, string 
 /// <param name="TotalGross">Running sum of every flow's gross interest, conserved to the cent.</param>
 /// <param name="TotalTax">Running sum of every flow's withholding tax (sum of per-flow taxes — NOT rate-scaled).</param>
 /// <param name="TotalNet">Running sum of every flow's net interest; <c>TotalGross = TotalTax + TotalNet</c>.</param>
+/// <param name="PendingAccrual">The accrual flow awaiting its withholding leg — the pre-field date
+/// source (see <see cref="Babelstone.Families.TermDeposit.PendingAccrual"/>). Declared LAST and
+/// null-defaulted so a belief stored before this field existed deserializes unchanged (additive-only
+/// state evolution, the same forward-only discipline events get).</param>
 public sealed record WithholdingLedger(
     IReadOnlyList<WithholdingEntry> Entries,
     Money TotalGross,
     Money TotalTax,
-    Money TotalNet)
+    Money TotalNet,
+    PendingAccrual? PendingAccrual = null)
 {
     /// <summary>The seed state a fold starts from (before any withholding event).</summary>
     public static WithholdingLedger Empty { get; } = new([], Money.Zero, Money.Zero, Money.Zero);
 }
 
 // Pure folds (state, event) → state for the withholding-ledger projection. No clock, no I/O,
-// no randomness (BENG001/002/003); each body is a single `state with { … }` that APPENDS the
-// recorded flow and accumulates per-flow totals via Money's checked + operator. The fold records
-// the (gross, tax, net) the event already carries — it NEVER re-derives tax from a rate, honouring
-// the financial-math §5.4 flow-by-flow withholding rule.
+// no randomness (BENG001/002/003); each body is a single `state with { … }`. The two flow handlers
+// APPEND the recorded flow and accumulate per-flow totals via Money's checked + operator; the
+// accrual handler only arms the pending-accrual date slot. The fold records the (gross, tax, net)
+// the event already carries — it NEVER re-derives tax from a rate, honouring the financial-math
+// §5.4 flow-by-flow withholding rule.
 
 public sealed class WithholdingLedgerWithholdingAppliedHandler : IEventHandler<WithholdingLedger, WithholdingApplied>
 {
@@ -81,14 +105,36 @@ public sealed class WithholdingLedgerWithholdingAppliedHandler : IEventHandler<W
         // the cent by the command-side Withhold). Reconstructing gross by adding the two recorded
         // legs is exact integer arithmetic — not a rate re-derivation.
         var gross = @event.Net + @event.Tax;
+
+        // A pre-field flow (WithheldOn replays as default 0001-01-01) recovers its date from the paired
+        // InterestAccrued the decider emitted just before it, only under the gross conservation
+        // cross-check (see PendingAccrual). A dated flow keeps its own stamp verbatim; an unpairable flow
+        // keeps the default so the statement read surface still surfaces it loud — never a guessed year.
+        var withheldOn = @event.WithheldOn != default
+            ? @event.WithheldOn
+            : state.PendingAccrual is { } accrual && accrual.Gross == gross ? accrual.AsOf : default;
+
         return HandlerResult<WithholdingLedger>.From(state with
         {
-            Entries = [.. state.Entries, new WithholdingEntry(gross, @event.Tax, @event.Net, "withholding", @event.WithheldOn)],
+            Entries = [.. state.Entries, new WithholdingEntry(gross, @event.Tax, @event.Net, "withholding", withheldOn)],
             TotalGross = state.TotalGross + gross,
             TotalTax = state.TotalTax + @event.Tax,
             TotalNet = state.TotalNet + @event.Net,
+            // Consume-once: matched or not, the slot never carries past a withholding flow.
+            PendingAccrual = null,
         });
     }
+}
+
+public sealed class WithholdingLedgerInterestAccruedHandler : IEventHandler<WithholdingLedger, InterestAccrued>
+{
+    public HandlerResult<WithholdingLedger> Apply(WithholdingLedger state, InterestAccrued @event)
+        // An accrual is NOT a withholding flow: it appends no entry and moves no total. It only ARMS the
+        // pending-accrual slot the next WithholdingApplied reads its pre-field date from (see PendingAccrual).
+        => HandlerResult<WithholdingLedger>.From(state with
+        {
+            PendingAccrual = new PendingAccrual(@event.GrossInterest, @event.AsOf),
+        });
 }
 
 public sealed class WithholdingLedgerInterestPaidHandler : IEventHandler<WithholdingLedger, InterestPaid>
