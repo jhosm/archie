@@ -108,6 +108,37 @@ dupes="$(cut -f1 "$rows" | sort | uniq -d || true)"
 
 cut -f1 "$rows" | sort -u > "$tmp/catalogue_tids"
 
+# --- Helper: is a scripts/*.sh gate actually WIRED INTO CI? True iff ci.yml names the
+#     script's path directly (e.g. `run: ./scripts/grafana-rbac-check.sh`), or a Makefile
+#     target whose recipe invokes the script is itself run by ci.yml (`make <target>`).
+#     This is the mechanical half of ADR-PC-020 §P6's "a test that exists AND RUNS IN CI"
+#     for script-realised commitments (bd babelstone-2t16.28): without it, an orphaned
+#     scripts/*.sh that merely NAMES a Test ID would resolve a Live row while no CI step
+#     ever executes it. ---
+CI_WORKFLOW=".github/workflows/ci.yml"
+ci_invokes_script() { # <scripts/foo.sh> -> rc 0 iff CI executes it
+  sh_path="$1"
+  [ -f "$CI_WORKFLOW" ] || return 1
+  grep -qF "$sh_path" "$CI_WORKFLOW" && return 0
+  [ -f Makefile ] || return 1
+  # Every make target whose recipe (tab-indented line) invokes the script...
+  while IFS= read -r tgt; do
+    [ -n "$tgt" ] || continue
+    # ...is wired iff ci.yml runs `make … <target>` (tokenise the make invocations and
+    # match the target token exactly — no regex metacharacter risk from target names).
+    if grep -oE 'make[[:space:]]+[^&|;)"]*' "$CI_WORKFLOW" | tr -s '[:space:]' '\n' \
+        | grep -qFx "$tgt"; then
+      return 0
+    fi
+  done < <(awk -v s="$sh_path" '
+    /^[ \t]*#/ { next }
+    /^[^\t][^=]*:/ { tgt = $0; sub(/:.*/, "", tgt); next }
+    /^\t/ { if (tgt != "" && index($0, s) > 0) { n = split(tgt, a, /[ \t]+/);
+            for (i = 1; i <= n; i++) if (a[i] != "") print a[i] } }
+  ' Makefile | sort -u)
+  return 1
+}
+
 # --- Helper: print the `## Verifiable commitments` section of an ADR file. ---
 vc_section() { awk '/^## Verifiable commitments/{f=1;next} f&&/^## /{f=0} f&&/^---$/{f=0} f' "$1"; }
 # --- Helper: the Test IDs a section *references* — the leading `TID` of each
@@ -164,13 +195,24 @@ while IFS=$'\t' read -r tid st gate link; do
   # RBAC enforcement, OBS_PLANE_RBAC / catalogue SEC-2). These run in ci.yml's path-scoped
   # jobs, so they ARE "a test that exists and runs in CI" (ADR-PC-020 §P6) for a commitment
   # whose realisation is ops/infra config with NO compiled-code home (the engine/contract
-  # subtrees carry no Grafana/Kong source). Accept a scripts/*.sh gate naming the Test ID as
-  # Live-resolution evidence alongside the code-dir tests. Purely additive — it can only let
-  # MORE rows resolve, never fewer, so it cannot mask a regression in an existing Live row.
-  if [ -z "$found_test" ] && [ -d scripts ] && grep -rqF --include='*.sh' -e "$tid" scripts 2>/dev/null; then
-    found_test="yes"
+  # subtrees carry no Grafana/Kong source).
+  #
+  # BOTH halves of §P6 are asserted mechanically (bd babelstone-2t16.28): the script must
+  # name the Test ID ("a test that exists") AND be invoked by ci.yml — directly, or via a
+  # make target ci.yml runs ("and runs in CI", ci_invokes_script above). A scripts/*.sh
+  # that names the Test ID but that no CI step executes is an ORPHANED gate: it does NOT
+  # resolve the row (pre-tightening it did, by convention alone — the loophole this closes).
+  if [ -z "$found_test" ] && [ -d scripts ]; then
+    while IFS= read -r gate_sh; do
+      [ -n "$gate_sh" ] || continue
+      if ci_invokes_script "$gate_sh"; then
+        found_test="yes"
+        break
+      fi
+      note "row '$tid': '$gate_sh' names the Test ID but is not invoked by $CI_WORKFLOW (directly or via a make target it runs) — an orphaned gate is not Live-resolution evidence (ADR-PC-020 §P6 'runs in CI')."
+    done < <(grep -rlF --include='*.sh' -e "$tid" scripts 2>/dev/null | sort)
   fi
-  [ -n "$found_test" ] || err "$CATALOGUE" "Row '$tid' is Live but no test/code under {$CODE_DIRS} (nor a CI gate under scripts/*.sh) references the Test ID."
+  [ -n "$found_test" ] || err "$CATALOGUE" "Row '$tid' is Live but no test/code under {$CODE_DIRS} (nor a CI-WIRED gate under scripts/*.sh — the script must also be invoked by $CI_WORKFLOW, directly or via a make target it runs) references the Test ID."
 done < "$rows"
 [ "$live" -gt 0 ] || note "no Live commitments yet — engine is a skeleton; test-resolution checks are dormant (all rows Planned)."
 
