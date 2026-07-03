@@ -22,9 +22,16 @@
 # redpanda-console 8080, Kong admin 8001) are likewise unaffected.
 #
 # Maintainer note — future workloads: default-deny means a NEW workload gets no
-# inbound traffic until an allow is added here. Known deferred case: the
-# Mission Control agent host (agent-host:8091, AGENT_URL) — when it lands, add
-# an allow from mission-control on 9000→8091's edge.
+# inbound traffic until an allow is added here, and policy 2 admits ONLY
+# kube-system/Traefik into kong:8000 — so a future in-namespace caller of the
+# Kong proxy hits that wall too. The known cases, named so the first symptom
+# is not a mystery timeout:
+#   • Mission Control agent host (agent-host:8091, AGENT_URL): needs an
+#     inbound allow from mission-control to 8091, AND an entry in policy 2's
+#     from-list — it dials the secured MCP edge through the Kong proxy (8000).
+#   • ADR-PC-036 lifecycle-driver: dials the engine through Kong's
+#     engine-lifecycle-movers route, so it likewise needs adding to policy 2's
+#     from-list (kong:8000) when it lands on this box.
 ---
 # 1 · The wall: default-deny ingress for EVERY pod in the namespace.
 apiVersion: networking.k8s.io/v1
@@ -39,8 +46,9 @@ spec:
 # 2 · Kong proxy (8000) — only the public edge (Traefik, kube-system) may reach
 # it; every product-API request keeps entering through the ADR-IC-006 edge.
 # The Admin API (8001) gets NO allow on purpose: nothing in-cluster dials it
-# (deck-sync is operator/CI-run via port-forward), and the companion
-# kong-admin-localhost.patch.yaml binds it to 127.0.0.1 anyway.
+# (operator deck-sync goes through kubectl port-forward; the cd.yml CI leg's
+# port-forward step is the follow-up named in kong-admin-localhost.patch.yaml),
+# and that companion patch binds it to 127.0.0.1 anyway.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
