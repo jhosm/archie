@@ -35,15 +35,6 @@ info:
   x-authorized-consumers:
     - retail-web
     - retail-mobile
-  # ── ADR-IC-020 Decision §3 breaking-change approval (openapi-catalog-validate.sh step 2) ──
-  # APPROVED for THIS change only: the 1.0.0 seed (PR #431's governance-gate scaffold) sketched
-  # a placeholder 202 body (process_id+stream_url only, uuid-typed) that never matched the
-  # shipped ConstituteResponse; this revision transcribes the REAL wire shapes (deposit_id/
-  # status added, PROC-… references not UUIDs, the gateway's minLength/SCA/429 semantics made
-  # explicit). No consumer ever integrated against the placeholder sketch. REMOVE this flag in
-  # the next change that touches this file — leaving it would silently pre-approve a FUTURE
-  # breaking change.
-  x-breaking-change-approved: true
 servers:
   - url: https://api.babelstone.example
     description: Public edge gateway (Kong).

@@ -32,14 +32,6 @@ info:
     - retail-web
     - retail-mobile
     - ops-console
-  # ── ADR-IC-020 Decision §3 breaking-change approval (openapi-catalog-validate.sh step 2) ──
-  # APPROVED for THIS change only: the 1.0.0 seed (PR #431's governance-gate scaffold) sketched
-  # placeholder schemas (Deposit{id,…}, MaturityList{items}) that never matched the shipped
-  # DTOs; this revision replaces them with the REAL DepositResponse/DepositMaturitiesResponse
-  # shapes and makes from/to required (as the handler binds them). No consumer ever integrated
-  # against the placeholder sketch. REMOVE this flag in the next change that touches this file
-  # — leaving it would silently pre-approve a FUTURE breaking change.
-  x-breaking-change-approved: true
 servers:
   - url: https://api.babelstone.example
     description: Public edge gateway (Kong).
@@ -188,6 +180,7 @@ components:
         - lifecycle
         - last_sequence
         - last_updated
+        - product_config_version
       properties:
         deposit_id:
           type: string
@@ -265,6 +258,13 @@ components:
           type: string
           format: date-time
           description: The producing event's transaction_time (honest staleness display).
+        product_config_version:
+          type: string
+          description: >
+            The product-config generation pin (content hash sha256:<hex>, ADR-PC-009 §A2) the
+            deposit was constituted under — the provenance surface reads the REAL pin off the
+            canonical resource. ADDITIVE and prospective-only (like product_code): pre-pin
+            deposits carry the "" default and are not back-fillable.
       examples:
         - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
           sor: engine
@@ -286,6 +286,7 @@ components:
           lifecycle: ACTIVE
           last_sequence: 3
           last_updated: "2026-06-30T12:00:00Z"
+          product_config_version: "sha256:9f2c4a1e0b7d6c5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f"
     DepositMaturities:
       type: object
       description: The maturities range-query result (DepositMaturitiesResponse) — snake_case on the wire.
