@@ -126,6 +126,7 @@ public static class BabelstonePiiGuard
         BabelstoneAttributes.ProjectionKind,         // projection_kind (reconciliation counters / gauge)
         SagaDispatchCommandTypeTagKey,               // command_type    (saga dispatch counters)
         BabelstoneAttributes.LifecycleCommandKindTag, // command_kind   (lifecycle-driver counters/histogram)
+        BabelstoneAttributes.HoldReleaseAnomalyKindTag, // babelstone.hold_release_anomaly (active-hold projector counter)
         TelemetrySignalTagKey,                       // this guard's own strip-counter dimension
     ];
 

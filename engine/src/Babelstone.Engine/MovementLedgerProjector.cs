@@ -88,6 +88,6 @@ public sealed class MovementLedgerProjector(IMovementLedgerStore store) : ISpine
         await store.AppendAsync(entries, ct);
     }
 
-    /// <summary>Truncate the ledger for a rebuild (truncate-then-refold, ADR-PC-032 §A5).</summary>
+    /// <summary>Truncate the ledger for a rebuild (truncate-then-refold, ADR-PC-032).</summary>
     public Task ResetForRebuildAsync(CancellationToken ct = default) => store.TruncateAsync(ct);
 }

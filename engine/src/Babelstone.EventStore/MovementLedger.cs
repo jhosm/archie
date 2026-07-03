@@ -153,8 +153,9 @@ public sealed class PostgresMovementLedgerStore(string connectionString) : IMove
         await connection.OpenAsync(ct);
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("account_ref", accountRef);
-        var result = await command.ExecuteScalarAsync(ct);
-        return result is long cents ? cents : 0L;
+        // Hard unbox: COALESCE guarantees a non-null value and ::bigint guarantees Int64, so any
+        // other shape is schema/query drift — throw (InvalidCastException), never mask it as 0.
+        return (long)(await command.ExecuteScalarAsync(ct))!;
     }
 
     public async Task<IReadOnlyList<MovementLedgerEntry>> GetStatementAsync(

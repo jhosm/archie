@@ -13,7 +13,7 @@ public sealed record SpineProjectionRelayOptions
 /// <summary>
 /// Hosts the <see cref="SpineProjectionDrainer"/> as an in-process <see cref="BackgroundService"/> —
 /// the production caller that keeps the movement ledger and the active-hold set fed from the event
-/// log (ADR-PC-032 §A1's deferred live drive / ADR-PC-033). The same co-hosted poll-loop shape as
+/// log (ADR-PC-032 / ADR-PC-033). The same co-hosted poll-loop shape as
 /// <see cref="ProjectionRelayService"/> and the outbox relay: a clean empty cycle waits a poll
 /// interval, a backlog loops straight on, and a drain failure is backpressure — back off and retry,
 /// leaving the checkpoints where they are (both read models are rebuildable and every apply is

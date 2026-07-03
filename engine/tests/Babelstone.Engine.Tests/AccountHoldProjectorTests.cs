@@ -6,32 +6,38 @@ namespace Babelstone.Engine.Tests;
 
 /// <summary>
 /// Tests for the spine-owned <see cref="AccountHoldProjector"/> — the HOLD_LIFECYCLE_PURE gate
-/// (ADR-PC-033 slots 2/4). In plain English: these prove the hold lifecycle is exactly the three
-/// pure transitions <c>HoldPlaced → HoldCaptured | HoldExpired</c>, that <c>hold_id</c> makes the
+/// (ADR-PC-033). In plain English: these prove the hold lifecycle is exactly the three pure
+/// transitions <c>HoldPlaced → HoldCaptured | HoldExpired</c>, that <c>hold_id</c> makes the
 /// lifecycle idempotent (a re-delivered or duplicate release folds at most once — never a
-/// double-release), that a partial capture releases the remainder, and that replaying the same
-/// event sequence reproduces the same hold set (replay determinism, no clock anywhere in the fold).
+/// double-release), that a NO-OP release is SURFACED rather than silently absorbed (distinguishing
+/// the never-placed fold error from the already-released reconciliation signal), that a partial
+/// capture releases the remainder, that a hold event must ride its own instance stream, and that
+/// replaying the same event sequence reproduces the same hold set (replay determinism — no clock
+/// anywhere in the fold).
 /// </summary>
 public sealed class AccountHoldProjectorTests
 {
     private static readonly DateOnly ValueDate = new(2026, 6, 25);
 
-    private static HoldPlaced Placed(string holdId, string accountRef = "acct-1", long cents = 5_000) =>
-        new(Guid.NewGuid(), holdId, accountRef, new Money(cents), ValueDate);
+    // Hold events must ride their own instance stream (the projector enforces it), so every
+    // helper binds the event to the stream it will be applied under.
+    private static HoldPlaced Placed(Guid stream, string holdId, string accountRef = "acct-1", long cents = 5_000) =>
+        new(stream, holdId, accountRef, new Money(cents), ValueDate);
 
-    private static HoldCaptured Captured(string holdId, long cents, string accountRef = "acct-1") =>
-        new(Guid.NewGuid(), holdId, accountRef, new Money(cents), ValueDate.AddDays(2));
+    private static HoldCaptured Captured(Guid stream, string holdId, long cents, string accountRef = "acct-1") =>
+        new(stream, holdId, accountRef, new Money(cents), ValueDate.AddDays(2));
 
-    private static HoldExpired Expired(string holdId, string accountRef = "acct-1") =>
-        new(Guid.NewGuid(), holdId, accountRef, ValueDate.AddDays(7));
+    private static HoldExpired Expired(Guid stream, string holdId, string accountRef = "acct-1") =>
+        new(stream, holdId, accountRef, ValueDate.AddDays(7));
 
     [Fact]
     public async Task A_placed_hold_is_active_and_reduces_the_available_balance_fold()
     {
         var store = new InMemoryAccountHoldStore();
         var projector = new AccountHoldProjector(store);
+        var stream = Guid.NewGuid();
 
-        await projector.ApplyAsync(Guid.NewGuid(), 0, Placed("hold-1", cents: 5_000));
+        await projector.ApplyAsync(stream, 0, Placed(stream, "hold-1", cents: 5_000));
 
         Assert.Equal(5_000, await store.GetActiveHoldCentsAsync("acct-1"));
         var hold = Assert.Single(await store.GetActiveHoldsAsync("acct-1"));
@@ -44,9 +50,10 @@ public sealed class AccountHoldProjectorTests
     {
         var store = new InMemoryAccountHoldStore();
         var projector = new AccountHoldProjector(store);
+        var stream = Guid.NewGuid();
 
-        await projector.ApplyAsync(Guid.NewGuid(), 0, Placed("hold-1", cents: 5_000));
-        await projector.ApplyAsync(Guid.NewGuid(), 1, Captured("hold-1", cents: 5_000));
+        await projector.ApplyAsync(stream, 0, Placed(stream, "hold-1", cents: 5_000));
+        await projector.ApplyAsync(stream, 1, Captured(stream, "hold-1", cents: 5_000));
 
         Assert.Equal(0, await store.GetActiveHoldCentsAsync("acct-1"));
         Assert.Empty(await store.GetActiveHoldsAsync("acct-1"));
@@ -57,12 +64,13 @@ public sealed class AccountHoldProjectorTests
     {
         var store = new InMemoryAccountHoldStore();
         var projector = new AccountHoldProjector(store);
+        var stream = Guid.NewGuid();
 
-        // ADR-PC-033 slot 2: a HoldCaptured for LESS than the held amount releases the remainder —
-        // the whole hold leaves the active set; only the captured cents were posted (by the capture's
+        // ADR-PC-033: a HoldCaptured for LESS than the held amount releases the remainder — the
+        // whole hold leaves the active set; only the captured cents were posted (by the capture's
         // own Movement, not by this fold).
-        await projector.ApplyAsync(Guid.NewGuid(), 0, Placed("hold-1", cents: 5_000));
-        await projector.ApplyAsync(Guid.NewGuid(), 1, Captured("hold-1", cents: 3_000));
+        await projector.ApplyAsync(stream, 0, Placed(stream, "hold-1", cents: 5_000));
+        await projector.ApplyAsync(stream, 1, Captured(stream, "hold-1", cents: 3_000));
 
         Assert.Equal(0, await store.GetActiveHoldCentsAsync("acct-1"));
         var row = store.Row("hold-1");
@@ -76,14 +84,15 @@ public sealed class AccountHoldProjectorTests
     {
         var store = new InMemoryAccountHoldStore();
         var projector = new AccountHoldProjector(store);
+        var stream = Guid.NewGuid();
 
-        await projector.ApplyAsync(Guid.NewGuid(), 0, Placed("hold-1", cents: 5_000));
-        await projector.ApplyAsync(Guid.NewGuid(), 1, Expired("hold-1"));
+        await projector.ApplyAsync(stream, 0, Placed(stream, "hold-1", cents: 5_000));
+        await projector.ApplyAsync(stream, 1, Expired(stream, "hold-1"));
 
         Assert.Equal(0, await store.GetActiveHoldCentsAsync("acct-1"));
         var row = store.Row("hold-1");
         Assert.Equal("EXPIRED", row.State);
-        Assert.Null(row.CapturedAmountCents); // nothing posted on expiry (ADR-PC-033 slot 2)
+        Assert.Null(row.CapturedAmountCents); // nothing posted on expiry (ADR-PC-033)
     }
 
     [Fact]
@@ -91,60 +100,115 @@ public sealed class AccountHoldProjectorTests
     {
         var store = new InMemoryAccountHoldStore();
         var projector = new AccountHoldProjector(store);
-        var placed = Placed("hold-1", cents: 5_000);
+        var stream = Guid.NewGuid();
+        var placed = Placed(stream, "hold-1", cents: 5_000);
 
         // The at-least-once drive may re-deliver after a crash between apply and checkpoint; the
-        // hold_id key (ADR-PC-033 slot 4) makes the re-apply a no-op.
-        await projector.ApplyAsync(Guid.NewGuid(), 0, placed);
-        await projector.ApplyAsync(Guid.NewGuid(), 0, placed);
+        // hold_id key (ADR-PC-033) makes the re-apply a no-op.
+        await projector.ApplyAsync(stream, 0, placed);
+        await projector.ApplyAsync(stream, 0, placed);
 
         Assert.Equal(5_000, await store.GetActiveHoldCentsAsync("acct-1"));
         Assert.Single(await store.GetActiveHoldsAsync("acct-1"));
     }
 
     [Fact]
-    public async Task A_second_capture_of_the_same_hold_is_a_no_op_never_a_double_release()
+    public async Task A_second_capture_is_a_no_op_and_is_surfaced_as_already_released()
     {
         var store = new InMemoryAccountHoldStore();
-        var projector = new AccountHoldProjector(store);
+        var anomalies = new List<HoldReleaseAnomaly>();
+        var projector = new AccountHoldProjector(store, anomalies.Add);
+        var stream = Guid.NewGuid();
 
-        await projector.ApplyAsync(Guid.NewGuid(), 0, Placed("hold-1", cents: 5_000));
-        await projector.ApplyAsync(Guid.NewGuid(), 1, Captured("hold-1", cents: 5_000));
-        await projector.ApplyAsync(Guid.NewGuid(), 2, Captured("hold-1", cents: 5_000));
+        await projector.ApplyAsync(stream, 0, Placed(stream, "hold-1", cents: 5_000));
+        await projector.ApplyAsync(stream, 1, Captured(stream, "hold-1", cents: 5_000));
+        await projector.ApplyAsync(stream, 2, Captured(stream, "hold-1", cents: 5_000));
 
-        // The first capture's fold stands; the duplicate transitioned zero rows (slot 4).
+        // The first capture's fold stands; the duplicate transitioned zero rows — a no-op, never a
+        // double-release — and was SURFACED as the reconciliation signal ADR-PC-033 requires.
         var row = store.Row("hold-1");
         Assert.Equal("CAPTURED", row.State);
         Assert.Equal(5_000, row.CapturedAmountCents);
+        var anomaly = Assert.Single(anomalies);
+        Assert.Equal(HoldReleaseResult.AlreadyReleased, anomaly.Kind);
+        Assert.Equal("hold-1", anomaly.HoldId);
+        Assert.Equal(nameof(HoldCaptured), anomaly.ReleaseEventType);
+        Assert.Equal(stream, anomaly.ReleasingStreamId);
+        Assert.Equal(2, anomaly.ReleasingSequence);
     }
 
     [Fact]
-    public async Task An_expiry_after_capture_is_a_no_op_the_terminal_state_stands()
+    public async Task An_expiry_after_capture_is_a_no_op_the_terminal_state_stands_and_is_surfaced()
     {
         var store = new InMemoryAccountHoldStore();
-        var projector = new AccountHoldProjector(store);
+        var anomalies = new List<HoldReleaseAnomaly>();
+        var projector = new AccountHoldProjector(store, anomalies.Add);
+        var stream = Guid.NewGuid();
 
-        await projector.ApplyAsync(Guid.NewGuid(), 0, Placed("hold-1", cents: 5_000));
-        await projector.ApplyAsync(Guid.NewGuid(), 1, Captured("hold-1", cents: 5_000));
-        await projector.ApplyAsync(Guid.NewGuid(), 2, Expired("hold-1"));
+        await projector.ApplyAsync(stream, 0, Placed(stream, "hold-1", cents: 5_000));
+        await projector.ApplyAsync(stream, 1, Captured(stream, "hold-1", cents: 5_000));
+        await projector.ApplyAsync(stream, 2, Expired(stream, "hold-1"));
 
         Assert.Equal("CAPTURED", store.Row("hold-1").State);
+        var anomaly = Assert.Single(anomalies);
+        Assert.Equal(HoldReleaseResult.AlreadyReleased, anomaly.Kind);
+        Assert.Equal(nameof(HoldExpired), anomaly.ReleaseEventType);
     }
 
     [Fact]
-    public async Task A_release_for_an_unplaced_hold_folds_to_nothing()
+    public async Task A_release_for_an_unplaced_hold_folds_to_nothing_and_is_surfaced_as_never_placed()
     {
         var store = new InMemoryAccountHoldStore();
-        var projector = new AccountHoldProjector(store);
+        var anomalies = new List<HoldReleaseAnomaly>();
+        var projector = new AccountHoldProjector(store, anomalies.Add);
+        var streamA = Guid.NewGuid();
+        var streamB = Guid.NewGuid();
 
-        // The fold trusts its input stream (ADR-PC-033 slot 5): an unmatched release transitions
-        // nothing here — the mismatch is the family's reconciliation surface, not a fold failure.
-        await projector.ApplyAsync(Guid.NewGuid(), 0, Captured("hold-ghost", cents: 1_000));
-        await projector.ApplyAsync(Guid.NewGuid(), 1, Expired("hold-ghost2"));
+        // The fold trusts its input stream (ADR-PC-033): an unmatched release transitions nothing —
+        // but it is a FOLD-ORDER ERROR the projector must surface, never silently absorb.
+        await projector.ApplyAsync(streamA, 0, Captured(streamA, "hold-ghost", cents: 1_000));
+        await projector.ApplyAsync(streamB, 0, Expired(streamB, "hold-ghost2"));
 
         Assert.Empty(await store.GetActiveHoldsAsync("acct-1"));
         Assert.False(store.Has("hold-ghost"));
         Assert.False(store.Has("hold-ghost2"));
+        Assert.Equal(2, anomalies.Count);
+        Assert.All(anomalies, anomaly => Assert.Equal(HoldReleaseResult.NeverPlaced, anomaly.Kind));
+    }
+
+    [Fact]
+    public async Task A_clean_lifecycle_surfaces_no_anomaly()
+    {
+        var store = new InMemoryAccountHoldStore();
+        var anomalies = new List<HoldReleaseAnomaly>();
+        var projector = new AccountHoldProjector(store, anomalies.Add);
+        var stream = Guid.NewGuid();
+
+        await projector.ApplyAsync(stream, 0, Placed(stream, "hold-1"));
+        await projector.ApplyAsync(stream, 1, Captured(stream, "hold-1", cents: 5_000));
+
+        Assert.Empty(anomalies);
+    }
+
+    [Fact]
+    public async Task A_hold_event_on_a_foreign_stream_is_refused()
+    {
+        var store = new InMemoryAccountHoldStore();
+        var projector = new AccountHoldProjector(store);
+        var ownStream = Guid.NewGuid();
+        var foreignStream = Guid.NewGuid();
+
+        // The single-stream ordering precondition rebuild determinism rests on (ADR-PC-033) is
+        // enforced, not assumed: a hold event appended to a stream other than its own InstanceId
+        // fails loud on every lifecycle transition.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            projector.ApplyAsync(foreignStream, 0, Placed(ownStream, "hold-1")));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            projector.ApplyAsync(foreignStream, 0, Captured(ownStream, "hold-1", cents: 1_000)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            projector.ApplyAsync(foreignStream, 0, Expired(ownStream, "hold-1")));
+
+        Assert.False(store.Has("hold-1")); // nothing folded
     }
 
     [Fact]
@@ -165,13 +229,14 @@ public sealed class AccountHoldProjectorTests
         // clock, no randomness — so folding the SAME sequence into a fresh (rebuilt) store
         // reproduces the same rows. This is the unit half of the replay gate; the Postgres
         // truncate-then-refold half lives in the integration suite (ACCOUNT_BALANCE_IS_A_FOLD).
-        var stream = Guid.NewGuid();
-        var events = new (long Seq, DomainEvent Event)[]
+        var streamA = Guid.NewGuid();
+        var streamB = Guid.NewGuid();
+        var events = new (Guid Stream, long Seq, DomainEvent Event)[]
         {
-            (0, Placed("hold-1", cents: 5_000)),
-            (1, Placed("hold-2", "acct-2", 700)),
-            (2, Captured("hold-1", cents: 3_000)),
-            (3, Expired("hold-2", "acct-2")),
+            (streamA, 0, Placed(streamA, "hold-1", cents: 5_000)),
+            (streamB, 0, Placed(streamB, "hold-2", "acct-2", 700)),
+            (streamA, 1, Captured(streamA, "hold-1", cents: 3_000)),
+            (streamB, 1, Expired(streamB, "hold-2", "acct-2")),
         };
 
         var first = new InMemoryAccountHoldStore();
@@ -179,7 +244,7 @@ public sealed class AccountHoldProjectorTests
         foreach (var store in new[] { first, second })
         {
             var projector = new AccountHoldProjector(store);
-            foreach (var (seq, @event) in events)
+            foreach (var (stream, seq, @event) in events)
             {
                 await projector.ApplyAsync(stream, seq, @event);
             }
@@ -193,8 +258,9 @@ public sealed class AccountHoldProjectorTests
     {
         var store = new InMemoryAccountHoldStore();
         var projector = new AccountHoldProjector(store);
+        var stream = Guid.NewGuid();
 
-        await projector.ApplyAsync(Guid.NewGuid(), 0, Placed("hold-1"));
+        await projector.ApplyAsync(stream, 0, Placed(stream, "hold-1"));
         await projector.ResetForRebuildAsync();
 
         Assert.Empty(await store.GetActiveHoldsAsync("acct-1"));
@@ -208,8 +274,9 @@ public sealed class AccountHoldProjectorTests
     /// <summary>
     /// An in-memory <see cref="IAccountHoldStore"/> test double mirroring the
     /// <see cref="PostgresAccountHoldStore"/> contract: placement idempotent on <c>hold_id</c>,
-    /// releases transitioning ONLY an ACTIVE row, and truncate for rebuild. Kept in the test
-    /// project (the same convention as the other in-memory storage doubles).
+    /// releases transitioning ONLY an ACTIVE row with the three-way <see cref="HoldReleaseResult"/>
+    /// answer, and truncate for rebuild. Kept in the test project (the same convention as the other
+    /// in-memory storage doubles).
     /// </summary>
     private sealed class InMemoryAccountHoldStore : IAccountHoldStore
     {
@@ -228,13 +295,18 @@ public sealed class AccountHoldProjectorTests
             return Task.CompletedTask;
         }
 
-        public Task<bool> CaptureAsync(
+        public Task<HoldReleaseResult> CaptureAsync(
             string holdId, long capturedAmountCents, Guid releasedStreamId, long releasedSequence,
             CancellationToken ct = default)
         {
-            if (!_rows.TryGetValue(holdId, out var row) || row.State != "ACTIVE")
+            if (!_rows.TryGetValue(holdId, out var row))
             {
-                return Task.FromResult(false);
+                return Task.FromResult(HoldReleaseResult.NeverPlaced);
+            }
+
+            if (row.State != "ACTIVE")
+            {
+                return Task.FromResult(HoldReleaseResult.AlreadyReleased);
             }
 
             _rows[holdId] = row with
@@ -244,15 +316,20 @@ public sealed class AccountHoldProjectorTests
                 ReleasedStreamId = releasedStreamId,
                 ReleasedSequence = releasedSequence,
             };
-            return Task.FromResult(true);
+            return Task.FromResult(HoldReleaseResult.Transitioned);
         }
 
-        public Task<bool> ExpireAsync(
+        public Task<HoldReleaseResult> ExpireAsync(
             string holdId, Guid releasedStreamId, long releasedSequence, CancellationToken ct = default)
         {
-            if (!_rows.TryGetValue(holdId, out var row) || row.State != "ACTIVE")
+            if (!_rows.TryGetValue(holdId, out var row))
             {
-                return Task.FromResult(false);
+                return Task.FromResult(HoldReleaseResult.NeverPlaced);
+            }
+
+            if (row.State != "ACTIVE")
+            {
+                return Task.FromResult(HoldReleaseResult.AlreadyReleased);
             }
 
             _rows[holdId] = row with
@@ -261,7 +338,7 @@ public sealed class AccountHoldProjectorTests
                 ReleasedStreamId = releasedStreamId,
                 ReleasedSequence = releasedSequence,
             };
-            return Task.FromResult(true);
+            return Task.FromResult(HoldReleaseResult.Transitioned);
         }
 
         public Task<long> GetActiveHoldCentsAsync(string accountRef, CancellationToken ct = default) =>
