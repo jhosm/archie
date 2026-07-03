@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "namespace": "operations",
+  "name": "HoldExpired",
+  "doc": "The hold timed out before capture (ADR-PC-033 slot 2): it leaves the active set, restoring the available balance, with NO posting — no money moved. Appended by an operator/command action reading the projection-derived expiry horizon, never by a clock-driven scheduler (ADR-PC-023). DORMANT wire shape (the .avsc.json posture): the event is STORE-ONLY today (ADR-IC-017 — no named external consumer); bus promotion is renaming to .avsc plus the AsyncAPI catalog entry. Field names follow the engine codec convention. No PII (ADR-PC-004).",
+  "fields": [
+    { "name": "instance_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "The account-owning instance (stream) the hold rides — a structural id, not PII." },
+    { "name": "hold_id", "type": "string", "doc": "The placed hold this expiry releases (the ADR-PC-033 slot-4 lifecycle key)." },
+    { "name": "account_ref", "type": "string", "doc": "The opaque account whose available balance the release restores — a reference, never PII." },
+    { "name": "value_date", "type": { "type": "int", "logicalType": "date" }, "doc": "The economic date the expiry took effect — an input from the expiry read, never a clock read." }
+  ]
+}

@@ -176,6 +176,17 @@ builder.Services.AddSingleton<IProjectionCheckpointStore>(_ => new PostgresProje
 builder.Services.AddSingleton<IMovementLedgerStore>(_ => new PostgresMovementLedgerStore(connectionString));
 builder.Services.AddSingleton(serviceProvider =>
     new MovementLedgerProjector(serviceProvider.GetRequiredService<IMovementLedgerStore>()));
+// The spine-owned ACTIVE-HOLD read model + balance folds (ADR-PC-033): account_holds (migration
+// 0020) is the rebuildable fold of the hold lifecycle (HoldPlaced -> HoldCaptured | HoldExpired)
+// that the available-balance read subtracts from the movement-ledger signed sum —
+// `available = accounting − Σ(active holds)`, both computed, never stored
+// (ACCOUNT_BALANCE_IS_A_FOLD). Family-agnostic spine components like the ledger above.
+builder.Services.AddSingleton<IAccountHoldStore>(_ => new PostgresAccountHoldStore(connectionString));
+builder.Services.AddSingleton(serviceProvider =>
+    new AccountHoldProjector(serviceProvider.GetRequiredService<IAccountHoldStore>()));
+builder.Services.AddSingleton(serviceProvider => new AccountBalanceReader(
+    serviceProvider.GetRequiredService<IMovementLedgerStore>(),
+    serviceProvider.GetRequiredService<IAccountHoldStore>()));
 // A.11 snapshot runtime wiring (ADR-PC-003): the byte-oriented snapshot store is a family-agnostic
 // spine component (ADR-PC-021), backed by the same PostgreSQL tier as the event store (ADR-PC-003
 // — snapshots are rows in a `snapshots` table in the SAME database). The family module composes the
@@ -278,6 +289,29 @@ foreach (var module in familyModules)
 // so all the ConfigureServices calls above have run); each family contributes only modules, the host
 // owns the relay. The same co-hosted in-process shape as the outbox relay below.
 builder.Services.AddProjectionRuntime();
+
+// The spine account-projection drive (ADR-PC-032 §A1 live drive / ADR-PC-033): the production
+// caller that feeds decoded appended/replayed events to the MovementLedgerProjector and the
+// AccountHoldProjector. Registered ONCE here as a spine singleton — NOT on the per-family
+// ProjectionDrainer above — because its read models are account-keyed and CROSS-family (one
+// account_ref receives movements from many streams across families). Decode goes through each
+// family's OWN fold-module bindings (a merged registry is impossible: every family legitimately
+// binds the same cross-cutting operations.* event types), discovered by the engine's
+// FamilyModuleLoader over the same Babelstone.Families.* assemblies the host-module scan uses —
+// reflection stays at this composition root (ADR-PC-010).
+var engineFamilyFoldModules = new FamilyModuleLoader().LoadAll(HostModuleLoader.FamilyHostAssemblies());
+builder.Services.AddSingleton(serviceProvider => new SpineProjectionDrainer(
+    serviceProvider.GetRequiredService<IEventStore>(),
+    serviceProvider.GetRequiredService<IProjectionCheckpointStore>(),
+    serviceProvider.GetRequiredService<IEventSerializer>(),
+    engineFamilyFoldModules,
+    [
+        serviceProvider.GetRequiredService<MovementLedgerProjector>(),
+        serviceProvider.GetRequiredService<AccountHoldProjector>(),
+    ],
+    serviceProvider.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton(new SpineProjectionRelayOptions());
+builder.Services.AddHostedService<SpineProjectionRelayService>();
 
 // The IC-004 outbox→Redpanda relay (G.1), co-hosted in this process (event-store-skeleton §5.1).
 // Two pieces register here, the same proven shape as the projection relay above:

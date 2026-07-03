@@ -140,9 +140,11 @@ public sealed class PostgresMovementLedgerStore(string connectionString) : IMove
     public async Task<long> GetBalanceCentsAsync(string accountRef, CancellationToken ct = default)
     {
         // The balance is the signed sum: Credit adds, Debit subtracts (direction is relative to the
-        // account). COALESCE makes an account with no rows read as zero, not NULL.
+        // account). COALESCE makes an account with no rows read as zero, not NULL. The ::bigint cast
+        // is load-bearing: PostgreSQL's SUM(bigint) returns NUMERIC, which Npgsql surfaces as
+        // decimal — without the cast the scalar read below would never see an Int64.
         const string sql = """
-            SELECT COALESCE(SUM(CASE WHEN direction = 'Credit' THEN amount_cents ELSE -amount_cents END), 0)
+            SELECT COALESCE(SUM(CASE WHEN direction = 'Credit' THEN amount_cents ELSE -amount_cents END), 0)::bigint
             FROM movement_ledger
             WHERE account_ref = @account_ref;
             """;

@@ -1,0 +1,13 @@
+{
+  "type": "record",
+  "namespace": "operations",
+  "name": "HoldCaptured",
+  "doc": "The matching settlement/capture arrived (ADR-PC-033 slot 2): the hold leaves the active set (stops reducing the available balance); the posting Movement that moves the accounting balance rides its own Movement-bearing event, not this fact. A capture MAY be partial — captured_amount_cents less than the placed amount releases the remainder. DORMANT wire shape (the .avsc.json posture): the event is STORE-ONLY today (ADR-IC-017 — no named external consumer); bus promotion is renaming to .avsc plus the AsyncAPI catalog entry. Field names follow the engine codec convention. No PII (ADR-PC-004).",
+  "fields": [
+    { "name": "instance_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "The account-owning instance (stream) the hold rides — a structural id, not PII." },
+    { "name": "hold_id", "type": "string", "doc": "The placed hold this capture releases (the ADR-PC-033 slot-4 lifecycle key)." },
+    { "name": "account_ref", "type": "string", "doc": "The opaque account the earmark applied to — a reference, never PII." },
+    { "name": "captured_amount_cents", "type": "long", "doc": "The settled amount in integer cents — may be less than the placed amount (a partial capture releases the remainder)." },
+    { "name": "value_date", "type": { "type": "int", "logicalType": "date" }, "doc": "The economic date the capture settled — an input date, never a clock read." }
+  ]
+}

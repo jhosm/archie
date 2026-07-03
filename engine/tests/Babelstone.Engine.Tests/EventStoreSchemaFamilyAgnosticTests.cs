@@ -67,6 +67,9 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
     /// <c>movement_ledger</c> (0019 — the spine-owned, <c>account_ref</c>-keyed movement ledger, the
     /// ADR-PC-032 §A1 read side; it folds only the family-agnostic <c>Movement</c> atom via the
     /// <c>IMovementBearing</c> seam, so it carries no family-named column).
+    /// <c>account_holds</c> (0020 — the spine-owned, <c>account_ref</c>-keyed active-hold read model,
+    /// the ADR-PC-033 hold-lifecycle fold the available-balance read subtracts; it carries only opaque
+    /// <c>hold_id</c>/<c>account_ref</c> references and closed-set states, so no family-named column).
     /// <c>schema_migrations</c> is created by <see cref="MigrationRunner"/> in code (not a
     /// <c>.sql</c> resource, so the parse never sees it today); it is listed defensively so that moving
     /// the ledger DDL into a migration file stays green.
@@ -75,7 +78,7 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
     [
         "events", "outbox", "snapshots", "rate_sheets", "projections",
         "pack_versions", "projection_checkpoints", "inbox", "command_dedup", "schema_migrations",
-        "bulk_operation_jobs", "bulk_operation_targets", "movement_ledger",
+        "bulk_operation_jobs", "bulk_operation_targets", "movement_ledger", "account_holds",
     ];
 
     /// <summary>
