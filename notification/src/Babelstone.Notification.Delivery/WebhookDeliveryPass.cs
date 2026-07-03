@@ -123,6 +123,9 @@ public sealed class WebhookDeliveryPass(
         {
             case WebhookDeliveryOutcome.Delivered:
                 await _outbox.MarkDeliveredAsync(record.NotificationId, attempt, ct);
+                // The aggregable outcome series (ADR-IC-007): recorded once per classified attempt,
+                // beside the per-attempt log line the counter makes rate-queryable.
+                NotificationDeliveryMetrics.RecordOutcome(NotificationDeliveryMetrics.OutcomeDelivered);
                 logger?.LogInformation(
                     "Notification {NotificationId} ({TriggerKind}) delivered on attempt {Attempt}.",
                     record.NotificationId, record.Signal.TriggerKind, attempt);
@@ -132,6 +135,7 @@ public sealed class WebhookDeliveryPass(
                 // §D4: a non-429 4xx means the endpoint is misconfigured — abandon immediately and flag
                 // for human review (the subscription-suspension event is the durable store's follow-up).
                 await _outbox.MarkAbandonedAsync(record.NotificationId, attempt, result.Detail, ct);
+                NotificationDeliveryMetrics.RecordOutcome(NotificationDeliveryMetrics.OutcomeAbandoned);
                 logger?.LogError(
                     "Notification {NotificationId} ABANDONED on attempt {Attempt}: {Detail}. The webhook "
                     + "endpoint is misconfigured (ADR-IC-011 §D4) — human review required.",
@@ -142,6 +146,7 @@ public sealed class WebhookDeliveryPass(
                 // §D4 exhaustion (~12h of backoff): dead-letter. The producing flow is long committed and
                 // unaffected (post-flag); the consumer/operator picks this up out of band.
                 await _outbox.MarkDeadLetteredAsync(record.NotificationId, attempt, result.Detail, ct);
+                NotificationDeliveryMetrics.RecordOutcome(NotificationDeliveryMetrics.OutcomeDeadLettered);
                 logger?.LogError(
                     "Notification {NotificationId} DEAD-LETTERED after {Attempt} attempts: {Detail} "
                     + "(ADR-IC-011 §D4 exhaustion).",
@@ -155,6 +160,7 @@ public sealed class WebhookDeliveryPass(
                 var nextAttemptAt = _clock.GetUtcNow() + delay;
                 await _outbox.MarkAttemptFailedAsync(
                     record.NotificationId, attempt, nextAttemptAt, result.Detail, ct);
+                NotificationDeliveryMetrics.RecordOutcome(NotificationDeliveryMetrics.OutcomeTransientRetry);
                 logger?.LogWarning(
                     "Notification {NotificationId} delivery attempt {Attempt} failed transiently ({Detail}); "
                     + "next attempt at {NextAttemptAt:O}.",

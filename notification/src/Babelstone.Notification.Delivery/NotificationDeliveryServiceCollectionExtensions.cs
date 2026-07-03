@@ -88,8 +88,8 @@ public static class NotificationDeliveryServiceCollectionExtensions
         services.TryAddSingleton(TimeProvider.System);
 
         // The per-service outbox (ADR-IC-004): the durable PostgreSQL store when a connection string
-        // is configured (bd babelstone-60n8.10 — production posture, ADR-IC-011 §P3), else the
-        // in-memory v1 (dev/tests: a host with no delivery database keeps its pre-durability shape).
+        // is configured (the production posture, ADR-IC-011), else the in-memory double (a host with
+        // no delivery database keeps the in-process shape).
         var deliveryConnectionString =
             configuration["Notification:Delivery:ConnectionString"]
             ?? configuration.GetConnectionString("NotificationDelivery")
@@ -146,20 +146,21 @@ public static class NotificationDeliveryServiceCollectionExtensions
     }
 
     /// <summary>
-    /// The durable-delivery composition (bd babelstone-60n8.10): the PostgreSQL
-    /// <see cref="IDeliveryOutbox"/> + its boot-time migration service, and — when the backbone is
-    /// configured (<c>Kafka:BootstrapServers</c>, the same key the engine host reads) — the §D4
-    /// exhaustion relay that publishes <c>NotificationDeliveryExhausted</c> (ADR-IC-011 §P3 step 7).
-    /// With no bootstrap servers configured the store still runs durable and dead-letters still write
-    /// exhausted-outbox rows; the announcement drains once a broker is configured — rows are never
-    /// lost, only waiting (ADR-IC-004 backpressure posture).
+    /// The durable-delivery composition: the PostgreSQL <see cref="IDeliveryOutbox"/> + its boot-time
+    /// migration service + the exhausted-backlog-age gauge, and — when the backbone is configured
+    /// (<c>Kafka:BootstrapServers</c>, the same key the engine host reads) — the exhaustion relay that
+    /// publishes <c>NotificationDeliveryExhausted</c> (ADR-IC-011). With no bootstrap servers
+    /// configured the store still runs durable and dead-letters still write exhausted-outbox rows; the
+    /// announcement drains once a broker is configured — rows are never lost, only waiting
+    /// (ADR-IC-004 backpressure posture), a mode the boot WARN below and the climbing lag gauge keep
+    /// from being silent.
     /// </summary>
     private static void AddDurableDeliveryStore(
         IServiceCollection services, IConfiguration configuration, string connectionString)
     {
-        // The two-connection split (ADR-PC-001 §P3, the lifecycle/orchestrator shape): DDL runs as the
-        // migration role; the runtime role holds only the enqueue/claim/flip envelope. In dev the
-        // migration string falls back to the runtime one.
+        // The two-connection split (the ADR-PC-001 role discipline; the lifecycle/orchestrator shape):
+        // DDL runs as the migration role; the runtime role holds only the enqueue/claim/flip envelope.
+        // In dev the migration string falls back to the runtime one.
         var migrationConnectionString =
             configuration["Notification:Delivery:MigrationConnectionString"]
             ?? configuration.GetConnectionString("NotificationDeliveryMigration")
@@ -169,11 +170,17 @@ public static class NotificationDeliveryServiceCollectionExtensions
         services.AddSingleton<IDeliveryOutbox>(store);
         services.AddSingleton<IExhaustedDeliveryOutbox>(store);
 
-        // Registered BEFORE the delivery/relay workers below: hosted services start in registration
-        // order and this one's StartAsync AWAITS the runner, so those workers only start against a
-        // migrated store. (The scheduler's NotificationWorker is typically registered by the host
-        // before this call — its first pass racing a first-boot migration is a transient failure the
-        // cadence loop's backoff absorbs.)
+        // The exhausted-backlog-age gauge rides with the STORE, not the relay: it must keep climbing
+        // (and alerting) precisely when no relay is draining — wedged, crashed, or never configured.
+        // Container-owned singleton, so disposal removes the gauge with the host.
+        services.AddSingleton(_ => new ExhaustedPendingLagObserver(connectionString));
+
+        // Registered BEFORE the delivery/relay workers below: with the host's default sequential
+        // hosted-service startup, registration order is start order and this service's StartAsync
+        // AWAITS the runner, so those workers only start against a migrated store. (A host that opts
+        // into concurrent startup, or a hosted service registered before this call — the scheduler's
+        // NotificationWorker typically is — can race a first-boot migration; that is a transient
+        // failure the cadence loop's backoff absorbs.)
         services.AddHostedService(provider => new DeliveryStoreMigrationService(
             migrationConnectionString,
             provider.GetService<Microsoft.Extensions.Logging.ILogger<DeliveryStoreMigrationService>>()));
@@ -181,7 +188,16 @@ public static class NotificationDeliveryServiceCollectionExtensions
         var bootstrapServers = configuration["Kafka:BootstrapServers"];
         if (string.IsNullOrWhiteSpace(bootstrapServers))
         {
-            return; // durable store without a backbone — exhausted rows accumulate PENDING (see summary)
+            // Durable store without a backbone: dead-letters are recorded but their announcements
+            // cannot drain. A legitimate dev posture and a silent-stall production misconfiguration —
+            // so say it ONCE, loudly, at boot (the lag gauge is the ongoing alarm).
+            services.AddHostedService(provider => new StartupWarningService(
+                provider.GetService<Microsoft.Extensions.Logging.ILogger<StartupWarningService>>(),
+                "The durable notification delivery store is configured but no Kafka:BootstrapServers "
+                + "is — NotificationDeliveryExhausted announcements will accumulate PENDING in "
+                + "notification_delivery_exhausted and NOT drain to the backbone (ADR-IC-011) until "
+                + "a broker is configured. Watch notification_delivery_exhausted_pending_lag_seconds."));
+            return;
         }
 
         // The same SR keys the engine host's bus codec reads (Bus:SchemaRegistryUrl defaulting to the

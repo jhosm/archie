@@ -6,9 +6,9 @@ using Xunit;
 namespace Babelstone.Notification.Delivery.Tests;
 
 /// <summary>
-/// The FORMAL Pact CDC consumer half of the notify emit contract (bd babelstone-2t16.14; ADR-IC-009) —
-/// the AUTHORITATIVE behavioural gate the G.6 emit-contract fitness tests defer to in their
-/// doc-comments. In plain English: the notification-delivery estate is the CONSUMER of the engine's
+/// The FORMAL Pact CDC consumer half of the notify emit contract (ADR-IC-009) — the AUTHORITATIVE
+/// behavioural gate the G.6 emit-contract fitness tests defer to in their doc-comments. In plain
+/// English: the notification-delivery estate is the CONSUMER of the engine's
 /// EVENT_DRIVEN <c>NotificationDue</c> messages; this test declares, as a real PactV3 message pact,
 /// exactly what a consumable message looks like — identity fields present and non-null, money as
 /// positive integer cents, the governed trigger taxonomy — proves the consumer's own binding against a
@@ -27,13 +27,13 @@ namespace Babelstone.Notification.Delivery.Tests;
 /// the Pact-STYLE <c>NotificationDuePactConsumerTests</c>) only structurally imply.
 /// </para>
 /// <para>
-/// <b>Why PactNet 4.5.</b> The repo's earlier Pact-STYLE stance ("the PactNet FFI is CI-fragile") is
-/// half-lifted by this issue: the FFI runs fine for message pacts on the 4.5 line, while 5.0.x has an
-/// open upstream message-verification regression (pact-net #530) — see Directory.Packages.props.
+/// <b>Why PactNet 4.5.</b> The 5.0.x line fails message producer-verification with "builder error
+/// for url (message://…)" (pact-foundation/pact-net#530); the 4.5 line runs both halves green — see
+/// Directory.Packages.props.
 /// </para>
 /// <para>
 /// <b>Regenerating.</b> The committed pact is the artefact of record (published to the dev-stack Pact
-/// Broker via <c>make pact-publish</c>, ADR-IC-009 §S1). After a DELIBERATE contract change, run this
+/// Broker via <c>make pact-publish</c>, ADR-IC-009). After a DELIBERATE contract change, run this
 /// test with <c>BABELSTONE_PACT_UPDATE=1</c> to rewrite <c>contracts/pact/</c>, and commit the diff.
 /// </para>
 /// </remarks>
@@ -46,7 +46,7 @@ public sealed class NotificationDueMessagePactTests
     public const string Provider = "engine";
 
     private const string UuidRegex = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
-    private const string CentsRegex = "^[0-9]+$";          // money-as-cents: digits only, never a float (ADR-IC-009 §P2)
+    private const string CentsRegex = "^[0-9]+$";          // money-as-cents: digits only, never a float (ADR-IC-009)
     private const string IsoDateRegex = "^[0-9]{4}-[0-9]{2}-[0-9]{2}$";
 
     [Fact]
@@ -60,7 +60,7 @@ public sealed class NotificationDueMessagePactTests
             .Given("a term deposit matured with a notification obligation")
             .WithJsonContent(new
             {
-                // The identity set (ADR-IC-009 §P2: never null) — the dedupe key, the stream, the
+                // The identity set (ADR-IC-009: never null) — the dedupe key, the stream, the
                 // recipient reference (opaque — PII resolved at render time, ADR-PC-025 Decision 1).
                 notification_id = Match.Regex("018f3c1a-2f66-7c3e-9c9a-5b8f0d9e4a01", UuidRegex),
                 instance_id = Match.Regex("2b6f2e8c-6f9d-4b7e-8a2c-9d1e0f3a5b7c", UuidRegex),
@@ -69,12 +69,12 @@ public sealed class NotificationDueMessagePactTests
                 template_ref = Match.Type("pt.notice.maturity"),
                 template_pack_version = Match.Type("pt.2026.1"),
                 // EXACT equality, not a type matcher: this pact is the EVENT_DRIVEN leg's contract
-                // (the governed taxonomy symbol, ADR-PC-025 §6).
+                // (the governed taxonomy symbol, ADR-PC-025).
                 trigger_kind = "EVENT_DRIVEN",
                 // EVENT_DRIVEN always traces to a causing domain event (ADR-PC-023).
                 causation_id = Match.Regex("5e8d7c1d-9a3e-4b2f-8a2c-3d5a7b9c1f0e", UuidRegex),
                 // Structural interpolation values only: amounts are INTEGER-CENT STRINGS (money is
-                // never a float on any wire — ADR-PC-010 §P1 / ADR-IC-009 §P2), dates are ISO.
+                // never a float on any wire — ADR-PC-010 / ADR-IC-009), dates are ISO.
                 data = new
                 {
                     principal_cents = Match.Regex("1000000", CentsRegex),
@@ -91,10 +91,10 @@ public sealed class NotificationDueMessagePactTests
     }
 
     /// <summary>
-    /// The consumer-side binding proof: the delivery estate can construct its
-    /// <see cref="NotificationDueSignal"/> from the message exactly the way the (future) bus source
-    /// implementation will — ids parse as GUIDs, the trigger symbol maps through the governed
-    /// <see cref="TriggerKindWire"/> vocabulary, amounts are integer cents.
+    /// The consumer-side binding proof: a bus-source implementation must construct
+    /// <see cref="NotificationDueSignal"/> from exactly this message — ids parse as GUIDs, the
+    /// trigger symbol maps through the governed <see cref="TriggerKindWire"/> vocabulary, amounts
+    /// are integer cents.
     /// </summary>
     private static void BindLikeTheDeliveryEstate(JObject message)
     {

@@ -59,13 +59,12 @@
          settlement endpoints and points the dispatcher's SettlementBaseUrl at it — a TEST-only
          dependency that does NOT widen the runtime orchestrator graph (ADR-PC-019 §P2). -->
     <PackageVersion Include="WireMock.Net" Version="2.11.0" />
-    <!-- PactNet (bd babelstone-2t16.14, ADR-IC-009): the FORMAL Pact CDC harness for the notify emit
-         contract — the notification-delivery consumer's message pact + the engine-side producer
-         verification, both TEST-only (never a runtime dependency). Pinned to the 4.5 line
-         DELIBERATELY: PactNet 5.0.x ships a libpact_ffi regression that breaks message-pact
-         PRODUCER verification with "builder error for url (message://...)" (pact-foundation/pact-net
-         #530, open); 4.5.0's bundled FFI predates it and both halves run green. Revisit when #530
-         closes upstream. -->
+    <!-- PactNet (ADR-IC-009): the FORMAL Pact CDC harness for the notify emit contract — the
+         notification-delivery consumer's message pact + the engine-side producer verification, both
+         TEST-only (never a runtime dependency). Pinned to the 4.5 line DELIBERATELY: PactNet 5.0.x
+         ships a libpact_ffi regression that breaks message-pact PRODUCER verification with
+         "builder error for url (message://...)" (pact-foundation/pact-net#530); 4.5.0's bundled FFI
+         predates it and both halves run green. -->
     <PackageVersion Include="PactNet" Version="4.5.0" />
     <!-- Line/branch code-coverage collector (Q.y, babelstone-2t16.13). Each *.Tests.csproj
          carries a version-less <PackageReference Include="coverlet.collector"> with

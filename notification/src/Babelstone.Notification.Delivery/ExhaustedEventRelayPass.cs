@@ -1,10 +1,11 @@
 using Babelstone.Cadence;
+using Babelstone.Telemetry;
 using Microsoft.Extensions.Logging;
 
 namespace Babelstone.Notification.Delivery;
 
 /// <summary>
-/// The per-tick §D4 exhaustion relay (ADR-IC-011 §P3 step 7; bd babelstone-60n8.10): claim the PENDING
+/// The per-tick exhaustion relay (ADR-IC-011): claim the PENDING
 /// <c>NotificationDeliveryExhausted</c> outbox rows, publish each to the backbone, flip it PUBLISHED.
 /// The notification estate's own miniature of the engine's outbox relay (ADR-IC-004), on the same
 /// clock-owning cadence machinery (ADR-IC-019 mechanism reuse). A publish failure aborts the pass and
@@ -45,12 +46,18 @@ public sealed class ExhaustedEventRelayPass(
             // at-least-once with a stable id, the ADR-IC-004 posture. The flip never precedes the ack.
             await _publisher.PublishAsync(exhausted, ct);
             await _outbox.MarkPublishedAsync(exhausted.NotificationId, ct);
+            NotificationDeliveryMetrics.RecordExhaustedPublished();
 
-            logger?.LogWarning(
+            // Information, not Warning: the paging signal is the DEAD-LETTERED Error the drain pass
+            // emitted at flip time; this line records that the announcement went out (the alertable
+            // structured event an operator keys the out-of-band pickup on).
+            logger?.LogInformation(
+                BabelstoneEvents.NotificationDeliveryExhaustedPublished,
                 "NotificationDeliveryExhausted published for notification {NotificationId} "
-                + "({TriggerKind}, {Attempts} attempts): {LastError}. The obligation is dead-lettered "
-                + "(ADR-IC-011 §D4) — operator/consumer pickup is out of band.",
-                exhausted.NotificationId, exhausted.TriggerKind, exhausted.Attempts, exhausted.LastError);
+                + "({TriggerKind}, {Attempts} attempts, causation {CausationId}): {LastError}. The "
+                + "obligation is dead-lettered (ADR-IC-011) — operator/consumer pickup is out of band.",
+                exhausted.NotificationId, exhausted.TriggerKind, exhausted.Attempts,
+                exhausted.CausationId, exhausted.LastError);
         }
     }
 }

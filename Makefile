@@ -84,7 +84,7 @@ openapi-catalog-selftest: ## Prove the OpenAPI gate rejects each negative fixtur
 openapi-catalog-reconcile: ## Live check: kong.yml routes materialise in a throwaway Kong (ADR-IC-020 main lane, needs Docker)
 	@./scripts/openapi-catalog-reconcile.sh
 
-pact-broker-up: ## Start the self-hosted Pact Broker (+ its Postgres) — profile `pact` (ADR-IC-009 §S1, bd 2t16.14)
+pact-broker-up: ## Start the self-hosted Pact Broker (+ its Postgres) — profile `pact` (ADR-IC-009)
 	@$(COMPOSE) --profile pact up -d --wait pact-broker
 	@echo "Pact Broker: http://localhost:$${PACT_BROKER_PORT:-9292}"
 

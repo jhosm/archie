@@ -37,6 +37,12 @@
       "type": "enum"
     },
     {
+      "has_default": true,
+      "name": "causation_id",
+      "optional": true,
+      "type": "[null,string@uuid]"
+    },
+    {
       "has_default": false,
       "name": "attempts",
       "optional": false,

@@ -4,8 +4,8 @@ using Xunit;
 namespace Babelstone.Notification.Delivery.Tests;
 
 /// <summary>
-/// The §D4 exhaustion relay's drain semantics (bd babelstone-60n8.10; ADR-IC-011 §P3 step 7 /
-/// ADR-IC-004), over fakes at the outbox and publisher seams: publish-then-flip ordering, batch
+/// The exhaustion relay's drain semantics (ADR-IC-011 / ADR-IC-004), over fakes at the outbox and
+/// publisher seams: publish-then-flip ordering, batch
 /// bounding, and the backpressure posture — a publish failure aborts the pass and flips NOTHING behind
 /// it, so an unreachable broker leaves every unannounced row PENDING for the next tick (never lost,
 /// never FAILED).
@@ -22,6 +22,7 @@ public sealed class ExhaustedEventRelayPassTests
         TemplateRef: "pt.test.notice",
         TemplatePackVersion: "pt.2026.1",
         TriggerKind: NotificationTriggerKind.Scheduled,
+        CausationId: null,
         Attempts: 10,
         LastError: "receiver answered 503",
         ExhaustedAt: DateTimeOffset.UtcNow);

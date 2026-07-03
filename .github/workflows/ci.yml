@@ -95,8 +95,8 @@ jobs:
             acl: ['acl/**']
             mcp_server: ['mcp-server/**']
             # notification also names contracts/pact/**: the delivery tests drift-check the committed
-            # notification-delivery⇄engine message pact (bd 2t16.14, ADR-IC-009), so a hand-edit of
-            # the pact artefact must re-run the consumer lane that would catch it.
+            # notification-delivery⇄engine message pact (ADR-IC-009), so a hand-edit of the pact
+            # artefact must re-run the consumer lane that would catch it.
             notification: ['notification/**', 'cadence/**', 'composition/**', 'contracts/pact/**']
             lifecycle: ['lifecycle-driver/**', 'cadence/**', 'composition/**']
             product_configs: ['product-configs/**']
@@ -196,8 +196,8 @@ jobs:
         # (maintainer directive). The Category=Fuzz trait tags AvroDecodeFuzzTests, InboxWireFormatFuzzTests,
         # and EngineApiJsonEnvelopeFuzzTests (all unit-tier) so this filter excludes them here.
         #
-        # The ADR-IC-009 Pact PRODUCER-verification lane (bd babelstone-2t16.14) also runs in this
-        # step: NotificationDuePactProviderTests (Babelstone.OutboxPublisher.Tests, NOTIFY_EMIT_PACT)
+        # The ADR-IC-009 Pact PRODUCER-verification lane also runs in this step:
+        # NotificationDuePactProviderTests (Babelstone.OutboxPublisher.Tests, NOTIFY_EMIT_PACT)
         # verifies the committed contracts/pact/notification-delivery-engine.json against a payload
         # round-tripped through the engine-embedded governed schema + the real Avro codec — hermetic
         # (file-sourced pact, no broker), Docker-free, so it needs no extra job or step.
@@ -597,20 +597,20 @@ jobs:
         # The DELIVERY-half tests (bd babelstone-60n8.4/.7) run as a second Docker-free lane: the
         # ADR-IC-011 HMAC/backoff/dead-letter transport + the ADR-IC-004 outbox over a fake
         # HttpMessageHandler — no receiver, no infrastructure. The delivery-half consumer PACT lane
-        # (bd babelstone-2t16.14, ADR-IC-009) also runs in the unit tier: the committed
-        # contracts/pact/ message pacts are regenerated and drift-checked there, Docker-free.
+        # (ADR-IC-009) also runs in the unit tier: the committed contracts/pact/ message pacts are
+        # regenerated and drift-checked there, Docker-free.
         # (`dotnet test` takes ONE path, so one invocation per test project, like the
         # engine/orchestrator jobs.)
         run: |
           dotnet build notification/src/Babelstone.Notification.Host/Babelstone.Notification.Host.csproj --configuration Release --nologo
           dotnet test notification/tests/Babelstone.Notification.Tests/Babelstone.Notification.Tests.csproj --configuration Release --nologo --filter "Category!=Integration"
           dotnet test notification/tests/Babelstone.Notification.Delivery.Tests/Babelstone.Notification.Delivery.Tests.csproj --configuration Release --nologo --filter "Category!=Integration"
-      - name: Integration tests (Testcontainers tier — ADR-IC-009; bd babelstone-60n8.10)
+      - name: Integration tests (Testcontainers tier — ADR-IC-009)
         # The durable-delivery-store tier: PostgresDeliveryOutboxIntegrationTests against a REAL
         # PostgreSQL (Testcontainers self-manages the container — random host ports, no `services:`
         # block; the ubuntu-latest runner ships Docker), mirroring the orchestrator/lifecycle jobs'
-        # two-tier shape. Proves the crash-surviving ADR-IC-011 §P3 store: idempotent enqueue across
-        # store instances, the §D4 lifecycle, and the atomic DEAD_LETTERED flip +
+        # two-tier shape. Proves the crash-surviving ADR-IC-011 store: idempotent enqueue across
+        # store instances, the retry lifecycle, and the atomic DEAD_LETTERED flip +
         # NotificationDeliveryExhausted outbox insert (ADR-IC-004).
         run: |
           dotnet test notification/tests/Babelstone.Notification.Delivery.Tests/Babelstone.Notification.Delivery.Tests.csproj --configuration Release --nologo --filter "Category=Integration"

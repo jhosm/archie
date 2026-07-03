@@ -1,4 +1,6 @@
+using System.Diagnostics.Metrics;
 using Babelstone.Notification.Delivery.Migrations;
+using Babelstone.Telemetry;
 using Babelstone.TestFixtures;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -8,9 +10,9 @@ namespace Babelstone.Notification.Delivery.Tests;
 
 /// <summary>
 /// One PostgreSQL container with the notification delivery estate's own migration set applied (the
-/// <c>notification_delivery</c> series, ADR-IC-011 §P3; bd babelstone-60n8.10) — the same fixture shape
-/// as the lifecycle driver's <c>LifecyclePostgresFixture</c> and the orchestrator's. Tests use fresh
-/// notification ids, so a shared database needs no per-test reset.
+/// <c>notification_delivery</c> series, ADR-IC-011) — the same fixture shape as the lifecycle
+/// driver's <c>LifecyclePostgresFixture</c> and the orchestrator's. Tests use fresh notification ids,
+/// so a shared database needs no per-test reset.
 /// </summary>
 public sealed class DeliveryPostgresFixture : IAsyncLifetime
 {
@@ -31,13 +33,12 @@ public sealed class DeliveryPostgresFixture : IAsyncLifetime
 public sealed class DeliveryPostgresCollection : ICollectionFixture<DeliveryPostgresFixture>;
 
 /// <summary>
-/// The durable delivery store against a REAL PostgreSQL (bd babelstone-60n8.10 — the crash-surviving
-/// replacement for the in-memory v1, ADR-IC-011 §P3): idempotent enqueue on the composite
-/// <c>notification_id</c> (ADR-PC-025 slot 4) that survives a "restart" (a fresh store instance over
-/// the same database), the due-claim ordering, the §D4 status lifecycle with fail-loud unknown-id
-/// marks, and the load-bearing transactional pair — the DEAD_LETTERED flip and the
-/// <c>NotificationDeliveryExhausted</c> outbox row commit together, and the exhausted row drains
-/// through claim → publish → PUBLISHED exactly once.
+/// The durable delivery store against a REAL PostgreSQL (ADR-IC-011): idempotent enqueue on the
+/// composite <c>notification_id</c> (ADR-PC-025 slot 4) that survives a "restart" (a fresh store
+/// instance over the same database), the due-claim ordering, the status lifecycle with fail-loud
+/// unknown-id marks, the load-bearing transactional pair — the DEAD_LETTERED flip and the
+/// <c>NotificationDeliveryExhausted</c> outbox row commit together, the exhausted row drains through
+/// claim → publish → PUBLISHED exactly once — and the DB-backed pending-lag gauge.
 /// </summary>
 [Trait("Category", "Integration")]
 [Collection(nameof(DeliveryPostgresCollection))]
@@ -49,14 +50,16 @@ public sealed class PostgresDeliveryOutboxIntegrationTests(DeliveryPostgresFixtu
 
     private static NotificationDueSignal Signal(
         NotificationTriggerKind triggerKind = NotificationTriggerKind.Scheduled,
-        Guid? customerRef = null) => new(
+        Guid? customerRef = null,
+        Guid? causationId = null) => new(
         NotificationId: Guid.NewGuid(),
         InstanceId: Guid.NewGuid(),
         CustomerRef: customerRef,
         TemplateRef: "pt.test.notice",
         TemplatePackVersion: "pt.2026.1",
         TriggerKind: triggerKind,
-        CausationId: triggerKind == NotificationTriggerKind.EventDriven ? Guid.NewGuid() : null,
+        CausationId: causationId
+            ?? (triggerKind == NotificationTriggerKind.EventDriven ? Guid.NewGuid() : null),
         Data: new Dictionary<string, string> { ["principal_cents"] = "1000000", ["maturity_date"] = "2026-09-01" },
         DueAt: new DateOnly(2026, 7, 3));
 
@@ -176,8 +179,8 @@ public sealed class PostgresDeliveryOutboxIntegrationTests(DeliveryPostgresFixtu
         var record = await store.GetAsync(signal.NotificationId);
         Assert.NotNull(record);
         Assert.Equal(DeliveryStatus.Abandoned, record.Status);
-        // §D4 separates the two terminal failures: only EXHAUSTION announces on the backbone; the
-        // misconfigured-endpoint case is the human-review residual, not an exhausted event.
+        // ADR-IC-011 separates the two terminal failures: only EXHAUSTION announces on the backbone;
+        // the misconfigured-endpoint case is the human-review residual, not an exhausted event.
         Assert.Equal(0, await CountExhaustedRowsAsync(signal.NotificationId));
     }
 
@@ -186,7 +189,8 @@ public sealed class PostgresDeliveryOutboxIntegrationTests(DeliveryPostgresFixtu
     {
         var store = Store();
         var customerRef = Guid.NewGuid();
-        var signal = Signal(NotificationTriggerKind.EventDriven, customerRef);
+        var causationId = Guid.NewGuid();
+        var signal = Signal(NotificationTriggerKind.EventDriven, customerRef, causationId);
         await store.EnqueueAsync(signal, T0);
 
         await store.MarkDeadLetteredAsync(signal.NotificationId, attempts: 10, "receiver answered 503");
@@ -196,8 +200,13 @@ public sealed class PostgresDeliveryOutboxIntegrationTests(DeliveryPostgresFixtu
         Assert.Equal(DeliveryStatus.DeadLettered, record.Status);
         Assert.Equal(10, record.Attempts);
 
-        // The same transaction recorded the §D4 announcement (ADR-IC-011 §P3 step 7 / ADR-IC-004) —
-        // claim it back through the relay's port and check the structural copy.
+        // Only a PENDING obligation can exhaust: a second dead-letter of the now-terminal record is
+        // the fail-loud wiring-bug path, not a silent double-announce.
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.MarkDeadLetteredAsync(signal.NotificationId, attempts: 11, "again"));
+
+        // The same transaction recorded the announcement (ADR-IC-011 / ADR-IC-004) — claim it back
+        // through the relay's port and check the structural copy, causation included (ADR-PC-023).
         var pending = await store.ClaimPendingAsync(100);
         var exhausted = Assert.Single(pending, e => e.NotificationId == signal.NotificationId);
         Assert.Equal(signal.InstanceId, exhausted.InstanceId);
@@ -205,6 +214,7 @@ public sealed class PostgresDeliveryOutboxIntegrationTests(DeliveryPostgresFixtu
         Assert.Equal("pt.test.notice", exhausted.TemplateRef);
         Assert.Equal("pt.2026.1", exhausted.TemplatePackVersion);
         Assert.Equal(NotificationTriggerKind.EventDriven, exhausted.TriggerKind);
+        Assert.Equal(causationId, exhausted.CausationId);
         Assert.Equal(10, exhausted.Attempts);
         Assert.Equal("receiver answered 503", exhausted.LastError);
         Assert.NotEqual(Guid.Empty, exhausted.EventId);
@@ -216,6 +226,45 @@ public sealed class PostgresDeliveryOutboxIntegrationTests(DeliveryPostgresFixtu
             signal.NotificationId,
             (await store.ClaimPendingAsync(100)).Select(e => e.NotificationId));
         await Assert.ThrowsAsync<InvalidOperationException>(() => store.MarkPublishedAsync(signal.NotificationId));
+    }
+
+    [Fact]
+    public async Task Pending_exhausted_backlog_age_is_observable_on_the_shared_meter()
+    {
+        var store = Store();
+        var signal = Signal();
+        await store.EnqueueAsync(signal, T0);
+        await store.MarkDeadLetteredAsync(signal.NotificationId, attempts: 10, "receiver answered 503");
+
+        var measurements = new List<double>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == BabelstoneTelemetry.MeterName
+                && instrument.Name == BabelstoneAttributes.NotificationExhaustedPendingLagMetric)
+            {
+                l.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<double>((_, value, _, _) =>
+        {
+            lock (measurements)
+            {
+                measurements.Add(value);
+            }
+        });
+        listener.Start();
+
+        // The observer registers the gauge on the shared meter; RecordObservableInstruments drives
+        // its DB read (the collection cycle's analogue). With a PENDING row just written, the oldest
+        // backlog age must be a real, non-negative reading — the series an alert watches when no
+        // relay is draining.
+        using var observer = new ExhaustedPendingLagObserver(fixture.ConnectionString);
+        listener.RecordObservableInstruments();
+
+        Assert.NotEmpty(measurements);
+        Assert.All(measurements, v => Assert.True(v >= 0));
+        Assert.Contains(measurements, v => v > 0);
     }
 
     [Fact]

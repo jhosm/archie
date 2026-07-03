@@ -417,4 +417,47 @@ public static class BabelstoneAttributes
     /// <see cref="ReconciliationConsumer"/> / <see cref="ProjectionKind"/>).
     /// </summary>
     public const string LifecycleCommandKindTag = "command_kind";
+
+    /// <summary>
+    /// Webhook delivery-attempt outcomes (ADR-IC-011): a monotonic counter incremented once per
+    /// delivery attempt the notification drain pass classifies, tagged by
+    /// <see cref="NotificationDeliveryOutcomeTag"/> (<c>delivered</c> / <c>transient_retry</c> /
+    /// <c>abandoned</c> / <c>dead_lettered</c>). The rates an operator alarms on — a rising
+    /// <c>abandoned</c> is a misconfigured receiver endpoint, a rising <c>dead_lettered</c> is
+    /// exhaustion — where a log line alone is not aggregable. snake_case, read by dashboards/alerts by
+    /// this exact string.
+    /// </summary>
+    public const string NotificationDeliveriesMetric = "notification_deliveries_total";
+
+    /// <summary>
+    /// The OUTCOME dimension of <see cref="NotificationDeliveriesMetric"/> — the delivery pass's
+    /// classification of one attempt (ADR-IC-011 status handling): <c>delivered</c>,
+    /// <c>transient_retry</c>, <c>abandoned</c>, or <c>dead_lettered</c>. A closed structural
+    /// vocabulary, never PII (ADR-PC-004 / OBS_NO_PII_ATTRS). Carries the <c>babelstone.*</c> prefix —
+    /// the same tagging register as the outbox publish-latency histogram's
+    /// <see cref="AggregateType"/> tag.
+    /// </summary>
+    public const string NotificationDeliveryOutcomeTag = "babelstone.delivery_outcome";
+
+    /// <summary>
+    /// The exhausted-announcement backlog-age gauge (ADR-IC-004 posture, the notification estate's
+    /// mirror of <see cref="OutboxPublishLagMetric"/>): the age in seconds of the OLDEST
+    /// <c>PENDING</c> <c>notification_delivery_exhausted</c> outbox row at each collection cycle,
+    /// computed single-clock in the DB (0 when empty). A per-published counter goes silent exactly
+    /// when the relay is wedged or the broker/registry is unreachable — this gauge keeps climbing, so
+    /// it is the alert that catches a delivery estate silently accumulating unannounced dead-letters
+    /// (including the configured-store-but-no-backbone mode, which the host also WARNs about at boot).
+    /// snake_case-with-unit-suffix, read by alert rules by this exact string.
+    /// </summary>
+    public const string NotificationExhaustedPendingLagMetric =
+        "notification_delivery_exhausted_pending_lag_seconds";
+
+    /// <summary>
+    /// <c>NotificationDeliveryExhausted</c> events published to the backbone (ADR-IC-011): a monotonic
+    /// counter incremented once per broker-acked relay publish. The throughput face of the exhaustion
+    /// relay; its stall face is <see cref="NotificationExhaustedPendingLagMetric"/>. snake_case, read
+    /// by dashboards by this exact string.
+    /// </summary>
+    public const string NotificationExhaustedPublishedMetric =
+        "notification_delivery_exhausted_published_total";
 }

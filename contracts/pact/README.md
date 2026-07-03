@@ -14,7 +14,7 @@ catalogue) cannot give on their own.
 | `notification-delivery-engine.json` | `NotificationDueMessagePactTests` (`notification/tests/Babelstone.Notification.Delivery.Tests`) | `NotificationDuePactProviderTests` (`engine/tests/Babelstone.OutboxPublisher.Tests`, Test ID `NOTIFY_EMIT_PACT`) | The EVENT_DRIVEN `NotificationDue` message (ADR-PC-025): identity fields present and non-null, `customer_id` an opaque uuid reference, money as integer-cent **strings**, the governed `trigger_kind` symbol, ISO `due_at`. |
 
 The GL-posting Pact consumer is **GL-team-owned and out-of-repo** (ADR-PC-012): babelstone owns GL
-producer-verification only if/when a reference GL consumer exists (bd `babelstone-2t16.14` notes).
+producer-verification only if/when a reference GL consumer exists.
 
 ## Conventions
 
@@ -30,5 +30,5 @@ producer-verification only if/when a reference GL consumer exists (bd `babelston
   second repository consumes a babelstone contract.
 - **Regenerating after a deliberate contract change**: run the consumer test with
   `BABELSTONE_PACT_UPDATE=1`, commit the diff, and expect the producer verification to answer for it.
-- **PactNet is pinned to 4.5** (`Directory.Packages.props`): the 5.0.x line has an open upstream
-  message-verification regression (pact-foundation/pact-net#530).
+- **PactNet is pinned to 4.5** (`Directory.Packages.props`): the 5.0.x line fails message
+  producer-verification with "builder error for url (message://…)" (pact-foundation/pact-net#530).

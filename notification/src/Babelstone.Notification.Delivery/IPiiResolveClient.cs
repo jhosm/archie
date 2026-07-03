@@ -1,8 +1,9 @@
 namespace Babelstone.Notification.Delivery;
 
 /// <summary>
-/// The render-time PII resolve seam (ADR-PC-025 §PII / bd babelstone-60n8.7). In plain terms: the bus
-/// never carries a customer's name or NIF — only an opaque <c>customer_ref</c> — so the renderer asks the
+/// The render-time PII resolve seam (ADR-PC-025). In plain terms: the bus never carries a
+/// customer's name or NIF — only the opaque <c>customer_id</c> reference (the CLR signal's
+/// <see cref="NotificationDueSignal.CustomerRef"/>) — so the renderer asks the
 /// ENGINE for the PII it needs at the moment of rendering, uses it transiently for that one delivery
 /// attempt, and discards it. The engine decrypts internally (OpenBao stays inside the engine boundary,
 /// ADR-PC-004 §P2) and answers nothing for a crypto-shredded subject (§P3) — so an erased customer's
