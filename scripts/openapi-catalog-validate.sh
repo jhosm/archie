@@ -17,7 +17,12 @@
 #
 #   (2) OASDIFF BREAKING-CHANGE DIFF — each modified spec is diffed against its origin/main version
 #       with `oasdiff breaking`; a breaking change fails the build UNLESS the spec carries
-#       info.x-breaking-change-approved: true (the mirror of the AsyncAPI §P4 approval gate).
+#       info.x-breaking-change-approved: true (the mirror of the AsyncAPI §P4 approval gate). The
+#       approval is SINGLE-USE and self-cleaning: if a CHANGED spec carries the flag but oasdiff
+#       finds NO breaking change, the flag is STALE and the build FAILS — the author must drop it in
+#       the same change (an approval must not linger to silently pre-approve the NEXT breaking
+#       change; bd ax0b.3). Scoped to changed specs, so an unrelated PR is never blocked by another
+#       spec's still-legitimate pending flag.
 #
 #   (3) KONG-ROUTE <-> SPEC RECONCILIATION (the no-drift anchor). Reads infra/kong/kong.yml (never
 #       writes it) and, over the PUBLIC route surface:
@@ -234,10 +239,21 @@ else
 		rc=$?
 		set -e
 		rm -rf "$diffdir"
+		approved="$(y2j "$f" | jq -r '.info["x-breaking-change-approved"] // empty')"
 		if [ "$rc" -eq 0 ]; then
-			note "  ok    $f: no breaking changes vs $BASELINE_REF"
+			# No breaking change. A lingering info.x-breaking-change-approved:true is now STALE: it has
+			# no breaking change to approve and would silently pre-approve the NEXT one (the risk the
+			# "REMOVE this flag on next touch" note warns of). If THIS change touched the file, force the
+			# flag's removal here — self-cleaning, so the approval cannot outlive the one change it was
+			# granted for (ADR-IC-020 Decision §3; bd babelstone-ax0b.3). Scoped to a CHANGED file (git
+			# diff vs baseline) so an unrelated PR that leaves the spec untouched is never blocked by
+			# another spec's still-pending, still-legitimate flag.
+			if [ "$approved" = "true" ] && ! git diff --quiet "$BASELINE_REF" -- "$f" 2>/dev/null; then
+				err "$f: carries info.x-breaking-change-approved:true but has NO breaking change vs $BASELINE_REF — the approval flag is STALE; remove it in this change (a lingering flag silently pre-approves a FUTURE breaking change; ADR-IC-020 Decision §3)"
+			else
+				note "  ok    $f: no breaking changes vs $BASELINE_REF"
+			fi
 		else
-			approved="$(y2j "$f" | jq -r '.info["x-breaking-change-approved"] // empty')"
 			if [ "$approved" = "true" ]; then
 				note "  ok    $f: breaking change(s) — APPROVED (x-breaking-change-approved:true)"
 			else
