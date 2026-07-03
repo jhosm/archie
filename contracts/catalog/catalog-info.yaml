@@ -8,7 +8,11 @@
 #     `spec.type: asyncapi`, `spec.definition.$text` -> the relative AsyncAPI file;
 #   * the reconciliation contracts under ./reconciliation/*.reconciliation.yaml — one
 #     `kind: API` entity per consumer, `spec.type: reconciliation`, `spec.definition.$text`
-#     -> the relative descriptor (Backstage resolves $text relative to this file's location).
+#     -> the relative descriptor (Backstage resolves $text relative to this file's location);
+#   * the OpenAPI REST contracts under ../openapi/specs/*.openapi.yaml (ADR-IC-020; bd
+#     babelstone-ax0b.3) — one `kind: API` entity per spec, `spec.type: openapi`,
+#     `spec.definition.$text` -> the relative OpenAPI file (never inlined — the specs are
+#     gated by scripts/openapi-catalog-validate.sh, the REST mirror of the AsyncAPI gate).
 #
 # The descriptors ship as the source of truth; the Backstage HOST that renders them is
 # deployed by the infra/ manifests (infra/compose.yaml `backstage` service, infra/k8s/base/
@@ -73,6 +77,88 @@ spec:
     - ./reconciliation/engine-projection-runtime.reconciliation.yaml
     - ./reconciliation/acl.reconciliation.yaml
     - ./reconciliation/notification.reconciliation.yaml
+---
+# The governed OpenAPI catalogue of the synchronous REST surfaces (ADR-IC-020; bd
+# babelstone-ax0b.3) — the second catalogue spec format alongside AsyncAPI. Same $text-pointer
+# no-drift discipline: the *.openapi.yaml files under ../openapi/specs/ are the source of
+# truth (gated by scripts/openapi-catalog-validate.sh — Spectral governance fields, oasdiff
+# breaking diff, Kong-route reconciliation); the schema is NEVER inlined here.
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
+  name: babelstone-rest-apis
+  description: The governed OpenAPI catalogue of the public (and marked-internal) REST surfaces (ADR-IC-020).
+spec:
+  type: url
+  targets:
+    - ../openapi/specs/orchestrator-edge.openapi.yaml
+    - ../openapi/specs/engine-reads.openapi.yaml
+    - ../openapi/specs/engine-sor-ops.openapi.yaml
+    - ../openapi/specs/orchestrator-process-status.openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: orchestrator-edge-api
+  title: Edge — Deposit Constitution API
+  description: >
+    The public edge front door (ADR-IC-006): POST /api/v1/deposits/constitute starts the
+    constitution saga; the SSE stream reports its progress. JWT + PSD2-SCA + rate limits at
+    the Kong gateway.
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-edge
+  definition:
+    $text: ../openapi/specs/orchestrator-edge.openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: engine-deposit-reads-api
+  title: Engine — Deposit Query Reads
+  description: >
+    The CQRS read surface (ADR-IC-005 / ADR-PC-027): the canonical deposit point-read (with
+    as-of and read-your-writes) and the maturities range scan. Read-only — the engine command
+    surface is deliberately not public.
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-engine
+  definition:
+    $text: ../openapi/specs/engine-reads.openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: engine-sor-ops-api
+  title: Edge — SoR-Routed Instance Operations
+  description: >
+    The single client-facing surface for state-changing operations on an EXISTING instance
+    during coexistence (ADR-PC-018): the gateway resolves instance_id -> sor -> backend and
+    fails closed (503 SOR_UNRESOLVED) rather than guess a backend.
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-engine
+  definition:
+    $text: ../openapi/specs/engine-sor-ops.openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: orchestrator-process-status-api
+  title: Orchestrator — Process Status Snapshot
+  description: >
+    The poll-once saga-status snapshot (Document 11 Pattern 2) the MCP get_process_status
+    tool reads. NOT yet a public Kong route — an mcp->orchestrator internal read, marked
+    x-internal-route in the spec (the documented routing nuance).
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-edge
+  definition:
+    $text: ../openapi/specs/orchestrator-process-status.openapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API

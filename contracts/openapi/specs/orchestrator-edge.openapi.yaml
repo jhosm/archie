@@ -1,10 +1,20 @@
 openapi: 3.1.0
 # contracts/openapi/specs/orchestrator-edge.openapi.yaml — the PUBLIC edge front door
-# (ADR-IC-006 §Decision / Document 05; catalogued per ADR-IC-020). One hand-written OpenAPI
-# spec for the two orchestrator-upstream edge routes exposed through Kong: the constitute POST
-# that STARTS the saga, and the long-lived SSE saga-progress stream. The Kong-route <-> spec
-# reconciliation in scripts/openapi-catalog-validate.sh proves every path+method here is an
-# exposed public Kong route and vice-versa (the no-drift anchor).
+# (ADR-IC-006 §Decision / Document 05; catalogued per ADR-IC-020; bd babelstone-ax0b.3). One
+# hand-written OpenAPI spec for the two orchestrator-upstream edge routes exposed through Kong:
+# the constitute POST that STARTS the saga, and the long-lived SSE saga-progress stream. The
+# Kong-route <-> spec reconciliation in scripts/openapi-catalog-validate.sh proves every
+# path+method here is an exposed public Kong route and vice-versa (the no-drift anchor).
+#
+# Shapes are transcribed from the REAL code surfaces, not invented:
+#   * request validation — the constitute route's pre-function body check (infra/kong/kong.yml,
+#     deposits-constitute) + ProcessApiEndpoints.ConstituteAsync's structural validation;
+#   * 202 body — ConstituteResponse (orchestrator/src/.../Edge/ProcessApiEndpoints.cs),
+#     serialized snake_case by the edge's JsonOptions;
+#   * edge error envelopes — the Kong pre-function 403 SCA_REQUIRED {code, message} and the
+#     orchestrator's RFC 9457 application/problem+json rejections.
+# NO PII anywhere (ADR-PC-004 §P2): account references are opaque *_account_ref tokens, never
+# an IBAN/NIF/name; every example is synthetic.
 info:
   title: Babelstone Edge — Deposit Constitution API
   version: 1.0.0
@@ -13,7 +23,10 @@ info:
     constitution here (POST /api/v1/deposits/constitute) and watches its progress over the
     SSE stream. The engine COMMAND surface (POST /v1/deposits) is DELIBERATELY NOT here — it
     is the orchestrator's internal, mTLS-only saga target, never the public write path
-    (ADR-IC-006 §P5 Boundary 2).
+    (ADR-IC-006 §P5 Boundary 2). Both operations require an OAuth 2.0 bearer token validated
+    at the gateway (per-route jwt plugin, ADR-IC-006 §1); the constitute money-mover
+    additionally requires FRESH PSD2 Strong Customer Authentication (acr + auth_time claims,
+    ADR-IC-006 §P2) and is rate-limited to 5 req/min per consumer (§P3).
   # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
   x-owner: platform-edge
   x-owner-contact: platform-edge@babelstone.example
@@ -22,6 +35,15 @@ info:
   x-authorized-consumers:
     - retail-web
     - retail-mobile
+  # ── ADR-IC-020 Decision §3 breaking-change approval (openapi-catalog-validate.sh step 2) ──
+  # APPROVED for THIS change only: the 1.0.0 seed (PR #431's governance-gate scaffold) sketched
+  # a placeholder 202 body (process_id+stream_url only, uuid-typed) that never matched the
+  # shipped ConstituteResponse; this revision transcribes the REAL wire shapes (deposit_id/
+  # status added, PROC-… references not UUIDs, the gateway's minLength/SCA/429 semantics made
+  # explicit). No consumer ever integrated against the placeholder sketch. REMOVE this flag in
+  # the next change that touches this file — leaving it would silently pre-approve a FUTURE
+  # breaking change.
+  x-breaking-change-approved: true
 servers:
   - url: https://api.babelstone.example
     description: Public edge gateway (Kong).
@@ -31,9 +53,18 @@ paths:
       operationId: constituteDeposit
       summary: Start a term-deposit constitution (STARTS the saga).
       description: >
-        Accepts a constitution request and returns 202 with a process_id and a stream_url.
-        Rate-limited and PSD2-SCA-enforced at the edge (ADR-IC-006 §P2/§P3). The body carries
-        already-tokenised account references — NO raw PII (ADR-PC-004 §P2).
+        Accepts a constitution request and returns 202 with the client-facing references and a
+        stream_url. The 202 means the SAGA started (Document 05 §Step 0) — it is NOT the
+        deposit's terminal outcome; watch the SSE stream (or poll the process-status snapshot)
+        for the saga's progression to a terminal state. Rate-limited (5 req/min per consumer)
+        and PSD2-SCA-enforced at the edge (ADR-IC-006 §P2/§P3): the gateway rejects an absent
+        or stale SCA proof with 403 SCA_REQUIRED before the request reaches the application.
+        The body carries already-tokenised account references — NO raw PII (ADR-PC-004 §P2).
+        The owning client is the GATEWAY-attested caller identity (the JWT sub Kong propagates
+        as X-Client-Id), never a body field — it is what the stream/status ownership checks
+        bind to.
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -42,18 +73,47 @@ paths:
               $ref: '#/components/schemas/ConstituteRequest'
       responses:
         '202':
-          description: Constitution accepted; the saga has started.
+          description: >
+            Constitution accepted; the saga has started. The Location header carries the SSE
+            stream URL for this process (the same value as body stream_url).
+          headers:
+            Location:
+              description: The SSE saga-progress stream URL for the started process.
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConstituteAccepted'
         '400':
-          description: Structurally invalid request (rejected at the edge).
+          description: >
+            Structurally invalid request, rejected at the edge (Kong pre-function body
+            validation: missing/empty product_code or source_account_ref, a non-positive or
+            non-integer amount, a non-JSON body) or by the orchestrator's own structural check.
+            Edge rejections carry a JSON {message}; application rejections carry RFC 9457
+            application/problem+json.
         '401':
-          description: Missing or invalid bearer token.
+          description: Missing or invalid bearer token (gateway jwt validation, ADR-IC-006 §1).
         '403':
-          description: Strong Customer Authentication (PSD2 SCA) required.
-  /api/v1/processes/{id}/stream:
+          description: >
+            Strong Customer Authentication required (PSD2). A constitution debits a payment
+            account — a PIS-equivalent money-mover — so SCA must be FRESH (acr present,
+            auth_time within the freshness window), not merely ever-completed (ADR-IC-006 §P2 /
+            Document 10). Stable machine code SCA_REQUIRED; fail-closed on any uncertainty.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
+              examples:
+                scaRequired:
+                  value:
+                    code: SCA_REQUIRED
+                    message: Strong Customer Authentication (PSD2 SCA) is required for this operation.
+        '429':
+          description: >
+            Rate limit exceeded — 5 req/min per consumer on this money-mover, under a global
+            30 req/min per-IP fallback (ADR-IC-006 §P3).
+  /api/v1/processes/{processId}/stream:
     get:
       operationId: streamProcess
       summary: Server-Sent-Events saga-progress stream (long-lived).
@@ -62,14 +122,28 @@ paths:
       # response-body check is WAIVED for it. Kept in lock-step with the orchestrator-sse Kong route
       # (30-min read_timeout, buffering off; ADR-IC-006 §P4).
       x-sse-stream: true
+      description: >
+        A long-lived text/event-stream of the saga's STRUCTURAL state progression until a
+        terminal state. Each named `event: state` frame carries a JSON data line of the shape
+        {"process_id": "...", "state": "...", "version": N, "terminal": true|false} — the
+        verbatim family saga state (ADR-IC-018 §D3), the optimistic-concurrency version, and
+        the routed state machine's terminality answer. `: keep-alive` comment frames keep the
+        connection open through long waits (e.g. AWAIT_WORKFLOW_APPROVAL). NO PII crosses the
+        stream. Per-process OWNERSHIP is enforced: only the client that started the process
+        (the gateway-attested identity) may watch it — process_id is NOT a capability token.
+        The gateway holds a 30-minute read timeout with buffering off for this route
+        (ADR-IC-006 §P4).
+      security:
+        - bearerAuth: []
       parameters:
-        - name: id
+        - name: processId
           in: path
           required: true
-          description: The process_id returned by the constitute call.
+          description: >
+            The client-facing PROC-… process reference returned by the constitute call
+            (an opaque public reference, not a raw UUID).
           schema:
             type: string
-            format: uuid
       responses:
         '200':
           description: An open Server-Sent-Events stream of saga-progress frames.
@@ -78,10 +152,24 @@ paths:
               schema:
                 type: string
         '401':
-          description: Missing or invalid bearer token.
+          description: Missing or invalid bearer token (gateway jwt validation).
         '403':
-          description: The caller does not own this process (per-process ownership).
+          description: >
+            The caller is not the process's owning client (per-process ownership on the
+            gateway-attested identity — an unknown reference is 404, a known reference owned
+            by ANOTHER client is 403).
+        '404':
+          description: No such process reference.
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        OAuth 2.0 bearer token validated at the gateway (per-route jwt plugin — signature,
+        expiry, issuer; ADR-IC-006 §1). The token's sub becomes the gateway-attested caller
+        identity (X-Client-Id) the application's ownership checks bind to (§P4).
   schemas:
     ConstituteRequest:
       type: object
@@ -89,24 +177,59 @@ components:
       properties:
         product_code:
           type: string
-          description: A catalogue reference (not PII).
+          minLength: 1
+          description: A catalogue reference (not PII). The engine resolves the product shape from it (ADR-PC-009).
         amount:
           type: integer
           minimum: 1
-          description: Positive integer cents (the engine's money discipline).
+          description: Positive integer cents (the engine's money discipline, ADR-PC-010 §P1) — never a float.
         source_account_ref:
           type: string
+          minLength: 1
           description: Opaque account token — NOT a raw IBAN (ADR-PC-004 §P2).
         interest_account_ref:
           type: string
-          description: Optional opaque account token for interest payouts.
+          description: Optional opaque account token for interest payouts (a reference, never an IBAN).
+      examples:
+        - product_code: TD-PT-12M-STD
+          amount: 1000000
+          source_account_ref: acct-ref-7f3a9c1e
+          interest_account_ref: acct-ref-2b8d4f60
     ConstituteAccepted:
       type: object
-      required: [process_id, stream_url]
+      description: >
+        The 202 body (ConstituteResponse in ProcessApiEndpoints.cs, snake_case on the wire).
+        Every field is a structural reference — no PII (ADR-PC-004 §P2).
+      required: [deposit_id, process_id, status, stream_url]
       properties:
+        deposit_id:
+          type: string
+          description: The client-facing DEP-… deposit reference.
         process_id:
           type: string
-          format: uuid
+          description: The client-facing PROC-… process reference (the stream/status key).
+        status:
+          type: string
+          description: The synchronous acceptance status — always PROCESSING at 202.
+          enum: [PROCESSING]
         stream_url:
           type: string
-          format: uri
+          description: The SSE endpoint the client subscribes to for saga progress.
+      examples:
+        - deposit_id: DEP-01J9ZK3W
+          process_id: PROC-01J9ZK40
+          status: PROCESSING
+          stream_url: /api/v1/processes/PROC-01J9ZK40/stream
+    EdgeError:
+      type: object
+      description: >
+        The gateway pre-function rejection envelope — a stable machine code plus a generic
+        message; deliberately indistinguishable across failure branches so nothing leaks
+        (fail-closed, no PII).
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: A stable machine code (e.g. SCA_REQUIRED).
+        message:
+          type: string

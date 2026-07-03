@@ -1,0 +1,212 @@
+openapi: 3.1.0
+# contracts/openapi/specs/engine-sor-ops.openapi.yaml — the SoR-routed EXISTING-instance
+# operation front door (ADR-PC-018 — I.5; catalogued per ADR-IC-020; bd babelstone-ax0b.3,
+# closing the "engine-sor-ops DEFERRED" hand-off recorded by PR #431's §P3 contract review in
+# scripts/openapi-catalog-validate.sh). This is a PUBLIC, client-facing money-mover route in
+# infra/kong/kong.yml (service engine-sor-ops, route sor-engine-ops) — per-route iam-issuer
+# JWT + PSD2-SCA acr/auth_time freshness + the X-Client-Id IDOR overwrite — so it belongs in
+# the catalogued public surface, not the exclusion list.
+#
+# WHAT IS BINDING HERE vs PROVISIONAL:
+#   * BINDING — the EDGE contract (transcribed from infra/kong/kong.yml and proven live by
+#     scripts/edge-contract-test.sh 1z0r/abig): ONE route with NO `sor` class word in the
+#     path (the gateway resolves instance_id -> sor -> backend itself, ADR-PC-018 §1/§2), the
+#     401/403 SCA_REQUIRED/429 guard set, and the fail-closed 503 SOR_UNRESOLVED refusal for
+#     legacy-SoR / unknown / unresolvable instances (§5 — refuse, never guess: guessing a
+#     backend is split-brain).
+#   * PROVISIONAL — the 200 outcome envelope: the engine-side handler behind this route is
+#     the ADR-PC-018 SCAFFOLD (the engine's dedicated per-op endpoints exist, but the
+#     gateway-keyed /operations envelope handler is not shipped yet), so the acceptance shape
+#     below is modelled on the engine's existing op outcomes (TerminateEarlyResponse et al.:
+#     id + status + commit_sequence) and marked as such in its description. bd babelstone-
+#     ax0b.4's drift contract tests bind it to code when the handler lands.
+# NO PII (ADR-PC-004 §P2): opaque *_account_ref tokens only; synthetic examples.
+info:
+  title: Babelstone Edge — SoR-Routed Instance Operations
+  version: 1.0.0
+  description: >
+    The single client-facing surface for state-changing operations on an EXISTING deposit
+    instance during coexistence (terminate early, withdraw partially, change auto-renewal —
+    ADR-PC-018). There is deliberately NO system-of-record class word in the path: the
+    gateway reads `sor` off the engine read surface for the instance and decides the backend
+    itself; a client can never pick it (ADR-PC-018 §2). An engine-SoR instance's operation is
+    proxied to the engine; a legacy-SoR, unknown, or unresolvable instance is REFUSED
+    fail-closed with 503 SOR_UNRESOLVED rather than routed by guess (§5 — split-brain
+    prevention). A PIS-equivalent money-mover: fresh PSD2 SCA is enforced at the edge with
+    the same gate as the constitute front door, and the caller identity is gateway-attested
+    (X-Client-Id from the JWT sub — the IDOR guard for the per-instance ownership check).
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract        # GDPR Art.6(1)(b) — performance of the deposit contract
+  x-authorized-consumers:
+    - retail-web
+    - retail-mobile
+servers:
+  - url: https://api.babelstone.example
+    description: Public edge gateway (Kong).
+paths:
+  /api/v1/sor/instances/{instance_id}/operations:
+    post:
+      operationId: submitInstanceOperation
+      summary: Submit a state-changing operation on an existing instance (SoR-routed money-mover).
+      description: >
+        Submits an operation against the instance named in the path. The gateway resolves the
+        instance's system-of-record (a read-only, idempotent lookup of GET /v1/deposits/{id}'s
+        `sor` field — ADR-PC-018 §3/§4) BEFORE proxying: only an explicit `sor == engine`
+        reaches the engine backend; every other outcome (legacy, unknown instance, projection
+        lag, read-surface failure) is a fail-closed 503 SOR_UNRESOLVED. SCA freshness (acr +
+        auth_time) is enforced at the edge exactly as on the constitute money-mover
+        (ADR-IC-006 §P2); rate-limited to 5 req/min per consumer (§P3). instance_id is
+        server-derived from the path, never a client-trusted routing key.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: instance_id
+          in: path
+          required: true
+          description: The deposit instance's stream id.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceOperationRequest'
+      responses:
+        '200':
+          description: >
+            The operation outcome from the engine backend (only reachable when the gateway
+            resolved sor == engine). PROVISIONAL SHAPE — see the header note: modelled on the
+            engine's existing op outcomes (instance id + lifecycle status + the ADR-IC-005
+            §P3 commit_sequence read-your-writes token) until the engine-side /operations
+            envelope handler ships.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceOperationOutcome'
+        '400':
+          description: Structurally invalid operation body (rejected by the backend).
+        '401':
+          description: Missing or invalid bearer token (gateway jwt validation, ADR-IC-006 §1).
+        '403':
+          description: >
+            Strong Customer Authentication required (PSD2): an existing-instance
+            state-changing op moves money, so it carries the SAME fresh-SCA gate as the
+            constitute route — stable machine code SCA_REQUIRED, fail-closed on any
+            uncertainty (ADR-IC-006 §P2).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
+              examples:
+                scaRequired:
+                  value:
+                    code: SCA_REQUIRED
+                    message: Strong Customer Authentication (PSD2 SCA) is required for this operation.
+        '422':
+          description: >
+            The backend refused the operation on domain grounds (e.g. not Active, inside the
+            lock-up, below the product's minimum) — a domain rejection, never a phantom
+            operation.
+        '429':
+          description: >
+            Rate limit exceeded — 5 req/min per consumer, the same tight money-mover budget
+            as constitute (ADR-IC-006 §P3).
+        '503':
+          description: >
+            SOR_UNRESOLVED (fail-closed, ADR-PC-018 §5): the instance's system-of-record is
+            legacy, unknown, or could not be resolved (projection lag / read-surface
+            unreachable) — the operation is REFUSED rather than routed to a guessed backend
+            (guessing is split-brain). Retry once the instance is resolvable; a legacy-SoR
+            instance's operations belong to the legacy channel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
+              examples:
+                sorUnresolved:
+                  value:
+                    code: SOR_UNRESOLVED
+                    message: >-
+                      Instance state unavailable: the system-of-record for this instance
+                      cannot be resolved to an available backend, so the operation is refused
+                      rather than routed.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        OAuth 2.0 bearer token validated at the gateway (per-route jwt plugin — signature,
+        expiry, issuer). The token's sub is attested to the backend as X-Client-Id
+        (overwriting any client-supplied value — the IDOR guard) and its acr/auth_time
+        claims carry the PSD2 SCA freshness proof (ADR-IC-006 §P2/§P4).
+  schemas:
+    InstanceOperationRequest:
+      type: object
+      description: >
+        The operation envelope. `op` names the state-changing operation; the remaining fields
+        are op-specific and optional at the envelope level (the backend validates per-op).
+        Account references are opaque tokens, never an IBAN (ADR-PC-004 §P2).
+      required: [op]
+      properties:
+        op:
+          type: string
+          description: The operation to perform on the instance (ADR-PC-018's existing-instance op set).
+          enum:
+            - terminate_early
+            - partial_withdrawal
+            - change_auto_renewal
+        amount_cents:
+          type: integer
+          format: int64
+          minimum: 1
+          description: For partial_withdrawal — the principal to take out, integer cents (ADR-PC-010 §P1).
+        payout_account_ref:
+          type: string
+          description: For terminate_early — the opaque account token the net settlement is credited to.
+        auto_renewal_policy:
+          type: string
+          description: For change_auto_renewal — the new renewal policy code.
+      examples:
+        - op: terminate_early
+          payout_account_ref: acct-ref-2b8d4f60
+    InstanceOperationOutcome:
+      type: object
+      description: >
+        The operation outcome (PROVISIONAL — see the spec header): the instance, its
+        resulting lifecycle status, and the commit sequence the append reached (the
+        ADR-IC-005 §P3 read-your-writes token a caller hands back as If-Min-Sequence on the
+        follow-up read). Structural facts only, no PII.
+      required: [instance_id, status, commit_sequence]
+      properties:
+        instance_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: The instance's resulting lifecycle status (e.g. TERMINATEDEARLY, ACTIVE).
+        commit_sequence:
+          type: integer
+          format: int64
+      examples:
+        - instance_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+          status: TERMINATEDEARLY
+          commit_sequence: 5
+    EdgeError:
+      type: object
+      description: >
+        The gateway pre-function refusal envelope — a stable machine code plus a generic
+        message, identical across failure branches so nothing leaks (fail-closed, no PII).
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: A stable machine code (SCA_REQUIRED, SOR_UNRESOLVED).
+        message:
+          type: string

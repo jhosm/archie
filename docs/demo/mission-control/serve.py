@@ -93,6 +93,7 @@ import http.server
 import socketserver
 import urllib.request
 import urllib.error
+import urllib.parse
 import json
 
 PORT = int(os.environ.get("MC_PORT", "9000"))
@@ -107,6 +108,16 @@ AGENT_URL = os.environ.get("AGENT_URL", "http://localhost:8091").rstrip("/")
 PANDAPROXY_URL = os.environ.get("PANDAPROXY_URL", "http://localhost:18082").rstrip("/")
 SCHEMA_REGISTRY_URL = os.environ.get("SCHEMA_REGISTRY_URL", "http://localhost:18081").rstrip("/")
 LOKI_URL = os.environ.get("LOKI_URL", "http://localhost:3100").rstrip("/")
+# The local OCI registry that distributes the signed regulatory packs (ADR-PC-007; host port 5001
+# in infra/compose.yaml). The /registry/* arm is GET-ONLY: the provenance strip reads Distribution
+# v2 manifest/referrer metadata (a "signature referrer exists" badge) — it never pushes.
+REGISTRY_URL = os.environ.get("REGISTRY_URL", "http://localhost:5001").rstrip("/")
+# Prometheus inside the grafana-lgtm appliance (host port 9090, infra/compose.yaml — the P-PORTS
+# prereq, bd babelstone-f0ic.15.2). The /prom/* arm is GET-ONLY (Metrics lens, bd f0ic.15.6): the
+# UI runs instant/range queries over the engine's SLI series. PII is stripped at EMIT by the
+# metric View allowlist (AddBabelstonePiiGuard — only admitted structural dimensions survive), so
+# no BFF-side response filter is needed here: what Prometheus stores is already references-only.
+PROM_URL = os.environ.get("PROM_URL", "http://localhost:9090").rstrip("/")
 DEMO_CLIENT_ID = os.environ.get("DEMO_CLIENT_ID", "CLI-DEMO-0001")
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -160,9 +171,18 @@ _PG_ALLOWLIST = {
         "schema_id", "status", "created_at", "published_at",
     },
     ("engine", "inbox"): {"message_id", "source_topic", "processed_at", "result_summary"},
+    # The durable pack-version registry (ADR-PC-007 §P3, migration 0006): resolves a pinned
+    # pack_version string to its immutable OCI coordinates. Digests / refs / version strings are
+    # structural facts; registered_by (an operator identity) is deliberately ABSENT.
+    ("engine", "pack_versions"): {
+        "pack_id", "pack_version", "oci_ref", "image_digest", "signature_digest", "registered_at",
+    },
     ("engine", "command_dedup"): {"command_id", "stream_id", "commit_sequence", "created_at"},
     ("orchestrator", "saga_state"): {
         "process_id", "saga_type", "state", "version", "correlation_id", "created_at", "updated_at",
+        # The client-facing PROC-… handle (migration 0005): the key the UI holds, resolved here to
+        # the internal UUID for the transition/leg reads. An opaque reference, never PII.
+        "public_process_id",
     },
     ("orchestrator", "saga_transition"): {
         "id", "process_id", "from_state", "to_state", "event_type", "message_id", "note", "occurred_at",
@@ -170,6 +190,9 @@ _PG_ALLOWLIST = {
     ("orchestrator", "saga_outbox"): {
         "seq", "message_id", "process_id", "command_type", "causation_id", "correlation_id",
         "status", "created_at", "published_at",
+        # Outbound W3C Trace Context (migration 0003: "opaque 00-<trace-id>-<span-id>-<flags>;
+        # operational, NOT PII") — the saga-leg → Tempo deep-link key (bd babelstone-f0ic.15.9).
+        "traceparent",
     },
     ("orchestrator", "inbox"): {"message_id", "source_topic", "processed_at", "result_summary"},
 }
@@ -316,30 +339,23 @@ def _pg_columns(db, table, columns):
     return columns
 
 
-def pg_select(db, table, columns, order=None, descending=True, limit=50):
-    """Open a READ-ONLY connection to the chosen DB and SELECT the allowlisted structural columns.
-    Identifiers are emitted only from the static allowlist (and quoted via psycopg.sql.Identifier),
-    so no caller string ever becomes SQL."""
+def _pg_guard(db):
+    """The shared /pg/* admission check: routes enabled, db known, DSN local. Returns the DSN."""
     if not PG_ENABLE:
         raise PgError(403, "/pg/* is disabled (serve.py is not bound to loopback; set MC_PG_ENABLE=1 to force)")
     if db not in _PG_DSN:
         raise PgError(404, "unknown db: %s (expected 'engine' or 'orchestrator')" % db)
     dsn = _PG_DSN[db]
     _assert_local_dsn(dsn)
-    cols = _pg_columns(db, table, columns)
-    if order is not None:
-        _pg_columns(db, table, [order])  # the ORDER BY column must be allowlisted too
+    return dsn
+
+
+def _pg_run(db, query, params=None):
+    """Open a READ-ONLY connection to the chosen DB and run ONE query (a psycopg sql.Composed built
+    from allowlisted identifiers, or a module-level FIXED SQL string — never caller-assembled text).
+    Caller VALUES only ever travel as bound parameters. Returns rows as dicts."""
+    dsn = _pg_guard(db)
     psycopg = _require_psycopg()
-    from psycopg import sql
-
-    parts = [sql.SQL("SELECT "), sql.SQL(", ").join(sql.Identifier(c) for c in cols),
-             sql.SQL(" FROM "), sql.Identifier(table)]
-    if order is not None:
-        parts += [sql.SQL(" ORDER BY "), sql.Identifier(order),
-                  sql.SQL(" DESC") if descending else sql.SQL(" ASC")]
-    parts += [sql.SQL(" LIMIT "), sql.Literal(int(limit))]
-    query = sql.Composed(parts)
-
     try:
         with psycopg.connect(dsn, autocommit=True, connect_timeout=3) as conn:
             with conn.cursor() as cur:
@@ -347,13 +363,41 @@ def pg_select(db, table, columns, order=None, descending=True, limit=50):
                 # mistaken future query) is rejected by Postgres itself, not just by our SELECT-only
                 # code path. autocommit=True makes this SET persist for the connection's lifetime.
                 cur.execute("SET default_transaction_read_only = on")
-                cur.execute(query)
+                cur.execute(query, params)
                 names = [d.name for d in cur.description]
                 return [dict(zip(names, row)) for row in cur.fetchall()]
     except PgError:
         raise
     except Exception as e:  # psycopg.OperationalError etc. — surface as a clean 502
         raise PgError(502, "Postgres query failed against %s DB: %s" % (db, e))
+
+
+def pg_select(db, table, columns, where=None, order=None, descending=True, limit=50):
+    """SELECT the allowlisted structural columns over the read-only window. Identifiers are emitted
+    only from the static allowlist (and quoted via psycopg.sql.Identifier), so no caller string ever
+    becomes SQL; `where` is a list of (column, value) equality filters whose COLUMN must be
+    allowlisted and whose VALUE is always a bound parameter (never interpolated)."""
+    _pg_guard(db)
+    cols = _pg_columns(db, table, columns)
+    if order is not None:
+        _pg_columns(db, table, [order])  # the ORDER BY column must be allowlisted too
+    where = where or []
+    if where:
+        _pg_columns(db, table, [c for c, _ in where])  # WHERE columns must be allowlisted too
+    psycopg = _require_psycopg()
+    from psycopg import sql
+
+    parts = [sql.SQL("SELECT "), sql.SQL(", ").join(sql.Identifier(c) for c in cols),
+             sql.SQL(" FROM "), sql.Identifier(table)]
+    params = []
+    for i, (c, v) in enumerate(where):
+        parts += [sql.SQL(" WHERE " if i == 0 else " AND "), sql.Identifier(c), sql.SQL(" = %s")]
+        params.append(v)
+    if order is not None:
+        parts += [sql.SQL(" ORDER BY "), sql.Identifier(order),
+                  sql.SQL(" DESC") if descending else sql.SQL(" ASC")]
+    parts += [sql.SQL(" LIMIT "), sql.Literal(int(limit))]
+    return _pg_run(db, sql.Composed(parts), params or None)
 
 
 def pg_smoke():
@@ -365,9 +409,256 @@ def pg_smoke():
     return {"db": "engine", "table": "outbox", "count": len(rows), "rows": rows}
 
 
+# ── Outbox·Inbox lens (bd babelstone-f0ic.15.5) ──────────────────────────────────────────────
+# The publish-lag SQL, VERBATIM from the engine's OutboxLagObserver.cs (the ADR-IC-004 SLI): the
+# age in seconds of the OLDEST PENDING outbox row, computed entirely in the DB (single-clock, so
+# no host/DB skew can bias it; 0 when the backlog is empty). Reusing the exact statement means the
+# lens shows the SAME number the outbox_publish_lag_seconds gauge exports — not a re-derivation
+# that could drift from it.
+_OUTBOX_LAG_SQL_VERBATIM = """SELECT COALESCE(EXTRACT(EPOCH FROM clock_timestamp() - MIN(created_at)), 0)
+FROM outbox
+WHERE status = 'PENDING';"""
+
+# Row counts by drain status — the transactional-outbox state at a glance (PENDING backlog vs
+# PUBLISHED history). Fixed, module-level SQL over one allowlisted structural column.
+_OUTBOX_COUNTS_SQL = "SELECT status, COUNT(*) AS n FROM outbox GROUP BY status;"
+
+# The recent tail with the per-row publish latency (published_at − created_at, both DB-stamped —
+# the same single-clock discipline as the lag SQL; NULL while a row is still PENDING). Every named
+# column is on the structural allowlist; the payload BYTEA is deliberately absent. LIMIT is bound.
+_OUTBOX_RECENT_SQL = """SELECT event_id, aggregate_type, aggregate_id, sequence_number, event_type, schema_id,
+       status, created_at, published_at,
+       EXTRACT(EPOCH FROM (published_at - created_at)) AS publish_latency_seconds
+FROM outbox
+ORDER BY created_at DESC
+LIMIT %s;"""
+
+
+def pg_outbox_summary(limit=20):
+    """The Outbox·Inbox lens's engine-outbox read: counts by status + the VERBATIM ADR-IC-004
+    publish-lag SQL + the recent tail with per-row publish latency. Structural columns only."""
+    counts = {r["status"]: r["n"] for r in _pg_run("engine", _OUTBOX_COUNTS_SQL)}
+    lag_rows = _pg_run("engine", _OUTBOX_LAG_SQL_VERBATIM)
+    lag_seconds = list(lag_rows[0].values())[0] if lag_rows else 0
+    recent = _pg_run("engine", _OUTBOX_RECENT_SQL, (int(limit),))
+    return {
+        "counts": counts,
+        "publish_lag_seconds": lag_seconds,
+        "publish_lag_sql": _OUTBOX_LAG_SQL_VERBATIM,
+        "rows": recent,
+    }
+
+
+def pg_inbox_tail(db="engine", limit=20):
+    """The consumer-inbox dedup ledger tail (engine or orchestrator): rows are the RESULTING state
+    (one row per logical message) — a dedup is a SILENT PK collision, so there is no per-replay row
+    here; an actual replay hit is only visible via the dispatcher/inbox OTel counters."""
+    rows = pg_select(db, "inbox", ["message_id", "source_topic", "processed_at", "result_summary"],
+                     order="processed_at", descending=True, limit=limit)
+    return {"db": db, "table": "inbox", "count": len(rows), "rows": rows}
+
+
+def pg_command_dedup_tail(limit=20):
+    """The engine command-idempotency ledger tail (ADR-PC-029 slot 4): one row per logical command,
+    with the stream + commit sequence its original apply reached. Same silent-collision semantics as
+    the inbox — the ledger shows state, not replay events."""
+    rows = pg_select("engine", "command_dedup", ["command_id", "stream_id", "commit_sequence", "created_at"],
+                     order="created_at", descending=True, limit=limit)
+    return {"db": "engine", "table": "command_dedup", "count": len(rows), "rows": rows}
+
+
+# ── Config-provenance strip (bd babelstone-f0ic.15.8) ────────────────────────────────────────
+def pg_provenance(stream_id):
+    """The REAL signed/pinned pack identity for one instance: the head pin (events.pack_version is
+    a top-level non-PII column on EVERY event — latest by sequence is the instance's current pin,
+    ADR-PC-009) joined through public.pack_versions to its immutable OCI coordinates (ADR-PC-007
+    §P3). Structural facts only. NB product_config_version is NOT SQL-readable (it lives inside the
+    Avro payload BYTEA) — the UI reads it off GET /v1/deposits/{id}, never through this window."""
+    head = pg_select("engine", "events",
+                     ["pack_version", "sequence_number", "event_type", "transaction_time"],
+                     where=[("stream_id", stream_id)], order="sequence_number", descending=True, limit=1)
+    pin = head[0] if head else None
+    pack = None
+    if pin and pin.get("pack_version"):
+        rows = pg_select("engine", "pack_versions",
+                         ["pack_id", "pack_version", "oci_ref", "image_digest", "signature_digest", "registered_at"],
+                         where=[("pack_version", pin["pack_version"])], limit=1)
+        pack = rows[0] if rows else None
+    return {"stream_id": stream_id, "pin": pin, "pack": pack}
+
+
+# ── Topology lens history reads (bd babelstone-f0ic.15.3) ────────────────────────────────────
+def pg_resolve_process(handle):
+    """Resolve a process handle to its saga_state row. Accepts the client-facing PROC-… reference
+    (resolved via public_process_id) or the internal UUID. Raises 404 when unknown."""
+    key = "public_process_id" if str(handle).startswith("PROC-") else "process_id"
+    rows = pg_select("orchestrator", "saga_state",
+                     ["process_id", "public_process_id", "saga_type", "state", "version",
+                      "correlation_id", "created_at", "updated_at"],
+                     where=[(key, handle)], limit=1)
+    if not rows:
+        raise PgError(404, "unknown process: %s" % handle)
+    return rows[0]
+
+
+def pg_process_transitions(handle):
+    """The REAL path a saga took: its saga_state row + the ordered saga_transition legs + the
+    dispatched saga_outbox command legs — everything the Topology lens needs to light the actual
+    journey instead of a canned sequence. Structural columns only; no payload ever crosses."""
+    process = pg_resolve_process(handle)
+    pid = process["process_id"]
+    transitions = pg_select("orchestrator", "saga_transition",
+                            ["id", "process_id", "from_state", "to_state", "event_type",
+                             "message_id", "note", "occurred_at"],
+                            where=[("process_id", pid)], order="id", descending=False, limit=200)
+    legs = pg_select("orchestrator", "saga_outbox",
+                     ["seq", "message_id", "process_id", "command_type", "causation_id",
+                      "correlation_id", "status", "created_at", "published_at", "traceparent"],
+                     where=[("process_id", pid)], order="seq", descending=False, limit=200)
+    return {"process": process, "transitions": transitions, "legs": legs}
+
+
+def pg_stream_events(stream_id, limit=200):
+    """One stream's REAL event chain (engine public.events), ascending — event types, sequence
+    numbers and the causation/correlation references. The payload BYTEA is refused by the
+    allowlist/PII firewall; only structural envelope columns cross the engine boundary."""
+    rows = pg_select("engine", "events",
+                     ["event_id", "stream_id", "sequence_number", "event_type", "family",
+                      "pack_version", "valid_time", "transaction_time", "causation_id", "correlation_id"],
+                     where=[("stream_id", stream_id)], order="sequence_number", descending=False, limit=limit)
+    return {"db": "engine", "table": "events", "stream_id": stream_id, "count": len(rows), "rows": rows}
+
+
+def pg_saga_outbox_tail(process_id=None, limit=20):
+    """The orchestrator's saga_outbox tail — the saga's dispatched command legs. Optionally filtered
+    to one process (the internal UUID; the PROC-… public handle resolves via /pg/processes/*). The
+    payload BYTEA never crosses; structural columns only."""
+    where = []
+    if process_id:
+        where.append(("process_id", process_id))
+    rows = pg_select("orchestrator", "saga_outbox",
+                     ["seq", "message_id", "process_id", "command_type", "causation_id",
+                      "correlation_id", "status", "created_at", "published_at", "traceparent"],
+                     where=where, order="seq", descending=True, limit=limit)
+    return {"db": "orchestrator", "table": "saga_outbox", "count": len(rows), "rows": rows}
+
+
 def _json_default(o):
     """Serialise UUID / datetime / Decimal etc. as strings for the JSON response."""
     return str(o)
+
+
+# ── Topology manifest — derived from the estate, not re-hardcoded (bd babelstone-f0ic.15.3) ──
+# The node/edge manifest the Topology lens renders in LIVE modes is DERIVED from the repo's C4 L2
+# PlantUML sources (the architecture's own model — docs/…/product_concepts/diagrams/) and enriched
+# with the LIVE topic list read off Redpanda through the pandaproxy arm. So the picture the lens
+# draws is sourced from the same artefacts the architecture docs render, and a C4 edit flows into
+# the lens without touching this file. Everything here is structural (service names, topic names,
+# relationship labels) — no PII surface exists in a C4 model.
+import re as _re
+
+_C4_DIAGRAM_DIR = os.path.normpath(os.path.join(
+    ROOT, "..", "..", "product-management", "product_concepts", "diagrams"))
+_C4_SOURCES = (
+    "c4-l2-runtime-write-read.puml",        # engine / orchestrator / ACL / core / Kong / Redpanda
+    "c4-l2-event-backbone-consumers.puml",  # downstream consumers: GL / IFRS 9 / reporting / notification
+    "c4-l2-agent-channel.puml",             # the MCP server + agent channel
+)
+# Container(id, "label", "tech", "desc"…) / ContainerDb / System / System_Ext / Person / Person_Ext.
+_C4_NODE_RE = _re.compile(
+    r'^\s*(Person_Ext|Person|System_Ext|System|ContainerDb|Container)\(\s*([A-Za-z0-9_]+)\s*,\s*"([^"]*)"\s*(?:,\s*"([^"]*)")?')
+_C4_REL_RE = _re.compile(
+    r'^\s*(?:Bi)?Rel(?:_[A-Za-z]+)?\(\s*([A-Za-z0-9_]+)\s*,\s*([A-Za-z0-9_]+)\s*,\s*"([^"]*)"')
+
+
+def _c4_parse(text):
+    """Parse ONE C4-PlantUML source into (nodes, edges). Node plane: 'ext' for System_Ext/Person*,
+    'estate' when the line carries $tags=\"estate\", else 'build' (the engine-boundary deliverable)."""
+    nodes, edges = {}, []
+    for line in text.splitlines():
+        m = _C4_NODE_RE.match(line)
+        if m:
+            kind, node_id, label, tech = m.group(1), m.group(2), m.group(3), m.group(4) or ""
+            if kind in ("System_Ext", "Person", "Person_Ext"):
+                plane = "ext"
+            elif '$tags="estate"' in line:
+                plane = "estate"
+            else:
+                plane = "build"
+            nodes[node_id] = {"id": node_id, "label": label, "tech": tech, "plane": plane}
+            continue
+        m = _C4_REL_RE.match(line)
+        if m:
+            edges.append([m.group(1), m.group(2), m.group(3)])
+    return nodes, edges
+
+
+def _c4_columns(nodes, edges):
+    """Assign a left-to-right column hint per node: BFS depth from the source nodes (no inbound
+    edge), capped at 5 — the same 6-column stage the lens lays out. Unreachable nodes fall back to
+    a plane-typical column so nothing lands off-grid."""
+    inbound = {n: 0 for n in nodes}
+    adjacency = {n: [] for n in nodes}
+    for a, b, _ in edges:
+        if a in nodes and b in nodes:
+            adjacency[a].append(b)
+            inbound[b] += 1
+    frontier = [n for n, deg in inbound.items() if deg == 0] or list(nodes)[:1]
+    depth = {n: 0 for n in frontier}
+    queue = list(frontier)
+    # Shortest-path BFS (first visit wins): the Rel graph cycles through the bus (engine→redpanda→
+    # orch→engine), so a longest-path rank would drag every node to the deep end — the hop count
+    # from the callers is the stable left-to-right reading order.
+    while queue:
+        cur = queue.pop(0)
+        for nxt in adjacency.get(cur, []):
+            if nxt not in depth:
+                depth[nxt] = depth[cur] + 1
+                queue.append(nxt)
+    fallback = {"ext": 5, "estate": 3, "build": 3}
+    for node_id, node in nodes.items():
+        node["col"] = min(depth.get(node_id, fallback[node["plane"]]), 5)
+    return nodes
+
+
+def _live_topics():
+    """Best-effort LIVE topic list off Redpanda's HTTP proxy (the same arm the Topic·Avro lens
+    uses). Internal topics are filtered; unreachable broker → None (the manifest says so)."""
+    try:
+        with urllib.request.urlopen(PANDAPROXY_URL + "/topics", timeout=2) as resp:
+            names = json.loads(resp.read())
+        return [t for t in names if isinstance(t, str) and not t.startswith("_")]
+    except Exception:
+        return None
+
+
+def topology_manifest():
+    """The estate-derived node/edge manifest (bd babelstone-f0ic.15.3): C4 L2 sources parsed into
+    nodes/edges (+ column hints), topics read live where the broker answers."""
+    nodes, edges, parsed = {}, [], []
+    for name in _C4_SOURCES:
+        path = os.path.join(_C4_DIAGRAM_DIR, name)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                file_nodes, file_edges = _c4_parse(f.read())
+        except OSError:
+            continue                      # a container image without the docs tree — degrade
+        parsed.append(name)
+        for node_id, node in file_nodes.items():
+            nodes.setdefault(node_id, node)   # first definition wins (the runtime diagram leads)
+        seen = {(a, b) for a, b, _ in edges}
+        for a, b, label in file_edges:
+            if (a, b) not in seen:
+                edges.append([a, b, label])
+                seen.add((a, b))
+    _c4_columns(nodes, edges)
+    topics = _live_topics()
+    return {
+        "source": {"diagrams": parsed, "topics": "pandaproxy" if topics is not None else "unavailable"},
+        "nodes": list(nodes.values()),
+        "edges": edges,
+        "topics": topics or [],
+    }
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -409,6 +700,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # resolves a record's wire schema-id to its subject/version for the catalog badge. Strip
             # the /sr prefix. Read-only GETs of structural schema metadata — no PII.
             return SCHEMA_REGISTRY_URL, None, self.path[len("/sr"):]
+        if self.path.startswith("/registry/"):
+            # The OCI registry's Distribution v2 API (config-provenance strip, bd babelstone-
+            # f0ic.15.8): the UI checks the pinned image digest is PRESENT and that a cosign
+            # signature referrer exists — surfacing signature_digest as the fact. Full cosign
+            # VERIFY stays a CI/deploy attestation (ADR-PC-007), never re-run in a browser. Strip
+            # the /registry prefix so the upstream sees /v2/…. GET-only (enforced in do_POST etc.):
+            # this window can read pack metadata, it can never push. Digests are structural — no PII.
+            return REGISTRY_URL, None, self.path[len("/registry"):]
+        if self.path.startswith("/prom/"):
+            # Prometheus's query API (Metrics lens, bd babelstone-f0ic.15.6): the five SLI cards run
+            # instant/range queries here (mirrors the /tempo arm — strip the /prom prefix so the
+            # upstream sees its own /api/v1/… path). GET-only (enforced in do_POST etc.). PII was
+            # already stripped at emit by the metric View allowlist — references only in the store.
+            return PROM_URL, None, self.path[len("/prom"):]
         if self.path.startswith("/loki/"):
             # Grafana Loki's query API (Logs lens, bd babelstone-f0ic.15.7): the Logs lens fetches the
             # REAL structured logs at /loki/api/v1/query_range, correlated by the active trace id. Loki's
@@ -493,15 +798,54 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             resp.close()
 
     def _pg_handle(self):
-        """The read-only Postgres Inspector routes (bd babelstone-f0ic.15.1). Returns True if it
-        handled the request. Today: /pg/smoke (the structural smoke read). The lens-specific
-        select routes (Outbox·Inbox, provenance, topology) build on pg_select() in later issues."""
+        """The read-only Postgres Inspector routes (bd babelstone-f0ic.15.1/.15.5). Returns True if
+        it handled the request. Every route reads STRUCTURAL allowlisted columns only (the PII
+        firewall refuses payload/detail/BYTEA), read-only, loopback-only."""
         if not self.path.startswith("/pg/"):
             return False
-        path = self.path.split("?", 1)[0]
+        split = urllib.parse.urlsplit(self.path)
+        path = split.path
+        qs = urllib.parse.parse_qs(split.query)
+
+        def q(name, default=None):
+            vals = qs.get(name)
+            return vals[0] if vals else default
+
+        def qlimit(default=20, cap=200):
+            try:
+                return max(1, min(int(q("limit", default)), cap))
+            except (TypeError, ValueError):
+                raise PgError(400, "limit must be an integer")
+
         try:
             if path == "/pg/smoke":
                 body = pg_smoke()
+            elif path == "/pg/outbox/summary":
+                # Outbox·Inbox lens (bd babelstone-f0ic.15.5): the real transactional-outbox drain —
+                # counts by status, the VERBATIM ADR-IC-004 publish-lag SQL, and the recent tail.
+                body = pg_outbox_summary(limit=qlimit())
+            elif path == "/pg/inbox/tail":
+                db = q("db", "engine")
+                body = pg_inbox_tail(db=db, limit=qlimit())
+            elif path == "/pg/command-dedup/tail":
+                body = pg_command_dedup_tail(limit=qlimit())
+            elif path == "/pg/saga-outbox/tail":
+                body = pg_saga_outbox_tail(process_id=q("process_id"), limit=qlimit())
+            elif path.startswith("/pg/processes/") and path.endswith("/transitions"):
+                # Topology lens (bd babelstone-f0ic.15.3): the REAL path one saga took — its
+                # ordered saga_transition legs + dispatched saga_outbox command legs. The handle is
+                # the client-facing PROC-… reference (or the internal UUID).
+                handle = path[len("/pg/processes/"):-len("/transitions")]
+                body = pg_process_transitions(handle)
+            elif path.startswith("/pg/streams/") and path.endswith("/events"):
+                # Topology lens (bd babelstone-f0ic.15.3): one stream's real event chain —
+                # structural envelope columns only (never events.payload).
+                stream_id = path[len("/pg/streams/"):-len("/events")]
+                body = pg_stream_events(stream_id, limit=qlimit(default=200))
+            elif path.startswith("/pg/provenance/"):
+                # Config-provenance strip (bd babelstone-f0ic.15.8): the instance's head pack pin
+                # + its OCI coordinates from the durable pack_versions registry.
+                body = pg_provenance(path[len("/pg/provenance/"):])
             else:
                 raise PgError(404, "no such /pg route: %s" % path)
             payload = json.dumps(body, default=_json_default).encode()
@@ -520,6 +864,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return True
 
     def do_GET(self):
+        if self.path.split("?", 1)[0] == "/topology/manifest":
+            # The estate-derived Topology manifest (bd babelstone-f0ic.15.3): C4 L2 sources parsed
+            # into nodes/edges + the live Redpanda topic list. Read-only, structural names only.
+            payload = json.dumps(topology_manifest(), default=_json_default).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if self._pg_handle():
             return
         route = self._route()
@@ -527,13 +881,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._relay("GET", route[0], route[1], route[2])
         return super().do_GET()
 
+    def _refuse_mutation(self):
+        """The GET-only arms (the OCI /registry window; Prometheus /prom): reads are the whole
+        point — a mutating verb through these arms is refused before any relay."""
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/registry/") or path.startswith("/prom/"):
+            self.send_error(405, "read-only arm — GET only")
+            return True
+        return False
+
     def do_POST(self):
+        if self._refuse_mutation():
+            return
         route = self._route()
         if route is not None:
             return self._relay("POST", route[0], route[1], route[2])
         self.send_error(405)
 
     def do_PUT(self):
+        if self._refuse_mutation():
+            return
         route = self._route()
         if route is not None:
             return self._relay("PUT", route[0], route[1], route[2])
@@ -542,6 +909,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_DELETE(self):
         # The Topic·Avro lens deletes its pandaproxy consumer instance when it's done reading, so
         # the consumer-group dance cleans up after itself (no leaked consumers).
+        if self._refuse_mutation():
+            return
         route = self._route()
         if route is not None:
             return self._relay("DELETE", route[0], route[1], route[2])
@@ -560,6 +929,8 @@ def main():
         print("  pandaproxy    %s  (proxied at /pandaproxy/* — Topic·Avro real records)" % PANDAPROXY_URL)
         print("  schema-reg    %s  (proxied at /sr/*      — Topic·Avro schema badge)" % SCHEMA_REGISTRY_URL)
         print("  loki          %s  (proxied at /loki/*   — Logs lens real logs, allowlisted)" % LOKI_URL)
+        print("  registry      %s  (proxied at /registry/* — provenance strip, GET-only)" % REGISTRY_URL)
+        print("  prometheus    %s  (proxied at /prom/*   — Metrics lens live SLIs, GET-only)" % PROM_URL)
         print("  postgres      /pg/* read-only Inspector lenses %s" % ("(ENABLED)" if PG_ENABLE else "(disabled — not bound to loopback)"))
         print("  mode          open the page, flip the toggle to LIVE·engine or LIVE·saga")
         print("  Ctrl-C to stop")

@@ -89,6 +89,18 @@ replicas:
     count: 1
 
 patches:
+  # Drop the base's DEV-ONLY placeholder Secret from the staging render
+  # (bd babelstone-zla1.12.4; ADR-PC-004 §A1). The real babelstone-dev-secrets is
+  # operator-provisioned once (runbook §1 step 5) and must never be clobbered by a
+  # redeploy re-applying the committed example values. Fail-closed counterpart:
+  # scripts/cd-secret-preflight.sh (wired into cd.yml) refuses the apply when the
+  # render still carries a placeholder body or the live Secret is missing/still
+  # a placeholder.
+  - path: drop-dev-secrets.patch.yaml
+    target:
+      version: v1
+      kind: Secret
+      name: babelstone-dev-secrets
   # Pin durable Hetzner CSI block storage (hcloud-volumes) on every stateful
   # volume. JSON6902 add-ops — volumeClaimTemplates has no strategic-merge key, so
   # a merge patch would REPLACE the whole VCT list (dropping the base 5Gi request);

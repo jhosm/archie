@@ -269,7 +269,14 @@ public sealed record DepositResponse(
     int CouponsPaid,
     string Lifecycle,
     long LastSequence,
-    DateTimeOffset LastUpdated)
+    DateTimeOffset LastUpdated,
+    // The product-config generation pin (content hash sha256:<hex>, ADR-PC-009 §A2) the deposit was
+    // constituted under — folded from DepositConstituted.ProductConfigVersion, projected here so the
+    // provenance surface (bd babelstone-f0ic.15.8) reads the REAL pin off the canonical resource.
+    // ADDITIVE with the "" default (prospective-only, like ProductCode): pre-pin deposits
+    // (bd fk7m.9/v794) carry "" and are not back-fillable — render "—" for them. Appended with a
+    // trailing default so existing positional constructions keep compiling. Structural, never PII.
+    string ProductConfigVersion = "")
 {
     /// <summary>From the denormalized read-model row — the fast, eventually-consistent default path.</summary>
     public static DepositResponse FromReadModel(DepositReadModelRow r) => new(
@@ -292,7 +299,8 @@ public sealed record DepositResponse(
         CouponsPaid: r.CouponsPaid,
         Lifecycle: r.Lifecycle,
         LastSequence: r.LastSequence,
-        LastUpdated: r.LastUpdated);
+        LastUpdated: r.LastUpdated,
+        ProductConfigVersion: r.ProductConfigVersion);
 
     /// <summary>
     /// From an authoritative fold of the event stream — the read-your-writes fallback, served when the
@@ -325,7 +333,8 @@ public sealed record DepositResponse(
             CouponsPaid: p.CouponsPaid,
             Lifecycle: p.Lifecycle.ToString(),
             LastSequence: hydrated.Version,
-            LastUpdated: hydrated.LastTransactionTime.GetValueOrDefault());
+            LastUpdated: hydrated.LastTransactionTime.GetValueOrDefault(),
+            ProductConfigVersion: p.ProductConfigVersion);
     }
 }
 

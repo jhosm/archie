@@ -2,7 +2,9 @@
 # hetzner-k3s cluster config — the always-on staging / demo box (Phase 1).
 #
 # One CAX41 ARM node running single-node k3s in Hetzner Helsinki (hel1), on babelstone.dev.
-# Consumed by `hetzner-k3s create --config cluster.yaml` to CREATE the cluster that the
+# Consumed via ./provision.sh (the fail-closed preflight + render wrapper — bd
+# babelstone-zla1.12.6), which substitutes the SSH allow-list sentinel below and runs
+# `hetzner-k3s create --config cluster.rendered.yaml` to CREATE the cluster that the
 # Kustomize overlay (infra/k8s/overlays/staging) then deploys INTO. Targets hetzner-k3s v2.6.0+.
 # See ./README.md for the provision walk-through.
 #
@@ -17,7 +19,9 @@
 config_format_version: 1            # required by hetzner-k3s v2.6.0+
 
 cluster_name: babelstone-staging    # prefixes every Hetzner resource name; lowercase + hyphen only
-kubeconfig_path: "./kubeconfig"     # cluster-admin credential — GITIGNORED, never commit (feeds cd.yml's KUBECONFIG_B64)
+kubeconfig_path: "./kubeconfig"     # cluster-admin credential — GITIGNORED, never commit; OPERATOR-ONLY
+                                    # (cd.yml's KUBECONFIG_B64 is the scoped cd-deployer SA kubeconfig
+                                    # minted by scripts/cd-kubeconfig.sh, never this file — zla1.12.1)
 
 # VERIFY before `create`: run `hetzner-k3s releases` and pin a currently-supported k3s release
 # (the latest patch of the minor you want). A hard-coded version goes stale.
@@ -33,7 +37,13 @@ networking:
   allowed_networks:
     # hetzner-k3s synthesises the Hetzner Cloud Firewall from these CIDR lists.
     ssh:
-      - REPLACE_ME/32     # lock SSH(22) to your operator / jump-host IP — REPLACE before `create`
+      # LOAD-BEARING SENTINEL — do NOT hand-edit (bd babelstone-zla1.12.6). Provision via
+      # ./provision.sh, which substitutes this line with the validated $SSH_ALLOWED_CIDR
+      # (a REQUIRED env var, explicit /32s only) into the gitignored cluster.rendered.yaml
+      # and REFUSES to create when the value is unset, still REPLACE_ME, 0.0.0.0/0, or not
+      # a /32. Running `hetzner-k3s create` directly against THIS file fails on purpose:
+      # the sentinel is not a valid CIDR, and the fix is provision.sh — never 0.0.0.0/0.
+      - REPLACE_ME/32
     api:
       # k8s API(6443) open to the world: the GitHub-hosted cd.yml runner has no stable egress IP,
       # so a network allow-list can't admit it. Auth is the cluster's mutual-TLS client cert (the
