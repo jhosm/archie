@@ -61,7 +61,8 @@ public sealed class SimulationClock(DateTimeOffset start) : TimeProvider
 /// stable_occurrence_key)</c> pair the driver's canonical number-pinned idempotency key is derived from
 /// (LCD-1). The family builds such milestones from its ONE shared dispatch mapping (the same mapping its
 /// production driver rule consumes), so a forecast milestone and the production command for the same
-/// occurrence cannot silently diverge — a fitness test compares the two and fails on drift. The identity is
+/// occurrence cannot silently diverge — the per-family <c>LifecycleDispatchFitnessTests</c> compare the
+/// two and fail on drift. The identity is
 /// OPTIONAL and family-agnostic (a plain kind string + occurrence number): a milestone with no production
 /// driver counterpart (e.g. a coupon the driver does not yet fire) carries <see langword="null"/>s, and the
 /// runtime itself never reads either — it still only walks due instants and fires steps.

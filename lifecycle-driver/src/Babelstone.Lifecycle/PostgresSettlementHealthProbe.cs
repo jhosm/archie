@@ -31,7 +31,7 @@ namespace Babelstone.Lifecycle;
 /// settlement legs (index ≥ 1) park at a DERIVED per-Movement subject (<c>SettlementMovementFanout</c>),
 /// which this probe does not scan; the primary leg (index 0) keeps the instance id and IS scanned. Every
 /// recurring lifecycle event gated today (a loan installment) carries a single movement, so the primary
-/// covers the whole gated surface; a future multi-movement recurring event must widen this scan.
+/// covers the whole gated surface.
 /// </para>
 /// <para>
 /// A connection/query failure PROPAGATES (fail-closed): the pass treats it as backpressure and the

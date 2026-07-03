@@ -4,8 +4,8 @@ using Babelstone.Lifecycle;
 namespace Babelstone.Families.PersonalLoan.Lifecycle;
 
 /// <summary>
-/// The personal-loan family's ONE LifecycleMilestone→command dispatch mapping (ADR-PC-036 §Decision 7 —
-/// candidate D's harvested idea; bd babelstone-6cpq.11). In plain terms: "installment N of loan L is due on
+/// The personal-loan family's ONE LifecycleMilestone→command dispatch mapping (ADR-PC-036 §Decision 7).
+/// In plain terms: "installment N of loan L is due on
 /// D" must mean EXACTLY ONE wire command — same command kind, same number-pinned occurrence key, same
 /// endpoint path, same body shape — whether it is the PRODUCTION driver firing it (the
 /// <see cref="InstallmentRule"/> A4b path) or the engine's simulation FORECAST scheduling it (a
@@ -30,7 +30,7 @@ public static class PersonalLoanLifecycleDispatch
     public const string CommandKindPayInstallment = "pay_installment";
 
     /// <summary>The scoped, non-interactive SCA service principal the loan installment money-mover route
-    /// authorises the driver by (ADR-PC-036 §Decision 1; bd babelstone-6cpq.14/.15). Kept in lock-step with
+    /// authorises the driver by (ADR-PC-036 §Decision 1). Kept in lock-step with
     /// the engine-side <c>ScaServicePrincipal.LifecycleMoneyMoverScope</c>; the token keeps its
     /// <c>deposit-money-mover</c> spelling for byte-for-byte lock-step with the gateway/IAM allowance — a
     /// FAMILY-NEUTRAL scope by MEANING even though the string still reads "deposit".</summary>

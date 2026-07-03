@@ -30,9 +30,10 @@ namespace Babelstone.Lifecycle;
 /// <b>The heartbeat gauge emits nothing until the first completed pass</b> — the alert rules read
 /// <c>absent()</c> as its own signal (a driver that never completed a pass), the same convention as the
 /// reconciliation drill-freshness gauge and the <c>EngineMetricsAbsent</c> staging-liveness rule.
-/// <see cref="RecordScheduleHeld"/> is the LCD-2 settlement-health gate's emit hook: shipped with the
-/// monitoring surface (this issue), CALLED by the gate when it lands (bd babelstone-6cpq.10) — until
-/// then the series is absent and its page is dormant by construction.
+/// <see cref="RecordScheduleHeld"/> is the LCD-2 settlement-health gate's emit hook, called at the
+/// recurring rule's hold site (the personal-loan <c>InstallmentRule</c>) once per held occurrence per
+/// pass — the series is live wherever a schedule is held; the alert RULE reading it is the remaining
+/// ops follow-up.
 /// </para>
 /// </remarks>
 public static class LifecycleDriverMetrics
@@ -98,8 +99,8 @@ public static class LifecycleDriverMetrics
     /// <summary>
     /// The LCD-2 settlement-health gate's emit hook (ADR-PC-036 §Decision 4): a recurring rule that HOLDS
     /// occurrence N+1 because occurrence N's cash leg is parked calls this once per held occurrence per
-    /// pass, so the silent schedule stall becomes the <c>LifecycleScheduleHeld</c> page. Shipped here with
-    /// the monitoring surface; wired by the gate build (bd babelstone-6cpq.10).
+    /// pass — wired at the personal-loan <c>InstallmentRule</c>'s hold site — so the schedule stall is a
+    /// series, never invisible. The alert RULE reading it is the remaining ops follow-up.
     /// </summary>
     public static void RecordScheduleHeld(string commandKind) =>
         ScheduleHeld.Add(1, KindTag(commandKind));

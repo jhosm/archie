@@ -8,8 +8,8 @@ namespace Babelstone.Families.TermDeposit.Lifecycle.Tests;
 
 /// <summary>
 /// The dispatch-mapping FITNESS FUNCTION for the term-deposit maturity (ADR-PC-036 §Decision 7 —
-/// "share the dispatch mapping with <c>SimulationRuntime</c> so the forecast is a fitness function"; bd
-/// babelstone-6cpq.11). In plain terms: the simulation already forecasts a deposit's maturity as a
+/// "share the dispatch mapping with <c>SimulationRuntime</c> so the forecast is a fitness function").
+/// In plain terms: the simulation already forecasts a deposit's maturity as a
 /// <see cref="LifecycleMilestone"/>, and production fires the same occurrence as a
 /// <see cref="LifecycleCommandDecision"/> — if the two ever disagree on WHAT fires (command kind, occurrence
 /// key, due instant, canonical dispatch id), the forecast is lying about production. This test builds each

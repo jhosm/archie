@@ -44,8 +44,11 @@ namespace Babelstone.Families.PersonalLoan.Lifecycle;
 /// predicate), so an automated catch-up after an outage never advances the paid-count past collected cash.
 /// The rule re-evaluates every pass, so the schedule RESUMES on the first tick after the leg settles
 /// (the operator's resolution drives the saga to <c>SETTLEMENT_COMPLETED</c>). A permanently parked leg
-/// therefore stalls the loan's schedule BY DESIGN — correct, but it must be alerted (an ops follow-up,
-/// ADR-PC-036 §Residual risks). Maturity (one-shot) needs no such gate — <c>MaturityRule</c> takes no probe.
+/// therefore stalls the loan's schedule BY DESIGN — and each hold is counted
+/// (<c>LifecycleDriverMetrics.RecordScheduleHeld</c>, the <c>lifecycle_schedule_held_total</c> series), so
+/// the stall is a metric, never invisible; only the alert RULE reading that series remains an ops
+/// follow-up (ADR-PC-036 §Residual risks). Maturity (one-shot) needs no such gate — <c>MaturityRule</c>
+/// takes no probe.
 /// </para>
 /// <para>
 /// The collection account the installment debits is the loan's own disbursement-account reference, recovered
@@ -58,20 +61,13 @@ public sealed class InstallmentRule(
     ISettlementHealthProbe settlementHealth) : ILifecycleCommandRule
 {
     /// <summary>The STABLE command-kind the installment idempotency key is derived under — the shared
-    /// dispatch mapping's <see cref="PersonalLoanLifecycleDispatch.CommandKindPayInstallment"/> (ADR-PC-036
-    /// §Decision 7: the production rule and the simulation forecast consume ONE mapping), re-exposed here
-    /// for existing callers. MUST equal the engine installment endpoint's own derivation kind
-    /// (<c>LoansEndpoints.PayInstallmentCommandKind = "pay_installment"</c>) so the driver-derived id and
-    /// the engine-derived id are identical (LCD-1, ADR-PC-036 §Decision 1+3).</summary>
+    /// dispatch mapping's <see cref="PersonalLoanLifecycleDispatch.CommandKindPayInstallment"/>, re-exposed
+    /// here for existing callers.</summary>
     public const string CommandKindPayInstallment = PersonalLoanLifecycleDispatch.CommandKindPayInstallment;
 
     /// <summary>The scoped, non-interactive SCA service principal the loan installment money-mover route
-    /// authorises the driver by (ADR-PC-036 §Decision 1; bd babelstone-6cpq.14/.15) — the shared dispatch
-    /// mapping's <see cref="PersonalLoanLifecycleDispatch.MoneyMoverScope"/>, re-exposed here for existing
-    /// callers. Kept in lock-step with the engine-side <c>ScaServicePrincipal.LifecycleMoneyMoverScope</c>;
-    /// the token keeps its <c>deposit-money-mover</c> spelling for byte-for-byte lock-step with the
-    /// gateway/IAM allowance; it is the SAME literal MaturityRule presents — a FAMILY-NEUTRAL scope by
-    /// MEANING (it authorises the loan installment too) even though the string still reads "deposit".</summary>
+    /// authorises the driver by — the shared dispatch mapping's
+    /// <see cref="PersonalLoanLifecycleDispatch.MoneyMoverScope"/>, re-exposed here for existing callers.</summary>
     public const string DepositMoneyMoverScope = PersonalLoanLifecycleDispatch.MoneyMoverScope;
 
     // The loan's structural state (a LoanPosition) is serialized into the read-model row's Detail by the SAME
@@ -124,6 +120,10 @@ public sealed class InstallmentRule(
             // (backpressure, fail-closed) rather than guessing healthy.
             if (await _settlementHealth.IsParkedAsync(loan.StreamId, ct))
             {
+                // Count the hold (lifecycle_schedule_held_total, once per held occurrence per pass) so
+                // the stalled schedule is a series the lifecycle-driver alert group can page on — a
+                // parked leg holds BY DESIGN, but never invisibly.
+                LifecycleDriverMetrics.RecordScheduleHeld(CommandKindPayInstallment);
                 continue;
             }
 
