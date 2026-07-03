@@ -1,0 +1,298 @@
+openapi: 3.1.0
+# contracts/openapi/internal/engine-rate-sheets.openapi.yaml — the treasury rate-sheet deploy
+# surface (ADR-PC-008; catalogued per ADR-IC-020; bd babelstone-ax0b.5). INTERNAL admin-ops
+# plane: POST /v1/rate-sheets is served by the standalone Babelstone.RateSheets.Api host
+# (ADR-PC-008 Amendment §A1 — the first HTTP host in the engine) and is deliberately NOT an
+# infra/kong/kong.yml route — its caller is the treasury/ALM deploy tooling on the internal
+# network, under a deploy authz scope DISTINCT from the product+compliance scope (§P4).
+# Authn/authz is the gateway/deploy-channel's job, never the host's: the host records the
+# gateway-authenticated deploying principal from the X-Deploy-Actor header (Amendment §A3),
+# and rejects a request without it (401).
+#
+# Shapes are transcribed from the REAL code surface: RateSheetDeployRequest /
+# RateSheetResponse (engine/src/Babelstone.RateSheets.Api/RateSheetContracts.cs) and the
+# RateBand wire converter (engine/src/Babelstone.RateSheets/RateSheetBody.cs) — snake_case on
+# the wire, money as integer cents. Spec<->DTO lock: Babelstone.ContractDrift.Tests Layer 1
+# (bd babelstone-ax0b.4). No PII (ADR-PC-004 §P2) — a rate-sheet deploy carries no depositor
+# data; actors/approvers are role principals, never customers.
+info:
+  title: Babelstone Engine — Rate-Sheet Deploy (INTERNAL admin-ops)
+  version: 1.0.0
+  description: >
+    The forward-only rate-sheet deploy endpoint (ADR-PC-008). A sheet is validated
+    SYNCHRONOUSLY at deploy — referenced products must exist in the active configs, bands
+    must cover principals exhaustively without overlap, and every TAN must honour the
+    verified pack's declared bound ([0, max_consumer_rate_bps] from the signed pack keyed on
+    pack_version — ADR-PC-007 §P4). Idempotency is keyed on rate_sheet_version_id (the
+    natural key, §P2): a byte-identical re-POST of an existing version replays 200 with the
+    stored resource; a DIFFERENT body under an existing version id is a 409 — corrections
+    ship forward-only as a new version (§P5), never an edit. An Idempotency-Key header, when
+    supplied, must equal rate_sheet_version_id (400 otherwise).
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: legitimate-interest   # GDPR Art.6(1)(f) — internal pricing operations; no data-subject data
+  x-authorized-consumers:
+    - treasury-alm          # the treasury/ALM approver scope (ADR-PC-008 §P4)
+  # ── INTERNAL marker (openapi-catalog-validate.sh internal leg; bd babelstone-ax0b.5) ──
+  x-internal: >-
+    Operator/admin-ops deploy plane (ADR-PC-008 §P4): the treasury/ALM rate-sheet deploy
+    channel on the internal network — deliberately not an infra/kong/kong.yml route; the
+    public edge never prices, it only consumes resolved rates.
+servers:
+  - url: https://rate-sheets:8080
+    description: >
+      The standalone Babelstone.RateSheets.Api host's internal Kestrel surface (ADR-PC-008
+      Amendment §A1) — deliberately NOT the public Kong gateway host.
+paths:
+  /v1/rate-sheets:
+    post:
+      operationId: deployRateSheet
+      summary: Deploy an immutable rate-sheet version (forward-only).
+      description: >
+        Validates the sheet against the pack bound and the active product configs, then
+        applies the ADR-PC-008 idempotency rule keyed on rate_sheet_version_id — a new
+        version is created (201), an identical re-POST is replayed (200), and a different
+        body under an existing version id is rejected (409). The deploying principal is the
+        gateway-authenticated X-Deploy-Actor header, recorded as published_by — never a
+        payload field a caller could spoof (Amendment §A3); the treasury sign-off travels in
+        the body as approved_by / approval_ref.
+      parameters:
+        - name: X-Deploy-Actor
+          in: header
+          required: true
+          description: >
+            The gateway-authenticated deploying principal (ADR-PC-008 Amendment §A3),
+            recorded as published_by on the immutable row. Absent/blank is a 401 — the host
+            never trusts a payload identity.
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: >
+            Optional — rate_sheet_version_id IS the natural idempotency key (ADR-PC-008
+            §P2), so no separate header is needed; when supplied it MUST equal
+            rate_sheet_version_id (400 otherwise).
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RateSheetDeployRequest'
+      responses:
+        '201':
+          description: The sheet was deployed — the stored resource, with the database-assigned published_at.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateSheetResponse'
+        '200':
+          description: >
+            Idempotent replay — an identical body already exists under this
+            rate_sheet_version_id; the stored resource is returned unchanged (no second row).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateSheetResponse'
+        '400':
+          description: >
+            Deploy rejection (RFC 9457 validation problem): an Idempotency-Key that differs
+            from rate_sheet_version_id, an unknown/unpinned pack_version (the bound cannot be
+            resolved — ADR-PC-008 §P2 / ADR-PC-007 §P4), or a sheet failing the validator's
+            invariants (band coverage, pack bound, product references).
+        '401':
+          description: Missing X-Deploy-Actor — no gateway-authenticated deploying principal.
+        '409':
+          description: >
+            Forward-only-immutability breach — the rate_sheet_version_id already exists with
+            a DIFFERENT definition, or the family's effective_from is already claimed by a
+            different version. Corrections ship as a NEW version (ADR-PC-008 §P5). Body is
+            {"error": "<detail>"}.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateSheetConflict'
+components:
+  schemas:
+    RateSheetDeployRequest:
+      type: object
+      description: >
+        The deploy body (RateSheetDeployRequest, snake_case on the wire). The envelope fields
+        become columns on the stored immutable row; products is the JSONB body, 1:1 with the
+        deployed YAML. The deploying principal is NOT here — it is the X-Deploy-Actor header.
+      required:
+        - rate_sheet_version_id
+        - product_family
+        - pack_version
+        - effective_from
+        - approved_by
+        - approval_ref
+        - products
+      properties:
+        rate_sheet_version_id:
+          type: string
+          description: The immutable version id — the natural idempotency key (ADR-PC-008 §P2).
+        product_family:
+          type: string
+          description: The product family the sheet prices (e.g. term_deposit).
+        pack_version:
+          type: string
+          description: >
+            The verified regulatory pack the sheet's bound is read from (e.g. pt.2026.1) —
+            must be a loaded, verified pack (ADR-PC-007 §P4).
+        effective_from:
+          type: string
+          format: date-time
+          description: >
+            When the sheet takes effect (truncated to microsecond resolution at the
+            boundary). One version per (family, effective_from) — a claimed instant under a
+            different version id is a 409.
+        approved_by:
+          type: string
+          description: The treasury approver recorded on the immutable row (a role principal, not PII).
+        approval_ref:
+          type: string
+          description: The treasury sign-off reference recorded on the row.
+        products:
+          type: object
+          description: >
+            product_id -> role -> ordered principal bands (RateSheetBody.Products, 1:1 with
+            the deployed YAML). Dictionary keys are data and stay verbatim.
+          additionalProperties:
+            type: object
+            description: role (e.g. standard, new_money) -> the bands offered to that (product, role).
+            additionalProperties:
+              $ref: '#/components/schemas/RoleRates'
+      examples:
+        - rate_sheet_version_id: rs-2026-02
+          product_family: term_deposit
+          pack_version: pt.2026.1
+          effective_from: "2026-02-01T00:00:00Z"
+          approved_by: treasury:alm-committee
+          approval_ref: ALM-2026-014
+          products:
+            dpz_pt_12m_juros_venc:
+              standard:
+                # Example bands are BOUNDED only: the real top band ends [lower, null]
+                # (open-ended), but a literal null in an example crashes the pinned
+                # Spectral 6.14.2 JSONPath engine (nimma), so the open-ended form is
+                # documented on the RateBand schema instead of exemplified here.
+                bands:
+                  - principal_cents: [0, 5000000]
+                    tan_basis_points: 250
+                  - principal_cents: [5000000, 10000000]
+                    tan_basis_points: 275
+    RateSheetResponse:
+      type: object
+      description: >
+        The stored sheet as returned on 200/201 (RateSheetResponse) — symmetric with the
+        request, plus the publication metadata (published_by from X-Deploy-Actor;
+        published_at database-assigned, null only in never-persisted in-memory contexts).
+      required:
+        - rate_sheet_version_id
+        - product_family
+        - pack_version
+        - effective_from
+        - approved_by
+        - approval_ref
+        - published_by
+        - products
+      properties:
+        rate_sheet_version_id:
+          type: string
+        product_family:
+          type: string
+        pack_version:
+          type: string
+        effective_from:
+          type: string
+          format: date-time
+        approved_by:
+          type: string
+        approval_ref:
+          type: string
+        published_by:
+          type: string
+          description: The gateway-authenticated deploying principal (the X-Deploy-Actor value).
+        published_at:
+          type: string
+          format: date-time
+          description: The database-assigned publication instant.
+        products:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              $ref: '#/components/schemas/RoleRates'
+      examples:
+        - rate_sheet_version_id: rs-2026-02
+          product_family: term_deposit
+          pack_version: pt.2026.1
+          effective_from: "2026-02-01T00:00:00Z"
+          approved_by: treasury:alm-committee
+          approval_ref: ALM-2026-014
+          published_by: deploy:treasury-pipeline
+          published_at: "2026-01-28T10:15:00Z"
+          products:
+            dpz_pt_12m_juros_venc:
+              standard:
+                # Bounded example only — see the note on the request example above.
+                bands:
+                  - principal_cents: [0, 100000000]
+                    tan_basis_points: 250
+    RoleRates:
+      type: object
+      description: The ordered principal bands offered to one (product, role) — RoleRates.
+      required: [bands]
+      properties:
+        bands:
+          type: array
+          description: >
+            Ordered, contiguous, exhaustive principal bands (the validator's cross-band
+            invariants; ADR-PC-008 §P2).
+          items:
+            $ref: '#/components/schemas/RateBand'
+    RateBand:
+      type: object
+      description: >
+        One principal band — the FIXED wire shape owned by RateBandJsonConverter
+        (Babelstone.RateSheets/RateSheetBody.cs), independent of the host's naming policy:
+        principal_cents is exactly [lower, upper] with a non-negative lower and an upper
+        either null (the open-ended top band) or strictly above the lower; a malformed band
+        is rejected at deserialize. NOTE for the drift suite (bd babelstone-ax0b.4): this
+        schema is converter-owned, so it is documented here verbatim and EXEMPT from the
+        reflection-based Layer-1 structural check (reflection sees From/To/TanBasisPoints,
+        not the wire array).
+      required: [principal_cents, tan_basis_points]
+      properties:
+        principal_cents:
+          type: array
+          description: >
+            [lower, upper] in integer cents — lower inclusive and non-negative; upper
+            exclusive, or null for the open-ended top band.
+          minItems: 2
+          maxItems: 2
+          # JSON-Schema union spelled as oneOf (not the 3.1 `type: [integer, "null"]` array
+          # form, which the pinned Spectral 6.14.2 oas ruleset crashes on).
+          items:
+            oneOf:
+              - type: integer
+              - type: "null"
+        tan_basis_points:
+          type: integer
+          description: The TAN offered within the band, basis points.
+      examples:
+        - principal_cents: [0, 5000000]
+          tan_basis_points: 250
+    RateSheetConflict:
+      type: object
+      description: The 409 forward-only-immutability breach envelope.
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: What the conflict was (an existing different definition, or a claimed effective_from).

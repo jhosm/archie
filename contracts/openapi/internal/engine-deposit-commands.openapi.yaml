@@ -1,0 +1,916 @@
+openapi: 3.1.0
+# contracts/openapi/internal/engine-deposit-commands.openapi.yaml — the engine's INTERNAL
+# deposit command / money-mover surface (ADR-PC-029; catalogued per ADR-IC-020; bd
+# babelstone-ax0b.5). This file lives under contracts/openapi/internal/ — NOT specs/ — because
+# it documents a surface that is DELIBERATELY ABSENT from infra/kong/kong.yml: the engine
+# command ingress is the orchestrator saga dispatcher's mTLS-only target behind Boundary 2
+# (ADR-IC-006 §P5 — an internal service rejects any request without a valid client certificate
+# at the transport layer), never a public client route. The public write path is the edge
+# constitute front door (specs/orchestrator-edge.openapi.yaml), which STARTS the saga that
+# eventually POSTs here.
+#
+# The openapi-catalog-validate.sh INTERNAL leg enforces exactly that posture: every internal
+# spec must carry info.x-internal (a non-empty reason), and NO operation below may ever match
+# a public Kong route — the never-public mirror of the public dir's POST /v1/deposits negative
+# invariant. The engine-lifecycle-movers Kong service DOES proxy the maturity/interest paths,
+# but it is a scoped, audited SERVICE-PRINCIPAL channel (ADR-PC-036; excluded from the public
+# reconcile scope alongside mcp-server), not a public client API — the ops stay internal here.
+#
+# Shapes are transcribed from the REAL code surface, not invented: DepositsEndpoints.cs +
+# DepositsContracts.cs in families/term-deposit/src/Babelstone.Families.TermDeposit.Application
+# (snake_case on the wire — the host's SnakeCaseLower JSON options; money as integer cents,
+# ADR-PC-010 §P1). The spec<->DTO lock is enforced by the Babelstone.ContractDrift.Tests
+# Layer-1 suite (bd babelstone-ax0b.4): mutating a DTO without updating this file turns CI red.
+# NO PII (ADR-PC-004 §P2): opaque account tokens, structural facts, synthetic examples only.
+# The one deliberate exception is documented on ErasePersonalDataRequest.subject_id.
+info:
+  title: Babelstone Engine — Deposit Commands (INTERNAL, mTLS-only)
+  version: 1.0.0
+  description: >
+    The engine's deposit command / money-mover ingress (ADR-PC-029). INTERNAL — this surface
+    is deliberately NOT exposed through the public Kong edge (ADR-IC-006 §P5 Boundary 2): its
+    callers are the orchestrator's saga command dispatcher, the MCP server's deposit tools,
+    and the ADR-PC-036 lifecycle-command driver, all over the internal mTLS network. Where a
+    caller-supplied Idempotency-Key is marked required it is MANDATORY and must be a UUID
+    (ADR-PC-029 slot 1/slot 4): the engine dedupes per aggregate on it and replays the
+    ORIGINAL outcome (same commit_sequence, no second append) on an at-least-once retry; a
+    missing/malformed key fails loud with 400. Maturity and interest instead derive the
+    command id SERVER-side (LifecycleCommandKey, ADR-PC-036 Decision 1) and are additionally
+    gated by step-up SCA: the ScaPreconditionFilter authorises either a fresh gateway-attested
+    human SCA proof (X-SCA-Acr/X-SCA-Auth-Time) or the scoped non-interactive service
+    principal (X-SCA-Service-Principal — maturity + interest only), short-circuiting 422
+    SCA_REQUIRED before any side effect. Early termination is human-SCA only (the service
+    principal's allowance excludes it). Errors are RFC 9457 application/problem+json.
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract        # GDPR Art.6(1)(b) — performance of the deposit contract
+  x-authorized-consumers:
+    - orchestrator          # the saga command dispatcher (ADR-PC-029 slot 3)
+    - mcp-server            # the deposit tools (ADR-IC-010)
+    - lifecycle-driver      # maturity/interest via the scoped service principal (ADR-PC-036)
+  # ── INTERNAL marker (openapi-catalog-validate.sh internal leg; bd babelstone-ax0b.5) ──
+  # A non-empty reason string is REQUIRED on every spec under contracts/openapi/internal/.
+  # The gate FAILS if any operation below ever appears as a public Kong route — exposing one
+  # publicly must MOVE its spec to specs/ (and pass the public reconcile) in the same change.
+  x-internal: >-
+    The engine command ingress is the mTLS-only Boundary-2 target of the orchestrator saga /
+    MCP tools / lifecycle driver (ADR-IC-006 §P5, ADR-PC-029) — deliberately absent from
+    infra/kong/kong.yml; the public write path is the edge constitute saga front door.
+servers:
+  - url: https://engine:8080
+    description: >
+      The engine host's internal (mTLS-only) Kestrel surface — deliberately NOT the public
+      Kong gateway host; unauthenticated transport is rejected at Boundary 2 (ADR-IC-006 §P5).
+paths:
+  /v1/deposits:
+    post:
+      operationId: constituteDeposit
+      summary: Constitute a term deposit (the saga dispatcher's engine command target).
+      description: >
+        Opens the deposit stream. The saga sends the MINIMAL body (deposit_id, product_id,
+        principal_cents, funding_account — the ENGINE_COMMAND_PACT shape) and the engine
+        resolves the structural facts (term / interest variant / renewal policy / coupon
+        cadence / pricing role) from its deployed product-config store in-transaction
+        (ADR-PC-008 §S2 / ADR-PC-009); a direct caller that supplies the full structural
+        shape stays on the explicit path, honoured unchanged. The TAN is never supplied —
+        it is resolved from the effective rate sheet.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConstituteDepositRequest'
+      responses:
+        '201':
+          description: >
+            Constituted (or the idempotent replay of the original constitution — same body,
+            no second append). Location points at the canonical read resource
+            /v1/deposits/{id}; commit_sequence is the ADR-IC-005 §P3 read-your-writes token.
+          headers:
+            Location:
+              description: The canonical deposit read resource for the new stream.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConstituteDepositResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029 slot 1) — fail loud, never a non-idempotent constitution.
+        '409':
+          description: The deposit stream already exists (a non-idempotent id collision).
+        '422':
+          description: >
+            Domain rejection — no rate sheet effective at constitution, or an unpriced
+            (product, role); never a silent-default constitution.
+  /v1/deposits/{id}/maturity:
+    post:
+      operationId: matureDeposit
+      summary: Mature a deposit at term (irreversible money-mover, step-up-SCA gated).
+      description: >
+        Accrues the final interest, applies withholding, and pays out — the one-shot maturity
+        occurrence. NO caller Idempotency-Key: the command id is SERVER-DERIVED via the
+        canonical LifecycleCommandKey.Derive(deposit_id, "mature", 1) (ADR-PC-036 Decision 1),
+        so a manual caller, the MCP mature_deposit tool, and the lifecycle driver all dedupe
+        onto the SAME command. Step-up SCA is enforced BEFORE any side effect: a fresh
+        gateway-attested human proof OR the scoped non-interactive service principal
+        (ADR-PC-036) — absent/stale authorisation is a 422 SCA_REQUIRED.
+      parameters:
+        - $ref: '#/components/parameters/DepositId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MatureDepositRequest'
+      responses:
+        '200':
+          description: >
+            The matured deposit (the authoritative post-append fold; last_sequence is the
+            commit sequence). An idempotent replay returns the same shape.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deposit'
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: >
+            SCA_REQUIRED (no fresh human proof and no authorised service principal), or the
+            lifecycle guard (not constituted / already matured) — never a double maturity.
+  /v1/deposits/{id}/interest:
+    post:
+      operationId: payInterest
+      summary: Pay one PERIODIC coupon (irreversible money-mover, step-up-SCA gated).
+      description: >
+        Pays the next intermediate coupon of a PERIODIC deposit; the coupon window is derived
+        engine-side from the schedule and the coupons already paid. Shares the SAME
+        step-up-SCA route group as maturity (human proof or the scoped service principal,
+        ADR-PC-036) — SCA parity by construction.
+      parameters:
+        - $ref: '#/components/parameters/DepositId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PayInterestRequest'
+      responses:
+        '200':
+          description: The deposit after the coupon (authoritative post-append fold).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deposit'
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: >
+            SCA_REQUIRED, or the lifecycle/variant guard (not constituted, not PERIODIC, no
+            intermediate coupon left) — never a phantom coupon.
+  /v1/deposits/{id}/terminate:
+    post:
+      operationId: terminateEarly
+      summary: Break a deposit before maturity (irreversible money-mover, HUMAN step-up SCA only).
+      description: >
+        Early termination (F.4): accrues the elapsed interest, withholds, applies the
+        product's penalty, and records the NET settlement payout append-first. HUMAN SCA
+        ONLY — terminate is NOT in the scoped service principal's allowance (ADR-PC-036), so
+        the automated lifecycle driver can never break a deposit. The mandatory
+        Idempotency-Key (ADR-PC-029 slot 4) makes an at-least-once retry replay the original
+        outcome rather than append a second termination.
+      parameters:
+        - $ref: '#/components/parameters/DepositId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TerminateEarlyRequest'
+      responses:
+        '200':
+          description: The termination outcome (terminal TERMINATEDEARLY status).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminateEarlyResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029 slot 4).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: >
+            SCA_REQUIRED (a non-interactive caller always fails here), or the F.3 lifecycle
+            gate (not Active / already terminated / matured).
+  /v1/deposits/{id}/partial-withdrawal:
+    post:
+      operationId: withdrawPartially
+      summary: Withdraw part of the principal, leaving the deposit Active (F.12).
+      description: >
+        Reduces the principal; the product's policy (minimum withdrawal, minimum remaining
+        balance, lock-up) is resolved ENGINE-side from the deposit's product config. A partial
+        withdrawal is genuinely REPEATABLE, so the mandatory Idempotency-Key (ADR-PC-029
+        slot 4) is what stops an at-least-once retry withdrawing twice.
+      parameters:
+        - $ref: '#/components/parameters/DepositId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PartialWithdrawRequest'
+      responses:
+        '200':
+          description: The deposit after the withdrawal (still Active, reduced principal).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deposit'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029 slot 4).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: >
+            The lifecycle + F.12 policy gates (not Active, within the lock-up, below the
+            minimum, leaving too little, or the whole balance — which is a termination).
+  /v1/deposits/{id}/erase-personal-data:
+    post:
+      operationId: erasePersonalData
+      summary: GDPR Article 17 right-to-be-forgotten (crypto-shred + erasure fact).
+      description: >
+        Crypto-shreds the data subject's encryption key (ADR-PC-004 §P3) and appends the
+        structural erasure fact. Key destruction is irreversible, so the mandatory
+        Idempotency-Key (ADR-PC-029 slot 4) makes the erasure safely retryable — a replay
+        returns the original outcome with no second shred and no second append.
+      parameters:
+        - $ref: '#/components/parameters/DepositId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErasePersonalDataRequest'
+      responses:
+        '200':
+          description: The erasure outcome (terminal ERASED status; the subject id is never echoed).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErasePersonalDataResponse'
+        '400':
+          description: Missing/non-UUID Idempotency-Key, or a missing subject_id.
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: Not erasable from the current lifecycle (already erased under a different command id).
+        '500':
+          description: >
+            The pseudonym salt secret is not configured — the host cannot mint a
+            non-reversible subject pseudonym, so it refuses rather than re-leak identity
+            (ADR-IC-016 §8).
+  /v1/deposits/{id}/correction:
+    post:
+      operationId: correctDeposit
+      summary: Operator-only bitemporal correction of a recorded fact (D.5 / F.6).
+      description: >
+        The thin front door to the ADR-PC-002 §P2 bitemporal supersession: appends a
+        store-only DepositCorrected whose valid-time is effective_from; the projection
+        supersedes the prior belief, never overwrites it. OPERATOR actors only (ops:* /
+        operator:* — a non-operator actor is a 422). STORE-ONLY: no money moves, the deposit
+        stays Active. Repeatable, so the Idempotency-Key is mandatory (ADR-PC-029 slot 4).
+      parameters:
+        - $ref: '#/components/parameters/DepositId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CorrectDepositRequest'
+      responses:
+        '200':
+          description: The correction outcome (the deposit stays Active; the correction is tallied).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CorrectDepositResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029 slot 4).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: >
+            The operator guard (non-operator actor), an unknown/non-correctable field, or
+            the F.3 lifecycle gate.
+  /v1/deposits/{id}/constitute-renewal:
+    post:
+      operationId: constituteRenewal
+      summary: Renewal saga step 2 — open the renewed instance off a CLOSING (Matured) deposit.
+      description: >
+        {id} is the CLOSING deposit (the saga's process_id); the body is MINIMAL — the engine
+        reads every renewal fact (term / variant / cadence / policy, product code, role,
+        funding) off the closing deposit's folded state, so the orchestrator carries no
+        product-family knowledge (ADR-IC-003 §A7). Returns 201 with Location pointing at the
+        NEW stream. Mandatory Idempotency-Key (ADR-PC-029 slot 4).
+      parameters:
+        - $ref: '#/components/parameters/DepositId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConstituteRenewalRequest'
+      responses:
+        '201':
+          description: The renewed instance is open (Location names the NEW stream).
+          headers:
+            Location:
+              description: The canonical read resource of the NEW (renewed) deposit stream.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConstituteRenewalResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029 slot 4).
+        '409':
+          description: The new stream already exists (a non-idempotent collision on new_deposit_id).
+        '422':
+          description: >
+            Closing deposit not Matured, renewal policy NONE, or an unpriced renewal rate —
+            never a silent-default renewal.
+  /v1/deposits/{id}/renewal-link:
+    post:
+      operationId: linkRenewal
+      summary: Renewal saga step 3 — fold the CLOSING stream Matured → Renewed.
+      description: >
+        Appends DepositRenewed to the CLOSING stream {id}; the body carries the new deposit
+        id whose head constitution fills the link. Returns 200 (it mutates an existing
+        stream; it does not create a resource). Mandatory Idempotency-Key (ADR-PC-029 slot 4).
+      parameters:
+        - $ref: '#/components/parameters/DepositId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinkRenewalRequest'
+      responses:
+        '200':
+          description: The renewal link outcome (the closing stream is terminal RENEWED).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkRenewalResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029 slot 4).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: Closing deposit not Matured, or the new stream missing.
+components:
+  parameters:
+    DepositId:
+      name: id
+      in: path
+      required: true
+      description: >
+        The deposit's raw stream id (a canonical UUID) — the same id form the engine read
+        surface takes (GET /v1/deposits/{id}), never the edge's opaque DEP-… handle.
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >
+        The deterministic command id (ADR-PC-029 slot 1/slot 4) — a UUID, in practice the
+        saga's saga_outbox row id. MANDATORY on every op that declares it: the engine dedupes
+        per aggregate on this key and replays the ORIGINAL outcome (same commit_sequence, no
+        second append/settle) on an at-least-once retry; absent/malformed fails loud (400).
+        The engine can never mint it — a server-minted id would change on every retry and
+        defeat the dedup. (Maturity/interest do NOT take this header: their command id is
+        server-derived, ADR-PC-036 Decision 1.)
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    ConstituteDepositRequest:
+      type: object
+      description: >
+        The constitution command (ConstituteDepositRequest, snake_case on the wire). The
+        structural facts are OPTIONAL — the saga sends only the minimal shape and the engine
+        resolves the rest from the product config (ADR-PC-009); a supplied full shape is
+        honoured unchanged. Money is integer cents (ADR-PC-010 §P1); funding_account is an
+        opaque token, never an IBAN (ADR-PC-004 §P2).
+      required: [principal_cents, product_id, funding_account]
+      properties:
+        principal_cents:
+          type: integer
+          format: int64
+          description: The principal, integer cents.
+        product_id:
+          type: string
+          description: The catalogue product code the engine resolves the shape and rate from.
+        funding_account:
+          type: string
+          description: Opaque funding-account token (a reference, never an IBAN).
+        role:
+          type: string
+          description: Optional pricing-role override (v1 default resolved from the product config).
+        term_days:
+          type: integer
+          description: Optional; resolved from the product config when omitted.
+        start_date:
+          type: string
+          format: date
+          description: Optional; host-stamped from constituted_at when omitted.
+        interest_variant:
+          type: string
+          description: Optional (AT_MATURITY / PERIODIC / ADVANCE); resolved from the product config when omitted.
+        auto_renewal_policy:
+          type: string
+          description: Optional; resolved from the product config when omitted.
+        deposit_id:
+          type: string
+          format: uuid
+          description: >
+            Optional caller-chosen stream id (the saga supplies its process_id, so
+            ce_subject = process_id); engine-minted when omitted.
+        constituted_at:
+          type: string
+          format: date-time
+          description: Optional constitution instant; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal recorded on the append.
+        payment_period_months:
+          type: integer
+          description: PERIODIC coupon cadence in months (1 or 3); omit/0 for AT_MATURITY and ADVANCE.
+      examples:
+        - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+          product_id: TD-PT-12M-STD
+          principal_cents: 1000000
+          funding_account: acct-ref-7f3a9c1e
+    ConstituteDepositResponse:
+      type: object
+      description: >
+        The constitution outcome (ConstituteDepositResponse): the assigned id, the lifecycle
+        state, and commit_sequence — the ADR-IC-005 §P3 read-your-writes token the caller
+        hands back as If-Min-Sequence on the follow-up read.
+      required: [deposit_id, status, commit_sequence]
+      properties:
+        deposit_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: The synchronous constitution outcome — ACTIVE in the walking skeleton.
+        commit_sequence:
+          type: integer
+          format: int64
+      examples:
+        - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+          status: ACTIVE
+          commit_sequence: 0
+    MatureDepositRequest:
+      type: object
+      description: >
+        The maturity command (MatureDepositRequest) — every field optional; the instant is
+        host-stamped and the payout account defaults to the dev current account when omitted.
+      properties:
+        matured_at:
+          type: string
+          format: date-time
+          description: The maturity instant; host-stamped when omitted.
+        payout_account:
+          type: string
+          description: Opaque payout-account token (a reference, never an IBAN).
+        actor:
+          type: string
+          description: The acting principal recorded on the append.
+      examples:
+        - payout_account: acct-ref-2b8d4f60
+    PayInterestRequest:
+      type: object
+      description: >
+        The coupon command (PayInterestRequest) — the coupon window is derived engine-side
+        from the schedule and the coupons already paid, never supplied here.
+      properties:
+        paid_at:
+          type: string
+          format: date-time
+          description: The payment instant; host-stamped when omitted.
+        payout_account:
+          type: string
+          description: Opaque payout-account token (a reference, never an IBAN).
+        actor:
+          type: string
+          description: The acting principal recorded on the append.
+      examples:
+        - payout_account: acct-ref-2b8d4f60
+    TerminateEarlyRequest:
+      type: object
+      description: >
+        The early-termination command (TerminateEarlyRequest). The penalty policy is resolved
+        ENGINE-side from the product config, never supplied. All fields optional with safe
+        defaults; termination_reason is a stable machine code, never PII.
+      properties:
+        payout_account:
+          type: string
+          description: Opaque token the NET settlement is credited to (never an IBAN).
+        termination_reason:
+          type: string
+          description: A stable non-PII reason code (defaults to CUSTOMER_REQUEST).
+        terminated_at:
+          type: string
+          format: date-time
+          description: The break instant; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal recorded on the append.
+      examples:
+        - payout_account: acct-ref-2b8d4f60
+          termination_reason: CUSTOMER_REQUEST
+    TerminateEarlyResponse:
+      type: object
+      description: The termination outcome (TerminateEarlyResponse) — structural facts only.
+      required: [deposit_id, status, commit_sequence]
+      properties:
+        deposit_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: The terminal lifecycle status (TERMINATEDEARLY).
+        commit_sequence:
+          type: integer
+          format: int64
+      examples:
+        - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+          status: TERMINATEDEARLY
+          commit_sequence: 4
+    PartialWithdrawRequest:
+      type: object
+      description: >
+        The partial-withdrawal command (PartialWithdrawRequest). No payout account — a
+        partial withdrawal carries no settlement leg; the F.12 policy is resolved engine-side.
+      required: [withdrawn_amount_cents]
+      properties:
+        withdrawn_amount_cents:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The principal to take out, integer cents (ADR-PC-010 §P1).
+        withdrawn_at:
+          type: string
+          format: date-time
+          description: The withdrawal instant; host-stamped when omitted (its DATE is the as-of policy date).
+        actor:
+          type: string
+          description: The acting principal recorded on the append.
+      examples:
+        - withdrawn_amount_cents: 250000
+    ErasePersonalDataRequest:
+      type: object
+      description: >
+        The GDPR Article 17 erasure command (ErasePersonalDataRequest). subject_id is the raw
+        data-subject key name — the ONE sanctioned appearance of the raw subject reference, in
+        the body of this authenticated internal command (ADR-PC-004 §P2): the host uses it
+        only to destroy the key and to derive the salted one-way pseudonym persisted on the
+        event; it is never stored, streamed, or echoed back.
+      required: [subject_id]
+      properties:
+        subject_id:
+          type: string
+          description: The data-subject key name to crypto-shred. Resolved at the host, never persisted.
+        erasure_reason:
+          type: string
+          description: A stable machine code (defaults to GDPR_ARTICLE_17) — never PII.
+        erased_at:
+          type: string
+          format: date-time
+          description: The erasure instant; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to gdpr:erasure).
+      examples:
+        - subject_id: subject-key-3f6e9a12
+    ErasePersonalDataResponse:
+      type: object
+      description: The erasure outcome (ErasePersonalDataResponse) — the subject id is never echoed back.
+      required: [deposit_id, status, commit_sequence]
+      properties:
+        deposit_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: The terminal lifecycle status (ERASED).
+        commit_sequence:
+          type: integer
+          format: int64
+      examples:
+        - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+          status: ERASED
+          commit_sequence: 5
+    CorrectDepositRequest:
+      type: object
+      description: >
+        The operator correction command (CorrectDepositRequest, bd babelstone-k6r8.11). The
+        corrected VALUE travels as the typed structural field its corrected_field names —
+        principal as integer cents, rate as basis points, dates as ISO dates; the others stay
+        null. effective_from is the valid-time the ADR-PC-002 §P2 bitemporal supersession
+        takes effect from. Every field is structural or a stable code — no PII.
+      required: [correction_id, corrected_field, effective_from, correction_reason]
+      properties:
+        correction_id:
+          type: string
+          description: >
+            A stable operator-supplied id for audit lineage (e.g. corr-001) — distinct from
+            the Idempotency-Key dedup key.
+        corrected_field:
+          type: string
+          description: >
+            The structural field being corrected (principal, rate, start_date,
+            maturity_date) — an unknown/non-correctable field is a 422 before any append.
+        corrected_principal_cents:
+          type: integer
+          format: int64
+          description: The corrected principal in integer cents when corrected_field is principal; null otherwise.
+        corrected_tan_basis_points:
+          type: integer
+          description: The corrected TAN in basis points when corrected_field is rate; null otherwise.
+        corrected_start_date:
+          type: string
+          format: date
+          description: The corrected start value-date when corrected_field is start_date; null otherwise.
+        corrected_maturity_date:
+          type: string
+          format: date
+          description: The corrected maturity date when corrected_field is maturity_date; null otherwise.
+        effective_from:
+          type: string
+          format: date
+          description: The valid-time the correction takes effect FROM (the bitemporal supersession axis).
+        correction_reason:
+          type: string
+          description: A stable non-PII reason code/string (e.g. clerk-entry).
+        actor:
+          type: string
+          description: The OPERATOR actor (ops:* / operator:*); a non-operator actor is a 422.
+      examples:
+        - correction_id: corr-001
+          corrected_field: principal
+          corrected_principal_cents: 1050000
+          effective_from: "2026-02-01"
+          correction_reason: clerk-entry
+          actor: ops:clerk
+    CorrectDepositResponse:
+      type: object
+      description: The correction outcome (CorrectDepositResponse) — the deposit stays Active.
+      required: [deposit_id, status, commit_sequence]
+      properties:
+        deposit_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: The (unchanged, still Active) lifecycle status.
+        commit_sequence:
+          type: integer
+          format: int64
+      examples:
+        - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+          status: ACTIVE
+          commit_sequence: 2
+    ConstituteRenewalRequest:
+      type: object
+      description: >
+        Renewal saga step 2 (ConstituteRenewalRequest) — MINIMAL by design: the engine reads
+        every renewal fact off the CLOSING deposit's folded state (bd babelstone-mtto.5).
+      required: [new_deposit_id]
+      properties:
+        new_deposit_id:
+          type: string
+          format: uuid
+          description: >
+            The fresh stream id the renewed instance is constituted under (the saga derives
+            it deterministically, so the renewal is a replayable command).
+        renewed_at:
+          type: string
+          format: date-time
+          description: The renewal instant (the new sheet resolves as-of here); host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal (defaults to saga:renewal).
+      examples:
+        - new_deposit_id: 8a2b4c6d-1e3f-4a5b-9c8d-7e6f5a4b3c2d
+    ConstituteRenewalResponse:
+      type: object
+      description: >
+        The constitute-renewal outcome (ConstituteRenewalResponse): the closing deposit id,
+        the NEW deposit id, its lifecycle, and the new stream's commit_sequence.
+      required: [deposit_id, new_deposit_id, status, commit_sequence]
+      properties:
+        deposit_id:
+          type: string
+          format: uuid
+          description: The CLOSING (Matured) deposit id the renewal was driven off.
+        new_deposit_id:
+          type: string
+          format: uuid
+          description: The NEW (renewed) deposit's stream id.
+        status:
+          type: string
+          description: The new instance's lifecycle — ACTIVE.
+        commit_sequence:
+          type: integer
+          format: int64
+      examples:
+        - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+          new_deposit_id: 8a2b4c6d-1e3f-4a5b-9c8d-7e6f5a4b3c2d
+          status: ACTIVE
+          commit_sequence: 0
+    LinkRenewalRequest:
+      type: object
+      description: >
+        Renewal saga step 3 (LinkRenewalRequest): the new deposit id whose head constitution
+        fills the DepositRenewed link on the CLOSING stream.
+      required: [new_deposit_id]
+      properties:
+        new_deposit_id:
+          type: string
+          format: uuid
+          description: The renewed instance's stream id (opened by constitute-renewal).
+        renewed_at:
+          type: string
+          format: date-time
+          description: The valid time on the DepositRenewed append; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal (defaults to saga:renewal).
+      examples:
+        - new_deposit_id: 8a2b4c6d-1e3f-4a5b-9c8d-7e6f5a4b3c2d
+    LinkRenewalResponse:
+      type: object
+      description: >
+        The renewal-link outcome (LinkRenewalResponse): the closing deposit's terminal
+        RENEWED lifecycle and its post-link commit_sequence.
+      required: [deposit_id, new_deposit_id, status, commit_sequence]
+      properties:
+        deposit_id:
+          type: string
+          format: uuid
+          description: The CLOSING deposit id the link was appended to.
+        new_deposit_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          description: The closing deposit's terminal lifecycle — RENEWED.
+        commit_sequence:
+          type: integer
+          format: int64
+      examples:
+        - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+          new_deposit_id: 8a2b4c6d-1e3f-4a5b-9c8d-7e6f5a4b3c2d
+          status: RENEWED
+          commit_sequence: 4
+    Deposit:
+      type: object
+      description: >
+        The deposit resource (DepositResponse, ADR-PC-021 §D5 boundary) as returned by the
+        money-mover ops that answer with the authoritative post-append fold — the SAME shape
+        the public read surface serves (specs/engine-reads.openapi.yaml), duplicated here so
+        each catalogued spec stays self-contained. snake_case on the wire, money as integer
+        cents (ADR-PC-010 §P1), structural facts only, no PII (ADR-PC-004 §P2).
+      required:
+        - deposit_id
+        - sor
+        - principal_cents
+        - tan_basis_points
+        - rate_sheet_version_id
+        - product_code
+        - term_days
+        - start_date
+        - maturity_date
+        - interest_variant
+        - auto_renewal_policy
+        - payment_period_months
+        - accrued_gross_interest_cents
+        - withholding_to_date_cents
+        - net_interest_cents
+        - total_payout_cents
+        - coupons_paid
+        - lifecycle
+        - last_sequence
+        - last_updated
+        - product_config_version
+      properties:
+        deposit_id:
+          type: string
+          format: uuid
+          description: The deposit's stream id.
+        sor:
+          type: string
+          description: The system-of-record routing truth (ADR-PC-018 §6.2) — closed vocabulary.
+          enum: [engine, legacy]
+        principal_cents:
+          type: integer
+          format: int64
+          description: Current principal, integer cents.
+        tan_basis_points:
+          type: integer
+          description: The resolved nominal annual rate (TAN), basis points.
+        rate_sheet_version_id:
+          type: string
+          description: The price/version key the TAN was resolved from.
+        product_code:
+          type: string
+          description: The catalogue structural code (prospective-only; pre-v794 deposits carry "").
+        term_days:
+          type: integer
+          description: The deposit's term, days.
+        start_date:
+          type: string
+          format: date
+        maturity_date:
+          type: string
+          format: date
+        interest_variant:
+          type: string
+          description: AT_MATURITY / PERIODIC / ADVANCE.
+        auto_renewal_policy:
+          type: string
+        payment_period_months:
+          type: integer
+          description: PERIODIC coupon cadence in months (0 for AT_MATURITY / ADVANCE).
+        accrued_gross_interest_cents:
+          type: integer
+          format: int64
+        withholding_to_date_cents:
+          type: integer
+          format: int64
+        net_interest_cents:
+          type: integer
+          format: int64
+        total_payout_cents:
+          type: integer
+          format: int64
+        coupons_paid:
+          type: integer
+        lifecycle:
+          type: string
+          description: >
+            The lifecycle state label (e.g. ACTIVE, MATURED, RENEWED, TERMINATEDEARLY,
+            ERASED) — a structural string, deliberately not a closed enum here.
+        last_sequence:
+          type: integer
+          format: int64
+          description: >
+            The per-stream version this answer reflects (ADR-IC-005 §P3) — the commit
+            sequence of the command on a money-mover response.
+        last_updated:
+          type: string
+          format: date-time
+          description: The producing event's transaction_time.
+        product_config_version:
+          type: string
+          description: >
+            The product-config generation pin (content hash sha256:<hex>, ADR-PC-009 §A2)
+            the deposit was constituted under; pre-pin deposits carry "".
+      examples:
+        - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+          sor: engine
+          principal_cents: 1000000
+          tan_basis_points: 250
+          rate_sheet_version_id: rs-2026-02
+          product_code: TD-PT-12M-STD
+          term_days: 365
+          start_date: "2026-01-15"
+          maturity_date: "2027-01-15"
+          interest_variant: AT_MATURITY
+          auto_renewal_policy: NO_RENEWAL
+          payment_period_months: 0
+          accrued_gross_interest_cents: 25000
+          withholding_to_date_cents: 7000
+          net_interest_cents: 18000
+          total_payout_cents: 1018000
+          coupons_paid: 0
+          lifecycle: MATURED
+          last_sequence: 3
+          last_updated: "2027-01-15T09:00:00Z"
+          product_config_version: "sha256:9f2c4a1e0b7d6c5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f"
