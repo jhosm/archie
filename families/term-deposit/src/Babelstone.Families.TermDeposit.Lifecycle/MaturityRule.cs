@@ -42,22 +42,21 @@ namespace Babelstone.Families.TermDeposit.Lifecycle;
 /// </remarks>
 public sealed class MaturityRule(IDepositReadModelStore deposits) : ILifecycleCommandRule
 {
-    /// <summary>The STABLE command-kind the maturity idempotency key is derived under. MUST equal the engine
-    /// maturity endpoint's own derivation kind (<c>DepositsEndpoints.MatureCommandKind = "mature"</c>) so the
-    /// driver-derived id and the engine-derived id are identical (LCD-1, ADR-PC-036 §Decision 1+3) — named
-    /// here, not referenced, to keep the driver free of a family-application compile dependency, the same
-    /// lock-step-by-constant discipline <c>HttpLifecycleCommandSink</c> uses for its headers.</summary>
-    public const string CommandKindMature = "mature";
+    /// <summary>The STABLE command-kind the maturity idempotency key is derived under — the shared dispatch
+    /// mapping's <see cref="TermDepositLifecycleDispatch.CommandKindMature"/> (ADR-PC-036 §Decision 7: the
+    /// production rule and the simulation forecast consume ONE mapping), re-exposed here for existing
+    /// callers. MUST equal the engine maturity endpoint's own derivation kind
+    /// (<c>DepositsEndpoints.MatureCommandKind = "mature"</c>) so the driver-derived id and the
+    /// engine-derived id are identical (LCD-1, ADR-PC-036 §Decision 1+3).</summary>
+    public const string CommandKindMature = TermDepositLifecycleDispatch.CommandKindMature;
 
     /// <summary>The scoped, non-interactive SCA service principal the deposit money-mover route authorises the
-    /// driver by (ADR-PC-036 §Decision 1). Kept in lock-step with the engine-side
-    /// <c>ScaServicePrincipal.LifecycleMoneyMoverScope</c>; named locally (not referenced) so the driver core
-    /// takes no dependency on the term-deposit Application assembly.</summary>
-    public const string DepositMoneyMoverScope = "lifecycle:deposit-money-mover";
-
-    // Maturity is the degenerate ONE-SHOT occurrence (exactly one per deposit), so its stable occurrence key
-    // is the constant 1 — the engine maturity endpoint derives its key under the same constant.
-    private const long MaturityOccurrence = 1;
+    /// driver by (ADR-PC-036 §Decision 1) — the shared dispatch mapping's
+    /// <see cref="TermDepositLifecycleDispatch.MoneyMoverScope"/>, re-exposed here for existing callers.
+    /// Kept in lock-step with the engine-side <c>ScaServicePrincipal.LifecycleMoneyMoverScope</c>; named
+    /// locally (not referenced) so the driver core takes no dependency on the term-deposit Application
+    /// assembly.</summary>
+    public const string DepositMoneyMoverScope = TermDepositLifecycleDispatch.MoneyMoverScope;
 
     private readonly IDepositReadModelStore _deposits =
         deposits ?? throw new ArgumentNullException(nameof(deposits));
@@ -87,17 +86,11 @@ public sealed class MaturityRule(IDepositReadModelStore deposits) : ILifecycleCo
                 continue;
             }
 
-            decisions.Add(new LifecycleCommandDecision(
-                InstanceId: deposit.StreamId,
-                CommandKind: CommandKindMature,
-                OccurrenceKey: MaturityOccurrence,
-                RequestPath: $"/v1/deposits/{deposit.StreamId:D}/maturity",
-                // matured_at carries the deposit's OWN maturity date as the business valid_time, so a late
-                // firing still records the correct business date (ADR-PC-036 §Context; ADR-PC-002). The payout
-                // account defaults engine-side; the body carries no PII (ADR-PC-004 §P2).
-                Body: new Dictionary<string, object?> { ["matured_at"] = AtUtcMidnight(deposit.MaturityDate) },
-                DueAt: deposit.MaturityDate,
-                ServicePrincipalScope: DepositMoneyMoverScope));
+            // The ONE shared dispatch mapping (ADR-PC-036 §Decision 7): the same
+            // milestone→command mapping the simulation forecast consumes, so the command this
+            // production rule fires for a maturity occurrence cannot silently diverge from the
+            // forecast's milestone — the dispatch fitness test compares the two.
+            decisions.Add(TermDepositLifecycleDispatch.MatureDecision(deposit.StreamId, deposit.MaturityDate));
         }
 
         return decisions;
@@ -105,9 +98,4 @@ public sealed class MaturityRule(IDepositReadModelStore deposits) : ILifecycleCo
 
     private static bool IsActive(string lifecycle) =>
         string.Equals(lifecycle, nameof(DepositLifecycle.Active), StringComparison.OrdinalIgnoreCase);
-
-    // The due date rides as a value (ADR-PC-036 §Context): a DateOnly maturity date as UTC midnight, the wire
-    // shape the engine endpoint's DateTimeOffset? MaturedAt binds and stamps the event's valid_time from.
-    private static DateTimeOffset AtUtcMidnight(DateOnly date) =>
-        new(date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
 }

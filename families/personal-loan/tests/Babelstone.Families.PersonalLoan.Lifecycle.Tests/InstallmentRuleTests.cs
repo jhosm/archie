@@ -43,7 +43,7 @@ public sealed class InstallmentRuleTests
     {
         var loan = Guid.NewGuid();
         var sink = new RecordingSink();
-        var pass = NewPass(sink, new InstallmentRule(new FakeInstallmentStore(Loan(loan, nextNumber: 1, nextDue: Today))));
+        var pass = NewPass(sink, new InstallmentRule(new FakeInstallmentStore(Loan(loan, nextNumber: 1, nextDue: Today)), Healthy));
 
         var first = await pass.RunOnceAsync(Today);
         var second = await pass.RunOnceAsync(Today);
@@ -65,7 +65,7 @@ public sealed class InstallmentRuleTests
         // so the calendar keeps surfacing N. A repeated PayInstallment is legal from Active, so ALL safety here
         // rests on the number-pinned key deduping the re-tick.
         var sink = new RecordingSink();
-        var pass = NewPass(sink, new InstallmentRule(new FakeInstallmentStore(Loan(loan, nextNumber: 1, nextDue: Today))));
+        var pass = NewPass(sink, new InstallmentRule(new FakeInstallmentStore(Loan(loan, nextNumber: 1, nextDue: Today)), Healthy));
 
         var first = await pass.RunOnceAsync(Today);
         var retick = await pass.RunOnceAsync(Today);
@@ -82,7 +82,7 @@ public sealed class InstallmentRuleTests
         var loan = Guid.NewGuid();
         var store = new FakeInstallmentStore(Loan(loan, nextNumber: 1, nextDue: Today));
         var sink = new RecordingSink();
-        var pass = NewPass(sink, new InstallmentRule(store));
+        var pass = NewPass(sink, new InstallmentRule(store, Healthy));
 
         var firstTick = await pass.RunOnceAsync(Today);
         // Occurrence 1's LoanInstallmentPaid lands → the calendar fold advances the next-unpaid to occurrence 2.
@@ -102,7 +102,7 @@ public sealed class InstallmentRuleTests
     public async Task The_decision_carries_the_loan_collection_account_due_date_and_the_scoped_sca_principal()
     {
         var loan = Guid.NewGuid();
-        var rule = new InstallmentRule(new FakeInstallmentStore(Loan(loan, nextNumber: 3, nextDue: Today)));
+        var rule = new InstallmentRule(new FakeInstallmentStore(Loan(loan, nextNumber: 3, nextDue: Today)), Healthy);
 
         var decision = Assert.Single(await rule.EvaluateAsync(Today));
 
@@ -129,7 +129,7 @@ public sealed class InstallmentRuleTests
         // legit clock-driven driver POST is ADMITTED, not refused 422 SCA_REQUIRED. This mirrors the term-deposit
         // maturity driver-path (MaturityRule presents the same scope; ScaServicePrincipal authorises the leaf).
         var loan = Guid.NewGuid();
-        var rule = new InstallmentRule(new FakeInstallmentStore(Loan(loan, nextNumber: 1, nextDue: Today)));
+        var rule = new InstallmentRule(new FakeInstallmentStore(Loan(loan, nextNumber: 1, nextDue: Today)), Healthy);
 
         var decision = Assert.Single(await rule.EvaluateAsync(Today));
         Assert.NotNull(decision.ServicePrincipalScope);
@@ -149,7 +149,7 @@ public sealed class InstallmentRuleTests
     public async Task A_not_yet_due_installment_is_not_fired()
     {
         var loan = Guid.NewGuid();
-        var rule = new InstallmentRule(new FakeInstallmentStore(Loan(loan, nextNumber: 1, nextDue: Today.AddDays(1))));
+        var rule = new InstallmentRule(new FakeInstallmentStore(Loan(loan, nextNumber: 1, nextDue: Today.AddDays(1))), Healthy);
 
         Assert.Empty(await rule.EvaluateAsync(Today));
     }
@@ -157,6 +157,11 @@ public sealed class InstallmentRuleTests
     // --- helpers ---
 
     private static readonly JsonStateSerializer<LoanPosition> Codec = new();
+
+    // An always-healthy settlement probe: these tests exercise the rule's due-date/number-pinning
+    // behaviour with no parked cash leg. The LCD-2 gate's held/resume behaviour is proved in
+    // SettlementHealthGateTests (unit) and SettlementHealthGateIntegrationTests (real saga_state).
+    private static FakeSettlementHealthProbe Healthy => new();
 
     private static LifecycleSchedulePass NewPass(ILifecycleCommandSink sink, params ILifecycleCommandRule[] rules) =>
         new(rules, new InMemoryLifecycleDispatchLedger(), sink);

@@ -46,19 +46,43 @@ public sealed class SimulationClock(DateTimeOffset start) : TimeProvider
 /// deciders and pure handlers, never by hand-faking events.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The schedule is supplied by the FAMILY, which alone knows what a deposit's milestones are (coupon
 /// boundaries, month-ends, maturity) and how to fire them. The engine spine stays family-agnostic
 /// (ENGINE_FAMILY_AGNOSTIC, ADR-PC-021): <see cref="SimulationRuntime{TState}"/> only walks an
 /// ordered list of <c>(DueAt, Step)</c> pairs and fast-forwards the clock between them — it names no
 /// coupon, no maturity, no family type.
+/// </para>
+/// <para>
+/// <b>The forecast is a fitness function (ADR-PC-036 §Decision 7).</b> A milestone that corresponds to a
+/// PRODUCTION clock-driven lifecycle command (a deposit maturity, a loan installment — the occurrences the
+/// downstream lifecycle-command driver fires) MAY carry that command's identity in
+/// <see cref="CommandKind"/> / <see cref="OccurrenceKey"/> — the same <c>(command_kind,
+/// stable_occurrence_key)</c> pair the driver's canonical number-pinned idempotency key is derived from
+/// (LCD-1). The family builds such milestones from its ONE shared dispatch mapping (the same mapping its
+/// production driver rule consumes), so a forecast milestone and the production command for the same
+/// occurrence cannot silently diverge — a fitness test compares the two and fails on drift. The identity is
+/// OPTIONAL and family-agnostic (a plain kind string + occurrence number): a milestone with no production
+/// driver counterpart (e.g. a coupon the driver does not yet fire) carries <see langword="null"/>s, and the
+/// runtime itself never reads either — it still only walks due instants and fires steps.
+/// </para>
 /// </remarks>
 /// <param name="DueAt">The instant the milestone falls due — the clock is advanced to here before the
 /// step runs, and the step stamps its event's valid time from this same instant.</param>
 /// <param name="Step">The real lifecycle command to run at <paramref name="DueAt"/>. Receives the
 /// due instant so it can stamp the command's timestamp from the advanced clock, not a separate read.</param>
+/// <param name="CommandKind">The STABLE production command-kind this milestone forecasts (e.g.
+/// <c>"mature"</c>, <c>"pay_installment"</c>) — the kind half of the driver's number-pinned occurrence
+/// identity (ADR-PC-036 §Decision 7) — or <see langword="null"/> for a milestone with no production
+/// driver counterpart.</param>
+/// <param name="OccurrenceKey">The STABLE per-occurrence key this milestone forecasts (the installment
+/// NUMBER; <c>1</c> for a one-shot maturity) — or <see langword="null"/> when <paramref name="CommandKind"/>
+/// is null.</param>
 public sealed record LifecycleMilestone(
     DateTimeOffset DueAt,
-    Func<DateTimeOffset, CancellationToken, Task> Step);
+    Func<DateTimeOffset, CancellationToken, Task> Step,
+    string? CommandKind = null,
+    long? OccurrenceKey = null);
 
 /// <summary>
 /// Runs the pure engine core (dispatch + fold) for forward projection (capability #4)

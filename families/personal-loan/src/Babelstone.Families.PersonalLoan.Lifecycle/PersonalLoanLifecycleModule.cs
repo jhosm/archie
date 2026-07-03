@@ -44,8 +44,14 @@ public sealed class PersonalLoanLifecycleModule : IFamilyLifecycleModule
             new PostgresInstallmentCalendarReadModelStore(ctx.ReadModelConnectionString));
 
         // The family's lifecycle rule joins the core-resolvable ILifecycleCommandRule set the
-        // LifecycleSchedulePass enumerates per tick. It resolves the family-owned store registered just above.
+        // LifecycleSchedulePass enumerates per tick. It resolves the family-owned store registered just
+        // above, plus the HOST-registered family-agnostic ISettlementHealthProbe — the LCD-2
+        // settlement-health gate the RECURRING path consults before surfacing a loan's next occurrence
+        // (ADR-PC-036 §Decision 4): the probe is generic driver-core machinery (it keys on the instance id
+        // alone), so the composition root registers it once and every recurring family rule shares it.
         services.AddSingleton<ILifecycleCommandRule>(sp =>
-            new InstallmentRule(sp.GetRequiredService<IInstallmentCalendarReadModelStore>()));
+            new InstallmentRule(
+                sp.GetRequiredService<IInstallmentCalendarReadModelStore>(),
+                sp.GetRequiredService<ISettlementHealthProbe>()));
     }
 }

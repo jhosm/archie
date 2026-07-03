@@ -34,31 +34,45 @@ namespace Babelstone.Families.PersonalLoan.Lifecycle;
 /// forward pointer is NULL), so every returned row is an Active loan still owing an installment.
 /// </para>
 /// <para>
-/// This rule does NOT encode the settlement-health gate (ADR-PC-036 §Decision 4 / LCD-2 — fire N+1 only when
-/// N's de-settled cash leg is not parked): that is a separate recurring-driver concern, out of scope here
-/// (this issue covers §Decisions 2, 3 &amp; 5). The collection account the installment debits is the loan's own
-/// disbursement-account reference, recovered from the read-model row's structural detail body; it is an opaque
-/// token, never an IBAN, and carries no PII (ADR-PC-004 §P2).
+/// <b>The settlement-health gate bounds catch-up (ADR-PC-036 §Decision 4 / LCD-2,
+/// <c>LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE</c>).</b> The paid-count advances on the installment EVENT,
+/// not on settled CASH — the cash leg is the downstream ADR-PC-032 Originated <c>Movement</c>, effected by
+/// the substrate-owned <c>SettlementProcess</c> saga. So before surfacing a loan's next-due occurrence, this
+/// rule consults the <see cref="ISettlementHealthProbe"/> and REFUSES while the loan's cash leg is parked in
+/// <c>HUMAN_INTERVENTION_REQUIRED</c>: N+1 is held while occurrence N's collection is stuck awaiting an
+/// operator (and installment 1 is held while the disbursement's own leg is parked — strictly safer, same
+/// predicate), so an automated catch-up after an outage never advances the paid-count past collected cash.
+/// The rule re-evaluates every pass, so the schedule RESUMES on the first tick after the leg settles
+/// (the operator's resolution drives the saga to <c>SETTLEMENT_COMPLETED</c>). A permanently parked leg
+/// therefore stalls the loan's schedule BY DESIGN — correct, but it must be alerted (an ops follow-up,
+/// ADR-PC-036 §Residual risks). Maturity (one-shot) needs no such gate — <c>MaturityRule</c> takes no probe.
+/// </para>
+/// <para>
+/// The collection account the installment debits is the loan's own disbursement-account reference, recovered
+/// from the read-model row's structural detail body; it is an opaque token, never an IBAN, and carries no
+/// PII (ADR-PC-004 §P2).
 /// </para>
 /// </remarks>
-public sealed class InstallmentRule(IInstallmentCalendarReadModelStore loans) : ILifecycleCommandRule
+public sealed class InstallmentRule(
+    IInstallmentCalendarReadModelStore loans,
+    ISettlementHealthProbe settlementHealth) : ILifecycleCommandRule
 {
-    /// <summary>The STABLE command-kind the installment idempotency key is derived under. MUST equal the engine
-    /// installment endpoint's own derivation kind (<c>LoansEndpoints.PayInstallmentCommandKind =
-    /// "pay_installment"</c>) so the driver-derived id and the engine-derived id are identical (LCD-1,
-    /// ADR-PC-036 §Decision 1+3) — named here, not referenced, to keep the driver free of a family-application
-    /// compile dependency.</summary>
-    public const string CommandKindPayInstallment = "pay_installment";
+    /// <summary>The STABLE command-kind the installment idempotency key is derived under — the shared
+    /// dispatch mapping's <see cref="PersonalLoanLifecycleDispatch.CommandKindPayInstallment"/> (ADR-PC-036
+    /// §Decision 7: the production rule and the simulation forecast consume ONE mapping), re-exposed here
+    /// for existing callers. MUST equal the engine installment endpoint's own derivation kind
+    /// (<c>LoansEndpoints.PayInstallmentCommandKind = "pay_installment"</c>) so the driver-derived id and
+    /// the engine-derived id are identical (LCD-1, ADR-PC-036 §Decision 1+3).</summary>
+    public const string CommandKindPayInstallment = PersonalLoanLifecycleDispatch.CommandKindPayInstallment;
 
     /// <summary>The scoped, non-interactive SCA service principal the loan installment money-mover route
-    /// authorises the driver by (ADR-PC-036 §Decision 1; bd babelstone-6cpq.14/.15). Kept in lock-step with the
-    /// engine-side <c>ScaServicePrincipal.LifecycleMoneyMoverScope</c>; named locally (not referenced) so the
-    /// driver core takes no dependency on the engine hosting assembly — exactly the lock-step-by-constant
-    /// discipline the one-shot <c>MaturityRule.DepositMoneyMoverScope</c> uses. The token keeps its
-    /// <c>deposit-money-mover</c> spelling for byte-for-byte lock-step with the gateway/IAM allowance; it is the
-    /// SAME literal MaturityRule presents — a FAMILY-NEUTRAL scope by MEANING (it authorises the loan installment
-    /// too) even though the string still reads "deposit".</summary>
-    public const string DepositMoneyMoverScope = "lifecycle:deposit-money-mover";
+    /// authorises the driver by (ADR-PC-036 §Decision 1; bd babelstone-6cpq.14/.15) — the shared dispatch
+    /// mapping's <see cref="PersonalLoanLifecycleDispatch.MoneyMoverScope"/>, re-exposed here for existing
+    /// callers. Kept in lock-step with the engine-side <c>ScaServicePrincipal.LifecycleMoneyMoverScope</c>;
+    /// the token keeps its <c>deposit-money-mover</c> spelling for byte-for-byte lock-step with the
+    /// gateway/IAM allowance; it is the SAME literal MaturityRule presents — a FAMILY-NEUTRAL scope by
+    /// MEANING (it authorises the loan installment too) even though the string still reads "deposit".</summary>
+    public const string DepositMoneyMoverScope = PersonalLoanLifecycleDispatch.MoneyMoverScope;
 
     // The loan's structural state (a LoanPosition) is serialized into the read-model row's Detail by the SAME
     // codec the read-model runner uses, so deserializing it here recovers the loan's disbursement-account
@@ -69,12 +83,17 @@ public sealed class InstallmentRule(IInstallmentCalendarReadModelStore loans) : 
     private readonly IInstallmentCalendarReadModelStore _loans =
         loans ?? throw new ArgumentNullException(nameof(loans));
 
+    private readonly ISettlementHealthProbe _settlementHealth =
+        settlementHealth ?? throw new ArgumentNullException(nameof(settlementHealth));
+
     /// <inheritdoc />
     public string FamilyName => "personal_loan";
 
     /// <summary>
     /// Produce a <c>PayInstallment</c> command for every Active loan whose next-unpaid installment is due on or
-    /// before <paramref name="asOf"/>. The driver's pass derives each decision's number-pinned id and dedupes
+    /// before <paramref name="asOf"/> AND whose cash leg is not parked in human intervention (the LCD-2
+    /// settlement-health gate, ADR-PC-036 §Decision 4 — a held loan is simply not surfaced this pass, and is
+    /// re-evaluated next tick). The driver's pass derives each decision's number-pinned id and dedupes
     /// it, so re-presenting the same still-due occurrence on every pass collects it at most once
     /// (ADR-PC-036 §Decision 2/3).
     /// </summary>
@@ -96,38 +115,30 @@ public sealed class InstallmentRule(IInstallmentCalendarReadModelStore loans) : 
                 continue;
             }
 
+            // The LCD-2 settlement-health gate (ADR-PC-036 §Decision 4): refuse to surface this loan's
+            // next occurrence while its de-settled cash leg (ADR-PC-032 Originated Movement — the previous
+            // installment's collection, or the disbursement itself) is parked in
+            // HUMAN_INTERVENTION_REQUIRED. Held, not dropped: the loan is re-evaluated every pass and
+            // resumes on the first tick after the operator resolves the leg — so a catch-up after an
+            // outage never advances the paid-count past collected cash. A probe failure propagates
+            // (backpressure, fail-closed) rather than guessing healthy.
+            if (await _settlementHealth.IsParkedAsync(loan.StreamId, ct))
+            {
+                continue;
+            }
+
             var collectionAccountRef = DetailSerializer.Deserialize(loan.Detail).DisbursementAccountRef;
 
-            decisions.Add(new LifecycleCommandDecision(
-                InstanceId: loan.StreamId,
-                // The occurrence key is the stable installment NUMBER, never the due-date — the number-pin the
-                // whole double-collection safety rests on (ADR-PC-036 §Decision 3, LCD-1).
-                CommandKind: CommandKindPayInstallment,
-                OccurrenceKey: installmentNumber,
-                RequestPath: $"/v1/loans/{loan.StreamId:D}/installment",
-                // paid_at carries the installment's OWN due date as the business valid_time (ADR-PC-036
-                // §Context; ADR-PC-002). collection_account_ref is the loan's opaque account token; money is
-                // cents-native and no PII rides the body (ADR-PC-004 §P2).
-                Body: new Dictionary<string, object?>
-                {
-                    ["collection_account_ref"] = collectionAccountRef,
-                    ["paid_at"] = AtUtcMidnight(dueDate),
-                },
-                DueAt: dueDate,
-                // The loan installment route is a clock-driven money-mover behind the SHARED SCA gate
-                // (bd babelstone-6cpq.14): the non-interactive driver has no human acr/auth_time, so it presents
-                // the SCOPED, gateway-attested service principal that authorises ONLY the lifecycle money-movers
-                // (ADR-PC-036 §Decision 1) — the SAME scope MaturityRule presents for the deposit maturity — and
-                // the gate admits it instead of refusing 422 SCA_REQUIRED. The key stays server-derived; the
-                // scope is route-scoped, not blanket (ILifecycleCommandDecision).
-                ServicePrincipalScope: DepositMoneyMoverScope));
+            // The ONE shared dispatch mapping (ADR-PC-036 §Decision 7): the same milestone→command
+            // mapping the simulation forecast consumes — the occurrence key is the stable installment
+            // NUMBER (the number-pin the whole double-collection safety rests on, §Decision 3 / LCD-1),
+            // paid_at carries the due date as the business valid_time, and the decision presents the
+            // SCOPED lifecycle money-mover principal (§Decision 1) the shared SCA gate admits. The
+            // dispatch fitness test compares this against the forecast milestone for the same occurrence.
+            decisions.Add(PersonalLoanLifecycleDispatch.PayInstallmentDecision(
+                loan.StreamId, installmentNumber, dueDate, collectionAccountRef));
         }
 
         return decisions;
     }
-
-    // The due date rides as a value (ADR-PC-036 §Context): a DateOnly due date as UTC midnight, the wire shape
-    // the engine endpoint's DateTimeOffset? PaidAt binds and stamps the event's valid_time from.
-    private static DateTimeOffset AtUtcMidnight(DateOnly date) =>
-        new(date.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
 }

@@ -1,5 +1,6 @@
 using Babelstone.Engine;
 using Babelstone.EventStore;
+using Babelstone.Families.TermDeposit.Lifecycle;
 using Babelstone.FinancialTypes;
 using Babelstone.RateSheets;
 using Xunit;
@@ -143,9 +144,11 @@ public sealed class SimulationForwardLifecycleTests(ConstitutionFixture fixture)
                     DepositId: depositId, PaidAt: instant, PayoutAccount: "PT50-DDA-001", Actor: "sim:clock-advance"), ct)));
         }
 
-        // Maturity: the final milestone, at the scheduled maturity date.
-        var maturityAt = new DateTimeOffset(position.MaturityDate, TimeOnly.MinValue, TimeSpan.Zero);
-        milestones.Add(new LifecycleMilestone(maturityAt, (instant, ct) =>
+        // Maturity: the final milestone, at the scheduled maturity date — built through the family's ONE
+        // shared dispatch mapping (TermDepositLifecycleDispatch, ADR-PC-036 §Decision 7), the SAME mapping
+        // the production driver's MaturityRule consumes, so this forecast milestone carries the production
+        // command identity ("mature", occurrence 1) and the dispatch fitness test can fail on divergence.
+        milestones.Add(TermDepositLifecycleDispatch.MaturityMilestone(position.MaturityDate, (instant, ct) =>
             service.MatureAsync(new MatureDepositCommand(
                 DepositId: depositId, MaturedAt: instant, PayoutAccount: "PT50-DDA-001", Actor: "sim:clock-advance"), ct)));
 

@@ -118,6 +118,24 @@ var ledgerMigrationConnectionString =
     ?? Environment.GetEnvironmentVariable("BABELSTONE_LIFECYCLE_LEDGER_MIGRATION_CONNECTION")
     ?? ledgerConnectionString;
 
+// The settlement-health read (ADR-PC-036 §Decision 4, LCD-2): the orchestrator database whose saga_state
+// rows record where each cash leg stands — the driver READS it (one indexed EXISTS per due recurring
+// instance) to refuse firing occurrence N+1 while occurrence N's Originated Movement (ADR-PC-032) is parked
+// in HUMAN_INTERVENTION_REQUIRED awaiting an operator. Read-only and DISTINCT from the engine read-model
+// connection (a different service's database: the saga substrate, not the calendar tier), though a
+// deployment may point both at the same cluster. Fail-loud: a driver that cannot SEE settlement health
+// could advance a loan's paid-count past collected cash after an outage, so it must not start blind — the
+// gate is load-bearing, never optional.
+var settlementHealthConnectionString =
+    builder.Configuration["Lifecycle:SettlementHealthConnectionString"]
+    ?? builder.Configuration.GetConnectionString("SettlementHealth")
+    ?? Environment.GetEnvironmentVariable("BABELSTONE_SETTLEMENT_HEALTH_CONNECTION")
+    ?? throw new InvalidOperationException(
+        "No settlement-health connection string configured. Set Lifecycle:SettlementHealthConnectionString, " +
+        "ConnectionStrings:SettlementHealth, or BABELSTONE_SETTLEMENT_HEALTH_CONNECTION (the orchestrator " +
+        "saga_state read the LCD-2 settlement-health gate consults, ADR-PC-036 §Decision 4 — the driver " +
+        "must not fire installment N+1 while N's cash leg is parked in HUMAN_INTERVENTION_REQUIRED).");
+
 // The wall-clock the worker loop OWNS (ADR-PC-023 §6 — the engine emits no clock-driven signal, so the
 // downstream driver owns the clock). TimeProvider.System in production; a test substitutes a fake so the loop
 // can be driven with no real wall-clock wait.
@@ -145,6 +163,14 @@ builder.Services.AddSingleton(schedulerOptions);
 // test double — never wired here.)
 builder.Services.AddSingleton<ILifecycleDispatchLedger>(
     new PostgresLifecycleDispatchLedger(ledgerConnectionString));
+
+// The settlement-health probe (ADR-PC-036 §Decision 4, LCD-2): the family-agnostic read of the settlement
+// saga's saga_state row a RECURRING family rule consults before surfacing an instance's next occurrence —
+// registered ONCE here at the composition root (it keys on the instance id alone and names no family), and
+// resolved by each recurring family module when it constructs its rule. One-shot rules (maturity) never
+// consult it (§Decision 4: maturity needs no gate).
+builder.Services.AddSingleton<ISettlementHealthProbe>(
+    new PostgresSettlementHealthProbe(settlementHealthConnectionString));
 
 // The ledger schema migration runs FIRST (registered before the worker: hosted services start in
 // registration order), applying the driver host's OWN forward-only series (ADR-PC-038 §Decision 1) so

@@ -25,6 +25,12 @@
     <!-- The family CORE (pure-fold) read side MaturityRule range-scans: IDepositReadModelStore +
          DepositReadModelRow + the DepositLifecycle vocabulary. -->
     <ProjectReference Include="../Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
+    <!-- The engine KERNEL's simulation seam (already transitively referenced via the family core): the
+         family's shared dispatch mapping (TermDepositLifecycleDispatch, ADR-PC-036 §Decision 7) builds the
+         identity-stamped LifecycleMilestone the SimulationRuntime forecast walks, so the forecast and the
+         production MaturityRule consume ONE mapping and the dispatch fitness test can compare them.
+         Explicit so the dependency is greppable, not an accident of transitivity. -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
     <!-- The family APPLICATION layer: the Npgsql PostgresDepositReadModelStore the module binds behind the
          store interface (the §D4 composition root names Postgres here, not in the driver core). -->
     <ProjectReference Include="../Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
