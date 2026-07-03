@@ -346,7 +346,7 @@ public sealed class PostgresDeliveryOutbox(string connectionString) : IDeliveryO
 /// contract symbols — the same rendering the webhook envelope and the Avro enum use — so a DBA reading
 /// the table and a consumer reading the bus see one vocabulary.
 /// </summary>
-internal static class TriggerKindWire
+public static class TriggerKindWire
 {
     public static string ToWire(NotificationTriggerKind kind) => kind switch
     {

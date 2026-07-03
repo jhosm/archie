@@ -94,7 +94,10 @@ jobs:
             orchestrator: ['orchestrator/**', 'composition/**']
             acl: ['acl/**']
             mcp_server: ['mcp-server/**']
-            notification: ['notification/**', 'cadence/**', 'composition/**']
+            # notification also names contracts/pact/**: the delivery tests drift-check the committed
+            # notification-delivery⇄engine message pact (bd 2t16.14, ADR-IC-009), so a hand-edit of
+            # the pact artefact must re-run the consumer lane that would catch it.
+            notification: ['notification/**', 'cadence/**', 'composition/**', 'contracts/pact/**']
             lifecycle: ['lifecycle-driver/**', 'cadence/**', 'composition/**']
             product_configs: ['product-configs/**']
             packs: ['packs/**']
@@ -192,6 +195,12 @@ jobs:
         # `&Category!=Fuzz` keeps the fuzz suites OUT of the per-PR lane — they run only in fuzz.yml
         # (maintainer directive). The Category=Fuzz trait tags AvroDecodeFuzzTests, InboxWireFormatFuzzTests,
         # and EngineApiJsonEnvelopeFuzzTests (all unit-tier) so this filter excludes them here.
+        #
+        # The ADR-IC-009 Pact PRODUCER-verification lane (bd babelstone-2t16.14) also runs in this
+        # step: NotificationDuePactProviderTests (Babelstone.OutboxPublisher.Tests, NOTIFY_EMIT_PACT)
+        # verifies the committed contracts/pact/notification-delivery-engine.json against a payload
+        # round-tripped through the engine-embedded governed schema + the real Avro codec — hermetic
+        # (file-sourced pact, no broker), Docker-free, so it needs no extra job or step.
         run: dotnet test engine/Babelstone.slnx --configuration Release --nologo --filter "Category!=Integration&Category!=Fuzz" --collect:"XPlat Code Coverage" --settings engine/coverlet.runsettings --results-directory coverage/unit
       - name: Integration tests (Testcontainers tier — E.6, ADR-IC-009)
         # The complementary `--filter "Category=Integration"` lane the unit step

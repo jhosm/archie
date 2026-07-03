@@ -395,6 +395,54 @@ services:
       retries: 12
       start_period: 30s
 
+  # ── Pact Broker (ADR-IC-009 §S1; bd babelstone-2t16.14) ──────────────────────────────────
+  # The self-hosted contract-exchange point for the ADR-IC-009 Pact CDC layer: consumers publish
+  # their message pacts here (make pact-publish); humans browse contracts and verification state
+  # at http://localhost:${PACT_BROKER_PORT:-9292}. Profile-gated (`pact`) so the default
+  # `make up` skips it — the PR-lane CI verification is deliberately HERMETIC (the committed
+  # contracts/pact/ files are the verifier's source), so the broker is a dev/estate surface,
+  # not a CI dependency. Start with: docker compose -f infra/compose.yaml --profile pact up -d
+  # NB: the official image does not embed PostgreSQL — it needs the companion database below,
+  # the same service-scoped-second-Postgres shape as backstage-db.
+  pact-broker-db:
+    profiles: ["pact"]
+    image: postgres:16-alpine
+    container_name: babelstone-pact-broker-db
+    environment:
+      POSTGRES_USER: pactbroker
+      POSTGRES_PASSWORD: pactbroker   # dev-only placeholder; a real deploy uses a secret
+      POSTGRES_DB: pactbroker
+    volumes:
+      - pactbrokerdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pactbroker"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  pact-broker:
+    profiles: ["pact"]
+    image: pactfoundation/pact-broker:2.139.0-pactbroker2.119.0
+    container_name: babelstone-pact-broker
+    depends_on:
+      pact-broker-db:
+        condition: service_healthy
+    environment:
+      PACT_BROKER_DATABASE_URL: "postgres://pactbroker:pactbroker@pact-broker-db/pactbroker"
+      # Dev-only open read on the loopback stack; a real deploy fronts this with the gateway
+      # (ADR-IC-006) and real credentials.
+      PACT_BROKER_ALLOW_PUBLIC_READ: "true"
+      PACT_BROKER_PORT: "9292"
+    ports:
+      - "${PACT_BROKER_PORT:-9292}:9292"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9292/diagnostic/status/heartbeat >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
 volumes:
   pgdata:
   rpdata:
@@ -402,3 +450,5 @@ volumes:
   # Ephemeral mTLS material for the MCP agent channel — populated at-up by mcp-certgen from the
   # committed POC CA (ADR-IC-006 §P5 / ADR-IC-010 §P5). Not a secret; regenerated on `make reset`.
   mcp-certs:
+  # The Pact Broker's contract store (profile `pact`, ADR-IC-009 §S1).
+  pactbrokerdata:
