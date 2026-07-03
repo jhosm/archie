@@ -30,6 +30,10 @@
          and the pack parser. The pure decider tier needs only the family + math (transitive). -->
     <ProjectReference Include="../../src/Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
     <ProjectReference Include="../../src/Babelstone.Families.TermDeposit/Babelstone.Families.TermDeposit.csproj" />
+    <!-- The family's lifecycle-dispatch mapping (TermDepositLifecycleDispatch, ADR-PC-036 §Decision 7): the
+         simulation forward-lifecycle test builds its maturity milestone through the SAME shared mapping the
+         production driver rule consumes, so the forecast is the drift guard the dispatch fitness test reads. -->
+    <ProjectReference Include="../../src/Babelstone.Families.TermDeposit.Lifecycle/Babelstone.Families.TermDeposit.Lifecycle.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.EventStore/Babelstone.EventStore.csproj" />
     <ProjectReference Include="../../../../engine/src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />

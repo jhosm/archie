@@ -32,4 +32,20 @@
          Babelstone.Lifecycle.Tests. -->
     <ProjectReference Include="../../src/Babelstone.Families.PersonalLoan.Lifecycle/Babelstone.Families.PersonalLoan.Lifecycle.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- The LCD-2 settlement-health gate's INTEGRATION twin (ADR-PC-036 §Decision 4; bd babelstone-6cpq.10):
+         the real PostgresSettlementHealthProbe read against the ORCHESTRATOR'S REAL saga_state schema — a
+         PostgreSQL container the orchestrator's own migration set is applied to. Npgsql for the fixture's
+         row inserts; the shared TestFixtures GatedStartAsync gates the container start; excluded from the
+         Docker-free lane by the Category!=Integration convention. -->
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <!-- The orchestrator SUBSTRATE (a family-agnostic core, fine for a TEST project to name): its
+         MigrationRunner applies the real saga_state schema, and its SettlementProcess.Type /
+         States.HumanInterventionRequired constants are asserted byte-for-byte against the probe's PINNED
+         wire literals — the cross-service lock-step check the extraction-ready posture demands. -->
+    <ProjectReference Include="../../../../orchestrator/src/Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
+    <ProjectReference Include="../../../../engine/tests/Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
+  </ItemGroup>
 </Project>

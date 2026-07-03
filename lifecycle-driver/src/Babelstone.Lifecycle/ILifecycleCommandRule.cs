@@ -20,10 +20,11 @@ namespace Babelstone.Lifecycle;
 /// <para>
 /// The driver fires recurring occurrence N+1 only when N's de-settled cash leg is healthy
 /// (<c>LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE</c>, ADR-PC-036 §Decision 4) — that settlement-health gate is a
-/// recurring-rule concern (the family rule does not surface N+1 while N is parked), not generic-driver
-/// machinery; maturity (one-shot) needs no such gate. The first concrete rules are the sibling bd issues
-/// babelstone-6cpq.8 (term-deposit maturity, one-shot) and babelstone-6cpq.9 (personal-loan installment,
-/// recurring); this issue stands up the host they plug into.
+/// recurring-rule concern (the family rule consults the <see cref="ISettlementHealthProbe"/> and does not
+/// surface N+1 while N is parked), not generic-driver machinery; maturity (one-shot) needs no such gate. The
+/// first concrete rules are the sibling bd issues babelstone-6cpq.8 (term-deposit maturity, one-shot) and
+/// babelstone-6cpq.9 (personal-loan installment, recurring — the rule carrying the LCD-2 gate,
+/// bd babelstone-6cpq.10); this issue stands up the host they plug into.
 /// </para>
 /// </remarks>
 public interface ILifecycleCommandRule
