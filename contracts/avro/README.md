@@ -65,6 +65,22 @@ IBAN/cleartext or ciphertext account identifier ([ADR-PC-004 §P2](../../docs/pr
 The first family to emit movements authors the carrying event's `.avsc` (the
 `Movement`-array field) and is the **contract-reviewer**'s lane.
 
+## The hold-lifecycle shapes (ADR-PC-033) — governed but dormant
+
+The three cross-cutting hold-lifecycle events —
+`operations.HoldPlaced` → `operations.HoldCaptured` | `operations.HoldExpired`
+([ADR-PC-033](../../docs/product-management/product_concepts/adrs/ADR-PC-033-account-abstraction-and-hold-lifecycle.md)) —
+have their governed wire shapes authored under
+[`operations/`](./operations/) as **`.avsc.json`** files (the same dormant posture as
+`_shared/Movement.avsc.json`). The events are **store-only** today
+([ADR-IC-017](../../docs/product-management/integration_concepts/adrs/ADR-IC-017-integration-event-promotion-criterion.md):
+no named external consumer exists), so the shapes are deliberately outside the `*.avsc`
+glob the engine embeds, the catalog discovers, and the compat gate scans — a hold event
+never reaches the durable bus. The field names already follow the engine codec's binding
+convention (`Money Amount` → `amount_cents`, `Guid` → `uuid`, `DateOnly` → `date`), so
+**bus promotion is a rename to `.avsc` plus the AsyncAPI catalog entry and shape-lock**,
+made deliberately with the first named consumer — never a reshape.
+
 ## No PII — ever
 
 These events are **structural** ([ADR-PC-004 §P2](../../docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)):

@@ -36,7 +36,7 @@ namespace Babelstone.Engine;
 /// <see cref="IProjectionRunner"/> on the per-family drainer.
 /// </para>
 /// </remarks>
-public sealed class MovementLedgerProjector(IMovementLedgerStore store)
+public sealed class MovementLedgerProjector(IMovementLedgerStore store) : ISpineProjector
 {
     /// <summary>
     /// Fold one decoded event into the account-keyed ledger. A no-op unless <paramref name="event"/>
@@ -87,4 +87,7 @@ public sealed class MovementLedgerProjector(IMovementLedgerStore store)
 
         await store.AppendAsync(entries, ct);
     }
+
+    /// <summary>Truncate the ledger for a rebuild (truncate-then-refold, ADR-PC-032 §A5).</summary>
+    public Task ResetForRebuildAsync(CancellationToken ct = default) => store.TruncateAsync(ct);
 }

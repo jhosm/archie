@@ -15,7 +15,9 @@ namespace Babelstone.Engine;
 /// <para>
 /// These engine-declared events — <see cref="PackVersionMigrated"/>, <see cref="SchemaVersionMigrated"/>,
 /// <see cref="FundsHeld"/>, <see cref="AccountFrozen"/> (and the promoted
-/// <see cref="PersonalDataErasureRequested"/>) — take a synthetic <c>operations</c> aggregate_type, so
+/// <see cref="PersonalDataErasureRequested"/>), plus the ADR-PC-033 hold lifecycle
+/// (<see cref="HoldPlaced"/> / <see cref="HoldCaptured"/> / <see cref="HoldExpired"/>, declared in
+/// <c>AccountHoldEvents.cs</c>) — take a synthetic <c>operations</c> aggregate_type, so
 /// their stored <c>event_type</c> is <c>operations.&lt;EventName&gt;</c> (no family prefix — they are
 /// family-agnostic). The convention is recorded set-level in event-store §4.3. The fifth §4.1 event,
 /// <c>LegacyInstanceObserved</c> (the legacy batch-ingest fact, ADR-PC-017), is deferred to the DEF-1
@@ -390,5 +392,15 @@ public static class CrossCuttingEventRegistrations
             new DispatchableHandler<TState, AccountFrozen>(new AccountFrozenHandler<TState>())),
         new("operations.PersonalDataErasureRequested", typeof(PersonalDataErasureRequested),
             new DispatchableHandler<TState, PersonalDataErasureRequested>(new PersonalDataErasureRequestedHandler<TState>())),
+        // The ADR-PC-033 hold lifecycle (AccountHoldEvents.cs): three cross-cutting facts any
+        // transactional family's authorization path appends. Bound for EVERY family so the events
+        // decode (and replay fail-closed) on any family stream that carries them; the folds are
+        // no-ops because the active-hold set is the SPINE-owned AccountHoldProjector fold.
+        new("operations.HoldPlaced", typeof(HoldPlaced),
+            new DispatchableHandler<TState, HoldPlaced>(new HoldPlacedHandler<TState>())),
+        new("operations.HoldCaptured", typeof(HoldCaptured),
+            new DispatchableHandler<TState, HoldCaptured>(new HoldCapturedHandler<TState>())),
+        new("operations.HoldExpired", typeof(HoldExpired),
+            new DispatchableHandler<TState, HoldExpired>(new HoldExpiredHandler<TState>())),
     ];
 }
