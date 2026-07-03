@@ -8,8 +8,8 @@ using Xunit;
 namespace Babelstone.OutboxPublisher.Tests;
 
 /// <summary>
-/// The FORMAL Pact CDC producer half of the notify emit contract (bd babelstone-2t16.14; ADR-IC-009
-/// §P2) — the engine-side verification of the committed
+/// The FORMAL Pact CDC producer half of the notify emit contract (ADR-IC-009) — the engine-side
+/// verification of the committed
 /// <c>contracts/pact/notification-delivery-engine.json</c> the notification-delivery consumer
 /// generates (<c>NotificationDueMessagePactTests</c>). In plain English: the consumer wrote down what
 /// an EVENT_DRIVEN <c>NotificationDue</c> message must look like — identity fields non-null, money as
@@ -21,27 +21,23 @@ namespace Babelstone.OutboxPublisher.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>What "produced through the engine's own machinery" means today.</b> The engine's runtime
-/// EVENT_DRIVEN emission is still the named 60n8.3/60n8.7 residual — no code path constructs a
-/// <c>NotificationDue</c> in production yet. What EXISTS and is engine-owned is the governed schema
-/// (the embedded <see cref="AvroSchemaCatalog"/> copy of
-/// <c>contracts/avro/operations/NotificationDue.avsc</c>) and the Avro codec the relay publishes with.
-/// So the scenario builds the representative payload as a <see cref="GenericRecord"/> against that
-/// embedded schema and ROUND-TRIPS it through the real binary codec (write + read) before projecting
-/// the decoded view for Pact — the ADR-IC-009 §P2 "verified against messages produced by the real Avro
-/// serializer" obligation, scoped to what the engine actually owns. When the runtime emission lands,
-/// its payload builder replaces the literal below and this verification gates it unchanged.
+/// <b>What is verified.</b> The scenario builds the representative payload as a
+/// <see cref="GenericRecord"/> against the ENGINE-EMBEDDED governed schema (the
+/// <see cref="AvroSchemaCatalog"/> copy of <c>contracts/avro/operations/NotificationDue.avsc</c>)
+/// and ROUND-TRIPS it through the real binary codec (write + read) before projecting the decoded
+/// view for Pact — the ADR-IC-009 "verified against messages produced by the real Avro serializer"
+/// obligation, scoped to what the engine owns: the schema and the codec (the engine has no runtime
+/// EVENT_DRIVEN <c>NotificationDue</c> emission path).
 /// </para>
 /// <para>
 /// <b>Pact source: the committed file, not a live broker.</b> The PR lane stays hermetic (the same
 /// stance as every other contracts gate): the consumer test drift-locks the committed pact, and this
-/// verifier reads it from disk. The dev-stack Pact Broker (ADR-IC-009 §S1, <c>make pact-broker-up</c> /
-/// <c>make pact-publish</c>) carries the same artefact for humans and cross-repo consumers; a
-/// broker-sourced CI verification is the named follow-up once a second repo consumes it.
+/// verifier reads it from disk. The dev-stack Pact Broker (ADR-IC-009, <c>make pact-broker-up</c> /
+/// <c>make pact-publish</c>) carries the same artefact for humans and cross-repo consumers.
 /// </para>
 /// <para>
-/// <b>PactNet 4.5, deliberately</b> — 5.0.x message verification is broken upstream
-/// (pact-foundation/pact-net #530); see Directory.Packages.props.
+/// <b>PactNet 4.5, deliberately</b> — 5.0.x fails message producer-verification with "builder error
+/// for url (message://…)" (pact-foundation/pact-net#530); see Directory.Packages.props.
 /// </para>
 /// </remarks>
 public sealed class NotificationDuePactProviderTests
@@ -92,7 +88,7 @@ public sealed class NotificationDuePactProviderTests
         record.Add("causation_id", Guid.Parse("5e8d7c1d-9a3e-4b2f-8a2c-3d5a7b9c1f0e"));
         record.Add("data", new Dictionary<string, object>
         {
-            ["principal_cents"] = "1000000",   // integer-cent STRING (ADR-PC-010 §P1 — money is never a float)
+            ["principal_cents"] = "1000000",   // integer-cent STRING (ADR-PC-010 — money is never a float)
             ["maturity_date"] = "2026-09-01",
         });
         record.Add("due_at", new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc)); // Avro date logical

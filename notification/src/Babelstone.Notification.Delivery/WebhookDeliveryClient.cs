@@ -217,11 +217,10 @@ public sealed class WebhookDeliveryClient(
     /// field set, under the same names, as the governed Avro schema
     /// (<c>contracts/avro/operations/NotificationDue.avsc</c>), in the snake_case JSON the repo's HTTP
     /// contracts use. <c>CustomerId</c> deliberately keeps the schema's <c>customer_id</c> spelling
-    /// rather than the CLR signal's <c>CustomerRef</c> (bd babelstone-60n8.12 — the §P3 contract review
-    /// caught the webhook and the bus naming the SAME opaque recipient reference differently; the
-    /// governed schema wins on the wire). It is nullable here where the Avro field is not: the v1
-    /// SCHEDULED leg's signal carries no recipient reference (the ADR-PC-025 named residual) — the
-    /// webhook envelope surfaces that honestly instead of inventing one.</summary>
+    /// rather than the CLR signal's <c>CustomerRef</c>: the webhook and the bus name the SAME opaque
+    /// recipient reference, and the governed schema wins on every wire. It is nullable here where the
+    /// Avro field is not: the v1 SCHEDULED leg's signal carries no recipient reference (the ADR-PC-025
+    /// named residual) — the webhook envelope surfaces that honestly instead of inventing one.</summary>
     private sealed record NotificationPayload(
         Guid NotificationId,
         Guid InstanceId,

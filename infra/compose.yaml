@@ -395,14 +395,15 @@ services:
       retries: 12
       start_period: 30s
 
-  # ── Pact Broker (ADR-IC-009 §S1; bd babelstone-2t16.14) ──────────────────────────────────
+  # ── Pact Broker (ADR-IC-009) ─────────────────────────────────────────────────────────────
   # The self-hosted contract-exchange point for the ADR-IC-009 Pact CDC layer: consumers publish
   # their message pacts here (make pact-publish); humans browse contracts and verification state
   # at http://localhost:${PACT_BROKER_PORT:-9292}. Profile-gated (`pact`) so the default
   # `make up` skips it — the PR-lane CI verification is deliberately HERMETIC (the committed
   # contracts/pact/ files are the verifier's source), so the broker is a dev/estate surface,
   # not a CI dependency. Start with: docker compose -f infra/compose.yaml --profile pact up -d
-  # NB: the official image does not embed PostgreSQL — it needs the companion database below,
+  # NB: the official image does not embed PostgreSQL (the ADR-IC-009 S1 narrative overstates the
+  # trial image — see the dated correction in the ADR) — it needs the companion database below,
   # the same service-scoped-second-Postgres shape as backstage-db.
   pact-broker-db:
     profiles: ["pact"]
@@ -450,5 +451,5 @@ volumes:
   # Ephemeral mTLS material for the MCP agent channel — populated at-up by mcp-certgen from the
   # committed POC CA (ADR-IC-006 §P5 / ADR-IC-010 §P5). Not a secret; regenerated on `make reset`.
   mcp-certs:
-  # The Pact Broker's contract store (profile `pact`, ADR-IC-009 §S1).
+  # The Pact Broker's contract store (profile `pact`, ADR-IC-009).
   pactbrokerdata:

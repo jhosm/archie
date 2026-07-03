@@ -5,33 +5,33 @@ using NpgsqlTypes;
 namespace Babelstone.Notification.Delivery;
 
 /// <summary>
-/// The durable <see cref="IDeliveryOutbox"/> — the ADR-IC-011 §P3 PostgreSQL delivery store that
-/// replaces <see cref="InMemoryDeliveryOutbox"/> behind the port (bd babelstone-60n8.10; the named
-/// follow-up of PR #435). In plain terms: the transport's memory of what it owes now survives a crash —
-/// an enqueued obligation is a committed row, a claim is a read of due PENDING rows, and every §D4
-/// outcome is a committed flip. The store also implements <see cref="IExhaustedDeliveryOutbox"/>: the
-/// §D4 dead-letter flip and the <c>NotificationDeliveryExhausted</c> outbox insert are ONE transaction
-/// (ADR-IC-004), so "gave up" and "will announce it" can never diverge.
+/// The durable <see cref="IDeliveryOutbox"/> — the ADR-IC-011 PostgreSQL delivery store (the
+/// production implementation behind the port; <see cref="InMemoryDeliveryOutbox"/> is the
+/// no-database dev/test double). In plain terms: the transport's memory of what it owes survives a
+/// crash — an enqueued obligation is a committed row, a claim is a read of due PENDING rows, and
+/// every classified outcome is a committed flip. The store also implements
+/// <see cref="IExhaustedDeliveryOutbox"/>: the dead-letter flip and the
+/// <c>NotificationDeliveryExhausted</c> outbox insert are ONE transaction (ADR-IC-004), so "gave up"
+/// and "will announce it" can never diverge.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Raw Npgsql from a connection string</b> — the same shape as the engine's event store, the
 /// orchestrator's substrate, and the lifecycle driver's ledger: each operation opens its own pooled
 /// connection; no ORM, no shared data source. The runtime role (<c>babelstone_notification</c>) holds
-/// exactly the enqueue/claim/flip envelope (ADR-PC-001 §P3, lifted).
+/// exactly the enqueue/claim/flip envelope (the ADR-PC-001 role discipline, lifted).
 /// </para>
 /// <para>
 /// <b>The port's semantics carry over unchanged.</b> Enqueue is idempotent on <c>notification_id</c>
 /// (<c>INSERT … ON CONFLICT DO NOTHING</c> — terminal rows retained, so a late redelivery re-opens
 /// nothing, ADR-PC-025 slot 4); claims take no lease (single drain worker, the documented
 /// <see cref="IDeliveryOutbox"/> stance); a mark for an unknown id throws (a wiring bug, not a runtime
-/// condition). With this store in place, <see cref="INotificationDueSource"/>'s
-/// commit-offset-only-after-enqueue rule (ADR-IC-011 §P3 step 3) becomes ENFORCEABLE: the enqueue the
-/// source awaits is a durable commit, not a dictionary insert — the §P3 contract-review residual this
-/// store closes.
+/// condition). The durable commit is also what makes <see cref="INotificationDueSource"/>'s
+/// commit-offset-only-after-enqueue rule (ADR-IC-011) enforceable: the enqueue a bus source awaits
+/// is a committed row, not a dictionary insert.
 /// </para>
 /// <para>
-/// <b>NO PII at rest (ADR-PC-025 §PII).</b> Only the STRUCTURAL signal is persisted — ids, template
+/// <b>NO PII at rest (ADR-PC-025).</b> Only the STRUCTURAL signal is persisted — ids, template
 /// refs, the string→string data map (amounts as integer-cent strings, dates, rates), transport-status
 /// text. Rendered content and render-time-resolved PII materialise per attempt and are never written.
 /// </para>
@@ -138,18 +138,21 @@ public sealed class PostgresDeliveryOutbox(string connectionString) : IDeliveryO
 
     /// <inheritdoc />
     /// <remarks>
-    /// The §D4 exhaustion is the transactional pair (ADR-IC-004 / ADR-IC-011 §P3 step 7): the
-    /// DEAD_LETTERED flip and the <c>notification_delivery_exhausted</c> outbox insert commit together —
-    /// a crash between them is impossible by construction, so every dead-letter WILL be announced on the
-    /// backbone once the relay drains it.
+    /// The exhaustion is the transactional pair (ADR-IC-004 / ADR-IC-011): the DEAD_LETTERED flip and
+    /// the <c>notification_delivery_exhausted</c> outbox insert commit together — a crash between them
+    /// is impossible by construction, so every dead-letter WILL be announced on the backbone once the
+    /// relay drains it.
     /// </remarks>
     public async Task MarkDeadLetteredAsync(
         Guid notificationId, int attempts, string? reason, CancellationToken ct = default)
     {
+        // AND status = 'PENDING': only a live obligation can exhaust. The fail-loud on 0 rows below
+        // then also catches a mis-wired second dead-letter of an already-terminal record, not just an
+        // unknown id.
         const string flipSql = """
             UPDATE notification_delivery
             SET status = 'DEAD_LETTERED', attempts = @attempts, last_error = @reason
-            WHERE notification_id = @notification_id;
+            WHERE notification_id = @notification_id AND status = 'PENDING';
             """;
 
         // The exhausted row copies the delivery row's structural identity in-database — one round
@@ -158,9 +161,9 @@ public sealed class PostgresDeliveryOutbox(string connectionString) : IDeliveryO
         const string exhaustSql = """
             INSERT INTO notification_delivery_exhausted
                 (notification_id, instance_id, customer_ref, template_ref, template_pack_version,
-                 trigger_kind, attempts, last_error)
+                 trigger_kind, causation_id, attempts, last_error)
             SELECT notification_id, instance_id, customer_ref, template_ref, template_pack_version,
-                   trigger_kind, @attempts, @reason
+                   trigger_kind, causation_id, @attempts, @reason
             FROM notification_delivery
             WHERE notification_id = @notification_id
             ON CONFLICT (notification_id) DO NOTHING;
@@ -231,7 +234,8 @@ public sealed class PostgresDeliveryOutbox(string connectionString) : IDeliveryO
 
         const string sql = """
             SELECT notification_id, event_id, instance_id, customer_ref, template_ref,
-                   template_pack_version, trigger_kind, attempts, last_error, exhausted_at
+                   template_pack_version, trigger_kind, causation_id, attempts, last_error,
+                   exhausted_at
             FROM notification_delivery_exhausted
             WHERE status = 'PENDING'
             ORDER BY exhausted_at, notification_id
@@ -255,9 +259,10 @@ public sealed class PostgresDeliveryOutbox(string connectionString) : IDeliveryO
                 TemplateRef: reader.GetString(4),
                 TemplatePackVersion: reader.GetString(5),
                 TriggerKind: TriggerKindWire.FromWire(reader.GetString(6)),
-                Attempts: reader.GetInt32(7),
-                LastError: await reader.IsDBNullAsync(8, ct) ? null : reader.GetString(8),
-                ExhaustedAt: new DateTimeOffset(reader.GetFieldValue<DateTime>(9), TimeSpan.Zero)));
+                CausationId: await reader.IsDBNullAsync(7, ct) ? null : reader.GetGuid(7),
+                Attempts: reader.GetInt32(8),
+                LastError: await reader.IsDBNullAsync(9, ct) ? null : reader.GetString(9),
+                ExhaustedAt: new DateTimeOffset(reader.GetFieldValue<DateTime>(10), TimeSpan.Zero)));
         }
 
         return pending;
@@ -341,7 +346,7 @@ public sealed class PostgresDeliveryOutbox(string connectionString) : IDeliveryO
 }
 
 /// <summary>
-/// The <see cref="NotificationTriggerKind"/> ↔ governed wire symbol map (ADR-PC-025 §6 /
+/// The <see cref="NotificationTriggerKind"/> ↔ governed wire symbol map (ADR-PC-025 /
 /// <c>contracts/avro/operations/NotificationDue.avsc</c>): the store persists the SCREAMING_SNAKE_CASE
 /// contract symbols — the same rendering the webhook envelope and the Avro enum use — so a DBA reading
 /// the table and a consumer reading the bus see one vocabulary.

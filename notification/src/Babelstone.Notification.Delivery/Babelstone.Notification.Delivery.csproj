@@ -14,7 +14,8 @@
      refs and data maps are opaque strings. It reaches the engine only over the published HTTP PII-resolve
      surface (ADR-PC-025 §PII), never a compile-time kernel reference. Extraction-ready subtree
      (ADR-PC-019 §P2): carries its own copy of the shared engine build settings and depends only on
-     framework packages + the notification core + the shared cadence machinery. -->
+     framework/third-party packages + the notification core + the shared cadence machinery + the
+     SDK-free telemetry name-contract leaf. -->
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>Babelstone.Notification.Delivery</RootNamespace>
@@ -45,28 +46,28 @@
          (the same leaf package the orchestrator's saga command dispatcher uses — connection
          pooling/lifetime owned by the factory; no engine-kernel ref, ADR-PC-019 §P2). -->
     <PackageReference Include="Microsoft.Extensions.Http" />
-    <!-- The durable delivery store (bd babelstone-60n8.10, ADR-IC-011 §P3): raw Npgsql against the
-         notification estate's OWN PostgreSQL tables — the same driver-only posture as the engine's
-         event store and the lifecycle driver's ledger; no ORM, no engine-spine reference. -->
+    <!-- The durable delivery store (ADR-IC-011): raw Npgsql against the notification estate's OWN
+         PostgreSQL tables — the same driver-only posture as the engine's event store and the
+         lifecycle driver's ledger; no ORM, no engine-spine reference. -->
     <PackageReference Include="Npgsql" />
-    <!-- The §D4 exhaustion relay (ADR-IC-011 §P3 step 7): the NotificationDeliveryExhausted backbone
-         producer. Confluent.Kafka is the byte producer, Confluent.SchemaRegistry resolves the
-         subject's schema_id (register-if-absent, ADR-IC-002 walking-skeleton posture), Apache.Avro
-         encodes the governed payload. THIRD-PARTY packages only — the wire plumbing is deliberately
+    <!-- The exhaustion relay (ADR-IC-011): the NotificationDeliveryExhausted backbone producer.
+         Confluent.Kafka is the byte producer, Confluent.SchemaRegistry resolves the subject's
+         schema_id (register-if-absent, ADR-IC-002 walking-skeleton posture), Apache.Avro encodes the
+         governed payload. THIRD-PARTY packages only — the wire plumbing is deliberately
          self-contained here (a small mirror of the engine's OutboxDrainer) because this subtree takes
-         no engine-spine ProjectReference (ADR-IC-019 §P2, NOTIFICATION_FAMILY_AGNOSTIC). -->
+         no engine-spine ProjectReference (ADR-IC-019, NOTIFICATION_FAMILY_AGNOSTIC). -->
     <PackageReference Include="Confluent.Kafka" />
     <PackageReference Include="Confluent.SchemaRegistry" />
     <PackageReference Include="Apache.Avro" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The delivery estate's OWN forward-only migration series (ADR-IC-011 §P3), embedded so a
+    <!-- The delivery estate's OWN forward-only migration series (ADR-IC-011), embedded so a
          deployed binary carries its schema — the same discipline as the engine / orchestrator /
          lifecycle-driver migration sets. -->
     <EmbeddedResource Include="Migrations/Sql/*.sql" />
     <!-- The governed NotificationDeliveryExhausted schema (contracts/avro is the single source,
-         ADR-IC-002 §P1): embedded so the relay serialises against the exact contract it publishes. -->
+         ADR-IC-002): embedded so the relay serialises against the exact contract it publishes. -->
     <EmbeddedResource Include="../../../contracts/avro/operations/NotificationDeliveryExhausted.avsc"
                       Link="Contracts/NotificationDeliveryExhausted.avsc" />
   </ItemGroup>
@@ -80,5 +81,11 @@
          outbound port (the SCHEDULED-leg hand-off) and maps its RaisedReminder into the delivery signal.
          The arrow is delivery → core (one-way); the core never references back. -->
     <ProjectReference Include="../Babelstone.Notification/Babelstone.Notification.csproj" />
+    <!-- The SDK-free telemetry NAME CONTRACT (ADR-IC-007): the shared meter and the
+         BabelstoneAttributes/BabelstoneEvents strings the delivery metrics and the exhaustion relay's
+         structured log ride on. A leaf library, not the engine kernel — the same reference the
+         lifecycle driver's core takes for its metrics; NotificationFamilyAgnosticTests names the
+         forbidden spine set and this is not in it. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
   </ItemGroup>
 </Project>

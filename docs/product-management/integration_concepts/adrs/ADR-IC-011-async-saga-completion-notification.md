@@ -199,6 +199,8 @@ Summary of all six choices:
 | D5 — Owning component | Dedicated notification service; subscribes to saga terminal events via Redpanda; orchestrator is unaware |
 | D6 — SSE coexistence | SSE retained as-is; callbacks are opt-in via `notification_subscription_id` in the initiating request; the two paths are independently useful |
 
+*Revised 2026-07-03: the D2 `idempotency_key = sha256("{process_id}:{terminal_event_type}")` recipe is scoped to the saga-completion callback payload it was derived for. The notification-estate delivery envelope keeps the D2 PROPERTY — one key, stable across every retry and redelivery of the same logical notification — with a different shape (the composite `notification_id` UUID, which the notification payload already carries); see the dated §P2 revision below for the full statement. Receivers treat `idempotency_key` as an opaque stable string in both cases.*
+
 ---
 
 ## Consequences

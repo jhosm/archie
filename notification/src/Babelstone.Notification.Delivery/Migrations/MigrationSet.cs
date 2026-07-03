@@ -6,11 +6,11 @@ namespace Babelstone.Notification.Delivery.Migrations;
 
 /// <summary>
 /// The ordered set of forward-only migrations embedded in this assembly — the notification delivery
-/// estate's OWN migration series (ADR-IC-011 §P3; lifted from the engine's
+/// estate's OWN migration series (ADR-IC-011; lifted from the engine's
 /// <c>Babelstone.EventStore.Migrations.MigrationSet</c> via the orchestrator's and the lifecycle
 /// driver's copies). Discovery is from embedded <c>Migrations/Sql/NNNN_name.sql</c> resources so a
 /// deployed binary carries its own schema — there is no loose-file lookup at runtime. The copy (rather
-/// than a shared library) keeps the notification subtree extraction-ready (ADR-PC-019 §P2): no
+/// than a shared library) keeps the notification subtree extraction-ready (ADR-PC-019): no
 /// engine-spine reference rides in through the migration plumbing.
 /// </summary>
 public static partial class MigrationSet
@@ -44,7 +44,7 @@ public static partial class MigrationSet
 
         migrations.Sort((a, b) => a.Version.CompareTo(b.Version));
 
-        // Forward-only discipline (ADR-PC-001 §P5, lifted) starts here: a duplicate version is a
+        // Forward-only discipline (ADR-PC-001, lifted) starts here: a duplicate version is a
         // packaging error, caught before any DDL touches a database.
         for (var i = 1; i < migrations.Count; i++)
         {

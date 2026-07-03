@@ -11,7 +11,7 @@ using ConfluentSchema = Confluent.SchemaRegistry.Schema;
 namespace Babelstone.Notification.Delivery;
 
 /// <summary>
-/// The backbone-publish seam of the §D4 exhaustion relay (ADR-IC-011 §P3 step 7): publish ONE
+/// The backbone-publish seam of the exhaustion relay (ADR-IC-011): publish ONE
 /// <c>operations.NotificationDeliveryExhausted</c> event and return only on broker ack. A throw is
 /// BACKPRESSURE — the relay pass leaves the row PENDING and retries next tick (never FAILED,
 /// ADR-IC-004). A seam (not the Confluent producer directly) so the relay's ordering/flip behaviour is
@@ -30,7 +30,7 @@ public interface IExhaustedEventPublisher
 /// <c>schema_id</c> ‖ Avro value), keyed by <c>instance_id</c>, with CloudEvents 1.0 binary-mode Kafka
 /// headers, produced to the <c>operations</c> topic (topic == aggregate_type, the relay convention) —
 /// byte-for-byte the posture of the engine's <c>OutboxDrainer</c>, self-contained here because the
-/// notification subtree takes no engine-spine reference (ADR-IC-019 §P2, NOTIFICATION_FAMILY_AGNOSTIC).
+/// notification subtree takes no engine-spine reference (ADR-IC-019, NOTIFICATION_FAMILY_AGNOSTIC).
 /// </summary>
 /// <remarks>
 /// The <c>schema_id</c> is resolved against the Schema Registry ONCE, lazily, on the first publish
@@ -42,7 +42,7 @@ public interface IExhaustedEventPublisher
 public sealed class KafkaExhaustedEventPublisher : IExhaustedEventPublisher, IAsyncDisposable
 {
     /// <summary>The synthetic cross-cutting aggregate_type — the topic AND the ce_aggregatetype
-    /// (event-store §4.3; topic == aggregate_type, the relay's documented convention).</summary>
+    /// (topic == aggregate_type, the relay's documented convention).</summary>
     public const string Topic = "operations";
 
     /// <summary>The Schema-Registry subject (ADR-IC-002: fully-qualified record name + -value).</summary>
@@ -139,6 +139,7 @@ public sealed class KafkaExhaustedEventPublisher : IExhaustedEventPublisher, IAs
         record.Add("template_pack_version", exhausted.TemplatePackVersion);
         record.Add("trigger_kind", new GenericEnum(
             (EnumSchema)schema["trigger_kind"].Schema, TriggerKindWire.ToWire(exhausted.TriggerKind)));
+        record.Add("causation_id", exhausted.CausationId.HasValue ? exhausted.CausationId.Value : null);
         record.Add("attempts", exhausted.Attempts);
         record.Add("last_error", exhausted.LastError);
         record.Add("exhausted_at", exhausted.ExhaustedAt.UtcDateTime);
@@ -154,7 +155,9 @@ public sealed class KafkaExhaustedEventPublisher : IExhaustedEventPublisher, IAs
 
     // CloudEvents 1.0 Binary Content Mode (ADR-IC-015): attributes as Kafka headers, the Avro value
     // as the message value — every header derivable from the outbox row alone (ADR-IC-004). ce_id is
-    // the row's DB-generated event_id, so a relay retry republishes the SAME id.
+    // the row's DB-generated event_id, so a relay retry republishes the SAME id. No traceparent
+    // header rides yet — the OBS_TRACEPARENT_PROPAGATION residual (ADR-IC-007), the same open debt
+    // as the engine relay's headers.
     public static Headers BuildHeaders(ExhaustedDelivery exhausted)
     {
         var headers = new Headers();

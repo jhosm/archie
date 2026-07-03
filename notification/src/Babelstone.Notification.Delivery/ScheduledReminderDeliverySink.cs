@@ -21,7 +21,9 @@ namespace Babelstone.Notification.Delivery;
 /// still see carries the SAME id, which is exactly the contract: dedupe is consumer-side.
 /// </para>
 /// <para>
-/// <b>What the v1 signal does not carry.</b> <c>customer_ref</c> is <see langword="null"/>: the
+/// <b>What the v1 signal does not carry.</b> The recipient reference
+/// (<see cref="NotificationDueSignal.CustomerRef"/> — <c>customer_id</c> on every wire) is
+/// <see langword="null"/>: the
 /// ADR-PC-027 read surface the scheduler works from exposes no recipient reference yet, so the consumer
 /// resolves the recipient from <c>instance_id</c> — a named residual of the read surface, not of this
 /// transport. <c>template_pack_version</c> is the host's pinned pack version (the same one-pinned-pack v1

@@ -4,10 +4,10 @@ namespace Babelstone.Notification.Delivery.Migrations;
 
 /// <summary>
 /// Applies the forward-only <see cref="MigrationSet"/> against a PostgreSQL database — the
-/// notification delivery estate's OWN migration series (ADR-IC-011 §P3; lifted from the engine's
+/// notification delivery estate's OWN migration series (ADR-IC-011; lifted from the engine's
 /// <c>Babelstone.EventStore.Migrations.MigrationRunner</c> via the orchestrator's and the lifecycle
 /// driver's copies). Thin and hand-rolled (ADR-PC-010): no migration framework owns the schema. It
-/// connects as the migration role (ADR-PC-001 §P3) — the role that holds the DDL privileges the
+/// connects as the migration role (ADR-PC-001) — the role that holds the DDL privileges the
 /// delivery estate's runtime role (<c>babelstone_notification</c>) is denied.
 /// </summary>
 public sealed class MigrationRunner(string connectionString)
@@ -22,10 +22,9 @@ public sealed class MigrationRunner(string connectionString)
 
     // A stable, arbitrary 64-bit key naming this runner's session advisory lock. Two runners that start
     // concurrently (overlapping deploys, an app boot racing CI) would otherwise both read the ledger,
-    // both apply migration N, and collide. The lock serialises them: the second waits. A DIFFERENT
-    // constant from the engine's, the orchestrator's, the lifecycle driver's, and the family
-    // read-model runners', so a notification deploy against a shared cluster does not block on another
-    // component's unrelated migration set.
+    // both apply migration N, and collide. The lock serialises them: the second waits. The constant is
+    // this component's own, distinct from the other Babelstone migration runners', so a notification
+    // deploy against a shared cluster does not block on an unrelated migration set.
     private const long MigrationLockKey = 6193472850317264089;
 
     /// <summary>
