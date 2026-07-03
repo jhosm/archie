@@ -10,7 +10,7 @@ namespace Babelstone.Engine;
 /// </summary>
 /// <param name="InstanceId">The account-owning instance (stream) the resulting hold rides — a structural id, not PII.</param>
 /// <param name="AccountRef">The opaque account being debited — never PII (ADR-PC-004).</param>
-/// <param name="HoldId">The hold's lifecycle dedup/correlation key the caller supplies (ADR-PC-033 slot 4)
+/// <param name="HoldId">The hold's lifecycle dedup/correlation key the caller supplies (ADR-PC-033)
 /// — deterministic per authorization, so a replayed attempt earmarks at most once.</param>
 /// <param name="Amount">The attempted debit, integer-cents <see cref="Money"/> (ADR-PC-010).</param>
 /// <param name="ValueDate">The economic date of the attempt — supplied by the command, never a clock read.</param>
@@ -23,9 +23,8 @@ public sealed record AuthorizationRequest(
 
 /// <summary>
 /// The stage-4 rule inputs (ADR-PC-030: "within product rules / limits / overdraft") the pack
-/// supplies. The pack OWNS these values (ADR-PC-033 slot 6); the grammar that expresses them is a
-/// named-but-separate pack-grammar expansion, so until it lands the command shell resolves them
-/// from its pack surface and hands the resolved cents here — the decider never reads a pack.
+/// supplies. The pack OWNS these values (ADR-PC-033); the command shell resolves them from its
+/// pack surface and hands the resolved cents here — the decider never reads a pack.
 /// </summary>
 /// <param name="OverdraftLimitCents">The authorized overdraft (*descoberto autorizado*), in cents at or
 /// above zero: how far below zero the available balance may go. Zero — the default — means no overdraft.</param>
@@ -56,16 +55,17 @@ public enum AuthorizationDeclineReason
 /// The authorization decision: <see cref="Authorized"/> carries the <see cref="HoldPlaced"/> fact
 /// the shell appends (stage 5 — the earmark IS the approval's record); <see cref="Declined"/>
 /// carries the reason the caller returns as <c>declined</c>. The decider never appends a
-/// <see cref="HoldPlaced"/> on a refusal (ADR-PC-033 slot 5) — what refusal FACT a family records
-/// is that family's own contract, which is why the spine decision carries data, not a refusal event.
+/// <see cref="HoldPlaced"/> on a refusal (ADR-PC-033) — what refusal FACT a family records is that
+/// family's own contract, which is why the spine decision carries data, not a refusal event.
 /// </summary>
 public abstract record AuthorizationDecision
 {
     private AuthorizationDecision() { }
 
-    /// <summary>Approved: append <see cref="Hold"/> — from its sequence forward the earmark lowers
-    /// the available balance, which is what makes the NEXT concurrent authorization safe without
-    /// locking (ADR-PC-030 §48).</summary>
+    /// <summary>Approved: append <see cref="Hold"/> — from its sequence forward the earmark is on
+    /// the log, and once the spine projection drive folds it the available balance drops, which is
+    /// what makes a later authorization safe without locking (ADR-PC-030). The command shell owns
+    /// read-your-writes: it drains before it decides, so "later" never trusts a stale fold.</summary>
     public sealed record Authorized(HoldPlaced Hold) : AuthorizationDecision;
 
     /// <summary>Refused: nothing is earmarked; the caller answers <c>declined</c> with the reason.</summary>
@@ -74,7 +74,7 @@ public abstract record AuthorizationDecision
 
 /// <summary>
 /// The funds-and-rules core of real-time authorization — the engine-owned stages 3–5 of the
-/// ADR-PC-030 §P3 pipeline, as one pure decider. In plain English: given what is spendable right
+/// ADR-PC-030 authorization pipeline, as one pure decider. In plain English: given what is spendable right
 /// now (the available-balance fold) and the pack's limit rules, either refuse the debit or produce
 /// the <see cref="HoldPlaced"/> fact that earmarks the money. Everything impure — reading the fold,
 /// resolving pack rules, the append itself, SCA, fraud, the rails — lives OUTSIDE (the excluded
@@ -83,7 +83,7 @@ public abstract record AuthorizationDecision
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The gate blocks the authorization, never the recording of facts (ADR-PC-033 slot 5).</b>
+/// <b>The gate blocks the authorization, never the recording of facts (ADR-PC-033).</b>
 /// Only this decision consults the balance, BEFORE its append; the balance and hold folds
 /// themselves are never gated. The <c>amount ≤ available</c> invariant is enforced HERE, at
 /// authorization — the fold trusts its input stream, so prevention lives in the one place that
@@ -100,8 +100,9 @@ public static class FundsAndRulesDecider
 {
     /// <summary>
     /// Decide one authorization attempt. <paramref name="availableBalanceCents"/> is the CURRENT
-    /// available-balance fold (<c>AccountBalanceReader.GetAvailableBalanceCentsAsync</c>) — already
-    /// net of every active hold, so earlier approvals are visible to this decision by construction.
+    /// available-balance fold (<c>AccountBalanceReader.GetAvailableBalanceCentsAsync</c>) — net of
+    /// every hold the spine projection drive has folded. Earlier approvals are visible once
+    /// drained; the command shell drains before it decides (read-your-writes).
     /// </summary>
     public static AuthorizationDecision Decide(
         AuthorizationRequest request, long availableBalanceCents, AuthorizationRules rules)
@@ -129,8 +130,8 @@ public static class FundsAndRulesDecider
             return new AuthorizationDecision.Declined(AuthorizationDeclineReason.InsufficientAvailableBalance);
         }
 
-        // Stage 5 — earmark: the approval IS the HoldPlaced fact. From its append forward the hold
-        // lowers the available balance, so the next concurrent authorization already sees it.
+        // Stage 5 — earmark: the approval IS the HoldPlaced fact. Once the appended hold is
+        // drained into the read model it lowers the available balance the next decision reads.
         return new AuthorizationDecision.Authorized(new HoldPlaced(
             InstanceId: request.InstanceId,
             HoldId: request.HoldId,

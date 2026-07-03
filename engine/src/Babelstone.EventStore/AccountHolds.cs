@@ -3,7 +3,7 @@ using Npgsql;
 namespace Babelstone.EventStore;
 
 /// <summary>
-/// One recorded hold in the <c>account_ref</c>-keyed active-hold read model (ADR-PC-033 slots 1–3):
+/// One recorded hold in the <c>account_ref</c>-keyed active-hold read model (ADR-PC-033):
 /// the fold of one hold's lifecycle (<c>HoldPlaced → HoldCaptured | HoldExpired</c>), flattened to
 /// family-agnostic PRIMITIVES so this storage boundary names no engine domain type (the same split
 /// that keeps <see cref="MovementLedgerEntry"/> generic — the typed <c>Babelstone.Engine</c> projector
@@ -11,7 +11,7 @@ namespace Babelstone.EventStore;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The table is a REBUILDABLE derived cache keyed by <see cref="HoldId"/> — the ADR-PC-033 slot-4
+/// The table is a REBUILDABLE derived cache keyed by <see cref="HoldId"/> — the ADR-PC-033
 /// idempotency/correlation key every lifecycle event of one hold carries. While
 /// <see cref="State"/> is <c>ACTIVE</c> the hold's <see cref="AmountCents"/> reduces the account's
 /// available balance; a capture or expiry transitions the row out of the active set. The row is
@@ -19,11 +19,11 @@ namespace Babelstone.EventStore;
 /// by query (migration 0020).
 /// </para>
 /// <para>
-/// No PII (ADR-PC-004 §P2): <see cref="HoldId"/> / <see cref="AccountRef"/> are opaque structural
+/// No PII (ADR-PC-004): <see cref="HoldId"/> / <see cref="AccountRef"/> are opaque structural
 /// references; <see cref="State"/> is a closed-set member name; the rest are ids, amounts, dates.
 /// </para>
 /// </remarks>
-/// <param name="HoldId">The hold's lifecycle idempotency/correlation key (ADR-PC-033 slot 4).</param>
+/// <param name="HoldId">The hold's lifecycle idempotency/correlation key (ADR-PC-033).</param>
 /// <param name="AccountRef">The opaque account the earmark applies to — the fold key, never PII.</param>
 /// <param name="AmountCents">The earmarked amount, integer cents (ADR-PC-010).</param>
 /// <param name="ValueDate">The economic date the hold took effect — the expiry-horizon axis (ADR-PC-023).</param>
@@ -31,7 +31,7 @@ namespace Babelstone.EventStore;
 /// <param name="PlacedStreamId">The stream that carried the <c>HoldPlaced</c> event.</param>
 /// <param name="PlacedSequence">The <c>HoldPlaced</c> event's per-stream sequence.</param>
 /// <param name="CapturedAmountCents">Set on capture — MAY be less than <see cref="AmountCents"/>
-/// (a partial capture releases the remainder, ADR-PC-033 slot 2); null while active / on expiry.</param>
+/// (a partial capture releases the remainder, ADR-PC-033); null while active / on expiry.</param>
 /// <param name="ReleasedStreamId">The stream that carried the releasing event; null while active.</param>
 /// <param name="ReleasedSequence">The releasing event's per-stream sequence; null while active.</param>
 public sealed record AccountHoldRow(
@@ -47,21 +47,37 @@ public sealed record AccountHoldRow(
     long? ReleasedSequence = null);
 
 /// <summary>
+/// How a capture/expiry landed against the hold set — the three-way answer whose non-normal
+/// members the projector must SURFACE, never silently absorb (ADR-PC-033).
+/// </summary>
+public enum HoldReleaseResult
+{
+    /// <summary>The hold was ACTIVE and is now released — the one normal outcome.</summary>
+    Transitioned,
+
+    /// <summary>The hold exists but had already left the active set — a duplicate/late release.
+    /// Folds as a no-op (never a double-release); a reconciliation signal.</summary>
+    AlreadyReleased,
+
+    /// <summary>No hold with this id was ever placed — a fold-order error.</summary>
+    NeverPlaced,
+}
+
+/// <summary>
 /// The generic, family-agnostic storage boundary for the spine-owned active-hold read model
-/// (ADR-PC-033 slots 1–3, migration 0020). The available-balance fold subtracts
+/// (ADR-PC-033, migration 0020). The available-balance fold subtracts
 /// <see cref="GetActiveHoldCentsAsync"/> from the movement-ledger signed sum; the hold set itself is
 /// a rebuildable fold of the three lifecycle events, never a stored source of truth. Family-agnostic
 /// by construction — it stores only <see cref="AccountHoldRow"/> primitives, so adding a family is
 /// zero diff here (ENGINE_FAMILY_AGNOSTIC, ADR-PC-021).
 /// </summary>
 /// <remarks>
-/// Idempotency mirrors the lifecycle's own key (ADR-PC-033 slot 4): <see cref="PlaceAsync"/> is a
+/// Idempotency mirrors the lifecycle's own key (ADR-PC-033): <see cref="PlaceAsync"/> is a
 /// no-op when the <c>hold_id</c> already exists, and <see cref="CaptureAsync"/> /
 /// <see cref="ExpireAsync"/> transition ONLY an <c>ACTIVE</c> row — a re-delivered or duplicate
-/// release folds at most once (the "no double-release" guarantee; the unmatched re-delivery is a
-/// reconciliation concern the transactional family owns, ADR-PC-033 §Residual-risks, so the store
-/// reports it as <see langword="false"/> rather than throwing). <see cref="TruncateAsync"/> is the
-/// rebuild path (truncate-then-refold, ACCOUNT_BALANCE_IS_A_FOLD).
+/// release folds at most once (the "no double-release" guarantee), reported as the
+/// non-<see cref="HoldReleaseResult.Transitioned"/> result so the caller can surface it.
+/// <see cref="TruncateAsync"/> is the rebuild path (truncate-then-refold, ACCOUNT_BALANCE_IS_A_FOLD).
 /// </remarks>
 public interface IAccountHoldStore
 {
@@ -73,23 +89,24 @@ public interface IAccountHoldStore
 
     /// <summary>
     /// Transition an ACTIVE hold to CAPTURED, recording the captured amount and the releasing
-    /// event's identity. Returns <see langword="false"/> (a fold no-op) when the hold is not
-    /// currently active — already captured/expired, or never placed.
+    /// event's identity. A hold not currently active transitions nothing; the returned
+    /// <see cref="HoldReleaseResult"/> says which no-op it was so the caller can surface it.
     /// </summary>
-    Task<bool> CaptureAsync(
+    Task<HoldReleaseResult> CaptureAsync(
         string holdId, long capturedAmountCents, Guid releasedStreamId, long releasedSequence,
         CancellationToken ct = default);
 
     /// <summary>
-    /// Transition an ACTIVE hold to EXPIRED, recording the releasing event's identity. Returns
-    /// <see langword="false"/> (a fold no-op) when the hold is not currently active.
+    /// Transition an ACTIVE hold to EXPIRED, recording the releasing event's identity. A hold not
+    /// currently active transitions nothing; the returned <see cref="HoldReleaseResult"/> says
+    /// which no-op it was so the caller can surface it.
     /// </summary>
-    Task<bool> ExpireAsync(
+    Task<HoldReleaseResult> ExpireAsync(
         string holdId, Guid releasedStreamId, long releasedSequence, CancellationToken ct = default);
 
     /// <summary>
     /// Σ(active holds) for the account, integer cents — the subtrahend of the available-balance
-    /// fold (ADR-PC-033 slot 1). Zero for an account with no active holds (the uniform empty-set
+    /// fold (ADR-PC-033). Zero for an account with no active holds (the uniform empty-set
     /// answer a non-transactional account reads).
     /// </summary>
     Task<long> GetActiveHoldCentsAsync(string accountRef, CancellationToken ct = default);
@@ -106,7 +123,7 @@ public interface IAccountHoldStore
     Task<IReadOnlyList<AccountHoldRow>> GetActiveHoldsWithValueDateAtOrBeforeAsync(
         DateOnly valueDateHorizon, CancellationToken ct = default);
 
-    /// <summary>Truncate the whole hold set for a clean rebuild (truncate-then-refold, ADR-PC-033 slot 3).</summary>
+    /// <summary>Truncate the whole hold set for a clean rebuild (truncate-then-refold, ADR-PC-033).</summary>
     Task TruncateAsync(CancellationToken ct = default);
 }
 
@@ -124,7 +141,7 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
     {
         ArgumentNullException.ThrowIfNull(hold);
 
-        // ON CONFLICT DO NOTHING on hold_id: the lifecycle idempotency key (ADR-PC-033 slot 4) —
+        // ON CONFLICT DO NOTHING on hold_id: the lifecycle idempotency key (ADR-PC-033) —
         // a re-delivered HoldPlaced re-inserts the same row as a no-op, never a second earmark.
         const string sql = """
             INSERT INTO account_holds
@@ -146,12 +163,13 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
         await command.ExecuteNonQueryAsync(ct);
     }
 
-    public async Task<bool> CaptureAsync(
+    public async Task<HoldReleaseResult> CaptureAsync(
         string holdId, long capturedAmountCents, Guid releasedStreamId, long releasedSequence,
         CancellationToken ct = default)
     {
         // Transition ONLY an ACTIVE row: a hold already captured/expired (or never placed) is a
-        // zero-row no-op — the slot-4 "a second HoldCaptured is a no-op, never a double-release".
+        // zero-row no-op ("a second HoldCaptured is a no-op, never a double-release", ADR-PC-033),
+        // classified below so the projector can surface it.
         const string sql = """
             UPDATE account_holds
             SET state = 'CAPTURED',
@@ -163,15 +181,22 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(ct);
-        await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("hold_id", holdId);
-        command.Parameters.AddWithValue("captured_amount_cents", capturedAmountCents);
-        command.Parameters.AddWithValue("released_stream_id", releasedStreamId);
-        command.Parameters.AddWithValue("released_sequence", releasedSequence);
-        return await command.ExecuteNonQueryAsync(ct) == 1;
+        await using (var command = new NpgsqlCommand(sql, connection))
+        {
+            command.Parameters.AddWithValue("hold_id", holdId);
+            command.Parameters.AddWithValue("captured_amount_cents", capturedAmountCents);
+            command.Parameters.AddWithValue("released_stream_id", releasedStreamId);
+            command.Parameters.AddWithValue("released_sequence", releasedSequence);
+            if (await command.ExecuteNonQueryAsync(ct) == 1)
+            {
+                return HoldReleaseResult.Transitioned;
+            }
+        }
+
+        return await ClassifyNoOpReleaseAsync(connection, holdId, ct);
     }
 
-    public async Task<bool> ExpireAsync(
+    public async Task<HoldReleaseResult> ExpireAsync(
         string holdId, Guid releasedStreamId, long releasedSequence, CancellationToken ct = default)
     {
         const string sql = """
@@ -184,17 +209,38 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(ct);
+        await using (var command = new NpgsqlCommand(sql, connection))
+        {
+            command.Parameters.AddWithValue("hold_id", holdId);
+            command.Parameters.AddWithValue("released_stream_id", releasedStreamId);
+            command.Parameters.AddWithValue("released_sequence", releasedSequence);
+            if (await command.ExecuteNonQueryAsync(ct) == 1)
+            {
+                return HoldReleaseResult.Transitioned;
+            }
+        }
+
+        return await ClassifyNoOpReleaseAsync(connection, holdId, ct);
+    }
+
+    // A zero-row release is one of two very different facts (ADR-PC-033): the hold exists but
+    // already left the active set (a duplicate/late release), or it was NEVER placed (a fold-order
+    // error). One existence probe on the already-open connection tells them apart.
+    private static async Task<HoldReleaseResult> ClassifyNoOpReleaseAsync(
+        NpgsqlConnection connection, string holdId, CancellationToken ct)
+    {
+        const string sql = "SELECT EXISTS (SELECT 1 FROM account_holds WHERE hold_id = @hold_id);";
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("hold_id", holdId);
-        command.Parameters.AddWithValue("released_stream_id", releasedStreamId);
-        command.Parameters.AddWithValue("released_sequence", releasedSequence);
-        return await command.ExecuteNonQueryAsync(ct) == 1;
+        return (bool)(await command.ExecuteScalarAsync(ct))!
+            ? HoldReleaseResult.AlreadyReleased
+            : HoldReleaseResult.NeverPlaced;
     }
 
     public async Task<long> GetActiveHoldCentsAsync(string accountRef, CancellationToken ct = default)
     {
         // COALESCE makes an account with no active holds read as zero — the uniform empty-hold-set
-        // answer that keeps the available-balance fold total over every account (ADR-PC-033 slot 1).
+        // answer that keeps the available-balance fold total over every account (ADR-PC-033).
         // ::bigint because SUM(bigint) returns NUMERIC (surfaced as decimal), never an Int64.
         const string sql = """
             SELECT COALESCE(SUM(amount_cents), 0)::bigint
@@ -206,8 +252,9 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
         await connection.OpenAsync(ct);
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("account_ref", accountRef);
-        var result = await command.ExecuteScalarAsync(ct);
-        return result is long cents ? cents : 0L;
+        // Hard unbox: COALESCE guarantees a non-null value and ::bigint guarantees Int64, so any
+        // other shape is schema/query drift — throw (InvalidCastException), never mask it as 0.
+        return (long)(await command.ExecuteScalarAsync(ct))!;
     }
 
     public async Task<IReadOnlyList<AccountHoldRow>> GetActiveHoldsAsync(

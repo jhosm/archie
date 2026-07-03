@@ -3,7 +3,7 @@ using Babelstone.EventStore;
 namespace Babelstone.Engine;
 
 /// <summary>
-/// A spine-owned, CROSS-FAMILY projector the host drives directly (ADR-PC-032 §A1 / ADR-PC-033):
+/// A spine-owned, CROSS-FAMILY projector the host drives directly (ADR-PC-032 / ADR-PC-033):
 /// it folds already-decoded events, keyed by something that spans streams and families (an
 /// <c>account_ref</c>), which is exactly why it is NOT an <see cref="IProjectionRunner"/> on the
 /// per-family/per-stream <see cref="ProjectionDrainer"/>. The two v1 implementations are the
@@ -27,11 +27,10 @@ public interface ISpineProjector
 }
 
 /// <summary>
-/// The production caller that feeds appended/replayed events to the spine projectors — the host
-/// drive ADR-PC-032 §A1 scoped to a follow-up when the movement ledger landed read-wired but
-/// undriven. In plain English: the movement ledger and the active-hold set only fill up if
-/// something reads the event log and hands each decoded event to their <c>ApplyAsync</c>; this is
-/// that something. It is registered ONCE at the composition root as a spine singleton — NOT on the
+/// The production caller that feeds appended/replayed events to the spine projectors — the live
+/// projection drive of the ADR-PC-032 read side. In plain English: the movement ledger and the
+/// active-hold set only fill up if something reads the event log and hands each decoded event to
+/// their <c>ApplyAsync</c>; this is that something. It is registered ONCE at the composition root as a spine singleton — NOT on the
 /// per-family <see cref="ProjectionDrainer"/> — because its projections are account-keyed and
 /// cross-family (one <c>account_ref</c> receives movements from many streams across families).
 /// </summary>
@@ -56,10 +55,21 @@ public interface ISpineProjector
 /// family's bindings fails LOUD, the same fail-closed stance as the aggregate fold.
 /// </para>
 /// <para>
-/// <b>Rebuild is truncate-then-refold and deterministic.</b> <see cref="RebuildAsync"/> resets
-/// every projector's derived state and the shared checkpoints, then re-drains from sequence 0;
-/// every projected column is event-derived (no clock, no randomness), so the rebuilt tables are
-/// identical to the incrementally-built ones (ACCOUNT_BALANCE_IS_A_FOLD).
+/// <b>One writer at a time.</b> <see cref="DrainOnceAsync"/> and <see cref="RebuildAsync"/>
+/// serialize on an in-process gate: the drainer is the composition root's ONE singleton and the
+/// only writer of these read models, so the gate is the mutual exclusion that keeps a live relay
+/// pass from writing a stale checkpoint into the middle of a rebuild (a permanent fold hole). A
+/// second engine process would need a cross-process lock — no current deployment runs one; adding
+/// one is a deliberate change to this type, not a config knob.
+/// </para>
+/// <para>
+/// <b>Rebuild is truncate-then-refold and READ-deterministic.</b> <see cref="RebuildAsync"/>
+/// resets the shared checkpoints, clears every projector's derived state, then re-drains from
+/// sequence 0; every projected column is event-derived (no clock, no randomness), so the rebuilt
+/// tables answer every read identically to the incrementally-built ones. Read-identical, not
+/// byte-identical: <c>movement_ledger.row_id</c> is a BIGSERIAL surrogate a rebuild re-mints, and
+/// every read excludes it — the same surrogate-vs-read split the bitemporal projection store
+/// draws (ACCOUNT_BALANCE_IS_A_FOLD).
 /// </para>
 /// </remarks>
 public sealed class SpineProjectionDrainer
@@ -77,6 +87,10 @@ public sealed class SpineProjectionDrainer
     private readonly IEventSerializer _serializer;
     private readonly IReadOnlyList<ISpineProjector> _projectors;
     private readonly TimeProvider _clock;
+
+    // The one-writer gate (see class remarks): serializes drain passes and rebuilds on the
+    // composition root's singleton drainer, so a relay pass can never interleave with a rebuild.
+    private readonly SemaphoreSlim _writerGate = new(1, 1);
 
     // family name → that family's event-type bindings, materialized once: the drive iterates
     // ReadStreamIdsAsync per family and decodes with the matching registry (see class remarks for
@@ -108,6 +122,19 @@ public sealed class SpineProjectionDrainer
     /// event to every projector. Returns the number of events folded (0 = fully caught up).
     /// </summary>
     public async Task<int> DrainOnceAsync(CancellationToken ct = default)
+    {
+        await _writerGate.WaitAsync(ct);
+        try
+        {
+            return await DrainAllUnderGateAsync(ct);
+        }
+        finally
+        {
+            _writerGate.Release();
+        }
+    }
+
+    private async Task<int> DrainAllUnderGateAsync(CancellationToken ct)
     {
         var folded = 0;
         foreach (var (family, registry) in _families)
@@ -146,26 +173,39 @@ public sealed class SpineProjectionDrainer
     }
 
     /// <summary>
-    /// Cold rebuild (truncate-then-refold): clear every projector's derived state, reset the shared
-    /// checkpoints, and re-fold every stream from sequence 0. Deterministic — every projected
-    /// column is event-derived, so the rebuilt read models are identical to the incrementally-built
-    /// ones (ACCOUNT_BALANCE_IS_A_FOLD).
+    /// Cold rebuild (truncate-then-refold): reset the shared checkpoints, clear every projector's
+    /// derived state, and re-fold every stream from sequence 0 — all under the one-writer gate, so
+    /// a live relay pass cannot interleave. The rebuilt read models answer every read identically
+    /// to the incrementally-built ones (read-identical — see the class remarks;
+    /// ACCOUNT_BALANCE_IS_A_FOLD).
     /// </summary>
     public async Task<int> RebuildAsync(CancellationToken ct = default)
     {
-        foreach (var projector in _projectors)
+        await _writerGate.WaitAsync(ct);
+        try
         {
-            await projector.ResetForRebuildAsync(ct);
-        }
+            // Checkpoints FIRST, then truncate: a crash between the two leaves populated tables
+            // under reset checkpoints, and the next drain re-folds from 0 into idempotent applies —
+            // self-healing. The inverse order would strand EMPTY tables under caught-up checkpoints
+            // (an under-stated hold set inflating the available balance) until an operator noticed.
+            await _checkpoints.ResetAsync(CheckpointKind, ct);
+            foreach (var projector in _projectors)
+            {
+                await projector.ResetForRebuildAsync(ct);
+            }
 
-        await _checkpoints.ResetAsync(CheckpointKind, ct);
-        return await DrainOnceAsync(ct);
+            return await DrainAllUnderGateAsync(ct);
+        }
+        finally
+        {
+            _writerGate.Release();
+        }
     }
 
     // Structural-only decode through the family's own binding (no PII unprotect — the projectors
     // read only structural facts; the same posture as ProjectionRunner). Fail-loud on an event
     // type the family's own module does not bind: silence here would fold zero movements off a
-    // conforming event — the correctness hole the seam exists to close (ADR-PC-032 §A2).
+    // conforming event — the correctness hole the seam exists to close (ADR-PC-032).
     private DomainEvent Decode(HandlerRegistry registry, EventEnvelope envelope)
     {
         if (!registry.TryResolveByEventType(envelope.EventType, out var registration))

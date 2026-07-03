@@ -5,7 +5,7 @@ namespace Babelstone.Engine.Tests;
 
 /// <summary>
 /// Tests for <see cref="FundsAndRulesDecider"/> — the engine-owned stages 3–5 of real-time
-/// authorization (ADR-PC-030 §P3 / ADR-PC-033 slot 5). In plain English: given what is spendable
+/// authorization (ADR-PC-030 / ADR-PC-033). In plain English: given what is spendable
 /// now and the pack's limit rules, the decider either refuses the debit (declined, nothing
 /// earmarked) or produces the <c>HoldPlaced</c> fact that earmarks the money. The suite pins the
 /// gate order, the *descoberto autorizado* overdraft window, and the no-locking concurrency story:
@@ -80,10 +80,11 @@ public sealed class FundsAndRulesDeciderTests
     [Fact]
     public void An_earlier_approvals_hold_lowers_the_next_decisions_available_input()
     {
-        // The no-locking double-spend story (ADR-PC-030 §48 / ADR-PC-033): the first debit's
-        // HoldPlaced lowers the available-balance FOLD before the second authorization is
-        // evaluated. Modelled here by feeding the second decision the post-hold available balance —
-        // exactly what AccountBalanceReader returns once the first hold is active.
+        // The no-locking double-spend story (ADR-PC-030 / ADR-PC-033): once the first debit's
+        // HoldPlaced is drained into the read model, the available-balance fold the second
+        // authorization reads is already lower. Modelled here by feeding the second decision the
+        // post-hold available balance — what AccountBalanceReader returns once the first hold is
+        // folded (the command shell drains before it decides).
         const long opening = 10_000;
 
         var first = FundsAndRulesDecider.Decide(Request(8_000, "hold-1"), opening, new AuthorizationRules());

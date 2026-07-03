@@ -9,11 +9,11 @@ namespace Babelstone.EventStore.Tests;
 /// Integration tests for the spine account-projection drive — <see cref="SpineProjectionDrainer"/>
 /// feeding <see cref="MovementLedgerProjector"/> + <see cref="AccountHoldProjector"/> off REAL
 /// appends to a real PostgreSQL event store. This is the ACCOUNT_BALANCE_IS_A_FOLD gate
-/// (ADR-PC-033) and the live-drive acceptance ADR-PC-032 §A1 deferred: after real appends the
-/// movement ledger holds the account's statement and signed-sum balance; the available balance is
+/// (ADR-PC-033) over the ADR-PC-032 read side: after real appends the movement ledger holds the
+/// account's statement and signed-sum balance; the available balance is
 /// <c>accounting − Σ(active holds)</c>; at-least-once re-delivery re-applies as a no-op; and a
 /// discard-and-rebuild (truncate + refold) reproduces the ledger, the hold set, and both balances
-/// identically from the stream.
+/// READ-identically from the stream (the BIGSERIAL surrogate is excluded from every read).
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class SpineAccountProjectionIntegrationTests(PostgresEventStoreFixture fixture)
@@ -30,7 +30,7 @@ public sealed class SpineAccountProjectionIntegrationTests(PostgresEventStoreFix
         var stream = Guid.NewGuid();
 
         // Two real appends on one stream: a 100.00 credit, then a 30.00 debit + 2.50 credit on one
-        // multi-movement event (the renewal shape, ADR-PC-032 §A3).
+        // multi-movement event (the renewal shape, ADR-PC-032).
         await AppendAsync(runtime, stream, 0,
             new TestMoneyMover([Credit(account, 10_000)]));
         await AppendAsync(runtime, stream, 1,
@@ -75,12 +75,12 @@ public sealed class SpineAccountProjectionIntegrationTests(PostgresEventStoreFix
             new HoldPlaced(stream, $"{account}-h1", account, new Money(4_000), ValueDate));
         await runtime.Drainer.DrainOnceAsync();
 
-        // available = accounting − Σ(active holds) (ADR-PC-033 slot 1): the accounting balance is
+        // available = accounting − Σ(active holds) (ADR-PC-033): the accounting balance is
         // untouched by the earmark; only spendability drops.
         Assert.Equal(10_000, await runtime.Balances.GetAccountingBalanceCentsAsync(account));
         Assert.Equal(6_000, await runtime.Balances.GetAvailableBalanceCentsAsync(account));
 
-        // A partial capture releases the WHOLE earmark (slot 2); the posting movement of the
+        // A partial capture releases the WHOLE earmark (ADR-PC-033); the posting movement of the
         // capture rides its own Movement-bearing event and moves the accounting balance.
         await AppendAsync(runtime, stream, 2,
             new HoldCaptured(stream, $"{account}-h1", account, new Money(2_500), ValueDate.AddDays(1)));
@@ -267,9 +267,9 @@ public sealed class SpineAccountProjectionIntegrationTests(PostgresEventStoreFix
         account, SettlementDirection.Debit, new Money(cents), ValueDate,
         MovementOperation.CollectInstallment, MovementOrigin.Originated, Guid.NewGuid());
 
-    // A REAL append through PostgresEventStore (the hkwp.5 acceptance: not a seeded in-memory
-    // read): envelope built the way the aggregate runtime builds one, store-only (no outbox rows —
-    // every event here is uncatalogued).
+    // A REAL append through PostgresEventStore (not a seeded in-memory read): envelope built the
+    // way the aggregate runtime builds one, store-only (no outbox rows — every event here is
+    // uncatalogued).
     private async Task AppendAsync(TestRuntime runtime, Guid streamId, long sequence, DomainEvent @event)
     {
         var eventType = @event switch

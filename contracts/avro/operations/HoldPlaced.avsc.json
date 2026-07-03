@@ -2,12 +2,38 @@
   "type": "record",
   "namespace": "operations",
   "name": "HoldPlaced",
-  "doc": "An authorization was approved and its funds earmarked (ADR-PC-033 slot 2 / ADR-PC-030 stage 5): from this fact's sequence forward the hold is ACTIVE and lowers the account's available balance. DORMANT wire shape (the .avsc.json posture, like _shared/Movement.avsc.json): the event is STORE-ONLY today (ADR-IC-017 — no named external consumer), so this file is deliberately outside the *.avsc catalog/embed/compat globs; bus promotion is renaming it to .avsc plus the AsyncAPI catalog entry, with the first named consumer. Field names follow the engine codec convention (Money Amount -> amount_cents etc.) so promotion is a rename, not a reshape. No PII (ADR-PC-004): hold_id and account_ref are opaque structural references, never an IBAN.",
+  "doc": "Business payload only (ADR-IC-002); the CloudEvents envelope rides in Kafka headers, NOT here. An authorization was approved and its funds earmarked (ADR-PC-033 / ADR-PC-030 stage 5): from this fact's sequence forward the hold is ACTIVE and lowers the account's available balance. DORMANT wire shape (the .avsc.json posture, like _shared/Movement.avsc.json): the event is STORE-ONLY today (ADR-IC-017 — no named external consumer), so this file is deliberately outside the *.avsc catalog/embed/compat globs; bus promotion is renaming to .avsc plus the AsyncAPI catalog entry and shape-lock, with the first named consumer. Field names follow the engine codec convention (Money Amount -> amount_cents etc.) so promotion is a rename, not a reshape. No PII (ADR-PC-004): hold_id and account_ref are opaque structural references, never an IBAN.",
   "fields": [
-    { "name": "instance_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "The account-owning instance (stream) the hold rides — a structural id, not PII." },
-    { "name": "hold_id", "type": "string", "doc": "The hold's lifecycle dedup/correlation key (ADR-PC-033 slot 4) — every later capture/expiry carries it." },
-    { "name": "account_ref", "type": "string", "doc": "The opaque account whose available balance the earmark reduces — a reference, never PII." },
-    { "name": "amount_cents", "type": "long", "doc": "The earmarked amount in integer cents (ADR-PC-010)." },
-    { "name": "value_date", "type": { "type": "int", "logicalType": "date" }, "doc": "The economic date the hold takes effect — command-supplied, never a clock read." }
+    {
+      "name": "instance_id",
+      "type": {
+        "type": "string",
+        "logicalType": "uuid"
+      },
+      "doc": "The account-owning instance (stream) the hold rides — a structural id, not PII."
+    },
+    {
+      "name": "hold_id",
+      "type": "string",
+      "doc": "The hold's lifecycle dedup/correlation key (ADR-PC-033) — every later capture/expiry carries it."
+    },
+    {
+      "name": "account_ref",
+      "type": "string",
+      "doc": "The opaque account whose available balance the earmark reduces — a reference, never PII."
+    },
+    {
+      "name": "amount_cents",
+      "type": "long",
+      "doc": "The earmarked amount in integer cents (ADR-PC-010)."
+    },
+    {
+      "name": "value_date",
+      "type": {
+        "type": "int",
+        "logicalType": "date"
+      },
+      "doc": "The economic date the hold takes effect — command-supplied, never a clock read."
+    }
   ]
 }

@@ -183,7 +183,21 @@ builder.Services.AddSingleton(serviceProvider =>
 // (ACCOUNT_BALANCE_IS_A_FOLD). Family-agnostic spine components like the ledger above.
 builder.Services.AddSingleton<IAccountHoldStore>(_ => new PostgresAccountHoldStore(connectionString));
 builder.Services.AddSingleton(serviceProvider =>
-    new AccountHoldProjector(serviceProvider.GetRequiredService<IAccountHoldStore>()));
+    new AccountHoldProjector(
+        serviceProvider.GetRequiredService<IAccountHoldStore>(),
+        // The ADR-PC-033 surfacing sink: a hold release that transitioned nothing is a warning an
+        // operator/reconciliation must see (never a silent no-op). The projector counts it on
+        // hold_release_anomalies_total; this callback carries the identifiers — structural only,
+        // never PII (ADR-PC-004) — into the structured log.
+        onReleaseAnomaly: anomaly =>
+            serviceProvider.GetRequiredService<ILoggerFactory>()
+                .CreateLogger<AccountHoldProjector>()
+                .LogWarning(
+                    "Hold release folded as a no-op ({AnomalyKind}): {ReleaseEventType} for hold {HoldId} "
+                    + "at stream {ReleasingStreamId} seq {ReleasingSequence} — never_placed is a fold-order "
+                    + "error, already_released a duplicate/late release (ADR-PC-033).",
+                    anomaly.Kind, anomaly.ReleaseEventType, anomaly.HoldId,
+                    anomaly.ReleasingStreamId, anomaly.ReleasingSequence)));
 builder.Services.AddSingleton(serviceProvider => new AccountBalanceReader(
     serviceProvider.GetRequiredService<IMovementLedgerStore>(),
     serviceProvider.GetRequiredService<IAccountHoldStore>()));
@@ -290,7 +304,7 @@ foreach (var module in familyModules)
 // owns the relay. The same co-hosted in-process shape as the outbox relay below.
 builder.Services.AddProjectionRuntime();
 
-// The spine account-projection drive (ADR-PC-032 §A1 live drive / ADR-PC-033): the production
+// The spine account-projection drive (ADR-PC-032 / ADR-PC-033): the production
 // caller that feeds decoded appended/replayed events to the MovementLedgerProjector and the
 // AccountHoldProjector. Registered ONCE here as a spine singleton — NOT on the per-family
 // ProjectionDrainer above — because its read models are account-keyed and CROSS-family (one

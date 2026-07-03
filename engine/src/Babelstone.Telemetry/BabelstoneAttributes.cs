@@ -195,6 +195,24 @@ public static class BabelstoneAttributes
     public const string EventsAppendedMetric = "events_appended_total";
 
     /// <summary>
+    /// Hold-lifecycle releases that transitioned NOTHING (ADR-PC-033: a capture/expiry of an
+    /// unplaced hold is a fold error, a duplicate release a reconciliation signal — both must be
+    /// surfaced, not silently absorbed). A monotonic counter bumped by the active-hold projector
+    /// when a <c>HoldCaptured</c>/<c>HoldExpired</c> folds as a no-op, tagged by
+    /// <see cref="HoldReleaseAnomalyKindTag"/>. snake_case metric name (a Prometheus/Grafana query
+    /// reads it by this exact string), not a span key.
+    /// </summary>
+    public const string HoldReleaseAnomaliesMetric = "hold_release_anomalies_total";
+
+    /// <summary>
+    /// The metric dimension classifying a no-op hold release (<c>never_placed</c> — the fold-order
+    /// error — vs <c>already_released</c> — the duplicate/late release). A closed two-member set,
+    /// operational tier only; the hold id itself rides the structured warning log, never a metric
+    /// dimension (unbounded cardinality).
+    /// </summary>
+    public const string HoldReleaseAnomalyKindTag = "babelstone.hold_release_anomaly";
+
+    /// <summary>
     /// Inbox messages handled for the FIRST time (G.2): the dedup row was inserted and the handler
     /// ran inside one transaction (Document 04). A monotonic counter, tagged by <see cref="SourceTopic"/>.
     /// Distinct from <see cref="InboxDuplicatesMetric"/> (the dedup-backstop firing). snake_case
