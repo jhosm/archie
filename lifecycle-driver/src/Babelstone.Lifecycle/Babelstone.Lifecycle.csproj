@@ -49,6 +49,20 @@
          centrally via Directory.Packages.props). The runnable Host.CreateApplicationBuilder + the typed
          HttpClient registration live in the consuming host exe, not here. -->
     <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <!-- Npgsql is the durable dispatch ledger's data dependency (ADR-PC-038 §Decision 1): the
+         lifecycle_dispatch_ledger claim/record path (PostgresLifecycleDispatchLedger) and the driver's own
+         forward-only migration runner — the same posture as the orchestrator substrate, which embeds its
+         Postgres persistence directly. NOT a family and NOT an engine-spine reference, so the core stays
+         family-agnostic (LIFECYCLE_FAMILY_AGNOSTIC) and extraction-ready (ADR-PC-019 §P2). -->
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The dispatch-ledger DDL ships as embedded, numbered, forward-only SQL resources — the driver
+         host's OWN migration series (ADR-PC-038 §Decision 1; ADR-PC-001 §P5 discipline, lifted the same
+         way the orchestrator substrate lifted it). They live with the MigrationSet that enumerates this
+         assembly's own resources, so a deployed binary carries its own schema. -->
+    <EmbeddedResource Include="Migrations/Sql/*.sql" />
   </ItemGroup>
 
   <ItemGroup>

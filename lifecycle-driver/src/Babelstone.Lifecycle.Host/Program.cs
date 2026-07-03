@@ -97,11 +97,13 @@ if (pollSeconds is > 0)
 
 builder.Services.AddSingleton(schedulerOptions);
 
-// The dispatch ledger (ADR-PC-036 §Decision 2): the "already fired this occurrence" memory that makes a re-tick
-// of an already-dispatched lifecycle command a no-op, keyed on the canonical number-pinned dispatch id. In-memory
-// for v1; a durable, crash-surviving ledger is a later operating concern the host owns as it hardens (the engine's
-// command_dedup is the authoritative idempotency backstop regardless).
-builder.Services.AddSingleton<LifecycleDispatchLedger>();
+// The dispatch ledger (ADR-PC-036 §Decision 2; hardened per ADR-PC-038): the "already fired this occurrence"
+// memory that makes a re-tick of an already-dispatched lifecycle command a no-op, keyed on the canonical
+// number-pinned dispatch id — now behind the claim port whose atomic per-occurrence claim is ALSO the
+// multi-replica single-firing guard. In-memory registration pending the durable Postgres wiring landing in
+// the sibling change (bd babelstone-1nkm.3); the engine's command_dedup is the authoritative idempotency
+// backstop regardless.
+builder.Services.AddSingleton<ILifecycleDispatchLedger, InMemoryLifecycleDispatchLedger>();
 
 // The command-POST SINK (ADR-PC-036 §Decision 2): a typed HttpClient whose BaseAddress is the engine's ADR-PC-029
 // command surface, normalised to a trailing "/" so a "/v1/..." command path resolves. This is the ONLY runtime

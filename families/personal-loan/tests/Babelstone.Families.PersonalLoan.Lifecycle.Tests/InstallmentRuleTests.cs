@@ -159,7 +159,7 @@ public sealed class InstallmentRuleTests
     private static readonly JsonStateSerializer<LoanPosition> Codec = new();
 
     private static LifecycleSchedulePass NewPass(ILifecycleCommandSink sink, params ILifecycleCommandRule[] rules) =>
-        new(rules, new LifecycleDispatchLedger(), sink);
+        new(rules, new InMemoryLifecycleDispatchLedger(), sink);
 
     private static InstallmentCalendarReadModelRow Loan(Guid id, int nextNumber, DateOnly nextDue)
     {
