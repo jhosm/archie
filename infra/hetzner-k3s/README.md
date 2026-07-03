@@ -93,6 +93,29 @@ and mint the least-privilege `cd-deployer` kubeconfig with
 The full operator runbook — bring-up, redeploy, restore, upgrade, backups — is
 [`../runbooks/staging-ops.md`](../runbooks/staging-ops.md) (its §1.1 cross-references this file).
 
+## Control-plane hardening (bd babelstone-zla1.12.9 — applies at NEXT provision)
+
+`cluster.yaml` now carries two CIS-aligned settings that only take effect when the cluster is
+(re-)provisioned — they cannot retro-fit the running box:
+
+- **kube-apiserver audit logging** (`kube_api_server_args` + the audit policy written by
+  `additional_pre_k3s_commands` before k3s starts). The log lands on the node at
+  `/var/lib/rancher/k3s/server/logs/audit.log` (30 days retained on-box). **Maintainer
+  follow-up: ship it off-box** — an on-box audit log dies with the box. Point a log shipper
+  (e.g. Grafana Alloy / promtail tailing that path) at the LGTM appliance's Loki so the trail
+  survives node loss and is tamper-evident off the host.
+- **etcd secrets-at-rest encryption** (`secrets-encryption: true` via a k3s
+  `config.yaml.d` drop-in). After provisioning, verify on the node with
+  `k3s secrets-encrypt status`, and rotate the key periodically with
+  `k3s secrets-encrypt rotate-keys` (k3s re-encrypts existing Secrets). Without this, every
+  Secret (the in-cluster Hetzner token, kubeconfigs, the OpenBao token, backup keys) is
+  base64-plaintext to anyone with disk or snapshot access.
+
+To pick these up on the EXISTING staging box either re-provision (restore from backups per
+`../runbooks/staging-ops.md`), or apply the equivalent by hand on the node (write the two
+files, add the apiserver args to the k3s config, restart k3s) — the committed config remains
+the source of truth either way.
+
 ## Posture notes (recorded drift)
 
 - **Single node is non-HA by choice.** One copy of every stateful service — notably a
@@ -105,4 +128,8 @@ The full operator runbook — bring-up, redeploy, restore, upgrade, backups — 
 - **The k8s API (6443) is publicly reachable**, guarded by the cluster's mutual-TLS client cert
   rather than a network allow-list, because the GitHub-hosted `cd.yml` runner has no stable
   egress IP to allow-list. SSH (22) stays locked to the operator IP. Tighten the API exposure
-  (self-hosted runner or tunnel) for a real tier.
+  (self-hosted runner or tunnel) for a real tier. A **cheap partial mitigation** is now
+  documented inline in `cluster.yaml`'s `allowed_networks.api` section (commented option):
+  allow-list your operator `/32` plus the GitHub Actions egress ranges from
+  `https://api.github.com/meta` (`.actions[]`) — read its caveats (list size vs firewall rule
+  limits, rotation breaking `cd.yml`, and it admitting any Actions tenant) before flipping it.
