@@ -273,6 +273,18 @@ The `outcome` field is populated from the CQRS read model for the process (ADR-I
 
 The `terminal_event` field carries the saga's terminal state name (`COMPLETED`, `CANCELLED`, `HUMAN_INTERVENTION_REQUIRED`) — not a derived summary. The receiver makes its own interpretation.
 
+*Revised 2026-07-03 (bd `babelstone-60n8.12`, the PR #435 §P3 contract review): the `idempotency_key`
+SHAPE above — `sha256(process_id + ':' + terminal_event_type)` — is the saga-completion sketch, and the
+shipped notification-estate transport (ADR-PC-025 / bd `babelstone-60n8.4`/`60n8.7`,
+`WebhookDeliveryClient`) deliberately diverges from it: its `idempotency_key` is the composite
+`notification_id` UUID (ADR-PC-025 slot 4) verbatim, not a sha256 digest. The PROPERTY this envelope
+requires is unchanged and holds — the key is stable across every delivery attempt and across upstream
+redelivery/replay of the same logical notification, so receiver-side dedupe works identically; the
+sha256 construction was a derivation recipe for a payload that HAS no single stable id (a saga terminal
+transition), and the notification signal already carries one. Receivers MUST treat `idempotency_key` as
+an opaque stable string, never parse its shape. `delivery_attempt` / `event_id` semantics (fresh per
+attempt, logging never dedupe) carry over unchanged.*
+
 ---
 
 ### P3 — Notification service as a choreography consumer
