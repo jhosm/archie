@@ -41,6 +41,9 @@ public sealed class EarlyTerminationDeciderTests
         var accrued = Assert.IsType<InterestAccrued>(events[0]);
         var withheld = Assert.IsType<WithholdingApplied>(events[1]);
         var terminated = Assert.IsType<DepositTerminatedEarly>(events[2]);
+        // The withholding leg is stamped with its paired accrual's date — the same-date invariant the
+        // ledger's pre-field attribution (PendingAccrual) rests on; asserted for every termination shape.
+        Assert.Equal(accrued.AsOf, withheld.WithheldOn);
         return (accrued, withheld, terminated);
     }
 

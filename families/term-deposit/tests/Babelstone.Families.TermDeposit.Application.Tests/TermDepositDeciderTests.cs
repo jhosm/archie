@@ -225,6 +225,9 @@ public sealed class TermDepositDeciderTests
         Assert.Equal(Maturity, accrued.AsOf);
         Assert.Equal(new Money(8_517), withheld.Tax);
         Assert.Equal(new Money(21_900), withheld.Net);          // gross − tax, conserved to the cent
+        // The withholding leg is stamped with its paired accrual's date — the same-date invariant the
+        // ledger's pre-field attribution (PendingAccrual) rests on.
+        Assert.Equal(accrued.AsOf, withheld.WithheldOn);
         Assert.Equal(new Money(PrincipalCents), matured.PrincipalReturned);
         Assert.Equal(new Money(21_900), matured.NetInterestPaid);
         Assert.Equal(new Money(1_021_900), matured.TotalPayout); // principal + net
@@ -374,6 +377,9 @@ public sealed class TermDepositDeciderTests
         Assert.Equal(new Money(139_651), accrued.GrossInterest); // the final 31-day coupon, not the whole term
         Assert.Equal(new DateOnly(2027, 1, 1), accrued.AsOf);
         Assert.Equal(new Money(100_549), withheld.Net);
+        // The withholding leg is stamped with its paired accrual's date — the same-date invariant the
+        // ledger's pre-field attribution (PendingAccrual) rests on.
+        Assert.Equal(accrued.AsOf, withheld.WithheldOn);
         Assert.Equal(new Money(KPrincipalCents), matured.PrincipalReturned);
         Assert.Equal(new Money(100_549), matured.NetInterestPaid);
         Assert.Equal(new Money(KPrincipalCents + 100_549), matured.TotalPayout);

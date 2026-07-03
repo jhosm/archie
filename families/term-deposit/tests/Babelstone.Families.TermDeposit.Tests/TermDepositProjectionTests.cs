@@ -346,6 +346,68 @@ public sealed class TermDepositProjectionTests
     }
 
     [Fact]
+    public void WithholdingLedger_a_coupon_clears_an_armed_accrual_so_no_stale_date_leaks()
+    {
+        // The one silent wrong-tax-year channel: an accrual armed in one year, a coupon in between, then
+        // a pre-field withholding flow whose gross COINCIDENTALLY equals the stale accrual's (realistic —
+        // same principal/rate/window). If the coupon did not clear the slot, the pre-field flow would
+        // inherit the stale accrual's tax year with NO un-dated residual left to trip the statement
+        // guard. The coupon must settle the slot: the pre-field flow stays UNDATED and surfaces loud.
+        var registry = TermDepositProjectionModule.WithholdingLedgerRegistry();
+
+        var ledger = WithholdingLedger.Empty;
+        ledger = Fold(ledger, registry, new InterestAccrued(new Money(30_417), new DateOnly(2025, 12, 30)));
+        ledger = Fold(ledger, registry, new InterestPaid(Guid.NewGuid(), new Money(7_501), new Money(2_100), new Money(5_401), new DateOnly(2026, 1, 2)));
+        ledger = Fold(ledger, registry, new WithholdingApplied(new Money(8_517), new Money(21_900)));
+
+        Assert.Equal(2, ledger.Entries.Count);
+        Assert.Equal(new DateOnly(2026, 1, 2), ledger.Entries[0].WithheldOn); // the coupon, dated on its PaidOn
+        Assert.Equal(default, ledger.Entries[1].WithheldOn);                  // NOT 2025-12-30 — stays loud
+        Assert.Null(ledger.PendingAccrual);
+    }
+
+    [Fact]
+    public void WithholdingLedger_a_second_accrual_poisons_the_slot_so_neither_date_is_guessed()
+    {
+        // Two consecutive accruals with no settling flow between them is a stream shape the decider never
+        // emits, and the legacy emitter's shape cannot be re-verified — so the fold must not pick one of
+        // the two dates. Re-arming poisons the slot: the pre-field flow that follows refuses attribution
+        // and stays UNDATED (loud), even though its gross matches BOTH accruals.
+        var registry = TermDepositProjectionModule.WithholdingLedgerRegistry();
+
+        var ledger = WithholdingLedger.Empty;
+        ledger = Fold(ledger, registry, new InterestAccrued(new Money(30_417), new DateOnly(2025, 12, 30)));
+        ledger = Fold(ledger, registry, new InterestAccrued(new Money(30_417), new DateOnly(2026, 1, 2)));
+        ledger = Fold(ledger, registry, new WithholdingApplied(new Money(8_517), new Money(21_900)));
+
+        var entry = Assert.Single(ledger.Entries);
+        Assert.Equal(default, entry.WithheldOn);
+        // Consume-once holds for a poisoned slot too: the withholding flow cleared it.
+        Assert.Null(ledger.PendingAccrual);
+    }
+
+    [Fact]
+    public void WithholdingLedger_belief_stored_before_the_pending_accrual_field_deserializes_to_a_null_slot()
+    {
+        // A captured pre-field belief payload: what JsonStateSerializer wrote BEFORE the PendingAccrual
+        // property existed on the state record — no such JSON member at all. Missing member → null slot,
+        // the additive-state tolerance the WithholdingLedger param doc claims.
+        const string json =
+            """{"Entries":[{"Gross":{"Cents":30417},"Tax":{"Cents":8517},"Net":{"Cents":21900},"Source":"withholding","WithheldOn":"0001-01-01"}],"TotalGross":{"Cents":30417},"TotalTax":{"Cents":8517},"TotalNet":{"Cents":21900}}""";
+        var serializer = new JsonStateSerializer<WithholdingLedger>();
+
+        var ledger = serializer.Deserialize(System.Text.Encoding.UTF8.GetBytes(json));
+
+        Assert.Null(ledger.PendingAccrual);
+        // The captured entries and totals round-trip untouched.
+        var entry = Assert.Single(ledger.Entries);
+        Assert.Equal(default, entry.WithheldOn);
+        Assert.Equal(new Money(30_417), ledger.TotalGross);
+        Assert.Equal(new Money(8_517), ledger.TotalTax);
+        Assert.Equal(new Money(21_900), ledger.TotalNet);
+    }
+
+    [Fact]
     public void WithholdingLedger_per_tax_year_slices_sum_exactly_to_the_recorded_totals()
     {
         // The financial-math property the annual statement depends on: attribution assigns each flow to
@@ -445,12 +507,16 @@ public sealed class TermDepositProjectionTests
     public async Task Runner_rebuild_reproduces_a_byte_identical_belief()
     {
         // Folds are deterministic and every stamp is event-derived, so re-folding the same events
-        // yields a byte-for-byte identical structural payload (ADR-PC-010 §P5).
+        // yields a byte-for-byte identical structural payload (ADR-PC-010 §P5). The fixture includes a
+        // pre-field pair (accrual + un-dated WithholdingApplied) so byte-identity covers the
+        // pending-accrual attribution path too, not just the dated flows.
         var streamId = Guid.NewGuid();
         var events = new[]
         {
             Envelope(streamId, 0, "term_deposit.WithholdingApplied", new WithholdingApplied(new Money(8_517), new Money(21_900))),
             Envelope(streamId, 1, "term_deposit.InterestPaid", new InterestPaid(streamId, new Money(7_500), new Money(2_100), new Money(5_400), new DateOnly(2026, 4, 1))),
+            Envelope(streamId, 2, "term_deposit.InterestAccrued", new InterestAccrued(new Money(30_417), new DateOnly(2026, 7, 1))),
+            Envelope(streamId, 3, "term_deposit.WithholdingApplied", new WithholdingApplied(new Money(8_517), new Money(21_900))),
         };
 
         var first = new InMemoryProjectionStorage();
