@@ -1,0 +1,67 @@
+<!-- FAMILY_TO_CORE_DEFAULT_DENY — the BUILD-TIME layer (ADR-PC-040 candidate C, reserved by the
+     ADR as a hardening step layerable onto the <BabelstoneRole> marker with no re-decision).
+
+     In plain terms: the generic parts of every Babelstone service must never reference a product
+     "family" project — product knowledge flows family → core, one way, by default. The
+     authoritative enforcement is (and stays) the repo-wide CI gate pair in
+     Babelstone.Composition.Tests (FamilyAgnosticDefaultDenyTests / catalogue row XC-1 and
+     CompositionRootFamilyAgnosticTests / row XC-2). This file adds FAILURE LOCALITY only: the
+     violating project's own `dotnet build` fails, on the developer's machine, at the moment the
+     bad ProjectReference is added — instead of compiling clean locally and failing later in CI
+     (the ADR-PC-040 Context's PR #404 arrow-reversal incident, which no build ever refused).
+
+     Classification mirrors the XC-1 gate (ADR-PC-040 §D2), read from the SAME MSBuild marker the
+     ADR fixed precisely so this layer could be added later:
+       - <BabelstoneRole> CompositionRoot or TestRig  -> exempt (the explicit opt-outs);
+       - <IsTestProject>true or a /tests/ path segment -> exempt (tests exercise families by design);
+       - a project under families/**                   -> exempt (the arrow's tail, never its head);
+       - everything else (no role, or Core — and any unknown role value, which the CI gate
+         separately fails on vocabulary drift) -> gated: any ProjectReference resolving under
+         families/** fails the build with BBS0040.
+
+     WIRING: imported once, from the repo-root Directory.Build.targets, which MSBuild hands to
+     every SDK project in the repository automatically (nearest-Directory.Build.targets-up lookup;
+     no subtree carries its own). That keeps the ADR-PC-019 §P2 extraction-ready posture intact —
+     no subtree csproj or build file names this file, so an extracted subtree builds unchanged,
+     it merely loses the local guard (CI-equivalent gates would move with the extraction).
+     FamilyToCoreBuildGuardTests (in Babelstone.Composition.Tests, beside the gates this layers
+     onto) proves both the wiring and the deny/allow behaviour against throwaway fixture projects.
+
+     $(BabelstoneFamiliesDirectory) is overridable ONLY as a test seam: the fixture tests point it
+     at a scratch families/ tree so a deliberately violating fixture project never has to
+     reference (or restore) a real family. Real builds never set it. -->
+<Project>
+
+  <PropertyGroup>
+    <BabelstoneFamiliesDirectory Condition="'$(BabelstoneFamiliesDirectory)' == ''">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '..', 'families'))</BabelstoneFamiliesDirectory>
+  </PropertyGroup>
+
+  <Target Name="BabelstoneFamilyToCoreDefaultDeny"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(BabelstoneRole)' != 'CompositionRoot' and '$(BabelstoneRole)' != 'TestRig' and '$(IsTestProject)' != 'true'">
+
+    <PropertyGroup>
+      <_BabelstoneSep>$([System.IO.Path]::DirectorySeparatorChar)</_BabelstoneSep>
+      <_BabelstoneProjectPath>$([MSBuild]::NormalizePath('$(MSBuildProjectFullPath)'))</_BabelstoneProjectPath>
+      <!-- The same two path-shape exemptions the XC-1 gate applies (ADR-PC-040 §D2): a family
+           contribution IS the family, and a tests/ path segment marks test-owned projects
+           (including committed fixtures that set no IsTestProject property). -->
+      <_BabelstoneIsFamilyProject>$(_BabelstoneProjectPath.StartsWith('$(BabelstoneFamiliesDirectory)'))</_BabelstoneIsFamilyProject>
+      <_BabelstoneIsUnderTests>$(_BabelstoneProjectPath.Contains('$(_BabelstoneSep)tests$(_BabelstoneSep)'))</_BabelstoneIsUnderTests>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(_BabelstoneIsFamilyProject)' != 'true' and '$(_BabelstoneIsUnderTests)' != 'true'">
+      <!-- FullPath resolves each (relative) Include against THIS project's directory — the same
+           resolve-then-prefix-match technique the CI gate uses, so both layers agree on what
+           "lands in families/**" means regardless of the ../ shape used to reach it. -->
+      <_BabelstoneFamilyReference Include="@(ProjectReference)"
+        Condition="$([System.String]::Copy('%(ProjectReference.FullPath)').StartsWith('$(BabelstoneFamiliesDirectory)'))" />
+    </ItemGroup>
+
+    <Error Condition="'@(_BabelstoneFamilyReference)' != ''"
+           Code="BBS0040"
+           Text="FAMILY_TO_CORE_DEFAULT_DENY (ADR-PC-040 §D1/§D2, build-time layer): this project carries no (or a 'Core') &lt;BabelstoneRole&gt;, so it is a family-agnostic core BY DEFAULT and must not reference any families/** project — the family → core arrow is one-way. Offending ProjectReference(s): @(_BabelstoneFamilyReference->'%(Identity)', '; '). If this project genuinely composes families, declare &lt;BabelstoneRole&gt;CompositionRoot&lt;/BabelstoneRole&gt; in its .csproj (one visible line; it then comes under the COMPOSITION_ROOT_NAMES_NO_FAMILY source gate). The authoritative repo-wide gate is FamilyAgnosticDefaultDenyTests (catalogue row XC-1); this build error is the same covenant, surfaced where the violation lives." />
+
+  </Target>
+
+</Project>

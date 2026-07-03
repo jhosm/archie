@@ -53,11 +53,16 @@ jobs:
             #   - 'composition/**'   built by engine/Babelstone.slnx (the shared FamilyModuleScanner —
             #                        moved out of cadence/ into its own subtree — + composition tests
             #                        run in this lane)
+            #   - 'Directory.Build.targets'  the repo-root shim handing the ADR-PC-040 candidate-C
+            #                        build guard (composition/msbuild/FamilyToCoreDefaultDeny.targets,
+            #                        covered by 'composition/**') to every project — an edit to it
+            #                        must re-run the guard's wiring test (FamilyToCoreBuildGuardTests)
             engine:
               - 'engine/**'
               - '.github/scripts/coverage-floor-cobertura.py'
               - 'cadence/**'
               - 'composition/**'
+              - 'Directory.Build.targets'
               - '**/*.csproj'
               - '**/Program.cs'
               - 'orchestrator/src/Babelstone.Orchestrator/**'
