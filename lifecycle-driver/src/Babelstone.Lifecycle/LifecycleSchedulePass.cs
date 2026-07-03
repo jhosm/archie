@@ -96,13 +96,28 @@ public sealed class LifecycleSchedulePass(
                 // POST while holding the claim; record only on success. A non-success engine response
                 // throws out of the sink and bubbles to the worker as backpressure — the claim disposes
                 // UN-recorded, releasing the occurrence so the next pass retries it (the engine's
-                // command_dedup makes the re-POST safe — ADR-PC-029 slot 4).
-                await _sink.DispatchAsync(decision, commandId, ct);
+                // command_dedup makes the re-POST safe — ADR-PC-029 slot 4). The failure is counted
+                // (lifecycle_dispatch_failure_total — a sustained rate is the "money-mover cannot reach
+                // the engine" page, bd babelstone-1nkm.4) before it propagates.
+                try
+                {
+                    await _sink.DispatchAsync(decision, commandId, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    LifecycleDriverMetrics.RecordDispatchFailed(decision.CommandKind);
+                    throw;
+                }
 
                 // Commit the durable dispatched record in the same stroke that releases the claim
                 // (ADR-PC-038 §Decision 3): a crash between the POST's 2xx and this commit leaves the
                 // occurrence re-claimable, and the engine dedupes the re-POST — effectively-once.
                 await claim.RecordDispatchedAsync(ct);
+
+                // The throughput + lag signals (bd babelstone-1nkm.4), recorded in this impure driver
+                // shell (OBS-2) with structural tags only: one dispatch, and how late after its business
+                // due date it landed.
+                LifecycleDriverMetrics.RecordDispatched(decision.CommandKind, decision.DueAt);
 
                 dispatched.Add(new DispatchedCommand(
                     CommandId: commandId,
@@ -121,6 +136,12 @@ public sealed class LifecycleSchedulePass(
                 "rule(s) (ADR-PC-036 §Decision 2; number-pinned idempotency at command_dedup).",
                 dispatched.Count, asOf, _rules.Count);
         }
+
+        // The tick-liveness heartbeat (bd babelstone-1nkm.4): this pass ran to COMPLETION — every rule
+        // evaluated, every claimed occurrence recorded or released. A pass that threw above never reaches
+        // this, so the heartbeat goes stale while the worker backs off — exactly the signal the
+        // LifecycleDriverTickStale alert reads.
+        LifecycleDriverMetrics.RecordPassCompleted();
 
         return dispatched;
     }

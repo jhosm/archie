@@ -400,6 +400,133 @@ groups:
           runbook: ../../runbooks/reconciliation-alerts.md
 
   # ---------------------------------------------------------------------------
+  # LIFECYCLE DRIVER (bd babelstone-1nkm.4; ADR-PC-036 / ADR-PC-038). The always-on
+  # clock-owning money-mover: its worst failures are SILENT by construction — a
+  # wedged tick loop just stops firing due maturities/installments, and a parked
+  # settlement quietly stalls a recurring schedule with no arrears state anywhere
+  # to make the miss visible. These rules read the LifecycleDriverMetrics surface
+  # (the shared Babelstone.Engine meter): the tick-liveness heartbeat gauge is the
+  # host's health signal (freshness + absent(), the same posture as the
+  # EngineMetricsAbsent staging-liveness rule — the driver is a worker host with
+  # no HTTP surface, so the heartbeat IS the probe), the failure counter catches a
+  # driver that ticks but cannot land its POSTs, and the lag histogram catches one
+  # that lands them ever later. Runbook: infra/runbooks/lifecycle-driver-ops.md.
+  # Thresholds assume the default 1h poll interval (Lifecycle:PollIntervalSeconds)
+  # — retune alongside it (thresholds are deployment-time decisions).
+  # ---------------------------------------------------------------------------
+  - name: lifecycle-driver
+    rules:
+      - alert: LifecycleDriverTickStale
+        # No COMPLETED schedule pass for >2.5 poll intervals: the loop is wedged,
+        # crash-looping, or stuck in max backoff against a dead dependency (engine
+        # or Postgres down). Due money movement is NOT happening. 2.5x leaves room
+        # for one full exponential-backoff recovery (ceiling 5m) before paging.
+        expr: time() - lifecycle_pass_last_success_timestamp_seconds > 9000
+        for: 5m
+        labels:
+          severity: critical
+          sli: lifecycle_tick_liveness
+          adr: ADR-PC-038
+        annotations:
+          summary: "Lifecycle driver has not completed a schedule pass in >2.5h"
+          description: >-
+            lifecycle_pass_last_success_timestamp_seconds is stale: no lifecycle
+            schedule pass has run to completion for more than 2.5 poll intervals.
+            Due maturities/installments are not being dispatched. Check the driver
+            host's logs (Cadence backoff warnings), its engine command-surface
+            target, and the dispatch-ledger Postgres. Missed occurrences backfill
+            automatically once the loop recovers (the calendar re-derives them;
+            command_dedup keeps retries effectively-once).
+          runbook: ../../runbooks/lifecycle-driver-ops.md
+      - alert: LifecycleDriverMetricsAbsent
+        # The heartbeat gauge emits only after the FIRST completed pass, so an
+        # absent series on a deployed driver means it is down, crash-looping
+        # before its first tick, or its telemetry path is broken — the worker-host
+        # analogue of EngineMetricsAbsent. On a stack that deliberately runs no
+        # lifecycle driver, silence this rule at the Alertmanager route.
+        expr: absent(lifecycle_pass_last_success_timestamp_seconds)
+        for: 30m
+        labels:
+          severity: warning
+          sli: lifecycle_tick_liveness
+          adr: ADR-PC-038
+        annotations:
+          summary: "Lifecycle driver is not reporting its tick heartbeat"
+          description: >-
+            The lifecycle driver's tick-liveness gauge has been ABSENT for 30m —
+            the host is down, has never completed a pass since deploy, or its
+            telemetry is not reaching the collector. The engine keeps recording
+            facts correctly; what is missing is the actor that fires due
+            lifecycle commands.
+          runbook: ../../runbooks/lifecycle-driver-ops.md
+      - alert: LifecycleDispatchFailuresSustained
+        # One failed POST is routine backpressure (the pass releases the claim and
+        # retries next tick); failures ACROSS ticks for an hour mean the driver
+        # persistently cannot land money-mover commands (engine 5xx, auth/SCA
+        # principal misconfiguration, unroutable target).
+        expr: sum(increase(lifecycle_dispatch_failure_total[1h])) > 2
+        for: 10m
+        labels:
+          severity: critical
+          sli: lifecycle_dispatch_failures
+          adr: ADR-PC-038
+        annotations:
+          summary: "Lifecycle driver POSTs are failing repeatedly"
+          description: >-
+            lifecycle_dispatch_failure_total is rising across ticks: claimed due
+            occurrences keep failing their engine POST and being released for
+            retry. No occurrence is lost (claim->POST->record + command_dedup),
+            but due money movement is stalled. Inspect the driver's dispatch
+            warnings (status codes) and the engine command surface.
+          runbook: ../../runbooks/lifecycle-driver-ops.md
+      - alert: LifecycleDispatchLagP99High
+        # Dispatching more than a day after the business due date: an extended
+        # outage backfill or a persistently failing subset. The engine still
+        # stamps the correct business valid_time (the command carries its own due
+        # date), so this is an operations signal, not a correctness one.
+        expr: histogram_quantile(0.99, sum by (le) (rate(lifecycle_dispatch_lag_seconds_bucket[6h]))) > 86400
+        for: 30m
+        labels:
+          severity: warning
+          sli: lifecycle_dispatch_lag
+          adr: ADR-PC-038
+        annotations:
+          summary: "Lifecycle dispatch lag p99 >1 day"
+          description: >-
+            The p99 of lifecycle_dispatch_lag_seconds exceeds one day: due
+            occurrences are being fired long after their business due date
+            (post-outage backfill, or a subset repeatedly failing and retrying).
+            Verify the tick cadence and the failure counter; business dates stay
+            correct (bitemporal valid_time rides the command).
+          runbook: ../../runbooks/lifecycle-driver-ops.md
+      - alert: LifecycleScheduleHeld
+        # The parked-settlement stall (ADR-PC-036 §Decision 4 / §Residual-risks
+        # "must be alerted, not invisible"; LCD-2): a recurring rule HELD
+        # occurrence N+1 because occurrence N's cash leg is parked in
+        # HUMAN_INTERVENTION_REQUIRED. There is NO arrears state for the miss to
+        # land in — this page is the only thing that makes the stall visible.
+        # The emit hook (LifecycleDriverMetrics.RecordScheduleHeld) ships with the
+        # monitoring surface; the settlement-health gate that CALLS it is the
+        # LCD-2 build (bd babelstone-6cpq.10) — until it lands this series is
+        # absent and the rule is dormant by construction (an absent series never
+        # matches > 0), so the alert ships ready rather than commented out.
+        expr: sum by (command_kind) (increase(lifecycle_schedule_held_total[24h])) > 0
+        for: 0m
+        labels:
+          severity: critical
+          sli: lifecycle_schedule_held
+          adr: ADR-PC-036
+        annotations:
+          summary: "A lifecycle schedule is stalled behind a parked settlement"
+          description: >-
+            The settlement-health gate held a recurring occurrence because the
+            prior occurrence's cash leg is parked in HUMAN_INTERVENTION_REQUIRED
+            (LCD-2). The schedule will NOT advance until an operator resolves the
+            parked settlement — there is no arrears state to catch the miss.
+            Follow the parked-settlement procedure in the runbook.
+          runbook: ../../runbooks/lifecycle-driver-ops.md
+
+  # ---------------------------------------------------------------------------
   # STAGING LIVENESS (bd babelstone-zla1.7). The cheapest IN-CLUSTER "is the app
   # up" signal: the engine continuously emits outbox_publish_lag_seconds, so its
   # ABSENCE means the engine isn't reporting (down, crash-looping, or telemetry

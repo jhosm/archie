@@ -125,6 +125,34 @@ the due-date, so a re-dated or backfilled retry of occurrence N dedupes to one m
 (`ENGINE_COMMAND_IDEMPOTENT`); the dispatch ledger is the cheap front-line that keeps the driver from
 re-POSTing every tick.
 
+## Monitoring, health, and on-call
+
+The driver is an always-on **money-mover whose worst failures are silent** — a wedged tick loop just stops
+firing, and a parked settlement stalls a schedule with no arrears state to catch the miss. Its
+observability surface (bd `babelstone-1nkm.4`) is OpenTelemetry parity with the notification sibling
+(tracing + logs, [ADR-IC-007](../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md)
+Layer 1) **plus** metrics on the shared `Babelstone.Engine` meter (`LifecycleDriverMetrics.cs`, wired by
+the host's `WithMetrics` through the no-PII guard):
+
+- `lifecycle_pass_last_success_timestamp_seconds` — the **tick-liveness heartbeat** gauge, the worker
+  host's health/liveness signal (no HTTP surface — freshness + `absent()` is the probe, the
+  `EngineMetricsAbsent` posture);
+- `lifecycle_dispatch_total` / `lifecycle_dispatch_failure_total` — POST success/failure, tagged by the
+  structural `command_kind` only;
+- `lifecycle_dispatch_lag_seconds` — how late after its business due date each occurrence fired;
+- `lifecycle_schedule_held_total` — the **parked-settlement stall** signal (`RecordScheduleHeld`, the emit
+  hook the LCD-2 settlement-health gate calls when it lands, bd `babelstone-6cpq.10`).
+
+The alert rules live in the `lifecycle-driver` group of
+[`infra/grafana/prometheus/alert-rules.yaml`](../infra/grafana/prometheus/alert-rules.yaml)
+(`LifecycleDriverTickStale`, `LifecycleDriverMetricsAbsent`, `LifecycleDispatchFailuresSustained`,
+`LifecycleDispatchLagP99High`, and the `LifecycleScheduleHeld` page — "alerted, not invisible",
+ADR-PC-036 §Residual-risks); the on-call procedures — including the parked-settlement / stalled-schedule
+entry and the ledger audit queries — are
+[`infra/runbooks/lifecycle-driver-ops.md`](../infra/runbooks/lifecycle-driver-ops.md). Every recovery is
+retry-safe by construction: the ledger + the engine's `command_dedup` make the failure modes stalls,
+never duplicates.
+
 > Status: **host + both family rules shipped, and the ADR-PC-038 hardening is in.** The host owns the
 > clock, runs the Cadence worker, single-fires by atomic claim on the durable Postgres dispatch ledger
 > (survives restarts, shared across replicas — no leader elected; LCD-4/LCD-5), and POSTs through the

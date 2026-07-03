@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -41,6 +42,17 @@ builder.Services.AddOpenTelemetry()
         ]))
     .WithTracing(tracing => tracing
         .AddSource(BabelstoneTelemetry.ActivitySourceName)
+        .AddBabelstonePiiGuard()
+        .AddOtlpExporter())
+    // Metrics (bd babelstone-1nkm.4): the MeterProvider the driver's operational instruments need — with
+    // none registered every LifecycleDriverMetrics record is a no-op, which is how the un-hardened host
+    // ran blind. AddMeter turns on the shared Babelstone.Engine meter (the lifecycle_dispatch_total /
+    // lifecycle_dispatch_failure_total counters, the lifecycle_dispatch_lag_seconds histogram, and the
+    // lifecycle_pass_last_success_timestamp_seconds tick-liveness heartbeat the lifecycle-driver alert
+    // group reads — the always-on money-mover's health surface). The View-based no-PII guard keeps only
+    // the admitted operational dimensions (command_kind), the same posture as the orchestrator host.
+    .WithMetrics(metrics => metrics
+        .AddMeter(BabelstoneTelemetry.MeterName)
         .AddBabelstonePiiGuard()
         .AddOtlpExporter())
     .WithLogging(logging => logging
