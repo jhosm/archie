@@ -1,0 +1,29 @@
+openapi: 3.1.0
+# NEGATIVE FIXTURE — an INTERNAL-catalogue spec (overlaid into the internal dir) that carries
+# every Spectral governance field but DROPS info.x-internal. The gate's internal leg MUST fail
+# it (bd babelstone-ax0b.5): an internal spec without the reason marker is indistinguishable
+# from a public API to a catalogue reader.
+info:
+  title: Babelstone Engine — Fixture Internal Surface (no marker)
+  version: 1.0.0
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract
+  x-authorized-consumers:
+    - orchestrator
+  # info.x-internal intentionally MISSING (the defect under test).
+servers:
+  - url: https://engine:8080
+paths:
+  /v1/fixture-internal-op:
+    post:
+      operationId: fixtureInternalOp
+      summary: A fixture internal operation.
+      responses:
+        '200':
+          description: A fixture response.
+          content:
+            application/json:
+              schema:
+                type: object

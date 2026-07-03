@@ -59,6 +59,22 @@
 #   SSE EXEMPTION: an operation marked x-sse-stream: true streams text/event-stream, not a JSON body,
 #   so the response-body check is WAIVED for it (the REST mirror of the AsyncAPI x-compacted case).
 #
+#   INTERNAL SPECS DIR (contracts/openapi/internal/; bd ax0b.5): the catalogue's second, physically
+#   separated home for surfaces that are NEVER public by design — the engine command/money-mover
+#   ingress (ADR-PC-029; mTLS-only Boundary 2, ADR-IC-006 §P5) and the operator/admin-ops planes
+#   (rate-sheet deploy ADR-PC-008, pack migrations ADR-PC-009). These specs get the SAME Spectral
+#   governance lint, the SAME oasdiff breaking-change discipline, and the SAME structural checks as
+#   the public set, but a DIFFERENT reconcile:
+#     * every internal spec MUST carry info.x-internal: "<non-empty reason string>" (a bare true
+#       does not count) — the document-level marking that keeps a reader from mistaking it for a
+#       public API; a PUBLIC spec (under specs/) carrying info.x-internal FAILS (dir/marker
+#       lock-step, so the marker can never dress a public spec as internal or vice versa);
+#     * NEVER-PUBLIC reconcile — no internal-spec operation may match an exposed public Kong route
+#       (the document-level mirror of the POST /v1/deposits negative invariant below); exposing one
+#       publicly must MOVE its spec to specs/ (and pass the public reconcile) in the same change.
+#   The public dir's absolute POST /v1/deposits negative invariant is UNTOUCHED: the engine command
+#   surface still cannot be smuggled into contracts/openapi/specs/ under any marker.
+#
 #   INTERNAL-ROUTE WAIVER (x-internal-route; bd ax0b.3): an operation may document a REAL upstream
 #   HTTP surface that is deliberately NOT (yet) exposed through Kong — today the mcp->orchestrator
 #   process-status snapshot GET /api/v1/processes/{id}/status (Document 11 Pattern 2, bd vjoi). Such
@@ -87,6 +103,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 SPECS_DIR="${OPENAPI_SPECS_DIR:-contracts/openapi/specs}"
+INTERNAL_SPECS_DIR="${OPENAPI_INTERNAL_SPECS_DIR:-contracts/openapi/internal}"
 KONG_CONFIG="${OPENAPI_KONG_CONFIG:-infra/kong/kong.yml}"
 SPECTRAL_RULESET="${OPENAPI_SPECTRAL_RULESET:-.spectral.yaml}"
 BASELINE_REF="${OPENAPI_BASELINE_REF:-origin/main}"
@@ -145,11 +162,19 @@ if [ "${1:-}" = "--self-test" ]; then
 		[ -d "$case_dir" ] || continue
 		case_name="$(basename "$case_dir")"
 		# Build a throwaway spec set = the good baseline + this case's overlay (files that OVERWRITE
-		# same-named baseline files) minus any basenames listed in the case's `.remove` file.
+		# same-named baseline files) minus any basenames listed in the case's `.remove` file. The
+		# INTERNAL dir gets the same treatment: baseline internal specs + any overlay under the
+		# case's internal/ subdir (bd ax0b.5) — so an internal-leg fixture perturbs only the
+		# internal set while the public baseline stays green, and vice versa.
 		tmp="$(mktemp -d)"
+		tmp_internal="$(mktemp -d)"
 		cp -f "$SPECS_DIR"/*.openapi.yaml "$tmp"/ 2>/dev/null || true
+		[ -d "$INTERNAL_SPECS_DIR" ] && cp -f "$INTERNAL_SPECS_DIR"/*.openapi.yaml "$tmp_internal"/ 2>/dev/null || true
 		for ov in "$case_dir"*.openapi.yaml; do
 			[ -f "$ov" ] && cp -f "$ov" "$tmp"/
+		done
+		for ov in "$case_dir"internal/*.openapi.yaml; do
+			[ -f "$ov" ] && cp -f "$ov" "$tmp_internal"/
 		done
 		if [ -f "${case_dir}.remove" ]; then
 			while IFS= read -r rm_name; do
@@ -159,14 +184,15 @@ if [ "${1:-}" = "--self-test" ]; then
 		fi
 		# Run the gate against the throwaway set (skip the git-baseline breaking diff — the tmp
 		# specs are untracked). It MUST exit non-zero.
-		if OPENAPI_SPECS_DIR="$tmp" OPENAPI_SKIP_BREAKING=1 "$0" >/tmp/openapi-selftest.out 2>&1; then
+		if OPENAPI_SPECS_DIR="$tmp" OPENAPI_INTERNAL_SPECS_DIR="$tmp_internal" OPENAPI_SKIP_BREAKING=1 \
+			"$0" >/tmp/openapi-selftest.out 2>&1; then
 			note "  FAIL  case '$case_name' PASSED the gate but was expected to FAIL"
 			sed 's/^/      | /' /tmp/openapi-selftest.out >&2 || true
 			st_fail=1
 		else
 			note "  ok    case '$case_name' correctly FAILED the gate"
 		fi
-		rm -rf "$tmp"
+		rm -rf "$tmp" "$tmp_internal"
 	done
 	note ""
 	if [ "$st_fail" -eq 0 ]; then
@@ -186,13 +212,22 @@ files=()
 while IFS= read -r -d '' f; do files+=("$f"); done \
 	< <(find "$SPECS_DIR" -name '*.openapi.yaml' -print0 | sort -z)
 
-if [ "${#files[@]}" -eq 0 ]; then
-	note "no *.openapi.yaml under $SPECS_DIR — nothing to validate"
+# The INTERNAL catalogue (contracts/openapi/internal/, bd ax0b.5): never-public-by-design
+# surfaces. Same lint + breaking-change discipline as the public set; different reconcile
+# (the never-public leg below). An absent dir is fine — the internal catalogue is optional.
+ifiles=()
+if [ -d "$INTERNAL_SPECS_DIR" ]; then
+	while IFS= read -r -d '' f; do ifiles+=("$f"); done \
+		< <(find "$INTERNAL_SPECS_DIR" -name '*.openapi.yaml' -print0 | sort -z)
+fi
+
+if [ "${#files[@]}" -eq 0 ] && [ "${#ifiles[@]}" -eq 0 ]; then
+	note "no *.openapi.yaml under $SPECS_DIR or $INTERNAL_SPECS_DIR — nothing to validate"
 	exit 0
 fi
 
 note "== OpenAPI catalogue gate (ADR-IC-020; REST mirror of the AsyncAPI §P1/§P4 gate) =="
-note "specs dir: $SPECS_DIR   kong: $KONG_CONFIG   baseline: $BASELINE_REF"
+note "specs dir: $SPECS_DIR   internal: $INTERNAL_SPECS_DIR   kong: $KONG_CONFIG   baseline: $BASELINE_REF"
 note ""
 
 # ---------------------------------------------------------------------------
@@ -204,7 +239,7 @@ if [ ! -f "$SPECTRAL_RULESET" ]; then
 	err "the frozen Spectral ruleset $SPECTRAL_RULESET is missing (ADR-IC-020)"
 else
 	if npx --yes "$SPECTRAL_CLI" lint --ruleset "$SPECTRAL_RULESET" --fail-severity=error \
-		"${files[@]}" >/tmp/openapi-spectral.out 2>&1; then
+		${files[@]+"${files[@]}"} ${ifiles[@]+"${ifiles[@]}"} >/tmp/openapi-spectral.out 2>&1; then
 		note "  ok    spectral lint clean (no error-severity findings)"
 	else
 		sed 's/^/    /' /tmp/openapi-spectral.out >&2 || true
@@ -225,7 +260,7 @@ elif ! command -v docker >/dev/null 2>&1; then
 elif ! git rev-parse --verify "$BASELINE_REF" >/dev/null 2>&1; then
 	note "  baseline ref $BASELINE_REF not resolvable — skipping the diff (run \`git fetch origin main\`)"
 else
-	for f in "${files[@]}"; do
+	for f in ${files[@]+"${files[@]}"} ${ifiles[@]+"${ifiles[@]}"}; do
 		if ! git cat-file -e "$BASELINE_REF:$f" 2>/dev/null; then
 			note "  new   $f (no baseline — not a breaking change)"
 			continue
@@ -273,8 +308,14 @@ note "-- structural: response-body present (SSE-exempt) + collect spec operation
 declare -a spec_ops=()          # "METHOD <canon-path>"
 declare -a spec_ops_raw=()      # "METHOD <raw-path> (<file>)" for messages, lockstep with spec_ops
 declare -a spec_ops_internal=() # "true"/"false" — x-internal-route non-empty-STRING waiver, lockstep
-for f in "${files[@]}"; do
+for f in ${files[@]+"${files[@]}"}; do
 	doc="$(y2j "$f")" || { err "$f: could not parse YAML"; continue; }
+	# Dir/marker lock-step (bd ax0b.5): a spec under the PUBLIC dir must not carry the
+	# document-level info.x-internal marker — an internal surface lives under
+	# contracts/openapi/internal/, never as a marked file among the public specs.
+	if [ -n "$(printf '%s' "$doc" | jq -r '.info["x-internal"] // empty')" ]; then
+		err "$f: carries info.x-internal but lives under the PUBLIC specs dir — move it to $INTERNAL_SPECS_DIR (dir/marker lock-step, bd ax0b.5)"
+	fi
 	while IFS= read -r line; do
 		[ -n "$line" ] || continue
 		# line = "<METHOD>\t<path>\t<has_sse>\t<has_2xx_json>\t<is_internal>"
@@ -316,6 +357,54 @@ for f in "${files[@]}"; do
 	')
 done
 note ""
+
+# ---------------------------------------------------------------------------
+# INTERNAL catalogue structural checks (bd ax0b.5): every internal spec must carry the
+# document-level info.x-internal non-empty-STRING reason (the reader-facing "this is NOT a
+# public API" marking), and its operations get the same response-body/SSE obligation as the
+# public set. Operations are collected for the never-public reconcile below.
+# ---------------------------------------------------------------------------
+declare -a int_ops=()      # "METHOD <canon-path>"
+declare -a int_ops_raw=()  # "METHOD <raw-path> (<file>)" for messages, lockstep with int_ops
+if [ "${#ifiles[@]}" -gt 0 ]; then
+	note "-- structural: INTERNAL catalogue ($INTERNAL_SPECS_DIR; info.x-internal + response-body) --"
+	for f in "${ifiles[@]}"; do
+		doc="$(y2j "$f")" || { err "$f: could not parse YAML"; continue; }
+		marker="$(printf '%s' "$doc" | jq -r '.info["x-internal"] // empty | if (type == "string") then . else "" end')"
+		if [ -z "$marker" ]; then
+			err "$f: an INTERNAL spec must carry info.x-internal: \"<non-empty reason string>\" — a reader must never mistake it for a public API (bd ax0b.5; a bare true does not count)"
+		else
+			note "  ok    $f :: info.x-internal reason present"
+		fi
+		while IFS= read -r line; do
+			[ -n "$line" ] || continue
+			method="$(printf '%s' "$line" | cut -f1)"
+			path="$(printf '%s' "$line" | cut -f2)"
+			has_sse="$(printf '%s' "$line" | cut -f3)"
+			has_body="$(printf '%s' "$line" | cut -f4)"
+			cp="$(canon "$path")"
+			int_ops+=("$method $cp")
+			int_ops_raw+=("$method $path ($f)")
+			if [ "$has_sse" = "true" ]; then
+				note "  ok    $method $path :: SSE-exempt (x-sse-stream:true) — response-body check waived"
+			elif [ "$has_body" = "true" ]; then
+				note "  ok    $method $path :: has a 2xx response body"
+			else
+				err "$f: operation $method $path has no 2xx response body and is not x-sse-stream:true (ADR-IC-020 response-body check)"
+			fi
+		done < <(printf '%s' "$doc" | jq -r '
+			(.paths // {}) | to_entries[] | .key as $p | .value | to_entries[]
+			| select(.key | test("^(get|put|post|delete|patch|head|options|trace)$"))
+			| (.key | ascii_upcase) as $m
+			| ((.value["x-sse-stream"] // false) | tostring) as $sse
+			| ([ (.value.responses // {}) | to_entries[]
+				| select(.key | test("^2..$"))
+				| ((.value.content // {}) | length) ] | (add // 0) > 0 | tostring) as $body
+			| "\($m)\t\($p)\t\($sse)\t\($body)"
+		')
+	done
+	note ""
+fi
 
 # ---------------------------------------------------------------------------
 # (3) Kong-route <-> spec reconciliation (the no-drift anchor).
@@ -385,6 +474,28 @@ else
 				note "  ok    REVERSE  spec op [$sraw] is a public Kong route"
 			else
 				err "spec operation [$sraw] (canonical: $so) is NOT an exposed public Kong route (ADR-IC-020 REVERSE reconcile — a spec must document a real public route, never an internal/command surface; a deliberately internal surface needs x-internal-route: \"<reason>\")"
+			fi
+			i=$((i + 1))
+		done
+
+		# NEVER-PUBLIC — no INTERNAL-catalogue operation may match an exposed public Kong route
+		# (bd ax0b.5): the document-level mirror of the POST /v1/deposits negative invariant.
+		# When a surface goes public, the same change must MOVE its spec from
+		# contracts/openapi/internal/ to specs/ and pass the public reconcile — never a silent
+		# dual identity. (Routes of the EXCLUDED non-public services — the mcp-server agent
+		# channel and the scoped engine-lifecycle-movers service-principal channel — are not
+		# public routes, so an internal spec documenting those upstream paths is consistent.)
+		i=0
+		while [ "$i" -lt "${#int_ops[@]}" ]; do
+			io="${int_ops[$i]}"; iraw="${int_ops_raw[$i]}"
+			found=0
+			for ko in ${kong_ops[@]+"${kong_ops[@]}"}; do
+				[ "$ko" = "$io" ] && { found=1; break; }
+			done
+			if [ "$found" = "1" ]; then
+				err "INTERNAL spec operation [$iraw] IS an exposed public Kong route — an internal-catalogue surface must never be public; move the spec to $SPECS_DIR in the change that exposes it (bd ax0b.5 never-public invariant)"
+			else
+				note "  ok    NEVER-PUBLIC internal op [$iraw] is not a public Kong route"
 			fi
 			i=$((i + 1))
 		done
