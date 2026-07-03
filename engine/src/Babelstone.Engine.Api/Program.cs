@@ -383,14 +383,13 @@ builder.Services.AddHostedService<DedupRetentionSweepService>();
 
 // The bulk-operations runner (ADR-PC-035): register -> drain -> complete over the migration-0018
 // work-tables — the outbox pattern's second instance, co-hosted like the relays above. The
-// service is the operator-facing half (register/progress/retry/cancel; the HTTP surface is a
-// tracked sibling); the drainer claims bounded SKIP-LOCKED batches and appends each instance's
-// STORE-ONLY cross-cutting event idempotently on the deterministic (job_id, instance_id) command
-// id (§P3, ENGINE_COMMAND_IDEMPOTENT). Operations ride as thin IBulkOperationStrategy adapters
-// resolved from DI — none registered yet (the four adapters are a tracked sibling), so the runner
-// idles until they land; a job registered for an unknown kind fails loud, by query. The appender
+// service is the operator-facing half (register/progress/retry/cancel); the drainer claims
+// bounded SKIP-LOCKED batches and appends each instance's STORE-ONLY cross-cutting event
+// idempotently on the deterministic command id (BulkOperationCommandId /
+// ENGINE_COMMAND_IDEMPOTENT). Operations ride as thin IBulkOperationStrategy adapters resolved
+// from DI; a job registered for a kind no adapter serves fails loud, by query. The appender
 // reuses the same per-family fold-module registries as the spine projection drive, so the whole
-// path names no family (ADR-PC-021 §P2).
+// path names no family (ADR-PC-021).
 builder.Services.AddSingleton<IBulkOperationStore>(_ => new PostgresBulkOperationStore(connectionString));
 builder.Services.AddSingleton(serviceProvider => new BulkInstanceAppender(
     serviceProvider.GetRequiredService<IEventStore>(),
