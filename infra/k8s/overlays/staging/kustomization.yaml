@@ -154,9 +154,10 @@ patches:
   # untouched. See grafana-lgtm-rules.patch.yaml for the /otel-lgtm path rationale.
   - path: grafana-lgtm-rules.patch.yaml
   # Bind the Kong Admin API to the pod's loopback and drop its Service port
-  # (bd babelstone-zla1.12.8): nothing in-cluster dials 8001 (deck-sync is
-  # operator/CI-run and reaches the pod loopback via kubectl port-forward), so
-  # the full edge control plane stops being dialable from the pod network.
+  # (bd babelstone-zla1.12.8): nothing in-cluster dials 8001. The OPERATOR
+  # deck-sync path keeps working (kubectl port-forward reaches the pod
+  # loopback); the cd.yml CI leg needs a port-forward step + a cd-deployer
+  # RBAC widening first — the named follow-up in the patch header.
   - path: kong-admin-localhost.patch.yaml
   # GATED OPT-IN — internal mTLS on the engine + orchestrator hops (bd
   # babelstone-zla1.12.8 sub-gap (c); ADR-IC-006 §P5 Boundary 2 / ADR-IC-016

@@ -48,7 +48,8 @@ networking:
       # k8s API(6443) open to the world: the GitHub-hosted cd.yml runner has no stable egress IP,
       # so a network allow-list can't admit it. Auth is the cluster's mutual-TLS client cert (the
       # kubeconfig), not the firewall. Deliberate staging trade-off — tighten for a real tier.
-      # (Recorded ADR-PC-020 §D3 drift; ADR-IC-006 minimise-public-surface posture.)
+      # (Recorded ADR-PC-020 §D3 drift; Document 10 posture — everything outside the
+      # gateway is untrusted, so a world-open 6443 is a documented exception, not a norm.)
       - 0.0.0.0/0
       # ── CHEAP PARTIAL MITIGATION — documented option (bd babelstone-zla1.12.8 (b)) ──
       # Replace the 0.0.0.0/0 above with (1) your operator /32 and (2) the GitHub Actions
