@@ -55,21 +55,30 @@ command, rather than raise a reminder.
   in a downstream sibling host ([ADR-PC-023](../docs/product-management/product_concepts/adrs/ADR-PC-023-temporal-signals-projection-derived.md)
   §6), never in the engine.
 - `LifecycleSchedulePass.cs` — the per-tick engine (an `ISchedulePass`): enumerate the registered family
-  rules, derive each due occurrence's number-pinned dispatch id, **check** the dispatch ledger (skip a
-  re-tick), **POST** through the sink, and — only on success — **record** the dispatch. Check-then-POST-then-
-  record so a transient engine outage never strands a due command (the next pass retries; the engine
-  dedupes).
+  rules, derive each due occurrence's number-pinned dispatch id, **claim** it on the dispatch ledger (skip a
+  re-tick, a restart replay, or a competing replica's in-flight claim), **POST** through the sink, and — only
+  on success — **record** the dispatch as the claim commits. Claim-then-POST-then-record so a transient
+  engine outage never strands a due command (the un-recorded claim releases; the next pass retries; the
+  engine dedupes).
 - `ILifecycleCommandRule.cs` — the **family-contribution port** (`ILifecycleCommandRule` +
   `LifecycleCommandDecision` + `DispatchedCommand` + `ILifecycleCommandSink`), the write-side mirror of the
   notification core's `INotificationScheduleRule`. A family rule reads its own forward calendar and says
   which occurrences are due; it never reimplements the idempotency.
-- `LifecycleDispatchLedger.cs` — the "already fired this occurrence" memory that makes a re-tick a no-op,
-  keyed on the canonical, **server-derived, number-pinned** dispatch id
+- `ILifecycleDispatchLedger.cs` / `PostgresLifecycleDispatchLedger.cs` — the **durable dispatch ledger**
+  ([ADR-PC-038](../docs/product-management/product_concepts/adrs/ADR-PC-038-lifecycle-driver-leader-election-and-durable-ledger.md)):
+  one Postgres `lifecycle_dispatch_ledger` row per due occurrence, keyed on the canonical,
+  **server-derived, number-pinned** dispatch id
   (`LifecycleCommandKey.Derive(instance_id, command_kind, stable_occurrence_key)` — referenced from the
   engine hosting seam, **not** reinvented; LCD-1,
   [ADR-PC-036](../docs/product-management/product_concepts/adrs/ADR-PC-036-lifecycle-command-driver.md)
-  §Decision 1+3). In-memory v1; a durable, crash-surviving ledger is a later operating concern (the engine's
-  `command_dedup` is the authoritative idempotency backstop regardless).
+  §Decision 1+3). The per-occurrence **atomic claim** — `FOR UPDATE SKIP LOCKED` plus a per-instance,
+  salt-namespaced `pg_try_advisory_xact_lock`, the same competing-consumers pattern as the saga dispatcher
+  and the outbox relay — **is** the multi-replica single-firing guard (no elected leader,
+  `LIFECYCLE_DRIVER_SINGLE_FIRING`/LCD-4), and the table's persistence is the crash-survival + queryable
+  `dispatched_at` audit trail (`LIFECYCLE_DISPATCH_LEDGER_DURABLE`/LCD-5). The engine's `command_dedup` is
+  the authoritative idempotency backstop regardless. `InMemoryLifecycleDispatchLedger.cs` is the
+  claim-faithful Docker-free test double; `Migrations/` is the driver host's **own** forward-only migration
+  series (embedded `Sql/NNNN_*.sql`, applied at boot).
 - `HttpLifecycleCommandSink.cs` — the production `ILifecycleCommandSink`: POSTs the engine's
   [ADR-PC-029](../docs/product-management/product_concepts/adrs/ADR-PC-029-engine-command-ingress.md)
   command endpoint, presenting the canonical key as the `Idempotency-Key` header and the **scoped,
@@ -79,9 +88,13 @@ command, rather than raise a reminder.
 
 **`src/Babelstone.Lifecycle.Host/`** — the runnable **composition-root exe**
 (`Microsoft.NET.Sdk.Worker`). `Program.cs` resolves the engine command endpoint (`Engine:BaseUrl`, a
-service endpoint not a credential), registers the typed command-POST `HttpClient`, `TimeProvider.System`,
-the dispatch ledger and the cadence knobs, registers the per-tick pass over the family rules, and runs the
-clock-owning worker. Family `ILifecycleCommandRule` contributions plug in here with zero core diff.
+service endpoint not a credential) and the **dispatch-ledger database** (`Lifecycle:LedgerConnectionString`
+/ `ConnectionStrings:LifecycleLedger` / `BABELSTONE_LIFECYCLE_LEDGER_CONNECTION` — fail-loud, plus an
+optional distinct migration-role connection `Lifecycle:LedgerMigrationConnectionString`), applies the
+ledger's own forward-only migration series at boot (a hosted service registered before the worker),
+registers the typed command-POST `HttpClient`, `TimeProvider.System`, the durable Postgres dispatch ledger
+and the cadence knobs, registers the per-tick pass over the family rules, and runs the clock-owning
+worker. Family `ILifecycleCommandRule` contributions plug in here with zero core diff.
 
 **Family rules** are the sibling work that lands on this host, and now have
 ([bd `babelstone-6cpq.8`](../docs/product-management/product_concepts/adrs/ADR-PC-036-lifecycle-command-driver.md) /
@@ -112,13 +125,13 @@ the due-date, so a re-dated or backfilled retry of occurrence N dedupes to one m
 (`ENGINE_COMMAND_IDEMPOTENT`); the dispatch ledger is the cheap front-line that keeps the driver from
 re-POSTing every tick.
 
-> Status: **host + both family rules shipped.** The host owns the clock, runs the Cadence worker, dedupes on
-> the number-pinned dispatch id, and POSTs through the command sink with the scoped SCA principal; the
-> term-deposit `MaturityRule` and personal-loan `InstallmentRule` (bd `babelstone-6cpq.8` / `.9`) read their
-> forward calendars and contribute the due commands. **Not** built here: the recurring settlement-health gate
-> (`LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE`, LCD-2, ADR-PC-036 §Decision 4), and the operating-concern
-> hardening the host owns as it matures — single-firing/leader-election, a durable dispatch ledger, and
-> monitoring
+> Status: **host + both family rules shipped, and the ADR-PC-038 hardening is in.** The host owns the
+> clock, runs the Cadence worker, single-fires by atomic claim on the durable Postgres dispatch ledger
+> (survives restarts, shared across replicas — no leader elected; LCD-4/LCD-5), and POSTs through the
+> command sink with the scoped SCA principal; the term-deposit `MaturityRule` and personal-loan
+> `InstallmentRule` (bd `babelstone-6cpq.8` / `.9`) read their forward calendars and contribute the due
+> commands. **Not** built here: the recurring settlement-health gate
+> (`LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE`, LCD-2, ADR-PC-036 §Decision 4)
 > ([ADR-PC-036](../docs/product-management/product_concepts/adrs/ADR-PC-036-lifecycle-command-driver.md)
 > §Consequences). Extraction-ready subtree per
 > [ADR-PC-019 §P2](../docs/product-management/product_concepts/adrs/ADR-PC-019-repository-strategy-monorepo.md);

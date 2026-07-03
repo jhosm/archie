@@ -79,6 +79,33 @@ var readModelConnectionString =
         "ConnectionStrings:EngineReadModel, or BABELSTONE_ENGINE_READMODEL_CONNECTION (the ADR-IC-005 " +
         "read-model tier the family rules range-scan: read_model.deposits, read_model.installment_calendar).");
 
+// The durable dispatch-ledger database (ADR-PC-038 §Decision 1): where the driver's OWN
+// lifecycle_dispatch_ledger table lives — the crash-surviving "already fired this occurrence" record whose
+// atomic per-occurrence claim is ALSO the multi-replica single-firing guard (§Decision 2). This is the
+// RUNTIME-role connection (babelstone_lifecycle — claim/record only, no DDL; ADR-PC-001 §P3). It is
+// DISTINCT from the engine read-model connection above (a different concern: the calendar the rules READ
+// vs the ledger the driver WRITES), though a deployment may point both at the same cluster. Fail-loud: a
+// driver whose dispatches would not survive a restart must not start (the in-memory ledger is a test
+// double, never a production fallback).
+var ledgerConnectionString =
+    builder.Configuration["Lifecycle:LedgerConnectionString"]
+    ?? builder.Configuration.GetConnectionString("LifecycleLedger")
+    ?? Environment.GetEnvironmentVariable("BABELSTONE_LIFECYCLE_LEDGER_CONNECTION")
+    ?? throw new InvalidOperationException(
+        "No lifecycle dispatch-ledger connection string configured. Set Lifecycle:LedgerConnectionString, " +
+        "ConnectionStrings:LifecycleLedger, or BABELSTONE_LIFECYCLE_LEDGER_CONNECTION (the durable " +
+        "lifecycle_dispatch_ledger substrate, ADR-PC-038 §Decision 1).");
+
+// The MIGRATION-role connection the ledger's forward-only series applies over (DDL privileges,
+// ADR-PC-001 §P3) — distinct from the runtime role in production, wired by deployment; a dev/test stack
+// MAY fall back to the runtime connection (the same single-credential convenience the demo stack uses for
+// the engine store).
+var ledgerMigrationConnectionString =
+    builder.Configuration["Lifecycle:LedgerMigrationConnectionString"]
+    ?? builder.Configuration.GetConnectionString("LifecycleLedgerMigration")
+    ?? Environment.GetEnvironmentVariable("BABELSTONE_LIFECYCLE_LEDGER_MIGRATION_CONNECTION")
+    ?? ledgerConnectionString;
+
 // The wall-clock the worker loop OWNS (ADR-PC-023 §6 — the engine emits no clock-driven signal, so the
 // downstream driver owns the clock). TimeProvider.System in production; a test substitutes a fake so the loop
 // can be driven with no real wall-clock wait.
@@ -97,13 +124,22 @@ if (pollSeconds is > 0)
 
 builder.Services.AddSingleton(schedulerOptions);
 
-// The dispatch ledger (ADR-PC-036 §Decision 2; hardened per ADR-PC-038): the "already fired this occurrence"
-// memory that makes a re-tick of an already-dispatched lifecycle command a no-op, keyed on the canonical
-// number-pinned dispatch id — now behind the claim port whose atomic per-occurrence claim is ALSO the
-// multi-replica single-firing guard. In-memory registration pending the durable Postgres wiring landing in
-// the sibling change (bd babelstone-1nkm.3); the engine's command_dedup is the authoritative idempotency
-// backstop regardless.
-builder.Services.AddSingleton<ILifecycleDispatchLedger, InMemoryLifecycleDispatchLedger>();
+// The DURABLE dispatch ledger (ADR-PC-036 §Decision 2, hardened per ADR-PC-038): the crash-surviving
+// Postgres lifecycle_dispatch_ledger whose per-occurrence atomic claim (FOR UPDATE SKIP LOCKED + the
+// per-instance advisory lock) is the multi-replica single-firing guard, keyed on the canonical
+// number-pinned dispatch id (LCD-1). A restart does not re-POST (LIFECYCLE_DISPATCH_LEDGER_DURABLE) and
+// N replicas fire each occurrence once (LIFECYCLE_DRIVER_SINGLE_FIRING); the engine's command_dedup stays
+// the authoritative idempotency backstop regardless. (InMemoryLifecycleDispatchLedger is the Docker-free
+// test double — never wired here.)
+builder.Services.AddSingleton<ILifecycleDispatchLedger>(
+    new PostgresLifecycleDispatchLedger(ledgerConnectionString));
+
+// The ledger schema migration runs FIRST (registered before the worker: hosted services start in
+// registration order), applying the driver host's OWN forward-only series (ADR-PC-038 §Decision 1) so
+// lifecycle_dispatch_ledger exists before the first tick can claim on it — the same boot shape as the
+// orchestrator's SagaMigrationHostedService. Idempotent: a boot with nothing pending is a no-op (the
+// MigrationRunner ledger + its advisory lock guard it, including against a concurrently booting replica).
+builder.Services.AddHostedService(_ => new LifecycleLedgerMigrationHostedService(ledgerMigrationConnectionString));
 
 // The command-POST SINK (ADR-PC-036 §Decision 2): a typed HttpClient whose BaseAddress is the engine's ADR-PC-029
 // command surface, normalised to a trailing "/" so a "/v1/..." command path resolves. This is the ONLY runtime
@@ -148,4 +184,21 @@ namespace Babelstone.Lifecycle.Host
     /// composed by the statements above.
     /// </summary>
     public sealed partial class Program;
+
+    /// <summary>
+    /// Applies the lifecycle driver's OWN dispatch-ledger schema on startup (ADR-PC-038 §Decision 1 — the
+    /// driver host owns its forward-only migration series, exactly as the orchestrator owns its saga
+    /// schema). A hosted service so the host's lifetime owns it, registered BEFORE the worker so the
+    /// <c>lifecycle_dispatch_ledger</c> table exists before the first tick claims on it; idempotent — a
+    /// boot with nothing pending is a no-op, and the runner's session advisory lock serialises a
+    /// concurrently booting replica instead of racing it.
+    /// </summary>
+    internal sealed class LifecycleLedgerMigrationHostedService(string migrationConnectionString) : IHostedService
+    {
+        public async Task StartAsync(CancellationToken cancellationToken) =>
+            await new Babelstone.Lifecycle.Migrations.MigrationRunner(migrationConnectionString)
+                .ApplyAsync(cancellationToken);
+
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
 }
