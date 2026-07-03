@@ -97,6 +97,10 @@ patches:
   # render still carries a placeholder body or the live Secret is missing/still
   # a placeholder.
   - path: drop-dev-secrets.patch.yaml
+    target:
+      version: v1
+      kind: Secret
+      name: babelstone-dev-secrets
   # Pin durable Hetzner CSI block storage (hcloud-volumes) on every stateful
   # volume. JSON6902 add-ops — volumeClaimTemplates has no strategic-merge key, so
   # a merge patch would REPLACE the whole VCT list (dropping the base 5Gi request);

@@ -96,19 +96,8 @@ spec:
                   cpu: 500m
                   memory: 256Mi
 ---
-# Backup credential seam — DEV-ONLY placeholders, same contract as base/secrets.example.yaml and
-# the ha overlay's pgbackrest secret. The real Hetzner Object Storage bucket + keys are
-# account-gated; swap this for an uncommitted Secret (or OpenBao-backed provisioning, M.2/puu3).
-# NEVER commit real credentials.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: babelstone-backup-secret
-  annotations:
-    babelstone.io/secret-boundary: "dev-mode-placeholder — real provisioning is account-gated / M.2 (puu3)"
-type: Opaque
-stringData:
-  S3_ENDPOINT: "https://fsn1.your-objectstorage.com"
-  S3_BUCKET: "babelstone-staging-backups-REPLACE_ME"
-  AWS_ACCESS_KEY_ID: "REPLACE_ME"
-  AWS_SECRET_ACCESS_KEY: "REPLACE_ME-not-a-real-secret"
+# Backup credential seam — the babelstone-backup-secret Secret is NOT committed (it used to be a
+# DEV-ONLY placeholder doc here, which the cd-secret-preflight render gate now rightly refuses:
+# bd babelstone-zla1.12.4, ADR-PC-004 §A1). The operator provisions the real Hetzner Object
+# Storage bucket + keys once (runbook staging-ops.md §1 step 5); the CronJobs below secretKeyRef
+# it by name, exactly the babelstone-dev-secrets contract. NEVER commit real credentials.
