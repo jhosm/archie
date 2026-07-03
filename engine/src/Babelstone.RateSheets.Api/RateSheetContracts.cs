@@ -45,6 +45,15 @@ public sealed record RateSheetResponse(
 }
 
 /// <summary>
+/// The 409 forward-only-immutability breach envelope (ADR-PC-008 §P5): what the deploy returns
+/// when a <c>rate_sheet_version_id</c> already exists with a different definition, or the family's
+/// <c>effective_from</c> is already claimed. Public (not a handler-private detail) because it is a
+/// catalogued wire shape — engine-rate-sheets.openapi.yaml documents it and the contract-drift
+/// Layer-1 suite binds it, exactly like the 200/201 body.
+/// </summary>
+public sealed record RateSheetConflict(string Error);
+
+/// <summary>
 /// Resolves the pack-declared rate bounds a sheet must honour at deploy (ADR-PC-008,
 /// surface §2.5) from the VERIFIED pack keyed on the sheet's <c>pack_version</c> — the bound
 /// is the signed pack's <c>parameters/constants.yaml</c> <c>max_consumer_rate_bps</c>, never a

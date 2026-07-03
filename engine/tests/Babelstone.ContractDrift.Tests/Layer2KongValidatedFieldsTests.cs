@@ -5,7 +5,7 @@ using YamlDotNet.Serialization;
 namespace Babelstone.ContractDrift.Tests;
 
 /// <summary>
-/// LAYER 2 of the drift guard (bd babelstone-ax0b.4): the public write path's documented
+/// LAYER 2 of the drift guard: the public write path's documented
 /// required set must be CONSISTENT with what the edge actually enforces. Kong CE has no
 /// request-validator plugin, so the constitute route's body validation is a pre-function Lua
 /// chunk in infra/kong/kong.yml (the deposits-constitute route) — this suite extracts the

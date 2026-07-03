@@ -34,8 +34,10 @@ info:
     caller-supplied Idempotency-Key is marked required it is MANDATORY and must be a UUID
     (ADR-PC-029 slot 1/slot 4): the engine dedupes per aggregate on it and replays the
     ORIGINAL outcome (same commit_sequence, no second append) on an at-least-once retry; a
-    missing/malformed key fails loud with 400. Maturity and interest instead derive the
-    command id SERVER-side (LifecycleCommandKey, ADR-PC-036 Decision 1) and are additionally
+    missing/malformed key fails loud with 400. MATURITY (alone) instead derives its command
+    id SERVER-side (LifecycleCommandKey, ADR-PC-036 Decision 1); INTEREST carries no command
+    id at all today — its retry safety rests on the coupon-window legality gate and
+    optimistic concurrency, with a named residual (see that op). Both money-movers are
     gated by step-up SCA: the ScaPreconditionFilter authorises either a fresh gateway-attested
     human SCA proof (X-SCA-Acr/X-SCA-Auth-Time) or the scoped non-interactive service
     principal (X-SCA-Service-Principal — maturity + interest only), short-circuiting 422
@@ -150,7 +152,19 @@ paths:
         Pays the next intermediate coupon of a PERIODIC deposit; the coupon window is derived
         engine-side from the schedule and the coupons already paid. Shares the SAME
         step-up-SCA route group as maturity (human proof or the scoped service principal,
-        ADR-PC-036) — SCA parity by construction.
+        ADR-PC-036) — SCA parity by construction. RETRY SEMANTICS — weaker than every
+        sibling, documented deliberately: this op has NO command-id idempotency today
+        (PayInterestCommand carries no CommandId, so nothing lands in command_dedup; the
+        ADR-PC-036 canonical key covers maturity only, and the ADR itself lists deposit
+        coupons as a FUTURE lifecycle rule). A retry is guarded by (a) the legality gate —
+        not constituted / not PERIODIC / no intermediate coupon left is a 422, never a
+        phantom coupon — and (b) optimistic concurrency, so two CONCURRENT posts race one
+        head and the loser gets 409. RESIDUAL, named: a SEQUENTIAL re-POST after a committed
+        append is a NEW command against the new head — it derives and pays the NEXT unpaid
+        coupon window (legal, so no 422) instead of replaying the previous outcome. Treat a
+        timeout as unknown-outcome and READ the deposit (coupons_paid) before re-posting.
+        Threading a command id through this op is a tracked follow-up and a prerequisite
+        before any coupon rule joins the lifecycle driver.
       parameters:
         - $ref: '#/components/parameters/DepositId'
       requestBody:
@@ -401,8 +415,9 @@ components:
         per aggregate on this key and replays the ORIGINAL outcome (same commit_sequence, no
         second append/settle) on an at-least-once retry; absent/malformed fails loud (400).
         The engine can never mint it — a server-minted id would change on every retry and
-        defeat the dedup. (Maturity/interest do NOT take this header: their command id is
-        server-derived, ADR-PC-036 Decision 1.)
+        defeat the dedup. (Maturity does NOT take this header: its command id is
+        server-derived, ADR-PC-036 Decision 1. Interest takes NO command id at all today —
+        see that op's documented retry residual.)
       schema:
         type: string
         format: uuid
@@ -414,7 +429,16 @@ components:
         structural facts are OPTIONAL — the saga sends only the minimal shape and the engine
         resolves the rest from the product config (ADR-PC-009); a supplied full shape is
         honoured unchanged. Money is integer cents (ADR-PC-010 §P1); funding_account is an
-        opaque token, never an IBAN (ADR-PC-004 §P2).
+        opaque token, never an IBAN (ADR-PC-004 §P2). WHAT `required` MEANS HERE, candidly:
+        it reflects the DTO's serialization convention (non-nullable, no default — the
+        contract's intent), NOT a runtime rejection the engine performs today — System.Text.
+        Json binds a missing member to its default (0 / null) and the handler does not yet
+        400 on an absent product_id/funding_account (an omitted principal constitutes a
+        zero-principal deposit only if the product config admits it; the rate-resolve 422 is
+        the usual backstop). On the PUBLIC path this is moot — the Kong pre-function enforces
+        the edge's required set before anything reaches the saga (the drift suite's Layer 2
+        asserts that set); engine-side runtime enforcement for direct internal callers is a
+        tracked follow-up.
       required: [principal_cents, product_id, funding_account]
       properties:
         principal_cents:

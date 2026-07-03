@@ -102,6 +102,7 @@ spec:
     - ../openapi/internal/engine-deposit-commands.openapi.yaml
     - ../openapi/internal/engine-rate-sheets.openapi.yaml
     - ../openapi/internal/engine-pack-migrations.openapi.yaml
+    - ../openapi/internal/engine-withholding-reads.openapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API
@@ -219,6 +220,23 @@ spec:
   owner: platform-engine
   definition:
     $text: ../openapi/internal/engine-pack-migrations.openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: engine-withholding-reads-api
+  title: "INTERNAL — Engine Withholding Reads"
+  description: >
+    The additive CQRS reads behind the annual IRS-withholding statement (ADR-PC-023 §6): the
+    cross-stream statement population scan and the per-stream DATED withholding ledger (the
+    per-tax-year slicing key). Read-only, eventually consistent, and deliberately not Kong
+    routes — the public engine read surface stays the canonical point read + maturities scan.
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-engine
+  definition:
+    $text: ../openapi/internal/engine-withholding-reads.openapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API

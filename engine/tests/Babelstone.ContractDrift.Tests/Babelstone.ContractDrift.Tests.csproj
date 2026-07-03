@@ -12,7 +12,7 @@
     <!-- The committed *.openapi.yaml specs and infra/kong/kong.yml are read as YAML documents;
          YamlDotNet is the pack loader's already-pinned parser (Directory.Packages.props). The
          suite is HERMETIC — no server, no broker, no containers: it reflects the shipped DTO
-         assemblies and reads committed files only (bd babelstone-ax0b.4 Option-A drift guard). -->
+         assemblies and reads committed files only. -->
     <PackageReference Include="YamlDotNet" />
   </ItemGroup>
 

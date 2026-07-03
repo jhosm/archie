@@ -86,6 +86,16 @@ paths:
       responses:
         '201':
           description: The sheet was deployed — the stored resource, with the database-assigned published_at.
+          headers:
+            Location:
+              description: >
+                /v1/rate-sheets/{rate_sheet_version_id} — the created version's identity as
+                a path. CAVEAT, stated plainly: no GET route is mapped at that path today
+                (the host exposes only this POST), so the header is an identity/audit
+                convention, not yet a dereferenceable link; a read surface is a possible
+                follow-up, and adding one must not change this header's shape.
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -100,10 +110,12 @@ paths:
                 $ref: '#/components/schemas/RateSheetResponse'
         '400':
           description: >
-            Deploy rejection (RFC 9457 validation problem): an Idempotency-Key that differs
-            from rate_sheet_version_id, an unknown/unpinned pack_version (the bound cannot be
-            resolved — ADR-PC-008 §P2 / ADR-PC-007 §P4), or a sheet failing the validator's
-            invariants (band coverage, pack bound, product references).
+            Deploy rejection (RFC 9457 validation problem): a missing/blank required envelope
+            field (the host's envelope guard names every offending field at once — the
+            `required` set below is RUNTIME-ENFORCED, not just declared), an Idempotency-Key
+            that differs from rate_sheet_version_id, an unknown/unpinned pack_version (the
+            bound cannot be resolved — ADR-PC-008 §P2 / ADR-PC-007 §P4), or a sheet failing
+            the validator's invariants (band coverage, pack bound, product references).
         '401':
           description: Missing X-Deploy-Actor — no gateway-authenticated deploying principal.
         '409':

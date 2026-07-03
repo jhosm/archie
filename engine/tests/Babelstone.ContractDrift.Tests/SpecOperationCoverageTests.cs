@@ -3,13 +3,13 @@ using Xunit;
 namespace Babelstone.ContractDrift.Tests;
 
 /// <summary>
-/// The self-policing closure over the drift guard (bd babelstone-ax0b.4 acceptance: one
-/// Layer-1 case per documented surface): EVERY operation in EVERY committed spec must have
-/// its request and 2xx-response schemas covered by a Layer-1 case, unless it is exempt —
-/// <c>x-sse-stream: true</c> (streams frames, no JSON body to bind; the ADR-IC-020 SSE
-/// exemption) or the provisional engine-sor-ops envelope (0.x, no shipped DTO; pinned by
-/// Layer1's provisional guard). Documenting a NEW operation without adding its drift case
-/// fails HERE, so the catalogue can never quietly outgrow the guard.
+/// The self-policing closure over the drift guard (one Layer-1 case per documented
+/// surface): EVERY operation in EVERY committed spec must have its request and 2xx-response
+/// schemas covered by a Layer-1 case, unless it is exempt — <c>x-sse-stream: true</c>
+/// (streams frames, no JSON body to bind; the same waiver the gate script's response-body
+/// check honours) or the provisional engine-sor-ops envelope (0.x, no shipped DTO; pinned
+/// by Layer1's provisional guard). Documenting a NEW operation without adding its drift
+/// case fails HERE, so the catalogue can never quietly outgrow the guard.
 /// </summary>
 public sealed class SpecOperationCoverageTests
 {
@@ -24,6 +24,7 @@ public sealed class SpecOperationCoverageTests
         "contracts/openapi/internal/engine-deposit-commands.openapi.yaml",
         "contracts/openapi/internal/engine-rate-sheets.openapi.yaml",
         "contracts/openapi/internal/engine-pack-migrations.openapi.yaml",
+        "contracts/openapi/internal/engine-withholding-reads.openapi.yaml",
     ];
 
     // The provisional-envelope exemption (see Layer1's Sor_ops guard).
@@ -68,7 +69,7 @@ public sealed class SpecOperationCoverageTests
             {
                 if (operation.IsSseStream)
                 {
-                    continue; // ADR-IC-020 SSE exemption — no JSON body to bind.
+                    continue; // x-sse-stream waiver (openapi-catalog-validate.sh response-body check) — no JSON body to bind.
                 }
 
                 if (string.Equals(specPath, ProvisionalSpec, StringComparison.Ordinal))
