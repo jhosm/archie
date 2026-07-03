@@ -82,6 +82,12 @@
          port — with NO engine-kernel or family reference (ADR-IC-019 §D2/§P2; gated by
          NOTIFICATION_FAMILY_AGNOSTIC). Extraction-ready subtree (ADR-PC-019 §P2). -->
     <Project Path="../notification/src/Babelstone.Notification/Babelstone.Notification.csproj" />
+    <!-- The notification DELIVERY half (bd babelstone-60n8.4/.7): the ADR-IC-004 per-service outbox +
+         ADR-IC-011 HMAC-SHA256-signed webhook transport delivering NotificationDue at-least-once — ONE
+         transport for the SCHEDULED and EVENT_DRIVEN legs, parameterised by trigger_kind. Family-agnostic
+         like the core (gated by NOTIFICATION_FAMILY_AGNOSTIC alongside it); extraction-ready subtree
+         (ADR-PC-019 §P2). -->
+    <Project Path="../notification/src/Babelstone.Notification.Delivery/Babelstone.Notification.Delivery.csproj" />
     <!-- The notification worker HOST (ADR-IC-019 §D4/§A2 composition root, bd babelstone-9u70): the runnable
          Worker exe that holds the explicit list of family notification contributions, composes each, and runs
          the core loop. It is the ONE place that names a family (the §A2 exemption), so it is NOT a §P1 core
@@ -159,6 +165,11 @@
          snake_case wire shape, ADR-PC-027) + the NOTIFICATION_FAMILY_AGNOSTIC fitness gate that
          parses the core .csproj for a families/** or engine-spine reference (ADR-IC-019 §D2/§P2). -->
     <Project Path="../notification/tests/Babelstone.Notification.Tests/Babelstone.Notification.Tests.csproj" />
+    <!-- The DELIVERY-half tests (bd babelstone-60n8.4/.7): Docker-free + receiver-free — the ADR-IC-011
+         §D3 HMAC signature against an independently-computed vector, the §D4 backoff/Retry-After/
+         dead-letter/abandon lifecycle, the outbox's idempotent enqueue on the composite notification_id
+         (ADR-PC-025 slot 4), and the drain pass end-to-end over a fake HttpMessageHandler. -->
+    <Project Path="../notification/tests/Babelstone.Notification.Delivery.Tests/Babelstone.Notification.Delivery.Tests.csproj" />
     <!-- The notification worker HOST tests (bd babelstone-kuw2): the NotificationModuleLoader assembly-scan
          discovery fitness proof — the shipped term-deposit family is discovered with no host-composition edit
          naming it, in a stable order, and a duplicate FamilyName fails loud (ADR-IC-019 §D4; ADR-PC-021 §A3). -->

@@ -1,5 +1,6 @@
 using Babelstone.Cadence;
 using Babelstone.Notification;
+using Babelstone.Notification.Delivery;
 using Babelstone.Notification.Host;
 using Babelstone.Packs;
 using Babelstone.Telemetry;
@@ -132,6 +133,11 @@ builder.Services.AddSingleton<NotificationSchedulePass>();
 // The host shell — the standing BackgroundService the schedule pass runs inside. It OWNS the clock, cadence,
 // retry and backoff (ADR-PC-023 §6); the NotificationDue emission over the outbox is bd babelstone-60n8.3.
 builder.Services.AddHostedService<NotificationWorker>();
+
+// Webhook delivery (SCHEDULED + EVENT_DRIVEN legs) — a config-gated no-op until
+// Notification:Webhook:EndpointUrl is set, so hosts without a configured receiver
+// run exactly as before.
+builder.Services.AddNotificationWebhookDelivery(builder.Configuration);
 
 var app = builder.Build();
 await app.RunAsync();
