@@ -583,18 +583,28 @@ jobs:
         # contribution's MaturityReminderRuleTests run in the engine job via engine/Babelstone.slnx.
         #
         # NB: there is NO notification contract-test project (ADR-IC-013 boundary
-        # contracts) and NO Testcontainers Integration tier yet. Add a contract-test leg
-        # and a `--filter "Category=Integration"` lane here when those land (the
-        # NotificationDue emission child, bd babelstone-60n8.3), mirroring the
-        # orchestrator job's two-tier shape.
+        # contracts) yet. Add a contract-test leg here when it lands (the
+        # NotificationDue emission child, bd babelstone-60n8.3).
         # The DELIVERY-half tests (bd babelstone-60n8.4/.7) run as a second Docker-free lane: the
         # ADR-IC-011 HMAC/backoff/dead-letter transport + the ADR-IC-004 outbox over a fake
-        # HttpMessageHandler — no receiver, no infrastructure. (`dotnet test` takes ONE path, so one
-        # invocation per test project, like the engine/orchestrator jobs.)
+        # HttpMessageHandler — no receiver, no infrastructure. The delivery-half consumer PACT lane
+        # (bd babelstone-2t16.14, ADR-IC-009) also runs in the unit tier: the committed
+        # contracts/pact/ message pacts are regenerated and drift-checked there, Docker-free.
+        # (`dotnet test` takes ONE path, so one invocation per test project, like the
+        # engine/orchestrator jobs.)
         run: |
           dotnet build notification/src/Babelstone.Notification.Host/Babelstone.Notification.Host.csproj --configuration Release --nologo
           dotnet test notification/tests/Babelstone.Notification.Tests/Babelstone.Notification.Tests.csproj --configuration Release --nologo --filter "Category!=Integration"
           dotnet test notification/tests/Babelstone.Notification.Delivery.Tests/Babelstone.Notification.Delivery.Tests.csproj --configuration Release --nologo --filter "Category!=Integration"
+      - name: Integration tests (Testcontainers tier — ADR-IC-009; bd babelstone-60n8.10)
+        # The durable-delivery-store tier: PostgresDeliveryOutboxIntegrationTests against a REAL
+        # PostgreSQL (Testcontainers self-manages the container — random host ports, no `services:`
+        # block; the ubuntu-latest runner ships Docker), mirroring the orchestrator/lifecycle jobs'
+        # two-tier shape. Proves the crash-surviving ADR-IC-011 §P3 store: idempotent enqueue across
+        # store instances, the §D4 lifecycle, and the atomic DEAD_LETTERED flip +
+        # NotificationDeliveryExhausted outbox insert (ADR-IC-004).
+        run: |
+          dotnet test notification/tests/Babelstone.Notification.Delivery.Tests/Babelstone.Notification.Delivery.Tests.csproj --configuration Release --nologo --filter "Category=Integration"
 
   lifecycle:
     needs: changes

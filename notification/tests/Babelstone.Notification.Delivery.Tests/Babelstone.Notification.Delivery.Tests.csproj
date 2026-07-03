@@ -15,6 +15,15 @@
     <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
          out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
     <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+    <!-- The durable-store Integration tier (bd babelstone-60n8.10): a real PostgreSQL via
+         Testcontainers (the same tier shape as the orchestrator's and the lifecycle driver's), plus
+         Npgsql for direct row assertions. -->
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <!-- Decode the relay's Confluent wire-format value back through the governed schema (Apache.Avro)
+         and assert the CloudEvents headers (Confluent.Kafka Headers type) — no broker, no Docker. -->
+    <PackageReference Include="Apache.Avro" />
+    <PackageReference Include="Confluent.Kafka" />
   </ItemGroup>
 
   <ItemGroup>
@@ -25,5 +34,8 @@
          permanent-4xx abandonment, §D4 exhaustion dead-lettering, and the EVENT_DRIVEN leg's render-time
          PII resolution that never persists PII. -->
     <ProjectReference Include="../../src/Babelstone.Notification.Delivery/Babelstone.Notification.Delivery.csproj" />
+    <!-- The shared container-startup throttle (a TEST-only cross-subtree reference, the same one the
+         lifecycle driver's tests take — the extraction-ready posture constrains src/, not tests/). -->
+    <ProjectReference Include="../../../engine/tests/Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
   </ItemGroup>
 </Project>

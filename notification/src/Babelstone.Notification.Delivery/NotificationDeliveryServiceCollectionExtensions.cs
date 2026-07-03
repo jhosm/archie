@@ -87,8 +87,21 @@ public static class NotificationDeliveryServiceCollectionExtensions
         // self-sufficient for tests and future hosts without double-registering).
         services.TryAddSingleton(TimeProvider.System);
 
-        // The per-service outbox (ADR-IC-004) — in-memory v1, durable store behind the port later.
-        services.TryAddSingleton<IDeliveryOutbox, InMemoryDeliveryOutbox>();
+        // The per-service outbox (ADR-IC-004): the durable PostgreSQL store when a connection string
+        // is configured (bd babelstone-60n8.10 — production posture, ADR-IC-011 §P3), else the
+        // in-memory v1 (dev/tests: a host with no delivery database keeps its pre-durability shape).
+        var deliveryConnectionString =
+            configuration["Notification:Delivery:ConnectionString"]
+            ?? configuration.GetConnectionString("NotificationDelivery")
+            ?? Environment.GetEnvironmentVariable("BABELSTONE_NOTIFICATION_DELIVERY_CONNECTION");
+        if (!string.IsNullOrWhiteSpace(deliveryConnectionString))
+        {
+            AddDurableDeliveryStore(services, configuration, deliveryConnectionString);
+        }
+        else
+        {
+            services.TryAddSingleton<IDeliveryOutbox, InMemoryDeliveryOutbox>();
+        }
 
         // The SCHEDULED leg (bd babelstone-60n8.4): the core's NotificationSchedulePass discovers this
         // sink through its optional INotificationDeliverySink parameter and hands every newly-raised
@@ -130,6 +143,69 @@ public static class NotificationDeliveryServiceCollectionExtensions
         services.AddHostedService<WebhookDeliveryWorker>();
 
         return services;
+    }
+
+    /// <summary>
+    /// The durable-delivery composition (bd babelstone-60n8.10): the PostgreSQL
+    /// <see cref="IDeliveryOutbox"/> + its boot-time migration service, and — when the backbone is
+    /// configured (<c>Kafka:BootstrapServers</c>, the same key the engine host reads) — the §D4
+    /// exhaustion relay that publishes <c>NotificationDeliveryExhausted</c> (ADR-IC-011 §P3 step 7).
+    /// With no bootstrap servers configured the store still runs durable and dead-letters still write
+    /// exhausted-outbox rows; the announcement drains once a broker is configured — rows are never
+    /// lost, only waiting (ADR-IC-004 backpressure posture).
+    /// </summary>
+    private static void AddDurableDeliveryStore(
+        IServiceCollection services, IConfiguration configuration, string connectionString)
+    {
+        // The two-connection split (ADR-PC-001 §P3, the lifecycle/orchestrator shape): DDL runs as the
+        // migration role; the runtime role holds only the enqueue/claim/flip envelope. In dev the
+        // migration string falls back to the runtime one.
+        var migrationConnectionString =
+            configuration["Notification:Delivery:MigrationConnectionString"]
+            ?? configuration.GetConnectionString("NotificationDeliveryMigration")
+            ?? connectionString;
+
+        var store = new PostgresDeliveryOutbox(connectionString);
+        services.AddSingleton<IDeliveryOutbox>(store);
+        services.AddSingleton<IExhaustedDeliveryOutbox>(store);
+
+        // Registered BEFORE the delivery/relay workers below: hosted services start in registration
+        // order and this one's StartAsync AWAITS the runner, so those workers only start against a
+        // migrated store. (The scheduler's NotificationWorker is typically registered by the host
+        // before this call — its first pass racing a first-boot migration is a transient failure the
+        // cadence loop's backoff absorbs.)
+        services.AddHostedService(provider => new DeliveryStoreMigrationService(
+            migrationConnectionString,
+            provider.GetService<Microsoft.Extensions.Logging.ILogger<DeliveryStoreMigrationService>>()));
+
+        var bootstrapServers = configuration["Kafka:BootstrapServers"];
+        if (string.IsNullOrWhiteSpace(bootstrapServers))
+        {
+            return; // durable store without a backbone — exhausted rows accumulate PENDING (see summary)
+        }
+
+        // The same SR keys the engine host's bus codec reads (Bus:SchemaRegistryUrl defaulting to the
+        // infra/compose.yaml external listener; Bus:RegisterSchemas — register-if-absent — is the
+        // ADR-IC-002 walking-skeleton convenience, flipped off where CI owns registration).
+        var schemaRegistryUrl = configuration["Bus:SchemaRegistryUrl"] ?? "http://localhost:18081";
+        var registerSchemas = configuration.GetValue("Bus:RegisterSchemas", true);
+
+        services.TryAddSingleton<IExhaustedEventPublisher>(_ =>
+            new KafkaExhaustedEventPublisher(bootstrapServers, schemaRegistryUrl, registerSchemas));
+
+        var relayCadence = new ExhaustedRelayCadenceOptions();
+        var relayPollSeconds = configuration.GetValue<double?>($"{ConfigSection}:ExhaustedRelayPollIntervalSeconds");
+        if (relayPollSeconds is > 0)
+        {
+            relayCadence = new ExhaustedRelayCadenceOptions
+            {
+                PollInterval = TimeSpan.FromSeconds(relayPollSeconds.Value),
+            };
+        }
+
+        services.AddSingleton(relayCadence);
+        services.AddSingleton<ExhaustedEventRelayPass>();
+        services.AddHostedService<ExhaustedEventRelayWorker>();
     }
 
     /// <summary>

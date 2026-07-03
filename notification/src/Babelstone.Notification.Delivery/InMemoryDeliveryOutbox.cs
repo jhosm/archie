@@ -1,11 +1,13 @@
 namespace Babelstone.Notification.Delivery;
 
 /// <summary>
-/// The v1 in-memory <see cref="IDeliveryOutbox"/> — the same in-process posture as the scheduler's
+/// The in-memory <see cref="IDeliveryOutbox"/> — the same in-process posture as the scheduler's
 /// <c>InMemoryDedupeLedger</c>: it proves the at-least-once + idempotent-enqueue invariants within one
-/// process lifetime, and a durable, crash-surviving store (the ADR-IC-011 §P3 PostgreSQL delivery table)
-/// slots in behind the port as the named follow-up. Thread-safe (one dictionary behind a lock — a single
-/// drain worker runs at a time, but enqueue arrives from the scheduler pass and the bus drain).
+/// process lifetime. Since bd babelstone-60n8.10 the production store is
+/// <see cref="PostgresDeliveryOutbox"/> (the durable ADR-IC-011 §P3 PostgreSQL delivery table, selected
+/// by configuration); this type remains the no-database dev/test double — a host without a delivery
+/// connection string keeps its pre-durability shape. Thread-safe (one dictionary behind a lock — a
+/// single drain worker runs at a time, but enqueue arrives from the scheduler pass and the bus drain).
 /// </summary>
 public sealed class InMemoryDeliveryOutbox : IDeliveryOutbox
 {
