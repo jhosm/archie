@@ -51,10 +51,15 @@
          it; the core never references back (ADR-IC-019 §P2). -->
     <ProjectReference Include="../Babelstone.Notification/Babelstone.Notification.csproj" />
 
-    <!-- The shared generic FamilyModuleScanner (ADR-PC-040 §D4) this host's module loader delegates
-         its discovery mechanics to. Already reachable transitively (the core references
-         Babelstone.Cadence); named explicitly because host code uses its types directly. -->
+    <!-- The shared CADENCE poll-loop machinery (ADR-IC-019 / ADR-PC-036 §Decision 2). Already reachable
+         transitively (the core references Babelstone.Cadence); named explicitly because host code uses
+         its types directly (CadenceSchedulerOptions, IDedupeLedger/InMemoryDedupeLedger in Program.cs). -->
     <ProjectReference Include="../../../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
+
+    <!-- The shared generic FamilyModuleScanner (ADR-PC-040 §D4) this host's module loader delegates
+         its discovery mechanics to — its own tiny assembly (composition/), separate from the Cadence
+         poll-loop library above. -->
+    <ProjectReference Include="../../../composition/src/Babelstone.Composition/Babelstone.Composition.csproj" />
 
     <!-- The family NOTIFICATION contributions the host composes — the §A2 exemption: the host MAY name a
          family; the core MAY NOT (ADR-IC-019 §D4). Adding a family is a new line here + its module, zero

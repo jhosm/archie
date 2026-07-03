@@ -81,7 +81,7 @@ public sealed class SagaModuleLoaderTests
         // the load-time collision the loader must reject before composing (two modules would
         // double-register a saga's machine/bridge/router in the saga_type registries). The generic
         // failure mechanics (default-ctor diagnostic, custom-activator support) are pinned at the
-        // scanner level by FamilyModuleScannerTests (Babelstone.Cadence.Tests); this asserts the saga
+        // scanner level by FamilyModuleScannerTests (Babelstone.Composition.Tests); this asserts the saga
         // estate's own vocabulary surfaces.
         var ex = Assert.Throws<InvalidOperationException>(
             () => new SagaModuleLoader().LoadAll([typeof(SagaModuleLoaderTests).Assembly], Context));
