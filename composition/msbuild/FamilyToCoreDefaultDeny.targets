@@ -10,8 +10,8 @@
      bad ProjectReference is added — instead of compiling clean locally and failing later in CI
      (the ADR-PC-040 Context's PR #404 arrow-reversal incident, which no build ever refused).
 
-     Classification mirrors the XC-1 gate (ADR-PC-040 §D2), read from the SAME MSBuild marker the
-     ADR fixed precisely so this layer could be added later:
+     Classification follows the XC-1 gate's rules (ADR-PC-040), read from the same MSBuild
+     marker; if the two layers ever disagree, the gate wins:
        - <BabelstoneRole> CompositionRoot or TestRig  -> exempt (the explicit opt-outs);
        - <IsTestProject>true or a /tests/ path segment -> exempt (tests exercise families by design);
        - a project under families/**                   -> exempt (the arrow's tail, never its head);
@@ -21,7 +21,7 @@
 
      WIRING: imported once, from the repo-root Directory.Build.targets, which MSBuild hands to
      every SDK project in the repository automatically (nearest-Directory.Build.targets-up lookup;
-     no subtree carries its own). That keeps the ADR-PC-019 §P2 extraction-ready posture intact —
+     no subtree carries its own). That keeps the ADR-PC-019 extraction-ready posture intact —
      no subtree csproj or build file names this file, so an extracted subtree builds unchanged,
      it merely loses the local guard (CI-equivalent gates would move with the extraction).
      FamilyToCoreBuildGuardTests (in Babelstone.Composition.Tests, beside the gates this layers
@@ -29,7 +29,7 @@
 
      $(BabelstoneFamiliesDirectory) is overridable ONLY as a test seam: the fixture tests point it
      at a scratch families/ tree so a deliberately violating fixture project never has to
-     reference (or restore) a real family. Real builds never set it. -->
+     reference (or restore) a real family. It must not be set outside tests. -->
 <Project>
 
   <PropertyGroup>
@@ -43,17 +43,17 @@
     <PropertyGroup>
       <_BabelstoneSep>$([System.IO.Path]::DirectorySeparatorChar)</_BabelstoneSep>
       <_BabelstoneProjectPath>$([MSBuild]::NormalizePath('$(MSBuildProjectFullPath)'))</_BabelstoneProjectPath>
-      <!-- The same two path-shape exemptions the XC-1 gate applies (ADR-PC-040 §D2): a family
-           contribution IS the family, and a tests/ path segment marks test-owned projects
-           (including committed fixtures that set no IsTestProject property). -->
+      <!-- Path-shape exemptions (ADR-PC-040): a family contribution IS the family, and a
+           tests/ path segment marks test-owned projects (including committed fixtures that
+           set no IsTestProject property). -->
       <_BabelstoneIsFamilyProject>$(_BabelstoneProjectPath.StartsWith('$(BabelstoneFamiliesDirectory)'))</_BabelstoneIsFamilyProject>
       <_BabelstoneIsUnderTests>$(_BabelstoneProjectPath.Contains('$(_BabelstoneSep)tests$(_BabelstoneSep)'))</_BabelstoneIsUnderTests>
     </PropertyGroup>
 
     <ItemGroup Condition="'$(_BabelstoneIsFamilyProject)' != 'true' and '$(_BabelstoneIsUnderTests)' != 'true'">
-      <!-- FullPath resolves each (relative) Include against THIS project's directory — the same
-           resolve-then-prefix-match technique the CI gate uses, so both layers agree on what
-           "lands in families/**" means regardless of the ../ shape used to reach it. -->
+      <!-- FullPath resolves each (relative) Include against THIS project's directory before the
+           prefix match, so a reference "lands in families/**" regardless of the ../ shape used
+           to reach it. -->
       <_BabelstoneFamilyReference Include="@(ProjectReference)"
         Condition="$([System.String]::Copy('%(ProjectReference.FullPath)').StartsWith('$(BabelstoneFamiliesDirectory)'))" />
     </ItemGroup>

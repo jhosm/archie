@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# spec-coverage-check.sh — the authoritative per-push half of the ADR-PC-020 §P6
+# spec-coverage-check.sh — the authoritative per-push half of the ADR-PC-020
 # coverage checker: ADR <-> catalogue <-> code/test traceability.
 #
-# ADR-PC-020 §P6 asserts:
+# ADR-PC-020 asserts:
 #   - every Verifiable commitment resolves to >=1 test that exists (and runs in CI),
 #     and (where applicable) >=1 code anchor;
 #   - every ADR anchor in code points to a LIVE (non-superseded) ADR.
@@ -32,8 +32,8 @@ CATALOGUE="$PC_ADRS/commitment-catalogue.md"
 # Derived from the repo's tracked top-level directories minus an explicit exclusion
 # set, rather than hand-maintained: a new top-level estate dir (a future family or
 # boundary service) is auto-in-scope, so no Live commitment fails coverage merely
-# because its dir was forgotten (bd babelstone-64uw.4 — lifecycle-driver + cadence
-# previously had to be hand-added in PR #404 for a commitment to resolve).
+# because its dir was forgotten (lifecycle-driver + cadence previously had to be
+# hand-added in PR #404 for a commitment to resolve).
 #
 # Excluded (everything that is NOT a compiled-source subtree carrying ADR anchors):
 #   - dot-dirs (.github, .beads, .claude, .config, .githooks, …) — tooling/CI/config;
@@ -111,10 +111,10 @@ cut -f1 "$rows" | sort -u > "$tmp/catalogue_tids"
 # --- Helper: is a scripts/*.sh gate actually WIRED INTO CI? True iff ci.yml names the
 #     script's path directly (e.g. `run: ./scripts/grafana-rbac-check.sh`), or a Makefile
 #     target whose recipe invokes the script is itself run by ci.yml (`make <target>`).
-#     This is the mechanical half of ADR-PC-020 §P6's "a test that exists AND RUNS IN CI"
-#     for script-realised commitments (bd babelstone-2t16.28): without it, an orphaned
-#     scripts/*.sh that merely NAMES a Test ID would resolve a Live row while no CI step
-#     ever executes it. ---
+#     This is the mechanical half of ADR-PC-020's "a test that exists AND RUNS IN CI"
+#     for script-realised commitments: without it, an orphaned scripts/*.sh that merely
+#     NAMES a Test ID would resolve a Live row while no CI step ever executes it
+#     (spec-coverage-check.test.sh, Case B, guards exactly that regression). ---
 CI_WORKFLOW=".github/workflows/ci.yml"
 ci_invokes_script() { # <scripts/foo.sh> -> rc 0 iff CI executes it
   sh_path="$1"
@@ -193,11 +193,11 @@ while IFS=$'\t' read -r tid st gate link; do
   # A commitment may instead be realised by a CI shell-script gate under scripts/ — e.g.
   # kong-config-check.sh (ADR-IC-006) or grafana-rbac-check.sh (the observability-plane
   # RBAC enforcement, OBS_PLANE_RBAC / catalogue SEC-2). These run in ci.yml's path-scoped
-  # jobs, so they ARE "a test that exists and runs in CI" (ADR-PC-020 §P6) for a commitment
+  # jobs, so they ARE "a test that exists and runs in CI" (ADR-PC-020) for a commitment
   # whose realisation is ops/infra config with NO compiled-code home (the engine/contract
   # subtrees carry no Grafana/Kong source).
   #
-  # BOTH halves of §P6 are asserted mechanically (bd babelstone-2t16.28): the script must
+  # BOTH halves of the principle are asserted mechanically: the script must
   # name the Test ID ("a test that exists") AND be invoked by ci.yml — directly, or via a
   # make target ci.yml runs ("and runs in CI", ci_invokes_script above). A scripts/*.sh
   # that names the Test ID but that no CI step executes is an ORPHANED gate: it does NOT
@@ -235,7 +235,7 @@ for d in $CODE_DIRS; do
     # embeds non-text bytes, so grep's binary heuristic (notably BSD/macOS grep) can emit a
     # 'Binary file <path> matches' line in place of the -o matches — the loop then ingests it
     # as a bogus anchor that resolves to no ADR. -a forces text so the file's real `// ADR-NNN`
-    # anchors are extracted and checked instead (bd babelstone-2t16.23).
+    # anchors are extracted and checked instead.
   done < <(grep -rahoE "${CODE_INCLUDES[@]}" 'ADR-(PC|IC)-[0-9]{3}' "$d" 2>/dev/null | sort -u)
 done
 [ "$anchors" -gt 0 ] || note "no code anchors yet — no engine source committed."

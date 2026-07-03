@@ -32,8 +32,8 @@ jobs:
       - name: Run spec-coverage-check.sh unit tests (hermetic fixture repos)
         # Self-test first (the adr-governance.yml pattern): proves the checker's
         # scripts/*.sh Live-resolution branch demands actual ci.yml wiring — an
-        # orphaned gate naming a Test ID must NOT resolve a Live row (ADR-PC-020
-        # §P6 "and runs in CI", bd babelstone-2t16.28) — before trusting its verdict.
+        # orphaned gate naming a Test ID must NOT resolve a Live row (ADR-PC-020's
+        # "and runs in CI") — before trusting its verdict.
         run: bash .github/scripts/spec-coverage-check.test.sh
       - name: ADR <-> catalogue <-> code/test coverage (ADR-PC-020 §P6)
         run: bash .github/scripts/spec-coverage-check.sh

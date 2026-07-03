@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Unit tests for spec-coverage-check.sh — focused on the scripts/*.sh Live-resolution
-# branch and its CI-wiring tightening (ADR-PC-020 §P6; bd babelstone-2t16.28).
+# branch and its CI-wiring tightening (ADR-PC-020).
 #
 # REGRESSION GUARD (the reason this file exists): a Live catalogue row with no
 # compiled-code home may resolve against a CI shell-script gate under scripts/. The
 # original branch accepted ANY scripts/*.sh that merely NAMED the Test ID — binding
-# §P6's "and runs in CI" by convention, not mechanically. An orphaned script no ci.yml
+# the ADR's "and runs in CI" by convention, not mechanically. An orphaned script no ci.yml
 # step ever executes could therefore satisfy a Live row. The tightened branch accepts a
 # script only when .github/workflows/ci.yml invokes it — directly, or via a Makefile
 # target ci.yml runs. Case B below fails against the pre-fix behaviour and passes
@@ -14,7 +14,7 @@
 # Hermetic: each case builds a throwaway git repo (the checker anchors on
 # `git rev-parse --show-toplevel` and reads `git ls-tree HEAD`), so no fixtures on disk
 # and no dependence on the real catalogue. Pure bash + git + awk/grep (all on the
-# ubuntu-latest runner; bash-3.2-safe for local macOS).
+# ubuntu-latest runner).
 #
 # Run: bash .github/scripts/spec-coverage-check.test.sh   (exit 0 = all green)
 set -uo pipefail

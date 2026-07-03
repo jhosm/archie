@@ -6,21 +6,17 @@ using Xunit;
 namespace Babelstone.Composition.Tests;
 
 /// <summary>
-/// The BUILD-TIME layer of <c>FAMILY_TO_CORE_DEFAULT_DENY</c> (ADR-PC-040 candidate C — reserved
-/// by the ADR as a hardening step layerable onto the <c>&lt;BabelstoneRole&gt;</c> marker):
+/// The BUILD-TIME layer of <c>FAMILY_TO_CORE_DEFAULT_DENY</c> (ADR-PC-040 candidate C):
 /// <c>composition/msbuild/FamilyToCoreDefaultDeny.targets</c>, imported repo-wide by the root
 /// <c>Directory.Build.targets</c>, fails a project's own <c>dotnet build</c> when a project with
 /// no (or a <c>Core</c>) role references <c>families/**</c>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>What this adds and what it does not.</b> The authoritative enforcement remains the sibling
-/// CI gates (<see cref="FamilyAgnosticDefaultDenyTests"/> / catalogue row XC-1 and
-/// <see cref="CompositionRootFamilyAgnosticTests"/> / row XC-2). The build guard adds FAILURE
-/// LOCALITY only: the PR #404 class of drift (a core born referencing families) now refuses to
-/// compile on the author's machine instead of compiling clean and failing later in CI. If the
-/// guard and the gate ever disagreed, the gate wins — which is why both read the same marker and
-/// use the same resolve-then-prefix-match reference classification.
+/// <b>What this adds and what it does not.</b> The guard adds failure locality on top of the
+/// authoritative sibling CI gates (<see cref="FamilyAgnosticDefaultDenyTests"/> / catalogue row
+/// XC-1 and <see cref="CompositionRootFamilyAgnosticTests"/> / row XC-2). If the layers ever
+/// disagree, the gate wins — see the guard's own header for the full story.
 /// </para>
 /// <para>
 /// <b>How it is proven.</b> Two ways, mirroring how the sibling gates prove theirs (parse the

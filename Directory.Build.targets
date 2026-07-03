@@ -4,11 +4,10 @@
      directory; no subtree in this repository carries one, so this root file reaches every .NET
      project — engine, families, boundary services, shared libraries, tests — with ZERO per-subtree
      build plumbing. That is what lets the ADR-PC-040 candidate-C build-time guard below apply
-     repo-wide while keeping the ADR-PC-019 §P2 extraction-ready posture: no subtree file names it,
+     repo-wide while keeping the ADR-PC-019 extraction-ready posture: no subtree file names it,
      and an extracted subtree simply builds without it.
 
-     Keep this file a shim. Shared *settings* stay where they are today (engine/Directory.Build.props
-     and the boundary subtrees' own csproj copies — the deliberate §P2 arrangement); anything added
+     Keep this file a shim — shared settings stay in the subtrees (ADR-PC-019); anything added
      here silently becomes a build input of every project in the repo.
 
      CAUTION — shadowing: if a subtree ever adds its own Directory.Build.targets, MSBuild stops
