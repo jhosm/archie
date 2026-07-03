@@ -6,15 +6,18 @@ using System.Text.Json.Serialization;
 namespace Babelstone.ContractDrift.Tests;
 
 /// <summary>
-/// The wire-level shape of a C# DTO, derived by reflection HONOURING System.Text.Json
-/// semantics exactly as the hosts configure them (bd babelstone-ax0b.4 Layer 1):
+/// The wire-level shape of a C# DTO, derived by reflection honouring System.Text.Json
+/// semantics:
 /// <list type="bullet">
-/// <item>property NAME = <c>[JsonPropertyName]</c> when present, else the hosts'
-/// <c>JsonNamingPolicy.SnakeCaseLower</c> (Babelstone.Engine.Api / RateSheets.Api /
-/// orchestrator EdgeServices all pin that policy);</item>
+/// <item>property NAME = <c>[JsonPropertyName]</c> when present, else
+/// <c>JsonNamingPolicy.SnakeCaseLower</c>. ASSUMED, not observed: this mirrors BY HAND the
+/// naming policy the hosts pin in their own setup (Babelstone.Engine.Api / RateSheets.Api
+/// Program, the orchestrator's edge JSON options) — nothing here reads a host's
+/// <c>JsonSerializerOptions</c> at test time, so a host that ever changes its policy must
+/// change this mirror in the same commit;</item>
 /// <item>NULLABILITY via <see cref="NullabilityInfoContext"/> (NRT annotations for reference
 /// types, <c>Nullable&lt;T&gt;</c> for value types);</item>
-/// <item>REQUIREDNESS is the repo's boundary-contract convention (ADR-PC-021 §D5), not STJ
+/// <item>REQUIREDNESS is THIS SUITE'S OWN convention — no ADR defines one, and it is not STJ
 /// strictness (STJ never throws on a missing positional record parameter): a RESPONSE
 /// property is required iff non-nullable (the serializer always writes it); a REQUEST
 /// property is required iff non-nullable AND without a primary-constructor default (a

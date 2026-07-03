@@ -8,16 +8,16 @@ using Xunit;
 namespace Babelstone.ContractDrift.Tests;
 
 /// <summary>
-/// LAYER 1 of the Option-A spec&lt;-&gt;code drift guard (bd babelstone-ax0b.4): for every
-/// documented surface, the committed OpenAPI schema and the shipped C# DTO must agree on the
-/// wire — same property-NAME set (System.Text.Json semantics: [JsonPropertyName] else the
-/// hosts' SnakeCaseLower policy), same scalar types, and the same required set (see
-/// <see cref="WireShape"/> for the requiredness convention). We chose hand-authored specs
-/// over generated ones (Option A), so THIS suite is what stops a spec lying about the code:
-/// mutating a DTO — add / rename / re-require a field — without updating its spec turns the
-/// build RED and names the exact mismatch. It is NOT Pact: the Pact-style CDC
-/// (EngineCommandContract) checks consumer&lt;-&gt;provider compatibility; this checks
-/// spec&lt;-&gt;code honesty — complementary axes, both kept (Layer 3 cross-checks them).
+/// LAYER 1 of the spec&lt;-&gt;code drift guard: for every documented surface, the committed
+/// OpenAPI schema and the shipped C# DTO must agree on the wire — same property-NAME set
+/// (System.Text.Json semantics: [JsonPropertyName] else SnakeCaseLower), same scalar types,
+/// and the same required set (see <see cref="WireShape"/> for the requiredness convention
+/// and its assumed-not-observed naming-policy disclosure). The specs are hand-authored, so
+/// this suite is what stops one lying about the code: mutating a DTO — add / rename /
+/// re-require a field — without updating its spec turns the build RED and names the exact
+/// mismatch. It is NOT Pact: the Pact-style CDC (EngineCommandContract) checks
+/// consumer&lt;-&gt;provider compatibility; this checks spec&lt;-&gt;code honesty —
+/// complementary axes, both kept (Layer 3 cross-checks them).
 /// </summary>
 public sealed class Layer1SpecDtoStructuralTests
 {
@@ -32,8 +32,10 @@ public sealed class Layer1SpecDtoStructuralTests
 
         /// <summary>
         /// The public-edge request: property names/types are asserted here, but the REQUIRED
-        /// set's source of truth is the Kong pre-function, not DTO nullability (the
-        /// orchestrator binds nullable and validates by hand) — Layer 2 owns that assertion.
+        /// set's source of truth is the Kong pre-function, and DTO nullability cannot stand
+        /// in for it — the DTO mixes nullable strings with a non-nullable <c>amount</c>, so
+        /// the reflection convention would derive a required set that matches neither the
+        /// edge's enforcement nor the spec. Layer 2 owns the required-set assertion.
         /// </summary>
         EdgeRequest,
     }
@@ -49,7 +51,7 @@ public sealed class Layer1SpecDtoStructuralTests
         { "contracts/openapi/specs/orchestrator-edge.openapi.yaml", "ConstituteAccepted", typeof(ConstituteResponse), Mode.Response },
         { "contracts/openapi/specs/orchestrator-process-status.openapi.yaml", "ProcessStatus", typeof(ProcessStatusResponse), Mode.Response },
 
-        // ── internal/ (never-public catalogue, bd ax0b.5) ─────────────────────────────────
+        // ── internal/ (the never-public catalogue) ────────────────────────────────────────
         { "contracts/openapi/internal/engine-deposit-commands.openapi.yaml", "ConstituteDepositRequest", typeof(ConstituteDepositRequest), Mode.Request },
         { "contracts/openapi/internal/engine-deposit-commands.openapi.yaml", "ConstituteDepositResponse", typeof(ConstituteDepositResponse), Mode.Response },
         { "contracts/openapi/internal/engine-deposit-commands.openapi.yaml", "MatureDepositRequest", typeof(MatureDepositRequest), Mode.Request },
@@ -68,10 +70,15 @@ public sealed class Layer1SpecDtoStructuralTests
         { "contracts/openapi/internal/engine-deposit-commands.openapi.yaml", "Deposit", typeof(DepositResponse), Mode.Response },
         { "contracts/openapi/internal/engine-rate-sheets.openapi.yaml", "RateSheetDeployRequest", typeof(RateSheetDeployRequest), Mode.Request },
         { "contracts/openapi/internal/engine-rate-sheets.openapi.yaml", "RateSheetResponse", typeof(RateSheetResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-rate-sheets.openapi.yaml", "RateSheetConflict", typeof(RateSheetConflict), Mode.Response },
         { "contracts/openapi/internal/engine-rate-sheets.openapi.yaml", "RoleRates", typeof(RoleRates), Mode.Response },
         { "contracts/openapi/internal/engine-pack-migrations.openapi.yaml", "PackMigrationRequest", typeof(PackMigrationRequest), Mode.Request },
         { "contracts/openapi/internal/engine-pack-migrations.openapi.yaml", "InstanceFilter", typeof(InstanceFilter), Mode.Request },
         { "contracts/openapi/internal/engine-pack-migrations.openapi.yaml", "PackMigrationResponse", typeof(PackMigrationResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-withholding-reads.openapi.yaml", "DepositWithholdingStatements", typeof(DepositWithholdingStatementsResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-withholding-reads.openapi.yaml", "WithholdingLedger", typeof(DepositWithholdingLedgerResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-withholding-reads.openapi.yaml", "WithholdingLedgerEntry", typeof(WithholdingLedgerEntryResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-withholding-reads.openapi.yaml", "Deposit", typeof(DepositResponse), Mode.Response },
 
         // NOT here, deliberately:
         //  * RateBand — its wire shape is OWNED by RateBandJsonConverter (the [lower, upper]

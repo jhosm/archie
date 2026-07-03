@@ -3,8 +3,8 @@ using YamlDotNet.Serialization;
 namespace Babelstone.ContractDrift.Tests;
 
 /// <summary>
-/// A minimal, purpose-built reader over a committed <c>*.openapi.yaml</c> file (bd
-/// babelstone-ax0b.4). Deliberately NOT a full OpenAPI object model: the drift suite needs
+/// A minimal, purpose-built reader over a committed <c>*.openapi.yaml</c> file.
+/// Deliberately NOT a full OpenAPI object model: the drift suite needs
 /// exactly three things — the named component schemas (property names / scalar types /
 /// required sets), the operations (method, path, request/response schema refs, the
 /// <c>x-sse-stream</c> exemption marker, and header parameters), and the <c>info.version</c>.

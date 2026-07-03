@@ -21,7 +21,7 @@
 #       approval is SINGLE-USE and self-cleaning: if a CHANGED spec carries the flag but oasdiff
 #       finds NO breaking change, the flag is STALE and the build FAILS — the author must drop it in
 #       the same change (an approval must not linger to silently pre-approve the NEXT breaking
-#       change; bd ax0b.3). Scoped to changed specs, so an unrelated PR is never blocked by another
+#       change). Scoped to changed specs, so an unrelated PR is never blocked by another
 #       spec's still-legitimate pending flag.
 #
 #   (3) KONG-ROUTE <-> SPEC RECONCILIATION (the no-drift anchor). Reads infra/kong/kong.yml (never
@@ -59,9 +59,9 @@
 #   SSE EXEMPTION: an operation marked x-sse-stream: true streams text/event-stream, not a JSON body,
 #   so the response-body check is WAIVED for it (the REST mirror of the AsyncAPI x-compacted case).
 #
-#   INTERNAL SPECS DIR (contracts/openapi/internal/; bd ax0b.5): the catalogue's second, physically
+#   INTERNAL SPECS DIR (contracts/openapi/internal/): the catalogue's second, physically
 #   separated home for surfaces that are NEVER public by design — the engine command/money-mover
-#   ingress (ADR-PC-029; mTLS-only Boundary 2, ADR-IC-006 §P5) and the operator/admin-ops planes
+#   ingress (ADR-PC-029; mTLS-only Boundary 2, ADR-IC-006) and the operator/admin-ops planes
 #   (rate-sheet deploy ADR-PC-008, pack migrations ADR-PC-009). These specs get the SAME Spectral
 #   governance lint, the SAME oasdiff breaking-change discipline, and the SAME structural checks as
 #   the public set, but a DIFFERENT reconcile:
@@ -164,7 +164,7 @@ if [ "${1:-}" = "--self-test" ]; then
 		# Build a throwaway spec set = the good baseline + this case's overlay (files that OVERWRITE
 		# same-named baseline files) minus any basenames listed in the case's `.remove` file. The
 		# INTERNAL dir gets the same treatment: baseline internal specs + any overlay under the
-		# case's internal/ subdir (bd ax0b.5) — so an internal-leg fixture perturbs only the
+		# case's internal/ subdir — so an internal-leg fixture perturbs only the
 		# internal set while the public baseline stays green, and vice versa.
 		tmp="$(mktemp -d)"
 		tmp_internal="$(mktemp -d)"
@@ -212,7 +212,7 @@ files=()
 while IFS= read -r -d '' f; do files+=("$f"); done \
 	< <(find "$SPECS_DIR" -name '*.openapi.yaml' -print0 | sort -z)
 
-# The INTERNAL catalogue (contracts/openapi/internal/, bd ax0b.5): never-public-by-design
+# The INTERNAL catalogue (contracts/openapi/internal/): never-public-by-design
 # surfaces. Same lint + breaking-change discipline as the public set; different reconcile
 # (the never-public leg below). An absent dir is fine — the internal catalogue is optional.
 ifiles=()
@@ -276,15 +276,12 @@ else
 		rm -rf "$diffdir"
 		approved="$(y2j "$f" | jq -r '.info["x-breaking-change-approved"] // empty')"
 		if [ "$rc" -eq 0 ]; then
-			# No breaking change. A lingering info.x-breaking-change-approved:true is now STALE: it has
-			# no breaking change to approve and would silently pre-approve the NEXT one (the risk the
-			# "REMOVE this flag on next touch" note warns of). If THIS change touched the file, force the
-			# flag's removal here — self-cleaning, so the approval cannot outlive the one change it was
-			# granted for (ADR-IC-020 Decision §3; bd babelstone-ax0b.3). Scoped to a CHANGED file (git
-			# diff vs baseline) so an unrelated PR that leaves the spec untouched is never blocked by
-			# another spec's still-pending, still-legitimate flag.
+			# No breaking change, so a lingering approval flag is STALE — force its removal in the
+			# same change, or it silently pre-approves the NEXT break (ADR-IC-020). Scoped to a
+			# CHANGED file (git diff vs baseline) so an unrelated PR that leaves the spec untouched
+			# is never blocked by another spec's still-pending, still-legitimate flag.
 			if [ "$approved" = "true" ] && ! git diff --quiet "$BASELINE_REF" -- "$f" 2>/dev/null; then
-				err "$f: carries info.x-breaking-change-approved:true but has NO breaking change vs $BASELINE_REF — the approval flag is STALE; remove it in this change (a lingering flag silently pre-approves a FUTURE breaking change; ADR-IC-020 Decision §3)"
+				err "$f: carries info.x-breaking-change-approved:true but has NO breaking change vs $BASELINE_REF — the approval flag is STALE; remove it in this change (a lingering flag silently pre-approves a FUTURE breaking change; ADR-IC-020)"
 			else
 				note "  ok    $f: no breaking changes vs $BASELINE_REF"
 			fi
@@ -310,11 +307,11 @@ declare -a spec_ops_raw=()      # "METHOD <raw-path> (<file>)" for messages, loc
 declare -a spec_ops_internal=() # "true"/"false" — x-internal-route non-empty-STRING waiver, lockstep
 for f in ${files[@]+"${files[@]}"}; do
 	doc="$(y2j "$f")" || { err "$f: could not parse YAML"; continue; }
-	# Dir/marker lock-step (bd ax0b.5): a spec under the PUBLIC dir must not carry the
+	# Dir/marker lock-step: a spec under the PUBLIC dir must not carry the
 	# document-level info.x-internal marker — an internal surface lives under
 	# contracts/openapi/internal/, never as a marked file among the public specs.
 	if [ -n "$(printf '%s' "$doc" | jq -r '.info["x-internal"] // empty')" ]; then
-		err "$f: carries info.x-internal but lives under the PUBLIC specs dir — move it to $INTERNAL_SPECS_DIR (dir/marker lock-step, bd ax0b.5)"
+		err "$f: carries info.x-internal but lives under the PUBLIC specs dir — move it to $INTERNAL_SPECS_DIR (dir/marker lock-step)"
 	fi
 	while IFS= read -r line; do
 		[ -n "$line" ] || continue
@@ -359,7 +356,7 @@ done
 note ""
 
 # ---------------------------------------------------------------------------
-# INTERNAL catalogue structural checks (bd ax0b.5): every internal spec must carry the
+# INTERNAL catalogue structural checks: every internal spec must carry the
 # document-level info.x-internal non-empty-STRING reason (the reader-facing "this is NOT a
 # public API" marking), and its operations get the same response-body/SSE obligation as the
 # public set. Operations are collected for the never-public reconcile below.
@@ -372,7 +369,7 @@ if [ "${#ifiles[@]}" -gt 0 ]; then
 		doc="$(y2j "$f")" || { err "$f: could not parse YAML"; continue; }
 		marker="$(printf '%s' "$doc" | jq -r '.info["x-internal"] // empty | if (type == "string") then . else "" end')"
 		if [ -z "$marker" ]; then
-			err "$f: an INTERNAL spec must carry info.x-internal: \"<non-empty reason string>\" — a reader must never mistake it for a public API (bd ax0b.5; a bare true does not count)"
+			err "$f: an INTERNAL spec must carry info.x-internal: \"<non-empty reason string>\" — a reader must never mistake it for a public API (a bare true does not count)"
 		else
 			note "  ok    $f :: info.x-internal reason present"
 		fi
@@ -478,13 +475,11 @@ else
 			i=$((i + 1))
 		done
 
-		# NEVER-PUBLIC — no INTERNAL-catalogue operation may match an exposed public Kong route
-		# (bd ax0b.5): the document-level mirror of the POST /v1/deposits negative invariant.
-		# When a surface goes public, the same change must MOVE its spec from
-		# contracts/openapi/internal/ to specs/ and pass the public reconcile — never a silent
-		# dual identity. (Routes of the EXCLUDED non-public services — the mcp-server agent
-		# channel and the scoped engine-lifecycle-movers service-principal channel — are not
-		# public routes, so an internal spec documenting those upstream paths is consistent.)
+		# NEVER-PUBLIC — no INTERNAL-catalogue operation may match an exposed public Kong route:
+		# the document-level mirror of the POST /v1/deposits negative invariant. When a surface
+		# goes public, the same change must MOVE its spec from contracts/openapi/internal/ to
+		# specs/ and pass the public reconcile — never a silent dual identity. (Excluded-service
+		# routes are not public, so an internal spec documenting those paths is consistent.)
 		i=0
 		while [ "$i" -lt "${#int_ops[@]}" ]; do
 			io="${int_ops[$i]}"; iraw="${int_ops_raw[$i]}"
@@ -493,7 +488,7 @@ else
 				[ "$ko" = "$io" ] && { found=1; break; }
 			done
 			if [ "$found" = "1" ]; then
-				err "INTERNAL spec operation [$iraw] IS an exposed public Kong route — an internal-catalogue surface must never be public; move the spec to $SPECS_DIR in the change that exposes it (bd ax0b.5 never-public invariant)"
+				err "INTERNAL spec operation [$iraw] IS an exposed public Kong route — an internal-catalogue surface must never be public; move the spec to $SPECS_DIR in the change that exposes it (the never-public invariant)"
 			else
 				note "  ok    NEVER-PUBLIC internal op [$iraw] is not a public Kong route"
 			fi

@@ -3,16 +3,17 @@ using Xunit;
 namespace Babelstone.ContractDrift.Tests;
 
 /// <summary>
-/// LAYER 3 of the drift guard (bd babelstone-ax0b.4): where a Pact-style CDC already pins a
-/// surface, the OpenAPI spec must describe AT LEAST what the pact exercises — the spec is a
-/// superset of the pact, so the two guards can never contradict each other. Today ONE
-/// surface has a pact: POST /v1/deposits (ENGINE_COMMAND_PACT, ADR-PC-029 slot 6 — consumer
-/// half in orchestrator/tests/.../EngineCommandPactConsumerTests, provider half in
+/// LAYER 3 of the drift guard: where a Pact-style CDC already pins a surface, the OpenAPI
+/// spec must describe AT LEAST what the pact exercises — the spec is a superset of the pact,
+/// so the two guards can never contradict each other. Today ONE surface has a pact:
+/// POST /v1/deposits (ENGINE_COMMAND_PACT, ADR-PC-029 slot 6 — consumer half in
+/// orchestrator/tests/.../EngineCommandPactConsumerTests, provider half in
 /// engine/tests/.../EngineCommandPactProviderTests). The pinned field sets below MIRROR
-/// EngineCommandContract.AssertConsumerRequest / ExpectedCreatedBody — the same
-/// constants-duplication precedent the provider test uses (the contract class lives in the
-/// orchestrator TEST assembly; a project reference from here would drag a test project into
-/// this hermetic suite for four string arrays).
+/// EngineCommandContract.AssertConsumerRequest / ExpectedCreatedBody and are KEPT IN SYNC BY
+/// HAND — nothing mechanical links them, so a change to the contract class must update these
+/// arrays in the same commit (the same constants-duplication precedent the provider test
+/// uses; a project reference from here would drag the orchestrator TEST assembly into this
+/// hermetic suite for four string arrays).
 /// </summary>
 public sealed class Layer3PactSupersetTests
 {
@@ -39,7 +40,7 @@ public sealed class Layer3PactSupersetTests
             .SingleOrDefault(o => o.Method == "POST" && o.Path == ConstituteRoute)
             ?? throw new Xunit.Sdk.XunitException(
                 $"{CommandsSpec}: POST {ConstituteRoute} is not documented — the pact-pinned engine command "
-                + "surface must be catalogued (bd ax0b.5)");
+                + "surface must be catalogued");
 
         // The pact's mandatory Idempotency-Key must be documented as a REQUIRED header.
         Assert.True(operation.HeaderParameters.Any(h =>

@@ -137,10 +137,21 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Deposit'
+        '400':
+          description: >
+            Malformed as-of point — a NEGATIVE as_of_sequence (the per-stream sequence
+            domain starts at 0). A clean client error, never a 500.
         '401':
           description: Missing or invalid bearer token (gateway jwt validation).
         '404':
-          description: No such deposit (a genuinely non-existent stream).
+          description: >
+            No such deposit (a genuinely non-existent stream — the as_of axis does not
+            change the unknown-stream verdict).
+        '422':
+          description: >
+            as_of_sequence is beyond the stream head — the caller asked for a sequence that
+            does not exist yet. Rejected rather than silently folding to head, so a
+            not-yet-committed point is never passed off as "now".
         '429':
           description: Rate limit exceeded (200 req/min per consumer, ADR-IC-006 §P3).
 components:
