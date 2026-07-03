@@ -1,7 +1,7 @@
 using System.Xml.Linq;
 using Xunit;
 
-namespace Babelstone.Engine.Tests;
+namespace Babelstone.Composition.Tests;
 
 /// <summary>
 /// FAMILY_TO_CORE_DEFAULT_DENY (ADR-PC-040 §D1/§D2; catalogue row XC-1): the <em>family → core</em>
