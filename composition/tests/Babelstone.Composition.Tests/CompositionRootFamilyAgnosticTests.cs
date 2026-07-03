@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Xunit;
 
-namespace Babelstone.Engine.Tests;
+namespace Babelstone.Composition.Tests;
 
 /// <summary>
 /// COMPOSITION_ROOT_NAMES_NO_FAMILY (ADR-PC-040 §D3; catalogue row XC-2): EVERY composition root —

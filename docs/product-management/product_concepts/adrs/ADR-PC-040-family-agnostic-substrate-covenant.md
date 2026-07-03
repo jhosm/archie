@@ -89,7 +89,7 @@ A dependency-direction covenant is not a regulated runtime artefact; no candidat
 
 ### P1 — The universal dependency gate (`FAMILY_TO_CORE_DEFAULT_DENY`)
 
-One repo-wide fitness test (`FamilyAgnosticDefaultDenyTests`, `Babelstone.Engine.Tests`, Docker-free default lane) walks every `*.csproj` under the repo root (excluding `bin/`/`obj/`), classifies each per §D2, and fails if any project classified Core carries a `ProjectReference` resolving under `families/**` (resolution against the csproj's own directory, path-normalised — the same technique the estate gates use). An unknown `<BabelstoneRole>` value is itself a failure. The gate asserts at least one `CompositionRoot` exists (so a marker sweep cannot make it vacuous). It runs in the engine CI job, whose path filter includes `**/*.csproj` — so any PR that adds or edits any project file re-runs it.
+One repo-wide fitness test (`FamilyAgnosticDefaultDenyTests`, `Babelstone.Composition.Tests` — the covenant's gates live beside its mechanism, Docker-free default lane) walks every `*.csproj` under the repo root (excluding `bin/`/`obj/`), classifies each per §D2, and fails if any project classified Core carries a `ProjectReference` resolving under `families/**` (resolution against the csproj's own directory, path-normalised — the same technique the estate gates use). An unknown `<BabelstoneRole>` value is itself a failure. The gate asserts at least one `CompositionRoot` exists (so a marker sweep cannot make it vacuous). It runs in the engine CI job, whose path filter includes `**/*.csproj` — so any PR that adds or edits any project file re-runs it.
 
 ### P2 — The universal composition-root source gate (`COMPOSITION_ROOT_NAMES_NO_FAMILY`)
 
