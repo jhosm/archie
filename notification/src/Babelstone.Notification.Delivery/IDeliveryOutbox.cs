@@ -12,9 +12,12 @@ namespace Babelstone.Notification.Delivery;
 /// this store — the scheduler's SCHEDULED sink and the EVENT_DRIVEN bus drain — and both upstreams are
 /// themselves at-least-once, so a re-presented signal is the EXPECTED case: enqueue admits a given
 /// <c>notification_id</c> exactly once, ever (terminal records are retained so a late redelivery of an
-/// already-delivered signal re-opens nothing). The v1 store is in-memory (the same posture as the
-/// scheduler's dedupe ledger); a durable, crash-surviving store is the named follow-up and slots in
-/// behind this port — the interface is the contract, the storage is replaceable (ADR-IC-004).
+/// already-delivered signal re-opens nothing). Two implementations live behind this port (the interface
+/// is the contract, the storage is replaceable — ADR-IC-004): the production
+/// <see cref="PostgresDeliveryOutbox"/> — the durable, crash-surviving ADR-IC-011 §P3 store
+/// (bd babelstone-60n8.10), whose dead-letter flip also records the §D4
+/// <c>NotificationDeliveryExhausted</c> announcement transactionally — and
+/// <see cref="InMemoryDeliveryOutbox"/>, retained as the no-database dev/test double.
 /// </remarks>
 public interface IDeliveryOutbox
 {
@@ -39,7 +42,9 @@ public interface IDeliveryOutbox
     Task MarkAttemptFailedAsync(
         Guid notificationId, int attempts, DateTimeOffset nextAttemptAt, string? reason, CancellationToken ct = default);
 
-    /// <summary>Retries exhausted (§D4) — terminal <see cref="DeliveryStatus.DeadLettered"/>.</summary>
+    /// <summary>Retries exhausted (§D4) — terminal <see cref="DeliveryStatus.DeadLettered"/>. The
+    /// durable store records the <c>NotificationDeliveryExhausted</c> backbone announcement in the SAME
+    /// transaction as the flip (ADR-IC-011 §P3 step 7 / ADR-IC-004); the exhaustion relay drains it.</summary>
     Task MarkDeadLetteredAsync(Guid notificationId, int attempts, string? reason, CancellationToken ct = default);
 
     /// <summary>Permanent receiver rejection (non-429 4xx, §D4) — terminal

@@ -88,16 +88,24 @@ opt-out-window width pack-sourced via configuration, [ADR-PC-007](../docs/produc
 is `families/term-deposit/src/Babelstone.Families.TermDeposit.Notification/`, which references this core
 only (the `family → core` arrow).
 
-> Status: **scheduler + webhook delivery shipped; bus consumer and durable stores deferred.** The estate
-> owns the clock, polls the maturity calendar, raises deduplicated *due* reminders (bd `babelstone-60n8.2`
-> + the [ADR-IC-019](../docs/product-management/integration_concepts/adrs/ADR-IC-019-family-agnostic-notification-platform.md)
-> §D1 family-agnostic split), and now **delivers** them over the ADR-IC-011 signed webhook through the
+> Status: **scheduler + webhook delivery + durable delivery store shipped; bus consumer deferred.** The
+> estate owns the clock, polls the maturity calendar, raises deduplicated *due* reminders (bd
+> `babelstone-60n8.2` + the [ADR-IC-019](../docs/product-management/integration_concepts/adrs/ADR-IC-019-family-agnostic-notification-platform.md)
+> §D1 family-agnostic split), and **delivers** them over the ADR-IC-011 signed webhook through the
 > ADR-IC-004 outbox (bd `babelstone-60n8.4`), with the EVENT_DRIVEN leg sharing the same transport
-> (bd `babelstone-60n8.7`). What is **not** built yet: the engine-side EVENT_DRIVEN `NotificationDue`
-> emission and its Redpanda consumer (the `INotificationDueSource` seam ships a Null default until then),
-> the engine's `GET /v1/pii/resolve` surface (the client tolerates its absence — notices render
-> structurally), the §D4 `NotificationDeliveryExhausted` backbone event, and activation in `Program.cs`
-> (one `AddNotificationWebhookDelivery` composition line). The dedupe ledger and the delivery outbox are
-> in-memory v1; durable, crash-surviving stores land together. Extraction-ready subtree per
+> (bd `babelstone-60n8.7`). The delivery outbox is **durable** (bd `babelstone-60n8.10`): configure
+> `Notification:Delivery:ConnectionString` (or `ConnectionStrings:NotificationDelivery` /
+> `BABELSTONE_NOTIFICATION_DELIVERY_CONNECTION`) and `PostgresDeliveryOutbox` replaces the in-memory
+> v1 behind the port — the estate's own forward-only migration series (`Migrations/Sql/`, runtime role
+> `babelstone_notification`) applies at boot, obligations survive a crash, and §D4 exhaustion
+> dead-letters write the `NotificationDeliveryExhausted` announcement **in the same transaction**
+> (ADR-IC-011 §P3 step 7), drained to the Redpanda backbone by the exhaustion relay when
+> `Kafka:BootstrapServers` (+ `Bus:SchemaRegistryUrl`) is configured — the governed schema is
+> `contracts/avro/operations/NotificationDeliveryExhausted.avsc`. What is **not** built yet: the
+> engine-side EVENT_DRIVEN `NotificationDue` emission and its Redpanda consumer (the
+> `INotificationDueSource` seam ships a Null default until then), and the engine's
+> `GET /v1/pii/resolve` surface (the client tolerates its absence — notices render structurally). The
+> SCHEDULER's dedupe ledger stays in-memory v1 (the emission child's concern, bd `babelstone-60n8.3`).
+> Extraction-ready subtree per
 > [ADR-PC-019 §P2](../docs/product-management/product_concepts/adrs/ADR-PC-019-repository-strategy-monorepo.md);
 > placement per [ADR-IC-013](../docs/product-management/integration_concepts/adrs/ADR-IC-013-in-house-estate-build-and-repository-placement.md).

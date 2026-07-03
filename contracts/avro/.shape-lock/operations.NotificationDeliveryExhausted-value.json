@@ -1,0 +1,61 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "notification_id",
+      "optional": false,
+      "type": "string@uuid"
+    },
+    {
+      "has_default": false,
+      "name": "instance_id",
+      "optional": false,
+      "type": "string@uuid"
+    },
+    {
+      "has_default": true,
+      "name": "customer_id",
+      "optional": true,
+      "type": "[null,string@uuid]"
+    },
+    {
+      "has_default": false,
+      "name": "template_ref",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "template_pack_version",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "trigger_kind",
+      "optional": false,
+      "type": "enum"
+    },
+    {
+      "has_default": false,
+      "name": "attempts",
+      "optional": false,
+      "type": "int"
+    },
+    {
+      "has_default": true,
+      "name": "last_error",
+      "optional": true,
+      "type": "[null,string]"
+    },
+    {
+      "has_default": false,
+      "name": "exhausted_at",
+      "optional": false,
+      "type": "long@timestamp-millis"
+    }
+  ],
+  "name": "NotificationDeliveryExhausted",
+  "namespace": "operations",
+  "subject": "operations.NotificationDeliveryExhausted-value"
+}

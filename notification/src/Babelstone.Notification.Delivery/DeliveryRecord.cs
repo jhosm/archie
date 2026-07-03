@@ -15,8 +15,9 @@ public enum DeliveryStatus
     Delivered,
 
     /// <summary>Retries exhausted (§D4 — <see cref="WebhookDeliveryOptions.MaxAttempts"/> transient
-    /// failures). Terminal; an operator/consumer must intervene. The §D4
-    /// <c>NotificationDeliveryExhausted</c> backbone event is a named residual of the durable store.</summary>
+    /// failures). Terminal; an operator/consumer must intervene. The durable store
+    /// (<see cref="PostgresDeliveryOutbox"/>) records the §D4 <c>NotificationDeliveryExhausted</c>
+    /// backbone announcement in the same transaction as this flip (bd babelstone-60n8.10).</summary>
     DeadLettered,
 
     /// <summary>The receiver answered a non-429 4xx — the endpoint is misconfigured, retrying cannot fix
