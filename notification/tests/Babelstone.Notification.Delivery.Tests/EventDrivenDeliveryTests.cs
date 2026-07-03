@@ -47,7 +47,9 @@ public sealed class EventDrivenDeliveryTests
         var notification = root.GetProperty("notification");
         Assert.Equal("EVENT_DRIVEN", notification.GetProperty("trigger_kind").GetString());
         Assert.Equal(causationId.ToString("D"), notification.GetProperty("causation_id").GetString());
-        Assert.Equal(customerRef.ToString("D"), notification.GetProperty("customer_ref").GetString());
+        // customer_id — the governed Avro field name (bd babelstone-60n8.12: the webhook wire matches
+        // contracts/avro/operations/NotificationDue.avsc, not the CLR signal's CustomerRef spelling).
+        Assert.Equal(customerRef.ToString("D"), notification.GetProperty("customer_id").GetString());
 
         // The rendered slot: structural data + the PII resolved AT RENDER TIME by reference.
         var rendered = root.GetProperty("rendered");
