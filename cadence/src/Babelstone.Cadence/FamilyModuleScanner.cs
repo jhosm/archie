@@ -25,7 +25,7 @@ namespace Babelstone.Cadence;
 /// </para>
 /// <para>
 /// <b>Generic by construction.</b> Like everything in <c>Babelstone.Cadence</c>, this names no family,
-/// no engine type, and no module contract: the contract arrives as <typeparamref name="TModule"/>, the
+/// no engine type, and no module contract: the contract arrives as <c>TModule</c> on <see cref="LoadAll"/>, the
 /// family key as a selector, and the diagnostics vocabulary as strings. The only product-adjacent
 /// knowledge is the <see cref="FamilyAssemblyNamePrefix"/> — the family-agnostic membership predicate
 /// (a NAME PATTERN, not a family) the whole plug-in design keys on (ADR-PC-021).
