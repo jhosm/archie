@@ -63,7 +63,7 @@ public sealed class MaturityRuleTests
         // the engine's command_dedup swallows the repeat (one-shot, number-pinned).
         Assert.Equal(1, decision.OccurrenceKey);
         Assert.Equal(LifecycleCommandKey.Derive(deposit, EngineMatureKind, 1),
-            LifecycleDispatchLedger.DispatchId(decision));
+            LifecycleDispatchId.Of(decision));
 
         // The due date rides as the business valid_time: the deposit's OWN (past) maturity date, not today, so
         // a late firing records the correct business date (ADR-PC-036 §Context; ADR-PC-002).
@@ -106,7 +106,7 @@ public sealed class MaturityRuleTests
     // --- helpers ---
 
     private static LifecycleSchedulePass NewPass(ILifecycleCommandSink sink, params ILifecycleCommandRule[] rules) =>
-        new(rules, new LifecycleDispatchLedger(), sink);
+        new(rules, new InMemoryLifecycleDispatchLedger(), sink);
 
     private static DepositReadModelRow Deposit(Guid id, DateOnly maturity, string lifecycle) =>
         new(

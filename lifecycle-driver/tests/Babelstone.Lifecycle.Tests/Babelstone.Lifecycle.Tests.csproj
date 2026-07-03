@@ -18,11 +18,27 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The lifecycle-command driver CORE under test (ADR-PC-036 §Decision 2; bd babelstone-6cpq.7): the
-         dispatch ledger's re-tick no-op + number-pinned dispatch id (LifecycleDispatchLedgerTests), the
-         per-tick pass's dedupe + check-then-POST-then-record ordering (LifecycleSchedulePassTests), and the
-         HTTP command sink's end-to-end POST through a fake HttpMessageHandler (HttpLifecycleCommandSinkTests).
-         Docker-free and engine-runtime-free — the sink is driven by a fake handler, no live engine. -->
+    <!-- The Testcontainers-backed Integration tier (ADR-PC-038; bd babelstone-1nkm.2/.3): the durable
+         lifecycle_dispatch_ledger claim/record path against a real PostgreSQL — single-firing
+         (LIFECYCLE_DRIVER_SINGLE_FIRING) and restart-durability (LIFECYCLE_DISPATCH_LEDGER_DURABLE).
+         Npgsql for the direct row assertions; the shared TestFixtures GatedStartAsync gates the container
+         start exactly as the engine + orchestrator integration suites do. Excluded from the Docker-free
+         lane by the Category!=Integration convention. -->
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The lifecycle-command driver CORE under test (ADR-PC-036 §Decision 2; bd babelstone-6cpq.7;
+         hardened per ADR-PC-038): the dispatch ledger's claim semantics + number-pinned dispatch id
+         (InMemoryLifecycleDispatchLedgerTests + the Postgres integration twin), the per-tick pass's
+         dedupe + claim-then-POST-then-record ordering (LifecycleSchedulePassTests), and the HTTP command
+         sink's end-to-end POST through a fake HttpMessageHandler (HttpLifecycleCommandSinkTests). The
+         unit tier is Docker-free and engine-runtime-free — the sink is driven by a fake handler, no live
+         engine. -->
     <ProjectReference Include="../../src/Babelstone.Lifecycle/Babelstone.Lifecycle.csproj" />
+    <!-- The shared Testcontainers startup gate (GatedStartAsync) the Postgres fixture reuses — dev-time
+         test tooling, shared repo-wide (not an engine-runtime reference). -->
+    <ProjectReference Include="../../../engine/tests/Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
   </ItemGroup>
 </Project>

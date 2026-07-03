@@ -14,7 +14,7 @@ namespace Babelstone.Lifecycle;
 /// the projection IS the temporal signal) — the clock lives one layer up, in the <see cref="LifecycleWorker"/>
 /// (ADR-PC-023 §6), never inside a rule — so it is trivially testable with a fixed date and no real wall-clock
 /// wait. It does NOT own the dispatch-id derivation or the dedupe: those are driver primitives
-/// (<see cref="LifecycleDispatchLedger"/> over <c>LifecycleCommandKey</c>) the pass applies to every decision,
+/// (the <see cref="ILifecycleDispatchLedger"/> claim over <c>LifecycleCommandKey</c>) the pass applies to every decision,
 /// so a family rule never reimplements idempotency and may return the same due occurrence on every pass without
 /// double-firing (the dispatch ledger + the engine's <c>command_dedup</c> both absorb the repeat).
 /// <para>

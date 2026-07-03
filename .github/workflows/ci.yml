@@ -620,6 +620,17 @@ jobs:
         run: |
           dotnet build lifecycle-driver/src/Babelstone.Lifecycle.Host/Babelstone.Lifecycle.Host.csproj --configuration Release --nologo
           dotnet test lifecycle-driver/tests/Babelstone.Lifecycle.Tests/Babelstone.Lifecycle.Tests.csproj --configuration Release --nologo --filter "Category!=Integration"
+      - name: Integration tests (Testcontainers tier — ADR-PC-038, ADR-IC-009)
+        # The complementary `--filter "Category=Integration"` lane, mirroring the orchestrator job's
+        # two-tier shape: the durable lifecycle_dispatch_ledger suite
+        # (LifecycleDispatchLedgerPostgresIntegrationTests) against a real PostgreSQL — the
+        # LIFECYCLE_DRIVER_SINGLE_FIRING (LCD-4) and LIFECYCLE_DISPATCH_LEDGER_DURABLE (LCD-5)
+        # commitments. Testcontainers self-manages the container (random host ports, no `services:`
+        # block) and the ubuntu-latest runner ships Docker, so no `make up` is needed — the same
+        # convention the engine + orchestrator Integration tiers use. (The same tests also run in the
+        # engine job's slnx Integration lane on engine-path changes; this step keeps
+        # lifecycle-driver/**-only changes gated too.)
+        run: dotnet test lifecycle-driver/tests/Babelstone.Lifecycle.Tests/Babelstone.Lifecycle.Tests.csproj --configuration Release --nologo --filter "Category=Integration"
 
   product-configs:
     needs: changes

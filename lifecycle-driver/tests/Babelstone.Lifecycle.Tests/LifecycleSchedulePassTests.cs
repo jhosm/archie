@@ -16,11 +16,12 @@ namespace Babelstone.Lifecycle.Tests;
 /// <item>the pass is family-agnostic — it dispatches whatever each registered <see cref="ILifecycleCommandRule"/>
 /// returns, driven by fake rules that the pass never names;</item>
 /// <item>the POSTed command id is exactly the canonical <c>LifecycleCommandKey.Derive</c> value (LCD-1);</item>
-/// <item>a sink failure leaves the occurrence UN-recorded — the next pass retries it (check-then-POST-then-record
-/// ordering), so a transient engine outage never strands a due command.</item>
+/// <item>a sink failure leaves the occurrence UN-recorded — the next pass retries it (claim-then-POST-then-record
+/// ordering, ADR-PC-038 §Decision 3), so a transient engine outage never strands a due command.</item>
 /// </list>
-/// The as-of date is an INPUT (no clock read inside the pass), and the real <see cref="LifecycleDispatchLedger"/>
-/// backs the dedupe.
+/// The as-of date is an INPUT (no clock read inside the pass), and the claim-faithful
+/// <see cref="InMemoryLifecycleDispatchLedger"/> backs the dedupe (its durable Postgres twin is exercised in
+/// <c>LifecycleDispatchLedgerPostgresIntegrationTests</c>).
 /// </summary>
 public sealed class LifecycleSchedulePassTests
 {
@@ -115,7 +116,7 @@ public sealed class LifecycleSchedulePassTests
     // --- helpers ---
 
     private static LifecycleSchedulePass NewPass(ILifecycleCommandSink sink, params ILifecycleCommandRule[] rules) =>
-        new(rules, new LifecycleDispatchLedger(), sink);
+        new(rules, new InMemoryLifecycleDispatchLedger(), sink);
 
     private static LifecycleCommandDecision Installment(Guid loan, long number, DateOnly dueAt) =>
         new(

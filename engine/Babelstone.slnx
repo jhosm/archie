@@ -96,7 +96,8 @@
     <!-- The lifecycle-command driver CORE library (ADR-PC-036 §Decision 2, candidate A; bd babelstone-6cpq.7):
          the per-tick LifecycleSchedulePass (a Babelstone.Cadence ISchedulePass), the family-rule port
          (ILifecycleCommandRule + LifecycleCommandDecision), the dispatch ledger that makes a re-tick of an
-         already-fired occurrence a no-op (LifecycleDispatchLedger, keyed on the server-derived number-pinned
+         already-fired occurrence a no-op AND single-fires across replicas (ILifecycleDispatchLedger — the
+         durable Postgres claim per ADR-PC-038, keyed on the server-derived number-pinned
          LifecycleCommandKey it references — not reinvents), the command-POST sink (ILifecycleCommandSink /
          HttpLifecycleCommandSink), and the clock-owning LifecycleWorker. REUSES Babelstone.Cadence; reaches the
          engine ONLY over the ADR-PC-029 command surface (the engine stays clockless —

@@ -323,4 +323,80 @@ public static class BabelstoneAttributes
     /// read by the alert rule by this exact string — never a <c>babelstone.*</c> span key.
     /// </summary>
     public const string SnapshotHashMismatchMetric = "snapshot_hash_mismatch_total";
+
+    /// <summary>
+    /// Lifecycle-driver DISPATCHES (bd babelstone-1nkm.4; ADR-PC-036 / ADR-PC-038): a monotonic counter
+    /// incremented once per due occurrence the driver's schedule pass successfully POSTed to the engine's
+    /// ADR-PC-029 command surface AND durably recorded on <c>lifecycle_dispatch_ledger</c> — the
+    /// money-mover's basic throughput signal ("did today's maturities/installments fire?"). Tagged by
+    /// <see cref="LifecycleCommandKindTag"/> only (a kind code, never PII). snake_case-with-unit-suffix
+    /// (the <c>_total</c> the OTLP cumulative convention bakes into the emitted name), read by the
+    /// <c>lifecycle-driver</c> alert group by this exact string — never a <c>babelstone.*</c> span key.
+    /// </summary>
+    public const string LifecycleDispatchedMetric = "lifecycle_dispatch_total";
+
+    /// <summary>
+    /// Lifecycle-driver DISPATCH FAILURES (bd babelstone-1nkm.4): a monotonic counter incremented when a
+    /// claimed occurrence's POST throws (a non-2xx engine response, a timeout, a transport error) — the
+    /// occurrence stays un-recorded and re-claimable, the worker backs off, and the engine's
+    /// <c>command_dedup</c> keeps the eventual retry effectively-once, so ONE failure is routine
+    /// backpressure; a SUSTAINED rate means the always-on money-mover cannot reach the engine and due
+    /// money movement is stalling (the <c>LifecycleDispatchFailuresSustained</c> alert). Tagged by
+    /// <see cref="LifecycleCommandKindTag"/>. snake_case metric name, read by the alert rule by this
+    /// exact string.
+    /// </summary>
+    public const string LifecycleDispatchFailureMetric = "lifecycle_dispatch_failure_total";
+
+    /// <summary>
+    /// Lifecycle DISPATCH LAG histogram (bd babelstone-1nkm.4): the seconds between an occurrence's
+    /// business due date (UTC midnight of <c>due_at</c>) and the moment the driver successfully
+    /// dispatched it, recorded once per dispatch and tagged by <see cref="LifecycleCommandKindTag"/>.
+    /// A poll-interval's worth of lag is by design (ADR-PC-036 tolerates a due date firing up to one
+    /// interval late); DAYS of lag means the calendar is surfacing work the driver keeps failing to
+    /// land, or a backfill after a long outage — the <c>LifecycleDispatchLagP99High</c> alert reads the
+    /// p99. Deliberately a per-dispatch histogram, not the backlog-age-gauge shape of
+    /// <see cref="OutboxPublishLagMetric"/>: the "nothing is dispatching at all" outage mode is covered
+    /// by <see cref="LifecyclePassFreshnessMetric"/> going stale, which keeps reporting when this series
+    /// goes silent. snake_case-with-unit-suffix, read by the alert rule by this exact string.
+    /// </summary>
+    public const string LifecycleDispatchLagMetric = "lifecycle_dispatch_lag_seconds";
+
+    /// <summary>
+    /// Lifecycle-driver TICK-LIVENESS gauge (bd babelstone-1nkm.4): an observable gauge of the
+    /// Unix-epoch SECONDS of the most recent schedule pass that ran to COMPLETION (every registered
+    /// family rule evaluated; every claimed occurrence either recorded or released). This is the
+    /// always-on host's heartbeat — the health surface the alert rules read (the same
+    /// freshness-plus-<c>absent()</c> posture as <see cref="ReconciliationDrillFreshnessMetric"/> and
+    /// the <c>EngineMetricsAbsent</c> staging-liveness rule): <c>LifecycleDriverTickStale</c> fires when
+    /// <c>time() − this</c> exceeds the poll interval with margin (the loop is wedged, crash-looping, or
+    /// backing off against a dead dependency), and <c>absent()</c> covers a driver that never completed
+    /// a pass. Emits nothing until the first completed pass. snake_case-with-unit-suffix, read by the
+    /// alert rules by this exact string.
+    /// </summary>
+    public const string LifecyclePassFreshnessMetric = "lifecycle_pass_last_success_timestamp_seconds";
+
+    /// <summary>
+    /// Lifecycle SCHEDULE-HELD occurrences (bd babelstone-1nkm.4; ADR-PC-036 §Decision 4 / LCD-2): a
+    /// monotonic counter for each recurring occurrence N+1 a family rule HOLDS because occurrence N's
+    /// de-settled cash leg is parked in <c>HUMAN_INTERVENTION_REQUIRED</c> — the settlement-health gate.
+    /// This stall is SILENT by construction (there is no arrears state for the miss to land in;
+    /// ADR-PC-036 §Residual-risks says it "must be alerted, not invisible"), so the
+    /// <c>LifecycleScheduleHeld</c> alert pages on any increase. The EMIT hook
+    /// (<c>LifecycleDriverMetrics.RecordScheduleHeld</c>) ships with the monitoring surface; the gate
+    /// that calls it is the LCD-2 build (bd babelstone-6cpq.10) — until it lands the series is absent
+    /// and the alert is dormant by construction. Tagged by <see cref="LifecycleCommandKindTag"/>.
+    /// snake_case metric name, read by the alert rule by this exact string.
+    /// </summary>
+    public const string LifecycleScheduleHeldMetric = "lifecycle_schedule_held_total";
+
+    /// <summary>
+    /// The COMMAND-KIND dimension the lifecycle-driver metrics are tagged with (the stable
+    /// ADR-PC-036 §Decision 1 kind code, e.g. <c>pay_installment</c> / <c>mature_deposit</c> — the same
+    /// value <see cref="LifecycleCommandKind"/> carries on spans). A structural reference, never PII
+    /// (ADR-PC-004 / OBS_NO_PII_ATTRS). The metric label key is the bare <c>command_kind</c> string the
+    /// alert rules group by — a metric dimension, not a <c>babelstone.*</c> span-attribute key, so it
+    /// does not carry the span-key prefix (the same register split as
+    /// <see cref="ReconciliationConsumer"/> / <see cref="ProjectionKind"/>).
+    /// </summary>
+    public const string LifecycleCommandKindTag = "command_kind";
 }

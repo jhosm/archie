@@ -125,6 +125,7 @@ public static class BabelstonePiiGuard
         BabelstoneAttributes.ReconciliationConsumer, // consumer        (reconciliation counters)
         BabelstoneAttributes.ProjectionKind,         // projection_kind (reconciliation counters / gauge)
         SagaDispatchCommandTypeTagKey,               // command_type    (saga dispatch counters)
+        BabelstoneAttributes.LifecycleCommandKindTag, // command_kind   (lifecycle-driver counters/histogram)
         TelemetrySignalTagKey,                       // this guard's own strip-counter dimension
     ];
 
