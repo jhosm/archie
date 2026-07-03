@@ -84,6 +84,20 @@ openapi-catalog-selftest: ## Prove the OpenAPI gate rejects each negative fixtur
 openapi-catalog-reconcile: ## Live check: kong.yml routes materialise in a throwaway Kong (ADR-IC-020 main lane, needs Docker)
 	@./scripts/openapi-catalog-reconcile.sh
 
+pact-broker-up: ## Start the self-hosted Pact Broker (+ its Postgres) — profile `pact` (ADR-IC-009 §S1, bd 2t16.14)
+	@$(COMPOSE) --profile pact up -d --wait pact-broker
+	@echo "Pact Broker: http://localhost:$${PACT_BROKER_PORT:-9292}"
+
+pact-publish: ## Publish the committed contracts/pact/*.json to the dev-stack Pact Broker (needs jq + curl)
+	@for f in contracts/pact/*.json; do \
+	  consumer=$$(jq -r '.consumer.name' $$f); provider=$$(jq -r '.provider.name' $$f); \
+	  version=$$(git rev-parse --short HEAD); \
+	  echo "publishing $$f  ($$consumer -> $$provider @ $$version)"; \
+	  curl -fsS -X PUT -H 'Content-Type: application/json' -d @$$f \
+	    "http://localhost:$${PACT_BROKER_PORT:-9292}/pacts/provider/$$provider/consumer/$$consumer/version/$$version" >/dev/null; \
+	done
+	@echo "published — browse http://localhost:$${PACT_BROKER_PORT:-9292}"
+
 gen-saga-topics: ## Regenerate the saga family-integration-topic manifest from the AsyncAPI catalogue (bd 9w2k.4)
 	@mise exec -- python3 scripts/gen-saga-topics.py
 

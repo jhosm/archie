@@ -24,6 +24,11 @@
          and assert the CloudEvents headers (Confluent.Kafka Headers type) — no broker, no Docker. -->
     <PackageReference Include="Apache.Avro" />
     <PackageReference Include="Confluent.Kafka" />
+    <!-- The FORMAL Pact CDC consumer half (bd babelstone-2t16.14, ADR-IC-009): generates the
+         notification-delivery ⇄ engine message pact and drift-checks it against the committed
+         contracts/pact/ artefact. Pinned to 4.5 (see Directory.Packages.props — PactNet 5.0.x
+         message verification is broken upstream, pact-net #530). TEST-only. -->
+    <PackageReference Include="PactNet" />
   </ItemGroup>
 
   <ItemGroup>

@@ -22,6 +22,12 @@
     <PackageReference Include="Confluent.SchemaRegistry" />
     <PackageReference Include="Confluent.SchemaRegistry.Serdes.Avro" />
     <PackageReference Include="Apache.Avro" />
+    <!-- The FORMAL Pact CDC producer half of the notify emit contract (bd babelstone-2t16.14,
+         ADR-IC-009 §P2): NotificationDuePactProviderTests verifies the committed
+         contracts/pact/notification-delivery-engine.json against a payload round-tripped through the
+         engine-embedded governed schema + real Avro codec. Pinned 4.5 (see Directory.Packages.props —
+         PactNet 5.0.x message verification is broken upstream, pact-net #530). TEST-only. -->
+    <PackageReference Include="PactNet" />
   </ItemGroup>
 
   <ItemGroup>
