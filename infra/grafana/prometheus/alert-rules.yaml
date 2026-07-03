@@ -527,6 +527,79 @@ groups:
           runbook: ../../runbooks/lifecycle-driver-ops.md
 
   # ---------------------------------------------------------------------------
+  # BACKUP HEALTH (bd babelstone-zla1.12.5; ADR-PC-005 §P2 — off-site backups,
+  # restore not assumed). A backup you cannot see failing is a backup you do
+  # not have: the one copy of the data that survives losing the whole box is
+  # the nightly logical dump → Hetzner Object Storage
+  # (infra/k8s/overlays/staging/backup-cronjobs.yaml), and until now NOTHING
+  # alerted when it failed or silently stopped running. Two complementary
+  # rules:
+  #   (1) FAILURE — the Job/CronJob visibly failed. Reads kube-state-metrics'
+  #       kube_job_status_failed. The LGTM appliance's bundled Prometheus does
+  #       not scrape kube-state-metrics YET, so this ships LIVE-but-DORMANT by
+  #       construction (an absent series never matches > 0 — the exact
+  #       LifecycleScheduleHeld posture): it arms itself the moment the
+  #       maintainer wires kube-state-metrics, with threshold + severity
+  #       already decided here.
+  #   (2) FRESHNESS — no successful backup RECORDED in >26h (the ~daily 01:30
+  #       cadence plus grace). Reads the backup_last_success_timestamp_seconds
+  #       heartbeat the CronJob pushes AFTER asserting both objects were
+  #       actually written off-box (PUSHGATEWAY_URL seam). `absent()` makes a
+  #       never-pushed heartbeat fire too — an unwired heartbeat and a stale
+  #       backup are the same finding: the off-box copy is UNPROVEN. This is
+  #       the ProjectionRebuildDrillStale live-but-defensive posture.
+  # ---------------------------------------------------------------------------
+  - name: backup-health
+    rules:
+      - alert: BackupJobFailed
+        # Any failed backup-family Job in a day is a page: db-logical-backup
+        # (the off-box dump) and volume-snapshot (the CSI snapshot leg) share
+        # the babelstone.io/dr-role backup posture; job_name carries the
+        # CronJob-stamped prefix.
+        expr: increase(kube_job_status_failed{job_name=~"(db-logical-backup|volume-snapshot).*"}[24h]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          sli: backup_job
+          adr: ADR-PC-005
+        annotations:
+          summary: "A backup Job failed (logical dump or volume snapshot)"
+          description: >-
+            kube_job_status_failed reports a failed db-logical-backup /
+            volume-snapshot Job in the last 24h. The off-box copy of the data
+            did not advance; the box is one disk loss away from exceeding the
+            recovery point. Inspect the Job's pod logs (the fail-closed
+            upload_and_assert step names the object that did not land) and
+            re-run the CronJob once fixed. NOTE: dormant until the bundled
+            Prometheus scrapes kube-state-metrics (maintainer wiring).
+          runbook: ../../runbooks/staging-ops.md
+      - alert: BackupFreshnessStale
+        # >26h without a RECORDED successful backup (daily 01:30 UTC cadence
+        # + grace), or the heartbeat was never pushed at all — either way the
+        # off-box backup is currently unproven, which for DR purposes is the
+        # same as absent (ADR-PC-005 §P2: restore is never assumed).
+        expr: |
+          (time() - backup_last_success_timestamp_seconds > 26 * 3600)
+          or absent(backup_last_success_timestamp_seconds)
+        for: 1h
+        labels:
+          severity: critical
+          sli: backup_freshness
+          adr: ADR-PC-005
+        annotations:
+          summary: "Off-box backup stale (>26h) or never recorded"
+          description: >-
+            No successful nightly logical backup has been recorded in the last
+            26 hours — or the backup_last_success_timestamp_seconds heartbeat
+            has never been pushed (PUSHGATEWAY_URL unwired). The last provable
+            off-box copy is aging; a box loss now means losing everything since
+            it. Check the db-logical-backup CronJob's last runs and the
+            Hetzner Object Storage bucket listing; wire the heartbeat seam
+            (backup-cronjobs.yaml PUSHGATEWAY_URL) so freshness becomes
+            provable rather than assumed.
+          runbook: ../../runbooks/staging-ops.md
+
+  # ---------------------------------------------------------------------------
   # STAGING LIVENESS (bd babelstone-zla1.7). The cheapest IN-CLUSTER "is the app
   # up" signal: the engine continuously emits outbox_publish_lag_seconds, so its
   # ABSENCE means the engine isn't reporting (down, crash-looping, or telemetry
