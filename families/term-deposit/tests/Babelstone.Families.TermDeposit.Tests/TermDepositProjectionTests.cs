@@ -257,6 +257,126 @@ public sealed class TermDepositProjectionTests
         Assert.Equal(position.NetInterest, ledger.TotalNet);
     }
 
+    // --- Pre-field attribution: an un-dated WithholdingApplied inherits its paired accrual's date ---
+
+    [Fact]
+    public void WithholdingLedger_pre_field_flow_is_dated_from_its_paired_accrual()
+    {
+        // A WithholdingApplied stored before the WithheldOn field existed replays with the default date.
+        // The decider emits it immediately after the InterestAccrued it withholds, same date, gross
+        // conserved — so the fold recovers the date from that paired accrual (event-derived, no clock).
+        var registry = TermDepositProjectionModule.WithholdingLedgerRegistry();
+
+        var ledger = WithholdingLedger.Empty;
+        ledger = Fold(ledger, registry, new InterestAccrued(new Money(30_417), new DateOnly(2025, 7, 1)));
+        ledger = Fold(ledger, registry, new WithholdingApplied(new Money(8_517), new Money(21_900)));
+
+        var entry = Assert.Single(ledger.Entries);
+        Assert.Equal(new DateOnly(2025, 7, 1), entry.WithheldOn);
+        // Attribution assigns ONLY the date — the recorded amounts and their conservation are untouched.
+        Assert.Equal(new Money(30_417), entry.Gross);
+        Assert.Equal(new Money(8_517), entry.Tax);
+        Assert.Equal(new Money(21_900), entry.Net);
+        Assert.Equal(entry.Tax + entry.Net, entry.Gross);
+        Assert.Equal(new Money(30_417), ledger.TotalGross);
+        Assert.Equal(new Money(8_517), ledger.TotalTax);
+        Assert.Equal(new Money(21_900), ledger.TotalNet);
+        // The slot is consumed by the withholding flow that used it.
+        Assert.Null(ledger.PendingAccrual);
+    }
+
+    [Fact]
+    public void WithholdingLedger_dated_flow_keeps_its_own_stamp_over_the_pending_accrual()
+    {
+        // A post-field flow carries its own WithheldOn; the pending accrual must never override it.
+        // The dates differ here only to PIN the precedence — the decider stamps both with the same date.
+        var registry = TermDepositProjectionModule.WithholdingLedgerRegistry();
+
+        var ledger = WithholdingLedger.Empty;
+        ledger = Fold(ledger, registry, new InterestAccrued(new Money(30_417), new DateOnly(2025, 7, 1)));
+        ledger = Fold(ledger, registry, new WithholdingApplied(new Money(8_517), new Money(21_900), new DateOnly(2025, 7, 2)));
+
+        var entry = Assert.Single(ledger.Entries);
+        Assert.Equal(new DateOnly(2025, 7, 2), entry.WithheldOn);
+        Assert.Null(ledger.PendingAccrual);
+    }
+
+    [Fact]
+    public void WithholdingLedger_refuses_attribution_when_the_gross_does_not_conserve()
+    {
+        // The conservation cross-check: the paired accrual's gross must equal the flow's Tax + Net to the
+        // cent. A mismatched accrual is NOT this flow's pair, so the entry stays un-dated and the statement
+        // rule's fail-loud guard surfaces it — a wrong statutory tax year is worse than a loud stop.
+        var registry = TermDepositProjectionModule.WithholdingLedgerRegistry();
+
+        var ledger = WithholdingLedger.Empty;
+        ledger = Fold(ledger, registry, new InterestAccrued(new Money(30_418), new DateOnly(2025, 7, 1)));
+        ledger = Fold(ledger, registry, new WithholdingApplied(new Money(8_517), new Money(21_900)));
+
+        var entry = Assert.Single(ledger.Entries);
+        Assert.Equal(default, entry.WithheldOn);
+    }
+
+    [Fact]
+    public void WithholdingLedger_pre_field_flow_with_no_paired_accrual_stays_undated()
+    {
+        var registry = TermDepositProjectionModule.WithholdingLedgerRegistry();
+
+        var ledger = Fold(WithholdingLedger.Empty, registry, new WithholdingApplied(new Money(8_517), new Money(21_900)));
+
+        var entry = Assert.Single(ledger.Entries);
+        Assert.Equal(default, entry.WithheldOn);
+    }
+
+    [Fact]
+    public void WithholdingLedger_pending_accrual_is_consume_once()
+    {
+        // One accrual dates exactly one withholding flow. A second un-dated flow with the same amounts
+        // must NOT inherit the already-consumed date — it stays un-dated and surfaces loud downstream.
+        var registry = TermDepositProjectionModule.WithholdingLedgerRegistry();
+
+        var ledger = WithholdingLedger.Empty;
+        ledger = Fold(ledger, registry, new InterestAccrued(new Money(30_417), new DateOnly(2025, 7, 1)));
+        ledger = Fold(ledger, registry, new WithholdingApplied(new Money(8_517), new Money(21_900)));
+        ledger = Fold(ledger, registry, new WithholdingApplied(new Money(8_517), new Money(21_900)));
+
+        Assert.Equal(2, ledger.Entries.Count);
+        Assert.Equal(new DateOnly(2025, 7, 1), ledger.Entries[0].WithheldOn);
+        Assert.Equal(default, ledger.Entries[1].WithheldOn);
+    }
+
+    [Fact]
+    public void WithholdingLedger_per_tax_year_slices_sum_exactly_to_the_recorded_totals()
+    {
+        // The financial-math property the annual statement depends on: attribution assigns each flow to
+        // exactly one tax year and never touches an amount, so the per-year slices PARTITION the ledger —
+        // summed across years they reproduce the recorded totals to the cent (integer cents, no rounding).
+        var registry = TermDepositProjectionModule.WithholdingLedgerRegistry();
+
+        var ledger = WithholdingLedger.Empty;
+        // A pre-field pair attributed into 2025 …
+        ledger = Fold(ledger, registry, new InterestAccrued(new Money(30_417), new DateOnly(2025, 12, 31)));
+        ledger = Fold(ledger, registry, new WithholdingApplied(new Money(8_517), new Money(21_900)));
+        // … a second pre-field pair attributed into 2026 …
+        ledger = Fold(ledger, registry, new InterestAccrued(new Money(7_501), new DateOnly(2026, 6, 30)));
+        ledger = Fold(ledger, registry, new WithholdingApplied(new Money(2_100), new Money(5_401)));
+        // … and a dated coupon in 2026.
+        ledger = Fold(ledger, registry, new InterestPaid(Guid.NewGuid(), new Money(7_503), new Money(2_101), new Money(5_402), new DateOnly(2026, 10, 1)));
+
+        Assert.All(ledger.Entries, e => Assert.NotEqual(default, e.WithheldOn));
+
+        var y2025 = ledger.Entries.Where(e => e.WithheldOn.Year == 2025).ToList();
+        var y2026 = ledger.Entries.Where(e => e.WithheldOn.Year == 2026).ToList();
+        Assert.Equal(ledger.Entries.Count, y2025.Count + y2026.Count);
+
+        Assert.Equal(new Money(8_517), new Money(y2025.Sum(e => e.Tax.Cents)));
+        Assert.Equal(new Money(2_100 + 2_101), new Money(y2026.Sum(e => e.Tax.Cents)));
+        // Per-year sums recompose the running totals exactly — gross, tax, and net.
+        Assert.Equal(ledger.TotalTax.Cents, y2025.Sum(e => e.Tax.Cents) + y2026.Sum(e => e.Tax.Cents));
+        Assert.Equal(ledger.TotalGross.Cents, y2025.Sum(e => e.Gross.Cents) + y2026.Sum(e => e.Gross.Cents));
+        Assert.Equal(ledger.TotalNet.Cents, y2025.Sum(e => e.Net.Cents) + y2026.Sum(e => e.Net.Cents));
+    }
+
     // --- Runtime properties via the real ProjectionRunner over an in-memory store ---
 
     [Fact]
@@ -295,6 +415,30 @@ public sealed class TermDepositProjectionTests
         // Two flows, not three — the re-delivered event did not double-count.
         Assert.Equal(2, ledger.Entries.Count);
         Assert.Equal(new Money(8_517 + 2_100), ledger.TotalTax);
+    }
+
+    [Fact]
+    public async Task Runner_attributes_a_pre_field_flow_across_the_stored_state_round_trip()
+    {
+        // The pending-accrual slot must SURVIVE the store round trip: the runner persists the belief after
+        // the InterestAccrued (arming the slot) and reads it back before folding the pre-field
+        // WithholdingApplied — so attribution works event-by-event through the real runner + JSON state
+        // serializer, exactly how a projection rebuild replays a legacy stream.
+        var storage = new InMemoryProjectionStorage();
+        var runner = WithholdingRunner(storage);
+        var serializer = new JsonStateSerializer<WithholdingLedger>();
+        var streamId = Guid.NewGuid();
+
+        await runner.ApplyAsync(Envelope(streamId, 0, "term_deposit.InterestAccrued",
+            new InterestAccrued(new Money(30_417), new DateOnly(2025, 7, 1))));
+        await runner.ApplyAsync(Envelope(streamId, 1, "term_deposit.WithholdingApplied",
+            new WithholdingApplied(new Money(8_517), new Money(21_900))));
+
+        var record = await storage.ReadCurrentBeliefAsync(streamId, TermDepositProjectionModule.WithholdingLedgerKind);
+        var ledger = serializer.Deserialize(record!.StructuralPayload);
+        var entry = Assert.Single(ledger.Entries);
+        Assert.Equal(new DateOnly(2025, 7, 1), entry.WithheldOn);
+        Assert.Null(ledger.PendingAccrual);
     }
 
     [Fact]

@@ -49,8 +49,16 @@ namespace Babelstone.Families.TermDeposit.Notification;
 /// would SILENTLY drop it from EVERY per-tax-year statement — a legacy depositor would never receive the
 /// statutory withholding statement they are owed, and a deposit that ALSO has dated flows would emit a
 /// statement that silently under-reports (the pre-field flow omitted from the sum). The rule therefore
-/// SURFACES an un-dated flow (throws, naming the deposit) rather than under-reporting, so the stream is
-/// backfilled first — the same fail-loud discipline the engine applies to an empty funding reference.
+/// SURFACES an un-dated flow (throws, naming the deposit) rather than under-reporting — the same fail-loud
+/// discipline the engine applies to an empty funding reference.
+/// </para>
+/// <para>
+/// <b>The cure is fold-side attribution, not this guard.</b> The withholding-ledger fold now dates a
+/// pre-field flow from its paired <c>InterestAccrued</c> (event-derived, conservation-checked — see the
+/// family's <c>PendingAccrual</c>), so rebuilding the <c>term_deposit.withholding_ledger</c> projection
+/// (ADR-PC-002 §P4 supersede-all + cold re-fold) materialises the dates and clears this guard for every
+/// attributable stream. The guard remains as the RESIDUAL: a flow that still lacks a date after a rebuild
+/// has no paired accrual to inherit from and needs investigation, never a guessed tax year.
 /// </para>
 /// </remarks>
 public sealed class WithholdingStatementRule(DepositReadClient depositReadClient) : INotificationScheduleRule
@@ -100,14 +108,16 @@ public sealed class WithholdingStatementRule(DepositReadClient depositReadClient
             var ledger = await _depositReadClient.GetWithholdingLedgerAsync(deposit.DepositId, ct);
 
             // An un-dated flow (WithheldOn == default, i.e. 0001-01-01) carries no recoverable tax year, so it
-            // must be backfilled before it can be sliced — surface it rather than silently drop (see the
-            // <para> on the class for the full fail-loud rationale).
+            // cannot be sliced — surface it rather than silently drop (see the class <para>s for the fail-loud
+            // rationale and the rebuild-side cure).
             if (ledger.Any(entry => entry.WithheldOn == default))
             {
                 throw new InvalidOperationException(
-                    $"Deposit {deposit.DepositId} has a pre-field WithholdingApplied flow with no withheld-on " +
-                    "date (default 0001-01-01) — it cannot be sliced to a tax year and must be backfilled before " +
-                    "an annual IRS-withholding statement can be scheduled.");
+                    $"Deposit {deposit.DepositId} has a withholding flow with no withheld-on date (default " +
+                    "0001-01-01), so it cannot be sliced to a tax year. Rebuild the term_deposit.withholding_ledger " +
+                    "projection so the fold attributes the date from the flow's paired accrual; a flow still " +
+                    "un-dated after a rebuild has no paired accrual and needs investigation before an annual " +
+                    "IRS-withholding statement can be scheduled.");
             }
 
             var yearFlows = ledger.Where(entry => entry.WithheldOn.Year == taxYear).ToList();

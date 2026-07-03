@@ -212,8 +212,11 @@ public sealed class TermDepositProjectionModule : IProjectionModule
     ]);
 
     /// <summary>
-    /// The withholding-ledger fold registry: only the withholding-bearing event types (the runner
-    /// skips every other family event). Exposed so tests fold the same bindings the runner uses.
+    /// The withholding-ledger fold registry: the withholding-bearing event types plus
+    /// <c>InterestAccrued</c> — not itself a withholding flow, folded only to arm the pending-accrual
+    /// slot a pre-field <c>WithholdingApplied</c> recovers its date from (see
+    /// <see cref="PendingAccrual"/>). The runner skips every other family event. Exposed so tests fold
+    /// the same bindings the runner uses.
     /// </summary>
     public static HandlerRegistry WithholdingLedgerRegistry() => new(
     [
@@ -221,5 +224,7 @@ public sealed class TermDepositProjectionModule : IProjectionModule
             new DispatchableHandler<WithholdingLedger, WithholdingApplied>(new WithholdingLedgerWithholdingAppliedHandler())),
         new("term_deposit.InterestPaid", typeof(InterestPaid),
             new DispatchableHandler<WithholdingLedger, InterestPaid>(new WithholdingLedgerInterestPaidHandler())),
+        new("term_deposit.InterestAccrued", typeof(InterestAccrued),
+            new DispatchableHandler<WithholdingLedger, InterestAccrued>(new WithholdingLedgerInterestAccruedHandler())),
     ]);
 }
