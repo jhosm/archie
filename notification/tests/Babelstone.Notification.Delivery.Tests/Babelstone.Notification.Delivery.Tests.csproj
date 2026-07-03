@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The delivery half under test (bd babelstone-60n8.4/.7): the ADR-IC-011 HMAC signature scheme +
+         §D4 retry schedule, the ADR-IC-004 in-memory outbox's idempotent enqueue + status lifecycle, the
+         SCHEDULED-leg sink mapping, and the drain pass end-to-end over a fake HttpMessageHandler (no
+         receiver, no Docker) — delivery, stable idempotency key across retries, backoff, Retry-After,
+         permanent-4xx abandonment, §D4 exhaustion dead-lettering, and the EVENT_DRIVEN leg's render-time
+         PII resolution that never persists PII. -->
+    <ProjectReference Include="../../src/Babelstone.Notification.Delivery/Babelstone.Notification.Delivery.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,60 @@
+<!-- The /notification DELIVERY half — the outbound webhook transport LIBRARY (bd babelstone-60n8.4 /
+     babelstone-60n8.7). In plain terms: once the scheduler (or the engine, for event-driven notices) has
+     decided a customer notification is due, THIS is the machinery that actually gets it to the
+     customer-communications consumer — an ADR-IC-004 per-service outbox drained by an ADR-IC-011
+     HMAC-SHA256-signed webhook client with at-least-once delivery, exponential backoff (±25% jitter),
+     dead-lettering, and consumer-side dedupe anchored on the stable composite notification_id
+     (ADR-PC-025 slot 4). ONE transport for BOTH legs, parameterised by trigger_kind: the SCHEDULED leg
+     enqueues via the core's INotificationDeliverySink; the EVENT_DRIVEN leg drains an
+     INotificationDueSource (the post-commit bus seam) into the SAME outbox and renders the
+     instance-pinned pack template with render-time PII resolution (ADR-PC-025 §PII) before delivery.
+
+     FAMILY-AGNOSTIC (ADR-IC-019 §D2/§P2, gated by NOTIFICATION_FAMILY_AGNOSTIC alongside the core): this
+     library references neither the engine kernel nor any product family — it moves signals whose template
+     refs and data maps are opaque strings. It reaches the engine only over the published HTTP PII-resolve
+     surface (ADR-PC-025 §PII), never a compile-time kernel reference. Extraction-ready subtree
+     (ADR-PC-019 §P2): carries its own copy of the shared engine build settings and depends only on
+     framework packages + the notification core + the shared cadence machinery. -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Notification.Delivery</RootNamespace>
+    <AssemblyName>Babelstone.Notification.Delivery</AssemblyName>
+
+    <!-- Shared engine build settings (mirrors the notification core csproj; the notification subtree is
+         extraction-ready per ADR-PC-019 §P2, so it carries its own copy rather than inheriting the
+         engine's). Runtime pinned by ADR-IC-011 — .NET, the same language as the engine (ADR-PC-010). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Doc COVERAGE is a docs concern, not a build gate (same stance as the notification core):
+         CS1591/CS1573 suppressed, doc ROT (malformed XML, broken refs) still fails. -->
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- BackgroundService (via the cadence worker base), IServiceCollection/IConfiguration (the
+         composition extension), and ILogger — all surfaced through Microsoft.Extensions.Hosting
+         (version pinned centrally via Directory.Packages.props). -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <!-- IHttpClientFactory for the outbound webhook client and the engine PII-resolve client
+         (the same leaf package the orchestrator's saga command dispatcher uses — connection
+         pooling/lifetime owned by the factory; no engine-kernel ref, ADR-PC-019 §P2). -->
+    <PackageReference Include="Microsoft.Extensions.Http" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The shared CADENCE machinery (ADR-PC-036 §Decision 2 + ADR-IC-019 mechanism reuse): the delivery
+         worker is a CadenceWorker subclass and the delivery pass is an ISchedulePass, so the outbox drain
+         runs on the SAME proven clock-owning poll loop as the scheduler and the lifecycle driver. -->
+    <ProjectReference Include="../../../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
+    <!-- The family-agnostic notification CORE: this library implements its INotificationDeliverySink
+         outbound port (the SCHEDULED-leg hand-off) and maps its RaisedReminder into the delivery signal.
+         The arrow is delivery → core (one-way); the core never references back. -->
+    <ProjectReference Include="../Babelstone.Notification/Babelstone.Notification.csproj" />
+  </ItemGroup>
+</Project>

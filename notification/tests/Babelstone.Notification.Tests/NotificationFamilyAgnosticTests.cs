@@ -29,6 +29,11 @@ public sealed class NotificationFamilyAgnosticTests
     private static readonly string[] CoreProjects =
     [
         "Babelstone.Notification",
+        // The delivery half (bd babelstone-60n8.4/.7) is family-agnostic by the same §D2/§P2 contract: it
+        // moves NotificationDueSignal payloads whose template refs and data maps are opaque strings, and
+        // reaches the engine only over the published PII-resolve HTTP surface (ADR-PC-025 §PII) — never a
+        // kernel reference, never a family literal.
+        "Babelstone.Notification.Delivery",
     ];
 
     /// <summary>

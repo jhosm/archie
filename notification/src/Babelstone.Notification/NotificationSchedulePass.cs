@@ -29,7 +29,8 @@ namespace Babelstone.Notification;
 public sealed class NotificationSchedulePass(
     IEnumerable<INotificationScheduleRule> rules,
     IDedupeLedger dedupeLedger,
-    ILogger<NotificationSchedulePass>? logger = null) : ISchedulePass
+    ILogger<NotificationSchedulePass>? logger = null,
+    INotificationDeliverySink? deliverySink = null) : ISchedulePass
 {
     private readonly IReadOnlyList<INotificationScheduleRule> _rules =
         (rules ?? throw new ArgumentNullException(nameof(rules))).ToList();
@@ -80,6 +81,17 @@ public sealed class NotificationSchedulePass(
             logger?.LogInformation(
                 "Notification schedule pass raised {Count} new reminder(s) as-of {AsOf} across {RuleCount} " +
                 "family rule(s) (ADR-PC-025 slot-4 dedupe).", raised.Count, asOf, _rules.Count);
+
+            // Hand the newly-raised reminders to the delivery half (bd babelstone-60n8.4): the ADR-IC-004
+            // per-service outbox + ADR-IC-011 HMAC-webhook transport own everything from here (signing,
+            // retry, backoff, dead-letter). Optional by construction — a host composing no delivery half
+            // (the pre-60n8.4 scheduler shape) runs unchanged. The sink is idempotent on the composite
+            // notification_id (its own contract), so a re-forward is the at-least-once case, never a
+            // second delivery obligation.
+            if (deliverySink is not null)
+            {
+                await deliverySink.EnqueueAsync(raised, ct);
+            }
         }
 
         return raised;
