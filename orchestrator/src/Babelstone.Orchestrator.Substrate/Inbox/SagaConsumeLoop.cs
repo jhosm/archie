@@ -113,7 +113,16 @@ public sealed class SagaConsumeLoop : IDisposable
             };
             _consumer = new ConsumerBuilder<byte[], byte[]>(config).Build();
             _ownsConsumer = true;
-            _consumer.Subscribe(options.Topics);
+            // A module MAY declare an EMPTY consume-topic set (ADR-IC-018 §P4): a family module whose
+            // saga estate is empty — e.g. one that exists only to declare its FamilyIntegrationTopics
+            // for the settlement saga's derived subscribe set (ADR-PC-040 §D3) — has nothing to drive,
+            // so its loop subscribes to nothing and idles (every Consume times out). Guarded here rather
+            // than in the host so the host's unconditional one-loop-per-module registration stays
+            // module-count-invariant; Confluent's Subscribe is not called with an empty set.
+            if (options.Topics.Count > 0)
+            {
+                _consumer.Subscribe(options.Topics);
+            }
         }
         else
         {

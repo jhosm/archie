@@ -75,7 +75,9 @@ public sealed class MovementSagaAutoStartIntegrationTests(OrchestratorPostgresFi
         var occurrenceId = SettlementMovementFanout.OccurrenceProcessId(loanId, eventId, 0);
         Assert.Null(await StateOrNullAsync(loanId));
         Assert.Equal(SettlementProcess.States.ConfirmingCredit, await StateOrNullAsync(occurrenceId));
-        Assert.Equal([SettlementProcess.States.ConfirmingCredit], await StatesBySubjectAsync(loanId));
+        Assert.Equal(
+            SettlementProcess.States.ConfirmingCredit,
+            Assert.Single(await StatesBySubjectAsync(loanId)));
         Assert.Equal(SettlementProcess.ConfirmCredit, Assert.Single(sink.Emitted).CommandType);
     }
 
@@ -99,7 +101,9 @@ public sealed class MovementSagaAutoStartIntegrationTests(OrchestratorPostgresFi
         Assert.Equal(
             SettlementProcess.States.Reserving,
             await StateOrNullAsync(SettlementMovementFanout.OccurrenceProcessId(processId, eventId, 0)));
-        Assert.Equal([SettlementProcess.States.Reserving], await StatesBySubjectAsync(processId));
+        Assert.Equal(
+            SettlementProcess.States.Reserving,
+            Assert.Single(await StatesBySubjectAsync(processId)));
         Assert.Equal(SettlementProcess.ReserveAccountBalance, Assert.Single(sink.Emitted).CommandType);
     }
 

@@ -76,7 +76,7 @@ jobs:
               - 'lifecycle-driver/src/Babelstone.Lifecycle.Host/**'
             pack_validate: ['pack-validate/**']
             families: ['families/**']
-            contracts: ['contracts/**', 'scripts/avro-compat-check.sh', 'scripts/asyncapi-catalog-validate.sh', 'scripts/asyncapi-catalog-reconcile.sh', 'scripts/openapi-catalog-validate.sh', 'scripts/openapi-catalog-reconcile.sh', '.spectral.yaml', 'infra/kong/kong.yml', 'scripts/gen-saga-topics.py', 'scripts/gen-saga-topics-check.sh', 'families/term-deposit/src/Babelstone.Families.TermDeposit.Orchestration/FamilyIntegrationTopics.g.cs']
+            contracts: ['contracts/**', 'scripts/avro-compat-check.sh', 'scripts/asyncapi-catalog-validate.sh', 'scripts/asyncapi-catalog-reconcile.sh', 'scripts/openapi-catalog-validate.sh', 'scripts/openapi-catalog-reconcile.sh', '.spectral.yaml', 'infra/kong/kong.yml', 'scripts/gen-saga-topics.py', 'scripts/gen-saga-topics-check.sh', 'families/term-deposit/src/Babelstone.Families.TermDeposit.Orchestration/FamilyIntegrationTopics.g.cs', 'families/personal-loan/src/Babelstone.Families.PersonalLoan.Orchestration/FamilyIntegrationTopics.g.cs']
             # Shared-library consumers name the shared subtrees too: their builds compile them via
             # ProjectReference, so a shared-library-only change must re-run their lanes (previously a
             # silent gap). All three hosts compile 'composition/**' (the shared FamilyModuleScanner,
