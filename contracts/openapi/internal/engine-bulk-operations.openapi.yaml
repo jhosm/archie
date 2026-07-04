@@ -1,0 +1,393 @@
+openapi: 3.1.0
+# contracts/openapi/internal/engine-bulk-operations.openapi.yaml — the operator bulk-operations
+# surface (ADR-PC-035; catalogued per ADR-IC-020; bd babelstone-ax0b.11). INTERNAL admin-ops
+# plane: the four routes are mapped ONCE at host level by the family-agnostic hosting spine
+# (Babelstone.Engine.Hosting/BulkOperationsEndpoints.cs, ADR-PC-021) and are deliberately NOT
+# infra/kong/kong.yml routes — their caller is the operator tooling on the internal network.
+# This is how an operator hands the engine a huge, EXPLICIT to-do list once (a frozen instance
+# set), then watches it drain, retries just the failures, or cancels the whole plan. The
+# background runner (the generic drainer) dispatches on operation_kind to the registered
+# IBulkOperationStrategy adapters; the surface here owns only register/preview + the progress,
+# retry, and cancel queries.
+#
+# Shapes are transcribed from the REAL code surface: BulkOperationRequest / BulkTargetRequest /
+# BulkOperationRegisterResponse / BulkOperationStatusResponse / BulkOperationRetryResponse /
+# BulkOperationCancelResponse (Babelstone.Engine.Hosting) — snake_case on the wire. Spec<->DTO
+# lock: Babelstone.ContractDrift.Tests Layer 1 (bd babelstone-ax0b.4). No PII (ADR-PC-004 §P2):
+# a job id, an operation-kind dispatch key, an operator actor reference, a set digest, structural
+# instance ids, and opaque per-item frozen JSON only — never the full id set on any response
+# (the PR #324 500k-id payload lesson: counts + a digest + a small sample instead).
+info:
+  title: Babelstone Engine — Bulk Operations (INTERNAL admin-ops)
+  version: 1.0.0
+  description: >
+    The operator command/query surface for the generic bulk-operations runner (ADR-PC-035).
+    Register freezes an EXPLICIT, immutable instance universe into one audited job the
+    background drainer works through; progress is by query; retry re-arms ONLY the FAILED
+    subset; cancel is a status flip (no catalogued event — bulk milestones are STORE-ONLY,
+    ADR-IC-017). The target set is named ONE of two ways (mutually exclusive): a bare
+    instance_ids list (operations with no per-item params), or a rich targets list carrying
+    frozen per-item JSON (e.g. a per-item held_amount_cents). preview=true returns counts + the
+    set_digest + a small sample WITHOUT registering anything (the pre-register confirmation
+    step). Register is idempotent on (job_id, set_digest): re-POSTing the same job_id with the
+    SAME frozen set replays benignly; a DIFFERENT set is a 409 (a frozen universe is immutable —
+    a straggler is a NEW job). Family-agnostic by construction — the surface names no family;
+    the drainer dispatches on operation_kind to the family/adapter write-paths (ADR-PC-021).
+    Errors are RFC 9457 application/problem+json.
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: legal-obligation   # GDPR Art.6(1)(c) — pack/schema migration, legal holds, compliance freezes; structural ids only, no data-subject data
+  x-authorized-consumers:
+    - platform-operations   # the operator bulk-operations tooling (ADR-PC-035 operator-initiated)
+  # ── INTERNAL marker (openapi-catalog-validate.sh internal leg; bd babelstone-ax0b.5) ──
+  x-internal: >-
+    Operator/admin-ops bulk-operations plane (ADR-PC-035): operator-initiated, audited bulk
+    work over a frozen instance universe on the internal network — deliberately not an
+    infra/kong/kong.yml route; draining half a million instances is never a public client
+    operation.
+servers:
+  - url: https://engine:8080
+    description: >
+      The engine host's internal (mTLS-only) Kestrel surface — deliberately NOT the public
+      Kong gateway host (ADR-IC-006 §P5 Boundary 2).
+paths:
+  /v1/bulk-operations:
+    post:
+      operationId: registerBulkOperation
+      summary: Register (or preview) an operator bulk-operation over a frozen instance set.
+      description: >
+        Validates the intent (a non-empty job_id, operation_kind, actor; a positive
+        requested_batch_size when supplied; exactly one non-empty target arm; no duplicate or
+        empty-uuid ids; an optional caller set_digest that must match), then either previews
+        (preview=true — counts + digest + a small sample, NO side effect) or registers the
+        frozen job. The response NEVER echoes the full id set — it returns the total_count, the
+        server-computed set_digest, and a small sample only. Register is idempotent on
+        (job_id, set_digest): a duplicate register of the same frozen set replays benignly
+        (already_registered=true); a duplicate under a DIFFERENT set is a 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkOperationRequest'
+      responses:
+        '200':
+          description: >
+            The register/preview outcome: registered=false for a preview (the would-be-frozen
+            counts + digest), registered=true once the job exists (already_registered=true on
+            an idempotent replay of the same frozen set).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkOperationRegisterResponse'
+        '400':
+          description: >
+            Malformed intent — a missing job_id/operation_kind/actor, or a non-positive
+            requested_batch_size; fail loud, never freeze nothing or the wrong plan.
+        '409':
+          description: >
+            The job_id is already registered over a DIFFERENT frozen set (set_digest mismatch) —
+            a registered universe is immutable; register a NEW job_id for a different set.
+        '422':
+          description: >
+            Unprocessable selection — both or neither of instance_ids/targets, an empty-uuid or
+            duplicate target id, or a caller set_digest that does not match the payload's frozen
+            set (the target set changed since it was fingerprinted).
+  /v1/bulk-operations/{jobId}:
+    get:
+      operationId: getBulkOperation
+      summary: Read a bulk-operation job's live status and progress.
+      description: >
+        Returns the job's status and the {total, applied, skipped, failed, pending} progress
+        tuple by query over the frozen set (ADR-PC-035), plus the operation_kind and the
+        set_digest frozen at registration (when the audit snapshot carries one).
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: The live job view — status + the progress tuple.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkOperationStatusResponse'
+        '404':
+          description: No bulk-operation job with that id is registered.
+  /v1/bulk-operations/{jobId}/retry-failed:
+    post:
+      operationId: retryFailedBulkOperation
+      summary: Re-arm only the FAILED subset of a bulk-operation job.
+      description: >
+        Re-drives ONLY the FAILED targets (ADR-PC-035): the store re-arms FAILED→PENDING under a
+        reopenable job so the drainer picks them up again. A CANCELLED plan re-arms nothing
+        (retried_count 0) — the plan stays cancelled. Idempotent: a second call once nothing is
+        FAILED re-arms nothing.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: The selective-retry outcome — how many FAILED targets were re-armed to PENDING.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkOperationRetryResponse'
+        '404':
+          description: No bulk-operation job with that id is registered.
+  /v1/bulk-operations/{jobId}/cancel:
+    post:
+      operationId: cancelBulkOperation
+      summary: Cancel a bulk-operation job (stop further claims).
+      description: >
+        A status flip to CANCELLED, deliberately NOT an event (ADR-IC-017 store-only posture —
+        there is no catalogued BulkOperationCancelled): the claim's own DRAINING requirement
+        makes the flip bite even mid-run; already-applied items stay applied. Only a REGISTERED
+        or DRAINING job can be cancelled — a terminal job is a 409.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: The cancel outcome — cancelled=true once the job flipped to CANCELLED.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkOperationCancelResponse'
+        '404':
+          description: No bulk-operation job with that id is registered.
+        '409':
+          description: >
+            The job is already terminal (COMPLETED/FAILED/CANCELLED) — only a REGISTERED or
+            DRAINING job can be cancelled.
+components:
+  parameters:
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      description: The operator-minted job id (a uuid) — the job's identity.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    BulkOperationRequest:
+      type: object
+      description: >
+        The operator bulk-operation registration command (BulkOperationRequest, snake_case on
+        the wire). Freezes an EXPLICIT instance set into one audited job. The target set is named
+        exactly ONE of two ways (mutually exclusive): a non-empty instance_ids list, or a
+        non-empty targets list carrying frozen per-item JSON. There is no predicate arm — the
+        registration input is always the concrete frozen set (ADR-PC-035: one job owns ONE
+        decidable set).
+      required: [job_id, operation_kind, actor]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+          description: >
+            The operator-minted job id — the job's identity, the action_id the deterministic
+            per-instance command ids derive from, AND the register-level idempotency key: the
+            same job_id + same frozen set (same set_digest) replays benignly; a different set is
+            a 409.
+        operation_kind:
+          type: string
+          description: The adapter dispatch key (e.g. PackVersionMigrated, SchemaVersionMigrated, FundsHeld, AccountFrozen).
+        actor:
+          type: string
+          description: The registering operator — a structural actor token, never PII (ADR-PC-004).
+        requested_batch_size:
+          type: integer
+          description: >
+            The drainer's bounded claim size (ADR-PC-035 / ADR-PC-009 §A3) — must be a positive
+            integer when supplied; the host default (500) applies when omitted.
+        instance_ids:
+          type: array
+          description: >
+            The explicit frozen id set (the bare arm — operations with no per-item params).
+            Mutually exclusive with targets.
+          items:
+            type: string
+            format: uuid
+        targets:
+          type: array
+          description: >
+            The explicit frozen target set with per-item JSON (the rich arm — e.g. a per-item
+            held_amount_cents or freeze_reason). Mutually exclusive with instance_ids.
+          items:
+            $ref: '#/components/schemas/BulkTargetRequest'
+        set_digest:
+          type: string
+          description: >
+            Optional integrity check: the caller's digest over the frozen id set (minted at
+            preview time). When supplied it MUST match the server-computed digest, so a payload
+            that mutated between preview and register fails loud (422).
+        preview:
+          type: boolean
+          default: false
+          description: >
+            When true, returns counts + set_digest + a small sample WITHOUT registering anything
+            (the pre-register confirmation step — ADR-PC-035 matched_count).
+      examples:
+        - job_id: 3f7c9a1e-2b4d-4c6f-8a9b-1c2d3e4f5a6b
+          operation_kind: FundsHeld
+          actor: ops:compliance
+          targets:
+            - instance_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+              item_params:
+                held_amount_cents: 150000
+              precondition_input:
+                reason_code: COURT_ORDER
+          preview: true
+    BulkTargetRequest:
+      type: object
+      description: >
+        One instance in the rich target arm (BulkTargetRequest): the opaque instance id plus
+        optional frozen per-item JSON — item_params feeds the adapter's event factory,
+        precondition_input its precondition. The per-item JSON is opaque to the spine (frozen
+        verbatim into the work-table row, never parsed here).
+      required: [instance_id]
+      properties:
+        instance_id:
+          type: string
+          format: uuid
+          description: The opaque product-instance (stream) reference — never PII.
+        item_params:
+          type: object
+          additionalProperties: true
+          description: Optional per-item params for the adapter's event factory; frozen verbatim at registration.
+        precondition_input:
+          type: object
+          additionalProperties: true
+          description: Optional per-item input to the adapter's precondition; frozen verbatim at registration.
+    BulkOperationRegisterResponse:
+      type: object
+      description: >
+        The register/preview outcome (BulkOperationRegisterResponse). Deliberately NEVER echoes
+        the full id set (the PR #324 500k-id payload the runner exists to avoid): the caller gets
+        counts, the verifiable set_digest, and a small sample of the frozen set only.
+      required: [job_id, registered, already_registered, total_count, set_digest, sample_instance_ids]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+          description: Echoes the job id (the audit handle).
+        registered:
+          type: boolean
+          description: True iff a job exists after this call (false only for a preview).
+        already_registered:
+          type: boolean
+          description: True when this was an idempotent replay of an existing registration (same frozen set).
+        status:
+          type: string
+          description: >
+            The job's status (REGISTERED on first registration; the live status on a replay);
+            omitted on a preview.
+        total_count:
+          type: integer
+          format: int64
+          description: The size of the frozen universe (the matched_count).
+        set_digest:
+          type: string
+          description: >
+            The server-computed digest over the frozen id set (sha256:<hex> over the
+            ordinal-sorted lowercase-hyphenated ids) — the verifiable fingerprint of exactly
+            what was frozen.
+        sample_instance_ids:
+          type: array
+          description: A small sample of the frozen set (first few, request order) — never the full set.
+          items:
+            type: string
+            format: uuid
+      examples:
+        - job_id: 3f7c9a1e-2b4d-4c6f-8a9b-1c2d3e4f5a6b
+          registered: true
+          already_registered: false
+          status: REGISTERED
+          total_count: 1
+          set_digest: sha256:9b2f0c1a4e6d8b3f5a7c9e1d2f4b6a8c0e2d4f6a8b0c2e4d6f8a0b2c4e6d8f0a
+          sample_instance_ids:
+            - 6f1d2c3b-4a5e-4789-9cde-f01234567890
+    BulkOperationStatusResponse:
+      type: object
+      description: >
+        The live job view (BulkOperationStatusResponse): status + the
+        {total, applied, skipped, failed, pending} progress tuple by query over the frozen set.
+      required: [job_id, operation_kind, status, total, applied, skipped, failed, pending]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+          description: The job's identity.
+        operation_kind:
+          type: string
+          description: The adapter dispatch key the job registered under.
+        status:
+          type: string
+          description: REGISTERED → DRAINING → COMPLETED | FAILED | CANCELLED.
+        set_digest:
+          type: string
+          description: >
+            The digest frozen at registration (read back from the audit snapshot); omitted for a
+            snapshot that predates the digest convention.
+        total:
+          type: integer
+          format: int64
+          description: The frozen universe size.
+        applied:
+          type: integer
+          format: int64
+          description: Targets whose event appended.
+        skipped:
+          type: integer
+          format: int64
+          description: Targets the precondition declined.
+        failed:
+          type: integer
+          format: int64
+          description: Targets that errored — selectively retryable.
+        pending:
+          type: integer
+          format: int64
+          description: Targets not yet processed.
+      examples:
+        - job_id: 3f7c9a1e-2b4d-4c6f-8a9b-1c2d3e4f5a6b
+          operation_kind: FundsHeld
+          status: DRAINING
+          set_digest: sha256:9b2f0c1a4e6d8b3f5a7c9e1d2f4b6a8c0e2d4f6a8b0c2e4d6f8a0b2c4e6d8f0a
+          total: 1000
+          applied: 640
+          skipped: 12
+          failed: 3
+          pending: 345
+    BulkOperationRetryResponse:
+      type: object
+      description: >
+        The selective-retry outcome (BulkOperationRetryResponse): how many FAILED targets were
+        re-armed to PENDING for the drainer to pick up again.
+      required: [job_id, retried_count]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+          description: The job's identity.
+        retried_count:
+          type: integer
+          description: The number of FAILED targets re-armed to PENDING (0 for a cancelled plan or when nothing is FAILED).
+      examples:
+        - job_id: 3f7c9a1e-2b4d-4c6f-8a9b-1c2d3e4f5a6b
+          retried_count: 3
+    BulkOperationCancelResponse:
+      type: object
+      description: >
+        The cancel outcome (BulkOperationCancelResponse): whether the job flipped to CANCELLED.
+      required: [job_id, cancelled]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+          description: The job's identity.
+        cancelled:
+          type: boolean
+          description: True once the job flipped to CANCELLED (a terminal job is a 409, not cancelled=false).
+      examples:
+        - job_id: 3f7c9a1e-2b4d-4c6f-8a9b-1c2d3e4f5a6b
+          cancelled: true

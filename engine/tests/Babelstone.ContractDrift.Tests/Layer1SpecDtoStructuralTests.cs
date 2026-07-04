@@ -79,6 +79,12 @@ public sealed class Layer1SpecDtoStructuralTests
         { "contracts/openapi/internal/engine-withholding-reads.openapi.yaml", "WithholdingLedger", typeof(DepositWithholdingLedgerResponse), Mode.Response },
         { "contracts/openapi/internal/engine-withholding-reads.openapi.yaml", "WithholdingLedgerEntry", typeof(WithholdingLedgerEntryResponse), Mode.Response },
         { "contracts/openapi/internal/engine-withholding-reads.openapi.yaml", "Deposit", typeof(DepositResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-bulk-operations.openapi.yaml", "BulkOperationRequest", typeof(BulkOperationRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-bulk-operations.openapi.yaml", "BulkTargetRequest", typeof(BulkTargetRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-bulk-operations.openapi.yaml", "BulkOperationRegisterResponse", typeof(BulkOperationRegisterResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-bulk-operations.openapi.yaml", "BulkOperationStatusResponse", typeof(BulkOperationStatusResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-bulk-operations.openapi.yaml", "BulkOperationRetryResponse", typeof(BulkOperationRetryResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-bulk-operations.openapi.yaml", "BulkOperationCancelResponse", typeof(BulkOperationCancelResponse), Mode.Response },
 
         // NOT here, deliberately:
         //  * RateBand — its wire shape is OWNED by RateBandJsonConverter (the [lower, upper]
