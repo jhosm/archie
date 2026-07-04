@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- The RootNamespace stays Babelstone.Engine.Hosting DELIBERATELY: LifecycleCommandKey was extracted
+         from the engine hosting seam namespace-PRESERVING (bd babelstone-6cpq.13), so every existing
+         consumer — the loan/deposit endpoints, the lifecycle-driver core, the family lifecycle
+         contributions — keeps compiling with no using-directive churn. New types do NOT belong here:
+         this assembly exists to hold the canonical lifecycle-command idempotency key derivation and
+         nothing else. -->
+    <RootNamespace>Babelstone.Engine.Hosting</RootNamespace>
+    <AssemblyName>Babelstone.Engine.LifecycleKeys</AssemblyName>
+  </PropertyGroup>
+
+  <!-- The canonical, SERVER-DERIVED lifecycle-command idempotency key (ADR-PC-036 Decision 1, LCD-1) as a
+       LEAF contract assembly (ADR-PC-019 §P2 extraction-ready posture, the same stance as
+       Babelstone.Telemetry): System.* only — no engine spine, no packages, no hosting framework — so the
+       lifecycle-command driver core can reference the ONE key-derivation everyone must share WITHOUT
+       pulling the engine hosting assembly (and, transitively, the engine kernel) into its build.
+       Babelstone.Engine.Hosting references this project so its own consumers see the type exactly where
+       they always did. -->
+</Project>

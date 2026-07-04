@@ -16,9 +16,9 @@
      NO_CLOCK_DRIVEN_ENGINE_SIGNAL): the driver is DOWNSTREAM. It owns the clock and reaches the engine ONLY
      by HTTP-POSTing the engine's existing ADR-PC-029 command endpoints — it never reads the engine byte
      store and never makes the engine read a clock. The idempotency key it POSTs (and dedupes its own dispatch
-     ledger on) is the canonical, SERVER-DERIVED, number-pinned LifecycleCommandKey (referenced from
-     Babelstone.Engine.Hosting — derived the SAME way the engine derives it, so a manual caller, the MCP agent
-     and this driver all converge on ONE key per occurrence; LCD-1).
+     ledger on) is the canonical, SERVER-DERIVED, number-pinned LifecycleCommandKey (referenced from the thin
+     Babelstone.Engine.LifecycleKeys leaf — derived the SAME way the engine derives it, so a manual caller, the
+     MCP agent and this driver all converge on ONE key per occurrence; LCD-1).
 
      Extraction-ready subtree (ADR-PC-019 §P2): carries its own copy of the shared build settings rather than
      inheriting engine/Directory.Build.props, mirroring the cadence + notification subtrees. -->
@@ -74,16 +74,18 @@
     <ProjectReference Include="../../../cadence/src/Babelstone.Cadence/Babelstone.Cadence.csproj" />
 
     <!-- LifecycleCommandKey (ADR-PC-036 §Decision 1+3, LCD-1) — the canonical, SERVER-DERIVED, number-pinned
-         idempotency key the driver POSTs and dedupes its dispatch ledger on. REFERENCED, not reinvented: it
-         already lives in the engine hosting seam (Babelstone.Engine.Hosting), derived the SAME way the loan
-         installment endpoint derives it, so a manual caller, the MCP agent and this driver converge on ONE key
-         per occurrence. This is a COMPILE-TIME reference to a pure static helper only — the driver still reaches
-         the engine at runtime ONLY over the ADR-PC-029 command HTTP surface (it never reads the byte store, and
-         the engine stays clockless: NO_CLOCK_DRIVEN_ENGINE_SIGNAL holds). The driver core stays FAMILY-agnostic
-         (the LIFECYCLE_FAMILY_AGNOSTIC fitness test forbids a families/** reference) but MAY name the engine
-         hosting seam — Babelstone.Engine.Hosting is the shared host-composition contract assembly, NOT a family
-         and NOT a §P2 spine project, so this reference is sound. -->
-    <ProjectReference Include="../../../engine/src/Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
+         idempotency key the driver POSTs and dedupes its dispatch ledger on. REFERENCED, not reinvented: the
+         helper was extracted namespace-preserving out of the engine hosting seam into the thin
+         Babelstone.Engine.LifecycleKeys LEAF assembly (bd babelstone-6cpq.13) — System.* only, no engine
+         kernel, no hosting framework — derived the SAME way the loan installment endpoint derives it, so a
+         manual caller, the MCP agent and this driver converge on ONE key per occurrence. This is a
+         COMPILE-TIME reference to a pure static helper only — the driver still reaches the engine at runtime
+         ONLY over the ADR-PC-029 command HTTP surface (it never reads the byte store, and the engine stays
+         clockless: NO_CLOCK_DRIVEN_ENGINE_SIGNAL holds). The driver core stays FAMILY-agnostic (the
+         LIFECYCLE_FAMILY_AGNOSTIC fitness test forbids a families/** reference); the leaf key assembly is
+         NOT a family and NOT a §P2 spine project, so this reference is sound — and the driver core no longer
+         pulls Babelstone.Engine.Hosting (and, transitively, the engine kernel) into its build at all. -->
+    <ProjectReference Include="../../../engine/src/Babelstone.Engine.LifecycleKeys/Babelstone.Engine.LifecycleKeys.csproj" />
 
     <!-- The SDK-free shared telemetry LEAF (ADR-PC-019 §P2): the versioned babelstone.* span-attribute /
          span-name contract (BabelstoneAttributes) and the shared Babelstone.Engine ActivitySource

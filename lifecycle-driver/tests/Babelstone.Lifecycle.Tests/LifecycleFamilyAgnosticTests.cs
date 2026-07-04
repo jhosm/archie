@@ -17,10 +17,12 @@ namespace Babelstone.Lifecycle.Tests;
 /// </summary>
 /// <remarks>
 /// Unlike the notification core (which reaches the engine ONLY over the ADR-PC-027 HTTP contract, so its gate
-/// also forbids any engine reference), the lifecycle driver is downstream and MAY name the engine hosting seam
-/// <c>Babelstone.Engine.Hosting</c> at compile time for the canonical <c>LifecycleCommandKey</c> (ADR-PC-036
-///, LCD-1) — that is not a family and not a spine project. So this gate checks the one invariant
-/// the refactor restores: NO <c>families/**</c> reference from the core.
+/// also forbids any engine reference), the lifecycle driver is downstream and MAY name the thin
+/// <c>Babelstone.Engine.LifecycleKeys</c> leaf at compile time for the canonical <c>LifecycleCommandKey</c>
+/// (ADR-PC-036, LCD-1) — extracted namespace-preserving from the engine hosting seam (bd babelstone-6cpq.13)
+/// precisely so this core needs neither <c>Babelstone.Engine.Hosting</c> nor the kernel; the leaf is not a
+/// family and not a spine project. So this gate checks the one invariant the refactor restores: NO
+/// <c>families/**</c> reference from the core.
 /// </remarks>
 public sealed class LifecycleFamilyAgnosticTests
 {
