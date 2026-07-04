@@ -74,6 +74,14 @@ jobs:
               - 'infra/kong/kong.yml'
               - 'notification/src/Babelstone.Notification.Host/**'
               - 'lifecycle-driver/src/Babelstone.Lifecycle.Host/**'
+              # The FAMILY_ORIGINATED_MOVEMENTS_SETTLEMENT_WIRED gate (catalogue row XC-3,
+              # Babelstone.Composition.Tests — runs in this lane via the slnx test sweep) derives its
+              # EXPECTED side from the Avro catalogue (the embedded Originated Movement carrier shape)
+              # and its ACTUAL side from the family Orchestration manifests/modules + the host's
+              # scan-anchor reference (**/*.csproj above), so a change to either input must re-run it —
+              # otherwise a new Movement-bearing event could land without the wiring verdict.
+              - 'contracts/avro/**'
+              - 'families/*/src/*Orchestration*/**'
             pack_validate: ['pack-validate/**']
             families: ['families/**']
             contracts: ['contracts/**', 'scripts/avro-compat-check.sh', 'scripts/asyncapi-catalog-validate.sh', 'scripts/asyncapi-catalog-reconcile.sh', 'scripts/openapi-catalog-validate.sh', 'scripts/openapi-catalog-reconcile.sh', '.spectral.yaml', 'infra/kong/kong.yml', 'scripts/gen-saga-topics.py', 'scripts/gen-saga-topics-check.sh', 'families/term-deposit/src/Babelstone.Families.TermDeposit.Orchestration/FamilyIntegrationTopics.g.cs', 'families/personal-loan/src/Babelstone.Families.PersonalLoan.Orchestration/FamilyIntegrationTopics.g.cs']

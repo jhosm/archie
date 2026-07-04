@@ -201,6 +201,10 @@ A `Planned` status is a deliberate, listed hole: the tests land with the impleme
 
 *Status update 2026-06-26 (bd `babelstone-t7o3.19`):* commitment 3 (`SETTLEMENT_LEG_SCA_GATE_CANNOT_BYPASS`) lands **`Live`** — the §A7/§A8 freshness gate the §A8 amendment recorded as `Planned` now has its receiver-side gate + integration test (registered as catalogue row **MOVEMENT-3**, the authoritative status). The substrate attests; the receiver denies at the settlement-dispatch instant.
 
+*Status update 2026-07-04 (bd `babelstone-3o6m`/`babelstone-9z9w`):* one **new** commitment registers `Live` (catalogue row **XC-3**, the authoritative status), closing the review-luck class PR #442 exposed — a family shipping `Originated` Movement-bearing events with NO settlement wiring, which no mechanical gate saw:
+
+- `FAMILY_ORIGINATED_MOVEMENTS_SETTLEMENT_WIRED` — **every family whose Avro catalogue carries `Originated` Movement-bearing events is wired into the settlement saga's consume set** (§Decision slot 2 — an Originated movement HAS a cash leg to drive; [ADR-IC-018](../../integration_concepts/adrs/ADR-IC-018-family-owned-saga-modules.md) §D6 discovery). Derived structurally from the embedded shared `Movement` carrier shape (the `origin` enum reaching `Originated`) — never a hand-list of event names, so a new event or family is covered at birth; an Observed-only carrier (a narrowed `["Observed"]` enum, the future [ADR-PC-039](./ADR-PC-039-credit-card-family.md)-shape families) does not trip it. Enforced by `FamilyOriginatedMovementsSettlementWiredTests` (`Babelstone.Composition.Tests`, the covenant-gate home): the family's catalogue-generated `FamilyIntegrationTopics.g.cs` lists the topic, its project defines the `ISagaModule` declarer, and the orchestrator host carries the scan-anchor `ProjectReference` — the three disk-parseable links whose absence was exactly the bd `babelstone-9z9w` gap.
+
 ---
 
 ## Cross-references
