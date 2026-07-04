@@ -76,6 +76,10 @@ public sealed class SagaTransitionLog
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("process_id", processId);
         command.Parameters.AddWithValue("to_state", state);
-        return Convert.ToInt32(await command.ExecuteScalarAsync(ct));
+        // Hard unbox: COUNT(*) is non-null bigint in PostgreSQL, so the scalar is always a boxed
+        // Int64 — any other shape is schema/query drift and must throw, never be coerced. The
+        // narrowing to int is safe: a per-(process, state) transition count near int.MaxValue is
+        // structurally impossible (the reissue budget escalates after a handful of entries).
+        return (int)(long)(await command.ExecuteScalarAsync(ct))!;
     }
 }
