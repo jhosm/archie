@@ -381,6 +381,32 @@ builder.Services.AddSingleton(serviceProvider =>
     new DedupRetentionSweeper(serviceProvider.GetRequiredService<DedupRetentionOptions>()));
 builder.Services.AddHostedService<DedupRetentionSweepService>();
 
+// The bulk-operations runner (ADR-PC-035): register -> drain -> complete over the migration-0018
+// work-tables — the outbox pattern's second instance, co-hosted like the relays above. The
+// service is the operator-facing half (register/progress/retry/cancel); the drainer claims
+// bounded SKIP-LOCKED batches and appends each instance's STORE-ONLY cross-cutting event
+// idempotently on the deterministic command id (BulkOperationCommandId /
+// ENGINE_COMMAND_IDEMPOTENT). Operations ride as thin IBulkOperationStrategy adapters resolved
+// from DI; a job registered for a kind no adapter serves fails loud, by query. The appender
+// reuses the same per-family fold-module registries as the spine projection drive, so the whole
+// path names no family (ADR-PC-021).
+builder.Services.AddSingleton<IBulkOperationStore>(_ => new PostgresBulkOperationStore(connectionString));
+builder.Services.AddSingleton(serviceProvider => new BulkInstanceAppender(
+    serviceProvider.GetRequiredService<IEventStore>(),
+    serviceProvider.GetRequiredService<IEventSerializer>(),
+    serviceProvider.GetRequiredService<IIntegrationEventCatalog>(),
+    engineFamilyFoldModules,
+    serviceProvider.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton(serviceProvider =>
+    new BulkOperationService(serviceProvider.GetRequiredService<IBulkOperationStore>()));
+builder.Services.AddSingleton(serviceProvider => new BulkOperationDrainer(
+    serviceProvider.GetRequiredService<IBulkOperationStore>(),
+    serviceProvider.GetRequiredService<BulkInstanceAppender>(),
+    serviceProvider.GetServices<IBulkOperationStrategy>(),
+    serviceProvider.GetService<ILogger<BulkOperationDrainer>>()));
+builder.Services.AddSingleton(new BulkOperationRunnerOptions());
+builder.Services.AddHostedService<BulkOperationRunnerService>();
+
 var app = builder.Build();
 
 // Resolve the lag observer eagerly so its observable gauge is created BEFORE the first
