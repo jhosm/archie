@@ -27,24 +27,33 @@ public sealed class SagaStateStore
     /// <c>saga_state_pkey</c> and returns false (the saga already exists), so a redelivered
     /// "start" event never resets a running saga. Runs inside the caller's transaction.
     /// </summary>
+    /// <param name="processId">The saga instance id. For a per-occurrence settlement instance
+    /// (ADR-PC-032 §A9/§A10 Revised 2026-07-04) this is the DERIVED occurrence id, distinct per
+    /// (subject, event, movement index).</param>
+    /// <param name="subjectId">The account/instrument linkage (the triggering event's real
+    /// <c>ce_subject</c>) persisted as the indexed <c>saga_state.subject_id</c> — the key the
+    /// lifecycle driver's LCD-2 settlement-health probe reads (ADR-PC-036 §Decision 4 Revised
+    /// 2026-07-04). Equals <paramref name="processId"/> for every non-fanned-out saga.</param>
     /// <returns>True if this call created the saga; false if it already existed.</returns>
     public async Task<bool> TryStartAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
         Guid processId,
+        Guid subjectId,
         string sagaType,
         string initialState,
         Guid? correlationId,
         CancellationToken ct = default)
     {
         const string sql = """
-            INSERT INTO saga_state (process_id, saga_type, state, version, correlation_id)
-            VALUES (@process_id, @saga_type, @state, 0, @correlation_id)
+            INSERT INTO saga_state (process_id, subject_id, saga_type, state, version, correlation_id)
+            VALUES (@process_id, @subject_id, @saga_type, @state, 0, @correlation_id)
             ON CONFLICT (process_id) DO NOTHING;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("process_id", processId);
+        command.Parameters.AddWithValue("subject_id", subjectId);
         command.Parameters.AddWithValue("saga_type", sagaType);
         // The state IS the persisted wire string (ADR-IC-018 §D3): the saga owns its vocabulary,
         // the substrate persists it verbatim — no central enum round-trip.
@@ -79,13 +88,17 @@ public sealed class SagaStateStore
         CancellationToken ct = default)
     {
         const string sql = """
-            INSERT INTO saga_state (process_id, saga_type, state, version, correlation_id, public_process_id, owning_client_id)
-            VALUES (@process_id, @saga_type, @state, 0, @correlation_id, @public_process_id, @owning_client_id)
+            INSERT INTO saga_state (process_id, subject_id, saga_type, state, version, correlation_id, public_process_id, owning_client_id)
+            VALUES (@process_id, @subject_id, @saga_type, @state, 0, @correlation_id, @public_process_id, @owning_client_id)
             ON CONFLICT (process_id) DO NOTHING;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("process_id", processId);
+        // An edge-started saga IS keyed on its subject (the process id is the aggregate reference the
+        // edge minted), so subject_id = process_id — the same identity the 0009 backfill gives every
+        // pre-per-occurrence row.
+        command.Parameters.AddWithValue("subject_id", processId);
         command.Parameters.AddWithValue("saga_type", sagaType);
         command.Parameters.AddWithValue("state", initialState);
         command.Parameters.AddWithValue("correlation_id", (object?)correlationId ?? DBNull.Value);
@@ -108,7 +121,7 @@ public sealed class SagaStateStore
         CancellationToken ct = default)
     {
         const string sql = """
-            SELECT process_id, saga_type, state, version, correlation_id, public_process_id, owning_client_id
+            SELECT process_id, saga_type, state, version, correlation_id, public_process_id, owning_client_id, subject_id
             FROM saga_state
             WHERE process_id = @process_id
             FOR UPDATE;
@@ -135,7 +148,7 @@ public sealed class SagaStateStore
         CancellationToken ct = default)
     {
         const string sql = """
-            SELECT process_id, saga_type, state, version, correlation_id, public_process_id, owning_client_id
+            SELECT process_id, saga_type, state, version, correlation_id, public_process_id, owning_client_id, subject_id
             FROM saga_state
             WHERE public_process_id = @public_process_id;
             """;
@@ -162,7 +175,8 @@ public sealed class SagaStateStore
             Version: reader.GetInt64(3),
             CorrelationId: reader.IsDBNull(4) ? null : reader.GetGuid(4),
             PublicProcessId: reader.IsDBNull(5) ? null : reader.GetString(5),
-            OwningClientId: reader.IsDBNull(6) ? null : reader.GetString(6));
+            OwningClientId: reader.IsDBNull(6) ? null : reader.GetString(6),
+            SubjectId: reader.GetGuid(7));
     }
 
     /// <summary>

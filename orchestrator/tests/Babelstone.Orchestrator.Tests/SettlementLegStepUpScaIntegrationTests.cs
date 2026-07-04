@@ -75,8 +75,8 @@ public sealed class SettlementLegStepUpScaIntegrationTests : IAsyncLifetime
         // with NO SCA claims on its headers (the absent-proof case). The leg emits ConfirmCredit carrying no
         // SCA; the receiver fail-closes 422 SCA_REQUIRED before the credit lands.
         var processId = Guid.NewGuid();
-        await AutoStartMaturityAsync(processId, scaAcr: null, scaAuthTime: null);
-        var creditId = await OutboxMessageIdAsync(processId, SettlementProcess.ConfirmCredit);
+        var occurrenceId = await AutoStartMaturityAsync(processId, scaAcr: null, scaAuthTime: null);
+        var creditId = await OutboxMessageIdAsync(occurrenceId, SettlementProcess.ConfirmCredit);
 
         await using var acl = new RecordingHttpServer(ScaGatedResponder);
         await DrainUntilTerminalAsync(acl, creditId);
@@ -100,8 +100,8 @@ public sealed class SettlementLegStepUpScaIntegrationTests : IAsyncLifetime
         // forwarded (the substrate attests); the RECEIVER re-checks freshness at dispatch and refuses.
         var processId = Guid.NewGuid();
         var stale = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - (ScaMaxAgeSeconds + 60);
-        await AutoStartMaturityAsync(processId, scaAcr: "urn:bank:sca:psd2", scaAuthTime: stale);
-        var creditId = await OutboxMessageIdAsync(processId, SettlementProcess.ConfirmCredit);
+        var occurrenceId = await AutoStartMaturityAsync(processId, scaAcr: "urn:bank:sca:psd2", scaAuthTime: stale);
+        var creditId = await OutboxMessageIdAsync(occurrenceId, SettlementProcess.ConfirmCredit);
 
         await using var acl = new RecordingHttpServer(ScaGatedResponder);
         await DrainUntilTerminalAsync(acl, creditId);
@@ -123,8 +123,8 @@ public sealed class SettlementLegStepUpScaIntegrationTests : IAsyncLifetime
         // cash leg's outbox row, the dispatcher re-emits them, and the receiver lets the credit through.
         var processId = Guid.NewGuid();
         var fresh = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        await AutoStartMaturityAsync(processId, scaAcr: "urn:bank:sca:psd2", scaAuthTime: fresh);
-        var creditId = await OutboxMessageIdAsync(processId, SettlementProcess.ConfirmCredit);
+        var occurrenceId = await AutoStartMaturityAsync(processId, scaAcr: "urn:bank:sca:psd2", scaAuthTime: fresh);
+        var creditId = await OutboxMessageIdAsync(occurrenceId, SettlementProcess.ConfirmCredit);
 
         await using var acl = new RecordingHttpServer(ScaGatedResponder);
         await DrainUntilTerminalAsync(acl, creditId);
@@ -189,8 +189,10 @@ public sealed class SettlementLegStepUpScaIntegrationTests : IAsyncLifetime
 
     /// <summary>Auto-start the settlement saga off a maturity Movement-bearing event (an Originated CREDIT)
     /// carrying the attested SCA on its CloudEvents headers (the populate hop). The auto-start emits
-    /// ConfirmCredit, whose outbox row the substrate stamps with the SCA claims read off the event headers.</summary>
-    private async Task AutoStartMaturityAsync(Guid processId, string? scaAcr, long? scaAuthTime)
+    /// ConfirmCredit, whose outbox row the substrate stamps with the SCA claims read off the event headers.
+    /// Returns the saga's PER-OCCURRENCE process id (ADR-PC-032 §A9/§A10 Revised 2026-07-04) — the instance
+    /// the outbox rows are keyed on, derived from (subject, event id, movement index).</summary>
+    private async Task<Guid> AutoStartMaturityAsync(Guid processId, string? scaAcr, long? scaAuthTime)
     {
         var sink = new SettlementCommandOutboxSink(new SagaOutboxWriter());
         // The settlement base URL is irrelevant for the SEED (no HTTP runs here — the advance only writes the
@@ -212,16 +214,18 @@ public sealed class SettlementLegStepUpScaIntegrationTests : IAsyncLifetime
             headers[ScaAuthTimeHeaderKey] = authTime.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        var eventId = Guid.NewGuid();
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();
         var outcome = await handler.AdvanceAsync(connection, tx, new SagaInboxEvent(
-            MessageId: Guid.NewGuid(), ProcessId: processId, EventType: "DepositMatured",
+            MessageId: eventId, ProcessId: processId, EventType: "DepositMatured",
             SourceTopic: "term_deposit", CorrelationId: null,
             TraceParent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
             ExtensionHeaders: headers));
         await tx.CommitAsync();
 
         Assert.Equal(AdvanceOutcome.Advanced, outcome);
+        return SettlementMovementFanout.OccurrenceProcessId(processId, eventId, 0);
     }
 
     private IHost BuildHost(string settlementBaseUrl)

@@ -281,7 +281,7 @@ public sealed class SagaStepUpScaIntegrationTests : IAsyncLifetime
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();
         await stateStore.TryStartAsync(
-            connection, tx, processId, ConstitutionProcess.Type, ConstitutionProcess.States.Started, correlationId: null);
+            connection, tx, processId, subjectId: processId, ConstitutionProcess.Type, ConstitutionProcess.States.Started, correlationId: null);
         await businessRefStore.TryInsertAsync(
             connection, tx,
             new SagaBusinessReference(

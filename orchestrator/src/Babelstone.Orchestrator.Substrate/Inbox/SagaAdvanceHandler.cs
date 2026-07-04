@@ -356,36 +356,37 @@ public sealed class SagaAdvanceHandler
                 return AdvanceOutcome.UnknownSaga;
             }
 
-            // (2a-FANOUT) Optional MULTI-INSTANCE fan-out (ADR-PC-032 §A9/§A10; ADR-IC-018 §P5). A single
-            // matched event MAY need to start MORE THAN ONE saga instance — the settlement saga fans a
-            // multi-direction Movement-bearing event (a renewal's rollover-debit + interest-credit) into ONE
-            // instance per Movement, each gated by its own direction. The rule's FanOut projector (the module's,
-            // header-only, family-agnostic — the substrate only invokes it) returns the per-instance events, the
-            // PRIMARY (the event's own ids) FIRST. We process every SECONDARY (index >= 1) here, in THIS SAME
-            // transaction, so all legs start atomically with the primary's offset commit (effectively-once,
-            // all-or-nothing); each secondary's projected event carries its own derived process_id / message_id
-            // and its movementdirections list reduced to its OWN single direction, so it branches THIS leg and
-            // never re-fans-out (a single-entry list is inert — no recursion past depth 1). The PRIMARY then
-            // continues below with the index-0 projection (its list reduced to the first direction). A null/
-            // single-element projection is "no fan-out": message is unchanged, exactly the established path for
-            // a standalone single-direction leg.
+            // (2a-FANOUT) Optional MULTI-INSTANCE fan-out (ADR-PC-032 §A9/§A10, incl. the per-occurrence-
+            // identity revision 2026-07-04; ADR-IC-018 §P5). A single matched event MAY need to start one or
+            // more saga instances at ids that are NOT the event's ce_subject — the settlement saga projects
+            // EVERY Movement-bearing event into one instance per Movement, each at a deterministic
+            // per-occurrence process id (derived from subject + event id + index) with the real subject
+            // preserved on the projection's SubjectId. The rule's FanOut projector (the module's, header-only,
+            // family-agnostic — the substrate only invokes it) returns the per-instance events, the PRIMARY
+            // FIRST. We process every SECONDARY (index >= 1) here, in THIS SAME transaction, so all legs start
+            // atomically with the primary's offset commit (effectively-once, all-or-nothing); each projected
+            // event carries its own derived process_id / message_id and its movementdirections list reduced to
+            // its OWN single direction, so it branches THIS leg and never re-fans-out (the projection is inert
+            // on re-entry — no recursion past depth 1). The PRIMARY then continues below with the index-0
+            // projection. A null/empty projection is "no fan-out": message is unchanged.
             if (autoStart.FanOut is { } fanOut)
             {
                 var projections = fanOut(message);
-                if (projections is { Count: > 1 })
+                if (projections is { Count: > 0 })
                 {
                     for (var i = 1; i < projections.Count; i++)
                     {
                         // Each secondary is a full advance on the SAME connection/transaction: it auto-starts
-                        // its own derived-process_id instance (its movementdirections list is a single entry →
-                        // its own FanOut is a no-op) and advances it with that direction. A non-Advanced outcome
-                        // (a duplicate on redelivery) is the effectively-once guarantee; a SagaConcurrencyException
-                        // propagates so the whole unit rolls back and redelivers (all legs together).
+                        // its own derived-process_id instance (its projection is inert to its own FanOut) and
+                        // advances it with that direction. A non-Advanced outcome (a duplicate on redelivery)
+                        // is the effectively-once guarantee; a SagaConcurrencyException propagates so the
+                        // whole unit rolls back and redelivers (all legs together).
                         await AdvanceCoreAsync(connection, transaction, projections[i], span, ct);
                     }
 
-                    // Drive the PRIMARY with the index-0 projection (its movementdirections list reduced to the
-                    // first direction), so the established single-instance advance below settles the first Movement.
+                    // Drive the PRIMARY with the index-0 projection (its derived per-occurrence id, its
+                    // movementdirections list reduced to the first direction), so the single-instance advance
+                    // below settles the first Movement.
                     message = projections[0];
                 }
             }
@@ -397,20 +398,23 @@ public sealed class SagaAdvanceHandler
             // ce_type (which would break the engine inbox's ce_type↔schema_id decode).
             autoStartEffectiveEventType = autoStart.EffectiveStartEventType;
 
-            // Auto-start (ADR-IC-018 §P5): create the saga_state row (process_id = ce_subject, the saga's
-            // InitialState, its saga_type) and fall through to advance it with the effective start event — all
-            // in the loop's ONE transaction (start + first transition + dedup row commit atomically). The
-            // INSERT is idempotent on process_id: a redelivered start (a replayed DepositMatured) collides
-            // on the PK and TryStartAsync returns false, so we reload the existing row rather than reset a
-            // running/terminal saga (Risk R4 — the existing terminal guard then no-ops a late re-start).
+            // Auto-start (ADR-IC-018 §P5): create the saga_state row (process_id = ce_subject — or, for a
+            // fanned-out per-occurrence leg, the projection's derived id with its real ce_subject persisted
+            // as subject_id — the saga's InitialState, its saga_type) and fall through to advance it with the
+            // effective start event — all in the loop's ONE transaction (start + first transition + dedup row
+            // commit atomically). The INSERT is idempotent on process_id: a redelivered start (a replayed
+            // DepositMatured) collides on the PK and TryStartAsync returns false, so we reload the existing
+            // row rather than reset a running/terminal saga (Risk R4 — the existing terminal guard then
+            // no-ops a late re-start).
+            var subjectId = message.SubjectId ?? message.ProcessId;
             var created = await _stateStore.TryStartAsync(
-                connection, transaction, message.ProcessId,
+                connection, transaction, message.ProcessId, subjectId,
                 autoStart.SagaType, autoStart.InitialState, message.CorrelationId, ct);
 
             saga = created
                 ? new SagaInstance(
                     message.ProcessId, autoStart.SagaType, autoStart.InitialState,
-                    Version: 0, message.CorrelationId)
+                    Version: 0, message.CorrelationId, SubjectId: subjectId)
                 : await _stateStore.LoadAsync(connection, transaction, message.ProcessId, ct);
 
             if (saga is null)

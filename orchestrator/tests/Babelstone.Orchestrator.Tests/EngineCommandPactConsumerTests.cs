@@ -148,7 +148,7 @@ public sealed class EngineCommandPactConsumerTests : IAsyncLifetime
         await connection.OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();
         await stateStore.TryStartAsync(
-            connection, tx, processId, ConstitutionProcess.Type, ConstitutionProcess.States.Started, correlationId: null);
+            connection, tx, processId, subjectId: processId, ConstitutionProcess.Type, ConstitutionProcess.States.Started, correlationId: null);
 
         // Pin the per-saga business references the full-payload factory reads (mandatory now — bd
         // babelstone-t7o3.9). The FK requires the saga_state row to exist first (same transaction).
