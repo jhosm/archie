@@ -21,8 +21,12 @@
 -- this instance parked in HUMAN_INTERVENTION_REQUIRED?" — which is why it is indexed.
 --
 -- Forward-only (ADR-PC-001 §P5, lifted): the backfill sets subject_id := process_id for
--- every existing row — exactly correct, because before this migration the saga instance id
--- WAS the ce_subject (the pre-per-occurrence scheme). NOT NULL after the backfill so every
+-- every existing row. Correct for primary/edge-started rows, whose instance id WAS the
+-- ce_subject (the pre-per-occurrence scheme). Pre-migration multi-direction SECONDARY legs
+-- carried a derived instance id, so their backfilled subject_id is that derived id, not the
+-- real subject — the LCD-2 probe cannot see a pre-migration parked secondary, the same
+-- blind spot the old probe had; only rows written after this migration close that residual.
+-- NOT NULL after the backfill so every
 -- future start MUST carry its subject linkage (both SagaStateStore start paths do).
 ALTER TABLE saga_state ADD COLUMN subject_id UUID;
 
