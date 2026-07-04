@@ -147,6 +147,19 @@ public static class DepositsEndpoints
         TimeProvider clock,
         CancellationToken ct)
     {
+        // The constitution envelope's required-trio guard (bd babelstone-ax0b.8), mirroring the rate-sheet
+        // deploy endpoint's ValidateEnvelope: System.Text.Json binds a missing member to null/0 despite the
+        // record's non-nullable declarations, so a body missing product_id / funding_account / a positive
+        // principal_cents would otherwise ride past into a downstream NullReference/domain 500. Enforce the
+        // UNCONDITIONALLY-required trio here as a clean 400 naming every offending field at once — BEFORE the
+        // Idempotency-Key parse and any side effect. ONLY the trio is required: the structural quartet (term
+        // / start date / interest variant / renewal policy) stays OPTIONAL — the engine resolves it from the
+        // product config when absent (HasStructuralFacts, Fork B rework), so this guard never demands it.
+        if (ValidateConstituteEnvelope(request) is { } invalidEnvelope)
+        {
+            return invalidEnvelope;
+        }
+
         // ADR-PC-029 slot 1: the caller MUST supply a deterministic command id as the Idempotency-Key
         // header (in practice the saga's saga_outbox row id). It is MANDATORY — the engine never
         // accepts a non-idempotent constitution, so a caller that omits or malforms the key fails loud
@@ -239,6 +252,49 @@ public static class DepositsEndpoints
         // If-Min-Sequence on the follow-up GET to read its own write (ADR-IC-005 §P3).
         return Results.Created(
             $"/v1/deposits/{depositId}", new ConstituteDepositResponse(depositId, "ACTIVE", commitSequence));
+    }
+
+    /// <summary>
+    /// The constitution envelope's required-TRIO guard (bd babelstone-ax0b.8), the deposit-side analogue of
+    /// <c>DeployRateSheetEndpoint.ValidateEnvelope</c>. Returns the 400 validation problem naming every
+    /// missing member of the unconditionally-required trio — <c>product_id</c>, <c>funding_account</c>,
+    /// <c>principal_cents</c> — at once, or null when the trio is present. System.Text.Json binds a missing
+    /// member to null (the reference strings) or 0 (the value-type <c>principal_cents</c>) despite the
+    /// record's non-nullable declaration, so this guard is what stops a bare/partial body from riding into a
+    /// downstream NullReference/domain fault surfacing as an opaque 500.
+    /// <para>
+    /// SCOPE — ONLY the trio is required. The structural quartet (<c>term_days</c>, <c>start_date</c>,
+    /// <c>interest_variant</c>, <c>auto_renewal_policy</c>) stays OPTIONAL: <see cref="HasStructuralFacts"/>
+    /// decides the full-facts-vs-minimal path, and on the minimal path the engine resolves the quartet from
+    /// the product config (Fork B rework). This guard never demands it. A pure function (no I/O, no clock),
+    /// so it is unit-testable without the HTTP stack.
+    /// </para>
+    /// </summary>
+    internal static IResult? ValidateConstituteEnvelope(ConstituteDepositRequest request)
+    {
+        var missing = new Dictionary<string, string[]>();
+
+        if (string.IsNullOrWhiteSpace(request.ProductId))
+        {
+            missing["product_id"] = ["product_id is required and must be non-blank."];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.FundingAccount))
+        {
+            missing["funding_account"] = ["funding_account is required and must be non-blank."];
+        }
+
+        // principal_cents is a value type, so a missing member binds to 0 (not null); a deposit of zero (or
+        // negative) principal is meaningless, so require a strictly positive cents amount.
+        if (request.PrincipalCents <= 0)
+        {
+            missing["principal_cents"] =
+                ["principal_cents is required and must be a positive integer amount in cents."];
+        }
+
+        // TypedResults (not Results) so the guard's outcome is the concrete ValidationProblem type — the
+        // unit tests assert on it directly; the wire shape is identical (RFC 9457 problem+json, 400).
+        return missing.Count > 0 ? TypedResults.ValidationProblem(missing) : null;
     }
 
     /// <summary>
