@@ -103,6 +103,7 @@ spec:
     - ../openapi/internal/engine-rate-sheets.openapi.yaml
     - ../openapi/internal/engine-pack-migrations.openapi.yaml
     - ../openapi/internal/engine-withholding-reads.openapi.yaml
+    - ../openapi/internal/engine-bulk-operations.openapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API
@@ -237,6 +238,25 @@ spec:
   owner: platform-engine
   definition:
     $text: ../openapi/internal/engine-withholding-reads.openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: engine-bulk-operations-api
+  title: "INTERNAL — Engine Bulk Operations (admin-ops)"
+  description: >
+    The operator command/query surface for the generic bulk-operations runner (ADR-PC-035):
+    register freezes an EXPLICIT, immutable instance universe into one audited job the
+    background drainer works through; progress is by query; retry re-arms only the FAILED
+    subset; cancel is a STORE-ONLY status flip (ADR-IC-017). Idempotent on (job_id, set_digest),
+    family-agnostic (dispatches on operation_kind). A host-level route on the internal network —
+    not a Kong route.
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-engine
+  definition:
+    $text: ../openapi/internal/engine-bulk-operations.openapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API

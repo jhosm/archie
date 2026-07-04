@@ -25,6 +25,7 @@ public sealed class SpecOperationCoverageTests
         "contracts/openapi/internal/engine-rate-sheets.openapi.yaml",
         "contracts/openapi/internal/engine-pack-migrations.openapi.yaml",
         "contracts/openapi/internal/engine-withholding-reads.openapi.yaml",
+        "contracts/openapi/internal/engine-bulk-operations.openapi.yaml",
     ];
 
     // The provisional-envelope exemption (see Layer1's Sor_ops guard).
