@@ -46,7 +46,7 @@ public sealed class Layer4MappedEndpointSpecCoverageTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>The personal_loan (credito_pessoal) family surface — catalogue not yet authored (bd babelstone-9g77 follow-up).</b>
+    /// <b>The personal_loan (credito_pessoal) family surface — catalogue not yet authored (bd babelstone-ax0b.10 follow-up).</b>
     /// The <c>personal_loan</c> family's host module maps a full command/query surface
     /// (<c>families/personal-loan/.../LoansEndpoints.cs</c>), but no <c>engine-loan-*.openapi.yaml</c> spec
     /// has been authored for it yet — the family shipped its endpoints ahead of its OpenAPI contract. This
@@ -54,7 +54,7 @@ public sealed class Layer4MappedEndpointSpecCoverageTests
     /// family or hastily hand-author six under-reviewed specs (which would also need Layer-1 DTO drift
     /// cases + a meta-sweep entry per operation), the whole family surface is allowlisted here with the
     /// gap named. Authoring the personal_loan OpenAPI specs — and then DELETING these entries so Layer 4
-    /// re-covers them — is the tracked follow-up.
+    /// re-covers them — is the tracked follow-up, bd babelstone-ax0b.10.
     /// </para>
     /// </remarks>
     private static readonly IReadOnlySet<MappedRoute> Allowlist = new HashSet<MappedRoute>
