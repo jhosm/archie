@@ -643,8 +643,9 @@ jobs:
         # the lifecycle-driver subtree carries its build settings inline, not via the engine's
         # Directory.Build.props, since it is extraction-ready per ADR-PC-019 §P2) + the
         # Docker-free test lane. Building the HOST transitively builds the Babelstone.Lifecycle
-        # core LIBRARY, the shared Babelstone.Cadence machinery, and the Babelstone.Engine.Hosting
-        # seam (for the server-derived, number-pinned LifecycleCommandKey it references — LCD-1).
+        # core LIBRARY, the shared Babelstone.Cadence machinery, and the thin
+        # Babelstone.Engine.LifecycleKeys leaf (for the server-derived, number-pinned
+        # LifecycleCommandKey it references — LCD-1; no engine hosting seam, no kernel).
         # The dispatch-ledger re-tick no-op (LifecycleDispatchLedgerTests), the per-tick pass's
         # dedupe + check-then-POST-then-record ordering (LifecycleSchedulePassTests), and the
         # command sink's end-to-end POST through a fake HttpMessageHandler (HttpLifecycleCommandSinkTests)

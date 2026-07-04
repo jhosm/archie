@@ -22,5 +22,11 @@
     <!-- VerifiedPack — the per-deployment pinned pack FamilyHostContext carries to each family module
          (ADR-PC-009), the one non-DI ingredient the seam hands across. -->
     <ProjectReference Include="../Babelstone.Packs/Babelstone.Packs.csproj" />
+    <!-- LifecycleCommandKey (ADR-PC-036 Decision 1, LCD-1) — extracted namespace-PRESERVING into its own
+         thin leaf assembly (bd babelstone-6cpq.13) so the lifecycle-command driver core can reference the
+         canonical key derivation without this hosting seam (and, transitively, the engine kernel).
+         Referencing it here keeps every existing consumer of the seam compiling unchanged: the type still
+         appears in the Babelstone.Engine.Hosting namespace it always lived in. -->
+    <ProjectReference Include="../Babelstone.Engine.LifecycleKeys/Babelstone.Engine.LifecycleKeys.csproj" />
   </ItemGroup>
 </Project>

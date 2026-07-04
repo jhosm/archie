@@ -7,8 +7,9 @@
 # targets the HOST project explicitly — exactly the notification/orchestrator/engine pattern. A bare
 # `dotnet restore`/`dotnet publish` with no project arg is ambiguous (many .csproj repo-wide, no root
 # .sln/.slnx at the repo root), so both restore and publish name the .csproj. Building the HOST transitively
-# builds the Babelstone.Lifecycle core + the Babelstone.Cadence machinery + the Babelstone.Engine.Hosting seam
-# (for the LifecycleCommandKey it references). Build with:
+# builds the Babelstone.Lifecycle core + the Babelstone.Cadence machinery + the thin
+# Babelstone.Engine.LifecycleKeys leaf (for the LifecycleCommandKey it references — no engine hosting seam,
+# no kernel; bd babelstone-6cpq.13). Build with:
 #   docker build -f lifecycle-driver/Dockerfile -t babelstone-lifecycle-driver .
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build

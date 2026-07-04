@@ -13,6 +13,10 @@
          in-process hosting components a family module resolves. NOT a §P2 spine project (it may
          name a family in principle), so it stays out of the ENGINE_FAMILY_AGNOSTIC allowlist. -->
     <Project Path="src/Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
+    <!-- The canonical lifecycle-command idempotency-key LEAF (ADR-PC-036 Decision 1, LCD-1; extracted
+         namespace-preserving from the hosting seam per bd babelstone-6cpq.13): System.*-only, so the
+         lifecycle-driver core references the ONE key derivation without the hosting seam or the kernel. -->
+    <Project Path="src/Babelstone.Engine.LifecycleKeys/Babelstone.Engine.LifecycleKeys.csproj" />
     <!-- The shared OTel instrumentation surface (ADR-IC-007 Layer 1, Epic K.1): ActivitySource + babelstone.* attribute keys. -->
     <Project Path="src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
     <!-- The HOST-side OTel-SDK seam (K.5, bd scd2.3): Npgsql built-in query-telemetry registration,

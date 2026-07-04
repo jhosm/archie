@@ -22,8 +22,11 @@ namespace Babelstone.Engine.Hosting;
 /// occurrence N reuses the same key and dedupes to ONE money leg (ADR-PC-029 slot 4,
 /// <c>ENGINE_COMMAND_IDEMPOTENT</c>). Pure: no clock, no randomness — the same inputs always yield the
 /// same id, so an at-least-once retry targets the same dedup receipt. Mirrors
-/// <c>PackMigration.DeterministicCommandId</c>'s derivation style (same assembly), with its own distinct
-/// namespace so a lifecycle-command id can never collide with another deterministic command-id space.
+/// <c>PackMigration.DeterministicCommandId</c>'s derivation style (in <c>Babelstone.Engine.Hosting</c> — the
+/// assembly this helper was extracted from, namespace-preserving, into its own thin leaf so the
+/// lifecycle-command driver can reference the key without the hosting seam; bd babelstone-6cpq.13), with its
+/// own distinct namespace so a lifecycle-command id can never collide with another deterministic command-id
+/// space.
 /// </para>
 /// </summary>
 public static class LifecycleCommandKey
