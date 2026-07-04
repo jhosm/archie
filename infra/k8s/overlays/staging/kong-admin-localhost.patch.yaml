@@ -15,16 +15,15 @@
 # (KONG_ADMIN_ADDR=http://127.0.0.1:8001), and via kubectl exec — while being
 # unreachable from any pod on the cluster network.
 #
-# The CI leg does NOT work yet: cd.yml step 4e runs deck-sync.sh on the
-# GitHub-hosted runner with no port-forward step anywhere, so once this patch
-# is applied the KONG_ADMIN_ADDR secret alone connects to nothing. FOLLOW-UP
-# (maintainer/orchestrator-tracked — named here so it cannot be silently
-# assumed away): add a background `kubectl port-forward deploy/kong 8001:8001 &`
-# (+ readiness wait) to cd.yml before step 4e, AND widen the scoped
-# cd-deployer Role — it grants no `pods`/`pods/portforward` verbs today
-# (bootstrap/cd-deploy-rbac.yaml), so the port-forward would be Forbidden
-# under the current deploy identity. Deliberately NOT bundled into this PR:
-# widening the deploy identity is its own security decision.
+# The CI leg works the same way (follow-up LANDED — bd babelstone-zla1.12.12,
+# the widening this header used to name as deliberately NOT bundled): cd.yml's
+# promote job opens a background `kubectl port-forward deploy/kong 8001:8001`
+# with a readiness wait against /status (step 4e) before its deck sync (4f),
+# points deck at the tunnel's local end (http://127.0.0.1:8001 — structural,
+# not configuration, so the KONG_ADMIN_ADDR environment secret is retired),
+# and tears the tunnel down explicitly (4g). The scoped cd-deployer Role
+# grants exactly the verbs that tunnel needs and nothing more — pods get/list
+# + pods/portforward create (bootstrap/cd-deploy-rbac.yaml).
 #
 # Two strategic-merge docs: the Deployment env override (env lists merge by
 # name) and the Service port removal ($patch: delete on the 8001 entry).

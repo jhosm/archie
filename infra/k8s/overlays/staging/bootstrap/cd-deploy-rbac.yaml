@@ -47,7 +47,9 @@ type: kubernetes.io/service-account-token
 # Namespaced Role — the verbs `kubectl apply -k overlays/staging` actually needs
 # (get + create + patch for client-side apply; list/update for kubectl's diffing and
 # annotation rewrites), on exactly the kinds the overlay renders. No wildcard, no
-# delete (except Jobs, below), and NO general secret read/write.
+# delete (except Jobs, below), and NO general secret read/write. Plus ONE deliberate
+# non-apply grant: the Kong Admin port-forward for cd.yml's deck sync (last two rules;
+# bd babelstone-zla1.12.12).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -102,6 +104,20 @@ rules:
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshots"]
     verbs: ["create", "get", "list", "delete"]
+  # Kong Admin tunnel for cd.yml's deck sync (bd babelstone-zla1.12.12 — the follow-up
+  # named in ../kong-admin-localhost.patch.yaml's header): staging binds Kong's Admin
+  # API to the pod loopback, so the CI leg reaches it only via `kubectl port-forward
+  # deploy/kong 8001:8001`, which needs pods get + list (kubectl resolves deploy/kong
+  # to its running pod) and a pods/portforward CREATE to open the kubelet stream.
+  # Deliberately nothing more: no watch, no exec (a shell inside a pod would dwarf the
+  # tunnel), no delete — a leaked deploy token can tunnel to this namespace's pods but
+  # cannot enter or kill them.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

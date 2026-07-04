@@ -248,14 +248,65 @@ jobs:
           set -euo pipefail
           mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/overlays/$OVERLAY" \
             | kubectl apply -f -
-      # 4e — declarative Kong deck sync with the REAL edge mTLS + IAM key from OpenBao (bd 4c81.1).
+      # 4e — open the kubelet tunnel to the Kong Admin API for the deck sync in 4f.
+      #      Staging binds the Admin API to the pod's loopback and drops its 8001 Service
+      #      port (overlays/staging/kong-admin-localhost.patch.yaml, bd babelstone-zla1.12.8),
+      #      so no cluster-network address — and no secret-held URL — reaches it any more.
+      #      `kubectl port-forward` tunnels through the kubelet and connects to the POD's
+      #      loopback, which is exactly why the loopback bind stays deck-syncable. The scoped
+      #      cd-deployer Role grants the minimal verbs this needs (pods get/list +
+      #      pods/portforward create — bootstrap/cd-deploy-rbac.yaml; bd babelstone-zla1.12.12,
+      #      the follow-up the patch header named). The forward runs in the background with its
+      #      PID kept for the explicit 4g teardown; the readiness loop polls the Admin /status
+      #      THROUGH the tunnel so 4f never races the connection, and fails loud (with the
+      #      forward's own log) if the tunnel dies or never comes up.
+      - name: Port-forward the Kong Admin API (kubelet tunnel to the pod loopback)
+        env:
+          KUBECONFIG: ${{ runner.temp }}/kubeconfig
+        run: |
+          set -euo pipefail
+          kubectl port-forward deploy/kong 8001:8001 \
+            > "$RUNNER_TEMP/kong-port-forward.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/kong-port-forward.pid"
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 2 http://127.0.0.1:8001/status >/dev/null 2>&1; then
+              echo "Kong Admin API reachable through the tunnel (after ~${i}s)"
+              exit 0
+            fi
+            if ! kill -0 "$(cat "$RUNNER_TEMP/kong-port-forward.pid")" 2>/dev/null; then
+              echo "::error::kubectl port-forward exited before the Admin API became reachable:"
+              cat "$RUNNER_TEMP/kong-port-forward.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::Kong Admin API not reachable through the port-forward after 30s"
+          cat "$RUNNER_TEMP/kong-port-forward.log"
+          exit 1
+      # 4f — declarative Kong deck sync with the REAL edge mTLS + IAM key from OpenBao (bd 4c81.1).
       #      BAO_ADDR/BAO_TOKEN are environment secrets (a deploy-scoped policy, never root).
+      #      The Admin address is the 4e tunnel's local end — structural, not configuration —
+      #      which retires the KONG_ADMIN_ADDR environment secret (once the loopback bind
+      #      landed it pointed at nothing a runner could reach).
       - name: deck sync the edge config (real OpenBao mTLS + IAM key, ADR-IC-006 §P1/§P5/§P7)
         env:
           BAO_ADDR: ${{ secrets.BAO_ADDR }}
           BAO_TOKEN: ${{ secrets.BAO_DEPLOY_TOKEN }}
-          KONG_ADMIN_ADDR: ${{ secrets.KONG_ADMIN_ADDR }}
-        run: ./scripts/deck-sync.sh --kong-addr "$KONG_ADMIN_ADDR"
+        run: ./scripts/deck-sync.sh --kong-addr http://127.0.0.1:8001
+      # 4g — tear the tunnel down explicitly. The runner reaps stray processes at job end
+      #      anyway, but the forward holds an authenticated kubelet stream, so we kill it the
+      #      moment it has served its one purpose rather than rely on teardown.
+      - name: Stop the Kong Admin port-forward
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -f "$RUNNER_TEMP/kong-port-forward.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/kong-port-forward.pid")" 2>/dev/null || true
+            rm -f "$RUNNER_TEMP/kong-port-forward.pid"
+            echo "port-forward stopped"
+          else
+            echo "no port-forward was started (an earlier step failed before 4e)"
+          fi
 
   # ── always-run aggregator (same gate pattern as ci.yml) ─────────────────────────────
   gate:
