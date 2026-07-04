@@ -88,6 +88,12 @@ public sealed class BulkOperationService(IBulkOperationStore store)
     public Task<BulkOperationProgress> GetProgressAsync(Guid jobId, CancellationToken ct = default)
         => store.GetProgressAsync(jobId, ct);
 
+    /// <summary>One job header by query (ADR-PC-035) — status, kind, frozen counts, and the
+    /// <c>matched_set</c> audit snapshot (which the command surface's register-level idempotency
+    /// check reads its <c>set_digest</c> from); null when no such job is registered.</summary>
+    public Task<BulkOperationJobRow?> GetJobAsync(Guid jobId, CancellationToken ct = default)
+        => store.ReadJobAsync(jobId, ct);
+
     /// <summary>Selective retry (ADR-PC-035): re-arm a reopenable job's FAILED subset to PENDING;
     /// the re-run dedupes on the deterministic command id (<see cref="BulkOperationCommandId"/>).</summary>
     public Task<int> RetryFailedAsync(Guid jobId, CancellationToken ct = default)

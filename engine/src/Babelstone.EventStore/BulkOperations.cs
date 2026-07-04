@@ -155,6 +155,10 @@ public interface IBulkOperationStore
 
     /// <summary>One target row (for tests/audit reads); null when absent.</summary>
     Task<BulkOperationTargetRow?> ReadTargetAsync(Guid jobId, Guid instanceId, CancellationToken ct = default);
+
+    /// <summary>One job header by id (the command/query surface's status + idempotency read,
+    /// ADR-PC-035); null when no such job is registered.</summary>
+    Task<BulkOperationJobRow?> ReadJobAsync(Guid jobId, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -494,6 +498,39 @@ public sealed class PostgresBulkOperationStore(string connectionString) : IBulkO
 
         await using var reader = await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct) ? ReadTarget(reader) : null;
+    }
+
+    public async Task<BulkOperationJobRow?> ReadJobAsync(Guid jobId, CancellationToken ct = default)
+    {
+        const string sql = """
+            SELECT job_id, operation_kind, matched_set::text, requested_batch_size, total_count, actor,
+                   status, created_at, started_at, completed_at
+            FROM bulk_operation_jobs
+            WHERE job_id = @job_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("job_id", jobId);
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct))
+        {
+            return null;
+        }
+
+        return new BulkOperationJobRow(
+            JobId: reader.GetGuid(0),
+            OperationKind: reader.GetString(1),
+            MatchedSetJson: reader.GetString(2),
+            RequestedBatchSize: reader.GetInt32(3),
+            TotalCount: reader.GetInt64(4),
+            Actor: reader.GetString(5),
+            Status: reader.GetString(6),
+            CreatedAt: reader.GetFieldValue<DateTimeOffset>(7),
+            StartedAt: reader.IsDBNull(8) ? null : reader.GetFieldValue<DateTimeOffset>(8),
+            CompletedAt: reader.IsDBNull(9) ? null : reader.GetFieldValue<DateTimeOffset>(9));
     }
 
     private static BulkOperationTargetRow ReadTarget(NpgsqlDataReader reader) => new(

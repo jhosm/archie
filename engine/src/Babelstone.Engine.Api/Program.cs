@@ -452,6 +452,12 @@ foreach (var module in familyModules)
 // host has ONE route, not the per-family collision a Map<TState>-per-module loop would create.
 PackMigrationsEndpoints.Map(app);
 
+// The operator bulk-operations surface (ADR-PC-035, bd babelstone-qpiw.4): register/preview a
+// frozen explicit set, read live progress, retry only the FAILED subset, cancel — thin mappings
+// onto the BulkOperationService registered above, registered ONCE at host level (family-agnostic;
+// the runner dispatches on operation_kind, never on a family).
+BulkOperationsEndpoints.Map(app);
+
 app.Run();
 
 // Exposed for WebApplicationFactory<Program> in the integration tests.
