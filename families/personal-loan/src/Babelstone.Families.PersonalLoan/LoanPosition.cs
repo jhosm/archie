@@ -99,7 +99,7 @@ public sealed record LoanPosition(
     Money TotalCapitalRepaid,
     Money TotalCommissionCharged,
     Money WrittenOffAmount,
-    LoanLifecycle Lifecycle) : IErasable<LoanPosition>
+    LoanLifecycle Lifecycle) : IErasable<LoanPosition>, IAccount
 {
     /// <summary>
     /// GDPR Article 17 terminal transition (ADR-PC-004 §P3 / Amendment A4): label the loan
@@ -110,6 +110,20 @@ public sealed record LoanPosition(
     /// no I/O (BENG001/002/003).
     /// </summary>
     public LoanPosition WithErased() => this with { Lifecycle = LoanLifecycle.Erased };
+
+    /// <summary>
+    /// The Account seam binding (ADR-PC-033 slot 1): the personal loan is a DEGENERATE account —
+    /// one balance, no holds — so implementing <see cref="IAccount"/> RECLASSIFIES it; nothing
+    /// about the fold changes. The <c>account_ref</c> is the loan's own stream id
+    /// (<see cref="LoanId"/>): an opaque instance identifier the engine resolves internally, never
+    /// PII (ADR-PC-004 §P2) — NOT <see cref="DisbursementAccountRef"/>, which is the COUNTERPARTY
+    /// reference the disbursement moved money to, not this account. A computed read over the
+    /// already-folded id — not a record positional parameter — so the compiler-synthesised record
+    /// equality and replay determinism (ADR-PC-010 §P5) are untouched. Deliberately NOT
+    /// <see cref="IHoldable"/>: a loan carries no holds, so its available balance trivially equals
+    /// its accounting balance (the uniform-split degenerate case, ADR-PC-033 slot 1).
+    /// </summary>
+    public string AccountRef => LoanId.ToString();
 
     /// <summary>The seed state a fold starts from (before <c>LoanDisbursed</c>).</summary>
     public static LoanPosition Empty { get; } = new(
