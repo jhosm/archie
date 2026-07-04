@@ -74,6 +74,19 @@ public sealed class SettlementMovementFanoutTests
     }
 
     [Fact]
+    public void The_derivation_matches_the_pinned_golden_ids_so_the_scheme_cannot_silently_re_key()
+    {
+        // Golden literals: self-consistency alone would still pass if the namespace GUID or the
+        // delimiter changed, silently re-keying every in-flight saga's identity and ACL tokens
+        // across a deploy. These pins fail on ANY change to the derivation inputs or encoding —
+        // changing them is a deliberate, reviewed re-key, never a refactor side-effect.
+        var projections = SettlementSagaModule.FanOutByMovementDirection(MovementEvent("Debit,Credit"));
+
+        Assert.Equal(Guid.Parse("aa5b5213-fa3c-4d57-81d1-958349aff857"), projections[0].ProcessId);
+        Assert.Equal(Guid.Parse("bc47ce69-4906-fb58-9178-167ad928b414"), projections[1].ProcessId);
+    }
+
+    [Fact]
     public void The_derivation_is_deterministic_so_a_redelivery_re_derives_the_same_ids()
     {
         // Effectively-once per leg: the same event re-projects to byte-identical process ids + dedup ids, so
