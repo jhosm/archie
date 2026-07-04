@@ -434,14 +434,18 @@ components:
         honoured unchanged. Money is integer cents (ADR-PC-010 §P1); funding_account is an
         opaque token, never an IBAN (ADR-PC-004 §P2). WHAT `required` MEANS HERE, candidly:
         it reflects the DTO's serialization convention (non-nullable, no default — the
-        contract's intent), NOT a runtime rejection the engine performs today — System.Text.
-        Json binds a missing member to its default (0 / null) and the handler does not yet
-        400 on an absent product_id/funding_account (an omitted principal constitutes a
-        zero-principal deposit only if the product config admits it; the rate-resolve 422 is
-        the usual backstop). On the PUBLIC path this is moot — the Kong pre-function enforces
-        the edge's required set before anything reaches the saga (the drift suite's Layer 2
-        asserts that set); engine-side runtime enforcement for direct internal callers is a
-        tracked follow-up.
+        contract's intent) AND a runtime rejection the engine now performs — System.Text.
+        Json binds a missing member to its default (0 / null), so the constitute handler runs
+        an up-front ValidateConstituteEnvelope guard (bd babelstone-ax0b.8) that returns a 400
+        (RFC 9457 problem+json) naming each missing member of this required trio for DIRECT
+        INTERNAL callers: an absent/blank product_id or funding_account, and a principal_cents
+        that is not strictly positive (a missing member binds to 0, and a zero/negative
+        principal is rejected rather than admitted). SCOPE: only this trio is enforced — the
+        OPTIONAL structural facts (term_days / start_date / interest_variant /
+        auto_renewal_policy) stay resolved from the product config, never demanded. On the
+        PUBLIC path the Kong pre-function still enforces the edge's required set before
+        anything reaches the saga (the drift suite's Layer 2 asserts that set); the engine
+        guard is now the equivalent backstop for direct internal callers.
       required: [principal_cents, product_id, funding_account]
       properties:
         principal_cents:
