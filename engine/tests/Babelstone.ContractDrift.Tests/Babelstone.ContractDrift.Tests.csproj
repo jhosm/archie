@@ -5,6 +5,15 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Layer 4 composes the engine host's endpoint map (EndpointDataSource / RouteEndpoint /
+         IEndpointRouteBuilder / minimal-API MapPost·MapGet) against a collecting route builder, so the
+         suite needs the ASP.NET Core shared framework — the same FrameworkReference the host carries.
+         The suite stays HERMETIC (no server, no broker, no containers): it only READS the built route
+         patterns, it never listens on a socket. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
@@ -17,7 +26,20 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The DTO assemblies whose wire shapes the committed OpenAPI specs document. -->
+    <!-- Layer 4 route-table composition. The engine COMPOSITION ROOT (the only project that may name a
+         family, ADR-PC-021 §A2): it carries HostModuleLoader (the family-discovery seam Layer 4 replays)
+         AND, via its family ProjectReferences, copies each Babelstone.Families.*.dll into this test's
+         output dir — exactly the output-dir probe FamilyHostAssemblies() uses, so the personal_loan and
+         term_deposit host modules are discovered here without a host boot (the same trick
+         Babelstone.Engine.Api.Tests uses). -->
+    <ProjectReference Include="../../src/Babelstone.Engine.Api/Babelstone.Engine.Api.csproj" />
+    <!-- The personal_loan family's application assembly, referenced explicitly so its
+         Babelstone.Families.PersonalLoan.Application.dll (carrying PersonalLoanHostModule + LoansEndpoints)
+         lands in the output dir for the FamilyHostAssemblies() probe even should the transitive copy be
+         elided — the same belt-and-braces anchor the host itself keeps (ADR-PC-021 §A3). -->
+    <ProjectReference Include="../../../families/personal-loan/src/Babelstone.Families.PersonalLoan.Application/Babelstone.Families.PersonalLoan.Application.csproj" />
+
+    <!-- The DTO assemblies whose wire shapes the committed OpenAPI specs document (Layers 1–3). -->
     <!-- Engine command surface + read DTOs (contracts/openapi/internal/engine-deposit-commands, specs/engine-reads). -->
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
     <!-- Pack-migration operator surface (contracts/openapi/internal/engine-pack-migrations). -->
