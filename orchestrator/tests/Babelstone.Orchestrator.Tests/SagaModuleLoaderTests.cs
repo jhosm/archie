@@ -30,11 +30,14 @@ public sealed class SagaModuleLoaderTests
 
         var sagaTypes = modules.Select(m => m.SagaType).ToList();
 
-        // The shipped family's BOTH saga modules are discovered with no host-composition edit naming
-        // them — the host's Program.cs holds no family type, yet the loader finds the constitution and
-        // renewal modules purely by assembly-scan + the (SagaModuleContext) activation contract.
+        // BOTH shipped families' saga modules are discovered with no host-composition edit naming
+        // them — the host's Program.cs holds no family type, yet the loader finds the term-deposit
+        // constitution + renewal modules AND the personal-loan module (bd babelstone-9z9w — the
+        // integration-topics declarer whose own saga estate is empty) purely by assembly-scan + the
+        // (SagaModuleContext) activation contract.
         Assert.Contains("ConstitutionProcess", sagaTypes);
         Assert.Contains("RenewalProcess", sagaTypes);
+        Assert.Contains("PersonalLoanProcess", sagaTypes);
 
         // Each saga type is governed by exactly one module — the duplicate-key guard would have thrown.
         Assert.Equal(sagaTypes.Count, sagaTypes.Distinct().Count());
@@ -56,6 +59,13 @@ public sealed class SagaModuleLoaderTests
             .ToList();
 
         Assert.NotEmpty(union);
+
+        // And it spans MORE THAN ONE family (bd babelstone-9z9w): the union is what makes the LCD-2
+        // write side reachable for a family that runs no saga of its own — its module's declaration
+        // alone joins its Movement-bearing topic to the settlement saga's subscribe set. Still
+        // family-agnostic: a count, not a topic name.
+        Assert.True(union.Count >= 2,
+            $"expected the discovered modules' integration-topic union to span both shipped families, got [{string.Join(", ", union)}]");
     }
 
     [Fact]

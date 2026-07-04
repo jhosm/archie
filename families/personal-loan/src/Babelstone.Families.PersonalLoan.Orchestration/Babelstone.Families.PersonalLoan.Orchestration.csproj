@@ -1,0 +1,40 @@
+<!-- The personal-loan family's SAGA module (ADR-IC-018 §D1/§P1; bd babelstone-9z9w): the
+     ISagaModule (PersonalLoanSagaModule) the host discovers by assembly-scan, whose load-bearing
+     contribution is the catalogue-generated FamilyIntegrationTopics declaration — that is what joins
+     loan Movement-bearing events (LoanDisbursed, LoanInstallmentPaid, ... on the personal_loan topic)
+     to the substrate-owned settlement saga's consume set (ADR-PC-040 §D3; ADR-IC-018 Revised
+     2026-07-02). The loan family owns no saga of its own yet, so the module's machine/bridge/router
+     members are inert fail-closed stubs. It depends ONLY on the substrate's generic ports — the
+     family → substrate arrow, never the reverse (ADR-IC-018 §D2), and never the engine kernel
+     (extraction-ready, ADR-PC-019 §P2). Build settings inherit from families/Directory.Build.props →
+     engine/Directory.Build.props (net10.0, nullable, warnings-as-errors). -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Families.PersonalLoan.Orchestration</RootNamespace>
+    <AssemblyName>Babelstone.Families.PersonalLoan.Orchestration</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- IServiceCollection for PersonalLoanSagaModule.ConfigureServices. No Npgsql: the module owns
+         no store (the settlement machinery that consumes the declared topics is the substrate's).
+         No Confluent.Kafka: the family module does not own the consume loop (the substrate does). -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The family → substrate arrow (ADR-IC-018 §D2/§P2): the only RUNTIME project reference, never the
+         reverse, never the engine kernel. -->
+    <ProjectReference Include="../../../../orchestrator/src/Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- BENG005 no-PII telemetry tripwire (bd njt2.12): the Babelstone.Engine.Analyzers suite attached as
+         a BUILD-TIME checker only (OutputItemType=Analyzer, ReferenceOutputAssembly=false — passed to the
+         compiler, NEVER linked). Not a runtime/code dependency on the engine kernel, so it does not
+         re-arm the family → substrate arrow or erode extraction-readiness (ADR-PC-019 §P2) — dev tooling,
+         shed on extraction like any shared analyser. Vacuous today (this module opens no spans); the same
+         posture as the term-deposit Orchestration module. -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

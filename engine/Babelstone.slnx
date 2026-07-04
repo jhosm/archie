@@ -51,6 +51,11 @@
          schema + the impure decider/application layer; same family → engine plugin arrow (ADR-PC-021). -->
     <Project Path="../families/personal-loan/src/Babelstone.Families.PersonalLoan/Babelstone.Families.PersonalLoan.csproj" />
     <Project Path="../families/personal-loan/src/Babelstone.Families.PersonalLoan.Application/Babelstone.Families.PersonalLoan.Application.csproj" />
+    <!-- The personal-loan family's SAGA module (ADR-IC-018 §D1; bd babelstone-9z9w): the ISagaModule whose
+         catalogue-generated FamilyIntegrationTopics declaration joins loan Movement-bearing events to the
+         substrate settlement saga's consume set; the loan family runs no saga of its own yet, so its
+         machine/bridge/router are inert stubs. Family → substrate arrow only. -->
+    <Project Path="../families/personal-loan/src/Babelstone.Families.PersonalLoan.Orchestration/Babelstone.Families.PersonalLoan.Orchestration.csproj" />
     <!-- The personal-loan family's LIFECYCLE-COMMAND contribution (ADR-PC-036 §Decision 2/3/5): the recurring
          InstallmentRule + the IFamilyLifecycleModule that binds its forward installment-calendar Npgsql store
          and registers the rule, discovered by the lifecycle host's assembly-scan (family → core arrow). -->
@@ -151,6 +156,11 @@
     <!-- The family LIFECYCLE contribution tests (ADR-PC-036 §Decision 2/3/5): InstallmentRule's number-pinned
          recurring decision, the re-tick no-op, advance-to-N+1-only-after-N-paid, over a fake calendar store. -->
     <Project Path="../families/personal-loan/tests/Babelstone.Families.PersonalLoan.Lifecycle.Tests/Babelstone.Families.PersonalLoan.Lifecycle.Tests.csproj" />
+    <!-- The personal-loan ORCHESTRATION module tests (bd babelstone-9z9w): the module's declarations
+         (catalogue-generated integration topics, empty consume set, inert fail-closed stubs) + the
+         loan-installment per-occurrence settlement walk through the substrate saga (occurrence N parked
+         while N+1 arrives is representable — ADR-PC-032 §A9/§A10 Revised 2026-07-04). -->
+    <Project Path="../families/personal-loan/tests/Babelstone.Families.PersonalLoan.Orchestration.Tests/Babelstone.Families.PersonalLoan.Orchestration.Tests.csproj" />
     <!-- H.1 saga substrate: pure state-machine tests + saga-persistence/advance/role-envelope
          integration tests (the latter [Trait("Category","Integration")], filtered out of the
          default lane). -->

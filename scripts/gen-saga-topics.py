@@ -40,7 +40,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CATALOG_EVENTS = REPO_ROOT / "contracts" / "catalog" / "events"
 
-# The one family this manifest governs today. Keyed by the catalogue `x-owner` value, mapped
+# The families this manifest governs. Keyed by the catalogue `x-owner` value, mapped
 # to the generated file's home in the family's OWN orchestration tree (co-located with the
 # orchestrator/family deploy inputs, NOT the docs-gen reference tree — ADR-IC-003 §A8). A second
 # family adds a row here + its own generated manifest; the substrate and the gate are unchanged.
@@ -52,6 +52,19 @@ FAMILIES = {
         / "term-deposit"
         / "src"
         / "Babelstone.Families.TermDeposit.Orchestration"
+        / "FamilyIntegrationTopics.g.cs",
+    },
+    # The personal-loan Orchestration module (bd babelstone-9z9w; ADR-IC-018 §D6 discovery /
+    # ADR-PC-040 §D3): its generated manifest is what joins loan Movement-bearing events
+    # (LoanDisbursed / LoanInstallmentPaid / ... on the personal_loan channel) to the substrate
+    # settlement saga's consume set via the host's discovered-module union.
+    "personal-loan": {
+        "namespace": "Babelstone.Families.PersonalLoan.Orchestration",
+        "out": REPO_ROOT
+        / "families"
+        / "personal-loan"
+        / "src"
+        / "Babelstone.Families.PersonalLoan.Orchestration"
         / "FamilyIntegrationTopics.g.cs",
     },
 }

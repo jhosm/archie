@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The family's ORCHESTRATION module under test (bd babelstone-9z9w): the PersonalLoanSagaModule
+         whose catalogue-generated FamilyIntegrationTopics declaration joins loan Movement-bearing events
+         to the substrate settlement saga's consume set. Docker-free: the module's declarations and the
+         per-occurrence settlement walk are pure (the fan-out projector + the SettlementProcess table). -->
+    <ProjectReference Include="../../src/Babelstone.Families.PersonalLoan.Orchestration/Babelstone.Families.PersonalLoan.Orchestration.csproj" />
+    <!-- The orchestrator SUBSTRATE (a family-agnostic core, fine for a TEST project to name): the
+         SettlementProcess machine + SettlementMovementFanout the loan-installment end-to-end walk drives,
+         and the ISagaModule contract shape the module tests assert against. -->
+    <ProjectReference Include="../../../../orchestrator/src/Babelstone.Orchestrator.Substrate/Babelstone.Orchestrator.Substrate.csproj" />
+  </ItemGroup>
+</Project>
