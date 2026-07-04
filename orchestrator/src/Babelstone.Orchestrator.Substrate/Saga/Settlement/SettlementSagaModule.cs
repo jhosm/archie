@@ -111,14 +111,14 @@ public sealed class SettlementSagaModule : ISagaModule
             headers.TryGetValue(OriginHeader, out var origin)
             && string.Equals(origin, OriginatedValue, StringComparison.Ordinal),
         Match: AutoStartMatch.ByHeaderPredicate,
-        // MULTI-DIRECTION fan-out (ADR-PC-032 §A9/§A10, option b). A single Movement-bearing event MAY carry
-        // money moving two ways at once (a renewal's rollover-debit + interest-credit). The producer
-        // (Babelstone.Engine.MovementHeaders) emits the ordered movementdirections list; when it spans more
-        // than one direction this projector fans it into ONE settlement instance per Movement, each at a
-        // deterministic per-Movement process id and gated by its own direction (the substrate only INVOKES this
-        // — the settlement-specific list shape lives here, family-agnostic; ADR-IC-018 §P5). A standalone
-        // single-direction event's one-entry list does not fan out, so the projector returns the lone event
-        // unchanged.
+        // PER-OCCURRENCE fan-out (ADR-PC-032 §A9/§A10, option b + the per-occurrence-identity revision
+        // 2026-07-04). The producer (Babelstone.Engine.MovementHeaders) emits the ordered movementdirections
+        // list (one entry per Originated Movement); this projector fans EVERY Movement-bearing event into ONE
+        // settlement instance per Movement — each at a deterministic per-occurrence process id derived from
+        // (ce_subject, ce_id, movement index) and gated by its own direction — so a recurring subject's later
+        // occurrences (installment N ≥ 2) get their OWN saga instead of no-oping at occurrence 1's terminal
+        // saga, while a redelivery re-derives the same ids and dedups. The substrate only INVOKES this — the
+        // settlement-specific list shape lives here, family-agnostic; ADR-IC-018 §P5.
         FanOut: FanOutByMovementDirection);
 
     /// <inheritdoc />
@@ -135,22 +135,34 @@ public sealed class SettlementSagaModule : ISagaModule
     }
 
     /// <summary>
-    /// Fan a matched Movement-bearing event into ONE per-Movement settlement event per Originated direction
-    /// (ADR-PC-032 §A9/§A10, option b). Reads the ordered <c>movementdirections</c> list the producer emits;
-    /// when it spans more than one direction, for each direction in carrier order it projects the source event
-    /// into a per-Movement <see cref="Inbox.SagaInboxEvent"/> (its own derived process id / dedup id, its list
-    /// reduced to that single direction). The PRIMARY (index 0) keeps the event's own ids; the secondaries are
-    /// deterministically derived (so a redelivery re-derives them — effectively-once per leg). A standalone
-    /// single-direction event (one-entry list) returns the lone source event UNCHANGED — the substrate then
-    /// starts the established single instance. Pure (no clock, no I/O); names no family.
+    /// Fan a matched Movement-bearing event into ONE per-OCCURRENCE settlement event per Originated direction
+    /// (ADR-PC-032 §A9/§A10, option b + the per-occurrence-identity revision 2026-07-04). Reads the ordered
+    /// <c>movementdirections</c> list the producer emits and, for EVERY entry in carrier order (a one-entry
+    /// list included), projects the source event into a per-occurrence <see cref="Inbox.SagaInboxEvent"/>: a
+    /// deterministic process id derived from (ce_subject, ce_id, movement index), the real subject preserved
+    /// on <see cref="Inbox.SagaInboxEvent.SubjectId"/>, and the list reduced to that single direction. Same
+    /// event redelivered → same derived ids (effectively-once per leg); a LATER event on the same subject →
+    /// fresh instances (per-occurrence identity — the one-terminal-saga-per-ce_subject gap, bd
+    /// babelstone-3o6m). An ALREADY-PROJECTED leg (non-null <c>SubjectId</c>) and a directions-less event
+    /// return the lone source unchanged — the projection is inert on re-entry, and a defensive
+    /// no-declared-directions event keeps the legacy single instance on its own <c>ce_subject</c>. Pure (no
+    /// clock, no I/O); names no family.
     /// </summary>
     public static IReadOnlyList<Inbox.SagaInboxEvent> FanOutByMovementDirection(Inbox.SagaInboxEvent source)
     {
-        var directions = SettlementMovementFanout.ParseDirections(source.ExtensionHeaders);
-        if (directions.Count < 2)
+        if (source.SubjectId is not null)
         {
-            // A single-entry (or absent) movementdirections list → no fan-out. The established single instance
-            // settles the event, keeping its own ce_subject; the substitutor's SingleDirection branches it.
+            // Already a projected per-occurrence leg (the fan-out stamped its SubjectId): inert on re-entry —
+            // the recursive secondary advance must start THIS derived instance, never re-derive from it.
+            return [source];
+        }
+
+        var directions = SettlementMovementFanout.ParseDirections(source.ExtensionHeaders);
+        if (directions.Count == 0)
+        {
+            // No declared movementdirections list (the producer always emits one for an Originated event —
+            // ADR-PC-032 §A9 — so this is defensive depth): fall back to the legacy single instance keyed on
+            // the event's own ce_subject rather than minting an occurrence id from a phantom movement.
             return [source];
         }
 

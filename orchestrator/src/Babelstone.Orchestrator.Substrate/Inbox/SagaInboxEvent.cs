@@ -36,6 +36,14 @@ namespace Babelstone.Orchestrator.Inbox;
 /// to decide whether an unknown-saga event starts a new instance, so the extraction-ready,
 /// payload-blind boundary is preserved. Every value is a structural routing discriminator, NEVER PII
 /// (ADR-PC-004 §P2). Null when the record carried no extension attributes beyond the standard set.</param>
+/// <param name="SubjectId">The account/instrument linkage (the record's REAL <c>ce_subject</c>) when
+/// <see cref="ProcessId"/> is a DERIVED per-occurrence saga instance id (ADR-PC-032 §A9/§A10 Revised
+/// 2026-07-04): the settlement fan-out rewrites <see cref="ProcessId"/> to a deterministic derivation of
+/// (ce_subject, event id, movement index) and preserves the subject here, so the start path persists it
+/// into <c>saga_state.subject_id</c> (the LCD-2 probe's key). <c>null</c> — the default, and what the
+/// consume loop always projects — means <see cref="ProcessId"/> IS the subject (every non-fanned-out
+/// event). A non-null value also marks the event as an already-projected occurrence leg, which is what
+/// makes a projected leg INERT on fan-out re-entry. Structural GUID, never PII (ADR-PC-004 §P2).</param>
 public sealed record SagaInboxEvent(
     Guid MessageId,
     Guid ProcessId,
@@ -43,4 +51,5 @@ public sealed record SagaInboxEvent(
     string SourceTopic,
     Guid? CorrelationId,
     string? TraceParent = null,
-    IReadOnlyDictionary<string, string>? ExtensionHeaders = null);
+    IReadOnlyDictionary<string, string>? ExtensionHeaders = null,
+    Guid? SubjectId = null);

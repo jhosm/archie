@@ -4,19 +4,25 @@ namespace Babelstone.Lifecycle;
 
 /// <summary>
 /// PostgreSQL-backed <see cref="ISettlementHealthProbe"/> (ADR-PC-036 §Decision 4, LCD-2): reads the
-/// orchestrator's <c>saga_state</c> row for the substrate-owned <c>SettlementProcess</c> and answers
-/// "is this instance's cash leg parked in <c>HUMAN_INTERVENTION_REQUIRED</c>?". In plain terms: when the
-/// settlement of a collected installment cannot be effected, the settlement saga parks in a state an
-/// operator must resolve; this probe is how the lifecycle driver SEES that park, so the recurring path can
-/// refuse to advance the schedule past money actually collected.
+/// orchestrator's <c>saga_state</c> rows for the substrate-owned <c>SettlementProcess</c> and answers
+/// "is ANY of this instance's settlement occurrences parked in <c>HUMAN_INTERVENTION_REQUIRED</c>?". In
+/// plain terms: when the settlement of a collected installment cannot be effected, that occurrence's
+/// settlement saga parks in a state an operator must resolve; this probe is how the lifecycle driver SEES
+/// that park, so the recurring path can refuse to advance the schedule past money actually collected.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Read-only, and keyed exactly the way the saga is keyed.</b> The settlement saga instance for a
-/// single-direction Movement-bearing event is keyed by the event's <c>ce_subject</c> — the engine relay
-/// stamps that as the AGGREGATE id (ADR-IC-018 §P5), i.e. the same instance/stream id the lifecycle
-/// driver's decisions carry. One indexed <c>EXISTS</c> over <c>(saga_type, state)</c> + the process-id key;
-/// the probe never writes and never joins the orchestrator's other tables.
+/// <b>Read-only, and keyed by the SUBJECT linkage, not the saga instance id (ADR-PC-036 §Decision 4,
+/// Revised 2026-07-04).</b> Settlement identity is PER OCCURRENCE (ADR-PC-032 §A9/§A10 Revised
+/// 2026-07-04): each Originated Movement — installment 1, installment 2, each leg of a multi-direction
+/// event — gets its own saga at a DERIVED <c>process_id</c>, while the account/instrument linkage (the
+/// event's <c>ce_subject</c> = the aggregate/stream id the lifecycle driver's decisions carry) is
+/// persisted on the indexed <c>saga_state.subject_id</c> column (orchestrator migration 0009). So the
+/// gate's question is "is ANY settlement occurrence for THIS instance parked?" — one indexed
+/// <c>EXISTS</c> over <c>subject_id</c> + the <c>(saga_type, state)</c> btree. This also closes the old
+/// residual: a fanned-out secondary leg (index ≥ 1) carries the same <c>subject_id</c>, so a parked
+/// secondary now holds the schedule too. The probe never writes and never joins the orchestrator's
+/// other tables.
 /// </para>
 /// <para>
 /// <b>Pinned wire literals, not a compile-time reference (the extraction-ready posture).</b>
@@ -24,14 +30,9 @@ namespace Babelstone.Lifecycle;
 /// <c>SettlementProcess.Type</c> / <c>SettlementProcess.States.HumanInterventionRequired</c> — named
 /// locally, not referenced, so the driver core takes no dependency on the orchestrator substrate assembly
 /// (the same lock-step-by-constant discipline the rules use for command kinds and the fan-out uses for the
-/// <c>movementdirections</c> header). The LCD-2 integration test asserts the two sides agree byte-for-byte.
-/// </para>
-/// <para>
-/// <b>Known residual — fanned-out secondary legs.</b> A MULTI-direction Movement-bearing event's secondary
-/// settlement legs (index ≥ 1) park at a DERIVED per-Movement subject (<c>SettlementMovementFanout</c>),
-/// which this probe does not scan; the primary leg (index 0) keeps the instance id and IS scanned. Every
-/// recurring lifecycle event gated today (a loan installment) carries a single movement, so the primary
-/// covers the whole gated surface.
+/// <c>movementdirections</c> header). The LCD-2 integration test asserts the two sides agree byte-for-byte,
+/// and its walk over the orchestrator's REAL migrated schema is the tripwire for the <c>subject_id</c>
+/// column shape itself — an orchestrator migration reshaping it breaks that test, not production.
 /// </para>
 /// <para>
 /// A connection/query failure PROPAGATES (fail-closed): the pass treats it as backpressure and the
@@ -61,14 +62,16 @@ public sealed class PostgresSettlementHealthProbe(string connectionString) : ISe
     /// <inheritdoc />
     public async Task<bool> IsParkedAsync(Guid instanceId, CancellationToken ct = default)
     {
-        // EXISTS over the (saga_type, state) index + the process-id primary key: is THIS instance's
-        // settlement saga currently parked awaiting an operator? The saga row is keyed by ce_subject =
-        // the aggregate id (ADR-IC-018 §P5), which is exactly the decision's InstanceId.
+        // EXISTS over the subject_id index (migration 0009) + the (saga_type, state) btree: is ANY of
+        // THIS instance's settlement occurrences currently parked awaiting an operator? Each occurrence
+        // is its own saga at a derived process_id (ADR-PC-032 §A9/§A10 Revised 2026-07-04); the
+        // subject_id column carries the ce_subject = aggregate id linkage, which is exactly the
+        // decision's InstanceId (ADR-PC-036 §Decision 4 Revised 2026-07-04).
         const string sql = """
             SELECT EXISTS (
                 SELECT 1
                 FROM saga_state
-                WHERE process_id = @process_id
+                WHERE subject_id = @subject_id
                   AND saga_type = @saga_type
                   AND state = @state);
             """;
@@ -76,7 +79,7 @@ public sealed class PostgresSettlementHealthProbe(string connectionString) : ISe
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(ct);
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("process_id", instanceId);
+        command.Parameters.AddWithValue("subject_id", instanceId);
         command.Parameters.AddWithValue("saga_type", SettlementSagaType);
         command.Parameters.AddWithValue("state", ParkedState);
 

@@ -25,7 +25,7 @@ public sealed class RolePrivilegeIntegrationTests(OrchestratorPostgresFixture fi
         // INSERT and UPDATE are the saga aggregate's lifecycle — the one place the
         // orchestrator MUTATES in place (optimistic concurrency, ADR-IC-003 §P1).
         await ExecAsync(connection,
-            "INSERT INTO saga_state (process_id, saga_type, state) VALUES (@p, 'ConstitutionProcess', 'STARTED');",
+            "INSERT INTO saga_state (process_id, subject_id, saga_type, state) VALUES (@p, @p, 'ConstitutionProcess', 'STARTED');",
             ("p", processId));
         await ExecAsync(connection,
             "UPDATE saga_state SET state = 'PARALLEL_VALIDATION', version = version + 1 WHERE process_id = @p;",
@@ -45,7 +45,7 @@ public sealed class RolePrivilegeIntegrationTests(OrchestratorPostgresFixture fi
 
         // Seed a saga + transition as the owner (migration role), then SET ROLE and try to mutate.
         await ExecAsync(connection,
-            "INSERT INTO saga_state (process_id, saga_type, state) VALUES (@p, 'ConstitutionProcess', 'STARTED');",
+            "INSERT INTO saga_state (process_id, subject_id, saga_type, state) VALUES (@p, @p, 'ConstitutionProcess', 'STARTED');",
             ("p", processId));
         await ExecAsync(connection,
             "INSERT INTO saga_transition (process_id, from_state, to_state, event_type) " +

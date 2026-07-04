@@ -5,12 +5,15 @@ using Babelstone.Orchestrator.Inbox;
 namespace Babelstone.Orchestrator.Saga.Settlement;
 
 /// <summary>
-/// Fans a MULTI-DIRECTION Movement-bearing event out into one settlement subject per Originated Movement
-/// (ADR-PC-032 §A9/§A10, option b; feature-design money-movement-settlement §6). In plain English: a single
-/// event can carry money moving two opposite ways at once — a deposit renewal rolls the principal over (a
-/// debit) AND pays the interest (a credit). One settlement saga instance branches to ONE direction, so this
-/// helper turns that one event into N independent settlement subjects — one per Movement, each gated by its
-/// own direction — so both legs settle correctly with no silent loss.
+/// Projects a Movement-bearing event into one PER-OCCURRENCE settlement subject per Originated Movement
+/// (ADR-PC-032 §A9/§A10, option b + the per-occurrence-identity revision 2026-07-04; feature-design
+/// money-movement-settlement §6). In plain English: every time money moves, the settlement machinery needs
+/// its own saga instance to succeed, fail, or park in — including the SECOND and later times money moves on
+/// the SAME account (a loan's monthly installments), and including a single event that moves money two
+/// opposite ways at once (a renewal's rollover-debit + interest-credit). This helper turns each
+/// Movement-bearing event into N independent settlement instances — one per Movement — whose process ids are
+/// deterministic derivations of (subject, event id, movement index), so occurrence 2 never collides with
+/// occurrence 1's completed saga, while a REDELIVERY of the same event re-derives the same ids and dedups.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -19,20 +22,26 @@ namespace Babelstone.Orchestrator.Saga.Settlement;
 /// — the comma-separated closed-enum names of every Originated direction in carrier order: a single entry for
 /// a standalone leg (e.g. <c>Credit</c>), N entries for a multi-direction event (e.g. <c>Debit,Credit</c>).
 /// The substrate names no family — it reads only these header strings (ADR-IC-018 §D5; the extraction-ready,
-/// payload-blind boundary), never the Avro payload. Fan-out triggers only when the list has ≥ 2 entries; a
-/// single-entry list is one settlement instance the established way — the lone event flows through unchanged,
-/// keeping its own <c>ce_subject</c> as its process id (byte-for-byte the prior single-direction behaviour),
-/// and <see cref="SingleDirection"/> branches it. For a genuinely multi-direction event the PRIMARY instance
-/// (index 0) keeps the event's own <c>ce_subject</c>; the SECONDARY instances (index ≥ 1) are derived (below).
+/// payload-blind boundary), never the Avro payload.
 /// </para>
 /// <para>
-/// <b>Deterministic per-Movement subjects (ADR-PC-010 §P5 — no clock, no mint).</b> A secondary instance's
-/// process id is a v5-style (SHA-1, namespaced) hash of <c>(ce_subject, index)</c>, and its dedup message id
-/// a v5-style hash of <c>(original message_id, index)</c> — NOT <see cref="System.Guid.NewGuid"/>. So a
-/// redelivery of the SAME multi-direction event re-derives the SAME secondary subjects and the SAME dedup
-/// ids: the auto-start INSERT collides on the process-id PK and the inbox dedup row collides on the message
-/// id, so each secondary leg starts and advances EXACTLY ONCE (effectively-once), exactly as the primary leg
-/// does on its own <c>ce_subject</c>. Index 0 is the identity (the primary keeps the real ids).
+/// <b>Per-occurrence identity (ADR-PC-032 §A9/§A10 Revised 2026-07-04; bd babelstone-3o6m / Q-BH).</b>
+/// EVERY settlement instance's process id — index 0 included — is a v5-style (SHA-1, namespaced) hash of
+/// <c>(ce_subject, ce_id, movement index)</c>, NOT the bare <c>ce_subject</c>. Deterministic (ADR-PC-010 §P5
+/// — no clock, no mint), so a redelivery of the SAME event re-derives the SAME process ids and the auto-start
+/// INSERT collides on the <c>saga_state</c> PK (effectively-once per leg) — while a LATER occurrence on the
+/// same subject (installment N's event has its own <c>ce_id</c>) derives a FRESH instance, so
+/// <c>SETTLEMENT_COMPLETED</c> stays terminal PER OCCURRENCE and a recurring schedule's occurrence N ≥ 2 has
+/// its own saga to drive or park. The account/instrument linkage is preserved on the projection's
+/// <see cref="SagaInboxEvent.SubjectId"/> (persisted as the indexed <c>saga_state.subject_id</c> the LCD-2
+/// probe keys on, ADR-PC-036 §Decision 4 Revised 2026-07-04). Each occurrence's process id is also what the
+/// ACL idempotency references derive from (<see cref="SettlementReferences"/>), so installment 2's debit
+/// token can never dedup against installment 1's.
+/// </para>
+/// <para>
+/// <b>Dedup message ids.</b> The PRIMARY leg (index 0) keeps the event's own <c>ce_id</c> as its inbox dedup
+/// identity (one physical delivery ↔ one primary advance); a SECONDARY leg's (index ≥ 1) dedup id is a
+/// v5-style hash of <c>(ce_id, index)</c> — so a redelivery's every leg collides on its own dedup row.
 /// </para>
 /// <para>
 /// <b>Per-account FIFO holds.</b> Each instance gets its OWN process id, hence its OWN dispatcher
@@ -43,42 +52,34 @@ namespace Babelstone.Orchestrator.Saga.Settlement;
 /// </remarks>
 public static class SettlementMovementFanout
 {
-    // A fixed namespace GUID for derived per-Movement settlement SUBJECTS — an arbitrary, stable constant,
-    // DISTINCT from every other derived-id namespace in the repo (self-emit …001, settlement-result …002,
-    // renewal-deposit …003, pack …009) so a derived subject can never collide with another derived id by
-    // construction.
+    // A fixed namespace GUID for derived per-occurrence settlement PROCESS IDS — an arbitrary, stable
+    // constant, DISTINCT from every other derived-id namespace in the repo (self-emit …001,
+    // settlement-result …002, renewal-deposit …003, pack …009) so a derived occurrence id can never collide
+    // with another derived id by construction.
     private static readonly Guid SettlementSubjectNamespace = Guid.Parse("b1be1570-0000-5e1f-e317-00000000000a");
 
     // A fixed namespace GUID for derived per-Movement settlement DEDUP MESSAGE IDs — distinct again, so the
-    // secondary legs' inbox dedup keys cannot collide with the subject ids or any external ce_id.
+    // secondary legs' inbox dedup keys cannot collide with the occurrence ids or any external ce_id.
     private static readonly Guid SettlementMessageNamespace = Guid.Parse("b1be1570-0000-5e1f-e317-00000000000b");
 
     /// <summary>
     /// Parse the ordered Originated directions a Movement-bearing event's <c>movementdirections</c> list
-    /// declares that REQUIRE FAN-OUT (length ≥ 2 — a genuinely multi-direction event), or an EMPTY list
-    /// otherwise (a standalone single-direction leg, or a non-Movement event — the caller starts ONE instance
-    /// the established way, no fan-out). Reads the <see cref="DirectionsHeader"/> header ONLY; names no family.
-    /// The values are the closed-enum NAMES the producer emits (<c>Debit</c> / <c>Credit</c>); the substrate
-    /// keeps them as the WIRE STRINGS (the substitutor matches on them — ADR-IC-018 §D5), never re-typing them
-    /// to an engine enum (the orchestrator stays extraction-ready, ADR-PC-019 §P2).
+    /// declares — ONE entry per Movement, in carrier order (a single entry for a standalone leg, N for a
+    /// multi-direction event), or an EMPTY list for a non-Movement event (no/blank header). Reads the
+    /// <see cref="DirectionsHeader"/> header ONLY; names no family. The values are the closed-enum NAMES the
+    /// producer emits (<c>Debit</c> / <c>Credit</c>); the substrate keeps them as the WIRE STRINGS (the
+    /// substitutor matches on them — ADR-IC-018 §D5), never re-typing them to an engine enum (the
+    /// orchestrator stays extraction-ready, ADR-PC-019 §P2). Every declared entry is projected into its own
+    /// per-occurrence instance by <see cref="ProjectMovementEvent"/> — the fan-out's inertia guard is the
+    /// projection's <see cref="SagaInboxEvent.SubjectId"/> stamp, not the list length.
     /// </summary>
     /// <param name="extensionHeaders">The event's projected extension attributes (ce_-stripped, lowercased).
     /// Null/empty ⇒ no directions.</param>
-    /// <returns>The ordered direction wire strings when the event spans MORE THAN ONE Movement (length ≥ 2);
-    /// an EMPTY list otherwise (a single-direction or non-Movement event — no fan-out, the lone event flows
-    /// through unchanged keeping its real <c>ce_subject</c>).</returns>
+    /// <returns>The ordered direction wire strings the event declares (one per Movement); an EMPTY list for
+    /// a non-Movement event.</returns>
     public static IReadOnlyList<string> ParseDirections(
         IReadOnlyDictionary<string, string>? extensionHeaders)
-    {
-        // The producer ALWAYS emits movementdirections as an ordered list — one entry for a standalone leg, N
-        // for a multi-direction event. Fan-out is needed ONLY for length ≥ 2: a single-entry list is one
-        // settlement instance the established way (the event keeps its own ce_subject; SingleDirection branches
-        // it). Treating length < 2 as "no fan-out" is ALSO what makes a fanned-out leg inert on re-entry — each
-        // leg carries a single-entry list, so re-parsing it returns [] and it never re-fans-out (no recursion
-        // past depth 1).
-        var directions = SplitDirections(extensionHeaders);
-        return directions.Length >= 2 ? directions : [];
-    }
+        => SplitDirections(extensionHeaders);
 
     /// <summary>
     /// The lone Originated direction a (post-fan-out) leg's <c>movementdirections</c> header declares — the
@@ -115,23 +116,27 @@ public static class SettlementMovementFanout
     }
 
     /// <summary>
-    /// The per-Movement subject for <paramref name="index"/> of the multi-direction event whose own subject is
-    /// <paramref name="eventSubject"/>. Index 0 is the IDENTITY (the primary instance keeps the event's real
-    /// <c>ce_subject</c>); index ≥ 1 is a deterministic v5-style derivation, stable across redelivery.
+    /// The PER-OCCURRENCE settlement process id for movement <paramref name="index"/> of the event
+    /// <paramref name="eventMessageId"/> on subject <paramref name="eventSubject"/> (ADR-PC-032 §A9/§A10
+    /// Revised 2026-07-04): a deterministic v5-style derivation of (ce_subject, ce_id, movement index) —
+    /// for EVERY index, 0 included. Same inputs → same id (a redelivery collides on the saga_state PK,
+    /// effectively-once); a different event id (installment N+1) → a fresh instance on the same subject.
+    /// Never <see cref="Guid.NewGuid"/> (ADR-PC-010 §P5).
     /// </summary>
-    public static Guid SubjectForMovement(Guid eventSubject, int index)
+    public static Guid OccurrenceProcessId(Guid eventSubject, Guid eventMessageId, int index)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(index);
-        return index == 0
-            ? eventSubject
-            : DeriveV5(SettlementSubjectNamespace, eventSubject.ToString("N") + "|" + index);
+        return DeriveV5(
+            SettlementSubjectNamespace,
+            eventSubject.ToString("N") + "|" + eventMessageId.ToString("N") + "|" + index);
     }
 
     /// <summary>
     /// The per-Movement dedup message id for <paramref name="index"/> of the multi-direction event whose own
     /// dedup id is <paramref name="eventMessageId"/>. Index 0 is the IDENTITY (the primary leg dedups on the
-    /// event's real message id); index ≥ 1 is a deterministic v5-style derivation, so a redelivery re-derives
-    /// the SAME id and the inbox dedup absorbs it (effectively-once per leg).
+    /// event's real message id — one physical delivery ↔ one primary advance); index ≥ 1 is a deterministic
+    /// v5-style derivation, so a redelivery re-derives the SAME id and the inbox dedup absorbs it
+    /// (effectively-once per leg).
     /// </summary>
     public static Guid MessageIdForMovement(Guid eventMessageId, int index)
     {
@@ -142,12 +147,16 @@ public static class SettlementMovementFanout
     }
 
     /// <summary>
-    /// Project the event into the per-Movement <see cref="SagaInboxEvent"/> for <paramref name="index"/>: its
-    /// derived subject + dedup id, and its extension headers with <c>movementdirections</c> OVERWRITTEN to this
-    /// leg's SINGLE direction (so the machine's substitutor branches THIS leg, and the now-single-entry list is
-    /// inert on re-entry — a leg must NOT re-fan-out). The primary (index 0) keeps the event's real ids; its
-    /// list is pinned to the first direction. Family-agnostic: it copies whatever other extension attributes
-    /// the record carried (e.g. the SCA claims), naming none.
+    /// Project the event into the per-occurrence <see cref="SagaInboxEvent"/> for movement
+    /// <paramref name="index"/>: its derived per-occurrence process id
+    /// (<see cref="OccurrenceProcessId"/>), its dedup id (<see cref="MessageIdForMovement"/>), its REAL
+    /// <c>ce_subject</c> preserved on <see cref="SagaInboxEvent.SubjectId"/> (the account/instrument linkage
+    /// the start path persists as <c>saga_state.subject_id</c>), and its extension headers with
+    /// <c>movementdirections</c> OVERWRITTEN to this leg's SINGLE direction (so the machine's substitutor
+    /// branches THIS leg). The non-null <see cref="SagaInboxEvent.SubjectId"/> is ALSO the inertia stamp: a
+    /// projected leg re-entering the fan-out flows through unchanged (no recursion past depth 1).
+    /// Family-agnostic: it copies whatever other extension attributes the record carried (e.g. the SCA
+    /// claims), naming none.
     /// </summary>
     public static SagaInboxEvent ProjectMovementEvent(
         SagaInboxEvent source, int index, string direction)
@@ -157,10 +166,8 @@ public static class SettlementMovementFanout
         ArgumentOutOfRangeException.ThrowIfNegative(index);
 
         // Carry every extension attribute forward (the SCA claims, any future routing discriminator), then
-        // OVERWRITE movementdirections with THIS leg's single direction. Reducing the list to one entry does
-        // both jobs at once: the substitutor's SingleDirection now resolves THIS leg's branch, and a re-parse
-        // returns [] (length < 2) so the leg never re-fans-out (no recursion past depth 1). Ordinal-ignore-case
-        // to match the consume loop's projection.
+        // OVERWRITE movementdirections with THIS leg's single direction so the substitutor's SingleDirection
+        // resolves THIS leg's branch. Ordinal-ignore-case to match the consume loop's projection.
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (source.ExtensionHeaders is { } existing)
         {
@@ -175,7 +182,10 @@ public static class SettlementMovementFanout
         return source with
         {
             MessageId = MessageIdForMovement(source.MessageId, index),
-            ProcessId = SubjectForMovement(source.ProcessId, index),
+            ProcessId = OccurrenceProcessId(source.ProcessId, source.MessageId, index),
+            // The event's REAL ce_subject — the projection is built from an UN-projected event (the fan-out
+            // guard returns a projected leg unchanged), so source.ProcessId IS the subject here.
+            SubjectId = source.ProcessId,
             ExtensionHeaders = headers,
         };
     }

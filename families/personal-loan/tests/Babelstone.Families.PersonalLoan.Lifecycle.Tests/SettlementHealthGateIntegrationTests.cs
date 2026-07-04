@@ -10,22 +10,28 @@ using Xunit;
 namespace Babelstone.Families.PersonalLoan.Lifecycle.Tests;
 
 /// <summary>
-/// The LCD-2 integration test (ADR-PC-036 §Decision 4, <c>LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE</c>):
-/// the held-then-resume walk of
+/// The LCD-2 integration test (ADR-PC-036 §Decision 4 Revised 2026-07-04,
+/// <c>LIFECYCLE_DRIVER_SETTLEMENT_HEALTH_GATE</c>): the held-then-resume walk of
 /// <c>SettlementHealthGateTests</c>, but against the ORCHESTRATOR'S REAL <c>saga_state</c> schema (its own
 /// migration set applied to a PostgreSQL container) read by the REAL
 /// <see cref="PostgresSettlementHealthProbe"/>. In plain terms: this is the cross-service proof — the row
 /// the settlement saga actually parks in is the row the lifecycle driver's gate actually reads, so
 /// installment N+1 is held while occurrence N's cash leg sits in <c>HUMAN_INTERVENTION_REQUIRED</c> and
-/// resumes once an operator drives it to <c>SETTLEMENT_COMPLETED</c>.
+/// resumes once an operator drives it to <c>SETTLEMENT_COMPLETED</c>. Settlement identity is PER OCCURRENCE
+/// (ADR-PC-032 §A9/§A10 Revised 2026-07-04): each occurrence's saga lives at a DERIVED <c>process_id</c>
+/// and the probe keys on the <c>saga_state.subject_id</c> linkage — so the rows this test seeds carry
+/// exactly that shape (derived process id ≠ subject), proving the gate sees a park the instance id alone
+/// could no longer find.
 /// </summary>
 /// <remarks>
 /// The probe's wire literals are PINNED (the driver core takes no orchestrator compile dependency), so this
 /// project — which references BOTH sides — also asserts the lock-step byte-for-byte:
 /// <see cref="PostgresSettlementHealthProbe.SettlementSagaType"/> ↔ <see cref="SettlementProcess.Type"/> and
 /// <see cref="PostgresSettlementHealthProbe.ParkedState"/> ↔
-/// <see cref="SettlementProcess.States.HumanInterventionRequired"/>. Tagged Integration so the Docker-free
-/// lane skips it; the integration lane runs it.
+/// <see cref="SettlementProcess.States.HumanInterventionRequired"/>. The probe's THIRD wire dependency — the
+/// <c>subject_id</c> column shape (migration 0009) — is pinned by the real-schema walk itself: the probe's
+/// EXISTS runs against the orchestrator's own migrated schema, so a reshape breaks here, not in production.
+/// Tagged Integration so the Docker-free lane skips it; the integration lane runs it.
 /// </remarks>
 [Trait("Category", "Integration")]
 public sealed class SettlementHealthGateIntegrationTests(SettlementSagaPostgresFixture fixture)
@@ -59,10 +65,14 @@ public sealed class SettlementHealthGateIntegrationTests(SettlementSagaPostgresF
         Assert.Equal(1, Assert.Single(first).OccurrenceKey);
 
         // N's paid event lands (the calendar advances to occurrence 2) — and N's cash leg PARKS: the
-        // settlement saga instance keyed by the loan's stream id (ce_subject, ADR-IC-018 §P5) lands in
-        // HUMAN_INTERVENTION_REQUIRED awaiting an operator.
+        // settlement saga instance for THAT OCCURRENCE — its process_id a per-occurrence derivation of
+        // (ce_subject, event id, movement index), its subject_id the loan's stream id (ADR-PC-032 §A9/§A10
+        // Revised 2026-07-04) — lands in HUMAN_INTERVENTION_REQUIRED awaiting an operator.
         store.Replace(Loan(loan, nextNumber: 2, nextDue: Today));
-        await fixture.InsertSettlementSagaAsync(loan, SettlementProcess.States.HumanInterventionRequired);
+        var occurrence1 = SettlementMovementFanout.OccurrenceProcessId(loan, Guid.NewGuid(), 0);
+        Assert.NotEqual(loan, occurrence1); // the probe can no longer find this park by instance id alone
+        await fixture.InsertSettlementSagaAsync(
+            occurrence1, subjectId: loan, SettlementProcess.States.HumanInterventionRequired);
 
         // HELD: automated passes keep finding occurrence 2 due and keep refusing it — the paid-count
         // never outruns collected cash, tick after tick.
@@ -72,7 +82,7 @@ public sealed class SettlementHealthGateIntegrationTests(SettlementSagaPostgresF
 
         // The operator resolves the parked leg (OperatorResolved → SETTLEMENT_COMPLETED). The schedule
         // resumes on the very next pass.
-        await fixture.UpdateSettlementSagaAsync(loan, SettlementProcess.States.SettlementCompleted);
+        await fixture.UpdateSettlementSagaAsync(occurrence1, SettlementProcess.States.SettlementCompleted);
         var resumed = await pass.RunOnceAsync(Today.AddDays(2));
         Assert.Equal(2, Assert.Single(resumed).OccurrenceKey);
         Assert.Equal(2, sink.Dispatched.Count);
@@ -85,7 +95,9 @@ public sealed class SettlementHealthGateIntegrationTests(SettlementSagaPostgresF
         // HUMAN_INTERVENTION_REQUIRED holds the schedule — the gate reads the operator-escalation state,
         // not "any saga exists".
         var loan = Guid.NewGuid();
-        await fixture.InsertSettlementSagaAsync(loan, SettlementProcess.States.ConfirmingDebit);
+        await fixture.InsertSettlementSagaAsync(
+            SettlementMovementFanout.OccurrenceProcessId(loan, Guid.NewGuid(), 0),
+            subjectId: loan, SettlementProcess.States.ConfirmingDebit);
 
         var probe = new PostgresSettlementHealthProbe(fixture.ConnectionString);
         Assert.False(await probe.IsParkedAsync(loan));
@@ -173,15 +185,20 @@ public sealed class SettlementSagaPostgresFixture : IAsyncLifetime
 
     public async Task DisposeAsync() => await _pg.DisposeAsync();
 
-    /// <summary>Insert a settlement saga row exactly as the substrate's auto-start does: keyed by the
-    /// event's <c>ce_subject</c> (= the aggregate id), typed <c>SettlementProcess</c>, in the given state.</summary>
-    public async Task InsertSettlementSagaAsync(Guid processId, string state)
+    /// <summary>Insert a settlement saga row exactly as the substrate's auto-start does since the
+    /// per-occurrence-identity revision (ADR-PC-032 §A9/§A10 Revised 2026-07-04): keyed by the DERIVED
+    /// per-occurrence <paramref name="processId"/>, carrying the account/instrument linkage on
+    /// <paramref name="subjectId"/> (the event's <c>ce_subject</c> = the aggregate id — the column the
+    /// LCD-2 probe keys on), typed <c>SettlementProcess</c>, in the given state.</summary>
+    public async Task InsertSettlementSagaAsync(Guid processId, Guid subjectId, string state)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(
-            "INSERT INTO saga_state (process_id, saga_type, state) VALUES (@p, @t, @s);", connection);
+            "INSERT INTO saga_state (process_id, subject_id, saga_type, state) VALUES (@p, @subj, @t, @s);",
+            connection);
         command.Parameters.AddWithValue("p", processId);
+        command.Parameters.AddWithValue("subj", subjectId);
         command.Parameters.AddWithValue("t", SettlementProcess.Type);
         command.Parameters.AddWithValue("s", state);
         await command.ExecuteNonQueryAsync();

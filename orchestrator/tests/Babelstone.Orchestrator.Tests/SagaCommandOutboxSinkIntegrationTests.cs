@@ -185,7 +185,7 @@ public sealed class SagaCommandOutboxSinkIntegrationTests(OrchestratorPostgresFi
 
     private Task StartBareSagaAsync(Guid processId, Guid correlationId) =>
         RunHelper((c, tx) => _stateStore.TryStartAsync(
-            c, tx, processId, _machine.SagaType, _machine.InitialState, correlationId));
+            c, tx, processId, subjectId: processId, _machine.SagaType, _machine.InitialState, correlationId));
 
     private Task EmitOnceAsync(SagaCommandOutboxSink sink, Guid processId, string commandType, Guid causationId, Guid correlationId) =>
         RunHelper((c, tx) => sink.EmitAsync(c, tx, processId, commandType, causationId, correlationId));

@@ -330,7 +330,7 @@ public sealed class MultiSagaSubstrateTests
             await using var connection = await OpenAsync();
             await using var tx = await connection.BeginTransactionAsync();
             var created = await _stateStore.TryStartAsync(
-                connection, tx, processId, sagaType, initialState, correlationId: null);
+                connection, tx, processId, subjectId: processId, sagaType, initialState, correlationId: null);
             Assert.True(created);
             await tx.CommitAsync();
             return processId;

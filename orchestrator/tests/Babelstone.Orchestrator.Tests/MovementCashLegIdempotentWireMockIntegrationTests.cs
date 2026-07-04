@@ -242,7 +242,7 @@ public sealed class MovementCashLegIdempotentWireMockIntegrationTests : IAsyncLi
         // Start in the settlement saga's initial state, then advance the row to the in-flight state the leg
         // is decided from — the FK the saga_outbox row needs is the saga_state row (same transaction).
         await stateStore.TryStartAsync(
-            connection, tx, processId, SettlementProcess.Type, SettlementProcess.States.SettlementStarted, correlationId);
+            connection, tx, processId, subjectId: processId, SettlementProcess.Type, SettlementProcess.States.SettlementStarted, correlationId);
         await stateStore.TryAdvanceAsync(connection, tx, processId, expectedVersion: 0, state, default);
         await tx.CommitAsync();
     }

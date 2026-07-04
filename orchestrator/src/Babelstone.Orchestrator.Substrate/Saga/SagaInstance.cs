@@ -23,6 +23,12 @@ namespace Babelstone.Orchestrator.Saga;
 /// <c>client_id</c>). The SSE read enforces the requester's <c>client_id</c> matches this so a
 /// guessed/stolen <c>process_id</c> yields no updates (ADR-IC-006 §P4 / Document 05 §Step 0). An
 /// opaque business reference, NOT PII. Null for a consume-loop-started saga.</param>
+/// <param name="SubjectId">The account/instrument this instance belongs to (the persisted, NOT NULL
+/// <c>saga_state.subject_id</c>, migration 0009): the triggering event's real <c>ce_subject</c>. For a
+/// per-occurrence settlement instance (ADR-PC-032 §A9/§A10 Revised 2026-07-04) it differs from the
+/// derived <see cref="ProcessId"/>; for every other saga it equals it. <c>null</c> only on an in-memory
+/// instance constructed by a caller that did not thread it — a LOADED row always carries it. Structural
+/// GUID, never PII (ADR-PC-004 §P2).</param>
 public sealed record SagaInstance(
     Guid ProcessId,
     string SagaType,
@@ -30,4 +36,5 @@ public sealed record SagaInstance(
     long Version,
     Guid? CorrelationId,
     string? PublicProcessId = null,
-    string? OwningClientId = null);
+    string? OwningClientId = null,
+    Guid? SubjectId = null);

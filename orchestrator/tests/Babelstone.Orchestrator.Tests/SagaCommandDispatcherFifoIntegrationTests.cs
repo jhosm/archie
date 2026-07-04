@@ -304,7 +304,7 @@ public sealed class SagaCommandDispatcherFifoIntegrationTests : IAsyncLifetime
         await using var connection = await OpenAsync();
         await using var tx = await connection.BeginTransactionAsync();
         await stateStore.TryStartAsync(
-            connection, tx, processId, ConstitutionProcess.Type, ConstitutionProcess.States.Started, correlationId);
+            connection, tx, processId, subjectId: processId, ConstitutionProcess.Type, ConstitutionProcess.States.Started, correlationId);
         await businessRefStore.TryInsertAsync(
             connection, tx,
             new SagaBusinessReference(
