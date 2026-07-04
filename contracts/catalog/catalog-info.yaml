@@ -95,6 +95,14 @@ spec:
     - ../openapi/specs/engine-reads.openapi.yaml
     - ../openapi/specs/engine-sor-ops.openapi.yaml
     - ../openapi/specs/orchestrator-process-status.openapi.yaml
+    # The INTERNAL catalogue (../openapi/internal/, bd babelstone-ax0b.5): never-public-by-design
+    # surfaces — the mTLS-only engine command ingress and the operator/admin-ops planes. Each
+    # carries info.x-internal (a required reason string) and the gate's NEVER-PUBLIC reconcile
+    # proves none of their operations is an exposed Kong route.
+    - ../openapi/internal/engine-deposit-commands.openapi.yaml
+    - ../openapi/internal/engine-rate-sheets.openapi.yaml
+    - ../openapi/internal/engine-pack-migrations.openapi.yaml
+    - ../openapi/internal/engine-withholding-reads.openapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API
@@ -159,6 +167,76 @@ spec:
   owner: platform-edge
   definition:
     $text: ../openapi/specs/orchestrator-process-status.openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: engine-deposit-commands-api
+  title: "INTERNAL — Engine Deposit Commands (mTLS-only)"
+  description: >
+    The engine's deposit command / money-mover ingress (ADR-PC-029) — INTERNAL by design,
+    deliberately absent from the Kong edge (ADR-IC-006 §P5 Boundary 2). Callers: the
+    orchestrator saga dispatcher, the MCP deposit tools, and the ADR-PC-036 lifecycle driver
+    (maturity/interest via the scoped service principal). Mandatory Idempotency-Key on the
+    caller-keyed commands; step-up SCA on the irreversible money-movers. NEVER a public route
+    (the gate's never-public reconcile proves it).
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-engine
+  definition:
+    $text: ../openapi/internal/engine-deposit-commands.openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: engine-rate-sheets-api
+  title: "INTERNAL — Engine Rate-Sheet Deploy (admin-ops)"
+  description: >
+    The treasury/ALM forward-only rate-sheet deploy plane (ADR-PC-008): synchronous
+    validation against the verified pack bound, idempotent on rate_sheet_version_id
+    (identical re-POST replays 200, a different body under an existing id is 409). Served by
+    the standalone Babelstone.RateSheets.Api host on the internal network — not a Kong route.
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-engine
+  definition:
+    $text: ../openapi/internal/engine-rate-sheets.openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: engine-pack-migrations-api
+  title: "INTERNAL — Engine Pack Migrations (admin-ops)"
+  description: >
+    The operator pack-migration plane (ADR-PC-009 §P3): the only sanctioned way to re-pin
+    existing instances to a newer regulatory pack — previewable, audited, idempotent on
+    (migration_id, instance_id); distinct from adoption (which pins NEW constitutions). A
+    host-level family-agnostic route on the internal network — not a Kong route.
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-engine
+  definition:
+    $text: ../openapi/internal/engine-pack-migrations.openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: engine-withholding-reads-api
+  title: "INTERNAL — Engine Withholding Reads"
+  description: >
+    The additive CQRS reads behind the annual IRS-withholding statement (ADR-PC-023 §6): the
+    cross-stream statement population scan and the per-stream DATED withholding ledger (the
+    per-tax-year slicing key). Read-only, eventually consistent, and deliberately not Kong
+    routes — the public engine read surface stays the canonical point read + maturities scan.
+spec:
+  type: openapi
+  lifecycle: production
+  owner: platform-engine
+  definition:
+    $text: ../openapi/internal/engine-withholding-reads.openapi.yaml
 ---
 apiVersion: backstage.io/v1alpha1
 kind: API

@@ -1,0 +1,23 @@
+<!-- Repo-root Directory.Build.targets — deliberately a one-import shim, not a settings home.
+
+     MSBuild gives every SDK project the NEAREST Directory.Build.targets walking up from its own
+     directory; no subtree in this repository carries one, so this root file reaches every .NET
+     project — engine, families, boundary services, shared libraries, tests — with ZERO per-subtree
+     build plumbing. That is what lets the ADR-PC-040 candidate-C build-time guard below apply
+     repo-wide while keeping the ADR-PC-019 extraction-ready posture: no subtree file names it,
+     and an extracted subtree simply builds without it.
+
+     Keep this file a shim — shared settings stay in the subtrees (ADR-PC-019); anything added
+     here silently becomes a build input of every project in the repo.
+
+     CAUTION — shadowing: if a subtree ever adds its own Directory.Build.targets, MSBuild stops
+     there and this file (and the guard) silently no longer applies to that subtree; the new file
+     must then import this one (or the guard directly). FamilyToCoreBuildGuardTests in
+     Babelstone.Composition.Tests fails on exactly that drift. -->
+<Project>
+
+  <!-- Build-time family→core default-deny guard (ADR-PC-040 candidate C — failure locality on
+       top of the authoritative XC-1/XC-2 CI gates; see the .targets header for the full story). -->
+  <Import Project="$(MSBuildThisFileDirectory)composition/msbuild/FamilyToCoreDefaultDeny.targets" />
+
+</Project>

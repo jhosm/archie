@@ -296,6 +296,19 @@ invariants are preserved:
   never reach a public route.
 - **No POC cert/key literals committed** — TLS is issued at runtime by
   cert-manager, exactly as the edge mTLS material is sourced at `deck sync` time.
+- **In-cluster network walls** (bd babelstone-zla1.12.8;
+  [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
+  §P5 / [ADR-IC-016](../../docs/product-management/integration_concepts/adrs/ADR-IC-016-service-identity-and-mtls.md)
+  plane (i)): `network-policies.yaml` applies **default-deny ingress** to every pod
+  with one targeted allow per real traffic edge — no arbitrary pod can reach the
+  engine command surface (`POST /v1/deposits`), Postgres, OpenBao, Redpanda, or the
+  Kong Admin API. Staging also binds the Kong Admin API to the pod loopback and
+  drops its 8001 Service port (`kong-admin-localhost.patch.yaml` — the base table
+  above still lists 8001 for the dev rendering); operator `deck sync` reaches it via
+  `kubectl port-forward` (which targets the pod loopback). The internal-mTLS
+  extension to the engine/orchestrator hops is authored but **gated off**
+  (`internal-mtls.patch.yaml` + `bootstrap/internal-mtls.yaml` — rollout order in
+  the patch header).
 
 **TLS issuance is a cluster CRD, kept out of the kustomize build.** cert-manager's
 `ClusterIssuer` (and `Certificate`) are CRDs, and the CI gate runs

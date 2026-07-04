@@ -129,6 +129,10 @@
     <Project Path="tests/Babelstone.Engine.Api.Tests/Babelstone.Engine.Api.Tests.csproj" />
     <!-- E.4 Redpanda Testcontainer integration test (the fixture E.6 reuses). -->
     <Project Path="tests/Babelstone.OutboxPublisher.Tests/Babelstone.OutboxPublisher.Tests.csproj" />
+    <!-- The OpenAPI spec<->code drift guard: hermetic Layer-1/2/3 contract tests binding the
+         committed contracts/openapi/** specs to the shipped DTOs, the Kong-validated constitute
+         fields, and the ENGINE_COMMAND_PACT shape. -->
+    <Project Path="tests/Babelstone.ContractDrift.Tests/Babelstone.ContractDrift.Tests.csproj" />
     <!-- G.2 inbox consumer: pure dedup/wire-format/poison tests + Redpanda+PG integration round-trip. -->
     <Project Path="tests/Babelstone.InboxConsumer.Tests/Babelstone.InboxConsumer.Tests.csproj" />
     <Project Path="../families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/Babelstone.Families.TermDeposit.Tests.csproj" />

@@ -1,0 +1,452 @@
+# In-cluster network walls for the staging box (bd babelstone-zla1.12.8;
+# ADR-IC-006 §P5 Boundary 2 / ADR-IC-016 plane (i)).
+#
+# Plain English: before this file, the cluster had no internal walls — ANY pod
+# (a compromised Backstage, Mission Control, or a future demo add-on) could dial
+# the engine's money-moving command port (engine:8080 POST /v1/deposits,
+# deliberately NOT a Kong route: direct access bypasses the saga's reserve/debit
+# legs and the edge SCA), the shared Postgres, OpenBao, Redpanda, and the Kong
+# Admin API. This file is default-deny ingress for every pod in the namespace,
+# plus one targeted allow per real traffic edge (the edges were derived from the
+# manifests' env/config — see the per-policy comments). Egress is deliberately
+# NOT restricted (policyTypes: [Ingress] only), so DNS and the documented
+# outbound paths (S3 backups, Let's Encrypt, OTLP fan-out) are untouched.
+#
+# Enforcement note: k3s ships an embedded NetworkPolicy controller (kube-router
+# derived), so these are enforced on the staging box with no extra install.
+# Kubelet liveness/readiness probes originate on the node itself and are exempt
+# from NetworkPolicy on the standard implementations (k3s/kube-router, Calico,
+# Cilium) — the httpGet probes (backstage, core-acl-stub, mission-control) keep
+# working. `kubectl port-forward` traffic enters through the kubelet, not the
+# pod network, so operator port-forwards (Grafana 3000, Logto admin 3002,
+# redpanda-console 8080, Kong admin 8001) are likewise unaffected.
+#
+# Maintainer note — future workloads: default-deny means a NEW workload gets no
+# inbound traffic until an allow is added here, and policy 2 admits ONLY
+# kube-system/Traefik into kong:8000 — so a future in-namespace caller of the
+# Kong proxy hits that wall too. The known cases, named so the first symptom
+# is not a mystery timeout:
+#   • Mission Control agent host (agent-host:8091, AGENT_URL): needs an
+#     inbound allow from mission-control to 8091, AND an entry in policy 2's
+#     from-list — it dials the secured MCP edge through the Kong proxy (8000).
+#   • ADR-PC-036 lifecycle-driver: dials the engine through Kong's
+#     engine-lifecycle-movers route, so it likewise needs adding to policy 2's
+#     from-list (kong:8000) when it lands on this box.
+---
+# 1 · The wall: default-deny ingress for EVERY pod in the namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# 2 · Kong proxy (8000) — only the public edge (Traefik, kube-system) may reach
+# it; every product-API request keeps entering through the ADR-IC-006 edge.
+# The Admin API (8001) gets NO allow on purpose: nothing in-cluster dials it
+# (operator deck-sync goes through kubectl port-forward; the cd.yml CI leg's
+# port-forward step is the follow-up named in kong-admin-localhost.patch.yaml),
+# and that companion patch binds it to 127.0.0.1 anyway.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kong-proxy-from-traefik
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kong
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+# 3 · Engine (8080) — the command surface this whole file exists to wall off.
+# Legitimate callers only: Kong (the two read routes + lifecycle-movers),
+# the orchestrator (saga dispatcher ActivateDeposit leg), the notification
+# worker (polls the read surface), the mcp-server (deposit tools), and
+# Mission Control (same-origin /v1/* proxy). Any other pod is dropped — a
+# Kong-bypassing POST /v1/deposits from a compromised pod no longer connects.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-engine-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: engine
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - kong
+                  - orchestrator
+                  - notification
+                  - mcp-server
+                  - mission-control
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# 4 · Orchestrator (8080) — the saga edge: Kong (constitute + SSE routes),
+# mcp-server (saga tools), Mission Control (/api/v1/* proxy).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-orchestrator-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: orchestrator
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - kong
+                  - mcp-server
+                  - mission-control
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# 5 · mcp-server (8080) — Kong ONLY (the mTLS hop, ADR-IC-010 §P5). This is the
+# network-layer restatement of what the TLS handshake already enforces
+# (defence in depth: mTLS rejects a rogue client, the policy stops it dialling).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mcp-server-from-kong
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kong
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# 6 · core-acl-stub (8080) — the orchestrator's settlement legs only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-core-acl-stub-from-orchestrator
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: core-acl-stub
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: orchestrator
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# 7 · Shared Postgres (5432) — every workload that legitimately opens a
+# connection to the main instance (engine `babelstone`, orchestrator
+# `babelstone_orchestrator`, logto `logto`): the three long-running services,
+# the event-store migration Job, the three Logto DB Jobs, and the nightly
+# logical-backup CronJob. initContainers run with the same pod labels, so the
+# wait-for-migration / create-db inits are covered by their parents' entries.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - engine
+                  - orchestrator
+                  - logto
+                  - event-store-migrate
+                  - logto-db-init
+                  - logto-db-alteration
+                  - logto-key-rotation
+                  - db-logical-backup
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# 8 · Backstage's dedicated Postgres (5432) — Backstage + the backup CronJob.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backstage-db-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backstage-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - backstage
+                  - db-logical-backup
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# 9 · Redpanda — Kafka (9092) + Schema Registry (8081) from the bus clients
+# only. The orchestrator is included on 8081 defensively (its Avro consume
+# loops resolve schemas even though no env names the SR today). The host
+# listeners (19092/18081), the admin API (9644), and internal RPC (33145) get
+# NO allow: nothing in-cluster uses them (single broker; console reads
+# 9092/8081 only).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redpanda-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redpanda
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - engine
+                  - orchestrator
+                  - redpanda-console
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 8081
+---
+# 10 · OpenBao (8200) — NOTHING in-cluster dials it today (engine ships
+# OpenBao__Enabled=false; deck-sync reads it operator-side). The allow is
+# scoped to the three .NET services that own the M.2 secret-boundary seam, so
+# flipping OpenBao__Enabled=true later needs no policy change — while a random
+# compromised pod still cannot reach the secret store.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-openbao-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - engine
+                  - orchestrator
+                  - notification
+      ports:
+        - protocol: TCP
+          port: 8200
+---
+# 11 · OTel Collector (4317 gRPC / 4318 HTTP) — every pod in the namespace may
+# emit telemetry (ADR-IC-007 §P1: the Collector is the ONE ingest point). A
+# namespace-wide allow on exactly these two ports is the least-privilege shape
+# that doesn't need editing for every new emitter.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-otel-collector-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+---
+# 12 · Grafana LGTM — OTLP (4317/4318) from the Collector ONLY (the §P1
+# boundary: services must not ship telemetry direct-to-backend, and now the
+# network agrees), and the Tempo query API (3200) from Mission Control's
+# Telemetry tab proxy. The Grafana UI (3000) gets NO allow: it is deliberately
+# unexposed and operators reach it via port-forward (kubelet path, unaffected).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana-lgtm-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana-lgtm
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: otel-collector
+      ports:
+        - protocol: TCP
+          port: 4317
+        - protocol: TCP
+          port: 4318
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mission-control
+      ports:
+        - protocol: TCP
+          port: 3200
+---
+# 13 · Registry (5000) — image pulls come from the NODE's containerd (host
+# network), not from a pod, so a podSelector allow cannot admit them; host-
+# originated traffic handling also differs per CNI. The pragmatic shape is an
+# unrestricted allow on exactly port 5000. Residual risk (accepted, staging):
+# any pod can pull/push the internal registry — contained to the demo images;
+# tighten with an ipBlock on the node CIDR for a real tier.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-registry-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: registry
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 5000
+---
+# 14 · Backstage portal (7007) — the public edge (Traefik) only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backstage-from-traefik
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backstage
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 7007
+---
+# 15 · Mission Control (9000) — the public edge (Traefik) only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mission-control-from-traefik
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mission-control
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 9000
+---
+# 16 · Logto (3001, the OIDC issuer) — the public edge (Traefik) only. This
+# also covers Grafana's operator SSO: its generic_oauth dials the PUBLIC
+# https://auth.babelstone.dev, which re-enters through Traefik. The admin
+# console (3002) gets NO allow (operator port-forward only, as documented in
+# ingress.yaml).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-logto-from-traefik
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: logto
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 3001
+---
+# 17 · cert-manager HTTP-01 solver pods (8089) — WITHOUT this, default-deny
+# blocks the ACME challenge and every Let's Encrypt issuance/renewal on the box
+# fails at the next rotation. Solver pods are created ad hoc in THIS namespace
+# by cert-manager with this well-known label; the challenge arrives from
+# Traefik and is self-checked by cert-manager, so the allow is unrestricted on
+# exactly the solver port (the cert-manager-documented posture — the pod exists
+# only for the seconds a challenge is live and serves a public token).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-http01-solver
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8089

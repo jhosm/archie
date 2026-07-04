@@ -1,0 +1,70 @@
+# Engine + orchestrator SERVER certs for the internal-mTLS extension (bd
+# babelstone-zla1.12.8 sub-gap (c); ADR-IC-006 §P5 Boundary 2 / ADR-IC-016
+# plane (i)) — cluster bootstrap, applied ONCE with mcp-mtls.yaml, NOT part of
+# the kustomize overlay (cert-manager CRDs would fail the strict kubeconform
+# gate, same reasoning as mcp-mtls.yaml).
+#
+# Plain English: today only the Kong→mcp-server hop is true mutual TLS; the
+# engine and orchestrator serve plain HTTP and verify no client cert — even
+# though the committed kong.yml ALREADY dials https://engine:8080 /
+# https://orchestrator:8080 and presents the shared client cert (entity
+# 7e9b6f1a-…). These two Certificates extend the SAME internal CA chain
+# (mcp-mtls-ca, from mcp-mtls.yaml — one CA underwrites everything, the
+# load-bearing §P5 constraint) with server certs for the two Kestrel hosts.
+# The consuming half is overlays/staging/internal-mtls.patch.yaml (a GATED
+# opt-in patch — see the rollout note there).
+#
+# Prereq: mcp-mtls.yaml applied first (it creates the mcp-mtls-ca Issuer).
+#
+#   selfSigned Issuer ─► CA Certificate (mcp-mtls-ca) ─► CA Issuer ─┬─► mcp-server SERVER cert   (mcp-mtls.yaml)
+#                                                                   ├─► Kong CLIENT cert          (mcp-mtls.yaml)
+#                                                                   ├─► engine SERVER cert        (this file)
+#                                                                   └─► orchestrator SERVER cert  (this file)
+---
+# The engine's SERVER cert — CN/SAN must include `engine` (the in-cluster
+# Service name Kong, the orchestrator dispatcher, notification, mcp-server and
+# Mission Control dial). Mounted by the gated internal-mtls.patch.yaml.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: engine-tls
+  namespace: babelstone-staging
+spec:
+  secretName: babelstone-engine-tls
+  commonName: engine
+  dnsNames:
+    - engine
+    - engine.babelstone-staging.svc.cluster.local
+  usages:
+    - server auth
+    - digital signature
+    - key encipherment
+  duration: 2160h      # 90 days
+  renewBefore: 360h
+  issuerRef:
+    name: mcp-mtls-ca
+    kind: Issuer
+    group: cert-manager.io
+---
+# The orchestrator's SERVER cert — CN/SAN must include `orchestrator`.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: orchestrator-tls
+  namespace: babelstone-staging
+spec:
+  secretName: babelstone-orchestrator-tls
+  commonName: orchestrator
+  dnsNames:
+    - orchestrator
+    - orchestrator.babelstone-staging.svc.cluster.local
+  usages:
+    - server auth
+    - digital signature
+    - key encipherment
+  duration: 2160h
+  renewBefore: 360h
+  issuerRef:
+    name: mcp-mtls-ca
+    kind: Issuer
+    group: cert-manager.io

@@ -32,14 +32,6 @@ info:
     - retail-web
     - retail-mobile
     - ops-console
-  # ── ADR-IC-020 Decision §3 breaking-change approval (openapi-catalog-validate.sh step 2) ──
-  # APPROVED for THIS change only: the 1.0.0 seed (PR #431's governance-gate scaffold) sketched
-  # placeholder schemas (Deposit{id,…}, MaturityList{items}) that never matched the shipped
-  # DTOs; this revision replaces them with the REAL DepositResponse/DepositMaturitiesResponse
-  # shapes and makes from/to required (as the handler binds them). No consumer ever integrated
-  # against the placeholder sketch. REMOVE this flag in the next change that touches this file
-  # — leaving it would silently pre-approve a FUTURE breaking change.
-  x-breaking-change-approved: true
 servers:
   - url: https://api.babelstone.example
     description: Public edge gateway (Kong).
@@ -99,7 +91,22 @@ paths:
         - name: id
           in: path
           required: true
-          description: The deposit's stream id.
+          description: >
+            The deposit's raw stream id (a canonical UUID). NOTE — two id FORMS name the same
+            deposit across the catalogued surfaces, and this read takes the UUID form, NOT the
+            edge's opaque handle: the public edge (orchestrator-edge constitute) returns a
+            `DEP-…` deposit reference, whereas this engine read keys on the bare UUID. They are
+            the SAME underlying value: the edge derives the reference deterministically as
+            `"DEP-" + <this UUID in 32-char hex, no dashes>` (EdgeReferences), and in the
+            constitution walking skeleton the deposit's stream id equals its saga process id — so
+            `DEP-…` and the sibling `PROC-…` process reference share ONE GUID. A holder of a
+            `DEP-…` reference therefore recovers this `{id}` by stripping the `DEP-` prefix and
+            reading the remaining hex as a UUID, without a lookup table. Treat that correspondence
+            as INFORMATIONAL, not a stable client contract: it is a v1 convenience (a renewal opens
+            a fresh deposit stream under its own GUID), and this endpoint does not itself accept the
+            `DEP-…` form. The canonical, guaranteed read key is the UUID. (The mismatch between the
+            form the edge ISSUES and the form this read ACCEPTS is a known seam, called out here for
+            follow-up — not resolved in this catalogue change, which documents what is true today.)
           schema:
             type: string
             format: uuid
@@ -130,10 +137,21 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Deposit'
+        '400':
+          description: >
+            Malformed as-of point — a NEGATIVE as_of_sequence (the per-stream sequence
+            domain starts at 0). A clean client error, never a 500.
         '401':
           description: Missing or invalid bearer token (gateway jwt validation).
         '404':
-          description: No such deposit (a genuinely non-existent stream).
+          description: >
+            No such deposit (a genuinely non-existent stream — the as_of axis does not
+            change the unknown-stream verdict).
+        '422':
+          description: >
+            as_of_sequence is beyond the stream head — the caller asked for a sequence that
+            does not exist yet. Rejected rather than silently folding to head, so a
+            not-yet-committed point is never passed off as "now".
         '429':
           description: Rate limit exceeded (200 req/min per consumer, ADR-IC-006 §P3).
 components:
@@ -173,6 +191,7 @@ components:
         - lifecycle
         - last_sequence
         - last_updated
+        - product_config_version
       properties:
         deposit_id:
           type: string
@@ -180,7 +199,14 @@ components:
           description: The deposit's stream id.
         sor:
           type: string
-          description: The system-of-record for this instance (ADR-PC-018 §6.2 routing truth).
+          description: >
+            The system-of-record for this instance (ADR-PC-018 §6.2 routing truth). CONTROLLED
+            VOCABULARY, intentionally closed (unlike `lifecycle` below, which is left open): `sor`
+            is a small routing token the gateway reads to pick a backend, not a free-form label, so
+            the enum IS the contract — a new system-of-record is a deliberate, reviewed spec change
+            that widens this list in lock-step with ADR-PC-018 §6.2, never an unannounced value on
+            the wire. Today only `engine` and `legacy` exist (`engine` for any engine-materialised
+            deposit this read returns).
           enum: [engine, legacy]
         principal_cents:
           type: integer
@@ -243,6 +269,13 @@ components:
           type: string
           format: date-time
           description: The producing event's transaction_time (honest staleness display).
+        product_config_version:
+          type: string
+          description: >
+            The product-config generation pin (content hash sha256:<hex>, ADR-PC-009 §A2) the
+            deposit was constituted under — the provenance surface reads the REAL pin off the
+            canonical resource. ADDITIVE and prospective-only (like product_code): pre-pin
+            deposits carry the "" default and are not back-fillable.
       examples:
         - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
           sor: engine
@@ -264,6 +297,7 @@ components:
           lifecycle: ACTIVE
           last_sequence: 3
           last_updated: "2026-06-30T12:00:00Z"
+          product_config_version: "sha256:9f2c4a1e0b7d6c5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f"
     DepositMaturities:
       type: object
       description: The maturities range-query result (DepositMaturitiesResponse) — snake_case on the wire.

@@ -37,6 +37,17 @@ internal static class DeployRateSheetEndpoint
         // — a stable log scope an operator filters on, matching the ILogger<T> default category name.
         var logger = loggerFactory.CreateLogger(LogCategory);
 
+        // Envelope guard FIRST: System.Text.Json binds a missing member to null/default despite the
+        // record's non-nullable declarations, and the catalogued spec
+        // (contracts/openapi/internal/engine-rate-sheets.openapi.yaml) marks every envelope field
+        // required — so enforce that here as a clean 400 naming each offending field, never a
+        // downstream NullReferenceException surfacing as an opaque 500. Runs before the
+        // Idempotency-Key comparison because comparing against a null version id is meaningless.
+        if (ValidateEnvelope(request) is { } invalidEnvelope)
+        {
+            return invalidEnvelope;
+        }
+
         // ADR-PC-008: an Idempotency-Key header, when supplied, must equal the version id —
         // the version id IS the natural idempotency key, so no separate header is needed.
         if (http.Headers.TryGetValue("Idempotency-Key", out var key)
@@ -161,6 +172,44 @@ internal static class DeployRateSheetEndpoint
         }
     }
 
+    /// <summary>
+    /// The deploy envelope's required-field guard: every envelope field the stored row needs must be
+    /// present and non-blank (and <c>products</c> non-null, <c>effective_from</c> non-default — the
+    /// value a missing member binds to). Returns the 400 validation problem
+    /// naming every offending field at once, or null when the envelope is well-formed. A pure
+    /// function (no I/O, no clock) so the guard is unit-testable without the HTTP stack.
+    /// </summary>
+    internal static IResult? ValidateEnvelope(RateSheetDeployRequest request)
+    {
+        var missing = new Dictionary<string, string[]>();
+        AddIfBlank(missing, "rate_sheet_version_id", request.RateSheetVersionId);
+        AddIfBlank(missing, "product_family", request.ProductFamily);
+        AddIfBlank(missing, "pack_version", request.PackVersion);
+        AddIfBlank(missing, "approved_by", request.ApprovedBy);
+        AddIfBlank(missing, "approval_ref", request.ApprovalRef);
+        if (request.EffectiveFrom == default)
+        {
+            missing["effective_from"] = ["effective_from is required (a missing member binds to the default instant)."];
+        }
+
+        if (request.Products is null)
+        {
+            missing["products"] = ["products is required — the sheet's priceable body (ADR-PC-008)."];
+        }
+
+        // TypedResults (not Results) so the guard's outcome is the concrete ValidationProblem
+        // type — the unit tests assert on it directly; the wire shape is identical.
+        return missing.Count > 0 ? TypedResults.ValidationProblem(missing) : null;
+    }
+
+    private static void AddIfBlank(Dictionary<string, string[]> missing, string field, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            missing[field] = [$"{field} is required and must be non-blank."];
+        }
+    }
+
     // PostgreSQL TIMESTAMPTZ resolves to microseconds; .NET DateTimeOffset to 100ns ticks.
     // Normalise at the boundary (10 ticks = 1 microsecond) so stored and compared values match.
     private static DateTimeOffset ToMicroseconds(DateTimeOffset value) =>
@@ -199,6 +248,4 @@ internal static class DeployRateSheetEndpoint
             incoming.PublishedBy, detail);
         return Results.Conflict(new RateSheetConflict(detail));
     }
-
-    private sealed record RateSheetConflict(string Error);
 }

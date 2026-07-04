@@ -1,0 +1,294 @@
+openapi: 3.1.0
+# contracts/openapi/internal/engine-withholding-reads.openapi.yaml — the engine's ADDITIVE
+# withholding read surfaces (catalogued per ADR-IC-020). These two GETs shipped with the
+# withholding-statement / withholding-ledger work and are served by the same engine host as
+# the canonical reads, but they are NOT infra/kong/kong.yml routes — the public
+# specs/engine-reads.openapi.yaml header names them as deliberately absent (the REVERSE
+# reconcile would fail them there). Their consumer today is the internal annual
+# IRS-withholding statement scheduler path, not a public client. Cataloguing them here closes
+# the "shipped but documented nowhere" gap; if either is ever exposed through Kong, the
+# never-public gate forces this spec's operation to MOVE to specs/ in the same change.
+#
+# Shapes are transcribed from the REAL code surface, not invented:
+# DepositWithholdingStatementsResponse / DepositWithholdingLedgerResponse /
+# WithholdingLedgerEntryResponse in families/term-deposit/src/Babelstone.Families.TermDeposit
+# .Application/DepositsContracts.cs (snake_case on the wire; money as integer cents,
+# ADR-PC-010 §P1), locked by the Babelstone.ContractDrift.Tests Layer-1 suite. No PII
+# (ADR-PC-004 §P2) — structural facts and cents-native rollups only.
+info:
+  title: Babelstone Engine — Withholding Reads (INTERNAL)
+  version: 1.0.0
+  description: >
+    The additive CQRS reads behind the annual IRS-withholding statement (ADR-PC-023 §6,
+    ADR-PC-027 storage-opaque read surfaces): the cross-stream statement population scan
+    (every deposit with withholding to date, with its rollups) and the per-stream DATED
+    withholding ledger (the per-flow dates the cumulative rollups cannot express, so a
+    downstream reader slices withholding PER TAX YEAR). Read-only — no command is stapled to
+    a read surface (ADR-PC-018 §6); both are eventually consistent projections. INTERNAL:
+    neither is a Kong route; the engine read exposed publicly stays the canonical point read
+    + maturities scan (specs/engine-reads.openapi.yaml).
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: legal-obligation   # GDPR Art.6(1)(c) — Portuguese IRS withholding reporting
+  x-authorized-consumers:
+    - platform-operations   # the annual withholding-statement scheduler / ops tooling
+  # ── INTERNAL marker (openapi-catalog-validate.sh internal leg) ──
+  x-internal: >-
+    Additive engine reads consumed by the internal withholding-statement path — deliberately
+    not infra/kong/kong.yml routes (the public engine read surface is engine-reads); exposing
+    one publicly must move its operation to specs/ in the same change.
+servers:
+  - url: https://engine:8080
+    description: >
+      The engine host's internal (mTLS-only) Kestrel surface — deliberately NOT the public
+      Kong gateway host (ADR-IC-006 §P5 Boundary 2).
+paths:
+  /v1/deposits/withholding-statements:
+    get:
+      operationId: listWithholdingStatements
+      summary: The annual IRS-withholding statement population scan.
+      description: >
+        Every deposit that has had tax withheld, ordered by id, each carrying the read-model
+        accrual/withholding rollups the statement interpolates. Current belief, no window
+        parameter: the downstream scheduler owns the as-of statement date and the
+        per-tax-year idempotency (ADR-PC-023 §6), so this read names neither. A query-named
+        collection with no write-side twin (the fold cannot answer a cross-stream scan).
+      responses:
+        '200':
+          description: The withholding population (empty when no deposit has withholding yet).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepositWithholdingStatements'
+  /v1/deposits/{id}/withholding-ledger:
+    get:
+      operationId: getWithholdingLedger
+      summary: The per-stream DATED withholding ledger.
+      description: >
+        The dated withholding flows of ONE deposit, served from the withholding-ledger
+        projection's current belief — the ADDITIVE surface exposing the per-flow dates the
+        canonical read's cumulative withholding_to_date rollup cannot, so a reader can slice
+        withholding per tax year. Async-materialised, so eventually consistent like the
+        read-model GET.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: >
+            The deposit's raw stream id (a canonical UUID) — the same id form the canonical
+            point read takes, never the edge's opaque DEP-… handle.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The deposit's withholding ledger (flows in fold order, plus conserved totals).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithholdingLedger'
+        '404':
+          description: >
+            No ledger belief for this deposit — it has had NO withholding flow yet (the
+            sub-resource does not exist; never a phantom empty ledger), or the deposit
+            itself does not exist.
+components:
+  schemas:
+    DepositWithholdingStatements:
+      type: object
+      description: >
+        The statement-population result (DepositWithholdingStatementsResponse, snake_case on
+        the wire) — the same per-row Deposit rollup shape the maturities scan returns.
+      required: [deposits]
+      properties:
+        deposits:
+          type: array
+          description: Every deposit with withholding to date, ordered by id.
+          items:
+            $ref: '#/components/schemas/Deposit'
+    WithholdingLedger:
+      type: object
+      description: >
+        The per-stream ledger read (DepositWithholdingLedgerResponse): the dated flows in
+        fold (append) order plus running totals conserved to the cent — gross = tax + net.
+      required: [deposit_id, entries, total_gross_cents, total_tax_cents, total_net_cents]
+      properties:
+        deposit_id:
+          type: string
+          format: uuid
+          description: The deposit's stream id.
+        entries:
+          type: array
+          description: The withholding flows in fold order, each carrying its own withheld_on date.
+          items:
+            $ref: '#/components/schemas/WithholdingLedgerEntry'
+        total_gross_cents:
+          type: integer
+          format: int64
+          description: Running sum of every flow's gross interest, integer cents.
+        total_tax_cents:
+          type: integer
+          format: int64
+          description: Running sum of every flow's withholding tax, integer cents.
+        total_net_cents:
+          type: integer
+          format: int64
+          description: Running sum of every flow's net interest, integer cents (gross = tax + net).
+      examples:
+        - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+          entries:
+            - withheld_on: "2026-07-15"
+              gross_cents: 12500
+              tax_cents: 3500
+              net_cents: 9000
+              source: coupon
+          total_gross_cents: 12500
+          total_tax_cents: 3500
+          total_net_cents: 9000
+    WithholdingLedgerEntry:
+      type: object
+      description: >
+        One dated withholding flow (WithholdingLedgerEntryResponse): the per-flow
+        (gross, tax, net) exactly as recorded plus the date it was withheld on — the
+        per-tax-year slicing key. Money is integer cents (ADR-PC-010 §P1); no PII.
+      required: [withheld_on, gross_cents, tax_cents, net_cents, source]
+      properties:
+        withheld_on:
+          type: string
+          format: date
+          description: >
+            The date the flow was withheld on (AT_MATURITY / termination date, or the
+            coupon's paid date).
+        gross_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        net_cents:
+          type: integer
+          format: int64
+          description: The flow's net interest, cents (gross = tax + net).
+        source:
+          type: string
+          description: >
+            Which event produced the flow — `withholding` (AT_MATURITY split) or `coupon` (a
+            PERIODIC/ADVANCE InterestPaid leg). A structural string, deliberately not a
+            closed enum here (a new flow source is an additive projection change).
+      examples:
+        - withheld_on: "2026-07-15"
+          gross_cents: 12500
+          tax_cents: 3500
+          net_cents: 9000
+          source: coupon
+    Deposit:
+      type: object
+      description: >
+        The deposit resource (DepositResponse, ADR-PC-021 §D5 boundary) — the SAME shape the
+        public read surface serves (specs/engine-reads.openapi.yaml), duplicated here so each
+        catalogued spec stays self-contained. snake_case on the wire, money as integer cents
+        (ADR-PC-010 §P1), structural facts only, no PII (ADR-PC-004 §P2).
+      required:
+        - deposit_id
+        - sor
+        - principal_cents
+        - tan_basis_points
+        - rate_sheet_version_id
+        - product_code
+        - term_days
+        - start_date
+        - maturity_date
+        - interest_variant
+        - auto_renewal_policy
+        - payment_period_months
+        - accrued_gross_interest_cents
+        - withholding_to_date_cents
+        - net_interest_cents
+        - total_payout_cents
+        - coupons_paid
+        - lifecycle
+        - last_sequence
+        - last_updated
+        - product_config_version
+      properties:
+        deposit_id:
+          type: string
+          format: uuid
+          description: The deposit's stream id.
+        sor:
+          type: string
+          description: The system-of-record routing truth (ADR-PC-018 §6.2) — closed vocabulary.
+          enum: [engine, legacy]
+        principal_cents:
+          type: integer
+          format: int64
+        tan_basis_points:
+          type: integer
+        rate_sheet_version_id:
+          type: string
+        product_code:
+          type: string
+        term_days:
+          type: integer
+        start_date:
+          type: string
+          format: date
+        maturity_date:
+          type: string
+          format: date
+        interest_variant:
+          type: string
+          description: AT_MATURITY / PERIODIC / ADVANCE.
+        auto_renewal_policy:
+          type: string
+        payment_period_months:
+          type: integer
+        accrued_gross_interest_cents:
+          type: integer
+          format: int64
+        withholding_to_date_cents:
+          type: integer
+          format: int64
+        net_interest_cents:
+          type: integer
+          format: int64
+        total_payout_cents:
+          type: integer
+          format: int64
+        coupons_paid:
+          type: integer
+        lifecycle:
+          type: string
+        last_sequence:
+          type: integer
+          format: int64
+        last_updated:
+          type: string
+          format: date-time
+        product_config_version:
+          type: string
+          description: The product-config generation pin (ADR-PC-009 §A2); pre-pin deposits carry "".
+      examples:
+        - deposit_id: 6f1d2c3b-4a5e-4789-9cde-f01234567890
+          sor: engine
+          principal_cents: 1000000
+          tan_basis_points: 250
+          rate_sheet_version_id: rs-2026-02
+          product_code: TD-PT-12M-STD
+          term_days: 365
+          start_date: "2026-01-15"
+          maturity_date: "2027-01-15"
+          interest_variant: PERIODIC
+          auto_renewal_policy: NO_RENEWAL
+          payment_period_months: 3
+          accrued_gross_interest_cents: 12500
+          withholding_to_date_cents: 3500
+          net_interest_cents: 9000
+          total_payout_cents: 1009000
+          coupons_paid: 1
+          lifecycle: ACTIVE
+          last_sequence: 4
+          last_updated: "2026-07-15T09:00:00Z"
+          product_config_version: "sha256:9f2c4a1e0b7d6c5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f"

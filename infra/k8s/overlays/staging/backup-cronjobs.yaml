@@ -40,18 +40,53 @@ spec:
               command:
                 - /bin/sh
                 - -c
+                # FAIL-CLOSED backup (bd babelstone-zla1.12.5; ADR-PC-005 §P2): the job may
+                # only exit 0 after ASSERTING each object really landed off-box. Two guards:
+                #   • `set -o pipefail` — before this, a failed pg_dumpall piping into a
+                #     SUCCESSFUL empty upload exited 0: the exact "backup you cannot see
+                #     failing" failure mode. Now any stage failing fails the run.
+                #   • upload_and_assert — after each streamed upload, HEAD the object and
+                #     require a plausible size (an empty/truncated dump reads as FAILURE).
+                # On success it optionally pushes a freshness heartbeat
+                # (backup_last_success_timestamp_seconds) that the BackupFreshnessStale
+                # alert (infra/grafana/prometheus/alert-rules.yaml) watches; while
+                # PUSHGATEWAY_URL is unwired the alert deliberately reads absent-as-stale.
                 - |
                   set -eu
-                  # aws-cli (Alpine community) for the S3 upload; busybox already has gzip/date.
-                  apk add --no-cache aws-cli >/dev/null
+                  set -o pipefail
+                  # aws-cli (Alpine community) for the S3 upload + assert; curl for the
+                  # optional heartbeat push; busybox already has gzip/date.
+                  apk add --no-cache aws-cli curl >/dev/null
                   TS="$(date -u +%Y%m%dT%H%M%SZ)"
-                  S3="aws --endpoint-url ${S3_ENDPOINT} s3 cp -"
+                  # A real gzipped dump is never this small (an empty-DB pg_dumpall gzips
+                  # to a few KB); below the floor we treat the object as NOT WRITTEN.
+                  MIN_BYTES=1024
+                  upload_and_assert() {
+                    KEY="$1"
+                    aws --endpoint-url "${S3_ENDPOINT}" s3 cp - "s3://${S3_BUCKET}/${KEY}"
+                    SIZE="$(aws --endpoint-url "${S3_ENDPOINT}" s3api head-object \
+                      --bucket "${S3_BUCKET}" --key "${KEY}" \
+                      --query ContentLength --output text)" || SIZE=""
+                    if [ -z "${SIZE}" ] || [ "${SIZE}" -lt "${MIN_BYTES}" ]; then
+                      echo "BACKUP ASSERT FAILED: s3://${S3_BUCKET}/${KEY} absent or too small (${SIZE:-no object} < ${MIN_BYTES} bytes)" >&2
+                      exit 1
+                    fi
+                    echo "asserted s3://${S3_BUCKET}/${KEY} (${SIZE} bytes)"
+                  }
                   echo "dumping main cluster (babelstone + babelstone_orchestrator) ..."
                   PGPASSWORD="${PG_PASSWORD}" pg_dumpall -h postgres -U "${PG_USER}" \
-                    | gzip | ${S3} "s3://${S3_BUCKET}/postgres/all-${TS}.sql.gz"
+                    | gzip | upload_and_assert "postgres/all-${TS}.sql.gz"
                   echo "dumping backstage (separate instance) ..."
                   PGPASSWORD="${BACKSTAGE_PG_PASSWORD}" pg_dump -h backstage-db -U backstage backstage \
-                    | gzip | ${S3} "s3://${S3_BUCKET}/backstage/backstage-${TS}.sql.gz"
+                    | gzip | upload_and_assert "backstage/backstage-${TS}.sql.gz"
+                  # Freshness heartbeat — only after BOTH objects are asserted written.
+                  if [ -n "${PUSHGATEWAY_URL:-}" ]; then
+                    printf '# TYPE backup_last_success_timestamp_seconds gauge\nbackup_last_success_timestamp_seconds %s\n' "$(date +%s)" \
+                      | curl -fsS --data-binary @- "${PUSHGATEWAY_URL%/}/metrics/job/db-logical-backup"
+                    echo "pushed backup_last_success_timestamp_seconds"
+                  else
+                    echo "PUSHGATEWAY_URL unset — no freshness heartbeat; BackupFreshnessStale correctly reads absent-as-stale."
+                  fi
                   echo "logical backup complete (${TS})."
               env:
                 - name: PG_USER
@@ -88,6 +123,13 @@ spec:
                     secretKeyRef:
                       name: babelstone-backup-secret
                       key: AWS_SECRET_ACCESS_KEY
+                # OPTIONAL freshness-heartbeat sink (bd babelstone-zla1.12.5): point this at
+                # a Prometheus Pushgateway scraped by the LGTM appliance (maintainer wiring —
+                # none is deployed today; the same seam the projection-rebuild drill uses).
+                # Empty = skip the push; the BackupFreshnessStale alert then reads
+                # absent-as-stale, which is the safe interpretation, not a gap.
+                - name: PUSHGATEWAY_URL
+                  value: ""
               resources:
                 requests:
                   cpu: 100m

@@ -1,0 +1,184 @@
+openapi: 3.1.0
+# contracts/openapi/internal/engine-pack-migrations.openapi.yaml — the operator pack-migration
+# surface (ADR-PC-009; catalogued per ADR-IC-020; bd babelstone-ax0b.5). INTERNAL admin-ops
+# plane: POST /v1/pack-migrations is mapped ONCE at host level by the family-agnostic hosting
+# spine (Babelstone.Engine.Hosting/PackMigrationsEndpoints.cs, ADR-PC-021) and is deliberately
+# NOT an infra/kong/kong.yml route — its caller is the operator tooling on the internal
+# network. It is DISTINCT from adoption (POST /v1/pack-adoptions sets the pack NEW
+# constitutions pin, ADR-PC-009 §P4): this endpoint re-pins EXISTING instances, explicitly and
+# audited — there are no silent upgrades.
+#
+# Shapes are transcribed from the REAL code surface: PackMigrationRequest /
+# PackMigrationResponse / InstanceFilter (Babelstone.Engine.Hosting) — snake_case on the wire.
+# Spec<->DTO lock: Babelstone.ContractDrift.Tests Layer 1 (bd babelstone-ax0b.4). No PII
+# (ADR-PC-004 §P2): version strings, a migration id, an operator actor reference, a family
+# selector, and structural instance ids only.
+info:
+  title: Babelstone Engine — Pack Migrations (INTERNAL admin-ops)
+  version: 1.0.0
+  description: >
+    The only sanctioned way to move a LIVE instance to a newer regulatory pack (ADR-PC-009
+    §P3): an explicit, audited operator migration. The target set is named exactly ONE of two
+    ways — an explicit instance_ids list, or an instance_filter predicate resolved over the
+    family read model (v1: the live population only). preview=true returns the matched set
+    WITHOUT emitting anything (the pre-emission confirmation step); the emit path appends one
+    PackVersionMigrated per matched instance still pinned to from_pack_version. Idempotent on
+    (migration_id, instance_id): re-issuing an already-applied migration is a no-op replay
+    (§P3). Family-agnostic by construction — the single route dispatches on product_family to
+    the family's registered write-path (ADR-PC-021). Errors are RFC 9457
+    application/problem+json.
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: legal-obligation   # GDPR Art.6(1)(c) — regulatory-pack compliance operations; no data-subject data
+  x-authorized-consumers:
+    - platform-operations   # the operator migration tooling (ADR-PC-009 §P3 operator-initiated)
+  # ── INTERNAL marker (openapi-catalog-validate.sh internal leg; bd babelstone-ax0b.5) ──
+  x-internal: >-
+    Operator/admin-ops migration plane (ADR-PC-009 §P3): operator-initiated re-pinning of
+    existing instances on the internal network — deliberately not an infra/kong/kong.yml
+    route; a regulatory migration is never a public client operation.
+servers:
+  - url: https://engine:8080
+    description: >
+      The engine host's internal (mTLS-only) Kestrel surface — deliberately NOT the public
+      Kong gateway host (ADR-IC-006 §P5 Boundary 2).
+paths:
+  /v1/pack-migrations:
+    post:
+      operationId: migratePackVersions
+      summary: Preview or apply an operator pack migration (re-pin existing instances).
+      description: >
+        Validates the intent (versions must differ; exactly one of instance_ids XOR
+        instance_filter; a resolvable product_family), resolves the target set (the predicate
+        WIDENS to the live population, the per-instance from_pack_version head check
+        NARROWS), then either previews (no side effect) or emits one PackVersionMigrated per
+        matched instance. The response's instance_ids echoes the CONCRETE resolved set either
+        way, so the operator sees exactly what a predicate selected (audit-completeness,
+        ADR-PC-009).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PackMigrationRequest'
+      responses:
+        '200':
+          description: >
+            The migration outcome: migrated=false for a preview (the would-be-affected set),
+            migrated=true once events were emitted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PackMigrationResponse'
+        '400':
+          description: >
+            Malformed intent — a missing required field, or from_pack_version equal to
+            to_pack_version (a migration moves the pin); fail loud, never re-pin nothing or
+            the wrong set.
+        '422':
+          description: >
+            Unprocessable selection — both or neither of instance_ids/instance_filter, an
+            instance_filter without product_family or with currently_active=false (v1
+            migrates only the live population), no registered write-path/resolver for the
+            named family, or an ambiguous omitted product_family on a multi-family host.
+components:
+  schemas:
+    PackMigrationRequest:
+      type: object
+      description: >
+        The operator migration command (PackMigrationRequest, snake_case on the wire).
+        Exactly ONE of instance_ids (non-empty) or instance_filter names the target set.
+      required: [from_pack_version, to_pack_version, migration_id, operator_actor]
+      properties:
+        from_pack_version:
+          type: string
+          description: The pack version the matched instances are currently pinned to (e.g. pt.2026.1).
+        to_pack_version:
+          type: string
+          description: The pack version to re-pin them to (e.g. pt.2027.1) — must differ from from_pack_version.
+        migration_id:
+          type: string
+          description: >
+            The operator migration's id — the audit handle and the (migration_id,
+            instance_id) idempotency dedupe key (ADR-PC-009 §P3).
+        operator_actor:
+          type: string
+          description: The operator/service actor initiating the migration (recorded on each event; never PII).
+        product_family:
+          type: string
+          description: >
+            The target family for the EXPLICIT-ids arm (e.g. term_deposit). Optional when
+            exactly one family is hosted; required to disambiguate a multi-family host.
+            Ignored for the predicate arm (the filter carries its own product_family).
+        instance_ids:
+          type: array
+          description: >
+            The explicit instances to consider; only those currently on from_pack_version are
+            migrated. Mutually exclusive with instance_filter.
+          items:
+            type: string
+            format: uuid
+        instance_filter:
+          $ref: '#/components/schemas/InstanceFilter'
+        preview:
+          type: boolean
+          default: false
+          description: >
+            When true, returns the matched set WITHOUT emitting any event (the pre-emission
+            confirmation step — ADR-PC-009 residual risks: previewable before emission).
+        migrated_at:
+          type: string
+          format: date-time
+          description: Optional valid-time for the migration events; host-stamped when omitted.
+      examples:
+        - from_pack_version: pt.2026.1
+          to_pack_version: pt.2027.1
+          migration_id: mig-2027-001
+          operator_actor: ops:compliance
+          instance_filter:
+            product_family: term_deposit
+            currently_active: true
+          preview: true
+    InstanceFilter:
+      type: object
+      description: >
+        The surface §3.6 predicate (InstanceFilter): resolved over the family read model to a
+        concrete id set. v1 supports only the live population (currently_active must be true
+        — re-pinning a terminal instance accrues no further events; the complement is a
+        deliberate future ADR, not a default).
+      required: [product_family, currently_active]
+      properties:
+        product_family:
+          type: string
+          description: The product family whose population the predicate selects (e.g. term_deposit).
+        currently_active:
+          type: boolean
+          description: Must be true in v1 — only the live lifecycle population is migratable.
+    PackMigrationResponse:
+      type: object
+      description: >
+        The migration outcome (PackMigrationResponse): the echoed audit handle, whether
+        events were emitted, and the CONCRETE matched instance set (re-pinned when migrated,
+        else previewed).
+      required: [migration_id, migrated, instance_ids]
+      properties:
+        migration_id:
+          type: string
+          description: Echoes the request's migration id (the audit handle).
+        migrated:
+          type: boolean
+          description: True iff events were emitted (false for a preview).
+        instance_ids:
+          type: array
+          description: The matched instances — the resolved-and-on-from set.
+          items:
+            type: string
+            format: uuid
+      examples:
+        - migration_id: mig-2027-001
+          migrated: false
+          instance_ids:
+            - 6f1d2c3b-4a5e-4789-9cde-f01234567890
+            - 8a2b4c6d-1e3f-4a5b-9c8d-7e6f5a4b3c2d

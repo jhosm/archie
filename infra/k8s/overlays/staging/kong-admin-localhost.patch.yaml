@@ -1,0 +1,51 @@
+# Bind the Kong Admin API to loopback + drop it from the Service (bd
+# babelstone-zla1.12.8; ADR-IC-006 Boundary 1 / Document 10 posture —
+# everything outside the gateway is untrusted, and the gateway's own control
+# plane must never be part of the reachable surface).
+#
+# Plain English: the Admin API is Kong's full control plane — anything that can
+# reach it can rewrite every edge route and policy. In DB-less mode nothing
+# in-cluster ever needs it at runtime (the config is declarative; the base
+# manifest shipped it on 0.0.0.0:8001 purely as a dev convenience), so staging
+# binds it to 127.0.0.1 inside the pod and removes the 8001 Service port.
+#
+# The OPERATOR `deck sync` path still works: `kubectl port-forward deploy/kong
+# 8001:8001` tunnels through the kubelet and connects to the POD'S LOOPBACK,
+# so a 127.0.0.1 bind stays reachable for a port-forwarded deck sync
+# (KONG_ADMIN_ADDR=http://127.0.0.1:8001), and via kubectl exec — while being
+# unreachable from any pod on the cluster network.
+#
+# The CI leg does NOT work yet: cd.yml step 4e runs deck-sync.sh on the
+# GitHub-hosted runner with no port-forward step anywhere, so once this patch
+# is applied the KONG_ADMIN_ADDR secret alone connects to nothing. FOLLOW-UP
+# (maintainer/orchestrator-tracked — named here so it cannot be silently
+# assumed away): add a background `kubectl port-forward deploy/kong 8001:8001 &`
+# (+ readiness wait) to cd.yml before step 4e, AND widen the scoped
+# cd-deployer Role — it grants no `pods`/`pods/portforward` verbs today
+# (bootstrap/cd-deploy-rbac.yaml), so the port-forward would be Forbidden
+# under the current deploy identity. Deliberately NOT bundled into this PR:
+# widening the deploy identity is its own security decision.
+#
+# Two strategic-merge docs: the Deployment env override (env lists merge by
+# name) and the Service port removal ($patch: delete on the 8001 entry).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong
+spec:
+  template:
+    spec:
+      containers:
+        - name: kong
+          env:
+            - name: KONG_ADMIN_LISTEN
+              value: 127.0.0.1:8001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong
+spec:
+  ports:
+    - port: 8001
+      $patch: delete

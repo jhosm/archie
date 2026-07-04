@@ -5,6 +5,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The hermetic envelope-guard unit tests call the internal handler helper directly
+         (DeployRateSheetEndpoint.ValidateEnvelope) — the HTTP-level deploy tests stay
+         Docker-gated, so the guard's 400 branches need an in-process seam. -->
+    <InternalsVisibleTo Include="Babelstone.RateSheets.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The treasury-gated deploy surface (ADR-PC-008 §P2): the first HTTP host in
          the engine. Authentication/authorization is the API gateway's job (§P4 /
          ADR-IC-010); this host validates, persists, and records the approver. -->

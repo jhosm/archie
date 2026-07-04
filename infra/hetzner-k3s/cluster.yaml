@@ -48,7 +48,26 @@ networking:
       # k8s API(6443) open to the world: the GitHub-hosted cd.yml runner has no stable egress IP,
       # so a network allow-list can't admit it. Auth is the cluster's mutual-TLS client cert (the
       # kubeconfig), not the firewall. Deliberate staging trade-off — tighten for a real tier.
+      # (Recorded ADR-PC-020 §D3 drift; Document 10 posture — everything outside the
+      # gateway is untrusted, so a world-open 6443 is a documented exception, not a norm.)
       - 0.0.0.0/0
+      # ── CHEAP PARTIAL MITIGATION — documented option (bd babelstone-zla1.12.8 (b)) ──
+      # Replace the 0.0.0.0/0 above with (1) your operator /32 and (2) the GitHub Actions
+      # egress ranges, so the GitHub-hosted cd.yml runner still reaches 6443:
+      #     curl -s https://api.github.com/meta | jq -r '.actions[]'
+      # Know what you are buying before flipping it:
+      #   • the list is LARGE (thousands of CIDRs — verify it fits Hetzner Cloud Firewall
+      #     rule limits before committing to this path; aggregate if needed);
+      #   • it ROTATES — a stale list silently breaks cd.yml deploys, so re-render it at
+      #     every provision;
+      #   • it admits ANY GitHub Actions tenant, not just this repo's workflows — this is
+      #     defence in depth on TOP of the kubeconfig's mutual-TLS client cert, never a
+      #     substitute for it.
+      # The full fix stays a self-hosted runner / WireGuard-tailscale tunnel / bastion
+      # (see README "Posture notes"). Example shape (values ILLUSTRATIVE — render the
+      # real .actions[] list at provision time):
+      #   - <your-operator-ip>/32
+      #   - 4.148.0.0/16          # ← one of the many api.github.com/meta .actions[] ranges
   public_network:
     ipv4: true
     ipv6: true
@@ -84,5 +103,82 @@ addons:
     enabled: true
   cluster_autoscaler:
     enabled: false         # no autoscaled pools on a single node (defaults true)
+
+# ── Control-plane & secrets-at-rest hardening (bd babelstone-zla1.12.9; CIS) ─────────────────
+# Both settings below take effect at the NEXT `hetzner-k3s create` (they do not retro-fit the
+# running box — k3s is only installed at provision time). Nothing here carries a secret: the
+# audit policy is public config, and k3s generates + manages the encryption key itself.
+#
+# (1) kube-apiserver AUDIT LOGGING (CIS apiserver section): a tamper-evident record of who did
+#     what through the admin API — without it, a compromise via the admin cert is invisible.
+#     The policy file is written onto the node by the pre-k3s command below BEFORE k3s starts,
+#     so the apiserver arg never points at a missing file. The log lands ON THE NODE at
+#     /var/lib/rancher/k3s/server/logs/audit.log — shipping it OFF-BOX to the LGTM/Loki plane
+#     is the maintainer's follow-up (an on-box log dies with the box; see README
+#     "Control-plane hardening").
+kube_api_server_args:
+  - audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log
+  - audit-policy-file=/etc/rancher/k3s/audit-policy.yaml
+  - audit-log-maxage=30      # days of rotated files to retain on-box
+  - audit-log-maxbackup=10   # rotated files to retain
+  - audit-log-maxsize=100    # MB per file before rotation
+
+additional_pre_k3s_commands:
+  # The audit POLICY: Metadata as the floor for everything, Request-level bodies for
+  # mutations (who changed WHAT), and — deliberately — NEVER request/response bodies for
+  # secret-bearing resources (a Request-level rule on secrets would copy secret material
+  # into the audit log; the secrets rule is FIRST so the mutation rule can't capture it).
+  # High-volume read noise (node/kube-proxy reads, health probes, leases, events) is
+  # dropped so 30 days fits on-box.
+  - mkdir -p /etc/rancher/k3s /var/lib/rancher/k3s/server/logs
+  - |
+    cat > /etc/rancher/k3s/audit-policy.yaml <<'AUDIT_POLICY'
+    apiVersion: audit.k8s.io/v1
+    kind: Policy
+    omitStages:
+      - RequestReceived
+    rules:
+      # Secret-bearing resources: METADATA ONLY — never log their bodies.
+      - level: Metadata
+        resources:
+          - group: ""
+            resources: ["secrets", "configmaps"]
+          - group: "authentication.k8s.io"
+            resources: ["tokenreviews"]
+      # High-volume, low-signal noise: drop entirely.
+      - level: None
+        users: ["system:kube-proxy"]
+        verbs: ["watch"]
+      - level: None
+        userGroups: ["system:nodes"]
+        verbs: ["get", "list", "watch"]
+      - level: None
+        nonResourceURLs: ["/healthz*", "/readyz*", "/livez*", "/version", "/metrics"]
+      - level: None
+        resources:
+          - group: "coordination.k8s.io"
+            resources: ["leases"]
+          - group: ""
+            resources: ["events"]
+      # Every mutation: Request level (verb + object + request body).
+      - level: Request
+        verbs: ["create", "update", "patch", "delete", "deletecollection"]
+      # Everything else (reads): Metadata.
+      - level: Metadata
+    AUDIT_POLICY
+  # (2) etcd SECRETS-AT-REST ENCRYPTION (CIS secrets section): k3s defaults to storing
+  #     Secrets base64-only in etcd, so anyone with disk/snapshot access (Hetzner rescue
+  #     boot, a stolen image, a CSI snapshot) reads the Hetzner token, kubeconfigs, the
+  #     OpenBao token and backup keys in clear. `secrets-encryption: true` makes k3s
+  #     generate an AES key and AES-CBC-encrypt Secrets at rest. Written as a k3s config
+  #     DROP-IN (config.yaml.d) rather than /etc/rancher/k3s/config.yaml so nothing
+  #     hetzner-k3s itself renders is clobbered. Verify after provision:
+  #     `k3s secrets-encrypt status`; rotate periodically: `k3s secrets-encrypt rotate-keys`
+  #     (see README "Control-plane hardening").
+  - |
+    mkdir -p /etc/rancher/k3s/config.yaml.d
+    cat > /etc/rancher/k3s/config.yaml.d/50-secrets-encryption.yaml <<'K3S_CFG'
+    secrets-encryption: true
+    K3S_CFG
 
 protect_against_deletion: true   # guards against an accidental `hetzner-k3s delete`

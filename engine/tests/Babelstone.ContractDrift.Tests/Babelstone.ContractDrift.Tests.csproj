@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+    <!-- The committed *.openapi.yaml specs and infra/kong/kong.yml are read as YAML documents;
+         YamlDotNet is the pack loader's already-pinned parser (Directory.Packages.props). The
+         suite is HERMETIC — no server, no broker, no containers: it reflects the shipped DTO
+         assemblies and reads committed files only. -->
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The DTO assemblies whose wire shapes the committed OpenAPI specs document. -->
+    <!-- Engine command surface + read DTOs (contracts/openapi/internal/engine-deposit-commands, specs/engine-reads). -->
+    <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />
+    <!-- Pack-migration operator surface (contracts/openapi/internal/engine-pack-migrations). -->
+    <ProjectReference Include="../../src/Babelstone.Engine.Hosting/Babelstone.Engine.Hosting.csproj" />
+    <!-- Rate-sheet deploy surface (contracts/openapi/internal/engine-rate-sheets). -->
+    <ProjectReference Include="../../src/Babelstone.RateSheets.Api/Babelstone.RateSheets.Api.csproj" />
+    <!-- Edge constitute / process-status DTOs (specs/orchestrator-edge, specs/orchestrator-process-status).
+         Already a member of engine/Babelstone.slnx, so no new build coupling. -->
+    <ProjectReference Include="../../../orchestrator/src/Babelstone.Orchestrator/Babelstone.Orchestrator.csproj" />
+  </ItemGroup>
+</Project>

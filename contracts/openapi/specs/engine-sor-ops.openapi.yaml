@@ -23,7 +23,15 @@ openapi: 3.1.0
 # NO PII (ADR-PC-004 §P2): opaque *_account_ref tokens only; synthetic examples.
 info:
   title: Babelstone Edge — SoR-Routed Instance Operations
-  version: 1.0.0
+  # 0.x on purpose (SemVer): this surface is PROVISIONAL — the EDGE contract is binding and live,
+  # but the 200 outcome envelope + the `op` set are modelled on the engine's existing op outcomes,
+  # not yet transcribed from a shipped /operations handler (see WHAT IS BINDING vs PROVISIONAL). A
+  # sub-1.0 version is the client-visible signal that the response shape may still move before it is
+  # code-bound; bd babelstone-ax0b.4 promotes this to 1.0.0 when its drift tests bind the envelope to
+  # the shipped handler. (The frozen .spectral.yaml x-status vocabulary has no "draft"/"experimental"
+  # value, so the 0.x version — not x-status — carries the provisional signal; x-status stays `active`
+  # because the ROUTE is active and reachable today.)
+  version: 0.1.0
   description: >
     The single client-facing surface for state-changing operations on an EXISTING deposit
     instance during coexistence (terminate early, withdraw partially, change auto-renewal —
@@ -66,7 +74,14 @@ paths:
         - name: instance_id
           in: path
           required: true
-          description: The deposit instance's stream id.
+          description: >
+            The deposit instance's raw stream id (a canonical UUID) — the SAME id form the engine
+            read surface takes (GET /v1/deposits/{id}), NOT the edge's opaque `DEP-…` handle. A
+            holder of a `DEP-…` deposit reference recovers this UUID by stripping the `DEP-` prefix
+            and reading the remaining 32-char hex (EdgeReferences derives the reference as `"DEP-"
+            + <UUID hex>`; in the constitution walking skeleton the deposit stream id equals the
+            saga process id, so `DEP-…`/`PROC-…` share one GUID). Treat that as informational — the
+            canonical routing/read key is the UUID.
           schema:
             type: string
             format: uuid
@@ -116,13 +131,25 @@ paths:
           description: >
             Rate limit exceeded — 5 req/min per consumer, the same tight money-mover budget
             as constitute (ADR-IC-006 §P3).
+        # DELIBERATELY NO 404 on the {instance_id} path (ADR-PC-018 §5). An UNKNOWN instance is
+        # NOT a 404 here: distinguishing "no such instance" (404) from "resolved to a backend that
+        # refused" would make the gateway an existence oracle over instances whose SoR it has not
+        # confirmed (and, failing closed, will not confirm) — and the gateway never guesses a
+        # backend. So an
+        # unknown / unresolvable / legacy instance all collapse into the SAME fail-closed 503
+        # SOR_UNRESOLVED below (a genuinely non-existent stream is indistinguishable, by design,
+        # from one whose SoR cannot be resolved). This is an intentional departure from the usual
+        # REST 404-on-missing-path-resource; the engine READ surface (GET /v1/deposits/{id}) still
+        # answers 404 for a non-existent stream — the existence answer lives there, not here.
         '503':
           description: >
             SOR_UNRESOLVED (fail-closed, ADR-PC-018 §5): the instance's system-of-record is
-            legacy, unknown, or could not be resolved (projection lag / read-surface
-            unreachable) — the operation is REFUSED rather than routed to a guessed backend
-            (guessing is split-brain). Retry once the instance is resolvable; a legacy-SoR
-            instance's operations belong to the legacy channel.
+            legacy, unknown (no such resolvable instance), or could not be resolved (projection
+            lag / read-surface unreachable) — the operation is REFUSED rather than routed to a
+            guessed backend (guessing is split-brain), and an unknown instance is deliberately
+            NOT distinguished from an unresolvable one (no existence oracle here — see the note
+            above; the read surface owns the 404 existence answer). Retry once the instance is
+            resolvable; a legacy-SoR instance's operations belong to the legacy channel.
           content:
             application/json:
               schema:
@@ -183,6 +210,15 @@ components:
         resulting lifecycle status, and the commit sequence the append reached (the
         ADR-IC-005 §P3 read-your-writes token a caller hands back as If-Min-Sequence on the
         follow-up read). Structural facts only, no PII.
+
+
+        FIELD-NAME RECONCILIATION (bd babelstone-ax0b.4): this envelope names the id
+        `instance_id` (the path-consistent noun for an existing-instance op), but the engine
+        op outcomes it is modelled on (TerminateEarlyResponse et al.) name it `deposit_id`.
+        When the engine-side /operations handler ships, ONE spelling must win — either the
+        handler emits `instance_id` for the gateway envelope, or this field becomes
+        `deposit_id` to match the engine DTOs. The drift tests that bind this shape MUST
+        assert the chosen spelling so the two cannot silently diverge.
       required: [instance_id, status, commit_sequence]
       properties:
         instance_id:

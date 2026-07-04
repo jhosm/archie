@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# spec-coverage-check.sh — the authoritative per-push half of the ADR-PC-020 §P6
+# spec-coverage-check.sh — the authoritative per-push half of the ADR-PC-020
 # coverage checker: ADR <-> catalogue <-> code/test traceability.
 #
-# ADR-PC-020 §P6 asserts:
+# ADR-PC-020 asserts:
 #   - every Verifiable commitment resolves to >=1 test that exists (and runs in CI),
 #     and (where applicable) >=1 code anchor;
 #   - every ADR anchor in code points to a LIVE (non-superseded) ADR.
@@ -32,8 +32,8 @@ CATALOGUE="$PC_ADRS/commitment-catalogue.md"
 # Derived from the repo's tracked top-level directories minus an explicit exclusion
 # set, rather than hand-maintained: a new top-level estate dir (a future family or
 # boundary service) is auto-in-scope, so no Live commitment fails coverage merely
-# because its dir was forgotten (bd babelstone-64uw.4 — lifecycle-driver + cadence
-# previously had to be hand-added in PR #404 for a commitment to resolve).
+# because its dir was forgotten (lifecycle-driver + cadence previously had to be
+# hand-added in PR #404 for a commitment to resolve).
 #
 # Excluded (everything that is NOT a compiled-source subtree carrying ADR anchors):
 #   - dot-dirs (.github, .beads, .claude, .config, .githooks, …) — tooling/CI/config;
@@ -108,6 +108,37 @@ dupes="$(cut -f1 "$rows" | sort | uniq -d || true)"
 
 cut -f1 "$rows" | sort -u > "$tmp/catalogue_tids"
 
+# --- Helper: is a scripts/*.sh gate actually WIRED INTO CI? True iff ci.yml names the
+#     script's path directly (e.g. `run: ./scripts/grafana-rbac-check.sh`), or a Makefile
+#     target whose recipe invokes the script is itself run by ci.yml (`make <target>`).
+#     This is the mechanical half of ADR-PC-020's "a test that exists AND RUNS IN CI"
+#     for script-realised commitments: without it, an orphaned scripts/*.sh that merely
+#     NAMES a Test ID would resolve a Live row while no CI step ever executes it
+#     (spec-coverage-check.test.sh, Case B, guards exactly that regression). ---
+CI_WORKFLOW=".github/workflows/ci.yml"
+ci_invokes_script() { # <scripts/foo.sh> -> rc 0 iff CI executes it
+  sh_path="$1"
+  [ -f "$CI_WORKFLOW" ] || return 1
+  grep -qF "$sh_path" "$CI_WORKFLOW" && return 0
+  [ -f Makefile ] || return 1
+  # Every make target whose recipe (tab-indented line) invokes the script...
+  while IFS= read -r tgt; do
+    [ -n "$tgt" ] || continue
+    # ...is wired iff ci.yml runs `make … <target>` (tokenise the make invocations and
+    # match the target token exactly — no regex metacharacter risk from target names).
+    if grep -oE 'make[[:space:]]+[^&|;)"]*' "$CI_WORKFLOW" | tr -s '[:space:]' '\n' \
+        | grep -qFx "$tgt"; then
+      return 0
+    fi
+  done < <(awk -v s="$sh_path" '
+    /^[ \t]*#/ { next }
+    /^[^\t][^=]*:/ { tgt = $0; sub(/:.*/, "", tgt); next }
+    /^\t/ { if (tgt != "" && index($0, s) > 0) { n = split(tgt, a, /[ \t]+/);
+            for (i = 1; i <= n; i++) if (a[i] != "") print a[i] } }
+  ' Makefile | sort -u)
+  return 1
+}
+
 # --- Helper: print the `## Verifiable commitments` section of an ADR file. ---
 vc_section() { awk '/^## Verifiable commitments/{f=1;next} f&&/^## /{f=0} f&&/^---$/{f=0} f' "$1"; }
 # --- Helper: the Test IDs a section *references* — the leading `TID` of each
@@ -162,15 +193,26 @@ while IFS=$'\t' read -r tid st gate link; do
   # A commitment may instead be realised by a CI shell-script gate under scripts/ — e.g.
   # kong-config-check.sh (ADR-IC-006) or grafana-rbac-check.sh (the observability-plane
   # RBAC enforcement, OBS_PLANE_RBAC / catalogue SEC-2). These run in ci.yml's path-scoped
-  # jobs, so they ARE "a test that exists and runs in CI" (ADR-PC-020 §P6) for a commitment
+  # jobs, so they ARE "a test that exists and runs in CI" (ADR-PC-020) for a commitment
   # whose realisation is ops/infra config with NO compiled-code home (the engine/contract
-  # subtrees carry no Grafana/Kong source). Accept a scripts/*.sh gate naming the Test ID as
-  # Live-resolution evidence alongside the code-dir tests. Purely additive — it can only let
-  # MORE rows resolve, never fewer, so it cannot mask a regression in an existing Live row.
-  if [ -z "$found_test" ] && [ -d scripts ] && grep -rqF --include='*.sh' -e "$tid" scripts 2>/dev/null; then
-    found_test="yes"
+  # subtrees carry no Grafana/Kong source).
+  #
+  # BOTH halves of the principle are asserted mechanically: the script must
+  # name the Test ID ("a test that exists") AND be invoked by ci.yml — directly, or via a
+  # make target ci.yml runs ("and runs in CI", ci_invokes_script above). A scripts/*.sh
+  # that names the Test ID but that no CI step executes is an ORPHANED gate: it does NOT
+  # resolve the row (pre-tightening it did, by convention alone — the loophole this closes).
+  if [ -z "$found_test" ] && [ -d scripts ]; then
+    while IFS= read -r gate_sh; do
+      [ -n "$gate_sh" ] || continue
+      if ci_invokes_script "$gate_sh"; then
+        found_test="yes"
+        break
+      fi
+      note "row '$tid': '$gate_sh' names the Test ID but is not invoked by $CI_WORKFLOW (directly or via a make target it runs) — an orphaned gate is not Live-resolution evidence (ADR-PC-020 §P6 'runs in CI')."
+    done < <(grep -rlF --include='*.sh' -e "$tid" scripts 2>/dev/null | sort)
   fi
-  [ -n "$found_test" ] || err "$CATALOGUE" "Row '$tid' is Live but no test/code under {$CODE_DIRS} (nor a CI gate under scripts/*.sh) references the Test ID."
+  [ -n "$found_test" ] || err "$CATALOGUE" "Row '$tid' is Live but no test/code under {$CODE_DIRS} (nor a CI-WIRED gate under scripts/*.sh — the script must also be invoked by $CI_WORKFLOW, directly or via a make target it runs) references the Test ID."
 done < "$rows"
 [ "$live" -gt 0 ] || note "no Live commitments yet — engine is a skeleton; test-resolution checks are dormant (all rows Planned)."
 
@@ -193,7 +235,7 @@ for d in $CODE_DIRS; do
     # embeds non-text bytes, so grep's binary heuristic (notably BSD/macOS grep) can emit a
     # 'Binary file <path> matches' line in place of the -o matches — the loop then ingests it
     # as a bogus anchor that resolves to no ADR. -a forces text so the file's real `// ADR-NNN`
-    # anchors are extracted and checked instead (bd babelstone-2t16.23).
+    # anchors are extracted and checked instead.
   done < <(grep -rahoE "${CODE_INCLUDES[@]}" 'ADR-(PC|IC)-[0-9]{3}' "$d" 2>/dev/null | sort -u)
 done
 [ "$anchors" -gt 0 ] || note "no code anchors yet — no engine source committed."

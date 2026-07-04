@@ -83,6 +83,8 @@ A dependency-direction covenant is not a regulated runtime artefact; no candidat
 
 *Revised 2026-07-03: `FamilyModuleScanner` moved out of `Babelstone.Cadence` into its own tiny assembly, `Babelstone.Composition` (a new extraction-ready `composition/` subtree mirroring `cadence/`'s layout). Discovery is composition machinery, not clock-owning poll-loop cadence — Cadence keeps its [ADR-PC-036](./ADR-PC-036-lifecycle-command-driver.md) charter (`CadenceWorker`/`ISchedulePass`/`IDedupeLedger`/`CompositeId`) unchanged — and parking the scanner in Cadence had forced a Cadence reference onto hosts that run no poll loop (`Babelstone.Engine.Api`, the orchestrator). §D4's mechanics, the scanner's public contract, and every estate loader are unchanged; only the assembly home moved.*
 
+*Revised 2026-07-03: the Deferred candidate-C hardening is now adopted — a build-time `FAMILY_TO_CORE_DEFAULT_DENY` layer (`composition/msbuild/FamilyToCoreDefaultDeny.targets`, imported once by a repo-root one-import `Directory.Build.targets` shim) fails the violating project's own `dotnet build` with `BBS0040`, reading the same `<BabelstoneRole>` marker per §D2. The cross-subtree coupling that motivated the deferral does not arise: no subtree file names the guard (MSBuild's nearest-file lookup delivers it), so the [ADR-PC-019 §P2](./ADR-PC-019-repository-strategy-monorepo.md) extraction posture is intact — an extracted subtree builds unchanged, merely losing the local guard. The XC-1/XC-2 CI gates remain authoritative; the build layer adds failure locality only, proven by `FamilyToCoreBuildGuardTests` in `Babelstone.Composition.Tests`.*
+
 ---
 
 ## Implementation Principles
