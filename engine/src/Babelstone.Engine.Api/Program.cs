@@ -399,6 +399,16 @@ builder.Services.AddSingleton(serviceProvider => new BulkInstanceAppender(
     serviceProvider.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton(serviceProvider =>
     new BulkOperationService(serviceProvider.GetRequiredService<IBulkOperationStore>()));
+// The four production bulk-operation adapters (ADR-PC-035, bd babelstone-qpiw.5): each rides the
+// ONE generic runner as a pure precondition + per-instance store-only event factory over the
+// engine-declared cross-cutting events (CrossCuttingEvents.cs). The drainer resolves them by
+// operation_kind; a job for a kind no adapter serves fails loud, by query. Pack/schema migration
+// narrow by from-version (skip an already-moved instance); FundsHeld carries per-item integer
+// cents (ADR-PC-010); AccountFrozen carries a machine reason code, never PII (ADR-PC-004).
+builder.Services.AddSingleton<IBulkOperationStrategy, PackVersionMigratedBulkStrategy>();
+builder.Services.AddSingleton<IBulkOperationStrategy, SchemaVersionMigratedBulkStrategy>();
+builder.Services.AddSingleton<IBulkOperationStrategy, FundsHeldBulkStrategy>();
+builder.Services.AddSingleton<IBulkOperationStrategy, AccountFrozenBulkStrategy>();
 builder.Services.AddSingleton(serviceProvider => new BulkOperationDrainer(
     serviceProvider.GetRequiredService<IBulkOperationStore>(),
     serviceProvider.GetRequiredService<BulkInstanceAppender>(),
