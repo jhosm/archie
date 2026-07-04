@@ -325,7 +325,7 @@ public sealed class TermDepositConstitutionService(
         //    the caller threads for read-your-writes.
         return await runtime.AppendAsync(
             command.DepositId, hydrated.Version, events,
-            Context(command.Actor, command.PaidAt), ct);
+            Context(command.Actor, command.PaidAt, command.CommandId), ct);
     }
 
     /// <summary>
@@ -923,9 +923,11 @@ public sealed class TermDepositConstitutionService(
             MinRemainingBalanceCents: position.MinRemainingBalanceCents,
             LockupPeriodDays: position.LockupPeriodDays);
 
-    // commandId is the OPTIONAL command-ingress idempotency key (ADR-PC-029 slot 4): the
-    // constitution paths thread the command's CommandId so the append dedupes on it; the
-    // engine-internal lifecycle steps (maturity, coupon, termination, renewal) pass none.
+    // commandId is the OPTIONAL command-ingress idempotency key (ADR-PC-029 slot 4): every command
+    // path threads its command's CommandId so the append dedupes on it — caller-supplied for the
+    // constitution/termination/withdrawal/erasure/renewal surfaces, SERVER-DERIVED (the canonical
+    // LifecycleCommandKey, ADR-PC-036 Decision 1) for the driven lifecycle money-movers (maturity,
+    // coupon). Null only for direct in-process callers (unit tests) that supply none.
     private AppendContext Context(string actor, DateTimeOffset validTime, Guid? commandId = null) =>
         new(Family.FamilyName, pack.VersionKey, Family.SchemaVersion, actor, validTime, CommandId: commandId);
 }

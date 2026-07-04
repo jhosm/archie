@@ -37,6 +37,14 @@ public static class DepositsEndpoints
     // (ADR-PC-036 §Decision 3), maturity has a single occurrence and never re-fires under a new number.
     private const long MatureOccurrence = 1;
 
+    // The stable command_kind tag the SERVER-DERIVED coupon idempotency key is namespaced under
+    // (ADR-PC-036 Decision 1+3) — the same canonical LifecycleCommandKey.Derive spec the loan installment
+    // endpoint uses (LCD-1). Unlike the one-shot maturity, a PERIODIC coupon is a RECURRING occurrence:
+    // its stable occurrence key is the coupon NUMBER (CouponsPaid + 1, mirroring the loan's
+    // InstallmentsPaid + 1), never the PaidAt date, so a re-dated retry of coupon N converges on the
+    // same key while coupon N+1 derives a fresh one.
+    private const string PayInterestCommandKind = "pay_interest";
+
     public static void Map(IEndpointRouteBuilder app)
     {
         app.MapPost("/v1/deposits", ConstituteAsync);
@@ -507,6 +515,7 @@ public static class DepositsEndpoints
         PayInterestRequest request,
         TermDepositConstitutionService service,
         AggregateRuntime<DepositPosition> runtime,
+        ICommandLog commandLog,
         TimeProvider clock,
         CancellationToken ct)
     {
@@ -516,11 +525,36 @@ public static class DepositsEndpoints
         // X-SCA-Acr/X-SCA-Auth-Time) or the ADR-PC-036 scoped service principal (the lifecycle driver's
         // coupon firing, X-SCA-Service-Principal). SCA parity by construction — both money-movers share one
         // filter, so neither can be less guarded than the other, and the principal is scoped to BOTH alike.
+
+        // ADR-PC-036 Decision 1+3: the coupon command id is SERVER-DERIVED via the CANONICAL
+        // LifecycleCommandKey.Derive(deposit_id, "pay_interest", CouponsPaid + 1) — the SAME helper the loan
+        // installment endpoint uses (LCD-1), a coupon being a RECURRING occurrence pinned to the coupon
+        // NUMBER off the authoritative fold (mirroring the loan's InstallmentsPaid + 1), never the PaidAt
+        // date. NEVER caller-supplied. A manual caller, the MCP agent, and the lifecycle driver firing the
+        // SAME still-due coupon all compute the SAME id, so the append dedupes at command_dedup
+        // (ADR-PC-029 slot 4) — the guard PayInterest formerly lacked entirely (its retry safety leaned on
+        // the coupon-window legality gate + optimistic concurrency alone, a named residual on the spec).
+        var current = await runtime.LoadAsync(id, ct);
+        var couponNumber = current.State.CouponsPaid + 1;
+        var commandId = LifecycleCommandKey.Derive(id, PayInterestCommandKind, couponNumber);
+
+        // Pre-check BEFORE any side effect (decide / append): a known command id replays the ORIGINAL
+        // outcome with NO second append (ADR-PC-029 slot 4). The crash-atomic guarantee is the
+        // in-transaction command_dedup INSERT inside the append; this read keeps the common sequential
+        // retry off the write path (the same shape as MatureAsync / the loan PayInstallmentAsync).
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            var replay = await runtime.LoadAsync(id, ct);
+            return Results.Ok(DepositResponse.FromFold(replay));
+        }
+
         var command = new PayInterestCommand(
             DepositId: id,
             PaidAt: request.PaidAt ?? clock.GetUtcNow(),
             PayoutAccount: request.PayoutAccount ?? "PT50-DDA-001",
-            Actor: request.Actor ?? "mcp:dev");
+            Actor: request.Actor ?? "mcp:dev",
+            CommandId: commandId);
 
         Hydrated<DepositPosition> hydrated;
 
@@ -537,8 +571,29 @@ public static class DepositsEndpoints
             {
                 await service.PayInterestAsync(command, ct);
             }
+            catch (DuplicateCommandException)
+            {
+                // A concurrent duplicate of the SAME coupon occurrence slipped past the pre-check: the
+                // in-transaction command_dedup INSERT rolled the append back (NO second coupon). Return the
+                // ORIGINAL outcome verbatim off the authoritative fold — the idempotent replay slot 4
+                // mandates (ADR-PC-029), exactly the MatureAsync / loan PayInstallmentAsync shape.
+                var replay = await runtime.LoadAsync(id, ct);
+                return Results.Ok(DepositResponse.FromFold(replay));
+            }
             catch (ConcurrencyException)
             {
+                // A concurrent writer reached the head between our load and our append. If that winner was
+                // a concurrent firing of THIS SAME coupon occurrence (its number-pinned key now exists), the
+                // intended effect already happened — replay its outcome rather than surface a spurious 409
+                // (mirroring the loan PayInstallmentAsync). Otherwise it is a genuine clash on a DIFFERENT
+                // command — surface 409.
+                var raced = await commandLog.TryGetAsync(commandId, ct);
+                if (raced is not null)
+                {
+                    var replay = await runtime.LoadAsync(id, ct);
+                    return Results.Ok(DepositResponse.FromFold(replay));
+                }
+
                 return Results.Problem($"Deposit {id} was modified concurrently.", statusCode: StatusCodes.Status409Conflict);
             }
             catch (DomainRejectedException e)

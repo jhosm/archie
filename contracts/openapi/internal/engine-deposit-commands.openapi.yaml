@@ -34,10 +34,11 @@ info:
     caller-supplied Idempotency-Key is marked required it is MANDATORY and must be a UUID
     (ADR-PC-029 slot 1/slot 4): the engine dedupes per aggregate on it and replays the
     ORIGINAL outcome (same commit_sequence, no second append) on an at-least-once retry; a
-    missing/malformed key fails loud with 400. MATURITY (alone) instead derives its command
-    id SERVER-side (LifecycleCommandKey, ADR-PC-036 Decision 1); INTEREST carries no command
-    id at all today — its retry safety rests on the coupon-window legality gate and
-    optimistic concurrency, with a named residual (see that op). Both money-movers are
+    missing/malformed key fails loud with 400. MATURITY and INTEREST instead derive their
+    command ids SERVER-side (LifecycleCommandKey, ADR-PC-036 Decision 1): maturity as the
+    one-shot occurrence (deposit_id, "mature", 1), interest number-pinned to the coupon
+    NUMBER (deposit_id, "pay_interest", coupons_paid + 1) — see each op for the exact
+    replay semantics and the interest op's named residual. Both money-movers are
     gated by step-up SCA: the ScaPreconditionFilter authorises either a fresh gateway-attested
     human SCA proof (X-SCA-Acr/X-SCA-Auth-Time) or the scoped non-interactive service
     principal (X-SCA-Service-Principal — maturity + interest only), short-circuiting 422
@@ -152,19 +153,21 @@ paths:
         Pays the next intermediate coupon of a PERIODIC deposit; the coupon window is derived
         engine-side from the schedule and the coupons already paid. Shares the SAME
         step-up-SCA route group as maturity (human proof or the scoped service principal,
-        ADR-PC-036) — SCA parity by construction. RETRY SEMANTICS — weaker than every
-        sibling, documented deliberately: this op has NO command-id idempotency today
-        (PayInterestCommand carries no CommandId, so nothing lands in command_dedup; the
-        ADR-PC-036 canonical key covers maturity only, and the ADR itself lists deposit
-        coupons as a FUTURE lifecycle rule). A retry is guarded by (a) the legality gate —
-        not constituted / not PERIODIC / no intermediate coupon left is a 422, never a
-        phantom coupon — and (b) optimistic concurrency, so two CONCURRENT posts race one
-        head and the loser gets 409. RESIDUAL, named: a SEQUENTIAL re-POST after a committed
-        append is a NEW command against the new head — it derives and pays the NEXT unpaid
-        coupon window (legal, so no 422) instead of replaying the previous outcome. Treat a
-        timeout as unknown-outcome and READ the deposit (coupons_paid) before re-posting.
-        Threading a command id through this op is a tracked follow-up and a prerequisite
-        before any coupon rule joins the lifecycle driver.
+        ADR-PC-036) — SCA parity by construction. RETRY SEMANTICS: the command id is
+        SERVER-derived and number-pinned (LifecycleCommandKey.Derive(deposit_id,
+        "pay_interest", coupons_paid + 1), ADR-PC-036 Decision 1+3, LCD-1 — the recurring
+        sibling of the loan installment op; never caller-supplied). Two firings of the SAME
+        still-due coupon occurrence — a manual operator, the MCP agent, and the lifecycle
+        driver racing, or an at-least-once redelivery — converge on the SAME key and dedupe
+        at command_dedup (ADR-PC-029 slot 4): the replay returns the ORIGINAL outcome, no
+        second coupon. The legality gate (not constituted / not PERIODIC / no intermediate
+        coupon left is a 422) and optimistic concurrency still guard as before. RESIDUAL,
+        named (the same one the loan installment op carries): the occurrence number is
+        derived from the LIVE fold, so a SEQUENTIAL re-POST after coupon N has committed
+        derives coupon N+1 — a NEW occurrence, not a replay — and pays the next unpaid
+        window (legal, so no 422). Treat a timeout as unknown-outcome and READ the deposit
+        (coupons_paid) before re-posting; the automated driver closes this residual by
+        presenting its schedule-derived occurrence number and its own dispatch ledger.
       parameters:
         - $ref: '#/components/parameters/DepositId'
       requestBody:

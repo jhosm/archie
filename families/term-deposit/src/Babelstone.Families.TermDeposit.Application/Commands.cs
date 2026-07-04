@@ -148,11 +148,20 @@ public sealed record MatureDepositCommand(
 /// Coupons are triggered manually here, exactly as maturity is; the time-based scheduler that
 /// auto-fires them on due dates is deferred to A.8b.</summary>
 /// <param name="PayoutAccount">The legacy current account credited the coupon net (settlement).</param>
+/// <param name="CommandId">The SERVER-DERIVED recurring occurrence key (ADR-PC-036 Decision 1+3), computed
+/// by the canonical <c>Babelstone.Engine.Hosting.LifecycleCommandKey.Derive(deposit_id, "pay_interest",
+/// coupons_paid + 1)</c> — the SAME helper the loan installment endpoint uses (LCD-1). Unlike the one-shot
+/// maturity (constant occurrence 1), a coupon is a RECURRING occurrence, so its stable occurrence key is
+/// the coupon NUMBER (never the <c>PaidAt</c> date) — a re-dated retry of coupon N reuses the same key and
+/// dedupes to ONE money leg at <c>command_dedup</c> (ADR-PC-029 slot 4). NEVER caller-supplied. Nullable
+/// only for direct in-process callers (family unit tests) that construct the command without exercising
+/// idempotency; the HTTP/MCP boundary always derives and supplies it.</param>
 public sealed record PayInterestCommand(
     Guid DepositId,
     DateTimeOffset PaidAt,
     string PayoutAccount,
-    string Actor);
+    string Actor,
+    Guid? CommandId = null);
 
 /// <summary>Break a constituted deposit before maturity (02 §2.5): accrue the elapsed-period interest,
 /// withhold that one flow, apply the product's configured penalty (flat or banded, with optional floor)
