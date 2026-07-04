@@ -131,7 +131,7 @@ public sealed record DepositPosition(
     Money SettlementAmount,
     int CorrectionCount,
     int CouponsPaid,
-    DepositLifecycle Lifecycle) : IErasable<DepositPosition>
+    DepositLifecycle Lifecycle) : IErasable<DepositPosition>, IAccount
 {
     /// <summary>
     /// GDPR Article 17 terminal transition (ADR-PC-004 §P3 / Amendment A4): label the deposit
@@ -173,6 +173,20 @@ public sealed record DepositPosition(
         CorrectionCount: 0,
         CouponsPaid: 0,
         Lifecycle: DepositLifecycle.Pending);
+
+    /// <summary>
+    /// The Account seam binding (ADR-PC-033 slot 1): the term deposit is a DEGENERATE account —
+    /// one balance, no holds — so implementing <see cref="IAccount"/> RECLASSIFIES it; nothing
+    /// about the fold changes. The <c>account_ref</c> is the deposit's own stream id
+    /// (<see cref="DepositId"/>): an opaque instance identifier the engine resolves internally,
+    /// never PII (ADR-PC-004 §P2) — NOT <see cref="FundingAccount"/>, which is the COUNTERPARTY
+    /// reference the constitution debit moved money from, not this account. A computed read over
+    /// the already-folded id — not a record field — so the custom element-wise equality below and
+    /// replay determinism (ADR-PC-010 §P5) are untouched. Deliberately NOT <see cref="IHoldable"/>:
+    /// a deposit carries no holds, so its available balance trivially equals its accounting balance
+    /// (the uniform-split degenerate case, ADR-PC-033 slot 1).
+    /// </summary>
+    public string AccountRef => DepositId.ToString();
 
     // The record carries ONE collection field — PrincipalTimeline (bd babelstone-emtr). The
     // compiler-synthesized record equality would compare it by REFERENCE, which would make two

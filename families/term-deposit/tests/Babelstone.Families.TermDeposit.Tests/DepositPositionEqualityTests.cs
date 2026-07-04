@@ -111,11 +111,15 @@ public class DepositPositionEqualityTests
     public void Confirms_every_record_field_is_covered_by_a_single_field_variant()
     {
         // Guards the test itself against drift: the variant set must cover EXACTLY the record's public
-        // fields. Reflecting over the record (not a hand-maintained literal on both sides) means ADDING a
-        // field to DepositPosition without a matching variant fails HERE — caught now, not as a fresh
-        // survivor in the next weekly run.
+        // STATE-BEARING fields. Reflecting over the record (not a hand-maintained literal on both sides)
+        // means ADDING a field to DepositPosition without a matching variant fails HERE — caught now, not
+        // as a fresh survivor in the next weekly run. Get-only COMPUTED properties (no setter — e.g. the
+        // IAccount seam's AccountRef, a read over the already-folded DepositId, ADR-PC-033 slot 1) are
+        // excluded: they carry no independent state, so they deliberately have no equality weight and no
+        // variant. A positional record parameter always has an init accessor, so none can slip past.
         var recordFieldCount = typeof(DepositPosition)
-            .GetProperties(BindingFlags.Public | BindingFlags.Instance).Length;
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Count(p => p.CanWrite);
         Assert.Equal(27, recordFieldCount); // the 27 positional record parameters
         Assert.Equal(recordFieldCount, SingleFieldVariants(Baseline()).Count);
     }
