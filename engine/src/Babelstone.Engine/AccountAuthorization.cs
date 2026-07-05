@@ -43,11 +43,17 @@ public enum AuthorizationDeclineReason
     /// <summary>The attempted amount was zero or negative — structurally not an authorization.</summary>
     NonPositiveAmount,
 
+    /// <summary>Stage 3 (freeze gate, ADR-PC-041): the instance is under an active compliance freeze
+    /// (an <c>AccountFrozen</c> with no matching <c>AccountUnfrozen</c>), so every debit is refused
+    /// until it lifts — evaluated BEFORE the funds check, and the decline names the freeze
+    /// reason/actor (<see cref="AuthorizationDecision.Declined"/>).</summary>
+    AccountFrozen,
+
     /// <summary>Stage 4: the amount exceeds the pack's per-transaction ceiling.</summary>
     PerTransactionLimitExceeded,
 
-    /// <summary>Stages 3–4: the available balance — net of active holds, plus any authorized
-    /// overdraft — does not cover the amount.</summary>
+    /// <summary>Stages 3–4: the available balance — net of active holds (authorization AND legal,
+    /// ADR-PC-041), plus any authorized overdraft — does not cover the amount.</summary>
     InsufficientAvailableBalance,
 }
 
@@ -68,8 +74,17 @@ public abstract record AuthorizationDecision
     /// read-your-writes: it drains before it decides, so "later" never trusts a stale fold.</summary>
     public sealed record Authorized(HoldPlaced Hold) : AuthorizationDecision;
 
-    /// <summary>Refused: nothing is earmarked; the caller answers <c>declined</c> with the reason.</summary>
-    public sealed record Declined(AuthorizationDeclineReason Reason) : AuthorizationDecision;
+    /// <summary>
+    /// Refused: nothing is earmarked; the caller answers <c>declined</c> with the reason. When
+    /// <see cref="Reason"/> is <see cref="AuthorizationDeclineReason.AccountFrozen"/> the decline
+    /// NAMES the freeze (ADR-PC-041 slot 5): <see cref="FreezeReason"/>/<see cref="ComplianceActor"/>
+    /// carry the machine-code reason and the operator that placed it, so "why was this refused?" is a
+    /// read, not a forensic log dig (HOLD_REASON_OBSERVABLE). Both are null for every other reason.
+    /// </summary>
+    public sealed record Declined(
+        AuthorizationDeclineReason Reason,
+        string? FreezeReason = null,
+        string? ComplianceActor = null) : AuthorizationDecision;
 }
 
 /// <summary>
@@ -104,8 +119,16 @@ public static class FundsAndRulesDecider
     /// every hold the spine projection drive has folded. Earlier approvals are visible once
     /// drained; the command shell drains before it decides (read-your-writes).
     /// </summary>
+    /// <param name="request">The authorization attempt.</param>
+    /// <param name="availableBalanceCents">The current available-balance fold, net of every active
+    /// hold (authorization AND legal, ADR-PC-041) the spine projection drive has folded.</param>
+    /// <param name="rules">The pack-supplied stage-4 rule inputs.</param>
+    /// <param name="activeFreeze">The instance's active compliance freeze, or null if it is not
+    /// frozen (ADR-PC-041) — read by the shell from <see cref="AccountFreezeReader"/> and handed in so
+    /// the decider stays pure. When non-null, every debit is refused, naming the freeze.</param>
     public static AuthorizationDecision Decide(
-        AuthorizationRequest request, long availableBalanceCents, AuthorizationRules rules)
+        AuthorizationRequest request, long availableBalanceCents, AuthorizationRules rules,
+        AccountFreeze? activeFreeze = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(rules);
@@ -114,6 +137,18 @@ public static class FundsAndRulesDecider
         if (request.Amount.Cents <= 0)
         {
             return new AuthorizationDecision.Declined(AuthorizationDeclineReason.NonPositiveAmount);
+        }
+
+        // Stage 3 — freeze gate (ADR-PC-041 slot 5): an active compliance freeze refuses EVERY debit,
+        // evaluated before the funds check, and the decline names the freeze reason/actor. A pure
+        // read-state-and-decide step (the shell read the predicate; no clock, no I/O here) — the
+        // freeze blocks the authorization, never the recording or folding of facts.
+        if (activeFreeze is not null)
+        {
+            return new AuthorizationDecision.Declined(
+                AuthorizationDeclineReason.AccountFrozen,
+                FreezeReason: activeFreeze.FreezeReason,
+                ComplianceActor: activeFreeze.ComplianceActor);
         }
 
         // Stage 4 — product rules/limits: the pack's per-transaction ceiling refuses before any

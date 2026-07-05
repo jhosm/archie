@@ -360,7 +360,51 @@ public sealed class AccountHoldProjectorTests
             DateOnly valueDateHorizon, CancellationToken ct = default)
         {
             IReadOnlyList<AccountHoldRow> holds = _rows.Values
-                .Where(r => r.State == "ACTIVE" && r.ValueDate <= valueDateHorizon)
+                .Where(r => r.State == "ACTIVE" && r.Kind == "AUTHORIZATION"
+                            && r.ValueDate <= valueDateHorizon)
+                .OrderBy(r => r.AccountRef, StringComparer.Ordinal)
+                .ThenBy(r => r.HoldId, StringComparer.Ordinal)
+                .ToList();
+            return Task.FromResult(holds);
+        }
+
+        public Task PlaceLegalAsync(AccountHoldRow legalHold, CancellationToken ct = default)
+        {
+            _rows.TryAdd(legalHold.HoldId, legalHold); // ON CONFLICT (hold_id) DO NOTHING
+            return Task.CompletedTask;
+        }
+
+        public Task<HoldReleaseResult> ReleaseLegalAsync(
+            string holdId, Guid releasedStreamId, long releasedSequence, CancellationToken ct = default)
+        {
+            if (!_rows.TryGetValue(holdId, out var row))
+            {
+                return Task.FromResult(HoldReleaseResult.NeverPlaced);
+            }
+
+            // Matches the real store's UPDATE … WHERE state='ACTIVE' AND kind='LEGAL' then
+            // EXISTS(hold_id) probe: a row that exists but is inactive or not a legal hold folds as a
+            // no-op classified AlreadyReleased (never NeverPlaced).
+            if (row.State != "ACTIVE" || row.Kind != "LEGAL")
+            {
+                return Task.FromResult(HoldReleaseResult.AlreadyReleased);
+            }
+
+            _rows[holdId] = row with
+            {
+                State = "RELEASED",
+                ReleasedStreamId = releasedStreamId,
+                ReleasedSequence = releasedSequence,
+            };
+            return Task.FromResult(HoldReleaseResult.Transitioned);
+        }
+
+        public Task<IReadOnlyList<AccountHoldRow>> GetActiveLegalHoldsWithExpiryAtOrBeforeAsync(
+            DateOnly expiryHorizon, CancellationToken ct = default)
+        {
+            IReadOnlyList<AccountHoldRow> holds = _rows.Values
+                .Where(r => r.State == "ACTIVE" && r.Kind == "LEGAL"
+                            && r.ExpiresAt is { } e && e <= expiryHorizon)
                 .OrderBy(r => r.AccountRef, StringComparer.Ordinal)
                 .ThenBy(r => r.HoldId, StringComparer.Ordinal)
                 .ToList();

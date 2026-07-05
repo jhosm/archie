@@ -66,29 +66,56 @@ public enum HoldState
 }
 
 /// <summary>
-/// A hold — the spine value object for funds earmarked by an approved-but-unsettled authorization
-/// (ADR-PC-033). In plain English: when an authorization is approved, N cents on the account
-/// are set aside so a second concurrent authorization cannot spend them; the hold is captured when
-/// the settlement arrives or expires if it times out. While <see cref="State"/> is
-/// <see cref="HoldState.Active"/> the hold lowers the account's available balance.
+/// Which KIND of active hold an earmark is (ADR-PC-041): both lower available balance, but they are
+/// different lifecycles under the same synthetic <c>operations</c> aggregate_type, and the kind is
+/// what makes the "why funds are held" answer observable (HOLD_REASON_OBSERVABLE).
+/// </summary>
+public enum HoldKind
+{
+    /// <summary>An approved-but-unsettled authorization earmark (ADR-PC-033): transient, captured on
+    /// settlement or expired if it times out.</summary>
+    Authorization,
+
+    /// <summary>A court order / garnishment (ADR-PC-041): externally instructed, NEVER captured,
+    /// lifted by an <c>operations.FundsReleased</c> discharge. Carries a <see cref="Hold.LegalReference"/>.</summary>
+    Legal,
+}
+
+/// <summary>
+/// A hold — the spine value object for funds earmarked either by an approved-but-unsettled
+/// authorization (ADR-PC-033) or by a legal hold / court order (ADR-PC-041). In plain English: N
+/// cents on the account are set aside — by an authorization so a second concurrent one cannot spend
+/// them, or by a court order that must not be spent pending a legal process. While <see cref="State"/>
+/// is <see cref="HoldState.Active"/> the hold lowers the account's available balance, regardless of
+/// <see cref="Kind"/>.
 /// </summary>
 /// <remarks>
 /// Carries NO family-typed shape and NO PII (ENGINE_FAMILY_AGNOSTIC / ADR-PC-004): an opaque
-/// <see cref="HoldId"/> + <see cref="AccountRef"/>, integer-cents <see cref="Money"/>, a date, and
-/// a closed-set state. It is a READ shape over the rebuildable active-hold fold (never a stored
-/// source of truth — ADR-PC-033 rejected every stored mutable balance/hold number).
+/// <see cref="HoldId"/> + <see cref="AccountRef"/>, integer-cents <see cref="Money"/>, dates, a
+/// closed-set state/kind, and a structural court reference. It is a READ shape over the rebuildable
+/// active-hold fold (never a stored source of truth — ADR-PC-033 rejected every stored mutable
+/// balance/hold number).
 /// </remarks>
-/// <param name="HoldId">The dedup/correlation key every lifecycle event of this hold carries (ADR-PC-033).</param>
+/// <param name="HoldId">The dedup/correlation key every lifecycle event of this hold carries (ADR-PC-033/041).</param>
 /// <param name="AccountRef">The opaque account the earmark applies to — never PII (ADR-PC-004).</param>
 /// <param name="Amount">The earmarked amount (integer cents, ADR-PC-010).</param>
-/// <param name="ValueDate">The economic date the hold took effect — the expiry-horizon axis (ADR-PC-023).</param>
-/// <param name="State">Where in the three-transition lifecycle this hold is (ADR-PC-033).</param>
+/// <param name="ValueDate">An AUTHORIZATION hold's economic effective date — its expiry-horizon axis
+/// (ADR-PC-023). Null for a LEGAL hold, which uses <see cref="ExpiresAt"/> instead (ADR-PC-041).</param>
+/// <param name="State">Where in its lifecycle this hold is (ADR-PC-033/041).</param>
+/// <param name="Kind">Authorization or legal (ADR-PC-041) — the observable "why".</param>
+/// <param name="LegalReference">A LEGAL hold's court/case reference (ADR-PC-041 slot 1) — null for an
+/// authorization hold. STRUCTURAL, never PII (ADR-PC-004).</param>
+/// <param name="ExpiresAt">A LEGAL hold's advisory expiry horizon (ADR-PC-041 slot 2); null =
+/// open-ended or an authorization hold.</param>
 public sealed record Hold(
     string HoldId,
     string AccountRef,
     Money Amount,
-    DateOnly ValueDate,
-    HoldState State);
+    DateOnly? ValueDate,
+    HoldState State,
+    HoldKind Kind = HoldKind.Authorization,
+    string? LegalReference = null,
+    DateOnly? ExpiresAt = null);
 
 /// <summary>
 /// The spine-owned generic balance fold reads (ADR-PC-033): the ACCOUNTING balance is the
@@ -146,12 +173,31 @@ public sealed class AccountBalanceReader(IMovementLedgerStore movements, IAccoun
         return rows.Select(ToHold).ToList();
     }
 
+    /// <summary>
+    /// The projection-derived LEGAL-hold expiry read (ADR-PC-041 slot 2 / ADR-PC-023): every ACTIVE
+    /// legal hold whose <see cref="Hold.ExpiresAt"/> horizon is at or before
+    /// <paramref name="expiryHorizon"/> — what an operator/command shell reads to decide which
+    /// <c>FundsReleased</c> facts to append. Open-ended legal holds are never candidates. The horizon
+    /// is an input, never a clock read, so the fold stays replay-deterministic.
+    /// </summary>
+    public async Task<IReadOnlyList<Hold>> GetLegalHoldExpiryCandidatesAsync(
+        DateOnly expiryHorizon, CancellationToken ct = default)
+    {
+        var rows = await holds.GetActiveLegalHoldsWithExpiryAtOrBeforeAsync(expiryHorizon, ct);
+        return rows.Select(ToHold).ToList();
+    }
+
     // Rows out of the store are ACTIVE by query; the closed-set parse is still total (fail-loud on
-    // a state outside the migration-0020 CHECK set rather than a silent default).
+    // a state/kind outside the migration CHECK set rather than a silent default). Kind maps the
+    // storage-primitive string to the spine enum: AUTHORIZATION -> Authorization, LEGAL -> Legal
+    // (ADR-PC-041); LegalReference/ExpiresAt surface the observable "why" for a legal hold.
     private static Hold ToHold(AccountHoldRow row) => new(
         HoldId: row.HoldId,
         AccountRef: row.AccountRef,
         Amount: new Money(row.AmountCents),
         ValueDate: row.ValueDate,
-        State: Enum.Parse<HoldState>(row.State, ignoreCase: true));
+        State: Enum.Parse<HoldState>(row.State, ignoreCase: true),
+        Kind: Enum.Parse<HoldKind>(row.Kind, ignoreCase: true),
+        LegalReference: row.LegalReference,
+        ExpiresAt: row.ExpiresAt);
 }
