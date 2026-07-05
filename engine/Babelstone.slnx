@@ -31,6 +31,9 @@
     <Project Path="src/Babelstone.InboxConsumer/Babelstone.InboxConsumer.csproj" />
     <Project Path="src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
     <Project Path="src/Babelstone.RateSheets.Api/Babelstone.RateSheets.Api.csproj" />
+    <!-- The product-config deploy host (ADR-PC-009 §A2, ADR-PC-008): the versioned deploy registry
+         sibling of the rate-sheet host — POST /v1/product-configs. -->
+    <Project Path="src/Babelstone.ProductConfigs.Api/Babelstone.ProductConfigs.Api.csproj" />
     <!-- The engine command/query HTTP boundary (ADR-PC-021 §D5, realized in E.5): the surface the MCP server calls. -->
     <Project Path="src/Babelstone.Engine.Api/Babelstone.Engine.Api.csproj" />
     <Project Path="src/Babelstone.Packs/Babelstone.Packs.csproj" />
@@ -125,6 +128,7 @@
          test project — it runs no tests, it just ships the fixture. -->
     <Project Path="tests/Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
     <Project Path="tests/Babelstone.RateSheets.Tests/Babelstone.RateSheets.Tests.csproj" />
+    <Project Path="tests/Babelstone.ProductConfigs.Api.Tests/Babelstone.ProductConfigs.Api.Tests.csproj" />
     <Project Path="tests/Babelstone.FinancialTypes.Tests/Babelstone.FinancialTypes.Tests.csproj" />
     <Project Path="tests/Babelstone.Money.Analyzers.Tests/Babelstone.Money.Analyzers.Tests.csproj" />
     <Project Path="tests/Babelstone.FinancialMath.Tests/Babelstone.FinancialMath.Tests.csproj" />

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+    <!-- Real PostgreSQL per integration test (ADR-IC-009). DB-touching tests carry
+         [Trait("Category","Integration")]; the default engine CI job filters them out. -->
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <!-- In-process host for the POST /v1/product-configs deploy endpoint (ADR-PC-009 §A2).
+         Transitively brings the Microsoft.AspNetCore.App framework reference. -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
+    <ProjectReference Include="../../src/Babelstone.ProductConfigs.Api/Babelstone.ProductConfigs.Api.csproj" />
+    <ProjectReference Include="../../src/Babelstone.EventStore.Migrations/Babelstone.EventStore.Migrations.csproj" />
+    <ProjectReference Include="../../src/Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+    <!-- The shared ContainerStartupGate (throttles concurrent Testcontainers startups). -->
+    <ProjectReference Include="../Babelstone.TestFixtures/Babelstone.TestFixtures.csproj" />
+  </ItemGroup>
+</Project>

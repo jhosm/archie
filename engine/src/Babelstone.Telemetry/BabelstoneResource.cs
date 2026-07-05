@@ -26,6 +26,11 @@ public static class BabelstoneResource
     /// <summary>The rate-sheet deploy host's <c>service.name</c> (ADR-PC-008).</summary>
     public const string RateSheetsApiServiceName = "babelstone-rate-sheets-api";
 
+    /// <summary>The product-config deploy host's <c>service.name</c> (ADR-PC-009 §A2 / ADR-PC-008). The
+    /// sibling of the rate-sheet deploy host for the product-config artefact family: the treasury/product
+    /// gated <c>POST /v1/product-configs</c> versioned deploy registry.</summary>
+    public const string ProductConfigsApiServiceName = "babelstone-product-configs-api";
+
     /// <summary>The saga orchestrator host's <c>service.name</c> (ADR-IC-018 composition root).
     /// Its saga-advance spans (opened on the SHARED <c>Babelstone.Engine</c> source) carry this
     /// service identity, so a saga trace shows the orchestrator and engine as distinct services
