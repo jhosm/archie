@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.ProductConfigs.Api</RootNamespace>
+    <AssemblyName>Babelstone.ProductConfigs.Api</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The hermetic envelope-guard unit tests call the internal handler helper directly
+         (DeployProductConfigEndpoint.ValidateEnvelope) — the HTTP-level deploy tests stay
+         Docker-gated, so the guard's 400 branches need an in-process seam. -->
+    <InternalsVisibleTo Include="Babelstone.ProductConfigs.Api.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The product-config deploy surface (ADR-PC-009 §A2, ADR-PC-008): the versioned deploy
+         registry sibling of the rate-sheet host. The registry types (ProductConfigVersion,
+         IProductConfigVersionStore, PostgresProductConfigVersionStore) live in the generic
+         Babelstone.RateSheets spine next to the rate-sheet store. -->
+    <ProjectReference Include="../Babelstone.RateSheets/Babelstone.RateSheets.csproj" />
+
+    <!-- OpenTelemetry tracing (ADR-IC-007 Layer 1, Epic K.1): the shared resource helper
+         (BabelstoneResource) + the SDK hosting integration and OTLP exporter, for OBS-1 parity
+         with the rate-sheet deploy host. -->
+    <ProjectReference Include="../Babelstone.Telemetry/Babelstone.Telemetry.csproj" />
+    <!-- The host-side OTel-SDK seam (K.5): registers Npgsql's built-in query CLIENT spans on this
+         host's TracerProvider so the registry store's Postgres calls are visible in the trace too. -->
+    <ProjectReference Include="../Babelstone.Telemetry.Hosting/Babelstone.Telemetry.Hosting.csproj" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <!-- Npgsql's built-in OTel instrumentation (K.5): declared DIRECTLY here because the
+         Babelstone.Telemetry.Hosting seam keeps Npgsql.OpenTelemetry PrivateAssets="all". This host
+         calls AddNpgsqlQueryTelemetry() on its registry store's Postgres calls, so it needs the
+         runtime assembly present. -->
+    <PackageReference Include="Npgsql.OpenTelemetry" />
+  </ItemGroup>
+</Project>
