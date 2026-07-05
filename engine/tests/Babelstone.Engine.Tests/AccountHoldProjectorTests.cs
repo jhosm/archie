@@ -267,9 +267,127 @@ public sealed class AccountHoldProjectorTests
         Assert.False(store.Has("hold-1"));
     }
 
+    // The ADR-PC-041 legal-hold lifecycle: a court order sets funds aside (FundsHeld) as a second
+    // kind of active hold, lifted by a discharge (FundsReleased). A legal hold rides its instance
+    // stream, and its account_ref is the instance itself (the degenerate single-account mapping).
+    private static FundsHeld Held(
+        Guid instance, string holdId, long cents = 50_000, string legalRef = "case-2026-1",
+        DateOnly? expiresAt = null) =>
+        new(instance, holdId, new Money(cents), legalRef, expiresAt);
+
+    private static FundsReleased Released(Guid instance, string holdId, string releaseRef = "discharge-1") =>
+        new(instance, holdId, releaseRef);
+
+    // LEGAL_HOLD_LOWERS_AVAILABLE (ADR-PC-041 §Decision slots 1–2): a FundsHeld folds into the same
+    // active-hold set as an authorization hold, so `available = accounting − Σ(active holds)` drops by
+    // the held amount; a FundsReleased restores it. account_ref is the instance itself.
+    [Fact]
+    public async Task A_legal_hold_lowers_available_balance_and_a_release_restores_it()
+    {
+        var store = new InMemoryAccountHoldStore();
+        var reader = new AccountBalanceReader(new FixedBalanceMovementStore(100_000), store);
+        var projector = new AccountHoldProjector(store);
+        var instance = Guid.NewGuid();
+        var acct = instance.ToString();
+
+        Assert.Equal(100_000, await reader.GetAvailableBalanceCentsAsync(acct));
+
+        await projector.ApplyAsync(instance, 0, Held(instance, "legal-1", cents: 50_000));
+        Assert.Equal(50_000, await reader.GetAvailableBalanceCentsAsync(acct)); // 100_000 − 50_000
+
+        await projector.ApplyAsync(instance, 1, Released(instance, "legal-1"));
+        Assert.Equal(100_000, await reader.GetAvailableBalanceCentsAsync(acct)); // restored, no posting
+    }
+
+    // HOLD_REASON_OBSERVABLE (ADR-PC-041 §Decision slot 1/5): an active legal hold surfaces its kind
+    // and legal reference, so "why are these funds held?" is a read, not a forensic log dig — and it
+    // does not conflate with a co-resident authorization hold.
+    [Fact]
+    public async Task An_active_legal_hold_surfaces_its_kind_and_legal_reference()
+    {
+        var store = new InMemoryAccountHoldStore();
+        var reader = new AccountBalanceReader(new FixedBalanceMovementStore(0), store);
+        var projector = new AccountHoldProjector(store);
+        var instance = Guid.NewGuid();
+        var acct = instance.ToString();
+
+        // An authorization hold and a legal hold co-reside on the same account.
+        await projector.ApplyAsync(instance, 0, Placed(instance, "auth-1", accountRef: acct, cents: 1_000));
+        await projector.ApplyAsync(instance, 1, Held(instance, "legal-1", cents: 50_000, legalRef: "garnish-42"));
+
+        var holds = await reader.GetActiveHoldsAsync(acct);
+        var legal = Assert.Single(holds, h => h.Kind == HoldKind.Legal);
+        Assert.Equal("garnish-42", legal.LegalReference);
+        var auth = Assert.Single(holds, h => h.Kind == HoldKind.Authorization);
+        Assert.Null(auth.LegalReference);
+    }
+
+    // DETERMINISM_GATE (ADR-PC-041 §Decision slot 2; ADR-PC-023): the legal-hold fold reads no clock,
+    // so replaying the same event sequence after a truncate reproduces the active-hold set identically.
+    [Fact]
+    public async Task Replaying_the_legal_hold_sequence_after_a_rebuild_reproduces_the_active_set()
+    {
+        var store = new InMemoryAccountHoldStore();
+        var projector = new AccountHoldProjector(store);
+        var instance = Guid.NewGuid();
+        var acct = instance.ToString();
+
+        async Task FoldAll()
+        {
+            await projector.ApplyAsync(instance, 0, Held(instance, "legal-1", cents: 50_000));
+            await projector.ApplyAsync(instance, 1, Held(instance, "legal-2", cents: 20_000));
+            await projector.ApplyAsync(instance, 2, Released(instance, "legal-1"));
+        }
+
+        await FoldAll();
+        var before = await store.GetActiveHoldCentsAsync(acct);
+
+        await projector.ResetForRebuildAsync();
+        await FoldAll();
+        var after = await store.GetActiveHoldCentsAsync(acct);
+
+        Assert.Equal(20_000, before); // only legal-2 remains active
+        Assert.Equal(before, after);  // truncate-then-refold reproduces it identically
+    }
+
+    // A legal release that transitions nothing is SURFACED, never silently absorbed (ADR-PC-041) —
+    // the same posture as an authorization no-op release.
+    [Fact]
+    public async Task A_duplicate_legal_release_folds_once_and_is_surfaced()
+    {
+        var anomalies = new List<HoldReleaseAnomaly>();
+        var store = new InMemoryAccountHoldStore();
+        var projector = new AccountHoldProjector(store, anomalies.Add);
+        var instance = Guid.NewGuid();
+
+        await projector.ApplyAsync(instance, 0, Held(instance, "legal-1", cents: 50_000));
+        await projector.ApplyAsync(instance, 1, Released(instance, "legal-1"));
+        await projector.ApplyAsync(instance, 2, Released(instance, "legal-1")); // duplicate
+
+        var anomaly = Assert.Single(anomalies);
+        Assert.Equal(HoldReleaseResult.AlreadyReleased, anomaly.Kind);
+        Assert.Equal("legal-1", anomaly.HoldId);
+    }
+
     // A family-agnostic, test-only event the projector must ignore (kept local so Engine.Tests
     // stays family-agnostic).
     private sealed record TestUnrelated(string Note) : DomainEvent;
+
+    // A minimal IMovementLedgerStore returning a fixed accounting balance for any account — enough to
+    // exercise `available = accounting − Σ(active holds)` without a full ledger fold.
+    private sealed class FixedBalanceMovementStore(long balanceCents) : IMovementLedgerStore
+    {
+        public Task<long> GetBalanceCentsAsync(string accountRef, CancellationToken ct = default) =>
+            Task.FromResult(balanceCents);
+
+        public Task AppendAsync(IReadOnlyList<MovementLedgerEntry> entries, CancellationToken ct = default) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<MovementLedgerEntry>> GetStatementAsync(
+            string accountRef, CancellationToken ct = default) => throw new NotSupportedException();
+
+        public Task TruncateAsync(CancellationToken ct = default) => throw new NotSupportedException();
+    }
 
     /// <summary>
     /// An in-memory <see cref="IAccountHoldStore"/> test double mirroring the
