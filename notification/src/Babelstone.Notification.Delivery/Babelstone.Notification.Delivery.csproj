@@ -62,6 +62,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The delivery tests drive the internal consume/commit seam (IByteMessageConsumer) that
+         KafkaNotificationDueSource polls, so the poll/decode/deferred-commit behaviour is exercised
+         with no broker — the same InternalsVisibleTo posture the engine's InboxConsumer takes. -->
+    <InternalsVisibleTo Include="Babelstone.Notification.Delivery.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The delivery estate's OWN forward-only migration series (ADR-IC-011), embedded so a
          deployed binary carries its schema — the same discipline as the engine / orchestrator /
          lifecycle-driver migration sets. -->
@@ -70,6 +77,12 @@
          ADR-IC-002): embedded so the relay serialises against the exact contract it publishes. -->
     <EmbeddedResource Include="../../../contracts/avro/operations/NotificationDeliveryExhausted.avsc"
                       Link="Contracts/NotificationDeliveryExhausted.avsc" />
+    <!-- The governed NotificationDue schema (contracts/avro is the single source, ADR-IC-002):
+         embedded so the EVENT_DRIVEN bus consumer (KafkaNotificationDueSource) DESERIALISES against
+         the exact contract the engine publishes — the reader half of the same posture the exhausted
+         relay uses for its producer schema (bd babelstone-60n8.7 / babelstone-60n8.11). -->
+    <EmbeddedResource Include="../../../contracts/avro/operations/NotificationDue.avsc"
+                      Link="Contracts/NotificationDue.avsc" />
   </ItemGroup>
 
   <ItemGroup>
