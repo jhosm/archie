@@ -46,27 +46,19 @@ public sealed class Layer4MappedEndpointSpecCoverageTests
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>The personal_loan (credito_pessoal) family surface — catalogue not yet authored (bd babelstone-ax0b.10 follow-up).</b>
-    /// The <c>personal_loan</c> family's host module maps a full command/query surface
-    /// (<c>families/personal-loan/.../LoansEndpoints.cs</c>), but no <c>engine-loan-*.openapi.yaml</c> spec
-    /// has been authored for it yet — the family shipped its endpoints ahead of its OpenAPI contract. This
-    /// is EXACTLY the class of gap this sweep exists to make visible, so rather than silently exempt the
-    /// family or hastily hand-author six under-reviewed specs (which would also need Layer-1 DTO drift
-    /// cases + a meta-sweep entry per operation), the whole family surface is allowlisted here with the
-    /// gap named. Authoring the personal_loan OpenAPI specs — and then DELETING these entries so Layer 4
-    /// re-covers them — is the tracked follow-up, bd babelstone-ax0b.10.
+    /// <b>Currently empty — the intended steady state.</b> The allowlist most recently held the
+    /// <c>personal_loan</c> (credito_pessoal) family's six mapped routes
+    /// (<c>families/personal-loan/.../LoansEndpoints.cs</c>), which had shipped ahead of their OpenAPI
+    /// contract. That gap is now CLOSED (bd babelstone-ax0b.10): the surface is catalogued in
+    /// <c>contracts/openapi/internal/engine-loan-commands.openapi.yaml</c> and
+    /// <c>engine-loan-reads.openapi.yaml</c> (each operation with its Layer-1 DTO drift case and its
+    /// meta-sweep entry), so the code→spec sweep re-covers those routes for real and the entries were
+    /// DELETED in the same change. An empty allowlist means every mapped engine route is genuinely
+    /// catalogued — the state this sweep exists to hold. A future entry must name its route, reason, and
+    /// tracking follow-up, exactly the "divergence is allowed; silent divergence is not" discipline above.
     /// </para>
     /// </remarks>
-    private static readonly IReadOnlySet<MappedRoute> Allowlist = new HashSet<MappedRoute>
-    {
-        // personal_loan family — see the remarks above (catalogue authoring is the tracked follow-up).
-        new("POST", "/v1/loans"),
-        new("POST", "/v1/loans/{id}/installment"),
-        new("POST", "/v1/loans/{id}/early-repayment"),
-        new("POST", "/v1/loans/{id}/write-off"),
-        new("POST", "/v1/loans/{id}/erase-personal-data"),
-        new("GET", "/v1/loans/{id}"),
-    };
+    private static readonly IReadOnlySet<MappedRoute> Allowlist = new HashSet<MappedRoute>();
 
     [Fact]
     public void Every_mapped_engine_endpoint_is_catalogued_or_explicitly_allowlisted()

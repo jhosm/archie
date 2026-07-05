@@ -1,0 +1,476 @@
+openapi: 3.1.0
+# contracts/openapi/internal/engine-loan-commands.openapi.yaml — the engine's INTERNAL
+# personal_loan (credito_pessoal) command / money-mover surface (ADR-PC-021 §D5; ADR-PC-030;
+# catalogued per ADR-IC-020; bd babelstone-ax0b.10). The closed-end-asset sibling of the
+# deposit command spec (internal/engine-deposit-commands.openapi.yaml). This file lives under
+# contracts/openapi/internal/ — NOT specs/ — because it documents a surface that is
+# DELIBERATELY ABSENT from infra/kong/kong.yml: the engine command ingress is the orchestrator
+# saga dispatcher's mTLS-only target behind Boundary 2 (ADR-IC-006 §P5 — an internal service
+# rejects any request without a valid client certificate at the transport layer), never a
+# public client route. The public write path is the edge constitute front door, which STARTS
+# the saga that eventually POSTs here.
+#
+# The openapi-catalog-validate.sh INTERNAL leg enforces exactly that posture: every internal
+# spec must carry info.x-internal (a non-empty reason), and NO operation below may ever match
+# a public Kong route — the never-public mirror of the public dir's POST /v1/deposits negative
+# invariant. Authoring these six loan operations here is the tracked retirement of the Layer-4
+# route→spec allowlist (Layer4MappedEndpointSpecCoverageTests): with the spec catalogued, the
+# code→spec sweep re-covers the routes for real, so the allowlist entries are deleted in the
+# same change.
+#
+# Shapes are transcribed from the REAL code surface, not invented: LoansEndpoints.cs +
+# LoansContracts.cs in families/personal-loan/src/Babelstone.Families.PersonalLoan.Application
+# (snake_case on the wire — the host's SnakeCaseLower JSON options; money as integer cents,
+# ADR-PC-010 §P1). The spec<->DTO lock is enforced by the Babelstone.ContractDrift.Tests
+# Layer-1 suite (bd babelstone-ax0b.4): mutating a DTO without updating this file turns CI red.
+# NO PII (ADR-PC-004 §P2): opaque account tokens, structural facts, synthetic examples only.
+# The one deliberate exception is documented on ErasePersonalDataRequest.subject_pseudonym —
+# and even that is a salted one-way hash, never the raw subject id.
+info:
+  title: Babelstone Engine — Personal Loan Commands (INTERNAL, mTLS-only)
+  version: 1.0.0
+  description: >
+    The engine's personal_loan (credito_pessoal) command / money-mover ingress (ADR-PC-030).
+    INTERNAL — this surface is deliberately NOT exposed through the public Kong edge (ADR-IC-006
+    §P5 Boundary 2): its callers are the orchestrator's saga command dispatcher, the MCP server's
+    loan tools, and the ADR-PC-036 lifecycle-command driver, all over the internal mTLS network.
+    The money-movers are idempotent (ADR-PC-029 slot 4): an at-least-once retry replays the
+    ORIGINAL outcome rather than moving money twice. The INSTALLMENT path is the exception to the
+    caller-supplied-key rule — its command id is SERVER-DERIVED and number-pinned via
+    LifecycleCommandKey.Derive(loan_id, "pay_installment", installments_paid + 1) (ADR-PC-036
+    Decision 1+3, LCD-1), so it takes NO Idempotency-Key header; the other money-movers
+    (early-repayment / write-off / erase-personal-data) keep a mandatory caller-supplied
+    Idempotency-Key. Disburse honours the key when supplied (a new-stream append is naturally a
+    one-shot) but does not require it. The two IRREVERSIBLE customer-collecting money-movers —
+    installment and early-repayment — are gated by step-up SCA: the shared ScaPreconditionFilter
+    authorises either a fresh gateway-attested human SCA proof (X-SCA-Acr/X-SCA-Auth-Time) or, for
+    installment only, the scoped non-interactive service principal (X-SCA-Service-Principal —
+    ADR-PC-036), short-circuiting 422 SCA_REQUIRED before any side effect. Early repayment is
+    human-SCA only (the service principal's allowance excludes it, the loan analogue of the deposit
+    /terminate). Write-off records an accounting loss (no money moves) and erase-personal-data is a
+    GDPR Article 17 surface governed by its own crypto-shred discipline — neither is on the
+    money-mover SCA gate. NO eager settlement on any path: each money-moving event records its leg
+    APPEND-FIRST as a Movement for the substrate-owned settlement saga to effect (ADR-PC-032 slot 5).
+    Errors are RFC 9457 application/problem+json.
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract        # GDPR Art.6(1)(b) — performance of the personal-loan contract
+  x-authorized-consumers:
+    - orchestrator          # the saga command dispatcher (ADR-PC-029 slot 3)
+    - mcp-server            # the loan tools (ADR-IC-010)
+    - lifecycle-driver      # installments via the scoped service principal (ADR-PC-036)
+  # ── INTERNAL marker (openapi-catalog-validate.sh internal leg; bd babelstone-ax0b.10) ──
+  # A non-empty reason string is REQUIRED on every spec under contracts/openapi/internal/.
+  # The gate FAILS if any operation below ever appears as a public Kong route — exposing one
+  # publicly must MOVE its spec to specs/ (and pass the public reconcile) in the same change.
+  x-internal: >-
+    The engine loan command ingress is the mTLS-only Boundary-2 target of the orchestrator saga /
+    MCP tools / lifecycle driver (ADR-IC-006 §P5, ADR-PC-029, ADR-PC-030) — deliberately absent
+    from infra/kong/kong.yml; the public write path is the edge constitute saga front door.
+servers:
+  - url: https://engine:8080
+    description: >
+      The engine host's internal (mTLS-only) Kestrel surface — deliberately NOT the public
+      Kong gateway host; unauthenticated transport is rejected at Boundary 2 (ADR-IC-006 §P5).
+paths:
+  /v1/loans:
+    post:
+      operationId: disburseLoan
+      summary: Disburse an already-approved personal loan (opens the stream).
+      description: >
+        Opens the loan stream for a loan whose approval and pricing inputs were fixed upstream
+        at origination (ADR-PC-030 / ADR-PC-024). The engine resolves the effective rate sheet,
+        computes the French amortization schedule, and appends LoanDisbursed with its money leg
+        APPEND-FIRST as an Originated Credit Movement (the lump sum ENTERS the disbursement
+        account; the cash leg is the settlement saga's gated step, ADR-PC-032 slot 5). The
+        Idempotency-Key is OPTIONAL here (a new-stream append is naturally a one-shot) but
+        honoured when supplied, so a retry of the SAME disbursement dedupes (ADR-PC-029 slot 4).
+        NOT step-up-SCA-gated: disbursing an already-approved loan is an origination-side action,
+        not an agent-triggered collection from the customer.
+      parameters:
+        - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DisburseLoanRequest'
+      responses:
+        '201':
+          description: >
+            Disbursed (or the idempotent replay of the original disbursement — same body, no
+            second append). Location points at the canonical read resource /v1/loans/{id};
+            commit_sequence is the ADR-IC-005 §P3 read-your-writes token.
+          headers:
+            Location:
+              description: The canonical loan read resource for the new stream.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoanCommandResponse'
+        '400':
+          description: A present-but-non-UUID Idempotency-Key (ADR-PC-029 slot 4) — fail loud rather than admit a non-idempotent key.
+        '422':
+          description: >
+            The disbursement was refused — commercial-eligibility preconditions not met
+            (LoanDisbursementFailed is durably recorded; the loan folds to Failed, so no loan
+            was opened — a refusal, not a compensation, ADR-PC-024 §5).
+  /v1/loans/{id}/installment:
+    post:
+      operationId: payLoanInstallment
+      summary: Pay one scheduled installment (irreversible money-mover, step-up-SCA gated).
+      description: >
+        Collects the next scheduled installment from the customer and folds it. NO caller
+        Idempotency-Key: the command id is SERVER-DERIVED and number-pinned via
+        LifecycleCommandKey.Derive(loan_id, "pay_installment", installments_paid + 1)
+        (ADR-PC-036 Decision 1+3, LCD-1), so a manual operator, the MCP agent, and the lifecycle
+        driver paying the SAME installment all converge on the SAME key and dedupe to ONE money
+        leg at command_dedup (ADR-PC-029 slot 4). The installment NUMBER is the stable occurrence
+        key — never the paid_at due-date — so a re-dated or backfilled retry of occurrence N is
+        swallowed (number-pinned; safe only while ADR-PC-031 forbids re-amortization). PayInstallment
+        is legal repeatedly from Active, so the legality gate gives no backstop — the number-pinned
+        key is the only guard against a double-collection. Step-up SCA is enforced BEFORE any side
+        effect: a fresh gateway-attested human proof OR the scoped non-interactive service principal
+        (ADR-PC-036) — absent/stale authorisation is a 422 SCA_REQUIRED.
+      parameters:
+        - $ref: '#/components/parameters/LoanId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PayInstallmentRequest'
+      responses:
+        '200':
+          description: >
+            The loan after the installment (the authoritative post-append fold; commit_sequence
+            is the reached commit sequence). An idempotent replay returns the same shape.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoanCommandResponse'
+        '409':
+          description: Concurrent modification on a DIFFERENT command (a genuine optimistic-concurrency conflict).
+        '422':
+          description: >
+            SCA_REQUIRED (no fresh human proof and no authorised service principal), or the
+            lifecycle guard (not Active / already settled) — never a double collection.
+  /v1/loans/{id}/early-repayment:
+    post:
+      operationId: repayLoanEarly
+      summary: Repay a loan early (irreversible money-mover, HUMAN step-up SCA only).
+      description: >
+        A partial or full prepayment of the outstanding capital plus the legally-capped
+        early-repayment commission; a FULL repayment (repayment_amount_cents equal to the
+        outstanding balance) settles the loan. HUMAN SCA ONLY — early repayment is NOT in the
+        scoped service principal's allowance (ADR-PC-036), the loan analogue of the deposit
+        /terminate, so the automated lifecycle driver can never repay a loan early. A partial
+        repayment is repeatable, so the mandatory Idempotency-Key (ADR-PC-029 slot 4) makes an
+        at-least-once retry replay the original outcome rather than collect twice.
+      parameters:
+        - $ref: '#/components/parameters/LoanId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepayEarlyRequest'
+      responses:
+        '200':
+          description: The loan after the early repayment (settled when the whole outstanding balance was repaid).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoanCommandResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029 slot 4).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: >
+            SCA_REQUIRED (a non-interactive caller always fails here), or the lifecycle gate
+            (not Active / already settled).
+  /v1/loans/{id}/write-off:
+    post:
+      operationId: writeOffLoan
+      summary: Write off a defaulted loan (operator-recorded loss — no money moves).
+      description: >
+        RECORDS the loan as an unrecoverable loss (ADR-PC-030 §P1) — the engine does not run
+        collections, and NO money moves (it is an operator-recorded accounting fact, not a
+        money-mover), so it is NOT step-up-SCA-gated (the same posture as the deposit operator-only
+        /correction). Carries a mandatory Idempotency-Key (ADR-PC-029 slot 4).
+      parameters:
+        - $ref: '#/components/parameters/LoanId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WriteOffLoanRequest'
+      responses:
+        '200':
+          description: The write-off outcome (the loss is recorded).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoanCommandResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029 slot 4).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: Not writable-off from the current lifecycle (e.g. already settled or written off).
+  /v1/loans/{id}/erase-personal-data:
+    post:
+      operationId: eraseLoanPersonalData
+      summary: GDPR Article 17 right-to-be-forgotten (erasure fact after crypto-shred).
+      description: >
+        Records the erasure fact for a loan whose data-subject key the host has ALREADY
+        crypto-shredded (ADR-PC-004 §P3) — a DIFFERENT gate from the money-mover SCA gate, so
+        this op is ungated by step-up SCA. Key destruction is irreversible, so the mandatory
+        Idempotency-Key (ADR-PC-029 slot 4) makes the erasure safely retryable — a replay
+        returns the original outcome with no second append.
+      parameters:
+        - $ref: '#/components/parameters/LoanId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErasePersonalDataRequest'
+      responses:
+        '200':
+          description: The erasure outcome (the raw subject id is never echoed — only the opaque pseudonym travels in).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoanCommandResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029 slot 4).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: Not erasable from the current lifecycle (already erased under a different command id).
+components:
+  parameters:
+    LoanId:
+      name: id
+      in: path
+      required: true
+      description: >
+        The loan's raw stream id (a canonical UUID) — the same id form the engine read surface
+        takes (GET /v1/loans/{id}).
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >
+        The deterministic command id (ADR-PC-029 slot 4) — a UUID, in practice the saga's
+        saga_outbox row id. MANDATORY on every op that declares it: the engine dedupes per
+        aggregate on this key and replays the ORIGINAL outcome (same commit_sequence, no second
+        append) on an at-least-once retry; absent/malformed fails loud (400). (The installment op
+        takes NO Idempotency-Key — its command id is server-derived and number-pinned, ADR-PC-036
+        Decision 1+3.)
+      schema:
+        type: string
+        format: uuid
+    OptionalIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >
+        OPTIONAL on disburse (ADR-PC-029 slot 4): a new-stream append is naturally a one-shot, so
+        the key is not required, but when supplied it must be a UUID and a retry of the SAME
+        disbursement dedupes to the original outcome. A present-but-non-UUID value fails loud (400).
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    DisburseLoanRequest:
+      type: object
+      description: >
+        The disbursement command (DisburseLoanRequest, snake_case on the wire). The loan is
+        already approved and priced upstream (ADR-PC-030 / ADR-PC-024); the engine resolves the
+        rate sheet and computes the French amortization schedule. Money is integer cents
+        (ADR-PC-010 §P1); disbursement_account_ref is an opaque token, never an IBAN (ADR-PC-004
+        §P2). early_repayment_commission_bps defaults to the PT consumer-credit statutory cap
+        (50 bps) when omitted; actor defaults to ops:loan-officer; disbursed_at is host-stamped
+        from the wall clock when omitted (the decider stays pure, ADR-PC-010 §P5).
+      required: [loan_id, principal_cents, product_id, role, term_months, start_date, purpose, disbursement_account_ref]
+      properties:
+        loan_id:
+          type: string
+          format: uuid
+          description: The loan stream/aggregate id (caller-supplied).
+        principal_cents:
+          type: integer
+          format: int64
+          description: The disbursed capital (lump sum), integer cents.
+        product_id:
+          type: string
+          description: The product code the rate sheet prices, e.g. cp_pt_general_36m.
+        role:
+          type: string
+          description: The pricing role resolved from the loan origin, e.g. standard.
+        term_months:
+          type: integer
+          description: The number of monthly installments the loan amortizes over.
+        start_date:
+          type: string
+          format: date
+          description: The disbursement date — the schedule anchor.
+        purpose:
+          type: string
+          description: The loan purpose category (e.g. general) — a stable code, not PII.
+        disbursement_account_ref:
+          type: string
+          description: Opaque account token the lump sum is credited to (a reference, never an IBAN).
+        disbursed_at:
+          type: string
+          format: date-time
+          description: The instant the sheet resolves as-of and the event's valid time; host-stamped when omitted.
+        early_repayment_commission_bps:
+          type: integer
+          description: The early-repayment commission the product charges, basis points (defaults to the 50 bps PT statutory cap).
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to ops:loan-officer).
+      examples:
+        - loan_id: 7c2e3d4f-5a6b-4c8d-9e0f-1a2b3c4d5e6f
+          principal_cents: 1500000
+          product_id: cp_pt_general_36m
+          role: standard
+          term_months: 36
+          start_date: "2026-03-01"
+          purpose: general
+          disbursement_account_ref: acct-ref-4d9f2a1c
+    PayInstallmentRequest:
+      type: object
+      description: >
+        The installment command (PayInstallmentRequest) — the engine derives the next installment
+        number from the loan's schedule (installments_paid + 1) and folds it; the occurrence is
+        never supplied here. No caller Idempotency-Key: the command id is server-derived and
+        number-pinned (ADR-PC-036 Decision 1+3, LCD-1). collection_account_ref is an opaque token,
+        never an IBAN (ADR-PC-004 §P2); paid_at is host-stamped when omitted; actor defaults to
+        ops:loan-officer.
+      required: [collection_account_ref]
+      properties:
+        collection_account_ref:
+          type: string
+          description: Opaque account token the installment is collected from (a reference, never an IBAN).
+        paid_at:
+          type: string
+          format: date-time
+          description: The instant the installment is paid; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to ops:loan-officer).
+      examples:
+        - collection_account_ref: acct-ref-4d9f2a1c
+    RepayEarlyRequest:
+      type: object
+      description: >
+        The early-repayment command (RepayEarlyRequest): a partial or full prepayment of the
+        outstanding capital plus the legally-capped early-repayment commission (resolved
+        engine-side, never supplied). A repayment_amount_cents equal to the outstanding balance is
+        a full repayment that settles the loan. repayment_account_ref is an opaque token, never an
+        IBAN (ADR-PC-004 §P2); repaid_at is host-stamped when omitted; actor defaults to
+        ops:loan-officer.
+      required: [repayment_amount_cents, repayment_account_ref]
+      properties:
+        repayment_amount_cents:
+          type: integer
+          format: int64
+          description: The capital to repay early, integer cents (equal to the outstanding balance ⇒ a full repayment).
+        repayment_account_ref:
+          type: string
+          description: Opaque account token the repayment + commission is collected from (a reference, never an IBAN).
+        repaid_at:
+          type: string
+          format: date-time
+          description: The instant the repayment fires; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to ops:loan-officer).
+      examples:
+        - repayment_amount_cents: 500000
+          repayment_account_ref: acct-ref-4d9f2a1c
+    WriteOffLoanRequest:
+      type: object
+      description: >
+        The write-off command (WriteOffLoanRequest) — the engine records the loss (ADR-PC-030 §P1);
+        NO money moves. write_off_reason is a stable non-PII reason code; written_off_at is
+        host-stamped when omitted; actor defaults to ops:loan-officer.
+      required: [write_off_reason]
+      properties:
+        write_off_reason:
+          type: string
+          description: A stable, non-PII reason code (e.g. DEFAULT_UNRECOVERABLE).
+        written_off_at:
+          type: string
+          format: date-time
+          description: The instant the write-off fires; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to ops:loan-officer).
+      examples:
+        - write_off_reason: DEFAULT_UNRECOVERABLE
+    ErasePersonalDataRequest:
+      type: object
+      description: >
+        The GDPR Article 17 erasure command (ErasePersonalDataRequest). subject_pseudonym is a
+        salted one-way hash of the data-subject id — an OPAQUE reference, NEVER the raw subject id
+        (ADR-PC-004 §P2); the host has already crypto-shredded the subject's key (ADR-PC-004 §P3).
+        erasure_reason is a stable machine code; erased_at is host-stamped when omitted; actor
+        defaults to ops:dpo.
+      required: [subject_pseudonym, erasure_reason]
+      properties:
+        subject_pseudonym:
+          type: string
+          description: A salted one-way hash of the data-subject id — an opaque reference, never the raw subject id.
+        erasure_reason:
+          type: string
+          description: A stable machine code (e.g. GDPR_ARTICLE_17) — never PII.
+        erased_at:
+          type: string
+          format: date-time
+          description: The instant erasure took effect; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to ops:dpo).
+      examples:
+        - subject_pseudonym: subj-hash-8b3e6f21a4c9
+          erasure_reason: GDPR_ARTICLE_17
+    LoanCommandResponse:
+      type: object
+      description: >
+        A loan command outcome (LoanCommandResponse): the loan id, its folded lifecycle status,
+        and commit_sequence — the ADR-IC-005 §P3 read-your-writes token the caller hands back on
+        the follow-up read. Structural facts only, no PII.
+      required: [loan_id, status, commit_sequence]
+      properties:
+        loan_id:
+          type: string
+          format: uuid
+          description: The loan's stream id.
+        status:
+          type: string
+          description: The folded lifecycle status (e.g. ACTIVE, SETTLED, WRITTENOFF, ERASED, FAILED) — an uppercased structural string.
+        commit_sequence:
+          type: integer
+          format: int64
+          description: The per-stream commit sequence this outcome reached (ADR-IC-005 §P3).
+      examples:
+        - loan_id: 7c2e3d4f-5a6b-4c8d-9e0f-1a2b3c4d5e6f
+          status: ACTIVE
+          commit_sequence: 0

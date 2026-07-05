@@ -5,6 +5,10 @@ using Babelstone.RateSheets;
 using Babelstone.RateSheets.Api;
 using Xunit;
 
+// The personal_loan DTOs (LoansContracts.cs) share short names with the term-deposit ones
+// (ErasePersonalDataRequest), so alias the namespace rather than pull it into scope and collide.
+using Loan = Babelstone.Families.PersonalLoan.Application;
+
 namespace Babelstone.ContractDrift.Tests;
 
 /// <summary>
@@ -85,6 +89,17 @@ public sealed class Layer1SpecDtoStructuralTests
         { "contracts/openapi/internal/engine-bulk-operations.openapi.yaml", "BulkOperationStatusResponse", typeof(BulkOperationStatusResponse), Mode.Response },
         { "contracts/openapi/internal/engine-bulk-operations.openapi.yaml", "BulkOperationRetryResponse", typeof(BulkOperationRetryResponse), Mode.Response },
         { "contracts/openapi/internal/engine-bulk-operations.openapi.yaml", "BulkOperationCancelResponse", typeof(BulkOperationCancelResponse), Mode.Response },
+
+        // personal_loan command + read surface (contracts/openapi/internal/engine-loan-commands,
+        // engine-loan-reads; bd babelstone-ax0b.10). The five command ops all answer with the one
+        // LoanCommandResponse; the read is the folded LoanResponse.
+        { "contracts/openapi/internal/engine-loan-commands.openapi.yaml", "DisburseLoanRequest", typeof(Loan.DisburseLoanRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-loan-commands.openapi.yaml", "PayInstallmentRequest", typeof(Loan.PayInstallmentRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-loan-commands.openapi.yaml", "RepayEarlyRequest", typeof(Loan.RepayEarlyRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-loan-commands.openapi.yaml", "WriteOffLoanRequest", typeof(Loan.WriteOffLoanRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-loan-commands.openapi.yaml", "ErasePersonalDataRequest", typeof(Loan.ErasePersonalDataRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-loan-commands.openapi.yaml", "LoanCommandResponse", typeof(Loan.LoanCommandResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-loan-reads.openapi.yaml", "Loan", typeof(Loan.LoanResponse), Mode.Response },
 
         // NOT here, deliberately:
         //  * RateBand — its wire shape is OWNED by RateBandJsonConverter (the [lower, upper]
