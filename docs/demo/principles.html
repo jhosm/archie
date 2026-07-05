@@ -570,7 +570,7 @@ h2 {
 .trust-fill.low { background: var(--wrong); }
 
 /* ---------- closing ---------- */
-.principles-list { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.7rem; margin-top: 2.4rem; }
+.principles-list { display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.6rem; margin-top: 2.4rem; }
 @media (max-width: 900px) { .principles-list { grid-template-columns: 1fr 1fr; } }
 .pl-item {
   border: 1px solid var(--hair); border-radius: 10px; padding: 1rem 0.9rem;
@@ -598,6 +598,45 @@ h2 {
 }
 .hint kbd { color: var(--paper-soft); border: 1px solid var(--hair); border-radius: 4px; padding: 0.05rem 0.35rem; }
 
+/* ============================================================
+   PRINCIPLE 06 — accounts: the balance is a fold, not a column
+   ============================================================ */
+.ledger { display:flex; flex-direction:column; gap:0.6rem; }
+.ledger-row { display:flex; align-items:center; gap:0.9rem; border:1px solid var(--hair); border-radius:10px;
+  padding:0.8rem 1.1rem; background:linear-gradient(180deg, rgba(255,255,255,0.022), transparent); }
+.ledger-row .ll { font-family:var(--mono); font-size:0.66rem; letter-spacing:0.12em; text-transform:uppercase; color:var(--muted); }
+.ledger-row .lv { font-family:var(--serif); font-size:clamp(1.3rem,2.3vw,1.9rem); font-weight:500; margin-left:auto; transition:color 0.3s var(--ease); }
+.ledger-row.acct .lv { color:var(--paper); }
+.ledger-row.avail { border-color:rgba(111,214,160,0.4); background:rgba(111,214,160,0.05); }
+.ledger-row.avail .lv { color:var(--verify); }
+.ledger-row.avail.blocked { border-color:rgba(224,115,94,0.45); background:rgba(224,115,94,0.06); }
+.ledger-row.avail.blocked .lv { color:var(--wrong); }
+.ledger-eq { font-family:var(--mono); font-size:0.7rem; color:var(--faint); text-align:center; letter-spacing:0.04em; }
+.holds-row { display:flex; flex-wrap:wrap; gap:0.5rem; min-height:1.7rem; align-items:center; padding:0 0.15rem; }
+.hold-chip { font-family:var(--mono); font-size:0.68rem; padding:0.28rem 0.6rem; border-radius:6px;
+  border:1px solid rgba(224,177,94,0.55); color:var(--gold); background:rgba(224,177,94,0.08);
+  display:inline-flex; gap:0.45rem; align-items:center; animation:rise 0.4s var(--ease) both; }
+.hold-chip .hx { color:var(--faint); font-size:0.6rem; }
+.holds-empty { font-family:var(--mono); font-size:0.68rem; color:var(--faint); }
+.freeze-banner { font-family:var(--mono); font-size:0.68rem; letter-spacing:0.03em; color:var(--wrong);
+  border:1px solid rgba(224,115,94,0.45); border-radius:8px; padding:0.5rem 0.8rem; background:rgba(224,115,94,0.06);
+  display:none; align-items:center; gap:0.5rem; margin:0.1rem 0; }
+.freeze-banner.show { display:flex; animation:rise 0.4s var(--ease) both; }
+
+/* real-world-care coda grid */
+.rwc-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; margin-top:2rem; }
+@media (max-width:900px){ .rwc-grid { grid-template-columns:1fr; } }
+.rwc-card { border:1px solid var(--hair); border-radius:12px; padding:1.15rem 1.25rem; position:relative; overflow:hidden;
+  background:linear-gradient(180deg, rgba(255,255,255,0.022), transparent); }
+.rwc-card::before { content:""; position:absolute; top:0; left:0; width:100%; height:2px; background:linear-gradient(90deg, var(--gold), transparent); }
+.rwc-card.new::before { background:linear-gradient(90deg, var(--verify), transparent); }
+.rwc-card .rt { font-family:var(--mono); font-size:0.63rem; letter-spacing:0.15em; text-transform:uppercase; color:var(--gold); }
+.rwc-card.new .rt { color:var(--verify); }
+.rwc-card h3 { font-family:var(--serif); font-weight:500; font-size:1.28rem; margin:0.5rem 0 0.45rem; line-height:1.1; }
+.rwc-card p { color:var(--muted); font-size:0.9rem; line-height:1.5; font-weight:300; }
+.rwc-card p b { color:var(--paper-soft); font-weight:500; }
+.rwc-card .rref { margin-top:0.85rem; font-family:var(--mono); font-size:0.63rem; color:var(--faint); letter-spacing:0.04em; }
+
 @media print {
   @page { size: 1280px 720px; margin: 0; }
   html, body { overflow: visible; height: auto; }
@@ -621,17 +660,18 @@ h2 {
 <div class="deck" id="deck">
 
   <!-- 1 — TITLE -->
-  <section class="slide" data-notes="Frame the deck: the pitch deck claims 'correct by construction.' THIS deck shows the five design choices that earn that claim. Each slide is one principle, one mechanism, one animation you can poke at. Say: 'Correctness isn't a feature we tested in. It's a consequence of five decisions. Here they are.'">
+  <section class="slide" data-notes="Frame the deck: the pitch deck claims 'correct by construction.' THIS deck shows the six design choices that earn that claim. Each slide is one principle, one mechanism, one animation you can poke at. Say: 'Correctness isn't a feature we tested in. It's a consequence of six decisions. Here they are.' The sixth — the balance is a fold, not a column — is the newest, and it applies the first two choices to money itself.">
     <div class="slide-inner">
       <div class="kicker r" style="--i:0">The design choices</div>
       <h1 class="r" style="--i:1">What makes it<br /><span class="em-gold em-serif-i">correct by construction.</span></h1>
-      <p class="lead r" style="--i:2">Not five features. Five decisions — each one a mechanism you can watch work.</p>
+      <p class="lead r" style="--i:2">Not six features. Six decisions — each one a mechanism you can watch work.</p>
       <div class="principles-list">
         <div class="pl-item r" style="--i:3"><div class="pi-no">01</div><div class="pi-t">Functional core, imperative shell</div></div>
         <div class="pl-item r" style="--i:4"><div class="pi-no">02</div><div class="pi-t">The fold is the truth</div></div>
         <div class="pl-item r" style="--i:5"><div class="pi-no">03</div><div class="pi-t">A family-agnostic spine</div></div>
         <div class="pl-item r" style="--i:6"><div class="pi-no">04</div><div class="pi-t">No PII on the bus</div></div>
         <div class="pl-item r" style="--i:7"><div class="pi-no">05</div><div class="pi-t">Drift is explicit or it's blocked</div></div>
+        <div class="pl-item r" style="--i:8"><div class="pi-no">06</div><div class="pi-t">The balance is a fold, not a column</div></div>
       </div>
     </div>
   </section>
@@ -1200,18 +1240,66 @@ familyModules = [
     </div>
   </section>
 
+  <!-- 06 — ACCOUNTS: THE BALANCE IS A FOLD -->
+  <section class="slide" data-anim="accountsDemo" data-notes="Principle 06 — the fold, pointed at money itself. Most cores store the spendable balance as a number and UPDATE it — the exact overwrite principle 02 refused. Here the available balance is NEVER stored: it's `accounting − Σ active holds`, folded from events on every read. Poke it: 'Legal hold €500' drops what's spendable without moving a cent (a court garnishment / ADR-PC-041); 'Freeze account' blocks debits entirely and NAMES why in the refusal (AML/sanctions) — the number doesn't change, because a freeze is a total block, not an amount; credits would still land, because a freeze stops money leaving, not arriving. Reset and it all comes back — and because it's a fold, a rebuild reproduces every number to the cent. Every product is 'an account'; a term deposit is just the degenerate case with no holds. ADR-PC-032 (movement), 033 (account/hold), 041 (legal holds & freezes).">
+    <div class="slide-inner">
+      <div class="principle-no r" style="--i:0">PRINCIPLE 06</div>
+      <h2 class="r" style="--i:1">The balance is a <span class="em-gold">fold</span>,<br />not a column.</h2>
+      <div class="two-col" style="margin-top:1.8rem">
+        <div class="r" style="--i:2">
+          <p class="lead" style="margin-top:0">Every product is an <b style="color:var(--paper)">account</b> — a stream of movements. The <b style="color:var(--paper)">spendable</b> balance is never stored: it's <span class="em-verify">accounting − Σ holds</span>, folded from events on every read.</p>
+          <div class="takeaway">The number a legacy core mutates in place — and gets wrong — we <b>refuse to store at all.</b> A hold lowers it; a freeze blocks it; a rebuild reproduces it to the cent.</div>
+          <div class="fold-controls" style="margin-top:1.6rem">
+            <button class="btn" id="acHold">+ Legal hold €500</button>
+            <button class="btn" id="acFreeze">Freeze account</button>
+            <button class="btn ghost" id="acReset">Reset</button>
+          </div>
+          <div class="ref">ADR-PC-032 · 033 · 041 · available = a rebuildable fold, never a stored number</div>
+        </div>
+        <div class="stage r" style="--i:3">
+          <div class="stage-cap"><span class="live"></span>available balance · computed live</div>
+          <div class="ledger">
+            <div class="ledger-row acct"><span class="ll">Accounting balance</span><span class="lv" id="acAccounting">€10,000.00</span></div>
+            <div class="ledger-eq">− Σ active holds</div>
+            <div class="holds-row" id="acHolds"><span class="holds-empty">no active holds</span></div>
+            <div class="freeze-banner" id="acFreezeBanner">⛔&nbsp; FROZEN · debits refused — reason SANCTIONS_MATCH · actor compliance-svc</div>
+            <div class="ledger-eq">= spendable</div>
+            <div class="ledger-row avail" id="acAvailRow"><span class="ll">Available balance</span><span class="lv" id="acAvailable">€10,000.00</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CODA — REAL-WORLD CARE -->
+  <section class="slide" data-notes="The coda — the same rigor, pointed at the parts of banking that are actually messy. These aren't happy-path features; each is a place real production breaks, modelled as first-class, replayable facts. Bulk operations: a regulator forces a change across every affected account — the runner freezes a target universe, drains it idempotently, isolates per-item failures, and RESUMES mid-run after a crash with exact counts. Holds & freezes (principle 06): court garnishments and AML freezes as real constraints that carry their own reason. Crypto-shred erasure (principle 04): forget a customer by destroying one key. Reconciliation & rebuild drills: the read models are checked against the log daily, and a cold rebuild must diverge nowhere — a fast-but-wrong cache is the worst failure mode. Expiry without clocks: nothing is ever manufactured from the wall-clock — holds and freezes lapse when an operator appends a fact off a projection horizon, so replay stays deterministic. Bitemporal truth: every event records WHEN it happened and WHEN we learned it, separately, so a backdated correction never rewrites what the books said at the time.">
+    <div class="slide-inner">
+      <div class="kicker r" style="--i:0">The coda · built for the messy parts</div>
+      <h2 class="r" style="--i:1">The same rigor, where the<br />real world gets <span class="em-gold em-serif-i">messy.</span></h2>
+      <div class="rwc-grid">
+        <div class="rwc-card r" style="--i:2"><div class="rt">Scale · resumable</div><h3>Bulk operations</h3><p>A regulator forces a change across <b>every affected account</b>. The runner freezes a target universe, drains it idempotently, isolates per-item failures, and <b>resumes mid-run after a crash</b> with exact counts.</p><div class="rref">ADR-PC-035 · BULK_OP_REGISTER_DRAIN_COMPLETE · Live</div></div>
+        <div class="rwc-card new r" style="--i:3"><div class="rt">Legal · compliance</div><h3>Holds &amp; freezes</h3><p>A court garnishment makes funds unspendable; an AML freeze <b>blocks debits and names why</b> in the refusal. First-class replayable facts — not a flag on a row.</p><div class="rref">ADR-PC-041 · FREEZE_GATES_AUTHORIZATION · Live</div></div>
+        <div class="rwc-card r" style="--i:4"><div class="rt">Privacy</div><h3>Erase by shredding</h3><p>Forget a customer by <b>destroying one key</b> — every encrypted copy, everywhere, becomes unreadable at once. Right-to-be-forgotten as a single audited act.</p><div class="rref">ADR-PC-004 · crypto-shredding · principle 04</div></div>
+        <div class="rwc-card r" style="--i:5"><div class="rt">Integrity</div><h3>Reconciliation &amp; drills</h3><p>The read models are <b>checked against the log daily</b> and alarm on drift; a cold rebuild must reproduce every belief — a fast-but-wrong cache is the worst failure mode, so it's gated.</p><div class="rref">ADR-PC-002 · rebuild drill · ACCOUNT_BALANCE_IS_A_FOLD</div></div>
+        <div class="rwc-card r" style="--i:6"><div class="rt">Time</div><h3>Expiry without clocks</h3><p>No engine fact is ever <b>manufactured from the wall-clock.</b> Holds and freezes lapse when an operator appends a fact off a projection horizon — so replay stays deterministic, forever.</p><div class="rref">ADR-PC-023 · projection-derived signals</div></div>
+        <div class="rwc-card r" style="--i:7"><div class="rt">Audit</div><h3>Bitemporal truth</h3><p>Every event records <b>when it happened</b> and <b>when we learned it</b> — separately (valid-time vs transaction-time), so a backdated correction never rewrites what the books said at the time.</p><div class="rref">EventEnvelope · ValidTime · TransactionTime</div></div>
+      </div>
+    </div>
+  </section>
+
   <!-- 7 — CLOSING -->
-  <section class="slide" data-notes="Tie it together and hand back to the pitch. None of these five is exotic on its own. The asset is that they COMPOSE: a pure core makes replay deterministic; deterministic replay makes the event log the truth; a generic spine lets families plug into that truth; the PII boundary keeps the truth lawful; and the drift gate keeps the whole record honest as it grows. Correct by construction isn't a slogan — it's the sum of these five choices, held together coherently. End here, or jump back to the pitch deck's demo.">
+  <section class="slide" data-notes="Tie it together and hand back to the pitch. None of these six is exotic on its own. The asset is that they COMPOSE: a pure core makes replay deterministic; deterministic replay makes the event log the truth; a generic spine lets families plug into that truth; the PII boundary keeps the truth lawful; and the drift gate keeps the whole record honest as it grows; and the balance itself is a fold, so the money is only ever as true as the log. Correct by construction isn't a slogan — it's the sum of these six choices, held together coherently. End here, or jump back to the pitch deck's demo.">
     <div class="slide-inner">
       <div class="kicker verify r" style="--i:0">Why it composes</div>
-      <h2 class="r" style="--i:1">Five choices. <span class="em-gold em-serif-i">One property.</span></h2>
-      <p class="lead r" style="--i:2;max-width:60ch">A pure core makes replay deterministic. Determinism makes the log the truth. A generic spine lets families plug into that truth. The PII boundary keeps it lawful. The drift gate keeps the record honest as it grows.</p>
+      <h2 class="r" style="--i:1">Six choices. <span class="em-gold em-serif-i">One property.</span></h2>
+      <p class="lead r" style="--i:2;max-width:62ch">A pure core makes replay deterministic. Determinism makes the log the truth. A generic spine lets families plug into that truth. The PII boundary keeps it lawful. The drift gate keeps the record honest — and the balance is a fold, so the money is only ever as true as the log.</p>
       <div class="principles-list">
         <div class="pl-item r" style="--i:3"><div class="pi-no">01</div><div class="pi-t">Pure core</div></div>
         <div class="pl-item r" style="--i:4"><div class="pi-no">02</div><div class="pi-t">Deterministic fold</div></div>
         <div class="pl-item r" style="--i:5"><div class="pi-no">03</div><div class="pi-t">Generic spine</div></div>
         <div class="pl-item r" style="--i:6"><div class="pi-no">04</div><div class="pi-t">PII boundary</div></div>
         <div class="pl-item r" style="--i:7"><div class="pi-no">05</div><div class="pi-t">Explicit drift</div></div>
+        <div class="pl-item r" style="--i:8"><div class="pi-no">06</div><div class="pi-t">Balance is a fold</div></div>
       </div>
       <p class="r" style="--i:8;font-family:var(--mono);font-size:0.8rem;color:var(--verify);margin-top:2.2rem;letter-spacing:0.05em">correct by construction = the sum, held together coherently</p>
     </div>
@@ -1263,6 +1351,7 @@ familyModules = [
     godEngine:    () => setTimeout(playGodEngine, 700),
     piiFanout:    () => setTimeout(playFanout, 500),
     docDrift:     () => setTimeout(playDrift, 650),
+    accountsDemo: () => setTimeout(acInit, 200),
   };
 
   function render() {
@@ -1707,6 +1796,48 @@ familyModules = [
   const driftGoBtn = document.getElementById('driftGo'), driftResetBtn = document.getElementById('driftReset');
   if (driftGoBtn) driftGoBtn.addEventListener('click', driftGo);
   if (driftResetBtn) driftResetBtn.addEventListener('click', driftReset);
+
+  /* ===== 06 — accounts: available = accounting − Σ holds (ADR-PC-032/033/041) ===== */
+  const AC_ACCT = 1000000; // €10,000.00, integer cents (ADR-PC-010)
+  let acHolds = [], acFrozen = false, acWired = false, acN = 0;
+  const acFmt = c => '€' + (c / 100).toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  function acRender() {
+    const holdsEl = document.getElementById('acHolds');
+    if (!holdsEl) return;
+    const held = acHolds.reduce((s, h) => s + h.cents, 0);
+    holdsEl.innerHTML = acHolds.length
+      ? acHolds.map(h => `<span class="hold-chip">${h.label} <span class="hx">${h.ref}</span></span>`).join('')
+      : '<span class="holds-empty">no active holds</span>';
+    document.getElementById('acAvailable').textContent = acFmt(AC_ACCT - held);
+    const availRow = document.getElementById('acAvailRow');
+    document.getElementById('acFreezeBanner').classList.toggle('show', acFrozen);
+    availRow.classList.toggle('blocked', acFrozen);
+    availRow.querySelector('.ll').textContent = acFrozen ? 'Available · debits blocked' : 'Available balance';
+  }
+  function acReset() {
+    acHolds = []; acFrozen = false; acN = 0;
+    const fb = document.getElementById('acFreeze'); if (fb) fb.textContent = 'Freeze account';
+    acRender();
+  }
+  function acInit() {
+    if (!acWired) {
+      const hold = document.getElementById('acHold');
+      if (!hold) return; // slide markup absent
+      hold.addEventListener('click', () => {
+        acN++;
+        acHolds.push({ cents: 50000, label: 'legal hold €500', ref: 'case-' + (2025 + acN) });
+        acRender();
+      });
+      document.getElementById('acFreeze').addEventListener('click', e => {
+        acFrozen = !acFrozen;
+        e.currentTarget.textContent = acFrozen ? 'Unfreeze' : 'Freeze account';
+        acRender();
+      });
+      document.getElementById('acReset').addEventListener('click', acReset);
+      acWired = true;
+    }
+    acReset();
+  }
 
   render();
 })();
