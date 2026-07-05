@@ -30,6 +30,27 @@ public sealed class NotificationDeliveryMetricsTests
             BabelstoneAttributes.NotificationDeliveryOutcomeTag,
             outcomes);
 
+        // The MeterListener callback appends to `outcomes` on whatever thread emits the
+        // measurement, holding lock(outcomes). The instrument is process-global and other test
+        // classes drive the same passes in parallel, so every read/reset of the list here must
+        // take that same lock — otherwise a concurrent Add races Clear()/Contains() and throws
+        // "collection was modified". These helpers keep the test body inside that lock.
+        void ResetOutcomes()
+        {
+            lock (outcomes)
+            {
+                outcomes.Clear();
+            }
+        }
+
+        void AssertObserved(string outcome)
+        {
+            lock (outcomes)
+            {
+                Assert.Contains(outcome, outcomes);
+            }
+        }
+
         var clock = new DeliveryTestSupport.MutableClock(new DateTimeOffset(2026, 7, 3, 8, 0, 0, TimeSpan.Zero));
         var outbox = new InMemoryDeliveryOutbox();
 
@@ -38,32 +59,32 @@ public sealed class NotificationDeliveryMetricsTests
         var okHandler = new DeliveryTestSupport.FakeHandler(_ =>
             DeliveryTestSupport.FakeHandler.Status(HttpStatusCode.OK));
         await DeliveryTestSupport.Pass(outbox, okHandler, clock).RunOnceAsync(AsOf);
-        Assert.Contains(NotificationDeliveryMetrics.OutcomeDelivered, outcomes);
+        AssertObserved(NotificationDeliveryMetrics.OutcomeDelivered);
 
         // transient_retry: a 503 marks the attempt failed and reschedules.
-        outcomes.Clear();
+        ResetOutcomes();
         await outbox.EnqueueAsync(DeliveryTestSupport.Signal(), clock.Now);
         var busyHandler = new DeliveryTestSupport.FakeHandler(_ =>
             DeliveryTestSupport.FakeHandler.Status(HttpStatusCode.ServiceUnavailable));
         await DeliveryTestSupport.Pass(outbox, busyHandler, clock).RunOnceAsync(AsOf);
-        Assert.Contains(NotificationDeliveryMetrics.OutcomeTransientRetry, outcomes);
+        AssertObserved(NotificationDeliveryMetrics.OutcomeTransientRetry);
 
         // abandoned: a non-429 4xx is terminal immediately.
-        outcomes.Clear();
+        ResetOutcomes();
         await outbox.EnqueueAsync(DeliveryTestSupport.Signal(), clock.Now);
         var goneHandler = new DeliveryTestSupport.FakeHandler(_ =>
             DeliveryTestSupport.FakeHandler.Status(HttpStatusCode.NotFound));
         await DeliveryTestSupport.Pass(outbox, goneHandler, clock).RunOnceAsync(AsOf);
-        Assert.Contains(NotificationDeliveryMetrics.OutcomeAbandoned, outcomes);
+        AssertObserved(NotificationDeliveryMetrics.OutcomeAbandoned);
 
         // dead_lettered: exhaust MaxAttempts=1 in one pass.
-        outcomes.Clear();
+        ResetOutcomes();
         await outbox.EnqueueAsync(DeliveryTestSupport.Signal(), clock.Now);
         var deadHandler = new DeliveryTestSupport.FakeHandler(_ =>
             DeliveryTestSupport.FakeHandler.Status(HttpStatusCode.ServiceUnavailable));
         await DeliveryTestSupport.Pass(outbox, deadHandler, clock, DeliveryTestSupport.Options(maxAttempts: 1))
             .RunOnceAsync(AsOf);
-        Assert.Contains(NotificationDeliveryMetrics.OutcomeDeadLettered, outcomes);
+        AssertObserved(NotificationDeliveryMetrics.OutcomeDeadLettered);
     }
 
     [Fact]
