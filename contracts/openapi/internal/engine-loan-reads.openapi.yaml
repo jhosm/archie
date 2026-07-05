@@ -1,0 +1,183 @@
+openapi: 3.1.0
+# contracts/openapi/internal/engine-loan-reads.openapi.yaml — the engine's personal_loan
+# (credito_pessoal) CQRS read surface (ADR-PC-021 §D5; ADR-PC-027; catalogued per ADR-IC-020;
+# bd babelstone-ax0b.10). The closed-end-asset sibling of the deposit reads. This ONE canonical
+# loan point-read is served by the engine host, but it is NOT an infra/kong/kong.yml route — no
+# public loan read is exposed today (the public client surface stays the edge constitute saga
+# front door + the deposit reads). So it lives here under contracts/openapi/internal/, exactly
+# like engine-withholding-reads: INTERNAL by design, and the never-public gate forces its
+# operation to MOVE to specs/ in the same change if a loan read is ever exposed through Kong.
+#
+# Cataloguing it here closes the "shipped but documented nowhere" gap the Layer-4 route→spec
+# sweep surfaced (Layer4MappedEndpointSpecCoverageTests); the matching allowlist entry is deleted
+# in the same change so the code→spec sweep re-covers GET /v1/loans/{id} for real.
+#
+# Shapes are transcribed from the REAL code surface, not invented: LoanResponse in
+# families/personal-loan/src/Babelstone.Families.PersonalLoan.Application/LoansContracts.cs and
+# the GetLoanAsync handler in LoansEndpoints.cs (snake_case on the wire — the host's JSON options;
+# money as integer cents, ADR-PC-010 §P1), locked by the Babelstone.ContractDrift.Tests Layer-1
+# suite. No PII (ADR-PC-004 §P2) — structural facts and cents-native rollups only; the account
+# reference is an opaque token, never an IBAN.
+info:
+  title: Babelstone Engine — Personal Loan Reads (INTERNAL)
+  version: 1.0.0
+  description: >
+    The CQRS read surface for personal loans (ADR-PC-027 storage-opaque read surfaces): ONE
+    canonical loan resource, folded from the event stream (the bitemporal projections suffice —
+    no denormalized read-model table, ADR-PC-002 §P2). Read-only — no command is stapled to a
+    read surface (ADR-PC-018 §6). INTERNAL: this is not a Kong route; no public loan read is
+    exposed today (the public client surface is the edge constitute saga front door and the
+    deposit reads, specs/engine-reads.openapi.yaml).
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract        # GDPR Art.6(1)(b) — performance of the personal-loan contract
+  x-authorized-consumers:
+    - orchestrator          # the saga reads the loan state on its command path
+    - mcp-server            # the loan tools' read-back (ADR-IC-010)
+    - platform-operations   # ops tooling / read-your-writes verification
+  # ── INTERNAL marker (openapi-catalog-validate.sh internal leg; bd babelstone-ax0b.10) ──
+  x-internal: >-
+    The engine loan read is served on the internal (mTLS-only) Kestrel surface and is
+    deliberately NOT an infra/kong/kong.yml route — no public loan read exists today; exposing
+    one publicly must move its operation to specs/ in the same change.
+servers:
+  - url: https://engine:8080
+    description: >
+      The engine host's internal (mTLS-only) Kestrel surface — deliberately NOT the public
+      Kong gateway host (ADR-IC-006 §P5 Boundary 2).
+paths:
+  /v1/loans/{id}:
+    get:
+      operationId: getLoan
+      summary: The one canonical loan read resource.
+      description: >
+        The current belief of ONE loan, folded from the event stream (the amortization / position
+        projections; no separate read-model URL — whether an answer is served from a projection or
+        an authoritative fold is the engine's private business, ADR-IC-005 §P2). Returns 404 while
+        the loan is still Pending (no LoanDisbursed appended yet) or the stream does not exist —
+        never a phantom empty loan.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: >
+            The loan's raw stream id (a canonical UUID) — the same id form the loan command
+            surface takes (POST /v1/loans/{id}/…).
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The loan's current folded position (money as integer cents, structural facts only).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Loan'
+        '404':
+          description: >
+            No loan resource — the stream is still Pending (no disbursement appended yet) or does
+            not exist (the resource does not exist; never a phantom empty loan).
+components:
+  schemas:
+    Loan:
+      type: object
+      description: >
+        The loan resource (LoanResponse, ADR-PC-021 §D5 boundary) folded from the event stream.
+        snake_case on the wire, money as integer cents (ADR-PC-010 §P1), structural facts only,
+        no PII (ADR-PC-004 §P2) — the account reference is opaque, never an IBAN.
+      required:
+        - loan_id
+        - principal_cents
+        - tan_basis_points
+        - rate_sheet_version_id
+        - term_months
+        - installment_amount_cents
+        - start_date
+        - purpose
+        - product_code
+        - outstanding_balance_cents
+        - installments_paid
+        - total_interest_paid_cents
+        - total_capital_repaid_cents
+        - total_commission_charged_cents
+        - written_off_amount_cents
+        - status
+      properties:
+        loan_id:
+          type: string
+          format: uuid
+          description: The loan's stream id.
+        principal_cents:
+          type: integer
+          format: int64
+          description: The disbursed capital (lump sum), integer cents.
+        tan_basis_points:
+          type: integer
+          description: The resolved nominal annual rate (TAN), basis points.
+        rate_sheet_version_id:
+          type: string
+          description: The price/version key the TAN was resolved from.
+        term_months:
+          type: integer
+          description: The number of monthly installments the loan amortizes over.
+        installment_amount_cents:
+          type: integer
+          format: int64
+          description: The scheduled monthly installment, integer cents (the French amortization annuity).
+        start_date:
+          type: string
+          format: date
+          description: The disbursement date — the schedule anchor.
+        purpose:
+          type: string
+          description: The loan purpose category (a stable code, not PII).
+        product_code:
+          type: string
+          description: The catalogue structural code the loan was priced under.
+        outstanding_balance_cents:
+          type: integer
+          format: int64
+          description: The remaining capital to repay, integer cents.
+        installments_paid:
+          type: integer
+          description: How many scheduled installments have been collected so far.
+        total_interest_paid_cents:
+          type: integer
+          format: int64
+          description: Cumulative interest collected across installments + early repayments, integer cents.
+        total_capital_repaid_cents:
+          type: integer
+          format: int64
+          description: Cumulative capital repaid, integer cents.
+        total_commission_charged_cents:
+          type: integer
+          format: int64
+          description: Cumulative early-repayment commission charged, integer cents.
+        written_off_amount_cents:
+          type: integer
+          format: int64
+          description: The capital written off as an unrecoverable loss, integer cents (0 unless written off).
+        status:
+          type: string
+          description: >
+            The folded lifecycle status (e.g. ACTIVE, SETTLED, WRITTENOFF, ERASED) — an
+            uppercased structural string, deliberately not a closed enum here.
+      examples:
+        - loan_id: 7c2e3d4f-5a6b-4c8d-9e0f-1a2b3c4d5e6f
+          principal_cents: 1500000
+          tan_basis_points: 720
+          rate_sheet_version_id: cp-rs-2026-03
+          term_months: 36
+          installment_amount_cents: 46500
+          start_date: "2026-03-01"
+          purpose: general
+          product_code: cp_pt_general_36m
+          outstanding_balance_cents: 1000000
+          installments_paid: 11
+          total_interest_paid_cents: 61500
+          total_capital_repaid_cents: 500000
+          total_commission_charged_cents: 0
+          written_off_amount_cents: 0
+          status: ACTIVE
