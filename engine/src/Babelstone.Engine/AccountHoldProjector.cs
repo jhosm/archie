@@ -111,6 +111,35 @@ public sealed class AccountHoldProjector(
                     await store.ExpireAsync(expired.HoldId, streamId, sequenceNumber, ct),
                     expired.HoldId, nameof(HoldExpired), streamId, sequenceNumber);
                 break;
+
+            // The ADR-PC-041 legal-hold lifecycle folds into the SAME active-hold set as an
+            // authorization hold (kind = LEGAL), so it lowers available balance for free. FundsHeld
+            // carries only an InstanceId, so the account_ref is the instance itself (the degenerate
+            // single-account 1:1 mapping every IAccount seam exposes today) — the same stream, so the
+            // RequireOwnStream precondition is trivially met.
+            case FundsHeld held:
+                RequireOwnStream(streamId, held.InstanceId, nameof(FundsHeld), held.HoldId);
+                await store.PlaceLegalAsync(
+                    new AccountHoldRow(
+                        HoldId: held.HoldId,
+                        AccountRef: held.InstanceId.ToString(),
+                        AmountCents: held.HeldAmount.Cents,
+                        ValueDate: null,
+                        State: "ACTIVE",
+                        PlacedStreamId: streamId,
+                        PlacedSequence: sequenceNumber,
+                        Kind: "LEGAL",
+                        LegalReference: held.LegalReference,
+                        ExpiresAt: held.HoldExpiresAt),
+                    ct);
+                break;
+
+            case FundsReleased released:
+                RequireOwnStream(streamId, released.InstanceId, nameof(FundsReleased), released.HoldId);
+                Surface(
+                    await store.ReleaseLegalAsync(released.HoldId, streamId, sequenceNumber, ct),
+                    released.HoldId, nameof(FundsReleased), streamId, sequenceNumber);
+                break;
         }
     }
 

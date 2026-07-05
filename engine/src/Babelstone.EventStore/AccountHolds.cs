@@ -26,25 +26,38 @@ namespace Babelstone.EventStore;
 /// <param name="HoldId">The hold's lifecycle idempotency/correlation key (ADR-PC-033).</param>
 /// <param name="AccountRef">The opaque account the earmark applies to — the fold key, never PII.</param>
 /// <param name="AmountCents">The earmarked amount, integer cents (ADR-PC-010).</param>
-/// <param name="ValueDate">The economic date the hold took effect — the expiry-horizon axis (ADR-PC-023).</param>
-/// <param name="State"><c>ACTIVE</c>, <c>CAPTURED</c>, or <c>EXPIRED</c> — the closed lifecycle set.</param>
-/// <param name="PlacedStreamId">The stream that carried the <c>HoldPlaced</c> event.</param>
-/// <param name="PlacedSequence">The <c>HoldPlaced</c> event's per-stream sequence.</param>
+/// <param name="ValueDate">The economic date an AUTHORIZATION hold took effect — its expiry-horizon
+/// axis (ADR-PC-023). Null for a LEGAL hold, which has no economic effective date on
+/// <c>operations.FundsHeld</c> and uses <see cref="ExpiresAt"/> as its horizon instead (ADR-PC-041).</param>
+/// <param name="State"><c>ACTIVE</c>, <c>CAPTURED</c>, <c>EXPIRED</c> (authorization lifecycle) or
+/// <c>RELEASED</c> (legal-hold lift) — the closed lifecycle set (ADR-PC-041).</param>
+/// <param name="PlacedStreamId">The stream that carried the placing event (<c>HoldPlaced</c> / <c>FundsHeld</c>).</param>
+/// <param name="PlacedSequence">The placing event's per-stream sequence.</param>
 /// <param name="CapturedAmountCents">Set on capture — MAY be less than <see cref="AmountCents"/>
-/// (a partial capture releases the remainder, ADR-PC-033); null while active / on expiry.</param>
+/// (a partial capture releases the remainder, ADR-PC-033); null while active / on expiry / release.</param>
 /// <param name="ReleasedStreamId">The stream that carried the releasing event; null while active.</param>
 /// <param name="ReleasedSequence">The releasing event's per-stream sequence; null while active.</param>
+/// <param name="Kind"><c>AUTHORIZATION</c> (an approved-but-unsettled earmark, ADR-PC-033) or
+/// <c>LEGAL</c> (a court order / garnishment, ADR-PC-041). Both fold into <see cref="AmountCents"/> so
+/// both lower available balance; the kind is what makes the "why" observable (HOLD_REASON_OBSERVABLE).</param>
+/// <param name="LegalReference">The court/case reference a LEGAL hold names (ADR-PC-041 slot 1) — the
+/// observable "why". Null for an authorization hold. STRUCTURAL, never PII (ADR-PC-004).</param>
+/// <param name="ExpiresAt">A LEGAL hold's advisory expiry horizon (ADR-PC-041 slot 2 / ADR-PC-023);
+/// null = open-ended, or an authorization hold (which uses <see cref="ValueDate"/>).</param>
 public sealed record AccountHoldRow(
     string HoldId,
     string AccountRef,
     long AmountCents,
-    DateOnly ValueDate,
+    DateOnly? ValueDate,
     string State,
     Guid PlacedStreamId,
     long PlacedSequence,
     long? CapturedAmountCents = null,
     Guid? ReleasedStreamId = null,
-    long? ReleasedSequence = null);
+    long? ReleasedSequence = null,
+    string Kind = "AUTHORIZATION",
+    string? LegalReference = null,
+    DateOnly? ExpiresAt = null);
 
 /// <summary>
 /// How a capture/expiry landed against the hold set — the three-way answer whose non-normal
@@ -88,6 +101,28 @@ public interface IAccountHoldStore
     Task PlaceAsync(AccountHoldRow hold, CancellationToken ct = default);
 
     /// <summary>
+    /// Record a placed LEGAL hold (ADR-PC-041), idempotently on <c>hold_id</c>: a court order /
+    /// garnishment (<c>operations.FundsHeld</c>) that sets funds aside as a second kind of active
+    /// hold. Its <see cref="AccountHoldRow.Kind"/> is <c>LEGAL</c>, it carries a
+    /// <see cref="AccountHoldRow.LegalReference"/> and an optional
+    /// <see cref="AccountHoldRow.ExpiresAt"/> horizon, and it lowers available balance exactly as an
+    /// authorization hold does (the Σ spans both kinds). A re-delivered <c>FundsHeld</c> never
+    /// earmarks twice.
+    /// </summary>
+    Task PlaceLegalAsync(AccountHoldRow legalHold, CancellationToken ct = default);
+
+    /// <summary>
+    /// Transition an ACTIVE LEGAL hold to RELEASED (ADR-PC-041): the court order was discharged
+    /// (<c>operations.FundsReleased</c>), restoring available balance with NO posting. A legal hold
+    /// is never captured, so this is a distinct transition from
+    /// <see cref="CaptureAsync"/>/<see cref="ExpireAsync"/>. A hold not currently ACTIVE (or not a
+    /// legal hold) transitions nothing; the returned <see cref="HoldReleaseResult"/> says which no-op
+    /// it was so the caller can surface it (a reconciliation signal, never a double-restore).
+    /// </summary>
+    Task<HoldReleaseResult> ReleaseLegalAsync(
+        string holdId, Guid releasedStreamId, long releasedSequence, CancellationToken ct = default);
+
+    /// <summary>
     /// Transition an ACTIVE hold to CAPTURED, recording the captured amount and the releasing
     /// event's identity. A hold not currently active transitions nothing; the returned
     /// <see cref="HoldReleaseResult"/> says which no-op it was so the caller can surface it.
@@ -123,6 +158,16 @@ public interface IAccountHoldStore
     Task<IReadOnlyList<AccountHoldRow>> GetActiveHoldsWithValueDateAtOrBeforeAsync(
         DateOnly valueDateHorizon, CancellationToken ct = default);
 
+    /// <summary>
+    /// The cross-account LEGAL-hold expiry-horizon read (ADR-PC-041 slot 2 / ADR-PC-023): every
+    /// ACTIVE legal hold whose <c>expires_at</c> is non-null and at or before
+    /// <paramref name="expiryHorizon"/> — what the operator/command shell reads to decide which
+    /// <c>FundsReleased</c> facts to append. Open-ended legal holds (null <c>expires_at</c>) are never
+    /// candidates. The horizon is an INPUT, never a clock read, so the fold stays replay-deterministic.
+    /// </summary>
+    Task<IReadOnlyList<AccountHoldRow>> GetActiveLegalHoldsWithExpiryAtOrBeforeAsync(
+        DateOnly expiryHorizon, CancellationToken ct = default);
+
     /// <summary>Truncate the whole hold set for a clean rebuild (truncate-then-refold, ADR-PC-033).</summary>
     Task TruncateAsync(CancellationToken ct = default);
 }
@@ -143,11 +188,12 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
 
         // ON CONFLICT DO NOTHING on hold_id: the lifecycle idempotency key (ADR-PC-033) —
         // a re-delivered HoldPlaced re-inserts the same row as a no-op, never a second earmark.
+        // kind = 'AUTHORIZATION' explicitly (the 0021 default) — the legal-hold path is PlaceLegalAsync.
         const string sql = """
             INSERT INTO account_holds
-                (hold_id, account_ref, amount_cents, value_date, state, placed_stream_id, placed_sequence)
+                (hold_id, account_ref, amount_cents, value_date, state, placed_stream_id, placed_sequence, kind)
             VALUES
-                (@hold_id, @account_ref, @amount_cents, @value_date, 'ACTIVE', @placed_stream_id, @placed_sequence)
+                (@hold_id, @account_ref, @amount_cents, @value_date, 'ACTIVE', @placed_stream_id, @placed_sequence, 'AUTHORIZATION')
             ON CONFLICT (hold_id) DO NOTHING;
             """;
 
@@ -157,10 +203,70 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
         command.Parameters.AddWithValue("hold_id", hold.HoldId);
         command.Parameters.AddWithValue("account_ref", hold.AccountRef);
         command.Parameters.AddWithValue("amount_cents", hold.AmountCents);
-        command.Parameters.AddWithValue("value_date", hold.ValueDate);
+        command.Parameters.AddWithValue("value_date", (object?)hold.ValueDate ?? DBNull.Value);
         command.Parameters.AddWithValue("placed_stream_id", hold.PlacedStreamId);
         command.Parameters.AddWithValue("placed_sequence", hold.PlacedSequence);
         await command.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task PlaceLegalAsync(AccountHoldRow legalHold, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(legalHold);
+
+        // The legal-hold placement (ADR-PC-041): kind = 'LEGAL', a legal_reference, an optional
+        // expires_at horizon, and NO value_date (a legal hold has no economic effective date). Same
+        // ON CONFLICT DO NOTHING idempotency on hold_id — a re-delivered FundsHeld never earmarks twice.
+        const string sql = """
+            INSERT INTO account_holds
+                (hold_id, account_ref, amount_cents, value_date, state, placed_stream_id, placed_sequence,
+                 kind, legal_reference, expires_at)
+            VALUES
+                (@hold_id, @account_ref, @amount_cents, NULL, 'ACTIVE', @placed_stream_id, @placed_sequence,
+                 'LEGAL', @legal_reference, @expires_at)
+            ON CONFLICT (hold_id) DO NOTHING;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("hold_id", legalHold.HoldId);
+        command.Parameters.AddWithValue("account_ref", legalHold.AccountRef);
+        command.Parameters.AddWithValue("amount_cents", legalHold.AmountCents);
+        command.Parameters.AddWithValue("placed_stream_id", legalHold.PlacedStreamId);
+        command.Parameters.AddWithValue("placed_sequence", legalHold.PlacedSequence);
+        command.Parameters.AddWithValue("legal_reference", (object?)legalHold.LegalReference ?? DBNull.Value);
+        command.Parameters.AddWithValue("expires_at", (object?)legalHold.ExpiresAt ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<HoldReleaseResult> ReleaseLegalAsync(
+        string holdId, Guid releasedStreamId, long releasedSequence, CancellationToken ct = default)
+    {
+        // Transition ONLY an ACTIVE legal hold: a legal release settles nothing, so state -> RELEASED
+        // (distinct from CAPTURED/EXPIRED). The kind = 'LEGAL' guard means an authorization hold id
+        // never matches here — it would classify as a no-op and surface, not silently release.
+        const string sql = """
+            UPDATE account_holds
+            SET state = 'RELEASED',
+                released_stream_id = @released_stream_id,
+                released_sequence = @released_sequence
+            WHERE hold_id = @hold_id AND state = 'ACTIVE' AND kind = 'LEGAL';
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using (var command = new NpgsqlCommand(sql, connection))
+        {
+            command.Parameters.AddWithValue("hold_id", holdId);
+            command.Parameters.AddWithValue("released_stream_id", releasedStreamId);
+            command.Parameters.AddWithValue("released_sequence", releasedSequence);
+            if (await command.ExecuteNonQueryAsync(ct) == 1)
+            {
+                return HoldReleaseResult.Transitioned;
+            }
+        }
+
+        return await ClassifyNoOpReleaseAsync(connection, holdId, ct);
     }
 
     public async Task<HoldReleaseResult> CaptureAsync(
@@ -262,7 +368,8 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
     {
         const string sql = """
             SELECT hold_id, account_ref, amount_cents, value_date, state, placed_stream_id,
-                   placed_sequence, captured_amount_cents, released_stream_id, released_sequence
+                   placed_sequence, captured_amount_cents, released_stream_id, released_sequence,
+                   kind, legal_reference, expires_at
             FROM account_holds
             WHERE account_ref = @account_ref AND state = 'ACTIVE'
             ORDER BY hold_id;
@@ -278,11 +385,15 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
     public async Task<IReadOnlyList<AccountHoldRow>> GetActiveHoldsWithValueDateAtOrBeforeAsync(
         DateOnly valueDateHorizon, CancellationToken ct = default)
     {
+        // AUTHORIZATION holds only: their expiry horizon is value_date (-> HoldExpired). Legal holds
+        // have a separate horizon (expires_at -> FundsReleased) and their own read below, so the two
+        // operator expiry lanes never cross (ADR-PC-041 slot 2).
         const string sql = """
             SELECT hold_id, account_ref, amount_cents, value_date, state, placed_stream_id,
-                   placed_sequence, captured_amount_cents, released_stream_id, released_sequence
+                   placed_sequence, captured_amount_cents, released_stream_id, released_sequence,
+                   kind, legal_reference, expires_at
             FROM account_holds
-            WHERE state = 'ACTIVE' AND value_date <= @value_date_horizon
+            WHERE state = 'ACTIVE' AND kind = 'AUTHORIZATION' AND value_date <= @value_date_horizon
             ORDER BY account_ref, hold_id;
             """;
 
@@ -290,6 +401,28 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
         await connection.OpenAsync(ct);
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("value_date_horizon", valueDateHorizon);
+        return await ReadRowsAsync(command, ct);
+    }
+
+    public async Task<IReadOnlyList<AccountHoldRow>> GetActiveLegalHoldsWithExpiryAtOrBeforeAsync(
+        DateOnly expiryHorizon, CancellationToken ct = default)
+    {
+        // LEGAL holds only, with a non-null horizon that has passed (ADR-PC-041 slot 2 / ADR-PC-023):
+        // an open-ended legal hold (expires_at IS NULL) is never an expiry candidate.
+        const string sql = """
+            SELECT hold_id, account_ref, amount_cents, value_date, state, placed_stream_id,
+                   placed_sequence, captured_amount_cents, released_stream_id, released_sequence,
+                   kind, legal_reference, expires_at
+            FROM account_holds
+            WHERE state = 'ACTIVE' AND kind = 'LEGAL'
+                  AND expires_at IS NOT NULL AND expires_at <= @expiry_horizon
+            ORDER BY account_ref, hold_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("expiry_horizon", expiryHorizon);
         return await ReadRowsAsync(command, ct);
     }
 
@@ -312,13 +445,16 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
                 HoldId: reader.GetString(0),
                 AccountRef: reader.GetString(1),
                 AmountCents: reader.GetInt64(2),
-                ValueDate: reader.GetFieldValue<DateOnly>(3),
+                ValueDate: reader.IsDBNull(3) ? null : reader.GetFieldValue<DateOnly>(3),
                 State: reader.GetString(4),
                 PlacedStreamId: reader.GetGuid(5),
                 PlacedSequence: reader.GetInt64(6),
                 CapturedAmountCents: reader.IsDBNull(7) ? null : reader.GetInt64(7),
                 ReleasedStreamId: reader.IsDBNull(8) ? null : reader.GetGuid(8),
-                ReleasedSequence: reader.IsDBNull(9) ? null : reader.GetInt64(9)));
+                ReleasedSequence: reader.IsDBNull(9) ? null : reader.GetInt64(9),
+                Kind: reader.GetString(10),
+                LegalReference: reader.IsDBNull(11) ? null : reader.GetString(11),
+                ExpiresAt: reader.IsDBNull(12) ? null : reader.GetFieldValue<DateOnly>(12)));
         }
 
         return holds;

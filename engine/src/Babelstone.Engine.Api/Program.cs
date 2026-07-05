@@ -201,6 +201,25 @@ builder.Services.AddSingleton(serviceProvider =>
 builder.Services.AddSingleton(serviceProvider => new AccountBalanceReader(
     serviceProvider.GetRequiredService<IMovementLedgerStore>(),
     serviceProvider.GetRequiredService<IAccountHoldStore>()));
+// The ADR-PC-041 frozen-predicate store + projector + reader. Mirrors the hold trio above: a
+// PostgreSQL store, a spine projector folding AccountFrozen -> AccountUnfrozen (added to the spine
+// drive below), and the reader the authorization shell consults for the freeze gate.
+builder.Services.AddSingleton<IAccountFreezeStore>(_ => new PostgresAccountFreezeStore(connectionString));
+builder.Services.AddSingleton(serviceProvider =>
+    new AccountFreezeProjector(
+        serviceProvider.GetRequiredService<IAccountFreezeStore>(),
+        // The ADR-PC-041 surfacing sink: an unfreeze that transitioned nothing is a warning an
+        // operator/reconciliation must see (never a silent no-op) — structural only, never PII.
+        onLiftAnomaly: anomaly =>
+            serviceProvider.GetRequiredService<ILoggerFactory>()
+                .CreateLogger<AccountFreezeProjector>()
+                .LogWarning(
+                    "Freeze lift folded as a no-op ({AnomalyKind}): AccountUnfrozen for freeze {FreezeId} "
+                    + "at stream {LiftingStreamId} seq {LiftingSequence} — never_frozen is a fold-order "
+                    + "error, already_lifted a duplicate/late unfreeze (ADR-PC-041).",
+                    anomaly.Kind, anomaly.FreezeId, anomaly.LiftingStreamId, anomaly.LiftingSequence)));
+builder.Services.AddSingleton(serviceProvider => new AccountFreezeReader(
+    serviceProvider.GetRequiredService<IAccountFreezeStore>()));
 // A.11 snapshot runtime wiring (ADR-PC-003): the byte-oriented snapshot store is a family-agnostic
 // spine component (ADR-PC-021), backed by the same PostgreSQL tier as the event store (ADR-PC-003
 // — snapshots are rows in a `snapshots` table in the SAME database). The family module composes the
@@ -322,6 +341,7 @@ builder.Services.AddSingleton(serviceProvider => new SpineProjectionDrainer(
     [
         serviceProvider.GetRequiredService<MovementLedgerProjector>(),
         serviceProvider.GetRequiredService<AccountHoldProjector>(),
+        serviceProvider.GetRequiredService<AccountFreezeProjector>(),
     ],
     serviceProvider.GetRequiredService<TimeProvider>()));
 builder.Services.AddSingleton(new SpineProjectionRelayOptions());

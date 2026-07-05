@@ -359,6 +359,114 @@ public sealed class AccountFrozenHandler<TState> : IEventHandler<TState, Account
 }
 
 /// <summary>
+/// A legal hold was lifted — the release instruction that ends a <see cref="FundsHeld"/> earmark
+/// (ADR-PC-041). In plain English: the court order or garnishment that set money aside is
+/// discharged, so the held funds become spendable again. This is the legal-hold twin of the
+/// authorization lifecycle's <see cref="HoldCaptured"/>/<see cref="HoldExpired"/>, but with a
+/// crucial difference: a legal hold is NEVER captured — releasing it moves NO money (a garnishment
+/// that is actually paid out is a separate debit <c>Movement</c> the legal process instructs, not a
+/// capture of this hold). It applies to any product family, so the engine declares it ONCE in the
+/// spine (it names no family, ADR-PC-021); each family BINDS the generic no-op fold via
+/// <see cref="CrossCuttingEventRegistrations.For{TState}"/>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// STORE-ONLY (ADR-IC-017): appended, folded, and replayable, carrying NO governed <c>.avsc</c> —
+/// there is no NAMED external consumer in v1. Unlike the store-only NO-OP its <see cref="FundsHeld"/>
+/// placement had before ADR-PC-041, the pair now DOES something: the SPINE-owned
+/// <see cref="AccountHoldProjector"/> folds <see cref="FundsHeld"/> into the <c>account_ref</c>-keyed
+/// active-hold set (kind <c>LEGAL</c>) so it lowers <c>available balance</c>, and this event
+/// transitions that row out of the active set — restoring the balance, no posting. The synthetic
+/// <c>operations</c> aggregate_type keeps the stored <c>event_type</c> <c>operations.FundsReleased</c>
+/// family-agnostic (event-store §4.3).
+/// </para>
+/// <para>
+/// Two idempotency keys for two seams (ADR-PC-041 slot 4): the legal-hold LIFECYCLE is keyed by
+/// <paramref name="HoldId"/> — a re-delivered release folds at most once (a reconciliation signal,
+/// never a double-restore) — while the APPEND is keyed by the command's <c>CommandId</c>
+/// (ADR-PC-029), carried on the envelope, never here. STRUCTURAL only, never PII (ADR-PC-004):
+/// <paramref name="InstanceId"/>/<paramref name="HoldId"/> are opaque ids and
+/// <paramref name="ReleaseReference"/> is a court/case discharge reference.
+/// </para>
+/// </remarks>
+/// <param name="InstanceId">The instance (stream) the released hold applied to — a structural id, not PII.</param>
+/// <param name="HoldId">The <see cref="FundsHeld"/> this release lifts — the ADR-PC-041 legal-hold lifecycle key.</param>
+/// <param name="ReleaseReference">The discharge/release instruction reference (a case/court reference) — STRUCTURAL, never PII (ADR-PC-004).</param>
+public sealed record FundsReleased(
+    Guid InstanceId,
+    string HoldId,
+    string ReleaseReference) : DomainEvent;
+
+/// <summary>
+/// The pure per-family fold for <see cref="FundsReleased"/>, generic over ANY family projection
+/// <typeparamref name="TState"/> so it stays FAMILY-AGNOSTIC (ADR-PC-021): the engine owns this
+/// handler; a family BINDS it against its own state via
+/// <see cref="CrossCuttingEventRegistrations.For{TState}"/>.
+/// </summary>
+/// <remarks>
+/// The fold returns the state UNCHANGED — the conformant shape, not an omission: the active-hold set
+/// (both authorization AND legal holds, ADR-PC-041) is the SPINE-owned <see cref="AccountHoldProjector"/>
+/// fold, never family projection state. Pure — no clock, no I/O, no randomness (BENG001/002/003) — so
+/// replay is deterministic.
+/// </remarks>
+public sealed class FundsReleasedHandler<TState> : IEventHandler<TState, FundsReleased>
+{
+    public HandlerResult<TState> Apply(TState state, FundsReleased @event)
+        => HandlerResult<TState>.From(state);
+}
+
+/// <summary>
+/// A compliance freeze was lifted — the instruction that ends an <see cref="AccountFrozen"/> block
+/// (ADR-PC-041). In plain English: the AML/sanctions process that froze the account clears it, so
+/// debits are allowed again. From this event's sequence forward the instance is no longer frozen and
+/// the stages-3–5 authorization decider stops refusing its debits. It applies to any product family,
+/// so the engine declares it ONCE in the spine (it names no family, ADR-PC-021); each family BINDS
+/// the generic no-op fold via <see cref="CrossCuttingEventRegistrations.For{TState}"/>.
+/// </summary>
+/// <remarks>
+/// <para>
+/// STORE-ONLY (ADR-IC-017): appended, folded, replayable, NO governed <c>.avsc</c> in v1. The
+/// frozen predicate the decider consults is the SPINE-owned <c>AccountFreezeProjector</c> fold over
+/// the <c>account_freezes</c> read model (migration 0022): <see cref="AccountFrozen"/> marks the
+/// instance frozen, this event lifts it. A freeze is a total block, NOT an amount, so neither event
+/// touches <c>available balance</c> (ADR-PC-041 slot 2). The synthetic <c>operations</c>
+/// aggregate_type keeps the stored <c>event_type</c> <c>operations.AccountUnfrozen</c> family-agnostic.
+/// </para>
+/// <para>
+/// Idempotency: the freeze LIFECYCLE is keyed by <paramref name="FreezeId"/> — a re-delivered
+/// unfreeze folds at most once (a reconciliation signal). STRUCTURAL only, never PII (ADR-PC-004):
+/// <paramref name="UnfreezeActor"/> is an operator/service identity; <paramref name="UnfreezeReason"/>
+/// is a stable machine code, never free-text.
+/// </para>
+/// </remarks>
+/// <param name="InstanceId">The instance (stream) the lifted freeze applied to — a structural id, not PII.</param>
+/// <param name="FreezeId">The <see cref="AccountFrozen"/> this event lifts — the ADR-PC-041 freeze lifecycle key.</param>
+/// <param name="UnfreezeActor">The compliance operator/service actor that lifted the freeze — an operator identity, never PII (ADR-PC-004).</param>
+/// <param name="UnfreezeReason">A stable machine code for why the freeze was lifted (e.g. <c>SCREENING_CLEARED</c>) — never PII.</param>
+public sealed record AccountUnfrozen(
+    Guid InstanceId,
+    string FreezeId,
+    string UnfreezeActor,
+    string UnfreezeReason) : DomainEvent;
+
+/// <summary>
+/// The pure per-family fold for <see cref="AccountUnfrozen"/>, generic over ANY family projection
+/// <typeparamref name="TState"/> so it stays FAMILY-AGNOSTIC (ADR-PC-021): the engine owns this
+/// handler; a family BINDS it against its own state via
+/// <see cref="CrossCuttingEventRegistrations.For{TState}"/>.
+/// </summary>
+/// <remarks>
+/// The fold returns the state UNCHANGED — the conformant shape, not an omission: the frozen predicate
+/// is the SPINE-owned <c>AccountFreezeProjector</c> fold, never family projection state. Pure — no
+/// clock, no I/O, no randomness (BENG001/002/003) — so replay is deterministic.
+/// </remarks>
+public sealed class AccountUnfrozenHandler<TState> : IEventHandler<TState, AccountUnfrozen>
+{
+    public HandlerResult<TState> Apply(TState state, AccountUnfrozen @event)
+        => HandlerResult<TState>.From(state);
+}
+
+/// <summary>
 /// The engine-declared cross-cutting event bindings, yielded for a given family projection state. In
 /// plain English: the engine owns these family-agnostic operational events (§4.1), but the handler
 /// registry needs each one bound to a concrete projection state — so a family calls
@@ -388,8 +496,19 @@ public static class CrossCuttingEventRegistrations
             new DispatchableHandler<TState, SchemaVersionMigrated>(new SchemaVersionMigratedHandler<TState>())),
         new("operations.FundsHeld", typeof(FundsHeld),
             new DispatchableHandler<TState, FundsHeld>(new FundsHeldHandler<TState>())),
+        // The ADR-PC-041 legal-hold release: lifts a FundsHeld earmark out of the spine-owned
+        // active-hold set. Bound for EVERY family so it decodes (and replays fail-closed) on any
+        // family stream that carries it; the fold is a no-op because the legal-hold set is the
+        // SPINE-owned AccountHoldProjector fold.
+        new("operations.FundsReleased", typeof(FundsReleased),
+            new DispatchableHandler<TState, FundsReleased>(new FundsReleasedHandler<TState>())),
         new("operations.AccountFrozen", typeof(AccountFrozen),
             new DispatchableHandler<TState, AccountFrozen>(new AccountFrozenHandler<TState>())),
+        // The ADR-PC-041 freeze lift: clears the spine-owned frozen predicate the stages-3–5 decider
+        // consults. Bound for EVERY family (decode/replay fail-closed); the fold is a no-op because
+        // the frozen predicate is the SPINE-owned AccountFreezeProjector fold.
+        new("operations.AccountUnfrozen", typeof(AccountUnfrozen),
+            new DispatchableHandler<TState, AccountUnfrozen>(new AccountUnfrozenHandler<TState>())),
         new("operations.PersonalDataErasureRequested", typeof(PersonalDataErasureRequested),
             new DispatchableHandler<TState, PersonalDataErasureRequested>(new PersonalDataErasureRequestedHandler<TState>())),
         // The ADR-PC-033 hold lifecycle (AccountHoldEvents.cs): three cross-cutting facts any
