@@ -79,6 +79,11 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
         "events", "outbox", "snapshots", "rate_sheets", "projections",
         "pack_versions", "projection_checkpoints", "inbox", "command_dedup", "schema_migrations",
         "bulk_operation_jobs", "bulk_operation_targets", "movement_ledger", "account_holds",
+        // The versioned product-config deploy registry (migration 0021): a generic spine table
+        // mirroring rate_sheets — an audited deploy timeline of product-config generations, keyed by
+        // opaque version ids, no family vocabulary (ADR-PC-008/009). Added as the deliberate
+        // generic-engine change the allowlist gate wants.
+        "product_config_versions",
     ];
 
     /// <summary>
