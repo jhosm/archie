@@ -79,6 +79,10 @@ public sealed class EventStoreSchemaFamilyAgnosticTests
         "events", "outbox", "snapshots", "rate_sheets", "projections",
         "pack_versions", "projection_checkpoints", "inbox", "command_dedup", "schema_migrations",
         "bulk_operation_jobs", "bulk_operation_targets", "movement_ledger", "account_holds",
+        // The ADR-PC-041 frozen-predicate read model (migration 0022): a generic, instance-keyed
+        // spine table (freeze_id/instance_id primitives, no family vocabulary) the authorization
+        // decider consults — added here as the deliberate generic-engine change ADR-PC-021 wants.
+        "account_freezes",
     ];
 
     /// <summary>

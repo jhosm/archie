@@ -66,6 +66,56 @@ public sealed class FundsAndRulesDeciderTests
         Assert.Equal(AuthorizationDeclineReason.PerTransactionLimitExceeded, declined.Reason);
     }
 
+    private static AccountFreeze Freeze(
+        string reason = "SANCTIONS_MATCH", string actor = "compliance-svc") =>
+        new("freeze-1", Guid.NewGuid(), reason, actor, FreezeExpiresAt: null, FreezeState.Active);
+
+    // FREEZE_GATES_AUTHORIZATION (ADR-PC-041 §Decision slot 5): while an instance is frozen the
+    // decider refuses EVERY debit — even one the funds and limits would otherwise approve — and the
+    // decline NAMES the freeze reason/actor so "why was this refused?" is a read.
+    [Fact]
+    public void A_freeze_refuses_a_debit_that_funds_and_limits_would_otherwise_authorize()
+    {
+        var decision = FundsAndRulesDecider.Decide(
+            Request(4_000), availableBalanceCents: 1_000_000, new AuthorizationRules(),
+            activeFreeze: Freeze(reason: "AML_SCREENING", actor: "aml-team"));
+
+        var declined = Assert.IsType<AuthorizationDecision.Declined>(decision);
+        Assert.Equal(AuthorizationDeclineReason.AccountFrozen, declined.Reason);
+        // HOLD_REASON_OBSERVABLE: the decline carries the freeze's reason and actor.
+        Assert.Equal("AML_SCREENING", declined.FreezeReason);
+        Assert.Equal("aml-team", declined.ComplianceActor);
+    }
+
+    [Fact]
+    public void The_freeze_gate_precedes_the_funds_and_limit_gates()
+    {
+        // A debit that ALSO exceeds the balance and the per-transaction limit still declines with
+        // AccountFrozen, not InsufficientAvailableBalance/PerTransactionLimitExceeded — the freeze is
+        // evaluated first (ADR-PC-041 slot 5).
+        var decision = FundsAndRulesDecider.Decide(
+            Request(9_999_999), availableBalanceCents: 10, new AuthorizationRules(PerTransactionLimitCents: 100),
+            activeFreeze: Freeze());
+
+        var declined = Assert.IsType<AuthorizationDecision.Declined>(decision);
+        Assert.Equal(AuthorizationDeclineReason.AccountFrozen, declined.Reason);
+    }
+
+    [Fact]
+    public void An_unfrozen_instance_authorizes_normally_and_the_decline_carries_no_freeze_detail()
+    {
+        // No freeze (null) — the gate is transparent; a normal decline names no freeze.
+        var authorized = FundsAndRulesDecider.Decide(
+            Request(4_000), availableBalanceCents: 10_000, new AuthorizationRules(), activeFreeze: null);
+        Assert.IsType<AuthorizationDecision.Authorized>(authorized);
+
+        var declined = Assert.IsType<AuthorizationDecision.Declined>(
+            FundsAndRulesDecider.Decide(Request(20_000), 10_000, new AuthorizationRules(), activeFreeze: null));
+        Assert.Equal(AuthorizationDeclineReason.InsufficientAvailableBalance, declined.Reason);
+        Assert.Null(declined.FreezeReason);
+        Assert.Null(declined.ComplianceActor);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-100)]
