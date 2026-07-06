@@ -13,8 +13,8 @@
 
   <ItemGroup>
     <!-- Roslyn surface for the Money/Engine analysers (and their test harnesses). -->
-    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.3.0" />
-    <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="5.3.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="5.6.0" />
 
     <!-- PostgreSQL data access (EventStore, RateSheets, migrations). -->
     <PackageVersion Include="Npgsql" Version="10.0.3" />
@@ -24,9 +24,9 @@
          builds GenericRecords + serializes the value bytes. These stay OUT of
          Babelstone.EventStore (Npgsql-only) — they live in Babelstone.Engine.Avro and
          Babelstone.OutboxPublisher (event-store-skeleton §5.4 / §2.1). -->
-    <PackageVersion Include="Confluent.Kafka" Version="2.14.2" />
-    <PackageVersion Include="Confluent.SchemaRegistry" Version="2.14.2" />
-    <PackageVersion Include="Confluent.SchemaRegistry.Serdes.Avro" Version="2.14.2" />
+    <PackageVersion Include="Confluent.Kafka" Version="2.15.0" />
+    <PackageVersion Include="Confluent.SchemaRegistry" Version="2.15.0" />
+    <PackageVersion Include="Confluent.SchemaRegistry.Serdes.Avro" Version="2.15.0" />
     <PackageVersion Include="Apache.Avro" Version="1.12.1" />
     <!-- IHostedService/BackgroundService host for the relay's poll loop. -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.9" />
@@ -51,8 +51,8 @@
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
     <PackageVersion Include="FsCheck.Xunit" Version="3.3.3" />
-    <PackageVersion Include="Testcontainers" Version="4.12.0" />
-    <PackageVersion Include="Testcontainers.PostgreSql" Version="4.12.0" />
+    <PackageVersion Include="Testcontainers" Version="4.13.0" />
+    <PackageVersion Include="Testcontainers.PostgreSql" Version="4.13.0" />
     <!-- WireMock.Net (bd babelstone-t7o3.4): the in-process Core-ACL settlement stub the saga command
          DISPATCHER targets at v1 (the real ACL is DEF-1, bd ub9s). The gated-settlement integration
          test stands up a WireMock server with success + InsufficientBalance/refusal mappings for the
@@ -65,7 +65,7 @@
          ships a libpact_ffi regression that breaks message-pact PRODUCER verification with
          "builder error for url (message://...)" (pact-foundation/pact-net#530); 4.5.0's bundled FFI
          predates it and both halves run green. -->
-    <PackageVersion Include="PactNet" Version="4.5.0" />
+    <PackageVersion Include="PactNet" Version="5.0.1" />
     <!-- Line/branch code-coverage collector (Q.y, babelstone-2t16.13). Each *.Tests.csproj
          carries a version-less <PackageReference Include="coverlet.collector"> with
          PrivateAssets="all" (a build-time-only collector, never shipped). CI collects via
