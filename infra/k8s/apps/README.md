@@ -58,7 +58,8 @@ a flat ConfigMap can't carry its subdirs) is baked into a thin derived image,
 [`engine/Dockerfile`](./engine/Dockerfile): `FROM` the base
 `ghcr.io/jhosm/babelstone-engine` image + `COPY packs/pt.2026.1`. A dependent
 `build-engine-staging` job in `.github/workflows/image-build.yml` builds + pushes it
-multi-arch (arm64) and cosign-signs it by digest (so `cd.yml` can verify it on promotion).
+amd64-only (staging is a CPX42 x86 node, bd babelstone-zla1.13) and cosign-signs it by
+digest (so `cd.yml` can verify it on promotion).
 The base tag is a build-arg — pin it by digest for a real promotion; a movable `:latest` is
 fine for the demo box.
 
@@ -69,7 +70,7 @@ The notification host resolves the same instance-pinned pack off disk at startup
 [`notification/Dockerfile`](./notification/Dockerfile): `FROM` the base
 `ghcr.io/jhosm/babelstone-notification` image + `COPY packs/pt.2026.1`. The dependent
 `build-notification-staging` job in `.github/workflows/image-build.yml` builds + pushes it
-multi-arch and cosign-signs it by digest, exactly as `build-engine-staging` does (bd
+amd64-only and cosign-signs it by digest, exactly as `build-engine-staging` does (bd
 zla1.5.10); `notification.yaml` sets `Engine__PacksDir=/app/packs` to point the host's disk
 walk at the baked pack.
 
@@ -100,8 +101,9 @@ The **notification** worker (ADR-IC-011) is a headless `BackgroundService` — *
 Service, no probes** (nothing listens), `replicas:1` (its v1 dedupe ledger is in-memory and
 per-pod). It only reads the engine API and exports telemetry; no DB/Kafka/Kong/OpenBao, no PII.
 
-Both run the stock multi-arch images (`babelstone-orchestrator`, `babelstone-notification`) — no
-derived image or pack-bake needed (only the engine loads a pack).
+Both run the base (non-derived) images (`babelstone-orchestrator`, `babelstone-notification`) — no
+derived image or pack-bake needed (only the engine loads a pack). Like every babelstone image these
+are amd64-only (bd babelstone-zla1.13).
 
 ## Validate
 

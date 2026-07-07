@@ -5,8 +5,9 @@
 # same-origin-proxies the backends (no CORS): /v1/* → engine, /api/v1/* → orchestrator (it
 # injects the gateway-attested X-Client-Id), /tempo/* → Grafana Tempo, /agent/* → the agent
 # host. The browser hits ONLY Mission Control (app.babelstone.dev, see ingress.yaml); the
-# engine/orchestrator Services stay cluster-internal. Image is the multi-arch
-# ghcr.io/jhosm/babelstone-mission-control built in zla1.5.4 (binds 0.0.0.0 in-container).
+# engine/orchestrator Services stay cluster-internal. Image is the amd64-only
+# ghcr.io/jhosm/babelstone-mission-control built in zla1.5.4 (binds 0.0.0.0 in-container;
+# amd64 matches the CPX42 x86 staging node, bd babelstone-zla1.13).
 apiVersion: v1
 kind: Service
 metadata:

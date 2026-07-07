@@ -92,7 +92,8 @@ schedule_workloads_on_masters: true
 
 masters_pool:
   instance_type: cpx42    # x86 AMD (8 vCPU / 16 GB) — CAX41 ARM was out of stock in all 3 CAX
-                          # locations at provision (2026-07-07); images are multi-arch so x86 runs fine
+                          # locations at provision (2026-07-07); our images now build amd64-only to
+                          # match this box (bd babelstone-zla1.13)
   instance_count: 1
   locations:
     - hel1                 # Helsinki (FI) — CPX x86 had stock here when ARM did not (2026-07-07)
