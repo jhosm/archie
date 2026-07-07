@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-07-05 |
 | Deciders | jhosm |
 | Shape | Tool-selection ([ADR-PC-000 §D3](./ADR-PC-000-namespace-and-contract-shape-framework.md) residual category — a family-scoping / structural decision, declared tool-selection per the [§D4](./ADR-PC-000-namespace-and-contract-shape-framework.md) default; F1/F2 do not discriminate, the same class as [ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md), [ADR-PC-030](./ADR-PC-030-product-scope-and-boundary.md), [ADR-PC-031](./ADR-PC-031-personal-loan-family.md), and [ADR-PC-039](./ADR-PC-039-credit-card-family.md)) |
@@ -228,4 +228,4 @@ A `Planned` status is a deliberate, listed hole: the test lands with the family 
 
 ---
 
-*Proposed 2026-07-05 by jhosm.*
+*Proposed 2026-07-05 by jhosm. Accepted 2026-07-07 by jhosm.*
