@@ -14,10 +14,11 @@ name: Image build + publish
 # Build-only on pull_request (verify every Dockerfile still builds — NO push, NO registry
 # credentials needed on a fork PR); build AND push on push to main. Each pushed image is then
 # SBOM'd (syft / anchore-sbom-action, mirroring sbom.yml's tool choice) and scanned (grype /
-# anchore-scan-action, severity-cutoff high) ONCE PER PLATFORM (linux/amd64 AND linux/arm64,
-# bd babelstone-oq9z), with findings uploaded to the Security tab under a per-arch category
-# (ADR-IC-014 §S2) — the same report-only posture sbom.yml uses for the source graph (the
-# PR-blocking SCA gates are the per-ecosystem layer, not these defense-in-depth scans).
+# anchore-scan-action, severity-cutoff high) for the single published platform (linux/amd64 —
+# staging is a Hetzner CPX42 x86 node, bd babelstone-zla1.13; the arm64 leg was dropped with it),
+# with findings uploaded to the Security tab (ADR-IC-014 §S2) — the same report-only posture
+# sbom.yml uses for the source graph (the PR-blocking SCA gates are the per-ecosystem layer, not
+# these defense-in-depth scans).
 #
 # Each matrix leg emits its pushed image DIGEST as a job output (the `digest` step + the
 # `digests` job that fans them back in) AND cosign-signs that digest keyless (Sigstore OIDC,
@@ -110,7 +111,7 @@ jobs:
           # static UI (stdlib-only but for one pip dependency — psycopg, for the optional read-only
           # /pg/* Inspector lenses, bd babelstone-f0ic.15.1), so — like mcp-server / pack-validate —
           # it builds with its OWN dir as context (requirements.txt + serve.py + index.html live
-          # there). Publishes ghcr.io/jhosm/babelstone-mission-control, multi-arch + cosign-signed.
+          # there). Publishes ghcr.io/jhosm/babelstone-mission-control, amd64 + cosign-signed.
           - service: mission-control
             dockerfile: docs/demo/mission-control/Dockerfile
             context: docs/demo/mission-control
@@ -121,11 +122,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # QEMU registers binfmt handlers so this amd64 runner can build the linux/arm64 leg of the
-      # multi-arch manifest via emulation — the CAX41 staging node is ARM64 (bd babelstone-zla1.8).
-      - name: Set up QEMU (cross-arch emulation for the arm64 build leg)
-        uses: docker/setup-qemu-action@v4
-
+      # amd64-only builds run natively on the amd64 runner, so no QEMU/binfmt emulation is
+      # needed (the arm64 leg was dropped once staging landed on a Hetzner CPX42 x86 node,
+      # bd babelstone-zla1.13).
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -157,19 +156,19 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          # Multi-arch: the staging cluster is a Hetzner CAX41 (ARM64), so every image must carry a
-          # linux/arm64 manifest alongside linux/amd64 — an amd64-only image fails to start on ARM
-          # (exec format error). buildx builds the arm64 leg under QEMU emulation (bd babelstone-zla1.8).
-          platforms: linux/amd64,linux/arm64
-          # pull_request → build only (verify BOTH arches still build); push to main → push to GHCR.
+          # amd64-only: staging is a Hetzner CPX42 x86 node (bd babelstone-zla1.13), so a single
+          # linux/amd64 manifest is all that ever runs. The emulated arm64 leg — the slowest CI
+          # step — was dropped with the ARM staging plan (bd babelstone-zla1.8). Re-adding arm64
+          # is a small, well-understood revert if staging ever moves back onto a CAX ARM box.
+          platforms: linux/amd64
+          # pull_request → build only (verify the Dockerfile still builds); push to main → push to GHCR.
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false   # No buildkit SLSA-attestation index: keep the pushed artifact a plain
-                              # multi-arch manifest list, so steps.build.outputs.digest is the
-                              # image-INDEX digest cosign signs by digest in Q.5. Signing the index is
-                              # the standard way to sign a multi-arch image, and it is exactly the
-                              # digest cd.yml pins in PROMOTE_IMAGE_DIGESTS (flipping this to true would
+                              # single-arch manifest, so steps.build.outputs.digest is the image
+                              # digest cosign signs by digest in Q.5 — it is exactly the digest
+                              # cd.yml pins in PROMOTE_IMAGE_DIGESTS (flipping this to true would
                               # repoint the digest at an attestation index and desync that contract).
           cache-from: type=gha,scope=image-${{ matrix.service }}
           cache-to: type=gha,scope=image-${{ matrix.service }},mode=max
@@ -214,85 +213,50 @@ jobs:
           COSIGN_YES: "true"
         run: cosign sign "$IMAGE_REF"
 
-      # --- Per-platform container-image SBOM + scan (bd babelstone-oq9z) ----------------
-      # The pushed artifact is a multi-arch manifest LIST (index), and syft/grype resolve a
-      # bare index reference to the runner-host child manifest — here linux/amd64 — so a single
-      # scan over IMAGE@<index-digest> silently inventories ONLY the amd64 layers and skips the
-      # linux/arm64 child that actually runs on the CAX41 ARM64 staging node (bd babelstone-zla1.8).
-      # We therefore run the SBOM + scan ONCE PER PLATFORM, pinning syft with `--platform`
-      # (the anchore/sbom-action `platform` input) so EACH architecture's layers are inventoried,
-      # and upload a per-arch SARIF category so both surface distinctly in the Security tab.
-      # Pulling and unpacking the arm64 child for inventory is static layer inspection — no
-      # execution, so it needs no QEMU on this amd64 runner. The posture is unchanged: report-only
-      # (fail-build: false), DORA supply-chain evidence + defense-in-depth, NOT a gate — the
-      # PR-blocking SCA layer is source/graph-based and arch-independent (ADR-IC-014 §A1/§A2),
-      # so this closes a scan-VISIBILITY gap on the arm64 child without adding any new gate.
-
-      # ---- linux/amd64 ----
-      # CycloneDX JSON, uploaded as a per-service+arch artifact for audit / DORA evidence.
-      - name: Generate container image SBOM — linux/amd64 (CycloneDX)
-        id: sbom-amd64
+      # --- Container-image SBOM + scan (bd babelstone-qsf7) -----------------------------
+      # The pushed artifact is now a single-arch (linux/amd64) manifest — staging is a Hetzner
+      # CPX42 x86 node (bd babelstone-zla1.13), so amd64 is the only platform that runs. We
+      # therefore SBOM + scan that one platform: syft is pinned with `--platform linux/amd64`
+      # (the anchore/sbom-action `platform` input) so the inventory always describes the amd64
+      # child even if the pushed artifact is later re-wrapped as an index. The posture is
+      # report-only (fail-build: false), DORA supply-chain evidence + defense-in-depth, NOT a
+      # gate — the PR-blocking SCA layer is source/graph-based and arch-independent
+      # (ADR-IC-014 §A1/§A2). When the arm64 leg existed we ran this once per platform
+      # (bd babelstone-oq9z); dropping arm64 collapses it back to a single scan.
+      # CycloneDX JSON, uploaded as a per-service artifact for audit / DORA evidence.
+      - name: Generate container image SBOM (CycloneDX)
+        id: sbom
         if: ${{ steps.imgref.outputs.ref != '' }}
         uses: anchore/sbom-action@v0
         with:
           image: ${{ steps.imgref.outputs.ref }}
           platform: linux/amd64
           format: cyclonedx-json
-          output-file: ${{ runner.temp }}/babelstone-${{ matrix.service }}.image.amd64.cdx.json
-          artifact-name: babelstone-${{ matrix.service }}-image-sbom-amd64.cdx.json
+          output-file: ${{ runner.temp }}/babelstone-${{ matrix.service }}.image.cdx.json
+          artifact-name: babelstone-${{ matrix.service }}-image-sbom.cdx.json
           upload-artifact: true
 
-      # grype over the amd64 SBOM, severity-cutoff high (covers high AND critical), report-only
+      # grype over the SBOM, severity-cutoff high (covers high AND critical), report-only
       # (fail-build: false) — mirrors sbom.yml's source scan. Scans the SBOM just produced so the
       # inventory and the findings describe the same bytes.
-      - name: Scan image for vulnerabilities — linux/amd64 (report-only — DORA evidence, not a gate)
-        id: scan-amd64
-        if: ${{ steps.sbom-amd64.outcome == 'success' }}
+      - name: Scan image for vulnerabilities (report-only — DORA evidence, not a gate)
+        id: scan
+        if: ${{ steps.sbom.outcome == 'success' }}
         uses: anchore/scan-action@v7
         with:
-          sbom: ${{ runner.temp }}/babelstone-${{ matrix.service }}.image.amd64.cdx.json
+          sbom: ${{ runner.temp }}/babelstone-${{ matrix.service }}.image.cdx.json
           severity-cutoff: high
           fail-build: false
           output-format: sarif
 
-      # Per-service+arch category keeps each image's two arch findings distinguishable in the
-      # Security tab (ADR-IC-014 §S2). `if: always()` so results upload even if a scan errored.
-      - name: Upload image vulnerability findings — linux/amd64 — to the Security tab
-        if: ${{ always() && steps.scan-amd64.outputs.sarif != '' }}
+      # Per-service category keeps each image's findings distinguishable in the Security tab
+      # (ADR-IC-014 §S2). `if: always()` so results upload even if a scan errored.
+      - name: Upload image vulnerability findings to the Security tab
+        if: ${{ always() && steps.scan.outputs.sarif != '' }}
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: ${{ steps.scan-amd64.outputs.sarif }}
-          category: image-grype-${{ matrix.service }}-amd64
-
-      # ---- linux/arm64 (the previously-unscanned child — bd babelstone-oq9z) ----
-      - name: Generate container image SBOM — linux/arm64 (CycloneDX)
-        id: sbom-arm64
-        if: ${{ steps.imgref.outputs.ref != '' }}
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ steps.imgref.outputs.ref }}
-          platform: linux/arm64
-          format: cyclonedx-json
-          output-file: ${{ runner.temp }}/babelstone-${{ matrix.service }}.image.arm64.cdx.json
-          artifact-name: babelstone-${{ matrix.service }}-image-sbom-arm64.cdx.json
-          upload-artifact: true
-
-      - name: Scan image for vulnerabilities — linux/arm64 (report-only — DORA evidence, not a gate)
-        id: scan-arm64
-        if: ${{ steps.sbom-arm64.outcome == 'success' }}
-        uses: anchore/scan-action@v7
-        with:
-          sbom: ${{ runner.temp }}/babelstone-${{ matrix.service }}.image.arm64.cdx.json
-          severity-cutoff: high
-          fail-build: false
-          output-format: sarif
-
-      - name: Upload image vulnerability findings — linux/arm64 — to the Security tab
-        if: ${{ always() && steps.scan-arm64.outputs.sarif != '' }}
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: ${{ steps.scan-arm64.outputs.sarif }}
-          category: image-grype-${{ matrix.service }}-arm64
+          sarif_file: ${{ steps.scan.outputs.sarif }}
+          category: image-grype-${{ matrix.service }}
 
   build-engine-staging:
     # The pack-baked engine image for the staging cluster (bd babelstone-zla1.5.1): FROM the
@@ -313,8 +277,6 @@ jobs:
       id-token: write   # keyless cosign signing (so cd.yml can verify this image by digest)
     steps:
       - uses: actions/checkout@v7
-      - name: Set up QEMU (cross-arch emulation for the arm64 build leg)
-        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
@@ -331,16 +293,16 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=long
-      - name: Build + push (multi-arch)
+      - name: Build + push (amd64)
         id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           file: infra/k8s/apps/engine/Dockerfile
-          # Same multi-arch + plain-manifest posture as the matrix legs (the staging node is
-          # ARM64; provenance:false keeps steps.build.outputs.digest the image-index digest
-          # cosign signs / cd.yml pins — see the matrix build step).
-          platforms: linux/amd64,linux/arm64
+          # Same amd64-only + plain-manifest posture as the matrix legs (staging is a CPX42 x86
+          # node, bd babelstone-zla1.13; provenance:false keeps steps.build.outputs.digest the
+          # image digest cosign signs / cd.yml pins — see the matrix build step).
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -387,8 +349,6 @@ jobs:
       id-token: write   # keyless cosign signing (so cd.yml can verify this image by digest)
     steps:
       - uses: actions/checkout@v7
-      - name: Set up QEMU (cross-arch emulation for the arm64 build leg)
-        uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
@@ -405,17 +365,17 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-,format=long
-      - name: Build + push (multi-arch)
+      - name: Build + push (amd64)
         id: build
         uses: docker/build-push-action@v7
         with:
           context: .
           file: infra/k8s/apps/notification/Dockerfile
-          # Same multi-arch + plain-manifest posture as the matrix legs: multi-arch keeps the
-          # image portable (the staging node is x86/amd64 today — CPX42, bd zla1.2 — but a future
-          # arm64 node needs no rebuild); provenance:false keeps steps.build.outputs.digest the
-          # image-index digest cosign signs / cd.yml pins — see the matrix build step.
-          platforms: linux/amd64,linux/arm64
+          # Same amd64-only + plain-manifest posture as the matrix legs: staging is a CPX42 x86
+          # node (bd babelstone-zla1.13), so amd64 is the only platform that runs; provenance:false
+          # keeps steps.build.outputs.digest the image digest cosign signs / cd.yml pins — see the
+          # matrix build step.
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

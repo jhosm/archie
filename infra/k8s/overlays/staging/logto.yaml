@@ -18,8 +18,8 @@
 # pod-injected, not baked into the image.
 #
 # Lives in the staging overlay (not the apps/ product-service layer): like Mission Control it is
-# a staging-specific, public-facing concern. Multi-arch upstream image (svhd/logto) — the CAX41
-# staging node is ARM64 (bd babelstone-zla1.8). CI VALIDATES ONLY (kustomize build +
+# a staging-specific, public-facing concern. Upstream image (svhd/logto) runs on the CPX42 x86
+# staging node (bd babelstone-zla1.13). CI VALIDATES ONLY (kustomize build +
 # kubeconform); the live apply / DNS / cert issuance is account-gated (Phase 0-2).
 apiVersion: v1
 kind: Service
