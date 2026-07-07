@@ -21,9 +21,15 @@
 # pod network, so operator port-forwards (Grafana 3000, Logto admin 3002,
 # redpanda-console 8080, Kong admin 8001) are likewise unaffected.
 #
+# Maintainer note — the edge namespace: the Traefik ingress controller runs in its OWN
+# `traefik` namespace (Helm chart, bd zla1.14), NOT k3s's bundled kube-system Traefik
+# (disabled by hetzner-k3s). So every "public edge" allow below selects namespace
+# `traefik`; pointing them at kube-system silently denies all edge→backend traffic and
+# every host 502s (the first-stand-up symptom bd zla1.14 chased).
+#
 # Maintainer note — future workloads: default-deny means a NEW workload gets no
 # inbound traffic until an allow is added here, and policy 2 admits ONLY
-# kube-system/Traefik into kong:8000 — so a future in-namespace caller of the
+# the traefik-namespace Traefik into kong:8000 — so a future in-namespace caller of the
 # Kong proxy hits that wall too. The known cases, named so the first symptom
 # is not a mystery timeout:
 #   • Mission Control agent host (agent-host:8091, AGENT_URL): needs an
@@ -43,8 +49,8 @@ spec:
   policyTypes:
     - Ingress
 ---
-# 2 · Kong proxy (8000) — only the public edge (Traefik, kube-system) may reach
-# it; every product-API request keeps entering through the ADR-IC-006 edge.
+# 2 · Kong proxy (8000) — only the public edge (Traefik, in the `traefik` namespace) may
+# reach it; every product-API request keeps entering through the ADR-IC-006 edge.
 # The Admin API (8001) gets NO allow on purpose: nothing in-cluster dials it
 # (operator deck-sync goes through kubectl port-forward; the cd.yml CI leg's
 # port-forward step is the follow-up named in kong-admin-localhost.patch.yaml),
@@ -63,7 +69,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: kube-system
+              kubernetes.io/metadata.name: traefik
       ports:
         - protocol: TCP
           port: 8000
@@ -380,7 +386,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: kube-system
+              kubernetes.io/metadata.name: traefik
       ports:
         - protocol: TCP
           port: 7007
@@ -400,7 +406,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: kube-system
+              kubernetes.io/metadata.name: traefik
       ports:
         - protocol: TCP
           port: 9000
@@ -424,7 +430,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: kube-system
+              kubernetes.io/metadata.name: traefik
       ports:
         - protocol: TCP
           port: 3001
