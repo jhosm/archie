@@ -177,7 +177,7 @@ The family is discovered by the existing `FamilyModuleLoader` (folds) and `HostM
 
 - **Grace-period determinism across cycles.** The grace decision reads the prior sealed statement's paid-in-full flag; the fold must pin that flag across the statement boundary so a rebuild reproduces the same accrual choice. Owned by this family's fold + the deferred replay-determinism-auditor concern.
 - **Partial captures, reversals, and re-presentments** arrive as `Observed` `Movement`s on the consumed feed and are reconciliation-sensitive — the hold/capture reconciliation policy is this family's to specify within the [ADR-PC-033](./ADR-PC-033-account-abstraction-and-hold-lifecycle.md) abstraction (its §Residual-risks flag).
-- **Pack-grammar for revolving-rate / minimum-payment / limit constructs** widens the [ADR-PC-006](./ADR-PC-006-cue-schema-language.md)/[ADR-PC-007](./ADR-PC-007-signed-yaml-oci-pack.md) surface; must stay declarative (the same expansion [ADR-PC-030 §Residual-risks](./ADR-PC-030-product-scope-and-boundary.md) named for limits/*descoberto autorizado*).
+- **Pack-grammar for revolving-rate / minimum-payment / limit constructs** widens the [ADR-PC-006](./ADR-PC-006-cue-schema-language.md)/[ADR-PC-007](./ADR-PC-007-signed-yaml-oci-pack.md) surface; must stay declarative (the same expansion [ADR-PC-030 §Residual-risks](./ADR-PC-030-product-scope-and-boundary.md) named for limits/arranged overdraft).
 
 ---
 
