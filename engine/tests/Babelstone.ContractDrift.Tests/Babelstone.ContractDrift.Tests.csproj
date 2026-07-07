@@ -39,6 +39,12 @@
          elided — the same belt-and-braces anchor the host itself keeps (ADR-PC-021 §A3). -->
     <ProjectReference Include="../../../families/personal-loan/src/Babelstone.Families.PersonalLoan.Application/Babelstone.Families.PersonalLoan.Application.csproj" />
 
+    <!-- The current_account family's application assembly, referenced explicitly for the same reason as
+         the loan one above — its Babelstone.Families.CurrentAccount.Application.dll lands in the output
+         dir for the FamilyHostAssemblies() probe — AND because the Layer-1 drift suite binds its account
+         command/read DTOs (contracts/openapi/internal/engine-account-commands, engine-account-reads). -->
+    <ProjectReference Include="../../../families/current-account/src/Babelstone.Families.CurrentAccount.Application/Babelstone.Families.CurrentAccount.Application.csproj" />
+
     <!-- The DTO assemblies whose wire shapes the committed OpenAPI specs document (Layers 1–3). -->
     <!-- Engine command surface + read DTOs (contracts/openapi/internal/engine-deposit-commands, specs/engine-reads). -->
     <ProjectReference Include="../../../families/term-deposit/src/Babelstone.Families.TermDeposit.Application/Babelstone.Families.TermDeposit.Application.csproj" />

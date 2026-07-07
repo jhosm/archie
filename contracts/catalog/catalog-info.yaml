@@ -59,6 +59,19 @@ spec:
 apiVersion: backstage.io/v1alpha1
 kind: Location
 metadata:
+  name: babelstone-current-account-events
+  description: The governed AsyncAPI catalogue of the current_account (current-account) integration events.
+spec:
+  type: url
+  targets:
+    - ./events/AccountOpened.asyncapi.yaml
+    - ./events/AccountMarkedDormant.asyncapi.yaml
+    - ./events/AccountReactivated.asyncapi.yaml
+    - ./events/AccountClosed.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: Location
+metadata:
   name: babelstone-operations-events
   description: The governed AsyncAPI catalogue of the engine-declared cross-cutting (operations) integration events.
 spec:
@@ -365,6 +378,62 @@ spec:
   owner: personal-loan
   definition:
     $text: ./events/LoanSettled.asyncapi.yaml
+---
+# The current_account (current-account) integration events (ADR-PC-037). The first transactional
+# family's published account-status lifecycle: opened -> (dormant <-> reactivated) -> closed — the
+# coherent status stream a downstream account registry mirrors. AccountOpeningFailed is store-internal
+# only (no .avsc, no catalogue entry — a recorded verdict that never rides the durable bus).
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: account-opened
+  title: AccountOpened
+  description: The demand account is opened and starts transacting.
+spec:
+  type: asyncapi
+  lifecycle: production
+  owner: current-account
+  definition:
+    $text: ./events/AccountOpened.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: account-marked-dormant
+  title: AccountMarkedDormant
+  description: The account is marked dormant after an inactivity horizon (reversible).
+spec:
+  type: asyncapi
+  lifecycle: production
+  owner: current-account
+  definition:
+    $text: ./events/AccountMarkedDormant.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: account-reactivated
+  title: AccountReactivated
+  description: A dormant account is used again and reactivates.
+spec:
+  type: asyncapi
+  lifecycle: production
+  owner: current-account
+  definition:
+    $text: ./events/AccountReactivated.asyncapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: account-closed
+  title: AccountClosed
+  description: The account is closed (a business terminal).
+spec:
+  type: asyncapi
+  lifecycle: production
+  owner: current-account
+  definition:
+    $text: ./events/AccountClosed.asyncapi.yaml
 ---
 # The engine-declared cross-cutting (operations) integration events (ADR-PC-004 Amendment A4,
 # event-store §4.1/§4.3). Facts that apply to ANY instance regardless of family — declared once in

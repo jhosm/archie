@@ -1,0 +1,11 @@
+{
+  "type": "record",
+  "namespace": "accounts.current_account",
+  "name": "AccountMarkedDormant",
+  "doc": "The account is marked dormant after an inactivity horizon (ADR-PC-037: Active -> Dormant). Dormant is a NON-terminal, reversible state — an inactive account reactivates on use (accounts.current_account.AccountReactivated), distinguishing the demand account from the loan's good-or-closed binary. The dormancy CRITERIA (the inactivity horizon) are pack/product policy, not on this event. Business payload only (ADR-IC-002 §P5); CloudEvents envelope rides in Kafka headers, NOT here. No PII (ADR-PC-004 §P2).",
+  "fields": [
+    { "name": "account_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "AccountId (Guid) — the account stream id / opaque account_ref. Never PII (ADR-PC-004 §P2)." },
+    { "name": "marked_on", "type": { "type": "int", "logicalType": "date" }, "doc": "MarkedOn (DateOnly) — the value-date dormancy took effect, as days since epoch. An input date, never a clock read." },
+    { "name": "reason", "type": "string", "doc": "The structural dormancy reason code (e.g. INACTIVITY_HORIZON) — a stable machine code, never PII (ADR-PC-004 §P2)." }
+  ]
+}

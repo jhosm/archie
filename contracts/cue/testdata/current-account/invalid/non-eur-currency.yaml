@@ -1,0 +1,5 @@
+# REJECT: v1 is EUR-only — the schema pins `currency: "EUR"`, so a non-EUR variant conflicts at depth 1.
+variant_id: ca_pt_usd
+schema: current_account@2026.1
+pack: pt.2026.1
+currency: USD

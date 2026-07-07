@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "namespace": "accounts.current_account",
+  "name": "AccountOpened",
+  "doc": "The demand account (conta à ordem) is opened and starts transacting (ADR-PC-037: Pending -> Active). Carries the structural product identity fixed at opening; the account's balances are NOT here — both the accounting and available balances are spine-owned folds over the movement ledger + hold set (ADR-PC-033), never a stored number. Business payload only (ADR-IC-002 §P5); CloudEvents envelope rides in Kafka headers, NOT here. No PII (ADR-PC-004 §P2) — the account id is an opaque instance reference, never a name/NIF/IBAN. Account opening (KYC/onboarding) stays upstream (ADR-PC-024 / ADR-PC-030).",
+  "fields": [
+    { "name": "account_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "AccountId (Guid) — the account stream id, which is also this account's opaque account_ref. Never PII (ADR-PC-004 §P2)." },
+    { "name": "product_code", "type": "string", "doc": "The catalogue product code the account was opened under (e.g. ca_pt_standard) — the structural product identifier. NOT PII (ADR-PC-004 §P2)." },
+    { "name": "currency", "type": "string", "doc": "The account's ISO-4217 currency (e.g. EUR) — a structural token." },
+    { "name": "opened_on", "type": { "type": "int", "logicalType": "date" }, "doc": "OpenedOn (DateOnly) — the value-date the account opened, as days since epoch. An input date, never a clock read." }
+  ]
+}

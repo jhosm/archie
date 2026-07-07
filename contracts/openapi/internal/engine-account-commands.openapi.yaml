@@ -1,0 +1,407 @@
+openapi: 3.1.0
+# contracts/openapi/internal/engine-account-commands.openapi.yaml — the engine's INTERNAL
+# current_account (conta à ordem) lifecycle-command surface (ADR-PC-021 §D5; ADR-PC-037;
+# catalogued per ADR-IC-020). The first-transactional-family sibling of the deposit / loan command
+# specs. This file lives under contracts/openapi/internal/ — NOT specs/ — because it documents a
+# surface that is DELIBERATELY ABSENT from infra/kong/kong.yml: the engine command ingress is the
+# orchestrator saga dispatcher's mTLS-only target behind Boundary 2 (ADR-IC-006 §P5), never a
+# public client route.
+#
+# The openapi-catalog-validate.sh INTERNAL leg enforces exactly that posture: every internal spec
+# must carry info.x-internal (a non-empty reason), and NO operation below may ever match a public
+# Kong route. Cataloguing these five account lifecycle operations here keeps the Layer-4 route->spec
+# sweep (Layer4MappedEndpointSpecCoverageTests) covering the mapped routes for real, so no allowlist
+# entry is needed.
+#
+# NONE of these operations moves money — they only relabel the account's lifecycle state — so unlike
+# the deposit / loan money-movers there is no step-up SCA gate here. The synchronous AUTHORIZE
+# money-mover (place a hold or decline) is a separate authorize surface on the ADR-PC-034 technique,
+# not documented here.
+#
+# Shapes are transcribed from the REAL code surface, not invented: AccountsEndpoints.cs +
+# AccountsContracts.cs in families/current-account/src/Babelstone.Families.CurrentAccount.Application
+# (snake_case on the wire — the host's SnakeCaseLower JSON options; money as integer cents,
+# ADR-PC-010 §P1). The spec<->DTO lock is enforced by the Babelstone.ContractDrift.Tests Layer-1
+# suite: mutating a DTO without updating this file turns CI red. NO PII (ADR-PC-004 §P2): opaque
+# account tokens, structural codes, synthetic examples only. The one deliberate exception is
+# documented on ErasePersonalDataRequest.subject_pseudonym — a salted one-way hash, never the raw id.
+info:
+  title: Babelstone Engine — Current Account Commands (INTERNAL, mTLS-only)
+  version: 1.0.0
+  description: >
+    The engine's current_account (conta à ordem) lifecycle-command ingress (ADR-PC-037). INTERNAL —
+    this surface is deliberately NOT exposed through the public Kong edge (ADR-IC-006 §P5 Boundary
+    2): its callers are the orchestrator's saga command dispatcher, the MCP server's account tools,
+    and the ADR-PC-036 lifecycle-command driver (dormancy sweeps), all over the internal mTLS
+    network. The lifecycle commands are idempotent (ADR-PC-029): an at-least-once retry replays the
+    ORIGINAL outcome rather than re-applying the transition. Open honours the Idempotency-Key when
+    supplied (a new-stream append is naturally a one-shot) but does not require it; the operating
+    transitions (dormancy / reactivate / close) and the GDPR erase carry a mandatory caller-supplied
+    Idempotency-Key. NONE of these operations is step-up-SCA-gated: they move no money, only the
+    account's lifecycle label — the synchronous authorize money-mover is a separate surface. Account
+    opening (KYC / onboarding) stays upstream (ADR-PC-024 / ADR-PC-030): the engine records the
+    opened account, it never runs the checks that approve it. Errors are RFC 9457
+    application/problem+json.
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract        # GDPR Art.6(1)(b) — performance of the current-account contract
+  x-authorized-consumers:
+    - orchestrator          # the saga command dispatcher (ADR-PC-029)
+    - mcp-server            # the account tools (ADR-IC-010)
+    - lifecycle-driver      # dormancy sweeps via the ADR-PC-036 driver
+  # ── INTERNAL marker (openapi-catalog-validate.sh internal leg) ──
+  # A non-empty reason string is REQUIRED on every spec under contracts/openapi/internal/. The gate
+  # FAILS if any operation below ever appears as a public Kong route — exposing one publicly must
+  # MOVE its spec to specs/ (and pass the public reconcile) in the same change.
+  x-internal: >-
+    The engine current-account command ingress is the mTLS-only Boundary-2 target of the
+    orchestrator saga / MCP tools / lifecycle driver (ADR-IC-006 §P5, ADR-PC-029, ADR-PC-037) —
+    deliberately absent from infra/kong/kong.yml; the public write path is the edge saga front door.
+servers:
+  - url: https://engine:8080
+    description: >
+      The engine host's internal (mTLS-only) Kestrel surface — deliberately NOT the public Kong
+      gateway host; unauthenticated transport is rejected at Boundary 2 (ADR-IC-006 §P5).
+paths:
+  /v1/accounts:
+    post:
+      operationId: openAccount
+      summary: Open a new demand account (opens the stream).
+      description: >
+        Opens the account stream for an account whose KYC / onboarding was approved upstream
+        (ADR-PC-030 / ADR-PC-024). Appends AccountOpened and transitions the aggregate to Active;
+        the account's balances are NOT set here — both the accounting and available balances are
+        spine-owned folds over the movement ledger + hold set (ADR-PC-033), zero at opening. The
+        Idempotency-Key is OPTIONAL here (a new-stream append is naturally a one-shot) but honoured
+        when supplied, so a retry of the SAME open dedupes (ADR-PC-029).
+      parameters:
+        - $ref: '#/components/parameters/OptionalIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAccountRequest'
+      responses:
+        '201':
+          description: >
+            Opened (or the idempotent replay of the original open — same body, no second append).
+            Location points at the canonical read resource /v1/accounts/{id}; commit_sequence is the
+            ADR-IC-005 §P3 read-your-writes token.
+          headers:
+            Location:
+              description: The canonical account read resource for the new stream.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountCommandResponse'
+        '400':
+          description: A present-but-non-UUID Idempotency-Key (ADR-PC-029) — fail loud rather than admit a non-idempotent key.
+        '409':
+          description: The account stream was opened concurrently (optimistic-concurrency conflict on the new stream).
+        '422':
+          description: >
+            Opening was refused — an empty product code / currency, or a re-open of an
+            already-existing account (the decider rejects an illegal transition, ADR-PC-037).
+  /v1/accounts/{id}/dormancy:
+    post:
+      operationId: markAccountDormant
+      summary: Mark a live account dormant after an inactivity horizon.
+      description: >
+        Appends AccountMarkedDormant (Active -> Dormant, ADR-PC-037). Dormant is a NON-terminal,
+        reversible state (see reactivate). The dormancy CRITERIA (the inactivity horizon) are pack /
+        product policy, not decided here. No money moves, so this is NOT step-up-SCA-gated; the
+        mandatory Idempotency-Key (ADR-PC-029) makes an at-least-once retry replay rather than
+        re-transition.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkAccountDormantRequest'
+      responses:
+        '200':
+          description: The account after being marked dormant (the authoritative post-append fold). An idempotent replay returns the same shape.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountCommandResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: Not markable dormant from the current lifecycle (legal only from Active, ADR-PC-037).
+  /v1/accounts/{id}/reactivate:
+    post:
+      operationId: reactivateAccount
+      summary: Reactivate a dormant account (the reverse leg of Dormant <-> Active).
+      description: >
+        Appends AccountReactivated (Dormant -> Active, ADR-PC-037) — the reverse leg of the
+        reversible pair. No money moves, so this is NOT step-up-SCA-gated; the mandatory
+        Idempotency-Key (ADR-PC-029) makes an at-least-once retry replay rather than re-transition.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReactivateAccountRequest'
+      responses:
+        '200':
+          description: The account after reactivation (folded back to Active). An idempotent replay returns the same shape.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountCommandResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: Not reactivatable from the current lifecycle (legal only from Dormant, ADR-PC-037).
+  /v1/accounts/{id}/close:
+    post:
+      operationId: closeAccount
+      summary: Close a live account (a business terminal).
+      description: >
+        Appends AccountClosed (Active -> Closed, ADR-PC-037) — a business terminal. A closed account
+        still holds the subject's PII until erased, so GDPR erasure remains legal from Closed. No
+        money moves, so this is NOT step-up-SCA-gated; the mandatory Idempotency-Key (ADR-PC-029)
+        makes an at-least-once retry replay rather than re-transition.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloseAccountRequest'
+      responses:
+        '200':
+          description: The account after closing (folded to Closed). An idempotent replay returns the same shape.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountCommandResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: Not closable from the current lifecycle (legal only from Active, ADR-PC-037).
+  /v1/accounts/{id}/erase-personal-data:
+    post:
+      operationId: eraseAccountPersonalData
+      summary: GDPR Article 17 right-to-be-forgotten (erasure fact after crypto-shred).
+      description: >
+        Records the erasure fact for an account whose data-subject key the host has ALREADY
+        crypto-shredded (ADR-PC-004 §P3) — a DIFFERENT gate from any money-mover SCA gate, so this
+        op is ungated by step-up SCA. Erasure is legal from any state that still holds PII (Active /
+        Dormant / Failed / Closed) and rejected from Pending or an already-Erased account (also the
+        double-erase idempotency guard). Key destruction is irreversible, so the mandatory
+        Idempotency-Key (ADR-PC-029) makes the erasure safely retryable.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErasePersonalDataRequest'
+      responses:
+        '200':
+          description: The erasure outcome (the raw subject id is never echoed — only the opaque pseudonym travels in).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountCommandResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict).
+        '422':
+          description: Not erasable from the current lifecycle (Pending, or already erased under a different command id).
+components:
+  parameters:
+    AccountId:
+      name: id
+      in: path
+      required: true
+      description: >
+        The account's raw stream id (a canonical UUID) — the same id form the engine read surface
+        takes (GET /v1/accounts/{id}).
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >
+        The deterministic command id (ADR-PC-029) — a UUID, in practice the saga's saga_outbox row
+        id. MANDATORY on every operating transition + erase: the engine dedupes per aggregate on
+        this key and replays the ORIGINAL outcome (same commit_sequence, no second append) on an
+        at-least-once retry; absent/malformed fails loud (400).
+      schema:
+        type: string
+        format: uuid
+    OptionalIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >
+        OPTIONAL on open (ADR-PC-029): a new-stream append is naturally a one-shot, so the key is
+        not required, but when supplied it must be a UUID and a retry of the SAME open dedupes to the
+        original outcome. A present-but-non-UUID value fails loud (400).
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    OpenAccountRequest:
+      type: object
+      description: >
+        The open command (OpenAccountRequest, snake_case on the wire). The account's KYC / onboarding
+        was approved upstream (ADR-PC-030 / ADR-PC-024). account_id is an opaque instance reference,
+        never PII (ADR-PC-004 §P2); currency is EUR in v1; actor defaults to the operations
+        account-officer principal; opened_at is host-stamped from the wall clock when omitted (the
+        decider stays pure, ADR-PC-010 §P5).
+      required: [account_id, product_code, currency]
+      properties:
+        account_id:
+          type: string
+          format: uuid
+          description: The account stream/aggregate id (caller-supplied) — the opaque account_ref, never PII.
+        product_code:
+          type: string
+          description: The catalogue product code the account is opened under, e.g. ca_pt_standard.
+        currency:
+          type: string
+          description: The account's ISO-4217 currency (e.g. EUR) — a structural token.
+        opened_at:
+          type: string
+          format: date-time
+          description: The instant the account opens and the event's valid time; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to the operations account-officer principal).
+      examples:
+        - account_id: 7c2e3d4f-5a6b-4c8d-9e0f-1a2b3c4d5e6f
+          product_code: ca_pt_standard
+          currency: EUR
+    MarkAccountDormantRequest:
+      type: object
+      description: >
+        The mark-dormant command (MarkAccountDormantRequest). reason is a stable, non-PII dormancy
+        reason code; marked_at is host-stamped when omitted; actor defaults to the operations
+        account-officer principal.
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          description: A stable, non-PII dormancy reason code (e.g. INACTIVITY_HORIZON).
+        marked_at:
+          type: string
+          format: date-time
+          description: The instant dormancy takes effect; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to the operations account-officer principal).
+      examples:
+        - reason: INACTIVITY_HORIZON
+    ReactivateAccountRequest:
+      type: object
+      description: >
+        The reactivate command (ReactivateAccountRequest) — the reverse leg of Dormant <-> Active. It
+        carries only host-stampable metadata: reactivated_at is host-stamped when omitted; actor
+        defaults to the operations account-officer principal.
+      properties:
+        reactivated_at:
+          type: string
+          format: date-time
+          description: The instant the account reactivates; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to the operations account-officer principal).
+      examples:
+        - {}
+    CloseAccountRequest:
+      type: object
+      description: >
+        The close command (CloseAccountRequest). closure_reason is a stable, non-PII closure reason
+        code; closed_at is host-stamped when omitted; actor defaults to the operations
+        account-officer principal.
+      required: [closure_reason]
+      properties:
+        closure_reason:
+          type: string
+          description: A stable, non-PII closure reason code (e.g. CUSTOMER_REQUEST).
+        closed_at:
+          type: string
+          format: date-time
+          description: The instant the account closes; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to the operations account-officer principal).
+      examples:
+        - closure_reason: CUSTOMER_REQUEST
+    ErasePersonalDataRequest:
+      type: object
+      description: >
+        The GDPR Article 17 erasure command (ErasePersonalDataRequest). subject_pseudonym is a salted
+        one-way hash of the data-subject id — an OPAQUE reference, NEVER the raw subject id
+        (ADR-PC-004 §P2); the host has already crypto-shredded the subject's key (ADR-PC-004 §P3).
+        erasure_reason is a stable machine code; erased_at is host-stamped when omitted; actor
+        defaults to the data-protection-officer principal.
+      required: [subject_pseudonym, erasure_reason]
+      properties:
+        subject_pseudonym:
+          type: string
+          description: A salted one-way hash of the data-subject id — an opaque reference, never the raw subject id.
+        erasure_reason:
+          type: string
+          description: A stable machine code (e.g. GDPR_ARTICLE_17) — never PII.
+        erased_at:
+          type: string
+          format: date-time
+          description: The instant erasure took effect; host-stamped when omitted.
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to the data-protection-officer principal).
+      examples:
+        - subject_pseudonym: subj-hash-8b3e6f21a4c9
+          erasure_reason: GDPR_ARTICLE_17
+    AccountCommandResponse:
+      type: object
+      description: >
+        An account command outcome (AccountCommandResponse): the account id, its folded lifecycle
+        status, and commit_sequence — the ADR-IC-005 §P3 read-your-writes token the caller hands back
+        on the follow-up read. Structural facts only, no PII.
+      required: [account_id, status, commit_sequence]
+      properties:
+        account_id:
+          type: string
+          format: uuid
+          description: The account's stream id.
+        status:
+          type: string
+          description: The folded lifecycle status (e.g. ACTIVE, DORMANT, CLOSED, ERASED, FAILED) — an uppercased structural string.
+        commit_sequence:
+          type: integer
+          format: int64
+          description: The per-stream commit sequence this outcome reached (ADR-IC-005 §P3).
+      examples:
+        - account_id: 7c2e3d4f-5a6b-4c8d-9e0f-1a2b3c4d5e6f
+          status: ACTIVE
+          commit_sequence: 0

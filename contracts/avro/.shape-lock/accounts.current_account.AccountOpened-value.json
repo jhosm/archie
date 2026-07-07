@@ -1,0 +1,31 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "account_id",
+      "optional": false,
+      "type": "string@uuid"
+    },
+    {
+      "has_default": false,
+      "name": "product_code",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "currency",
+      "optional": false,
+      "type": "string"
+    },
+    {
+      "has_default": false,
+      "name": "opened_on",
+      "optional": false,
+      "type": "int@date"
+    }
+  ],
+  "name": "AccountOpened",
+  "namespace": "accounts.current_account",
+  "subject": "accounts.current_account.AccountOpened-value"
+}

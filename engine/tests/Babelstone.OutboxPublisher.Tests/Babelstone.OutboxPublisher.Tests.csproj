@@ -47,5 +47,11 @@
          family's handler registrations present (ADR-IC-017 §P3). As more families ship published events
          their test references join here. -->
     <ProjectReference Include="../../../families/personal-loan/src/Babelstone.Families.PersonalLoan/Babelstone.Families.PersonalLoan.csproj" />
+    <!-- current_account is referenced for the same reason as personal_loan above: its assembly must land
+         in the output dir so the family-agnostic catalog sweeps (AvroCatalogSweepTests,
+         CatalogGatedRelayReverseOrphanTests) can load it and resolve its four published .avsc (the account
+         lifecycle events) to their CLR DomainEvent records for the round-trip + catalogued ⊆ relay-capable
+         checks (ADR-IC-017). -->
+    <ProjectReference Include="../../../families/current-account/src/Babelstone.Families.CurrentAccount/Babelstone.Families.CurrentAccount.csproj" />
   </ItemGroup>
 </Project>

@@ -1,0 +1,8 @@
+# REJECT: `overdraft_limit` is not a field #CurrentAccount declares — the arranged-overdraft construct
+# is named `arranged_overdraft_limit`. A closed definition (ADR-PC-006 Decision) rejects an unknown
+# field at depth 1; there is no DSL escape hatch, so a typo'd or invented field cannot be silently carried.
+variant_id: ca_pt_typo
+schema: current_account@2026.1
+pack: pt.2026.1
+currency: EUR
+overdraft_limit: 50000

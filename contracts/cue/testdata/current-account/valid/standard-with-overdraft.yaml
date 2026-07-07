@@ -1,0 +1,13 @@
+# The canonical PT demand account (conta à ordem): EUR, an arranged overdraft of EUR 500, a
+# per-transaction cap and daily velocity limit, and an 18-month inactivity horizon before it is
+# eligible for dormancy. The overdraft-interest rate is resolved from the rate sheet, not declared here.
+variant_id: ca_pt_standard
+schema: current_account@2026.1
+pack: pt.2026.1
+currency: EUR
+arranged_overdraft_limit: 50000
+transaction_limits:
+  per_transaction_max_cents: 500000
+  daily_velocity_cents: 1000000
+  monthly_velocity_cents: 10000000
+dormancy_horizon_days: 540
