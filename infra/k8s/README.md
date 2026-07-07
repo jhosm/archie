@@ -266,7 +266,11 @@ the whole VCT list and drop the base storage request. At `kustomize build` /
 only at apply, once Phase-1 [`hetzner-k3s`](../hetzner-k3s/) installs the Hetzner CCM + CSI.
 
 **Public edge — the recorded drift.** `ingress.yaml` adds a public Traefik
-`Ingress` (k3s bundles Traefik as the `IngressClass`) for **four** hosts:
+`Ingress` (the `traefik` `IngressClass` is provided by the Traefik controller
+installed at [`bootstrap/`](./overlays/staging/bootstrap/helm/traefik-values.yaml) —
+hetzner-k3s disables the *bundled* Traefik + servicelb, so on this single node
+Traefik is installed back and binds the node's `:80`/`:443` directly via hostPort,
+there being no LoadBalancer; bd babelstone-zla1.14) for **four** hosts:
 `api.babelstone.dev` → the **Kong** proxy (8000), `backstage.babelstone.dev` →
 **Backstage** (7007), `app.babelstone.dev` → **Mission Control** (9000, the demo
 UI, bd babelstone-zla1.5.5 — the browser hits only this host and Mission Control

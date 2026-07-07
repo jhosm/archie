@@ -133,3 +133,14 @@ the source of truth either way.
   allow-list your operator `/32` plus the GitHub Actions egress ranges from
   `https://api.github.com/meta` (`.actions[]`) — read its caveats (list size vs firewall rule
   limits, rotation breaking `cd.yml`, and it admitting any Actions tenant) before flipping it.
+- **The public web ports (80/443) are provisioned out-of-band** (bd babelstone-zla1.14).
+  hetzner-k3s synthesises the Hetzner Cloud Firewall from `cluster.yaml`'s `allowed_networks`,
+  which only expresses the `ssh` and `api` lists — there is no knob for 80/443 there. So the
+  inbound web rule is added by [`firewall-web.sh`](./firewall-web.sh), which fetches
+  Cloudflare's published ranges and scopes 80/443 to them (only the Cloudflare proxy reaches
+  the origin — the node IP is not directly scannable). Same rotation caveat as the Actions
+  ranges above: re-run it after Cloudflare changes its published list, or a stale rule silently
+  drops traffic. Pairs with the Traefik ingress controller
+  ([`../k8s/overlays/staging/bootstrap/helm/traefik-values.yaml`](../k8s/overlays/staging/bootstrap/helm/traefik-values.yaml)),
+  which binds those ports on the node — hetzner-k3s disables the bundled Traefik + servicelb, so
+  both the controller and the firewall rule are required for `https://*.babelstone.dev` to answer.
