@@ -165,12 +165,15 @@ public sealed class EmitContractFitnessTests
         // Non-vacuity guard: the regex must extract ALL current family DomainEvent types, not a
         // subset (many are store-only with no .avsc, so a regex that silently dropped one would leave
         // a schemaless event unguarded). If a family adds/removes an event, update this count knowingly.
-        // Current total = 17: 11 from term_deposit + 6 from personal_loan (LoanDisbursed,
-        // LoanDisbursementFailed, LoanInstallmentPaid, LoanRepaidEarly, LoanSettled, LoanWrittenOff).
+        // Current total = 22: 11 from term_deposit + 6 from personal_loan (LoanDisbursed,
+        // LoanDisbursementFailed, LoanInstallmentPaid, LoanRepaidEarly, LoanSettled, LoanWrittenOff) +
+        // 5 from current_account (AccountOpened, AccountOpeningFailed, AccountMarkedDormant,
+        // AccountReactivated, AccountClosed).
         // GDPR Article 17 erasure is NO LONGER a family event: it is the engine-declared cross-cutting
         // operations.PersonalDataErasureRequested (ADR-PC-004 A4), so it lives in the spine
         // (CrossCuttingEvents.cs), not families/**/Events.cs, and is not counted by this family scan.
-        Assert.Equal(17, eventTypes.Count);
+        // Holds/movements are likewise cross-cutting operations.* records, not current_account events.
+        Assert.Equal(22, eventTypes.Count);
 
         var violations = eventTypes
             .Select(name => (name, suffix: MatchedClockDrivenSuffix(name)))

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Families.CurrentAccount</RootNamespace>
+    <AssemblyName>Babelstone.Families.CurrentAccount</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- A family references ONLY Babelstone.Engine (the dispatch/fold abstractions + the ADR-PC-033
+         IAccount/IHoldable seam) plus Babelstone.FinancialTypes (Money) — never EventStore or Pii. A
+         handler therefore structurally cannot reach the database or the OpenBao seam. The
+         family → engine arrow is one-way (ADR-PC-021 §P2; ENGINE_FAMILY_AGNOSTIC). FinancialTypes is
+         referenced ahead of the money-carrying events the authorize/overdraft path adds (bd 30hf.2/.4). -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+
+    <!-- The handler-purity analysers (BENG001/002/003) guard every IEventHandler.Apply body in this
+         family — the same checker the engine attaches to its own handlers. A clock/IO/rng call in a
+         fold fails the build (warnings are errors via Directory.Build.props). -->
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine.Analyzers/Babelstone.Engine.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

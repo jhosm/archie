@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Babelstone.Families.CurrentAccount.Application</RootNamespace>
+    <AssemblyName>Babelstone.Families.CurrentAccount.Application</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The current_account DECIDER (ADR-PC-021 §P3): the impure command-side layer that turns a
+         command into events. Unlike the pure-fold project (Babelstone.Families.CurrentAccount, which
+         references only Engine + FinancialTypes so a fold cannot reach a DB), the decider consults the
+         LifecycleTransitions legality table and appends through the runtime. No handler-purity analyser
+         here by design (ADR-PC-021 §P3): this is the impure layer, reviewed by the replay-determinism /
+         silent-failure lenses. The dependency arrow is family→engine only (ADR-PC-021 §D2/§P2).
+         This project holds the LIFECYCLE-command decider (open/dormant/reactivate/close, bd 30hf.1);
+         the synchronous AUTHORIZE decider + its declined taxonomy is its sibling (bd 30hf.2), and the
+         IFamilyHostModule + endpoints + read-model store are the host-wiring lane (bd 30hf.6). -->
+    <ProjectReference Include="../Babelstone.Families.CurrentAccount/Babelstone.Families.CurrentAccount.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.Engine/Babelstone.Engine.csproj" />
+    <ProjectReference Include="../../../../engine/src/Babelstone.FinancialTypes/Babelstone.FinancialTypes.csproj" />
+  </ItemGroup>
+</Project>

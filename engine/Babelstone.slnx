@@ -64,6 +64,14 @@
          InstallmentRule + the IFamilyLifecycleModule that binds its forward installment-calendar Npgsql store
          and registers the rule, discovered by the lifecycle host's assembly-scan (family → core arrow). -->
     <Project Path="../families/personal-loan/src/Babelstone.Families.PersonalLoan.Lifecycle/Babelstone.Families.PersonalLoan.Lifecycle.csproj" />
+    <!-- The current_account family (ADR-PC-037 / ADR-PC-030 roadmap item 4, bd babelstone-30hf): the conta à
+         ordem — the FIRST transactional (non-degenerate) instance of the ADR-PC-033 Account abstraction (the
+         accounting/available split + a hold ledger, IAccount + IHoldable). This scaffold (bd babelstone-30hf.1)
+         is the pure-fold schema + the lifecycle-command decider; the synchronous authorize decider (bd 30hf.2),
+         hold reconciliation (bd 30hf.3), and host wiring + contracts (bd 30hf.6) land on top. Same family →
+         engine plugin arrow (ADR-PC-021). -->
+    <Project Path="../families/current-account/src/Babelstone.Families.CurrentAccount/Babelstone.Families.CurrentAccount.csproj" />
+    <Project Path="../families/current-account/src/Babelstone.Families.CurrentAccount.Application/Babelstone.Families.CurrentAccount.Application.csproj" />
     <!-- The in-house saga orchestrator (ADR-IC-003, Epic H.1): the hand-rolled ConstitutionProcess
          state machine + saga-state/transition persistence + idempotent inbox-driven advance. An
          extraction-ready subtree (ADR-PC-019 §P2) that builds with the engine pipeline. -->
@@ -165,6 +173,12 @@
          loan-installment per-occurrence settlement walk through the substrate saga (occurrence N parked
          while N+1 arrives is representable — ADR-PC-032 §A9/§A10 Revised 2026-07-04). -->
     <Project Path="../families/personal-loan/tests/Babelstone.Families.PersonalLoan.Orchestration.Tests/Babelstone.Families.PersonalLoan.Orchestration.Tests.csproj" />
+    <!-- The current_account family tests (ADR-PC-037, bd babelstone-30hf.1): the account-seam conformance
+         (IAccount + IHoldable — the first non-degenerate account), the replay/fold tests over the account
+         position + the cross-cutting hold/erasure decode, the lifecycle legality (incl. the reversible
+         Dormant ⇄ Active pair), and the pure lifecycle-command decider. All Docker-free. -->
+    <Project Path="../families/current-account/tests/Babelstone.Families.CurrentAccount.Tests/Babelstone.Families.CurrentAccount.Tests.csproj" />
+    <Project Path="../families/current-account/tests/Babelstone.Families.CurrentAccount.Application.Tests/Babelstone.Families.CurrentAccount.Application.Tests.csproj" />
     <!-- H.1 saga substrate: pure state-machine tests + saga-persistence/advance/role-envelope
          integration tests (the latter [Trait("Category","Integration")], filtered out of the
          default lane). -->
