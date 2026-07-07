@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-07-05 |
 | Deciders | jhosm |
 | Shape | Contract-shape |
@@ -113,4 +113,4 @@ This decision's load-bearing commitments are fitness functions ([ADR-PC-020 §P5
 
 ---
 
-*Proposed 2026-07-05 by jhosm.*
+*Proposed 2026-07-05 by jhosm. Accepted 2026-07-07 by jhosm.*
