@@ -1,0 +1,25 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "account_id",
+      "optional": false,
+      "type": "string@uuid"
+    },
+    {
+      "has_default": false,
+      "name": "marked_on",
+      "optional": false,
+      "type": "int@date"
+    },
+    {
+      "has_default": false,
+      "name": "reason",
+      "optional": false,
+      "type": "string"
+    }
+  ],
+  "name": "AccountMarkedDormant",
+  "namespace": "accounts.current_account",
+  "subject": "accounts.current_account.AccountMarkedDormant-value"
+}

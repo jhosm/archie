@@ -1,0 +1,7 @@
+# A v1 basic demand account: EUR, no arranged overdraft and no velocity caps (every limit construct
+# is optional, so a variant that configures none is valid). The engine still applies the balance gate;
+# there is simply no overdraft headroom and no configured velocity ceiling.
+variant_id: ca_pt_basic
+schema: current_account@2026.1
+pack: pt.2026.1
+currency: EUR

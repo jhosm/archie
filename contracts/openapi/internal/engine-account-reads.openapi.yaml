@@ -1,0 +1,183 @@
+openapi: 3.1.0
+# contracts/openapi/internal/engine-account-reads.openapi.yaml — the engine's current_account
+# (conta à ordem) CQRS read surface (ADR-PC-021 §D5; ADR-PC-027; ADR-PC-037; catalogued per
+# ADR-IC-020). The first-transactional-family sibling of the deposit / loan reads. This ONE
+# canonical account point-read is served by the engine host, but it is NOT an infra/kong/kong.yml
+# route — no public account read is exposed today. So it lives here under contracts/openapi/internal/,
+# exactly like engine-loan-reads: INTERNAL by design, and the never-public gate forces its operation
+# to MOVE to specs/ in the same change if an account read is ever exposed through Kong.
+#
+# Cataloguing it here keeps the Layer-4 route->spec sweep (Layer4MappedEndpointSpecCoverageTests)
+# covering GET /v1/accounts/{id} for real, so no allowlist entry is needed.
+#
+# Shapes are transcribed from the REAL code surface, not invented: AccountResponse / AccountHoldView
+# in families/current-account/src/Babelstone.Families.CurrentAccount.Application/AccountsContracts.cs
+# and the GetAccountAsync handler in AccountsEndpoints.cs (snake_case on the wire — the host's JSON
+# options; money as integer cents, ADR-PC-010 §P1), locked by the Babelstone.ContractDrift.Tests
+# Layer-1 suite. The structural / lifecycle half is folded from the account stream; the two balances
+# and the active-hold set are read from the SPINE-owned folds (AccountBalanceReader), keyed by the
+# opaque account_ref (ADR-PC-033). No PII (ADR-PC-004 §P2) — structural facts and cents-native
+# rollups only; the account reference is an opaque token, never an IBAN.
+info:
+  title: Babelstone Engine — Current Account Reads (INTERNAL)
+  version: 1.0.0
+  description: >
+    The CQRS read surface for current accounts (ADR-PC-027 storage-opaque read surfaces): ONE
+    canonical account resource. The structural / lifecycle half is folded from the event stream; the
+    accounting and available balances and the active-hold set are the spine-owned folds
+    (AccountBalanceReader), never a family-named read-model table (ACCOUNT_BALANCE_IS_A_FOLD,
+    ADR-PC-033). Read-only — no command is stapled to a read surface (ADR-PC-018 §6). INTERNAL: this
+    is not a Kong route; no public account read is exposed today.
+  # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
+  x-owner: platform-engine
+  x-owner-contact: platform-engine@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: contract        # GDPR Art.6(1)(b) — performance of the current-account contract
+  x-authorized-consumers:
+    - orchestrator          # the saga reads the account state on its command path
+    - mcp-server            # the account tools' read-back (ADR-IC-010)
+    - platform-operations   # ops tooling / read-your-writes verification
+  # ── INTERNAL marker (openapi-catalog-validate.sh internal leg) ──
+  x-internal: >-
+    The engine account read is served on the internal (mTLS-only) Kestrel surface and is
+    deliberately NOT an infra/kong/kong.yml route — no public account read exists today; exposing one
+    publicly must move its operation to specs/ in the same change.
+servers:
+  - url: https://engine:8080
+    description: >
+      The engine host's internal (mTLS-only) Kestrel surface — deliberately NOT the public Kong
+      gateway host (ADR-IC-006 §P5 Boundary 2).
+paths:
+  /v1/accounts/{id}:
+    get:
+      operationId: getAccount
+      summary: The one canonical account read resource.
+      description: >
+        The current belief of ONE account: the structural / lifecycle half folded from the event
+        stream, plus the two balances and the active-hold set read from the spine-owned folds
+        (AccountBalanceReader, keyed by the account_ref). Returns 404 while the account is still
+        Pending (no AccountOpened appended yet) or the stream does not exist — never a phantom empty
+        account.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: >
+            The account's raw stream id (a canonical UUID) — the same id form the account command
+            surface takes (POST /v1/accounts/{id}/…).
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The account's current folded position + spine-owned balances/holds (money as integer cents).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '404':
+          description: >
+            No account resource — the stream is still Pending (no open appended yet) or does not
+            exist (the resource does not exist; never a phantom empty account).
+components:
+  schemas:
+    AccountResponse:
+      type: object
+      description: >
+        The account resource (AccountResponse, ADR-PC-021 §D5 boundary). The family record supplies
+        the structural / lifecycle half; accounting_balance_cents, available_balance_cents and
+        active_holds are read from the spine-owned folds (ACCOUNT_BALANCE_IS_A_FOLD, ADR-PC-033).
+        snake_case on the wire, money as integer cents (ADR-PC-010 §P1), no PII (ADR-PC-004 §P2) — the
+        account id is an opaque instance reference.
+      required:
+        - account_id
+        - product_code
+        - currency
+        - opened_on
+        - status
+        - accounting_balance_cents
+        - available_balance_cents
+        - active_holds
+      properties:
+        account_id:
+          type: string
+          format: uuid
+          description: The account's stream id / opaque account_ref.
+        product_code:
+          type: string
+          description: The catalogue structural code the account was opened under.
+        currency:
+          type: string
+          description: The account's ISO-4217 currency (e.g. EUR).
+        opened_on:
+          type: string
+          format: date
+          description: The value-date the account opened.
+        status:
+          type: string
+          description: >
+            The folded lifecycle status (e.g. ACTIVE, DORMANT, CLOSED, ERASED) — an uppercased
+            structural string, deliberately not a closed enum here.
+        accounting_balance_cents:
+          type: integer
+          format: int64
+          description: What has POSTED — the signed sum of movements recorded against the account_ref, integer cents.
+        available_balance_cents:
+          type: integer
+          format: int64
+          description: What is SPENDABLE now — accounting balance minus the sum of active holds, integer cents (computed, never stored).
+        active_holds:
+          type: array
+          description: The account's currently-active holds — a read over the spine-owned active-hold fold (ADR-PC-033).
+          items:
+            $ref: '#/components/schemas/AccountHoldView'
+      examples:
+        - account_id: 7c2e3d4f-5a6b-4c8d-9e0f-1a2b3c4d5e6f
+          product_code: ca_pt_standard
+          currency: EUR
+          opened_on: "2026-03-01"
+          status: ACTIVE
+          accounting_balance_cents: 150000
+          available_balance_cents: 120000
+          active_holds:
+            - hold_id: hold-4d9f2a1c
+              amount_cents: 30000
+              value_date: "2026-03-05"
+              state: Active
+              kind: Authorization
+    AccountHoldView:
+      type: object
+      description: >
+        One active hold on the account (AccountHoldView) — a read shape over the spine-owned
+        active-hold fold (ADR-PC-033), never a stored source of truth. Integer cents (ADR-PC-010 §P1),
+        no PII: the hold id and any court reference are structural.
+      required:
+        - hold_id
+        - amount_cents
+        - state
+        - kind
+      properties:
+        hold_id:
+          type: string
+          description: The dedup / correlation key every lifecycle event of this hold carries.
+        amount_cents:
+          type: integer
+          format: int64
+          description: The earmarked amount, integer cents.
+        value_date:
+          type: string
+          format: date
+          description: An authorization hold's economic effective date (its expiry-horizon axis); null for a legal hold.
+        state:
+          type: string
+          description: Where in its lifecycle this hold is (Active on the read view, by query).
+        kind:
+          type: string
+          description: Authorization or Legal (ADR-PC-041) — the observable "why".
+        legal_reference:
+          type: string
+          description: A legal hold's court / case reference (ADR-PC-041); null for an authorization hold. Structural, never PII.
+        expires_at:
+          type: string
+          format: date
+          description: A legal hold's advisory expiry horizon; null = open-ended or an authorization hold.

@@ -1,0 +1,19 @@
+{
+  "fields": [
+    {
+      "has_default": false,
+      "name": "account_id",
+      "optional": false,
+      "type": "string@uuid"
+    },
+    {
+      "has_default": false,
+      "name": "reactivated_on",
+      "optional": false,
+      "type": "int@date"
+    }
+  ],
+  "name": "AccountReactivated",
+  "namespace": "accounts.current_account",
+  "subject": "accounts.current_account.AccountReactivated-value"
+}

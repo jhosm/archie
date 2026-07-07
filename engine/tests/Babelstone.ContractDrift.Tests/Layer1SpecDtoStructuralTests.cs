@@ -9,6 +9,10 @@ using Xunit;
 // (ErasePersonalDataRequest), so alias the namespace rather than pull it into scope and collide.
 using Loan = Babelstone.Families.PersonalLoan.Application;
 
+// The current_account DTOs (AccountsContracts.cs) likewise share ErasePersonalDataRequest with the
+// deposit / loan surfaces, so alias their namespace too.
+using Account = Babelstone.Families.CurrentAccount.Application;
+
 namespace Babelstone.ContractDrift.Tests;
 
 /// <summary>
@@ -100,6 +104,17 @@ public sealed class Layer1SpecDtoStructuralTests
         { "contracts/openapi/internal/engine-loan-commands.openapi.yaml", "ErasePersonalDataRequest", typeof(Loan.ErasePersonalDataRequest), Mode.Request },
         { "contracts/openapi/internal/engine-loan-commands.openapi.yaml", "LoanCommandResponse", typeof(Loan.LoanCommandResponse), Mode.Response },
         { "contracts/openapi/internal/engine-loan-reads.openapi.yaml", "Loan", typeof(Loan.LoanResponse), Mode.Response },
+
+        // current_account lifecycle-command + read surface (contracts/openapi/internal/engine-account-commands,
+        // engine-account-reads). The five lifecycle ops all answer with the one AccountCommandResponse; the
+        // read is the folded AccountResponse composed with the spine-owned balances/holds.
+        { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "OpenAccountRequest", typeof(Account.OpenAccountRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "MarkAccountDormantRequest", typeof(Account.MarkAccountDormantRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "ReactivateAccountRequest", typeof(Account.ReactivateAccountRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "CloseAccountRequest", typeof(Account.CloseAccountRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "ErasePersonalDataRequest", typeof(Account.ErasePersonalDataRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "AccountCommandResponse", typeof(Account.AccountCommandResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-account-reads.openapi.yaml", "AccountResponse", typeof(Account.AccountResponse), Mode.Response },
 
         // NOT here, deliberately:
         //  * RateBand — its wire shape is OWNED by RateBandJsonConverter (the [lower, upper]

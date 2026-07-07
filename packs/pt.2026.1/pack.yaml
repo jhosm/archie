@@ -59,6 +59,7 @@ dependencies:
 schema_pins:
   term_deposit: term_deposit@2026.1
   personal_loan: personal_loan@2026.1
+  current_account: current_account@2026.1
 
 rate_sheet_refs:
   - deposits-pt

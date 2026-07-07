@@ -1,0 +1,10 @@
+{
+  "type": "record",
+  "namespace": "accounts.current_account",
+  "name": "AccountReactivated",
+  "doc": "A dormant account is used again and reactivates (ADR-PC-037: Dormant -> Active) — the reverse leg of the reversible Dormant <-> Active pair. Business payload only (ADR-IC-002 §P5); CloudEvents envelope rides in Kafka headers, NOT here. No PII (ADR-PC-004 §P2).",
+  "fields": [
+    { "name": "account_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "AccountId (Guid) — the account stream id / opaque account_ref. Never PII (ADR-PC-004 §P2)." },
+    { "name": "reactivated_on", "type": { "type": "int", "logicalType": "date" }, "doc": "ReactivatedOn (DateOnly) — the value-date the account reactivated, as days since epoch. An input date, never a clock read." }
+  ]
+}

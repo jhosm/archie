@@ -83,6 +83,15 @@ public sealed class HostModuleLoaderTests
         var personalLoan = modules.Single(m => m.FamilyName == "personal_loan");
         Assert.Equal("personal_loan@2026.1", personalLoan.SchemaVersion);
         Assert.Equal("personal_loan", personalLoan.AggregateType);
+
+        // The current_account (conta à ordem) family — the first TRANSACTIONAL family — is discovered the
+        // same way once the host carries its ProjectReference, wired into the running host with no
+        // per-family host edit beyond that scan anchor (ADR-PC-037). Its (schema_version, aggregate_type)
+        // must match the pinned pack's families.yaml entry, or the boot cross-check fails closed.
+        Assert.Contains(modules, m => m.FamilyName == "current_account");
+        var currentAccount = modules.Single(m => m.FamilyName == "current_account");
+        Assert.Equal("current_account@2026.1", currentAccount.SchemaVersion);
+        Assert.Equal("current_account", currentAccount.AggregateType);
     }
 
     [Fact]

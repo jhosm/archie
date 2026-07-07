@@ -28,3 +28,11 @@ families:
     aggregate_type: personal_loan
     schema_version: personal_loan@2026.1
     plugin_assembly: Babelstone.Families.PersonalLoan.Application
+  # The current_account (conta à ordem) family, wired into the running host by its host-wiring change.
+  # family_name / schema_version are the SAME values CurrentAccountFamilyModule stamps on every
+  # EventEnvelope; plugin_assembly is the .NET assembly carrying its IFamilyHostModule. Without this
+  # entry the host would fail closed the moment the CurrentAccount module is discovered in its output dir.
+  - family_name: current_account
+    aggregate_type: current_account
+    schema_version: current_account@2026.1
+    plugin_assembly: Babelstone.Families.CurrentAccount.Application

@@ -1,0 +1,11 @@
+{
+  "type": "record",
+  "namespace": "accounts.current_account",
+  "name": "AccountClosed",
+  "doc": "The account is closed (ADR-PC-037: Active -> Closed, a business terminal). A closed account still holds the subject's PII until erased, so the GDPR-erasure transition remains legal from Closed. Business payload only (ADR-IC-002 §P5); CloudEvents envelope rides in Kafka headers, NOT here. No PII (ADR-PC-004 §P2).",
+  "fields": [
+    { "name": "account_id", "type": { "type": "string", "logicalType": "uuid" }, "doc": "AccountId (Guid) — the account stream id / opaque account_ref. Never PII (ADR-PC-004 §P2)." },
+    { "name": "closed_on", "type": { "type": "int", "logicalType": "date" }, "doc": "ClosedOn (DateOnly) — the value-date the account closed, as days since epoch. An input date, never a clock read." },
+    { "name": "closure_reason", "type": "string", "doc": "The structural closure reason code (e.g. CUSTOMER_REQUEST) — a stable machine code, never PII (ADR-PC-004 §P2)." }
+  ]
+}

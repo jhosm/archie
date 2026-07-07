@@ -1,0 +1,73 @@
+asyncapi: '3.0.0'
+info:
+  title: AccountReactivated
+  version: '1'
+  description: |
+    A dormant account is used again and reactivates (ADR-PC-037: Dormant -> Active) — the reverse
+    leg of the reversible Dormant <-> Active pair.
+
+    Emitted: when the engine records a dormant account being reactivated on use.
+
+    No PII (ADR-PC-004 §P2): the payload carries only an opaque account reference + the value-date.
+    A downstream account registry consumes it to keep the account's status in sync.
+  x-owner: current-account
+  x-owner-contact: accounts-team@babelstone.example
+  x-status: active
+  x-gdpr-legal-basis: CONTRACT_PERFORMANCE
+  x-authorized-consumers:
+    - acl                 # downstream core-banking account registry mirrors the account's status (ADR-IC-012)
+channels:
+  current_account:
+    description: |
+      Event-carried-state-transfer stream for the current_account aggregate. Topic name ==
+      `aggregate_type` (the relay's documented convention, OutboxDrainer). One Avro schema per
+      event type (Option A, doc 08): each event is its own message on this channel.
+    x-compacted: false
+    messages:
+      AccountReactivated:
+        $ref: '#/components/messages/AccountReactivated'
+operations:
+  publishAccountReactivated:
+    action: send
+    channel:
+      $ref: '#/channels/current_account'
+    messages:
+      - $ref: '#/channels/current_account/messages/AccountReactivated'
+components:
+  messages:
+    AccountReactivated:
+      name: AccountReactivated
+      title: Account Reactivated
+      summary: A dormant account is used again and reactivates.
+      contentType: application/avro
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: 'aggregate_id (AccountId) — the Kafka record key.'
+          bindingVersion: '0.5.0'
+      headers:
+        type: object
+        required:
+          - ce_specversion
+          - ce_id
+          - ce_source
+          - ce_type
+          - ce_time
+          - ce_subject
+          - ce_aggregatetype
+          - ce_datacontenttype
+        properties:
+          ce_specversion:      { type: string, const: '1.0' }
+          ce_id:               { type: string, format: uuid, description: 'Unique event ID (outbox event_id).' }
+          ce_source:           { type: string, description: 'URI of the producing service, e.g. urn:babelstone:engine.' }
+          ce_type:             { type: string, description: 'Reverse-DNS event type, e.g. com.bank.accounts.AccountReactivated.' }
+          ce_time:             { type: string, format: date-time }
+          ce_datacontenttype:  { type: string, const: 'application/avro' }
+          ce_subject:          { type: string, description: 'aggregate_id — the specific account this event is about.' }
+          ce_aggregatetype:    { type: string, description: 'Aggregate type, e.g. current_account.' }
+      x-schema-registry-subject: accounts.current_account.AccountReactivated-value
+      payload:
+        schemaFormat: 'application/vnd.apache.avro+json;version=1.9.0'
+        schema:
+          $ref: '../../avro/accounts/current_account/AccountReactivated.avsc'

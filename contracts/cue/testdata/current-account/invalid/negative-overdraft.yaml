@@ -1,0 +1,7 @@
+# REJECT: an arranged overdraft limit is integer cents and non-negative (#Cents is `int & >=0`), so a
+# negative headroom fails depth 1 — a config cannot declare a negative overdraft.
+variant_id: ca_pt_neg
+schema: current_account@2026.1
+pack: pt.2026.1
+currency: EUR
+arranged_overdraft_limit: -100
