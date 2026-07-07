@@ -67,6 +67,10 @@ spec:
       labels:
         app.kubernetes.io/name: backstage-db
     spec:
+      # fsGroup chowns the data volume to the postgres gid so the non-root process can write
+      # PGDATA; pairs with the container runAsUser (#420 set runAsNonRoot without either).
+      securityContext:
+        fsGroup: 70
       containers:
         - name: postgres
           image: postgres:16-alpine
@@ -75,6 +79,8 @@ spec:
           # to /tmp on the root fs, so a read-only root would break initdb/startup.
           securityContext:
             runAsNonRoot: true
+            runAsUser: 70            # 'postgres' user in postgres:16-alpine (Alpine); numeric UID lets the kubelet verify non-root
+            runAsGroup: 70
             allowPrivilegeEscalation: false
             seccompProfile:
               type: RuntimeDefault

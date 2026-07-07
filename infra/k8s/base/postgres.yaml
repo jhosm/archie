@@ -34,6 +34,11 @@ spec:
       labels:
         app.kubernetes.io/name: postgres
     spec:
+      # PVC ownership: fsGroup chowns the mounted data volume to the postgres gid so the
+      # non-root process (runAsUser 70 below) can write PGDATA. Pairs with the container
+      # runAsUser — #420 set runAsNonRoot without either, which the kubelet cannot verify.
+      securityContext:
+        fsGroup: 70
       containers:
         - name: postgres
           image: postgres:18-alpine
@@ -42,6 +47,8 @@ spec:
           # scratch to /tmp on the root fs, so a read-only root would break initdb/startup.
           securityContext:
             runAsNonRoot: true
+            runAsUser: 70            # 'postgres' user in postgres:18-alpine (Alpine); numeric UID lets the kubelet verify non-root
+            runAsGroup: 70
             allowPrivilegeEscalation: false
             seccompProfile:
               type: RuntimeDefault

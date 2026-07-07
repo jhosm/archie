@@ -32,6 +32,11 @@ spec:
       labels:
         app.kubernetes.io/name: registry
     spec:
+      # registry:3.1.1 runs as root by default; run it as an arbitrary non-root uid and
+      # fsGroup-chown the blob PVC so it can write /var/lib/registry. Pairs with the
+      # container runAsUser (#420 set runAsNonRoot without a numeric UID the kubelet can verify).
+      securityContext:
+        fsGroup: 1000
       containers:
         - name: registry
           image: registry:3.1.1
@@ -40,6 +45,8 @@ spec:
           # (/var/lib/registry, the mounted PVC below), so readOnlyRootFilesystem is feasible.
           securityContext:
             runAsNonRoot: true
+            runAsUser: 1000          # registry:3.1.1 has no baked non-root user; run as an arbitrary non-root uid (PVC is fsGroup-chowned above)
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             seccompProfile:
