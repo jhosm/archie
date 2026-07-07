@@ -62,6 +62,17 @@ multi-arch (arm64) and cosign-signs it by digest (so `cd.yml` can verify it on p
 The base tag is a build-arg — pin it by digest for a real promotion; a movable `:latest` is
 fine for the demo box.
 
+### Pack-baked notification image
+
+The notification host resolves the same instance-pinned pack off disk at startup
+(ADR-PC-007 §P4), so `pt.2026.1` is baked into a twin derived image the identical way,
+[`notification/Dockerfile`](./notification/Dockerfile): `FROM` the base
+`ghcr.io/jhosm/babelstone-notification` image + `COPY packs/pt.2026.1`. The dependent
+`build-notification-staging` job in `.github/workflows/image-build.yml` builds + pushes it
+multi-arch and cosign-signs it by digest, exactly as `build-engine-staging` does (bd
+zla1.5.10); `notification.yaml` sets `Engine__PacksDir=/app/packs` to point the host's disk
+walk at the baked pack.
+
 ### Secret seam
 
 The DB password is the one secret on this path: `POSTGRES_PASSWORD` from base's

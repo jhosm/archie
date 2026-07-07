@@ -5,6 +5,12 @@
 # connect to a port (there's nothing listening). replicas:1 is required: the v1 dedupe ledger is
 # in-memory and per-pod, so two replicas would each independently decide the same reminder is due.
 # It talks only to the engine API and the OTLP collector; no DB, Kafka, Kong, or OpenBao. No PII.
+#
+# Runs the pack-baked derived image (ghcr.io/jhosm/babelstone-notification-staging — the base
+# notification image + pt.2026.1 under /app/packs, bd zla1.5.10), because the host resolves its
+# instance-pinned regulatory pack off disk at startup (ADR-PC-007 §P4). The pack is a directory
+# tree a flat ConfigMap can't carry, so it is baked into the image exactly as engine-staging does
+# (zla1.5.1); Engine__PacksDir below points the host's disk walk at it.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -23,11 +29,17 @@ spec:
     spec:
       containers:
         - name: notification
-          image: ghcr.io/jhosm/babelstone-notification:latest
+          image: ghcr.io/jhosm/babelstone-notification-staging:latest
           env:
             # The only hard-required runtime config (the host throws if the engine URL is unset).
             - name: Engine__BaseUrl
               value: http://engine:8080
+            # Regulatory pack — the host loads pt.2026.1 off disk at startup (ADR-PC-007 §P4),
+            # baked into this derived image at /app/packs (see the header + infra/k8s/apps/notification/Dockerfile).
+            - name: Engine__PacksDir
+              value: /app/packs
+            - name: Engine__PackVersion
+              value: pt.2026.1
             # Fail-fast without a deployment environment (ADR-IC-007 §P1 non-blank requirement).
             - name: DOTNET_ENVIRONMENT
               value: Production
