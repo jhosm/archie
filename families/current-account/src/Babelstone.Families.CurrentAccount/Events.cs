@@ -1,23 +1,27 @@
 using Babelstone.Engine;
+using Babelstone.FinancialTypes;
 
 namespace Babelstone.Families.CurrentAccount;
 
-// The five family-owned current_account lifecycle events (ADR-PC-037) —
-// the conta à ordem's own facts: opened, opening-failed, marked-dormant, reactivated, closed. Same
-// discipline as the term-deposit / personal-loan families: each is a past fact named
-// <Entity><PastParticipleVerb> (08-event-catalog-governance §Naming), STRUCTURAL only (no depositor
-// PII — name/NIF/IBAN — in cleartext OR ciphertext, ADR-PC-004 §P2), and folded by a PURE handler
-// (Handlers.cs). The pack/schema/family pins ride on the EventEnvelope via AppendContext, not on the
-// record.
+// The family-owned current_account events (ADR-PC-037) — the conta à ordem's own facts: the five
+// lifecycle facts (opened, opening-failed, marked-dormant, reactivated, closed) plus the authorize
+// refusal fact (AuthorizationDeclined). Same discipline as the term-deposit / personal-loan families:
+// each is a past fact named <Entity><PastParticipleVerb> (08-event-catalog-governance §Naming),
+// STRUCTURAL only (no depositor PII — name/NIF/IBAN — in cleartext OR ciphertext, ADR-PC-004 §P2), and
+// folded by a PURE handler (Handlers.cs). The pack/schema/family pins ride on the EventEnvelope via
+// AppendContext, not on the record.
 //
 // What is deliberately NOT here (ADR-PC-037): the HOLDS (HoldPlaced → HoldCaptured |
 // HoldExpired) and the posted MOVEMENTS are NOT family-owned events — they are the engine
 // cross-cutting operations.Hold* records and the ADR-PC-032 Movements the spine already owns,
 // instantiated here (bound via CrossCuttingEventRegistrations.For in CurrentAccountFamilyModule),
-// not re-decided. GDPR erasure is likewise the engine-declared operations.PersonalDataErasureRequested
-// folded via IErasable (AccountPosition.WithErased). This file carries only the account's own
-// open/dormant/close lifecycle. The authorize command with its declined taxonomy, and the
-// arranged-overdraft pack rule, are separate later changes on this family.
+// not re-decided. An APPROVED authorize appends the engine's operations.HoldPlaced (stage 5 — the
+// earmark IS the approval record); only a DECLINED authorize appends a family fact
+// (AuthorizationDeclined below), because "why this account refused a debit" is product vocabulary the
+// engine cannot name (ADR-PC-021). GDPR erasure is likewise the engine-declared
+// operations.PersonalDataErasureRequested folded via IErasable (AccountPosition.WithErased). The
+// arranged-overdraft pack rule (the overdraft VALUES the authorize decider reads) is a separate later
+// change on this family (ARRANGED_OVERDRAFT_PACK_BOUNDED).
 
 /// <summary>The demand account is opened and starts transacting (ADR-PC-037: Pending → Active).
 /// Carries the structural product identity fixed at opening; the account's balances are NOT carried
@@ -88,3 +92,25 @@ public sealed record AccountClosed(
     // point where the instance's state is interpretable on its own.
     public override bool IsLifecycleBoundary => true;
 }
+
+/// <summary>A synchronous authorize attempt was REFUSED (ADR-PC-037 §D6 / ADR-PC-033 slot 5): the
+/// funds-and-rules decider produced no earmark, so the account records this refusal fact instead of an
+/// <c>operations.HoldPlaced</c>. Recording the refusal is the family command shell's obligation — a
+/// decline is an auditable event, not a silent non-append — which is why the pure decider's declined
+/// DATA is turned into this stored fact here. Carries the D6 taxonomy CODE and the attempted
+/// amount/value-date for the audit trail; STRUCTURAL only, no PII (ADR-PC-004 §P2). STORE-ONLY like
+/// <see cref="AccountOpeningFailed"/> (uncatalogued — a refusal is internal audit, never a bus event),
+/// and folded as a pure no-op (a decline changes neither the lifecycle nor any balance).</summary>
+/// <param name="AccountId">The account stream the refused authorize targeted — never PII (ADR-PC-004 §P2).</param>
+/// <param name="DeclinedReason">The bounded D6 taxonomy code (e.g. <c>INSUFFICIENT_AVAILABLE_BALANCE</c>,
+/// <c>OVERDRAFT_LIMIT_EXCEEDED</c>, <c>LIMIT_EXCEEDED</c>, <c>ACCOUNT_NOT_ACTIVE</c>) — a stable machine code.</param>
+/// <param name="Amount">The debit that was attempted, integer-cents <see cref="Money"/> (ADR-PC-010) — audit only.</param>
+/// <param name="ValueDate">The attempt's economic value-date — an input date, never a clock read in a fold.</param>
+/// <param name="Detail">Optional structural detail (e.g. the compliance freeze reason, or the blocking
+/// lifecycle state) that names the refusal further — a stable code / role, never PII. Null when the code stands alone.</param>
+public sealed record AuthorizationDeclined(
+    Guid AccountId,
+    string DeclinedReason,
+    Money Amount,
+    DateOnly ValueDate,
+    string? Detail = null) : DomainEvent;

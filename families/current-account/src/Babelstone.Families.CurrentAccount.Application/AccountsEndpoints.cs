@@ -15,18 +15,24 @@ namespace Babelstone.Families.CurrentAccount.Application;
 /// (it stamps a missing opened_at / marked_at / … so the decider stays pure, ADR-PC-010) and maps the
 /// domain exceptions to HTTP.
 /// <para>
-/// NONE of these routes is step-up-SCA-gated: the lifecycle transitions (open / mark-dormant / reactivate
-/// / close) move no money — they only relabel the account's lifecycle state — so unlike the deposit /
-/// loan money-movers there is no irreversible cash leg to gate. The synchronous AUTHORIZE money-mover is
-/// a separate authorize surface on the ADR-PC-034 technique, not mapped here. The lifecycle commands stay
-/// idempotent (ADR-PC-029): an at-least-once retry replays the original outcome rather than re-applying
-/// the transition.
+/// NONE of these routes is step-up-SCA-gated. The lifecycle transitions (open / mark-dormant / reactivate
+/// / close) move no money — they only relabel the account's lifecycle state. The synchronous AUTHORIZE
+/// money-mover DOES earmark funds, but it is deliberately ungated too (ADR-PC-034): it is a machine/rail-
+/// initiated, de-settled decision on the mTLS-only internal command surface (ADR-IC-006 §P5 Boundary 2 —
+/// never a public Kong route), and strong customer authentication is an upstream stage-1/2 concern, not
+/// the engine's stage-3/5 decision (ADR-PC-034) — adding an engine-side SCA gate here would contradict
+/// that split. Every route stays idempotent (ADR-PC-029): an at-least-once retry replays the original
+/// outcome rather than re-applying it.
 /// </para>
 /// </summary>
 public static class AccountsEndpoints
 {
     private const string OperatorActor = "ops:account-officer";
     private const string DpoActor = "ops:dpo";
+
+    // The default acting principal recorded on an authorize append: a machine/rail authorize caller (the
+    // authorize hot path is not human-initiated), a structural role, never PII.
+    private const string AuthorizeActor = "svc:payment-authorize";
 
     public static void Map(IEndpointRouteBuilder app)
     {
@@ -42,6 +48,11 @@ public static class AccountsEndpoints
         app.MapPost("/v1/accounts/{id:guid}/dormancy", MarkDormantAsync);
         app.MapPost("/v1/accounts/{id:guid}/reactivate", ReactivateAsync);
         app.MapPost("/v1/accounts/{id:guid}/close", CloseAsync);
+
+        // The synchronous AUTHORIZE money-mover (ADR-PC-037 §D6 / ADR-PC-034): place a hold or decline, in
+        // real time. Ungated (see the class remarks) but carries a MANDATORY Idempotency-Key — a replayed
+        // authorize returns the original verdict (same hold_id) with no second HoldPlaced.
+        app.MapPost("/v1/accounts/{id:guid}/authorize", AuthorizeAsync);
 
         // GDPR Article 17 right-to-be-forgotten (ADR-PC-004) — a DIFFERENT gate from the money-mover SCA
         // gate; governed by its own crypto-shred discipline. Mandatory Idempotency-Key (key destruction
@@ -199,6 +210,76 @@ public static class AccountsEndpoints
             AccountingBalanceCents: accountingCents,
             AvailableBalanceCents: availableCents,
             ActiveHolds: holds.Select(ToHoldView).ToList()));
+    }
+
+    /// <summary>
+    /// The synchronous authorize decision (ADR-PC-037 §D6 / ADR-PC-034): fold the available balance, apply
+    /// the pack rules, and place a hold (authorized) or record a refusal fact (declined) — in real time,
+    /// idempotently on the mandatory Idempotency-Key command id. A DECLINED verdict is a normal business
+    /// outcome on the 200 body (the refusal is an appended auditable fact, not an HTTP error); only a bad
+    /// key (400), a concurrency clash (409), and an illegal-from-lifecycle rejection (422) are errors. A
+    /// replayed command id returns the ORIGINAL verdict (same hold_id) with no second HoldPlaced — the
+    /// AUTHORIZATION_SYNC_IDEMPOTENT contract — reconstructed from the single appended event.
+    /// </summary>
+    private static async Task<IResult> AuthorizeAsync(
+        Guid id,
+        AuthorizeRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        CurrentAccountAuthorizeService service,
+        ICommandLog commandLog,
+        TimeProvider clock,
+        CancellationToken ct)
+    {
+        // The Idempotency-Key command id is MANDATORY on this money-mover (ADR-PC-029) — no silent one-shot.
+        if (idempotencyKey is null || !Guid.TryParse(idempotencyKey, out var commandId))
+        {
+            return Results.Problem(
+                "Idempotency-Key header is required and must be a UUID (ADR-PC-029).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // A non-positive debit is structurally not an authorization — reject the request before any read
+        // or append, so it never becomes a business decline code.
+        if (request.AmountCents <= 0)
+        {
+            return Results.Problem(
+                "amount_cents must be a positive integer in cents (ADR-PC-010).",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // Pre-check BEFORE any side effect: a known command id replays the ORIGINAL verdict off the single
+        // appended event, with no second decision and no second append (ADR-PC-029). The crash-atomic
+        // guarantee is the in-transaction command_dedup below; this read keeps the common retry off the
+        // write path.
+        var receipt = await commandLog.TryGetAsync(commandId, ct);
+        if (receipt is not null)
+        {
+            return Results.Ok(await service.ReconstructVerdictAsync(id, receipt.CommitSequence, ct));
+        }
+
+        // The host owns the wall clock at this boundary (ADR-PC-010): the value_date is the caller's
+        // economic date; validTime is the envelope's stamped instant. The decider reads neither a clock.
+        var command = new AuthorizeAccountCommand(
+            id, request.AmountCents, request.ValueDate, request.Actor ?? AuthorizeActor, commandId);
+
+        try
+        {
+            return Results.Ok(await service.AuthorizeAsync(command, clock.GetUtcNow(), ct));
+        }
+        catch (DuplicateCommandException e)
+        {
+            // A concurrent duplicate slipped past the pre-check: the in-transaction dedup rolled the append
+            // back. Reconstruct the ORIGINAL verdict off the winner's appended event (idempotent replay).
+            return Results.Ok(await service.ReconstructVerdictAsync(id, e.CommitSequence, ct));
+        }
+        catch (ConcurrencyException)
+        {
+            return Results.Problem($"Account {id} was modified concurrently.", statusCode: StatusCodes.Status409Conflict);
+        }
+        catch (DomainRejectedException e)
+        {
+            return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
+        }
     }
 
     /// <summary>
