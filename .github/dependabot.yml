@@ -19,6 +19,15 @@ updates:
     groups:
       engine-nuget:
         patterns: ["*"]
+    ignore:
+      # PactNet is deliberately held on the 4.5 line (see the pin comment in
+      # Directory.Packages.props): PactNet 5.0.x ships a libpact_ffi regression that breaks
+      # message-pact PRODUCER verification (pact-foundation/pact-net#530). Comments don't
+      # constrain Dependabot, so block the 4.x→5.x major here until #530 is resolved and the
+      # engine-side producer verification is re-validated against 5.x. Minor/patch bumps within
+      # the 4.x line still flow. (Was PR #465, which broke the notify-emit Pact CDC harness.)
+      - dependency-name: "PactNet"
+        update-types: ["version-update:semver-major"]
 
   # Go — the pack-validate validator module (ADR-PC-006).
   - package-ecosystem: gomod
