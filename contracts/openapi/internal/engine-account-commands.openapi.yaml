@@ -9,14 +9,16 @@ openapi: 3.1.0
 #
 # The openapi-catalog-validate.sh INTERNAL leg enforces exactly that posture: every internal spec
 # must carry info.x-internal (a non-empty reason), and NO operation below may ever match a public
-# Kong route. Cataloguing these five account lifecycle operations here keeps the Layer-4 route->spec
-# sweep (Layer4MappedEndpointSpecCoverageTests) covering the mapped routes for real, so no allowlist
-# entry is needed.
+# Kong route. Cataloguing these account operations here keeps the Layer-4 route->spec sweep
+# (Layer4MappedEndpointSpecCoverageTests) covering the mapped routes for real, so no allowlist entry
+# is needed.
 #
-# NONE of these operations moves money — they only relabel the account's lifecycle state — so unlike
-# the deposit / loan money-movers there is no step-up SCA gate here. The synchronous AUTHORIZE
-# money-mover (place a hold or decline) is a separate authorize surface on the ADR-PC-034 technique,
-# not documented here.
+# The five lifecycle operations (open / dormancy / reactivate / close / erase) move no money — they
+# only relabel the account's lifecycle state. The synchronous AUTHORIZE money-mover (place a hold or
+# decline, ADR-PC-037 §D6 on the ADR-PC-034 technique) DOES earmark funds, and it is documented here — but it is UNGATED too: a
+# machine/rail-initiated, de-settled decision on this same mTLS-only Boundary-2 surface, where strong
+# customer authentication is an upstream stage-1/2 concern, not the engine's stage-3/5 decision. So
+# there is no step-up SCA gate anywhere in this spec.
 #
 # Shapes are transcribed from the REAL code surface, not invented: AccountsEndpoints.cs +
 # AccountsContracts.cs in families/current-account/src/Babelstone.Families.CurrentAccount.Application
@@ -37,10 +39,12 @@ info:
     ORIGINAL outcome rather than re-applying the transition. Open honours the Idempotency-Key when
     supplied (a new-stream append is naturally a one-shot) but does not require it; the operating
     transitions (dormancy / reactivate / close) and the GDPR erase carry a mandatory caller-supplied
-    Idempotency-Key. NONE of these operations is step-up-SCA-gated: they move no money, only the
-    account's lifecycle label — the synchronous authorize money-mover is a separate surface. Account
-    opening (KYC / onboarding) stays upstream (ADR-PC-024 / ADR-PC-030): the engine records the
-    opened account, it never runs the checks that approve it. Errors are RFC 9457
+    Idempotency-Key, as does the synchronous authorize money-mover (a replayed authorize returns the
+    ORIGINAL verdict — same hold_id — with no second HoldPlaced). NONE of these operations is
+    step-up-SCA-gated: the lifecycle transitions move no money, and the authorize money-mover is a
+    de-settled, machine/rail-initiated decision whose customer authentication is an upstream concern.
+    Account opening (KYC / onboarding) stays upstream (ADR-PC-024 / ADR-PC-030): the engine records
+    the opened account, it never runs the checks that approve it. Errors are RFC 9457
     application/problem+json.
   # ── ADR-IC-020 Decision §2 governance source-of-truth fields (enforced by .spectral.yaml) ──
   x-owner: platform-engine
@@ -233,6 +237,46 @@ paths:
           description: Concurrent modification (optimistic-concurrency conflict).
         '422':
           description: Not erasable from the current lifecycle (Pending, or already erased under a different command id).
+  /v1/accounts/{id}/authorize:
+    post:
+      operationId: authorizeAccountDebit
+      summary: Synchronously authorize a debit — place a hold or decline (ADR-PC-037 §D6).
+      description: >
+        The real-time authorize decision (ADR-PC-034 technique on the ADR-PC-029 command surface,
+        under a heavier load profile). Folds the available balance, applies the pack rules (limits,
+        arranged overdraft at stage 4), and appends operations.HoldPlaced (outcome AUTHORIZED,
+        carrying hold_id) OR a family refusal fact (outcome DECLINED, with a bounded declined_reason:
+        INSUFFICIENT_AVAILABLE_BALANCE / OVERDRAFT_LIMIT_EXCEEDED / LIMIT_EXCEEDED / ACCOUNT_NOT_ACTIVE).
+        A DECLINED is a normal business verdict on the 200 body — the refusal is an appended auditable
+        fact, not an HTTP error. De-settled: the 2xx confirms the verdict was decided and appended, NOT
+        that cash moved (capture arrives later as HoldCaptured). Idempotent (ADR-PC-029): a replayed
+        command id returns the ORIGINAL verdict (same hold_id) with no second HoldPlaced. Ungated —
+        strong customer authentication is an upstream stage-1/2 concern, not this stage-3/5 decision.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorizeRequest'
+      responses:
+        '200':
+          description: >
+            The authorize verdict (AUTHORIZED carries hold_id; DECLINED carries declined_reason). A
+            decline is an auditable refusal FACT, not an error. An idempotent replay returns the same
+            verdict (same hold_id / commit_sequence) with no second append.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthorizeResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key, or a non-positive amount_cents (ADR-PC-029 / ADR-PC-010).
+        '409':
+          description: Concurrent modification (optimistic-concurrency conflict on the account stream).
+        '422':
+          description: Not authorizable from the current lifecycle (a domain rejection, distinct from a business DECLINED).
 components:
   parameters:
     AccountId:
@@ -405,3 +449,62 @@ components:
         - account_id: 7c2e3d4f-5a6b-4c8d-9e0f-1a2b3c4d5e6f
           status: ACTIVE
           commit_sequence: 0
+    AuthorizeRequest:
+      type: object
+      description: >
+        The synchronous authorize command (AuthorizeRequest, snake_case). The account is the path id;
+        this body carries the attempted debit amount (integer cents, ADR-PC-010 §P1) and its economic
+        value_date. The Idempotency-Key command id rides the header (ADR-PC-029), not the body. actor
+        defaults to the machine/rail payment-authorize principal — a structural role, never PII.
+      required: [amount_cents, value_date]
+      properties:
+        amount_cents:
+          type: integer
+          format: int64
+          description: The debit amount to authorize, integer cents (ADR-PC-010) — must be positive.
+        value_date:
+          type: string
+          format: date
+          description: The debit's economic effective date (the hold's expiry-horizon axis, ADR-PC-023).
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to the payment-authorize principal); a role, never PII.
+      examples:
+        - amount_cents: 30000
+          value_date: "2026-03-05"
+    AuthorizeResponse:
+      type: object
+      description: >
+        The authorize verdict (AuthorizeResponse). outcome is AUTHORIZED or DECLINED. On AUTHORIZED,
+        hold_id carries the placed operations.HoldPlaced (declined_reason is absent); on DECLINED,
+        declined_reason carries the bounded taxonomy code (INSUFFICIENT_AVAILABLE_BALANCE /
+        OVERDRAFT_LIMIT_EXCEEDED / LIMIT_EXCEEDED / ACCOUNT_NOT_ACTIVE) and hold_id is absent.
+        commit_sequence is the ADR-IC-005 §P3 read-your-writes token. Structural facts only, no PII.
+      required: [account_id, outcome, commit_sequence]
+      properties:
+        account_id:
+          type: string
+          format: uuid
+          description: The account's stream id.
+        outcome:
+          type: string
+          description: AUTHORIZED or DECLINED — the synchronous verdict.
+        hold_id:
+          type: string
+          description: The placed hold's correlation id; present only on AUTHORIZED.
+        declined_reason:
+          type: string
+          description: The bounded refusal code; present only on DECLINED.
+        commit_sequence:
+          type: integer
+          format: int64
+          description: The per-stream commit sequence this verdict reached (ADR-IC-005 §P3).
+      examples:
+        - account_id: 7c2e3d4f-5a6b-4c8d-9e0f-1a2b3c4d5e6f
+          outcome: AUTHORIZED
+          hold_id: hold-4d9f2a1c8b7e4f0a9c1d2e3f4a5b6c7d
+          commit_sequence: 3
+        - account_id: 7c2e3d4f-5a6b-4c8d-9e0f-1a2b3c4d5e6f
+          outcome: DECLINED
+          declined_reason: INSUFFICIENT_AVAILABLE_BALANCE
+          commit_sequence: 3

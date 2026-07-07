@@ -107,13 +107,16 @@ public sealed class Layer1SpecDtoStructuralTests
 
         // current_account lifecycle-command + read surface (contracts/openapi/internal/engine-account-commands,
         // engine-account-reads). The five lifecycle ops all answer with the one AccountCommandResponse; the
-        // read is the folded AccountResponse composed with the spine-owned balances/holds.
+        // synchronous authorize money-mover has its own AuthorizeRequest/AuthorizeResponse pair (ADR-PC-037
+        // §D6); the read is the folded AccountResponse composed with the spine-owned balances/holds.
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "OpenAccountRequest", typeof(Account.OpenAccountRequest), Mode.Request },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "MarkAccountDormantRequest", typeof(Account.MarkAccountDormantRequest), Mode.Request },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "ReactivateAccountRequest", typeof(Account.ReactivateAccountRequest), Mode.Request },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "CloseAccountRequest", typeof(Account.CloseAccountRequest), Mode.Request },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "ErasePersonalDataRequest", typeof(Account.ErasePersonalDataRequest), Mode.Request },
+        { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "AuthorizeRequest", typeof(Account.AuthorizeRequest), Mode.Request },
         { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "AccountCommandResponse", typeof(Account.AccountCommandResponse), Mode.Response },
+        { "contracts/openapi/internal/engine-account-commands.openapi.yaml", "AuthorizeResponse", typeof(Account.AuthorizeResponse), Mode.Response },
         { "contracts/openapi/internal/engine-account-reads.openapi.yaml", "AccountResponse", typeof(Account.AccountResponse), Mode.Response },
 
         // NOT here, deliberately:

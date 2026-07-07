@@ -64,3 +64,13 @@ public sealed class AccountClosedHandler : IEventHandler<AccountPosition, Accoun
             Lifecycle = AccountLifecycle.Closed,
         });
 }
+
+public sealed class AuthorizationDeclinedHandler : IEventHandler<AccountPosition, AuthorizationDeclined>
+{
+    // A no-op fold, the conformant shape (not an omission): a decline is a recorded audit fact that
+    // changes NOTHING on the position — the lifecycle is untouched (the account stays Active/Dormant/…),
+    // and no money moved (the decider placed no hold, so both spine-owned balances are unaffected,
+    // ADR-PC-033). The refusal's own codes live on the event (store-only audit), not on this state.
+    public HandlerResult<AccountPosition> Apply(AccountPosition state, AuthorizationDeclined @event)
+        => HandlerResult<AccountPosition>.From(state);
+}

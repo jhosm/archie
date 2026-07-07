@@ -45,6 +45,11 @@ public sealed class CurrentAccountFamilyModule : IFamilyModule
             new DispatchableHandler<AccountPosition, AccountReactivated>(new AccountReactivatedHandler())),
         new("current_account.AccountClosed", typeof(AccountClosed),
             new DispatchableHandler<AccountPosition, AccountClosed>(new AccountClosedHandler())),
+        // The authorize refusal fact (ADR-PC-037 §D6): a DECLINED synchronous authorize appends this
+        // family event (an APPROVED one appends the cross-cutting operations.HoldPlaced spliced below).
+        // Store-only — a refusal is internal audit, never on the bus — and folded as a no-op.
+        new("current_account.AuthorizationDeclined", typeof(AuthorizationDeclined),
+            new DispatchableHandler<AccountPosition, AuthorizationDeclined>(new AuthorizationDeclinedHandler())),
         // The engine-declared cross-cutting operational events (event-store §4.1), bound against this
         // family's AccountPosition. The engine owns the event records + generic handlers (they name no
         // family — ADR-PC-021 §P2); the family supplies only its TState here, splicing in every

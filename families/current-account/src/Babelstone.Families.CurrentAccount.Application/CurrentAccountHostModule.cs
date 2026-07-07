@@ -103,11 +103,27 @@ public sealed class CurrentAccountHostModule : IFamilyHostModule
 
         // The current_account LIFECYCLE decider's orchestration (ADR-PC-021): this module is its
         // composition root. It depends only on the family runtime and the pinned pack (no rate sheet — a
-        // demand account's lifecycle carries no priced rate). The synchronous AUTHORIZE decider is a
-        // separate authorize path on the ADR-PC-034 technique, not registered here.
+        // demand account's lifecycle carries no priced rate).
         services.AddSingleton(serviceProvider => new CurrentAccountLifecycleService(
             serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
             ctx.Pack));
+
+        // The synchronous AUTHORIZE decider's orchestration (ADR-PC-034 technique / ADR-PC-037 §D6) — a
+        // SEPARATE service on the payment hot path (lifecycle relabels state, authorize earmarks funds). It
+        // composes the family runtime with the spine-owned, host-level singletons the decision reads: the
+        // available-balance + freeze readers, the projection drainer it drains before deciding
+        // (read-your-writes), and the store codec + PII protector it uses to reconstruct a replayed
+        // verdict off the single appended event. All are family→engine dependencies — the host still names
+        // no current-account type (ENGINE_API_HOST_FAMILY_AGNOSTIC).
+        services.AddSingleton(serviceProvider => new CurrentAccountAuthorizeService(
+            serviceProvider.GetRequiredService<AggregateRuntime<AccountPosition>>(),
+            serviceProvider.GetRequiredService<AccountBalanceReader>(),
+            serviceProvider.GetRequiredService<AccountFreezeReader>(),
+            serviceProvider.GetRequiredService<SpineProjectionDrainer>(),
+            ctx.Pack,
+            serviceProvider.GetRequiredService<IEventStore>(),
+            serviceProvider.GetRequiredService<IEventSerializer>(),
+            serviceProvider.GetRequiredService<IPiiProtector>()));
     }
 
     public void MapEndpoints(IEndpointRouteBuilder app)
