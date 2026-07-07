@@ -5,15 +5,18 @@
 #
 # Build context is the repo root (the central Directory.Packages.props pins versions there),
 # so the publish targets the project explicitly — exactly the orchestrator/engine pattern.
-# A bare `dotnet restore`/`dotnet publish` with no project arg is ambiguous (~35 .csproj
-# repo-wide, no root .sln/.slnx), so both restore and publish name the .csproj. Build with:
+# The named project is the runnable HOST exe (Babelstone.Notification.Host — the §D4/§A2
+# composition root, Microsoft.NET.Sdk.Worker + OutputType Exe), NOT the family-agnostic core
+# LIBRARY Babelstone.Notification: publishing the library emits no runtimeconfig.json / apphost,
+# so the container falls back to a self-contained launch and dies on the missing libhostpolicy.so.
+# Build with:
 #   docker build -f notification/Dockerfile -t babelstone-notification .
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY . .
-RUN dotnet restore notification/src/Babelstone.Notification/Babelstone.Notification.csproj
-RUN dotnet publish notification/src/Babelstone.Notification/Babelstone.Notification.csproj \
+RUN dotnet restore notification/src/Babelstone.Notification.Host/Babelstone.Notification.Host.csproj
+RUN dotnet publish notification/src/Babelstone.Notification.Host/Babelstone.Notification.Host.csproj \
     -c Release -o /app --no-restore
 
 # Chiseled (distroless-style) runtime base — no shell / perl / ncurses / tar / full util-linux,
@@ -22,4 +25,4 @@ RUN dotnet publish notification/src/Babelstone.Notification/Babelstone.Notificat
 FROM mcr.microsoft.com/dotnet/runtime:10.0-noble-chiseled-extra
 WORKDIR /app
 COPY --from=build /app .
-ENTRYPOINT ["dotnet", "Babelstone.Notification.dll"]
+ENTRYPOINT ["dotnet", "Babelstone.Notification.Host.dll"]
