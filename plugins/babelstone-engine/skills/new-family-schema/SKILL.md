@@ -12,18 +12,29 @@ description: >-
 # new-family-schema — scaffold a new product family
 
 You scaffold a **new family** (a product domain the engine event-sources) by copying the
-shape of the reference family,
-[`term_deposit`](families/term-deposit/src/Babelstone.Families.TermDeposit/) — the one fully
-realised family in the tree. A family is a self-contained .NET layer that contributes
-event-type→handler bindings the engine dispatches and folds, plus its projections and its
-lifecycle legality table. The engine spine **never names a family** — the dependency arrow is
-`family → engine`, one-way (the `ENGINE_FAMILY_AGNOSTIC` fitness function,
+shape of a reference family. There are two fully realised twins to model on:
+[`term_deposit`](families/term-deposit/src/Babelstone.Families.TermDeposit/) (the first, richest
+family) and [`personal_loan`](families/personal-loan/src/Babelstone.Families.PersonalLoan/) (the
+newer, leaner one — often the cleaner scaffold to copy). A family is a self-contained .NET layer
+that contributes event-type→handler bindings the engine dispatches and folds, plus its
+projections and its lifecycle legality table. The engine spine **never names a family** — the
+dependency arrow is `family → engine`, one-way (the `ENGINE_FAMILY_AGNOSTIC` fitness function,
 [`engine/tests/Babelstone.Engine.Tests/EngineFamilyAgnosticTests.cs`](engine/tests/Babelstone.Engine.Tests/EngineFamilyAgnosticTests.cs),
 [ADR-PC-021 §D2/§P2](docs/product-management/product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)).
 
-> Study the reference family first. Every file this skill scaffolds has a concrete twin under
-> `families/term-deposit/` — open the twin, copy its shape, swap the names. Do not invent
-> base types or namespaces; the ones below are the real ones.
+> Study a reference family first. Every file this skill scaffolds has a concrete twin under
+> `families/term-deposit/` (and `families/personal-loan/`) — open the twin, copy its shape, swap
+> the names. Do not invent base types or namespaces; the ones below are the real ones.
+
+> **The Account seam is now part of every family ([ADR-PC-033](docs/product-management/product_concepts/adrs/ADR-PC-033-account-abstraction-and-hold-lifecycle.md), landed after this skill's first draft).**
+> Every engine-owned aggregate *is an account*: its folded state implements `IAccount` (an opaque
+> `AccountRef`), and a **transactional** account (one that carries authorization holds and an
+> accounting/available-balance split) implements the `IHoldable` refinement. A deposit or a loan is
+> a **degenerate** account (one balance, no holds — `IAccount` but not `IHoldable`). The state also
+> implements `IErasable<TState>` (the GDPR-erasure seam), and the family module **splices in the
+> engine-declared cross-cutting event set** (`CrossCuttingEventRegistrations.For<TState>()`) — Steps
+> 3 and 5 below. These are load-bearing: skip them and the family will not compile, or will
+> fail-closed on replay when an erasure / hold / freeze event lands on its stream.
 
 Throughout, replace `<Family>` (PascalCase, e.g. `SavingsAccount`), `<family>` (snake_case
 family name, e.g. `savings_account`), `<domain>` (the bus domain, e.g. `deposits`), and
@@ -39,6 +50,9 @@ family name, e.g. `savings_account`), `<domain>` (the bus domain, e.g. `deposits
 | `IFamilyModule` + `HandlerRegistration` | [`engine/src/Babelstone.Engine/FamilyModule.cs`](engine/src/Babelstone.Engine/FamilyModule.cs) | exports `FamilyName` / `SchemaVersion` / `Handlers` |
 | `IProjectionModule` / `ProjectionRunner<TState>` / `ProjectionMode` | [`engine/src/Babelstone.Engine/Projections.cs`](engine/src/Babelstone.Engine/Projections.cs), [`ProjectionRunner.cs`](engine/src/Babelstone.Engine/ProjectionRunner.cs) | declares the family's projections |
 | `Money` (integer cents) | [`engine/src/Babelstone.FinancialTypes/Money.cs`](engine/src/Babelstone.FinancialTypes/Money.cs) | all monetary state |
+| `IErasable<TState>` (`WithErased()`) | [`engine/src/Babelstone.Engine/CrossCuttingEvents.cs`](engine/src/Babelstone.Engine/CrossCuttingEvents.cs) | the GDPR-erasure seam **every** `<State>` implements (ADR-PC-004 A4) |
+| `IAccount` (`AccountRef`) / `IHoldable : IAccount` | [`engine/src/Babelstone.Engine/Account.cs`](engine/src/Babelstone.Engine/Account.cs) | the ADR-PC-033 Account seam every `<State>` implements — `IHoldable` for a **transactional** account, bare `IAccount` for a **degenerate** one |
+| `CrossCuttingEventRegistrations.For<TState>()` | [`engine/src/Babelstone.Engine/CrossCuttingEvents.cs`](engine/src/Babelstone.Engine/CrossCuttingEvents.cs) | the engine-declared cross-cutting bindings (erasure, pack/schema migration, ADR-PC-041 legal holds & freezes, ADR-PC-033 authorization holds) spliced into the module's `Handlers` |
 | `IFamilyHostModule` / `FamilyHostContext` | [`engine/src/Babelstone.Engine.Hosting/IFamilyHostModule.cs`](engine/src/Babelstone.Engine.Hosting/IFamilyHostModule.cs) | the family's host composition seam (a shared hosting assembly) |
 
 The two namespaces a family code-lives in: `Babelstone.Families.<Family>` (the pure folds)
@@ -71,6 +85,18 @@ Copy each `.csproj` from its term-deposit twin and rename `RootNamespace`/`Assem
   `Babelstone.Packs`, and the pure project. It attaches **no** purity analyser by design
   ([ADR-PC-021 §P3](docs/product-management/product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)).
 
+Then **add every new project to [`engine/Babelstone.slnx`](engine/Babelstone.slnx)** — the src
+projects (pure + Application, and any Orchestration/Lifecycle/Notification contributions) under the
+`/src/` folder, the test projects under `/tests/`, each a `<Project Path="../families/…/…csproj" />`
+row modelled on the existing `term-deposit` / `personal-loan` rows. This is the solution CI builds
+and tests against (`sbom.yml`, `image-build.yml`); a family project **absent from the `.slnx` is
+silently never built or tested** in CI. (The engine host `ProjectReference` in Step 10 pulls the
+*pure + Application* src projects into its build transitively — and each other contribution
+project, if you add one, is pulled by its own host: Orchestration by the orchestrator, Lifecycle by
+the lifecycle-driver, Notification by the notification host. But the **test** projects are
+referenced by no host — they run **only** via the `.slnx`, so this step is what makes your
+fold/replay tests actually execute.)
+
 ## Step 2 — Events (`Events.cs`)
 
 Model on [`Events.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/Events.cs).
@@ -91,13 +117,38 @@ Each event is `public sealed record <Entity><PastParticipleVerb>(…) : DomainEv
 ## Step 3 — The folded-state record (`<State>.cs`)
 
 Model on
-[`DepositPosition.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/DepositPosition.cs).
+[`DepositPosition.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/DepositPosition.cs)
+or the leaner
+[`LoanPosition.cs`](families/personal-loan/src/Babelstone.Families.PersonalLoan/LoanPosition.cs).
 A `sealed record <State>(…)` holding the aggregate's folded state — **all money is `Money`**,
 no `decimal` state (`BMNY002`). Add:
 
 - a `public static <State> Empty { get; }` seed (the state a fold starts from before any event), and
 - a `DepositLifecycle`-style `<Family>Lifecycle` enum: a `Pending` seed, the live state(s), and
-  the terminal states. The fold only *labels* the lifecycle; **legality** is Step 6, not here.
+  the terminal states — including an `Erased` terminal reachable from any state that still holds PII
+  (the GDPR seam below). The fold only *labels* the lifecycle; **legality** is Step 6, not here.
+
+**Declare the seams the record implements** ([ADR-PC-033](docs/product-management/product_concepts/adrs/ADR-PC-033-account-abstraction-and-hold-lifecycle.md) / [ADR-PC-004 A4](docs/product-management/product_concepts/adrs/ADR-PC-004-pii-crypto-shredding.md)):
+`sealed record <State>(…) : IErasable<<State>>, IAccount` — or `…, IErasable<<State>>, IAccount, IHoldable`
+for a **transactional** account (one carrying authorization holds + an accounting/available split).
+
+- `IErasable<<State>>` — implement `public <State> WithErased() => this with { Lifecycle = <Family>Lifecycle.Erased };`.
+  The engine's generic erasure fold calls it; the family owns only what "erased" means on its own
+  lifecycle. **Required** — `CrossCuttingEventRegistrations.For<<State>>()` (Step 5) is constrained
+  `where TState : IErasable<TState>`, so without it the module will not compile.
+- `IAccount` — expose `public string AccountRef => <StreamIdField>.ToString();` as a **computed
+  property over the already-folded stream id** (not a positional record parameter), so the
+  compiler-synthesised record equality — the byte-identical replay-determinism backstop
+  ([ADR-PC-010 §P5](docs/product-management/product_concepts/adrs/ADR-PC-010-dotnet-hand-rolled-engine.md)) — is untouched. `AccountRef` is the account's **own** opaque
+  stream id, **never** a counterparty/funding reference and **never PII** (ADR-PC-004 §P2).
+- `IHoldable` (transactional accounts only) — a marker refinement with no extra member: it declares
+  the account carries the accounting/available split. The hold ledger and both balances are
+  **spine-owned** folds (the `AccountHoldProjector` + `AccountBalanceReader`, `available = accounting
+  − Σ active holds`); the family never tracks holds on its own state. (Arranged overdraft is **not** a
+  term in this fold — it is authorization headroom the decider applies at stage 4, see Step 7.)
+- **Record equality:** a state of only scalar/`Money`/enum fields keeps the default record equality
+  (`LoanPosition` does). If it carries a **collection** field, override `Equals`/`GetHashCode`
+  element-wise as `DepositPosition` does, or replay determinism breaks.
 
 ## Step 4 — Handlers: one pure fold per event (`Handlers.cs`)
 
@@ -127,7 +178,32 @@ discovers it by that ctor and throws a diagnosable error without one). It export
 - `FamilyName => "<family>";` (snake_case)
 - `SchemaVersion => "<family>@YYYY.N";` (matches the CUE family schema, Step 8)
 - `Handlers => [ … ]` — one `HandlerRegistration` per event, `event_type` string
-  `"<family>.<EventName>"`, each wrapping the fold in a `DispatchableHandler<<State>,<Event>>`.
+  `"<family>.<EventName>"`, each wrapping the fold in a `DispatchableHandler<<State>,<Event>>`,
+  **and — as the last entry — the spread `.. CrossCuttingEventRegistrations.For<<State>>()`**:
+
+  ```csharp
+  public IReadOnlyList<HandlerRegistration> Handlers =>
+  [
+      new("<family>.<EventName>", typeof(<EventName>),
+          new DispatchableHandler<<State>, <EventName>>(new <EventName>Handler())),
+      // … one per family event …
+
+      // The engine-declared cross-cutting events (event-store §4.1), bound against THIS family's
+      // <State> in one call so it cannot forget one as the set grows: pack/schema migration, GDPR
+      // erasure (operations.PersonalDataErasureRequested → <State>.WithErased via IErasable), the
+      // ADR-PC-041 legal holds & freezes (FundsHeld/FundsReleased/AccountFrozen/AccountUnfrozen),
+      // and the ADR-PC-033 authorization holds (HoldPlaced/HoldCaptured/HoldExpired). The engine
+      // owns the records + generic (no-op) folds — they name no family (ADR-PC-021 §P2); the family
+      // supplies only its TState. Their event_type is `operations.<EventName>`, not `<family>.…`.
+      .. CrossCuttingEventRegistrations.For<<State>>(),
+  ];
+  ```
+
+  This is **not optional**: it is what makes an `operations.HoldPlaced` / `operations.PersonalDataErasureRequested`
+  / freeze event **decode** (and replay fail-closed) on this family's stream. A transactional family
+  that omits it breaks the moment a hold or an erasure touches the account. Prefix the class with
+  `// Stryker disable all` — it is pure DI/registration glue, not folds/math (the `term-deposit`
+  twin does; the `personal-loan` module omits it, but adding it is the more explicit choice).
 
 Expose `public static HandlerRegistry Registry() => new(new <Family>FamilyModule().Handlers);`
 (the durable runtime and the projection runner reuse it — so the materialised state is the
@@ -151,6 +227,18 @@ The decider consults it **before appending** and rejects an illegal command with
   not a separate flag — one table, no second place to keep in sync.
 
 ## Step 7 — Projections (`<Family>ProjectionModule.cs`)
+
+**First, what you do NOT build.** For a **transactional** (`IHoldable`) account the
+accounting/available/active-hold projection is **spine-owned** — the generic `AccountHoldProjector`
+(over migration `0020_account_holds`) + `AccountBalanceReader` derive `available = accounting − Σ
+active holds` from the movement ledger and hold set keyed by the seam's
+`AccountRef` ([ADR-PC-033](docs/product-management/product_concepts/adrs/ADR-PC-033-account-abstraction-and-hold-lifecycle.md); the active-hold set folds both authorization
+and ADR-PC-041 legal holds). The family supplies only its state through the seam (Step 3); it does
+**not** re-derive balances in a family projection, and it **never** caches a balance in a stored
+mutable column (the shadow-balance failure ADR-PC-033 forbids). A family `IProjectionModule` is for
+the family's OWN structural/lifecycle position and any denormalized CQRS read model — not the
+balances. (Any **arranged overdraft** is a pack rule the authorize decider applies at authorization
+**stage 4** — it extends the authorization *threshold*, not the balance fold: ADR-PC-030 / ADR-PC-037 §D5.)
 
 Model on
 [`TermDepositProjectionModule.cs`](families/term-deposit/src/Babelstone.Families.TermDeposit/TermDepositProjectionModule.cs).
@@ -195,12 +283,25 @@ job, not this one.
 Add tests mirroring the reference family's two tiers:
 
 - **Pure fold/replay tests** in `Babelstone.Families.<Family>.Tests` (no Docker) — copy the
-  `Fold(seed, registry, event)` pattern from
-  [`TermDepositProjectionTests.cs`](families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/TermDepositProjectionTests.cs)
-  and the legality table coverage from
-  [`LifecycleTransitionsTests.cs`](families/term-deposit/tests/Babelstone.Families.TermDeposit.Tests/LifecycleTransitionsTests.cs).
-  Replay a realistic lifecycle (constitute → operate×N → close) and assert the folded
-  `<State>` is exact and byte-identical on rebuild.
+  `Fold(state, @event)` helper from
+  [`LoanPositionFoldTests.cs`](families/personal-loan/tests/Babelstone.Families.PersonalLoan.Tests/LoanPositionFoldTests.cs),
+  which resolves through the family's OWN registry and maps the event type as **`operations.<Name>`
+  for an engine-namespace cross-cutting event** (e.g. `PersonalDataErasureRequested`, `HoldPlaced`)
+  and **`<family>.<Name>` for a family event** — the same binding the durable runtime folds through.
+  Add the legality-table coverage from
+  [`LifecycleTransitionsTests.cs`](families/personal-loan/tests/Babelstone.Families.PersonalLoan.Tests/LifecycleTransitionsTests.cs)
+  (every business-terminal state closed to every business transition; erasure legal from any
+  PII-holding state; the `Erased` state closed to all). Copy the tiny JSON
+  [`TestCodec.cs`](families/personal-loan/tests/Babelstone.Families.PersonalLoan.Tests/TestCodec.cs)
+  if a test needs an `IEventSerializer`. Replay a realistic lifecycle (open → operate×N → close) and
+  a `PersonalDataErasureRequested` fold, and assert the folded `<State>` is exact and byte-identical
+  on rebuild.
+- **Account-seam tests** in the same project — copy
+  [`LoanPositionAccountSeamTests.cs`](families/personal-loan/tests/Babelstone.Families.PersonalLoan.Tests/LoanPositionAccountSeamTests.cs):
+  pin that `<State>` implements `IAccount` (and whether it is `IHoldable` — assert `IHoldable` for a
+  transactional account, and its ABSENCE for a degenerate one), that `AccountRef` is the account's
+  own opaque stream id (never a counterparty ref, never PII) and stable across folds, and that the
+  computed seam left record equality (the replay-determinism backstop) unchanged.
 - **Integration tests** in `Babelstone.Families.<Family>.Application.Tests` (Testcontainers
   PostgreSQL) — the end-to-end command→decider→append→rehydrate happy path, modelled on
   [`ConstituteAccrueMatureHappyPathTests.cs`](families/term-deposit/tests/Babelstone.Families.TermDeposit.Application.Tests/ConstituteAccrueMatureHappyPathTests.cs)
@@ -290,6 +391,14 @@ owns that four-artefacts-in-lock-step procedure.
 
 - **`family → engine` only** — the pure project references just `Engine` + `FinancialTypes`;
   the spine never references a family (`ENGINE_FAMILY_AGNOSTIC`, [ADR-PC-021 §D2/§P2](docs/product-management/product_concepts/adrs/ADR-PC-021-application-layer-family-owned-deciders.md)).
+- **`<State>` implements the seams** — `IErasable<<State>>` (with `WithErased()`) + `IAccount`
+  (an opaque `AccountRef`, never PII), plus `IHoldable` for a transactional account (holds +
+  accounting/available split, all spine-owned folds). [ADR-PC-033](docs/product-management/product_concepts/adrs/ADR-PC-033-account-abstraction-and-hold-lifecycle.md).
+- **The module splices `.. CrossCuttingEventRegistrations.For<<State>>()`** as its last `Handlers`
+  entry — without it the engine-declared erasure / hold / freeze events do not decode on the family
+  stream (replay fails closed). It compiles only because `<State>` is `IErasable<<State>>`.
+- **New projects join `engine/Babelstone.slnx`** — src under `/src/`, tests under `/tests/`; a
+  project absent from the `.slnx` is silently never built or tested in CI.
 - **Folds are pure** — single `state with { … }`, no clock/IO/rng; the `BENG001/002/003`
   analysers fail the build otherwise.
 - **No PII on events** — references behind the OpenBao seam, never identity on the bus
