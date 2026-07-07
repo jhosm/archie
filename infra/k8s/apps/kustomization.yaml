@@ -51,6 +51,8 @@ configMapGenerator:
       - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0018_bulk_operations.sql
       - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0019_movement_ledger.sql
       - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0020_account_holds.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0021_account_holds_legal_kind.sql
+      - ../../../engine/src/Babelstone.EventStore.Migrations/Sql/0022_account_freezes.sql
   # The apply script run by the migration Job (key apply.sh, mounted at /scripts).
   - name: migration-script
     files:
