@@ -1,16 +1,22 @@
 # Per-service CPU/memory requests + limits for the single staging node
-# (bd babelstone-zla1.4 residual). Sized for one Hetzner CAX41 — 16 vCPU / 32 GB
-# RAM (ARM). The locked staging-env priority is "an OOM mid-demo is the failure to
-# avoid", so every workload container carries a memory LIMIT (a runaway pod is
-# capped, not allowed to take the node down), while requests stay modest so the
-# whole stack schedules comfortably on one node.
+# (bd babelstone-zla1.4 residual; re-tuned for the 16 GB node — bd babelstone-zla1.5.7).
+# Sized for one Hetzner CPX42 — 8 vCPU / 16 GB RAM (x86). The originally-planned CAX41
+# ARM box (16 vCPU / 32 GB) was out of stock at provision, so staging runs on this smaller
+# x86 box (bd babelstone-zla1.2) and the memory LIMITS below were trimmed to match. The
+# locked staging-env priority is "an OOM mid-demo is the failure to avoid", so every
+# workload container carries a memory LIMIT (a runaway pod is capped, not allowed to take
+# the node down), while requests stay modest so the whole stack schedules on one node.
 #
-# Budget (≈28 GB / ≈14 vCPU allocatable after the k3s system reserve):
+# NOTE the scheduler sums only REQUESTS (never limits) against node-allocatable, so requests
+# are what must fit; limits are per-pod runtime OOM caps and may overcommit. The trim's goal
+# is that no single limit is a large fraction of the 16 GB node (grafana-lgtm was 6Gi ≈ ⅜ node).
+#
+# Budget (16 GB node → ≈15.6 Gi / 8 vCPU allocatable after the k3s system reserve):
 #   service            cpu req / lim    mem req / lim     note
-#   grafana-lgtm       500m / 2000m     1Gi / 6Gi         LGTM all-in-one (Loki+Tempo+Mimir+Grafana) — heaviest
-#   redpanda           1000m / 2000m    1Gi / 3Gi         broker (--smp=1; memory-hungry)
-#   postgres           250m / 1000m     512Mi / 2Gi       event store (ADR-PC-001)
-#   backstage          250m / 1000m     768Mi / 2Gi       Node app (~1GB steady / ~2GB peak)
+#   grafana-lgtm       500m / 2000m     1Gi / 3Gi         LGTM all-in-one (Loki+Tempo+Mimir+Grafana) — heaviest; capped 6Gi→3Gi
+#   redpanda           1000m / 2000m    1Gi / 2Gi         broker (--smp=1; memory-hungry); 3Gi→2Gi
+#   postgres           250m / 1000m     512Mi / 1536Mi    event store (ADR-PC-001); 2Gi→1.5Gi
+#   backstage          250m / 1000m     768Mi / 1536Mi    Node app (~1GB steady); 2Gi→1.5Gi
 #   kong               250m / 1000m     256Mi / 1Gi       edge gateway
 #   core-acl-stub      250m / 1000m     256Mi / 1Gi       WireMock (JVM)
 #   logto              100m / 1000m     256Mi / 768Mi     OAuth/OIDC AS (ADR-IC-021) — Node app
@@ -19,10 +25,14 @@
 #   openbao            100m / 500m      128Mi / 512Mi     dev mode (in-memory)
 #   redpanda-console   50m / 250m       128Mi / 512Mi     read-only UI
 #   registry           50m / 250m       128Mi / 512Mi     OCI pack registry
+#   (app services — engine/orchestrator/mcp-server/notification/mission-control — are sized
+#    inline in their own base manifests; together ≈1.15 Gi req / ≈3.2 Gi lim.)
 #   ─────────────────────────────────────────────────────────────────────────
-#   Σ requests        ≈ 3.0 vCPU / ≈4.85 Gi  (schedules trivially on one node)
-#   Σ limits          ≈ 11 vCPU / ≈19 Gi     (comfortably under node-allocatable
-#                                             → no node-level memory overcommit)
+#   Σ requests (WHOLE stack) ≈ 5.9 Gi / ≈4 vCPU  (fits 15.6 Gi → schedules, no Pending)
+#   Σ limits   (WHOLE stack) ≈ 17 Gi  (mild overcommit vs 15.6 Gi; realistic concurrent
+#                                      usage ≈7 Gi, and no single limit now exceeds 3 Gi so a
+#                                      lone runaway can't OOM the node). CPU limits overcommit
+#                                      too, but CPU is compressible — throttled, not killed.
 #
 # Logto is a staging-overlay service (like Mission Control), not a base backing-infra one;
 # it is sized here, alongside the backing infra, rather than inline (Mission Control sizes
@@ -50,7 +60,7 @@ spec:
               memory: 1Gi
             limits:
               cpu: "2"
-              memory: 6Gi
+              memory: 3Gi
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -67,7 +77,7 @@ spec:
               memory: 1Gi
             limits:
               cpu: "2"
-              memory: 3Gi
+              memory: 2Gi
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -84,7 +94,7 @@ spec:
               memory: 512Mi
             limits:
               cpu: "1"
-              memory: 2Gi
+              memory: 1536Mi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -101,7 +111,7 @@ spec:
               memory: 768Mi
             limits:
               cpu: "1"
-              memory: 2Gi
+              memory: 1536Mi
 ---
 apiVersion: apps/v1
 kind: Deployment
