@@ -37,17 +37,28 @@ spec:
       labels:
         app.kubernetes.io/name: grafana-lgtm
     spec:
+      # Non-root posture (bd zla1.5.8). The grafana/otel-lgtm image is USER root by default, so
+      # runAsNonRoot with no numeric uid yields CreateContainerConfigError ("image will run as
+      # root"). A numeric runAsUser fixes that — but the bundled Grafana, Loki, Tempo, Prometheus
+      # and Pyroscope all write under /data (a path absent from the image), plus the optional
+      # AI-tool MCP hint under root-owned /etc/lgtm, which a non-root uid can't create. fsGroup +
+      # the emptyDir mounts below make both writable at the chosen uid. Verified locally: every
+      # bundled component reaches "up and running" as uid 1000 with exactly this shape.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: grafana-lgtm
           image: grafana/otel-lgtm:0.28.0
-          # Hardened pod posture (ADR-IC-016 zero-trust, CIS PSA). readOnlyRootFilesystem
-          # is omitted: the all-in-one appliance writes Loki/Tempo/Prometheus/Grafana state
-          # to root-fs paths (no data volume here), so a read-only root would break it.
+          # Hardened container posture (ADR-IC-016 zero-trust, CIS PSA). readOnlyRootFilesystem is
+          # omitted: the appliance also writes scratch to the image's world-writable (1777) /tmp,
+          # so a read-only root would break it; its data dirs are the emptyDir volumes below.
           securityContext:
-            runAsNonRoot: true
             allowPrivilegeEscalation: false
-            seccompProfile:
-              type: RuntimeDefault
             capabilities:
               drop: ["ALL"]
           ports:
@@ -56,3 +67,18 @@ spec:
             # (grafana-lgtm:4317), never published on the Service (ADR-IC-007 §P1).
             - name: grafana-ui
               containerPort: 3000
+          volumeMounts:
+            # The all-in-one appliance's writable state (bd zla1.5.8): Grafana (/data/grafana),
+            # Loki (/data/loki), Tempo (/data/tempo), Prometheus (/data/prometheus) and Pyroscope
+            # (/data/pyroscope) all live under /data; /etc/lgtm holds the optional AI-tool MCP hint.
+            # emptyDir + the pod fsGroup above make both writable by the non-root uid. Ephemeral —
+            # as the appliance's state already was (it wrote to the container fs before, no volume).
+            - name: data
+              mountPath: /data
+            - name: etc-lgtm
+              mountPath: /etc/lgtm
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: etc-lgtm
+          emptyDir: {}
