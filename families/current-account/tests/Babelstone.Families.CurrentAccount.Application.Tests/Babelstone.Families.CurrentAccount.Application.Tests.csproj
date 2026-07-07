@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The lifecycle decider is PURE (it reads the folded position + a command and consults the
+         legality table — no I/O), so these are Docker-free unit tests, unlike the term-deposit /
+         personal-loan Application.Tests which are Testcontainers integration lanes. The authorize path
+         (bd 30hf.2) and the host-wired end-to-end tests (bd 30hf.6) add the integration tier later. -->
+    <ProjectReference Include="../../src/Babelstone.Families.CurrentAccount.Application/Babelstone.Families.CurrentAccount.Application.csproj" />
+  </ItemGroup>
+</Project>
