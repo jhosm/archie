@@ -28,8 +28,11 @@ ingressClass:
 
 # No cloud LoadBalancer on a single node with servicelb disabled — Traefik is reached through
 # the node IP via the hostPorts below, so the Service itself only needs to be cluster-internal.
+# (Current chart schema: the type lives at service.spec.type — the older service.type key is
+# silently ignored, leaving the LoadBalancer default stuck <pending> with no cloud LB.)
 service:
-  type: ClusterIP
+  spec:
+    type: ClusterIP
 
 # Bind the node's privileged :80/:443 directly. hostPort publishes the container port on the
 # node's own IP; Cloudflare's proxy re-encrypts to :443 here (SSL/TLS mode "Full (strict)",
@@ -39,8 +42,14 @@ ports:
     port: 8000
     hostPort: 80
     # Redirect plain HTTP to HTTPS at the edge; the real TLS is terminated on websecure.
-    redirectTo:
-      port: websecure
+    # (Current chart schema: ports.<name>.http.redirections.entryPoint — the older
+    # ports.web.redirectTo.port form was removed.)
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
   websecure:
     port: 8443
     hostPort: 443
@@ -85,10 +94,10 @@ api:
 deployment:
   replicas: 1
 
-# Drop Traefik's own access/error logs to the container stdout at a sane level; the LGTM/Loki
-# plane scrapes pod stdout. No OTLP export here (ADR-IC-007 §P1 keeps 4317/4318 unexposed).
-logs:
-  general:
-    level: INFO
-  access:
-    enabled: true
+# Traefik's own general + access logs go to the container stdout, which the LGTM/Loki plane
+# scrapes. No OTLP export here (ADR-IC-007 §P1 keeps 4317/4318 unexposed). (Current chart
+# schema: top-level `log:` and `accessLog:` — the older single `logs:` block was removed.)
+log:
+  level: INFO
+accessLog:
+  enabled: true
