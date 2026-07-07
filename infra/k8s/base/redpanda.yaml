@@ -46,6 +46,11 @@ spec:
       labels:
         app.kubernetes.io/name: redpanda
     spec:
+      # fsGroup chowns the mounted data PVC to the redpanda gid so the non-root process
+      # (runAsUser 101 below) can write its log dir. Pairs with the container runAsUser —
+      # #420 set runAsNonRoot without either, which the kubelet cannot verify.
+      securityContext:
+        fsGroup: 101
       containers:
         - name: redpanda
           image: docker.redpanda.com/redpandadata/redpanda:v24.3.1
@@ -54,6 +59,8 @@ spec:
           # state outside the data PVC at startup, so a read-only root would break boot.
           securityContext:
             runAsNonRoot: true
+            runAsUser: 101           # 'redpanda' user in the redpanda image; numeric UID lets the kubelet verify non-root
+            runAsGroup: 101
             allowPrivilegeEscalation: false
             seccompProfile:
               type: RuntimeDefault
@@ -63,6 +70,10 @@ spec:
           # broker shape): internal listener advertised as `redpanda`, external
           # as `localhost` (only the internal one matters in-cluster).
           command:
+            # `--mode dev-container` is an rpk flag, not a flag of the raw `redpanda`
+            # binary (which errors "unrecognised option") — invoke via rpk, the documented
+            # single-node dev entrypoint. Surfaced on the first real-cluster apply.
+            - rpk
             - redpanda
             - start
             - --mode=dev-container
@@ -71,7 +82,10 @@ spec:
             - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
             - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
             - --schema-registry-addr=internal://0.0.0.0:8081,external://0.0.0.0:18081
-            - --rpc-addr=redpanda:33145
+            # LISTEN on all local interfaces (a pod cannot bind the Service ClusterIP that
+            # `redpanda` resolves to → "Cannot assign requested address"); ADVERTISE the
+            # service name so peers/clients reach it. Surfaced on the first real-cluster apply.
+            - --rpc-addr=0.0.0.0:33145
             - --advertise-rpc-addr=redpanda:33145
           ports:
             - name: kafka

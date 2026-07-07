@@ -37,6 +37,8 @@ spec:
           # web UI that holds no on-disk state, so readOnlyRootFilesystem is feasible.
           securityContext:
             runAsNonRoot: true
+            runAsUser: 100           # 'redpandaconsole' user in the console image; numeric UID lets the kubelet verify non-root
+            runAsGroup: 101
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             seccompProfile:

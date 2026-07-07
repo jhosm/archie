@@ -45,6 +45,8 @@ spec:
           # startup, so a read-only root would break it.
           securityContext:
             runAsNonRoot: true
+            runAsUser: 1000          # 'ubuntu' user (uid 1000) in wiremock/wiremock:3.9.1 (Ubuntu-based, root by default); numeric UID lets the kubelet verify non-root
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             seccompProfile:
               type: RuntimeDefault
