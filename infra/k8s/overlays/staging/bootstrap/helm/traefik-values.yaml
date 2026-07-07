@@ -1,0 +1,94 @@
+# Traefik ingress-controller Helm values for the single-node staging box (bd babelstone-zla1.14).
+#
+# Plain English: the overlay's Ingresses all say `ingressClassName: traefik`, but nothing was
+# providing that class. hetzner-k3s installs k3s with the bundled Traefik AND servicelb
+# DISABLED (`--disable traefik,servicelb`), so — unlike a vanilla k3s — there is no ingress
+# controller and no LoadBalancer plumbing out of the box. This file installs Traefik back,
+# and because there is no Hetzner LB and no servicelb to hand out an external IP on a single
+# node, Traefik binds the node's :80/:443 DIRECTLY via hostPort. That is the missing piece
+# that makes https://*.babelstone.dev actually answer.
+#
+# This is a Helm VALUES file, not a Kubernetes manifest — it is applied with `helm install`
+# (see bootstrap/README.md "Apply order"), exactly like cert-manager. It deliberately lives in
+# bootstrap/ (not the Kustomize overlay), so it never enters `kustomize build` and the strict
+# kubeconform gate — which carries no Traefik CRD schemas — stays green. It is also
+# account-gated cluster setup, applied once by hand, not a routine deploy.
+#
+# Binding approach (bd babelstone-zla1.14 decision): hostPort, NOT a LoadBalancer Service and
+# NOT hostNetwork. hostPort binds only :80/:443 on the node — the minimum surface — whereas
+# hostNetwork would put Traefik in the host net namespace and claim every port. A NodePort
+# can't serve :80/:443 (the 30000–32767 range) without an extra redirect, so it was rejected.
+
+# The IngressClass this controller provides. MUST be `traefik` to match every
+# `ingressClassName: traefik` in ../ingress.yaml and the ClusterIssuer's DNS-01 solver.
+ingressClass:
+  enabled: true
+  name: traefik
+  isDefaultClass: true
+
+# No cloud LoadBalancer on a single node with servicelb disabled — Traefik is reached through
+# the node IP via the hostPorts below, so the Service itself only needs to be cluster-internal.
+service:
+  type: ClusterIP
+
+# Bind the node's privileged :80/:443 directly. hostPort publishes the container port on the
+# node's own IP; Cloudflare's proxy re-encrypts to :443 here (SSL/TLS mode "Full (strict)",
+# once the origin's Let's Encrypt cert is live).
+ports:
+  web:
+    port: 8000
+    hostPort: 80
+    # Redirect plain HTTP to HTTPS at the edge; the real TLS is terminated on websecure.
+    redirectTo:
+      port: websecure
+  websecure:
+    port: 8443
+    hostPort: 443
+
+# Binding privileged ports (<1024) as the chart's non-root user needs this Linux capability.
+securityContext:
+  capabilities:
+    add:
+      - NET_BIND_SERVICE
+    drop:
+      - ALL
+  runAsNonRoot: true
+  runAsGroup: 65532
+  runAsUser: 65532
+
+# Only watch Kubernetes Ingress resources (the overlay uses plain Ingress, not IngressRoute
+# CRDs). Keeps the install free of Traefik CRDs, so nothing here trips the kubeconform gate
+# elsewhere and the controller has a minimal RBAC surface.
+providers:
+  kubernetesIngress:
+    enabled: true
+    # Leave the Ingress status ADDRESS unpublished. With hostPort (no LoadBalancer Service),
+    # there is no external IP for Traefik to copy into `status.loadBalancer`, so
+    # `kubectl get ingress` shows an EMPTY ADDRESS — that is EXPECTED here and does not mean
+    # the route is down; traffic flows through the node's :80/:443 hostPorts regardless.
+    publishedService:
+      enabled: false
+  kubernetesCRD:
+    enabled: false
+  kubernetesGateway:
+    enabled: false
+
+# The Traefik dashboard/API is NOT exposed — no public Ingress, no insecure API. Operators
+# reach it by `kubectl port-forward` if needed (same posture as the Kong Admin API and the
+# Logto admin console).
+api:
+  dashboard: false
+  insecure: false
+
+# Single node: one controller replica is correct. hostPort means at most one Traefik pod can
+# schedule per node anyway (two would collide on :80/:443).
+deployment:
+  replicas: 1
+
+# Drop Traefik's own access/error logs to the container stdout at a sane level; the LGTM/Loki
+# plane scrapes pod stdout. No OTLP export here (ADR-IC-007 §P1 keeps 4317/4318 unexposed).
+logs:
+  general:
+    level: INFO
+  access:
+    enabled: true

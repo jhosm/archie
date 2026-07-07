@@ -14,6 +14,15 @@ This directory is **deliberately not referenced** by
 
 ## Contents
 
+- [`helm/traefik-values.yaml`](./helm/traefik-values.yaml) — Helm **values** for the
+  Traefik ingress controller that provides the `traefik` `IngressClass` the overlay's
+  [`../ingress.yaml`](../ingress.yaml) references (bd babelstone-zla1.14). hetzner-k3s
+  ships k3s with the *bundled* Traefik + servicelb **disabled**, so without this there is
+  no ingress controller and every `https://*.babelstone.dev` URL is dead. On a single node
+  with no LoadBalancer, Traefik binds the node's `:80`/`:443` directly via **hostPort**.
+  It lives in the `helm/` subfolder — not the top level — precisely so the
+  `kubectl apply -f bootstrap/` step below (non-recursive) never tries to `kubectl apply` a
+  Helm values file; it is consumed by `helm install -f` (see apply order), never `kubectl`.
 - [`clusterissuer-letsencrypt.yaml`](./clusterissuer-letsencrypt.yaml) — the
   Let's Encrypt `ClusterIssuer` the overlay's Ingress references by name
   (`cert-manager.io/cluster-issuer: letsencrypt-babelstone`). cert-manager's
@@ -51,6 +60,14 @@ helm repo add jetstack https://charts.jetstack.io && helm repo update
 helm install cert-manager jetstack/cert-manager \
   --namespace cert-manager --create-namespace --set crds.enabled=true
 
+# 1a. Install the Traefik ingress controller (bd babelstone-zla1.14). hetzner-k3s disables
+#     the bundled Traefik + servicelb, so this is what provides the `traefik` IngressClass and
+#     binds the node's :80/:443 (hostPort). Without it every https://*.babelstone.dev is dead.
+helm repo add traefik https://traefik.github.io/charts && helm repo update
+helm install traefik traefik/traefik \
+  --namespace traefik --create-namespace \
+  -f infra/k8s/overlays/staging/bootstrap/helm/traefik-values.yaml
+
 # 1b. Install the controllers the zla1.7 ops bootstrap depends on:
 #   - the external CSI snapshot controller + its CRDs (VolumeSnapshot/Class/Content) —
 #     NOT bundled with k3s; install the upstream kubernetes-csi/external-snapshotter manifests.
@@ -74,14 +91,28 @@ rm -f /tmp/cd-deployer.kubeconfig
 
 # 5. Apply the overlay itself (cd.yml does this on promote, using the cd-deployer identity).
 kubectl apply -k infra/k8s/overlays/staging
+
+# 6. Open inbound TCP 80/443 on the Hetzner firewall (bd babelstone-zla1.14). cluster.yaml's
+#    allowed_networks can only express ssh/api, so the web ports are added out-of-band, scoped
+#    to Cloudflare's ranges (only the proxy reaches the origin). DRY-RUN first, then --apply:
+export HCLOUD_TOKEN=...                       # same token used to provision
+infra/hetzner-k3s/firewall-web.sh             # prints the rules it WOULD add
+infra/hetzner-k3s/firewall-web.sh --apply     # adds inbound TCP 80 + 443 (Cloudflare-scoped)
+
+# 7. In the Cloudflare dashboard, set SSL/TLS mode to "Full (strict)" for babelstone.dev — the
+#    origin now presents a valid Let's Encrypt cert, so the proxy re-encrypts end-to-end.
 ```
 
 Prereqs: DNS A records `api.babelstone.dev`, `backstage.babelstone.dev`,
 `app.babelstone.dev`, and `auth.babelstone.dev` (the four Ingress hosts) resolve (proxied
 is fine), and a `cloudflare-api-token` Secret (scoped `Zone.DNS:Edit` for `babelstone.dev`)
 exists in the `cert-manager` namespace for the DNS-01 ACME challenge. Certs are issued via
-DNS-01, so the A records may stay behind the Cloudflare proxy. The full provision/restore/upgrade runbook is
-Phase 6 (bd babelstone-zla1.7).
+DNS-01, so the A records may stay behind the Cloudflare proxy. **The Hetzner firewall must
+also allow inbound 80/443** — hetzner-k3s synthesises the firewall from `cluster.yaml`'s
+`allowed_networks`, which only models `ssh`/`api`, so those web ports are provisioned
+out-of-band by [`firewall-web.sh`](../../../../hetzner-k3s/firewall-web.sh) (step 6 above;
+Cloudflare-scoped, and the list *rotates* — re-run after Cloudflare publishes range changes).
+The full provision/restore/upgrade runbook is Phase 6 (bd babelstone-zla1.7).
 
 **Kong↔mcp-server mTLS swap (after `mcp-mtls.yaml` is applied).** The committed
 `infra/kong/kong.yml` carries only POC placeholder certs for the mcp-server upstream

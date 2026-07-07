@@ -1,7 +1,10 @@
 # Public HTTPS edge for the staging box — the ADR-PC-020 §D3 drift acknowledged in
 # infra/k8s/README.md (this is the one place the deployed estate exposes anything
-# publicly). k3s bundles Traefik as the IngressClass; cert-manager (installed at
-# bootstrap/) issues Let's Encrypt certs via the DNS-01 solver (Cloudflare API),
+# publicly). The IngressClass `traefik` these Ingresses reference is provided by the
+# Traefik controller installed at bootstrap/helm/traefik-values.yaml — hetzner-k3s ships
+# k3s with the bundled Traefik + servicelb DISABLED, so on this single node Traefik is
+# installed back and binds the node's :80/:443 directly via hostPort (there is no LB).
+# cert-manager (also installed at bootstrap/) issues Let's Encrypt certs via the DNS-01 solver (Cloudflare API),
 # triggered by the cert-manager.io/cluster-issuer annotation. DNS-01 is what lets the
 # A records stay behind the Cloudflare proxy (an HTTP-01 challenge cannot reach a
 # proxied origin). cert-manager's ingress-shim

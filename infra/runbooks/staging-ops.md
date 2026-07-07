@@ -16,13 +16,22 @@ Scope: one Hetzner CAX41 running single-node k3s, domain `babelstone.dev`. State
 2. Point DNS A records `app`, `api`, `backstage`, `auth`.`babelstone.dev` at the node IP
    (the four Ingress hosts: Mission Control, Kong, Backstage, and the Logto OIDC issuer).
 3. Install the cluster add-ons (all under [`../k8s/overlays/staging/bootstrap/`](../k8s/overlays/staging/bootstrap/)):
+   - **Traefik** (Helm, `bootstrap/helm/traefik-values.yaml`) — the ingress controller
+     providing the `traefik` IngressClass, binding the node's :80/:443 (hostPort). hetzner-k3s
+     disables the bundled Traefik + servicelb, so without this every `https://*.babelstone.dev`
+     is dead (bd babelstone-zla1.14). See `bootstrap/README.md` step 1a.
    - **cert-manager** (Helm) — see `bootstrap/README.md`.
    - the **external CSI snapshot controller + CRDs** (NOT bundled with k3s) — required by the
      `VolumeSnapshotClass` and the volume-snapshot CronJob.
    - Rancher **system-upgrade-controller** (creates the `system-upgrade` namespace + SA the
      k3s upgrade Plan uses).
 4. `kubectl apply -f infra/k8s/overlays/staging/bootstrap/` (the issuers, the
-   `VolumeSnapshotClass`, the k3s upgrade `Plan`).
+   `VolumeSnapshotClass`, the k3s upgrade `Plan`). The `helm/` subfolder is skipped by the
+   non-recursive glob — those are Helm values, applied in step 3, not `kubectl apply`.
+   Then **open inbound 80/443 on the Hetzner firewall and set Cloudflare TLS** (bd babelstone-zla1.14):
+   `infra/hetzner-k3s/firewall-web.sh --apply` (Cloudflare-scoped; dry-runs without `--apply`),
+   then set the Cloudflare SSL/TLS mode to **Full (strict)**. `cluster.yaml` can't express these
+   web ports — see `bootstrap/README.md` steps 6–7 and `../hetzner-k3s/README.md` Posture notes.
 5. Provision the real secrets — **required before the first deploy**: the staging render
    deliberately carries NO Secret bodies (bd babelstone-zla1.12.4 — the committed dev
    placeholders are dropped from the build, so a redeploy can never overwrite what you set
@@ -134,4 +143,13 @@ volumesnapshot -l babelstone.io/dr-role=volume-snapshot --field-selector ...`) p
 kubectl -n babelstone-staging get pods,svc,ingress,cronjob
 kubectl -n babelstone-staging get certificate          # cert-manager TLS health (needs the CRDs)
 kubectl -n babelstone-staging logs deploy/engine       # app logs
+
+# Public edge health (bd babelstone-zla1.14). If any host returns 000, work outward:
+#   Traefik pod up?  →  kubectl -n traefik get pods,ingressclass    (IngressClass 'traefik' present)
+#   Ingress exists?  →  kubectl -n babelstone-staging get ingress   (ADDRESS is EXPECTED empty with hostPort — not a fault)
+#   Firewall open?   →  hcloud firewall describe babelstone-staging (inbound TCP 80/443 present)
+#   Direct origin?   →  curl -sk --resolve app.babelstone.dev:443:<node-ip> https://app.babelstone.dev/ -o /dev/null -w '%{http_code}\n'
+for h in app api auth; do
+  echo -n "$h.babelstone.dev → "; curl -s -o /dev/null -w '%{http_code}\n' "https://$h.babelstone.dev/"
+done   # expect real (non-000, non-5xx) codes end-to-end through Cloudflare with valid TLS
 ```
