@@ -29,7 +29,7 @@ This ADR fills the **last open mechanism question** the product-scope decision l
 The decision content is already settled; only the *call regime* is open. On a debit/authorization attempt the engine runs a pure decider ([ADR-PC-021](./ADR-PC-021-application-layer-family-owned-deciders.md)) that:
 
 1. folds the **available balance** = `accounting balance − Σ active holds` over the [ADR-PC-032](./ADR-PC-032-money-movement-primitive.md) `Movement`s and the [ADR-PC-033](./ADR-PC-033-account-abstraction-and-hold-lifecycle.md) hold ledger (both pure, rebuildable folds — no stored mutable number);
-2. applies pack rules (limits, *descoberto autorizado*) at stage 4 ([ADR-PC-030 §P1/§P3](./ADR-PC-030-product-scope-and-boundary.md));
+2. applies pack rules (limits, arranged overdraft) at stage 4 ([ADR-PC-030 §P1/§P3](./ADR-PC-030-product-scope-and-boundary.md));
 3. appends `HoldPlaced` (the `authorized` verdict + the earmark) **or** a refusal — exactly the [ADR-PC-033](./ADR-PC-033-account-abstraction-and-hold-lifecycle.md) gated `HoldPlaced → HoldCaptured | HoldExpired` lifecycle.
 
 This is the engine's most native operation (a read-state-and-append decider, [ADR-PC-030 §44](./ADR-PC-030-product-scope-and-boundary.md)), and stages 3–5 are the only ones the engine owns; instrument validation, SCA, fraud, and the rails sit *outside* and call *in* ([ADR-PC-030 §P1](./ADR-PC-030-product-scope-and-boundary.md)). The only undecided thing is **how the external authorization pipeline gets the verdict back** — and that is a transport/runtime question, not a contract or a math question.
