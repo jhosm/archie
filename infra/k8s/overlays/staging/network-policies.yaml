@@ -429,13 +429,14 @@ spec:
         - protocol: TCP
           port: 3001
 ---
-# 17 · cert-manager HTTP-01 solver pods (8089) — WITHOUT this, default-deny
-# blocks the ACME challenge and every Let's Encrypt issuance/renewal on the box
-# fails at the next rotation. Solver pods are created ad hoc in THIS namespace
-# by cert-manager with this well-known label; the challenge arrives from
-# Traefik and is self-checked by cert-manager, so the allow is unrestricted on
-# exactly the solver port (the cert-manager-documented posture — the pod exists
-# only for the seconds a challenge is live and serves a public token).
+# 17 · cert-manager HTTP-01 solver pods (8089) — a RETAINED NO-OP under the current
+# DNS-01 (Cloudflare) issuer, which validates via a TXT record and creates NO solver
+# pods, so nothing matches this selector today. Kept as defense-in-depth so a future
+# fallback to the HTTP-01 solver would not silently break at the next renewal against
+# default-deny. (Under HTTP-01 this is load-bearing: solver pods are created ad hoc in
+# THIS namespace with the well-known label below; the challenge arrives from Traefik and
+# is self-checked by cert-manager, so the allow is unrestricted on exactly the solver
+# port — the pod exists only for the seconds a challenge is live and serves a public token.)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

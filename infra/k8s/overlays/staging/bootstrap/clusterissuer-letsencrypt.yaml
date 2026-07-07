@@ -8,13 +8,27 @@
 # references this issuer by name (cert-manager.io/cluster-issuer:
 # letsencrypt-babelstone); cert-manager's ingress-shim does the rest.
 #
-# Bootstrap apply order (account-gated — needs the live cluster + DNS):
-#   1. helm install cert-manager (with its CRDs)
-#   2. kubectl apply -f infra/k8s/overlays/staging/bootstrap/   # this issuer
-#   3. kubectl apply -k infra/k8s/overlays/staging              # the overlay
+# CHALLENGE: DNS-01 via Cloudflare (2026-07-07). We validate by having cert-manager
+# create a temporary TXT record through the Cloudflare API rather than serving a
+# file on :80 (HTTP-01). This is what lets the four A records stay behind the
+# Cloudflare PROXY (orange-cloud) — an HTTP-01 challenge cannot reach the origin
+# through the proxy, DNS-01 does not need to. It also unlocks wildcard certs.
+# (Deviation from the originally-shipped http01 solver; recorded so the origin IP
+# is never exposed via grey-cloud DNS.)
 #
-# Prereqs: the node exists, DNS A records (api.babelstone.dev, backstage.babelstone.dev)
-# point at the node IP, and Traefik is reachable on :80 (the HTTP-01 ACME challenge).
+# Bootstrap apply order (account-gated — needs the live cluster + DNS + token):
+#   1. helm install cert-manager (with its CRDs)
+#   2. create the Cloudflare API-token Secret in the cert-manager namespace:
+#        kubectl -n cert-manager create secret generic cloudflare-api-token \
+#          --from-literal=api-token="$(cat ~/.cloudflare-dns-token)"
+#      (a scoped Zone.DNS:Edit token for babelstone.dev — never committed)
+#   3. kubectl apply -f infra/k8s/overlays/staging/bootstrap/   # this issuer
+#   4. kubectl apply -k infra/k8s/overlays/staging              # the overlay
+#
+# Prereqs: the node exists, the four A records (app/api/backstage/auth.babelstone.dev)
+# resolve (proxied is fine), and the cloudflare-api-token Secret exists in the
+# cert-manager namespace. Set the Cloudflare SSL/TLS mode to "Full (strict)" so the
+# proxy re-encrypts to the origin's Let's Encrypt cert.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -32,6 +46,12 @@ spec:
     privateKeySecretRef:
       name: letsencrypt-babelstone-account-key
     solvers:
-      - http01:
-          ingress:
-            class: traefik
+      # DNS-01 via Cloudflare: cert-manager writes the _acme-challenge TXT record
+      # through the Cloudflare API using a scoped Zone.DNS:Edit token. TXT records
+      # are never proxied, so this works regardless of the A records' orange/grey
+      # state — the whole point of choosing DNS-01 for a proxied origin.
+      - dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: cloudflare-api-token
+              key: api-token
