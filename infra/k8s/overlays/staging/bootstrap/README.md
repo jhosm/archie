@@ -77,8 +77,10 @@ kubectl apply -k infra/k8s/overlays/staging
 ```
 
 Prereqs: DNS A records `api.babelstone.dev`, `backstage.babelstone.dev`,
-`app.babelstone.dev`, and `auth.babelstone.dev` (the four Ingress hosts) point at the node
-IP, and Traefik (k3s-bundled) is reachable on `:80` for the HTTP-01 ACME challenge. The full provision/restore/upgrade runbook is
+`app.babelstone.dev`, and `auth.babelstone.dev` (the four Ingress hosts) resolve (proxied
+is fine), and a `cloudflare-api-token` Secret (scoped `Zone.DNS:Edit` for `babelstone.dev`)
+exists in the `cert-manager` namespace for the DNS-01 ACME challenge. Certs are issued via
+DNS-01, so the A records may stay behind the Cloudflare proxy. The full provision/restore/upgrade runbook is
 Phase 6 (bd babelstone-zla1.7).
 
 **Kong↔mcp-server mTLS swap (after `mcp-mtls.yaml` is applied).** The committed
