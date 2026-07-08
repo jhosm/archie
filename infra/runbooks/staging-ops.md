@@ -164,3 +164,49 @@ for h in app api auth; do
   echo -n "$h.babelstone.dev → "; curl -s -o /dev/null -w '%{http_code}\n' "https://$h.babelstone.dev/"
 done   # expect real (non-000, non-5xx) codes end-to-end through Cloudflare with valid TLS
 ```
+
+## 8. Public edge security posture (bd babelstone-zla1.10.6)
+
+In plain English: the two most sensitive UIs — the Logto **admin console**
+(`auth-admin.babelstone.dev`, the IAM control plane) and **Grafana**
+(`grafana.babelstone.dev`, the regulated observability plane) — sit behind several
+independent gates, so no single failure exposes them. The other public hosts
+(`app`/`api`/`backstage`) rely on Cloudflare + their own app auth only.
+
+**The four layers protecting `auth-admin` and `grafana` (verified 2026-07-08):**
+
+1. **Hetzner firewall** — inbound `:80`/`:443` is scoped to Cloudflare's published IP
+   ranges (`infra/hetzner-k3s/firewall-web.sh`), **not** `0.0.0.0/0`. A direct hit on the
+   node IP from any other address times out. Verify:
+   ```bash
+   hcloud firewall describe babelstone-staging   # tcp/80 + tcp/443 sources = CF ranges, never 0.0.0.0/0
+   curl -sk -m8 --resolve auth-admin.babelstone.dev:443:<node-ip> https://auth-admin.babelstone.dev/ -o /dev/null -w '%{http_code}\n'
+   # expect 000/timeout from a non-Cloudflare IP
+   ```
+2. **Cloudflare Access** — an identity gate (email-code / IdP) in front of both hosts.
+   Unauthenticated requests 302 to `<team>.cloudflareaccess.com/cdn-cgi/access/login/…`
+   **before** the app loads. Verify (no Access session):
+   ```bash
+   curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' https://auth-admin.babelstone.dev/
+   curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' https://grafana.babelstone.dev/
+   # expect 302 -> …cloudflareaccess.com/cdn-cgi/access/login/…  (NOT the app)
+   ```
+   Keep the OIDC **issuer** `auth.babelstone.dev` UNGATED (Grafana SSO + the Logto
+   Management API depend on it): `curl …/oidc/.well-known/openid-configuration` → 200.
+3. **App login** — Logto admin login **+ 2FA** on the console; Grafana login + Logto SSO
+   + §P6 RBAC (anonymous OFF) on Grafana.
+4. **`ADMIN_DISABLE_LOCALHOST=true`** on Logto (`logto.yaml`) — the admin console is
+   reachable only via its real `ADMIN_ENDPOINT` host, never a bare `localhost` origin.
+
+**Known residual — the Cloudflare origin bypass (tracked: bd babelstone-zla1.12.14).**
+Because the firewall must allow *all* Cloudflare IPs, an attacker who discovers the origin
+IP could proxy through their *own* Cloudflare zone with a spoofed `Host` header, reaching
+the origin from a CF IP and bypassing the babelstone.dev edge — including Cloudflare Access.
+They still hit each app's own login (+ 2FA), so it is **not** access, only loss of the edge
+layer + exposure of the pre-auth surface. Risk is **LOW on staging** (targeted-only;
+origin-IP discovery is the limiter — note `:6443` is world-open and reveals a live cluster),
+rising to **MEDIUM in production**. It is a **cluster-wide** concern (every public host, not
+just these two). The fix — Cloudflare Authenticated Origin Pulls (origin mTLS), a
+`Cf-Access-Jwt-Assertion` check at Traefik, or a Cloudflare Tunnel that removes the inbound
+origin port entirely — is **bd babelstone-zla1.12.14, gated as a MUST before production
+promotion.**
