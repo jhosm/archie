@@ -111,8 +111,10 @@ spec:
 # staging box's token ISSUER (login + SCA + the MCP-agent authority). The 4th public host. It is
 # NOT a product route — it sits beside Backstage/Mission Control straight through Traefik, so
 # Kong stays the ADR-IC-006 edge for the product API (auth subdomain, reverse-proxied per the
-# ADR-IC-021 staging rollout). Only the main app port (3001 — sign-in + OIDC discovery + JWKS)
-# is fronted; the admin console (3002) stays cluster-internal (operator port-forward).
+# ADR-IC-021 staging rollout). The main app port (3001 — sign-in + OIDC discovery + JWKS) is
+# fronted at auth.babelstone.dev; the admin console (3002) is fronted separately at
+# auth-admin.babelstone.dev (the `logto-admin` Ingress below, bd zla1.10) — see that block for
+# why the OSS console needs its own real HTTPS host rather than a localhost port-forward.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -138,3 +140,39 @@ spec:
                 name: logto
                 port:
                   number: 3001
+---
+# Logto Admin Console + Management API (bd zla1.10). The OSS admin console (port 3002) mints the
+# admin-tenant tokens the operator uses to call the DEFAULT tenant's Management API (create apps,
+# roles, users). Logto stamps those tokens with iss = {ADMIN_ENDPOINT}/oidc; the default tenant
+# accepts them ONLY if that issuer is a stable HTTPS URL that matches how the console is actually
+# reached (Logto OSS v1.41, PR #8869). A `kubectl port-forward` at http://localhost:3002 makes
+# the console mint iss=http://localhost:3002/oidc, which the Management API rejects with
+# JWTClaimValidationFailed('iss') → every write 401s. So the console gets its OWN real host here,
+# and logto.yaml sets ADMIN_ENDPOINT=https://auth-admin.babelstone.dev to match. Same DNS-01 TLS.
+# It is auth-gated by the Logto admin login; network-hardening (Cloudflare Access / IP allowlist /
+# ADMIN_DISABLE_LOCALHOST) is the follow-up so the IAM console isn't world-reachable by default.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: logto-admin
+  labels:
+    app.kubernetes.io/name: logto
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-babelstone
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - auth-admin.babelstone.dev
+      secretName: logto-admin-tls
+  rules:
+    - host: auth-admin.babelstone.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: logto
+                port:
+                  number: 3002

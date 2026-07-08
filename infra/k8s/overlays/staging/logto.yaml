@@ -37,8 +37,10 @@ spec:
     - name: http
       port: 3001
       targetPort: 3001
-    # Admin console: operators reach it via `kubectl port-forward` to hand-register each MCP
-    # agent client (DCR is the accepted gap — ADR-IC-021 §C6). Deliberately NOT ingressed.
+    # Admin console + Management API: operators reach it at https://auth-admin.babelstone.dev
+    # (the `logto-admin` Ingress, bd zla1.10) to hand-register each MCP agent client (DCR is the
+    # accepted gap — ADR-IC-021 §C6). It needs a real HTTPS host (matching ADMIN_ENDPOINT below),
+    # NOT a port-forward, or the Management API rejects the console's tokens on issuer mismatch.
     - name: admin
       port: 3002
       targetPort: 3002
@@ -123,6 +125,15 @@ spec:
             # reverse proxy, so trust the forwarded headers.
             - name: ENDPOINT
               value: https://auth.babelstone.dev
+            # Admin console base URL (bd zla1.10). Sets the ADMIN-tenant OIDC issuer + the console
+            # redirect URIs. MUST be the real HTTPS host the console is reached at (the logto-admin
+            # Ingress), because the DEFAULT tenant's Management API only accepts operator tokens
+            # whose iss = {ADMIN_ENDPOINT}/oidc. Unset, Logto defaults it to http://localhost:3002,
+            # and a port-forward then mints an issuer the Management API rejects (401 on every
+            # write). Logto OSS v1.41 reads the admin signing keys from the DB (PR #8869), so this
+            # host does not need to be self-reachable from the pod — only the issuer must match.
+            - name: ADMIN_ENDPOINT
+              value: https://auth-admin.babelstone.dev
             - name: TRUST_PROXY_HEADER
               value: "true"
             - name: PORT

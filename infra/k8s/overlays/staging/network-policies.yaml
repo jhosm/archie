@@ -411,11 +411,13 @@ spec:
         - protocol: TCP
           port: 9000
 ---
-# 16 · Logto (3001, the OIDC issuer) — the public edge (Traefik) only. This
-# also covers Grafana's operator SSO: its generic_oauth dials the PUBLIC
-# https://auth.babelstone.dev, which re-enters through Traefik. The admin
-# console (3002) gets NO allow (operator port-forward only, as documented in
-# ingress.yaml).
+# 16 · Logto (3001 the OIDC issuer + 3002 the admin console) — the public edge (Traefik) only.
+# This also covers Grafana's operator SSO: its generic_oauth dials the PUBLIC
+# https://auth.babelstone.dev, which re-enters through Traefik. The admin console (3002) now ALSO
+# takes an allow (bd zla1.10): Logto OSS v1.41 needs the console reached at a stable HTTPS host
+# (auth-admin.babelstone.dev) matching ADMIN_ENDPOINT so the Management API accepts its tokens — a
+# localhost port-forward mints an iss the default tenant rejects. The `logto-admin` Ingress fronts
+# it, so Traefik must reach 3002 too. Both ports admit ONLY the traefik namespace.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -434,6 +436,8 @@ spec:
       ports:
         - protocol: TCP
           port: 3001
+        - protocol: TCP
+          port: 3002
 ---
 # 17 · cert-manager HTTP-01 solver pods (8089) — a RETAINED NO-OP under the current
 # DNS-01 (Cloudflare) issuer, which validates via a TXT record and creates NO solver

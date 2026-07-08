@@ -23,13 +23,15 @@ MCP server fronted by Kong. Prerequisite: Logto is deployed and seeded (bd babel
 
 ## 0. Reach the Logto Admin Console
 
-The Console (port 3002) is deliberately **not** ingressed (`logto.yaml`). Reach it over a port-forward
-from an operator workstation:
+The Console is fronted at its own HTTPS host, **`https://auth-admin.babelstone.dev`** (the
+`logto-admin` Ingress, bd zla1.10). Open it in a browser and sign in with the Logto admin account.
 
-```bash
-kubectl -n babelstone-staging port-forward svc/logto 3002:3002
-# open http://localhost:3002
-```
+> Do **not** use a `kubectl port-forward` to `localhost:3002`: Logto OSS v1.41 mints the operator's
+> Management-API tokens with `iss = {ADMIN_ENDPOINT}/oidc`, and the default tenant rejects any
+> issuer that is not the real `auth-admin` host — so on a port-forward every Console write 401s
+> (`JWTClaimValidationFailed`). `ADMIN_ENDPOINT=https://auth-admin.babelstone.dev` in `logto.yaml`
+> is what makes the Console usable. (The host is auth-gated by the admin login; edge hardening is
+> tracked as bd zla1.10.6.)
 
 ## 1. Register the MCP server as an API resource (RFC 8707)
 
