@@ -1,0 +1,14 @@
+{
+  "_comment": "Golden snapshot of Logto's /.well-known/openid-configuration, captured from https://auth.babelstone.dev/oidc on 2026-07-08 (bd babelstone-zla1.10.5 slice 5). It locks the PKCE + grant contract behind IAM_OAUTH21_PKCE_ENFORCED (ADR-IC-021 C2). If Logto is ever reconfigured so its discovery drifts (e.g. advertises the weak 'plain' code_challenge method, or drops S256), update this snapshot in the SAME change so the drift is visible and acknowledged — the contract test test_iam_pkce_contract.py asserts against it.",
+  "issuer": "https://auth.babelstone.dev/oidc",
+  "code_challenge_methods_supported": ["S256"],
+  "grant_types_supported": [
+    "implicit",
+    "authorization_code",
+    "refresh_token",
+    "client_credentials",
+    "urn:ietf:params:oauth:grant-type:device_code",
+    "urn:ietf:params:oauth:grant-type:token-exchange"
+  ],
+  "response_types_supported": ["code id_token", "code", "id_token", "none"]
+}
