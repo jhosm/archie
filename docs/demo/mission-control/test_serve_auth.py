@@ -44,6 +44,7 @@ _TOUCHED = (
     "AUTH", "MC_AUTH_MODE", "MC_BIND", "MC_ALLOW_UNAUTHENTICATED",
     "OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_SCOPES",
     "OIDC_REDIRECT_URL", "MC_PUBLIC_BASE_URL", "MC_SESSION_SIGNING_KEY", "MC_SESSION_TTL",
+    "ORCHESTRATOR_URL",
 )
 
 
@@ -452,6 +453,78 @@ def test_oidc_tampered_session_cookie_rejected():
                 port, "/", headers={"Accept": "text/html",
                                     "Cookie": serve._SESSION_COOKIE + "=" + forged})
     assert status == 302  # a bad HMAC → treated as no session
+
+
+# ── X-Client-Id attestation on the /api/v1/* arm (bd babelstone-zla1.10.8.4) ──────────────────
+# The demo BFF stands in for Kong on the orchestrator edge: it must ATTEST X-Client-Id from the
+# validated identity, not forge a static one. In oidc mode that identity is the session `sub`; in
+# dev mode it stays the static DEMO_CLIENT_ID. A tiny fake orchestrator echoes back the header it
+# received so we can assert exactly what the BFF attested.
+class _OrchHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _echo(self):
+        body = json.dumps({"x_client_id": self.headers.get("X-Client-Id")}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def do_GET(self):
+        self._echo()
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        self.rfile.read(length)
+        self._echo()
+
+
+@contextmanager
+def fake_orchestrator():
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _OrchHandler)
+    base = "http://127.0.0.1:%d" % httpd.server_address[1]
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield base
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_oidc_api_arm_attests_x_client_id_from_session_sub():
+    # oidc mode: a /api/v1/* call bearing a valid session cookie must reach the orchestrator with
+    # X-Client-Id == that session's `sub` (mirroring Kong's attest-from-sub) — NOT the static demo id.
+    key = "unit-test-signing-key"
+    good = make_session_cookie(key, sub="op-42")
+    with fake_idp() as idp, fake_orchestrator() as orch:
+        serve.AUTH = _gate_for(idp, signing_key=key)
+        serve.ORCHESTRATOR_URL = orch
+        with run_mc() as port:
+            status, _hdrs, body = http_req(
+                port, "/api/v1/deposits/x", method="POST",
+                headers={"Cookie": serve._SESSION_COOKIE + "=" + good,
+                         "Content-Length": "0"})
+    assert status == 200
+    echoed = json.loads(body)["x_client_id"]
+    assert echoed == "op-42"                 # attested from the session sub
+    assert echoed != serve.DEMO_CLIENT_ID    # NOT the forged static CLI-DEMO-0001
+
+
+def test_dev_mode_api_arm_still_carries_static_demo_client_id():
+    # dev mode (AUTH is None): the /api/v1/* arm keeps the static DEMO_CLIENT_ID, byte-for-byte the
+    # pre-auth behaviour — no session exists to attest from.
+    with fake_orchestrator() as orch:
+        serve.ORCHESTRATOR_URL = orch  # AUTH stays None from the autouse fixture
+        with run_mc() as port:
+            status, _hdrs, body = http_req(
+                port, "/api/v1/deposits/x", method="POST",
+                headers={"Content-Length": "0"})
+    assert status == 200
+    assert json.loads(body)["x_client_id"] == serve.DEMO_CLIENT_ID  # CLI-DEMO-0001
 
 
 # ── pure helpers ──────────────────────────────────────────────────────────────────────────────

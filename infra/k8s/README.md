@@ -61,8 +61,13 @@ Boundary-1 owned channel), so `app.babelstone.dev` is gated-by-default. This own
 enforced in the Mission Control BFF (`serve.py`) itself, **not** Kong's OIDC/JWT plugin as ADR-IC-021
 step-2's prose literally reads — because this host is Traefik-fronted and same-origin-proxies its
 backends rather than being a Kong route — while the pinned PKCE (C2) / SCA (C4) commitments still
-hold. The residual forged-`X-Client-Id` Kong-bypass on the proxied `/api/v1/*` calls is a separate,
-still-open concern tracked as bd babelstone-zla1.10.8.4.
+hold. The `X-Client-Id` on the proxied `/api/v1/*` calls is **no longer forged/static** (bd
+babelstone-zla1.10.8.4): in oidc mode the BFF attests it from the validated OIDC session `sub`,
+mirroring Kong's own attest-from-`sub` algorithm — real attestation, not a stand-in. The residual
+is that this demo host still bypasses Kong's edge (no rate-limiting, request validation, or SCA
+step-up on that path); that Kong-bypass is now RECORDED via the
+[ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
+2026-07-08 amendment and tracked for full Kong-fronted conformance as epic bd babelstone-zla1.10.9.
 
 ## Layout
 
