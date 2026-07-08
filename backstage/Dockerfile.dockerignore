@@ -1,0 +1,17 @@
+# Per-Dockerfile ignore for backstage/Dockerfile. BuildKit prefers a <dockerfile>.dockerignore
+# over the context-root .dockerignore, so this scopes ONLY the Backstage image build — the .NET
+# image legs (which also use the repo root as context) are unaffected, and there is no repo-root
+# .dockerignore to change their behaviour.
+#
+# Correctness does not depend on this file — the Dockerfile COPYs explicit paths (backstage/,
+# contracts/catalog, contracts/openapi/{specs,internal}, infra/backstage/app-config.yaml) rather
+# than `COPY . .`. This just keeps the repo-root context lean and deterministic by dropping the
+# heavy, never-COPY'd artefacts (a stray local node_modules/dist/.git would otherwise bloat the
+# context sent to the daemon).
+.git
+**/node_modules
+**/dist
+**/bin
+**/obj
+backstage/.yarn/cache
+backstage/.yarn/install-state.gz

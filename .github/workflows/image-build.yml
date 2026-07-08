@@ -41,6 +41,11 @@ on:
       - 'notification/**'
       - 'mcp-server/**'
       - 'pack-validate/**'
+      - 'backstage/**'             # the Backstage catalogue-portal image (zla1.6.3/.6.4)
+      - 'contracts/catalog/**'     # the governed catalogue descriptor tree baked into the backstage image
+      - 'contracts/openapi/specs/**'   # OpenAPI specs the descriptor $text-references (baked into the image)
+      - 'contracts/openapi/internal/**' # internal OpenAPI specs the descriptor $text-references (baked in)
+      - 'infra/backstage/**'       # the governed app-config the backstage image bakes as production
       - 'docs/demo/mission-control/**'  # the Mission Control UI image (zla1.5.4)
       - 'families/**'              # the engine image's publish pulls in the family projects
       - 'Directory.Packages.props' # central package versions the .NET image restores against
@@ -115,6 +120,17 @@ jobs:
           - service: mission-control
             dockerfile: docs/demo/mission-control/Dockerfile
             context: docs/demo/mission-control
+          # Backstage catalogue portal (bd babelstone-zla1.6.3/.6.4; ADR-IC-015): the scaffolded
+          # Node app under backstage/, built multi-stage IN docker, that bakes the governed
+          # catalogue tree (contracts/catalog + the contracts/openapi specs it $text-references)
+          # and the governed app-config (infra/backstage/app-config.yaml). Like the .NET legs it
+          # builds with the REPO ROOT as context — it COPYs from outside backstage/ — so context
+          # is `.` and the Dockerfile path is repo-root-relative. Publishes
+          # ghcr.io/jhosm/babelstone-backstage, amd64 + SBOM + grype + cosign-by-digest via the
+          # shared matrix steps below.
+          - service: backstage
+            dockerfile: backstage/Dockerfile
+            context: .
     # Surface this leg's pushed digest to the fan-in `digests` job (and, downstream, to the
     # Q.5 cosign step). Empty on a PR run (build-only, nothing pushed).
     outputs:
