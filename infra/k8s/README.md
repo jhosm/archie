@@ -40,8 +40,9 @@ All Services are `ClusterIP` — in the `base` and `ha` renderings they are
 reached via `kubectl port-forward`. **The `staging` overlay is the one exception**
 ([see below](#staging-overlay--the-always-on-public-demo-box-bd-babelstone-zla1)):
 it adds a public Traefik `Ingress` + cert-manager/Let's Encrypt TLS fronting the
-Kong edge, the Backstage portal, the Mission Control demo UI, and the Logto OAuth/OIDC
-auth subdomain ([ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md))
+Kong edge, the Backstage portal, the Mission Control demo UI, the Logto OAuth/OIDC
+auth subdomain, and — since bd zla1.10 — the Logto **admin console** on its own
+`auth-admin` host ([ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md))
 — the always-on demo box. That is a deliberate,
 recorded extension of the previous "no ingress/gateway exposure beyond Kong"
 posture: an
@@ -281,9 +282,14 @@ bd babelstone-zla1.10.2 — the staging box's token **issuer**: login, SCA, and 
 MCP-agent authority). Logto is the **4th public host**; it is the token issuer, not
 a product route, so it sits beside Backstage/Mission Control straight through Traefik
 and Kong stays the [ADR-IC-006](../../docs/product-management/integration_concepts/adrs/ADR-IC-006-edge-api-gateway.md)
-edge for the product API (only Logto's main app port 3001 is fronted — sign-in + OIDC
-discovery + JWKS; its admin console on 3002 stays cluster-internal, operator
-port-forward). Adding any public ingress extends the previous
+edge for the product API (Logto's main app port 3001 is fronted at `auth` — sign-in +
+OIDC discovery + JWKS; and, since bd zla1.10, its admin console on 3002 is fronted
+separately at `auth-admin` — Logto OSS v1.41 rejects the console's Management-API
+tokens unless it is reached at a stable HTTPS host matching `ADMIN_ENDPOINT`, so the
+port-forward path no longer works. The admin console is auth-gated by the Logto admin
+login; network-hardening it — Cloudflare Access / IP allowlist / `ADMIN_DISABLE_LOCALHOST`
+— is the residual mitigation tracked as bd zla1.10.6). Adding any public ingress extends
+the previous
 "no ingress/gateway exposure beyond Kong" posture, so this is an
 [ADR-PC-020 §D3](../../docs/product-management/product_concepts/adrs/ADR-PC-020-llm-toolchain-and-conformance-governance.md)
 **explicit-drift event**, acknowledged in the same change (this section, the scope
