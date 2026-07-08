@@ -919,10 +919,20 @@ jobs:
         # durable hcloud storage + the public Traefik/cert-manager TLS edge; bd
         # babelstone-zla1).
         run: |
+          # Schemas resolve from the VENDORED set under infra/k8s/schemas/ (bd
+          # babelstone-6qt9) — NOT raw.githubusercontent.com, which rate-limits
+          # (HTTP 429) the shared GitHub-runner IPs and made this gate flakily red
+          # ("failed downloading schema … giving up after 3 attempt(s)") on changes
+          # it had nothing to do with. This is fully offline/hermetic: a Kind whose
+          # schema is not vendored fails LOUD ("no schema found for …") rather than
+          # reaching the network — run `make k8s-schemas` (scripts/k8s-schemas-vendor.sh)
+          # to vendor it. Keep in lockstep with cd.yml's render job (same location).
+          SCHEMA_LOC='infra/k8s/schemas/{{.NormalizedKubernetesVersion}}-standalone-strict/{{.ResourceKind}}{{.KindSuffix}}.json'
           for target in base overlays/ha overlays/staging; do
             echo "== kubeconform: $target =="
             mise exec -- kustomize build --load-restrictor=LoadRestrictionsNone "infra/k8s/$target" \
-              | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0
+              | mise exec -- kubeconform -strict -summary -kubernetes-version 1.31.0 \
+                  -schema-location "$SCHEMA_LOC"
           done
       - name: Assert ADR commitments in rendered manifests (P.6)
         # Mechanical fitness checks on the rendered output — divergence from
