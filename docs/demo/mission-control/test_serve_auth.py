@@ -74,7 +74,13 @@ class _IdpHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _record_ua(self):
+        uas = getattr(self.server, "user_agents", None)
+        if uas is not None:
+            uas.append((self.path, self.headers.get("User-Agent")))
+
     def do_GET(self):
+        self._record_ua()
         if self.path.startswith("/.well-known/openid-configuration"):
             base = self.server.base
             doc = {
@@ -92,6 +98,7 @@ class _IdpHandler(http.server.BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):
+        self._record_ua()
         if self.path == "/token":
             length = int(self.headers.get("Content-Length", 0) or 0)
             self.rfile.read(length)
@@ -112,6 +119,7 @@ def fake_idp():
     httpd.id_token = None
     httpd.disc_overrides = {}   # tests may inject a hostile/malformed discovery endpoint
     httpd.disc_drop = ()        # …or drop a required field (e.g. issuer)
+    httpd.user_agents = []      # (path, User-Agent) seen on each backchannel request (bd zla1.10.12)
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
     t.start()
     try:
@@ -309,6 +317,23 @@ def test_oidc_derives_redirect_from_public_base():
         gate = serve._build_oidc_gate()
     assert gate.redirect_url == "https://mc.example/callback"
     assert gate.token_endpoint == idp.base + "/token"  # discovered, not hardcoded
+
+
+def test_oidc_backchannel_sends_descriptive_user_agent():
+    # Python urllib's default "Python-urllib/<ver>" UA is 403'd by the CDN in front of the issuer
+    # (Cloudflare on auth.babelstone.dev), which crash-looped the fail-closed gate in staging. The
+    # backchannel (discovery here; the token exchange shares the same header) must send a descriptive,
+    # non-bot User-Agent (bd babelstone-zla1.10.12).
+    with fake_idp() as idp:
+        serve.OIDC_ISSUER = idp.base
+        serve.OIDC_CLIENT_ID = "mc"
+        serve.MC_SESSION_SIGNING_KEY = "k"
+        serve.OIDC_REDIRECT_URL = "https://mc.example/callback"
+        serve._build_oidc_gate()  # performs discovery over the backchannel
+        seen = [ua for (path, ua) in idp.user_agents if path.startswith("/.well-known")]
+    assert seen, "discovery was not called"
+    assert all(ua == serve._OIDC_USER_AGENT for ua in seen)
+    assert all("python-urllib" not in (ua or "").lower() for ua in seen)
 
 
 # ── oidc mode: the interactive redirect carries PKCE S256 ─────────────────────────────────────

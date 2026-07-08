@@ -175,6 +175,14 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 # from a route tuple, so the verb handlers can turn it into a 403 rather than forge the demo id.
 _REFUSE = object()
 
+# User-Agent for serve.py's server-side OIDC backchannel calls (discovery + code→token exchange).
+# Python urllib defaults to "Python-urllib/<ver>", which the WAF/CDN in front of the issuer
+# (Cloudflare, on auth.babelstone.dev) 403-blocks as a bot signature — that made the fail-closed gate
+# crash-loop on discovery in staging. A descriptive, non-bot UA passes cleanly; the browser-facing
+# authorize redirect is unaffected (that request is the user's browser, not this process).
+# See bd babelstone-zla1.10.12.
+_OIDC_USER_AGENT = "babelstone-mission-control/1.0"
+
 # ── Read-only Postgres window for the Inspector lenses (bd babelstone-f0ic.15.1) ─────────────
 # These DSNs point at the engine + orchestrator databases. They are READ-ONLY by construction
 # (the connection is opened read-only and only allowlisted structural columns are ever selected)
@@ -910,7 +918,8 @@ class _OidcGate:
         — the fail-closed contract: a gate that cannot discover its IdP must not start."""
         url = self.issuer + "/.well-known/openid-configuration"
         try:
-            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            req = urllib.request.Request(
+                url, headers={"Accept": "application/json", "User-Agent": _OIDC_USER_AGENT})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 doc = json.loads(resp.read())
         except Exception as e:
@@ -1034,7 +1043,8 @@ class _OidcGate:
         data = urllib.parse.urlencode(fields).encode("ascii")
         req = urllib.request.Request(
             self.token_endpoint, data=data, method="POST",
-            headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"})
+            headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json",
+                     "User-Agent": _OIDC_USER_AGENT})
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return json.loads(resp.read())
