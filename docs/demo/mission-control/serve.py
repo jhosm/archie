@@ -1033,9 +1033,10 @@ class _OidcGate:
             raise OidcAuthError("token exchange failed: %s" % e)
 
     def _validate_id_token(self, id_token, expected_nonce):
-        """FULL claim validation of the id_token received over the TLS backchannel. Signature is NOT
-        checked — see the module note above (OIDC Core §3.1.3.7 item 6: direct-communication TLS
-        validation stands in for signature verification in the code flow)."""
+        """Claim validation of the id_token received over the TLS backchannel — iss, aud, azp (when
+        multi-audience), exp, and nonce. The JWKS signature is intentionally NOT verified; the
+        TLS-authenticated direct token-endpoint backchannel stands in for it (OIDC Core §3.1.3.7
+        item 6) — see the module note above."""
         parts = id_token.split(".")
         if len(parts) != 3:
             raise OidcAuthError("malformed id_token (not a JWT)")
