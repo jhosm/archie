@@ -34,8 +34,9 @@ spec:
               value: production
             - name: BACKSTAGE_OIDC_METADATA_URL
               value: https://auth.babelstone.dev/oidc/.well-known/openid-configuration
+            # The Logto-assigned App ID (client_id) for the hand-registered Backstage app.
             - name: BACKSTAGE_OIDC_CLIENT_ID
-              value: babelstone-backstage
+              value: xs0shrdb5iem7pqgyt86m
             # OpenBao-seeded (runbook §3). Never in git; the committed secrets.example.yaml carries
             # only dev placeholders that the cd-secret-preflight refuses to deploy.
             - name: BACKSTAGE_OIDC_CLIENT_SECRET
