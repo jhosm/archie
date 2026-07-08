@@ -68,6 +68,12 @@ public enum HoldReleaseResult
     /// <summary>The hold was ACTIVE and is now released — the one normal outcome.</summary>
     Transitioned,
 
+    /// <summary>The hold was ACTIVE and is now CAPTURED, but the captured amount EXCEEDED the held
+    /// amount — an over-capture (ADR-PC-037 §D4). The money moved (the row DID transition), but the
+    /// amount mismatch is surfaced as a reconciliation signal, never silently absorbed. The spine only
+    /// reports the arithmetic; the family interprets the signal.</summary>
+    TransitionedOverCaptured,
+
     /// <summary>The hold exists but had already left the active set — a duplicate/late release.
     /// Folds as a no-op (never a double-release); a reconciliation signal.</summary>
     AlreadyReleased,
@@ -275,14 +281,17 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
     {
         // Transition ONLY an ACTIVE row: a hold already captured/expired (or never placed) is a
         // zero-row no-op ("a second HoldCaptured is a no-op, never a double-release", ADR-PC-033),
-        // classified below so the projector can surface it.
+        // classified below so the projector can surface it. RETURNING the held amount lets one atomic
+        // statement report an over-capture (captured > held, ADR-PC-037 §D4): the transition still
+        // happens (the money moved), but the mismatch is a reconciliation signal, never silently absorbed.
         const string sql = """
             UPDATE account_holds
             SET state = 'CAPTURED',
                 captured_amount_cents = @captured_amount_cents,
                 released_stream_id = @released_stream_id,
                 released_sequence = @released_sequence
-            WHERE hold_id = @hold_id AND state = 'ACTIVE';
+            WHERE hold_id = @hold_id AND state = 'ACTIVE'
+            RETURNING amount_cents;
             """;
 
         await using var connection = new NpgsqlConnection(connectionString);
@@ -293,9 +302,12 @@ public sealed class PostgresAccountHoldStore(string connectionString) : IAccount
             command.Parameters.AddWithValue("captured_amount_cents", capturedAmountCents);
             command.Parameters.AddWithValue("released_stream_id", releasedStreamId);
             command.Parameters.AddWithValue("released_sequence", releasedSequence);
-            if (await command.ExecuteNonQueryAsync(ct) == 1)
+            // Non-null RETURNING ⇒ exactly one ACTIVE row transitioned; the value is its held amount_cents.
+            if (await command.ExecuteScalarAsync(ct) is { } returned)
             {
-                return HoldReleaseResult.Transitioned;
+                return capturedAmountCents > Convert.ToInt64(returned)
+                    ? HoldReleaseResult.TransitionedOverCaptured
+                    : HoldReleaseResult.Transitioned;
             }
         }
 
