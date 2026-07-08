@@ -134,6 +134,12 @@ spec:
             # host does not need to be self-reachable from the pod — only the issuer must match.
             - name: ADMIN_ENDPOINT
               value: https://auth-admin.babelstone.dev
+            # Defense-in-depth for the now-public admin console (bd zla1.10.6): refuse the
+            # localhost:3002 admin-CORS fallback, so the console is reachable ONLY via the real
+            # ADMIN_ENDPOINT host (behind Traefik + the Cloudflare Access gate), never a bare
+            # port-forward origin. The network gate (Cloudflare Access) is the load-bearing control.
+            - name: ADMIN_DISABLE_LOCALHOST
+              value: "true"
             - name: TRUST_PROXY_HEADER
               value: "true"
             - name: PORT

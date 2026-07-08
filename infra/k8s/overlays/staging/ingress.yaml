@@ -176,3 +176,36 @@ spec:
                 name: logto
                 port:
                   number: 3002
+---
+# Grafana observability UI (bd zla1.10.1 / zla1.10.6). Fronts the grafana-lgtm appliance's
+# Grafana UI (port 3000) at grafana.babelstone.dev so operators reach it without a port-forward
+# and the OIDC redirect_uri is a stable public URL (grafana.ini [server] root_url matches). The
+# observability plane is a regulated data store (ADR-IC-007 §P4): access is gated by Grafana's
+# own login (anonymous OFF) + Logto SSO + §P6 RBAC, and — like the auth-admin console — the host
+# is meant to sit behind a Cloudflare Access identity gate (bd zla1.10.6). Only the UI port (3000)
+# is fronted; the appliance's OTLP ports (4317/4318) stay unexposed (ADR-IC-007 §P1, CI-asserted).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  labels:
+    app.kubernetes.io/name: grafana-lgtm
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-babelstone
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - grafana.babelstone.dev
+      secretName: grafana-tls
+  rules:
+    - host: grafana.babelstone.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana-lgtm
+                port:
+                  number: 3000
