@@ -70,6 +70,10 @@ spec:
           # dir at runtime, so a read-only root would break it.
           securityContext:
             runAsNonRoot: true
+            runAsUser: 1000          # the 'node' user in node:22-bookworm-slim (backstage/Dockerfile USER node).
+                                     # The image declares its user by NAME, which the kubelet cannot verify as
+                                     # non-root at admission — so runAsNonRoot alone fails the container with
+                                     # CreateContainerConfigError. Pinning the numeric UID lets the kubelet verify.
             allowPrivilegeEscalation: false
             seccompProfile:
               type: RuntimeDefault
