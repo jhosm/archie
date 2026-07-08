@@ -1,0 +1,12 @@
+# Mission Control serve.py — DEV/TEST-only dependencies (never shipped in the image).
+#
+# serve.py itself stays stdlib-only (the runtime requirements.txt carries just the lazily-imported
+# psycopg for the optional /pg/* lenses; the OIDC login gate, bd babelstone-zla1.10.8.1, is
+# stdlib-only by design — see the id_token-verification note in serve.py). These are only needed to
+# RUN the test suite:
+#
+#   python3 -m venv .venv && .venv/bin/python -m pip install -r requirements-dev.txt
+#   .venv/bin/python -m pytest test_serve_auth.py -q
+#
+# (mirrors the mcp-server per-package venv pattern in the repo Makefile).
+pytest>=8
