@@ -1,0 +1,35 @@
+# DEV-ONLY babelstone catalogue overlay — NOT the governed config.
+#
+# In plain English: this is a local-development overlay that points the portal at the
+# repository's real catalogue so you can see the events + reconciliation contracts render
+# without building the production image. Layer it on top of the stock app-config.yaml:
+#
+#   YARN_GLOBAL_FOLDER=<writable> corepack yarn start \
+#     --config app-config.yaml --config app-config.babelstone-dev.yaml
+#
+# The GOVERNED production config is /Users/joaomiranda/dev/babelstone/infra/backstage/app-config.yaml
+# (ADR-IC-015). The image build (a separate issue) bakes THAT file as app-config.production.yaml and
+# COPYs contracts/catalog/ to /catalog, so its single catalogue Location is /catalog/catalog-info.yaml.
+# This overlay is the local mirror of that posture — it does NOT fork or weaken the governed file.
+#
+# THE NO-DRIFT INVARIANT (ADR-IC-015 §1–§2): this overlay restates NO schema. Its only catalogue
+# content is the single file Location below — the repo's contracts/catalog/catalog-info.yaml, the
+# descriptor that points at the AsyncAPI / OpenAPI / reconciliation source files. Backstage is only
+# the rendering layer; the source files + the CI gate remain the governance source of truth.
+app:
+  title: babelstone catalogue (dev)
+
+organization:
+  name: babelstone
+
+# The ONLY catalogue source for local dev: the repo's real descriptor, by absolute path.
+# Backstage resolves the descriptor's relative $text references (./events/*, ./reconciliation/*,
+# ../openapi/specs/*) against the file's own directory, so all API entities flow from this one entry.
+# This overlay's array REPLACES the stock example locations in app-config.yaml (config-merge
+# semantics), matching the governed config's single-Location, no-schema-restatement shape.
+catalog:
+  rules:
+    - allow: [Location, API]
+  locations:
+    - type: file
+      target: /Users/joaomiranda/dev/babelstone/contracts/catalog/catalog-info.yaml
