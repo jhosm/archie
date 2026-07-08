@@ -11,10 +11,11 @@
 # staging direction:
 #   1. namespace      babelstone-dev → babelstone-staging
 #   2. storage        unset (k3s local-path) → hcloud-volumes (durable, snapshot-able)
-#   3. backstage-db   ephemeral → a durable PVC (base ships it PVC-less)
-#   4. public edge    ClusterIP-only → a Traefik Ingress + cert-manager TLS
+#   3. public edge    ClusterIP-only → a Traefik Ingress + cert-manager TLS
 #                     fronting Kong (the ADR-IC-006 authz edge stays in force,
 #                     now BEHIND Traefik) and the Backstage subdomain
+# (Backstage no longer diverges on storage: it uses in-memory SQLite, not Postgres —
+#  bd babelstone-zla1.6.6 — so there is no backstage DB pod or PVC in any overlay.)
 #
 # GOVERNANCE (ADR-PC-020 §D3 explicit-drift): adding a public Ingress extends the
 # documented "ingress beyond Kong out of scope" posture. It is acknowledged in the
@@ -42,9 +43,6 @@ resources:
   # bootstrap (bootstrap/), deliberately OUTSIDE this kustomization so the strict
   # kubeconform gate (which carries no CRD schemas) stays green.
   - ingress.yaml
-  # Durable backing store for the Backstage Postgres (base ships it PVC-less, so
-  # its catalogue DB would not survive a pod restart on the always-on box).
-  - backstage-db-pvc.yaml
   # The Mission Control demo UI (Deployment + Service) — demo-specific, so it lives here
   # rather than in the apps/ product-service layer (bd babelstone-zla1.5.5). Its public
   # Ingress (app.babelstone.dev) is in ingress.yaml above.
@@ -91,8 +89,6 @@ replicas:
     count: 1
   - name: backstage
     count: 1
-  - name: backstage-db
-    count: 1
 
 patches:
   # Drop the base's DEV-ONLY placeholder Secret from the staging render
@@ -131,10 +127,6 @@ patches:
       version: v1
       kind: StatefulSet
       name: registry
-  # Mount the durable PVC into the Backstage DB + set a PGDATA subdir (a freshly
-  # provisioned CSI volume mounts with lost+found, and Postgres refuses to initdb
-  # into a non-empty data root, so the data must live one level down).
-  - path: backstage-db-storage.patch.yaml
   # Per-service CPU/memory requests + limits sized for the single 16 vCPU / 32 GB
   # node (bd babelstone-zla1.4). A multi-document strategic-merge patch — one doc
   # per workload container, each adding only its `resources:` block. The locked

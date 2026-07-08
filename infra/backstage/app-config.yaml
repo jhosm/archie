@@ -81,12 +81,15 @@ backend:
     port: 7007
     host: 0.0.0.0
   database:
-    client: pg
-    connection:
-      host: ${BACKSTAGE_PG_HOST:-backstage-db}
-      port: ${BACKSTAGE_PG_PORT:-5432}
-      user: ${BACKSTAGE_PG_USER:-backstage}
-      password: ${BACKSTAGE_PG_PASSWORD:-backstage}
+    # SQLite (better-sqlite3), in-memory — NO Postgres (bd babelstone-zla1.6.6; the maintainer's
+    # topology call on zla1.6.1, NO ADR governs it). Backstage here is a read-only catalogue
+    # portal whose entire state rebuilds from the /catalog descriptor BAKED into the image on
+    # every boot (the ADR-IC-015 no-drift invariant — the catalogue is the source of truth, not
+    # this DB), so there is nothing to persist: it re-ingests in seconds. This means zero DB
+    # memory on the box and zero coupling. It also matches the stock create-app dev default
+    # (backstage/app-config.yaml, loaded first by the image CMD), so it is the tested config.
+    client: better-sqlite3
+    connection: ':memory:'
 
 # The ONLY catalogue source: the in-repo Backstage descriptor. It is mounted into the
 # container at /catalog/catalog-info.yaml (see the Deployment / compose volume). All event +

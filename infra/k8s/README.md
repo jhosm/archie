@@ -33,7 +33,7 @@ application/engine service images (they connect to this stack).
 | grafana-lgtm | Deployment | **3000 only** | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | otel-collector | Deployment | 4317, 4318, 13133 | [ADR-IC-007](../../docs/product-management/integration_concepts/adrs/ADR-IC-007-observability-stack.md) |
 | registry | StatefulSet + PVC | 5000 | [ADR-PC-007](../../docs/product-management/product_concepts/adrs/ADR-PC-007-signed-yaml-oci-pack.md) |
-| backstage (catalogue portal) + backstage-db | Deployment ×2 | 7007, 5432 | [ADR-IC-015](../../docs/product-management/integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) (supersedes the retired ADR-IC-008) — renders `catalog-info.yaml`; app image is human-handoff (bd babelstone-s4ol.1) |
+| backstage (catalogue portal) | Deployment | 7007 | [ADR-IC-015](../../docs/product-management/integration_concepts/adrs/ADR-IC-015-event-catalog-governance-tooling-backstage.md) (supersedes the retired ADR-IC-008) — renders `catalog-info.yaml` from the baked image; in-memory SQLite (no Postgres), rebuilt from the baked `/catalog` on boot (bd babelstone-zla1.6.6) |
 | core-acl-stub (v1 Core-ACL settlement stub) | Deployment | 8080 | [ADR-PC-016](../../docs/product-management/product_concepts/adrs/ADR-PC-016-legacy-current-account-adapter.md) / [ADR-PC-029](../../docs/product-management/product_concepts/adrs/ADR-PC-029-engine-command-ingress.md) — WireMock; real ACL is DEF-1 (bd babelstone-ub9s) |
 
 All Services are `ClusterIP` — in the `base` and `ha` renderings they are
@@ -81,8 +81,6 @@ infra/k8s/
         ├── logto.yaml                # Logto OAuth/OIDC AS (ADR-IC-021): Service + Deployment — the auth.babelstone.dev issuer
         ├── logto-jobs.yaml           # Logto DB lifecycle: init/seed Job + alteration-deploy upgrade Job + annual key-rotation CronJob
         ├── storageclass.patch.yaml   # JSON6902: pin hcloud-volumes on the stateful VCTs
-        ├── backstage-db-pvc.yaml     # durable PVC for the Backstage DB (base ships it PVC-less)
-        ├── backstage-db-storage.patch.yaml # mount that PVC + PGDATA subdir
         └── bootstrap/                # cluster-scoped, account-gated, applied ONCE (NOT kustomized)
             ├── clusterissuer-letsencrypt.yaml # Let's Encrypt ClusterIssuer (cert-manager CRD)
             └── README.md             # bootstrap apply order + prereqs
@@ -250,7 +248,6 @@ runs one copy of everything (HA would not fit a single node — do **not** promo
 |---|---|---|
 | Namespace | `babelstone-dev` | `babelstone-staging` |
 | Storage | unset → k3s `local-path` (node-local, ephemeral) | `hcloud-volumes` (Hetzner CSI block — survives node rebuild, **snapshot-able**) |
-| backstage-db | ephemeral (base ships it PVC-less) | a durable `PersistentVolumeClaim` |
 | Public access | `ClusterIP` + `kubectl port-forward` | a Traefik `Ingress` + cert-manager/Let's Encrypt TLS |
 
 **Storage — durable by choice.** The base `volumeClaimTemplates` carry no
