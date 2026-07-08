@@ -22,9 +22,12 @@ public sealed class LifecycleModuleLoaderTests
 
         var families = modules.Select(m => m.FamilyName).ToList();
 
-        // Both shipped families are discovered with no host-composition edit naming them.
+        // Every shipped family is discovered with no host-composition edit naming them — including
+        // current_account, whose lifecycle contribution is the projection-derived hold-expiry rule
+        // (ADR-PC-037).
         Assert.Contains("term_deposit", families);
         Assert.Contains("personal_loan", families);
+        Assert.Contains("current_account", families);
 
         // Each family contributes exactly one module — the loader's duplicate-family guard would have thrown.
         Assert.Equal(families.Count, families.Distinct().Count());

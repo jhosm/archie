@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <!-- Line/branch coverage collector (build-time only; PrivateAssets=all keeps it
+         out of any consuming graph). Activated by the XPlat Code Coverage VSTest collector. -->
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The family LIFECYCLE contribution under test: HoldExpiryRule (the projection-derived hold-expiry
+         decision, the value-date-horizon boundary, the per-hold occurrence key, backfill under the same
+         number-pinned id), driven over a fake spine hold store behind a real AccountBalanceReader with the real
+         LifecycleSchedulePass + dispatch ledger — no engine, no Docker, no clock. The contribution brings the
+         driver core's family-rule port (ILifecycleCommandRule / LifecycleCommandDecision) and the
+         LifecycleCommandKey seam via its project reference; the engine store types (IAccountHoldStore /
+         AccountHoldRow) ride in via the SUT's Babelstone.EventStore reference. -->
+    <ProjectReference Include="../../src/Babelstone.Families.CurrentAccount.Lifecycle/Babelstone.Families.CurrentAccount.Lifecycle.csproj" />
+  </ItemGroup>
+</Project>

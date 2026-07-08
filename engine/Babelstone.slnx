@@ -72,6 +72,11 @@
          engine plugin arrow (ADR-PC-021). -->
     <Project Path="../families/current-account/src/Babelstone.Families.CurrentAccount/Babelstone.Families.CurrentAccount.csproj" />
     <Project Path="../families/current-account/src/Babelstone.Families.CurrentAccount.Application/Babelstone.Families.CurrentAccount.Application.csproj" />
+    <!-- current_account's LIFECYCLE-COMMAND contribution (bd 30hf.3, ADR-PC-037 §D4e): the HoldExpiryRule +
+         IFamilyLifecycleModule that binds the SPINE active-hold reader (account_holds is spine-owned, so —
+         unlike the deposit/loan .Lifecycle projects — it reads the engine AccountBalanceReader, not a family
+         read-model store) and registers the projection-derived hold-expiry rule. -->
+    <Project Path="../families/current-account/src/Babelstone.Families.CurrentAccount.Lifecycle/Babelstone.Families.CurrentAccount.Lifecycle.csproj" />
     <!-- The in-house saga orchestrator (ADR-IC-003, Epic H.1): the hand-rolled ConstitutionProcess
          state machine + saga-state/transition persistence + idempotent inbox-driven advance. An
          extraction-ready subtree (ADR-PC-019 §P2) that builds with the engine pipeline. -->
@@ -179,6 +184,10 @@
          Dormant ⇄ Active pair), and the pure lifecycle-command decider. All Docker-free. -->
     <Project Path="../families/current-account/tests/Babelstone.Families.CurrentAccount.Tests/Babelstone.Families.CurrentAccount.Tests.csproj" />
     <Project Path="../families/current-account/tests/Babelstone.Families.CurrentAccount.Application.Tests/Babelstone.Families.CurrentAccount.Application.Tests.csproj" />
+    <!-- current_account's LIFECYCLE-command rule tests (bd 30hf.3, ADR-PC-037 §D4e): the HoldExpiryRule
+         driven over a fake spine hold store (candidates-in / decisions-out, no engine, no Docker, no clock)
+         — the projection-derived expiry horizon fires one expire_hold per due authorization hold. -->
+    <Project Path="../families/current-account/tests/Babelstone.Families.CurrentAccount.Lifecycle.Tests/Babelstone.Families.CurrentAccount.Lifecycle.Tests.csproj" />
     <!-- H.1 saga substrate: pure state-machine tests + saga-persistence/advance/role-envelope
          integration tests (the latter [Trait("Category","Integration")], filtered out of the
          default lane). -->

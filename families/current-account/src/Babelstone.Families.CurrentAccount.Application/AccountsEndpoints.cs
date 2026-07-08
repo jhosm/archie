@@ -34,6 +34,11 @@ public static class AccountsEndpoints
     // authorize hot path is not human-initiated), a structural role, never PII.
     private const string AuthorizeActor = "svc:payment-authorize";
 
+    // The default acting principal recorded on a hold-expiry append: the non-interactive ADR-PC-036
+    // lifecycle-command driver (hold expiry is machine-fired off a projection, never human-initiated), a
+    // structural role, never PII.
+    private const string ExpiryActor = "svc:lifecycle-hold-expiry";
+
     public static void Map(IEndpointRouteBuilder app)
     {
         // Open a new demand account (opens the stream). The Idempotency-Key is OPTIONAL here (the
@@ -53,6 +58,13 @@ public static class AccountsEndpoints
         // real time. Ungated (see the class remarks) but carries a MANDATORY Idempotency-Key — a replayed
         // authorize returns the original verdict (same hold_id) with no second HoldPlaced.
         app.MapPost("/v1/accounts/{id:guid}/authorize", AuthorizeAsync);
+
+        // The projection-derived HOLD-EXPIRY command (ADR-PC-037): append a HoldExpired for a hold the
+        // ADR-PC-036 lifecycle-command driver found due against a value-date horizon. Moves no money (a
+        // release with no posting), so ungated like the lifecycle transitions; the mandatory Idempotency-Key
+        // (the driver's canonical dispatch id) makes an at-least-once retry replay rather than re-expire.
+        // {id:guid} names the account stream; {holdId} is the hold's free-string lifecycle key.
+        app.MapPost("/v1/accounts/{id:guid}/holds/{holdId}/expire", ExpireHoldAsync);
 
         // GDPR Article 17 right-to-be-forgotten (ADR-PC-004) — a DIFFERENT gate from the money-mover SCA
         // gate; governed by its own crypto-shred discipline. Mandatory Idempotency-Key (key destruction
@@ -281,6 +293,35 @@ public static class AccountsEndpoints
             return Results.Problem(e.Message, statusCode: StatusCodes.Status422UnprocessableEntity);
         }
     }
+
+    /// <summary>
+    /// The projection-derived hold-expiry command (ADR-PC-037): append a <c>HoldExpired</c> for a hold
+    /// the ADR-PC-036 lifecycle-command driver found due against a value-date horizon. It reuses the shared
+    /// idempotent choreography — a HoldExpired moves no money (a posting-free release, ADR-PC-037), so
+    /// it is ungated exactly like the lifecycle transitions, and the mandatory Idempotency-Key (the driver's
+    /// canonical dispatch id) makes an at-least-once re-POST replay the original outcome rather than re-expire.
+    /// The business valid_time is the hold's economic value-date, not the wall-clock tick the driver fired on,
+    /// so a late/backfilled expiry records the correct economic date (ADR-PC-002 / ADR-PC-023).
+    /// </summary>
+    private static Task<IResult> ExpireHoldAsync(
+        Guid id,
+        string holdId,
+        ExpireHoldRequest request,
+        [FromHeader(Name = "Idempotency-Key")] string? idempotencyKey,
+        CurrentAccountHoldExpiryService service,
+        AggregateRuntime<AccountPosition> runtime,
+        ICommandLog commandLog,
+        TimeProvider clock,
+        CancellationToken ct)
+        => RunIdempotentAsync(
+            id, idempotencyKey, runtime, commandLog,
+            (commandId, validTime) => service.ExpireHoldAsync(
+                new ExpireHoldCommand(id, holdId, request.ValueDate, request.Actor ?? ExpiryActor, commandId),
+                validTime, ct),
+            // The business valid_time is the hold's economic value-date (a HoldExpired is dated by when the
+            // hold was due to expire, ADR-PC-023), passed as the override so the shared choreography stamps it.
+            new DateTimeOffset(request.ValueDate.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero),
+            clock, ct);
 
     /// <summary>
     /// The shared idempotent lifecycle-command choreography (ADR-PC-029), mirroring the deposit / loan

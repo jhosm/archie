@@ -14,14 +14,17 @@ openapi: 3.1.0
 # is needed.
 #
 # The five lifecycle operations (open / dormancy / reactivate / close / erase) move no money — they
-# only relabel the account's lifecycle state. The synchronous AUTHORIZE money-mover (place a hold or
+# only relabel the account's lifecycle state — and neither does the hold-expiry command (expire), a
+# posting-free release of an authorization hold fired by the ADR-PC-036 lifecycle-command driver
+# (ADR-PC-037 §D4e). The synchronous AUTHORIZE money-mover (place a hold or
 # decline, ADR-PC-037 §D6 on the ADR-PC-034 technique) DOES earmark funds, and it is documented here — but it is UNGATED too: a
 # machine/rail-initiated, de-settled decision on this same mTLS-only Boundary-2 surface, where strong
 # customer authentication is an upstream stage-1/2 concern, not the engine's stage-3/5 decision. So
 # there is no step-up SCA gate anywhere in this spec.
 #
 # Shapes are transcribed from the REAL code surface, not invented: AccountsEndpoints.cs +
-# AccountsContracts.cs in families/current-account/src/Babelstone.Families.CurrentAccount.Application
+# AccountsContracts.cs + HoldExpiryContracts.cs in
+# families/current-account/src/Babelstone.Families.CurrentAccount.Application
 # (snake_case on the wire — the host's SnakeCaseLower JSON options; money as integer cents,
 # ADR-PC-010 §P1). The spec<->DTO lock is enforced by the Babelstone.ContractDrift.Tests Layer-1
 # suite: mutating a DTO without updating this file turns CI red. NO PII (ADR-PC-004 §P2): opaque
@@ -277,6 +280,48 @@ paths:
           description: Concurrent modification (optimistic-concurrency conflict on the account stream).
         '422':
           description: Not authorizable from the current lifecycle (a domain rejection, distinct from a business DECLINED).
+  /v1/accounts/{id}/holds/{holdId}/expire:
+    post:
+      operationId: expireAccountHold
+      summary: Expire an authorization hold whose value-date horizon has passed (ADR-PC-037 §D4e).
+      description: >
+        The projection-derived hold-expiry command. The engine owns no clock (ADR-PC-023), so a
+        HoldExpired is appended off a projection over the active-hold set against a value-date horizon,
+        fired by the ADR-PC-036 lifecycle-command driver — this is that driver's target surface. Appends
+        operations.HoldExpired for the hold, ending the earmark with NO posting (a release, not a capture:
+        no money moves, ADR-PC-037 §D4d/e). NOT step-up-SCA-gated (moves no money) and NOT re-decided from
+        family state (a hold is a spine-owned fact, ADR-PC-033 — the family fold treats it as a no-op).
+        Idempotent (ADR-PC-029): a replayed command id (the driver's canonical number-pinned dispatch id)
+        returns the ORIGINAL outcome with no second HoldExpired; a late/duplicate release the projector
+        already recorded folds as a no-op reconciliation signal, never a double-release. The business
+        valid_time is the hold's economic value_date, not the wall-clock tick the driver fired on.
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/HoldId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExpireHoldRequest'
+      responses:
+        '200':
+          description: >
+            The account after the hold expiry (the authoritative post-append fold; the account's OWN
+            lifecycle status is unchanged — a hold is spine-owned). An idempotent replay returns the same
+            shape, and commit_sequence is the ADR-IC-005 §P3 read-your-writes token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountCommandResponse'
+        '400':
+          description: Missing or non-UUID Idempotency-Key (ADR-PC-029).
+        '409':
+          description: >
+            Concurrent modification (optimistic-concurrency conflict on the account stream). Expiry
+            consults no family legality gate, so — unlike the lifecycle transitions — it has no 422
+            domain-rejection path.
 components:
   parameters:
     AccountId:
@@ -289,6 +334,16 @@ components:
       schema:
         type: string
         format: uuid
+    HoldId:
+      name: holdId
+      in: path
+      required: true
+      description: >
+        The hold's lifecycle key (ADR-PC-033 slot 4) — the dedup/correlation id every lifecycle event of
+        the hold carries (in practice the form hold-{guid:N} the authorize money-mover minted). A free
+        string, deliberately NOT a UUID: an opaque structural token, never PII (ADR-PC-004 §P2).
+      schema:
+        type: string
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -508,3 +563,22 @@ components:
           outcome: DECLINED
           declined_reason: INSUFFICIENT_AVAILABLE_BALANCE
           commit_sequence: 3
+    ExpireHoldRequest:
+      type: object
+      description: >
+        The hold-expiry command (ExpireHoldRequest, snake_case). The account is the path id and the hold is
+        the path holdId; this body carries only the hold's economic value_date — the business valid_time the
+        engine stamps on the HoldExpired (ADR-PC-002 / ADR-PC-023), which the ADR-PC-036 driver read from the
+        expiry projection. The Idempotency-Key command id rides the header (ADR-PC-029), not the body. actor
+        defaults to the non-interactive lifecycle hold-expiry driver principal — a structural role, never PII.
+      required: [value_date]
+      properties:
+        value_date:
+          type: string
+          format: date
+          description: The hold's economic value-date — the business valid_time stamped on the HoldExpired (ADR-PC-023).
+        actor:
+          type: string
+          description: The acting principal recorded on the append (defaults to the lifecycle hold-expiry driver principal); a role, never PII.
+      examples:
+        - value_date: "2026-03-05"
