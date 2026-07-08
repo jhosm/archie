@@ -54,7 +54,12 @@ authz edge — now *behind* Traefik — and no OTLP port (4317/4318) is ever exp
 §P1). **That drift now NARROWS** (bd babelstone-zla1.10.8.3): the Mission Control demo UI is no
 longer an *unauthenticated* public surface — staging runs it with `MC_AUTH_MODE=oidc`, a Logto
 OIDC login gate ([ADR-IC-021](../../docs/product-management/integration_concepts/adrs/ADR-IC-021-iam-oauth-authorization-server.md)
-Boundary-1 owned channel), so `app.babelstone.dev` is gated-by-default.
+Boundary-1 owned channel), so `app.babelstone.dev` is gated-by-default. This owned-channel gate is
+enforced in the Mission Control BFF (`serve.py`) itself, **not** Kong's OIDC/JWT plugin as ADR-IC-021
+step-2's prose literally reads — because this host is Traefik-fronted and same-origin-proxies its
+backends rather than being a Kong route — while the pinned PKCE (C2) / SCA (C4) commitments still
+hold. The residual forged-`X-Client-Id` Kong-bypass on the proxied `/api/v1/*` calls is a separate,
+still-open concern tracked as bd babelstone-zla1.10.8.4.
 
 ## Layout
 
